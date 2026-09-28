@@ -13,6 +13,26 @@ jobs:
   check:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: sa
+          POSTGRES_PASSWORD: sa
+          POSTGRES_DB: squared_away
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U sa" --health-interval 5s --health-timeout 5s --health-retries 10
+    # Throwaway values for CI only. Nothing here talks to real Google or a real database.
+    env:
+      APP_URL: http://localhost:3100
+      DATABASE_URL: postgres://sa:sa@localhost:5432/squared_away
+      AUTH_SECRET: ci-only-secret-0000000000000000000000000
+      AUTH_TRUST_HOST: "true"
+      AUTH_GOOGLE_ID: ci-dummy-client-id
+      AUTH_GOOGLE_SECRET: ci-dummy-client-secret
+      TOKEN_ENCRYPTION_KEY: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+      ADMIN_EMAIL: admin@example.com
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4

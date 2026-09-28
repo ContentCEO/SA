@@ -41,12 +41,20 @@ business + voice profile) · Resend · Stripe · Sentry · Vercel · Vitest + Pl
 src/app/            routes (App Router)
 src/components/ui/  shadcn components (edited: all button sizes ≥44px, no red destructive)
 src/components/brand/  Headline (signature serif-over-heavy), Wordmark (placeholder)
-src/config/         site.ts (business facts), models.ts, pricing.ts
-src/db/             schema.ts, lazy db() client
+src/auth.ts         Auth.js (sign-in = openid/email/profile only; JWT sessions; invite-only)
+src/app/(app)/      signed-in screens: connect (pre-OAuth explainer), settings
+src/app/api/gmail/  Gmail OAuth callback (connect is a server action in (app)/connect/actions.ts)
+src/mailbox/        connector interface + gmail/ implementation (scopes, OAuth, state)
+src/server/         domain logic: accounts.ts, mailboxes.ts, session.ts (requireOwner)
+src/lib/crypto.ts   AES-256-GCM for refresh tokens
+src/config/         site.ts (business facts), models.ts, pricing.ts, retention.ts
+src/db/             schema.ts, lazy db() client (postgres.js)
+drizzle/            generated migrations — commit them
+scripts/invite.ts   pnpm invite owner@shop.com [trade] ["note"]
 src/styles/theme.css   THE theme file — every color/token
-tests/unit/         Vitest
-tests/e2e/          Playwright (mobile 375px + desktop projects)
-docs/               BRIEF.md, SETUP.md, google-verification.md (M11), legal drafts
+tests/unit/         Vitest; DB tests use in-memory PGlite (tests/support/db.ts)
+tests/e2e/          Playwright (mobile 375px + desktop); real Postgres; forged Auth.js cookie
+docs/               BRIEF.md, SETUP.md, google-verification.md, legal drafts
 ```
 
 ## Commands
@@ -80,6 +88,26 @@ In a sandbox with preinstalled Chromium: `PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-brows
 - Haiku ID: using dated snapshot `claude-haiku-4-5-20251001` (as specified; alias is
   `claude-haiku-4-5`). Sonnet: `claude-sonnet-5`. Verified 2026-09-28 — unchanged from the brief.
 - `db()` is created lazily so build/test don't need `DATABASE_URL`.
+- **DB driver: postgres.js everywhere** (not `@neondatabase/serverless`). Works with Neon's pooled
+  URL (`prepare: false` for PgBouncer), local Postgres, and CI's Postgres service, so signed-in e2e
+  tests run without Neon. Unit tests use PGlite with the real migrations.
+- **Sign-in and Gmail are two separate OAuth consents.** Auth.js asks only `openid email profile`;
+  Gmail scopes are requested by our own flow after the explainer screen. Same Google client, two
+  redirect URIs. Gives us full control of the refresh token and the "missing scope" handling.
+- If Google's granular consent returns fewer than all three Gmail scopes, we revoke and save nothing.
+- Connect uses `prompt=consent` + `access_type=offline` so a refresh token always comes back.
+- OAuth `state`: random 32 bytes in an httpOnly, SameSite=Lax cookie scoped to `/api/gmail`,
+  10-minute TTL, compared in constant time.
+- **Sign-in is invite-only** via an `invites` table (script now, /admin later). `ADMIN_EMAIL` always
+  allowed. First sign-in creates user + workspace (status `invited`), idempotently.
+- JWT sessions (no Auth.js adapter tables); session carries our `users.id` as `uid`.
+- CSRF: mutations are Server Actions (POST + Origin/Host check by Next). Every action re-checks the
+  owner via `requireOwner()`; queries are always scoped by `workspaceId`.
+- Mailbox limit before a plan is chosen (evaluation) = 1. Reconnecting the same address doesn't count.
+- Disconnect revokes at Google, then deletes the mailbox even if revoke fails (logged
+  `revokedAtProvider: false`). Deleting is what the owner asked for.
+- `activity_log` created early (M1) to record connect/reconnect/disconnect; detail is content-free.
+- "Toasts" are currently `?done=` / `?error=` query params rendered as `<Notice>` (role=status/alert).
 - Playwright's mobile project uses Chromium at 375×812 (not WebKit) to keep CI fast and single-browser.
 - Favicon and wordmark are text placeholders until Davi's icon pack arrives (`public/brand/`).
 - `/api/health` returns `{ ok, service, commit }` — used by Playwright's webServer check and for
@@ -87,8 +115,8 @@ In a sandbox with preinstalled Chromium: `PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-brows
 
 ## Milestones
 
-- [x] **0. Scaffold** — done (Vercel git link pending on Davi)
-- [ ] 1. Auth + Gmail connect
+- [x] **0. Scaffold**
+- [x] **1. Auth + Gmail connect** — code + tests done; live verification waits on Neon + Google client
 - [ ] 2. Sync
 - [ ] 3. Classification
 - [ ] 4. Profiles
@@ -102,8 +130,14 @@ In a sandbox with preinstalled Chromium: `PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-brows
 
 ## Waiting on Davi
 
-- Link GitHub repo `contentceo/sa` to the existing Vercel project `sa` (team DAC) — see docs/SETUP.md.
+- Confirm the Vercel ↔ GitHub link produced a preview deploy for this branch.
+- Neon project + `DATABASE_URL` in Vercel; Google Cloud OAuth client + Gmail API + test users.
+- Vercel env: `AUTH_SECRET`, `TOKEN_ENCRYPTION_KEY`, `AUTH_GOOGLE_ID/SECRET`, `APP_URL`, `ADMIN_EMAIL`.
 - Icon pack (`sa.` monogram, stacked wordmark).
 - `docs/terms.md`, `docs/privacy-policy.md` drafts.
-- `SUPPORT_EMAIL`, production domain / `APP_URL`, `ADMIN_EMAIL`.
-- Before M1: OK to create a Neon account/project; Google Cloud OAuth client.
+- `SUPPORT_EMAIL`, production domain.
+
+## Launch blockers to remember
+
+- Connect screen promises "won't keep email text longer than 30 days" — the purge job (M11) must
+  ship before real customer mail is synced (M2 lands bodies in the DB).
