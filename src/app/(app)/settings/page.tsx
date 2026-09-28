@@ -1,7 +1,8 @@
 import Link from "next/link";
+import { signOut } from "@/auth";
 import { Notice } from "@/components/app/notice";
 import { Headline } from "@/components/brand/headline";
-import { buttonVariants } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { relativeTime } from "@/lib/relative-time";
 import { listMailboxes, mailboxLimit, type MailboxSummary } from "@/server/mailboxes";
 import { BACKFILL_DAYS, syncSummary } from "@/server/sync";
@@ -109,6 +110,22 @@ export default async function SettingsPage(props: PageProps<"/settings">) {
             Connect another Gmail
           </Link>
         ) : null}
+      </section>
+
+      <section aria-labelledby="account" className="flex flex-col gap-3">
+        <h2 id="account" className="text-xl font-black">
+          Account
+        </h2>
+        <form
+          action={async () => {
+            "use server";
+            await signOut({ redirectTo: "/" });
+          }}
+        >
+          <Button type="submit" variant="outline" className="w-full">
+            Sign out
+          </Button>
+        </form>
       </section>
     </>
   );

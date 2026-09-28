@@ -12,6 +12,11 @@ export const mailboxSyncRequested = eventType("mailbox/sync.requested", {
   schema: staticSchema<{ mailboxId: string }>(),
 });
 
+/** New inbound mail landed: sort it. */
+export const mailboxClassifyRequested = eventType("mailbox/classify.requested", {
+  schema: staticSchema<{ mailboxId: string }>(),
+});
+
 /**
  * Fire-and-forget enqueue. If the queue is unreachable we log (content-free)
  * and move on — the 5-minute poll picks up anything missed.

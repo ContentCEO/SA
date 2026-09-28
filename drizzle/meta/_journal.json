@@ -15,6 +15,13 @@
       "when": 1790616396541,
       "tag": "0001_funny_chronomancer",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1790617782100,
+      "tag": "0002_thankful_apocalypse",
+      "breakpoints": true
     }
   ]
 }

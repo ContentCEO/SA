@@ -126,6 +126,13 @@ export const threads = pgTable(
     priority: text("priority"),
     needsOwner: boolean("needs_owner").notNull().default(false),
     needsOwnerReason: text("needs_owner_reason"),
+    /** The owner said "This one needs me". Classification never clears it. */
+    needsOwnerManual: boolean("needs_owner_manual").notNull().default(false),
+    /** One-sentence summary from classification. Kept after bodies are purged. */
+    summary: text("summary"),
+    /** Structured facts pulled from the latest inbound message (service, address, dates, amounts). */
+    extracted: jsonb("extracted").$type<Record<string, unknown>>(),
+    classifiedAt: timestamp("classified_at", { withTimezone: true }),
     awaitingReplySince: timestamp("awaiting_reply_since", { withTimezone: true }),
     followupCount: integer("followup_count").notNull().default(0),
     createdAt: createdAt(),
@@ -162,6 +169,8 @@ export const messages = pgTable(
     bodyText: text("body_text"),
     bodyPurgedAt: timestamp("body_purged_at", { withTimezone: true }),
     sentAt: timestamp("sent_at", { withTimezone: true }).notNull(),
+    /** Set once classification ran (or was deliberately skipped) for this message. */
+    classifiedAt: timestamp("classified_at", { withTimezone: true }),
     createdAt: createdAt(),
   },
   (t) => [
@@ -186,6 +195,32 @@ export const activityLog = pgTable(
     createdAt: createdAt(),
   },
   (t) => [index("activity_workspace_created_idx").on(t.workspaceId, t.createdAt)],
+);
+
+/**
+ * AI usage per workspace per UTC day. Drives the daily call cap and the
+ * per-customer monthly cost Davi sees in /admin. Never holds content.
+ */
+export const usage = pgTable(
+  "usage",
+  {
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    /** UTC date, YYYY-MM-DD. Monthly figures are sums over this. */
+    period: text("period").notNull(),
+    aiCalls: integer("ai_calls").notNull().default(0),
+    modelTokensIn: integer("model_tokens_in").notNull().default(0),
+    modelTokensOut: integer("model_tokens_out").notNull().default(0),
+    cacheReadTokens: integer("cache_read_tokens").notNull().default(0),
+    cacheWriteTokens: integer("cache_write_tokens").notNull().default(0),
+    draftsCreated: integer("drafts_created").notNull().default(0),
+    emailsSent: integer("emails_sent").notNull().default(0),
+    /** Hundredths of a cent, so tiny Haiku calls don't round to zero. */
+    estimatedCostCentiCents: integer("estimated_cost_centicents").notNull().default(0),
+    capAlertedAt: timestamp("cap_alerted_at", { withTimezone: true }),
+  },
+  (t) => [uniqueIndex("usage_workspace_period_uq").on(t.workspaceId, t.period)],
 );
 
 export type User = typeof users.$inferSelect;

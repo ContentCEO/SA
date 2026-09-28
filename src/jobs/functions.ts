@@ -8,7 +8,13 @@ import {
   purgeExpiredBodies,
   renewWatches,
 } from "@/server/sync";
-import { inngest, mailboxConnected, mailboxSyncRequested } from "./client";
+import { classifyPending } from "@/server/classification";
+import {
+  inngest,
+  mailboxClassifyRequested,
+  mailboxConnected,
+  mailboxSyncRequested,
+} from "./client";
 
 /**
  * 30-day backfill, one page per step so each step stays well under function
@@ -36,6 +42,7 @@ export const backfillMailbox = inngest.createFunction(
       if (!pageToken) break;
     }
     await step.run("finish", () => finishBackfill(mailboxId));
+    await step.sendEvent("classify", mailboxClassifyRequested.create({ mailboxId }));
     return { status: "ok", ingested: total };
   },
 );
@@ -54,6 +61,31 @@ export const syncMailbox = inngest.createFunction(
     if (result.status === "reconnect_needed")
       throw new NonRetriableError("Mailbox needs reconnecting.");
     return result;
+  },
+);
+
+/**
+ * Sort waiting mail for one mailbox, ten messages per step so a failure only
+ * retries its own batch. Stops early when the workspace hits its daily AI cap.
+ */
+export const classifyMailbox = inngest.createFunction(
+  {
+    id: "classify-mailbox",
+    triggers: [mailboxClassifyRequested],
+    concurrency: { key: "event.data.mailboxId", limit: 1 },
+    debounce: { key: "event.data.mailboxId", period: "30s" },
+    retries: 3,
+  },
+  async ({ event, step }) => {
+    let total = 0;
+    for (let round = 0; round < 50; round++) {
+      const r = await step.run(`batch-${round}`, () =>
+        classifyPending(event.data.mailboxId, { limit: 10 }),
+      );
+      total += r.classified;
+      if (r.capped || r.remaining === 0) return { classified: total, capped: r.capped };
+    }
+    return { classified: total, capped: false };
   },
 );
 

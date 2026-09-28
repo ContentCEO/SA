@@ -42,7 +42,9 @@ src/app/            routes (App Router)
 src/components/ui/  shadcn components (edited: all button sizes ≥44px, no red destructive)
 src/components/brand/  Headline (signature serif-over-heavy), Wordmark (placeholder)
 src/auth.ts         Auth.js (sign-in = openid/email/profile only; JWT sessions; invite-only)
-src/app/(app)/      signed-in screens: connect (pre-OAuth explainer), settings
+src/app/(app)/      signed-in screens: inbox, connect (pre-OAuth explainer), settings
+src/ai/             model client (cap, usage, logging), classify, prompts/ (versioned)
+src/jobs/           Inngest client, events, functions (served at /api/inngest)
 src/app/api/gmail/  Gmail OAuth callback (connect is a server action in (app)/connect/actions.ts)
 src/mailbox/        connector interface + gmail/ implementation (scopes, OAuth, state)
 src/server/         domain logic: accounts.ts, mailboxes.ts, session.ts (requireOwner)
@@ -139,6 +141,24 @@ In a sandbox with preinstalled Chromium: `PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-brows
   (only if `GMAIL_PUBSUB_TOPIC`), purge daily. `enqueue()` swallows send failures; the poll recovers.
 - Migrations run in `vercel-build` before `next build`. Keep them additive (old code must keep
   working against the new schema, since previews and prod share the DB).
+- **Classification (M3):** prompt in `src/ai/prompts/classify.v1.ts` (versioned; new file per change),
+  Haiku via `messages.parse` + `zodOutputFormat`, re-validated with Zod; one retry, then
+  `unreadable` → needs_owner "Couldn't sort this one automatically". `applyOwnerRules`
+  (`src/ai/classify.ts`) enforces complaint / legal / refund-dispute / VIP / amount > threshold /
+  first-time sender + large job / confidence < 0.6 in code regardless of model output.
+- Only the newest unclassified inbound message per inbox thread (last 14 days) goes to the model;
+  older ones are marked superseded. Gmail Promotions/Social tabs → noise without a model call.
+- Amount threshold defaults to $2,500 and VIP list is empty until the business profile (M4).
+- "First-time sender" = no earlier message from that address in what we've synced (30 days).
+- `src/ai/client.ts` `callStructured`: reserves a call against the per-workspace daily cap
+  (`AI_DAILY_CALL_CAP`, atomic upsert; `ai_cap_80_percent` warning once/day), records tokens +
+  estimated cost in `usage` (per UTC day, cost in centicents), logs only metadata. Tests swap the
+  transport with `setModelTransportForTests`.
+- Prompt caching: cache breakpoint after instructions + business block. Haiku 4.5 needs a 4,096-token
+  prefix to cache, which the classifier prompt doesn't reach yet — it matters for Sonnet drafting
+  (1,024 minimum), not here.
+- `threads.needs_owner_manual`: the owner's "This one needs me" always wins over classification.
+- Nav: Inbox · Settings in the header; Sign out lives at the bottom of Settings. Signed-in home = /inbox.
 - "Toasts" are currently `?done=` / `?error=` query params rendered as `<Notice>` (role=status/alert).
 - Playwright's mobile project uses Chromium at 375×812 (not WebKit) to keep CI fast and single-browser.
 - Favicon and wordmark are text placeholders until Davi's icon pack arrives (`public/brand/`).
@@ -150,7 +170,7 @@ In a sandbox with preinstalled Chromium: `PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-brows
 - [x] **0. Scaffold**
 - [x] **1. Auth + Gmail connect** — verified live 2026-09-28 (Davi signed in and connected Gmail on sa-dac3.vercel.app)
 - [x] **2. Sync** — code + tests done; live sync waits on the Inngest integration
-- [ ] 3. Classification
+- [x] **3. Classification** — code + tests done; live run waits on Inngest (and `ANTHROPIC_API_KEY` on Preview)
 - [ ] 4. Profiles
 - [ ] 5. Drafts + Queue
 - [ ] 6. Workspace lifecycle
@@ -162,6 +182,7 @@ In a sandbox with preinstalled Chromium: `PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-brows
 
 ## Waiting on Davi
 
+- Tick "Preview" on `ANTHROPIC_API_KEY` in Vercel (it's Production-only today).
 - Install the Inngest integration in Vercel (free tier) so sync runs in production.
 - Optional: Gmail push via Pub/Sub (steps in docs/SETUP.md §6); polling works without it.
 - Decide: custom domain vs. turning off Vercel login protection on production (invited owners can't
