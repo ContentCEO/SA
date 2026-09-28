@@ -1,0 +1,116 @@
+/*
+ * Squared Away — the one theme file.
+ *
+ * Strictly two-tone. No accent color. Status is shown with weight, position,
+ * and the charcoal/off-white inversion — never red, green, or blue.
+ * Every color in the app should trace back to a token here.
+ */
+
+:root {
+  /* Brand palette */
+  --sa-charcoal: #1b1b1b;
+  --sa-offwhite: #efeeea;
+  --sa-paper: #f7f6f3;
+  --sa-stone: #d9d7d0; /* borders on light */
+  --sa-ash: #9a9994; /* muted text on charcoal */
+  --sa-slate: #5e5d59; /* muted text on light */
+  --sa-graphite: #262625; /* raised panels on charcoal */
+
+  /* Type */
+  --sa-heavy-word-spacing: 0.14em;
+  --sa-heavy-tracking: -0.035em;
+
+  /* Touch */
+  --sa-tap: 44px;
+
+  /* shadcn semantic tokens, mapped onto the palette (light surfaces) */
+  --background: var(--sa-paper);
+  --foreground: var(--sa-charcoal);
+  --card: var(--sa-offwhite);
+  --card-foreground: var(--sa-charcoal);
+  --popover: var(--sa-paper);
+  --popover-foreground: var(--sa-charcoal);
+  --primary: var(--sa-charcoal);
+  --primary-foreground: var(--sa-offwhite);
+  --secondary: var(--sa-offwhite);
+  --secondary-foreground: var(--sa-charcoal);
+  --muted: var(--sa-offwhite);
+  --muted-foreground: var(--sa-slate);
+  --accent: var(--sa-offwhite);
+  --accent-foreground: var(--sa-charcoal);
+  /* No red. "Destructive" is expressed by inversion + explicit wording. */
+  --destructive: var(--sa-charcoal);
+  --border: var(--sa-stone);
+  --input: var(--sa-stone);
+  --ring: var(--sa-charcoal);
+  --radius: 0.5rem;
+}
+
+/* Inverted surface: charcoal panel. Used for the "squared away." moment,
+   status that needs attention, and the evaluation banner. */
+.sa-inverted {
+  --background: var(--sa-charcoal);
+  --foreground: var(--sa-offwhite);
+  --card: var(--sa-graphite);
+  --card-foreground: var(--sa-offwhite);
+  --primary: var(--sa-offwhite);
+  --primary-foreground: var(--sa-charcoal);
+  --muted: var(--sa-graphite);
+  --muted-foreground: var(--sa-ash);
+  --border: var(--sa-graphite);
+  --input: var(--sa-graphite);
+  --ring: var(--sa-offwhite);
+  background-color: var(--background);
+  color: var(--foreground);
+}
+
+@theme inline {
+  --color-charcoal: var(--sa-charcoal);
+  --color-offwhite: var(--sa-offwhite);
+  --color-paper: var(--sa-paper);
+  --color-stone: var(--sa-stone);
+  --color-ash: var(--sa-ash);
+  --color-slate: var(--sa-slate);
+  --color-graphite: var(--sa-graphite);
+
+  --font-sans: var(--font-inter-tight), ui-sans-serif, system-ui, sans-serif;
+  --font-heading: var(--font-inter-tight), ui-sans-serif, system-ui, sans-serif;
+  --font-serif: var(--font-instrument-serif), ui-serif, Georgia, serif;
+
+  --spacing-tap: var(--sa-tap);
+}
+
+/* Signature headline: light italic serif line over a heavy, tight sans line. */
+@layer components {
+  .sa-headline-serif {
+    font-family: var(--font-serif);
+    font-style: italic;
+    font-weight: 400;
+    line-height: 1;
+    letter-spacing: -0.01em;
+  }
+  .sa-headline-heavy {
+    font-family: var(--font-heading);
+    font-weight: 900;
+    line-height: 0.95;
+    letter-spacing: var(--sa-heavy-tracking);
+    word-spacing: var(--sa-heavy-word-spacing);
+  }
+}
+
+@layer base {
+  :focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+}
