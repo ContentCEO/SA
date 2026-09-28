@@ -111,6 +111,17 @@ In a sandbox with preinstalled Chromium: `PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-brows
   (prod+preview share it). Migration 0000 applied 2026-09-28.
 - Cloud sandboxes can't reach Postgres port 5432; use `pnpm db:migrate:http` (Neon HTTPS driver,
   same migrations table as drizzle-kit). `@neondatabase/serverless` is a devDependency for this only.
+- **Branches:** `main` = production (sa-dac3.vercel.app; Vercel Production branch = `main`). Work
+  happens on `claude/squared-away-mvp-ddxl7s` → preview at
+  `sa-git-claude-squared-away-mvp-ddxl7s-dac3.vercel.app`. Merging/pushing to `main` is a production
+  deploy — only with Davi's okay.
+- `APP_URL` is set for Production only; previews fall back to `VERCEL_BRANCH_URL` (`src/lib/app-url.ts`).
+- Vercel env (2026-09-28): `AUTH_SECRET`, `TOKEN_ENCRYPTION_KEY`, `DATABASE_URL`, `AUTH_GOOGLE_SECRET`
+  (sensitive, prod+preview — shared because prod and preview share one database); `AUTH_GOOGLE_ID`,
+  `ADMIN_EMAIL` (plain, prod+preview); `APP_URL` (prod only). Env changes need a redeploy.
+- Google OAuth client lives in Cloud project number 214188340483; app is in Testing (test users only).
+- Production has Vercel login protection (SSO, all except custom domains) — fine for Davi, blocks
+  invited owners until a custom domain is added or protection is limited to previews.
 - "Toasts" are currently `?done=` / `?error=` query params rendered as `<Notice>` (role=status/alert).
 - Playwright's mobile project uses Chromium at 375×812 (not WebKit) to keep CI fast and single-browser.
 - Favicon and wordmark are text placeholders until Davi's icon pack arrives (`public/brand/`).

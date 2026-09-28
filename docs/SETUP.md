@@ -90,6 +90,9 @@ APIs & Services → Credentials, the client needs two redirect URIs per environm
 - `{APP_URL}/api/auth/callback/google`
 - `{APP_URL}/api/gmail/callback`
 
+Registered today: production `https://sa-dac3.vercel.app` and the working-branch preview
+`https://sa-git-claude-squared-away-mvp-ddxl7s-dac3.vercel.app`.
+
 The Gmail API must be enabled, and while unverified, each owner must be added under OAuth consent
 screen → Test users. See `docs/google-verification.md` for why we ask for each scope.
 
@@ -102,4 +105,6 @@ The Vercel project is `sa` in the **DAC** team. To make every push deploy automa
 3. Under **Build and Deployment → Node.js Version**, choose **22.x** (matches CI).
 
 After that: every push to a branch makes a Preview deployment; `main` deploys to production.
+The Production branch must be `main` (Settings → Environments → Production → Branch Tracking).
+Changing an environment variable only takes effect after a redeploy.
 Deployment Protection (Vercel login) is on for previews, so only team members can see them.
