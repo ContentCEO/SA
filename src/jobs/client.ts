@@ -17,14 +17,16 @@ export const mailboxClassifyRequested = eventType("mailbox/classify.requested", 
   schema: staticSchema<{ mailboxId: string }>(),
 });
 
+/** Learn (or re-learn) how the owner writes. `force` overrides their manual edits. */
+export const voiceLearnRequested = eventType("voice/learn.requested", {
+  schema: staticSchema<{ workspaceId: string; force?: boolean }>(),
+});
+
 /**
  * Fire-and-forget enqueue. If the queue is unreachable we log (content-free)
  * and move on — the 5-minute poll picks up anything missed.
  */
-export async function enqueue(
-  event:
-    ReturnType<typeof mailboxConnected.create> | ReturnType<typeof mailboxSyncRequested.create>,
-) {
+export async function enqueue(event: Parameters<typeof inngest.send>[0] & { name: string }) {
   try {
     await inngest.send(event);
   } catch (err) {

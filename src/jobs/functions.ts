@@ -9,11 +9,14 @@ import {
   renewWatches,
 } from "@/server/sync";
 import { classifyPending } from "@/server/classification";
+import { getMailboxWorkspace } from "@/server/mailboxes";
+import { learnVoice, workspacesDueForVoiceRefresh } from "@/server/voice";
 import {
   inngest,
   mailboxClassifyRequested,
   mailboxConnected,
   mailboxSyncRequested,
+  voiceLearnRequested,
 } from "./client";
 
 /**
@@ -43,6 +46,9 @@ export const backfillMailbox = inngest.createFunction(
     }
     await step.run("finish", () => finishBackfill(mailboxId));
     await step.sendEvent("classify", mailboxClassifyRequested.create({ mailboxId }));
+    const workspaceId = await step.run("workspace", () => getMailboxWorkspace(mailboxId));
+    if (workspaceId)
+      await step.sendEvent("learn-voice", voiceLearnRequested.create({ workspaceId }));
     return { status: "ok", ingested: total };
   },
 );
@@ -86,6 +92,35 @@ export const classifyMailbox = inngest.createFunction(
       if (r.capped || r.remaining === 0) return { classified: total, capped: r.capped };
     }
     return { classified: total, capped: false };
+  },
+);
+
+/** Read sent mail and describe how the owner writes. One at a time per workspace. */
+export const learnVoiceFn = inngest.createFunction(
+  {
+    id: "learn-voice",
+    triggers: [voiceLearnRequested],
+    singleton: { key: "event.data.workspaceId", mode: "skip" },
+    retries: 2,
+  },
+  async ({ event, step }) =>
+    step.run("learn", () =>
+      learnVoice(event.data.workspaceId, { force: event.data.force ?? false }),
+    ),
+);
+
+/** Weekly: refresh learned voices (never ones the owner edited by hand). */
+export const refreshVoices = inngest.createFunction(
+  { id: "refresh-voices", triggers: [cron("23 8 * * 1")] },
+  async ({ step }) => {
+    const due = await step.run("due", () => workspacesDueForVoiceRefresh());
+    if (due.length) {
+      await step.sendEvent(
+        "fan-out",
+        due.map((workspaceId) => voiceLearnRequested.create({ workspaceId })),
+      );
+    }
+    return { refreshed: due.length };
   },
 );
 

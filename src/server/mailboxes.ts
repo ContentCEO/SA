@@ -131,3 +131,11 @@ export async function disconnectMailbox(
     });
   return true;
 }
+
+export async function getMailboxWorkspace(mailboxId: string): Promise<string | null> {
+  const [row] = await db()
+    .select({ workspaceId: mailboxes.workspaceId })
+    .from(mailboxes)
+    .where(eq(mailboxes.id, mailboxId));
+  return row?.workspaceId ?? null;
+}

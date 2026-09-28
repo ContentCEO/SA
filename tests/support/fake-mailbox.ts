@@ -50,15 +50,17 @@ export class FakeMailbox {
         guard();
         return { emailAddress: "owner@shop.com", historyId: String(this.history) };
       },
-      listMessages: async ({ query, pageToken }) => {
+      listMessages: async ({ query, pageToken, maxResults }) => {
         guard();
         const days = Number(/newer_than:(\d+)d/.exec(query)?.[1] ?? 9999);
         const cutoff = new Date("2026-09-28T12:00:00Z").getTime() - days * 86_400_000;
+        const sentOnly = query.includes("in:sent");
         const all = this.messages
           .filter((m) => m.internalDate >= cutoff)
+          .filter((m) => !sentOnly || m.labelIds.includes("SENT"))
           .map((m) => ({ id: m.providerMessageId, threadId: m.providerThreadId }));
         const start = Number(pageToken ?? 0);
-        const next = start + pageSize;
+        const next = start + (maxResults ?? pageSize);
         return {
           messages: all.slice(start, next),
           nextPageToken: next < all.length ? String(next) : undefined,

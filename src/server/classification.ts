@@ -3,7 +3,14 @@ import { and, count, desc, eq, gte, inArray, isNull, lt, sql } from "drizzle-orm
 import { classifyEmail, type Classification } from "@/ai/classify";
 import { AiCapReachedError } from "@/ai/usage";
 import { db } from "@/db";
-import { activityLog, mailboxes, messages, threads, workspaces } from "@/db/schema";
+import {
+  activityLog,
+  businessProfiles,
+  mailboxes,
+  messages,
+  threads,
+  workspaces,
+} from "@/db/schema";
 
 /** Classify inbound mail from this far back on the first pass; everything new after that. */
 export const CLASSIFY_LOOKBACK_DAYS = 14;
@@ -95,11 +102,15 @@ export async function classifyPending(
     await db().update(messages).set({ classifiedAt: now }).where(inArray(messages.id, superseded));
   }
 
+  const [profile] = await db()
+    .select()
+    .from(businessProfiles)
+    .where(eq(businessProfiles.workspaceId, box.workspace.id));
   const business = {
     businessName: box.workspace.businessName,
     trade: box.workspace.trade,
-    amountThresholdDollars: DEFAULT_AMOUNT_THRESHOLD_DOLLARS,
-    vipSenders: [] as string[],
+    amountThresholdDollars: profile?.amountThresholdDollars ?? DEFAULT_AMOUNT_THRESHOLD_DOLLARS,
+    vipSenders: (profile?.vipSenders ?? []).map((v) => v.toLowerCase()),
   };
 
   const batch = [...newestPerThread.values()].slice(0, limit);
@@ -140,7 +151,7 @@ export async function classifyPending(
             threadSummary: thread?.summary ?? null,
             body: m.bodyText ?? m.snippet ?? "",
           },
-          { senderIsVip: business.vipSenders.includes(m.fromAddress ?? ""), now },
+          { senderIsVip: business.vipSenders.includes((m.fromAddress ?? "").toLowerCase()), now },
         );
       } catch (err) {
         if (err instanceof AiCapReachedError) {

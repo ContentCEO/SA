@@ -197,6 +197,60 @@ export const activityLog = pgTable(
   (t) => [index("activity_workspace_created_idx").on(t.workspaceId, t.createdAt)],
 );
 
+/** What the owner tells us about the business. Drives classification and drafting. */
+export const businessProfiles = pgTable("business_profile", {
+  workspaceId: uuid("workspace_id")
+    .primaryKey()
+    .references(() => workspaces.id, { onDelete: "cascade" }),
+  services: text("services"),
+  serviceArea: text("service_area"),
+  hours: text("hours"),
+  leadTime: text("lead_time"),
+  pricingNotes: text("pricing_notes"),
+  paymentTerms: text("payment_terms"),
+  policies: text("policies"),
+  signature: text("signature"),
+  doNotPromise: jsonb("do_not_promise").$type<string[]>().notNull().default([]),
+  vipSenders: jsonb("vip_senders").$type<string[]>().notNull().default([]),
+  /** Emails mentioning more than this go to the owner. */
+  amountThresholdDollars: integer("amount_threshold_dollars").notNull().default(2500),
+  completedAt: timestamp("completed_at", { withTimezone: true }),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const voiceSourceEnum = pgEnum("voice_source", ["learned", "edited"]);
+export const voiceStatusEnum = pgEnum("voice_status", [
+  "learning",
+  "ready",
+  "not_enough_mail",
+  "failed",
+]);
+
+/**
+ * How the owner writes, learned from sent mail and editable in Settings.
+ * `examples` are short samples the model writes *in* the owner's style with
+ * customer details removed — not copies of real emails — so nothing here is
+ * email content subject to the 30-day purge.
+ */
+export const voiceProfiles = pgTable("voice_profile", {
+  workspaceId: uuid("workspace_id")
+    .primaryKey()
+    .references(() => workspaces.id, { onDelete: "cascade" }),
+  status: voiceStatusEnum("status").notNull().default("learning"),
+  source: voiceSourceEnum("source").notNull().default("learned"),
+  summary: text("summary"),
+  greetingStyle: text("greeting_style"),
+  signoffStyle: text("signoff_style"),
+  avgLengthWords: integer("avg_length_words"),
+  formality: text("formality"),
+  phrasesUsed: jsonb("phrases_used").$type<string[]>().notNull().default([]),
+  phrasesAvoided: jsonb("phrases_avoided").$type<string[]>().notNull().default([]),
+  examples: jsonb("examples").$type<string[]>().notNull().default([]),
+  learnedFromCount: integer("learned_from_count").notNull().default(0),
+  learnedAt: timestamp("learned_at", { withTimezone: true }),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 /**
  * AI usage per workspace per UTC day. Drives the daily call cap and the
  * per-customer monthly cost Davi sees in /admin. Never holds content.
@@ -224,6 +278,8 @@ export const usage = pgTable(
 );
 
 export type User = typeof users.$inferSelect;
+export type BusinessProfile = typeof businessProfiles.$inferSelect;
+export type VoiceProfile = typeof voiceProfiles.$inferSelect;
 export type Workspace = typeof workspaces.$inferSelect;
 export type Mailbox = typeof mailboxes.$inferSelect;
 export type Thread = typeof threads.$inferSelect;

@@ -8,6 +8,7 @@ import { GMAIL_STATE_COOKIE, gmailRedirectPath, statesMatch } from "@/mailbox/gm
 import { getWorkspaceForUser } from "@/server/accounts";
 import { enqueue, mailboxConnected } from "@/jobs/client";
 import { MailboxLimitError, saveConnectedMailbox } from "@/server/mailboxes";
+import { getBusinessProfile } from "@/server/profile";
 
 export const dynamic = "force-dynamic";
 
@@ -40,7 +41,9 @@ export async function GET(request: NextRequest) {
     });
     const mailbox = await saveConnectedMailbox(workspace, result);
     await enqueue(mailboxConnected.create({ mailboxId: mailbox.id }));
-    return to("/settings?done=connected");
+    // First time through: continue onboarding with the business profile.
+    const profile = await getBusinessProfile(workspace.id);
+    return to(profile?.completedAt ? "/settings?done=connected" : "/welcome/profile");
   } catch (err) {
     if (err instanceof MissingScopesError) return to("/connect?error=scopes");
     if (err instanceof MailboxLimitError) return to("/settings?error=limit");

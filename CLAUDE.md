@@ -47,7 +47,9 @@ src/ai/             model client (cap, usage, logging), classify, prompts/ (vers
 src/jobs/           Inngest client, events, functions (served at /api/inngest)
 src/app/api/gmail/  Gmail OAuth callback (connect is a server action in (app)/connect/actions.ts)
 src/mailbox/        connector interface + gmail/ implementation (scopes, OAuth, state)
-src/server/         domain logic: accounts.ts, mailboxes.ts, session.ts (requireOwner)
+src/server/         domain logic: accounts, mailboxes, session (requireOwner), sync, classification,
+                    inbox, profile, voice
+src/components/forms/  Field components + business profile / voice forms
 src/lib/crypto.ts   AES-256-GCM for refresh tokens
 src/config/         site.ts (business facts), models.ts, pricing.ts, retention.ts
 src/db/             schema.ts, lazy db() client (postgres.js)
@@ -159,6 +161,19 @@ In a sandbox with preinstalled Chromium: `PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-brows
   (1,024 minimum), not here.
 - `threads.needs_owner_manual`: the owner's "This one needs me" always wins over classification.
 - Nav: Inbox · Settings in the header; Sign out lives at the bottom of Settings. Signed-in home = /inbox.
+- **Profiles (M4):** `business_profile` (one row per workspace; business name + trade live on
+  `workspaces`) and `voice_profile`. Form validation in `src/server/profile.ts` (plain-language Zod
+  messages; list fields are one-per-line, trimmed, de-duped; VIPs must be emails, lowercased).
+  Classification now reads the owner's threshold and VIP list.
+- Voice learning (`src/server/voice.ts`, prompt `voice.v1`, Sonnet): up to 200 `in:sent` emails from
+  the last year, quoted text stripped, 1.5k chars each / 150k total, held in memory only — never stored.
+  <5 usable emails → `not_enough_mail` with no model call. Examples are model-written samples with
+  placeholders, re-scrubbed in code (emails, phones, prices, street addresses).
+- Owner edits set `source = edited`; the weekly refresh (Mon cron) skips those. "Re-learn from my sent
+  mail" in Settings forces a re-learn and overwrites edits (explicit owner action).
+- Onboarding: connect → `/welcome/profile` (only if the profile was never completed) →
+  `/welcome/learning` (auto-refreshes every 5s until backfill + voice are done) → Inbox.
+- Forms use `useActionState`; on error, focus + scroll to the first invalid field (phones).
 - "Toasts" are currently `?done=` / `?error=` query params rendered as `<Notice>` (role=status/alert).
 - Playwright's mobile project uses Chromium at 375×812 (not WebKit) to keep CI fast and single-browser.
 - Favicon and wordmark are text placeholders until Davi's icon pack arrives (`public/brand/`).
@@ -171,7 +186,7 @@ In a sandbox with preinstalled Chromium: `PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-brows
 - [x] **1. Auth + Gmail connect** — verified live 2026-09-28 (Davi signed in and connected Gmail on sa-dac3.vercel.app)
 - [x] **2. Sync** — code + tests done; live sync waits on the Inngest integration
 - [x] **3. Classification** — code + tests done; live run waits on Inngest (and `ANTHROPIC_API_KEY` on Preview)
-- [ ] 4. Profiles
+- [x] **4. Profiles** — code + tests done; live voice learning waits on Inngest
 - [ ] 5. Drafts + Queue
 - [ ] 6. Workspace lifecycle
 - [ ] 7. Follow-ups

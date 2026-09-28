@@ -39,6 +39,11 @@ We deliberately do **not** request `gmail.modify` or full `https://mail.google.c
   (configurable, `RETENTION_BODY_DAYS`) by a daily job; mail already older than that is never
   stored with a body in the first place. Metadata and one-line summaries are kept.
   (`purgeExpiredBodies` in `src/server/sync.ts`, tested in `tests/unit/sync.test.ts`.)
+- **Learning the owner's writing style:** up to 200 recent _sent_ emails are read into memory for a
+  single Anthropic call and are never written to our database (`src/server/voice.ts`, tested in
+  `tests/unit/voice.test.ts`). We store only a description of the style (greeting, sign-off, length,
+  phrases) plus five short sample replies the model writes in that style, with placeholders instead
+  of names, addresses, phone numbers, emails or prices — scrubbed again in code.
 - **Push notifications:** Gmail `watch` sends only "this address changed" through Google Pub/Sub;
   we then fetch changes ourselves. The push endpoint rejects requests without a shared secret.
 - **Tokens:** Google refresh tokens are encrypted with AES-256-GCM before storage
