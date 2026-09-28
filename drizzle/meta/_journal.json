@@ -8,6 +8,13 @@
       "when": 1790602979223,
       "tag": "0000_overjoyed_sage",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1790616396541,
+      "tag": "0001_funny_chronomancer",
+      "breakpoints": true
     }
   ]
 }

@@ -74,7 +74,24 @@ pnpm db:migrate     # apply migrations to DATABASE_URL
 pnpm db:migrate:http   # same, over Neon's HTTPS endpoint — for networks that block port 5432
 ```
 
-## 6. Inviting an owner
+## 6. Background jobs (Inngest)
+
+Sync, polling, watch renewal and the retention purge run as Inngest functions
+(`src/jobs/functions.ts`, served at `/api/inngest`).
+
+- Local: set `INNGEST_DEV=1` in `.env.local`, run `pnpm dev`, and in another terminal
+  `npx inngest-cli@latest dev -u http://localhost:3000/api/inngest`. The dashboard at
+  http://localhost:8288 shows every run and lets you trigger the crons.
+- Production: the Inngest Vercel integration sets `INNGEST_EVENT_KEY`/`INNGEST_SIGNING_KEY` and syncs
+  the app on every deploy.
+
+Without Inngest nothing syncs: connecting Gmail still works, but no mail is read.
+
+Gmail push (optional, faster than the 5-minute poll): create a Pub/Sub topic, grant
+`gmail-api-push@system.gserviceaccount.com` the Publisher role on it, add a push subscription to
+`{APP_URL}/api/gmail/push?token=...`, and set `GMAIL_PUBSUB_TOPIC` + `GMAIL_PUSH_VERIFICATION_TOKEN`.
+
+## 7. Inviting an owner
 
 ```bash
 pnpm invite owner@shop.com electrical "note for Davi"
@@ -82,7 +99,7 @@ pnpm invite owner@shop.com electrical "note for Davi"
 
 Runs against whatever `DATABASE_URL` is in `.env.local`. (Becomes a button in `/admin` in Milestone 6.)
 
-## 7. Google OAuth client
+## 8. Google OAuth client
 
 One OAuth client handles both sign-in and connecting Gmail. In Google Cloud Console →
 APIs & Services → Credentials, the client needs two redirect URIs per environment:
@@ -96,7 +113,7 @@ Registered today: production `https://sa-dac3.vercel.app` and the working-branch
 The Gmail API must be enabled, and while unverified, each owner must be added under OAuth consent
 screen → Test users. See `docs/google-verification.md` for why we ask for each scope.
 
-## 8. Deploys (Vercel)
+## 9. Deploys (Vercel)
 
 The Vercel project is `sa` in the **DAC** team. To make every push deploy automatically:
 
@@ -105,6 +122,9 @@ The Vercel project is `sa` in the **DAC** team. To make every push deploy automa
 3. Under **Build and Deployment → Node.js Version**, choose **22.x** (matches CI).
 
 After that: every push to a branch makes a Preview deployment; `main` deploys to production.
+Vercel runs `pnpm vercel-build`, which applies pending migrations (`scripts/migrate.ts`) before
+`next build`. Previews and production share one database today, so a preview build migrates it too —
+keep migrations additive.
 The Production branch must be `main` (Settings → Environments → Production → Branch Tracking).
 Changing an environment variable only takes effect after a redeploy.
 Deployment Protection (Vercel login) is on for previews, so only team members can see them.

@@ -1,0 +1,28 @@
+import { eventType, Inngest, staticSchema } from "inngest";
+
+export const inngest = new Inngest({ id: "squared-away" });
+
+/** A mailbox was connected or reconnected: run (or re-run) the 30-day backfill. */
+export const mailboxConnected = eventType("mailbox/connected", {
+  schema: staticSchema<{ mailboxId: string }>(),
+});
+
+/** Something may have changed in a mailbox (poll tick or Gmail push). */
+export const mailboxSyncRequested = eventType("mailbox/sync.requested", {
+  schema: staticSchema<{ mailboxId: string }>(),
+});
+
+/**
+ * Fire-and-forget enqueue. If the queue is unreachable we log (content-free)
+ * and move on — the 5-minute poll picks up anything missed.
+ */
+export async function enqueue(
+  event:
+    ReturnType<typeof mailboxConnected.create> | ReturnType<typeof mailboxSyncRequested.create>,
+) {
+  try {
+    await inngest.send(event);
+  } catch (err) {
+    console.error("enqueue_failed", { event: event.name, error: (err as Error).name });
+  }
+}

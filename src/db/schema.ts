@@ -4,7 +4,9 @@
  */
 import { sql } from "drizzle-orm";
 import {
+  boolean,
   index,
+  integer,
   jsonb,
   pgEnum,
   pgTable,
@@ -92,11 +94,80 @@ export const mailboxes = pgTable(
     watchExpiresAt: timestamp("watch_expires_at", { withTimezone: true }),
     status: mailboxStatusEnum("status").notNull().default("active"),
     connectedAt: timestamp("connected_at", { withTimezone: true }).notNull().defaultNow(),
+    /** Set when the 30-day backfill finishes; incremental sync only runs after this. */
+    backfillCompletedAt: timestamp("backfill_completed_at", { withTimezone: true }),
+    lastSyncedAt: timestamp("last_synced_at", { withTimezone: true }),
     createdAt: createdAt(),
   },
   (t) => [
     uniqueIndex("mailboxes_workspace_email_uq").on(t.workspaceId, sql`lower(${t.email})`),
     index("mailboxes_workspace_idx").on(t.workspaceId),
+  ],
+);
+
+export const directionEnum = pgEnum("direction", ["in", "out"]);
+
+export const threads = pgTable(
+  "threads",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    mailboxId: uuid("mailbox_id")
+      .notNull()
+      .references(() => mailboxes.id, { onDelete: "cascade" }),
+    gmailThreadId: text("gmail_thread_id").notNull(),
+    subject: text("subject"),
+    /** Email addresses on the thread, excluding the mailbox itself. */
+    participants: jsonb("participants").$type<string[]>().notNull().default([]),
+    lastMessageAt: timestamp("last_message_at", { withTimezone: true }),
+    /** Any message on the thread carries Gmail's INBOX label. Bodies are only kept for these. */
+    inInbox: boolean("in_inbox").notNull().default(false),
+    // Filled by classification (Milestone 3) and follow-ups (Milestone 7).
+    category: text("category"),
+    priority: text("priority"),
+    needsOwner: boolean("needs_owner").notNull().default(false),
+    needsOwnerReason: text("needs_owner_reason"),
+    awaitingReplySince: timestamp("awaiting_reply_since", { withTimezone: true }),
+    followupCount: integer("followup_count").notNull().default(0),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex("threads_mailbox_gmail_uq").on(t.mailboxId, t.gmailThreadId),
+    index("threads_mailbox_last_idx").on(t.mailboxId, t.lastMessageAt),
+  ],
+);
+
+export const messages = pgTable(
+  "messages",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    threadId: uuid("thread_id")
+      .notNull()
+      .references(() => threads.id, { onDelete: "cascade" }),
+    mailboxId: uuid("mailbox_id")
+      .notNull()
+      .references(() => mailboxes.id, { onDelete: "cascade" }),
+    gmailMessageId: text("gmail_message_id").notNull(),
+    /** RFC 822 Message-ID header, needed to thread our reply drafts (In-Reply-To/References). */
+    rfc822MessageId: text("rfc822_message_id"),
+    references: text("references"),
+    fromAddress: text("from_address"),
+    fromName: text("from_name"),
+    toAddresses: jsonb("to_addresses").$type<string[]>().notNull().default([]),
+    ccAddresses: jsonb("cc_addresses").$type<string[]>().notNull().default([]),
+    subject: text("subject"),
+    direction: directionEnum("direction").notNull(),
+    labelIds: jsonb("label_ids").$type<string[]>().notNull().default([]),
+    /** Gmail's preview text. It is body text, so it is purged with the body. */
+    snippet: text("snippet"),
+    bodyText: text("body_text"),
+    bodyPurgedAt: timestamp("body_purged_at", { withTimezone: true }),
+    sentAt: timestamp("sent_at", { withTimezone: true }).notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex("messages_mailbox_gmail_uq").on(t.mailboxId, t.gmailMessageId),
+    index("messages_thread_sent_idx").on(t.threadId, t.sentAt),
+    index("messages_retention_idx").on(t.sentAt),
   ],
 );
 
@@ -120,3 +191,5 @@ export const activityLog = pgTable(
 export type User = typeof users.$inferSelect;
 export type Workspace = typeof workspaces.$inferSelect;
 export type Mailbox = typeof mailboxes.$inferSelect;
+export type Thread = typeof threads.$inferSelect;
+export type Message = typeof messages.$inferSelect;

@@ -32,9 +32,15 @@ We deliberately do **not** request `gmail.modify` or full `https://mail.google.c
 - **Where email content goes:** our database, and the Anthropic API, only for the specific task
   (sorting a message, learning writing style, drafting a reply). Nowhere else. Anthropic does not use
   API data to train models.
-- **Retention:** email body text is purged after 30 days (configurable, `RETENTION_BODY_DAYS`);
-  metadata and one-line summaries are kept. _(Purge job ships in Milestone 11 — before any real
-  customer mail is synced at scale.)_
+- **What we store:** for the last 30 days, sender/recipients/subject/date for every message; body
+  text only for conversations in the inbox (`src/server/sync.ts`). Mail outside the inbox (archived
+  newsletters, promotions) is never downloaded with its body.
+- **Retention:** email body text and Gmail's preview snippet are purged after 30 days
+  (configurable, `RETENTION_BODY_DAYS`) by a daily job; mail already older than that is never
+  stored with a body in the first place. Metadata and one-line summaries are kept.
+  (`purgeExpiredBodies` in `src/server/sync.ts`, tested in `tests/unit/sync.test.ts`.)
+- **Push notifications:** Gmail `watch` sends only "this address changed" through Google Pub/Sub;
+  we then fetch changes ourselves. The push endpoint rejects requests without a shared secret.
 - **Tokens:** Google refresh tokens are encrypted with AES-256-GCM before storage
   (`src/lib/crypto.ts`) and never logged or sent to the browser.
 - **Disconnect:** revokes our token at Google (`oauth2.googleapis.com/revoke`) and deletes the

@@ -6,6 +6,7 @@ import { MissingScopesError } from "@/mailbox/connector";
 import { createGmailConnector } from "@/mailbox/gmail/connector";
 import { GMAIL_STATE_COOKIE, gmailRedirectPath, statesMatch } from "@/mailbox/gmail/oauth-state";
 import { getWorkspaceForUser } from "@/server/accounts";
+import { enqueue, mailboxConnected } from "@/jobs/client";
 import { MailboxLimitError, saveConnectedMailbox } from "@/server/mailboxes";
 
 export const dynamic = "force-dynamic";
@@ -37,7 +38,8 @@ export async function GET(request: NextRequest) {
       code,
       redirectUri: appUrl(gmailRedirectPath),
     });
-    await saveConnectedMailbox(workspace, result);
+    const mailbox = await saveConnectedMailbox(workspace, result);
+    await enqueue(mailboxConnected.create({ mailboxId: mailbox.id }));
     return to("/settings?done=connected");
   } catch (err) {
     if (err instanceof MissingScopesError) return to("/connect?error=scopes");

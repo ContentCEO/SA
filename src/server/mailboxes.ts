@@ -7,7 +7,10 @@ import { decryptSecret, encryptSecret } from "@/lib/crypto";
 import type { ConnectResult, MailboxConnector } from "@/mailbox/connector";
 
 /** What the UI may see about a mailbox. Never includes the token. */
-export type MailboxSummary = Pick<Mailbox, "id" | "email" | "provider" | "status" | "connectedAt">;
+export type MailboxSummary = Pick<
+  Mailbox,
+  "id" | "email" | "provider" | "status" | "connectedAt" | "backfillCompletedAt" | "lastSyncedAt"
+>;
 
 /** Before a plan is chosen (evaluation), a workspace gets one mailbox. */
 export function mailboxLimit(workspace: Pick<Workspace, "plan">): number {
@@ -29,6 +32,8 @@ export async function listMailboxes(workspaceId: string): Promise<MailboxSummary
       provider: mailboxes.provider,
       status: mailboxes.status,
       connectedAt: mailboxes.connectedAt,
+      backfillCompletedAt: mailboxes.backfillCompletedAt,
+      lastSyncedAt: mailboxes.lastSyncedAt,
     })
     .from(mailboxes)
     .where(eq(mailboxes.workspaceId, workspaceId))
@@ -85,6 +90,8 @@ export async function saveConnectedMailbox(
     provider: row.provider,
     status: row.status,
     connectedAt: row.connectedAt,
+    backfillCompletedAt: row.backfillCompletedAt,
+    lastSyncedAt: row.lastSyncedAt,
   };
 }
 

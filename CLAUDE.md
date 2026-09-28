@@ -122,6 +122,23 @@ In a sandbox with preinstalled Chromium: `PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-brows
 - Google OAuth client lives in Cloud project number 214188340483; app is in Testing (test users only).
 - Production has Vercel login protection (SSO, all except custom domains) — fine for Davi, blocks
   invited owners until a custom domain is added or protection is limited to previews.
+- **Sync (M2):** `MailboxReader` interface in `src/mailbox/connector.ts`; Gmail impl in
+  `src/mailbox/gmail/api.ts` is plain `fetch` (no googleapis SDK) with token refresh, 401 re-refresh
+  once, 429/5xx/rate-limit-403 exponential backoff with full jitter + Retry-After, and
+  `MailboxAuthError` on invalid_grant / repeated 401 / permanent 403.
+- Engine in `src/server/sync.ts`: backfill = record `historyId` first, then page `newer_than:30d`
+  (100/page, one Inngest step per page), metadata for all, `format=full` only for inbox threads and
+  only within retention. Incremental = History API from cursor; on 404 re-read last 7 days and take
+  a fresh cursor. Everything idempotent (unique gmail ids, onConflictDoNothing).
+- `MailboxAuthError` anywhere → `status = reconnect_needed` + one `mailbox_access_lost` log; every
+  job skips non-active mailboxes before touching Google. Banner on every signed-in screen.
+- Retention purge nulls `body_text` AND `snippet` (Gmail snippets are body text) past
+  `RETENTION_BODY_DAYS`; runs daily. Bodies capped at 20k chars.
+- Jobs (Inngest v4, `triggers` in options): backfill (singleton per mailbox), sync (concurrency 1 +
+  20s debounce per mailbox), poll every 5 min (also starts missed backfills), watch renewal daily
+  (only if `GMAIL_PUBSUB_TOPIC`), purge daily. `enqueue()` swallows send failures; the poll recovers.
+- Migrations run in `vercel-build` before `next build`. Keep them additive (old code must keep
+  working against the new schema, since previews and prod share the DB).
 - "Toasts" are currently `?done=` / `?error=` query params rendered as `<Notice>` (role=status/alert).
 - Playwright's mobile project uses Chromium at 375×812 (not WebKit) to keep CI fast and single-browser.
 - Favicon and wordmark are text placeholders until Davi's icon pack arrives (`public/brand/`).
@@ -132,7 +149,7 @@ In a sandbox with preinstalled Chromium: `PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-brows
 
 - [x] **0. Scaffold**
 - [x] **1. Auth + Gmail connect** — verified live 2026-09-28 (Davi signed in and connected Gmail on sa-dac3.vercel.app)
-- [ ] 2. Sync
+- [x] **2. Sync** — code + tests done; live sync waits on the Inngest integration
 - [ ] 3. Classification
 - [ ] 4. Profiles
 - [ ] 5. Drafts + Queue
@@ -145,6 +162,8 @@ In a sandbox with preinstalled Chromium: `PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-brows
 
 ## Waiting on Davi
 
+- Install the Inngest integration in Vercel (free tier) so sync runs in production.
+- Optional: Gmail push via Pub/Sub (steps in docs/SETUP.md §6); polling works without it.
 - Decide: custom domain vs. turning off Vercel login protection on production (invited owners can't
   get past Vercel's login today).
 - Rotate the Neon password and Google client secret that were pasted in chat; delete the old
@@ -155,5 +174,5 @@ In a sandbox with preinstalled Chromium: `PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-brows
 
 ## Launch blockers to remember
 
-- Connect screen promises "won't keep email text longer than 30 days" — the purge job (M11) must
-  ship before real customer mail is synced (M2 lands bodies in the DB).
+- Previews share the production database. Before real customers: give previews their own Neon
+  branch (Neon's Vercel integration does this) so a preview can't touch customer data.

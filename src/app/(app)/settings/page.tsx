@@ -2,7 +2,9 @@ import Link from "next/link";
 import { Notice } from "@/components/app/notice";
 import { Headline } from "@/components/brand/headline";
 import { buttonVariants } from "@/components/ui/button";
-import { listMailboxes, mailboxLimit } from "@/server/mailboxes";
+import { relativeTime } from "@/lib/relative-time";
+import { listMailboxes, mailboxLimit, type MailboxSummary } from "@/server/mailboxes";
+import { BACKFILL_DAYS, syncSummary } from "@/server/sync";
 import { requireOwner } from "@/server/session";
 import { cn } from "@/lib/utils";
 import { DisconnectButton } from "./disconnect-button";
@@ -23,9 +25,26 @@ const statusWords = {
   paused: "Paused",
 } as const;
 
+function syncLine(m: MailboxSummary, messageCount: number): string {
+  if (m.status === "reconnect_needed") {
+    return "Google access was removed, so Squared Away has stopped reading this inbox. Reconnect to pick up where it left off.";
+  }
+  if (m.status === "paused") return "Paused. Nothing is being read or drafted.";
+  if (!m.backfillCompletedAt) {
+    return `Reading your last ${BACKFILL_DAYS} days of email. This can take a few minutes.`;
+  }
+  const checked = m.lastSyncedAt ? `, checked ${relativeTime(m.lastSyncedAt)}` : "";
+  return `${messageCount.toLocaleString("en-US")} emails from the last ${BACKFILL_DAYS} days${checked}.`;
+}
+
 export default async function SettingsPage(props: PageProps<"/settings">) {
   const { workspace } = await requireOwner();
   const mailboxes = await listMailboxes(workspace.id);
+  const counts = new Map(
+    await Promise.all(
+      mailboxes.map(async (m) => [m.id, (await syncSummary(m.id)).messageCount] as const),
+    ),
+  );
   const params = await props.searchParams;
   const doneMsg = typeof params.done === "string" ? done[params.done] : undefined;
   const errorMsg = typeof params.error === "string" ? errors[params.error] : undefined;
@@ -65,6 +84,9 @@ export default async function SettingsPage(props: PageProps<"/settings">) {
                     <span className="text-lg font-semibold break-all">{m.email}</span>
                     <span className={cn(needsYou ? "font-black" : "text-muted-foreground")}>
                       {statusWords[m.status]}
+                    </span>
+                    <span className={cn("mt-1", needsYou ? "" : "text-muted-foreground")}>
+                      {syncLine(m, counts.get(m.id) ?? 0)}
                     </span>
                   </div>
                   {needsYou ? (
