@@ -27,11 +27,10 @@ Company $299 (10, priority support). All prices live in `src/config/pricing.ts`.
 
 ## Stack
 
-Next.js 16 (App Router, TS strict) · Tailwind v4 + shadcn/ui (base-ui primitives) · Postgres on Neon
-
-- Drizzle (migrations in `/drizzle`) · Auth.js Google provider (offline access) · Inngest (every
-  job idempotent) · Anthropic SDK (model IDs only in `src/config/models.ts`; prompt caching on
-  business + voice profile) · Resend · Stripe · Sentry · Vercel · Vitest + Playwright. pnpm.
+Next.js 16 (App Router, TS strict) · Tailwind v4 + shadcn/ui (base-ui primitives) · Postgres on
+Neon with Drizzle (migrations in `/drizzle`) · Auth.js Google provider (offline access) · Inngest
+(every job idempotent) · Anthropic SDK (model IDs only in `src/config/models.ts`; prompt caching on
+business + voice profile) · Resend · Stripe · Sentry · Vercel · Vitest + Playwright. pnpm.
 
 > Next 16 has breaking changes vs. older training data — check `node_modules/next/dist/docs/`
 > before using an unfamiliar API (see AGENTS.md).
