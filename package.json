@@ -16,7 +16,8 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:studio": "drizzle-kit studio",
-    "invite": "tsx --env-file-if-exists=.env.local scripts/invite.ts"
+    "invite": "tsx --env-file-if-exists=.env.local scripts/invite.ts",
+    "db:local": "tsx scripts/local-db.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.8.0",
@@ -44,6 +45,7 @@
     "@types/react-dom": "^19",
     "dotenv": "^18.0.4",
     "drizzle-kit": "^0.31.11",
+    "embedded-postgres": "16.14.0-beta.17",
     "eslint": "^9",
     "eslint-config-next": "16.3.6",
     "prettier": "^3.9.9",

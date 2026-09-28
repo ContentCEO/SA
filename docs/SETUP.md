@@ -7,7 +7,10 @@ Goal: a new developer runs Squared Away locally in under 30 minutes.
 - Node.js 22 or newer (`node -v`)
 - pnpm 10 (`corepack enable` then `pnpm -v`)
 - Git
-- Postgres 16 running locally (or Docker: `docker run -d -p 5432:5432 -e POSTGRES_USER=sa -e POSTGRES_PASSWORD=sa -e POSTGRES_DB=squared_away postgres:16`)
+- Postgres 16 on `localhost:5432`. Easiest: **`pnpm db:local`** (after `pnpm install`) runs a real
+  Postgres 16 from `.data/pg` — no Docker, no installer, no admin password. Leave it running in its
+  own terminal. Docker also works:
+  `docker run -d -p 5432:5432 -e POSTGRES_USER=sa -e POSTGRES_PASSWORD=sa -e POSTGRES_DB=squared_away postgres:16`
 
 ## 2. Install
 

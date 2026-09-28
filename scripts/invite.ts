@@ -29,6 +29,8 @@ async function main() {
     })
     .onConflictDoNothing();
   console.log(`Invited ${email}. They can sign in now.`);
+  // postgres.js keeps its pool open; exit so the command returns.
+  process.exit(0);
 }
 
 main().catch((err) => {

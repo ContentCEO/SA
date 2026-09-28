@@ -109,7 +109,14 @@ In a sandbox with preinstalled Chromium: `PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-brows
 - `activity_log` created early (M1) to record connect/reconnect/disconnect; detail is content-free.
 - "Toasts" are currently `?done=` / `?error=` query params rendered as `<Notice>` (role=status/alert).
 - Playwright's mobile project uses Chromium at 375×812 (not WebKit) to keep CI fast and single-browser.
-- Favicon and wordmark are text placeholders until Davi's icon pack arrives (`public/brand/`).
+- Favicon/app icons come from Davi's icon pack (`sa.` monogram) in `public/` + `site.webmanifest`.
+  The pack has no stacked wordmark file, so the header wordmark is still set in type.
+- **Local Postgres without Docker:** `pnpm db:local` (`scripts/local-db.ts`, `embedded-postgres`
+  pinned to the Postgres 16 build, devDependency only). Same URL as CI. Davi's Mac has no
+  Homebrew/Docker; Node lives in `~/.local/node`, `gh` in `~/.local/bin`.
+- **Merge note (2026-09-28):** two sessions built M0–M1 in parallel. This repo's version is the
+  base; the other build (local branch `local-build`, not pushed) contributed only the icon pack and
+  `db:local`. Build one milestone at a time from here — one session on the repo at a time.
 - `/api/health` returns `{ ok, service, commit }` — used by Playwright's webServer check and for
   deploy verification.
 
