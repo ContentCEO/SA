@@ -2,7 +2,7 @@ import "server-only";
 import { and, eq, inArray, isNotNull, isNull, lt, or, sql } from "drizzle-orm";
 import { bodyRetentionDays } from "@/config/retention";
 import { db } from "@/db";
-import { activityLog, mailboxes, messages, threads, type Mailbox } from "@/db/schema";
+import { activityLog, drafts, mailboxes, messages, threads, type Mailbox } from "@/db/schema";
 import { decryptSecret } from "@/lib/crypto";
 import {
   HistoryExpiredError,
@@ -388,6 +388,17 @@ export async function purgeExpiredBodies(
       ),
     )
     .returning({ id: messages.id });
+  // Draft text is email text too. Anything still pending that old is stale; expire it.
+  await db()
+    .update(drafts)
+    .set({ status: "expired", closedNote: "Expired after the retention window.", decidedAt: now })
+    .where(and(eq(drafts.status, "pending"), lt(drafts.createdAt, cutoff)));
+  await db()
+    .update(drafts)
+    .set({ body: null, originalBody: null })
+    .where(
+      and(lt(drafts.createdAt, cutoff), or(isNotNull(drafts.body), isNotNull(drafts.originalBody))),
+    );
   return purged.length;
 }
 

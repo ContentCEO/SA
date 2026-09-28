@@ -93,6 +93,8 @@ test("'This one needs me' moves a thread into Needs me", async ({ page, context 
   await page.getByText("Priya", { exact: true }).click();
   await expect(page.getByText("Work")).toBeVisible();
   await page.getByRole("button", { name: "This one needs me" }).click();
+  // Wait for the save to land before moving on.
+  await expect(page.getByRole("button", { name: "This one needs me" })).toHaveCount(0);
 
   await page.goto("/inbox?c=needs_me");
   await expect(page.locator("main li")).toHaveCount(2);

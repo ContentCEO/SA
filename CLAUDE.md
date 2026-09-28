@@ -179,6 +179,27 @@ In a sandbox with preinstalled Chromium: `PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-brows
 - Favicon and wordmark are text placeholders until Davi's icon pack arrives (`public/brand/`).
 - `/api/health` returns `{ ok, service, commit }` — used by Playwright's webServer check and for
   deploy verification.
+- **Drafts + Queue (M5):** `src/server/drafts.ts`, prompt `draft.v1` (Sonnet, effort medium, one
+  retry). Auto-drafts only quote_request / customer_question / scheduling / invoice_payment /
+  supplier_vendor threads that aren't needs_owner; the owner's "Draft a reply" (Inbox/Queue) may draft
+  anything non-noise, including complaints. One pending draft per thread (partial unique index).
+  Skips: owner replied last, no text, AI cap, model failure.
+- Every draft is a **real Gmail draft** (`MailboxWriter`, `src/mailbox/mime.ts` builds the threaded
+  MIME and strips CR/LF from headers). `checkDraft` (`src/ai/draft-checks.ts`) flags invented $,
+  new days/times/dates, never-promise items and filler, and caps confidence — it never rewrites.
+- **Send gate:** `src/server/lifecycle.ts` (`SENDING_ALLOWED = setup_paid, active`). `sendDraft`
+  checks it before any Gmail call → `SendingBlockedError` → 403 from `/api/drafts/[id]/send`.
+  Tested for every blocked status with zero Gmail calls.
+- Before sending we re-read the Gmail draft: deleted → discarded; changed in Gmail → take the Gmail
+  text and ask the owner to tap Send again (never send text they haven't seen in the app).
+- `reconcileDrafts` (runs at the start of every draft job): new inbound → expire + delete the Gmail
+  draft; missing draft + newer outbound → sent; missing → discarded; changed → take Gmail body.
+- Swipe-left on a draft card only reveals Discard's confirm — no gesture ever sends.
+- Draft text is purged with the same retention as bodies; pending drafts past retention expire.
+- Pipeline: sync → classify (if new mail) → draft; sync with no new mail still reconciles drafts.
+- Signed-in home is now `/queue`. Nav: Queue · Inbox · Settings.
+- Lesson: scripted `str.replace` edits must `assert old in s` — silent no-ops after Prettier caused
+  M3/M4 regressions. `tests/unit/jobs.test.ts` fails if a `createFunction` isn't registered.
 
 ## Milestones
 
@@ -187,7 +208,8 @@ In a sandbox with preinstalled Chromium: `PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-brows
 - [x] **2. Sync** — code + tests done; live sync waits on the Inngest integration
 - [x] **3. Classification** — code + tests done; live run waits on Inngest (and `ANTHROPIC_API_KEY` on Preview)
 - [x] **4. Profiles** — code + tests done; live voice learning waits on Inngest
-- [ ] 5. Drafts + Queue
+- [x] **5. Drafts + Queue** — code + tests done; live drafting waits on Inngest; sending stays off
+      until M6 moves a workspace to `setup_paid`
 - [ ] 6. Workspace lifecycle
 - [ ] 7. Follow-ups
 - [ ] 8. Digest + Activity

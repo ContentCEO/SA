@@ -85,3 +85,19 @@ export async function recordAiUsage(
       },
     });
 }
+
+/** Count drafts created / emails sent for the owner's activity and Davi's admin view. */
+export async function bumpUsageCounter(
+  workspaceId: string,
+  field: "draftsCreated" | "emailsSent",
+  now: Date = new Date(),
+): Promise<void> {
+  const column = field === "draftsCreated" ? usage.draftsCreated : usage.emailsSent;
+  await db()
+    .insert(usage)
+    .values({ workspaceId, period: utcDay(now), [field]: 1 })
+    .onConflictDoUpdate({
+      target: [usage.workspaceId, usage.period],
+      set: { [field]: sql`${column} + 1` },
+    });
+}

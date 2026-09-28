@@ -9,12 +9,14 @@ import {
   renewWatches,
 } from "@/server/sync";
 import { classifyPending } from "@/server/classification";
+import { createDraftForThread, reconcileDrafts, threadsToAutoDraft } from "@/server/drafts";
 import { getMailboxWorkspace } from "@/server/mailboxes";
 import { learnVoice, workspacesDueForVoiceRefresh } from "@/server/voice";
 import {
   inngest,
   mailboxClassifyRequested,
   mailboxConnected,
+  mailboxDraftRequested,
   mailboxSyncRequested,
   voiceLearnRequested,
 } from "./client";
@@ -53,6 +55,17 @@ export const backfillMailbox = inngest.createFunction(
   },
 );
 
+/**
+ * What runs after a sync: new mail gets sorted (which then drafts); no new
+ * mail still reconciles drafts, since the owner may have edited, sent or
+ * deleted them in Gmail.
+ */
+export function afterSync(mailboxId: string, ingested: number) {
+  return ingested > 0
+    ? mailboxClassifyRequested.create({ mailboxId })
+    : mailboxDraftRequested.create({ mailboxId });
+}
+
 /** Incremental sync for one mailbox. One at a time per mailbox; bursts collapse. */
 export const syncMailbox = inngest.createFunction(
   {
@@ -63,9 +76,14 @@ export const syncMailbox = inngest.createFunction(
     retries: 4,
   },
   async ({ event, step }) => {
-    const result = await step.run("sync", () => incrementalSync(event.data.mailboxId));
-    if (result.status === "reconnect_needed")
+    const { mailboxId } = event.data;
+    const result = await step.run("sync", () => incrementalSync(mailboxId));
+    if (result.status === "reconnect_needed") {
       throw new NonRetriableError("Mailbox needs reconnecting.");
+    }
+    if (result.status === "ok") {
+      await step.sendEvent("next", afterSync(mailboxId, result.ingested));
+    }
     return result;
   },
 );
@@ -89,9 +107,48 @@ export const classifyMailbox = inngest.createFunction(
         classifyPending(event.data.mailboxId, { limit: 10 }),
       );
       total += r.classified;
-      if (r.capped || r.remaining === 0) return { classified: total, capped: r.capped };
+      if (r.capped || r.remaining === 0) {
+        await step.sendEvent(
+          "draft",
+          mailboxDraftRequested.create({ mailboxId: event.data.mailboxId }),
+        );
+        return { classified: total, capped: r.capped };
+      }
     }
+    await step.sendEvent(
+      "draft",
+      mailboxDraftRequested.create({ mailboxId: event.data.mailboxId }),
+    );
     return { classified: total, capped: false };
+  },
+);
+
+/**
+ * Reconcile drafts with Gmail, then write replies for anything that's due —
+ * one thread per step so a failure only retries that thread.
+ */
+export const draftMailbox = inngest.createFunction(
+  {
+    id: "draft-mailbox",
+    triggers: [mailboxDraftRequested],
+    concurrency: { key: "event.data.mailboxId", limit: 1 },
+    debounce: { key: "event.data.mailboxId", period: "30s" },
+    retries: 3,
+  },
+  async ({ event, step }) => {
+    const { mailboxId } = event.data;
+    await step.run("reconcile", () => reconcileDrafts(mailboxId));
+    const due = await step.run("due", () => threadsToAutoDraft(mailboxId, 10));
+    let created = 0;
+    for (const threadId of due) {
+      const r = await step.run(`draft-${threadId}`, () =>
+        createDraftForThread(threadId, { trigger: "auto" }),
+      );
+      if (r.status === "created") created++;
+      if (r.status === "reconnect_needed" || (r.status === "skipped" && r.reason === "capped"))
+        break;
+    }
+    return { created };
   },
 );
 
@@ -157,6 +214,10 @@ export const purgeBodies = inngest.createFunction(
 export const functions = [
   backfillMailbox,
   syncMailbox,
+  classifyMailbox,
+  draftMailbox,
+  learnVoiceFn,
+  refreshVoices,
   pollMailboxes,
   renewGmailWatches,
   purgeBodies,

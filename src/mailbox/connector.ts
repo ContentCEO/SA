@@ -89,3 +89,31 @@ export class HistoryExpiredError extends Error {
     this.name = "HistoryExpiredError";
   }
 }
+
+/** A Gmail draft as we see it when reconciling. */
+export type RemoteDraft = {
+  draftId: string;
+  messageId: string;
+  threadId: string;
+  bodyText: string;
+};
+
+/**
+ * Write-side of a mailbox: drafts only. Sending is always "send this draft",
+ * never "send arbitrary mail", so every sent email existed as a visible draft first.
+ */
+export interface MailboxWriter {
+  createDraft(opts: {
+    threadId: string;
+    raw: string;
+  }): Promise<{ draftId: string; messageId: string }>;
+  /** null when the owner deleted it (or sent it) in Gmail. */
+  getDraft(draftId: string): Promise<RemoteDraft | null>;
+  updateDraft(
+    draftId: string,
+    opts: { threadId: string; raw: string },
+  ): Promise<{ messageId: string }>;
+  /** Must not throw if it's already gone. */
+  deleteDraft(draftId: string): Promise<void>;
+  sendDraft(draftId: string): Promise<{ messageId: string; threadId: string }>;
+}

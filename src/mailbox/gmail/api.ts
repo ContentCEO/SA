@@ -5,9 +5,10 @@ import {
   MailboxAuthError,
   type HistoryPage,
   type MailboxReader,
+  type MailboxWriter,
   type MailMessage,
 } from "../connector";
-import { toMailMessage, type GmailMessageResource } from "./parse";
+import { extractBodyText, toMailMessage, type GmailMessageResource } from "./parse";
 
 const API = "https://gmail.googleapis.com/gmail/v1/users/me";
 const TOKEN_URL = "https://oauth2.googleapis.com/token";
@@ -39,7 +40,7 @@ export function backoffDelay(
 
 const tokenResponse = z.object({ access_token: z.string(), expires_in: z.number().optional() });
 
-export function createGmailReader(opts: GmailReaderOptions): MailboxReader {
+export function createGmailReader(opts: GmailReaderOptions): MailboxReader & MailboxWriter {
   const fetchImpl = opts.fetchImpl ?? fetch;
   const sleep: Sleep = opts.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
   const maxRetries = opts.maxRetries ?? 5;
@@ -94,6 +95,7 @@ export function createGmailReader(opts: GmailReaderOptions): MailboxReader {
         },
         body: init?.body ? JSON.stringify(init.body) : undefined,
       });
+      if (res.status === 204) return {} as T;
       if (res.ok) return (await res.json()) as T;
       if (res.status === 404) return null;
       if (res.status === 401) {
@@ -172,6 +174,53 @@ export function createGmailReader(opts: GmailReaderOptions): MailboxReader {
       if (!r) throw new HistoryExpiredError();
       const added = (r.history ?? []).flatMap((h) => (h.messagesAdded ?? []).map((m) => m.message));
       return { added, nextPageToken: r.nextPageToken, historyId: r.historyId };
+    },
+
+    async createDraft({ threadId, raw }) {
+      const r = await call<{ id: string; message: { id: string } }>("/drafts", {
+        method: "POST",
+        body: { message: { raw, threadId } },
+      });
+      if (!r) throw new Error("Gmail draft create failed.");
+      return { draftId: r.id, messageId: r.message.id };
+    },
+
+    async getDraft(draftId) {
+      const r = await call<{ id: string; message: GmailMessageResource }>(
+        `/drafts/${encodeURIComponent(draftId)}?format=full`,
+      );
+      if (!r) return null;
+      return {
+        draftId: r.id,
+        messageId: r.message.id,
+        threadId: r.message.threadId,
+        bodyText: extractBodyText(r.message.payload) ?? "",
+      };
+    },
+
+    async updateDraft(draftId, { threadId, raw }) {
+      const r = await call<{ id: string; message: { id: string } }>(
+        `/drafts/${encodeURIComponent(draftId)}`,
+        {
+          method: "PUT",
+          body: { id: draftId, message: { raw, threadId } },
+        },
+      );
+      if (!r) throw new Error("Gmail draft no longer exists.");
+      return { messageId: r.message.id };
+    },
+
+    async deleteDraft(draftId) {
+      await call(`/drafts/${encodeURIComponent(draftId)}`, { method: "DELETE" });
+    },
+
+    async sendDraft(draftId) {
+      const r = await call<{ id: string; threadId: string }>("/drafts/send", {
+        method: "POST",
+        body: { id: draftId },
+      });
+      if (!r) throw new Error("Gmail draft no longer exists.");
+      return { messageId: r.id, threadId: r.threadId };
     },
 
     async watch(topicName) {

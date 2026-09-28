@@ -13,6 +13,8 @@ export type StructuredRequest = {
   system: { text: string; cache: boolean }[];
   user: string;
   schema: z.ZodType;
+  /** Sonnet only; Haiku 4.5 rejects the effort setting. */
+  effort?: "low" | "medium" | "high";
 };
 
 export type TransportResult = {
@@ -35,7 +37,10 @@ const anthropicTransport: Transport = async (req) => {
       ...(b.cache ? { cache_control: { type: "ephemeral" as const } } : {}),
     })),
     messages: [{ role: "user", content: req.user }],
-    output_config: { format: zodOutputFormat(req.schema) },
+    output_config: {
+      format: zodOutputFormat(req.schema),
+      ...(req.effort ? { effort: req.effort } : {}),
+    },
   });
   return {
     parsed: response.parsed_output ?? null,
@@ -70,6 +75,7 @@ export async function callStructured<S extends z.ZodType>(opts: {
   system: { text: string; cache: boolean }[];
   user: string;
   schema: S;
+  effort?: "low" | "medium" | "high";
   now?: Date;
 }): Promise<z.infer<S> | null> {
   const now = opts.now ?? new Date();
@@ -85,6 +91,7 @@ export async function callStructured<S extends z.ZodType>(opts: {
       system: opts.system,
       user: opts.user,
       schema: opts.schema,
+      effort: opts.effort,
     });
   } catch (err) {
     console.error("ai_call_failed", {

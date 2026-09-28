@@ -197,6 +197,64 @@ export const activityLog = pgTable(
   (t) => [index("activity_workspace_created_idx").on(t.workspaceId, t.createdAt)],
 );
 
+export const draftStatusEnum = pgEnum("draft_status", [
+  "pending",
+  "sent",
+  "edited_and_sent",
+  "discarded",
+  "expired",
+]);
+export const draftKindEnum = pgEnum("draft_kind", ["reply", "followup"]);
+
+/**
+ * A reply we wrote. It lives as a real Gmail draft (`gmail_draft_id`) so the
+ * owner can see and edit it in Gmail too; we reconcile if they do.
+ */
+export const drafts = pgTable(
+  "drafts",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    threadId: uuid("thread_id")
+      .notNull()
+      .references(() => threads.id, { onDelete: "cascade" }),
+    mailboxId: uuid("mailbox_id")
+      .notNull()
+      .references(() => mailboxes.id, { onDelete: "cascade" }),
+    /** The inbound message this replies to. */
+    replyToMessageId: uuid("reply_to_message_id").references(() => messages.id, {
+      onDelete: "set null",
+    }),
+    kind: draftKindEnum("kind").notNull().default("reply"),
+    gmailDraftId: text("gmail_draft_id"),
+    gmailMessageId: text("gmail_message_id"),
+    toAddress: text("to_address").notNull(),
+    subject: text("subject").notNull(),
+    /** Current text (after any owner edits). Purged with other bodies after the retention window. */
+    body: text("body"),
+    /** What we generated, to tell "sent" from "edited and sent". */
+    originalBody: text("original_body"),
+    status: draftStatusEnum("status").notNull().default("pending"),
+    /** One line the owner sees in the queue. */
+    reason: text("reason").notNull(),
+    /** Things the owner should double-check before sending. */
+    flags: jsonb("flags").$type<string[]>().notNull().default([]),
+    confidence: integer("confidence_pct").notNull().default(0),
+    promptVersion: text("prompt_version"),
+    /** Why it left the queue without being sent from here (deleted in Gmail, superseded…). */
+    closedNote: text("closed_note"),
+    sentGmailMessageId: text("sent_gmail_message_id"),
+    createdAt: createdAt(),
+    decidedAt: timestamp("decided_at", { withTimezone: true }),
+  },
+  (t) => [
+    index("drafts_mailbox_status_idx").on(t.mailboxId, t.status),
+    // At most one live draft per thread.
+    uniqueIndex("drafts_one_pending_per_thread")
+      .on(t.threadId)
+      .where(sql`status = 'pending'`),
+  ],
+);
+
 /** What the owner tells us about the business. Drives classification and drafting. */
 export const businessProfiles = pgTable("business_profile", {
   workspaceId: uuid("workspace_id")
@@ -280,6 +338,7 @@ export const usage = pgTable(
 export type User = typeof users.$inferSelect;
 export type BusinessProfile = typeof businessProfiles.$inferSelect;
 export type VoiceProfile = typeof voiceProfiles.$inferSelect;
+export type Draft = typeof drafts.$inferSelect;
 export type Workspace = typeof workspaces.$inferSelect;
 export type Mailbox = typeof mailboxes.$inferSelect;
 export type Thread = typeof threads.$inferSelect;

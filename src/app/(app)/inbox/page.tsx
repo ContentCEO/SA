@@ -8,6 +8,7 @@ import { cn } from "@/lib/utils";
 import { listInboxThreads, type InboxFilter, type InboxRow } from "@/server/inbox";
 import { listMailboxes } from "@/server/mailboxes";
 import { requireOwner } from "@/server/session";
+import { draftReplyAction } from "../queue/actions";
 import { markNeedsOwnerAction } from "./actions";
 
 function parseFilter(v: string | string[] | undefined): InboxFilter {
@@ -140,6 +141,14 @@ export default async function InboxPage(props: PageProps<"/inbox">) {
                     <p className="font-semibold">Why: {row.needsOwnerReason}</p>
                   ) : null}
                   <Details row={row} />
+                  {row.category !== "noise" ? (
+                    <form action={draftReplyAction}>
+                      <input type="hidden" name="threadId" value={row.id} />
+                      <Button type="submit" className="w-full">
+                        Draft a reply
+                      </Button>
+                    </form>
+                  ) : null}
                   {!row.needsOwner ? (
                     <form action={markNeedsOwnerAction}>
                       <input type="hidden" name="threadId" value={row.id} />

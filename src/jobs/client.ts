@@ -17,6 +17,11 @@ export const mailboxClassifyRequested = eventType("mailbox/classify.requested", 
   schema: staticSchema<{ mailboxId: string }>(),
 });
 
+/** Reconcile drafts with Gmail, then write any replies that are due. */
+export const mailboxDraftRequested = eventType("mailbox/draft.requested", {
+  schema: staticSchema<{ mailboxId: string }>(),
+});
+
 /** Learn (or re-learn) how the owner writes. `force` overrides their manual edits. */
 export const voiceLearnRequested = eventType("voice/learn.requested", {
   schema: staticSchema<{ workspaceId: string; force?: boolean }>(),

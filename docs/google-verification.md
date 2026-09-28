@@ -44,6 +44,14 @@ We deliberately do **not** request `gmail.modify` or full `https://mail.google.c
   `tests/unit/voice.test.ts`). We store only a description of the style (greeting, sign-off, length,
   phrases) plus five short sample replies the model writes in that style, with placeholders instead
   of names, addresses, phone numbers, emails or prices — scrubbed again in code.
+- **Drafts:** reply drafts are created in the owner's Gmail Drafts folder and a copy of the text is
+  kept in our database so the owner can review it in the app. Draft text is purged on the same
+  retention schedule as email bodies (`purgeExpiredBodies`). If the owner edits or deletes the draft
+  in Gmail, we follow Gmail (`reconcileDrafts` in `src/server/drafts.ts`).
+- **Sending:** only through Gmail's `drafts.send`, only after the owner taps "Send reply", and only
+  when the workspace's status allows it — checked in code before any call to Google
+  (`src/server/lifecycle.ts`, tested in `tests/unit/drafts.test.ts`). If the draft changed in Gmail
+  since the owner last saw it, we don't send; we show the new text and ask again.
 - **Push notifications:** Gmail `watch` sends only "this address changed" through Google Pub/Sub;
   we then fetch changes ourselves. The push endpoint rejects requests without a shared secret.
 - **Tokens:** Google refresh tokens are encrypted with AES-256-GCM before storage
