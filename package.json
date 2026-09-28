@@ -16,7 +16,8 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:studio": "drizzle-kit studio",
-    "invite": "tsx --env-file-if-exists=.env.local scripts/invite.ts"
+    "invite": "tsx --env-file-if-exists=.env.local scripts/invite.ts",
+    "db:migrate:http": "tsx --env-file-if-exists=.env.local scripts/migrate-http.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.8.0",
@@ -37,6 +38,7 @@
   },
   "devDependencies": {
     "@electric-sql/pglite": "^0.5.8",
+    "@neondatabase/serverless": "^1.1.0",
     "@playwright/test": "^1.63.0",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",

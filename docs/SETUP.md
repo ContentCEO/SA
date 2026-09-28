@@ -71,6 +71,7 @@ connection string in production.
 ```bash
 pnpm db:generate    # after editing src/db/schema.ts — commit the new files in /drizzle
 pnpm db:migrate     # apply migrations to DATABASE_URL
+pnpm db:migrate:http   # same, over Neon's HTTPS endpoint — for networks that block port 5432
 ```
 
 ## 6. Inviting an owner

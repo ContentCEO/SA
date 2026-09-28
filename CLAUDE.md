@@ -107,6 +107,10 @@ In a sandbox with preinstalled Chromium: `PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-brows
 - Disconnect revokes at Google, then deletes the mailbox even if revoke fails (logged
   `revokedAtProvider: false`). Deleting is what the owner asked for.
 - `activity_log` created early (M1) to record connect/reconnect/disconnect; detail is content-free.
+- Neon: project `autumn-term-70302192`, branch `production`, pooled URL in Vercel `DATABASE_URL`
+  (prod+preview share it). Migration 0000 applied 2026-09-28.
+- Cloud sandboxes can't reach Postgres port 5432; use `pnpm db:migrate:http` (Neon HTTPS driver,
+  same migrations table as drizzle-kit). `@neondatabase/serverless` is a devDependency for this only.
 - "Toasts" are currently `?done=` / `?error=` query params rendered as `<Notice>` (role=status/alert).
 - Playwright's mobile project uses Chromium at 375×812 (not WebKit) to keep CI fast and single-browser.
 - Favicon and wordmark are text placeholders until Davi's icon pack arrives (`public/brand/`).
