@@ -120,7 +120,7 @@ In a sandbox with preinstalled Chromium: `PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-brows
 ## Milestones
 
 - [x] **0. Scaffold**
-- [x] **1. Auth + Gmail connect** — code + tests done; live verification waits on Neon + Google client
+- [x] **1. Auth + Gmail connect** — verified live 2026-09-28 (Davi signed in and connected Gmail on sa-dac3.vercel.app)
 - [ ] 2. Sync
 - [ ] 3. Classification
 - [ ] 4. Profiles
@@ -134,12 +134,13 @@ In a sandbox with preinstalled Chromium: `PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-brows
 
 ## Waiting on Davi
 
-- Confirm the Vercel ↔ GitHub link produced a preview deploy for this branch.
-- Neon project + `DATABASE_URL` in Vercel; Google Cloud OAuth client + Gmail API + test users.
-- Vercel env: `AUTH_SECRET`, `TOKEN_ENCRYPTION_KEY`, `AUTH_GOOGLE_ID/SECRET`, `APP_URL`, `ADMIN_EMAIL`.
-- Icon pack (`sa.` monogram, stacked wordmark).
-- `docs/terms.md`, `docs/privacy-policy.md` drafts.
-- `SUPPORT_EMAIL`, production domain.
+- Decide: custom domain vs. turning off Vercel login protection on production (invited owners can't
+  get past Vercel's login today).
+- Rotate the Neon password and Google client secret that were pasted in chat; delete the old
+  Google secret.
+- Add each invited owner as a Google Cloud test user (Google Auth Platform → Audience).
+- Icon pack (`sa.` monogram, stacked wordmark); `docs/terms.md`, `docs/privacy-policy.md` drafts;
+  `SUPPORT_EMAIL`; production domain.
 
 ## Launch blockers to remember
 
