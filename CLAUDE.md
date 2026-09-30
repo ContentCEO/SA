@@ -123,6 +123,10 @@ In a sandbox with preinstalled Chromium: `PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-brows
 - Vercel env (2026-09-28): `AUTH_SECRET`, `TOKEN_ENCRYPTION_KEY`, `DATABASE_URL`, `AUTH_GOOGLE_SECRET`
   (sensitive, prod+preview — shared because prod and preview share one database); `AUTH_GOOGLE_ID`,
   `ADMIN_EMAIL` (plain, prod+preview); `APP_URL` (prod only). Env changes need a redeploy.
+- Inngest: Vercel Marketplace integration (Hobby/free), connected to `sa` 2026-09-30;
+  `INNGEST_EVENT_KEY` / `INNGEST_SIGNING_KEY` on prod + preview. `ANTHROPIC_API_KEY` on prod + preview.
+  Production (`main`) still runs M1 code, so only the preview runs jobs until Davi okays a promote.
+  The preview shares the prod DB, so it syncs and drafts for Davi's real mailbox (sending stays gated).
 - Google OAuth client lives in Cloud project number 214188340483; app is in Testing (test users only).
 - Production has Vercel login protection (SSO, all except custom domains) — fine for Davi, blocks
   invited owners until a custom domain is added or protection is limited to previews.
@@ -219,8 +223,6 @@ In a sandbox with preinstalled Chromium: `PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-brows
 
 ## Waiting on Davi
 
-- Tick "Preview" on `ANTHROPIC_API_KEY` in Vercel (it's Production-only today).
-- Install the Inngest integration in Vercel (free tier) so sync runs in production.
 - Optional: Gmail push via Pub/Sub (steps in docs/SETUP.md §6); polling works without it.
 - Decide: custom domain vs. turning off Vercel login protection on production (invited owners can't
   get past Vercel's login today).
