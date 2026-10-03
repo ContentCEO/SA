@@ -130,6 +130,9 @@ In a sandbox with preinstalled Chromium: `PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-brows
   production. Production protection = `prod_deployment_urls_and_all_previews` (2026-10-03): the
   production domain sa-dac3.vercel.app is public; previews and per-deploy URLs need Vercel login.
   M1–M5 were merged to `main` by Davi (PR #1, 2026-10-03).
+- Resend (2026-10-03): `RESEND_API_KEY` (sensitive) + `EMAIL_FROM="Squared Away <onboarding@resend.dev>"`
+  on sa Production. Davi's team also has a `contractorflow` project with its own `RESEND_API_KEY` —
+  the key was once pasted there by mistake; check the project name before env changes.
 - Google OAuth client lives in Cloud project number 214188340483; app is in Testing (test users only).
 - **Sync (M2):** `MailboxReader` interface in `src/mailbox/connector.ts`; Gmail impl in
   `src/mailbox/gmail/api.ts` is plain `fetch` (no googleapis SDK) with token refresh, 401 re-refresh
@@ -275,8 +278,8 @@ In a sandbox with preinstalled Chromium: `PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-brows
 
 ## Waiting on Davi
 
-- Resend: API key for the morning summary (`RESEND_API_KEY`, `EMAIL_FROM`; docs/SETUP.md §7b).
-  A Resend integration exists on the Vercel team but isn't connected to `sa`.
+- Resend: verify the production domain in Resend and switch `EMAIL_FROM` off `onboarding@resend.dev`
+  (until then the digest only reaches the Resend account's own address).
 - Optional: Gmail push via Pub/Sub (steps in docs/SETUP.md §6); polling works without it.
 - Rotate the Neon password and Google client secret that were pasted in chat; delete the old
   Google secret.
