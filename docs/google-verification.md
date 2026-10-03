@@ -52,6 +52,9 @@ We deliberately do **not** request `gmail.modify` or full `https://mail.google.c
   when the workspace's status allows it — checked in code before any call to Google
   (`src/server/lifecycle.ts`, tested in `tests/unit/drafts.test.ts`). If the draft changed in Gmail
   since the owner last saw it, we don't send; we show the new text and ask again.
+- **Morning summary email:** contains counts and categories only ("2 emails need you: a complaint,
+  a question") — no customer names, subjects or email text — so no Gmail content reaches our email
+  provider (`buildDigest` in `src/server/digest.ts`, tested in `tests/unit/digest-activity.test.ts`).
 - **Push notifications:** Gmail `watch` sends only "this address changed" through Google Pub/Sub;
   we then fetch changes ourselves. The push endpoint rejects requests without a shared secret.
 - **Tokens:** Google refresh tokens are encrypted with AES-256-GCM before storage

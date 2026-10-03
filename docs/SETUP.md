@@ -97,7 +97,21 @@ Gmail push (optional, faster than the 5-minute poll): create a Pub/Sub topic, gr
 pnpm invite owner@shop.com electrical "note for Davi"
 ```
 
-Runs against whatever `DATABASE_URL` is in `.env.local`. (Becomes a button in `/admin` in Milestone 6.)
+Runs against whatever `DATABASE_URL` is in `.env.local`. Day to day, use `/admin` → Invite an owner.
+
+## 7b. Morning summary email (Resend)
+
+The digest is sent through Resend's HTTP API (`src/lib/email.ts`). Without `RESEND_API_KEY` and
+`EMAIL_FROM`, nothing is sent — the job reports "not configured" and tries again next hour.
+
+1. resend.com → API Keys → Create API Key (sending access is enough).
+2. Until a domain is verified, Resend only delivers to the email address on the Resend account,
+   from `onboarding@resend.dev`. For testing: `EMAIL_FROM="Squared Away <onboarding@resend.dev>"`.
+3. For real owners: resend.com → Domains → add the production domain, add the DNS records it shows,
+   then set `EMAIL_FROM="Squared Away <hello@thatdomain>"`.
+4. Put both in Vercel (Production) and redeploy.
+
+The digest carries counts and categories only — no customer names, subjects or email text.
 
 ## 8. Google OAuth client
 

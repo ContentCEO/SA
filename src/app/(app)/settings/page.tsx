@@ -11,12 +11,18 @@ import { requireOwner } from "@/server/session";
 import { cn } from "@/lib/utils";
 import {
   describeVoice,
+  DIGEST_HOURS,
   FOLLOWUP_DAY_CHOICES,
   getBusinessProfile,
   getVoiceProfile,
 } from "@/server/profile";
 import { DisconnectButton } from "./disconnect-button";
-import { relearnVoiceAction, saveFollowupSettingsAction } from "./profile-actions";
+import {
+  relearnVoiceAction,
+  saveDigestSettingsAction,
+  saveFollowupSettingsAction,
+} from "./profile-actions";
+import { TimeZoneInput } from "@/components/forms/time-zone-input";
 
 const done: Record<string, string> = {
   connected: "Gmail connected.",
@@ -24,6 +30,7 @@ const done: Record<string, string> = {
   profile: "Business profile saved.",
   voice: "Saved how you write.",
   followups: "Follow-up settings saved.",
+  digest: "Morning summary saved.",
   relearn: "Re-reading your sent mail. This takes a minute or two.",
 };
 
@@ -259,6 +266,45 @@ export default async function SettingsPage(props: PageProps<"/settings">) {
           </p>
           <Button type="submit" variant="outline" className="w-full">
             Save follow-ups
+          </Button>
+        </form>
+      </section>
+
+      <section id="digest" aria-labelledby="digest-heading" className="flex flex-col gap-3">
+        <h2 id="digest-heading" className="text-xl font-black">
+          Morning summary
+        </h2>
+        <form action={saveDigestSettingsAction} className="flex flex-col gap-3">
+          <label className="flex min-h-tap items-center gap-3">
+            <input
+              type="checkbox"
+              name="enabled"
+              defaultChecked={profile?.digestEnabled ?? true}
+              className="size-6 accent-charcoal"
+            />
+            <span className="font-semibold">Email me a summary each morning</span>
+          </label>
+          <label className="flex flex-col gap-1.5">
+            <span className="font-semibold">Send it at</span>
+            <select
+              name="hour"
+              defaultValue={String(profile?.digestHour ?? 7)}
+              className="min-h-tap rounded-lg border border-input bg-paper px-3 text-base"
+            >
+              {DIGEST_HOURS.map((h) => (
+                <option key={h} value={h}>
+                  {h}:00 am
+                </option>
+              ))}
+            </select>
+          </label>
+          <TimeZoneInput fallback={profile?.timeZone ?? "America/New_York"} />
+          <p className="text-muted-foreground">
+            Just counts — how many replies are waiting and what needs you. No customer names or
+            email text go in it. Skipped on mornings with nothing to say.
+          </p>
+          <Button type="submit" variant="outline" className="w-full">
+            Save morning summary
           </Button>
         </form>
       </section>

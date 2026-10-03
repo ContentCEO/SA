@@ -8,15 +8,20 @@ export function AppHeader() {
         <Wordmark />
       </Link>
       <nav aria-label="Main" className="flex items-center">
-        <Link href="/queue" className="inline-flex min-h-tap items-center px-2 font-semibold">
-          Queue
-        </Link>
-        <Link href="/inbox" className="inline-flex min-h-tap items-center px-2 font-semibold">
-          Inbox
-        </Link>
-        <Link href="/settings" className="inline-flex min-h-tap items-center pl-2 font-semibold">
-          Settings
-        </Link>
+        {[
+          ["/queue", "Queue"],
+          ["/inbox", "Inbox"],
+          ["/activity", "Activity"],
+          ["/settings", "Settings"],
+        ].map(([href, label]) => (
+          <Link
+            key={href}
+            href={href!}
+            className="inline-flex min-h-tap items-center px-1.5 font-semibold last:pr-0"
+          >
+            {label}
+          </Link>
+        ))}
       </nav>
     </header>
   );

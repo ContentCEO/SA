@@ -11,6 +11,7 @@ import {
 } from "@/server/sync";
 import { classifyPending } from "@/server/classification";
 import { createDraftForThread, reconcileDrafts, threadsToAutoDraft } from "@/server/drafts";
+import { sendDigests } from "@/server/digest";
 import { threadsToFollowUp } from "@/server/followups";
 import { getMailboxWorkspace } from "@/server/mailboxes";
 import { learnVoice, workspacesDueForVoiceRefresh } from "@/server/voice";
@@ -199,6 +200,12 @@ export const followupScan = inngest.createFunction(
   },
 );
 
+/** Hourly: each owner's morning summary goes out once a day at their hour. */
+export const morningDigest = inngest.createFunction(
+  { id: "morning-digest", triggers: [cron("3 * * * *")], retries: 3 },
+  async ({ step }) => step.run("send", () => sendDigests()),
+);
+
 /** Read sent mail and describe how the owner writes. One at a time per workspace. */
 export const learnVoiceFn = inngest.createFunction(
   {
@@ -283,4 +290,5 @@ export const functions = [
   purgeBodies,
   workspaceLifecycle,
   followupScan,
+  morningDigest,
 ];

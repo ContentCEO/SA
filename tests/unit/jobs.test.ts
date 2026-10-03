@@ -43,6 +43,7 @@ describe("job wiring", () => {
         "draft-mailbox",
         "followup-scan",
         "learn-voice",
+        "morning-digest",
         "refresh-voices",
         "poll-mailboxes",
         "renew-gmail-watches",
