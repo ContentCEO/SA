@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { HistoryExpiredError, MailboxAuthError } from "@/mailbox/connector";
+import { HistoryExpiredError, MailboxAuthError, MailboxRateLimitError } from "@/mailbox/connector";
 import { backoffDelay, createGmailReader } from "@/mailbox/gmail/api";
 import { extractBodyText, htmlToText, parseAddressList } from "@/mailbox/gmail/parse";
 
@@ -99,6 +99,23 @@ describe("rate limits", () => {
     });
     await expect(r.getProfile()).rejects.toThrow(/500/);
     expect(f).toHaveBeenCalledTimes(4); // token + 3 tries
+  });
+
+  it("a rate limit that outlasts the retries is reported as 'slow down', not a failure", async () => {
+    const limited = () => json({ error: { errors: [{ reason: "rateLimitExceeded" }] } }, 403);
+    const f = vi
+      .fn()
+      .mockResolvedValueOnce(token())
+      .mockImplementation(async () => limited());
+    const r = createGmailReader({
+      refreshToken: "rt",
+      fetchImpl: f,
+      sleep: async () => {},
+      maxRetries: 2,
+    });
+    const err = await r.getProfile().catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(MailboxRateLimitError);
+    expect(err).not.toBeInstanceOf(MailboxAuthError);
   });
 
   it("keeps jittered delays within the exponential cap", () => {

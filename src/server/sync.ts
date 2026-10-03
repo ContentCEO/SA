@@ -27,7 +27,13 @@ import { jobsAllowed } from "./lifecycle";
 export const BACKFILL_DAYS = 30;
 /** When the history cursor has expired, re-read this many days instead. */
 export const RESYNC_DAYS = 7;
-const FETCH_CONCURRENCY = 8;
+/**
+ * Gmail allows roughly 50 message reads a second per user, and refuses bursts
+ * well before that. Four at a time stays comfortably under it.
+ */
+const FETCH_CONCURRENCY = 4;
+/** Messages per backfill step. Smaller pages mean a retry redoes less work. */
+const BACKFILL_PAGE_SIZE = 50;
 
 export type SyncDeps = {
   readerFor?: (mailbox: Mailbox) => MailboxReader;
@@ -272,7 +278,11 @@ export async function backfillPage(
   const reader = (deps.readerFor ?? defaultReaderFor)(mailbox);
   const now = deps.now?.() ?? new Date();
   return guarded(mailbox, async () => {
-    const page = await reader.listMessages({ query: windowQuery(BACKFILL_DAYS), pageToken });
+    const page = await reader.listMessages({
+      query: windowQuery(BACKFILL_DAYS),
+      pageToken,
+      maxResults: BACKFILL_PAGE_SIZE,
+    });
     const ingested = await ingest(mailbox, reader, page.messages, now);
     return { status: "ok", ingested, nextPageToken: page.nextPageToken };
   });

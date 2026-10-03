@@ -221,6 +221,10 @@ In a sandbox with preinstalled Chromium: `PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-brows
   extend 3 days, mark setup paid (turns sending on), setup call done (→ active), pause/resume
   (`ADMIN_MOVES` table; resume returns to where it was). Also an invite form. Link in Settings → Account
   for the admin only.
+- Gmail pacing: 4 concurrent reads, 50 messages per backfill step. A rate limit that outlasts the
+  client's retries throws `MailboxRateLimitError`; jobs wrap Gmail steps in `politely()` which turns
+  it into Inngest `RetryAfterError("2m")` — pause and resume, not fail. (First live backfill on
+  2026-10-03 kept tripping `rateLimitExceeded` at 8 concurrent / 100 per page.)
 - postgres.js can't bind a `Date` inside a raw `sql` template — pass `.toISOString()` with
   `::timestamptz` (PGlite tolerates it, so unit tests won't catch it; e2e did).
 - Lesson: scripted `str.replace` edits must `assert old in s` — silent no-ops after Prettier caused

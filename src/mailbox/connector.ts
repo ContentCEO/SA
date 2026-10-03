@@ -82,6 +82,17 @@ export class MailboxAuthError extends Error {
   }
 }
 
+/**
+ * Gmail kept saying "slow down" after our in-call retries. Not a failure of
+ * the mailbox — the job should pause for a few minutes and pick up again.
+ */
+export class MailboxRateLimitError extends Error {
+  constructor(message = "Gmail asked us to slow down.") {
+    super(message);
+    this.name = "MailboxRateLimitError";
+  }
+}
+
 /** The stored sync cursor is too old; fall back to a fresh window sync. */
 export class HistoryExpiredError extends Error {
   constructor() {
