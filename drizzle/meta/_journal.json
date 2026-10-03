@@ -36,6 +36,13 @@
       "when": 1790638036900,
       "tag": "0004_warm_anita_blake",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1791037590899,
+      "tag": "0005_next_santa_claus",
+      "breakpoints": true
     }
   ]
 }

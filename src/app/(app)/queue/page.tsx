@@ -34,7 +34,22 @@ const errors: Record<string, string> = {
 };
 
 const who = (i: QueueItem) => i.customerName || i.customerAddress || "Unknown sender";
-const tag = (i: QueueItem) => (isCategory(i.category) ? categoryTag[i.category] : "Email");
+const tag = (i: QueueItem) => {
+  const category = isCategory(i.category) ? categoryTag[i.category] : "Email";
+  return i.kind === "followup" ? `Follow-up · ${category}` : category;
+};
+
+const weekday = new Intl.DateTimeFormat("en-US", { weekday: "long", timeZone: "America/New_York" });
+
+/** The one line under "squared away." — what happens next, honestly. */
+function nextLine(sent: NonNullable<Awaited<ReturnType<typeof sentDraftSummary>>>) {
+  const name = firstName(sent.toName);
+  if (sent.nudgeOn) {
+    return `I'll nudge ${name ?? "them"} on ${weekday.format(sent.nudgeOn)} if there's no reply.`;
+  }
+  if (sent.lastNudgeUsed) return "That was the last nudge. I won't chase this one again.";
+  return `I'll let you know when ${name ?? "they"} write${name ? "s" : ""} back.`;
+}
 const firstName = (name: string | null) => (name ? name.split(/[\s,]+/)[0] : null);
 
 function gmailLink(i: QueueItem) {
@@ -64,9 +79,7 @@ export default async function QueuePage(props: PageProps<"/queue">) {
             <span className="sa-headline-serif text-3xl">reply sent,</span>
             <span className="sa-headline-heavy text-4xl">squared away.</span>
           </p>
-          <p className="text-ash">
-            {`I'll let you know when ${firstName(sent.toName) ?? "they"} write${firstName(sent.toName) ? "s" : ""} back.`}
-          </p>
+          <p className="text-ash">{nextLine(sent)}</p>
         </section>
       ) : (
         <Headline serif="waiting on you," heavy="the queue." />

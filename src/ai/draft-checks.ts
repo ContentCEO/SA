@@ -12,6 +12,10 @@ const FILLER = [
   "please do not hesitate",
   "per my last email",
   "kindly",
+  "just bumping this",
+  "just circling back",
+  "just following up on my last",
+  "friendly reminder",
 ];
 
 const DAYS =

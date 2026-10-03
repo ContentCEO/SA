@@ -74,7 +74,8 @@ test("after sending: the squared-away moment", async ({ page, context }) => {
   await page.goto(`/queue?sent=${draft.id}`);
   await expect(page.getByText("reply sent,")).toBeVisible();
   await expect(page.getByText("squared away.")).toBeVisible();
-  await expect(page.getByText("I'll let you know when Priya writes back.")).toBeVisible();
+  // A quote: we say when we'll nudge if it goes quiet.
+  await expect(page.getByText(/I'll nudge Priya on \w+day if there's no reply\./)).toBeVisible();
 });
 
 test("empty queue says so plainly", async ({ page, context }) => {

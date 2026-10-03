@@ -35,6 +35,7 @@ describe("job wiring", () => {
         "workspace-lifecycle",
         "classify-mailbox",
         "draft-mailbox",
+        "followup-scan",
         "learn-voice",
         "refresh-voices",
         "poll-mailboxes",

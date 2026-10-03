@@ -11,6 +11,7 @@ import {
 } from "@/server/sync";
 import { classifyPending } from "@/server/classification";
 import { createDraftForThread, reconcileDrafts, threadsToAutoDraft } from "@/server/drafts";
+import { threadsToFollowUp } from "@/server/followups";
 import { getMailboxWorkspace } from "@/server/mailboxes";
 import { learnVoice, workspacesDueForVoiceRefresh } from "@/server/voice";
 import { expireEvaluations, startPendingEvaluations } from "@/server/workspace-lifecycle";
@@ -171,6 +172,31 @@ export const draftMailbox = inngest.createFunction(
   },
 );
 
+/**
+ * Daily, 9am Eastern: nudge quiet quotes and invoices. Every nudge is a draft
+ * in the queue — nothing is sent. One thread per step.
+ */
+export const followupScan = inngest.createFunction(
+  { id: "followup-scan", triggers: [cron("TZ=America/New_York 11 9 * * *")], retries: 3 },
+  async ({ step }) => {
+    const boxes = await step.run("mailboxes", () => listSyncableMailboxes());
+    let created = 0;
+    for (const box of boxes) {
+      if (!box.backfillCompletedAt) continue;
+      const due = await step.run(`due-${box.id}`, () => threadsToFollowUp(box.id));
+      for (const threadId of due) {
+        const r = await step.run(`nudge-${threadId}`, () =>
+          politely(() => createDraftForThread(threadId, { trigger: "followup" })),
+        );
+        if (r.status === "created") created++;
+        if (r.status === "reconnect_needed" || (r.status === "skipped" && r.reason === "capped"))
+          break;
+      }
+    }
+    return { created };
+  },
+);
+
 /** Read sent mail and describe how the owner writes. One at a time per workspace. */
 export const learnVoiceFn = inngest.createFunction(
   {
@@ -254,4 +280,5 @@ export const functions = [
   renewGmailWatches,
   purgeBodies,
   workspaceLifecycle,
+  followupScan,
 ];

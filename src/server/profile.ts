@@ -94,6 +94,39 @@ export async function saveBusinessProfile(
   });
 }
 
+export const FOLLOWUP_DAY_CHOICES = [2, 3, 4, 5, 7] as const;
+
+export const followupSettingsInput = z.object({
+  enabled: z
+    .literal("on")
+    .optional()
+    .transform((v) => v === "on"),
+  days: z.coerce.number().refine((n) => (FOLLOWUP_DAY_CHOICES as readonly number[]).includes(n), {
+    message: "Pick how many days to wait.",
+  }),
+});
+
+/** Follow-up settings live on the business profile row; create it if needed. */
+export async function saveFollowupSettings(
+  workspaceId: string,
+  data: z.output<typeof followupSettingsInput>,
+  now: Date = new Date(),
+) {
+  const set = { followupsEnabled: data.enabled, followupDays: data.days, updatedAt: now };
+  await db()
+    .insert(businessProfiles)
+    .values({ workspaceId, ...set })
+    .onConflictDoUpdate({ target: businessProfiles.workspaceId, set });
+  await db()
+    .insert(activityLog)
+    .values({
+      workspaceId,
+      actor: "owner",
+      action: "followup_settings_saved",
+      detail: { enabled: data.enabled, days: data.days },
+    });
+}
+
 export async function getVoiceProfile(workspaceId: string): Promise<VoiceProfile | undefined> {
   const [row] = await db()
     .select()
