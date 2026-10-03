@@ -225,6 +225,19 @@ In a sandbox with preinstalled Chromium: `PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-brows
   client's retries throws `MailboxRateLimitError`; jobs wrap Gmail steps in `politely()` which turns
   it into Inngest `RetryAfterError("2m")` — pause and resume, not fail. (First live backfill on
   2026-10-03 kept tripping `rateLimitExceeded` at 8 concurrent / 100 per page.)
+- **Follow-ups (M7):** daily cron `followup-scan` (9:11am America/New_York). `threadsToFollowUp`
+  (`src/server/followups.ts`): quote_request / invoice_payment, not needs_owner, owner wrote last
+  ≥ `followup_days` ago (default 3; choices 2/3/4/5/7) and ≤ 21 days ago, customer has written at
+  least once, < 2 nudges **sent**, no draft of any kind since the owner's last message (so a
+  discarded nudge isn't rewritten until they write again), none pending.
+- Nudges reuse `createDraftForThread` with `trigger: "followup"` (prompt `followup.v1`, kind
+  `followup`, to = last inbound sender, threaded to the owner's last message). The cap, category and
+  needs-owner rules are re-checked there, whatever selected the thread. Sent nudges bump
+  `threads.followup_count`; the cap counts sent `followup` drafts. Reconcile also expires a pending
+  nudge if the owner wrote to the customer some other way.
+- Settings → Follow-ups: on/off + wait days (stored on `business_profile`). Every nudge is a draft;
+  nothing sends without a tap. The sent screen says "I'll nudge Dana on Thursday if there's no
+  reply." / "That was the last nudge." for chased categories.
 - postgres.js can't bind a `Date` inside a raw `sql` template — pass `.toISOString()` with
   `::timestamptz` (PGlite tolerates it, so unit tests won't catch it; e2e did).
 - Lesson: scripted `str.replace` edits must `assert old in s` — silent no-ops after Prettier caused
@@ -240,7 +253,7 @@ In a sandbox with preinstalled Chromium: `PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-brows
 - [x] **5. Drafts + Queue** — code + tests done; live drafting waits on Inngest; sending stays off
       until M6 moves a workspace to `setup_paid`
 - [x] **6. Workspace lifecycle** — trial clock, read-only expiry, admin page with manual moves
-- [ ] 7. Follow-ups
+- [x] **7. Follow-ups** — daily scan, nudge drafts, two-per-thread cap, settings
 - [ ] 8. Digest + Activity
 - [ ] 9. Autopilot
 - [ ] 10. Billing

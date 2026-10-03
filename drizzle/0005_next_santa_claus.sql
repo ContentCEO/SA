@@ -1,0 +1,2 @@
+ALTER TABLE "business_profile" ADD COLUMN "followups_enabled" boolean DEFAULT true NOT NULL;--> statement-breakpoint
+ALTER TABLE "business_profile" ADD COLUMN "followup_days" integer DEFAULT 3 NOT NULL;

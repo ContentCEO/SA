@@ -117,6 +117,8 @@ export function conversationBlock(opts: {
   extracted: Record<string, unknown> | null;
   messages: ConversationMessage[];
   ownerNote?: string | null;
+  /** What to write. Defaults to a reply to the last customer message. */
+  task?: string;
 }): string {
   const convo = opts.messages
     .map(
@@ -128,7 +130,7 @@ export function conversationBlock(opts: {
 What it is: ${opts.category ?? "unsorted"} — ${opts.summary ?? "no summary"}
 Details found: ${JSON.stringify(opts.extracted ?? {})}
 ${opts.ownerNote ? `The owner asked for this draft and said: ${opts.ownerNote}\n` : ""}
-Write the owner's reply to the last CUSTOMER message.
+${opts.task ?? "Write the owner's reply to the last CUSTOMER message."}
 
 <conversation>
 ${convo}

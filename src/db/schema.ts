@@ -272,6 +272,9 @@ export const businessProfiles = pgTable("business_profile", {
   vipSenders: jsonb("vip_senders").$type<string[]>().notNull().default([]),
   /** Emails mentioning more than this go to the owner. */
   amountThresholdDollars: integer("amount_threshold_dollars").notNull().default(2500),
+  /** Nudge quiet quotes and invoices after this many days without a reply. */
+  followupsEnabled: boolean("followups_enabled").notNull().default(true),
+  followupDays: integer("followup_days").notNull().default(3),
   completedAt: timestamp("completed_at", { withTimezone: true }),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });

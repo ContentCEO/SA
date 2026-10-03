@@ -5,7 +5,9 @@ import { z } from "zod";
 import { enqueue, voiceLearnRequested } from "@/jobs/client";
 import {
   businessProfileInput,
+  followupSettingsInput,
   saveBusinessProfile,
+  saveFollowupSettings,
   saveVoiceEdits,
   voiceEditInput,
 } from "@/server/profile";
@@ -52,4 +54,15 @@ export async function relearnVoiceAction() {
   const { workspace } = await requireOwner();
   await enqueue(voiceLearnRequested.create({ workspaceId: workspace.id, force: true }));
   redirect("/settings?done=relearn");
+}
+
+export async function saveFollowupSettingsAction(formData: FormData) {
+  const { workspace } = await requireOwner();
+  const parsed = followupSettingsInput.safeParse({
+    enabled: formData.get("enabled") ?? undefined,
+    days: formData.get("days"),
+  });
+  if (!parsed.success) redirect("/settings?error=unknown");
+  await saveFollowupSettings(workspace.id, parsed.data);
+  redirect("/settings?done=followups");
 }

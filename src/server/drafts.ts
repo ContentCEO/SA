@@ -11,6 +11,11 @@ import {
   type WorkspaceContext,
 } from "@/ai/prompts/draft.v1";
 import { prepareBody } from "@/ai/classify";
+import {
+  FOLLOWUP_INSTRUCTIONS,
+  FOLLOWUP_PROMPT_VERSION,
+  followupTask,
+} from "@/ai/prompts/followup.v1";
 import { AiCapReachedError, bumpUsageCounter } from "@/ai/usage";
 import { db } from "@/db";
 import {
@@ -46,6 +51,10 @@ export const AUTO_DRAFT_CATEGORIES = [
   "invoice_payment",
   "supplier_vendor",
 ] as const;
+/** Quiet threads in these categories get nudged. */
+export const FOLLOWUP_CATEGORIES = ["quote_request", "invoice_payment"] as const;
+/** Nudges per thread, ever. A guardrail, not a setting. */
+export const MAX_FOLLOWUPS = 2;
 const CONVERSATION_MESSAGES = 6;
 const PER_MESSAGE_CHARS = 3_000;
 
@@ -69,7 +78,10 @@ export type CreateOutcome =
         | "no_text"
         | "capped"
         | "model_failed"
-        | "read_only";
+        | "read_only"
+        | "followup_not_allowed"
+        | "customer_replied"
+        | "followup_cap";
     }
   | { status: "reconnect_needed" };
 
@@ -81,6 +93,40 @@ async function loadThread(threadId: string) {
     .innerJoin(workspaces, eq(workspaces.id, mailboxes.workspaceId))
     .where(eq(threads.id, threadId));
   return row;
+}
+
+/** Nudges actually sent in this thread (from the app or from Gmail). Discarded ones don't count. */
+async function countSentFollowups(threadId: string): Promise<number> {
+  const rows = await db()
+    .select({ id: drafts.id })
+    .from(drafts)
+    .where(
+      and(
+        eq(drafts.threadId, threadId),
+        eq(drafts.kind, "followup"),
+        inArray(drafts.status, ["sent", "edited_and_sent"]),
+      ),
+    );
+  return rows.length;
+}
+
+export async function followupSettings(workspaceId: string) {
+  const [p] = await db()
+    .select({ enabled: businessProfiles.followupsEnabled, days: businessProfiles.followupDays })
+    .from(businessProfiles)
+    .where(eq(businessProfiles.workspaceId, workspaceId));
+  return { enabled: p?.enabled ?? true, days: p?.days ?? 3 };
+}
+
+/** The customer in a thread: whoever most recently wrote in. */
+async function customerOf(threadId: string) {
+  const [m] = await db()
+    .select({ name: messages.fromName, address: messages.fromAddress })
+    .from(messages)
+    .where(and(eq(messages.threadId, threadId), eq(messages.direction, "in")))
+    .orderBy(desc(messages.sentAt))
+    .limit(1);
+  return m ?? null;
 }
 
 async function workspaceContext(
@@ -133,7 +179,8 @@ async function workspaceContext(
 export async function createDraftForThread(
   threadId: string,
   opts: DraftDeps & {
-    trigger: "auto" | "owner";
+    /** auto: reply to new mail. owner: they asked. followup: nudge a quiet thread. */
+    trigger: "auto" | "owner" | "followup";
     ownerNote?: string | null;
     /** Required when the owner triggers it: the thread must belong to them. */
     workspaceId?: string;
@@ -158,6 +205,20 @@ export async function createDraftForThread(
       return { status: "skipped", reason: "category" };
     }
   }
+  const followup = opts.trigger === "followup";
+  let nudgeNumber: 1 | 2 = 1;
+  if (followup) {
+    // Checked here, where the draft is made, whatever selected the thread.
+    if (
+      thread.needsOwner ||
+      !FOLLOWUP_CATEGORIES.includes(thread.category as (typeof FOLLOWUP_CATEGORIES)[number])
+    ) {
+      return { status: "skipped", reason: "followup_not_allowed" };
+    }
+    const sentNudges = await countSentFollowups(threadId);
+    if (sentNudges >= MAX_FOLLOWUPS) return { status: "skipped", reason: "followup_cap" };
+    nudgeNumber = sentNudges === 0 ? 1 : 2;
+  }
 
   const [pending] = await db()
     .select({ id: drafts.id })
@@ -174,7 +235,23 @@ export async function createDraftForThread(
       .limit(CONVERSATION_MESSAGES)
   ).reverse();
   const last = recent.at(-1);
-  if (!last || last.direction !== "in") return { status: "skipped", reason: "owner_replied_last" };
+  if (!last) return { status: "skipped", reason: "no_text" };
+  if (followup && last.direction !== "out")
+    return { status: "skipped", reason: "customer_replied" };
+  if (!followup && last.direction !== "in")
+    return { status: "skipped", reason: "owner_replied_last" };
+  // Who the reply goes to: the customer. For a nudge, that's whoever last wrote in.
+  const customer = followup
+    ? (
+        await db()
+          .select()
+          .from(messages)
+          .where(and(eq(messages.threadId, threadId), eq(messages.direction, "in")))
+          .orderBy(desc(messages.sentAt))
+          .limit(1)
+      )[0]
+    : last;
+  if (!customer) return { status: "skipped", reason: "no_text" };
   const withText = recent
     .map((m) => ({
       m,
@@ -191,6 +268,12 @@ export async function createDraftForThread(
     summary: thread.summary,
     extracted: thread.extracted,
     ownerNote: opts.ownerNote,
+    task: followup
+      ? followupTask({
+          nudgeNumber,
+          daysQuiet: Math.max(1, Math.round((now.getTime() - last.sentAt.getTime()) / 86_400_000)),
+        })
+      : undefined,
     messages: withText.map(({ m, text }) => ({
       from: m.direction === "out" ? mailbox.email : (m.fromName ?? m.fromAddress ?? "customer"),
       direction: m.direction,
@@ -204,11 +287,11 @@ export async function createDraftForThread(
     const request = {
       workspaceId: workspace.id,
       role: "draft" as const,
-      promptVersion: DRAFT_PROMPT_VERSION,
+      promptVersion: followup ? FOLLOWUP_PROMPT_VERSION : DRAFT_PROMPT_VERSION,
       maxTokens: 2048,
       effort: "medium" as const,
       system: [
-        { text: DRAFT_INSTRUCTIONS, cache: false },
+        { text: followup ? FOLLOWUP_INSTRUCTIONS : DRAFT_INSTRUCTIONS, cache: false },
         { text: wsBlock, cache: true },
       ],
       user: convo,
@@ -244,7 +327,7 @@ export async function createDraftForThread(
     Math.max(0, Math.min(1, result.confidence, checks.confidenceCap)) * 100,
   );
 
-  const to = last.fromAddress;
+  const to = customer.fromAddress;
   if (!to) return { status: "skipped", reason: "no_text" };
   const subject = replySubject(last.subject ?? thread.subject);
   const writer = (opts.writerFor ?? defaultWriter)(mailbox);
@@ -278,16 +361,18 @@ export async function createDraftForThread(
       threadId,
       mailboxId: mailbox.id,
       replyToMessageId: last.id,
+      kind: followup ? "followup" : "reply",
       gmailDraftId: created.draftId,
       gmailMessageId: created.messageId,
       toAddress: to,
       subject,
       body,
       originalBody: body,
-      reason: result.reason.trim().slice(0, 200) || "Reply drafted.",
+      reason:
+        result.reason.trim().slice(0, 200) || (followup ? "Follow-up nudge." : "Reply drafted."),
       flags,
       confidence,
-      promptVersion: DRAFT_PROMPT_VERSION,
+      promptVersion: followup ? FOLLOWUP_PROMPT_VERSION : DRAFT_PROMPT_VERSION,
       createdAt: now,
     })
     .onConflictDoNothing()
@@ -304,9 +389,15 @@ export async function createDraftForThread(
     .values({
       workspaceId: workspace.id,
       actor: "squared_away",
-      action: "draft_created",
+      action: followup ? "followup_drafted" : "draft_created",
       threadId,
-      detail: { draftId: row2.id, trigger: opts.trigger, confidence, flagCount: flags.length },
+      detail: {
+        draftId: row2.id,
+        trigger: opts.trigger,
+        confidence,
+        flagCount: flags.length,
+        ...(followup ? { nudgeNumber } : {}),
+      },
     });
   return { status: "created", draftId: row2.id };
 }
@@ -422,6 +513,7 @@ export async function sendDraft(
         needsOwnerManual: false,
         needsOwnerReason: null,
         awaitingReplySince: now,
+        ...(draft.kind === "followup" ? { followupCount: sql`${threads.followupCount} + 1` } : {}),
       })
       .where(eq(threads.id, thread.id));
     await bumpUsageCounter(workspaceId, "emailsSent", now);
@@ -434,11 +526,7 @@ export async function sendDraft(
         threadId: thread.id,
         detail: { draftId: draft.id, editedByOwner: edited, kind: draft.kind },
       });
-    const [to] = await db()
-      .select({ name: messages.fromName })
-      .from(messages)
-      .where(eq(messages.id, draft.replyToMessageId ?? ""));
-    return { status: "sent", edited, toName: to?.name ?? null };
+    return { status: "sent", edited, toName: (await customerOf(thread.id))?.name ?? null };
   } catch (err) {
     if (err instanceof MailboxAuthError) {
       await markReconnectNeeded(mailbox);
@@ -604,6 +692,17 @@ export async function reconcileDrafts(mailboxId: string, opts: DraftDeps = {}) {
             .where(eq(threads.id, d.threadId));
         }
         closed++;
+      } else if (d.kind === "followup" && newer.some((m) => m.direction === "out")) {
+        // The owner wrote to them some other way since; this nudge would repeat it.
+        await writer.deleteDraft(d.gmailDraftId!);
+        await closeDraft(
+          d,
+          mailbox.workspaceId,
+          "expired",
+          "You wrote to them since, so this nudge was out of date.",
+          now,
+        );
+        closed++;
       } else if (!sameText(remote.bodyText, d.body)) {
         await db().update(drafts).set({ body: remote.bodyText }).where(eq(drafts.id, d.id));
       }
@@ -620,6 +719,7 @@ export async function reconcileDrafts(mailboxId: string, opts: DraftDeps = {}) {
 
 export type QueueItem = {
   draftId: string | null;
+  kind: "reply" | "followup" | null;
   threadId: string;
   customerName: string | null;
   customerAddress: string | null;
@@ -690,6 +790,7 @@ export async function listQueue(
   return {
     needsYou: needs.map((t) => ({
       draftId: null,
+      kind: null,
       threadId: t.id,
       customerName: who.get(t.id)?.name ?? null,
       customerAddress: who.get(t.id)?.address ?? null,
@@ -706,6 +807,7 @@ export async function listQueue(
     })),
     drafts: pendingDrafts.map(({ draft, thread }) => ({
       draftId: draft.id,
+      kind: draft.kind,
       threadId: thread.id,
       customerName: who.get(thread.id)?.name ?? null,
       customerAddress: who.get(thread.id)?.address ?? draft.toAddress,
@@ -755,15 +857,24 @@ export async function threadsToAutoDraft(mailboxId: string, limit = 10): Promise
 export async function sentDraftSummary(workspaceId: string, draftId: string) {
   const row = await loadOwnedDraft(workspaceId, draftId);
   if (!row || (row.draft.status !== "sent" && row.draft.status !== "edited_and_sent")) return null;
-  const [to] = row.draft.replyToMessageId
-    ? await db()
-        .select({ name: messages.fromName })
-        .from(messages)
-        .where(eq(messages.id, row.draft.replyToMessageId))
-    : [];
+  const to = await customerOf(row.thread.id);
+  const settings = await followupSettings(workspaceId);
+  const chased =
+    settings.enabled &&
+    !row.thread.needsOwner &&
+    FOLLOWUP_CATEGORIES.includes(row.thread.category as (typeof FOLLOWUP_CATEGORIES)[number]);
+  const sentNudges = chased ? await countSentFollowups(row.thread.id) : 0;
+  const decidedAt = row.draft.decidedAt ?? new Date();
   return {
     toName: to?.name ?? null,
     toAddress: row.draft.toAddress,
     category: row.thread.category,
+    kind: row.draft.kind,
+    /** When we'll nudge if they go quiet; null if we won't. */
+    nudgeOn:
+      chased && sentNudges < MAX_FOLLOWUPS
+        ? new Date(decidedAt.getTime() + settings.days * 86_400_000)
+        : null,
+    lastNudgeUsed: chased && sentNudges >= MAX_FOLLOWUPS,
   };
 }
