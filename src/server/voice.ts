@@ -22,7 +22,10 @@ export const MAX_SENT_EMAILS = 200;
 export const MIN_SENT_EMAILS = 5;
 const PER_EMAIL_CHARS = 1_500;
 const TOTAL_CHARS = 150_000;
-const FETCH_CONCURRENCY = 8;
+/** Sent mail is read in one go, so keep it gentle: Gmail refuses bursts. */
+const FETCH_CONCURRENCY = 3;
+/** A learn that has said "learning" this long without finishing has died; start it again. */
+export const VOICE_STUCK_AFTER_MS = 30 * 60_000;
 
 export type VoiceDeps = { readerFor?: (m: Mailbox) => MailboxReader; now?: () => Date };
 export type VoiceOutcome =
@@ -184,6 +187,33 @@ export async function learnVoice(
       detail: { emailsRead: bodies.length },
     });
   return "ready";
+}
+
+/**
+ * Backstop for the poll: workspaces whose first read is done but whose voice
+ * was never learned, or whose learn died part-way (rate limits, timeouts).
+ */
+export async function workspacesNeedingVoice(now: Date = new Date()): Promise<string[]> {
+  const rows = await db()
+    .select({
+      workspaceId: mailboxes.workspaceId,
+      backfillCompletedAt: mailboxes.backfillCompletedAt,
+      status: voiceProfiles.status,
+      updatedAt: voiceProfiles.updatedAt,
+      workspace: { status: workspaces.status, evaluationEndsAt: workspaces.evaluationEndsAt },
+    })
+    .from(mailboxes)
+    .innerJoin(workspaces, eq(workspaces.id, mailboxes.workspaceId))
+    .leftJoin(voiceProfiles, eq(voiceProfiles.workspaceId, mailboxes.workspaceId))
+    .where(eq(mailboxes.status, "active"));
+  const stuckBefore = now.getTime() - VOICE_STUCK_AFTER_MS;
+  const due = rows.filter(
+    (r) =>
+      r.backfillCompletedAt &&
+      jobsAllowed(r.workspace, now) &&
+      (!r.status || (r.status === "learning" && (r.updatedAt?.getTime() ?? 0) < stuckBefore)),
+  );
+  return [...new Set(due.map((r) => r.workspaceId))];
 }
 
 /** Workspaces due for the weekly refresh: learned (not hand-edited) and older than a week. */

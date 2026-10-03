@@ -248,6 +248,9 @@ In a sandbox with preinstalled Chromium: `PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-brows
   to the AI provider). Quiet days are skipped. Resend via plain fetch with
   `Idempotency-Key: digest-<workspace>-<local date>`; without `RESEND_API_KEY`/`EMAIL_FROM` nothing is
   sent and the day isn't marked done. Read-only accounts get none.
+- Voice learning reads sent mail 3 at a time (8 tripped Gmail's limit live and the learn died at
+  "learning"). Retries 6; `workspace-lifecycle` (15 min) restarts voice for read mailboxes with no
+  profile or stuck in "learning" > 30 min (`workspacesNeedingVoice`).
 - postgres.js can't bind a `Date` inside a raw `sql` template — pass `.toISOString()` with
   `::timestamptz` (PGlite tolerates it, so unit tests won't catch it; e2e did).
 - Lesson: scripted `str.replace` edits must `assert old in s` — silent no-ops after Prettier caused
