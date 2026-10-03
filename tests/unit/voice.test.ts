@@ -3,11 +3,18 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { setModelTransportForTests } from "@/ai/client";
 import type { ModelVoice } from "@/ai/prompts/voice.v1";
 import type { Database } from "@/db";
+import { eq } from "drizzle-orm";
 import { mailboxes, messages, voiceProfiles } from "@/db/schema";
 import { ensureUserAndWorkspace } from "@/server/accounts";
 import { saveConnectedMailbox } from "@/server/mailboxes";
 import { saveVoiceEdits, voiceEditInput } from "@/server/profile";
-import { learnVoice, scrubExample, workspacesDueForVoiceRefresh } from "@/server/voice";
+import {
+  learnVoice,
+  scrubExample,
+  VOICE_STUCK_AFTER_MS,
+  workspacesDueForVoiceRefresh,
+  workspacesNeedingVoice,
+} from "@/server/voice";
 import { createTestDb } from "../support/db";
 import { FakeMailbox } from "../support/fake-mailbox";
 import { fakeTransport } from "../support/fake-model";
@@ -152,6 +159,31 @@ describe("learning the owner's voice", () => {
     await learnVoice(workspaceId, deps());
     expect(await workspacesDueForVoiceRefresh(new Date("2026-10-01"))).not.toContain(workspaceId);
     expect(await workspacesDueForVoiceRefresh(new Date("2026-10-06"))).toContain(workspaceId);
+  });
+});
+
+describe("restarting voice learning that never finished", () => {
+  it("picks up a mailbox that's been read but whose voice was never learned, or died part-way", async () => {
+    const now = new Date("2026-09-28T12:00:00Z");
+    expect(await workspacesNeedingVoice(now)).toEqual([]); // first read not done yet
+    await database.update(mailboxes).set({ backfillCompletedAt: now });
+    expect(await workspacesNeedingVoice(now)).toEqual([workspaceId]);
+
+    // Learning just started: leave it alone.
+    await database
+      .insert(voiceProfiles)
+      .values({ workspaceId, status: "learning", updatedAt: now });
+    expect(await workspacesNeedingVoice(now)).toEqual([]);
+    // Still "learning" well past the limit: it died. Start it again.
+    const later = new Date(now.getTime() + VOICE_STUCK_AFTER_MS + 60_000);
+    expect(await workspacesNeedingVoice(later)).toEqual([workspaceId]);
+
+    // Finished (or decided there wasn't enough mail): done.
+    await database
+      .update(voiceProfiles)
+      .set({ status: "not_enough_mail" })
+      .where(eq(voiceProfiles.workspaceId, workspaceId));
+    expect(await workspacesNeedingVoice(later)).toEqual([]);
   });
 });
 

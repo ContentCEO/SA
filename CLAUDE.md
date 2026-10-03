@@ -238,6 +238,19 @@ In a sandbox with preinstalled Chromium: `PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-brows
 - Settings → Follow-ups: on/off + wait days (stored on `business_profile`). Every nudge is a draft;
   nothing sends without a tap. The sent screen says "I'll nudge Dana on Thursday if there's no
   reply." / "That was the last nudge." for chased categories.
+- **Digest + Activity (M8):** `/activity` (in the header nav) renders `activity_log` as plain
+  sentences (`describeActivity`; unknown actions hidden) with the customer's first name from the
+  owner's own synced mail, plus a month summary. Time saved = 3 minutes × drafted replies actually
+  sent (`MINUTES_PER_SENT_REPLY`), labelled an estimate with the assumption shown.
+- Digest (`src/server/digest.ts`): hourly cron `morning-digest`; due once per local day at/after
+  `digest_hour` (5–9am) in the owner's `time_zone` (captured from the browser in Settings; invalid →
+  Eastern). **Counts and categories only — no names, subjects or text** (email content only ever goes
+  to the AI provider). Quiet days are skipped. Resend via plain fetch with
+  `Idempotency-Key: digest-<workspace>-<local date>`; without `RESEND_API_KEY`/`EMAIL_FROM` nothing is
+  sent and the day isn't marked done. Read-only accounts get none.
+- Voice learning reads sent mail 3 at a time (8 tripped Gmail's limit live and the learn died at
+  "learning"). Retries 6; `workspace-lifecycle` (15 min) restarts voice for read mailboxes with no
+  profile or stuck in "learning" > 30 min (`workspacesNeedingVoice`).
 - postgres.js can't bind a `Date` inside a raw `sql` template — pass `.toISOString()` with
   `::timestamptz` (PGlite tolerates it, so unit tests won't catch it; e2e did).
 - Lesson: scripted `str.replace` edits must `assert old in s` — silent no-ops after Prettier caused
@@ -254,13 +267,16 @@ In a sandbox with preinstalled Chromium: `PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-brows
       until M6 moves a workspace to `setup_paid`
 - [x] **6. Workspace lifecycle** — trial clock, read-only expiry, admin page with manual moves
 - [x] **7. Follow-ups** — daily scan, nudge drafts, two-per-thread cap, settings
-- [ ] 8. Digest + Activity
+- [x] **8. Digest + Activity** — Activity screen + honest estimate; digest code done, live email
+      waits on a Resend API key (and a verified domain for owners other than Davi)
 - [ ] 9. Autopilot
 - [ ] 10. Billing
 - [ ] 11. Hardening and launch
 
 ## Waiting on Davi
 
+- Resend: API key for the morning summary (`RESEND_API_KEY`, `EMAIL_FROM`; docs/SETUP.md §7b).
+  A Resend integration exists on the Vercel team but isn't connected to `sa`.
 - Optional: Gmail push via Pub/Sub (steps in docs/SETUP.md §6); polling works without it.
 - Rotate the Neon password and Google client secret that were pasted in chat; delete the old
   Google secret.

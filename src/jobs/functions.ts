@@ -11,9 +11,10 @@ import {
 } from "@/server/sync";
 import { classifyPending } from "@/server/classification";
 import { createDraftForThread, reconcileDrafts, threadsToAutoDraft } from "@/server/drafts";
+import { sendDigests } from "@/server/digest";
 import { threadsToFollowUp } from "@/server/followups";
 import { getMailboxWorkspace } from "@/server/mailboxes";
-import { learnVoice, workspacesDueForVoiceRefresh } from "@/server/voice";
+import { learnVoice, workspacesDueForVoiceRefresh, workspacesNeedingVoice } from "@/server/voice";
 import { expireEvaluations, startPendingEvaluations } from "@/server/workspace-lifecycle";
 import {
   inngest,
@@ -199,13 +200,19 @@ export const followupScan = inngest.createFunction(
   },
 );
 
+/** Hourly: each owner's morning summary goes out once a day at their hour. */
+export const morningDigest = inngest.createFunction(
+  { id: "morning-digest", triggers: [cron("3 * * * *")], retries: 3 },
+  async ({ step }) => step.run("send", () => sendDigests()),
+);
+
 /** Read sent mail and describe how the owner writes. One at a time per workspace. */
 export const learnVoiceFn = inngest.createFunction(
   {
     id: "learn-voice",
     triggers: [voiceLearnRequested],
     singleton: { key: "event.data.workspaceId", mode: "skip" },
-    retries: 2,
+    retries: 6,
   },
   async ({ event, step }) =>
     step.run("learn", () =>
@@ -248,15 +255,25 @@ export const pollMailboxes = inngest.createFunction(
 
 /**
  * Every 15 minutes: start the clock for anyone who connected Gmail but wasn't
- * moved (backstop), and record evaluations that have run out. Gates don't wait
+ * moved (backstop), record evaluations that have run out, and restart stuck
+ * voice learning. Gates don't wait
  * for this — they read the clock directly.
  */
 export const workspaceLifecycle = inngest.createFunction(
   { id: "workspace-lifecycle", triggers: [cron("*/15 * * * *")] },
-  async ({ step }) => ({
-    started: await step.run("start", () => startPendingEvaluations()),
-    expired: await step.run("expire", () => expireEvaluations()),
-  }),
+  async ({ step }) => {
+    const started = await step.run("start", () => startPendingEvaluations());
+    const expired = await step.run("expire", () => expireEvaluations());
+    // Also restart any voice learning that never ran or died part-way.
+    const voice = await step.run("voice", () => workspacesNeedingVoice());
+    if (voice.length) {
+      await step.sendEvent(
+        "learn-voice",
+        voice.map((workspaceId) => voiceLearnRequested.create({ workspaceId })),
+      );
+    }
+    return { started, expired, voiceRestarted: voice.length };
+  },
 );
 
 /** Daily: renew Gmail push watches before they silently expire. */
@@ -283,4 +300,5 @@ export const functions = [
   purgeBodies,
   workspaceLifecycle,
   followupScan,
+  morningDigest,
 ];

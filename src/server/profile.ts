@@ -127,6 +127,53 @@ export async function saveFollowupSettings(
     });
 }
 
+export const DIGEST_HOURS = [5, 6, 7, 8, 9] as const;
+
+function isTimeZone(tz: string) {
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: tz });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export const digestSettingsInput = z.object({
+  enabled: z
+    .literal("on")
+    .optional()
+    .transform((v) => v === "on"),
+  hour: z.coerce
+    .number()
+    .refine((n) => (DIGEST_HOURS as readonly number[]).includes(n), { message: "Pick a time." }),
+  timeZone: z.string().trim().max(64).refine(isTimeZone).catch("America/New_York"),
+});
+
+export async function saveDigestSettings(
+  workspaceId: string,
+  data: z.output<typeof digestSettingsInput>,
+  now: Date = new Date(),
+) {
+  const set = {
+    digestEnabled: data.enabled,
+    digestHour: data.hour,
+    timeZone: data.timeZone,
+    updatedAt: now,
+  };
+  await db()
+    .insert(businessProfiles)
+    .values({ workspaceId, ...set })
+    .onConflictDoUpdate({ target: businessProfiles.workspaceId, set });
+  await db()
+    .insert(activityLog)
+    .values({
+      workspaceId,
+      actor: "owner",
+      action: "digest_settings_saved",
+      detail: { enabled: data.enabled, hour: data.hour },
+    });
+}
+
 export async function getVoiceProfile(workspaceId: string): Promise<VoiceProfile | undefined> {
   const [row] = await db()
     .select()

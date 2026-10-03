@@ -5,8 +5,10 @@ import { z } from "zod";
 import { enqueue, voiceLearnRequested } from "@/jobs/client";
 import {
   businessProfileInput,
+  digestSettingsInput,
   followupSettingsInput,
   saveBusinessProfile,
+  saveDigestSettings,
   saveFollowupSettings,
   saveVoiceEdits,
   voiceEditInput,
@@ -65,4 +67,16 @@ export async function saveFollowupSettingsAction(formData: FormData) {
   if (!parsed.success) redirect("/settings?error=unknown");
   await saveFollowupSettings(workspace.id, parsed.data);
   redirect("/settings?done=followups");
+}
+
+export async function saveDigestSettingsAction(formData: FormData) {
+  const { workspace } = await requireOwner();
+  const parsed = digestSettingsInput.safeParse({
+    enabled: formData.get("enabled") ?? undefined,
+    hour: formData.get("hour"),
+    timeZone: formData.get("timeZone"),
+  });
+  if (!parsed.success) redirect("/settings?error=unknown");
+  await saveDigestSettings(workspace.id, parsed.data);
+  redirect("/settings?done=digest");
 }
