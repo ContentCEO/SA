@@ -32,9 +32,28 @@ We deliberately do **not** request `gmail.modify` or full `https://mail.google.c
 - **Where email content goes:** our database, and the Anthropic API, only for the specific task
   (sorting a message, learning writing style, drafting a reply). Nowhere else. Anthropic does not use
   API data to train models.
-- **Retention:** email body text is purged after 30 days (configurable, `RETENTION_BODY_DAYS`);
-  metadata and one-line summaries are kept. _(Purge job ships in Milestone 11 — before any real
-  customer mail is synced at scale.)_
+- **What we store:** for the last 30 days, sender/recipients/subject/date for every message; body
+  text only for conversations in the inbox (`src/server/sync.ts`). Mail outside the inbox (archived
+  newsletters, promotions) is never downloaded with its body.
+- **Retention:** email body text and Gmail's preview snippet are purged after 30 days
+  (configurable, `RETENTION_BODY_DAYS`) by a daily job; mail already older than that is never
+  stored with a body in the first place. Metadata and one-line summaries are kept.
+  (`purgeExpiredBodies` in `src/server/sync.ts`, tested in `tests/unit/sync.test.ts`.)
+- **Learning the owner's writing style:** up to 200 recent _sent_ emails are read into memory for a
+  single Anthropic call and are never written to our database (`src/server/voice.ts`, tested in
+  `tests/unit/voice.test.ts`). We store only a description of the style (greeting, sign-off, length,
+  phrases) plus five short sample replies the model writes in that style, with placeholders instead
+  of names, addresses, phone numbers, emails or prices — scrubbed again in code.
+- **Drafts:** reply drafts are created in the owner's Gmail Drafts folder and a copy of the text is
+  kept in our database so the owner can review it in the app. Draft text is purged on the same
+  retention schedule as email bodies (`purgeExpiredBodies`). If the owner edits or deletes the draft
+  in Gmail, we follow Gmail (`reconcileDrafts` in `src/server/drafts.ts`).
+- **Sending:** only through Gmail's `drafts.send`, only after the owner taps "Send reply", and only
+  when the workspace's status allows it — checked in code before any call to Google
+  (`src/server/lifecycle.ts`, tested in `tests/unit/drafts.test.ts`). If the draft changed in Gmail
+  since the owner last saw it, we don't send; we show the new text and ask again.
+- **Push notifications:** Gmail `watch` sends only "this address changed" through Google Pub/Sub;
+  we then fetch changes ourselves. The push endpoint rejects requests without a shared secret.
 - **Tokens:** Google refresh tokens are encrypted with AES-256-GCM before storage
   (`src/lib/crypto.ts`) and never logged or sent to the browser.
 - **Disconnect:** revokes our token at Google (`oauth2.googleapis.com/revoke`) and deletes the

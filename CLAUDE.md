@@ -42,10 +42,14 @@ src/app/            routes (App Router)
 src/components/ui/  shadcn components (edited: all button sizes ≥44px, no red destructive)
 src/components/brand/  Headline (signature serif-over-heavy), Wordmark (placeholder)
 src/auth.ts         Auth.js (sign-in = openid/email/profile only; JWT sessions; invite-only)
-src/app/(app)/      signed-in screens: connect (pre-OAuth explainer), settings
+src/app/(app)/      signed-in screens: inbox, connect (pre-OAuth explainer), settings
+src/ai/             model client (cap, usage, logging), classify, prompts/ (versioned)
+src/jobs/           Inngest client, events, functions (served at /api/inngest)
 src/app/api/gmail/  Gmail OAuth callback (connect is a server action in (app)/connect/actions.ts)
 src/mailbox/        connector interface + gmail/ implementation (scopes, OAuth, state)
-src/server/         domain logic: accounts.ts, mailboxes.ts, session.ts (requireOwner)
+src/server/         domain logic: accounts, mailboxes, session (requireOwner), sync, classification,
+                    inbox, profile, voice
+src/components/forms/  Field components + business profile / voice forms
 src/lib/crypto.ts   AES-256-GCM for refresh tokens
 src/config/         site.ts (business facts), models.ts, pricing.ts, retention.ts
 src/db/             schema.ts, lazy db() client (postgres.js)
@@ -111,20 +115,105 @@ In a sandbox with preinstalled Chromium: `PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-brows
   (prod+preview share it). Migration 0000 applied 2026-09-28.
 - Cloud sandboxes can't reach Postgres port 5432; use `pnpm db:migrate:http` (Neon HTTPS driver,
   same migrations table as drizzle-kit). `@neondatabase/serverless` is a devDependency for this only.
+- **Branches:** `main` = production (sa-dac3.vercel.app; Vercel Production branch = `main`). Work
+  happens on `claude/squared-away-mvp-ddxl7s` → preview at
+  `sa-git-claude-squared-away-mvp-ddxl7s-dac3.vercel.app`. Merging/pushing to `main` is a production
+  deploy — only with Davi's okay.
+- `APP_URL` is set for Production only; previews fall back to `VERCEL_BRANCH_URL` (`src/lib/app-url.ts`).
+- Vercel env (2026-09-28): `AUTH_SECRET`, `TOKEN_ENCRYPTION_KEY`, `DATABASE_URL`, `AUTH_GOOGLE_SECRET`
+  (sensitive, prod+preview — shared because prod and preview share one database); `AUTH_GOOGLE_ID`,
+  `ADMIN_EMAIL` (plain, prod+preview); `APP_URL` (prod only). Env changes need a redeploy.
+- Inngest: Vercel Marketplace integration (Hobby/free), connected to `sa` 2026-09-30;
+  `INNGEST_EVENT_KEY` / `INNGEST_SIGNING_KEY` on prod + preview. `ANTHROPIC_API_KEY` on prod + preview.
+  Production (`main`) still runs M1 code, so only the preview runs jobs until Davi okays a promote.
+  The preview shares the prod DB, so it syncs and drafts for Davi's real mailbox (sending stays gated).
+- Google OAuth client lives in Cloud project number 214188340483; app is in Testing (test users only).
+- Production has Vercel login protection (SSO, all except custom domains) — fine for Davi, blocks
+  invited owners until a custom domain is added or protection is limited to previews.
+- **Sync (M2):** `MailboxReader` interface in `src/mailbox/connector.ts`; Gmail impl in
+  `src/mailbox/gmail/api.ts` is plain `fetch` (no googleapis SDK) with token refresh, 401 re-refresh
+  once, 429/5xx/rate-limit-403 exponential backoff with full jitter + Retry-After, and
+  `MailboxAuthError` on invalid_grant / repeated 401 / permanent 403.
+- Engine in `src/server/sync.ts`: backfill = record `historyId` first, then page `newer_than:30d`
+  (100/page, one Inngest step per page), metadata for all, `format=full` only for inbox threads and
+  only within retention. Incremental = History API from cursor; on 404 re-read last 7 days and take
+  a fresh cursor. Everything idempotent (unique gmail ids, onConflictDoNothing).
+- `MailboxAuthError` anywhere → `status = reconnect_needed` + one `mailbox_access_lost` log; every
+  job skips non-active mailboxes before touching Google. Banner on every signed-in screen.
+- Retention purge nulls `body_text` AND `snippet` (Gmail snippets are body text) past
+  `RETENTION_BODY_DAYS`; runs daily. Bodies capped at 20k chars.
+- Jobs (Inngest v4, `triggers` in options): backfill (singleton per mailbox), sync (concurrency 1 +
+  20s debounce per mailbox), poll every 5 min (also starts missed backfills), watch renewal daily
+  (only if `GMAIL_PUBSUB_TOPIC`), purge daily. `enqueue()` swallows send failures; the poll recovers.
+- Migrations run in `vercel-build` before `next build`. Keep them additive (old code must keep
+  working against the new schema, since previews and prod share the DB).
+- **Classification (M3):** prompt in `src/ai/prompts/classify.v1.ts` (versioned; new file per change),
+  Haiku via `messages.parse` + `zodOutputFormat`, re-validated with Zod; one retry, then
+  `unreadable` → needs_owner "Couldn't sort this one automatically". `applyOwnerRules`
+  (`src/ai/classify.ts`) enforces complaint / legal / refund-dispute / VIP / amount > threshold /
+  first-time sender + large job / confidence < 0.6 in code regardless of model output.
+- Only the newest unclassified inbound message per inbox thread (last 14 days) goes to the model;
+  older ones are marked superseded. Gmail Promotions/Social tabs → noise without a model call.
+- Amount threshold defaults to $2,500 and VIP list is empty until the business profile (M4).
+- "First-time sender" = no earlier message from that address in what we've synced (30 days).
+- `src/ai/client.ts` `callStructured`: reserves a call against the per-workspace daily cap
+  (`AI_DAILY_CALL_CAP`, atomic upsert; `ai_cap_80_percent` warning once/day), records tokens +
+  estimated cost in `usage` (per UTC day, cost in centicents), logs only metadata. Tests swap the
+  transport with `setModelTransportForTests`.
+- Prompt caching: cache breakpoint after instructions + business block. Haiku 4.5 needs a 4,096-token
+  prefix to cache, which the classifier prompt doesn't reach yet — it matters for Sonnet drafting
+  (1,024 minimum), not here.
+- `threads.needs_owner_manual`: the owner's "This one needs me" always wins over classification.
+- Nav: Inbox · Settings in the header; Sign out lives at the bottom of Settings. Signed-in home = /inbox.
+- **Profiles (M4):** `business_profile` (one row per workspace; business name + trade live on
+  `workspaces`) and `voice_profile`. Form validation in `src/server/profile.ts` (plain-language Zod
+  messages; list fields are one-per-line, trimmed, de-duped; VIPs must be emails, lowercased).
+  Classification now reads the owner's threshold and VIP list.
+- Voice learning (`src/server/voice.ts`, prompt `voice.v1`, Sonnet): up to 200 `in:sent` emails from
+  the last year, quoted text stripped, 1.5k chars each / 150k total, held in memory only — never stored.
+  <5 usable emails → `not_enough_mail` with no model call. Examples are model-written samples with
+  placeholders, re-scrubbed in code (emails, phones, prices, street addresses).
+- Owner edits set `source = edited`; the weekly refresh (Mon cron) skips those. "Re-learn from my sent
+  mail" in Settings forces a re-learn and overwrites edits (explicit owner action).
+- Onboarding: connect → `/welcome/profile` (only if the profile was never completed) →
+  `/welcome/learning` (auto-refreshes every 5s until backfill + voice are done) → Inbox.
+- Forms use `useActionState`; on error, focus + scroll to the first invalid field (phones).
 - "Toasts" are currently `?done=` / `?error=` query params rendered as `<Notice>` (role=status/alert).
 - Playwright's mobile project uses Chromium at 375×812 (not WebKit) to keep CI fast and single-browser.
 - Favicon and wordmark are text placeholders until Davi's icon pack arrives (`public/brand/`).
 - `/api/health` returns `{ ok, service, commit }` — used by Playwright's webServer check and for
   deploy verification.
+- **Drafts + Queue (M5):** `src/server/drafts.ts`, prompt `draft.v1` (Sonnet, effort medium, one
+  retry). Auto-drafts only quote_request / customer_question / scheduling / invoice_payment /
+  supplier_vendor threads that aren't needs_owner; the owner's "Draft a reply" (Inbox/Queue) may draft
+  anything non-noise, including complaints. One pending draft per thread (partial unique index).
+  Skips: owner replied last, no text, AI cap, model failure.
+- Every draft is a **real Gmail draft** (`MailboxWriter`, `src/mailbox/mime.ts` builds the threaded
+  MIME and strips CR/LF from headers). `checkDraft` (`src/ai/draft-checks.ts`) flags invented $,
+  new days/times/dates, never-promise items and filler, and caps confidence — it never rewrites.
+- **Send gate:** `src/server/lifecycle.ts` (`SENDING_ALLOWED = setup_paid, active`). `sendDraft`
+  checks it before any Gmail call → `SendingBlockedError` → 403 from `/api/drafts/[id]/send`.
+  Tested for every blocked status with zero Gmail calls.
+- Before sending we re-read the Gmail draft: deleted → discarded; changed in Gmail → take the Gmail
+  text and ask the owner to tap Send again (never send text they haven't seen in the app).
+- `reconcileDrafts` (runs at the start of every draft job): new inbound → expire + delete the Gmail
+  draft; missing draft + newer outbound → sent; missing → discarded; changed → take Gmail body.
+- Swipe-left on a draft card only reveals Discard's confirm — no gesture ever sends.
+- Draft text is purged with the same retention as bodies; pending drafts past retention expire.
+- Pipeline: sync → classify (if new mail) → draft; sync with no new mail still reconciles drafts.
+- Signed-in home is now `/queue`. Nav: Queue · Inbox · Settings.
+- Lesson: scripted `str.replace` edits must `assert old in s` — silent no-ops after Prettier caused
+  M3/M4 regressions. `tests/unit/jobs.test.ts` fails if a `createFunction` isn't registered.
 
 ## Milestones
 
 - [x] **0. Scaffold**
-- [x] **1. Auth + Gmail connect** — code + tests done; live verification waits on Neon + Google client
-- [ ] 2. Sync
-- [ ] 3. Classification
-- [ ] 4. Profiles
-- [ ] 5. Drafts + Queue
+- [x] **1. Auth + Gmail connect** — verified live 2026-09-28 (Davi signed in and connected Gmail on sa-dac3.vercel.app)
+- [x] **2. Sync** — code + tests done; live sync waits on the Inngest integration
+- [x] **3. Classification** — code + tests done; live run waits on Inngest (and `ANTHROPIC_API_KEY` on Preview)
+- [x] **4. Profiles** — code + tests done; live voice learning waits on Inngest
+- [x] **5. Drafts + Queue** — code + tests done; live drafting waits on Inngest; sending stays off
+      until M6 moves a workspace to `setup_paid`
 - [ ] 6. Workspace lifecycle
 - [ ] 7. Follow-ups
 - [ ] 8. Digest + Activity
@@ -134,14 +223,16 @@ In a sandbox with preinstalled Chromium: `PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-brows
 
 ## Waiting on Davi
 
-- Confirm the Vercel ↔ GitHub link produced a preview deploy for this branch.
-- Neon project + `DATABASE_URL` in Vercel; Google Cloud OAuth client + Gmail API + test users.
-- Vercel env: `AUTH_SECRET`, `TOKEN_ENCRYPTION_KEY`, `AUTH_GOOGLE_ID/SECRET`, `APP_URL`, `ADMIN_EMAIL`.
-- Icon pack (`sa.` monogram, stacked wordmark).
-- `docs/terms.md`, `docs/privacy-policy.md` drafts.
-- `SUPPORT_EMAIL`, production domain.
+- Optional: Gmail push via Pub/Sub (steps in docs/SETUP.md §6); polling works without it.
+- Decide: custom domain vs. turning off Vercel login protection on production (invited owners can't
+  get past Vercel's login today).
+- Rotate the Neon password and Google client secret that were pasted in chat; delete the old
+  Google secret.
+- Add each invited owner as a Google Cloud test user (Google Auth Platform → Audience).
+- Icon pack (`sa.` monogram, stacked wordmark); `docs/terms.md`, `docs/privacy-policy.md` drafts;
+  `SUPPORT_EMAIL`; production domain.
 
 ## Launch blockers to remember
 
-- Connect screen promises "won't keep email text longer than 30 days" — the purge job (M11) must
-  ship before real customer mail is synced (M2 lands bodies in the DB).
+- Previews share the production database. Before real customers: give previews their own Neon
+  branch (Neon's Vercel integration does this) so a preview can't touch customer data.

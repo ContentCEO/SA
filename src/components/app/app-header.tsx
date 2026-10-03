@@ -1,24 +1,23 @@
 import Link from "next/link";
-import { signOut } from "@/auth";
 import { Wordmark } from "@/components/brand/wordmark";
-import { Button } from "@/components/ui/button";
 
 export function AppHeader() {
   return (
     <header className="flex items-center justify-between">
-      <Link href="/settings" className="inline-flex min-h-tap items-center rounded-md">
+      <Link href="/queue" className="inline-flex min-h-tap items-center rounded-md">
         <Wordmark />
       </Link>
-      <form
-        action={async () => {
-          "use server";
-          await signOut({ redirectTo: "/" });
-        }}
-      >
-        <Button type="submit" variant="ghost" size="sm">
-          Sign out
-        </Button>
-      </form>
+      <nav aria-label="Main" className="flex items-center">
+        <Link href="/queue" className="inline-flex min-h-tap items-center px-2 font-semibold">
+          Queue
+        </Link>
+        <Link href="/inbox" className="inline-flex min-h-tap items-center px-2 font-semibold">
+          Inbox
+        </Link>
+        <Link href="/settings" className="inline-flex min-h-tap items-center pl-2 font-semibold">
+          Settings
+        </Link>
+      </nav>
     </header>
   );
 }

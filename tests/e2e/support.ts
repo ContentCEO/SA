@@ -11,7 +11,14 @@ const client = postgres(process.env.DATABASE_URL!, { max: 2 });
 export const testDb = drizzle(client, { schema });
 
 /** A fresh invited owner with a workspace, optionally with a connected mailbox. */
-export async function seedOwner(opts: { mailbox?: boolean } = {}) {
+export async function seedOwner(
+  opts: {
+    mailbox?: boolean;
+    status?: "active" | "reconnect_needed";
+    backfilled?: boolean;
+    messageCount?: number;
+  } = {},
+) {
   const email = `owner-${randomUUID().slice(0, 8)}@example.com`;
   await testDb.insert(schema.invites).values({ email, trade: "plumbing" });
   const [user] = await testDb
@@ -31,9 +38,27 @@ export async function seedOwner(opts: { mailbox?: boolean } = {}) {
         email,
         encryptedRefreshToken: encryptSecret("fake-refresh-token"),
         scopes: "gmail",
+        status: opts.status ?? "active",
+        backfillCompletedAt: opts.backfilled ? new Date() : null,
+        lastSyncedAt: opts.backfilled ? new Date() : null,
       })
       .returning();
     mailboxId = m!.id;
+    if (opts.messageCount) {
+      const [t] = await testDb
+        .insert(schema.threads)
+        .values({ mailboxId, gmailThreadId: "t-e2e", inInbox: true })
+        .returning();
+      await testDb.insert(schema.messages).values(
+        Array.from({ length: opts.messageCount }, (_, i) => ({
+          threadId: t!.id,
+          mailboxId: mailboxId!,
+          gmailMessageId: `m-e2e-${i}`,
+          direction: "in" as const,
+          sentAt: new Date(),
+        })),
+      );
+    }
   }
   return { email, userId: user!.id, workspaceId: workspace!.id, mailboxId };
 }

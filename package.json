@@ -17,13 +17,16 @@
     "db:migrate": "drizzle-kit migrate",
     "db:studio": "drizzle-kit studio",
     "invite": "tsx --env-file-if-exists=.env.local scripts/invite.ts",
-    "db:migrate:http": "tsx --env-file-if-exists=.env.local scripts/migrate-http.ts"
+    "db:migrate:http": "tsx --env-file-if-exists=.env.local scripts/migrate-http.ts",
+    "vercel-build": "tsx scripts/migrate.ts && next build"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.128.0",
     "@base-ui/react": "^1.8.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "drizzle-orm": "^0.45.3",
+    "inngest": "^4.21.0",
     "lucide-react": "^1.48.0",
     "next": "16.3.6",
     "next-auth": "5.0.0-beta.32",

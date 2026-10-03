@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 
 export default async function SignInPage(props: PageProps<"/">) {
   const session = await auth();
-  if (session?.user?.id) redirect("/settings");
+  if (session?.user?.id) redirect("/queue");
   const { error } = await props.searchParams;
 
   return (
@@ -28,7 +28,7 @@ export default async function SignInPage(props: PageProps<"/">) {
         <form
           action={async () => {
             "use server";
-            await signIn("google", { redirectTo: "/settings" });
+            await signIn("google", { redirectTo: "/queue" });
           }}
         >
           <Button type="submit" size="lg" className="w-full sm:w-auto">
