@@ -60,7 +60,10 @@ We deliberately do **not** request `gmail.modify` or full `https://mail.google.c
   mailbox record. (`src/server/mailboxes.ts`)
 - **Delete my data:** wipes the workspace and revokes the Google token. _(Milestone 11.)_
 - **Admin view:** shows only operational health (status, counts, cost). No email content or
-  customer names. _(Milestone 6.)_
+  customer names — the query selects none (`adminOverview` in `src/server/admin.ts`, tested in
+  `tests/unit/lifecycle.test.ts`).
+- **After the three-day evaluation:** if the owner doesn't continue, the account becomes read-only —
+  we stop reading their mailbox and stop sending anything to the AI (`src/server/lifecycle.ts`).
 - **Logs:** never contain tokens, email bodies, or customer personal details.
 
 ## Keep this file honest

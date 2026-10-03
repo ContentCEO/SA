@@ -11,6 +11,7 @@ import {
   threads,
   workspaces,
 } from "@/db/schema";
+import { jobsAllowed } from "./lifecycle";
 
 /** Classify inbound mail from this far back on the first pass; everything new after that. */
 export const CLASSIFY_LOOKBACK_DAYS = 14;
@@ -86,7 +87,7 @@ export async function classifyPending(
     .from(mailboxes)
     .innerJoin(workspaces, eq(workspaces.id, mailboxes.workspaceId))
     .where(eq(mailboxes.id, mailboxId));
-  if (!box || box.mailbox.status !== "active")
+  if (!box || box.mailbox.status !== "active" || !jobsAllowed(box.workspace, now))
     return { classified: 0, superseded: 0, remaining: 0, capped: false };
 
   const since = new Date(now.getTime() - CLASSIFY_LOOKBACK_DAYS * 86_400_000);

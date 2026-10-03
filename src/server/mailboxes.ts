@@ -5,6 +5,7 @@ import { db } from "@/db";
 import { activityLog, mailboxes, type Mailbox, type Workspace } from "@/db/schema";
 import { decryptSecret, encryptSecret } from "@/lib/crypto";
 import type { ConnectResult, MailboxConnector } from "@/mailbox/connector";
+import { startEvaluation } from "./workspace-lifecycle";
 
 /** What the UI may see about a mailbox. Never includes the token. */
 export type MailboxSummary = Pick<
@@ -83,6 +84,9 @@ export async function saveConnectedMailbox(
       action: isReconnect ? "mailbox_reconnected" : "mailbox_connected",
       detail: { mailboxId: row.id, provider: row.provider },
     });
+
+  // The three-day clock starts the first time Gmail is connected (no-op after that).
+  await startEvaluation(workspace.id);
 
   return {
     id: row.id,

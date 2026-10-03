@@ -10,10 +10,11 @@ import {
 } from "@/ai/prompts/voice.v1";
 import { AiCapReachedError } from "@/ai/usage";
 import { db } from "@/db";
-import { activityLog, mailboxes, voiceProfiles, type Mailbox } from "@/db/schema";
+import { activityLog, mailboxes, voiceProfiles, workspaces, type Mailbox } from "@/db/schema";
 import { decryptSecret } from "@/lib/crypto";
 import { MailboxAuthError, type MailboxReader } from "@/mailbox/connector";
 import { createGmailReader } from "@/mailbox/gmail/api";
+import { jobsAllowed } from "./lifecycle";
 import { markReconnectNeeded } from "./sync";
 
 export const MAX_SENT_EMAILS = 200;
@@ -31,7 +32,8 @@ export type VoiceOutcome =
   | "failed"
   | "capped"
   | "reconnect_needed"
-  | "no_mailbox";
+  | "no_mailbox"
+  | "read_only";
 
 /** Belt and braces on top of the prompt: examples must not carry customer details. */
 export function scrubExample(text: string): string {
@@ -73,6 +75,9 @@ export async function learnVoice(
     .from(voiceProfiles)
     .where(eq(voiceProfiles.workspaceId, workspaceId));
   if (existing?.source === "edited" && !opts.force) return "skipped_edited";
+
+  const [ws] = await db().select().from(workspaces).where(eq(workspaces.id, workspaceId));
+  if (!ws || !jobsAllowed(ws, now)) return "read_only";
 
   const [mailbox] = await db()
     .select()
@@ -189,10 +194,17 @@ export async function workspacesDueForVoiceRefresh(now: Date = new Date()) {
       workspaceId: mailboxes.workspaceId,
       learnedAt: voiceProfiles.learnedAt,
       source: voiceProfiles.source,
+      workspace: { status: workspaces.status, evaluationEndsAt: workspaces.evaluationEndsAt },
     })
     .from(mailboxes)
+    .innerJoin(workspaces, eq(workspaces.id, mailboxes.workspaceId))
     .leftJoin(voiceProfiles, eq(voiceProfiles.workspaceId, mailboxes.workspaceId))
     .where(eq(mailboxes.status, "active"));
-  const due = rows.filter((r) => r.source !== "edited" && (!r.learnedAt || r.learnedAt < weekAgo));
+  const due = rows.filter(
+    (r) =>
+      jobsAllowed(r.workspace, now) &&
+      r.source !== "edited" &&
+      (!r.learnedAt || r.learnedAt < weekAgo),
+  );
   return [...new Set(due.map((r) => r.workspaceId))];
 }

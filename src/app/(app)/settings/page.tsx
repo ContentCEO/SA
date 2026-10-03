@@ -6,6 +6,7 @@ import { Button, buttonVariants } from "@/components/ui/button";
 import { relativeTime } from "@/lib/relative-time";
 import { listMailboxes, mailboxLimit, type MailboxSummary } from "@/server/mailboxes";
 import { BACKFILL_DAYS, syncSummary } from "@/server/sync";
+import { isAdminEmail } from "@/server/admin";
 import { requireOwner } from "@/server/session";
 import { cn } from "@/lib/utils";
 import { describeVoice, getBusinessProfile, getVoiceProfile } from "@/server/profile";
@@ -44,7 +45,8 @@ function syncLine(m: MailboxSummary, messageCount: number): string {
 }
 
 export default async function SettingsPage(props: PageProps<"/settings">) {
-  const { workspace } = await requireOwner();
+  const { workspace, session } = await requireOwner();
+  const admin = isAdminEmail(session?.user?.email);
   const mailboxes = await listMailboxes(workspace.id);
   const counts = new Map(
     await Promise.all(
@@ -221,6 +223,11 @@ export default async function SettingsPage(props: PageProps<"/settings">) {
         <h2 id="account" className="text-xl font-black">
           Account
         </h2>
+        {admin ? (
+          <Link href="/admin" className={cn(buttonVariants({ variant: "outline" }), "w-full")}>
+            Admin
+          </Link>
+        ) : null}
         <form
           action={async () => {
             "use server";

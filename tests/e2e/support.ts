@@ -84,3 +84,84 @@ export async function signInAs(context: BrowserContext, owner: { userId: string;
     { name: cookieName, value, domain: url.hostname, path: "/", httpOnly: true, sameSite: "Lax" },
   ]);
 }
+
+/** A needs-you complaint (Dana) and a quote with a pending draft (Priya). */
+export async function seedQueue(mailboxId: string) {
+  const mk = async (g: string, over: Partial<typeof schema.threads.$inferInsert>, from: string) => {
+    const [t] = await testDb
+      .insert(schema.threads)
+      .values({
+        mailboxId,
+        gmailThreadId: `${g}-${mailboxId}`,
+        inInbox: true,
+        lastMessageAt: new Date(),
+        ...over,
+      })
+      .returning();
+    const [m] = await testDb
+      .insert(schema.messages)
+      .values({
+        threadId: t!.id,
+        mailboxId,
+        gmailMessageId: `m-${g}-${mailboxId}`,
+        direction: "in",
+        fromName: from,
+        fromAddress: `${from.toLowerCase()}@x.com`,
+        sentAt: new Date(),
+      })
+      .returning();
+    return { t: t!, m: m! };
+  };
+  const complaint = await mk(
+    "c",
+    {
+      category: "complaint",
+      needsOwner: true,
+      needsOwnerReason: "Customer says the leak came back.",
+      summary: "Leak is back.",
+    },
+    "Dana",
+  );
+  const quote = await mk(
+    "q",
+    { category: "quote_request", summary: "Panel upgrade quote." },
+    "Priya",
+  );
+  const [draft] = await testDb
+    .insert(schema.drafts)
+    .values({
+      threadId: quote.t.id,
+      mailboxId,
+      replyToMessageId: quote.m.id,
+      gmailDraftId: "fake-draft",
+      toAddress: "priya@x.com",
+      subject: "Re: Panel",
+      body: "Hey Priya,\n\nWhat's the address, and how old is the current panel?\n\nThanks, Davi",
+      originalBody: "same",
+      reason: "Quote request, panel upgrade. Asked for the address and panel age.",
+      flags: ["Check you can do Tuesday morning."],
+      confidence: 85,
+    })
+    .returning();
+  return { complaint, quote, draft: draft! };
+}
+
+/** Set where a seeded owner is in the commercial flow. */
+export async function setWorkspace(
+  workspaceId: string,
+  values: Partial<typeof schema.workspaces.$inferInsert>,
+) {
+  await testDb.update(schema.workspaces).set(values).where(eq(schema.workspaces.id, workspaceId));
+}
+
+/** The ADMIN_EMAIL user (created once, reused across tests). */
+export async function seedAdmin() {
+  const email = process.env.ADMIN_EMAIL!.toLowerCase();
+  await testDb.insert(schema.users).values({ email, name: "Davi" }).onConflictDoNothing();
+  const [user] = await testDb.select().from(schema.users).where(eq(schema.users.email, email));
+  await testDb
+    .insert(schema.workspaces)
+    .values({ ownerUserId: user!.id, status: "active" })
+    .onConflictDoNothing();
+  return { email, userId: user!.id };
+}

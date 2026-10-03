@@ -1,4 +1,5 @@
-import { cron, NonRetriableError } from "inngest";
+import { cron, NonRetriableError, RetryAfterError } from "inngest";
+import { MailboxRateLimitError } from "@/mailbox/connector";
 import {
   backfillPage,
   beginBackfill,
@@ -12,6 +13,7 @@ import { classifyPending } from "@/server/classification";
 import { createDraftForThread, reconcileDrafts, threadsToAutoDraft } from "@/server/drafts";
 import { getMailboxWorkspace } from "@/server/mailboxes";
 import { learnVoice, workspacesDueForVoiceRefresh } from "@/server/voice";
+import { expireEvaluations, startPendingEvaluations } from "@/server/workspace-lifecycle";
 import {
   inngest,
   mailboxClassifyRequested,
@@ -22,6 +24,21 @@ import {
 } from "./client";
 
 /**
+ * Gmail said "slow down" more times than the client retries: pause this step
+ * for a couple of minutes instead of failing, so the job picks up where it was.
+ */
+export async function politely<T>(fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn();
+  } catch (err) {
+    if (err instanceof MailboxRateLimitError) {
+      throw new RetryAfterError("Gmail asked us to slow down.", "2m", { cause: err });
+    }
+    throw err;
+  }
+}
+
+/**
  * 30-day backfill, one page per step so each step stays well under function
  * time limits and retries resume from the page that failed.
  */
@@ -30,17 +47,19 @@ export const backfillMailbox = inngest.createFunction(
     id: "backfill-mailbox",
     triggers: [mailboxConnected],
     singleton: { key: "event.data.mailboxId", mode: "skip" },
-    retries: 5,
+    retries: 10,
   },
   async ({ event, step }) => {
     const { mailboxId } = event.data;
-    const start = await step.run("begin", () => beginBackfill(mailboxId));
+    const start = await step.run("begin", () => politely(() => beginBackfill(mailboxId)));
     if (start.status !== "ok") return start;
 
     let pageToken: string | undefined;
     let total = 0;
     for (let page = 0; ; page++) {
-      const result = await step.run(`page-${page}`, () => backfillPage(mailboxId, pageToken));
+      const result = await step.run(`page-${page}`, () =>
+        politely(() => backfillPage(mailboxId, pageToken)),
+      );
       if (result.status !== "ok") return result;
       total += result.ingested;
       pageToken = result.nextPageToken;
@@ -77,7 +96,7 @@ export const syncMailbox = inngest.createFunction(
   },
   async ({ event, step }) => {
     const { mailboxId } = event.data;
-    const result = await step.run("sync", () => incrementalSync(mailboxId));
+    const result = await step.run("sync", () => politely(() => incrementalSync(mailboxId)));
     if (result.status === "reconnect_needed") {
       throw new NonRetriableError("Mailbox needs reconnecting.");
     }
@@ -137,12 +156,12 @@ export const draftMailbox = inngest.createFunction(
   },
   async ({ event, step }) => {
     const { mailboxId } = event.data;
-    await step.run("reconcile", () => reconcileDrafts(mailboxId));
+    await step.run("reconcile", () => politely(() => reconcileDrafts(mailboxId)));
     const due = await step.run("due", () => threadsToAutoDraft(mailboxId, 10));
     let created = 0;
     for (const threadId of due) {
       const r = await step.run(`draft-${threadId}`, () =>
-        createDraftForThread(threadId, { trigger: "auto" }),
+        politely(() => createDraftForThread(threadId, { trigger: "auto" })),
       );
       if (r.status === "created") created++;
       if (r.status === "reconnect_needed" || (r.status === "skipped" && r.reason === "capped"))
@@ -162,7 +181,7 @@ export const learnVoiceFn = inngest.createFunction(
   },
   async ({ event, step }) =>
     step.run("learn", () =>
-      learnVoice(event.data.workspaceId, { force: event.data.force ?? false }),
+      politely(() => learnVoice(event.data.workspaceId, { force: event.data.force ?? false })),
     ),
 );
 
@@ -199,6 +218,19 @@ export const pollMailboxes = inngest.createFunction(
   },
 );
 
+/**
+ * Every 15 minutes: start the clock for anyone who connected Gmail but wasn't
+ * moved (backstop), and record evaluations that have run out. Gates don't wait
+ * for this — they read the clock directly.
+ */
+export const workspaceLifecycle = inngest.createFunction(
+  { id: "workspace-lifecycle", triggers: [cron("*/15 * * * *")] },
+  async ({ step }) => ({
+    started: await step.run("start", () => startPendingEvaluations()),
+    expired: await step.run("expire", () => expireEvaluations()),
+  }),
+);
+
 /** Daily: renew Gmail push watches before they silently expire. */
 export const renewGmailWatches = inngest.createFunction(
   { id: "renew-gmail-watches", triggers: [cron("17 6 * * *")] },
@@ -221,4 +253,5 @@ export const functions = [
   pollMailboxes,
   renewGmailWatches,
   purgeBodies,
+  workspaceLifecycle,
 ];

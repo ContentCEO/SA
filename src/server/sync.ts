@@ -2,7 +2,15 @@ import "server-only";
 import { and, eq, inArray, isNotNull, isNull, lt, or, sql } from "drizzle-orm";
 import { bodyRetentionDays } from "@/config/retention";
 import { db } from "@/db";
-import { activityLog, drafts, mailboxes, messages, threads, type Mailbox } from "@/db/schema";
+import {
+  activityLog,
+  drafts,
+  mailboxes,
+  messages,
+  threads,
+  workspaces,
+  type Mailbox,
+} from "@/db/schema";
 import { decryptSecret } from "@/lib/crypto";
 import {
   HistoryExpiredError,
@@ -13,12 +21,19 @@ import {
 } from "@/mailbox/connector";
 import { createGmailReader } from "@/mailbox/gmail/api";
 import { parseAddressList } from "@/mailbox/gmail/parse";
+import { jobsAllowed } from "./lifecycle";
 
 /** How far back the first sync reaches. */
 export const BACKFILL_DAYS = 30;
 /** When the history cursor has expired, re-read this many days instead. */
 export const RESYNC_DAYS = 7;
-const FETCH_CONCURRENCY = 8;
+/**
+ * Gmail allows roughly 50 message reads a second per user, and refuses bursts
+ * well before that. Four at a time stays comfortably under it.
+ */
+const FETCH_CONCURRENCY = 4;
+/** Messages per backfill step. Smaller pages mean a retry redoes less work. */
+const BACKFILL_PAGE_SIZE = 50;
 
 export type SyncDeps = {
   readerFor?: (mailbox: Mailbox) => MailboxReader;
@@ -27,7 +42,7 @@ export type SyncDeps = {
 
 export type SyncOutcome =
   | { status: "ok"; ingested: number; nextPageToken?: string }
-  | { status: "skipped"; reason: "not_found" | "not_active" | "not_ready" }
+  | { status: "skipped"; reason: "not_found" | "not_active" | "not_ready" | "read_only" }
   | { status: "reconnect_needed" };
 
 const defaultReaderFor = (m: Mailbox) =>
@@ -52,12 +67,21 @@ async function mapLimit<T, R>(
 }
 
 async function loadActiveMailbox(mailboxId: string) {
-  const [m] = await db().select().from(mailboxes).where(eq(mailboxes.id, mailboxId));
-  if (!m) return { mailbox: undefined, skip: { status: "skipped", reason: "not_found" } as const };
-  if (m.status !== "active") {
+  const [row] = await db()
+    .select({ mailbox: mailboxes, workspace: workspaces })
+    .from(mailboxes)
+    .innerJoin(workspaces, eq(workspaces.id, mailboxes.workspaceId))
+    .where(eq(mailboxes.id, mailboxId));
+  if (!row)
+    return { mailbox: undefined, skip: { status: "skipped", reason: "not_found" } as const };
+  if (row.mailbox.status !== "active") {
     return { mailbox: undefined, skip: { status: "skipped", reason: "not_active" } as const };
   }
-  return { mailbox: m, skip: undefined };
+  // Read-only workspaces (expired, paused, past due, canceled) aren't synced.
+  if (!jobsAllowed(row.workspace)) {
+    return { mailbox: undefined, skip: { status: "skipped", reason: "read_only" } as const };
+  }
+  return { mailbox: row.mailbox, skip: undefined };
 }
 
 /**
@@ -254,7 +278,11 @@ export async function backfillPage(
   const reader = (deps.readerFor ?? defaultReaderFor)(mailbox);
   const now = deps.now?.() ?? new Date();
   return guarded(mailbox, async () => {
-    const page = await reader.listMessages({ query: windowQuery(BACKFILL_DAYS), pageToken });
+    const page = await reader.listMessages({
+      query: windowQuery(BACKFILL_DAYS),
+      pageToken,
+      maxResults: BACKFILL_PAGE_SIZE,
+    });
     const ingested = await ingest(mailbox, reader, page.messages, now);
     return { status: "ok", ingested, nextPageToken: page.nextPageToken };
   });
@@ -331,11 +359,19 @@ export async function incrementalSync(
 }
 
 /** Mailboxes that should be polled / backfilled right now. */
-export async function listSyncableMailboxes() {
-  return db()
-    .select({ id: mailboxes.id, backfillCompletedAt: mailboxes.backfillCompletedAt })
+export async function listSyncableMailboxes(now: Date = new Date()) {
+  const rows = await db()
+    .select({
+      id: mailboxes.id,
+      backfillCompletedAt: mailboxes.backfillCompletedAt,
+      workspace: { status: workspaces.status, evaluationEndsAt: workspaces.evaluationEndsAt },
+    })
     .from(mailboxes)
+    .innerJoin(workspaces, eq(workspaces.id, mailboxes.workspaceId))
     .where(eq(mailboxes.status, "active"));
+  return rows
+    .filter((r) => jobsAllowed(r.workspace, now))
+    .map(({ id, backfillCompletedAt }) => ({ id, backfillCompletedAt }));
 }
 
 /** Gmail's push watch lasts 7 days; renew anything expiring within 2. No-op without a topic. */

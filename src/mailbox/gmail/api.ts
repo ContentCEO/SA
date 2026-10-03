@@ -3,6 +3,7 @@ import { z } from "zod";
 import {
   HistoryExpiredError,
   MailboxAuthError,
+  MailboxRateLimitError,
   type HistoryPage,
   type MailboxReader,
   type MailboxWriter,
@@ -123,6 +124,8 @@ export function createGmailReader(opts: GmailReaderOptions): MailboxReader & Mai
       }
       if (res.status === 403 && !retryable)
         throw new MailboxAuthError("Gmail access is not permitted.");
+      if (res.status === 429 || (res.status === 403 && retryable))
+        throw new MailboxRateLimitError(`Gmail API ${res.status}${reason ? ` (${reason})` : ""}.`);
       throw new Error(`Gmail API ${res.status}${reason ? ` (${reason})` : ""}.`);
     }
   }

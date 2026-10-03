@@ -3,7 +3,7 @@
 import { redirect } from "next/navigation";
 import { z } from "zod";
 import { createDraftForThread, discardDraft, saveDraftEdit, sendDraft } from "@/server/drafts";
-import { SendingBlockedError } from "@/server/lifecycle";
+import { ReadOnlyError, SendingBlockedError } from "@/server/lifecycle";
 import { requireOwner } from "@/server/session";
 
 const id = z.string().uuid();
@@ -44,7 +44,13 @@ export async function saveDraftEditAction(formData: FormData) {
   const text = body.safeParse(formData.get("body"));
   if (!draftId.success) redirect("/queue?error=unknown");
   if (!text.success) redirect("/queue?error=empty");
-  const r = await saveDraftEdit(workspace.id, draftId.data, text.data);
+  let r;
+  try {
+    r = await saveDraftEdit(workspace.id, draftId.data, text.data);
+  } catch (err) {
+    if (err instanceof ReadOnlyError) redirect("/queue?error=readonly");
+    throw err;
+  }
   redirect(
     r === "saved"
       ? "/queue?done=saved"
@@ -58,7 +64,12 @@ export async function discardDraftAction(formData: FormData) {
   const { workspace } = await requireOwner();
   const draftId = id.safeParse(formData.get("draftId"));
   if (!draftId.success) redirect("/queue?error=unknown");
-  await discardDraft(workspace.id, draftId.data);
+  try {
+    await discardDraft(workspace.id, draftId.data);
+  } catch (err) {
+    if (err instanceof ReadOnlyError) redirect("/queue?error=readonly");
+    throw err;
+  }
   redirect("/queue?done=discarded");
 }
 
@@ -78,6 +89,7 @@ export async function draftReplyAction(formData: FormData) {
     owner_replied_last: "replied",
     no_text: "notext",
     capped: "capped",
+    read_only: "readonly",
   };
   redirect(`/queue?error=${reasons[r.reason] ?? "draftfailed"}`);
 }

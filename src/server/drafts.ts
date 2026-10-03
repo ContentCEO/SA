@@ -29,7 +29,13 @@ import { decryptSecret } from "@/lib/crypto";
 import { MailboxAuthError, type MailboxWriter } from "@/mailbox/connector";
 import { createGmailReader } from "@/mailbox/gmail/api";
 import { buildReplyMime, replySubject, sameText, toGmailRaw } from "@/mailbox/mime";
-import { canSend, SendingBlockedError } from "./lifecycle";
+import {
+  canSend,
+  effectiveStatus,
+  jobsAllowed,
+  ReadOnlyError,
+  SendingBlockedError,
+} from "./lifecycle";
 import { markReconnectNeeded } from "./sync";
 
 /** Categories we draft for without being asked. Complaints and noise never are. */
@@ -62,7 +68,8 @@ export type CreateOutcome =
         | "owner_replied_last"
         | "no_text"
         | "capped"
-        | "model_failed";
+        | "model_failed"
+        | "read_only";
     }
   | { status: "reconnect_needed" };
 
@@ -139,6 +146,7 @@ export async function createDraftForThread(
     return { status: "skipped", reason: "not_found" };
   }
   const { thread, mailbox, workspace } = row;
+  if (!jobsAllowed(workspace, now)) return { status: "skipped", reason: "read_only" };
   if (mailbox.status !== "active") return { status: "skipped", reason: "mailbox_inactive" };
 
   if (opts.trigger === "auto") {
@@ -365,7 +373,7 @@ export async function sendDraft(
   if (!row || row.draft.status !== "pending" || !row.draft.gmailDraftId)
     return { status: "not_found" };
   const { draft, mailbox, thread, workspace } = row;
-  if (!canSend(workspace)) throw new SendingBlockedError(workspace.status);
+  if (!canSend(workspace, now)) throw new SendingBlockedError(effectiveStatus(workspace, now));
   if (mailbox.status !== "active") return { status: "reconnect_needed" };
 
   const writer = (opts.writerFor ?? defaultWriter)(mailbox);
@@ -449,7 +457,9 @@ export async function saveDraftEdit(
 ): Promise<"saved" | "not_found" | "deleted_in_gmail" | "reconnect_needed"> {
   const row = await loadOwnedDraft(workspaceId, draftId);
   if (!row || row.draft.status !== "pending" || !row.draft.gmailDraftId) return "not_found";
-  const { draft, mailbox, thread } = row;
+  const { draft, mailbox, thread, workspace } = row;
+  const now = opts.now?.() ?? new Date();
+  if (!jobsAllowed(workspace, now)) throw new ReadOnlyError(effectiveStatus(workspace, now));
   const writer = (opts.writerFor ?? defaultWriter)(mailbox);
   try {
     const remote = await writer.getDraft(draft.gmailDraftId!);
@@ -459,7 +469,7 @@ export async function saveDraftEdit(
         workspaceId,
         "discarded",
         "You deleted or sent this draft in Gmail.",
-        opts.now?.() ?? new Date(),
+        now,
       );
       return "deleted_in_gmail";
     }
@@ -514,6 +524,9 @@ export async function discardDraft(
 ): Promise<"discarded" | "not_found"> {
   const row = await loadOwnedDraft(workspaceId, draftId);
   if (!row || row.draft.status !== "pending") return "not_found";
+  const now = opts.now?.() ?? new Date();
+  if (!jobsAllowed(row.workspace, now))
+    throw new ReadOnlyError(effectiveStatus(row.workspace, now));
   const writer = (opts.writerFor ?? defaultWriter)(row.mailbox);
   if (row.draft.gmailDraftId) {
     try {
@@ -523,7 +536,7 @@ export async function discardDraft(
       await markReconnectNeeded(row.mailbox);
     }
   }
-  await closeDraft(row.draft, workspaceId, "discarded", null, opts.now?.() ?? new Date(), "owner");
+  await closeDraft(row.draft, workspaceId, "discarded", null, now, "owner");
   return "discarded";
 }
 
@@ -537,9 +550,15 @@ export async function discardDraft(
  */
 export async function reconcileDrafts(mailboxId: string, opts: DraftDeps = {}) {
   const now = opts.now?.() ?? new Date();
-  const [mailbox] = await db().select().from(mailboxes).where(eq(mailboxes.id, mailboxId));
-  if (!mailbox || mailbox.status !== "active")
+  const [box] = await db()
+    .select({ mailbox: mailboxes, workspace: workspaces })
+    .from(mailboxes)
+    .innerJoin(workspaces, eq(workspaces.id, mailboxes.workspaceId))
+    .where(eq(mailboxes.id, mailboxId));
+  // Read-only workspaces are left exactly as they are, here and in Gmail.
+  if (!box || box.mailbox.status !== "active" || !jobsAllowed(box.workspace, now))
     return { checked: 0, closed: 0, expiredThreads: [] as string[] };
+  const { mailbox } = box;
   const pending = await db()
     .select()
     .from(drafts)

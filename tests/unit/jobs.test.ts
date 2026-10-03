@@ -1,11 +1,28 @@
+import { RetryAfterError } from "inngest";
 import { describe, expect, it } from "vitest";
-import { afterSync, functions } from "@/jobs/functions";
+import { afterSync, functions, politely } from "@/jobs/functions";
+import { MailboxAuthError, MailboxRateLimitError } from "@/mailbox/connector";
 
 describe("job wiring", () => {
   it("sorts new mail after a sync, and reconciles drafts when there's none", () => {
     expect(afterSync("m1", 3).name).toBe("mailbox/classify.requested");
     expect(afterSync("m1", 0).name).toBe("mailbox/draft.requested");
     expect(afterSync("m1", 0).data).toEqual({ mailboxId: "m1" });
+  });
+
+  it("Gmail rate limits pause the step for a couple of minutes instead of failing it", async () => {
+    const err = await politely(async () => {
+      throw new MailboxRateLimitError();
+    }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(RetryAfterError);
+    expect((err as RetryAfterError).retryAfter).toBeTruthy();
+    // Anything else passes through untouched.
+    await expect(
+      politely(async () => {
+        throw new MailboxAuthError();
+      }),
+    ).rejects.toBeInstanceOf(MailboxAuthError);
+    await expect(politely(async () => 7)).resolves.toBe(7);
   });
 
   it("registers every job with Inngest", () => {
@@ -15,6 +32,7 @@ describe("job wiring", () => {
       [
         "backfill-mailbox",
         "sync-mailbox",
+        "workspace-lifecycle",
         "classify-mailbox",
         "draft-mailbox",
         "learn-voice",
