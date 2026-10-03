@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { HistoryExpiredError, MailboxAuthError, MailboxRateLimitError } from "@/mailbox/connector";
-import { backoffDelay, createGmailReader } from "@/mailbox/gmail/api";
+import { backoffDelay, createGmailReader, parseRetryAfter } from "@/mailbox/gmail/api";
 import { extractBodyText, htmlToText, parseAddressList } from "@/mailbox/gmail/parse";
 
 const json = (body: unknown, status = 200, headers: Record<string, string> = {}) =>
@@ -116,6 +116,37 @@ describe("rate limits", () => {
     const err = await r.getProfile().catch((e: unknown) => e);
     expect(err).toBeInstanceOf(MailboxRateLimitError);
     expect(err).not.toBeInstanceOf(MailboxAuthError);
+  });
+
+  it("when Gmail names a cool-down time, stops at once and reports it (retrying only extends it)", async () => {
+    const f = vi
+      .fn()
+      .mockResolvedValueOnce(token())
+      .mockResolvedValue(
+        json(
+          {
+            error: {
+              message: "User-rate limit exceeded.  Retry after 2026-10-03T14:45:00.000Z",
+              errors: [{ reason: "rateLimitExceeded" }],
+            },
+          },
+          403,
+        ),
+      );
+    const { r, sleep } = reader(f);
+    const err = await r.getProfile().catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(MailboxRateLimitError);
+    expect((err as MailboxRateLimitError).retryAt).toEqual(new Date("2026-10-03T14:45:00.000Z"));
+    expect(sleep).not.toHaveBeenCalled();
+    expect(f).toHaveBeenCalledTimes(2); // token + one try
+  });
+
+  it("parses Gmail's retry-after text, and ignores anything else", () => {
+    expect(parseRetryAfter("User-rate limit exceeded. Retry after 2026-10-03T14:45:00Z")).toEqual(
+      new Date("2026-10-03T14:45:00Z"),
+    );
+    expect(parseRetryAfter("Rate Limit Exceeded")).toBeUndefined();
+    expect(parseRetryAfter(undefined)).toBeUndefined();
   });
 
   it("keeps jittered delays within the exponential cap", () => {

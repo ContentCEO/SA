@@ -33,7 +33,9 @@ export async function politely<T>(fn: () => Promise<T>): Promise<T> {
     return await fn();
   } catch (err) {
     if (err instanceof MailboxRateLimitError) {
-      throw new RetryAfterError("Gmail asked us to slow down.", "2m", { cause: err });
+      // Wait as long as Gmail asked (plus a minute), and never less than two minutes.
+      const at = Math.max(Date.now() + 120_000, (err.retryAt?.getTime() ?? 0) + 60_000);
+      throw new RetryAfterError("Gmail asked us to slow down.", new Date(at), { cause: err });
     }
     throw err;
   }

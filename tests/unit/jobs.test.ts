@@ -16,6 +16,12 @@ describe("job wiring", () => {
     }).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(RetryAfterError);
     expect((err as RetryAfterError).retryAfter).toBeTruthy();
+    // Gmail's own cool-down wins when it's longer than our default pause.
+    const later = new Date(Date.now() + 30 * 60_000);
+    const waited = (await politely(async () => {
+      throw new MailboxRateLimitError("slow down", later);
+    }).catch((e: unknown) => e)) as RetryAfterError;
+    expect(new Date(waited.retryAfter).getTime()).toBe(later.getTime() + 60_000);
     // Anything else passes through untouched.
     await expect(
       politely(async () => {

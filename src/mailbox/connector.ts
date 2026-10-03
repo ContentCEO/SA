@@ -87,7 +87,11 @@ export class MailboxAuthError extends Error {
  * the mailbox — the job should pause for a few minutes and pick up again.
  */
 export class MailboxRateLimitError extends Error {
-  constructor(message = "Gmail asked us to slow down.") {
+  constructor(
+    message = "Gmail asked us to slow down.",
+    /** When Gmail said to try again, if it said. */
+    public readonly retryAt?: Date,
+  ) {
     super(message);
     this.name = "MailboxRateLimitError";
   }

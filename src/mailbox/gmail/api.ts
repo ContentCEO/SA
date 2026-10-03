@@ -39,6 +39,14 @@ export function backoffDelay(
   return Math.floor(random() * Math.min(capMs, baseMs * 2 ** attempt));
 }
 
+/** "…Retry after 2026-10-03T14:45:00.000Z" → that time. */
+export function parseRetryAfter(message: string | undefined): Date | undefined {
+  const m = message?.match(/retry after (\d{4}-\d{2}-\d{2}T[\d:.]+Z)/i);
+  if (!m) return undefined;
+  const d = new Date(m[1]!);
+  return Number.isNaN(d.getTime()) ? undefined : d;
+}
+
 const tokenResponse = z.object({ access_token: z.string(), expires_in: z.number().optional() });
 
 export function createGmailReader(opts: GmailReaderOptions): MailboxReader & MailboxWriter {
@@ -106,13 +114,24 @@ export function createGmailReader(opts: GmailReaderOptions): MailboxReader & Mai
         continue;
       }
       const err = (await res.json().catch(() => ({}))) as {
-        error?: { errors?: { reason?: string }[] };
+        error?: { message?: string; errors?: { reason?: string }[] };
       };
       const reason = err.error?.errors?.[0]?.reason;
+      // Gmail's own text, e.g. "User-rate limit exceeded. Retry after 2026-10-03T14:45:00.000Z".
+      // Never contains mail content; safe to keep for diagnosis.
+      const googleMessage = err.error?.message?.slice(0, 200);
+      const retryAt = parseRetryAfter(googleMessage);
       const retryable =
         res.status === 429 ||
         res.status >= 500 ||
         (res.status === 403 && RATE_LIMIT_REASONS.has(reason ?? ""));
+      // Gmail gave a cool-down time: retrying before it only extends it.
+      if (retryable && retryAt) {
+        throw new MailboxRateLimitError(
+          `Gmail API ${res.status} (${reason ?? "rate limited"}): ${googleMessage}`,
+          retryAt,
+        );
+      }
       if (retryable && attempt < maxRetries) {
         const retryAfter = Number(res.headers.get("retry-after"));
         await sleep(
@@ -125,7 +144,9 @@ export function createGmailReader(opts: GmailReaderOptions): MailboxReader & Mai
       if (res.status === 403 && !retryable)
         throw new MailboxAuthError("Gmail access is not permitted.");
       if (res.status === 429 || (res.status === 403 && retryable))
-        throw new MailboxRateLimitError(`Gmail API ${res.status}${reason ? ` (${reason})` : ""}.`);
+        throw new MailboxRateLimitError(
+          `Gmail API ${res.status}${reason ? ` (${reason})` : ""}${googleMessage ? `: ${googleMessage}` : "."}`,
+        );
       throw new Error(`Gmail API ${res.status}${reason ? ` (${reason})` : ""}.`);
     }
   }
