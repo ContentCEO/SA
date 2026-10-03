@@ -16,6 +16,8 @@ export type DraftCardProps = {
   lowConfidence: boolean;
   needsOwnerReason: string | null;
   canSend: boolean;
+  /** Read-only account: show the draft, but no edit, discard or swipe. */
+  readOnly?: boolean;
   sendingOffLabel: string;
   sendingOffDetail: string;
 };
@@ -47,7 +49,7 @@ export function DraftCard(p: DraftCardProps) {
   const start = useRef<{ x: number; y: number } | null>(null);
 
   const onPointerDown = (e: React.PointerEvent) => {
-    if (editing || e.pointerType === "mouse") return;
+    if (editing || p.readOnly || e.pointerType === "mouse") return;
     start.current = { x: e.clientX, y: e.clientY };
   };
   const onPointerMove = (e: React.PointerEvent) => {
@@ -178,14 +180,16 @@ export function DraftCard(p: DraftCardProps) {
                   <span className="text-sm text-ash">{p.sendingOffDetail}</span>
                 </div>
               )}
-              <div className="grid grid-cols-2 gap-2">
-                <Button type="button" variant="outline" onClick={() => setEditing(true)}>
-                  Edit
-                </Button>
-                <Button type="button" variant="outline" onClick={() => setConfirmDiscard(true)}>
-                  Discard
-                </Button>
-              </div>
+              {p.readOnly ? null : (
+                <div className="grid grid-cols-2 gap-2">
+                  <Button type="button" variant="outline" onClick={() => setEditing(true)}>
+                    Edit
+                  </Button>
+                  <Button type="button" variant="outline" onClick={() => setConfirmDiscard(true)}>
+                    Discard
+                  </Button>
+                </div>
+              )}
             </div>
           )}
         </>

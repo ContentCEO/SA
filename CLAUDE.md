@@ -42,19 +42,20 @@ src/app/            routes (App Router)
 src/components/ui/  shadcn components (edited: all button sizes ≥44px, no red destructive)
 src/components/brand/  Headline (signature serif-over-heavy), Wordmark (placeholder)
 src/auth.ts         Auth.js (sign-in = openid/email/profile only; JWT sessions; invite-only)
-src/app/(app)/      signed-in screens: inbox, connect (pre-OAuth explainer), settings
+src/app/(app)/      signed-in screens: queue, inbox, connect (pre-OAuth explainer), settings, admin
 src/ai/             model client (cap, usage, logging), classify, prompts/ (versioned)
 src/jobs/           Inngest client, events, functions (served at /api/inngest)
 src/app/api/gmail/  Gmail OAuth callback (connect is a server action in (app)/connect/actions.ts)
 src/mailbox/        connector interface + gmail/ implementation (scopes, OAuth, state)
-src/server/         domain logic: accounts, mailboxes, session (requireOwner), sync, classification,
-                    inbox, profile, voice
+src/server/         domain logic: accounts, mailboxes, session (requireOwner/requireAdmin), sync,
+                    classification, inbox, profile, voice, drafts, lifecycle (pure rules),
+                    workspace-lifecycle (DB transitions), admin (overview, invites)
 src/components/forms/  Field components + business profile / voice forms
 src/lib/crypto.ts   AES-256-GCM for refresh tokens
 src/config/         site.ts (business facts), models.ts, pricing.ts, retention.ts
 src/db/             schema.ts, lazy db() client (postgres.js)
 drizzle/            generated migrations — commit them
-scripts/invite.ts   pnpm invite owner@shop.com [trade] ["note"]
+scripts/invite.ts   pnpm invite owner@shop.com [trade] ["note"] (or /admin → Invite an owner)
 src/styles/theme.css   THE theme file — every color/token
 tests/unit/         Vitest; DB tests use in-memory PGlite (tests/support/db.ts)
 tests/e2e/          Playwright (mobile 375px + desktop); real Postgres; forged Auth.js cookie
@@ -125,11 +126,11 @@ In a sandbox with preinstalled Chromium: `PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-brows
   `ADMIN_EMAIL` (plain, prod+preview); `APP_URL` (prod only). Env changes need a redeploy.
 - Inngest: Vercel Marketplace integration (Hobby/free), connected to `sa` 2026-09-30;
   `INNGEST_EVENT_KEY` / `INNGEST_SIGNING_KEY` on prod + preview. `ANTHROPIC_API_KEY` on prod + preview.
-  Production (`main`) still runs M1 code, so only the preview runs jobs until Davi okays a promote.
-  The preview shares the prod DB, so it syncs and drafts for Davi's real mailbox (sending stays gated).
+  Previews stay behind Vercel login (Hobby plan has no automation bypass), so Inngest can only reach
+  production. Production protection = `prod_deployment_urls_and_all_previews` (2026-10-03): the
+  production domain sa-dac3.vercel.app is public; previews and per-deploy URLs need Vercel login.
+  M1–M5 were merged to `main` by Davi (PR #1, 2026-10-03).
 - Google OAuth client lives in Cloud project number 214188340483; app is in Testing (test users only).
-- Production has Vercel login protection (SSO, all except custom domains) — fine for Davi, blocks
-  invited owners until a custom domain is added or protection is limited to previews.
 - **Sync (M2):** `MailboxReader` interface in `src/mailbox/connector.ts`; Gmail impl in
   `src/mailbox/gmail/api.ts` is plain `fetch` (no googleapis SDK) with token refresh, 401 re-refresh
   once, 429/5xx/rate-limit-403 exponential backoff with full jitter + Retry-After, and
@@ -202,6 +203,26 @@ In a sandbox with preinstalled Chromium: `PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-brows
 - Draft text is purged with the same retention as bodies; pending drafts past retention expire.
 - Pipeline: sync → classify (if new mail) → draft; sync with no new mail still reconciles drafts.
 - Signed-in home is now `/queue`. Nav: Queue · Inbox · Settings.
+- **Lifecycle (M6):** rules are pure functions in `src/server/lifecycle.ts`; DB moves in
+  `src/server/workspace-lifecycle.ts`. `effectiveStatus()` treats `evaluating` past
+  `evaluation_ends_at` as `evaluation_expired`, so no gate waits on a cron.
+- The 3-day clock starts on the **first Gmail connect** (`saveConnectedMailbox` → `startEvaluation`,
+  only from `invited`, so reconnecting never restarts it). Cron `workspace-lifecycle` (every 15 min)
+  starts any missed clocks and records expiries (logged once).
+- `JOBS_ALLOWED` = invited, evaluating, setup_paid, active. Everything else is **read-only**: sync,
+  classify, draft (auto and owner), voice and reconcile all skip before touching Google or the model;
+  edit/discard throw `ReadOnlyError`. Read-only screens show drafts but no Edit/Discard/Draft a reply.
+  Data is never deleted for expiry or non-payment.
+- `StatusBanner` on every signed-in screen: "Day N of 3 · X left" during evaluation; inverted
+  explanation + phone/support email when expired, setup paid, past due, paused, canceled.
+- `/admin` (`requireAdmin` → 404 for anyone but `ADMIN_EMAIL`; actions re-check). Shows per-workspace
+  status, plan, evaluation end, mailbox health, draft counts, AI calls/cost — selects no thread,
+  message or draft text and no customer addresses (tested). Manual moves until Stripe (M10):
+  extend 3 days, mark setup paid (turns sending on), setup call done (→ active), pause/resume
+  (`ADMIN_MOVES` table; resume returns to where it was). Also an invite form. Link in Settings → Account
+  for the admin only.
+- postgres.js can't bind a `Date` inside a raw `sql` template — pass `.toISOString()` with
+  `::timestamptz` (PGlite tolerates it, so unit tests won't catch it; e2e did).
 - Lesson: scripted `str.replace` edits must `assert old in s` — silent no-ops after Prettier caused
   M3/M4 regressions. `tests/unit/jobs.test.ts` fails if a `createFunction` isn't registered.
 
@@ -214,7 +235,7 @@ In a sandbox with preinstalled Chromium: `PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-brows
 - [x] **4. Profiles** — code + tests done; live voice learning waits on Inngest
 - [x] **5. Drafts + Queue** — code + tests done; live drafting waits on Inngest; sending stays off
       until M6 moves a workspace to `setup_paid`
-- [ ] 6. Workspace lifecycle
+- [x] **6. Workspace lifecycle** — trial clock, read-only expiry, admin page with manual moves
 - [ ] 7. Follow-ups
 - [ ] 8. Digest + Activity
 - [ ] 9. Autopilot
@@ -224,8 +245,6 @@ In a sandbox with preinstalled Chromium: `PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-brows
 ## Waiting on Davi
 
 - Optional: Gmail push via Pub/Sub (steps in docs/SETUP.md §6); polling works without it.
-- Decide: custom domain vs. turning off Vercel login protection on production (invited owners can't
-  get past Vercel's login today).
 - Rotate the Neon password and Google client secret that were pasted in chat; delete the old
   Google secret.
 - Add each invited owner as a Google Cloud test user (Google Auth Platform → Audience).

@@ -1,67 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { eq } from "drizzle-orm";
 import * as schema from "../../src/db/schema";
-import { seedOwner, signInAs, testDb } from "./support";
-
-async function seedQueue(mailboxId: string) {
-  const mk = async (g: string, over: Partial<typeof schema.threads.$inferInsert>, from: string) => {
-    const [t] = await testDb
-      .insert(schema.threads)
-      .values({
-        mailboxId,
-        gmailThreadId: `${g}-${mailboxId}`,
-        inInbox: true,
-        lastMessageAt: new Date(),
-        ...over,
-      })
-      .returning();
-    const [m] = await testDb
-      .insert(schema.messages)
-      .values({
-        threadId: t!.id,
-        mailboxId,
-        gmailMessageId: `m-${g}-${mailboxId}`,
-        direction: "in",
-        fromName: from,
-        fromAddress: `${from.toLowerCase()}@x.com`,
-        sentAt: new Date(),
-      })
-      .returning();
-    return { t: t!, m: m! };
-  };
-  const complaint = await mk(
-    "c",
-    {
-      category: "complaint",
-      needsOwner: true,
-      needsOwnerReason: "Customer says the leak came back.",
-      summary: "Leak is back.",
-    },
-    "Dana",
-  );
-  const quote = await mk(
-    "q",
-    { category: "quote_request", summary: "Panel upgrade quote." },
-    "Priya",
-  );
-  const [draft] = await testDb
-    .insert(schema.drafts)
-    .values({
-      threadId: quote.t.id,
-      mailboxId,
-      replyToMessageId: quote.m.id,
-      gmailDraftId: "fake-draft",
-      toAddress: "priya@x.com",
-      subject: "Re: Panel",
-      body: "Hey Priya,\n\nWhat's the address, and how old is the current panel?\n\nThanks, Davi",
-      originalBody: "same",
-      reason: "Quote request, panel upgrade. Asked for the address and panel age.",
-      flags: ["Check you can do Tuesday morning."],
-      confidence: 85,
-    })
-    .returning();
-  return { complaint, quote, draft: draft! };
-}
+import { seedOwner, seedQueue, signInAs, testDb } from "./support";
 
 test("queue: needs-you first, then drafts; sending is off until setup, and it says so", async ({
   page,

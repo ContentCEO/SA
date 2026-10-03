@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { categoryTag, isCategory } from "@/config/categories";
 import { relativeTime } from "@/lib/relative-time";
 import { listQueue, sentDraftSummary, type QueueItem } from "@/server/drafts";
-import { canSend, sendingBlockedReason, sendingOffLabel } from "@/server/lifecycle";
+import { canSend, isReadOnly, sendingBlockedReason, sendingOffLabel } from "@/server/lifecycle";
 import { listMailboxes } from "@/server/mailboxes";
 import { requireOwner } from "@/server/session";
 import { draftReplyAction } from "./actions";
@@ -28,6 +28,8 @@ const errors: Record<string, string> = {
   notext: "There's no email text left to reply to (older than 30 days).",
   capped: "Today's drafting limit is used up. It resets tomorrow.",
   draftfailed: "Couldn't write a draft for that one. Try again in a minute.",
+  readonly:
+    "Your account is read-only right now, so nothing was changed. The note at the top says why.",
   unknown: "That didn't work. Refresh and try again.",
 };
 
@@ -48,6 +50,7 @@ export default async function QueuePage(props: PageProps<"/queue">) {
   const doneMsg = typeof params.done === "string" ? done[params.done] : undefined;
   const errorMsg = typeof params.error === "string" ? errors[params.error] : undefined;
   const sending = canSend(workspace);
+  const readOnly = isReadOnly(workspace);
   const empty = queue.needsYou.length === 0 && queue.drafts.length === 0;
 
   return (
@@ -101,12 +104,14 @@ export default async function QueuePage(props: PageProps<"/queue">) {
               {i.needsOwnerReason ? <p className="font-semibold">{i.needsOwnerReason}</p> : null}
               {i.summary ? <p className="text-ash">{i.summary}</p> : null}
               <div className="grid grid-cols-1 gap-2 pt-1">
-                <form action={draftReplyAction}>
-                  <input type="hidden" name="threadId" value={i.threadId} />
-                  <Button type="submit" className="w-full">
-                    Draft a reply
-                  </Button>
-                </form>
+                {readOnly ? null : (
+                  <form action={draftReplyAction}>
+                    <input type="hidden" name="threadId" value={i.threadId} />
+                    <Button type="submit" className="w-full">
+                      Draft a reply
+                    </Button>
+                  </form>
+                )}
                 <a
                   href={gmailLink(i)}
                   target="_blank"
@@ -138,6 +143,7 @@ export default async function QueuePage(props: PageProps<"/queue">) {
               lowConfidence={(i.confidence ?? 0) < 60}
               needsOwnerReason={i.needsOwnerReason}
               canSend={sending}
+              readOnly={readOnly}
               sendingOffLabel={sendingOffLabel(workspace)}
               sendingOffDetail={sendingBlockedReason(workspace)}
             />

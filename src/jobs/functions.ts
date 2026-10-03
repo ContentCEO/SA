@@ -12,6 +12,7 @@ import { classifyPending } from "@/server/classification";
 import { createDraftForThread, reconcileDrafts, threadsToAutoDraft } from "@/server/drafts";
 import { getMailboxWorkspace } from "@/server/mailboxes";
 import { learnVoice, workspacesDueForVoiceRefresh } from "@/server/voice";
+import { expireEvaluations, startPendingEvaluations } from "@/server/workspace-lifecycle";
 import {
   inngest,
   mailboxClassifyRequested,
@@ -199,6 +200,19 @@ export const pollMailboxes = inngest.createFunction(
   },
 );
 
+/**
+ * Every 15 minutes: start the clock for anyone who connected Gmail but wasn't
+ * moved (backstop), and record evaluations that have run out. Gates don't wait
+ * for this — they read the clock directly.
+ */
+export const workspaceLifecycle = inngest.createFunction(
+  { id: "workspace-lifecycle", triggers: [cron("*/15 * * * *")] },
+  async ({ step }) => ({
+    started: await step.run("start", () => startPendingEvaluations()),
+    expired: await step.run("expire", () => expireEvaluations()),
+  }),
+);
+
 /** Daily: renew Gmail push watches before they silently expire. */
 export const renewGmailWatches = inngest.createFunction(
   { id: "renew-gmail-watches", triggers: [cron("17 6 * * *")] },
@@ -221,4 +235,5 @@ export const functions = [
   pollMailboxes,
   renewGmailWatches,
   purgeBodies,
+  workspaceLifecycle,
 ];

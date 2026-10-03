@@ -2,7 +2,15 @@ import "server-only";
 import { and, eq, inArray, isNotNull, isNull, lt, or, sql } from "drizzle-orm";
 import { bodyRetentionDays } from "@/config/retention";
 import { db } from "@/db";
-import { activityLog, drafts, mailboxes, messages, threads, type Mailbox } from "@/db/schema";
+import {
+  activityLog,
+  drafts,
+  mailboxes,
+  messages,
+  threads,
+  workspaces,
+  type Mailbox,
+} from "@/db/schema";
 import { decryptSecret } from "@/lib/crypto";
 import {
   HistoryExpiredError,
@@ -13,6 +21,7 @@ import {
 } from "@/mailbox/connector";
 import { createGmailReader } from "@/mailbox/gmail/api";
 import { parseAddressList } from "@/mailbox/gmail/parse";
+import { jobsAllowed } from "./lifecycle";
 
 /** How far back the first sync reaches. */
 export const BACKFILL_DAYS = 30;
@@ -27,7 +36,7 @@ export type SyncDeps = {
 
 export type SyncOutcome =
   | { status: "ok"; ingested: number; nextPageToken?: string }
-  | { status: "skipped"; reason: "not_found" | "not_active" | "not_ready" }
+  | { status: "skipped"; reason: "not_found" | "not_active" | "not_ready" | "read_only" }
   | { status: "reconnect_needed" };
 
 const defaultReaderFor = (m: Mailbox) =>
@@ -52,12 +61,21 @@ async function mapLimit<T, R>(
 }
 
 async function loadActiveMailbox(mailboxId: string) {
-  const [m] = await db().select().from(mailboxes).where(eq(mailboxes.id, mailboxId));
-  if (!m) return { mailbox: undefined, skip: { status: "skipped", reason: "not_found" } as const };
-  if (m.status !== "active") {
+  const [row] = await db()
+    .select({ mailbox: mailboxes, workspace: workspaces })
+    .from(mailboxes)
+    .innerJoin(workspaces, eq(workspaces.id, mailboxes.workspaceId))
+    .where(eq(mailboxes.id, mailboxId));
+  if (!row)
+    return { mailbox: undefined, skip: { status: "skipped", reason: "not_found" } as const };
+  if (row.mailbox.status !== "active") {
     return { mailbox: undefined, skip: { status: "skipped", reason: "not_active" } as const };
   }
-  return { mailbox: m, skip: undefined };
+  // Read-only workspaces (expired, paused, past due, canceled) aren't synced.
+  if (!jobsAllowed(row.workspace)) {
+    return { mailbox: undefined, skip: { status: "skipped", reason: "read_only" } as const };
+  }
+  return { mailbox: row.mailbox, skip: undefined };
 }
 
 /**
@@ -331,11 +349,19 @@ export async function incrementalSync(
 }
 
 /** Mailboxes that should be polled / backfilled right now. */
-export async function listSyncableMailboxes() {
-  return db()
-    .select({ id: mailboxes.id, backfillCompletedAt: mailboxes.backfillCompletedAt })
+export async function listSyncableMailboxes(now: Date = new Date()) {
+  const rows = await db()
+    .select({
+      id: mailboxes.id,
+      backfillCompletedAt: mailboxes.backfillCompletedAt,
+      workspace: { status: workspaces.status, evaluationEndsAt: workspaces.evaluationEndsAt },
+    })
     .from(mailboxes)
+    .innerJoin(workspaces, eq(workspaces.id, mailboxes.workspaceId))
     .where(eq(mailboxes.status, "active"));
+  return rows
+    .filter((r) => jobsAllowed(r.workspace, now))
+    .map(({ id, backfillCompletedAt }) => ({ id, backfillCompletedAt }));
 }
 
 /** Gmail's push watch lasts 7 days; renew anything expiring within 2. No-op without a topic. */

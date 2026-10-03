@@ -15,6 +15,7 @@ describe("job wiring", () => {
       [
         "backfill-mailbox",
         "sync-mailbox",
+        "workspace-lifecycle",
         "classify-mailbox",
         "draft-mailbox",
         "learn-voice",

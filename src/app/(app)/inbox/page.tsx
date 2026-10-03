@@ -7,6 +7,7 @@ import { relativeTime } from "@/lib/relative-time";
 import { cn } from "@/lib/utils";
 import { listInboxThreads, type InboxFilter, type InboxRow } from "@/server/inbox";
 import { listMailboxes } from "@/server/mailboxes";
+import { isReadOnly } from "@/server/lifecycle";
 import { requireOwner } from "@/server/session";
 import { draftReplyAction } from "../queue/actions";
 import { markNeedsOwnerAction } from "./actions";
@@ -58,6 +59,7 @@ function Details({ row }: { row: InboxRow }) {
 
 export default async function InboxPage(props: PageProps<"/inbox">) {
   const { workspace } = await requireOwner();
+  const readOnly = isReadOnly(workspace);
   const params = await props.searchParams;
   const filter = parseFilter(params.c);
   const [rows, boxes] = await Promise.all([
@@ -141,7 +143,7 @@ export default async function InboxPage(props: PageProps<"/inbox">) {
                     <p className="font-semibold">Why: {row.needsOwnerReason}</p>
                   ) : null}
                   <Details row={row} />
-                  {row.category !== "noise" ? (
+                  {row.category !== "noise" && !readOnly ? (
                     <form action={draftReplyAction}>
                       <input type="hidden" name="threadId" value={row.id} />
                       <Button type="submit" className="w-full">
