@@ -1,6 +1,6 @@
 import "server-only";
 import { and, count, desc, eq, gte, inArray } from "drizzle-orm";
-import { categoryTag, isCategory } from "@/config/categories";
+import { categoryLabels, categoryTag, isCategory } from "@/config/categories";
 import { db } from "@/db";
 import { activityLog, drafts, mailboxes, messages, threads } from "@/db/schema";
 
@@ -31,6 +31,7 @@ export function describeActivity(
     case "followup_drafted":
       return `Drafted a follow-up${to}${detail.nudgeNumber === 2 ? " (the last one)" : ""}${about}`;
     case "reply_sent":
+      if (detail.autopilot) return `Autopilot sent a reply${to}${about}`;
       return `You sent ${detail.kind === "followup" ? "a follow-up" : "a reply"}${to}${
         detail.editedByOwner ? ", after editing it" : ""
       }`;
@@ -64,6 +65,22 @@ export function describeActivity(
       return detail.enabled
         ? "You changed your morning summary"
         : "You turned the morning summary off";
+    case "autopilot_scheduled":
+      return `Autopilot lined up a reply${to} — you had time to hold it`;
+    case "autopilot_held":
+      return `You held an autopilot reply${to}`;
+    case "autopilot_stood_down":
+      return `Autopilot didn't send the reply${to} — something changed, so it waits for you`;
+    case "autopilot_changed":
+      return `You turned autopilot ${detail.on ? "on" : "off"}${
+        typeof detail.category === "string" && isCategory(detail.category)
+          ? ` for ${categoryLabels[detail.category].toLowerCase()}`
+          : ""
+      }`;
+    case "plan_changed":
+      return detail.to
+        ? `Your plan changed to ${String(detail.to)[0]!.toUpperCase()}${String(detail.to).slice(1)}`
+        : "Your plan was removed";
     case "digest_sent":
       return "Sent your morning summary";
     case "evaluation_started":

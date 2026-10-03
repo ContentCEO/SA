@@ -22,6 +22,11 @@ export const mailboxDraftRequested = eventType("mailbox/draft.requested", {
   schema: staticSchema<{ mailboxId: string }>(),
 });
 
+/** Autopilot: send this draft at `at` if every check still passes then. */
+export const autopilotSendRequested = eventType("autopilot/send.requested", {
+  schema: staticSchema<{ draftId: string; at: string }>(),
+});
+
 /** Learn (or re-learn) how the owner writes. `force` overrides their manual edits. */
 export const voiceLearnRequested = eventType("voice/learn.requested", {
   schema: staticSchema<{ workspaceId: string; force?: boolean }>(),

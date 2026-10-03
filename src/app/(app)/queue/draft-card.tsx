@@ -4,7 +4,12 @@ import { useRef, useState } from "react";
 import { useFormStatus } from "react-dom";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { discardDraftAction, saveDraftEditAction, sendDraftAction } from "./actions";
+import {
+  discardDraftAction,
+  holdAutopilotAction,
+  saveDraftEditAction,
+  sendDraftAction,
+} from "./actions";
 
 export type DraftCardProps = {
   draftId: string;
@@ -18,6 +23,8 @@ export type DraftCardProps = {
   canSend: boolean;
   /** Read-only account: show the draft, but no edit, discard or swipe. */
   readOnly?: boolean;
+  /** Autopilot will send this at this (formatted) time unless held. */
+  autoSendAt?: string | null;
   sendingOffLabel: string;
   sendingOffDetail: string;
 };
@@ -82,6 +89,21 @@ export function DraftCard(p: DraftCardProps) {
       </header>
 
       {p.needsOwnerReason ? <p className="font-semibold">Needs you: {p.needsOwnerReason}</p> : null}
+
+      {p.autoSendAt ? (
+        <form
+          action={holdAutopilotAction}
+          role="status"
+          className="sa-inverted flex flex-col gap-2 rounded-lg p-3"
+        >
+          <input type="hidden" name="draftId" value={p.draftId} />
+          <p>
+            <span className="font-black">Autopilot sends this at {p.autoSendAt}</span>{" "}
+            <span className="text-ash">unless you hold it.</span>
+          </p>
+          <Pending label="Hold it" busy="Holding…" className="w-full" />
+        </form>
+      ) : null}
 
       {p.flags.length || p.lowConfidence ? (
         <div className="rounded-lg border-2 border-charcoal p-3">

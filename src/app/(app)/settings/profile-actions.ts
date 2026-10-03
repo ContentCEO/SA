@@ -13,6 +13,7 @@ import {
   saveVoiceEdits,
   voiceEditInput,
 } from "@/server/profile";
+import { AutopilotNotAllowedError, setAutopilot } from "@/server/autopilot";
 import { requireOwner } from "@/server/session";
 
 export type FormState = { errors?: Record<string, string[]>; values?: Record<string, string> };
@@ -79,4 +80,18 @@ export async function saveDigestSettingsAction(formData: FormData) {
   if (!parsed.success) redirect("/settings?error=unknown");
   await saveDigestSettings(workspace.id, parsed.data);
   redirect("/settings?done=digest");
+}
+
+/** Turning autopilot on is re-checked server-side (plan, setup done, earned); off always works. */
+export async function setAutopilotAction(formData: FormData) {
+  const { workspace } = await requireOwner();
+  const category = String(formData.get("category") ?? "");
+  const on = formData.get("on") === "1";
+  try {
+    await setAutopilot(workspace, category, on);
+  } catch (err) {
+    if (err instanceof AutopilotNotAllowedError) redirect("/settings?error=autopilot#autopilot");
+    throw err;
+  }
+  redirect(`/settings?done=${on ? "autopilot_on" : "autopilot_off"}#autopilot`);
 }

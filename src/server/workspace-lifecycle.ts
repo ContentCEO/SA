@@ -1,7 +1,8 @@
 import "server-only";
-import { and, eq, exists, lte } from "drizzle-orm";
+import { and, eq, exists, lte, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { activityLog, mailboxes, workspaces, type Workspace } from "@/db/schema";
+import { pricing } from "@/config/pricing";
+import { activityLog, drafts, mailboxes, rules, workspaces, type Workspace } from "@/db/schema";
 import { canMakeMove, EVALUATION_MS, resumeTarget, type AdminMove } from "./lifecycle";
 
 /**
@@ -142,4 +143,39 @@ export async function applyAdminMove(
       detail: { by: "admin", move, from: w.status, to: row.status },
     });
   return row.status;
+}
+
+/**
+ * Davi sets the plan by hand until Stripe does (Milestone 10). The plan
+ * decides mailbox limits and whether autopilot can be unlocked. Dropping to a
+ * plan without autopilot switches it off and stops anything counting down.
+ */
+export async function setWorkspacePlan(
+  workspaceId: string,
+  plan: Workspace["plan"],
+  now: Date = new Date(),
+) {
+  const [w] = await db().select().from(workspaces).where(eq(workspaces.id, workspaceId));
+  if (!w) throw new Error("Workspace not found.");
+  await db().update(workspaces).set({ plan }).where(eq(workspaces.id, workspaceId));
+  if (!plan || !pricing.plans[plan].autopilot) {
+    await db()
+      .update(rules)
+      .set({ mode: "draft", updatedAt: now })
+      .where(eq(rules.workspaceId, workspaceId));
+    await db().execute(sql`
+      update ${drafts} set auto_send_at = null
+      where ${drafts.autoSendAt} is not null and ${drafts.status} = 'pending'
+        and ${drafts.mailboxId} in (
+          select ${mailboxes.id} from ${mailboxes} where ${mailboxes.workspaceId} = ${workspaceId}
+        )`);
+  }
+  await db()
+    .insert(activityLog)
+    .values({
+      workspaceId,
+      actor: "squared_away",
+      action: "plan_changed",
+      detail: { by: "admin", from: w.plan, to: plan },
+    });
 }

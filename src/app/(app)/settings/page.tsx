@@ -7,7 +7,9 @@ import { relativeTime } from "@/lib/relative-time";
 import { listMailboxes, mailboxLimit, type MailboxSummary } from "@/server/mailboxes";
 import { BACKFILL_DAYS, syncSummary } from "@/server/sync";
 import { isAdminEmail } from "@/server/admin";
+import { autopilotState, EARN_THRESHOLD, GRACE_MINUTES } from "@/server/autopilot";
 import { requireOwner } from "@/server/session";
+import { categoryLabels } from "@/config/categories";
 import { cn } from "@/lib/utils";
 import {
   describeVoice,
@@ -20,6 +22,7 @@ import { DisconnectButton } from "./disconnect-button";
 import {
   relearnVoiceAction,
   saveDigestSettingsAction,
+  setAutopilotAction,
   saveFollowupSettingsAction,
 } from "./profile-actions";
 import { TimeZoneInput } from "@/components/forms/time-zone-input";
@@ -31,10 +34,13 @@ const done: Record<string, string> = {
   voice: "Saved how you write.",
   followups: "Follow-up settings saved.",
   digest: "Morning summary saved.",
+  autopilot_on: "Autopilot is on for that kind of email. You'll get 10 minutes to hold each one.",
+  autopilot_off: "Autopilot is off for that kind of email. Those replies wait for your tap again.",
   relearn: "Re-reading your sent mail. This takes a minute or two.",
 };
 
 const errors: Record<string, string> = {
+  autopilot: "Autopilot can't be turned on for that yet.",
   limit: "Your plan is at its mailbox limit. Disconnect one first, or ask about a bigger plan.",
   unknown: "That didn't work. Refresh and try again.",
 };
@@ -70,9 +76,10 @@ export default async function SettingsPage(props: PageProps<"/settings">) {
   const doneMsg = typeof params.done === "string" ? done[params.done] : undefined;
   const errorMsg = typeof params.error === "string" ? errors[params.error] : undefined;
   const canAddMore = mailboxes.length < mailboxLimit(workspace);
-  const [profile, voice] = await Promise.all([
+  const [profile, voice, autopilot] = await Promise.all([
     getBusinessProfile(workspace.id),
     getVoiceProfile(workspace.id),
+    autopilotState(workspace),
   ]);
   const profileFacts = [
     ["Business", workspace.businessName],
@@ -307,6 +314,65 @@ export default async function SettingsPage(props: PageProps<"/settings">) {
             Save morning summary
           </Button>
         </form>
+      </section>
+
+      <section id="autopilot" aria-labelledby="autopilot-heading" className="flex flex-col gap-3">
+        <h2 id="autopilot-heading" className="text-xl font-black">
+          Autopilot
+        </h2>
+        <p className="text-muted-foreground">
+          Lets Squared Away send replies on its own for the kinds of email you choose. Off until you
+          turn it on. Even then, it never sends complaints, anything about money, anything flagged
+          for you, follow-ups, or replies to people you haven&apos;t written to before — and each
+          one waits {GRACE_MINUTES} minutes in your queue so you can hold it.
+        </p>
+        {autopilot.lockedReason ? (
+          <p className="sa-inverted rounded-lg px-4 py-3 font-semibold">{autopilot.lockedReason}</p>
+        ) : (
+          <ul className="flex flex-col divide-y rounded-xl border bg-card">
+            {autopilot.categories.map((c) => (
+              <li key={c.category} className="flex flex-col gap-2 px-4 py-3">
+                <div className="flex items-baseline justify-between gap-3">
+                  <span className="font-semibold">{categoryLabels[c.category]}</span>
+                  <span className={c.on ? "font-black" : "text-muted-foreground"}>
+                    {c.on ? "On" : "Off"}
+                  </span>
+                </div>
+                {c.on ? (
+                  <form action={setAutopilotAction}>
+                    <input type="hidden" name="category" value={c.category} />
+                    <input type="hidden" name="on" value="0" />
+                    <Button type="submit" variant="outline" className="w-full">
+                      Turn off
+                    </Button>
+                  </form>
+                ) : c.canTurnOn ? (
+                  <details className="rounded-lg border">
+                    <summary className="flex min-h-tap cursor-pointer items-center px-4 font-semibold">
+                      Turn on
+                    </summary>
+                    <form action={setAutopilotAction} className="flex flex-col gap-2 px-4 pb-4">
+                      <input type="hidden" name="category" value={c.category} />
+                      <input type="hidden" name="on" value="1" />
+                      <p>
+                        Replies like these will send on their own after {GRACE_MINUTES} minutes,
+                        unless you hold them.
+                      </p>
+                      <Button type="submit" className="w-full">
+                        Yes, send these on their own
+                      </Button>
+                    </form>
+                  </details>
+                ) : (
+                  <p className="text-sm text-muted-foreground">
+                    Unlocks after {EARN_THRESHOLD} replies you sent without changing them (
+                    {Math.min(c.earned, EARN_THRESHOLD)} so far).
+                  </p>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
       </section>
 
       <section aria-labelledby="account" className="flex flex-col gap-3">

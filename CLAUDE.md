@@ -254,6 +254,23 @@ In a sandbox with preinstalled Chromium: `PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-brows
 - Voice learning reads sent mail 3 at a time (8 tripped Gmail's limit live and the learn died at
   "learning"). Retries 6; `workspace-lifecycle` (15 min) restarts voice for read mailboxes with no
   profile or stuck in "learning" > 30 min (`workspacesNeedingVoice`).
+- **Autopilot (M9)** — `src/server/autopilot.ts`, approved by Davi 2026-10-03. Three layers, all
+  in code with tests: (1) account: plan with `autopilot` (Crew/Company) **and** status `active`
+  (setup call done); (2) category: owner switched it on (`rules` table, mode draft|autopilot) and it
+  has **earned** it — ≥10 replies in that category sent exactly as drafted from the app;
+  (3) each email: eligible category (never complaint/noise), not needs_owner (incl. manual), reply
+  not follow-up, confidence ≥ 85, no flags, no money in the draft, no amount on invoice emails, and
+  the owner has **written to that address before**. Daily cap 20.
+- Grace window: `considerAutopilot` sets `drafts.auto_send_at` = now + 10 min and the queue card shows
+  "Autopilot sends this at 9:42 — Hold it". Job `autopilot-send` sleeps until then and
+  `runAutopilotSend` re-checks every layer plus "no newer mail" before `sendDraft(..., by:
+"autopilot")` (activity `reply_sent` actor squared_away, `autopilot: true`). Owner edit (app or
+  Gmail), Hold it, switching it off, plan change or status change all clear the countdown.
+  Backstop: the 15-min lifecycle job re-sends events for countdowns >5 min overdue.
+- Admin sets plans by hand (`setWorkspacePlan`) until Stripe (M10); dropping to a plan without
+  autopilot switches every category back to draft and clears countdowns.
+- **Future goal (after the website is complete):** a downloadable app (phone app store). Not started;
+  the site is mobile-first so a wrapper or native shell can reuse it later.
 - postgres.js can't bind a `Date` inside a raw `sql` template — pass `.toISOString()` with
   `::timestamptz` (PGlite tolerates it, so unit tests won't catch it; e2e did).
 - Lesson: scripted `str.replace` edits must `assert old in s` — silent no-ops after Prettier caused
@@ -272,7 +289,7 @@ In a sandbox with preinstalled Chromium: `PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-brows
 - [x] **7. Follow-ups** — daily scan, nudge drafts, two-per-thread cap, settings
 - [x] **8. Digest + Activity** — Activity screen + honest estimate; digest code done, live email
       waits on a Resend API key (and a verified domain for owners other than Davi)
-- [ ] 9. Autopilot
+- [x] **9. Autopilot** — three-layer guardrails, earned per category, 10-minute grace window
 - [ ] 10. Billing
 - [ ] 11. Hardening and launch
 

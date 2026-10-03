@@ -50,6 +50,13 @@
       "when": 1791041554163,
       "tag": "0006_hard_korg",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1791044329584,
+      "tag": "0007_nasty_namora",
+      "breakpoints": true
     }
   ]
 }

@@ -13,7 +13,8 @@ import {
 } from "@/server/admin";
 import { requireAdmin } from "@/server/session";
 import { ADMIN_MOVES, canMakeMove, type AdminMove } from "@/server/lifecycle";
-import { adminMoveAction, inviteAction } from "./actions";
+import { adminMoveAction, inviteAction, setPlanAction } from "./actions";
+import { pricing } from "@/config/pricing";
 
 export const metadata: Metadata = { title: "Admin", robots: { index: false } };
 
@@ -62,6 +63,7 @@ const done: Record<string, string> = {
   mark_setup_call_done: "Marked active.",
   pause: "Account paused.",
   resume: "Account resumed.",
+  plan: "Plan saved.",
   invited: "Invited. They can sign in now (add them as a Google test user too).",
   already_invited: "That address was already invited.",
 };
@@ -146,6 +148,29 @@ function WorkspaceCard({ w, now }: { w: AdminRow; now: Date }) {
         <Stat label="AI calls today" value={w.ai.callsToday} />
         <Stat label="AI cost this month" value={`${dollars(w.ai.costCentsThisMonth)} (est.)`} />
       </dl>
+      <form action={setPlanAction} className="flex gap-2">
+        <input type="hidden" name="workspaceId" value={w.workspaceId} />
+        <label className="flex flex-1 flex-col gap-1">
+          <span className="sr-only">Plan</span>
+          <select
+            name="plan"
+            aria-label="Plan"
+            defaultValue={w.plan ?? ""}
+            className="min-h-tap w-full rounded-lg border border-input bg-paper px-3 text-base"
+          >
+            <option value="">No plan yet</option>
+            {Object.entries(pricing.plans).map(([id, p]) => (
+              <option key={id} value={id}>
+                {p.name}
+                {p.autopilot ? " (autopilot)" : ""}
+              </option>
+            ))}
+          </select>
+        </label>
+        <Button type="submit" variant="outline">
+          Save plan
+        </Button>
+      </form>
       {allowed.length ? (
         <div className="flex flex-col gap-2">
           {allowed.map((m) => (

@@ -2,11 +2,15 @@
 
 import { redirect } from "next/navigation";
 import { z } from "zod";
-import { tradeEnum } from "@/db/schema";
+import { planEnum, tradeEnum } from "@/db/schema";
 import { inviteOwner } from "@/server/admin";
 import { requireAdmin } from "@/server/session";
 import { isAdminMove } from "@/server/lifecycle";
-import { applyAdminMove, MoveNotAllowedError } from "@/server/workspace-lifecycle";
+import {
+  applyAdminMove,
+  MoveNotAllowedError,
+  setWorkspacePlan,
+} from "@/server/workspace-lifecycle";
 
 const id = z.string().uuid();
 
@@ -41,4 +45,15 @@ export async function inviteAction(formData: FormData) {
   if (!parsed.success) redirect("/admin?error=invite");
   const r = await inviteOwner(parsed.data);
   redirect(`/admin?done=${r}`);
+}
+
+const plan = z.enum(planEnum.enumValues).nullable();
+
+export async function setPlanAction(formData: FormData) {
+  await requireAdmin();
+  const workspaceId = id.safeParse(formData.get("workspaceId"));
+  const chosen = plan.safeParse(formData.get("plan") || null);
+  if (!workspaceId.success || !chosen.success) redirect("/admin?error=unknown");
+  await setWorkspacePlan(workspaceId.data, chosen.data);
+  redirect("/admin?done=plan");
 }
