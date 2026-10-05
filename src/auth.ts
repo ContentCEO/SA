@@ -22,7 +22,7 @@ declare module "next-auth/jwt" {
 export const { handlers, auth, signIn, signOut } = NextAuth({
   providers: [Google({ authorization: { params: { scope: "openid email profile" } } })],
   session: { strategy: "jwt" },
-  pages: { signIn: "/", error: "/" },
+  pages: { signIn: "/signin", error: "/signin" },
   callbacks: {
     async signIn({ profile }) {
       if (!profile?.email || profile.email_verified === false) return false;

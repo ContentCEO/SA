@@ -55,6 +55,18 @@ export const invites = pgTable("invites", {
   acceptedAt: timestamp("accepted_at", { withTimezone: true }),
 });
 
+/** People who asked for access on the public site. Davi invites from /admin. */
+export const waitlist = pgTable("waitlist", {
+  email: text("email").primaryKey(),
+  name: text("name").notNull(),
+  phone: text("phone"),
+  trade: tradeEnum("trade"),
+  teamSize: text("team_size"),
+  note: text("note"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  invitedAt: timestamp("invited_at", { withTimezone: true }),
+});
+
 export const workspaces = pgTable(
   "workspaces",
   {

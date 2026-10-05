@@ -13,7 +13,8 @@ import {
 } from "@/server/admin";
 import { requireAdmin } from "@/server/session";
 import { ADMIN_MOVES, canMakeMove, type AdminMove } from "@/server/lifecycle";
-import { adminMoveAction, inviteAction, setPlanAction } from "./actions";
+import { adminMoveAction, inviteAction, inviteFromWaitlistAction, setPlanAction } from "./actions";
+import { listWaitlist } from "@/server/waitlist";
 import { pricing } from "@/config/pricing";
 
 export const metadata: Metadata = { title: "Admin", robots: { index: false } };
@@ -198,10 +199,11 @@ export default async function AdminPage(props: PageProps<"/admin">) {
   await requireAdmin();
   const params = await props.searchParams;
   const now = new Date();
-  const [rows, total, invited] = await Promise.all([
+  const [rows, total, invited, waiting] = await Promise.all([
     adminOverview(now),
     countWorkspaces(),
     listInvites(),
+    listWaitlist(),
   ]);
   const doneMsg = typeof params.done === "string" ? done[params.done] : undefined;
   const errorMsg = typeof params.error === "string" ? errors[params.error] : undefined;
@@ -226,6 +228,49 @@ export default async function AdminPage(props: PageProps<"/admin">) {
         {rows.map((w) => (
           <WorkspaceCard key={w.workspaceId} w={w} now={now} />
         ))}
+      </section>
+
+      <section id="waitlist" aria-labelledby="waitlist-heading" className="flex flex-col gap-3">
+        <h2 id="waitlist-heading" className="text-xl font-black">
+          Waitlist ({waiting.length})
+        </h2>
+        {waiting.length === 0 ? (
+          <p>Nobody yet. The form is on the public home page.</p>
+        ) : (
+          <ul className="flex flex-col gap-3">
+            {waiting.map((w) => (
+              <li
+                key={w.email}
+                aria-label={`Waitlist: ${w.email}`}
+                className="flex flex-col gap-2 rounded-xl border bg-card p-4"
+              >
+                <div className="flex flex-wrap items-baseline justify-between gap-2">
+                  <span className="text-lg font-black">{w.name}</span>
+                  <span className="text-sm text-muted-foreground">
+                    {relativeTime(w.createdAt, now)}
+                  </span>
+                </div>
+                <span className="break-all">{w.email}</span>
+                <span className="text-sm">
+                  {[w.trade, w.teamSize ? `${w.teamSize} people` : null, w.phone]
+                    .filter(Boolean)
+                    .join(" · ")}
+                </span>
+                {w.note ? <p className="text-muted-foreground">“{w.note}”</p> : null}
+                {w.invitedAt ? (
+                  <span className="font-semibold">Invited {relativeTime(w.invitedAt, now)}</span>
+                ) : (
+                  <form action={inviteFromWaitlistAction}>
+                    <input type="hidden" name="email" value={w.email} />
+                    <Button type="submit" className="w-full">
+                      Invite {w.name.split(" ")[0]}
+                    </Button>
+                  </form>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
       </section>
 
       <section aria-labelledby="invite" className="flex flex-col gap-3">

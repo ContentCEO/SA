@@ -8,9 +8,9 @@ import { isAdminEmail } from "./admin";
 export async function requireOwner() {
   const session = await auth();
   const userId = session?.user?.id;
-  if (!userId) redirect("/");
+  if (!userId) redirect("/signin");
   const workspace = await getWorkspaceForUser(userId);
-  if (!workspace) redirect("/");
+  if (!workspace) redirect("/signin");
   return { session, userId, workspace };
 }
 

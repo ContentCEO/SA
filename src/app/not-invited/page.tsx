@@ -12,18 +12,25 @@ export default function NotInvitedPage() {
         <Wordmark />
       </header>
       <main className="flex flex-1 flex-col justify-center gap-6 py-12">
-        <Headline serif="not quite yet," heavy="you're on the list." />
+        <Headline serif="not quite yet," heavy="invite only." />
         <p className="text-lg text-muted-foreground">
           Squared Away is invite-only right now. We set up each shop by hand so it works properly
           from day one.
         </p>
         <p className="text-lg">
           If you think you&apos;ve been invited, sign in with the same email address the invite went
-          to. Otherwise, call {siteConfig.operator} at {siteConfig.phone}
+          to. Otherwise, join the waitlist and we&apos;ll be in touch — or call{" "}
+          {siteConfig.operator} at {siteConfig.phone}
           {support ? ` or email ${support}` : ""}.
         </p>
         <Link
-          href="/"
+          href="/#waitlist"
+          className="inline-flex min-h-tap items-center justify-center rounded-lg bg-primary px-5 font-semibold text-primary-foreground"
+        >
+          Join the waitlist
+        </Link>
+        <Link
+          href="/signin"
           className="inline-flex min-h-tap items-center font-semibold underline underline-offset-4"
         >
           Try a different account

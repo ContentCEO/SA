@@ -57,6 +57,13 @@
       "when": 1791044329584,
       "tag": "0007_nasty_namora",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1791242550264,
+      "tag": "0008_secret_ser_duncan",
+      "breakpoints": true
     }
   ]
 }

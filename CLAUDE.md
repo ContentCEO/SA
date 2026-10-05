@@ -271,6 +271,12 @@ In a sandbox with preinstalled Chromium: `PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-brows
   autopilot switches every category back to draft and clears countdowns.
 - **Future goal (after the website is complete):** a downloadable app (phone app store). Not started;
   the site is mobile-first so a wrapper or native shell can reuse it later.
+- **Public site (2026-10-05, Davi asked for a sales website):** `/` is the marketing page (signed-in
+  users still go to `/queue`); sign-in moved to `/signin` (Auth.js `pages`, `requireOwner` redirect).
+  Copy must stay true to the code (scopes, 30-day retention, trial can't send, autopilot rules);
+  prices render from `src/config/pricing.ts`. Waitlist form → `waitlist` table (idempotent per
+  email, hidden "website" honeypot); joining does NOT allow sign-in — Davi taps Invite in
+  /admin → Waitlist (`inviteFromWaitlist`). `QueuePreview` is an HTML still of the queue.
 - postgres.js can't bind a `Date` inside a raw `sql` template — pass `.toISOString()` with
   `::timestamptz` (PGlite tolerates it, so unit tests won't catch it; e2e did).
 - Lesson: scripted `str.replace` edits must `assert old in s` — silent no-ops after Prettier caused
