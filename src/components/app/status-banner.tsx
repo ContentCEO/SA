@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { auth } from "@/auth";
 import { siteConfig } from "@/config/site";
 import { getWorkspaceForUser } from "@/server/accounts";
@@ -52,14 +53,28 @@ export async function StatusBanner() {
           Squared Away is reading and drafting, but nothing sends during your three days. See if the
           drafts sound like you.
         </p>
+        <Link
+          href="/billing"
+          className="inline-flex min-h-tap items-center font-semibold underline underline-offset-4"
+        >
+          See plans
+        </Link>
       </section>
     );
   }
 
-  const inverted = (title: string, body: React.ReactNode) => (
-    <section role="status" className="sa-inverted flex flex-col gap-1 rounded-xl p-4">
+  const inverted = (title: string, body: React.ReactNode, action?: string) => (
+    <section role="status" className="sa-inverted flex flex-col gap-2 rounded-xl p-4">
       <p className="text-lg font-black">{title}</p>
       <p>{body}</p>
+      {action ? (
+        <Link
+          href="/billing"
+          className="inline-flex min-h-tap items-center justify-center rounded-lg bg-primary px-4 font-semibold text-primary-foreground"
+        >
+          {action}
+        </Link>
+      ) : null}
     </section>
   );
 
@@ -69,8 +84,9 @@ export async function StatusBanner() {
         "Your three days are up.",
         <>
           Everything here stays as it is, read-only. Nothing new is read or drafted, and nothing is
-          sent. To switch sending on, set up with us. <Contact />
+          sent. To switch sending on, choose a plan — or talk to us first. <Contact />
         </>,
+        "Choose a plan",
       );
     case "setup_paid":
       return inverted(
@@ -86,6 +102,7 @@ export async function StatusBanner() {
         <>
           Squared Away is paused until it&apos;s sorted. Nothing is deleted. <Contact />
         </>,
+        "Update payment",
       );
     case "paused":
       return inverted(
@@ -98,8 +115,9 @@ export async function StatusBanner() {
       return inverted(
         "Your plan is canceled.",
         <>
-          Nothing new is read, drafted or sent. <Contact />
+          Nothing new is read, drafted or sent, and nothing is deleted. <Contact />
         </>,
+        "Choose a plan",
       );
     default:
       return null;

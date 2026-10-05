@@ -5,6 +5,7 @@ import { z } from "zod";
 import { planEnum, tradeEnum } from "@/db/schema";
 import { inviteOwner } from "@/server/admin";
 import { inviteFromWaitlist } from "@/server/waitlist";
+import { connectStripe } from "@/server/billing";
 import { requireAdmin } from "@/server/session";
 import { isAdminMove } from "@/server/lifecycle";
 import {
@@ -65,4 +66,19 @@ export async function inviteFromWaitlistAction(formData: FormData) {
   if (!email.success) redirect("/admin?error=unknown");
   const r = await inviteFromWaitlist(email.data);
   redirect(r === "invited" ? "/admin?done=invited#waitlist" : "/admin?error=unknown");
+}
+
+export async function connectStripeAction() {
+  await requireAdmin();
+  let mode: string;
+  try {
+    mode = (await connectStripe()).mode;
+  } catch (err) {
+    console.error("stripe_connect_failed", {
+      name: err instanceof Error ? err.name : "unknown",
+      message: err instanceof Error ? err.message.slice(0, 200) : "",
+    });
+    redirect("/admin?error=stripe#stripe");
+  }
+  redirect(`/admin?done=stripe_${mode}#stripe`);
 }

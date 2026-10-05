@@ -113,6 +113,27 @@ The digest is sent through Resend's HTTP API (`src/lib/email.ts`). Without `RESE
 
 The digest carries counts and categories only — no customer names, subjects or email text.
 
+## 7c. Payments (Stripe)
+
+Payments move accounts through the commercial flow — only Stripe's signed webhook changes status,
+never the browser redirect.
+
+1. dashboard.stripe.com → Developers → API keys → copy the **Secret key** (`sk_test_…` while
+   testing). Put it in Vercel → sa → Settings → Environment Variables as `STRIPE_SECRET_KEY`
+   (Production, sensitive) and redeploy.
+2. Open `/admin` → **Payments** → **Connect Stripe**. It creates (or reuses) the setup-fee and plan
+   prices from `src/config/pricing.ts` (lookup keys include the amount, so a price change makes a
+   new Stripe price), the customer billing portal, and a webhook to `/api/stripe/webhook`. The
+   webhook's signing secret is stored encrypted in `app_settings`. Safe to tap again.
+3. Test: as an owner, Settings → Plan & billing → Choose a plan, card `4242 4242 4242 4242`, any
+   future date, any CVC. The page shows "finishing up" until the webhook lands, then the account is
+   `setup_paid` (sending on). Admin still marks the setup call done (→ `active`).
+4. Going live: swap in the live secret key, redeploy, tap Connect Stripe again.
+
+What payments do: checkout paid → `setup_paid` (or back to `active` if setup was finished before);
+payment fails → `past_due` (jobs pause, nothing deleted); recovers → back; subscription ends →
+`canceled` (read-only). The $499 setup fee is charged once per account, on the first checkout.
+
 ## 8. Google OAuth client
 
 One OAuth client handles both sign-in and connecting Gmail. In Google Cloud Console →

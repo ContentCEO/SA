@@ -269,6 +269,19 @@ In a sandbox with preinstalled Chromium: `PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-brows
   Backstop: the 15-min lifecycle job re-sends events for countdowns >5 min overdue.
 - Admin sets plans by hand (`setWorkspacePlan`) until Stripe (M10); dropping to a plan without
   autopilot switches every category back to draft and clears countdowns.
+- **Billing (M10, 2026-10-05):** Stripe SDK, `src/server/billing.ts` + pure rules in
+  `src/server/billing-rules.ts`. Checkout (subscription mode) = plan price + the one-time setup fee
+  only if `setup_paid_at` is empty; one live subscription per workspace; Stripe's Billing Portal for
+  card/plan/cancel. Prices are found-or-created by lookup key `sa_<plan>_<cents>_month` /
+  `sa_setup_<cents>` (amount in the key → config change = new price). **Only the signed webhook**
+  (`/api/stripe/webhook`) changes status: paid checkout → setup_paid (active if the setup call was
+  already done); past_due/unpaid → past_due; recovered → back; canceled → canceled (subscription id
+  cleared, re-checkout allowed without the setup fee). Paused and trial accounts are never moved by
+  Stripe. Events are idempotent via `stripe_events` (row deleted on handler error so Stripe retries).
+  `/admin` → Payments → **Connect Stripe** sets up prices, the portal config and the webhook, storing
+  its signing secret encrypted in `app_settings` (`STRIPE_WEBHOOK_SECRET` env overrides).
+  `STRIPE_SECRET_KEY` (test) is on sa Production. Owner screen: `/billing` (Settings → Plan &
+  billing; banner links "See plans" / "Choose a plan" / "Update payment").
 - **Future goal (after the website is complete):** a downloadable app (phone app store). Not started;
   the site is mobile-first so a wrapper or native shell can reuse it later.
 - **Public site (2026-10-05, Davi asked for a sales website):** `/` is the marketing page (signed-in
@@ -305,7 +318,7 @@ In a sandbox with preinstalled Chromium: `PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-brows
 - [x] **8. Digest + Activity** — Activity screen + honest estimate; digest code done, live email
       waits on a Resend API key (and a verified domain for owners other than Davi)
 - [x] **9. Autopilot** — three-layer guardrails, earned per category, 10-minute grace window
-- [ ] 10. Billing
+- [x] **10. Billing** — Stripe Checkout + portal + webhook; Connect Stripe in /admin
 - [ ] 11. Hardening and launch
 
 ## Waiting on Davi

@@ -13,7 +13,14 @@ import {
 } from "@/server/admin";
 import { requireAdmin } from "@/server/session";
 import { ADMIN_MOVES, canMakeMove, type AdminMove } from "@/server/lifecycle";
-import { adminMoveAction, inviteAction, inviteFromWaitlistAction, setPlanAction } from "./actions";
+import {
+  adminMoveAction,
+  connectStripeAction,
+  inviteAction,
+  inviteFromWaitlistAction,
+  setPlanAction,
+} from "./actions";
+import { stripeConfigured } from "@/server/billing";
 import { listWaitlist } from "@/server/waitlist";
 import { pricing } from "@/config/pricing";
 
@@ -65,10 +72,14 @@ const done: Record<string, string> = {
   pause: "Account paused.",
   resume: "Account resumed.",
   plan: "Plan saved.",
+  stripe_test:
+    "Stripe connected in TEST mode: prices, billing portal and payment notifications are set up. Use card 4242 4242 4242 4242 to try it.",
+  stripe_live: "Stripe connected in LIVE mode. Real cards will be charged.",
   invited: "Invited. They can sign in now (add them as a Google test user too).",
   already_invited: "That address was already invited.",
 };
 const errors: Record<string, string> = {
+  stripe: "Couldn't connect Stripe. Check the STRIPE_SECRET_KEY in Vercel, then try again.",
   move: "That change isn't allowed from the account's current status. Refresh and look again.",
   invite: "That doesn't look like an email address.",
   unknown: "That didn't work. Refresh and try again.",
@@ -228,6 +239,25 @@ export default async function AdminPage(props: PageProps<"/admin">) {
         {rows.map((w) => (
           <WorkspaceCard key={w.workspaceId} w={w} now={now} />
         ))}
+      </section>
+
+      <section id="stripe" aria-labelledby="stripe-heading" className="flex flex-col gap-3">
+        <h2 id="stripe-heading" className="text-xl font-black">
+          Payments
+        </h2>
+        {stripeConfigured() ? (
+          <form action={connectStripeAction} className="flex flex-col gap-2">
+            <p>
+              Sets up the four prices from the price list, the customer billing page, and the
+              payment notifications that switch accounts on and off. Safe to tap again.
+            </p>
+            <Button type="submit" className="w-full">
+              Connect Stripe
+            </Button>
+          </form>
+        ) : (
+          <p>Add STRIPE_SECRET_KEY to the sa project in Vercel first.</p>
+        )}
       </section>
 
       <section id="waitlist" aria-labelledby="waitlist-heading" className="flex flex-col gap-3">

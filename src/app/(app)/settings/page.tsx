@@ -391,6 +391,9 @@ export default async function SettingsPage(props: PageProps<"/settings">) {
         <h2 id="account" className="text-xl font-black">
           Account
         </h2>
+        <Link href="/billing" className={cn(buttonVariants({ variant: "outline" }), "w-full")}>
+          Plan &amp; billing
+        </Link>
         {admin ? (
           <Link href="/admin" className={cn(buttonVariants({ variant: "outline" }), "w-full")}>
             Admin

@@ -64,6 +64,13 @@
       "when": 1791242550264,
       "tag": "0008_secret_ser_duncan",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1791243933207,
+      "tag": "0009_remarkable_forge",
+      "breakpoints": true
     }
   ]
 }

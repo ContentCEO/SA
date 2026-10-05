@@ -83,6 +83,12 @@ describe("activity wording", () => {
     expect(describeActivity("workspace_status_changed", { to: "setup_paid" }, null)).toBe(
       "Setup paid — sending switched on",
     );
+    expect(describeActivity("payment_received", { includesSetup: true }, null)).toMatch(
+      /sending switched on/,
+    );
+    expect(describeActivity("subscription_changed", { to: "past_due" }, null)).toMatch(
+      /didn't go through/,
+    );
     expect(describeActivity("something_internal", {}, null)).toBeNull();
   });
 });
