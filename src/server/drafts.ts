@@ -457,7 +457,11 @@ export type SendOutcome =
 export async function sendDraft(
   workspaceId: string,
   draftId: string,
-  opts: DraftDeps & { editedBody?: string } = {},
+  opts: DraftDeps & {
+    editedBody?: string;
+    /** Who pressed send: the owner, or autopilot after its checks and grace window. */
+    by?: "owner" | "autopilot";
+  } = {},
 ): Promise<SendOutcome> {
   const now = opts.now?.() ?? new Date();
   const row = await loadOwnedDraft(workspaceId, draftId);
@@ -482,7 +486,10 @@ export async function sendDraft(
     }
     if (!sameText(remote.bodyText, draft.body)) {
       // Changed in Gmail since the owner last saw it. Show them the new text; don't send blind.
-      await db().update(drafts).set({ body: remote.bodyText }).where(eq(drafts.id, draft.id));
+      await db()
+        .update(drafts)
+        .set({ body: remote.bodyText, autoSendAt: null })
+        .where(eq(drafts.id, draft.id));
       return { status: "changed_in_gmail" };
     }
 
@@ -521,10 +528,15 @@ export async function sendDraft(
       .insert(activityLog)
       .values({
         workspaceId,
-        actor: "owner",
+        actor: opts.by === "autopilot" ? "squared_away" : "owner",
         action: "reply_sent",
         threadId: thread.id,
-        detail: { draftId: draft.id, editedByOwner: edited, kind: draft.kind },
+        detail: {
+          draftId: draft.id,
+          editedByOwner: edited,
+          kind: draft.kind,
+          ...(opts.by === "autopilot" ? { autopilot: true } : {}),
+        },
       });
     return { status: "sent", edited, toName: (await customerOf(thread.id))?.name ?? null };
   } catch (err) {
@@ -565,7 +577,11 @@ export async function saveDraftEdit(
       threadId: thread.gmailThreadId,
       raw: mimeFor(draft, mailbox, body.trim(), await replyToHeaders(draft)),
     });
-    await db().update(drafts).set({ body: body.trim() }).where(eq(drafts.id, draft.id));
+    // The owner touched it, so it waits for their tap — autopilot stands down.
+    await db()
+      .update(drafts)
+      .set({ body: body.trim(), autoSendAt: null })
+      .where(eq(drafts.id, draft.id));
     return "saved";
   } catch (err) {
     if (err instanceof MailboxAuthError) {
@@ -704,7 +720,10 @@ export async function reconcileDrafts(mailboxId: string, opts: DraftDeps = {}) {
         );
         closed++;
       } else if (!sameText(remote.bodyText, d.body)) {
-        await db().update(drafts).set({ body: remote.bodyText }).where(eq(drafts.id, d.id));
+        await db()
+          .update(drafts)
+          .set({ body: remote.bodyText, autoSendAt: null })
+          .where(eq(drafts.id, d.id));
       }
     }
   } catch (err) {
@@ -720,6 +739,8 @@ export async function reconcileDrafts(mailboxId: string, opts: DraftDeps = {}) {
 export type QueueItem = {
   draftId: string | null;
   kind: "reply" | "followup" | null;
+  /** Autopilot will send this at this time unless held. */
+  autoSendAt: Date | null;
   threadId: string;
   customerName: string | null;
   customerAddress: string | null;
@@ -791,6 +812,7 @@ export async function listQueue(
     needsYou: needs.map((t) => ({
       draftId: null,
       kind: null,
+      autoSendAt: null,
       threadId: t.id,
       customerName: who.get(t.id)?.name ?? null,
       customerAddress: who.get(t.id)?.address ?? null,
@@ -808,6 +830,7 @@ export async function listQueue(
     drafts: pendingDrafts.map(({ draft, thread }) => ({
       draftId: draft.id,
       kind: draft.kind,
+      autoSendAt: draft.autoSendAt,
       threadId: thread.id,
       customerName: who.get(thread.id)?.name ?? null,
       customerAddress: who.get(thread.id)?.address ?? draft.toAddress,

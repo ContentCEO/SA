@@ -48,6 +48,11 @@ We deliberately do **not** request `gmail.modify` or full `https://mail.google.c
   kept in our database so the owner can review it in the app. Draft text is purged on the same
   retention schedule as email bodies (`purgeExpiredBodies`). If the owner edits or deletes the draft
   in Gmail, we follow Gmail (`reconcileDrafts` in `src/server/drafts.ts`).
+- **Autopilot (opt-in):** only for owners on a plan that includes it, after their setup call, one
+  kind of email at a time, and only after they've sent 10 of that kind exactly as drafted. Never for
+  complaints, money, flagged emails, follow-ups, or people the owner hasn't written to before. Each
+  autopilot reply sits in the owner's queue for 10 minutes with a "Hold it" button, and every check
+  runs again just before sending (`src/server/autopilot.ts`, tested in `tests/unit/autopilot.test.ts`).
 - **Sending:** only through Gmail's `drafts.send`, only after the owner taps "Send reply", and only
   when the workspace's status allows it — checked in code before any call to Google
   (`src/server/lifecycle.ts`, tested in `tests/unit/drafts.test.ts`). If the draft changed in Gmail

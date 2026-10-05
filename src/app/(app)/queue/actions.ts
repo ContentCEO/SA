@@ -2,6 +2,7 @@
 
 import { redirect } from "next/navigation";
 import { z } from "zod";
+import { holdAutopilot } from "@/server/autopilot";
 import { createDraftForThread, discardDraft, saveDraftEdit, sendDraft } from "@/server/drafts";
 import { ReadOnlyError, SendingBlockedError } from "@/server/lifecycle";
 import { requireOwner } from "@/server/session";
@@ -92,4 +93,13 @@ export async function draftReplyAction(formData: FormData) {
     read_only: "readonly",
   };
   redirect(`/queue?error=${reasons[r.reason] ?? "draftfailed"}`);
+}
+
+/** "Hold it": autopilot stands down; the draft waits for the owner like any other. */
+export async function holdAutopilotAction(formData: FormData) {
+  const { workspace } = await requireOwner();
+  const draftId = id.safeParse(formData.get("draftId"));
+  if (!draftId.success) redirect("/queue?error=unknown");
+  const held = await holdAutopilot(workspace.id, draftId.data);
+  redirect(held ? "/queue?done=held" : "/queue?error=unknown");
 }

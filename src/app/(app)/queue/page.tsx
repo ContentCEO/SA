@@ -7,6 +7,7 @@ import { relativeTime } from "@/lib/relative-time";
 import { listQueue, sentDraftSummary, type QueueItem } from "@/server/drafts";
 import { canSend, isReadOnly, sendingBlockedReason, sendingOffLabel } from "@/server/lifecycle";
 import { listMailboxes } from "@/server/mailboxes";
+import { getBusinessProfile } from "@/server/profile";
 import { requireOwner } from "@/server/session";
 import { draftReplyAction } from "./actions";
 import { DraftCard } from "./draft-card";
@@ -15,6 +16,7 @@ const done: Record<string, string> = {
   discarded: "Draft discarded.",
   saved: "Changes saved. It's updated in Gmail too.",
   drafted: "Reply drafted. It's below, and in your Gmail drafts.",
+  held: "Held. It won't send until you tap Send reply.",
 };
 const errors: Record<string, string> = {
   blocked: "Sending isn't switched on for your account, so nothing was sent.",
@@ -65,6 +67,8 @@ export default async function QueuePage(props: PageProps<"/queue">) {
   const doneMsg = typeof params.done === "string" ? done[params.done] : undefined;
   const errorMsg = typeof params.error === "string" ? errors[params.error] : undefined;
   const sending = canSend(workspace);
+  const timeZone = (await getBusinessProfile(workspace.id))?.timeZone ?? "America/New_York";
+  const clock = new Intl.DateTimeFormat("en-US", { hour: "numeric", minute: "2-digit", timeZone });
   const readOnly = isReadOnly(workspace);
   const empty = queue.needsYou.length === 0 && queue.drafts.length === 0;
 
@@ -157,6 +161,7 @@ export default async function QueuePage(props: PageProps<"/queue">) {
               needsOwnerReason={i.needsOwnerReason}
               canSend={sending}
               readOnly={readOnly}
+              autoSendAt={i.autoSendAt ? clock.format(i.autoSendAt) : null}
               sendingOffLabel={sendingOffLabel(workspace)}
               sendingOffDetail={sendingBlockedReason(workspace)}
             />

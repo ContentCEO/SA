@@ -36,6 +36,7 @@ describe("job wiring", () => {
     // Every job defined in the file must be registered, or it silently never runs.
     expect(ids.sort()).toEqual(
       [
+        "autopilot-send",
         "backfill-mailbox",
         "sync-mailbox",
         "workspace-lifecycle",

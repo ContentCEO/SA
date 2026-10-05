@@ -16,7 +16,9 @@ import { threadsToFollowUp } from "@/server/followups";
 import { getMailboxWorkspace } from "@/server/mailboxes";
 import { learnVoice, workspacesDueForVoiceRefresh, workspacesNeedingVoice } from "@/server/voice";
 import { expireEvaluations, startPendingEvaluations } from "@/server/workspace-lifecycle";
+import { considerAutopilot, overdueAutopilotDrafts, runAutopilotSend } from "@/server/autopilot";
 import {
+  autopilotSendRequested,
   inngest,
   mailboxClassifyRequested,
   mailboxConnected,
@@ -167,7 +169,17 @@ export const draftMailbox = inngest.createFunction(
       const r = await step.run(`draft-${threadId}`, () =>
         politely(() => createDraftForThread(threadId, { trigger: "auto" })),
       );
-      if (r.status === "created") created++;
+      if (r.status === "created") {
+        created++;
+        const draftId = r.draftId;
+        const at = await step.run(`autopilot-${draftId}`, () => considerAutopilot(draftId));
+        if (at) {
+          await step.sendEvent(
+            `autopilot-send-${draftId}`,
+            autopilotSendRequested.create({ draftId, at: new Date(at).toISOString() }),
+          );
+        }
+      }
       if (r.status === "reconnect_needed" || (r.status === "skipped" && r.reason === "capped"))
         break;
     }
@@ -204,6 +216,24 @@ export const followupScan = inngest.createFunction(
 export const morningDigest = inngest.createFunction(
   { id: "morning-digest", triggers: [cron("3 * * * *")], retries: 3 },
   async ({ step }) => step.run("send", () => sendDigests()),
+);
+
+/**
+ * Autopilot's grace window: wait until the send time (the owner can hold or
+ * edit it meanwhile), then check everything again and send only if it all
+ * still holds. Idempotent: a draft that's already gone or held is left alone.
+ */
+export const autopilotSend = inngest.createFunction(
+  {
+    id: "autopilot-send",
+    triggers: [autopilotSendRequested],
+    singleton: { key: "event.data.draftId", mode: "skip" },
+    retries: 3,
+  },
+  async ({ event, step }) => {
+    await step.sleepUntil("grace-window", new Date(event.data.at));
+    return step.run("send", () => politely(() => runAutopilotSend(event.data.draftId)));
+  },
 );
 
 /** Read sent mail and describe how the owner writes. One at a time per workspace. */
@@ -264,6 +294,16 @@ export const workspaceLifecycle = inngest.createFunction(
   async ({ step }) => {
     const started = await step.run("start", () => startPendingEvaluations());
     const expired = await step.run("expire", () => expireEvaluations());
+    // Autopilot drafts whose send event was lost: send (or stand down) now.
+    const overdue = await step.run("autopilot-overdue", () => overdueAutopilotDrafts());
+    if (overdue.length) {
+      await step.sendEvent(
+        "autopilot-overdue",
+        overdue.map((draftId) =>
+          autopilotSendRequested.create({ draftId, at: new Date().toISOString() }),
+        ),
+      );
+    }
     // Also restart any voice learning that never ran or died part-way.
     const voice = await step.run("voice", () => workspacesNeedingVoice());
     if (voice.length) {
@@ -301,4 +341,5 @@ export const functions = [
   workspaceLifecycle,
   followupScan,
   morningDigest,
+  autopilotSend,
 ];

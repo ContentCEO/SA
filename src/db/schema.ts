@@ -245,6 +245,8 @@ export const drafts = pgTable(
     sentGmailMessageId: text("sent_gmail_message_id"),
     createdAt: createdAt(),
     decidedAt: timestamp("decided_at", { withTimezone: true }),
+    /** Autopilot: when this draft will send unless the owner holds it. Null = waits for a tap. */
+    autoSendAt: timestamp("auto_send_at", { withTimezone: true }),
   },
   (t) => [
     index("drafts_mailbox_status_idx").on(t.mailboxId, t.status),
@@ -348,6 +350,27 @@ export type BusinessProfile = typeof businessProfiles.$inferSelect;
 export type VoiceProfile = typeof voiceProfiles.$inferSelect;
 export type Draft = typeof drafts.$inferSelect;
 export type Workspace = typeof workspaces.$inferSelect;
+export const ruleModeEnum = pgEnum("rule_mode", ["draft", "autopilot"]);
+
+/**
+ * Per-category rules. Only `autopilot` changes behaviour today: replies in that
+ * category may send on their own after a grace window, if every guardrail in
+ * `src/server/autopilot.ts` passes. Absent row = `draft` (wait for a tap).
+ */
+export const rules = pgTable(
+  "rules",
+  {
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    category: text("category").notNull(),
+    mode: ruleModeEnum("mode").notNull().default("draft"),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("rules_workspace_category_uq").on(t.workspaceId, t.category)],
+);
+
+export type Rule = typeof rules.$inferSelect;
 export type Mailbox = typeof mailboxes.$inferSelect;
 export type Thread = typeof threads.$inferSelect;
 export type Message = typeof messages.$inferSelect;
