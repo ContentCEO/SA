@@ -26,6 +26,7 @@ import {
   saveFollowupSettingsAction,
 } from "./profile-actions";
 import { TimeZoneInput } from "@/components/forms/time-zone-input";
+import { GetTheApp } from "@/components/app/get-the-app";
 
 const done: Record<string, string> = {
   connected: "Gmail connected.",
@@ -275,6 +276,17 @@ export default async function SettingsPage(props: PageProps<"/settings">) {
             Save follow-ups
           </Button>
         </form>
+      </section>
+
+      <section aria-labelledby="app-heading" className="flex flex-col gap-3">
+        <h2 id="app-heading" className="text-xl font-black">
+          Get the app
+        </h2>
+        <p className="text-muted-foreground">
+          Put Squared Away on your home screen. It opens straight to your queue, full screen, with
+          the same login.
+        </p>
+        <GetTheApp />
       </section>
 
       <section id="digest" aria-labelledby="digest-heading" className="flex flex-col gap-3">

@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { Instrument_Serif, Inter_Tight } from "next/font/google";
 import "./globals.css";
+import { ServiceWorker } from "@/components/app/service-worker";
 
 const interTight = Inter_Tight({
   variable: "--font-inter-tight",
@@ -20,6 +21,9 @@ const instrumentSerif = Instrument_Serif({
 export const metadata: Metadata = {
   title: "Squared Away",
   description: "Your inbox, handled.",
+  applicationName: "Squared Away",
+  appleWebApp: { capable: true, title: "Squared Away", statusBarStyle: "black" },
+  icons: { apple: "/app-icon/apple-180" },
 };
 
 export const viewport: Viewport = {
@@ -34,7 +38,10 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       lang="en"
       className={`${interTight.variable} ${instrumentSerif.variable} h-full antialiased`}
     >
-      <body className="flex min-h-full flex-col">{children}</body>
+      <body className="flex min-h-full flex-col">
+        {children}
+        <ServiceWorker />
+      </body>
     </html>
   );
 }

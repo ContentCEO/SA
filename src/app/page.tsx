@@ -168,7 +168,10 @@ export default async function HomePage() {
                   How it works
                 </Link>
               </div>
-              <p className="text-slate">Works with Gmail. Three-day trial on your real inbox.</p>
+              <p className="text-slate">
+                Works with Gmail · On the web or as an app on your phone · Three-day trial on your
+                real inbox.
+              </p>
             </div>
             <QueuePreview />
           </div>

@@ -277,6 +277,15 @@ In a sandbox with preinstalled Chromium: `PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-brows
   prices render from `src/config/pricing.ts`. Waitlist form → `waitlist` table (idempotent per
   email, hidden "website" honeypot); joining does NOT allow sign-in — Davi taps Invite in
   /admin → Waitlist (`inviteFromWaitlist`). `QueuePreview` is an HTML still of the queue.
+- **Installable app (PWA, 2026-10-05):** Davi wants website + downloadable app. `src/app/manifest.ts`
+  (start_url /queue, standalone), icons from `src/app/app-icon/[size]/route.tsx` (ImageResponse
+  placeholder until the icon pack), Apple web-app metadata, and `public/sw.js` which **never caches
+  pages or data** — only `public/offline.html`. Settings → "Get the app" (Install button on
+  Android/Chrome, Share → Add to Home Screen steps on iPhone). App-store listings later (Apple
+  $99/yr, Google $25) need Davi's okay; a Capacitor/TWA wrapper can reuse this site.
+- Davi's direction (2026-10-05): keep features simple; make it faster, smoother, more reliable.
+  Open idea, **his decision, don't build yet**: hands-on 1:1 business calls/reviews as part of a
+  package (setup call already in the $499 setup).
 - postgres.js can't bind a `Date` inside a raw `sql` template — pass `.toISOString()` with
   `::timestamptz` (PGlite tolerates it, so unit tests won't catch it; e2e did).
 - Lesson: scripted `str.replace` edits must `assert old in s` — silent no-ops after Prettier caused
