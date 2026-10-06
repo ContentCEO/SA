@@ -2,7 +2,9 @@
 
 import { redirect } from "next/navigation";
 import { z } from "zod";
+import { signOut } from "@/auth";
 import { createGmailConnector } from "@/mailbox/gmail/connector";
+import { deleteAccount, SubscriptionCancelError } from "@/server/account-deletion";
 import { disconnectMailbox } from "@/server/mailboxes";
 import { requireOwner } from "@/server/session";
 
@@ -15,4 +17,15 @@ export async function disconnectMailboxAction(formData: FormData) {
   if (!parsed.success) redirect("/settings?error=unknown");
   const ok = await disconnectMailbox(workspace.id, parsed.data.mailboxId, createGmailConnector());
   redirect(ok ? "/settings?done=disconnected" : "/settings?error=unknown");
+}
+
+export async function deleteAccountAction() {
+  const { userId } = await requireOwner();
+  try {
+    await deleteAccount(userId, createGmailConnector());
+  } catch (err) {
+    if (err instanceof SubscriptionCancelError) redirect("/settings?error=delete_billing");
+    throw err;
+  }
+  await signOut({ redirectTo: "/goodbye" });
 }

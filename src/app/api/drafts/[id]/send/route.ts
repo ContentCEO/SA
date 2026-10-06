@@ -4,6 +4,7 @@ import { auth } from "@/auth";
 import { getWorkspaceForUser } from "@/server/accounts";
 import { sendDraft } from "@/server/drafts";
 import { SendingBlockedError } from "@/server/lifecycle";
+import { hitLimit } from "@/server/rate-limit";
 
 export const dynamic = "force-dynamic";
 
@@ -21,6 +22,14 @@ export async function POST(request: NextRequest, ctx: RouteContext<"/api/drafts/
   if (!session?.user?.id) return NextResponse.json({ error: "Sign in first." }, { status: 401 });
   const workspace = await getWorkspaceForUser(session.user.id);
   if (!workspace) return NextResponse.json({ error: "Sign in first." }, { status: 401 });
+
+  const limit = await hitLimit("send", workspace.id);
+  if (!limit.allowed) {
+    return NextResponse.json(
+      { error: "Too many sends in a short time. Try again shortly." },
+      { status: 429, headers: { "Retry-After": String(limit.retryAfterSec) } },
+    );
+  }
 
   const { id } = await ctx.params;
   if (!z.string().uuid().safeParse(id).success)

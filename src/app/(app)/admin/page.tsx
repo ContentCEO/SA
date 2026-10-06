@@ -13,7 +13,15 @@ import {
 } from "@/server/admin";
 import { requireAdmin } from "@/server/session";
 import { ADMIN_MOVES, canMakeMove, type AdminMove } from "@/server/lifecycle";
-import { adminMoveAction, inviteAction, setPlanAction } from "./actions";
+import {
+  adminMoveAction,
+  connectStripeAction,
+  inviteAction,
+  inviteFromWaitlistAction,
+  setPlanAction,
+} from "./actions";
+import { stripeConfigured } from "@/server/billing";
+import { listWaitlist } from "@/server/waitlist";
 import { pricing } from "@/config/pricing";
 
 export const metadata: Metadata = { title: "Admin", robots: { index: false } };
@@ -64,10 +72,14 @@ const done: Record<string, string> = {
   pause: "Account paused.",
   resume: "Account resumed.",
   plan: "Plan saved.",
+  stripe_test:
+    "Stripe connected in TEST mode: prices, billing portal and payment notifications are set up. Use card 4242 4242 4242 4242 to try it.",
+  stripe_live: "Stripe connected in LIVE mode. Real cards will be charged.",
   invited: "Invited. They can sign in now (add them as a Google test user too).",
   already_invited: "That address was already invited.",
 };
 const errors: Record<string, string> = {
+  stripe: "Couldn't connect Stripe. Check the STRIPE_SECRET_KEY in Vercel, then try again.",
   move: "That change isn't allowed from the account's current status. Refresh and look again.",
   invite: "That doesn't look like an email address.",
   unknown: "That didn't work. Refresh and try again.",
@@ -198,10 +210,11 @@ export default async function AdminPage(props: PageProps<"/admin">) {
   await requireAdmin();
   const params = await props.searchParams;
   const now = new Date();
-  const [rows, total, invited] = await Promise.all([
+  const [rows, total, invited, waiting] = await Promise.all([
     adminOverview(now),
     countWorkspaces(),
     listInvites(),
+    listWaitlist(),
   ]);
   const doneMsg = typeof params.done === "string" ? done[params.done] : undefined;
   const errorMsg = typeof params.error === "string" ? errors[params.error] : undefined;
@@ -226,6 +239,68 @@ export default async function AdminPage(props: PageProps<"/admin">) {
         {rows.map((w) => (
           <WorkspaceCard key={w.workspaceId} w={w} now={now} />
         ))}
+      </section>
+
+      <section id="stripe" aria-labelledby="stripe-heading" className="flex flex-col gap-3">
+        <h2 id="stripe-heading" className="text-xl font-black">
+          Payments
+        </h2>
+        {stripeConfigured() ? (
+          <form action={connectStripeAction} className="flex flex-col gap-2">
+            <p>
+              Sets up the four prices from the price list, the customer billing page, and the
+              payment notifications that switch accounts on and off. Safe to tap again.
+            </p>
+            <Button type="submit" className="w-full">
+              Connect Stripe
+            </Button>
+          </form>
+        ) : (
+          <p>Add STRIPE_SECRET_KEY to the sa project in Vercel first.</p>
+        )}
+      </section>
+
+      <section id="waitlist" aria-labelledby="waitlist-heading" className="flex flex-col gap-3">
+        <h2 id="waitlist-heading" className="text-xl font-black">
+          Waitlist ({waiting.length})
+        </h2>
+        {waiting.length === 0 ? (
+          <p>Nobody yet. The form is on the public home page.</p>
+        ) : (
+          <ul className="flex flex-col gap-3">
+            {waiting.map((w) => (
+              <li
+                key={w.email}
+                aria-label={`Waitlist: ${w.email}`}
+                className="flex flex-col gap-2 rounded-xl border bg-card p-4"
+              >
+                <div className="flex flex-wrap items-baseline justify-between gap-2">
+                  <span className="text-lg font-black">{w.name}</span>
+                  <span className="text-sm text-muted-foreground">
+                    {relativeTime(w.createdAt, now)}
+                  </span>
+                </div>
+                <span className="break-all">{w.email}</span>
+                <span className="text-sm">
+                  {[w.trade, w.teamSize ? `${w.teamSize} people` : null, w.phone]
+                    .filter(Boolean)
+                    .join(" · ")}
+                </span>
+                {w.note ? <p className="text-muted-foreground">“{w.note}”</p> : null}
+                {w.invitedAt ? (
+                  <span className="font-semibold">Invited {relativeTime(w.invitedAt, now)}</span>
+                ) : (
+                  <form action={inviteFromWaitlistAction}>
+                    <input type="hidden" name="email" value={w.email} />
+                    <Button type="submit" className="w-full">
+                      Invite {w.name.split(" ")[0]}
+                    </Button>
+                  </form>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
       </section>
 
       <section aria-labelledby="invite" className="flex flex-col gap-3">

@@ -55,6 +55,18 @@ export const invites = pgTable("invites", {
   acceptedAt: timestamp("accepted_at", { withTimezone: true }),
 });
 
+/** People who asked for access on the public site. Davi invites from /admin. */
+export const waitlist = pgTable("waitlist", {
+  email: text("email").primaryKey(),
+  name: text("name").notNull(),
+  phone: text("phone"),
+  trade: tradeEnum("trade"),
+  teamSize: text("team_size"),
+  note: text("note"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  invitedAt: timestamp("invited_at", { withTimezone: true }),
+});
+
 export const workspaces = pgTable(
   "workspaces",
   {
@@ -344,6 +356,30 @@ export const usage = pgTable(
   },
   (t) => [uniqueIndex("usage_workspace_period_uq").on(t.workspaceId, t.period)],
 );
+
+/** App-wide settings Davi's admin tools write (e.g. the Stripe webhook secret, encrypted). */
+export const appSettings = pgTable("app_settings", {
+  key: text("key").primaryKey(),
+  value: text("value").notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+/** Stripe events already handled — webhooks can arrive more than once. */
+/**
+ * Fixed-window abuse limits (src/server/rate-limit.ts). Keys are a purpose
+ * plus a workspace id or a hashed IP — never an email or a raw address.
+ */
+export const rateLimits = pgTable("rate_limits", {
+  key: text("key").primaryKey(),
+  windowStart: timestamp("window_start", { withTimezone: true }).notNull(),
+  count: integer("count").notNull(),
+});
+
+export const stripeEvents = pgTable("stripe_events", {
+  id: text("id").primaryKey(),
+  type: text("type").notNull(),
+  receivedAt: timestamp("received_at", { withTimezone: true }).notNull().defaultNow(),
+});
 
 export type User = typeof users.$inferSelect;
 export type BusinessProfile = typeof businessProfiles.$inferSelect;

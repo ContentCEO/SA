@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#1B1B1B" />
+    <title>No signal · Squared Away</title>
+    <style>
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: flex;
+        align-items: center;
+        background: #f7f6f3;
+        color: #1b1b1b;
+        font-family:
+          system-ui,
+          -apple-system,
+          "Segoe UI",
+          sans-serif;
+      }
+      main {
+        padding: 24px 16px;
+        max-width: 28rem;
+        margin: 0 auto;
+      }
+      .serif {
+        font-family: Georgia, serif;
+        font-style: italic;
+        font-size: 2rem;
+        display: block;
+      }
+      .heavy {
+        font-weight: 900;
+        font-size: 2.5rem;
+        letter-spacing: -0.035em;
+        word-spacing: 0.14em;
+        display: block;
+      }
+      p {
+        font-size: 1.125rem;
+        line-height: 1.5;
+        color: #5e5d59;
+      }
+      button {
+        min-height: 48px;
+        width: 100%;
+        border: 0;
+        border-radius: 8px;
+        background: #1b1b1b;
+        color: #efeeea;
+        font-size: 1.125rem;
+        font-weight: 600;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1><span class="serif">no signal,</span><span class="heavy">nothing lost.</span></h1>
+      <p>
+        Squared Away needs a connection to load. Your queue is safe, and nothing is sent while
+        you're offline.
+      </p>
+      <button type="button" onclick="location.reload()">Try again</button>
+    </main>
+  </body>
+</html>

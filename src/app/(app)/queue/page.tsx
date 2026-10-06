@@ -19,6 +19,7 @@ const done: Record<string, string> = {
   held: "Held. It won't send until you tap Send reply.",
 };
 const errors: Record<string, string> = {
+  busy: "That's a lot in a short time, so we've paused it for a bit. Try again in a few minutes.",
   blocked: "Sending isn't switched on for your account, so nothing was sent.",
   changed:
     "That draft was changed in Gmail. Here's the latest version — read it, then tap Send reply again.",

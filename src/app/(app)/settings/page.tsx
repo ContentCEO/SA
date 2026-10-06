@@ -18,6 +18,7 @@ import {
   getBusinessProfile,
   getVoiceProfile,
 } from "@/server/profile";
+import { DeleteAccountButton } from "./delete-account-button";
 import { DisconnectButton } from "./disconnect-button";
 import {
   relearnVoiceAction,
@@ -26,6 +27,7 @@ import {
   saveFollowupSettingsAction,
 } from "./profile-actions";
 import { TimeZoneInput } from "@/components/forms/time-zone-input";
+import { GetTheApp } from "@/components/app/get-the-app";
 
 const done: Record<string, string> = {
   connected: "Gmail connected.",
@@ -40,6 +42,9 @@ const done: Record<string, string> = {
 };
 
 const errors: Record<string, string> = {
+  relearn_busy: "Your sent mail was re-read recently. You can do it again tomorrow.",
+  delete_billing:
+    "We couldn't cancel your plan, so nothing was deleted. Try again, or call us and we'll do it.",
   autopilot: "Autopilot can't be turned on for that yet.",
   limit: "Your plan is at its mailbox limit. Disconnect one first, or ask about a bigger plan.",
   unknown: "That didn't work. Refresh and try again.",
@@ -277,6 +282,17 @@ export default async function SettingsPage(props: PageProps<"/settings">) {
         </form>
       </section>
 
+      <section aria-labelledby="app-heading" className="flex flex-col gap-3">
+        <h2 id="app-heading" className="text-xl font-black">
+          Get the app
+        </h2>
+        <p className="text-muted-foreground">
+          Put Squared Away on your home screen. It opens straight to your queue, full screen, with
+          the same login.
+        </p>
+        <GetTheApp />
+      </section>
+
       <section id="digest" aria-labelledby="digest-heading" className="flex flex-col gap-3">
         <h2 id="digest-heading" className="text-xl font-black">
           Morning summary
@@ -379,6 +395,9 @@ export default async function SettingsPage(props: PageProps<"/settings">) {
         <h2 id="account" className="text-xl font-black">
           Account
         </h2>
+        <Link href="/billing" className={cn(buttonVariants({ variant: "outline" }), "w-full")}>
+          Plan &amp; billing
+        </Link>
         {admin ? (
           <Link href="/admin" className={cn(buttonVariants({ variant: "outline" }), "w-full")}>
             Admin
@@ -394,6 +413,7 @@ export default async function SettingsPage(props: PageProps<"/settings">) {
             Sign out
           </Button>
         </form>
+        <DeleteAccountButton hasPlan={Boolean(workspace.stripeSubscriptionId)} />
       </section>
     </>
   );

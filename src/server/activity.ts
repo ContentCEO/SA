@@ -81,6 +81,18 @@ export function describeActivity(
       return detail.to
         ? `Your plan changed to ${String(detail.to)[0]!.toUpperCase()}${String(detail.to).slice(1)}`
         : "Your plan was removed";
+    case "payment_received":
+      return detail.includesSetup
+        ? "Payment received — setup paid and sending switched on"
+        : "Payment received — your plan is back on";
+    case "subscription_changed":
+      return detail.to === "past_due"
+        ? "A payment didn't go through — paused until your card is updated"
+        : detail.to === "canceled"
+          ? "Your plan ended — nothing was deleted"
+          : detail.from === "past_due" || detail.from === "canceled"
+            ? "Payment sorted — switched back on"
+            : "Your plan was updated";
     case "digest_sent":
       return "Sent your morning summary";
     case "evaluation_started":

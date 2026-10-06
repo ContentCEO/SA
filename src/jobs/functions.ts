@@ -14,6 +14,7 @@ import { createDraftForThread, reconcileDrafts, threadsToAutoDraft } from "@/ser
 import { sendDigests } from "@/server/digest";
 import { threadsToFollowUp } from "@/server/followups";
 import { getMailboxWorkspace } from "@/server/mailboxes";
+import { purgeRateLimits } from "@/server/rate-limit";
 import { learnVoice, workspacesDueForVoiceRefresh, workspacesNeedingVoice } from "@/server/voice";
 import { expireEvaluations, startPendingEvaluations } from "@/server/workspace-lifecycle";
 import { considerAutopilot, overdueAutopilotDrafts, runAutopilotSend } from "@/server/autopilot";
@@ -322,10 +323,14 @@ export const renewGmailWatches = inngest.createFunction(
   async ({ step }) => ({ renewed: await step.run("renew", () => renewWatches()) }),
 );
 
-/** Daily: purge email text past the retention window. */
+/** Daily: purge email text past the retention window (and stale rate-limit windows). */
 export const purgeBodies = inngest.createFunction(
   { id: "purge-expired-bodies", triggers: [cron("41 7 * * *")] },
-  async ({ step }) => ({ purged: await step.run("purge", () => purgeExpiredBodies()) }),
+  async ({ step }) => {
+    const purged = await step.run("purge", () => purgeExpiredBodies());
+    await step.run("purge-rate-limits", () => purgeRateLimits());
+    return { purged };
+  },
 );
 
 export const functions = [

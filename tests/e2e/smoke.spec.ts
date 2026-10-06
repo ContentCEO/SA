@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 
 test("sign-in page shows the headline and a named button", async ({ page }) => {
-  await page.goto("/");
+  await page.goto("/signin");
   const h1 = page.getByRole("heading", { level: 1 });
   await expect(h1).toContainText("your inbox,");
   await expect(h1).toContainText("handled.");
@@ -12,13 +12,17 @@ test("sign-in page shows the headline and a named button", async ({ page }) => {
 test("signed-out visitors can't reach the app", async ({ page }) => {
   for (const path of ["/settings", "/connect"]) {
     await page.goto(path);
-    await expect(page).toHaveURL(/\/$/);
+    await expect(page).toHaveURL(/\/signin$/);
   }
 });
 
 test("not-invited page explains plainly", async ({ page }) => {
   await page.goto("/not-invited");
-  await expect(page.getByRole("heading", { level: 1 })).toContainText("you're on the list.");
+  await expect(page.getByRole("heading", { level: 1 })).toContainText("invite only.");
+  await expect(page.getByRole("link", { name: "Join the waitlist" })).toHaveAttribute(
+    "href",
+    "/#waitlist",
+  );
 });
 
 test("health endpoint responds", async ({ request }) => {

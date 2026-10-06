@@ -87,9 +87,39 @@ Sync, polling, watch renewal and the retention purge run as Inngest functions
 
 Without Inngest nothing syncs: connecting Gmail still works, but no mail is read.
 
-Gmail push (optional, faster than the 5-minute poll): create a Pub/Sub topic, grant
-`gmail-api-push@system.gserviceaccount.com` the Publisher role on it, add a push subscription to
-`{APP_URL}/api/gmail/push?token=...`, and set `GMAIL_PUBSUB_TOPIC` + `GMAIL_PUSH_VERIFICATION_TOKEN`.
+### 6a. Gmail instant notifications (optional)
+
+Without this, new mail is picked up by the 5-minute poll. With it, Gmail tells us within seconds.
+Free at this volume (Pub/Sub's free tier is 10 GB/month; each notification is a few hundred bytes).
+All in the same Google Cloud project as the OAuth client (project number 214188340483):
+
+1. console.cloud.google.com → APIs & Services → Library → **Cloud Pub/Sub API** → Enable.
+2. Pub/Sub → Topics → **Create topic**, ID `gmail-push`, untick "Add a default subscription" → Create.
+   Copy its full name: `projects/<project-id>/topics/gmail-push`.
+3. On that topic → **Permissions** (right panel; "Show info panel") → Add principal
+   `gmail-api-push@system.gserviceaccount.com`, role **Pub/Sub Publisher** → Save.
+4. Make a long random token (e.g. `openssl rand -hex 24`, or any 40+ random letters and digits).
+5. Pub/Sub → Subscriptions → **Create subscription**: topic `gmail-push`, delivery type **Push**,
+   endpoint `https://sa-dac3.vercel.app/api/gmail/push?token=<the token>`, everything else default.
+6. Vercel → sa → Settings → Environment Variables (Production): `GMAIL_PUBSUB_TOPIC` = the full topic
+   name from step 2, `GMAIL_PUSH_VERIFICATION_TOKEN` = the token (sensitive). Redeploy.
+7. Watches start at the next daily renewal (6:17 UTC). To start now: Inngest dashboard → Functions →
+   **renew-gmail-watches** → Invoke.
+
+The push only says "something changed in this mailbox" — we never read content from it; it just
+starts the normal sync. The poll keeps running as a safety net.
+
+### 6b. Error alerts (Sentry, optional)
+
+Server errors, browser errors, and background jobs that fail after all their retries are reported
+to Sentry. Every event is scrubbed first (`src/lib/sentry.ts`): no request bodies, cookies, headers
+or query strings, user reduced to an id, email addresses masked. No tracing or session replay.
+
+1. sentry.io → sign up (free Developer plan) → Create project → platform **Next.js**, name `sa`.
+   Skip the wizard — the code is already in place.
+2. Project → Settings → Client Keys (DSN) → copy the DSN.
+3. Vercel → sa → Environment Variables (Production): `NEXT_PUBLIC_SENTRY_DSN` = the DSN. Redeploy.
+4. Sentry → Alerts: the default "new issue" email alert is enough to start.
 
 ## 7. Inviting an owner
 
@@ -112,6 +142,27 @@ The digest is sent through Resend's HTTP API (`src/lib/email.ts`). Without `RESE
 4. Put both in Vercel (Production) and redeploy.
 
 The digest carries counts and categories only — no customer names, subjects or email text.
+
+## 7c. Payments (Stripe)
+
+Payments move accounts through the commercial flow — only Stripe's signed webhook changes status,
+never the browser redirect.
+
+1. dashboard.stripe.com → Developers → API keys → copy the **Secret key** (`sk_test_…` while
+   testing). Put it in Vercel → sa → Settings → Environment Variables as `STRIPE_SECRET_KEY`
+   (Production, sensitive) and redeploy.
+2. Open `/admin` → **Payments** → **Connect Stripe**. It creates (or reuses) the setup-fee and plan
+   prices from `src/config/pricing.ts` (lookup keys include the amount, so a price change makes a
+   new Stripe price), the customer billing portal, and a webhook to `/api/stripe/webhook`. The
+   webhook's signing secret is stored encrypted in `app_settings`. Safe to tap again.
+3. Test: as an owner, Settings → Plan & billing → Choose a plan, card `4242 4242 4242 4242`, any
+   future date, any CVC. The page shows "finishing up" until the webhook lands, then the account is
+   `setup_paid` (sending on). Admin still marks the setup call done (→ `active`).
+4. Going live: swap in the live secret key, redeploy, tap Connect Stripe again.
+
+What payments do: checkout paid → `setup_paid` (or back to `active` if setup was finished before);
+payment fails → `past_due` (jobs pause, nothing deleted); recovers → back; subscription ends →
+`canceled` (read-only). The $499 setup fee is charged once per account, on the first checkout.
 
 ## 8. Google OAuth client
 

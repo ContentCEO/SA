@@ -269,8 +269,53 @@ In a sandbox with preinstalled Chromium: `PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-brows
   Backstop: the 15-min lifecycle job re-sends events for countdowns >5 min overdue.
 - Admin sets plans by hand (`setWorkspacePlan`) until Stripe (M10); dropping to a plan without
   autopilot switches every category back to draft and clears countdowns.
+- **Billing (M10, 2026-10-05):** Stripe SDK, `src/server/billing.ts` + pure rules in
+  `src/server/billing-rules.ts`. Checkout (subscription mode) = plan price + the one-time setup fee
+  only if `setup_paid_at` is empty; one live subscription per workspace; Stripe's Billing Portal for
+  card/plan/cancel. Prices are found-or-created by lookup key `sa_<plan>_<cents>_month` /
+  `sa_setup_<cents>` (amount in the key → config change = new price). **Only the signed webhook**
+  (`/api/stripe/webhook`) changes status: paid checkout → setup_paid (active if the setup call was
+  already done); past_due/unpaid → past_due; recovered → back; canceled → canceled (subscription id
+  cleared, re-checkout allowed without the setup fee). Paused and trial accounts are never moved by
+  Stripe. Events are idempotent via `stripe_events` (row deleted on handler error so Stripe retries).
+  `/admin` → Payments → **Connect Stripe** sets up prices, the portal config and the webhook, storing
+  its signing secret encrypted in `app_settings` (`STRIPE_WEBHOOK_SECRET` env overrides).
+  `STRIPE_SECRET_KEY` (test) is on sa Production. Owner screen: `/billing` (Settings → Plan &
+  billing; banner links "See plans" / "Choose a plan" / "Update payment").
+- **Delete my account (2026-10-06):** Settings → Account → one confirmation.
+  `src/server/account-deletion.ts`: cancel the Stripe subscription immediately (if that fails,
+  **nothing** is deleted; an already-gone subscription is fine) → revoke Google for each mailbox (best
+  effort) → delete the `users` row (everything cascades) → sign out → `/goodbye`. Gmail drafts stay
+  in the owner's Gmail. Logs counts only. `/signin` only bounces to /queue if the account still
+  exists (a deleted account's JWT would otherwise loop).
+- **Rate limits (2026-10-06):** `src/server/rate-limit.ts`, fixed windows in the `rate_limits` table
+  (one atomic upsert; holds across serverless instances). Per workspace: send 60/10 min (action +
+  API → 429 with Retry-After), Draft a reply 30/h, re-learn voice 3/day, billing 10/h, Gmail connect
+  10/h. Waitlist 10/h per **hashed** IP (salted with AUTH_SECRET; raw IPs never stored). Webhooks
+  are signature/token-checked instead. Purged daily with bodies. e2e global setup clears the table.
+- **Error alerts (2026-10-06):** `@sentry/nextjs`, off unless `NEXT_PUBLIC_SENTRY_DSN` is set.
+  `src/instrumentation.ts` (server init + `onRequestError`), `src/instrumentation-client.ts` (SDK
+  loaded lazily only with a DSN), Inngest middleware `ReportFinalFailures` (final attempt only, then
+  flush). `scrubEvent` drops request data/cookies/headers/query, keeps only user id, masks emails,
+  drops console breadcrumbs and `extra`. Errors only (tracesSampleRate 0, no replay). No
+  `withSentryConfig` / source-map upload (keeps the build free of a Sentry auth token).
 - **Future goal (after the website is complete):** a downloadable app (phone app store). Not started;
   the site is mobile-first so a wrapper or native shell can reuse it later.
+- **Public site (2026-10-05, Davi asked for a sales website):** `/` is the marketing page (signed-in
+  users still go to `/queue`); sign-in moved to `/signin` (Auth.js `pages`, `requireOwner` redirect).
+  Copy must stay true to the code (scopes, 30-day retention, trial can't send, autopilot rules);
+  prices render from `src/config/pricing.ts`. Waitlist form → `waitlist` table (idempotent per
+  email, hidden "website" honeypot); joining does NOT allow sign-in — Davi taps Invite in
+  /admin → Waitlist (`inviteFromWaitlist`). `QueuePreview` is an HTML still of the queue.
+- **Installable app (PWA, 2026-10-05):** Davi wants website + downloadable app. `src/app/manifest.ts`
+  (start_url /queue, standalone), icons from `src/app/app-icon/[size]/route.tsx` (ImageResponse
+  placeholder until the icon pack), Apple web-app metadata, and `public/sw.js` which **never caches
+  pages or data** — only `public/offline.html`. Settings → "Get the app" (Install button on
+  Android/Chrome, Share → Add to Home Screen steps on iPhone). App-store listings later (Apple
+  $99/yr, Google $25) need Davi's okay; a Capacitor/TWA wrapper can reuse this site.
+- Davi's direction (2026-10-05): keep features simple; make it faster, smoother, more reliable.
+  Open idea, **his decision, don't build yet**: hands-on 1:1 business calls/reviews as part of a
+  package (setup call already in the $499 setup).
 - postgres.js can't bind a `Date` inside a raw `sql` template — pass `.toISOString()` with
   `::timestamptz` (PGlite tolerates it, so unit tests won't catch it; e2e did).
 - Lesson: scripted `str.replace` edits must `assert old in s` — silent no-ops after Prettier caused
@@ -290,14 +335,14 @@ In a sandbox with preinstalled Chromium: `PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-brows
 - [x] **8. Digest + Activity** — Activity screen + honest estimate; digest code done, live email
       waits on a Resend API key (and a verified domain for owners other than Davi)
 - [x] **9. Autopilot** — three-layer guardrails, earned per category, 10-minute grace window
-- [ ] 10. Billing
+- [x] **10. Billing** — Stripe Checkout + portal + webhook; Connect Stripe in /admin
 - [ ] 11. Hardening and launch
 
 ## Waiting on Davi
 
 - Resend: verify the production domain in Resend and switch `EMAIL_FROM` off `onboarding@resend.dev`
   (until then the digest only reaches the Resend account's own address).
-- Optional: Gmail push via Pub/Sub (steps in docs/SETUP.md §6); polling works without it.
+- Optional: Gmail instant notifications (docs/SETUP.md §6a) and Sentry error alerts (§6b).
 - Rotate the Neon password and Google client secret that were pasted in chat; delete the old
   Google secret.
 - Add each invited owner as a Google Cloud test user (Google Auth Platform → Audience).
