@@ -86,7 +86,7 @@ const faqs = [
   },
   {
     q: "What if I stop?",
-    a: "Disconnect Gmail in Settings and our access is removed at Google straight away. Month to month, no contract.",
+    a: "Disconnect Gmail in Settings and our access is removed at Google straight away. Want it all gone? Delete my account in Settings erases everything we hold, in one tap. Month to month, no contract.",
   },
 ];
 

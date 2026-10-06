@@ -1,6 +1,8 @@
 "use server";
 
+import { headers } from "next/headers";
 import { z } from "zod";
+import { hitLimit, ipKey } from "@/server/rate-limit";
 import { joinWaitlist, waitlistInput } from "@/server/waitlist";
 
 export type WaitlistState = {
@@ -22,6 +24,13 @@ export async function joinWaitlistAction(
     [...formData.entries()].map(([k, v]) => [k, typeof v === "string" ? v : ""]),
   ) as Record<string, string>;
   if (raw.website) return { status: "joined" };
+  if (!(await hitLimit("waitlist", ipKey(await headers()))).allowed) {
+    return {
+      status: "error",
+      errors: { email: ["Too many tries from here. Try again in an hour, or give us a call."] },
+      values: raw,
+    };
+  }
 
   const parsed = waitlistInput.safeParse({
     name: raw.name ?? "",

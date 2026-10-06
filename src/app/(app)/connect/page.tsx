@@ -7,6 +7,7 @@ import { requireOwner } from "@/server/session";
 import { startGmailConnect } from "./actions";
 
 const errors: Record<string, string> = {
+  busy: "That's a lot in a short time, so we've paused it for a bit. Try again in a few minutes.",
   denied: "No problem — Gmail wasn't connected. You can connect it whenever you're ready.",
   scopes:
     "Google let you untick some permissions, and Squared Away needs all three to work: read, draft, and send. Nothing was saved. Try again and leave them all ticked.",

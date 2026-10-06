@@ -14,6 +14,7 @@ import {
   voiceEditInput,
 } from "@/server/profile";
 import { AutopilotNotAllowedError, setAutopilot } from "@/server/autopilot";
+import { hitLimit } from "@/server/rate-limit";
 import { requireOwner } from "@/server/session";
 
 export type FormState = { errors?: Record<string, string[]>; values?: Record<string, string> };
@@ -55,6 +56,7 @@ export async function saveVoiceAction(_prev: FormState, formData: FormData): Pro
 
 export async function relearnVoiceAction() {
   const { workspace } = await requireOwner();
+  if (!(await hitLimit("relearn", workspace.id)).allowed) redirect("/settings?error=relearn_busy");
   await enqueue(voiceLearnRequested.create({ workspaceId: workspace.id, force: true }));
   redirect("/settings?done=relearn");
 }

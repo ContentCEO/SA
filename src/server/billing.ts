@@ -231,6 +231,16 @@ export async function createPortal(workspace: Workspace): Promise<string> {
   return portal.url;
 }
 
+/** Used when an owner deletes their account: stop billing straight away. Already gone is fine. */
+export async function cancelSubscriptionNow(subscriptionId: string) {
+  try {
+    await stripe().subscriptions.cancel(subscriptionId);
+  } catch (err) {
+    if ((err as { code?: string }).code === "resource_missing") return;
+    throw err;
+  }
+}
+
 async function log(workspaceId: string, action: string, detail: Record<string, unknown>) {
   await db().insert(activityLog).values({ workspaceId, actor: "squared_away", action, detail });
 }

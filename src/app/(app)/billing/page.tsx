@@ -15,6 +15,7 @@ import { openPortalAction, startCheckoutAction } from "./actions";
 export const metadata: Metadata = { title: "Plan & billing" };
 
 const errors: Record<string, string> = {
+  busy: "That's a lot in a short time, so we've paused it for a bit. Try again in a few minutes.",
   canceled: "Checkout was closed before paying. Nothing was charged.",
   has_plan: "You already have a plan — use Manage billing to change it.",
   unknown: "That didn't work. Refresh and try again.",

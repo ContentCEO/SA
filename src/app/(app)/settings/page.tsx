@@ -18,6 +18,7 @@ import {
   getBusinessProfile,
   getVoiceProfile,
 } from "@/server/profile";
+import { DeleteAccountButton } from "./delete-account-button";
 import { DisconnectButton } from "./disconnect-button";
 import {
   relearnVoiceAction,
@@ -41,6 +42,9 @@ const done: Record<string, string> = {
 };
 
 const errors: Record<string, string> = {
+  relearn_busy: "Your sent mail was re-read recently. You can do it again tomorrow.",
+  delete_billing:
+    "We couldn't cancel your plan, so nothing was deleted. Try again, or call us and we'll do it.",
   autopilot: "Autopilot can't be turned on for that yet.",
   limit: "Your plan is at its mailbox limit. Disconnect one first, or ask about a bigger plan.",
   unknown: "That didn't work. Refresh and try again.",
@@ -409,6 +413,7 @@ export default async function SettingsPage(props: PageProps<"/settings">) {
             Sign out
           </Button>
         </form>
+        <DeleteAccountButton hasPlan={Boolean(workspace.stripeSubscriptionId)} />
       </section>
     </>
   );

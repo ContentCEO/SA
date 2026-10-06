@@ -7,12 +7,14 @@ import { SiteFooter } from "@/components/app/site-footer";
 import { Headline } from "@/components/brand/headline";
 import { Wordmark } from "@/components/brand/wordmark";
 import { Button } from "@/components/ui/button";
+import { getWorkspaceForUser } from "@/server/accounts";
 
 export const metadata: Metadata = { title: "Sign in · Squared Away" };
 
 export default async function SignInPage(props: PageProps<"/signin">) {
   const session = await auth();
-  if (session?.user?.id) redirect("/queue");
+  // A session for an account that no longer exists (deleted on another device) stays here.
+  if (session?.user?.id && (await getWorkspaceForUser(session.user.id))) redirect("/queue");
   const { error } = await props.searchParams;
 
   return (

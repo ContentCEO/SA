@@ -8,5 +8,7 @@ export default async function globalSetup() {
   if (!url) throw new Error("E2E tests need DATABASE_URL (a disposable local Postgres).");
   const client = postgres(url, { max: 1, onnotice: () => {} });
   await migrate(drizzle(client), { migrationsFolder: "./drizzle" });
+  // Every run comes from 127.0.0.1; start each with fresh abuse-limit windows.
+  await client`delete from rate_limits`;
   await client.end();
 }

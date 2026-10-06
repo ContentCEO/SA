@@ -282,6 +282,17 @@ In a sandbox with preinstalled Chromium: `PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-brows
   its signing secret encrypted in `app_settings` (`STRIPE_WEBHOOK_SECRET` env overrides).
   `STRIPE_SECRET_KEY` (test) is on sa Production. Owner screen: `/billing` (Settings → Plan &
   billing; banner links "See plans" / "Choose a plan" / "Update payment").
+- **Delete my account (2026-10-06):** Settings → Account → one confirmation.
+  `src/server/account-deletion.ts`: cancel the Stripe subscription immediately (if that fails,
+  **nothing** is deleted; an already-gone subscription is fine) → revoke Google for each mailbox (best
+  effort) → delete the `users` row (everything cascades) → sign out → `/goodbye`. Gmail drafts stay
+  in the owner's Gmail. Logs counts only. `/signin` only bounces to /queue if the account still
+  exists (a deleted account's JWT would otherwise loop).
+- **Rate limits (2026-10-06):** `src/server/rate-limit.ts`, fixed windows in the `rate_limits` table
+  (one atomic upsert; holds across serverless instances). Per workspace: send 60/10 min (action +
+  API → 429 with Retry-After), Draft a reply 30/h, re-learn voice 3/day, billing 10/h, Gmail connect
+  10/h. Waitlist 10/h per **hashed** IP (salted with AUTH_SECRET; raw IPs never stored). Webhooks
+  are signature/token-checked instead. Purged daily with bodies. e2e global setup clears the table.
 - **Future goal (after the website is complete):** a downloadable app (phone app store). Not started;
   the site is mobile-first so a wrapper or native shell can reuse it later.
 - **Public site (2026-10-05, Davi asked for a sales website):** `/` is the marketing page (signed-in

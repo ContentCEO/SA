@@ -5,6 +5,7 @@ import { z } from "zod";
 import { holdAutopilot } from "@/server/autopilot";
 import { createDraftForThread, discardDraft, saveDraftEdit, sendDraft } from "@/server/drafts";
 import { ReadOnlyError, SendingBlockedError } from "@/server/lifecycle";
+import { hitLimit } from "@/server/rate-limit";
 import { requireOwner } from "@/server/session";
 
 const id = z.string().uuid();
@@ -17,6 +18,7 @@ export async function sendDraftAction(formData: FormData) {
   const edited = formData.get("body");
   const editedBody = typeof edited === "string" ? body.safeParse(edited) : null;
   if (editedBody && !editedBody.success) redirect("/queue?error=empty");
+  if (!(await hitLimit("send", workspace.id)).allowed) redirect("/queue?error=busy");
 
   let outcome;
   try {
@@ -79,6 +81,7 @@ export async function draftReplyAction(formData: FormData) {
   const { workspace } = await requireOwner();
   const threadId = id.safeParse(formData.get("threadId"));
   if (!threadId.success) redirect("/queue?error=unknown");
+  if (!(await hitLimit("draft", workspace.id)).allowed) redirect("/queue?error=busy");
   const r = await createDraftForThread(threadId.data, {
     trigger: "owner",
     workspaceId: workspace.id,

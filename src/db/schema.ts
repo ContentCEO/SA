@@ -365,6 +365,16 @@ export const appSettings = pgTable("app_settings", {
 });
 
 /** Stripe events already handled — webhooks can arrive more than once. */
+/**
+ * Fixed-window abuse limits (src/server/rate-limit.ts). Keys are a purpose
+ * plus a workspace id or a hashed IP — never an email or a raw address.
+ */
+export const rateLimits = pgTable("rate_limits", {
+  key: text("key").primaryKey(),
+  windowStart: timestamp("window_start", { withTimezone: true }).notNull(),
+  count: integer("count").notNull(),
+});
+
 export const stripeEvents = pgTable("stripe_events", {
   id: text("id").primaryKey(),
   type: text("type").notNull(),
