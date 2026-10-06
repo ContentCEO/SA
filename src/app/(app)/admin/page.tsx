@@ -20,7 +20,8 @@ import {
   inviteFromWaitlistAction,
   setPlanAction,
 } from "./actions";
-import { stripeConfigured } from "@/server/billing";
+import { PendingButton } from "@/components/app/pending-button";
+import { stripeConfigured, stripeConnectedAt } from "@/server/billing";
 import { listWaitlist } from "@/server/waitlist";
 import { pricing } from "@/config/pricing";
 
@@ -210,14 +211,22 @@ export default async function AdminPage(props: PageProps<"/admin">) {
   await requireAdmin();
   const params = await props.searchParams;
   const now = new Date();
-  const [rows, total, invited, waiting] = await Promise.all([
+  const [rows, total, invited, waiting, stripeAt] = await Promise.all([
     adminOverview(now),
     countWorkspaces(),
     listInvites(),
     listWaitlist(),
+    stripeConnectedAt(),
   ]);
-  const doneMsg = typeof params.done === "string" ? done[params.done] : undefined;
-  const errorMsg = typeof params.error === "string" ? errors[params.error] : undefined;
+  // Payment messages show inside the Payments section (the page scrolls there), not at the top.
+  const isStripe = (k: unknown) => typeof k === "string" && k.startsWith("stripe");
+  const doneMsg =
+    typeof params.done === "string" && !isStripe(params.done) ? done[params.done] : undefined;
+  const errorMsg =
+    typeof params.error === "string" && !isStripe(params.error) ? errors[params.error] : undefined;
+  const stripeDone = isStripe(params.done) ? done[params.done as string] : undefined;
+  const stripeError = isStripe(params.error) ? errors[params.error as string] : undefined;
+  const stripeReason = typeof params.reason === "string" ? params.reason.slice(0, 200) : null;
 
   return (
     <>
@@ -245,15 +254,26 @@ export default async function AdminPage(props: PageProps<"/admin">) {
         <h2 id="stripe-heading" className="text-xl font-black">
           Payments
         </h2>
+        {stripeDone ? <Notice>{stripeDone}</Notice> : null}
+        {stripeError ? (
+          <Notice strong>
+            {stripeError}
+            {stripeReason ? ` Stripe said: “${stripeReason}”` : null}
+          </Notice>
+        ) : null}
         {stripeConfigured() ? (
           <form action={connectStripeAction} className="flex flex-col gap-2">
+            <p className="font-semibold">
+              {stripeAt ? `Connected · last set up ${et.format(stripeAt)}` : "Not connected yet."}
+            </p>
             <p>
               Sets up the four prices from the price list, the customer billing page, and the
-              payment notifications that switch accounts on and off. Safe to tap again.
+              payment notifications that switch accounts on and off. Takes about 10 seconds. Safe to
+              tap again.
             </p>
-            <Button type="submit" className="w-full">
-              Connect Stripe
-            </Button>
+            <PendingButton pending="Connecting to Stripe…" className="w-full">
+              {stripeAt ? "Connect Stripe again" : "Connect Stripe"}
+            </PendingButton>
           </form>
         ) : (
           <p>Add STRIPE_SECRET_KEY to the sa project in Vercel first.</p>

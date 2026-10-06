@@ -74,11 +74,14 @@ export async function connectStripeAction() {
   try {
     mode = (await connectStripe()).mode;
   } catch (err) {
+    // Stripe's messages say what's wrong ("Invalid API Key", a missing permission) and carry
+    // no customer data; Davi sees it on his own admin page.
+    const reason = err instanceof Error ? err.message.slice(0, 200) : "unknown";
     console.error("stripe_connect_failed", {
       name: err instanceof Error ? err.name : "unknown",
-      message: err instanceof Error ? err.message.slice(0, 200) : "",
+      message: reason,
     });
-    redirect("/admin?error=stripe#stripe");
+    redirect(`/admin?error=stripe&reason=${encodeURIComponent(reason)}#stripe`);
   }
   redirect(`/admin?done=stripe_${mode}#stripe`);
 }

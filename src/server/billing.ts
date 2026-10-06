@@ -160,6 +160,15 @@ export async function connectStripe(): Promise<{
   };
 }
 
+/** When Connect Stripe last succeeded (the stored webhook secret), or null if never. */
+export async function stripeConnectedAt(): Promise<Date | null> {
+  const [row] = await db()
+    .select({ updatedAt: appSettings.updatedAt })
+    .from(appSettings)
+    .where(eq(appSettings.key, WEBHOOK_SECRET_KEY));
+  return row?.updatedAt ?? null;
+}
+
 async function webhookSecret(): Promise<string | null> {
   if (process.env.STRIPE_WEBHOOK_SECRET) return process.env.STRIPE_WEBHOOK_SECRET;
   const [row] = await db()
