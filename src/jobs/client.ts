@@ -1,6 +1,20 @@
-import { eventType, Inngest, staticSchema } from "inngest";
+import * as Sentry from "@sentry/nextjs";
+import { eventType, Inngest, Middleware, staticSchema } from "inngest";
 
-export const inngest = new Inngest({ id: "squared-away" });
+/**
+ * A job that has used up its retries goes to Sentry (scrubbed; a no-op without
+ * a DSN). Earlier attempts — rate-limit pauses included — are expected noise.
+ */
+class ReportFinalFailures extends Middleware.BaseMiddleware {
+  readonly id = "report-final-failures";
+  async onRunError({ error, fn, isFinalAttempt }: Middleware.OnRunErrorArgs) {
+    if (!isFinalAttempt) return;
+    Sentry.captureException(error, { tags: { job: fn.id() } });
+    await Sentry.flush(2000); // serverless: send before the function freezes
+  }
+}
+
+export const inngest = new Inngest({ id: "squared-away", middleware: [ReportFinalFailures] });
 
 /** A mailbox was connected or reconnected: run (or re-run) the 30-day backfill. */
 export const mailboxConnected = eventType("mailbox/connected", {

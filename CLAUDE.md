@@ -293,6 +293,12 @@ In a sandbox with preinstalled Chromium: `PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-brows
   API → 429 with Retry-After), Draft a reply 30/h, re-learn voice 3/day, billing 10/h, Gmail connect
   10/h. Waitlist 10/h per **hashed** IP (salted with AUTH_SECRET; raw IPs never stored). Webhooks
   are signature/token-checked instead. Purged daily with bodies. e2e global setup clears the table.
+- **Error alerts (2026-10-06):** `@sentry/nextjs`, off unless `NEXT_PUBLIC_SENTRY_DSN` is set.
+  `src/instrumentation.ts` (server init + `onRequestError`), `src/instrumentation-client.ts` (SDK
+  loaded lazily only with a DSN), Inngest middleware `ReportFinalFailures` (final attempt only, then
+  flush). `scrubEvent` drops request data/cookies/headers/query, keeps only user id, masks emails,
+  drops console breadcrumbs and `extra`. Errors only (tracesSampleRate 0, no replay). No
+  `withSentryConfig` / source-map upload (keeps the build free of a Sentry auth token).
 - **Future goal (after the website is complete):** a downloadable app (phone app store). Not started;
   the site is mobile-first so a wrapper or native shell can reuse it later.
 - **Public site (2026-10-05, Davi asked for a sales website):** `/` is the marketing page (signed-in
@@ -336,7 +342,7 @@ In a sandbox with preinstalled Chromium: `PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-brows
 
 - Resend: verify the production domain in Resend and switch `EMAIL_FROM` off `onboarding@resend.dev`
   (until then the digest only reaches the Resend account's own address).
-- Optional: Gmail push via Pub/Sub (steps in docs/SETUP.md §6); polling works without it.
+- Optional: Gmail instant notifications (docs/SETUP.md §6a) and Sentry error alerts (§6b).
 - Rotate the Neon password and Google client secret that were pasted in chat; delete the old
   Google secret.
 - Add each invited owner as a Google Cloud test user (Google Auth Platform → Audience).
