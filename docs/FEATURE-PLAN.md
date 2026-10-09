@@ -41,7 +41,7 @@ server-side and tested).
 
 ## Milestone 3 — Classification
 
-- [ ] **#48 More trades.** Add `hvac`, `roofing`, `painting`, `landscaping` to the `trade` enum
+- [x] **#48 More trades.** _(Done 2026-10-09.)_ Add `hvac`, `roofing`, `painting`, `landscaping` to the `trade` enum
       (migration). Each trade gets its own example file in `src/ai/prompts/trades/<trade>.ts` with
       vocabulary and the questions a quote request should ask (carpentry/plumbing/electrical get the
       same treatment). Invite script accepts the new trades. Tests: every enum value has a prompt
@@ -59,7 +59,7 @@ server-side and tested).
       instructions to the assistant", never drafted automatically, never eligible for autopilot.
       Email text always goes into prompts inside clearly delimited untrusted blocks. Tests: a set of
       injection fixtures all end up `needs_owner` with no draft.
-- [ ] **#46 Prompt evaluation set.** `tests/evals/` with 60+ invented trade emails (no real customer
+- [ ] **#46 Prompt evaluation set.** _(Davi 2026-10-09: run before each release / on demand, not nightly — keeps the cost to a few dollars a month.)_ `tests/evals/` with 60+ invented trade emails (no real customer
       data) and the expected category, priority, `needs_owner` and must-not-contain rules for
       drafts. `pnpm eval` runs them against the live models and prints a score table plus token
       cost. Runs on demand and nightly in CI only when `ANTHROPIC_API_KEY` is set as a CI secret,
@@ -105,7 +105,7 @@ server-side and tested).
       availability" (uses seasonal notes/hours only). Each regenerates with the same guardrails and
       #43 check, updates the Gmail draft, and logs `draft_revised` (content-free). Rate-limited per
       draft (5). Tests: a tweak can't remove a flag the check would raise.
-- [ ] **#4 Voice-to-edit.** Hold-to-talk button in the editor. Use the browser's Web Speech API (no
+- [ ] **#4 Voice-to-edit.** _(Davi 2026-10-09: go ahead. Browsers send speech to Google/Apple for transcription, so "audio never leaves the device" can't be promised — show a plain note by the button instead.)_ Hold-to-talk button in the editor. Use the browser's Web Speech API (no
       new paid provider); hide the button where unsupported. The transcript is an instruction ("tell
       her Thursday works, 450") → drafter revises → owner sees the result before sending. Facts the
       owner dictated count as source facts for #43. Audio never leaves the device.
@@ -138,7 +138,7 @@ server-side and tested).
       prompt with plain instructions for iPhone ("Share → Add to Home Screen"). Web Push with VAPID
       keys (`VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` in env). Push payloads never contain customer
       names or email text: "1 new quote request needs you."
-- [ ] **#10 Offline approvals.** With no signal, the queue (cached by the service worker) still
+- [ ] **#10 Offline approvals.** _(Davi 2026-10-09: opt-in setting only; off by default, since it stores email text on the phone.)_ With no signal, the queue (cached by the service worker) still
       opens. Tapping Send reply offline stores an intent locally and shows "Will send when you're
       back online." On reconnect the intent is posted; the server treats it like a fresh approval
       (full gate, draft must still be pending and unchanged in Gmail — otherwise tell the owner and

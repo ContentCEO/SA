@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Notice } from "@/components/app/notice";
 import { Headline } from "@/components/brand/headline";
 import { Button } from "@/components/ui/button";
+import { isTrade, tradeLabel } from "@/config/trades";
 import { tradeEnum } from "@/db/schema";
 import { relativeTime } from "@/lib/relative-time";
 import {
@@ -132,7 +133,7 @@ function WorkspaceCard({ w, now }: { w: AdminRow; now: Date }) {
         </span>
       </header>
       <dl className="grid grid-cols-2 gap-x-4 gap-y-2">
-        <Stat label="Trade" value={w.trade ? w.trade[0]!.toUpperCase() + w.trade.slice(1) : "—"} />
+        <Stat label="Trade" value={isTrade(w.trade) ? tradeLabel[w.trade] : "—"} />
         <Stat label="Plan" value={w.plan ?? "None yet"} />
         <Stat
           label={
@@ -389,7 +390,7 @@ export default async function AdminPage(props: PageProps<"/admin">) {
               <option value="">Not sure</option>
               {tradeEnum.enumValues.map((t) => (
                 <option key={t} value={t}>
-                  {t[0]!.toUpperCase() + t.slice(1)}
+                  {tradeLabel[t]}
                 </option>
               ))}
             </select>

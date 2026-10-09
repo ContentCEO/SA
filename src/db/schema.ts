@@ -15,8 +15,9 @@ import {
   uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
+import { TRADES } from "../config/trades";
 
-export const tradeEnum = pgEnum("trade", ["carpentry", "plumbing", "electrical", "other"]);
+export const tradeEnum = pgEnum("trade", TRADES);
 
 export const workspaceStatusEnum = pgEnum("workspace_status", [
   "invited",

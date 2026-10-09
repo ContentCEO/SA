@@ -1,6 +1,7 @@
 "use client";
 
 import { useActionState } from "react";
+import { TRADE_OPTIONS } from "@/config/trades";
 import { saveBusinessProfileAction, type FormState } from "@/app/(app)/settings/profile-actions";
 import { Button } from "@/components/ui/button";
 import { useFocusFirstError } from "./use-focus-first-error";
@@ -22,12 +23,7 @@ export type ProfileDefaults = {
   amountThresholdDollars: number;
 };
 
-const trades = [
-  { value: "electrical", label: "Electrical" },
-  { value: "plumbing", label: "Plumbing" },
-  { value: "carpentry", label: "Carpentry" },
-  { value: "other", label: "Something else" },
-];
+const trades = TRADE_OPTIONS;
 
 export function BusinessProfileForm({
   defaults,

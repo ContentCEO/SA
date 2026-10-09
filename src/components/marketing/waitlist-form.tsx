@@ -6,13 +6,11 @@ import { joinWaitlistAction, type WaitlistState } from "@/app/waitlist-actions";
 import { SelectField, TextArea, TextField } from "@/components/forms/field";
 import { useFocusFirstError } from "@/components/forms/use-focus-first-error";
 import { Button } from "@/components/ui/button";
+import { TRADE_OPTIONS } from "@/config/trades";
 
-const trades = [
-  { value: "carpentry", label: "Carpentry" },
-  { value: "plumbing", label: "Plumbing" },
-  { value: "electrical", label: "Electrical" },
-  { value: "other", label: "Another trade" },
-];
+const trades = TRADE_OPTIONS.map((t) =>
+  t.value === "other" ? { ...t, label: "Another trade" } : t,
+);
 const sizes = ["Just me", "2–5", "6–15", "16+"].map((s) => ({ value: s, label: s }));
 
 function Submit() {

@@ -9,13 +9,13 @@ import {
   draftSchema,
   workspaceBlock,
   type WorkspaceContext,
-} from "@/ai/prompts/draft.v2";
+} from "@/ai/prompts/draft.v3";
 import { prepareBody } from "@/ai/classify";
 import {
   FOLLOWUP_INSTRUCTIONS,
   FOLLOWUP_PROMPT_VERSION,
   followupTask,
-} from "@/ai/prompts/followup.v1";
+} from "@/ai/prompts/followup.v2";
 import { AiCapReachedError, bumpUsageCounter } from "@/ai/usage";
 import { db } from "@/db";
 import {

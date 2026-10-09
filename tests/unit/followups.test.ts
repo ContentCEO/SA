@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { beforeEach, describe, expect, it } from "vitest";
 import { setModelTransportForTests } from "@/ai/client";
-import type { ModelDraft } from "@/ai/prompts/draft.v2";
+import type { ModelDraft } from "@/ai/prompts/draft.v3";
 import type { Database } from "@/db";
 import { activityLog, drafts, messages, threads, workspaces } from "@/db/schema";
 import { ensureUserAndWorkspace } from "@/server/accounts";
@@ -115,7 +115,7 @@ async function sentNudge(threadId: string, createdDaysAgo: number) {
     originalBody: "nudge",
     status: "sent",
     reason: "nudge",
-    promptVersion: "followup.v1",
+    promptVersion: "followup.v2",
     // Drafted a little before it went out.
     createdAt: daysAgo(createdDaysAgo + 0.1),
     decidedAt: daysAgo(createdDaysAgo),
@@ -197,7 +197,7 @@ describe("which threads get a nudge", () => {
       originalBody: "x",
       status: "discarded",
       reason: "x",
-      promptVersion: "followup.v1",
+      promptVersion: "followup.v2",
       createdAt: daysAgo(1),
     });
     expect(await threadsToFollowUp(mailboxId, NOW)).toEqual([]);
@@ -239,7 +239,7 @@ describe("writing and sending a nudge", () => {
       toAddress: "dana@customer.com",
       status: "pending",
     });
-    expect(d!.promptVersion).toBe("followup.v1");
+    expect(d!.promptVersion).toBe("followup.v2");
     const raw = [...writer.drafts.values()][0]!.raw;
     expect(FakeWriter.headersOf(raw)).toMatch(/In-Reply-To: <g\d+-out@shop.com>/);
     expect(FakeWriter.headersOf(raw)).toMatch(/To: dana@customer.com/);

@@ -337,6 +337,14 @@ In a sandbox with preinstalled Chromium: `PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-brows
   (`access_lost` | `rate_limited` | `sync_failed`, never message text) set in `guarded()`, cleared on
   the next ok sync and on reconnect. Reconnect button only for lost access (the only thing the owner
   can fix); stale sync (>30 min) says "we're looking into it". Settings heading is "Your Gmail".
+- **#48 More trades (2026-10-09):** one list in `src/config/trades.ts` (enum, forms, invite, admin).
+  Per-trade `src/ai/prompts/trades/<trade>.ts` (vocabulary + quote questions; `Record<Trade, …>` makes
+  a missing file a compile error, and a test checks the files). `draft.v3` puts the owner's trade
+  words and "Before quoting, find out" into the cached business block; `followup.v2` / `voice.v2`
+  only widen the trade wording. Enum values added with `ALTER TYPE … ADD VALUE` (additive).
+- **Davi 2026-10-09 on the plan:** #4 voice-to-edit yes, with a plain note that the browser sends
+  speech to Google/Apple; #10 offline approvals only as an opt-in setting; #46 evals on demand /
+  before release, not nightly.
 - **Future goal (after the website is complete):** a downloadable app (phone app store). Not started;
   the site is mobile-first so a wrapper or native shell can reuse it later.
 - **Public site (2026-10-05, Davi asked for a sales website):** `/` is the marketing page (signed-in
