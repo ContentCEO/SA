@@ -9,7 +9,7 @@ import {
   draftSchema,
   workspaceBlock,
   type WorkspaceContext,
-} from "@/ai/prompts/draft.v1";
+} from "@/ai/prompts/draft.v2";
 import { prepareBody } from "@/ai/classify";
 import {
   FOLLOWUP_INSTRUCTIONS,

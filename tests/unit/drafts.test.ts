@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { setModelTransportForTests } from "@/ai/client";
-import type { ModelDraft } from "@/ai/prompts/draft.v1";
+import type { ModelDraft } from "@/ai/prompts/draft.v2";
 import type { Database } from "@/db";
 import {
   activityLog,
@@ -168,7 +168,7 @@ describe("writing drafts", () => {
       status: "pending",
       gmailDraftId: "d1",
       confidence: 90,
-      promptVersion: "draft.v1",
+      promptVersion: "draft.v2",
     });
     const [u] = await database.select().from(usage);
     expect(u!.draftsCreated).toBe(1);
