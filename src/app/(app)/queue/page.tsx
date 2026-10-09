@@ -155,6 +155,7 @@ export default async function QueuePage(props: PageProps<"/queue">) {
               draftId={i.draftId!}
               customer={who(i)}
               tag={tag(i)}
+              summary={i.summary}
               reason={i.reason ?? ""}
               body={i.body ?? ""}
               flags={i.flags}

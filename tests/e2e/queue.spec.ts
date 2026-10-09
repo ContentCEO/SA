@@ -18,6 +18,7 @@ test("queue: needs-you first, then drafts; sending is off until setup, and it sa
 
   const card = page.getByRole("article", { name: "Draft reply to Priya" });
   await expect(card).toContainText("Asked for the address and panel age.");
+  await expect(card).toContainText("Panel upgrade quote."); // what they want, at a glance
   await expect(card).toContainText("Check you can do Tuesday morning.");
   // The Send button is replaced by an explanation, not hidden.
   await expect(card.getByRole("button", { name: "Send reply" })).toHaveCount(0);

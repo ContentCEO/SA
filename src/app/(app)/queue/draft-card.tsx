@@ -15,6 +15,8 @@ export type DraftCardProps = {
   draftId: string;
   customer: string;
   tag: string;
+  /** One line on what the customer wants, from sorting — so the card reads without opening Gmail. */
+  summary?: string | null;
   reason: string;
   body: string;
   flags: string[];
@@ -85,7 +87,8 @@ export function DraftCard(p: DraftCardProps) {
       <header className="flex flex-col gap-1">
         <span className="text-lg font-black">{p.customer}</span>
         <span className="text-sm font-semibold">{p.tag}</span>
-        <p>{p.reason}</p>
+        {p.summary ? <p className="font-semibold">{p.summary}</p> : null}
+        <p className={p.summary ? "text-muted-foreground" : undefined}>{p.reason}</p>
       </header>
 
       {p.needsOwnerReason ? <p className="font-semibold">Needs you: {p.needsOwnerReason}</p> : null}
