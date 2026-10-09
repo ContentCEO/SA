@@ -5,7 +5,7 @@ import { StatusBanner } from "@/components/app/status-banner";
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   return (
-    <div className="mx-auto flex w-full max-w-xl flex-1 flex-col gap-8 px-4 py-6">
+    <div className="mx-auto flex w-full max-w-xl flex-1 flex-col gap-8 px-4 pt-6 pb-28 sm:pb-6">
       <AppHeader />
       <ReconnectBanner />
       <StatusBanner />

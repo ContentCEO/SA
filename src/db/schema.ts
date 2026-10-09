@@ -151,6 +151,14 @@ export const threads = pgTable(
     classifiedAt: timestamp("classified_at", { withTimezone: true }),
     awaitingReplySince: timestamp("awaiting_reply_since", { withTimezone: true }),
     followupCount: integer("followup_count").notNull().default(0),
+    /** Quote tracker: the owner's "Won" / "Lost" (null = still open). */
+    quoteOutcome: text("quote_outcome"),
+    quoteOutcomeAt: timestamp("quote_outcome_at", { withTimezone: true }),
+    /**
+     * What the job was quoted at, in cents: taken from the owner's own reply (largest $ figure,
+     * captured before bodies are purged) or typed by the owner. Kept after the purge.
+     */
+    quoteAmountCents: integer("quote_amount_cents"),
     createdAt: createdAt(),
   },
   (t) => [

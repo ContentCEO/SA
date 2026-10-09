@@ -299,6 +299,23 @@ In a sandbox with preinstalled Chromium: `PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-brows
   flush). `scrubEvent` drops request data/cookies/headers/query, keeps only user id, masks emails,
   drops console breadcrumbs and `extra`. Errors only (tracesSampleRate 0, no replay). No
   `withSentryConfig` / source-map upload (keeps the build free of a Sentry auth token).
+- **Upgrades (2026-10-09, Davi: "everything you said, let's do it"):**
+  - Gmail access lost → owner email (`src/server/alerts.ts`, 15-min lifecycle job), plus one
+    reminder after 2 days; `mailboxes.access_lost_at` / `access_alerts_sent`, reset on reconnect.
+  - Price list: business profile "Your price list" (the `pricing_notes` column), prompt `draft.v2`
+    quotes listed prices exactly as written; `checkDraft` still flags any other amount; autopilot
+    still never sends money.
+  - Draft cards show the classification summary (what the customer wants) above the reason.
+  - Quote tracker `/quotes` (`src/server/quotes.ts`, rules in `quote-rules.ts`): quote_request
+    threads + anything marked; stage = owner's Won/Lost, else waiting_on_you / talking / quiet
+    (owner wrote last ≥ follow-up days). Amount = largest $ in the owner's own reply (quoted text
+    stripped), captured before the body purge (`captureQuoteAmounts`, daily + on view) or typed on
+    Won. Totals over the last 30 days. `threads.quote_outcome/_at/quote_amount_cents`.
+  - Customers `/customers` (`src/server/customers.ts`): grouped by lower(sender) of inbound mail,
+    noise excluded; links use an **opaque key** (their newest message id) so email addresses never
+    appear in URLs or logs; search filters client-side for the same reason.
+  - Nav: bottom tab bar on phones (Queue · Inbox · Quotes · Customers · Activity · Settings), the
+    same links in the header from `sm` up; `(app)` layout pads the bottom on phones.
 - **Future goal (after the website is complete):** a downloadable app (phone app store). Not started;
   the site is mobile-first so a wrapper or native shell can reuse it later.
 - **Public site (2026-10-05, Davi asked for a sales website):** `/` is the marketing page (signed-in

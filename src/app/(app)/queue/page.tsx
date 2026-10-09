@@ -3,6 +3,7 @@ import { Notice } from "@/components/app/notice";
 import { Headline } from "@/components/brand/headline";
 import { Button } from "@/components/ui/button";
 import { categoryTag, isCategory } from "@/config/categories";
+import { gmailThreadLink } from "@/lib/gmail-link";
 import { relativeTime } from "@/lib/relative-time";
 import { listQueue, sentDraftSummary, type QueueItem } from "@/server/drafts";
 import { canSend, isReadOnly, sendingBlockedReason, sendingOffLabel } from "@/server/lifecycle";
@@ -55,9 +56,7 @@ function nextLine(sent: NonNullable<Awaited<ReturnType<typeof sentDraftSummary>>
 }
 const firstName = (name: string | null) => (name ? name.split(/[\s,]+/)[0] : null);
 
-function gmailLink(i: QueueItem) {
-  return `https://mail.google.com/mail/?authuser=${encodeURIComponent(i.mailboxEmail)}#all/${i.gmailThreadId}`;
-}
+const gmailLink = (i: QueueItem) => gmailThreadLink(i);
 
 export default async function QueuePage(props: PageProps<"/queue">) {
   const { workspace } = await requireOwner();

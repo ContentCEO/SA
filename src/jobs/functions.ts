@@ -16,6 +16,7 @@ import { threadsToFollowUp } from "@/server/followups";
 import { getMailboxWorkspace } from "@/server/mailboxes";
 import { purgeRateLimits } from "@/server/rate-limit";
 import { sendAccessLostAlerts } from "@/server/alerts";
+import { captureQuoteAmounts } from "@/server/quotes";
 import { learnVoice, workspacesDueForVoiceRefresh, workspacesNeedingVoice } from "@/server/voice";
 import { expireEvaluations, startPendingEvaluations } from "@/server/workspace-lifecycle";
 import { considerAutopilot, overdueAutopilotDrafts, runAutopilotSend } from "@/server/autopilot";
@@ -330,6 +331,8 @@ export const renewGmailWatches = inngest.createFunction(
 export const purgeBodies = inngest.createFunction(
   { id: "purge-expired-bodies", triggers: [cron("41 7 * * *")] },
   async ({ step }) => {
+    // Keep each quote's amount before the owner's reply text is purged.
+    await step.run("capture-quote-amounts", () => captureQuoteAmounts());
     const purged = await step.run("purge", () => purgeExpiredBodies());
     await step.run("purge-rate-limits", () => purgeRateLimits());
     return { purged };
