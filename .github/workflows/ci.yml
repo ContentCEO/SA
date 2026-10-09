@@ -46,7 +46,16 @@ jobs:
       - run: pnpm format:check
       - run: pnpm typecheck
       - run: pnpm test
-      - run: pnpm build
+      - name: Build
+        # On failure, surface the error lines as annotations (readable without the raw log).
+        run: |
+          set -o pipefail
+          pnpm build 2>&1 | tee build.log || {
+            grep -iE "error|failed|⨯|cannot|unexpected" build.log | tail -25 | while IFS= read -r line; do
+              echo "::error title=next build::${line}"
+            done
+            exit 1
+          }
       - run: pnpm exec playwright install --with-deps chromium
       - run: pnpm test:e2e
       - uses: actions/upload-artifact@v4
