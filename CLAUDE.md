@@ -359,6 +359,15 @@ In a sandbox with preinstalled Chromium: `PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-brows
   guardrails refuse both. `untrusted()` (`src/ai/prompts/untrusted.ts`) stops email text closing
   its `<email>` / `<conversation>` block. Inbox shows a permit card and invoice facts. No separate
   Haiku call for injection: the classifier (Haiku) already returns the signal.
+- **#46 Prompt evals (2026-10-09):** `tests/evals/cases.ts` (66 invented emails, every category and
+  trade, injection + building-department cases, draft rules), `run.ts` (real `classifyEmail` +
+  `draft.v3` + `checkDraft` on in-memory PGlite), `score.ts` (accuracy, needs-owner recall,
+  injection recall/false alarms, permit/invoice facts, draft pass rate; `regressions()` allows 0.03
+  wobble, **none** on needs-owner and injection recall). `pnpm eval` (tsx with
+  `--conditions=react-server` so `server-only` loads) / `--update-baseline` / `--no-drafts`;
+  GitHub Actions "Prompt evals" is workflow_dispatch only (needs the `ANTHROPIC_API_KEY` repo
+  secret). `tests/evals/baseline.json` is empty until the first live run. Unit test runs the whole
+  set through a stand-in model. **Extend the set whenever a prompt changes.**
 - **Future goal (after the website is complete):** a downloadable app (phone app store). Not started;
   the site is mobile-first so a wrapper or native shell can reuse it later.
 - **Public site (2026-10-05, Davi asked for a sales website):** `/` is the marketing page (signed-in

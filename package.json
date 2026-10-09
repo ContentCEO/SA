@@ -18,7 +18,8 @@
     "db:studio": "drizzle-kit studio",
     "invite": "tsx --env-file-if-exists=.env.local scripts/invite.ts",
     "db:migrate:http": "tsx --env-file-if-exists=.env.local scripts/migrate-http.ts",
-    "vercel-build": "tsx scripts/migrate.ts && next build"
+    "vercel-build": "tsx scripts/migrate.ts && next build",
+    "eval": "NODE_OPTIONS=--conditions=react-server tsx --env-file-if-exists=.env.local scripts/eval.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.128.0",

@@ -212,3 +212,13 @@ keep migrations additive.
 The Production branch must be `main` (Settings → Environments → Production → Branch Tracking).
 Changing an environment variable only takes effect after a redeploy.
 Deployment Protection (Vercel login) is on for previews, so only team members can see them.
+
+## 10. Prompt evals (before a release)
+
+`pnpm eval` sends the 66 invented emails in `tests/evals/cases.ts` through the real models and
+prints a score table plus token cost (about $1–2 for a full run; `--no-drafts` is cheaper). It fails
+if anything is worse than `tests/evals/baseline.json`. Needs `ANTHROPIC_API_KEY` in `.env.local`.
+
+- First time (or after an intended improvement): `pnpm eval --update-baseline`, then commit the file.
+- From GitHub: Actions → **Prompt evals** → Run workflow. Add `ANTHROPIC_API_KEY` as a repository
+  secret first (Settings → Secrets and variables → Actions). It never runs on its own.

@@ -1,0 +1,33 @@
+name: Prompt evals
+
+# On demand only (Actions → Prompt evals → Run workflow): each full run costs a
+# dollar or two in model calls. Run it before a release or after a prompt change.
+on:
+  workflow_dispatch:
+    inputs:
+      drafts:
+        description: "Also score drafts (costs more)"
+        type: boolean
+        default: true
+
+jobs:
+  evals:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      TOKEN_ENCRYPTION_KEY: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+    steps:
+      - name: Needs the ANTHROPIC_API_KEY secret
+        if: env.ANTHROPIC_API_KEY == ''
+        run: |
+          echo "Add ANTHROPIC_API_KEY under Settings → Secrets and variables → Actions to run evals."
+          exit 1
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm eval ${{ inputs.drafts && '' || '--no-drafts' }}

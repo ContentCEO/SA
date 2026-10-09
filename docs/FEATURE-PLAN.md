@@ -59,7 +59,7 @@ server-side and tested).
       instructions to the assistant", never drafted automatically, never eligible for autopilot.
       Email text always goes into prompts inside clearly delimited untrusted blocks. Tests: a set of
       injection fixtures all end up `needs_owner` with no draft.
-- [ ] **#46 Prompt evaluation set.** _(Davi 2026-10-09: run before each release / on demand, not nightly — keeps the cost to a few dollars a month.)_ `tests/evals/` with 60+ invented trade emails (no real customer
+- [x] **#46 Prompt evaluation set.** _(Done 2026-10-09 — 66 cases; baseline recorded on the first live run.)_ _(Davi 2026-10-09: run before each release / on demand, not nightly — keeps the cost to a few dollars a month.)_ `tests/evals/` with 60+ invented trade emails (no real customer
       data) and the expected category, priority, `needs_owner` and must-not-contain rules for
       drafts. `pnpm eval` runs them against the live models and prints a score table plus token
       cost. Runs on demand and nightly in CI only when `ANTHROPIC_API_KEY` is set as a CI secret,
