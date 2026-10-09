@@ -15,6 +15,7 @@ import { sendDigests } from "@/server/digest";
 import { threadsToFollowUp } from "@/server/followups";
 import { getMailboxWorkspace } from "@/server/mailboxes";
 import { purgeRateLimits } from "@/server/rate-limit";
+import { sendAccessLostAlerts } from "@/server/alerts";
 import { learnVoice, workspacesDueForVoiceRefresh, workspacesNeedingVoice } from "@/server/voice";
 import { expireEvaluations, startPendingEvaluations } from "@/server/workspace-lifecycle";
 import { considerAutopilot, overdueAutopilotDrafts, runAutopilotSend } from "@/server/autopilot";
@@ -313,7 +314,9 @@ export const workspaceLifecycle = inngest.createFunction(
         voice.map((workspaceId) => voiceLearnRequested.create({ workspaceId })),
       );
     }
-    return { started, expired, voiceRestarted: voice.length };
+    // Tell owners when Gmail access is lost (and remind once), so leads aren't silently missed.
+    const alerts = await step.run("access-lost-alerts", () => sendAccessLostAlerts());
+    return { started, expired, voiceRestarted: voice.length, accessAlerts: alerts.sent };
   },
 );
 

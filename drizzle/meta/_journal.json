@@ -78,6 +78,13 @@
       "when": 1791244831730,
       "tag": "0010_massive_thundra",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1791570341880,
+      "tag": "0011_demonic_red_shift",
+      "breakpoints": true
     }
   ]
 }

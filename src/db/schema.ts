@@ -109,6 +109,10 @@ export const mailboxes = pgTable(
     /** Set when the 30-day backfill finishes; incremental sync only runs after this. */
     backfillCompletedAt: timestamp("backfill_completed_at", { withTimezone: true }),
     lastSyncedAt: timestamp("last_synced_at", { withTimezone: true }),
+    /** When Google access was lost (status → reconnect_needed); cleared on reconnect. */
+    accessLostAt: timestamp("access_lost_at", { withTimezone: true }),
+    /** "Reconnect Gmail" emails sent for the current loss (max 2); reset on reconnect. */
+    accessAlertsSent: integer("access_alerts_sent").notNull().default(0),
     createdAt: createdAt(),
   },
   (t) => [

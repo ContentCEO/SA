@@ -60,6 +60,8 @@ export async function saveConnectedMailbox(
     scopes: result.grantedScopes.join(" "),
     status: "active" as const,
     connectedAt: new Date(),
+    accessLostAt: null,
+    accessAlertsSent: 0,
   };
 
   const [row] = isReconnect

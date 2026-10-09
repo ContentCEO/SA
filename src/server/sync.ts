@@ -91,7 +91,7 @@ async function loadActiveMailbox(mailboxId: string) {
 export async function markReconnectNeeded(mailbox: Pick<Mailbox, "id" | "workspaceId">) {
   const changed = await db()
     .update(mailboxes)
-    .set({ status: "reconnect_needed" })
+    .set({ status: "reconnect_needed", accessLostAt: new Date(), accessAlertsSent: 0 })
     .where(and(eq(mailboxes.id, mailbox.id), eq(mailboxes.status, "active")))
     .returning({ id: mailboxes.id });
   if (changed.length > 0) {
