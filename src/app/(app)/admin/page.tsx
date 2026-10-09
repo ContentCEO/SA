@@ -9,6 +9,7 @@ import {
   adminOverview,
   countWorkspaces,
   listInvites,
+  systemHealth,
   type AdminRow,
 } from "@/server/admin";
 import { requireAdmin } from "@/server/session";
@@ -158,6 +159,18 @@ function WorkspaceCard({ w, now }: { w: AdminRow; now: Date }) {
         <Stat label="Drafts waiting" value={w.drafts.pending} />
         <Stat label="Sent (7 days)" value={w.drafts.sentLast7Days} />
         <Stat label="Drafts this month" value={w.drafts.createdThisMonth} />
+        <Stat
+          label="Last sorted"
+          value={w.health.lastSortedAt ? relativeTime(w.health.lastSortedAt, now) : "Never"}
+        />
+        <Stat
+          label="Last draft"
+          value={w.health.lastDraftAt ? relativeTime(w.health.lastDraftAt, now) : "Never"}
+        />
+        <Stat
+          label="Last morning email"
+          value={w.health.lastDigestAt ? relativeTime(w.health.lastDigestAt, now) : "Never"}
+        />
         <Stat label="AI calls today" value={w.ai.callsToday} />
         <Stat label="AI cost this month" value={`${dollars(w.ai.costCentsThisMonth)} (est.)`} />
       </dl>
@@ -211,12 +224,13 @@ export default async function AdminPage(props: PageProps<"/admin">) {
   await requireAdmin();
   const params = await props.searchParams;
   const now = new Date();
-  const [rows, total, invited, waiting, stripeAt] = await Promise.all([
+  const [rows, total, invited, waiting, stripeAt, system] = await Promise.all([
     adminOverview(now),
     countWorkspaces(),
     listInvites(),
     listWaitlist(),
     stripeConnectedAt(),
+    systemHealth(now),
   ]);
   // Payment messages show inside the Payments section (the page scrolls there), not at the top.
   const isStripe = (k: unknown) => typeof k === "string" && k.startsWith("stripe");
@@ -236,6 +250,33 @@ export default async function AdminPage(props: PageProps<"/admin">) {
       </p>
       {doneMsg ? <Notice>{doneMsg}</Notice> : null}
       {errorMsg ? <Notice strong>{errorMsg}</Notice> : null}
+
+      <section
+        aria-labelledby="system"
+        className={
+          system.jobsLookStopped
+            ? "sa-inverted flex flex-col gap-2 rounded-xl p-4"
+            : "flex flex-col gap-2 rounded-xl border-2 border-charcoal p-4"
+        }
+      >
+        <h2 id="system" className="text-lg font-black">
+          {system.jobsLookStopped ? "Background jobs look stopped" : "System"}
+        </h2>
+        <p>
+          {system.workingMailboxes === 0
+            ? "No working mailboxes yet."
+            : `Last mail check ${system.lastSyncAt ? relativeTime(system.lastSyncAt, now) : "never"} across ${system.workingMailboxes} mailbox${system.workingMailboxes === 1 ? "" : "es"}.`}
+          {system.needReconnect
+            ? ` ${system.needReconnect} need${system.needReconnect === 1 ? "s" : ""} reconnecting.`
+            : ""}
+        </p>
+        {system.jobsLookStopped ? (
+          <p>
+            Mail is normally checked every 5 minutes. Open the Inngest dashboard (Vercel → sa →
+            Integrations → Inngest) and look for failed runs.
+          </p>
+        ) : null}
+      </section>
 
       <section aria-labelledby="accounts" className="flex flex-col gap-3">
         <h2 id="accounts" className="text-xl font-black">

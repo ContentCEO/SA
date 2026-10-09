@@ -2,9 +2,19 @@ import "server-only";
 import { and, count, desc, eq, gte, inArray, max, sql, sum } from "drizzle-orm";
 import { utcDay } from "@/ai/usage";
 import { db } from "@/db";
-import { drafts, invites, mailboxes, tradeEnum, usage, users, workspaces } from "@/db/schema";
+import {
+  activityLog,
+  drafts,
+  invites,
+  mailboxes,
+  threads,
+  tradeEnum,
+  usage,
+  users,
+  workspaces,
+} from "@/db/schema";
 import { normalizeEmail } from "./accounts";
-import { effectiveStatus } from "./lifecycle";
+import { effectiveStatus, jobsAllowed } from "./lifecycle";
 
 export function isAdminEmail(email: string | null | undefined): boolean {
   const admin = process.env.ADMIN_EMAIL;
@@ -24,6 +34,8 @@ export type AdminRow = {
   mailboxes: { total: number; needReconnect: number; lastSyncedAt: Date | null };
   drafts: { pending: number; sentLast7Days: number; createdThisMonth: number };
   ai: { callsToday: number; callsThisMonth: number; costCentsThisMonth: number };
+  /** When each part of the pipeline last did something for this account. */
+  health: { lastSortedAt: Date | null; lastDraftAt: Date | null; lastDigestAt: Date | null };
   createdAt: Date;
 };
 
@@ -98,11 +110,32 @@ export async function adminOverview(now: Date = new Date()): Promise<AdminRow[]>
     .where(and(inArray(usage.workspaceId, ids), gte(usage.period, monthStart)))
     .groupBy(usage.workspaceId);
 
+  const sorted = await db()
+    .select({ workspaceId: mailboxes.workspaceId, at: max(threads.classifiedAt) })
+    .from(threads)
+    .innerJoin(mailboxes, eq(mailboxes.id, threads.mailboxId))
+    .where(inArray(mailboxes.workspaceId, ids))
+    .groupBy(mailboxes.workspaceId);
+  const drafted = await db()
+    .select({ workspaceId: mailboxes.workspaceId, at: max(drafts.createdAt) })
+    .from(drafts)
+    .innerJoin(mailboxes, eq(mailboxes.id, drafts.mailboxId))
+    .where(inArray(mailboxes.workspaceId, ids))
+    .groupBy(mailboxes.workspaceId);
+  const digests = await db()
+    .select({ workspaceId: activityLog.workspaceId, at: max(activityLog.createdAt) })
+    .from(activityLog)
+    .where(and(inArray(activityLog.workspaceId, ids), eq(activityLog.action, "digest_sent")))
+    .groupBy(activityLog.workspaceId);
+
   const by = <T extends { workspaceId: string }>(rows: T[]) =>
     new Map(rows.map((r) => [r.workspaceId, r]));
   const b = by(boxes);
   const d = by(draftCounts);
   const m = by(month);
+  const hs = by(sorted);
+  const hd = by(drafted);
+  const hg = by(digests);
 
   return ws.map((w) => ({
     workspaceId: w.id,
@@ -130,7 +163,45 @@ export async function adminOverview(now: Date = new Date()): Promise<AdminRow[]>
       callsThisMonth: m.get(w.id)?.calls ?? 0,
       costCentsThisMonth: Math.round((m.get(w.id)?.cost ?? 0) / 100),
     },
+    health: {
+      lastSortedAt: hs.get(w.id)?.at ?? null,
+      lastDraftAt: hd.get(w.id)?.at ?? null,
+      lastDigestAt: hg.get(w.id)?.at ?? null,
+    },
   }));
+}
+
+/** The 5-minute poll syncs every working mailbox; much older than that means jobs stopped. */
+export const JOBS_STALE_AFTER_MS = 20 * 60 * 1000;
+
+/**
+ * App-wide health for the top of /admin: are background jobs running, and how
+ * many mailboxes need their owner to reconnect. Counts only.
+ */
+export async function systemHealth(now: Date = new Date()) {
+  const rows = await db()
+    .select({
+      status: mailboxes.status,
+      lastSyncedAt: mailboxes.lastSyncedAt,
+      backfillCompletedAt: mailboxes.backfillCompletedAt,
+      workspace: { status: workspaces.status, evaluationEndsAt: workspaces.evaluationEndsAt },
+    })
+    .from(mailboxes)
+    .innerJoin(workspaces, eq(workspaces.id, mailboxes.workspaceId));
+  const working = rows.filter(
+    (r) => r.status === "active" && r.backfillCompletedAt && jobsAllowed(r.workspace, now),
+  );
+  const newest = working.reduce<Date | null>(
+    (a, r) => (r.lastSyncedAt && (!a || r.lastSyncedAt > a) ? r.lastSyncedAt : a),
+    null,
+  );
+  return {
+    workingMailboxes: working.length,
+    needReconnect: rows.filter((r) => r.status === "reconnect_needed").length,
+    lastSyncAt: newest,
+    jobsLookStopped:
+      working.length > 0 && (!newest || now.getTime() - newest.getTime() > JOBS_STALE_AFTER_MS),
+  };
 }
 
 export type Trade = (typeof tradeEnum.enumValues)[number];

@@ -314,6 +314,11 @@ In a sandbox with preinstalled Chromium: `PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-brows
   - Customers `/customers` (`src/server/customers.ts`): grouped by lower(sender) of inbound mail,
     noise excluded; links use an **opaque key** (their newest message id) so email addresses never
     appear in URLs or logs; search filters client-side for the same reason.
+  - Admin health: per account last sorted / last draft / last morning email; a System box that
+    inverts to "Background jobs look stopped" when no working mailbox synced in 20 min.
+  - Instant loading placeholders (`loading.tsx` → `ScreenSkeleton`) on queue, inbox, quotes,
+    activity, settings only. **Never** on /admin or /customers/[key]: streaming turns `notFound()`
+    into a 200, and those must 404 (e2e caught it).
   - Nav: bottom tab bar on phones (Queue · Inbox · Quotes · Customers · Activity · Settings), the
     same links in the header from `sm` up; `(app)` layout pads the bottom on phones.
 - **Future goal (after the website is complete):** a downloadable app (phone app store). Not started;
