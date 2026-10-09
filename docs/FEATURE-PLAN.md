@@ -33,7 +33,7 @@ server-side and tested).
 
 ## Milestone 2 — Sync
 
-- [ ] **#44 Mailbox health page.** Settings → "Your Gmail": last sync time ("2 minutes ago"), push
+- [x] **#44 Mailbox health page.** _(Done 2026-10-09.)_ Settings → "Your Gmail": last sync time ("2 minutes ago"), push
       watch status, token status, all in plain words. One "Reconnect Gmail" button when anything is
       wrong. Data comes from `mailboxes` (add `last_synced_at`, `last_sync_error_code` — a code,
       never message content). Tests: each state renders the right plain sentence; reconnect button

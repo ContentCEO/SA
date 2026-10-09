@@ -332,6 +332,11 @@ In a sandbox with preinstalled Chromium: `PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-brows
 - **Feature plan:** `docs/FEATURE-PLAN.md` (Davi's picks from 50 ideas, 2026-10-09) is the spec for
   work beyond the brief, filed by milestone. 1:1 calls package, app-store listings: later (Davi).
   Calendar booking: after Google approves Gmail access.
+- **#44 Your Gmail health (2026-10-09):** `mailboxHealth()` (`src/server/mailbox-health.ts`, pure)
+  → three plain lines (Google access / Last checked / New mail). `mailboxes.last_sync_error_code`
+  (`access_lost` | `rate_limited` | `sync_failed`, never message text) set in `guarded()`, cleared on
+  the next ok sync and on reconnect. Reconnect button only for lost access (the only thing the owner
+  can fix); stale sync (>30 min) says "we're looking into it". Settings heading is "Your Gmail".
 - **Future goal (after the website is complete):** a downloadable app (phone app store). Not started;
   the site is mobile-first so a wrapper or native shell can reuse it later.
 - **Public site (2026-10-05, Davi asked for a sales website):** `/` is the marketing page (signed-in

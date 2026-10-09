@@ -19,6 +19,7 @@ import {
   getVoiceProfile,
 } from "@/server/profile";
 import { DeleteAccountButton } from "./delete-account-button";
+import { mailboxHealth } from "@/server/mailbox-health";
 import {
   confirmSmsCodeAction,
   removeSmsPhoneAction,
@@ -88,6 +89,7 @@ function syncLine(m: MailboxSummary, messageCount: number): string {
 export default async function SettingsPage(props: PageProps<"/settings">) {
   const { workspace, session } = await requireOwner();
   const admin = isAdminEmail(session?.user?.email);
+  const now = new Date();
   const mailboxes = await listMailboxes(workspace.id);
   const counts = new Map(
     await Promise.all(
@@ -133,7 +135,7 @@ export default async function SettingsPage(props: PageProps<"/settings">) {
 
       <section aria-labelledby="mailbox" className="flex flex-col gap-4">
         <h2 id="mailbox" className="text-xl font-black">
-          Connected mailbox
+          Your Gmail
         </h2>
 
         {mailboxes.length === 0 ? (
@@ -146,7 +148,8 @@ export default async function SettingsPage(props: PageProps<"/settings">) {
         ) : (
           <ul className="flex flex-col gap-3">
             {mailboxes.map((m) => {
-              const needsYou = m.status === "reconnect_needed";
+              const health = mailboxHealth(m, now, Boolean(process.env.GMAIL_PUBSUB_TOPIC));
+              const needsYou = health.needsReconnect;
               return (
                 <li
                   key={m.id}
@@ -164,6 +167,14 @@ export default async function SettingsPage(props: PageProps<"/settings">) {
                       {syncLine(m, counts.get(m.id) ?? 0)}
                     </span>
                   </div>
+                  <dl aria-label={`Health of ${m.email}`} className="flex flex-col gap-1.5">
+                    {health.lines.map((l) => (
+                      <div key={l.label} className="flex flex-col">
+                        <dt className="text-sm opacity-80">{l.label}</dt>
+                        <dd className={l.problem ? "font-black" : undefined}>{l.text}</dd>
+                      </div>
+                    ))}
+                  </dl>
                   {needsYou ? (
                     <Link href="/connect" className={cn(buttonVariants({ size: "lg" }), "w-full")}>
                       Reconnect Gmail

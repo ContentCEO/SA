@@ -15,6 +15,7 @@ import { decryptSecret } from "@/lib/crypto";
 import {
   HistoryExpiredError,
   MailboxAuthError,
+  MailboxRateLimitError,
   type MailboxReader,
   type MailMessage,
   type MessageRef,
@@ -106,14 +107,35 @@ export async function markReconnectNeeded(mailbox: Pick<Mailbox, "id" | "workspa
   }
 }
 
+export type SyncErrorCode = "access_lost" | "rate_limited" | "sync_failed";
+
+/** Remember the last problem as a code for Settings → Your Gmail (cleared on the next success). */
+async function noteSyncError(mailboxId: string, code: SyncErrorCode | null) {
+  await db()
+    .update(mailboxes)
+    .set({ lastSyncErrorCode: code, lastSyncErrorAt: code ? new Date() : null })
+    .where(
+      code
+        ? eq(mailboxes.id, mailboxId)
+        : and(eq(mailboxes.id, mailboxId), isNotNull(mailboxes.lastSyncErrorCode)),
+    );
+}
+
 async function guarded(mailbox: Mailbox, fn: () => Promise<SyncOutcome>): Promise<SyncOutcome> {
   try {
-    return await fn();
+    const outcome = await fn();
+    if (outcome.status === "ok") await noteSyncError(mailbox.id, null);
+    return outcome;
   } catch (err) {
     if (err instanceof MailboxAuthError) {
       await markReconnectNeeded(mailbox);
+      await noteSyncError(mailbox.id, "access_lost");
       return { status: "reconnect_needed" };
     }
+    await noteSyncError(
+      mailbox.id,
+      err instanceof MailboxRateLimitError ? "rate_limited" : "sync_failed",
+    ).catch(() => {});
     throw err;
   }
 }

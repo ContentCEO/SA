@@ -119,6 +119,29 @@ describe("incremental sync", () => {
   });
 });
 
+describe("sync error codes", () => {
+  it("records a code (never text) on failure and clears it on the next success", async () => {
+    fake.add({ id: "m1", threadId: "t1" });
+    await runBackfill(mailboxId, deps());
+    const broken = {
+      ...deps(),
+      readerFor: () => ({
+        ...fake.reader(),
+        listHistory: async () => {
+          throw new Error("Gmail said something with customer@x.com in it");
+        },
+      }),
+    };
+    await expect(incrementalSync(mailboxId, broken)).rejects.toThrow();
+    let [box] = await database.select().from(mailboxes);
+    expect(box!.lastSyncErrorCode).toBe("sync_failed");
+    expect(JSON.stringify(box)).not.toContain("customer@x.com");
+    await incrementalSync(mailboxId, deps());
+    [box] = await database.select().from(mailboxes);
+    expect(box!.lastSyncErrorCode).toBeNull();
+  });
+});
+
 describe("revoked access", () => {
   it("flags the mailbox, logs it once, and stops every later job", async () => {
     fake.add({ id: "m1", threadId: "t1" });
@@ -128,6 +151,7 @@ describe("revoked access", () => {
     expect(await incrementalSync(mailboxId, deps())).toEqual({ status: "reconnect_needed" });
     const [box] = await database.select().from(mailboxes);
     expect(box!.status).toBe("reconnect_needed");
+    expect(box!.lastSyncErrorCode).toBe("access_lost");
 
     const callsBefore = fake.calls;
     expect(await incrementalSync(mailboxId, deps())).toEqual({

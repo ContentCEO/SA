@@ -113,6 +113,9 @@ export const mailboxes = pgTable(
     accessLostAt: timestamp("access_lost_at", { withTimezone: true }),
     /** "Reconnect Gmail" emails sent for the current loss (max 2); reset on reconnect. */
     accessAlertsSent: integer("access_alerts_sent").notNull().default(0),
+    /** Last sync problem as a short code (access_lost / rate_limited / sync_failed) — never text. */
+    lastSyncErrorCode: text("last_sync_error_code"),
+    lastSyncErrorAt: timestamp("last_sync_error_at", { withTimezone: true }),
     createdAt: createdAt(),
   },
   (t) => [
