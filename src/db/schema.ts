@@ -306,6 +306,17 @@ export const businessProfiles = pgTable("business_profile", {
   digestHour: integer("digest_hour").notNull().default(7),
   timeZone: text("time_zone").notNull().default("America/New_York"),
   digestLastSentOn: text("digest_last_sent_on"),
+  /** Text alerts to the owner's own phone (E.164, e.g. +15085551234). Off until they opt in. */
+  alertPhone: text("alert_phone"),
+  /** Set once the owner typed back the code we texted; alerts only go to a verified number. */
+  alertPhoneVerifiedAt: timestamp("alert_phone_verified_at", { withTimezone: true }),
+  /** sha256 of the 6-digit code + its expiry; cleared once used. */
+  smsCodeHash: text("sms_code_hash"),
+  smsCodeExpiresAt: timestamp("sms_code_expires_at", { withTimezone: true }),
+  smsAlertsEnabled: boolean("sms_alerts_enabled").notNull().default(false),
+  /** Newest classification already covered by a text, and when the last text went out. */
+  smsAlertCursor: timestamp("sms_alert_cursor", { withTimezone: true }),
+  smsLastSentAt: timestamp("sms_last_sent_at", { withTimezone: true }),
   completedAt: timestamp("completed_at", { withTimezone: true }),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });

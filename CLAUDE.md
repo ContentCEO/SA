@@ -321,6 +321,17 @@ In a sandbox with preinstalled Chromium: `PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-brows
     into a 200, and those must 404 (e2e caught it).
   - Nav: bottom tab bar on phones (Queue · Inbox · Quotes · Customers · Activity · Settings), the
     same links in the header from `sm` up; `(app)` layout pads the bottom on phones.
+- **Text alerts (2026-10-09, plan #50; Davi: texting included in plans):** `src/server/sms-alerts.ts`,
+  `src/lib/sms.ts` (Twilio over fetch, off without env). Owner's own US mobile, confirmed by a
+  6-digit code (sha256 stored, 10-min expiry, 5 codes / 10 guesses per hour). Content-free counts +
+  link, quiet 9pm–7am local, ≥10 min apart, ≤10/day, only fresh (<24h) inbound quote requests /
+  needs_owner threads classified after the cursor; slot claimed atomically before sending. Runs
+  after classification and in the 15-min lifecycle backstop. **Missed-call text-back dropped**: it
+  would auto-text customers, which the feature plan forbids (no send path without approval; owner
+  can't text customers).
+- **Feature plan:** `docs/FEATURE-PLAN.md` (Davi's picks from 50 ideas, 2026-10-09) is the spec for
+  work beyond the brief, filed by milestone. 1:1 calls package, app-store listings: later (Davi).
+  Calendar booking: after Google approves Gmail access.
 - **Future goal (after the website is complete):** a downloadable app (phone app store). Not started;
   the site is mobile-first so a wrapper or native shell can reuse it later.
 - **Public site (2026-10-05, Davi asked for a sales website):** `/` is the marketing page (signed-in

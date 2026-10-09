@@ -38,3 +38,13 @@ test("a session for a deleted account lands on sign-in, not a redirect loop", as
   await page.goto("/signin");
   await expect(page.getByRole("button", { name: /Sign in with Google/ })).toBeVisible();
 });
+
+test("text alerts say plainly when texting isn't set up", async ({ page, context }) => {
+  const owner = await seedOwner();
+  await signInAs(context, owner);
+  await page.goto("/settings#texts");
+  const texts = page.getByRole("region", { name: "Text alerts" });
+  await expect(texts).toContainText("never a customer's name");
+  await expect(texts).toContainText("aren't switched on yet");
+  await expect(texts.getByRole("button")).toHaveCount(0);
+});

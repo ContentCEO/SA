@@ -49,6 +49,10 @@ export function describeActivity(
       return "You reconnected Gmail";
     case "mailbox_disconnected":
       return "You disconnected Gmail";
+    case "sms_alert_sent":
+      return "Texted you about new emails that need you";
+    case "sms_alerts_changed":
+      return detail.enabled ? "You turned on text alerts" : "You turned off text alerts";
     case "access_alert_sent":
       return detail.reminder
         ? "Reminded you by email to reconnect Gmail"

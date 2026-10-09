@@ -19,6 +19,14 @@ import {
   getVoiceProfile,
 } from "@/server/profile";
 import { DeleteAccountButton } from "./delete-account-button";
+import {
+  confirmSmsCodeAction,
+  removeSmsPhoneAction,
+  sendSmsCodeAction,
+  toggleSmsAlertsAction,
+} from "./sms-actions";
+import { smsConfigured } from "@/lib/sms";
+import { formatUsPhone } from "@/server/sms-alerts";
 import { DisconnectButton } from "./disconnect-button";
 import {
   relearnVoiceAction,
@@ -36,12 +44,21 @@ const done: Record<string, string> = {
   voice: "Saved how you write.",
   followups: "Follow-up settings saved.",
   digest: "Morning summary saved.",
+  sms_code: "Code sent. Type it in below.",
+  sms_on: "Text alerts are on.",
+  sms_off: "Text alerts are off.",
+  sms_removed: "Number removed.",
   autopilot_on: "Autopilot is on for that kind of email. You'll get 10 minutes to hold each one.",
   autopilot_off: "Autopilot is off for that kind of email. Those replies wait for your tap again.",
   relearn: "Re-reading your sent mail. This takes a minute or two.",
 };
 
 const errors: Record<string, string> = {
+  sms_phone: "That doesn't look like a US mobile number.",
+  sms_busy: "Too many tries. Wait an hour and try again.",
+  sms_code: "That code didn't match, or it expired. Send a new one.",
+  sms_not_configured: "Texting isn't switched on yet.",
+  sms_not_verified: "Confirm your number first.",
   relearn_busy: "Your sent mail was re-read recently. You can do it again tomorrow.",
   delete_billing:
     "We couldn't cancel your plan, so nothing was deleted. Try again, or call us and we'll do it.",
@@ -330,6 +347,75 @@ export default async function SettingsPage(props: PageProps<"/settings">) {
             Save morning summary
           </Button>
         </form>
+      </section>
+
+      <section id="texts" aria-labelledby="texts-heading" className="flex flex-col gap-3">
+        <h2 id="texts-heading" className="text-xl font-black">
+          Text alerts
+        </h2>
+        <p className="text-muted-foreground">
+          A text when a new quote request or an email that needs you comes in. Just the count and a
+          link — never a customer&apos;s name or words. Not between 9pm and 7am, at most one every
+          10 minutes. Reply STOP any time.
+        </p>
+        {!smsConfigured() ? (
+          <p className="font-semibold">Text alerts aren&apos;t switched on yet. Coming soon.</p>
+        ) : profile?.alertPhoneVerifiedAt && profile.alertPhone ? (
+          <div className="flex flex-col gap-3">
+            <p>
+              Texts go to <span className="font-semibold">{formatUsPhone(profile.alertPhone)}</span>
+              .
+            </p>
+            <form action={toggleSmsAlertsAction}>
+              <input type="hidden" name="enabled" value={profile.smsAlertsEnabled ? "off" : "on"} />
+              <Button type="submit" variant="outline" className="w-full">
+                {profile.smsAlertsEnabled ? "Turn off text alerts" : "Turn on text alerts"}
+              </Button>
+            </form>
+            <form action={removeSmsPhoneAction}>
+              <Button type="submit" variant="ghost" className="w-full">
+                Remove my number
+              </Button>
+            </form>
+          </div>
+        ) : profile?.smsCodeExpiresAt && profile.smsCodeExpiresAt > new Date() ? (
+          <form action={confirmSmsCodeAction} className="flex flex-col gap-3">
+            <label className="flex flex-col gap-1.5">
+              <span className="font-semibold">
+                The 6-digit code we texted to {formatUsPhone(profile.alertPhone!)}
+              </span>
+              <input
+                name="code"
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                maxLength={6}
+                required
+                className="min-h-tap rounded-lg border border-input bg-paper px-3 text-lg tracking-widest"
+              />
+            </label>
+            <Button type="submit" className="w-full">
+              Confirm my number
+            </Button>
+          </form>
+        ) : (
+          <form action={sendSmsCodeAction} className="flex flex-col gap-3">
+            <label className="flex flex-col gap-1.5">
+              <span className="font-semibold">Your mobile number</span>
+              <input
+                name="phone"
+                type="tel"
+                inputMode="tel"
+                autoComplete="tel"
+                placeholder="(508) 555-1234"
+                required
+                className="min-h-tap rounded-lg border border-input bg-paper px-3 text-base"
+              />
+            </label>
+            <Button type="submit" className="w-full">
+              Text me a code
+            </Button>
+          </form>
+        )}
       </section>
 
       <section id="autopilot" aria-labelledby="autopilot-heading" className="flex flex-col gap-3">
