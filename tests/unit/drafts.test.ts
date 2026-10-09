@@ -447,6 +447,40 @@ describe("what gets auto-drafted", () => {
   });
 });
 
+describe("emails that tried to instruct the assistant, and building departments", () => {
+  it("are never drafted by a job — only when the owner taps Draft a reply", async () => {
+    const tricky = await seedThread({ g: "inj", category: "quote_request", needsOwner: false });
+    await database
+      .update(threads)
+      .set({ extracted: { injection: true } })
+      .where(eq(threads.id, tricky.id));
+    const town = await seedThread({ g: "town", category: "scheduling" });
+    await database
+      .update(threads)
+      .set({ extracted: { municipal: true } })
+      .where(eq(threads.id, town.id));
+
+    const { transport, calls } = fakeTransport([modelDraft()]);
+    setModelTransportForTests(transport);
+    for (const trigger of ["auto", "followup"] as const) {
+      expect(await createDraftForThread(tricky.id, { trigger, ...deps() })).toMatchObject({
+        status: "skipped",
+        reason: "untrusted",
+      });
+      expect(await createDraftForThread(town.id, { trigger, ...deps() })).toMatchObject({
+        status: "skipped",
+        reason: "municipal",
+      });
+    }
+    expect(calls).toHaveLength(0); // the model never saw them
+    expect(writer.drafts.size).toBe(0);
+
+    expect(
+      await createDraftForThread(town.id, { trigger: "owner", workspaceId, ...deps() }),
+    ).toMatchObject({ status: "created" });
+  });
+});
+
 describe("retention", () => {
   it("purges draft text and expires stale pending drafts", async () => {
     setModelTransportForTests(fakeTransport([modelDraft()]).transport);

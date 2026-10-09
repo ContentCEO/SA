@@ -46,14 +46,14 @@ server-side and tested).
       vocabulary and the questions a quote request should ask (carpentry/plumbing/electrical get the
       same treatment). Invite script accepts the new trades. Tests: every enum value has a prompt
       file.
-- [ ] **#17 Permits and inspections.** New `extracted.permit` block from the classifier: issuing
+- [x] **#17 Permits and inspections.** _(Done 2026-10-09.)_ New `extracted.permit` block from the classifier: issuing
       body, permit number, inspection date/time, pass/fail, list of corrections. Mail from town/city
       building departments is never `noise`. Shown as a small card on the thread. No reply drafted to
       a municipality unless the owner taps "Draft a reply". Tests: fixture emails (pass, fail with
       corrections, scheduling notice).
-- [ ] **#27 (data part) Invoice facts.** Classifier extracts invoice number, amount, due date and
+- [x] **#27 (data part) Invoice facts.** _(Done 2026-10-09.)_ Classifier extracts invoice number, amount, due date and
       paid/unpaid signals into `extracted.invoice`. The view is built in M7.
-- [ ] **#42 Prompt-injection guard.** Before classification, a cheap check (rules + Haiku) flags
+- [x] **#42 Prompt-injection guard.** _(Done 2026-10-09.)_ Before classification, a cheap check (rules + Haiku) flags
       emails that try to instruct the AI ("ignore previous instructions", hidden text, base64 blocks,
       "send me the owner's…"). Flagged → `needs_owner = true`, reason "This email tries to give
       instructions to the assistant", never drafted automatically, never eligible for autopilot.

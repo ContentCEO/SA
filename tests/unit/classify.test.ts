@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { applyOwnerRules, classifyEmail, prepareBody } from "@/ai/classify";
 import { setModelTransportForTests } from "@/ai/client";
 import { estimateCostCentiCents } from "@/ai/cost";
-import { emailBlock } from "@/ai/prompts/classify.v1";
+import { emailBlock } from "@/ai/prompts/classify.v2";
 import { AiCapReachedError, reserveAiCall } from "@/ai/usage";
 import type { Database } from "@/db";
 import { usage } from "@/db/schema";
@@ -24,13 +24,23 @@ describe("needs_owner rules are enforced in code", () => {
     [
       "legal",
       {
-        signals: { mentions_legal: true, mentions_refund_or_dispute: false, large_request: false },
+        signals: {
+          ...classification().signals,
+          mentions_legal: true,
+          mentions_refund_or_dispute: false,
+          large_request: false,
+        },
       },
     ],
     [
       "refund/dispute",
       {
-        signals: { mentions_legal: false, mentions_refund_or_dispute: true, large_request: false },
+        signals: {
+          ...classification().signals,
+          mentions_legal: false,
+          mentions_refund_or_dispute: true,
+          large_request: false,
+        },
       },
     ],
     ["low confidence", { confidence: 0.4 }],
@@ -57,7 +67,12 @@ describe("needs_owner rules are enforced in code", () => {
   it("flags VIP senders and first-time senders with big jobs", () => {
     expect(applyOwnerRules(classification(), { ...ctx, senderIsVip: true }).needsOwner).toBe(true);
     const big = classification({
-      signals: { mentions_legal: false, mentions_refund_or_dispute: false, large_request: true },
+      signals: {
+        ...classification().signals,
+        mentions_legal: false,
+        mentions_refund_or_dispute: false,
+        large_request: true,
+      },
     });
     expect(applyOwnerRules(big, { ...ctx, firstTimeSender: true }).needsOwner).toBe(true);
     expect(applyOwnerRules(big, ctx).needsOwner).toBe(false); // a repeat customer's big job is normal work
@@ -172,7 +187,7 @@ describe("classifyEmail", () => {
     setModelTransportForTests(fakeTransport([classification()]).transport);
     await classifyEmail(workspaceId, business, email, { senderIsVip: false });
     const logged = JSON.stringify(spies.flatMap((s) => s.mock.calls));
-    expect(logged).toContain("classify.v1");
+    expect(logged).toContain("classify.v2");
     expect(logged).not.toContain("SECRET-BODY-TEXT");
     expect(logged).not.toContain("dana@x.com");
     spies.forEach((s) => s.mockRestore());

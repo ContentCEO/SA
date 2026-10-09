@@ -10,7 +10,19 @@ import {
   type Category,
   type EmailInput,
   type ModelClassification,
-} from "./prompts/classify.v1";
+} from "./prompts/classify.v2";
+import { INJECTION_REASON, injectionCheck, looksMunicipal } from "./guards";
+
+/**
+ * What we keep about an email. The model's facts, plus two flags set in code:
+ * `municipal` (building dept / inspector — never noise, never auto-drafted) and
+ * `injection` (tries to instruct the assistant — needs the owner, never
+ * auto-drafted, never autopilot).
+ */
+export type Extracted = ModelClassification["extracted"] & {
+  municipal?: boolean;
+  injection?: boolean;
+};
 
 /** Below this, the owner looks. */
 export const CONFIDENCE_THRESHOLD = 0.6;
@@ -24,7 +36,7 @@ export type Classification = {
   needsOwnerReason: string | null;
   summary: string;
   confidence: number;
-  extracted: ModelClassification["extracted"];
+  extracted: Extracted;
   /** true when the model output couldn't be used and we flagged instead of guessing. */
   unreadable: boolean;
 };
@@ -55,8 +67,17 @@ export function prepareBody(body: string): string {
  */
 export function applyOwnerRules(
   m: ModelClassification,
-  ctx: { firstTimeSender: boolean; senderIsVip: boolean; amountThresholdDollars: number },
+  ctx: {
+    firstTimeSender: boolean;
+    senderIsVip: boolean;
+    amountThresholdDollars: number;
+    injection?: boolean;
+  },
 ): Pick<Classification, "needsOwner" | "needsOwnerReason" | "priority"> {
+  // Never let the model's own words explain away an email that tried to instruct it.
+  if (ctx.injection) {
+    return { needsOwner: true, needsOwnerReason: INJECTION_REASON, priority: "normal" };
+  }
   const overThreshold = m.extracted.dollar_amounts.some((a) => a > ctx.amountThresholdDollars);
   const confidence = Math.max(0, Math.min(1, m.confidence));
   const reasons: [boolean, string][] = [
@@ -99,6 +120,8 @@ const UNREADABLE: Omit<Classification, "summary"> = {
     dates: [],
     dollar_amounts: [],
     urgency: "normal",
+    permit: null,
+    invoice: null,
   },
   unreadable: true,
 };
@@ -113,6 +136,10 @@ export async function classifyEmail(
   email: EmailInput,
   opts: { senderIsVip: boolean; now?: Date },
 ): Promise<Classification> {
+  const body = prepareBody(email.body);
+  // Checked in code first: the model is the thing being attacked.
+  const preCheck = injectionCheck(`${email.subject ?? ""}\n${body}`);
+  const municipalSender = looksMunicipal(email.fromAddress, email.fromName);
   const request = {
     workspaceId,
     role: "classify" as const,
@@ -122,7 +149,7 @@ export async function classifyEmail(
       { text: CLASSIFY_INSTRUCTIONS, cache: false },
       { text: businessBlock(business), cache: true },
     ],
-    user: emailBlock({ ...email, body: prepareBody(email.body) }),
+    user: emailBlock({ ...email, body }),
     schema: classificationSchema,
     now: opts.now,
   };
@@ -132,21 +159,42 @@ export async function classifyEmail(
   if (!result) {
     return {
       ...UNREADABLE,
+      ...(preCheck.flagged ? { needsOwnerReason: INJECTION_REASON } : {}),
+      extracted: {
+        ...UNREADABLE.extracted,
+        ...(preCheck.flagged ? { injection: true } : {}),
+        ...(municipalSender ? { municipal: true } : {}),
+      },
       summary: email.subject ? `Email: ${email.subject}` : "Email with no subject.",
     };
   }
 
+  const injection = preCheck.flagged || result.signals.tries_to_instruct_assistant;
+  const municipal = municipalSender || result.signals.from_building_department;
   const rules = applyOwnerRules(result, {
     firstTimeSender: email.firstTimeSender,
     senderIsVip: opts.senderIsVip,
     amountThresholdDollars: business.amountThresholdDollars,
+    injection,
   });
+  // Building departments are never noise.
+  const category: Category =
+    municipal && result.category === "noise"
+      ? result.extracted.permit?.result === "scheduled"
+        ? "scheduling"
+        : "customer_question"
+      : result.category;
   return {
-    category: result.category,
+    category,
     ...rules,
+    ...(municipal && rules.priority === "low" ? { priority: "normal" as const } : {}),
     summary: result.summary.trim().slice(0, 300),
     confidence: Math.max(0, Math.min(1, result.confidence)),
-    extracted: result.extracted,
+    extracted: {
+      ...result.extracted,
+      ...(injection ? { injection: true } : {}),
+      ...(municipal ? { municipal: true } : {}),
+    },
     unreadable: false,
   };
 }

@@ -345,6 +345,20 @@ In a sandbox with preinstalled Chromium: `PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-brows
 - **Davi 2026-10-09 on the plan:** #4 voice-to-edit yes, with a plain note that the browser sends
   speech to Google/Apple; #10 offline approvals only as an opt-in setting; #46 evals on demand /
   before release, not nightly.
+- **classify.v2 (2026-10-09, plan #17 #27 #42):** schema adds `signals.from_building_department`,
+  `signals.tries_to_instruct_assistant`, `extracted.permit` (issuing body, number, inspection time,
+  passed/failed/scheduled/other, corrections) and `extracted.invoice` (number, amount, due date,
+  unpaid/paid/partly_paid/unknown). Code-side guards in `src/ai/guards.ts`: `injectionCheck`
+  (rules: instruction phrases, base64 runs, ≥3 zero-width/bidi chars — tuned so "ignore my previous
+  email" / "send me the invoice" pass) runs **before** the model; injection (rules OR model) →
+  needs_owner with `INJECTION_REASON` (overrides the model's reason). `looksMunicipal` (.gov,
+  ci./town./co.*.xx.us, townof…, sender names like "Building Dept") OR the model signal → never
+  noise (→ scheduling if an inspection is scheduled, else customer_question), never `low`, skips the
+  Promotions shortcut. Both stored as `extracted.injection` / `extracted.municipal`;
+  `createDraftForThread` skips them for every trigger except the owner's tap, and autopilot
+  guardrails refuse both. `untrusted()` (`src/ai/prompts/untrusted.ts`) stops email text closing
+  its `<email>` / `<conversation>` block. Inbox shows a permit card and invoice facts. No separate
+  Haiku call for injection: the classifier (Haiku) already returns the signal.
 - **Future goal (after the website is complete):** a downloadable app (phone app store). Not started;
   the site is mobile-first so a wrapper or native shell can reuse it later.
 - **Public site (2026-10-05, Davi asked for a sales website):** `/` is the marketing page (signed-in

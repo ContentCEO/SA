@@ -81,7 +81,9 @@ export type CreateOutcome =
         | "read_only"
         | "followup_not_allowed"
         | "customer_replied"
-        | "followup_cap";
+        | "followup_cap"
+        | "untrusted"
+        | "municipal";
     }
   | { status: "reconnect_needed" };
 
@@ -196,6 +198,12 @@ export async function createDraftForThread(
   if (!jobsAllowed(workspace, now)) return { status: "skipped", reason: "read_only" };
   if (mailbox.status !== "active") return { status: "skipped", reason: "mailbox_inactive" };
 
+  const marks = (thread.extracted ?? {}) as { municipal?: boolean; injection?: boolean };
+  // Only the owner's tap drafts for these (feature plan #17, #42) — never a job.
+  if (opts.trigger !== "owner") {
+    if (marks.injection) return { status: "skipped", reason: "untrusted" };
+    if (marks.municipal) return { status: "skipped", reason: "municipal" };
+  }
   if (opts.trigger === "auto") {
     if (thread.category === "noise") return { status: "skipped", reason: "noise" };
     if (thread.needsOwner) return { status: "skipped", reason: "needs_owner" };

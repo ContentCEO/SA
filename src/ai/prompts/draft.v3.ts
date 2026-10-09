@@ -8,6 +8,7 @@
  */
 import { z } from "zod";
 import { tradePromptFor } from "./trades";
+import { untrusted } from "./untrusted";
 
 export const DRAFT_PROMPT_VERSION = "draft.v3";
 
@@ -152,6 +153,6 @@ ${opts.ownerNote ? `The owner asked for this draft and said: ${opts.ownerNote}\n
 ${opts.task ?? "Write the owner's reply to the last CUSTOMER message."}
 
 <conversation>
-${convo}
+${untrusted(convo, "conversation")}
 </conversation>`;
 }

@@ -1,4 +1,5 @@
 import "server-only";
+import { looksMunicipal } from "@/ai/guards";
 import { and, count, desc, eq, gte, inArray, isNull, lt, sql } from "drizzle-orm";
 import { classifyEmail, type Classification } from "@/ai/classify";
 import { AiCapReachedError } from "@/ai/usage";
@@ -39,6 +40,8 @@ const NOISE: Omit<Classification, "summary"> = {
     dates: [],
     dollar_amounts: [],
     urgency: "low",
+    permit: null,
+    invoice: null,
   },
   unreadable: false,
 };
@@ -119,7 +122,11 @@ export async function classifyPending(
   let capped = false;
   for (const m of batch) {
     let result: Classification;
-    if (m.labelIds.some((l) => NOISE_LABELS.includes(l))) {
+    if (
+      m.labelIds.some((l) => NOISE_LABELS.includes(l)) &&
+      // A building department landing in Promotions still gets read.
+      !looksMunicipal(m.fromAddress, m.fromName)
+    ) {
       result = {
         ...NOISE,
         summary: m.subject ? `Promotional email: ${m.subject}` : "Promotional email.",

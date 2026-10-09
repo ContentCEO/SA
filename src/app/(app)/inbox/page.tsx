@@ -1,7 +1,8 @@
 import Link from "next/link";
 import { Headline } from "@/components/brand/headline";
+import { PermitCard } from "@/components/app/permit-card";
 import { Button } from "@/components/ui/button";
-import { CATEGORIES } from "@/ai/prompts/classify.v1";
+import { CATEGORIES } from "@/ai/prompts/classify.v2";
 import { categoryLabels, categoryTag, isCategory } from "@/config/categories";
 import { relativeTime } from "@/lib/relative-time";
 import { cn } from "@/lib/utils";
@@ -35,6 +36,19 @@ function Details({ row }: { row: InboxRow }) {
     address?: string | null;
     dates?: string[];
     dollar_amounts?: number[];
+    invoice?: {
+      invoice_number: string | null;
+      amount: number | null;
+      due_date: string | null;
+      status: "unpaid" | "paid" | "partly_paid" | "unknown";
+    } | null;
+  };
+  const inv = x.invoice;
+  const invoiceWords = {
+    unpaid: "Unpaid",
+    paid: "Paid",
+    partly_paid: "Partly paid",
+    unknown: null,
   };
   const facts = [
     x.service_requested ? ["Work", x.service_requested] : null,
@@ -43,7 +57,20 @@ function Details({ row }: { row: InboxRow }) {
     x.dollar_amounts?.length
       ? ["Amounts", x.dollar_amounts.map((a) => `$${a.toLocaleString("en-US")}`).join(", ")]
       : null,
-  ].filter((f): f is [string, string] => f !== null);
+    inv
+      ? [
+          "Invoice",
+          [
+            inv.invoice_number ? `#${inv.invoice_number}` : null,
+            inv.amount !== null ? `$${inv.amount.toLocaleString("en-US")}` : null,
+            inv.due_date ? `due ${inv.due_date}` : null,
+            invoiceWords[inv.status],
+          ]
+            .filter(Boolean)
+            .join(" · "),
+        ]
+      : null,
+  ].filter((f): f is [string, string] => f !== null && f[1] !== "");
   if (facts.length === 0) return null;
   return (
     <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-sm">
@@ -142,6 +169,12 @@ export default async function InboxPage(props: PageProps<"/inbox">) {
                   {row.needsOwner && row.needsOwnerReason ? (
                     <p className="font-semibold">Why: {row.needsOwnerReason}</p>
                   ) : null}
+                  <PermitCard
+                    permit={
+                      (row.extracted as { permit?: Parameters<typeof PermitCard>[0]["permit"] })
+                        ?.permit
+                    }
+                  />
                   <Details row={row} />
                   {row.category !== "noise" && !readOnly ? (
                     <form action={draftReplyAction}>

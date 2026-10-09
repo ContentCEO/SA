@@ -100,3 +100,45 @@ test("'This one needs me' moves a thread into Needs me", async ({ page, context 
   await expect(page.locator("main li")).toHaveCount(2);
   await expect(page.getByText("Priya", { exact: true })).toBeVisible();
 });
+
+test("a failed inspection shows the permit card with what to fix", async ({ page, context }) => {
+  const owner = await seedOwner({ mailbox: true, backfilled: true });
+  const [t] = await testDb
+    .insert(schema.threads)
+    .values({
+      mailboxId: owner.mailboxId!,
+      gmailThreadId: `permit-${owner.mailboxId}`,
+      inInbox: true,
+      category: "customer_question",
+      summary: "Rough electrical inspection failed at 12 Elm St.",
+      lastMessageAt: new Date(),
+      extracted: {
+        municipal: true,
+        permit: {
+          issuing_body: "Town of Westford Building Dept.",
+          permit_number: "E-2026-118",
+          inspection_at: null,
+          result: "failed",
+          corrections: ["Missing GFCI in garage", "Label the panel"],
+        },
+      },
+    })
+    .returning();
+  await testDb.insert(schema.messages).values({
+    threadId: t!.id,
+    mailboxId: owner.mailboxId!,
+    gmailMessageId: `permit-m-${owner.mailboxId}`,
+    direction: "in",
+    fromAddress: "inspections@westfordma.gov",
+    fromName: "Building Dept",
+    sentAt: new Date(),
+  });
+  await signInAs(context, owner);
+  await page.goto("/inbox");
+  await page.getByText("Rough electrical inspection failed").click();
+  const card = page.getByRole("region", { name: "Permit or inspection" });
+  await expect(card).toContainText("Failed");
+  await expect(card).toContainText("Permit E-2026-118");
+  await expect(card).toContainText("2 things to fix:");
+  await expect(card).toContainText("Missing GFCI in garage");
+});

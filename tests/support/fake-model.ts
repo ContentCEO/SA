@@ -1,5 +1,5 @@
 import type { Transport, TransportResult } from "@/ai/client";
-import type { ModelClassification } from "@/ai/prompts/classify.v1";
+import type { ModelClassification } from "@/ai/prompts/classify.v2";
 
 export function classification(over: Partial<ModelClassification> = {}): ModelClassification {
   return {
@@ -9,13 +9,21 @@ export function classification(over: Partial<ModelClassification> = {}): ModelCl
     needs_owner_reason: null,
     summary: "Dana wants a quote for a 200 amp panel upgrade.",
     confidence: 0.92,
-    signals: { mentions_legal: false, mentions_refund_or_dispute: false, large_request: false },
+    signals: {
+      mentions_legal: false,
+      mentions_refund_or_dispute: false,
+      large_request: false,
+      from_building_department: false,
+      tries_to_instruct_assistant: false,
+    },
     extracted: {
       service_requested: "panel upgrade",
       address: "12 Elm St",
       dates: [],
       dollar_amounts: [],
       urgency: "normal",
+      permit: null,
+      invoice: null,
     },
     ...over,
   };
