@@ -41,6 +41,11 @@ export const autopilotSendRequested = eventType("autopilot/send.requested", {
   schema: staticSchema<{ draftId: string; at: string }>(),
 });
 
+/** Plan #7: the owner tapped Send reply; send at `at` unless they undo it. */
+export const draftSendQueued = eventType("draft/send.queued", {
+  schema: staticSchema<{ draftId: string; at: string }>(),
+});
+
 /** Learn (or re-learn) how the owner writes. `force` overrides their manual edits. */
 export const voiceLearnRequested = eventType("voice/learn.requested", {
   schema: staticSchema<{ workspaceId: string; force?: boolean }>(),

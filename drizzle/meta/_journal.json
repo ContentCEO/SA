@@ -141,6 +141,13 @@
       "when": 1791668298894,
       "tag": "0019_clever_namora",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1791668941074,
+      "tag": "0020_special_elektra",
+      "breakpoints": true
     }
   ]
 }

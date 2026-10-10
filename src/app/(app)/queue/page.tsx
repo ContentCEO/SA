@@ -16,12 +16,19 @@ import { dismissChecklistAction, draftReplyAction } from "./actions";
 import { OnboardingChecklist } from "@/components/app/onboarding-checklist";
 import { checklistFor } from "@/server/onboarding";
 import { DraftCard } from "./draft-card";
+import { UndoSend } from "./undo-send";
+import { RemindMe } from "./remind-me";
+import { SNOOZE_LABELS, snoozeOptions } from "@/server/snooze-rules";
+import { batchCandidates } from "@/server/drafts";
+import { BATCH_CATEGORIES } from "@/server/batch-rules";
 
 const done: Record<string, string> = {
   discarded: "Draft discarded.",
   saved: "Changes saved. It's updated in Gmail too.",
   drafted: "Reply drafted. It's below, and in your Gmail drafts.",
   revised: "Draft changed. Read it below — it's updated in Gmail too.",
+  undone: "Stopped. Nothing was sent — it's back below.",
+  snoozed: "Snoozed. It'll come back to the top of the queue.",
   held: "Held. It won't send until you tap Send reply.",
 };
 const errors: Record<string, string> = {
@@ -38,6 +45,8 @@ const errors: Record<string, string> = {
   notext: "There's no email text left to reply to (older than 30 days).",
   capped: "Today's drafting limit is used up. It resets tomorrow.",
   revisions: "That draft has been changed as many times as it can be. Edit it by hand instead.",
+  toolate: "Too late to undo — that reply has already gone.",
+  snooze: "That can't be put off that long — it looks urgent. Pick an earlier time.",
   draftfailed: "Couldn't write a draft for that one. Try again in a minute.",
   readonly:
     "Your account is read-only right now, so nothing was changed. The note at the top says why.",
@@ -73,8 +82,20 @@ export default async function QueuePage(props: PageProps<"/queue">) {
     listMailboxes(workspace.id),
     checklistFor(workspace.id),
   ]);
-  const sent =
-    typeof params.sent === "string" ? await sentDraftSummary(workspace.id, params.sent) : null;
+  // One id after a tap, several after "Send N replies" (plan #5).
+  const sentIds = (Array.isArray(params.sent) ? params.sent : params.sent ? [params.sent] : [])
+    .filter((s) => /^[0-9a-f-]{36}$/i.test(s))
+    .slice(0, 50);
+  const sentAll = (await Promise.all(sentIds.map((d) => sentDraftSummary(workspace.id, d)))).filter(
+    (s) => s !== null,
+  );
+  const sent = sentAll.length === 1 ? sentAll[0]! : null;
+  const sendingIds = sentAll.filter((s) => s.sendingAt).map((s) => s.draftId);
+  const sendAt = sentAll
+    .map((s) => s.sendingAt)
+    .filter((d): d is Date => d !== null)
+    .sort((a, b) => b.getTime() - a.getTime())[0];
+  const refused = Number(params.refused) || 0;
   const doneMsg = typeof params.done === "string" ? done[params.done] : undefined;
   const errorMsg = typeof params.error === "string" ? errors[params.error] : undefined;
   const sending = canSend(workspace);
@@ -82,19 +103,42 @@ export default async function QueuePage(props: PageProps<"/queue">) {
   const clock = new Intl.DateTimeFormat("en-US", { hour: "numeric", minute: "2-digit", timeZone });
   const readOnly = isReadOnly(workspace);
   const empty = queue.needsYou.length === 0 && queue.drafts.length === 0;
+  const now = new Date();
+  const remindOptions = (i: QueueItem) =>
+    snoozeOptions(now, timeZone, i.emergency).map((o) => ({
+      choice: o.choice,
+      label: SNOOZE_LABELS[o.choice],
+    }));
+  const readyCount =
+    sending && !readOnly ? (await batchCandidates(workspace.id, BATCH_CATEGORIES)).length : 0;
 
   return (
     <>
-      {sent ? (
+      {sentAll.length ? (
         <section
           aria-live="polite"
           className="sa-inverted flex animate-in flex-col gap-3 rounded-xl p-6 duration-500 zoom-in-95 fade-in"
         >
           <p className="flex flex-col">
-            <span className="sa-headline-serif text-3xl">reply sent,</span>
+            <span className="sa-headline-serif text-3xl">
+              {sentAll.length > 1
+                ? `${sentAll.length} replies ${sendingIds.length ? "on their way" : "sent"},`
+                : sendingIds.length
+                  ? "reply on its way,"
+                  : "reply sent,"}
+            </span>
             <span className="sa-headline-heavy text-4xl">squared away.</span>
           </p>
-          <p className="text-ash">{nextLine(sent)}</p>
+          {sent ? <p className="text-ash">{nextLine(sent)}</p> : null}
+          {refused ? (
+            <p className="text-ash">
+              {refused} {refused === 1 ? "reply wasn't" : "replies weren't"} sent — they changed or
+              need a closer look, so they&apos;re still below.
+            </p>
+          ) : null}
+          {sendingIds.length && sendAt ? (
+            <UndoSend key={sendingIds.join()} draftIds={sendingIds} sendAt={sendAt.toISOString()} />
+          ) : null}
         </section>
       ) : (
         <Headline serif="waiting on you," heavy="the queue." />
@@ -130,7 +174,10 @@ export default async function QueuePage(props: PageProps<"/queue">) {
                   {i.lastMessageAt ? relativeTime(i.lastMessageAt) : ""}
                 </span>
               </div>
-              <span className="text-sm font-semibold">{tag(i)}</span>
+              <span className="text-sm font-semibold">
+                {i.backFromSnooze ? "Back from snooze · " : ""}
+                {tag(i)}
+              </span>
               {i.needsOwnerReason ? <p className="font-semibold">{i.needsOwnerReason}</p> : null}
               {i.summary ? <p className="text-ash">{i.summary}</p> : null}
               <div className="grid grid-cols-1 gap-2 pt-1">
@@ -142,6 +189,7 @@ export default async function QueuePage(props: PageProps<"/queue">) {
                     </Button>
                   </form>
                 )}
+                <RemindMe threadId={i.threadId} options={remindOptions(i)} inverted />
                 <a
                   href={gmailLink(i)}
                   target="_blank"
@@ -161,13 +209,23 @@ export default async function QueuePage(props: PageProps<"/queue">) {
           <h2 id="drafts" className="text-xl font-black">
             Replies ready for you
           </h2>
+          {readyCount >= 2 ? (
+            <Link
+              href="/queue/review"
+              className="inline-flex min-h-tap items-center justify-center rounded-lg border-2 border-charcoal px-4 font-black"
+            >
+              Review all {readyCount} ready
+            </Link>
+          ) : null}
           {queue.drafts.map((i) => (
             <DraftCard
               // Remount when the text changes (e.g. edited in Gmail) so filled gaps reset to it.
               key={`${i.draftId}:${i.body}`}
               draftId={i.draftId!}
               customer={who(i)}
-              tag={tag(i)}
+              tag={`${i.backFromSnooze ? "Back from snooze · " : ""}${tag(i)}`}
+              threadId={i.threadId}
+              remindOptions={remindOptions(i)}
               summary={i.summary}
               reason={i.reason ?? ""}
               body={i.body ?? ""}

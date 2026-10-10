@@ -111,17 +111,17 @@ _Re-checked 2026-10-10: brief scope complete with tests; nothing else filed here
       new paid provider); hide the button where unsupported. The transcript is an instruction ("tell
       her Thursday works, 450") → drafter revises → owner sees the result before sending. Facts the
       owner dictated count as source facts for #43. Audio never leaves the device.
-- [ ] **#5 Batch approve.** "Review all ready" mode for drafts labelled Ready in categories the owner
+- [x] **#5 Batch approve.** _(Done 2026-10-10.)_ "Review all ready" mode for drafts labelled Ready in categories the owner
       picks (never complaints, never invoices with amounts, never `needs_owner`, never flagged).
       Shows a full list with recipient + first line of each; one "Send N replies" button after a
       confirmation. Every send still goes through the one send gate and is logged individually.
       Tests: ineligible drafts can't be batch-sent even if the client sends their IDs.
-- [ ] **#7 Undo send.** Approve → status `sending` with `send_after = now + 20s` (config
+- [x] **#7 Undo send.** _(Done 2026-10-10.)_ Approve → status `sending` with `send_after = now + 20s` (config
       `UNDO_WINDOW_SECONDS`, 10–30). The "squared away." moment shows with an Undo button and
       countdown. An idempotent Inngest job sends at `send_after` and re-runs the send gate at that
       moment (status can change in 20s). Undo before then → back to pending. Tests: undo works; gate
       re-checked at send time; double-send impossible.
-- [ ] **#6 Snooze.** "Remind me" → Tonight (6pm local) / Tomorrow morning / After this job (3h).
+- [x] **#6 Snooze.** _(Done 2026-10-10.)_ "Remind me" → Tonight (6pm local) / Tomorrow morning / After this job (3h).
       Snoozed items leave the queue and come back on top. Emergencies (priority high +
       `needs_owner`) can't be snoozed past tonight.
 - [ ] **#9 Swipe + haptics + left-handed.** Swipe right = open to send (never sends straight from a

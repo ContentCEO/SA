@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { eq } from "drizzle-orm";
 import * as schema from "../../src/db/schema";
-import { seedOwner, seedQueue, signInAs, testDb } from "./support";
+import { seedOwner, seedQueue, setWorkspace, signInAs, testDb } from "./support";
 
 test("queue: needs-you first, then drafts; sending is off until setup, and it says so", async ({
   page,
@@ -93,4 +93,108 @@ test("empty queue says so plainly", async ({ page, context }) => {
   await signInAs(context, owner);
   await page.goto("/queue");
   await expect(page.getByText("Nothing waiting on you.")).toBeVisible();
+});
+
+test("undo send: the window shows a countdown, and Undo puts the reply back", async ({
+  page,
+  context,
+}) => {
+  const owner = await seedOwner({ mailbox: true, backfilled: true });
+  const { draft } = await seedQueue(owner.mailboxId!);
+  await testDb
+    .update(schema.drafts)
+    .set({ sendAfter: new Date(Date.now() + 120_000) })
+    .where(eq(schema.drafts.id, draft.id));
+  await signInAs(context, owner);
+
+  await page.goto(`/queue?sent=${draft.id}`);
+  await expect(page.getByText("reply on its way,")).toBeVisible();
+  await expect(page.getByText(/Sending in \d+ seconds/)).toBeVisible();
+  // While it's going, it's not in the queue to tap again.
+  await expect(page.getByRole("article", { name: "Draft reply to Priya" })).toHaveCount(0);
+  await page.getByRole("button", { name: "Undo" }).click();
+  await expect(page.getByText("Stopped. Nothing was sent")).toBeVisible();
+  await expect(page.getByRole("article", { name: "Draft reply to Priya" })).toBeVisible();
+});
+
+test("remind me later: the conversation leaves the queue until then", async ({ page, context }) => {
+  const owner = await seedOwner({ mailbox: true, backfilled: true });
+  await seedQueue(owner.mailboxId!);
+  await signInAs(context, owner);
+  await page.goto("/queue");
+  const card = page.getByRole("article", { name: "Draft reply to Priya" });
+  await card.getByRole("button", { name: "Remind me later" }).click();
+  await card.getByRole("button", { name: "After this job (3 hours)" }).click();
+  await expect(page.getByText("Snoozed.")).toBeVisible();
+  await expect(page.getByRole("article", { name: "Draft reply to Priya" })).toHaveCount(0);
+});
+
+test("review all ready: lists who and how it starts, then asks once before sending", async ({
+  page,
+  context,
+}) => {
+  const owner = await seedOwner({ mailbox: true, backfilled: true });
+  await setWorkspace(owner.workspaceId, {
+    status: "active",
+    setupPaidAt: new Date(),
+    setupPaidVia: "stripe",
+  });
+  // The seeded complaint needs the owner, so it's never in the batch.
+  const { draft } = await seedQueue(owner.mailboxId!);
+  // Make the seeded quote draft Ready, and add a second Ready one.
+  await testDb
+    .update(schema.drafts)
+    .set({ flags: [], confidence: 92 })
+    .where(eq(schema.drafts.id, draft.id));
+  const [t2] = await testDb
+    .insert(schema.threads)
+    .values({
+      mailboxId: owner.mailboxId!,
+      gmailThreadId: `s-${owner.mailboxId}`,
+      inInbox: true,
+      category: "scheduling",
+      lastMessageAt: new Date(),
+    })
+    .returning();
+  await testDb.insert(schema.messages).values({
+    threadId: t2!.id,
+    mailboxId: owner.mailboxId!,
+    gmailMessageId: `m-s-${owner.mailboxId}`,
+    direction: "in",
+    fromName: "Omar",
+    fromAddress: "omar@x.com",
+    sentAt: new Date(),
+  });
+  await testDb.insert(schema.drafts).values({
+    threadId: t2!.id,
+    mailboxId: owner.mailboxId!,
+    gmailDraftId: "fake-draft-2",
+    toAddress: "omar@x.com",
+    subject: "Re: Time",
+    body: "Hi Omar,\nTuesday works — see you then.\nSam",
+    originalBody: "same",
+    reason: "Confirms the time.",
+    confidence: 95,
+  });
+  await signInAs(context, owner);
+
+  await page.goto("/queue");
+  await page.getByRole("link", { name: "Review all 2 ready" }).click();
+  await expect(page).toHaveURL(/\/queue\/review$/);
+  const list = page.getByRole("list", { name: "Replies to send" });
+  await expect(list.getByRole("listitem")).toHaveCount(2);
+  await expect(list).toContainText("To Omar");
+  await expect(list).toContainText("Tuesday works — see you then.");
+  await expect(list).toContainText("What's the address, and how old is the current panel?");
+
+  // Untick Scheduling → only the quote is left.
+  await page.getByRole("link", { name: "Scheduling" }).click();
+  await expect(list.getByRole("listitem")).toHaveCount(1);
+  await page.getByRole("link", { name: "Scheduling" }).click();
+  await expect(list.getByRole("listitem")).toHaveCount(2);
+
+  await page.getByRole("button", { name: "Send 2 replies" }).click();
+  await expect(page.getByRole("button", { name: "Yes, send 2 replies" })).toBeVisible();
+  await page.getByRole("button", { name: "Not yet" }).click();
+  await expect(page.getByRole("button", { name: "Send 2 replies" })).toBeVisible();
 });

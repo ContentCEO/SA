@@ -43,6 +43,20 @@ export function describeActivity(
       return detail.via === "voice"
         ? `You changed the draft${to} by voice`
         : `You changed the draft${to} with a quick tweak`;
+    case "send_undone":
+      return `You stopped the reply${to} before it went`;
+    case "send_stopped":
+      return `Didn't send the reply${to} — ${
+        detail.why === "changed_in_gmail"
+          ? "it was changed in Gmail"
+          : detail.why === "blocked"
+            ? "sending was switched off"
+            : detail.why === "reconnect_needed"
+              ? "Gmail needs reconnecting"
+              : "something changed"
+      }. It's back in your queue`;
+    case "snoozed":
+      return `You put off the conversation${name ? ` with ${name}` : ""} till later`;
     case "draft_expired":
       return `Withdrew an out-of-date draft${to}`;
     case "marked_needs_owner":

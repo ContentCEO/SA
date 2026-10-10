@@ -49,6 +49,7 @@ describe("job wiring", () => {
         "poll-mailboxes",
         "renew-gmail-watches",
         "purge-expired-bodies",
+        "send-after-undo",
       ].sort(),
     );
   });

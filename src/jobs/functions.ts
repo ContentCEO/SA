@@ -10,7 +10,13 @@ import {
   renewWatches,
 } from "@/server/sync";
 import { classifyPending } from "@/server/classification";
-import { createDraftForThread, reconcileDrafts, threadsToAutoDraft } from "@/server/drafts";
+import {
+  createDraftForThread,
+  deliverQueuedSend,
+  overdueQueuedSends,
+  reconcileDrafts,
+  threadsToAutoDraft,
+} from "@/server/drafts";
 import { sendDigests } from "@/server/digest";
 import { threadsToFollowUp } from "@/server/followups";
 import { getMailboxWorkspace } from "@/server/mailboxes";
@@ -24,6 +30,7 @@ import { expireEvaluations, startPendingEvaluations } from "@/server/workspace-l
 import { considerAutopilot, overdueAutopilotDrafts, runAutopilotSend } from "@/server/autopilot";
 import {
   autopilotSendRequested,
+  draftSendQueued,
   inngest,
   mailboxClassifyRequested,
   mailboxConnected,
@@ -248,6 +255,18 @@ export const autopilotSend = inngest.createFunction(
   },
 );
 
+/**
+ * Plan #7: wait out the undo window, then send — deliverQueuedSend claims the
+ * draft (so a duplicate event can't send twice) and re-runs the whole gate.
+ */
+export const sendAfterUndo = inngest.createFunction(
+  { id: "send-after-undo", triggers: [draftSendQueued], retries: 4 },
+  async ({ event, step }) => {
+    await step.sleepUntil("undo-window", new Date(event.data.at));
+    return step.run("send", () => politely(() => deliverQueuedSend(event.data.draftId)));
+  },
+);
+
 /** Read sent mail and describe how the owner writes. One at a time per workspace. */
 export const learnVoiceFn = inngest.createFunction(
   {
@@ -316,6 +335,14 @@ export const workspaceLifecycle = inngest.createFunction(
         ),
       );
     }
+    // Sends whose undo window ended but whose event was lost (plan #7).
+    const queued = await step.run("sends-overdue", () => overdueQueuedSends());
+    if (queued.length) {
+      await step.sendEvent(
+        "sends-overdue",
+        queued.map((draftId) => draftSendQueued.create({ draftId, at: new Date().toISOString() })),
+      );
+    }
     // Also restart any voice learning that never ran or died part-way.
     const voice = await step.run("voice", () => workspacesNeedingVoice());
     if (voice.length) {
@@ -365,4 +392,5 @@ export const functions = [
   followupScan,
   morningDigest,
   autopilotSend,
+  sendAfterUndo,
 ];

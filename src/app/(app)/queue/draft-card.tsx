@@ -8,6 +8,7 @@ import { findGaps } from "@/ai/gaps";
 import type { ConfidenceLabel } from "@/config/drafting";
 import { BodyWithGaps, ConfidenceTag, WhyThis } from "./draft-parts";
 import { SayAChange, TweakChips } from "./revise-controls";
+import { RemindMe, type SnoozeOption } from "./remind-me";
 import {
   discardDraftAction,
   holdAutopilotAction,
@@ -17,6 +18,9 @@ import {
 
 export type DraftCardProps = {
   draftId: string;
+  threadId: string;
+  /** Plan #6: the "Remind me" times allowed for this one right now. */
+  remindOptions?: SnoozeOption[];
   customer: string;
   tag: string;
   /** One line on what the customer wants, from sorting — so the card reads without opening Gmail. */
@@ -287,6 +291,7 @@ export function DraftCard(p: DraftCardProps) {
                   </Button>
                 </div>
               )}
+              <RemindMe threadId={p.threadId} options={p.remindOptions ?? []} />
             </div>
           )}
         </>

@@ -1,16 +1,23 @@
 "use server";
 
+import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { z } from "zod";
 import { holdAutopilot } from "@/server/autopilot";
 import { isTweak } from "@/ai/prompts/revise.v1";
+import { draftSendQueued, enqueue } from "@/jobs/client";
+import { isBatchCategory } from "@/server/batch-rules";
 import {
+  batchSend,
   createDraftForThread,
   discardDraft,
+  queueSend,
   reviseDraft,
   saveDraftEdit,
-  sendDraft,
+  undoSend,
 } from "@/server/drafts";
+import { isSnoozeChoice } from "@/server/snooze-rules";
+import { snoozeThread } from "@/server/snooze";
 import { ReadOnlyError, SendingBlockedError } from "@/server/lifecycle";
 import { hitLimit } from "@/server/rate-limit";
 import { dismissChecklist } from "@/server/onboarding";
@@ -30,13 +37,21 @@ export async function sendDraftAction(formData: FormData) {
 
   let outcome;
   try {
-    outcome = await sendDraft(workspace.id, draftId.data, { editedBody: editedBody?.data });
+    outcome = await queueSend(workspace.id, draftId.data, {
+      editedBody: editedBody?.data,
+      device: await device(),
+    });
   } catch (err) {
     if (err instanceof SendingBlockedError) redirect("/queue?error=blocked");
     throw err;
   }
   switch (outcome.status) {
-    case "sent":
+    case "queued":
+      await enqueue(
+        draftSendQueued.create({ draftId: draftId.data, at: outcome.sendAfter.toISOString() }),
+      );
+      redirect(`/queue?sent=${draftId.data}`);
+    case "already_sending":
       redirect(`/queue?sent=${draftId.data}`);
     case "changed_in_gmail":
       redirect("/queue?error=changed");
@@ -49,6 +64,56 @@ export async function sendDraftAction(formData: FormData) {
     default:
       redirect("/queue?error=unknown");
   }
+}
+
+/** For the proof-of-okay record (#41): phone or computer, from the browser's own description. */
+async function device(): Promise<"phone" | "computer"> {
+  const ua = (await headers()).get("user-agent") ?? "";
+  return /Mobi|Android|iPhone|iPad/i.test(ua) ? "phone" : "computer";
+}
+
+/** Plan #7: Undo, inside the window. */
+export async function undoSendAction(formData: FormData) {
+  const { workspace } = await requireOwner();
+  const ids = z.array(id).min(1).max(50).safeParse(formData.getAll("draftId"));
+  if (!ids.success) redirect("/queue?error=unknown");
+  let undone = 0;
+  for (const d of ids.data) if (await undoSend(workspace.id, d)) undone++;
+  redirect(undone ? "/queue?done=undone" : "/queue?error=toolate");
+}
+
+/** Plan #6: "Remind me". */
+export async function snoozeAction(formData: FormData) {
+  const { workspace } = await requireOwner();
+  const threadId = id.safeParse(formData.get("threadId"));
+  const choice = formData.get("choice");
+  if (!threadId.success || !isSnoozeChoice(choice)) redirect("/queue?error=unknown");
+  const r = await snoozeThread(workspace.id, threadId.data, choice);
+  redirect(r.status === "snoozed" ? "/queue?done=snoozed" : "/queue?error=snooze");
+}
+
+/** Plan #5: "Send N replies" after the confirmation. The server re-checks every one. */
+export async function batchSendAction(formData: FormData) {
+  const { workspace } = await requireOwner();
+  const ids = z.array(id).min(1).max(50).safeParse(formData.getAll("draftId"));
+  const picked = formData.getAll("category").filter(isBatchCategory);
+  if (!ids.success || picked.length === 0) redirect("/queue/review?error=none");
+  for (let i = 0; i < ids.data.length; i++) {
+    if (!(await hitLimit("send", workspace.id)).allowed) redirect("/queue?error=busy");
+  }
+  let r;
+  try {
+    r = await batchSend(workspace.id, ids.data, picked, { device: await device() });
+  } catch (err) {
+    if (err instanceof SendingBlockedError) redirect("/queue?error=blocked");
+    throw err;
+  }
+  for (const q of r.queued)
+    await enqueue(draftSendQueued.create({ draftId: q.draftId, at: q.sendAfter.toISOString() }));
+  if (!r.queued.length) redirect("/queue/review?error=none");
+  const qs = new URLSearchParams(r.queued.map((q) => ["sent", q.draftId]));
+  if (r.refused) qs.set("refused", String(r.refused));
+  redirect(`/queue?${qs}`);
 }
 
 export async function saveDraftEditAction(formData: FormData) {

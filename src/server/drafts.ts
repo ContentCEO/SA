@@ -1,5 +1,5 @@
 import "server-only";
-import { and, asc, desc, eq, gt, inArray, lte, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, isNotNull, isNull, lt, lte, or, sql } from "drizzle-orm";
 import { callStructured } from "@/ai/client";
 import { checkDraft, REGENERATE_ON } from "@/ai/draft-checks";
 import {
@@ -9,7 +9,7 @@ import {
   TWEAKS,
   type Tweak,
 } from "@/ai/prompts/revise.v1";
-import { MAX_REVISIONS_PER_DRAFT } from "@/config/drafting";
+import { MAX_REVISIONS_PER_DRAFT, UNDO_WINDOW_SECONDS } from "@/config/drafting";
 import { hasUnfilledGap } from "@/ai/gaps";
 import {
   conversationBlock,
@@ -51,6 +51,8 @@ import {
   ReadOnlyError,
   SendingBlockedError,
 } from "./lifecycle";
+import { batchEligible, firstLine } from "./batch-rules";
+import { BACK_ON_TOP_MS, isEmergency } from "./snooze-rules";
 import { markReconnectNeeded } from "./sync";
 
 /** Categories we draft for without being asked. Complaints and noise never are. */
@@ -487,6 +489,7 @@ export type SendOutcome =
   | { status: "changed_in_gmail" }
   | { status: "deleted_in_gmail" }
   | { status: "gaps_unfilled" }
+  | { status: "already_sending" }
   | { status: "not_found" }
   | { status: "reconnect_needed" };
 
@@ -503,6 +506,8 @@ export async function sendDraft(
     editedBody?: string;
     /** Who pressed send: the owner, or autopilot after its checks and grace window. */
     by?: "owner" | "autopilot";
+    /** The undo window has ended and this caller holds the claim (deliverQueuedSend). */
+    queued?: boolean;
   } = {},
 ): Promise<SendOutcome> {
   const now = opts.now?.() ?? new Date();
@@ -510,6 +515,10 @@ export async function sendDraft(
   if (!row || row.draft.status !== "pending" || !row.draft.gmailDraftId)
     return { status: "not_found" };
   const { draft, mailbox, thread, workspace } = row;
+  // A draft in its undo window only leaves through the job that claimed it (plan #7).
+  if (opts.queued ? !draft.sendAfter : draft.sendAfter) {
+    return opts.queued ? { status: "not_found" } : { status: "already_sending" };
+  }
   if (!canSend(workspace, now)) throw new SendingBlockedError(effectiveStatus(workspace, now));
   if (mailbox.status !== "active") return { status: "reconnect_needed" };
   // A reply with a {{gap}} still in it never leaves (plan #2) — checked before any Gmail call.
@@ -555,6 +564,8 @@ export async function sendDraft(
         body,
         decidedAt: now,
         sentGmailMessageId: sent.messageId,
+        sendAfter: null,
+        sendClaimedAt: null,
       })
       .where(eq(drafts.id, draft.id));
     await db()
@@ -579,6 +590,8 @@ export async function sendDraft(
           draftId: draft.id,
           editedByOwner: edited,
           kind: draft.kind,
+          gmailMessageId: sent.messageId,
+          ...(opts.queued ? { undoWindowSec: UNDO_WINDOW_SECONDS } : {}),
           ...(opts.by === "autopilot" ? { autopilot: true } : {}),
         },
       });
@@ -592,6 +605,291 @@ export async function sendDraft(
   }
 }
 
+export type QueueSendOutcome =
+  { status: "queued"; sendAfter: Date } | Exclude<SendOutcome, { status: "sent" }>;
+
+/**
+ * Plan #7: the owner tapped Send reply. Every check a send makes runs now (so
+ * a blocked account still gets its 403 and nothing unchecked waits), the text
+ * they approved is written to the Gmail draft, and it goes after the undo
+ * window — via deliverQueuedSend, which checks everything again then.
+ */
+export async function queueSend(
+  workspaceId: string,
+  draftId: string,
+  opts: DraftDeps & { editedBody?: string; device?: "phone" | "computer" } = {},
+): Promise<QueueSendOutcome> {
+  const now = opts.now?.() ?? new Date();
+  const row = await loadOwnedDraft(workspaceId, draftId);
+  if (!row || row.draft.status !== "pending" || !row.draft.gmailDraftId)
+    return { status: "not_found" };
+  const { draft, mailbox, thread, workspace } = row;
+  if (draft.sendAfter) return { status: "already_sending" };
+  if (!canSend(workspace, now)) throw new SendingBlockedError(effectiveStatus(workspace, now));
+  if (mailbox.status !== "active") return { status: "reconnect_needed" };
+  if (hasUnfilledGap(opts.editedBody ?? draft.body ?? "")) return { status: "gaps_unfilled" };
+
+  const writer = (opts.writerFor ?? defaultWriter)(mailbox);
+  let body = draft.body ?? "";
+  try {
+    const remote = await writer.getDraft(draft.gmailDraftId!);
+    if (!remote) {
+      await closeDraft(
+        draft,
+        workspaceId,
+        "discarded",
+        "You deleted or sent this draft in Gmail.",
+        now,
+      );
+      return { status: "deleted_in_gmail" };
+    }
+    if (!sameText(remote.bodyText, draft.body)) {
+      await db()
+        .update(drafts)
+        .set({ body: remote.bodyText, autoSendAt: null })
+        .where(eq(drafts.id, draft.id));
+      return { status: "changed_in_gmail" };
+    }
+    if (opts.editedBody !== undefined && !sameText(opts.editedBody, body)) {
+      body = opts.editedBody.trim();
+      await writer.updateDraft(draft.gmailDraftId!, {
+        threadId: thread.gmailThreadId,
+        raw: mimeFor(draft, mailbox, body, await replyToHeaders(draft)),
+      });
+    }
+  } catch (err) {
+    if (err instanceof MailboxAuthError) {
+      await markReconnectNeeded(mailbox);
+      return { status: "reconnect_needed" };
+    }
+    throw err;
+  }
+
+  const sendAfter = new Date(now.getTime() + UNDO_WINDOW_SECONDS * 1000);
+  const queued = await db()
+    .update(drafts)
+    .set({ body, sendAfter, sendClaimedAt: null, autoSendAt: null })
+    .where(and(eq(drafts.id, draft.id), eq(drafts.status, "pending"), isNull(drafts.sendAfter)))
+    .returning({ id: drafts.id });
+  // Two taps at once: only the first starts a window.
+  if (!queued.length) return { status: "already_sending" };
+  await db()
+    .insert(activityLog)
+    .values({
+      workspaceId,
+      actor: "owner",
+      action: "send_approved",
+      threadId: thread.id,
+      // Content-free: what the proof-of-okay record (#41) shows.
+      detail: {
+        draftId: draft.id,
+        device: opts.device ?? "unknown",
+        undoWindowSec: UNDO_WINDOW_SECONDS,
+        editedByOwner: !sameText(body, draft.originalBody),
+      },
+    });
+  return { status: "queued", sendAfter };
+}
+
+/** Undo inside the window: back to the queue, unchanged. False once the send has started. */
+export async function undoSend(workspaceId: string, draftId: string): Promise<boolean> {
+  const undone = await db()
+    .update(drafts)
+    .set({ sendAfter: null })
+    .where(
+      and(
+        eq(drafts.id, draftId),
+        eq(drafts.status, "pending"),
+        isNotNull(drafts.sendAfter),
+        isNull(drafts.sendClaimedAt),
+        inArray(
+          drafts.mailboxId,
+          db()
+            .select({ id: mailboxes.id })
+            .from(mailboxes)
+            .where(eq(mailboxes.workspaceId, workspaceId)),
+        ),
+      ),
+    )
+    .returning({ threadId: drafts.threadId });
+  if (!undone.length) return false;
+  await db().insert(activityLog).values({
+    workspaceId,
+    actor: "owner",
+    action: "send_undone",
+    threadId: undone[0]!.threadId,
+    detail: { draftId },
+  });
+  return true;
+}
+
+/** A claim older than this belongs to a run that died; another may take it. */
+const SEND_CLAIM_LEASE_MS = 2 * 60_000;
+
+export type DeliverResult =
+  { status: "sent" } | { status: "not_due" } | { status: "stopped"; why: string };
+
+/**
+ * The undo window is over: claim the draft (only one runner ever can), run the
+ * whole send — gate included, since the account can change in 20 seconds —
+ * and send. Anything that stops it puts the draft back in the queue.
+ */
+export async function deliverQueuedSend(
+  draftId: string,
+  opts: DraftDeps = {},
+): Promise<DeliverResult> {
+  const now = opts.now?.() ?? new Date();
+  const [claimed] = await db()
+    .update(drafts)
+    .set({ sendClaimedAt: now })
+    .where(
+      and(
+        eq(drafts.id, draftId),
+        eq(drafts.status, "pending"),
+        isNotNull(drafts.sendAfter),
+        lte(drafts.sendAfter, now),
+        or(
+          isNull(drafts.sendClaimedAt),
+          lt(drafts.sendClaimedAt, new Date(now.getTime() - SEND_CLAIM_LEASE_MS)),
+        ),
+      ),
+    )
+    .returning({ mailboxId: drafts.mailboxId, threadId: drafts.threadId });
+  if (!claimed) return { status: "not_due" };
+  const [box] = await db()
+    .select({ workspaceId: mailboxes.workspaceId })
+    .from(mailboxes)
+    .where(eq(mailboxes.id, claimed.mailboxId));
+  const workspaceId = box!.workspaceId;
+
+  let why: string;
+  try {
+    const outcome = await sendDraft(workspaceId, draftId, { ...opts, queued: true });
+    if (outcome.status === "sent") return { status: "sent" };
+    why = outcome.status;
+  } catch (err) {
+    if (!(err instanceof SendingBlockedError)) throw err; // the claim lapses; a retry takes it
+    why = "blocked";
+  }
+  await db()
+    .update(drafts)
+    .set({ sendAfter: null, sendClaimedAt: null })
+    .where(and(eq(drafts.id, draftId), eq(drafts.status, "pending")));
+  await db().insert(activityLog).values({
+    workspaceId,
+    actor: "squared_away",
+    action: "send_stopped",
+    threadId: claimed.threadId,
+    detail: { draftId, why },
+  });
+  return { status: "stopped", why };
+}
+
+/** Backstop for lost events: sends whose window ended a minute ago and nobody holds. */
+export async function overdueQueuedSends(now: Date = new Date()): Promise<string[]> {
+  const rows = await db()
+    .select({ id: drafts.id })
+    .from(drafts)
+    .where(
+      and(
+        eq(drafts.status, "pending"),
+        isNotNull(drafts.sendAfter),
+        lte(drafts.sendAfter, new Date(now.getTime() - 60_000)),
+        or(
+          isNull(drafts.sendClaimedAt),
+          lt(drafts.sendClaimedAt, new Date(now.getTime() - SEND_CLAIM_LEASE_MS)),
+        ),
+      ),
+    )
+    .limit(50);
+  return rows.map((r) => r.id);
+}
+
+export type BatchRow = {
+  draftId: string;
+  to: string;
+  category: string;
+  firstLine: string;
+};
+
+/** Plan #5: drafts that may be sent together, freshly read and filtered by the rules. */
+export async function batchCandidates(
+  workspaceId: string,
+  picked: readonly string[],
+): Promise<BatchRow[]> {
+  const rows = await db()
+    .select({ draft: drafts, thread: threads })
+    .from(drafts)
+    .innerJoin(threads, eq(threads.id, drafts.threadId))
+    .innerJoin(mailboxes, eq(mailboxes.id, drafts.mailboxId))
+    .where(
+      and(
+        eq(mailboxes.workspaceId, workspaceId),
+        eq(mailboxes.status, "active"),
+        eq(drafts.status, "pending"),
+        isNull(drafts.sendAfter),
+      ),
+    )
+    .orderBy(desc(threads.lastMessageAt));
+  const out: BatchRow[] = [];
+  for (const { draft, thread } of rows) {
+    const extracted = (thread.extracted ?? {}) as {
+      dollar_amounts?: number[];
+      injection?: boolean;
+      municipal?: boolean;
+    };
+    const ok = batchEligible(
+      {
+        category: thread.category,
+        needsOwner: thread.needsOwner || thread.needsOwnerManual,
+        flags: draft.flags,
+        confidencePct: draft.confidence,
+        body: draft.body ?? "",
+        amountsInEmail: extracted.dollar_amounts ?? [],
+        untrusted: extracted.injection === true || extracted.municipal === true,
+        autopilotCounting: draft.autoSendAt !== null,
+      },
+      picked,
+    );
+    if (!ok) continue;
+    const who = await customerOf(thread.id);
+    out.push({
+      draftId: draft.id,
+      to: who?.name || who?.address || draft.toAddress,
+      category: thread.category!,
+      firstLine: firstLine(draft.body ?? ""),
+    });
+  }
+  return out;
+}
+
+/**
+ * Plan #5 "Send N replies": each requested draft is re-checked against the
+ * rules on fresh rows (IDs from the browser prove nothing), then goes through
+ * queueSend — the one gate, its own undo window, its own log entry.
+ */
+export async function batchSend(
+  workspaceId: string,
+  draftIds: readonly string[],
+  picked: readonly string[],
+  opts: DraftDeps & { device?: "phone" | "computer" } = {},
+): Promise<{ queued: { draftId: string; sendAfter: Date }[]; refused: number }> {
+  const allowed = new Set((await batchCandidates(workspaceId, picked)).map((r) => r.draftId));
+  const queued: { draftId: string; sendAfter: Date }[] = [];
+  let refused = 0;
+  for (const id of new Set(draftIds)) {
+    if (!allowed.has(id)) {
+      refused++;
+      continue;
+    }
+    // A blocked account throws here, on the first one, before any Gmail call.
+    const r = await queueSend(workspaceId, id, { ...opts });
+    if (r.status === "queued") queued.push({ draftId: id, sendAfter: r.sendAfter });
+    else refused++;
+  }
+  return { queued, refused };
+}
+
 /** Save the owner's edits to the Gmail draft without sending. */
 export async function saveDraftEdit(
   workspaceId: string,
@@ -600,7 +898,8 @@ export async function saveDraftEdit(
   opts: DraftDeps = {},
 ): Promise<"saved" | "not_found" | "deleted_in_gmail" | "reconnect_needed"> {
   const row = await loadOwnedDraft(workspaceId, draftId);
-  if (!row || row.draft.status !== "pending" || !row.draft.gmailDraftId) return "not_found";
+  if (!row || row.draft.status !== "pending" || !row.draft.gmailDraftId || row.draft.sendAfter)
+    return "not_found";
   const { draft, mailbox, thread, workspace } = row;
   const now = opts.now?.() ?? new Date();
   if (!jobsAllowed(workspace, now)) throw new ReadOnlyError(effectiveStatus(workspace, now));
@@ -659,7 +958,7 @@ export async function reviseDraft(
   opts: DraftDeps = {},
 ): Promise<ReviseOutcome> {
   const row = await loadOwnedDraft(workspaceId, draftId);
-  if (!row || row.draft.status !== "pending" || !row.draft.gmailDraftId)
+  if (!row || row.draft.status !== "pending" || !row.draft.gmailDraftId || row.draft.sendAfter)
     return { status: "not_found" };
   const { draft, mailbox, thread, workspace } = row;
   const now = opts.now?.() ?? new Date();
@@ -849,7 +1148,7 @@ export async function discardDraft(
   opts: DraftDeps = {},
 ): Promise<"discarded" | "not_found"> {
   const row = await loadOwnedDraft(workspaceId, draftId);
-  if (!row || row.draft.status !== "pending") return "not_found";
+  if (!row || row.draft.status !== "pending" || row.draft.sendAfter) return "not_found";
   const now = opts.now?.() ?? new Date();
   if (!jobsAllowed(row.workspace, now))
     throw new ReadOnlyError(effectiveStatus(row.workspace, now));
@@ -895,6 +1194,8 @@ export async function reconcileDrafts(mailboxId: string, opts: DraftDeps = {}) {
   const expiredThreads: string[] = [];
   try {
     for (const d of pending) {
+      // The send job holds this one right now; it does its own checks.
+      if (d.sendClaimedAt) continue;
       const newer = await db()
         .select({ direction: messages.direction })
         .from(messages)
@@ -942,9 +1243,10 @@ export async function reconcileDrafts(mailboxId: string, opts: DraftDeps = {}) {
         );
         closed++;
       } else if (!sameText(remote.bodyText, d.body)) {
+        // Changed in Gmail: the owner hasn't approved this text, so any send stops too.
         await db()
           .update(drafts)
-          .set({ body: remote.bodyText, autoSendAt: null })
+          .set({ body: remote.bodyText, autoSendAt: null, sendAfter: null })
           .where(eq(drafts.id, d.id));
       }
     }
@@ -977,6 +1279,10 @@ export type QueueItem = {
   usedFacts: string[];
   /** Quick tweaks / voice edits left on this draft (plan #3, #4). */
   revisionsLeft: number;
+  /** Plan #6: high priority and needs the owner — snooze only until tonight. */
+  emergency: boolean;
+  /** Plan #6: came back from a snooze — shown on top. */
+  backFromSnooze: boolean;
   gmailThreadId: string;
   mailboxEmail: string;
   lastMessageAt: Date | null;
@@ -985,6 +1291,7 @@ export type QueueItem = {
 /** The queue: threads that need the owner with no draft first, then drafts waiting for a decision. */
 export async function listQueue(
   workspaceId: string,
+  now: Date = new Date(),
 ): Promise<{ needsYou: QueueItem[]; drafts: QueueItem[] }> {
   const boxes = await db().select().from(mailboxes).where(eq(mailboxes.workspaceId, workspaceId));
   if (boxes.length === 0) return { needsYou: [], drafts: [] };
@@ -995,9 +1302,24 @@ export async function listQueue(
     .select({ draft: drafts, thread: threads })
     .from(drafts)
     .innerJoin(threads, eq(threads.id, drafts.threadId))
-    .where(and(inArray(drafts.mailboxId, boxIds), eq(drafts.status, "pending")))
+    .where(
+      and(
+        inArray(drafts.mailboxId, boxIds),
+        eq(drafts.status, "pending"),
+        // In its undo window (plan #7): shown on the sent screen, not here.
+        isNull(drafts.sendAfter),
+      ),
+    )
     .orderBy(desc(threads.lastMessageAt));
+  // Every pending draft's thread counts as handled for "Needs you", snoozed or not.
   const draftedThreads = new Set(pendingDrafts.map((r) => r.thread.id));
+  const snoozed = (t: typeof threads.$inferSelect) => !!t.snoozedUntil && t.snoozedUntil > now;
+  const back = (t: typeof threads.$inferSelect) =>
+    !!t.snoozedUntil &&
+    t.snoozedUntil <= now &&
+    now.getTime() - t.snoozedUntil.getTime() < BACK_ON_TOP_MS;
+  const backFirst = <T extends { thread: typeof threads.$inferSelect }>(rows: T[]) =>
+    [...rows].sort((a, b) => Number(back(b.thread)) - Number(back(a.thread)));
 
   const needs = (
     await db()
@@ -1012,7 +1334,9 @@ export async function listQueue(
       )
       .orderBy(desc(threads.lastMessageAt))
       .limit(50)
-  ).filter((t) => !draftedThreads.has(t.id));
+  ).filter((t) => !draftedThreads.has(t.id) && !snoozed(t));
+  const shownDrafts = backFirst(pendingDrafts.filter((r) => !snoozed(r.thread)));
+  const shownNeeds = backFirst(needs.map((thread) => ({ thread }))).map((r) => r.thread);
 
   const senders = async (threadIds: string[]) => {
     if (!threadIds.length)
@@ -1032,10 +1356,13 @@ export async function listQueue(
       if (!out.has(r.threadId)) out.set(r.threadId, { name: r.name, address: r.address });
     return out;
   };
-  const who = await senders([...needs.map((t) => t.id), ...pendingDrafts.map((r) => r.thread.id)]);
+  const who = await senders([
+    ...shownNeeds.map((t) => t.id),
+    ...shownDrafts.map((r) => r.thread.id),
+  ]);
 
   return {
-    needsYou: needs.map((t) => ({
+    needsYou: shownNeeds.map((t) => ({
       draftId: null,
       kind: null,
       autoSendAt: null,
@@ -1051,11 +1378,13 @@ export async function listQueue(
       confidence: null,
       usedFacts: [],
       revisionsLeft: 0,
+      emergency: isEmergency(t),
+      backFromSnooze: back(t),
       gmailThreadId: t.gmailThreadId,
       mailboxEmail: emailOf.get(t.mailboxId) ?? "",
       lastMessageAt: t.lastMessageAt,
     })),
-    drafts: pendingDrafts.map(({ draft, thread }) => ({
+    drafts: shownDrafts.map(({ draft, thread }) => ({
       draftId: draft.id,
       kind: draft.kind,
       autoSendAt: draft.autoSendAt,
@@ -1071,6 +1400,8 @@ export async function listQueue(
       confidence: draft.confidence,
       usedFacts: draft.usedFacts,
       revisionsLeft: Math.max(0, MAX_REVISIONS_PER_DRAFT - draft.revisions),
+      emergency: isEmergency(thread),
+      backFromSnooze: back(thread),
       gmailThreadId: thread.gmailThreadId,
       mailboxEmail: emailOf.get(draft.mailboxId) ?? "",
       lastMessageAt: thread.lastMessageAt,
@@ -1109,7 +1440,10 @@ export async function threadsToAutoDraft(mailboxId: string, limit = 10): Promise
 /** For the "squared away." moment: a draft this workspace just sent. */
 export async function sentDraftSummary(workspaceId: string, draftId: string) {
   const row = await loadOwnedDraft(workspaceId, draftId);
-  if (!row || (row.draft.status !== "sent" && row.draft.status !== "edited_and_sent")) return null;
+  if (!row) return null;
+  const sendingAt = row.draft.status === "pending" ? row.draft.sendAfter : null;
+  if (!sendingAt && row.draft.status !== "sent" && row.draft.status !== "edited_and_sent")
+    return null;
   const to = await customerOf(row.thread.id);
   const settings = await followupSettings(workspaceId);
   const chased =
@@ -1117,8 +1451,11 @@ export async function sentDraftSummary(workspaceId: string, draftId: string) {
     !row.thread.needsOwner &&
     FOLLOWUP_CATEGORIES.includes(row.thread.category as (typeof FOLLOWUP_CATEGORIES)[number]);
   const sentNudges = chased ? await countSentFollowups(row.thread.id) : 0;
-  const decidedAt = row.draft.decidedAt ?? new Date();
+  const decidedAt = row.draft.decidedAt ?? sendingAt ?? new Date();
   return {
+    draftId: row.draft.id,
+    /** Plan #7: still in its undo window until then. Null once sent. */
+    sendingAt,
     toName: to?.name ?? null,
     toAddress: row.draft.toAddress,
     category: row.thread.category,

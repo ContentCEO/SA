@@ -154,6 +154,8 @@ export const threads = pgTable(
     needsOwnerReason: text("needs_owner_reason"),
     /** The owner said "This one needs me". Classification never clears it. */
     needsOwnerManual: boolean("needs_owner_manual").notNull().default(false),
+    /** Plan #6: hidden from the queue until then; comes back on top. */
+    snoozedUntil: timestamp("snoozed_until", { withTimezone: true }),
     /** One-sentence summary from classification. Kept after bodies are purged. */
     summary: text("summary"),
     /** Structured facts pulled from the latest inbound message (service, address, dates, amounts). */
@@ -285,6 +287,14 @@ export const drafts = pgTable(
     decidedAt: timestamp("decided_at", { withTimezone: true }),
     /** Autopilot: when this draft will send unless the owner holds it. Null = waits for a tap. */
     autoSendAt: timestamp("auto_send_at", { withTimezone: true }),
+    /**
+     * Plan #7 undo send: the owner tapped Send reply; it goes at this time unless
+     * they tap Undo. The draft stays `pending` meanwhile (so it still holds the
+     * thread's one live slot) but is out of the queue. Null = not sending.
+     */
+    sendAfter: timestamp("send_after", { withTimezone: true }),
+    /** Set by the one job allowed to send it; a stale claim (crash) can be retaken. */
+    sendClaimedAt: timestamp("send_claimed_at", { withTimezone: true }),
   },
   (t) => [
     index("drafts_mailbox_status_idx").on(t.mailboxId, t.status),
