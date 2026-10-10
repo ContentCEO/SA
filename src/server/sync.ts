@@ -402,9 +402,10 @@ export async function renewWatches(deps: SyncDeps = {}): Promise<number> {
   if (!topic) return 0;
   const now = deps.now?.() ?? new Date();
   const soon = new Date(now.getTime() + 2 * 86_400_000);
-  const due = await db()
-    .select()
+  const rows = await db()
+    .select({ mailbox: mailboxes, workspace: workspaces })
     .from(mailboxes)
+    .innerJoin(workspaces, eq(workspaces.id, mailboxes.workspaceId))
     .where(
       and(
         eq(mailboxes.status, "active"),
@@ -412,6 +413,8 @@ export async function renewWatches(deps: SyncDeps = {}): Promise<number> {
         or(isNull(mailboxes.watchExpiresAt), lt(mailboxes.watchExpiresAt, soon)),
       ),
     );
+  // Read-only accounts aren't synced, so there's nothing for a push to wake.
+  const due = rows.filter((r) => jobsAllowed(r.workspace, now)).map((r) => r.mailbox);
   let renewed = 0;
   for (const m of due) {
     const outcome = await guarded(m, async () => {

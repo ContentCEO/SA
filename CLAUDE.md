@@ -379,6 +379,13 @@ In a sandbox with preinstalled Chromium: `PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-brows
   (text ≤140, `ends_on` local date, ≤5 active, ≤1 year ahead; codes past/too_far/full),
   `activeNotes(now)` in the owner's time zone; only active notes go into `draft.v4`'s cached block
   and count as source text for checks; expired rows purged daily. `draft.v4` adds both lists.
+- **Milestone 2 re-check (2026-10-10, Davi's M2 prompt, branch `claude/milestone-2-sync`):** brief scope
+  (backfill, History API, Pub/Sub watch + 5-min poll, reconnect, revoked-token tests) was already
+  built; plan M2 has only #44 (done) and **no R-numbered items exist** in `docs/FEATURE-PLAN.md`.
+  Added the missing tests (`tests/unit/push-poll.test.ts`: watch renewal, poll selection, push
+  endpoint) and fixed two things they found: a garbled Pub/Sub payload made `/api/gmail/push` throw
+  (→ endless Pub/Sub retries; now acknowledged with 204), and `renewWatches` renewed watches for
+  read-only accounts (now skipped via `jobsAllowed`).
 - **Future goal (after the website is complete):** a downloadable app (phone app store). Not started;
   the site is mobile-first so a wrapper or native shell can reuse it later.
 - **Public site (2026-10-05, Davi asked for a sales website):** `/` is the marketing page (signed-in

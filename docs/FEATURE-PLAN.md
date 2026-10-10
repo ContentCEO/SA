@@ -33,6 +33,8 @@ server-side and tested).
 
 ## Milestone 2 — Sync
 
+_Re-checked 2026-10-10: brief scope complete with tests; nothing else filed here._
+
 - [x] **#44 Mailbox health page.** _(Done 2026-10-09.)_ Settings → "Your Gmail": last sync time ("2 minutes ago"), push
       watch status, token status, all in plain words. One "Reconnect Gmail" button when anything is
       wrong. Data comes from `mailboxes` (add `last_synced_at`, `last_sync_error_code` — a code,
