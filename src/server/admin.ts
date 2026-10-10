@@ -31,6 +31,7 @@ export type AdminRow = {
   plan: string | null;
   evaluationEndsAt: Date | null;
   setupPaidAt: Date | null;
+  setupPaidVia: "stripe" | "house" | null;
   mailboxes: { total: number; needReconnect: number; lastSyncedAt: Date | null };
   drafts: { pending: number; sentLast7Days: number; createdThisMonth: number };
   ai: { callsToday: number; callsThisMonth: number; costCentsThisMonth: number };
@@ -57,22 +58,34 @@ export async function adminOverview(now: Date = new Date()): Promise<AdminRow[]>
   const weekAgo = new Date(now.getTime() - 7 * 86_400_000);
   const monthStartDate = new Date(`${monthStart}T00:00:00Z`);
 
-  const ws = await db()
-    .select({
-      id: workspaces.id,
-      ownerEmail: users.email,
-      businessName: workspaces.businessName,
-      trade: workspaces.trade,
-      status: workspaces.status,
-      plan: workspaces.plan,
-      evaluationEndsAt: workspaces.evaluationEndsAt,
-      setupPaidAt: workspaces.setupPaidAt,
-      createdAt: workspaces.createdAt,
-    })
+  const columns = {
+    id: workspaces.id,
+    ownerEmail: users.email,
+    businessName: workspaces.businessName,
+    trade: workspaces.trade,
+    status: workspaces.status,
+    plan: workspaces.plan,
+    evaluationEndsAt: workspaces.evaluationEndsAt,
+    setupPaidAt: workspaces.setupPaidAt,
+    setupPaidVia: workspaces.setupPaidVia,
+    createdAt: workspaces.createdAt,
+  };
+  const newest = await db()
+    .select(columns)
     .from(workspaces)
     .innerJoin(users, eq(users.id, workspaces.ownerUserId))
     .orderBy(desc(workspaces.createdAt))
     .limit(ADMIN_PAGE_SIZE);
+  // Davi's own account is always shown first, however many newer accounts there are.
+  const adminEmail = process.env.ADMIN_EMAIL ? normalizeEmail(process.env.ADMIN_EMAIL) : null;
+  const own = adminEmail
+    ? await db()
+        .select(columns)
+        .from(workspaces)
+        .innerJoin(users, eq(users.id, workspaces.ownerUserId))
+        .where(eq(users.email, adminEmail))
+    : [];
+  const ws = [...own, ...newest.filter((w) => !own.some((o) => o.id === w.id))];
   if (ws.length === 0) return [];
   const ids = ws.map((w) => w.id);
 
@@ -147,6 +160,7 @@ export async function adminOverview(now: Date = new Date()): Promise<AdminRow[]>
     plan: w.plan,
     evaluationEndsAt: w.evaluationEndsAt,
     setupPaidAt: w.setupPaidAt,
+    setupPaidVia: w.setupPaidVia,
     createdAt: w.createdAt,
     mailboxes: {
       total: b.get(w.id)?.total ?? 0,

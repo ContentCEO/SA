@@ -48,7 +48,12 @@ let writer: FakeWriter;
 const deps = () => ({ writerFor: () => writer, now: () => NOW });
 
 async function setStatus(status: (typeof workspaces.$inferSelect)["status"]) {
-  await database.update(workspaces).set({ status }).where(eq(workspaces.id, workspaceId));
+  // Paid statuses come with a real (Stripe) setup payment, as in production.
+  const paid = status === "setup_paid" || status === "active";
+  await database
+    .update(workspaces)
+    .set({ status, setupPaidVia: paid ? "stripe" : null })
+    .where(eq(workspaces.id, workspaceId));
 }
 
 async function seedThread(
@@ -294,6 +299,20 @@ describe("sending — the gate", () => {
     expect(thread!.awaitingReplySince).toEqual(NOW);
   });
 
+  it("an active account without a real setup payment can't send, and Gmail is never touched", async () => {
+    const d = await pendingDraft();
+    for (const status of ["setup_paid", "active"] as const) {
+      await database
+        .update(workspaces)
+        .set({ status, setupPaidVia: null, setupPaidAt: NOW }) // e.g. marked paid by hand
+        .where(eq(workspaces.id, workspaceId));
+      await expect(sendDraft(workspaceId, d.id, deps())).rejects.toBeInstanceOf(
+        SendingBlockedError,
+      );
+    }
+    expect(writer.calls).toEqual([]);
+  });
+
   it("records edited-and-sent and updates the Gmail draft before sending", async () => {
     const d = await pendingDraft();
     await setStatus("active");
@@ -346,7 +365,7 @@ describe("sending — the gate", () => {
     const other = await ensureUserAndWorkspace({ email: "someone@else.com" });
     await database
       .update(workspaces)
-      .set({ status: "active" })
+      .set({ status: "active", setupPaidVia: "stripe" })
       .where(eq(workspaces.id, other.workspace.id));
     expect(await sendDraft(other.workspace.id, d.id, deps())).toEqual({ status: "not_found" });
     expect(await saveDraftEdit(other.workspace.id, d.id, "x", deps())).toBe("not_found");

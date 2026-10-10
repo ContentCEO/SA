@@ -2,7 +2,16 @@ import "server-only";
 import { and, eq, exists, lte, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { pricing } from "@/config/pricing";
-import { activityLog, drafts, mailboxes, rules, workspaces, type Workspace } from "@/db/schema";
+import {
+  activityLog,
+  drafts,
+  mailboxes,
+  rules,
+  users,
+  workspaces,
+  type Workspace,
+} from "@/db/schema";
+import { isAdminEmail } from "./admin";
 import { canMakeMove, EVALUATION_MS, resumeTarget, type AdminMove } from "./lifecycle";
 
 /**
@@ -113,9 +122,20 @@ export async function applyAdminMove(
       };
       break;
     }
-    case "mark_setup_paid":
-      set = { status: "setup_paid", setupPaidAt: now };
+    case "house_account": {
+      // Only Davi's own workspace — never a customer's, whatever the request says.
+      const [owner] = await db()
+        .select({ email: users.email })
+        .from(users)
+        .where(eq(users.id, w.ownerUserId));
+      if (!isAdminEmail(owner?.email)) throw new MoveNotAllowedError(move, w.status);
+      set = {
+        status: w.status === "active" ? "active" : "setup_paid",
+        setupPaidVia: "house",
+        setupPaidAt: w.setupPaidAt ?? now,
+      };
       break;
+    }
     case "mark_setup_call_done":
       set = { status: "active", setupCallCompletedAt: now };
       break;

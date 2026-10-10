@@ -20,7 +20,8 @@ mobile first (375px), 44px tap targets, plain words, fast.
 ## Commercial flow (gates real behavior — enforce server-side)
 
 `invited` → `evaluating` (3 days, **sending blocked in code → 403**) → `evaluation_expired`
-(read-only) → `setup_paid` ($499 once; sending unblocked; setup call pending) → `active`
+(read-only) → `setup_paid` ($499 once, **paid through Stripe**; sending unblocked; setup call
+pending) → `active`
 → `past_due` / `canceled` / `paused`. Plans: Solo $99 (1 mailbox), Crew $199 (3, autopilot),
 Company $299 (10, priority support). All prices live in `src/config/pricing.ts`.
 **Never change pricing or the commercial flow without asking Davi.**
@@ -386,6 +387,13 @@ In a sandbox with preinstalled Chromium: `PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-brows
   endpoint) and fixed two things they found: a garbled Pub/Sub payload made `/api/gmail/push` throw
   (→ endless Pub/Sub retries; now acknowledged with 204), and `renewWatches` renewed watches for
   read-only accounts (now skipped via `jobsAllowed`).
+- **Sending requires a real payment (Davi, 2026-10-10):** `canSend` = status in `SENDING_ALLOWED`
+  **and** `workspaces.setup_paid_via` ∈ {`stripe`, `house`}. `stripe` is set only by the signed
+  webhook's paid checkout that included the setup fee; `house` only by the admin move
+  `house_account`, which `applyAdminMove` refuses unless the workspace's owner is `ADMIN_EMAIL` (and
+  the button only shows on Davi's own card, pinned first in /admin). The old "Mark setup paid" move
+  is gone. Accounts hand-marked before this (via null) can't send, see "Sending turns on once setup
+  is paid" + Choose a plan, and are charged the setup fee (`checkoutTerms` uses `setupReallyPaid`).
 - **Future goal (after the website is complete):** a downloadable app (phone app store). Not started;
   the site is mobile-first so a wrapper or native shell can reuse it later.
 - **Public site (2026-10-05, Davi asked for a sales website):** `/` is the marketing page (signed-in

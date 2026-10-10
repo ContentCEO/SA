@@ -301,7 +301,7 @@ describe("writing and sending a nudge", () => {
   it("sending counts toward the cap, and the sent screen says what's next", async () => {
     await database
       .update(workspaces)
-      .set({ status: "active" })
+      .set({ status: "active", setupPaidVia: "stripe" })
       .where(eq(workspaces.id, workspaceId));
     const t = await quietThread({ ownerRepliedDaysAgo: 4 });
     setModelTransportForTests(fakeTransport([nudge()]).transport);
@@ -322,7 +322,7 @@ describe("writing and sending a nudge", () => {
   it("after the second nudge, the sent screen says that was the last one", async () => {
     await database
       .update(workspaces)
-      .set({ status: "active" })
+      .set({ status: "active", setupPaidVia: "stripe" })
       .where(eq(workspaces.id, workspaceId));
     const t = await quietThread({ ownerRepliedDaysAgo: 10 });
     await sentNudge(t, 4);

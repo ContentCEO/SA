@@ -81,6 +81,12 @@ export const workspaces = pgTable(
     evaluationStartedAt: timestamp("evaluation_started_at", { withTimezone: true }),
     evaluationEndsAt: timestamp("evaluation_ends_at", { withTimezone: true }),
     setupPaidAt: timestamp("setup_paid_at", { withTimezone: true }),
+    /**
+     * How setup was paid — the send gate needs one of these, not just a status:
+     * "stripe" = Stripe's signed webhook confirmed a real payment; "house" = Davi's own
+     * admin account (testing). Nothing else turns sending on.
+     */
+    setupPaidVia: text("setup_paid_via").$type<"stripe" | "house">(),
     setupCallCompletedAt: timestamp("setup_call_completed_at", { withTimezone: true }),
     plan: planEnum("plan"),
     stripeCustomerId: text("stripe_customer_id"),

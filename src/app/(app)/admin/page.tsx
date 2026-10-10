@@ -14,6 +14,7 @@ import {
   type AdminRow,
 } from "@/server/admin";
 import { requireAdmin } from "@/server/session";
+import { isAdminEmail } from "@/server/admin";
 import { ADMIN_MOVES, canMakeMove, type AdminMove } from "@/server/lifecycle";
 import {
   adminMoveAction,
@@ -46,10 +47,11 @@ const moves: Record<AdminMove, { label: string; explain: string; confirm: string
     explain: "Restarts drafting if it had stopped. Sending stays off.",
     confirm: "Add 3 days",
   },
-  mark_setup_paid: {
-    label: "Mark setup paid",
-    explain: "Turns sending on for this owner. Every reply still needs their tap.",
-    confirm: "Yes, setup is paid",
+  house_account: {
+    label: "Use as my own test account",
+    explain:
+      "Only for your own account: lets it send without paying, so you can test. Customers can only turn sending on by paying through Stripe.",
+    confirm: "Yes, this is my account",
   },
   mark_setup_call_done: {
     label: "Setup call done",
@@ -70,7 +72,7 @@ const moves: Record<AdminMove, { label: string; explain: string; confirm: string
 
 const done: Record<string, string> = {
   extend_evaluation: "Three more days added.",
-  mark_setup_paid: "Marked setup paid. Sending is on for them.",
+  house_account: "Your account can send now (marked as your own test account).",
   mark_setup_call_done: "Marked active.",
   pause: "Account paused.",
   resume: "Account resumed.",
@@ -108,8 +110,12 @@ function Stat({ label, value }: { label: string; value: React.ReactNode }) {
 }
 
 function WorkspaceCard({ w, now }: { w: AdminRow; now: Date }) {
-  const allowed = (Object.keys(ADMIN_MOVES) as AdminMove[]).filter((m) =>
-    canMakeMove(m, { status: w.status, evaluationEndsAt: w.evaluationEndsAt }, now),
+  const own = isAdminEmail(w.ownerEmail);
+  const allowed = (Object.keys(ADMIN_MOVES) as AdminMove[]).filter(
+    (m) =>
+      canMakeMove(m, { status: w.status, evaluationEndsAt: w.evaluationEndsAt }, now) &&
+      // The test-account switch only ever shows on Davi's own card.
+      (m !== "house_account" || (own && w.setupPaidVia !== "house")),
   );
   const inverted = ["evaluation_expired", "past_due", "paused", "canceled"].includes(w.status);
   return (
@@ -135,6 +141,16 @@ function WorkspaceCard({ w, now }: { w: AdminRow; now: Date }) {
       <dl className="grid grid-cols-2 gap-x-4 gap-y-2">
         <Stat label="Trade" value={isTrade(w.trade) ? tradeLabel[w.trade] : "—"} />
         <Stat label="Plan" value={w.plan ?? "None yet"} />
+        <Stat
+          label="Setup paid"
+          value={
+            w.setupPaidVia === "stripe"
+              ? "Yes, through Stripe"
+              : w.setupPaidVia === "house"
+                ? "Your own test account"
+                : "Not yet"
+          }
+        />
         <Stat
           label={
             !w.evaluationEndsAt

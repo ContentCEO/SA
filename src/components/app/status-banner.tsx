@@ -2,7 +2,7 @@ import Link from "next/link";
 import { auth } from "@/auth";
 import { siteConfig } from "@/config/site";
 import { getWorkspaceForUser } from "@/server/accounts";
-import { effectiveStatus, evaluationClock, timeLeft } from "@/server/lifecycle";
+import { effectiveStatus, evaluationClock, setupReallyPaid, timeLeft } from "@/server/lifecycle";
 
 function Contact() {
   const support = process.env.SUPPORT_EMAIL;
@@ -78,6 +78,18 @@ export async function StatusBanner() {
     </section>
   );
 
+  // Paid-for statuses without a real payment behind them (e.g. marked by hand before
+  // 2026-10-10): sending stays off until Stripe confirms the setup payment.
+  if ((status === "setup_paid" || status === "active") && !setupReallyPaid(workspace)) {
+    return inverted(
+      "Sending turns on once setup is paid.",
+      <>
+        Choose a plan to pay the one-time setup and switch sending on. Every reply still waits for
+        your okay. <Contact />
+      </>,
+      "Choose a plan",
+    );
+  }
   switch (status) {
     case "evaluation_expired":
       return inverted(
