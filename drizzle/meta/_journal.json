@@ -155,6 +155,13 @@
       "when": 1791670352416,
       "tag": "0021_bent_hairball",
       "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1791670900637,
+      "tag": "0022_conscious_wasp",
+      "breakpoints": true
     }
   ]
 }

@@ -67,6 +67,8 @@ export function describeActivity(
       return "You reconnected Gmail";
     case "mailbox_disconnected":
       return "You disconnected Gmail";
+    case "push_alert_sent":
+      return "Sent a notification to your phone about new emails that need you";
     case "sms_alert_sent":
       return "Texted you about new emails that need you";
     case "sms_alerts_changed":

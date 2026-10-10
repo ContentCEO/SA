@@ -344,6 +344,9 @@ export const businessProfiles = pgTable("business_profile", {
   smsAlertsEnabled: boolean("sms_alerts_enabled").notNull().default(false),
   /** Newest classification already covered by a text, and when the last text went out. */
   smsAlertCursor: timestamp("sms_alert_cursor", { withTimezone: true }),
+  /** Plan #36 phone notifications: same throttle and cursor as texts, kept apart. */
+  pushLastSentAt: timestamp("push_last_sent_at", { withTimezone: true }),
+  pushAlertCursor: timestamp("push_alert_cursor", { withTimezone: true }),
   smsLastSentAt: timestamp("sms_last_sent_at", { withTimezone: true }),
   completedAt: timestamp("completed_at", { withTimezone: true }),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
@@ -472,6 +475,23 @@ export const voiceSuggestions = pgTable(
     decidedAt: timestamp("decided_at", { withTimezone: true }),
   },
   (t) => [index("voice_suggestions_workspace_idx").on(t.workspaceId, t.status)],
+);
+
+/**
+ * Plan #36: phones that asked for notifications. Only the push service's
+ * endpoint — we send empty pushes, so no encryption keys are kept.
+ */
+export const pushSubscriptions = pgTable(
+  "push_subscriptions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    endpoint: text("endpoint").notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [uniqueIndex("push_subscriptions_endpoint_uq").on(t.endpoint)],
 );
 
 /** App-wide settings Davi's admin tools write (e.g. the Stripe webhook secret, encrypted). */

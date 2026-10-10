@@ -28,3 +28,37 @@ self.addEventListener("fetch", (event) => {
     ),
   );
 });
+
+/*
+ * Phone notifications (plan #36). The push is empty — the push service never
+ * sees anything — so ask the app for today's counts and show those. If the
+ * phone is signed out, a plain line instead.
+ */
+self.addEventListener("push", (event) => {
+  event.waitUntil(
+    fetch("/api/push/summary", { credentials: "same-origin", cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .catch(() => null)
+      .then((s) =>
+        self.registration.showNotification((s && s.title) || "Squared Away", {
+          body: (s && s.body) || "Something new is waiting in your queue.",
+          icon: "/app-icon/192",
+          badge: "/app-icon/192",
+          tag: "sa-queue",
+          renotify: true,
+          data: { url: "/queue" },
+        }),
+      ),
+  );
+});
+
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  event.waitUntil(
+    self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((wins) => {
+      const open = wins.find((w) => new URL(w.url).origin === self.location.origin);
+      if (open) return open.navigate("/queue").then((w) => (w || open).focus());
+      return self.clients.openWindow("/queue");
+    }),
+  );
+});

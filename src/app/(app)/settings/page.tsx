@@ -45,6 +45,8 @@ import {
 import { TimeZoneInput } from "@/components/forms/time-zone-input";
 import { GetTheApp } from "@/components/app/get-the-app";
 import { devicePrefs } from "@/lib/device-prefs";
+import { vapidPublicKey } from "@/lib/web-push";
+import { PushToggle } from "@/components/app/push-toggle";
 import { saveHandAction } from "./device-actions";
 import { openSuggestions } from "@/server/edit-learning";
 
@@ -371,6 +373,7 @@ export default async function SettingsPage(props: PageProps<"/settings">) {
           the same login.
         </p>
         <GetTheApp />
+        {vapidPublicKey() ? <PushToggle publicKey={vapidPublicKey()!} /> : null}
       </section>
 
       <section id="this-phone" aria-labelledby="this-phone-heading" className="flex flex-col gap-3">

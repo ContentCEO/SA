@@ -25,6 +25,7 @@ import { purgeRateLimits } from "@/server/rate-limit";
 import { sendAccessLostAlerts } from "@/server/alerts";
 import { captureQuoteAmounts } from "@/server/quotes";
 import { sendLeadAlerts } from "@/server/sms-alerts";
+import { sendPushAlerts } from "@/server/push-alerts";
 import { purgeExpiredNotes } from "@/server/seasonal-notes";
 import { learnVoice, workspacesDueForVoiceRefresh, workspacesNeedingVoice } from "@/server/voice";
 import { expireEvaluations, startPendingEvaluations } from "@/server/workspace-lifecycle";
@@ -40,10 +41,13 @@ import {
   voiceLearnRequested,
 } from "./client";
 
-/** Text the owner about new leads in this mailbox's workspace (no-op unless they opted in). */
+/** Text / notify the owner about new leads in this mailbox's workspace (no-op unless opted in). */
 async function alertsForMailbox(mailboxId: string) {
   const workspaceId = await getMailboxWorkspace(mailboxId);
-  return workspaceId ? sendLeadAlerts(new Date(), { workspaceId }) : { sent: 0 };
+  if (!workspaceId) return { sent: 0 };
+  const push = await sendPushAlerts(new Date(), { workspaceId });
+  const sms = await sendLeadAlerts(new Date(), { workspaceId });
+  return { sent: sms.sent, pushed: push.sent };
 }
 
 /**
@@ -365,6 +369,7 @@ export const workspaceLifecycle = inngest.createFunction(
     const alerts = await step.run("access-lost-alerts", () => sendAccessLostAlerts());
     // Backstop for text alerts held overnight or throttled.
     await step.run("text-alerts", () => sendLeadAlerts());
+    await step.run("push-alerts", () => sendPushAlerts());
     return { started, expired, voiceRestarted: voice.length, accessAlerts: alerts.sent };
   },
 );

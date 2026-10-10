@@ -171,6 +171,38 @@ export async function removeAlertPhone(workspaceId: string) {
 }
 
 /**
+ * New quote requests and emails that need the owner, sorted since `cursor`
+ * (default: the last hour), fresh and still waiting on them. Shared by texts
+ * and phone notifications (#36).
+ */
+export async function freshLeads(workspaceId: string, cursor: Date | null, now: Date) {
+  return db()
+    .select({
+      category: threads.category,
+      needsOwner: threads.needsOwner,
+      classifiedAt: threads.classifiedAt,
+    })
+    .from(threads)
+    .innerJoin(mailboxes, eq(mailboxes.id, threads.mailboxId))
+    .where(
+      and(
+        eq(mailboxes.workspaceId, workspaceId),
+        eq(threads.inInbox, true),
+        gt(threads.classifiedAt, cursor ?? new Date(now.getTime() - 60 * 60 * 1000)),
+        gt(threads.lastMessageAt, new Date(now.getTime() - SMS.freshMs)),
+        or(eq(threads.category, "quote_request"), eq(threads.needsOwner, true)),
+        sql`(select m.direction from messages m where m.thread_id = ${threads.id} order by m.sent_at desc limit 1) = 'in'`,
+      ),
+    )
+    .orderBy(desc(threads.classifiedAt));
+}
+
+export const leadCounts = (fresh: { needsOwner: boolean; category: string | null }[]) => ({
+  needsYou: fresh.filter((t) => t.needsOwner).length,
+  quotes: fresh.filter((t) => !t.needsOwner && t.category === "quote_request").length,
+});
+
+/**
  * After sorting (and every 15 minutes as a backstop): one text per batch of
  * new quote requests / emails that need the owner. At most one text every 10
  * minutes and 10 a day; nothing between 9pm and 7am (they get it at 7).
@@ -212,26 +244,7 @@ export async function sendLeadAlerts(
       );
     if ((today?.n ?? 0) >= SMS.dailyCap) continue;
 
-    const cursor = p.smsAlertCursor ?? new Date(now.getTime() - 60 * 60 * 1000);
-    const fresh = await db()
-      .select({
-        category: threads.category,
-        needsOwner: threads.needsOwner,
-        classifiedAt: threads.classifiedAt,
-      })
-      .from(threads)
-      .innerJoin(mailboxes, eq(mailboxes.id, threads.mailboxId))
-      .where(
-        and(
-          eq(mailboxes.workspaceId, w.id),
-          eq(threads.inInbox, true),
-          gt(threads.classifiedAt, cursor),
-          gt(threads.lastMessageAt, new Date(now.getTime() - SMS.freshMs)),
-          or(eq(threads.category, "quote_request"), eq(threads.needsOwner, true)),
-          sql`(select m.direction from messages m where m.thread_id = ${threads.id} order by m.sent_at desc limit 1) = 'in'`,
-        ),
-      )
-      .orderBy(desc(threads.classifiedAt));
+    const fresh = await freshLeads(w.id, p.smsAlertCursor, now);
     if (!fresh.length) continue;
 
     const newest = fresh[0]!.classifiedAt!;
@@ -251,10 +264,7 @@ export async function sendLeadAlerts(
       .returning({ id: businessProfiles.workspaceId });
     if (!claimed.length) continue;
 
-    const counts = {
-      needsYou: fresh.filter((t) => t.needsOwner).length,
-      quotes: fresh.filter((t) => !t.needsOwner && t.category === "quote_request").length,
-    };
+    const counts = leadCounts(fresh);
     const r = await send({ to: p.alertPhone!, body: leadAlertBody(counts, appUrl("/queue")) });
     if (r === "not_configured") {
       // Give the slot back so nothing is lost once texting is set up.
