@@ -121,6 +121,25 @@ or query strings, user reduced to an id, email addresses masked. No tracing or s
 3. Vercel → sa → Environment Variables (Production): `NEXT_PUBLIC_SENTRY_DSN` = the DSN. Redeploy.
 4. Sentry → Alerts: the default "new issue" email alert is enough to start.
 
+### 6c. Text alerts (Twilio, optional)
+
+Owners can opt in to a text when a new quote request or an email that needs them arrives. Texts
+are counts plus a link only (no names, no email text), confirmed with a 6-digit code, quiet from
+9pm–7am in the owner's time zone, max one per 10 minutes and 10 a day. Costs: about $1.15/month
+for the number plus about $0.01 per text, and a one-time US carrier (A2P 10DLC) registration.
+
+1. twilio.com → sign up → upgrade the account (add a card).
+2. Phone Numbers → Buy a number (local, SMS-capable).
+3. Messaging → Regulatory compliance → **A2P 10DLC**: register the brand (your business) and a
+   campaign. Use case "Account notifications"; sample message
+   `Squared Away: 1 new quote request needs you. Open: https://…/queue`; opt-in = "the business
+   owner enters their own mobile number in Settings and confirms a texted code". Approval takes
+   days; texts may be blocked by carriers until it's approved.
+4. Messaging → Services → Create → add the number to the service. Opt-out (STOP/HELP) handling is
+   on by default.
+5. Vercel → sa → Environment Variables (Production): `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`
+   (sensitive), `TWILIO_MESSAGING_SERVICE_SID`. Redeploy.
+
 ## 7. Inviting an owner
 
 ```bash
@@ -193,3 +212,13 @@ keep migrations additive.
 The Production branch must be `main` (Settings → Environments → Production → Branch Tracking).
 Changing an environment variable only takes effect after a redeploy.
 Deployment Protection (Vercel login) is on for previews, so only team members can see them.
+
+## 10. Prompt evals (before a release)
+
+`pnpm eval` sends the 66 invented emails in `tests/evals/cases.ts` through the real models and
+prints a score table plus token cost (about $1–2 for a full run; `--no-drafts` is cheaper). It fails
+if anything is worse than `tests/evals/baseline.json`. Needs `ANTHROPIC_API_KEY` in `.env.local`.
+
+- First time (or after an intended improvement): `pnpm eval --update-baseline`, then commit the file.
+- From GitHub: Actions → **Prompt evals** → Run workflow. Add `ANTHROPIC_API_KEY` as a repository
+  secret first (Settings → Secrets and variables → Actions). It never runs on its own.

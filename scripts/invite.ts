@@ -1,7 +1,7 @@
 /**
  * Invite an owner: pnpm invite owner@shop.com plumbing "met at trade show"
- * Trade is one of carpentry | plumbing | electrical | other (optional).
- * Replaced by a button in /admin in Milestone 6.
+ * Trade is optional; one of the values in src/config/trades.ts.
+ * Day to day, use /admin → Invite an owner.
  */
 import { invites, tradeEnum } from "../src/db/schema";
 import { db } from "../src/db";
@@ -9,9 +9,7 @@ import { db } from "../src/db";
 async function main() {
   const [emailArg, tradeArg, ...noteParts] = process.argv.slice(2);
   if (!emailArg || !emailArg.includes("@")) {
-    console.error(
-      'Usage: pnpm invite owner@shop.com [carpentry|plumbing|electrical|other] ["note"]',
-    );
+    console.error(`Usage: pnpm invite owner@shop.com [${tradeEnum.enumValues.join("|")}] ["note"]`);
     process.exit(1);
   }
   const trades = tradeEnum.enumValues as readonly string[];

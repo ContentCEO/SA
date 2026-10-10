@@ -299,6 +299,93 @@ In a sandbox with preinstalled Chromium: `PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-brows
   flush). `scrubEvent` drops request data/cookies/headers/query, keeps only user id, masks emails,
   drops console breadcrumbs and `extra`. Errors only (tracesSampleRate 0, no replay). No
   `withSentryConfig` / source-map upload (keeps the build free of a Sentry auth token).
+- **Upgrades (2026-10-09, Davi: "everything you said, let's do it"):**
+  - Gmail access lost → owner email (`src/server/alerts.ts`, 15-min lifecycle job), plus one
+    reminder after 2 days; `mailboxes.access_lost_at` / `access_alerts_sent`, reset on reconnect.
+  - Price list: business profile "Your price list" (the `pricing_notes` column), prompt `draft.v2`
+    quotes listed prices exactly as written; `checkDraft` still flags any other amount; autopilot
+    still never sends money.
+  - Draft cards show the classification summary (what the customer wants) above the reason.
+  - Quote tracker `/quotes` (`src/server/quotes.ts`, rules in `quote-rules.ts`): quote_request
+    threads + anything marked; stage = owner's Won/Lost, else waiting_on_you / talking / quiet
+    (owner wrote last ≥ follow-up days). Amount = largest $ in the owner's own reply (quoted text
+    stripped), captured before the body purge (`captureQuoteAmounts`, daily + on view) or typed on
+    Won. Totals over the last 30 days. `threads.quote_outcome/_at/quote_amount_cents`.
+  - Customers `/customers` (`src/server/customers.ts`): grouped by lower(sender) of inbound mail,
+    noise excluded; links use an **opaque key** (their newest message id) so email addresses never
+    appear in URLs or logs; search filters client-side for the same reason.
+  - Admin health: per account last sorted / last draft / last morning email; a System box that
+    inverts to "Background jobs look stopped" when no working mailbox synced in 20 min.
+  - Instant loading placeholders (`loading.tsx` → `ScreenSkeleton`) on queue, inbox, quotes,
+    activity, settings only. **Never** on /admin or /customers/[key]: streaming turns `notFound()`
+    into a 200, and those must 404 (e2e caught it).
+  - Nav: bottom tab bar on phones (Queue · Inbox · Quotes · Customers · Activity · Settings), the
+    same links in the header from `sm` up; `(app)` layout pads the bottom on phones.
+- **Text alerts (2026-10-09, plan #50; Davi: texting included in plans):** `src/server/sms-alerts.ts`,
+  `src/lib/sms.ts` (Twilio over fetch, off without env). Owner's own US mobile, confirmed by a
+  6-digit code (sha256 stored, 10-min expiry, 5 codes / 10 guesses per hour). Content-free counts +
+  link, quiet 9pm–7am local, ≥10 min apart, ≤10/day, only fresh (<24h) inbound quote requests /
+  needs_owner threads classified after the cursor; slot claimed atomically before sending. Runs
+  after classification and in the 15-min lifecycle backstop. **Missed-call text-back dropped**: it
+  would auto-text customers, which the feature plan forbids (no send path without approval; owner
+  can't text customers).
+- **Feature plan:** `docs/FEATURE-PLAN.md` (Davi's picks from 50 ideas, 2026-10-09) is the spec for
+  work beyond the brief, filed by milestone. 1:1 calls package, app-store listings: later (Davi).
+  Calendar booking: after Google approves Gmail access.
+- **#44 Your Gmail health (2026-10-09):** `mailboxHealth()` (`src/server/mailbox-health.ts`, pure)
+  → three plain lines (Google access / Last checked / New mail). `mailboxes.last_sync_error_code`
+  (`access_lost` | `rate_limited` | `sync_failed`, never message text) set in `guarded()`, cleared on
+  the next ok sync and on reconnect. Reconnect button only for lost access (the only thing the owner
+  can fix); stale sync (>30 min) says "we're looking into it". Settings heading is "Your Gmail".
+- **#48 More trades (2026-10-09):** one list in `src/config/trades.ts` (enum, forms, invite, admin).
+  Per-trade `src/ai/prompts/trades/<trade>.ts` (vocabulary + quote questions; `Record<Trade, …>` makes
+  a missing file a compile error, and a test checks the files). `draft.v3` puts the owner's trade
+  words and "Before quoting, find out" into the cached business block; `followup.v2` / `voice.v2`
+  only widen the trade wording. Enum values added with `ALTER TYPE … ADD VALUE` (additive).
+- **Davi 2026-10-09 on the plan:** #4 voice-to-edit yes, with a plain note that the browser sends
+  speech to Google/Apple; #10 offline approvals only as an opt-in setting; #46 evals on demand /
+  before release, not nightly.
+- **classify.v2 (2026-10-09, plan #17 #27 #42):** schema adds `signals.from_building_department`,
+  `signals.tries_to_instruct_assistant`, `extracted.permit` (issuing body, number, inspection time,
+  passed/failed/scheduled/other, corrections) and `extracted.invoice` (number, amount, due date,
+  unpaid/paid/partly_paid/unknown). Code-side guards in `src/ai/guards.ts`: `injectionCheck`
+  (rules: instruction phrases, base64 runs, ≥3 zero-width/bidi chars — tuned so "ignore my previous
+  email" / "send me the invoice" pass) runs **before** the model; injection (rules OR model) →
+  needs_owner with `INJECTION_REASON` (overrides the model's reason). `looksMunicipal` (.gov,
+  ci./town./co.*.xx.us, townof…, sender names like "Building Dept") OR the model signal → never
+  noise (→ scheduling if an inspection is scheduled, else customer_question), never `low`, skips the
+  Promotions shortcut. Both stored as `extracted.injection` / `extracted.municipal`;
+  `createDraftForThread` skips them for every trigger except the owner's tap, and autopilot
+  guardrails refuse both. `untrusted()` (`src/ai/prompts/untrusted.ts`) stops email text closing
+  its `<email>` / `<conversation>` block. Inbox shows a permit card and invoice facts. No separate
+  Haiku call for injection: the classifier (Haiku) already returns the signal.
+- **#46 Prompt evals (2026-10-09):** `tests/evals/cases.ts` (66 invented emails, every category and
+  trade, injection + building-department cases, draft rules), `run.ts` (real `classifyEmail` +
+  `draft.v3` + `checkDraft` on in-memory PGlite), `score.ts` (accuracy, needs-owner recall,
+  injection recall/false alarms, permit/invoice facts, draft pass rate; `regressions()` allows 0.03
+  wobble, **none** on needs-owner and injection recall). `pnpm eval` (tsx with
+  `--conditions=react-server` so `server-only` loads) / `--update-baseline` / `--no-drafts`;
+  GitHub Actions "Prompt evals" is workflow_dispatch only (needs the `ANTHROPIC_API_KEY` repo
+  secret). `tests/evals/baseline.json` is empty until the first live run. Unit test runs the whole
+  set through a stand-in model. **Extend the set whenever a prompt changes.**
+- **Plan M4 (2026-10-10):** #39 checklist (`src/server/onboarding.ts`, pure `buildChecklist`):
+  Connect Gmail / Tell us what you do (`business_profile.completed_at`) / Check your first 3 drafts
+  (sent, discarded or edited); on the Queue; "Hide this list" only when all done (server re-checks,
+  `onboarding_dismissed_at`); it comes back if a step un-does. #23 `business_profile.never_say`
+  (owner list, apart from the learned voice so a re-learn can't drop it; `src/server/never-say.ts`):
+  Settings textarea + draft editor "Never say this" on the selected text (a button, since a textarea
+  long-press can't host a custom menu). `checkDraft` now returns `hits`; never_say / never_promise
+  hits → **one** regenerate (`REGENERATE_ON`), then flags (cap 0.2). #25 `seasonal_notes` table
+  (text ≤140, `ends_on` local date, ≤5 active, ≤1 year ahead; codes past/too_far/full),
+  `activeNotes(now)` in the owner's time zone; only active notes go into `draft.v4`'s cached block
+  and count as source text for checks; expired rows purged daily. `draft.v4` adds both lists.
+- **Milestone 2 re-check (2026-10-10, Davi's M2 prompt, branch `claude/milestone-2-sync`):** brief scope
+  (backfill, History API, Pub/Sub watch + 5-min poll, reconnect, revoked-token tests) was already
+  built; plan M2 has only #44 (done) and **no R-numbered items exist** in `docs/FEATURE-PLAN.md`.
+  Added the missing tests (`tests/unit/push-poll.test.ts`: watch renewal, poll selection, push
+  endpoint) and fixed two things they found: a garbled Pub/Sub payload made `/api/gmail/push` throw
+  (→ endless Pub/Sub retries; now acknowledged with 204), and `renewWatches` renewed watches for
+  read-only accounts (now skipped via `jobsAllowed`).
 - **Future goal (after the website is complete):** a downloadable app (phone app store). Not started;
   the site is mobile-first so a wrapper or native shell can reuse it later.
 - **Public site (2026-10-05, Davi asked for a sales website):** `/` is the marketing page (signed-in

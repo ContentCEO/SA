@@ -6,6 +6,7 @@ import { holdAutopilot } from "@/server/autopilot";
 import { createDraftForThread, discardDraft, saveDraftEdit, sendDraft } from "@/server/drafts";
 import { ReadOnlyError, SendingBlockedError } from "@/server/lifecycle";
 import { hitLimit } from "@/server/rate-limit";
+import { dismissChecklist } from "@/server/onboarding";
 import { requireOwner } from "@/server/session";
 
 const id = z.string().uuid();
@@ -105,4 +106,11 @@ export async function holdAutopilotAction(formData: FormData) {
   if (!draftId.success) redirect("/queue?error=unknown");
   const held = await holdAutopilot(workspace.id, draftId.data);
   redirect(held ? "/queue?done=held" : "/queue?error=unknown");
+}
+
+/** Hide the getting-started list — allowed only once every step is done. */
+export async function dismissChecklistAction() {
+  const { workspace } = await requireOwner();
+  const ok = await dismissChecklist(workspace.id);
+  redirect(ok ? "/queue" : "/queue?error=unknown");
 }

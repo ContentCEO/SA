@@ -3,13 +3,16 @@ import { Notice } from "@/components/app/notice";
 import { Headline } from "@/components/brand/headline";
 import { Button } from "@/components/ui/button";
 import { categoryTag, isCategory } from "@/config/categories";
+import { gmailThreadLink } from "@/lib/gmail-link";
 import { relativeTime } from "@/lib/relative-time";
 import { listQueue, sentDraftSummary, type QueueItem } from "@/server/drafts";
 import { canSend, isReadOnly, sendingBlockedReason, sendingOffLabel } from "@/server/lifecycle";
 import { listMailboxes } from "@/server/mailboxes";
 import { getBusinessProfile } from "@/server/profile";
 import { requireOwner } from "@/server/session";
-import { draftReplyAction } from "./actions";
+import { dismissChecklistAction, draftReplyAction } from "./actions";
+import { OnboardingChecklist } from "@/components/app/onboarding-checklist";
+import { checklistFor } from "@/server/onboarding";
 import { DraftCard } from "./draft-card";
 
 const done: Record<string, string> = {
@@ -55,14 +58,16 @@ function nextLine(sent: NonNullable<Awaited<ReturnType<typeof sentDraftSummary>>
 }
 const firstName = (name: string | null) => (name ? name.split(/[\s,]+/)[0] : null);
 
-function gmailLink(i: QueueItem) {
-  return `https://mail.google.com/mail/?authuser=${encodeURIComponent(i.mailboxEmail)}#all/${i.gmailThreadId}`;
-}
+const gmailLink = (i: QueueItem) => gmailThreadLink(i);
 
 export default async function QueuePage(props: PageProps<"/queue">) {
   const { workspace } = await requireOwner();
   const params = await props.searchParams;
-  const [queue, boxes] = await Promise.all([listQueue(workspace.id), listMailboxes(workspace.id)]);
+  const [queue, boxes, checklist] = await Promise.all([
+    listQueue(workspace.id),
+    listMailboxes(workspace.id),
+    checklistFor(workspace.id),
+  ]);
   const sent =
     typeof params.sent === "string" ? await sentDraftSummary(workspace.id, params.sent) : null;
   const doneMsg = typeof params.done === "string" ? done[params.done] : undefined;
@@ -92,6 +97,8 @@ export default async function QueuePage(props: PageProps<"/queue">) {
 
       {doneMsg ? <Notice>{doneMsg}</Notice> : null}
       {errorMsg ? <Notice strong>{errorMsg}</Notice> : null}
+
+      <OnboardingChecklist list={checklist} dismissAction={dismissChecklistAction} />
 
       {boxes.length === 0 ? (
         <p className="text-lg">
@@ -155,6 +162,7 @@ export default async function QueuePage(props: PageProps<"/queue">) {
               draftId={i.draftId!}
               customer={who(i)}
               tag={tag(i)}
+              summary={i.summary}
               reason={i.reason ?? ""}
               body={i.body ?? ""}
               flags={i.flags}

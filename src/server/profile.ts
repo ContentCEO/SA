@@ -1,6 +1,7 @@
 import "server-only";
 import { eq } from "drizzle-orm";
 import { z } from "zod";
+import { TRADES } from "@/config/trades";
 import { db } from "@/db";
 import {
   activityLog,
@@ -10,8 +11,6 @@ import {
   type BusinessProfile,
   type VoiceProfile,
 } from "@/db/schema";
-
-const TRADES = ["carpentry", "plumbing", "electrical", "other"] as const;
 
 /** Textareas: trim, cap, empty → null. */
 const longText = (max = 2000) =>

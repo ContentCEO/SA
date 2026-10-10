@@ -19,6 +19,21 @@ import {
   getVoiceProfile,
 } from "@/server/profile";
 import { DeleteAccountButton } from "./delete-account-button";
+import { mailboxHealth } from "@/server/mailbox-health";
+import { activeNotes, MAX_ACTIVE_NOTES, NOTE_MAX_CHARS, ownerToday } from "@/server/seasonal-notes";
+import {
+  addSeasonalNoteAction,
+  removeSeasonalNoteAction,
+  saveNeverSayAction,
+} from "./wording-actions";
+import {
+  confirmSmsCodeAction,
+  removeSmsPhoneAction,
+  sendSmsCodeAction,
+  toggleSmsAlertsAction,
+} from "./sms-actions";
+import { smsConfigured } from "@/lib/sms";
+import { formatUsPhone } from "@/server/sms-alerts";
 import { DisconnectButton } from "./disconnect-button";
 import {
   relearnVoiceAction,
@@ -36,12 +51,28 @@ const done: Record<string, string> = {
   voice: "Saved how you write.",
   followups: "Follow-up settings saved.",
   digest: "Morning summary saved.",
+  sms_code: "Code sent. Type it in below.",
+  never_say: "Never-say list saved.",
+  note_added: "Note added. Drafts will use it until its last day.",
+  note_removed: "Note removed.",
+  sms_on: "Text alerts are on.",
+  sms_off: "Text alerts are off.",
+  sms_removed: "Number removed.",
   autopilot_on: "Autopilot is on for that kind of email. You'll get 10 minutes to hold each one.",
   autopilot_off: "Autopilot is off for that kind of email. Those replies wait for your tap again.",
   relearn: "Re-reading your sent mail. This takes a minute or two.",
 };
 
 const errors: Record<string, string> = {
+  note_invalid: "Write a short note and pick its last day.",
+  note_past: "That date has already passed.",
+  note_too_far: "Pick a date within the next year.",
+  note_full: "You can have 5 notes at once. Remove one first.",
+  sms_phone: "That doesn't look like a US mobile number.",
+  sms_busy: "Too many tries. Wait an hour and try again.",
+  sms_code: "That code didn't match, or it expired. Send a new one.",
+  sms_not_configured: "Texting isn't switched on yet.",
+  sms_not_verified: "Confirm your number first.",
   relearn_busy: "Your sent mail was re-read recently. You can do it again tomorrow.",
   delete_billing:
     "We couldn't cancel your plan, so nothing was deleted. Try again, or call us and we'll do it.",
@@ -71,6 +102,7 @@ function syncLine(m: MailboxSummary, messageCount: number): string {
 export default async function SettingsPage(props: PageProps<"/settings">) {
   const { workspace, session } = await requireOwner();
   const admin = isAdminEmail(session?.user?.email);
+  const now = new Date();
   const mailboxes = await listMailboxes(workspace.id);
   const counts = new Map(
     await Promise.all(
@@ -81,10 +113,12 @@ export default async function SettingsPage(props: PageProps<"/settings">) {
   const doneMsg = typeof params.done === "string" ? done[params.done] : undefined;
   const errorMsg = typeof params.error === "string" ? errors[params.error] : undefined;
   const canAddMore = mailboxes.length < mailboxLimit(workspace);
-  const [profile, voice, autopilot] = await Promise.all([
+  const [profile, voice, autopilot, notes, today] = await Promise.all([
     getBusinessProfile(workspace.id),
     getVoiceProfile(workspace.id),
     autopilotState(workspace),
+    activeNotes(workspace.id, now),
+    ownerToday(workspace.id, now),
   ]);
   const profileFacts = [
     ["Business", workspace.businessName],
@@ -116,7 +150,7 @@ export default async function SettingsPage(props: PageProps<"/settings">) {
 
       <section aria-labelledby="mailbox" className="flex flex-col gap-4">
         <h2 id="mailbox" className="text-xl font-black">
-          Connected mailbox
+          Your Gmail
         </h2>
 
         {mailboxes.length === 0 ? (
@@ -129,7 +163,8 @@ export default async function SettingsPage(props: PageProps<"/settings">) {
         ) : (
           <ul className="flex flex-col gap-3">
             {mailboxes.map((m) => {
-              const needsYou = m.status === "reconnect_needed";
+              const health = mailboxHealth(m, now, Boolean(process.env.GMAIL_PUBSUB_TOPIC));
+              const needsYou = health.needsReconnect;
               return (
                 <li
                   key={m.id}
@@ -147,6 +182,14 @@ export default async function SettingsPage(props: PageProps<"/settings">) {
                       {syncLine(m, counts.get(m.id) ?? 0)}
                     </span>
                   </div>
+                  <dl aria-label={`Health of ${m.email}`} className="flex flex-col gap-1.5">
+                    {health.lines.map((l) => (
+                      <div key={l.label} className="flex flex-col">
+                        <dt className="text-sm opacity-80">{l.label}</dt>
+                        <dd className={l.problem ? "font-black" : undefined}>{l.text}</dd>
+                      </div>
+                    ))}
+                  </dl>
                   {needsYou ? (
                     <Link href="/connect" className={cn(buttonVariants({ size: "lg" }), "w-full")}>
                       Reconnect Gmail
@@ -293,6 +336,90 @@ export default async function SettingsPage(props: PageProps<"/settings">) {
         <GetTheApp />
       </section>
 
+      <section id="never-say" aria-labelledby="never-say-heading" className="flex flex-col gap-3">
+        <h2 id="never-say-heading" className="text-xl font-black">
+          Never say this
+        </h2>
+        <p className="text-muted-foreground">
+          Words and phrases your drafts must never use — one per line. If one slips in, the draft is
+          rewritten once, then flagged for you. You can also select words while editing a draft and
+          tap Never say this.
+        </p>
+        <form action={saveNeverSayAction} className="flex flex-col gap-3">
+          <textarea
+            name="neverSay"
+            aria-label="Your never-say list"
+            defaultValue={(profile?.neverSay ?? []).join("\n")}
+            rows={4}
+            placeholder={"No worries\nPer my last email"}
+            className="w-full rounded-lg border border-input bg-paper px-3 py-2.5 text-base"
+          />
+          <Button type="submit" variant="outline" className="w-full">
+            Save never-say list
+          </Button>
+        </form>
+      </section>
+
+      <section
+        id="seasonal-notes"
+        aria-labelledby="seasonal-notes-heading"
+        className="flex flex-col gap-3"
+      >
+        <h2 id="seasonal-notes-heading" className="text-xl font-black">
+          Seasonal notes
+        </h2>
+        <p className="text-muted-foreground">
+          Short notes drafts can mention until their last day — “Booked through November”, “On
+          vacation Aug 1–10, back Aug 11”. Up to {MAX_ACTIVE_NOTES} at a time. They disappear on
+          their own.
+        </p>
+        {notes.length ? (
+          <ul className="flex flex-col gap-2">
+            {notes.map((n) => (
+              <li key={n.id} className="flex items-center gap-3 rounded-lg border bg-card p-3">
+                <div className="flex flex-1 flex-col">
+                  <span className="font-semibold">{n.text}</span>
+                  <span className="text-sm text-muted-foreground">Until {n.endsOn}</span>
+                </div>
+                <form action={removeSeasonalNoteAction}>
+                  <input type="hidden" name="id" value={n.id} />
+                  <Button type="submit" variant="ghost" aria-label={`Remove note: ${n.text}`}>
+                    Remove
+                  </Button>
+                </form>
+              </li>
+            ))}
+          </ul>
+        ) : null}
+        {notes.length < MAX_ACTIVE_NOTES ? (
+          <form action={addSeasonalNoteAction} className="flex flex-col gap-3">
+            <label className="flex flex-col gap-1.5">
+              <span className="font-semibold">Note</span>
+              <input
+                name="text"
+                required
+                maxLength={NOTE_MAX_CHARS}
+                placeholder="Booked through November"
+                className="min-h-tap rounded-lg border border-input bg-paper px-3 text-base"
+              />
+            </label>
+            <label className="flex flex-col gap-1.5">
+              <span className="font-semibold">Last day it applies</span>
+              <input
+                name="endsOn"
+                type="date"
+                required
+                min={today}
+                className="min-h-tap rounded-lg border border-input bg-paper px-3 text-base"
+              />
+            </label>
+            <Button type="submit" variant="outline" className="w-full">
+              Add note
+            </Button>
+          </form>
+        ) : null}
+      </section>
+
       <section id="digest" aria-labelledby="digest-heading" className="flex flex-col gap-3">
         <h2 id="digest-heading" className="text-xl font-black">
           Morning summary
@@ -330,6 +457,75 @@ export default async function SettingsPage(props: PageProps<"/settings">) {
             Save morning summary
           </Button>
         </form>
+      </section>
+
+      <section id="texts" aria-labelledby="texts-heading" className="flex flex-col gap-3">
+        <h2 id="texts-heading" className="text-xl font-black">
+          Text alerts
+        </h2>
+        <p className="text-muted-foreground">
+          A text when a new quote request or an email that needs you comes in. Just the count and a
+          link — never a customer&apos;s name or words. Not between 9pm and 7am, at most one every
+          10 minutes. Reply STOP any time.
+        </p>
+        {!smsConfigured() ? (
+          <p className="font-semibold">Text alerts aren&apos;t switched on yet. Coming soon.</p>
+        ) : profile?.alertPhoneVerifiedAt && profile.alertPhone ? (
+          <div className="flex flex-col gap-3">
+            <p>
+              Texts go to <span className="font-semibold">{formatUsPhone(profile.alertPhone)}</span>
+              .
+            </p>
+            <form action={toggleSmsAlertsAction}>
+              <input type="hidden" name="enabled" value={profile.smsAlertsEnabled ? "off" : "on"} />
+              <Button type="submit" variant="outline" className="w-full">
+                {profile.smsAlertsEnabled ? "Turn off text alerts" : "Turn on text alerts"}
+              </Button>
+            </form>
+            <form action={removeSmsPhoneAction}>
+              <Button type="submit" variant="ghost" className="w-full">
+                Remove my number
+              </Button>
+            </form>
+          </div>
+        ) : profile?.smsCodeExpiresAt && profile.smsCodeExpiresAt > new Date() ? (
+          <form action={confirmSmsCodeAction} className="flex flex-col gap-3">
+            <label className="flex flex-col gap-1.5">
+              <span className="font-semibold">
+                The 6-digit code we texted to {formatUsPhone(profile.alertPhone!)}
+              </span>
+              <input
+                name="code"
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                maxLength={6}
+                required
+                className="min-h-tap rounded-lg border border-input bg-paper px-3 text-lg tracking-widest"
+              />
+            </label>
+            <Button type="submit" className="w-full">
+              Confirm my number
+            </Button>
+          </form>
+        ) : (
+          <form action={sendSmsCodeAction} className="flex flex-col gap-3">
+            <label className="flex flex-col gap-1.5">
+              <span className="font-semibold">Your mobile number</span>
+              <input
+                name="phone"
+                type="tel"
+                inputMode="tel"
+                autoComplete="tel"
+                placeholder="(508) 555-1234"
+                required
+                className="min-h-tap rounded-lg border border-input bg-paper px-3 text-base"
+              />
+            </label>
+            <Button type="submit" className="w-full">
+              Text me a code
+            </Button>
+          </form>
+        )}
       </section>
 
       <section id="autopilot" aria-labelledby="autopilot-heading" className="flex flex-col gap-3">

@@ -21,6 +21,10 @@ export const LIMITS = {
   billing: { max: 10, windowSec: 60 * 60 },
   /** Starting a Gmail connect, per workspace. */
   connect: { max: 10, windowSec: 60 * 60 },
+  /** Texting a phone-confirmation code, per workspace. */
+  smsCode: { max: 5, windowSec: 60 * 60 },
+  /** Guessing the code, per workspace. */
+  smsVerify: { max: 10, windowSec: 60 * 60 },
 } as const;
 export type LimitName = keyof typeof LIMITS;
 

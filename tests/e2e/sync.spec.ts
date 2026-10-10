@@ -13,6 +13,12 @@ test("after the backfill, Settings shows how much was read and when", async ({ p
   await signInAs(context, owner);
   await page.goto("/settings");
   await expect(page.getByText("3 emails from the last 30 days, checked just now.")).toBeVisible();
+  const health = page.getByRole("definition").filter({ hasText: "Checked every 5 minutes." });
+  await expect(health).toBeVisible();
+  // Healthy: no Reconnect button in the Gmail section.
+  await expect(
+    page.getByRole("region", { name: "Your Gmail" }).getByRole("link", { name: "Reconnect Gmail" }),
+  ).toHaveCount(0);
 });
 
 test("lost Google access shows a Reconnect Gmail banner on every screen", async ({
@@ -30,6 +36,11 @@ test("lost Google access shows a Reconnect Gmail banner on every screen", async 
   }
   await page.goto("/settings");
   await expect(page.getByText("Needs reconnecting")).toBeVisible();
+  const gmail = page.getByRole("region", { name: "Your Gmail" });
+  await expect(gmail).toContainText(
+    "Removed. Squared Away can't read this inbox until you reconnect.",
+  );
+  await expect(gmail.getByRole("link", { name: "Reconnect Gmail" })).toBeVisible();
 });
 
 test("Gmail push rejects requests without the shared token", async ({ request }) => {

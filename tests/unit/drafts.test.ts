@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { setModelTransportForTests } from "@/ai/client";
-import type { ModelDraft } from "@/ai/prompts/draft.v1";
+import type { ModelDraft } from "@/ai/prompts/draft.v4";
 import type { Database } from "@/db";
 import {
   activityLog,
@@ -168,7 +168,7 @@ describe("writing drafts", () => {
       status: "pending",
       gmailDraftId: "d1",
       confidence: 90,
-      promptVersion: "draft.v1",
+      promptVersion: "draft.v4",
     });
     const [u] = await database.select().from(usage);
     expect(u!.draftsCreated).toBe(1);
@@ -444,6 +444,40 @@ describe("what gets auto-drafted", () => {
       .set({ classifiedAt: new Date(later.getTime() + 1000) })
       .where(eq(threads.id, t.id));
     expect(await threadsToAutoDraft(mailboxId)).toEqual([t.id]);
+  });
+});
+
+describe("emails that tried to instruct the assistant, and building departments", () => {
+  it("are never drafted by a job — only when the owner taps Draft a reply", async () => {
+    const tricky = await seedThread({ g: "inj", category: "quote_request", needsOwner: false });
+    await database
+      .update(threads)
+      .set({ extracted: { injection: true } })
+      .where(eq(threads.id, tricky.id));
+    const town = await seedThread({ g: "town", category: "scheduling" });
+    await database
+      .update(threads)
+      .set({ extracted: { municipal: true } })
+      .where(eq(threads.id, town.id));
+
+    const { transport, calls } = fakeTransport([modelDraft()]);
+    setModelTransportForTests(transport);
+    for (const trigger of ["auto", "followup"] as const) {
+      expect(await createDraftForThread(tricky.id, { trigger, ...deps() })).toMatchObject({
+        status: "skipped",
+        reason: "untrusted",
+      });
+      expect(await createDraftForThread(town.id, { trigger, ...deps() })).toMatchObject({
+        status: "skipped",
+        reason: "municipal",
+      });
+    }
+    expect(calls).toHaveLength(0); // the model never saw them
+    expect(writer.drafts.size).toBe(0);
+
+    expect(
+      await createDraftForThread(town.id, { trigger: "owner", workspaceId, ...deps() }),
+    ).toMatchObject({ status: "created" });
   });
 });
 

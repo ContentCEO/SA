@@ -1,9 +1,10 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useRef, useState, useTransition } from "react";
 import { useFormStatus } from "react-dom";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { addNeverSayAction } from "../settings/wording-actions";
 import {
   discardDraftAction,
   holdAutopilotAction,
@@ -15,6 +16,8 @@ export type DraftCardProps = {
   draftId: string;
   customer: string;
   tag: string;
+  /** One line on what the customer wants, from sorting — so the card reads without opening Gmail. */
+  summary?: string | null;
   reason: string;
   body: string;
   flags: string[];
@@ -54,6 +57,18 @@ export function DraftCard(p: DraftCardProps) {
   const [confirmDiscard, setConfirmDiscard] = useState(false);
   const [dx, setDx] = useState(0);
   const start = useRef<{ x: number; y: number } | null>(null);
+  const editor = useRef<HTMLTextAreaElement>(null);
+  const [neverSayNote, setNeverSayNote] = useState<string | null>(null);
+  const [savingPhrase, startSaving] = useTransition();
+  const neverSay = () => {
+    const el = editor.current;
+    const phrase = el ? el.value.slice(el.selectionStart, el.selectionEnd).trim() : "";
+    if (!phrase) {
+      setNeverSayNote("Select the words first — press and hold, then drag.");
+      return;
+    }
+    startSaving(async () => setNeverSayNote((await addNeverSayAction(phrase)).message));
+  };
 
   const onPointerDown = (e: React.PointerEvent) => {
     if (editing || p.readOnly || e.pointerType === "mouse") return;
@@ -85,7 +100,8 @@ export function DraftCard(p: DraftCardProps) {
       <header className="flex flex-col gap-1">
         <span className="text-lg font-black">{p.customer}</span>
         <span className="text-sm font-semibold">{p.tag}</span>
-        <p>{p.reason}</p>
+        {p.summary ? <p className="font-semibold">{p.summary}</p> : null}
+        <p className={p.summary ? "text-muted-foreground" : undefined}>{p.reason}</p>
       </header>
 
       {p.needsOwnerReason ? <p className="font-semibold">Needs you: {p.needsOwnerReason}</p> : null}
@@ -123,6 +139,7 @@ export function DraftCard(p: DraftCardProps) {
           <label className="flex flex-col gap-1.5">
             <span className="font-semibold">Your reply</span>
             <textarea
+              ref={editor}
               name="body"
               defaultValue={p.body}
               rows={10}
@@ -146,6 +163,20 @@ export function DraftCard(p: DraftCardProps) {
             variant="outline"
             className="w-full"
           />
+          <Button
+            type="button"
+            variant="outline"
+            className="w-full"
+            disabled={savingPhrase}
+            onClick={neverSay}
+          >
+            {savingPhrase ? "Adding…" : "Never say this"}
+          </Button>
+          {neverSayNote ? (
+            <p role="status" className="text-sm font-semibold">
+              {neverSayNote}
+            </p>
+          ) : null}
           <Button
             type="button"
             variant="ghost"

@@ -65,6 +65,9 @@ export type GuardrailInput = {
   draftBody: string;
   /** The owner has written to this address before (not just received from it). */
   knownCustomer: boolean;
+  /** The email tried to instruct the assistant, or came from a building department. */
+  untrusted?: boolean;
+  municipal?: boolean;
 };
 
 /** Layer 3. Every reason this email must wait for the owner; empty = may go. */
@@ -80,6 +83,8 @@ export function guardrailReasons(g: GuardrailInput): string[] {
     out.push("Payments with an amount always wait for you.");
   if (/\$\s?\d/.test(g.draftBody)) out.push("Mentions money, so it waits for you.");
   if (!g.knownCustomer) out.push("You haven't written to this person before.");
+  if (g.untrusted) out.push("This email tried to give instructions to the assistant.");
+  if (g.municipal) out.push("Building departments always wait for you.");
   return out;
 }
 
@@ -239,7 +244,11 @@ async function blockers(row: NonNullable<Awaited<ReturnType<typeof loadForAutopi
     .where(and(eq(messages.threadId, thread.id), eq(messages.direction, "in")))
     .orderBy(desc(messages.sentAt))
     .limit(1);
-  const extracted = (thread.extracted ?? {}) as { dollar_amounts?: number[] };
+  const extracted = (thread.extracted ?? {}) as {
+    dollar_amounts?: number[];
+    injection?: boolean;
+    municipal?: boolean;
+  };
   return guardrailReasons({
     category: thread.category,
     needsOwner: thread.needsOwner || thread.needsOwnerManual,
@@ -247,6 +256,8 @@ async function blockers(row: NonNullable<Awaited<ReturnType<typeof loadForAutopi
     confidencePct: draft.confidence,
     flags: draft.flags,
     amountsInEmail: extracted.dollar_amounts ?? [],
+    untrusted: extracted.injection === true,
+    municipal: extracted.municipal === true,
     draftBody: draft.body ?? "",
     knownCustomer: await knownCustomer(mailbox.id, customer?.address ?? null, draft.createdAt),
   });

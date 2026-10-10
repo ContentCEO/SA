@@ -33,9 +33,13 @@ export async function POST(request: NextRequest) {
   }
   const parsed = pushBody.safeParse(await request.json().catch(() => null));
   if (!parsed.success) return new NextResponse(null, { status: 204 });
-  const note = notification.safeParse(
-    JSON.parse(Buffer.from(parsed.data.message.data, "base64").toString("utf8") || "null"),
-  );
+  let decoded: unknown = null;
+  try {
+    decoded = JSON.parse(Buffer.from(parsed.data.message.data, "base64").toString("utf8"));
+  } catch {
+    // Garbled payload: acknowledge it so Pub/Sub doesn't retry forever; the poll covers us.
+  }
+  const note = notification.safeParse(decoded);
   if (!note.success) return new NextResponse(null, { status: 204 });
 
   const boxes = await db()

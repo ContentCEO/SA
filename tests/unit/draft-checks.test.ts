@@ -42,6 +42,7 @@ describe("draft spot checks", () => {
     expect(checkDraft("Hey Dana, what's the address? Thanks, Davi", ctx)).toEqual({
       flags: [],
       confidenceCap: 1,
+      hits: [],
     });
   });
 });

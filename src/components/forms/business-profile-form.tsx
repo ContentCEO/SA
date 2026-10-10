@@ -1,6 +1,7 @@
 "use client";
 
 import { useActionState } from "react";
+import { TRADE_OPTIONS } from "@/config/trades";
 import { saveBusinessProfileAction, type FormState } from "@/app/(app)/settings/profile-actions";
 import { Button } from "@/components/ui/button";
 import { useFocusFirstError } from "./use-focus-first-error";
@@ -22,12 +23,7 @@ export type ProfileDefaults = {
   amountThresholdDollars: number;
 };
 
-const trades = [
-  { value: "electrical", label: "Electrical" },
-  { value: "plumbing", label: "Plumbing" },
-  { value: "carpentry", label: "Carpentry" },
-  { value: "other", label: "Something else" },
-];
+const trades = TRADE_OPTIONS;
 
 export function BusinessProfileForm({
   defaults,
@@ -103,8 +99,8 @@ export function BusinessProfileForm({
       />
       <TextArea
         name="pricingNotes"
-        label="How do you price?"
-        hint="Anything you're happy to say in writing. “$95 service call, first half hour included. Everything else I quote after seeing it.”"
+        label="Your price list"
+        hint="One per line — only prices you're happy to put in writing. Drafts quote these exactly as written and never make up others. e.g. “Service call: $95, first half hour included” · “Water heater swap (40 gal tank): from $1,450 installed”"
         defaultValue={v("pricingNotes", defaults.pricingNotes) as string}
         error={e.pricingNotes}
       />

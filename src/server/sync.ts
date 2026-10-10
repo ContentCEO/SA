@@ -15,6 +15,7 @@ import { decryptSecret } from "@/lib/crypto";
 import {
   HistoryExpiredError,
   MailboxAuthError,
+  MailboxRateLimitError,
   type MailboxReader,
   type MailMessage,
   type MessageRef,
@@ -91,7 +92,7 @@ async function loadActiveMailbox(mailboxId: string) {
 export async function markReconnectNeeded(mailbox: Pick<Mailbox, "id" | "workspaceId">) {
   const changed = await db()
     .update(mailboxes)
-    .set({ status: "reconnect_needed" })
+    .set({ status: "reconnect_needed", accessLostAt: new Date(), accessAlertsSent: 0 })
     .where(and(eq(mailboxes.id, mailbox.id), eq(mailboxes.status, "active")))
     .returning({ id: mailboxes.id });
   if (changed.length > 0) {
@@ -106,14 +107,35 @@ export async function markReconnectNeeded(mailbox: Pick<Mailbox, "id" | "workspa
   }
 }
 
+export type SyncErrorCode = "access_lost" | "rate_limited" | "sync_failed";
+
+/** Remember the last problem as a code for Settings → Your Gmail (cleared on the next success). */
+async function noteSyncError(mailboxId: string, code: SyncErrorCode | null) {
+  await db()
+    .update(mailboxes)
+    .set({ lastSyncErrorCode: code, lastSyncErrorAt: code ? new Date() : null })
+    .where(
+      code
+        ? eq(mailboxes.id, mailboxId)
+        : and(eq(mailboxes.id, mailboxId), isNotNull(mailboxes.lastSyncErrorCode)),
+    );
+}
+
 async function guarded(mailbox: Mailbox, fn: () => Promise<SyncOutcome>): Promise<SyncOutcome> {
   try {
-    return await fn();
+    const outcome = await fn();
+    if (outcome.status === "ok") await noteSyncError(mailbox.id, null);
+    return outcome;
   } catch (err) {
     if (err instanceof MailboxAuthError) {
       await markReconnectNeeded(mailbox);
+      await noteSyncError(mailbox.id, "access_lost");
       return { status: "reconnect_needed" };
     }
+    await noteSyncError(
+      mailbox.id,
+      err instanceof MailboxRateLimitError ? "rate_limited" : "sync_failed",
+    ).catch(() => {});
     throw err;
   }
 }
@@ -380,9 +402,10 @@ export async function renewWatches(deps: SyncDeps = {}): Promise<number> {
   if (!topic) return 0;
   const now = deps.now?.() ?? new Date();
   const soon = new Date(now.getTime() + 2 * 86_400_000);
-  const due = await db()
-    .select()
+  const rows = await db()
+    .select({ mailbox: mailboxes, workspace: workspaces })
     .from(mailboxes)
+    .innerJoin(workspaces, eq(workspaces.id, mailboxes.workspaceId))
     .where(
       and(
         eq(mailboxes.status, "active"),
@@ -390,6 +413,8 @@ export async function renewWatches(deps: SyncDeps = {}): Promise<number> {
         or(isNull(mailboxes.watchExpiresAt), lt(mailboxes.watchExpiresAt, soon)),
       ),
     );
+  // Read-only accounts aren't synced, so there's nothing for a push to wake.
+  const due = rows.filter((r) => jobsAllowed(r.workspace, now)).map((r) => r.mailbox);
   let renewed = 0;
   for (const m of due) {
     const outcome = await guarded(m, async () => {

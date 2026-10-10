@@ -10,7 +10,15 @@ import { startEvaluation } from "./workspace-lifecycle";
 /** What the UI may see about a mailbox. Never includes the token. */
 export type MailboxSummary = Pick<
   Mailbox,
-  "id" | "email" | "provider" | "status" | "connectedAt" | "backfillCompletedAt" | "lastSyncedAt"
+  | "id"
+  | "email"
+  | "provider"
+  | "status"
+  | "connectedAt"
+  | "backfillCompletedAt"
+  | "lastSyncedAt"
+  | "watchExpiresAt"
+  | "lastSyncErrorCode"
 >;
 
 /** Before a plan is chosen (evaluation), a workspace gets one mailbox. */
@@ -35,6 +43,8 @@ export async function listMailboxes(workspaceId: string): Promise<MailboxSummary
       connectedAt: mailboxes.connectedAt,
       backfillCompletedAt: mailboxes.backfillCompletedAt,
       lastSyncedAt: mailboxes.lastSyncedAt,
+      watchExpiresAt: mailboxes.watchExpiresAt,
+      lastSyncErrorCode: mailboxes.lastSyncErrorCode,
     })
     .from(mailboxes)
     .where(eq(mailboxes.workspaceId, workspaceId))
@@ -60,6 +70,10 @@ export async function saveConnectedMailbox(
     scopes: result.grantedScopes.join(" "),
     status: "active" as const,
     connectedAt: new Date(),
+    accessLostAt: null,
+    accessAlertsSent: 0,
+    lastSyncErrorCode: null,
+    lastSyncErrorAt: null,
   };
 
   const [row] = isReconnect
@@ -96,6 +110,8 @@ export async function saveConnectedMailbox(
     connectedAt: row.connectedAt,
     backfillCompletedAt: row.backfillCompletedAt,
     lastSyncedAt: row.lastSyncedAt,
+    watchExpiresAt: row.watchExpiresAt,
+    lastSyncErrorCode: row.lastSyncErrorCode,
   };
 }
 

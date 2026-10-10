@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Notice } from "@/components/app/notice";
 import { Headline } from "@/components/brand/headline";
 import { Button } from "@/components/ui/button";
+import { isTrade, tradeLabel } from "@/config/trades";
 import { tradeEnum } from "@/db/schema";
 import { relativeTime } from "@/lib/relative-time";
 import {
@@ -9,6 +10,7 @@ import {
   adminOverview,
   countWorkspaces,
   listInvites,
+  systemHealth,
   type AdminRow,
 } from "@/server/admin";
 import { requireAdmin } from "@/server/session";
@@ -20,7 +22,8 @@ import {
   inviteFromWaitlistAction,
   setPlanAction,
 } from "./actions";
-import { stripeConfigured } from "@/server/billing";
+import { PendingButton } from "@/components/app/pending-button";
+import { stripeConfigured, stripeConnectedAt } from "@/server/billing";
 import { listWaitlist } from "@/server/waitlist";
 import { pricing } from "@/config/pricing";
 
@@ -130,7 +133,7 @@ function WorkspaceCard({ w, now }: { w: AdminRow; now: Date }) {
         </span>
       </header>
       <dl className="grid grid-cols-2 gap-x-4 gap-y-2">
-        <Stat label="Trade" value={w.trade ? w.trade[0]!.toUpperCase() + w.trade.slice(1) : "—"} />
+        <Stat label="Trade" value={isTrade(w.trade) ? tradeLabel[w.trade] : "—"} />
         <Stat label="Plan" value={w.plan ?? "None yet"} />
         <Stat
           label={
@@ -157,6 +160,18 @@ function WorkspaceCard({ w, now }: { w: AdminRow; now: Date }) {
         <Stat label="Drafts waiting" value={w.drafts.pending} />
         <Stat label="Sent (7 days)" value={w.drafts.sentLast7Days} />
         <Stat label="Drafts this month" value={w.drafts.createdThisMonth} />
+        <Stat
+          label="Last sorted"
+          value={w.health.lastSortedAt ? relativeTime(w.health.lastSortedAt, now) : "Never"}
+        />
+        <Stat
+          label="Last draft"
+          value={w.health.lastDraftAt ? relativeTime(w.health.lastDraftAt, now) : "Never"}
+        />
+        <Stat
+          label="Last morning email"
+          value={w.health.lastDigestAt ? relativeTime(w.health.lastDigestAt, now) : "Never"}
+        />
         <Stat label="AI calls today" value={w.ai.callsToday} />
         <Stat label="AI cost this month" value={`${dollars(w.ai.costCentsThisMonth)} (est.)`} />
       </dl>
@@ -210,14 +225,23 @@ export default async function AdminPage(props: PageProps<"/admin">) {
   await requireAdmin();
   const params = await props.searchParams;
   const now = new Date();
-  const [rows, total, invited, waiting] = await Promise.all([
+  const [rows, total, invited, waiting, stripeAt, system] = await Promise.all([
     adminOverview(now),
     countWorkspaces(),
     listInvites(),
     listWaitlist(),
+    stripeConnectedAt(),
+    systemHealth(now),
   ]);
-  const doneMsg = typeof params.done === "string" ? done[params.done] : undefined;
-  const errorMsg = typeof params.error === "string" ? errors[params.error] : undefined;
+  // Payment messages show inside the Payments section (the page scrolls there), not at the top.
+  const isStripe = (k: unknown) => typeof k === "string" && k.startsWith("stripe");
+  const doneMsg =
+    typeof params.done === "string" && !isStripe(params.done) ? done[params.done] : undefined;
+  const errorMsg =
+    typeof params.error === "string" && !isStripe(params.error) ? errors[params.error] : undefined;
+  const stripeDone = isStripe(params.done) ? done[params.done as string] : undefined;
+  const stripeError = isStripe(params.error) ? errors[params.error as string] : undefined;
+  const stripeReason = typeof params.reason === "string" ? params.reason.slice(0, 200) : null;
 
   return (
     <>
@@ -227,6 +251,33 @@ export default async function AdminPage(props: PageProps<"/admin">) {
       </p>
       {doneMsg ? <Notice>{doneMsg}</Notice> : null}
       {errorMsg ? <Notice strong>{errorMsg}</Notice> : null}
+
+      <section
+        aria-labelledby="system"
+        className={
+          system.jobsLookStopped
+            ? "sa-inverted flex flex-col gap-2 rounded-xl p-4"
+            : "flex flex-col gap-2 rounded-xl border-2 border-charcoal p-4"
+        }
+      >
+        <h2 id="system" className="text-lg font-black">
+          {system.jobsLookStopped ? "Background jobs look stopped" : "System"}
+        </h2>
+        <p>
+          {system.workingMailboxes === 0
+            ? "No working mailboxes yet."
+            : `Last mail check ${system.lastSyncAt ? relativeTime(system.lastSyncAt, now) : "never"} across ${system.workingMailboxes} mailbox${system.workingMailboxes === 1 ? "" : "es"}.`}
+          {system.needReconnect
+            ? ` ${system.needReconnect} need${system.needReconnect === 1 ? "s" : ""} reconnecting.`
+            : ""}
+        </p>
+        {system.jobsLookStopped ? (
+          <p>
+            Mail is normally checked every 5 minutes. Open the Inngest dashboard (Vercel → sa →
+            Integrations → Inngest) and look for failed runs.
+          </p>
+        ) : null}
+      </section>
 
       <section aria-labelledby="accounts" className="flex flex-col gap-3">
         <h2 id="accounts" className="text-xl font-black">
@@ -245,15 +296,26 @@ export default async function AdminPage(props: PageProps<"/admin">) {
         <h2 id="stripe-heading" className="text-xl font-black">
           Payments
         </h2>
+        {stripeDone ? <Notice>{stripeDone}</Notice> : null}
+        {stripeError ? (
+          <Notice strong>
+            {stripeError}
+            {stripeReason ? ` Stripe said: “${stripeReason}”` : null}
+          </Notice>
+        ) : null}
         {stripeConfigured() ? (
           <form action={connectStripeAction} className="flex flex-col gap-2">
+            <p className="font-semibold">
+              {stripeAt ? `Connected · last set up ${et.format(stripeAt)}` : "Not connected yet."}
+            </p>
             <p>
               Sets up the four prices from the price list, the customer billing page, and the
-              payment notifications that switch accounts on and off. Safe to tap again.
+              payment notifications that switch accounts on and off. Takes about 10 seconds. Safe to
+              tap again.
             </p>
-            <Button type="submit" className="w-full">
-              Connect Stripe
-            </Button>
+            <PendingButton pending="Connecting to Stripe…" className="w-full">
+              {stripeAt ? "Connect Stripe again" : "Connect Stripe"}
+            </PendingButton>
           </form>
         ) : (
           <p>Add STRIPE_SECRET_KEY to the sa project in Vercel first.</p>
@@ -328,7 +390,7 @@ export default async function AdminPage(props: PageProps<"/admin">) {
               <option value="">Not sure</option>
               {tradeEnum.enumValues.map((t) => (
                 <option key={t} value={t}>
-                  {t[0]!.toUpperCase() + t.slice(1)}
+                  {tradeLabel[t]}
                 </option>
               ))}
             </select>

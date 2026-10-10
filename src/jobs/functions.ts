@@ -15,6 +15,10 @@ import { sendDigests } from "@/server/digest";
 import { threadsToFollowUp } from "@/server/followups";
 import { getMailboxWorkspace } from "@/server/mailboxes";
 import { purgeRateLimits } from "@/server/rate-limit";
+import { sendAccessLostAlerts } from "@/server/alerts";
+import { captureQuoteAmounts } from "@/server/quotes";
+import { sendLeadAlerts } from "@/server/sms-alerts";
+import { purgeExpiredNotes } from "@/server/seasonal-notes";
 import { learnVoice, workspacesDueForVoiceRefresh, workspacesNeedingVoice } from "@/server/voice";
 import { expireEvaluations, startPendingEvaluations } from "@/server/workspace-lifecycle";
 import { considerAutopilot, overdueAutopilotDrafts, runAutopilotSend } from "@/server/autopilot";
@@ -27,6 +31,12 @@ import {
   mailboxSyncRequested,
   voiceLearnRequested,
 } from "./client";
+
+/** Text the owner about new leads in this mailbox's workspace (no-op unless they opted in). */
+async function alertsForMailbox(mailboxId: string) {
+  const workspaceId = await getMailboxWorkspace(mailboxId);
+  return workspaceId ? sendLeadAlerts(new Date(), { workspaceId }) : { sent: 0 };
+}
 
 /**
  * Gmail said "slow down" more times than the client retries: pause this step
@@ -134,6 +144,7 @@ export const classifyMailbox = inngest.createFunction(
       );
       total += r.classified;
       if (r.capped || r.remaining === 0) {
+        if (total > 0) await step.run("text-alerts", () => alertsForMailbox(event.data.mailboxId));
         await step.sendEvent(
           "draft",
           mailboxDraftRequested.create({ mailboxId: event.data.mailboxId }),
@@ -313,7 +324,11 @@ export const workspaceLifecycle = inngest.createFunction(
         voice.map((workspaceId) => voiceLearnRequested.create({ workspaceId })),
       );
     }
-    return { started, expired, voiceRestarted: voice.length };
+    // Tell owners when Gmail access is lost (and remind once), so leads aren't silently missed.
+    const alerts = await step.run("access-lost-alerts", () => sendAccessLostAlerts());
+    // Backstop for text alerts held overnight or throttled.
+    await step.run("text-alerts", () => sendLeadAlerts());
+    return { started, expired, voiceRestarted: voice.length, accessAlerts: alerts.sent };
   },
 );
 
@@ -327,8 +342,11 @@ export const renewGmailWatches = inngest.createFunction(
 export const purgeBodies = inngest.createFunction(
   { id: "purge-expired-bodies", triggers: [cron("41 7 * * *")] },
   async ({ step }) => {
+    // Keep each quote's amount before the owner's reply text is purged.
+    await step.run("capture-quote-amounts", () => captureQuoteAmounts());
     const purged = await step.run("purge", () => purgeExpiredBodies());
     await step.run("purge-rate-limits", () => purgeRateLimits());
+    await step.run("purge-expired-notes", () => purgeExpiredNotes());
     return { purged };
   },
 );

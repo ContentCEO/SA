@@ -15,8 +15,9 @@ import {
   uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
+import { TRADES } from "../config/trades";
 
-export const tradeEnum = pgEnum("trade", ["carpentry", "plumbing", "electrical", "other"]);
+export const tradeEnum = pgEnum("trade", TRADES);
 
 export const workspaceStatusEnum = pgEnum("workspace_status", [
   "invited",
@@ -109,6 +110,13 @@ export const mailboxes = pgTable(
     /** Set when the 30-day backfill finishes; incremental sync only runs after this. */
     backfillCompletedAt: timestamp("backfill_completed_at", { withTimezone: true }),
     lastSyncedAt: timestamp("last_synced_at", { withTimezone: true }),
+    /** When Google access was lost (status → reconnect_needed); cleared on reconnect. */
+    accessLostAt: timestamp("access_lost_at", { withTimezone: true }),
+    /** "Reconnect Gmail" emails sent for the current loss (max 2); reset on reconnect. */
+    accessAlertsSent: integer("access_alerts_sent").notNull().default(0),
+    /** Last sync problem as a short code (access_lost / rate_limited / sync_failed) — never text. */
+    lastSyncErrorCode: text("last_sync_error_code"),
+    lastSyncErrorAt: timestamp("last_sync_error_at", { withTimezone: true }),
     createdAt: createdAt(),
   },
   (t) => [
@@ -147,6 +155,14 @@ export const threads = pgTable(
     classifiedAt: timestamp("classified_at", { withTimezone: true }),
     awaitingReplySince: timestamp("awaiting_reply_since", { withTimezone: true }),
     followupCount: integer("followup_count").notNull().default(0),
+    /** Quote tracker: the owner's "Won" / "Lost" (null = still open). */
+    quoteOutcome: text("quote_outcome"),
+    quoteOutcomeAt: timestamp("quote_outcome_at", { withTimezone: true }),
+    /**
+     * What the job was quoted at, in cents: taken from the owner's own reply (largest $ figure,
+     * captured before bodies are purged) or typed by the owner. Kept after the purge.
+     */
+    quoteAmountCents: integer("quote_amount_cents"),
     createdAt: createdAt(),
   },
   (t) => [
@@ -284,6 +300,10 @@ export const businessProfiles = pgTable("business_profile", {
   signature: text("signature"),
   doNotPromise: jsonb("do_not_promise").$type<string[]>().notNull().default([]),
   vipSenders: jsonb("vip_senders").$type<string[]>().notNull().default([]),
+  /** The owner's "Never say this" list (plan #23). Kept apart from the learned voice so a re-learn can't drop it. */
+  neverSay: jsonb("never_say").$type<string[]>().notNull().default([]),
+  /** The owner hid the getting-started checklist (only offered once every step is done). */
+  onboardingDismissedAt: timestamp("onboarding_dismissed_at", { withTimezone: true }),
   /** Emails mentioning more than this go to the owner. */
   amountThresholdDollars: integer("amount_threshold_dollars").notNull().default(2500),
   /** Nudge quiet quotes and invoices after this many days without a reply. */
@@ -294,6 +314,17 @@ export const businessProfiles = pgTable("business_profile", {
   digestHour: integer("digest_hour").notNull().default(7),
   timeZone: text("time_zone").notNull().default("America/New_York"),
   digestLastSentOn: text("digest_last_sent_on"),
+  /** Text alerts to the owner's own phone (E.164, e.g. +15085551234). Off until they opt in. */
+  alertPhone: text("alert_phone"),
+  /** Set once the owner typed back the code we texted; alerts only go to a verified number. */
+  alertPhoneVerifiedAt: timestamp("alert_phone_verified_at", { withTimezone: true }),
+  /** sha256 of the 6-digit code + its expiry; cleared once used. */
+  smsCodeHash: text("sms_code_hash"),
+  smsCodeExpiresAt: timestamp("sms_code_expires_at", { withTimezone: true }),
+  smsAlertsEnabled: boolean("sms_alerts_enabled").notNull().default(false),
+  /** Newest classification already covered by a text, and when the last text went out. */
+  smsAlertCursor: timestamp("sms_alert_cursor", { withTimezone: true }),
+  smsLastSentAt: timestamp("sms_last_sent_at", { withTimezone: true }),
   completedAt: timestamp("completed_at", { withTimezone: true }),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
@@ -355,6 +386,25 @@ export const usage = pgTable(
     capAlertedAt: timestamp("cap_alerted_at", { withTimezone: true }),
   },
   (t) => [uniqueIndex("usage_workspace_period_uq").on(t.workspaceId, t.period)],
+);
+
+/**
+ * Seasonal notes (plan #25): short notes with an end date — "Booked through
+ * November", "On vacation Aug 1–10". In the drafting prompt only while active.
+ */
+export const seasonalNotes = pgTable(
+  "seasonal_notes",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    text: text("text").notNull(),
+    /** Last day the note applies, in the owner's local calendar (YYYY-MM-DD). */
+    endsOn: text("ends_on").notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [index("seasonal_notes_workspace_idx").on(t.workspaceId, t.endsOn)],
 );
 
 /** App-wide settings Davi's admin tools write (e.g. the Stripe webhook secret, encrypted). */

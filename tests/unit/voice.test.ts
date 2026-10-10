@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { beforeEach, describe, expect, it } from "vitest";
 import { setModelTransportForTests } from "@/ai/client";
-import type { ModelVoice } from "@/ai/prompts/voice.v1";
+import type { ModelVoice } from "@/ai/prompts/voice.v2";
 import type { Database } from "@/db";
 import { eq } from "drizzle-orm";
 import { mailboxes, messages, voiceProfiles } from "@/db/schema";

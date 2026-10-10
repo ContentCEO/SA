@@ -1,4 +1,4 @@
-import type { Category } from "@/ai/prompts/classify.v1";
+import type { Category } from "@/ai/prompts/classify.v2";
 
 /** What the owner sees. Plain words, in the order the filter chips appear. */
 export const categoryLabels: Record<Category, string> = {
