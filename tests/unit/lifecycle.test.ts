@@ -23,6 +23,7 @@ import {
   sendDraft,
 } from "@/server/drafts";
 import {
+  ADMIN_MOVES,
   canMakeMove,
   canSend,
   effectiveStatus,
@@ -75,12 +76,24 @@ describe("lifecycle rules (pure)", () => {
 
   it("only setup_paid and active can send — never during or after evaluation", () => {
     for (const status of ALL) {
-      expect(canSend({ status, evaluationEndsAt: null })).toBe(
+      expect(canSend({ status, evaluationEndsAt: null, setupPaidVia: "stripe" })).toBe(
         status === "setup_paid" || status === "active",
       );
     }
-    expect(canSend(evaluating, at(1))).toBe(false);
-    expect(canSend(evaluating, at(5))).toBe(false);
+    expect(canSend({ ...evaluating, setupPaidVia: "stripe" }, at(1))).toBe(false);
+    expect(canSend({ ...evaluating, setupPaidVia: "stripe" }, at(5))).toBe(false);
+  });
+
+  it("a paid status alone never sends: setup must really be paid (Stripe) or Davi's own account", () => {
+    for (const status of ["setup_paid", "active"] as const) {
+      expect(canSend({ status, evaluationEndsAt: null, setupPaidVia: null })).toBe(false);
+      expect(canSend({ status, evaluationEndsAt: null, setupPaidVia: "stripe" })).toBe(true);
+      expect(canSend({ status, evaluationEndsAt: null, setupPaidVia: "house" })).toBe(true);
+      expect(canSend({ status, evaluationEndsAt: null, setupPaidVia: "admin" as never })).toBe(
+        false,
+      );
+    }
+    expect(Object.keys(ADMIN_MOVES)).not.toContain("mark_setup_paid");
   });
 
   it("jobs run while invited, evaluating, setup_paid, active; everything else is read-only", () => {
@@ -90,8 +103,8 @@ describe("lifecycle rules (pure)", () => {
 
   it("admin moves are only allowed from the right statuses", () => {
     const from = (status: Status) => ({ status, evaluationEndsAt: at(3) });
-    expect(canMakeMove("mark_setup_paid", from("evaluating"), T0)).toBe(true);
-    expect(canMakeMove("mark_setup_paid", from("active"), T0)).toBe(false);
+    expect(canMakeMove("house_account", from("evaluating"), T0)).toBe(true);
+    expect(canMakeMove("house_account", from("paused"), T0)).toBe(false);
     expect(canMakeMove("mark_setup_call_done", from("evaluating"), T0)).toBe(false);
     expect(canMakeMove("mark_setup_call_done", from("setup_paid"), T0)).toBe(true);
     expect(canMakeMove("resume", from("active"), T0)).toBe(false);
@@ -195,14 +208,25 @@ describe("lifecycle in the database", () => {
   });
 
   describe("admin moves", () => {
-    it("mark setup paid turns sending on; setup call done makes it active", async () => {
-      expect(await applyAdminMove(workspaceId, "mark_setup_paid", T0)).toBe("setup_paid");
+    it("no admin move can turn sending on for a customer", async () => {
+      process.env.ADMIN_EMAIL = "davi@example.com"; // not this workspace's owner
+      await expect(applyAdminMove(workspaceId, "house_account", T0)).rejects.toBeInstanceOf(
+        MoveNotAllowedError,
+      );
       const w = await workspace();
-      expect(w.setupPaidAt).toEqual(T0);
+      expect(w.setupPaidVia).toBeNull();
+      expect(canSend(w)).toBe(false);
+    });
+
+    it("Davi's own account can be a test account that sends; setup call done makes it active", async () => {
+      process.env.ADMIN_EMAIL = "Owner@Shop.com";
+      expect(await applyAdminMove(workspaceId, "house_account", T0)).toBe("setup_paid");
+      const w = await workspace();
+      expect(w.setupPaidVia).toBe("house");
       expect(canSend(w)).toBe(true);
       expect(await applyAdminMove(workspaceId, "mark_setup_call_done", T0)).toBe("active");
       const [log] = await logged("workspace_status_changed");
-      expect(log!.detail).toMatchObject({ by: "admin", move: "mark_setup_paid" });
+      expect(log!.detail).toMatchObject({ by: "admin", move: "house_account" });
     });
 
     it("refuses moves that don't fit the current status", async () => {
@@ -225,7 +249,10 @@ describe("lifecycle in the database", () => {
     });
 
     it("pause then resume returns to where it was", async () => {
-      await applyAdminMove(workspaceId, "mark_setup_paid", T0);
+      await database
+        .update(workspaces)
+        .set({ status: "setup_paid", setupPaidAt: T0, setupPaidVia: "stripe" })
+        .where(eq(workspaces.id, workspaceId));
       await applyAdminMove(workspaceId, "pause", T0);
       expect((await workspace()).status).toBe("paused");
       expect(await applyAdminMove(workspaceId, "resume", T0)).toBe("setup_paid");

@@ -8,7 +8,11 @@ test("autopilot is locked, with the reason, until Crew/Company and setup is done
   context,
 }) => {
   const owner = await seedOwner({ mailbox: true });
-  await setWorkspace(owner.workspaceId, { status: "setup_paid", plan: "solo" });
+  await setWorkspace(owner.workspaceId, {
+    status: "setup_paid",
+    plan: "solo",
+    setupPaidVia: "stripe",
+  });
   await signInAs(context, owner);
   await page.goto("/settings");
   const section = page.getByRole("region", { name: "Autopilot" });
@@ -25,7 +29,7 @@ test("unlocked: each kind of email shows its progress; earned ones can be turned
   context,
 }) => {
   const owner = await seedOwner({ mailbox: true, backfilled: true });
-  await setWorkspace(owner.workspaceId, { status: "active", plan: "crew" });
+  await setWorkspace(owner.workspaceId, { status: "active", plan: "crew", setupPaidVia: "stripe" });
   for (let i = 0; i < 10; i++) {
     const [t] = await testDb
       .insert(schema.threads)
@@ -78,7 +82,7 @@ test("queue: an autopilot reply says when it sends, and Hold it stops it", async
   context,
 }) => {
   const owner = await seedOwner({ mailbox: true, backfilled: true });
-  await setWorkspace(owner.workspaceId, { status: "active", plan: "crew" });
+  await setWorkspace(owner.workspaceId, { status: "active", plan: "crew", setupPaidVia: "stripe" });
   const { draft } = await seedQueue(owner.mailboxId!);
   await testDb
     .update(schema.drafts)

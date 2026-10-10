@@ -195,7 +195,7 @@ describe("in the database", () => {
     ).id;
     await database
       .update(workspaces)
-      .set({ status: "active", plan: "crew" })
+      .set({ status: "active", plan: "crew", setupPaidVia: "stripe" })
       .where(eq(workspaces.id, workspaceId));
     writer = new FakeWriter();
   });
@@ -218,9 +218,11 @@ describe("in the database", () => {
       await earn("complaint", EARN_THRESHOLD);
       await database.update(workspaces).set({ plan: "solo" });
       await expect(setAutopilot(await ws(), "scheduling", true, NOW)).rejects.toThrow(/Crew/);
-      await database.update(workspaces).set({ plan: "crew", status: "setup_paid" });
+      await database
+        .update(workspaces)
+        .set({ plan: "crew", status: "setup_paid", setupPaidVia: "stripe" });
       await expect(setAutopilot(await ws(), "scheduling", true, NOW)).rejects.toThrow(/setup/);
-      await database.update(workspaces).set({ status: "active" });
+      await database.update(workspaces).set({ status: "active", setupPaidVia: "stripe" });
       await expect(setAutopilot(await ws(), "complaint", true, NOW)).rejects.toBeInstanceOf(
         AutopilotNotAllowedError,
       );

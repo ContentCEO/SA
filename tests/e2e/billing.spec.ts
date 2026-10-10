@@ -47,6 +47,7 @@ test("a paying account sees its plan and the way to manage it", async ({ page, c
     status: "active",
     plan: "crew",
     setupPaidAt: new Date(),
+    setupPaidVia: "stripe",
     setupCallCompletedAt: new Date(),
     stripeCustomerId: "cus_e2e",
     stripeSubscriptionId: "sub_e2e",
@@ -87,4 +88,21 @@ test("admin: Payments section explains what's missing", async ({ page, context }
   await page.goto("/admin");
   const payments = page.getByRole("region", { name: "Payments" });
   await expect(payments).toContainText("STRIPE_SECRET_KEY");
+});
+
+test("marked paid without a real payment: sending stays off and it says how to fix it", async ({
+  page,
+  context,
+}) => {
+  const owner = await seedOwner({ mailbox: true, backfilled: true });
+  await setWorkspace(owner.workspaceId, { status: "active", setupPaidAt: new Date() });
+  await signInAs(context, owner);
+  await page.goto("/queue");
+  const banner = page
+    .getByRole("status")
+    .filter({ hasText: "Sending turns on once setup is paid." });
+  await expect(banner.getByRole("link", { name: "Choose a plan" })).toHaveAttribute(
+    "href",
+    "/billing",
+  );
 });

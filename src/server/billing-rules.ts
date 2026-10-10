@@ -1,6 +1,6 @@
 import { pricing, type PlanId } from "@/config/pricing";
 import type { Workspace } from "@/db/schema";
-import { effectiveStatus } from "./lifecycle";
+import { effectiveStatus, setupReallyPaid } from "./lifecycle";
 
 /**
  * How payments move a workspace through the commercial flow. Pure functions;
@@ -14,7 +14,12 @@ import { effectiveStatus } from "./lifecycle";
  */
 type W = Pick<
   Workspace,
-  "status" | "evaluationEndsAt" | "setupPaidAt" | "setupCallCompletedAt" | "stripeSubscriptionId"
+  | "status"
+  | "evaluationEndsAt"
+  | "setupPaidAt"
+  | "setupPaidVia"
+  | "setupCallCompletedAt"
+  | "stripeSubscriptionId"
 >;
 type Status = Workspace["status"];
 
@@ -41,7 +46,8 @@ function restored(w: W): Status {
 export function checkoutTerms(w: W, now: Date = new Date()) {
   const status = effectiveStatus(w, now);
   const allowed = !w.stripeSubscriptionId && status !== "paused";
-  return { allowed, includeSetupFee: !w.setupPaidAt };
+  // Only a real payment (or Davi's own account) skips the fee — an old hand-marked date doesn't.
+  return { allowed, includeSetupFee: !setupReallyPaid(w) };
 }
 
 export function statusAfterCheckout(w: W, now: Date = new Date()): Status {

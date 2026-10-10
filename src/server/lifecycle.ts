@@ -12,6 +12,7 @@ import type { Workspace } from "@/db/schema";
  */
 type Status = Workspace["status"];
 type Clocked = Pick<Workspace, "status" | "evaluationEndsAt">;
+type Payable = Clocked & Pick<Workspace, "setupPaidVia">;
 
 export const EVALUATION_MS = pricing.evaluationDays * 86_400_000;
 
@@ -29,12 +30,20 @@ export function effectiveStatus(w: Clocked, now: Date = new Date()): Status {
 
 /**
  * Sending is the one irreversible thing we do, so it's gated here and nowhere
- * else. Only a workspace that has paid for setup (or is active) can send.
+ * else. Two things must both be true: the status allows it, AND setup was
+ * really paid — confirmed by Stripe's signed webhook ("stripe"), or it's Davi's
+ * own admin account ("house"). No button, status change or admin move alone
+ * can turn sending on (Davi, 2026-10-10).
  */
 export const SENDING_ALLOWED: readonly Status[] = ["setup_paid", "active"];
+export const PAID_VIA: readonly NonNullable<Workspace["setupPaidVia"]>[] = ["stripe", "house"];
 
-export function canSend(w: Clocked, now: Date = new Date()): boolean {
-  return SENDING_ALLOWED.includes(effectiveStatus(w, now));
+export function setupReallyPaid(w: Pick<Workspace, "setupPaidVia">): boolean {
+  return !!w.setupPaidVia && PAID_VIA.includes(w.setupPaidVia);
+}
+
+export function canSend(w: Payable, now: Date = new Date()): boolean {
+  return SENDING_ALLOWED.includes(effectiveStatus(w, now)) && setupReallyPaid(w);
 }
 
 /**
@@ -68,8 +77,12 @@ export class ReadOnlyError extends Error {
   }
 }
 
-export function sendingBlockedReason(w: Clocked, now: Date = new Date()): string {
-  switch (effectiveStatus(w, now)) {
+export function sendingBlockedReason(w: Payable, now: Date = new Date()): string {
+  const status = effectiveStatus(w, now);
+  if (SENDING_ALLOWED.includes(status) && !setupReallyPaid(w)) {
+    return "Sending turns on once your setup payment goes through. Choose a plan in Settings → Plan & billing.";
+  }
+  switch (status) {
     case "evaluating":
       return "Read the drafts and see if they sound like you.";
     case "evaluation_expired":
@@ -86,8 +99,11 @@ export function sendingBlockedReason(w: Clocked, now: Date = new Date()): string
 }
 
 /** Short label for the spot where the Send button would be. */
-export function sendingOffLabel(w: Clocked, now: Date = new Date()): string {
-  switch (effectiveStatus(w, now)) {
+export function sendingOffLabel(w: Payable, now: Date = new Date()): string {
+  const status = effectiveStatus(w, now);
+  if (SENDING_ALLOWED.includes(status) && !setupReallyPaid(w))
+    return "Waiting on your setup payment";
+  switch (status) {
     case "evaluating":
       return "Sending is off during your three days";
     case "evaluation_expired":
@@ -100,12 +116,14 @@ export function sendingOffLabel(w: Clocked, now: Date = new Date()): string {
 }
 
 /**
- * Admin moves Davi can make by hand until billing (Milestone 10) drives them.
- * Each lists the statuses it may start from; anything else is refused.
+ * Admin moves Davi can make by hand. Each lists the statuses it may start
+ * from; anything else is refused. There is deliberately no "mark setup paid":
+ * only a real Stripe payment does that. `house_account` is only accepted for
+ * the workspace Davi himself owns (checked server-side in applyAdminMove).
  */
 export const ADMIN_MOVES = {
   extend_evaluation: ["invited", "evaluating", "evaluation_expired"],
-  mark_setup_paid: ["invited", "evaluating", "evaluation_expired"],
+  house_account: ["invited", "evaluating", "evaluation_expired", "setup_paid", "active"],
   mark_setup_call_done: ["setup_paid"],
   pause: ["invited", "evaluating", "evaluation_expired", "setup_paid", "active", "past_due"],
   resume: ["paused"],

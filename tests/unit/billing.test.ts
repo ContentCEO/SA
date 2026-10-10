@@ -32,6 +32,7 @@ const w = (status: S, over: Partial<Workspace> = {}) => ({
   status,
   evaluationEndsAt: null,
   setupPaidAt: null,
+  setupPaidVia: null,
   setupCallCompletedAt: null,
   stripeSubscriptionId: null,
   ...over,
@@ -50,10 +51,14 @@ describe("billing rules", () => {
 
   it("charges the setup fee once, and only without a live subscription", () => {
     expect(checkoutTerms(w("evaluating"), NOW)).toEqual({ allowed: true, includeSetupFee: true });
-    expect(checkoutTerms(w("canceled", { setupPaidAt: NOW }), NOW)).toEqual({
-      allowed: true,
-      includeSetupFee: false,
-    });
+    expect(checkoutTerms(w("canceled", { setupPaidAt: NOW, setupPaidVia: "stripe" }), NOW)).toEqual(
+      {
+        allowed: true,
+        includeSetupFee: false,
+      },
+    );
+    // Marked paid by hand (before 2026-10-10), never paid through Stripe: the fee is still owed.
+    expect(checkoutTerms(w("setup_paid", { setupPaidAt: NOW }), NOW).includeSetupFee).toBe(true);
     expect(checkoutTerms(w("active", { stripeSubscriptionId: "sub_1" }), NOW).allowed).toBe(false);
     expect(checkoutTerms(w("paused"), NOW).allowed).toBe(false);
   });
@@ -64,7 +69,11 @@ describe("billing rules", () => {
     }
     expect(statusAfterCheckout(w("canceled", { setupCallCompletedAt: NOW }), NOW)).toBe("active");
     expect(statusAfterCheckout(w("active"), NOW)).toBe("active");
-    expect(canSend(w(statusAfterCheckout(w("evaluating"), NOW)), NOW)).toBe(true);
+    // The status alone never turns sending on — the webhook also records the Stripe payment.
+    expect(canSend(w(statusAfterCheckout(w("evaluating"), NOW)), NOW)).toBe(false);
+    expect(
+      canSend(w(statusAfterCheckout(w("evaluating"), NOW), { setupPaidVia: "stripe" }), NOW),
+    ).toBe(true);
   });
 
   it("failed payments pause, recovered payments restore, ended plans go read-only", () => {
@@ -189,7 +198,12 @@ describe("checkout", () => {
   it("leaves the setup fee off once it's paid, and reuses the customer", async () => {
     await database
       .update(workspaces)
-      .set({ status: "canceled", setupPaidAt: NOW, stripeCustomerId: "cus_old" })
+      .set({
+        status: "canceled",
+        setupPaidAt: NOW,
+        setupPaidVia: "stripe",
+        stripeCustomerId: "cus_old",
+      })
       .where(eq(workspaces.id, workspace.id));
     await createCheckout(await reload(), "solo");
     const params = calls.find((c) => c.method === "checkout.sessions.create")!
@@ -219,6 +233,7 @@ describe("webhook-driven status", () => {
     expect(after.plan).toBe("crew");
     expect(after.stripeSubscriptionId).toBe("sub_1");
     expect(after.setupPaidAt?.toISOString()).toBe(NOW.toISOString());
+    expect(after.setupPaidVia).toBe("stripe");
     expect(canSend(after)).toBe(true);
     const logs = await database.select().from(activityLog);
     expect(logs.map((l) => l.action)).toContain("payment_received");

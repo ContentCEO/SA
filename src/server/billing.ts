@@ -276,7 +276,10 @@ export async function applyCheckoutCompleted(session: Stripe.Checkout.Session, n
         typeof session.customer === "string" ? session.customer : w.stripeCustomerId,
       stripeSubscriptionId:
         typeof session.subscription === "string" ? session.subscription : w.stripeSubscriptionId,
-      ...(includesSetup && !w.setupPaidAt ? { setupPaidAt: now } : {}),
+      // The only place a real setup payment is recorded — and what turns sending on.
+      ...(includesSetup
+        ? { setupPaidAt: w.setupPaidAt ?? now, setupPaidVia: "stripe" as const }
+        : {}),
     })
     .where(eq(workspaces.id, w.id));
   await log(w.id, "payment_received", { plan, includesSetup, from: w.status, to });

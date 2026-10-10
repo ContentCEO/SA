@@ -94,18 +94,31 @@ test("admin: sees health with no email content, and can turn sending on", async 
     await expect(page.locator("main")).not.toContainText(secret);
   }
 
-  await card.getByText("Mark setup paid").click();
-  await expect(card).toContainText("Turns sending on");
-  await card.getByRole("button", { name: "Yes, setup is paid" }).click();
-  await expect(page.getByText("Marked setup paid. Sending is on for them.")).toBeVisible();
-  await expect(page.getByRole("article", { name: owner.email })).toContainText("Setup paid");
+  // Only a real Stripe payment turns sending on: no admin button can do it for a customer.
+  await expect(card).toContainText("Not yet");
+  await expect(card.getByText("Mark setup paid")).toHaveCount(0);
+  await expect(card.getByText("Use as my own test account")).toHaveCount(0);
+
+  // Davi's own card (always pinned first) has the test-account switch.
+  await testDb
+    .update(schema.workspaces)
+    .set({ setupPaidVia: null })
+    .where(eq(schema.workspaces.ownerUserId, admin.userId));
+  await page.reload();
+  const mine = page.getByRole("article", { name: admin.email });
+  await mine.getByText("Use as my own test account").click();
+  await mine.getByRole("button", { name: "Yes, this is my account" }).click();
+  await expect(page.getByText("Your account can send now")).toBeVisible();
+  await expect(page.getByRole("article", { name: admin.email })).toContainText(
+    "Your own test account",
+  );
 
   const [w] = await testDb
     .select()
     .from(schema.workspaces)
     .where(eq(schema.workspaces.id, owner.workspaceId));
-  expect(w!.status).toBe("setup_paid");
-  expect(w!.setupPaidAt).not.toBeNull();
+  expect(w!.status).toBe("evaluating");
+  expect(w!.setupPaidVia).toBeNull();
 });
 
 test("admin: invite an owner", async ({ page, context }) => {
