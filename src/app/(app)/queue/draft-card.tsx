@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import { useFormStatus } from "react-dom";
 import { Button } from "@/components/ui/button";
 import { addNeverSayAction } from "../settings/wording-actions";
@@ -32,6 +32,8 @@ export type DraftCardProps = {
   label: ConfidenceLabel;
   /** Plan #1: profile facts and voice traits the drafter used (keys). */
   usedFacts: string[];
+  /** Plan #9: mirror the swipes and the button order for a left thumb. */
+  leftHanded?: boolean;
   /** Quick tweaks / voice edits left (0 hides them). */
   revisionsLeft?: number;
   needsOwnerReason: string | null;
@@ -58,10 +60,22 @@ function Pending({
 }
 
 const SWIPE_REVEAL = 90;
+const DISCARD_UNDO_SECONDS = 5;
+
+/** A short tap of the motor where the phone has one; nothing where it doesn't. */
+const buzz = () => {
+  try {
+    navigator.vibrate?.(12);
+  } catch {
+    // Not available (iPhone Safari, desktops): no buzz.
+  }
+};
 
 /**
- * One draft in the queue. Swipe left (on a phone) to reach Discard — it asks
- * once; swiping never sends. Send reply is always a deliberate tap.
+ * One draft in the queue. On a phone (plan #9), swipe toward the thumb side to
+ * open it for sending — the full text and the Send button, never a send — and
+ * the other way to discard, with a few seconds to undo. Mirrored for a left
+ * thumb. Send reply is always a deliberate tap.
  */
 export function DraftCard(p: DraftCardProps) {
   const [editing, setEditing] = useState(false);
@@ -69,6 +83,22 @@ export function DraftCard(p: DraftCardProps) {
   const [confirmDiscard, setConfirmDiscard] = useState(false);
   const [dx, setDx] = useState(0);
   const start = useRef<{ x: number; y: number } | null>(null);
+  const buzzed = useRef(false);
+  const sendArea = useRef<HTMLDivElement>(null);
+  const discardForm = useRef<HTMLFormElement>(null);
+  const [discardIn, setDiscardIn] = useState<number | null>(null);
+  // Right thumb: right opens for sending. Left thumb: mirrored.
+  const toSend = p.leftHanded ? -1 : 1;
+
+  useEffect(() => {
+    if (discardIn === null) return;
+    if (discardIn === 0) {
+      discardForm.current?.requestSubmit();
+      return;
+    }
+    const t = setTimeout(() => setDiscardIn((s) => (s === null ? null : s - 1)), 1000);
+    return () => clearTimeout(t);
+  }, [discardIn]);
   const editor = useRef<HTMLTextAreaElement>(null);
   // The body as the owner sees it — gaps they fill in change it before sending.
   const [body, setBody] = useState(p.body);
@@ -94,11 +124,27 @@ export function DraftCard(p: DraftCardProps) {
     const x = e.clientX - start.current.x;
     const y = e.clientY - start.current.y;
     if (Math.abs(y) > Math.abs(x)) return; // scrolling, not swiping
-    setDx(Math.min(0, Math.max(-140, x)));
+    const next = Math.min(140, Math.max(-140, x));
+    if (Math.abs(next) >= SWIPE_REVEAL && !buzzed.current) {
+      buzzed.current = true;
+      buzz();
+    }
+    setDx(next);
   };
   const onPointerUp = () => {
-    if (dx <= -SWIPE_REVEAL) setConfirmDiscard(true);
+    if (dx * toSend >= SWIPE_REVEAL) {
+      // Open for sending: the whole draft and the Send button, ready for a deliberate tap.
+      setExpanded(true);
+      setConfirmDiscard(false);
+      requestAnimationFrame(() => {
+        sendArea.current?.scrollIntoView({ block: "center" });
+        sendArea.current?.querySelector<HTMLElement>("button, [role=note]")?.focus();
+      });
+    } else if (dx * toSend <= -SWIPE_REVEAL) {
+      setDiscardIn(DISCARD_UNDO_SECONDS);
+    }
     setDx(0);
+    buzzed.current = false;
     start.current = null;
   };
 
@@ -236,11 +282,30 @@ export function DraftCard(p: DraftCardProps) {
 
           <WhyThis reason={p.reason} usedFacts={p.usedFacts} flags={p.flags} />
 
-          {!p.readOnly && !confirmDiscard && (p.revisionsLeft ?? 0) > 0 ? (
+          {!p.readOnly && !confirmDiscard && discardIn === null && (p.revisionsLeft ?? 0) > 0 ? (
             <TweakChips draftId={p.draftId} />
           ) : null}
 
-          {confirmDiscard ? (
+          {discardIn !== null ? (
+            <form
+              ref={discardForm}
+              action={discardDraftAction}
+              role="status"
+              className="sa-inverted flex flex-col gap-2 rounded-lg p-3"
+            >
+              <input type="hidden" name="draftId" value={p.draftId} />
+              <p className="font-semibold">
+                {discardIn > 0
+                  ? `Discarding in ${discardIn}… It's removed from Gmail too.`
+                  : "Discarding…"}
+              </p>
+              {discardIn > 0 ? (
+                <Button type="button" className="w-full" onClick={() => setDiscardIn(null)}>
+                  Undo
+                </Button>
+              ) : null}
+            </form>
+          ) : confirmDiscard ? (
             <form
               action={discardDraftAction}
               className="sa-inverted flex flex-col gap-2 rounded-lg p-3"
@@ -258,10 +323,11 @@ export function DraftCard(p: DraftCardProps) {
               </Button>
             </form>
           ) : (
-            <div className="grid grid-cols-1 gap-2">
+            <div ref={sendArea} className="grid grid-cols-1 gap-2">
               {p.canSend && gapsLeft > 0 ? (
                 <div
                   role="note"
+                  tabIndex={-1}
                   className="flex min-h-12 items-center justify-center rounded-lg border-2 border-charcoal px-4 font-black"
                 >
                   Fill in {gapsLeft} gap{gapsLeft === 1 ? "" : "s"} to send
@@ -275,6 +341,7 @@ export function DraftCard(p: DraftCardProps) {
               ) : (
                 <div
                   role="note"
+                  tabIndex={-1}
                   className="sa-inverted flex min-h-12 flex-col justify-center rounded-lg px-4 py-2"
                 >
                   <span className="font-black">{p.sendingOffLabel}</span>
@@ -283,7 +350,13 @@ export function DraftCard(p: DraftCardProps) {
               )}
               {p.readOnly ? null : (
                 <div className="grid grid-cols-2 gap-2">
-                  <Button type="button" variant="outline" onClick={() => setEditing(true)}>
+                  {/* The main button sits under the thumb: right by default, left if mirrored. */}
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className={p.leftHanded ? undefined : "order-2"}
+                    onClick={() => setEditing(true)}
+                  >
                     Edit
                   </Button>
                   <Button type="button" variant="outline" onClick={() => setConfirmDiscard(true)}>

@@ -140,7 +140,15 @@ export function describeActivity(
   }
 }
 
-export type ActivityEntry = { id: string; at: Date; text: string; byYou: boolean };
+export type ActivityEntry = {
+  id: string;
+  at: Date;
+  text: string;
+  byYou: boolean;
+  /** Plan #41: a sent reply links to its record. */
+  recordId: string | null;
+};
+const SENT_ACTIONS = new Set(["reply_sent", "reply_sent_from_gmail"]);
 
 export async function listActivity(workspaceId: string, limit = 100): Promise<ActivityEntry[]> {
   const rows = await db()
@@ -175,7 +183,10 @@ export async function listActivity(workspaceId: string, limit = 100): Promise<Ac
       r.detail,
       r.threadId ? (who.get(r.threadId) ?? null) : null,
     );
-    return text ? [{ id: r.id, at: r.createdAt, text, byYou: r.actor === "owner" }] : [];
+    if (!text) return [];
+    const recordId =
+      SENT_ACTIONS.has(r.action) && typeof r.detail.draftId === "string" ? r.detail.draftId : null;
+    return [{ id: r.id, at: r.createdAt, text, byYou: r.actor === "owner", recordId }];
   });
 }
 

@@ -43,6 +43,8 @@ import {
 } from "./profile-actions";
 import { TimeZoneInput } from "@/components/forms/time-zone-input";
 import { GetTheApp } from "@/components/app/get-the-app";
+import { devicePrefs } from "@/lib/device-prefs";
+import { saveHandAction } from "./device-actions";
 
 const done: Record<string, string> = {
   connected: "Gmail connected.",
@@ -61,6 +63,7 @@ const done: Record<string, string> = {
   autopilot_on: "Autopilot is on for that kind of email. You'll get 10 minutes to hold each one.",
   autopilot_off: "Autopilot is off for that kind of email. Those replies wait for your tap again.",
   relearn: "Re-reading your sent mail. This takes a minute or two.",
+  hand: "Saved for this phone.",
 };
 
 const errors: Record<string, string> = {
@@ -110,6 +113,7 @@ export default async function SettingsPage(props: PageProps<"/settings">) {
     ),
   );
   const params = await props.searchParams;
+  const device = await devicePrefs();
   const doneMsg = typeof params.done === "string" ? done[params.done] : undefined;
   const errorMsg = typeof params.error === "string" ? errors[params.error] : undefined;
   const canAddMore = mailboxes.length < mailboxLimit(workspace);
@@ -334,6 +338,41 @@ export default async function SettingsPage(props: PageProps<"/settings">) {
           the same login.
         </p>
         <GetTheApp />
+      </section>
+
+      <section id="this-phone" aria-labelledby="this-phone-heading" className="flex flex-col gap-3">
+        <h2 id="this-phone-heading" className="text-xl font-black">
+          On this phone
+        </h2>
+        <form action={saveHandAction} className="flex flex-col gap-3">
+          <fieldset className="flex flex-col gap-2">
+            <legend className="font-semibold">Which hand do you hold it in?</legend>
+            {(
+              [
+                ["right", "Right hand"],
+                ["left", "Left hand — mirror the swipes and buttons"],
+              ] as const
+            ).map(([value, label]) => (
+              <label key={value} className="flex min-h-tap items-center gap-3">
+                <input
+                  type="radio"
+                  name="hand"
+                  value={value}
+                  defaultChecked={(value === "left") === device.leftHanded}
+                  className="size-5"
+                />
+                {label}
+              </label>
+            ))}
+          </fieldset>
+          <p className="text-sm text-muted-foreground">
+            Right hand: swipe a draft right to open it for sending, left to discard. Left hand: the
+            other way round. A swipe never sends, and a discard gives you a few seconds to undo.
+          </p>
+          <Button type="submit" variant="outline" className="w-full">
+            Save for this phone
+          </Button>
+        </form>
       </section>
 
       <section id="never-say" aria-labelledby="never-say-heading" className="flex flex-col gap-3">

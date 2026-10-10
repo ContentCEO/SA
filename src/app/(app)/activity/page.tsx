@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 import { Headline } from "@/components/brand/headline";
 import { relativeTime } from "@/lib/relative-time";
 import { listActivity, MINUTES_PER_SENT_REPLY, monthSummary } from "@/server/activity";
@@ -65,7 +66,20 @@ export default async function ActivityPage() {
           <ol className="flex flex-col divide-y rounded-xl border bg-card">
             {entries.map((e) => (
               <li key={e.id} className="flex items-baseline justify-between gap-3 px-4 py-3">
-                <span className={e.byYou ? "font-semibold" : undefined}>{e.text}</span>
+                <span className={e.byYou ? "font-semibold" : undefined}>
+                  {e.text}
+                  {e.recordId ? (
+                    <>
+                      {" "}
+                      <Link
+                        href={`/record/${e.recordId}`}
+                        className="inline-flex min-h-tap items-center font-semibold whitespace-nowrap underline underline-offset-4"
+                      >
+                        See record
+                      </Link>
+                    </>
+                  ) : null}
+                </span>
                 <time
                   dateTime={e.at.toISOString()}
                   className="shrink-0 text-sm text-muted-foreground"

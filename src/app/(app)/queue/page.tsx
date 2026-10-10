@@ -17,6 +17,7 @@ import { OnboardingChecklist } from "@/components/app/onboarding-checklist";
 import { checklistFor } from "@/server/onboarding";
 import { DraftCard } from "./draft-card";
 import { UndoSend } from "./undo-send";
+import { devicePrefs } from "@/lib/device-prefs";
 import { RemindMe } from "./remind-me";
 import { SNOOZE_LABELS, snoozeOptions } from "@/server/snooze-rules";
 import { batchCandidates } from "@/server/drafts";
@@ -104,6 +105,7 @@ export default async function QueuePage(props: PageProps<"/queue">) {
   const readOnly = isReadOnly(workspace);
   const empty = queue.needsYou.length === 0 && queue.drafts.length === 0;
   const now = new Date();
+  const device = await devicePrefs();
   const remindOptions = (i: QueueItem) =>
     snoozeOptions(now, timeZone, i.emergency).map((o) => ({
       choice: o.choice,
@@ -130,6 +132,14 @@ export default async function QueuePage(props: PageProps<"/queue">) {
             <span className="sa-headline-heavy text-4xl">squared away.</span>
           </p>
           {sent ? <p className="text-ash">{nextLine(sent)}</p> : null}
+          {sent && !sent.sendingAt ? (
+            <Link
+              href={`/record/${sent.draftId}`}
+              className="inline-flex min-h-tap items-center font-semibold underline underline-offset-4"
+            >
+              See record
+            </Link>
+          ) : null}
           {refused ? (
             <p className="text-ash">
               {refused} {refused === 1 ? "reply wasn't" : "replies weren't"} sent — they changed or
@@ -225,6 +235,7 @@ export default async function QueuePage(props: PageProps<"/queue">) {
               customer={who(i)}
               tag={`${i.backFromSnooze ? "Back from snooze · " : ""}${tag(i)}`}
               threadId={i.threadId}
+              leftHanded={device.leftHanded}
               remindOptions={remindOptions(i)}
               summary={i.summary}
               reason={i.reason ?? ""}

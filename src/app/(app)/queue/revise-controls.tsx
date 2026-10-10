@@ -4,16 +4,8 @@ import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useFormStatus } from "react-dom";
 import type { Tweak } from "@/ai/prompts/revise.v1";
 import { Button } from "@/components/ui/button";
+import { TWEAK_LABELS } from "@/config/tweaks";
 import { reviseDraftAction } from "./actions";
-
-/** Plan #3. `Record<Tweak, …>` makes a tweak without a chip a compile error. */
-const TWEAK_LABELS: Record<Tweak, string> = {
-  shorter: "Shorter",
-  warmer: "Warmer",
-  formal: "More formal",
-  photos: "Ask for photos",
-  availability: "Add my availability",
-};
 
 function Chip({ tweak, label }: { tweak: Tweak; label: string }) {
   const { pending } = useFormStatus();

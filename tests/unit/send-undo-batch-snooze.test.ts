@@ -18,6 +18,8 @@ import {
 } from "@/server/drafts";
 import { SendingBlockedError } from "@/server/lifecycle";
 import { saveConnectedMailbox } from "@/server/mailboxes";
+import { sendRecord } from "@/server/send-record";
+import { buildSendRecord } from "@/server/send-record-rules";
 import { snoozeThread } from "@/server/snooze";
 import { atLocalHour, snoozeOptions, snoozeUntil } from "@/server/snooze-rules";
 import { createTestDb } from "../support/db";
@@ -358,6 +360,60 @@ describe("plan M5 sending: undo (#7), batch (#5), snooze (#6)", () => {
       expect(await snoozeThread(workspaceId, thread.id, "tonight", NOW)).toMatchObject({
         status: "snoozed",
       });
+    });
+  });
+
+  describe("#41 proof-of-okay record", () => {
+    it("says you okayed it, from which device, what changed, the undo window and the Gmail id", async () => {
+      const { draft } = await seed();
+      await database.insert(activityLog).values({
+        workspaceId,
+        actor: "owner",
+        action: "draft_revised",
+        threadId: draft.threadId,
+        detail: { draftId: draft.id, via: "shorter" },
+      });
+      await queueSend(workspaceId, draft.id, {
+        ...deps(),
+        device: "phone",
+        editedBody: "Hi Dana — address?",
+      });
+      await deliverQueuedSend(draft.id, deps(later(21)));
+      const r = await sendRecord(workspaceId, draft.id);
+      expect(r).toMatchObject({
+        approvedBy: "you",
+        device: "phone",
+        edited: true,
+        changes: ["Shorter"],
+        undoWindowSec: UNDO_WINDOW_SECONDS,
+        holdWindowMin: null,
+      });
+      expect(r!.gmailMessageId).toMatch(/^sent-/);
+      // Another workspace can't read it; an unsent draft has no record.
+      const other = await ensureUserAndWorkspace({ email: "other@shop.com" });
+      expect(await sendRecord(other.workspace.id, draft.id)).toBeNull();
+      const unsent = await seed();
+      expect(await sendRecord(workspaceId, unsent.draft.id)).toBeNull();
+    });
+
+    it("an autopilot send is never shown as yours", () => {
+      const at = NOW;
+      const r = buildSendRecord(
+        { status: "sent", createdAt: at, decidedAt: at, sentGmailMessageId: "g1" },
+        [
+          { action: "autopilot_scheduled", actor: "squared_away", detail: {}, at },
+          {
+            action: "reply_sent",
+            actor: "squared_away",
+            detail: { autopilot: true, draftId: "d" },
+            at,
+          },
+        ],
+        10,
+      );
+      expect(r.approvedBy).toBe("autopilot");
+      expect(r.holdWindowMin).toBe(10);
+      expect(r.device).toBeNull();
     });
   });
 });

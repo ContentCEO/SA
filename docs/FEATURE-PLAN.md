@@ -124,11 +124,11 @@ _Re-checked 2026-10-10: brief scope complete with tests; nothing else filed here
 - [x] **#6 Snooze.** _(Done 2026-10-10.)_ "Remind me" → Tonight (6pm local) / Tomorrow morning / After this job (3h).
       Snoozed items leave the queue and come back on top. Emergencies (priority high +
       `needs_owner`) can't be snoozed past tonight.
-- [ ] **#9 Swipe + haptics + left-handed.** Swipe right = open to send (never sends straight from a
+- [x] **#9 Swipe + haptics + left-handed.** _(Done 2026-10-10.)_ Swipe right = open to send (never sends straight from a
       swipe), swipe left = discard with undo toast. `navigator.vibrate` where available. Setting "I
       hold my phone in my left hand" mirrors swipe directions and moves primary buttons.
       Reduced-motion respected. Playwright mobile tests for both hands.
-- [ ] **#41 Proof-of-okay receipt.** Every sent item has "See record": who approved it, when, from
+- [x] **#41 Proof-of-okay receipt.** _(Done 2026-10-10.)_ Every sent item has "See record": who approved it, when, from
       which device type, edited or not, tweaks used, undo window, Gmail message ID. Read from
       `activity_log`. This is the answer to "did the AI send that on its own?".
 - [ ] **#21 Learn from edits.** When a draft is sent edited, store a content-free diff summary
