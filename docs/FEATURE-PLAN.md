@@ -69,15 +69,15 @@ server-side and tested).
 
 ## Milestone 4 — Profiles
 
-- [ ] **#39 Onboarding checklist.** A plain checklist on the queue until done: "Connect Gmail" →
+- [x] **#39 Onboarding checklist.** _(Done 2026-10-10.)_ A plain checklist on the queue until done: "Connect Gmail" →
       "Tell us what you do" → "Check your first 3 drafts". Each step ticks itself from real data.
       Dismissable after all three. Tests: checklist state from DB.
-- [ ] **#23 "Never say this" list.** Extends `voice_profile.phrases_avoided` and
+- [x] **#23 "Never say this" list.** _(Done 2026-10-10.)_ Extends `voice_profile.phrases_avoided` and
       `business_profile.do_not_promise`. Owner adds phrases in Settings, or (after M5) by
       long-pressing selected text in the draft editor → "Never say this". Drafts are checked in code
       after generation (see #43); a match regenerates once, then flags. Tests: a banned phrase never
       reaches the queue unflagged.
-- [ ] **#25 Seasonal notes.** Short notes with an end date ("Booked through November", "On vacation
+- [x] **#25 Seasonal notes.** _(Done 2026-10-10.)_ Short notes with an end date ("Booked through November", "On vacation
       Aug 1–10, back Aug 11"). Added to the cached business profile while active, removed
       automatically after the end date. Max 5 active. Drafts may mention them but still never invent
       dates beyond what the note says. Tests: expired notes never reach the prompt.

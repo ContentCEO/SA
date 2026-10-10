@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { checkDraft } from "@/ai/draft-checks";
-import { DRAFT_INSTRUCTIONS, workspaceBlock, type WorkspaceContext } from "@/ai/prompts/draft.v3";
+import { DRAFT_INSTRUCTIONS, workspaceBlock, type WorkspaceContext } from "@/ai/prompts/draft.v4";
 
 const base: WorkspaceContext = {
   businessName: "Leak Busters",
@@ -14,6 +14,8 @@ const base: WorkspaceContext = {
   policies: null,
   signature: null,
   doNotPromise: [],
+  neverSay: [],
+  seasonalNotes: [],
   voice: null,
 };
 

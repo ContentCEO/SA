@@ -1,9 +1,10 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useRef, useState, useTransition } from "react";
 import { useFormStatus } from "react-dom";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { addNeverSayAction } from "../settings/wording-actions";
 import {
   discardDraftAction,
   holdAutopilotAction,
@@ -56,6 +57,18 @@ export function DraftCard(p: DraftCardProps) {
   const [confirmDiscard, setConfirmDiscard] = useState(false);
   const [dx, setDx] = useState(0);
   const start = useRef<{ x: number; y: number } | null>(null);
+  const editor = useRef<HTMLTextAreaElement>(null);
+  const [neverSayNote, setNeverSayNote] = useState<string | null>(null);
+  const [savingPhrase, startSaving] = useTransition();
+  const neverSay = () => {
+    const el = editor.current;
+    const phrase = el ? el.value.slice(el.selectionStart, el.selectionEnd).trim() : "";
+    if (!phrase) {
+      setNeverSayNote("Select the words first — press and hold, then drag.");
+      return;
+    }
+    startSaving(async () => setNeverSayNote((await addNeverSayAction(phrase)).message));
+  };
 
   const onPointerDown = (e: React.PointerEvent) => {
     if (editing || p.readOnly || e.pointerType === "mouse") return;
@@ -126,6 +139,7 @@ export function DraftCard(p: DraftCardProps) {
           <label className="flex flex-col gap-1.5">
             <span className="font-semibold">Your reply</span>
             <textarea
+              ref={editor}
               name="body"
               defaultValue={p.body}
               rows={10}
@@ -149,6 +163,20 @@ export function DraftCard(p: DraftCardProps) {
             variant="outline"
             className="w-full"
           />
+          <Button
+            type="button"
+            variant="outline"
+            className="w-full"
+            disabled={savingPhrase}
+            onClick={neverSay}
+          >
+            {savingPhrase ? "Adding…" : "Never say this"}
+          </Button>
+          {neverSayNote ? (
+            <p role="status" className="text-sm font-semibold">
+              {neverSayNote}
+            </p>
+          ) : null}
           <Button
             type="button"
             variant="ghost"

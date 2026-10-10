@@ -10,7 +10,9 @@ import { canSend, isReadOnly, sendingBlockedReason, sendingOffLabel } from "@/se
 import { listMailboxes } from "@/server/mailboxes";
 import { getBusinessProfile } from "@/server/profile";
 import { requireOwner } from "@/server/session";
-import { draftReplyAction } from "./actions";
+import { dismissChecklistAction, draftReplyAction } from "./actions";
+import { OnboardingChecklist } from "@/components/app/onboarding-checklist";
+import { checklistFor } from "@/server/onboarding";
 import { DraftCard } from "./draft-card";
 
 const done: Record<string, string> = {
@@ -61,7 +63,11 @@ const gmailLink = (i: QueueItem) => gmailThreadLink(i);
 export default async function QueuePage(props: PageProps<"/queue">) {
   const { workspace } = await requireOwner();
   const params = await props.searchParams;
-  const [queue, boxes] = await Promise.all([listQueue(workspace.id), listMailboxes(workspace.id)]);
+  const [queue, boxes, checklist] = await Promise.all([
+    listQueue(workspace.id),
+    listMailboxes(workspace.id),
+    checklistFor(workspace.id),
+  ]);
   const sent =
     typeof params.sent === "string" ? await sentDraftSummary(workspace.id, params.sent) : null;
   const doneMsg = typeof params.done === "string" ? done[params.done] : undefined;
@@ -91,6 +97,8 @@ export default async function QueuePage(props: PageProps<"/queue">) {
 
       {doneMsg ? <Notice>{doneMsg}</Notice> : null}
       {errorMsg ? <Notice strong>{errorMsg}</Notice> : null}
+
+      <OnboardingChecklist list={checklist} dismissAction={dismissChecklistAction} />
 
       {boxes.length === 0 ? (
         <p className="text-lg">

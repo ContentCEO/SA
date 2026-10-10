@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { workspaceBlock, type WorkspaceContext } from "@/ai/prompts/draft.v3";
+import { workspaceBlock, type WorkspaceContext } from "@/ai/prompts/draft.v4";
 import { tradePromptFor, tradePrompts } from "@/ai/prompts/trades";
 import { TRADES, tradeLabel } from "@/config/trades";
 import { tradeEnum } from "@/db/schema";
@@ -33,6 +33,8 @@ describe("trades", () => {
       policies: null,
       signature: null,
       doNotPromise: [],
+      neverSay: [],
+      seasonalNotes: [],
       voice: null,
     } satisfies WorkspaceContext;
     const block = workspaceBlock(ctx);

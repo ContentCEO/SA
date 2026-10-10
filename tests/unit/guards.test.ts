@@ -4,7 +4,7 @@ import { classifyEmail } from "@/ai/classify";
 import { setModelTransportForTests } from "@/ai/client";
 import { INJECTION_REASON, injectionCheck, looksMunicipal } from "@/ai/guards";
 import { emailBlock } from "@/ai/prompts/classify.v2";
-import { conversationBlock } from "@/ai/prompts/draft.v3";
+import { conversationBlock } from "@/ai/prompts/draft.v4";
 import { untrusted } from "@/ai/prompts/untrusted";
 import { ensureUserAndWorkspace } from "@/server/accounts";
 import { guardrailReasons } from "@/server/autopilot";

@@ -1,7 +1,7 @@
 import "server-only";
 import { and, asc, desc, eq, gt, inArray, sql } from "drizzle-orm";
 import { callStructured } from "@/ai/client";
-import { checkDraft } from "@/ai/draft-checks";
+import { checkDraft, REGENERATE_ON } from "@/ai/draft-checks";
 import {
   conversationBlock,
   DRAFT_INSTRUCTIONS,
@@ -9,7 +9,7 @@ import {
   draftSchema,
   workspaceBlock,
   type WorkspaceContext,
-} from "@/ai/prompts/draft.v3";
+} from "@/ai/prompts/draft.v4";
 import { prepareBody } from "@/ai/classify";
 import {
   FOLLOWUP_INSTRUCTIONS,
@@ -17,6 +17,7 @@ import {
   followupTask,
 } from "@/ai/prompts/followup.v2";
 import { AiCapReachedError, bumpUsageCounter } from "@/ai/usage";
+import { activeNotes } from "./seasonal-notes";
 import { db } from "@/db";
 import {
   activityLog,
@@ -134,6 +135,7 @@ async function customerOf(threadId: string) {
 async function workspaceContext(
   workspaceId: string,
   ws: { businessName: string | null; trade: string | null },
+  now: Date = new Date(),
 ) {
   const [profile] = await db()
     .select()
@@ -155,6 +157,11 @@ async function workspaceContext(
     policies: profile?.policies ?? null,
     signature: profile?.signature ?? null,
     doNotPromise: profile?.doNotPromise ?? [],
+    neverSay: profile?.neverSay ?? [],
+    seasonalNotes: (await activeNotes(workspaceId, now)).map(({ text, endsOn }) => ({
+      text,
+      endsOn,
+    })),
     voice:
       voice?.status === "ready"
         ? {
@@ -268,7 +275,7 @@ export async function createDraftForThread(
     .filter((x) => x.text.length > 0);
   if (!withText.some((x) => x.m.id === last.id)) return { status: "skipped", reason: "no_text" };
 
-  const ctx = await workspaceContext(workspace.id, workspace);
+  const ctx = await workspaceContext(workspace.id, workspace, now);
   const wsBlock = workspaceBlock(ctx);
   const convo = conversationBlock({
     subject: thread.subject,
@@ -290,6 +297,24 @@ export async function createDraftForThread(
     })),
   });
 
+  // What the draft may draw facts from, and what it must never say.
+  const checkContext = {
+    sourceText: [
+      withText.map((x) => x.text).join("\n"),
+      ctx.pricingNotes,
+      ctx.hours,
+      ctx.leadTime,
+      ctx.policies,
+      ctx.paymentTerms,
+      ...ctx.seasonalNotes.map((n) => n.text),
+    ]
+      .filter(Boolean)
+      .join("\n"),
+    doNotPromise: ctx.doNotPromise,
+    phrasesAvoided: ctx.voice?.phrasesAvoided ?? [],
+    neverSay: ctx.neverSay,
+  };
+
   let result;
   try {
     const request = {
@@ -307,6 +332,17 @@ export async function createDraftForThread(
       now,
     };
     result = (await callStructured(request)) ?? (await callStructured(request));
+    if (result?.body.trim()) {
+      // Something the owner explicitly banned slipped in: one fresh attempt, then flag (plan #23).
+      const first = checkDraft(result.body.trim(), checkContext);
+      if (first.hits.some((h) => REGENERATE_ON.includes(h))) {
+        const retry = await callStructured({
+          ...request,
+          user: `${convo}\n\nYour last attempt broke the owner's rules: ${first.flags.join(" ")} Write it again without that.`,
+        });
+        if (retry?.body.trim()) result = retry;
+      }
+    }
   } catch (err) {
     if (err instanceof AiCapReachedError) return { status: "skipped", reason: "capped" };
     throw err;
@@ -314,20 +350,7 @@ export async function createDraftForThread(
   if (!result || !result.body.trim()) return { status: "skipped", reason: "model_failed" };
 
   const body = result.body.trim();
-  const checks = checkDraft(body, {
-    sourceText: [
-      withText.map((x) => x.text).join("\n"),
-      ctx.pricingNotes,
-      ctx.hours,
-      ctx.leadTime,
-      ctx.policies,
-      ctx.paymentTerms,
-    ]
-      .filter(Boolean)
-      .join("\n"),
-    doNotPromise: ctx.doNotPromise,
-    phrasesAvoided: ctx.voice?.phrasesAvoided ?? [],
-  });
+  const checks = checkDraft(body, checkContext);
   const flags = [
     ...new Set([...result.flags.map((f) => f.trim()).filter(Boolean), ...checks.flags]),
   ].slice(0, 6);

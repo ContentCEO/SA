@@ -20,6 +20,12 @@ import {
 } from "@/server/profile";
 import { DeleteAccountButton } from "./delete-account-button";
 import { mailboxHealth } from "@/server/mailbox-health";
+import { activeNotes, MAX_ACTIVE_NOTES, NOTE_MAX_CHARS, ownerToday } from "@/server/seasonal-notes";
+import {
+  addSeasonalNoteAction,
+  removeSeasonalNoteAction,
+  saveNeverSayAction,
+} from "./wording-actions";
 import {
   confirmSmsCodeAction,
   removeSmsPhoneAction,
@@ -46,6 +52,9 @@ const done: Record<string, string> = {
   followups: "Follow-up settings saved.",
   digest: "Morning summary saved.",
   sms_code: "Code sent. Type it in below.",
+  never_say: "Never-say list saved.",
+  note_added: "Note added. Drafts will use it until its last day.",
+  note_removed: "Note removed.",
   sms_on: "Text alerts are on.",
   sms_off: "Text alerts are off.",
   sms_removed: "Number removed.",
@@ -55,6 +64,10 @@ const done: Record<string, string> = {
 };
 
 const errors: Record<string, string> = {
+  note_invalid: "Write a short note and pick its last day.",
+  note_past: "That date has already passed.",
+  note_too_far: "Pick a date within the next year.",
+  note_full: "You can have 5 notes at once. Remove one first.",
   sms_phone: "That doesn't look like a US mobile number.",
   sms_busy: "Too many tries. Wait an hour and try again.",
   sms_code: "That code didn't match, or it expired. Send a new one.",
@@ -100,10 +113,12 @@ export default async function SettingsPage(props: PageProps<"/settings">) {
   const doneMsg = typeof params.done === "string" ? done[params.done] : undefined;
   const errorMsg = typeof params.error === "string" ? errors[params.error] : undefined;
   const canAddMore = mailboxes.length < mailboxLimit(workspace);
-  const [profile, voice, autopilot] = await Promise.all([
+  const [profile, voice, autopilot, notes, today] = await Promise.all([
     getBusinessProfile(workspace.id),
     getVoiceProfile(workspace.id),
     autopilotState(workspace),
+    activeNotes(workspace.id, now),
+    ownerToday(workspace.id, now),
   ]);
   const profileFacts = [
     ["Business", workspace.businessName],
@@ -319,6 +334,90 @@ export default async function SettingsPage(props: PageProps<"/settings">) {
           the same login.
         </p>
         <GetTheApp />
+      </section>
+
+      <section id="never-say" aria-labelledby="never-say-heading" className="flex flex-col gap-3">
+        <h2 id="never-say-heading" className="text-xl font-black">
+          Never say this
+        </h2>
+        <p className="text-muted-foreground">
+          Words and phrases your drafts must never use — one per line. If one slips in, the draft is
+          rewritten once, then flagged for you. You can also select words while editing a draft and
+          tap Never say this.
+        </p>
+        <form action={saveNeverSayAction} className="flex flex-col gap-3">
+          <textarea
+            name="neverSay"
+            aria-label="Your never-say list"
+            defaultValue={(profile?.neverSay ?? []).join("\n")}
+            rows={4}
+            placeholder={"No worries\nPer my last email"}
+            className="w-full rounded-lg border border-input bg-paper px-3 py-2.5 text-base"
+          />
+          <Button type="submit" variant="outline" className="w-full">
+            Save never-say list
+          </Button>
+        </form>
+      </section>
+
+      <section
+        id="seasonal-notes"
+        aria-labelledby="seasonal-notes-heading"
+        className="flex flex-col gap-3"
+      >
+        <h2 id="seasonal-notes-heading" className="text-xl font-black">
+          Seasonal notes
+        </h2>
+        <p className="text-muted-foreground">
+          Short notes drafts can mention until their last day — “Booked through November”, “On
+          vacation Aug 1–10, back Aug 11”. Up to {MAX_ACTIVE_NOTES} at a time. They disappear on
+          their own.
+        </p>
+        {notes.length ? (
+          <ul className="flex flex-col gap-2">
+            {notes.map((n) => (
+              <li key={n.id} className="flex items-center gap-3 rounded-lg border bg-card p-3">
+                <div className="flex flex-1 flex-col">
+                  <span className="font-semibold">{n.text}</span>
+                  <span className="text-sm text-muted-foreground">Until {n.endsOn}</span>
+                </div>
+                <form action={removeSeasonalNoteAction}>
+                  <input type="hidden" name="id" value={n.id} />
+                  <Button type="submit" variant="ghost" aria-label={`Remove note: ${n.text}`}>
+                    Remove
+                  </Button>
+                </form>
+              </li>
+            ))}
+          </ul>
+        ) : null}
+        {notes.length < MAX_ACTIVE_NOTES ? (
+          <form action={addSeasonalNoteAction} className="flex flex-col gap-3">
+            <label className="flex flex-col gap-1.5">
+              <span className="font-semibold">Note</span>
+              <input
+                name="text"
+                required
+                maxLength={NOTE_MAX_CHARS}
+                placeholder="Booked through November"
+                className="min-h-tap rounded-lg border border-input bg-paper px-3 text-base"
+              />
+            </label>
+            <label className="flex flex-col gap-1.5">
+              <span className="font-semibold">Last day it applies</span>
+              <input
+                name="endsOn"
+                type="date"
+                required
+                min={today}
+                className="min-h-tap rounded-lg border border-input bg-paper px-3 text-base"
+              />
+            </label>
+            <Button type="submit" variant="outline" className="w-full">
+              Add note
+            </Button>
+          </form>
+        ) : null}
       </section>
 
       <section id="digest" aria-labelledby="digest-heading" className="flex flex-col gap-3">

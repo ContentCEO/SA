@@ -300,6 +300,10 @@ export const businessProfiles = pgTable("business_profile", {
   signature: text("signature"),
   doNotPromise: jsonb("do_not_promise").$type<string[]>().notNull().default([]),
   vipSenders: jsonb("vip_senders").$type<string[]>().notNull().default([]),
+  /** The owner's "Never say this" list (plan #23). Kept apart from the learned voice so a re-learn can't drop it. */
+  neverSay: jsonb("never_say").$type<string[]>().notNull().default([]),
+  /** The owner hid the getting-started checklist (only offered once every step is done). */
+  onboardingDismissedAt: timestamp("onboarding_dismissed_at", { withTimezone: true }),
   /** Emails mentioning more than this go to the owner. */
   amountThresholdDollars: integer("amount_threshold_dollars").notNull().default(2500),
   /** Nudge quiet quotes and invoices after this many days without a reply. */
@@ -382,6 +386,25 @@ export const usage = pgTable(
     capAlertedAt: timestamp("cap_alerted_at", { withTimezone: true }),
   },
   (t) => [uniqueIndex("usage_workspace_period_uq").on(t.workspaceId, t.period)],
+);
+
+/**
+ * Seasonal notes (plan #25): short notes with an end date — "Booked through
+ * November", "On vacation Aug 1–10". In the drafting prompt only while active.
+ */
+export const seasonalNotes = pgTable(
+  "seasonal_notes",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    text: text("text").notNull(),
+    /** Last day the note applies, in the owner's local calendar (YYYY-MM-DD). */
+    endsOn: text("ends_on").notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [index("seasonal_notes_workspace_idx").on(t.workspaceId, t.endsOn)],
 );
 
 /** App-wide settings Davi's admin tools write (e.g. the Stripe webhook secret, encrypted). */

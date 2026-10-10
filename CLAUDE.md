@@ -368,6 +368,17 @@ In a sandbox with preinstalled Chromium: `PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-brows
   GitHub Actions "Prompt evals" is workflow_dispatch only (needs the `ANTHROPIC_API_KEY` repo
   secret). `tests/evals/baseline.json` is empty until the first live run. Unit test runs the whole
   set through a stand-in model. **Extend the set whenever a prompt changes.**
+- **Plan M4 (2026-10-10):** #39 checklist (`src/server/onboarding.ts`, pure `buildChecklist`):
+  Connect Gmail / Tell us what you do (`business_profile.completed_at`) / Check your first 3 drafts
+  (sent, discarded or edited); on the Queue; "Hide this list" only when all done (server re-checks,
+  `onboarding_dismissed_at`); it comes back if a step un-does. #23 `business_profile.never_say`
+  (owner list, apart from the learned voice so a re-learn can't drop it; `src/server/never-say.ts`):
+  Settings textarea + draft editor "Never say this" on the selected text (a button, since a textarea
+  long-press can't host a custom menu). `checkDraft` now returns `hits`; never_say / never_promise
+  hits → **one** regenerate (`REGENERATE_ON`), then flags (cap 0.2). #25 `seasonal_notes` table
+  (text ≤140, `ends_on` local date, ≤5 active, ≤1 year ahead; codes past/too_far/full),
+  `activeNotes(now)` in the owner's time zone; only active notes go into `draft.v4`'s cached block
+  and count as source text for checks; expired rows purged daily. `draft.v4` adds both lists.
 - **Future goal (after the website is complete):** a downloadable app (phone app store). Not started;
   the site is mobile-first so a wrapper or native shell can reuse it later.
 - **Public site (2026-10-05, Davi asked for a sales website):** `/` is the marketing page (signed-in

@@ -18,6 +18,7 @@ import { purgeRateLimits } from "@/server/rate-limit";
 import { sendAccessLostAlerts } from "@/server/alerts";
 import { captureQuoteAmounts } from "@/server/quotes";
 import { sendLeadAlerts } from "@/server/sms-alerts";
+import { purgeExpiredNotes } from "@/server/seasonal-notes";
 import { learnVoice, workspacesDueForVoiceRefresh, workspacesNeedingVoice } from "@/server/voice";
 import { expireEvaluations, startPendingEvaluations } from "@/server/workspace-lifecycle";
 import { considerAutopilot, overdueAutopilotDrafts, runAutopilotSend } from "@/server/autopilot";
@@ -345,6 +346,7 @@ export const purgeBodies = inngest.createFunction(
     await step.run("capture-quote-amounts", () => captureQuoteAmounts());
     const purged = await step.run("purge", () => purgeExpiredBodies());
     await step.run("purge-rate-limits", () => purgeRateLimits());
+    await step.run("purge-expired-notes", () => purgeExpiredNotes());
     return { purged };
   },
 );

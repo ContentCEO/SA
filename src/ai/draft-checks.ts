@@ -39,12 +39,20 @@ export type CheckContext = {
   sourceText: string;
   doNotPromise: string[];
   phrasesAvoided: string[];
+  /** The owner's own "Never say this" list (plan #23). */
+  neverSay?: string[];
 };
 
-export type CheckResult = { flags: string[]; confidenceCap: number };
+/** What kind of problem each flag is, so the caller can decide to regenerate. */
+export type CheckHit = "money" | "when" | "never_promise" | "never_say" | "filler";
+export type CheckResult = { flags: string[]; confidenceCap: number; hits: CheckHit[] };
+
+/** Hits worth one fresh attempt before flagging (the owner explicitly banned these). */
+export const REGENERATE_ON: CheckHit[] = ["never_promise", "never_say"];
 
 export function checkDraft(body: string, ctx: CheckContext): CheckResult {
   const flags: string[] = [];
+  const hits: CheckHit[] = [];
   let cap = 1;
   const lowerBody = body.toLowerCase();
   const source = ctx.sourceText.toLowerCase();
@@ -57,6 +65,7 @@ export function checkDraft(body: string, ctx: CheckContext): CheckResult {
       `Mentions ${invented.map((a) => `$${a.toLocaleString("en-US")}`).join(", ")} — that price isn't in the email or your profile. Check it.`,
     );
     cap = Math.min(cap, 0.3);
+    hits.push("money");
   }
 
   // Days, dates and times the customer didn't bring up are commitments.
@@ -67,6 +76,7 @@ export function checkDraft(body: string, ctx: CheckContext): CheckResult {
   if (newWhen.length) {
     flags.push(`Mentions “${newWhen.join("”, “")}” — make sure you can commit to that.`);
     cap = Math.min(cap, 0.5);
+    hits.push("when");
   }
 
   // Never-promise list: flag when the key words of an item all show up in the draft.
@@ -77,6 +87,17 @@ export function checkDraft(body: string, ctx: CheckContext): CheckResult {
     if (words.length && words.every((w) => lowerWords(body).includes(w))) {
       flags.push(`Looks like it promises “${item}”, which is on your never-promise list.`);
       cap = Math.min(cap, 0.2);
+      hits.push("never_promise");
+    }
+  }
+
+  // The owner's never-say list: any listed phrase, anywhere, any case.
+  for (const phrase of ctx.neverSay ?? []) {
+    const p = phrase.trim().toLowerCase();
+    if (p && lowerBody.includes(p)) {
+      flags.push(`Says “${phrase.trim()}”, which is on your never-say list.`);
+      cap = Math.min(cap, 0.2);
+      hits.push("never_say");
     }
   }
 
@@ -86,7 +107,8 @@ export function checkDraft(body: string, ctx: CheckContext): CheckResult {
   if (avoided.length) {
     flags.push(`Uses “${avoided[0]}”, which doesn't sound like you.`);
     cap = Math.min(cap, 0.6);
+    hits.push("filler");
   }
 
-  return { flags, confidenceCap: cap };
+  return { flags, confidenceCap: cap, hits };
 }

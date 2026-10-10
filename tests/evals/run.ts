@@ -14,7 +14,7 @@ import {
   DRAFT_PROMPT_VERSION,
   draftSchema,
   workspaceBlock,
-} from "@/ai/prompts/draft.v3";
+} from "@/ai/prompts/draft.v4";
 import { usage } from "@/db/schema";
 import { ensureUserAndWorkspace } from "@/server/accounts";
 import { createTestDb } from "../support/db";
@@ -38,6 +38,8 @@ const PROFILE = {
   policies: null,
   signature: "Thanks,\nAlex",
   doNotPromise: ["same-day service"],
+  neverSay: ["no problem at all"],
+  seasonalNotes: [] as { text: string; endsOn: string }[],
 };
 
 export async function runEvals(
@@ -109,13 +111,16 @@ export async function runEvals(
         const check = checkDraft(draft.body, {
           sourceText: [c.body, workspaceBlock(ctx)].join("\n"),
           doNotPromise: PROFILE.doNotPromise,
+          neverSay: PROFILE.neverSay,
           phrasesAvoided: [],
         });
         if (c.draft.noInventedMoney)
           problems.push(...check.flags.filter((f) => f.includes("price")));
         if (c.draft.noInventedDates)
           problems.push(...check.flags.filter((f) => f.includes("commit")));
-        problems.push(...check.flags.filter((f) => f.includes("never-promise")));
+        problems.push(
+          ...check.flags.filter((f) => f.includes("never-promise") || f.includes("never-say")),
+        );
         for (const bad of c.draft.mustNotContain ?? []) {
           if (draft.body.toLowerCase().includes(bad.toLowerCase())) problems.push(`says "${bad}"`);
         }
