@@ -3,6 +3,8 @@ import { Notice } from "@/components/app/notice";
 import { Headline } from "@/components/brand/headline";
 import { Button } from "@/components/ui/button";
 import { categoryTag, isCategory } from "@/config/categories";
+import { findGaps } from "@/ai/gaps";
+import { confidenceLabel } from "@/config/drafting";
 import { gmailThreadLink } from "@/lib/gmail-link";
 import { relativeTime } from "@/lib/relative-time";
 import { listQueue, sentDraftSummary, type QueueItem } from "@/server/drafts";
@@ -22,6 +24,7 @@ const done: Record<string, string> = {
   held: "Held. It won't send until you tap Send reply.",
 };
 const errors: Record<string, string> = {
+  gaps: "Fill in every highlighted gap before sending — nothing was sent.",
   busy: "That's a lot in a short time, so we've paused it for a bit. Try again in a few minutes.",
   blocked: "Sending isn't switched on for your account, so nothing was sent.",
   changed:
@@ -158,7 +161,8 @@ export default async function QueuePage(props: PageProps<"/queue">) {
           </h2>
           {queue.drafts.map((i) => (
             <DraftCard
-              key={i.draftId}
+              // Remount when the text changes (e.g. edited in Gmail) so filled gaps reset to it.
+              key={`${i.draftId}:${i.body}`}
               draftId={i.draftId!}
               customer={who(i)}
               tag={tag(i)}
@@ -166,7 +170,12 @@ export default async function QueuePage(props: PageProps<"/queue">) {
               reason={i.reason ?? ""}
               body={i.body ?? ""}
               flags={i.flags}
-              lowConfidence={(i.confidence ?? 0) < 60}
+              label={confidenceLabel({
+                confidencePct: i.confidence,
+                flags: i.flags.length,
+                gaps: findGaps(i.body ?? "").length,
+              })}
+              usedFacts={i.usedFacts}
               needsOwnerReason={i.needsOwnerReason}
               canSend={sending}
               readOnly={readOnly}

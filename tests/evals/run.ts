@@ -14,7 +14,7 @@ import {
   DRAFT_PROMPT_VERSION,
   draftSchema,
   workspaceBlock,
-} from "@/ai/prompts/draft.v4";
+} from "@/ai/prompts/draft.v5";
 import { usage } from "@/db/schema";
 import { ensureUserAndWorkspace } from "@/server/accounts";
 import { createTestDb } from "../support/db";
@@ -119,7 +119,10 @@ export async function runEvals(
         if (c.draft.noInventedDates)
           problems.push(...check.flags.filter((f) => f.includes("commit")));
         problems.push(
-          ...check.flags.filter((f) => f.includes("never-promise") || f.includes("never-say")),
+          ...check.flags.filter(
+            (f) =>
+              f.includes("never-promise") || f.includes("never-say") || f.includes("stand behind"),
+          ),
         );
         for (const bad of c.draft.mustNotContain ?? []) {
           if (draft.body.toLowerCase().includes(bad.toLowerCase())) problems.push(`says "${bad}"`);

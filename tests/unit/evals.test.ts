@@ -75,6 +75,7 @@ describe("evaluation set (#46)", () => {
             reason: "Asked for the address.",
             flags: [],
             confidence: 0.9,
+            used_facts: [],
           }
         : oracle(EVAL_CASES[i]!);
       return {

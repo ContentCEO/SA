@@ -1,4 +1,5 @@
 import "server-only";
+import { hasUnfilledGap } from "@/ai/gaps";
 import { and, count, desc, eq, gte, inArray, isNotNull, lt, lte, sql } from "drizzle-orm";
 import { pricing } from "@/config/pricing";
 import { db } from "@/db";
@@ -82,6 +83,7 @@ export function guardrailReasons(g: GuardrailInput): string[] {
   if (g.category === "invoice_payment" && g.amountsInEmail.length)
     out.push("Payments with an amount always wait for you.");
   if (/\$\s?\d/.test(g.draftBody)) out.push("Mentions money, so it waits for you.");
+  if (hasUnfilledGap(g.draftBody)) out.push("Has gaps for you to fill in.");
   if (!g.knownCustomer) out.push("You haven't written to this person before.");
   if (g.untrusted) out.push("This email tried to give instructions to the assistant.");
   if (g.municipal) out.push("Building departments always wait for you.");

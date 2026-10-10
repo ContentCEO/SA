@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { beforeEach, describe, expect, it } from "vitest";
 import { setModelTransportForTests } from "@/ai/client";
-import type { ModelDraft } from "@/ai/prompts/draft.v4";
+import type { ModelDraft } from "@/ai/prompts/draft.v5";
 import type { Database } from "@/db";
 import { activityLog, drafts, messages, threads, workspaces } from "@/db/schema";
 import { ensureUserAndWorkspace } from "@/server/accounts";
@@ -27,6 +27,7 @@ const nudge = (over: Partial<ModelDraft> = {}): ModelDraft => ({
   reason: "No reply in 4 days to your panel upgrade quote. Gentle nudge.",
   flags: [],
   confidence: 0.9,
+  used_facts: [],
   ...over,
 });
 
@@ -239,7 +240,7 @@ describe("writing and sending a nudge", () => {
       toAddress: "dana@customer.com",
       status: "pending",
     });
-    expect(d!.promptVersion).toBe("followup.v2");
+    expect(d!.promptVersion).toBe("followup.v3");
     const raw = [...writer.drafts.values()][0]!.raw;
     expect(FakeWriter.headersOf(raw)).toMatch(/In-Reply-To: <g\d+-out@shop.com>/);
     expect(FakeWriter.headersOf(raw)).toMatch(/To: dana@customer.com/);

@@ -33,6 +33,8 @@ export async function sendDraftAction(formData: FormData) {
       redirect(`/queue?sent=${draftId.data}`);
     case "changed_in_gmail":
       redirect("/queue?error=changed");
+    case "gaps_unfilled":
+      redirect("/queue?error=gaps");
     case "deleted_in_gmail":
       redirect("/queue?error=deleted");
     case "reconnect_needed":

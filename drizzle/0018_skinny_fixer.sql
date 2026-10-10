@@ -1,0 +1,1 @@
+ALTER TABLE "drafts" ADD COLUMN "used_facts" jsonb DEFAULT '[]'::jsonb NOT NULL;

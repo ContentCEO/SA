@@ -273,6 +273,8 @@ export const drafts = pgTable(
     /** Things the owner should double-check before sending. */
     flags: jsonb("flags").$type<string[]>().notNull().default([]),
     confidence: integer("confidence_pct").notNull().default(0),
+    /** Which profile facts / voice traits the drafter says it used (keys only — plan #1). */
+    usedFacts: jsonb("used_facts").$type<string[]>().notNull().default([]),
     promptVersion: text("prompt_version"),
     /** Why it left the queue without being sent from here (deleted in Gmail, superseded…). */
     closedNote: text("closed_note"),

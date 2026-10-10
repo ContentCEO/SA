@@ -40,6 +40,12 @@ export async function POST(request: NextRequest, ctx: RouteContext<"/api/drafts/
 
   try {
     const outcome = await sendDraft(workspace.id, id, { editedBody });
+    if (outcome.status === "gaps_unfilled") {
+      return NextResponse.json(
+        { error: "Fill in every highlighted gap before sending." },
+        { status: 422 },
+      );
+    }
     const code = outcome.status === "sent" ? 200 : outcome.status === "not_found" ? 404 : 409;
     return NextResponse.json(outcome, { status: code });
   } catch (err) {

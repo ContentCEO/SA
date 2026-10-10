@@ -127,6 +127,13 @@
       "when": 1791651546846,
       "tag": "0017_solid_trish_tilby",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1791667480692,
+      "tag": "0018_skinny_fixer",
+      "breakpoints": true
     }
   ]
 }

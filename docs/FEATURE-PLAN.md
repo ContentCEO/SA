@@ -86,21 +86,21 @@ _Re-checked 2026-10-10: brief scope complete with tests; nothing else filed here
 
 ## Milestone 5 — Drafts + Queue
 
-- [ ] **#43 Check drafts in code before they're shown.** After the drafter returns, a deterministic
+- [x] **#43 Check drafts in code before they're shown.** _(Done 2026-10-10.)_ After the drafter returns, a deterministic
       check finds any dollar amount, date, time, weekday, "guarantee/warranty/promise" word, or
       do-not-promise / never-say phrase that is not present in the source thread or business
       profile. Any hit → draft flagged with the exact text to check, confidence capped. Hits that
       invent a price or date → regenerate once, then flag. This is the core trust feature: test it
       hard (unit tests per rule + eval fixtures).
-- [ ] **#2 Gaps to fill in.** When the drafter doesn't know a fact, it emits a typed placeholder
+- [x] **#2 Gaps to fill in.** _(Done 2026-10-10.)_ When the drafter doesn't know a fact, it emits a typed placeholder
       (`{{price}}`, `{{date}}`, `{{time}}`, `{{custom:label}}`) instead of vague wording. Queue shows
       each gap as a highlighted inline chip; tapping opens a big input. Send reply is disabled until
       every gap is filled — enforced server-side too (a body containing `{{` is rejected with a
       plain message). Tests: server rejects unfilled gaps.
-- [ ] **#1 "Why this draft" panel.** Tap "Why this?" under a draft: the one-line reason, which
+- [x] **#1 "Why this draft" panel.** _(Done 2026-10-10.)_ Tap "Why this?" under a draft: the one-line reason, which
       business-profile facts it used, which voice traits it used, and which flags fired. The drafter
       returns `used_facts: string[]` (keys, not free text). No hidden reasoning shown, just facts.
-- [ ] **#8 Confidence in words.** Map confidence + flags to three labels, shown by weight not
+- [x] **#8 Confidence in words.** _(Done 2026-10-10.)_ Map confidence + flags to three labels, shown by weight not
       colour: Ready / Check the details / Check everything. Flags always force at least "Check the
       details". Thresholds in `src/config/drafting.ts`.
 - [ ] **#3 Quick-tweak chips.** "Shorter", "Warmer", "More formal", "Ask for photos", "Add my

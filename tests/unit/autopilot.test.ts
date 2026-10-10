@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { beforeEach, describe, expect, it } from "vitest";
 import { setModelTransportForTests } from "@/ai/client";
-import type { ModelDraft } from "@/ai/prompts/draft.v4";
+import type { ModelDraft } from "@/ai/prompts/draft.v5";
 import type { Database } from "@/db";
 import {
   activityLog,
@@ -42,6 +42,7 @@ const cleanDraft = (over: Partial<ModelDraft> = {}): ModelDraft => ({
   reason: "Scheduling. Confirmed the visit.",
   flags: [],
   confidence: 0.95,
+  used_facts: [],
   ...over,
 });
 

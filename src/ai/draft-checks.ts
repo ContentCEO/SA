@@ -3,6 +3,7 @@
  * invent prices, dates or promises; these catch it when it does anyway. They
  * never rewrite the draft — they flag it for the owner and lower confidence.
  */
+import { withoutGaps } from "./gaps";
 
 const FILLER = [
   "i hope this email finds you well",
@@ -24,11 +25,18 @@ const TIMES = /\b\d{1,2}(:\d{2})?\s?(am|pm)\b|\b(noon|midnight)\b/gi;
 const DATES =
   /\b\d{1,2}\/\d{1,2}\b|\b(jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.? \d{1,2}(st|nd|rd|th)?\b/gi;
 
+/** Every dollar figure: "$1,450", "$95.00", "450 dollars", "450 bucks". */
 function money(text: string): number[] {
-  return [...text.matchAll(/\$\s?(\d[\d,]*(?:\.\d{1,2})?)/g)].map((m) =>
-    Number(m[1]!.replace(/,/g, "")),
-  );
+  const out = [
+    ...text.matchAll(/\$\s?(\d[\d,]*(?:\.\d{1,2})?)/g),
+    ...text.matchAll(/\b(\d[\d,]*(?:\.\d{1,2})?)\s*(?:dollars|bucks)\b/gi),
+  ];
+  return out.map((m) => Number(m[1]!.replace(/,/g, "")));
 }
+
+/** Words that make a commitment the owner has to stand behind. */
+const COMMITMENT =
+  /\b(guarantee[sd]?|guaranteeing|warrant(?:y|ies|ied)|promise[sd]?|promising)\b/gi;
 
 function lowerWords(text: string) {
   return text.toLowerCase().replace(/[^a-z0-9$ ]+/g, " ");
@@ -44,13 +52,18 @@ export type CheckContext = {
 };
 
 /** What kind of problem each flag is, so the caller can decide to regenerate. */
-export type CheckHit = "money" | "when" | "never_promise" | "never_say" | "filler";
+export type CheckHit = "money" | "when" | "commitment" | "never_promise" | "never_say" | "filler";
 export type CheckResult = { flags: string[]; confidenceCap: number; hits: CheckHit[] };
 
-/** Hits worth one fresh attempt before flagging (the owner explicitly banned these). */
-export const REGENERATE_ON: CheckHit[] = ["never_promise", "never_say"];
+/**
+ * Hits worth one fresh attempt before flagging (plan #23, #43): an invented price
+ * or date, or something the owner explicitly banned.
+ */
+export const REGENERATE_ON: CheckHit[] = ["money", "when", "never_promise", "never_say"];
 
-export function checkDraft(body: string, ctx: CheckContext): CheckResult {
+export function checkDraft(draftBody: string, ctx: CheckContext): CheckResult {
+  // Placeholders ({{price}}…) are gaps for the owner, not facts — check the words around them.
+  const body = withoutGaps(draftBody);
   const flags: string[] = [];
   const hits: CheckHit[] = [];
   let cap = 1;
@@ -77,6 +90,16 @@ export function checkDraft(body: string, ctx: CheckContext): CheckResult {
     flags.push(`Mentions “${newWhen.join("”, “")}” — make sure you can commit to that.`);
     cap = Math.min(cap, 0.5);
     hits.push("when");
+  }
+
+  // Guarantee / warranty / promise language the customer and profile never used.
+  const commitments = [
+    ...new Set([...body.matchAll(COMMITMENT)].map((m) => m[0].toLowerCase())),
+  ].filter((w) => !source.includes(w));
+  if (commitments.length) {
+    flags.push(`Says “${commitments.join("”, “")}” — make sure you stand behind that.`);
+    cap = Math.min(cap, 0.4);
+    hits.push("commitment");
   }
 
   // Never-promise list: flag when the key words of an item all show up in the draft.

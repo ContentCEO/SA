@@ -2,6 +2,7 @@ import "server-only";
 import { and, asc, desc, eq, gt, inArray, sql } from "drizzle-orm";
 import { callStructured } from "@/ai/client";
 import { checkDraft, REGENERATE_ON } from "@/ai/draft-checks";
+import { hasUnfilledGap } from "@/ai/gaps";
 import {
   conversationBlock,
   DRAFT_INSTRUCTIONS,
@@ -9,13 +10,13 @@ import {
   draftSchema,
   workspaceBlock,
   type WorkspaceContext,
-} from "@/ai/prompts/draft.v4";
+} from "@/ai/prompts/draft.v5";
 import { prepareBody } from "@/ai/classify";
 import {
   FOLLOWUP_INSTRUCTIONS,
   FOLLOWUP_PROMPT_VERSION,
   followupTask,
-} from "@/ai/prompts/followup.v2";
+} from "@/ai/prompts/followup.v3";
 import { AiCapReachedError, bumpUsageCounter } from "@/ai/usage";
 import { activeNotes } from "./seasonal-notes";
 import { db } from "@/db";
@@ -403,6 +404,7 @@ export async function createDraftForThread(
         result.reason.trim().slice(0, 200) || (followup ? "Follow-up nudge." : "Reply drafted."),
       flags,
       confidence,
+      usedFacts: [...new Set(result.used_facts ?? [])],
       promptVersion: followup ? FOLLOWUP_PROMPT_VERSION : DRAFT_PROMPT_VERSION,
       createdAt: now,
     })
@@ -476,6 +478,7 @@ export type SendOutcome =
   | { status: "blocked"; reason: string }
   | { status: "changed_in_gmail" }
   | { status: "deleted_in_gmail" }
+  | { status: "gaps_unfilled" }
   | { status: "not_found" }
   | { status: "reconnect_needed" };
 
@@ -501,6 +504,8 @@ export async function sendDraft(
   const { draft, mailbox, thread, workspace } = row;
   if (!canSend(workspace, now)) throw new SendingBlockedError(effectiveStatus(workspace, now));
   if (mailbox.status !== "active") return { status: "reconnect_needed" };
+  // A reply with a {{gap}} still in it never leaves (plan #2) — checked before any Gmail call.
+  if (hasUnfilledGap(opts.editedBody ?? draft.body ?? "")) return { status: "gaps_unfilled" };
 
   const writer = (opts.writerFor ?? defaultWriter)(mailbox);
   try {
@@ -782,6 +787,8 @@ export type QueueItem = {
   body: string | null;
   flags: string[];
   confidence: number | null;
+  /** Profile facts / voice traits the drafter relied on (keys). */
+  usedFacts: string[];
   gmailThreadId: string;
   mailboxEmail: string;
   lastMessageAt: Date | null;
@@ -854,6 +861,7 @@ export async function listQueue(
       body: null,
       flags: [],
       confidence: null,
+      usedFacts: [],
       gmailThreadId: t.gmailThreadId,
       mailboxEmail: emailOf.get(t.mailboxId) ?? "",
       lastMessageAt: t.lastMessageAt,
@@ -872,6 +880,7 @@ export async function listQueue(
       body: draft.body,
       flags: draft.flags,
       confidence: draft.confidence,
+      usedFacts: draft.usedFacts,
       gmailThreadId: thread.gmailThreadId,
       mailboxEmail: emailOf.get(draft.mailboxId) ?? "",
       lastMessageAt: thread.lastMessageAt,

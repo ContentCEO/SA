@@ -3,8 +3,10 @@
 import { useRef, useState, useTransition } from "react";
 import { useFormStatus } from "react-dom";
 import { Button } from "@/components/ui/button";
-import { cn } from "@/lib/utils";
 import { addNeverSayAction } from "../settings/wording-actions";
+import { findGaps } from "@/ai/gaps";
+import type { ConfidenceLabel } from "@/config/drafting";
+import { BodyWithGaps, ConfidenceTag, WhyThis } from "./draft-parts";
 import {
   discardDraftAction,
   holdAutopilotAction,
@@ -21,7 +23,10 @@ export type DraftCardProps = {
   reason: string;
   body: string;
   flags: string[];
-  lowConfidence: boolean;
+  /** Plan #8: Ready / Check the details / Check everything. */
+  label: ConfidenceLabel;
+  /** Plan #1: profile facts and voice traits the drafter used (keys). */
+  usedFacts: string[];
   needsOwnerReason: string | null;
   canSend: boolean;
   /** Read-only account: show the draft, but no edit, discard or swipe. */
@@ -58,6 +63,9 @@ export function DraftCard(p: DraftCardProps) {
   const [dx, setDx] = useState(0);
   const start = useRef<{ x: number; y: number } | null>(null);
   const editor = useRef<HTMLTextAreaElement>(null);
+  // The body as the owner sees it — gaps they fill in change it before sending.
+  const [body, setBody] = useState(p.body);
+  const gapsLeft = findGaps(body).length;
   const [neverSayNote, setNeverSayNote] = useState<string | null>(null);
   const [savingPhrase, startSaving] = useTransition();
   const neverSay = () => {
@@ -98,7 +106,10 @@ export function DraftCard(p: DraftCardProps) {
       onPointerCancel={onPointerUp}
     >
       <header className="flex flex-col gap-1">
-        <span className="text-lg font-black">{p.customer}</span>
+        <div className="flex items-baseline justify-between gap-2">
+          <span className="text-lg font-black">{p.customer}</span>
+          <ConfidenceTag label={p.label} />
+        </div>
         <span className="text-sm font-semibold">{p.tag}</span>
         {p.summary ? <p className="font-semibold">{p.summary}</p> : null}
         <p className={p.summary ? "text-muted-foreground" : undefined}>{p.reason}</p>
@@ -121,11 +132,13 @@ export function DraftCard(p: DraftCardProps) {
         </form>
       ) : null}
 
-      {p.flags.length || p.lowConfidence ? (
+      {p.flags.length || p.label === "check_everything" ? (
         <div className="rounded-lg border-2 border-charcoal p-3">
           <p className="font-black">Check before sending</p>
           <ul className="mt-1 flex list-disc flex-col gap-1 pl-5">
-            {p.lowConfidence ? <li>Not sure this one is right — read it closely.</li> : null}
+            {p.label === "check_everything" ? (
+              <li>Not sure this one is right — read it closely.</li>
+            ) : null}
             {p.flags.map((f) => (
               <li key={f}>{f}</li>
             ))}
@@ -141,7 +154,7 @@ export function DraftCard(p: DraftCardProps) {
             <textarea
               ref={editor}
               name="body"
-              defaultValue={p.body}
+              defaultValue={body}
               rows={10}
               autoFocus
               className="w-full rounded-lg border border-input bg-paper px-3 py-2.5 text-base"
@@ -189,7 +202,12 @@ export function DraftCard(p: DraftCardProps) {
       ) : (
         <>
           <div className="rounded-lg border bg-paper p-3">
-            <p className={cn("whitespace-pre-line", !expanded && "line-clamp-4")}>{p.body}</p>
+            <BodyWithGaps
+              body={body}
+              onChange={setBody}
+              expanded={expanded}
+              readOnly={p.readOnly}
+            />
             <button
               type="button"
               className="mt-1 inline-flex min-h-tap items-center font-semibold underline underline-offset-4"
@@ -199,6 +217,8 @@ export function DraftCard(p: DraftCardProps) {
               {expanded ? "Show less" : "Show full draft"}
             </button>
           </div>
+
+          <WhyThis reason={p.reason} usedFacts={p.usedFacts} flags={p.flags} />
 
           {confirmDiscard ? (
             <form
@@ -219,9 +239,17 @@ export function DraftCard(p: DraftCardProps) {
             </form>
           ) : (
             <div className="grid grid-cols-1 gap-2">
-              {p.canSend ? (
+              {p.canSend && gapsLeft > 0 ? (
+                <div
+                  role="note"
+                  className="flex min-h-12 items-center justify-center rounded-lg border-2 border-charcoal px-4 font-black"
+                >
+                  Fill in {gapsLeft} gap{gapsLeft === 1 ? "" : "s"} to send
+                </div>
+              ) : p.canSend ? (
                 <form action={sendDraftAction}>
                   <input type="hidden" name="draftId" value={p.draftId} />
+                  {body !== p.body ? <input type="hidden" name="body" value={body} /> : null}
                   <Pending label="Send reply" busy="Sending…" size="lg" className="w-full" />
                 </form>
               ) : (
