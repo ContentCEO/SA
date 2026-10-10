@@ -49,3 +49,11 @@ export async function removePushAction(endpoint: string): Promise<void> {
   const { workspace } = await requireOwner();
   if (typeof endpoint === "string") await removePushSubscription(workspace.id, endpoint);
 }
+
+/** Plan #37: sunlight mode, this device only. The page refreshes with the new look. */
+export async function toggleSunlightAction() {
+  await requireOwner();
+  const jar = await cookies();
+  if (jar.get(CONTRAST_COOKIE)?.value === "high") jar.delete(CONTRAST_COOKIE);
+  else jar.set(CONTRAST_COOKIE, "high", options);
+}

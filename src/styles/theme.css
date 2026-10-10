@@ -64,6 +64,40 @@
   color: var(--foreground);
 }
 
+/*
+ * Sunlight mode (plan #37): a per-device switch in the header. Bigger type,
+ * heavier weights, no grey — pure charcoal on pure off-white — and thicker
+ * borders. Set by data-contrast="high" on the signed-in app's wrapper; :has()
+ * lifts it to the whole page so the background and tab bar follow.
+ */
+:root:has([data-contrast="high"]) {
+  --sa-charcoal: #111111;
+  --sa-offwhite: #fffef9;
+  --sa-paper: #fffef9;
+  --sa-stone: #111111; /* borders: charcoal, not stone */
+  --sa-slate: #111111; /* muted text on light: none */
+  --sa-ash: #fffef9; /* muted text on charcoal: none */
+  --sa-graphite: #000000;
+  --font-weight-normal: 500;
+  --font-weight-medium: 600;
+  --font-weight-semibold: 700;
+  --font-weight-bold: 800;
+  font-size: 112.5%;
+  font-weight: 500;
+}
+:root:has([data-contrast="high"]) .border {
+  border-width: 2px;
+}
+:root:has([data-contrast="high"]) .border-t {
+  border-top-width: 2px;
+}
+:root:has([data-contrast="high"]) .border-b {
+  border-bottom-width: 2px;
+}
+:root:has([data-contrast="high"]) .border-2 {
+  border-width: 3px;
+}
+
 @theme inline {
   --color-charcoal: var(--sa-charcoal);
   --color-offwhite: var(--sa-offwhite);

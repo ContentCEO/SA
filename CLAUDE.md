@@ -387,6 +387,47 @@ In a sandbox with preinstalled Chromium: `PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-brows
   endpoint) and fixed two things they found: a garbled Pub/Sub payload made `/api/gmail/push` throw
   (→ endless Pub/Sub retries; now acknowledged with 204), and `renewWatches` renewed watches for
   read-only accounts (now skipped via `jobsAllowed`).
+- **Plan M5 (2026-10-10, branch `claude/milestone-5-drafts`; brief M5 was already built, no R-items):**
+  - #43/#2/#1/#8: `checkDraft` also flags guarantee/warranty/promise words ("commitment") and
+    "N dollars"; one regenerate on money/when/never_promise/never_say hits. Typed gaps
+    `{{price}}` `{{date}}` `{{time}}` `{{custom:label}}` (`src/ai/gaps.ts`) shown as fill-in chips;
+    the server refuses to send with any `{{`/`}}` left (also autopilot). `draft.v5` returns
+    `used_facts` (keys) for "Why this?". Labels Ready / Check the details / Check everything
+    (`src/config/drafting.ts`); flags or gaps never read Ready.
+  - #3/#4: `reviseDraft` + prompt `revise.v1` (tweak chips, and "Tell it what to change" typed or
+    hold-to-talk via the browser's Web Speech API, hidden where unsupported, with the
+    Google/Apple note). Same checks as a new draft; a **flagged** draft's text never counts as
+    source (a tweak can't launder a flag); spoken words do. Max 5 per draft, 40/h per workspace.
+    Clears any autopilot countdown. Log `draft_revised` {via} only.
+  - #7 undo send: drafts stay `pending` with `send_after` (no new enum value — adding one and
+    using it in the same migration run is unsafe) and are hidden from the queue. `queueSend` runs
+    every check at the tap (403 unchanged), job `send-after-undo` → `deliverQueuedSend` claims
+    atomically (`send_claimed_at`, 2-min lease) and re-runs the whole gate via
+    `sendDraft(..., {queued: true})`; anything that stops it un-queues and logs `send_stopped`.
+    Reconcile skips claimed drafts and a Gmail change un-queues. Backstop in the 15-min job. The
+    API route now answers 202 `{status: "queued"}`. Autopilot still sends directly (its 10-min
+    hold is its window).
+  - #5 `/queue/review` + `batchSend`: rules in `batch-rules.ts` re-checked on fresh rows; each
+    reply goes through `queueSend`. Categories picked per visit (`?cat=`), not stored.
+  - #6 `threads.snoozed_until`; rules in `snooze-rules.ts` (owner's time zone, DST-safe);
+    emergencies (priority high + needs_owner) only until midnight; back on top for 24h.
+  - #9 two-way swipe (thumb side opens for sending, other side discards after a 5s Undo),
+    `navigator.vibrate`. #9/#37/#10 are **per-device cookies** (`src/lib/device-prefs.ts`:
+    `sa_hand`, `sa_contrast`, `sa_offline`) so each phone renders right on first paint.
+  - #41 `/record/[draftId]` from draft row + activity log (`send_approved` carries device,
+    undo window, offline). No loading.tsx there (must 404).
+  - #21 `edit_signals` (counts/yes-no in code, tone via Haiku prompt `edit-tone.v1`), captured
+    daily before the purge; weekly `voice-ideas` proposes ≤3 `voice_suggestions`; only a yes
+    changes the voice profile (source → edited). Evals gained revise + tone cases.
+  - #36 web push without a library or payload: VAPID JWT in Node crypto, empty push, the service
+    worker fetches `/api/push/summary` (counts) with the owner's cookie. Endpoints allow-listed to
+    real push services. Same throttle/quiet hours as texts (shared `freshLeads`). Off until
+    `VAPID_PUBLIC_KEY`/`VAPID_PRIVATE_KEY` are set.
+  - #10 offline okays (opt-in): SW keeps `/queue` + `/_next/static` only while cache
+    `sa-queue-v1` exists; okays stored in localStorage with a sha-256 of the text seen;
+    server refuses `changed_since_seen` / `intent_expired` (>12h). Signed-out screens and
+    sign-out delete the copy.
+  - #37 sunlight: tokens under `:root:has([data-contrast="high"])` in theme.css; header toggle.
 - **Sending requires a real payment (Davi, 2026-10-10):** `canSend` = status in `SENDING_ALLOWED`
   **and** `workspaces.setup_paid_via` ∈ {`stripe`, `house`}. `stripe` is set only by the signed
   webhook's paid checkout that included the setup fee; `house` only by the admin move
@@ -435,6 +476,9 @@ In a sandbox with preinstalled Chromium: `PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-brows
 
 ## Waiting on Davi
 
+- Phone notifications (#36): add `VAPID_PUBLIC_KEY` + `VAPID_PRIVATE_KEY` (free; any VAPID key
+  generator) to Vercel Production, then redeploy. Off until then.
+- `ANTHROPIC_API_KEY` repo secret for the "Prompt evals" action (baseline still empty).
 - Resend: verify the production domain in Resend and switch `EMAIL_FROM` off `onboarding@resend.dev`
   (until then the digest only reaches the Resend account's own address).
 - Optional: Gmail instant notifications (docs/SETUP.md §6a) and Sentry error alerts (§6b).

@@ -146,7 +146,7 @@ _Re-checked 2026-10-10: brief scope complete with tests; nothing else filed here
       (full gate, draft must still be pending and unchanged in Gmail — otherwise tell the owner and
       don't send). Intents older than 12h are dropped with a notice. Tests: stale/changed draft is
       never sent from an old intent.
-- [ ] **#37 Sunlight mode.** Header toggle: bigger type, heavier weights, pure charcoal on pure
+- [x] **#37 Sunlight mode.** _(Done 2026-10-10.)_ Header toggle: bigger type, heavier weights, pure charcoal on pure
       off-white, thicker borders. Tokens in `src/styles/theme.css` under `[data-contrast="high"]`.
       Remembered per device.
 
