@@ -44,10 +44,11 @@ import {
 } from "./profile-actions";
 import { TimeZoneInput } from "@/components/forms/time-zone-input";
 import { GetTheApp } from "@/components/app/get-the-app";
-import { devicePrefs } from "@/lib/device-prefs";
+import { devicePrefs, OFFLINE_COOKIE } from "@/lib/device-prefs";
+import { cookies } from "next/headers";
 import { vapidPublicKey } from "@/lib/web-push";
 import { PushToggle } from "@/components/app/push-toggle";
-import { saveHandAction } from "./device-actions";
+import { saveHandAction, saveOfflineAction } from "./device-actions";
 import { openSuggestions } from "@/server/edit-learning";
 
 const done: Record<string, string> = {
@@ -68,6 +69,7 @@ const done: Record<string, string> = {
   autopilot_off: "Autopilot is off for that kind of email. Those replies wait for your tap again.",
   relearn: "Re-reading your sent mail. This takes a minute or two.",
   hand: "Saved for this phone.",
+  offline: "Saved for this phone.",
   idea_yes: "Done. New drafts will be written that way.",
   idea_no: "Okay — nothing changed.",
 };
@@ -409,6 +411,29 @@ export default async function SettingsPage(props: PageProps<"/settings">) {
             Save for this phone
           </Button>
         </form>
+        <form action={saveOfflineAction} className="flex flex-col gap-2 border-t pt-3">
+          <label className="flex min-h-tap items-start gap-3">
+            <input
+              type="checkbox"
+              name="offline"
+              value="on"
+              defaultChecked={device.offline}
+              className="mt-1 size-5"
+            />
+            <span>
+              <span className="font-semibold">Keep my queue on this phone for no-signal spots</span>
+              <span className="block text-sm text-muted-foreground">
+                Off unless you switch it on. It keeps a copy of your waiting drafts — including what
+                customers wrote — on this phone. A Send reply tapped with no signal goes once
+                you&apos;re back online, only if the draft hasn&apos;t changed, and only within 12
+                hours. Signing out deletes the copy.
+              </span>
+            </span>
+          </label>
+          <Button type="submit" variant="outline" className="w-full">
+            Save
+          </Button>
+        </form>
       </section>
 
       <section id="never-say" aria-labelledby="never-say-heading" className="flex flex-col gap-3">
@@ -677,6 +702,8 @@ export default async function SettingsPage(props: PageProps<"/settings">) {
         <form
           action={async () => {
             "use server";
+            // A phone that kept the queue (plan #10) stops keeping it.
+            (await cookies()).delete(OFFLINE_COOKIE);
             await signOut({ redirectTo: "/" });
           }}
         >

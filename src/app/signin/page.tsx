@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { ForgetOffline } from "@/components/app/forget-offline";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { auth, signIn } from "@/auth";
@@ -19,6 +20,7 @@ export default async function SignInPage(props: PageProps<"/signin">) {
 
   return (
     <div className="mx-auto flex w-full max-w-xl flex-1 flex-col px-4 py-6">
+      <ForgetOffline />
       <header>
         <Link href="/" className="inline-flex min-h-tap items-center">
           <Wordmark />

@@ -2,7 +2,12 @@
 
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
-import { CONTRAST_COOKIE, DEVICE_COOKIE_MAX_AGE, HAND_COOKIE } from "@/lib/device-prefs";
+import {
+  CONTRAST_COOKIE,
+  DEVICE_COOKIE_MAX_AGE,
+  HAND_COOKIE,
+  OFFLINE_COOKIE,
+} from "@/lib/device-prefs";
 import { removePushSubscription, savePushSubscription } from "@/server/push-alerts";
 import { requireOwner } from "@/server/session";
 
@@ -20,6 +25,18 @@ export async function saveHandAction(formData: FormData) {
   const left = formData.get("hand") === "left";
   (await cookies()).set(HAND_COOKIE, left ? "left" : "right", options);
   redirect("/settings?done=hand#this-phone");
+}
+
+/**
+ * Plan #10 (Davi: opt-in only, off by default): keep the queue on this phone
+ * for no-signal moments. Turning it off makes the queue page delete the copy.
+ */
+export async function saveOfflineAction(formData: FormData) {
+  await requireOwner();
+  const jar = await cookies();
+  if (formData.get("offline") === "on") jar.set(OFFLINE_COOKIE, "on", options);
+  else jar.delete(OFFLINE_COOKIE);
+  redirect("/settings?done=offline#this-phone");
 }
 
 /** Plan #36: this phone's push endpoint (refused unless it's a real push service). */

@@ -1,5 +1,7 @@
 import { expect, test, type Locator } from "@playwright/test";
-import { seedOwner, seedQueue, signInAs } from "./support";
+import { eq } from "drizzle-orm";
+import * as schema from "../../src/db/schema";
+import { seedOwner, seedQueue, setWorkspace, signInAs, testDb } from "./support";
 
 /** A finger swipe across the card (touch pointer events; a mouse never swipes). */
 async function swipe(card: Locator, dx: number) {
@@ -60,4 +62,55 @@ test("the hand setting is saved for this phone", async ({ page, context }) => {
   await expect(
     page.getByRole("region", { name: "On this phone" }).getByLabel(/Left hand/),
   ).toBeChecked();
+});
+
+test("offline okay (opt-in): held until back online, then refused if the draft changed", async ({
+  page,
+  context,
+  baseURL,
+}) => {
+  const owner = await seedOwner({ mailbox: true, backfilled: true });
+  await setWorkspace(owner.workspaceId, {
+    status: "active",
+    setupPaidAt: new Date(),
+    setupPaidVia: "stripe",
+  });
+  const { draft } = await seedQueue(owner.mailboxId!);
+  await signInAs(context, owner);
+  await context.addCookies([{ name: "sa_offline", value: "on", url: baseURL! }]);
+
+  await page.goto("/queue");
+  const card = page.getByRole("article", { name: "Draft reply to Priya" });
+  await expect(card.getByRole("button", { name: "Send reply" })).toBeVisible();
+
+  await context.setOffline(true);
+  await card.getByRole("button", { name: "Send reply" }).click();
+  await expect(card.getByText("Will send when you're back online.")).toBeVisible();
+
+  // Meanwhile the draft changes (say, rewritten in Gmail and picked up).
+  await testDb
+    .update(schema.drafts)
+    .set({ body: "A different reply." })
+    .where(eq(schema.drafts.id, draft.id));
+  await context.setOffline(false);
+  await expect(
+    page.getByText("Your reply to Priya wasn't sent — it changed since you okayed it."),
+  ).toBeVisible();
+  const [after] = await testDb.select().from(schema.drafts).where(eq(schema.drafts.id, draft.id));
+  expect(after!.sendAfter).toBeNull();
+  expect(after!.status).toBe("pending");
+});
+
+test("keeping the queue on this phone is off until switched on", async ({ page, context }) => {
+  const owner = await seedOwner({ mailbox: true, backfilled: true });
+  await signInAs(context, owner);
+  await page.goto("/settings");
+  const box = page.getByLabel(/Keep my queue on this phone/);
+  await expect(box).not.toBeChecked();
+  await box.check();
+  await page
+    .getByRole("region", { name: "On this phone" })
+    .getByRole("button", { name: "Save", exact: true })
+    .click();
+  await expect(page.getByLabel(/Keep my queue on this phone/)).toBeChecked();
 });

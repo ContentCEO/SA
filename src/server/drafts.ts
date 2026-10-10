@@ -1,4 +1,5 @@
 import "server-only";
+import { createHash } from "node:crypto";
 import { and, asc, desc, eq, gt, inArray, isNotNull, isNull, lt, lte, or, sql } from "drizzle-orm";
 import { callStructured } from "@/ai/client";
 import { checkDraft, REGENERATE_ON } from "@/ai/draft-checks";
@@ -606,7 +607,16 @@ export async function sendDraft(
 }
 
 export type QueueSendOutcome =
-  { status: "queued"; sendAfter: Date } | Exclude<SendOutcome, { status: "sent" }>;
+  | { status: "queued"; sendAfter: Date }
+  | { status: "changed_since_seen" }
+  | { status: "intent_expired" }
+  | Exclude<SendOutcome, { status: "sent" }>;
+
+/** Plan #10: an okay given with no signal counts for this long, no longer. */
+export const OFFLINE_INTENT_MAX_AGE_MS = 12 * 60 * 60 * 1000;
+
+/** The fingerprint of a draft's text, as the phone saw it (sha-256, hex). */
+export const bodyHash = (body: string) => createHash("sha256").update(body, "utf8").digest("hex");
 
 /**
  * Plan #7: the owner tapped Send reply. Every check a send makes runs now (so
@@ -617,7 +627,16 @@ export type QueueSendOutcome =
 export async function queueSend(
   workspaceId: string,
   draftId: string,
-  opts: DraftDeps & { editedBody?: string; device?: "phone" | "computer" } = {},
+  opts: DraftDeps & {
+    editedBody?: string;
+    device?: "phone" | "computer";
+    /**
+     * Plan #10, an okay given offline: the text the owner saw (its hash) and
+     * when they tapped. If the draft changed since, or it was over 12 hours
+     * ago, nothing is sent and they're told.
+     */
+    offline?: { seenHash: string; okayedAt: Date };
+  } = {},
 ): Promise<QueueSendOutcome> {
   const now = opts.now?.() ?? new Date();
   const row = await loadOwnedDraft(workspaceId, draftId);
@@ -626,6 +645,13 @@ export async function queueSend(
   const { draft, mailbox, thread, workspace } = row;
   if (draft.sendAfter) return { status: "already_sending" };
   if (!canSend(workspace, now)) throw new SendingBlockedError(effectiveStatus(workspace, now));
+  if (opts.offline) {
+    const age = now.getTime() - opts.offline.okayedAt.getTime();
+    if (!(age >= -5 * 60_000 && age <= OFFLINE_INTENT_MAX_AGE_MS))
+      return { status: "intent_expired" };
+    if (opts.offline.seenHash !== bodyHash(draft.body ?? ""))
+      return { status: "changed_since_seen" };
+  }
   if (mailbox.status !== "active") return { status: "reconnect_needed" };
   if (hasUnfilledGap(opts.editedBody ?? draft.body ?? "")) return { status: "gaps_unfilled" };
 
@@ -686,6 +712,7 @@ export async function queueSend(
         device: opts.device ?? "unknown",
         undoWindowSec: UNDO_WINDOW_SECONDS,
         editedByOwner: !sameText(body, draft.originalBody),
+        ...(opts.offline ? { offline: true } : {}),
       },
     });
   return { status: "queued", sendAfter };

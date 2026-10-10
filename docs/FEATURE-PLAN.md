@@ -136,11 +136,11 @@ _Re-checked 2026-10-10: brief scope complete with tests; nothing else filed here
       stored as structured fields, not text). Weekly job proposes voice-profile updates in plain
       words ("You always cut the first sentence. Start shorter?") that the owner accepts or ignores
       in Settings. Nothing changes the voice profile without the owner's yes.
-- [ ] **#36 Install as an app (PWA).** Web manifest (already started), service worker, install
+- [x] **#36 Install as an app (PWA).** _(Done 2026-10-10.)_ Web manifest (already started), service worker, install
       prompt with plain instructions for iPhone ("Share → Add to Home Screen"). Web Push with VAPID
       keys (`VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` in env). Push payloads never contain customer
       names or email text: "1 new quote request needs you."
-- [ ] **#10 Offline approvals.** _(Davi 2026-10-09: opt-in setting only; off by default, since it stores email text on the phone.)_ With no signal, the queue (cached by the service worker) still
+- [x] **#10 Offline approvals.** _(Done 2026-10-10.)_ _(Davi 2026-10-09: opt-in setting only; off by default, since it stores email text on the phone.)_ With no signal, the queue (cached by the service worker) still
       opens. Tapping Send reply offline stores an intent locally and shows "Will send when you're
       back online." On reconnect the intent is posted; the server treats it like a fresh approval
       (full gate, draft must still be pending and unchanged in Gmail — otherwise tell the owner and

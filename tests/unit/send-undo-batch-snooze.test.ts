@@ -8,6 +8,7 @@ import { ensureUserAndWorkspace } from "@/server/accounts";
 import { batchEligible, firstLine, type BatchCandidate } from "@/server/batch-rules";
 import {
   batchSend,
+  bodyHash,
   deliverQueuedSend,
   listQueue,
   overdueQueuedSends,
@@ -414,6 +415,77 @@ describe("plan M5 sending: undo (#7), batch (#5), snooze (#6)", () => {
       expect(r.approvedBy).toBe("autopilot");
       expect(r.holdWindowMin).toBe(10);
       expect(r.device).toBeNull();
+    });
+  });
+
+  describe("#10 offline okays", () => {
+    const okay = (body: string, at: Date = NOW) => ({ seenHash: bodyHash(body), okayedAt: at });
+
+    it("an okay for exactly the text on screen goes through the normal window", async () => {
+      const { draft } = await seed();
+      const r = await queueSend(workspaceId, draft.id, {
+        ...deps(later(3600)),
+        offline: okay(READY_BODY),
+      });
+      expect(r.status).toBe("queued");
+      const [log] = await database
+        .select()
+        .from(activityLog)
+        .where(eq(activityLog.action, "send_approved"));
+      expect(log!.detail).toMatchObject({ offline: true });
+    });
+
+    it("never sends a draft that changed since the okay — here or in Gmail", async () => {
+      const { draft } = await seed();
+      await database
+        .update(drafts)
+        .set({ body: "A rewritten reply." })
+        .where(eq(drafts.id, draft.id));
+      expect(
+        await queueSend(workspaceId, draft.id, { ...deps(), offline: okay(READY_BODY) }),
+      ).toEqual({
+        status: "changed_since_seen",
+      });
+
+      const b = await seed();
+      writer.editInGmail(b.draft.gmailDraftId!, "Changed in Gmail.");
+      expect(
+        await queueSend(workspaceId, b.draft.id, { ...deps(), offline: okay(READY_BODY) }),
+      ).toEqual({
+        status: "changed_in_gmail",
+      });
+      expect(writer.sent).toEqual([]);
+      expect((await row(draft.id)).sendAfter).toBeNull();
+      expect((await row(b.draft.id)).sendAfter).toBeNull();
+    });
+
+    it("an okay older than 12 hours, or for a draft that's gone, sends nothing", async () => {
+      const { draft } = await seed();
+      writer.calls.length = 0;
+      expect(
+        await queueSend(workspaceId, draft.id, {
+          ...deps(later(13 * 3600)),
+          offline: okay(READY_BODY, NOW),
+        }),
+      ).toEqual({ status: "intent_expired" });
+      expect(writer.calls).toEqual([]);
+
+      await database.update(drafts).set({ status: "discarded" }).where(eq(drafts.id, draft.id));
+      expect(
+        await queueSend(workspaceId, draft.id, { ...deps(), offline: okay(READY_BODY) }),
+      ).toEqual({ status: "not_found" });
+    });
+
+    it("the gate still applies: an okay from before the account was blocked can't send", async () => {
+      const { draft } = await seed();
+      await database
+        .update(workspaces)
+        .set({ status: "past_due" })
+        .where(eq(workspaces.id, workspaceId));
+      await expect(
+        queueSend(workspaceId, draft.id, { ...deps(), offline: okay(READY_BODY) }),
+      ).rejects.toThrow(SendingBlockedError);
+      expect(writer.calls).toEqual([]);
     });
   });
 });

@@ -1,5 +1,7 @@
 "use server";
 
+import { cookies } from "next/headers";
+import { OFFLINE_COOKIE } from "@/lib/device-prefs";
 import { redirect } from "next/navigation";
 import { z } from "zod";
 import { signOut } from "@/auth";
@@ -27,5 +29,6 @@ export async function deleteAccountAction() {
     if (err instanceof SubscriptionCancelError) redirect("/settings?error=delete_billing");
     throw err;
   }
+  (await cookies()).delete(OFFLINE_COOKIE);
   await signOut({ redirectTo: "/goodbye" });
 }

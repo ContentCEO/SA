@@ -36,12 +36,21 @@ export async function POST(request: NextRequest, ctx: RouteContext<"/api/drafts/
   const { id } = await ctx.params;
   if (!z.string().uuid().safeParse(id).success)
     return NextResponse.json({ error: "Not found." }, { status: 404 });
-  const payload = (await request.json().catch(() => ({}))) as { body?: unknown };
+  const payload = (await request.json().catch(() => ({}))) as {
+    body?: unknown;
+    seen?: unknown;
+    okayedAt?: unknown;
+  };
   const editedBody =
     typeof payload.body === "string" && payload.body.trim() ? payload.body : undefined;
+  // Plan #10: an okay the phone stored with no signal, posted on reconnect.
+  const offline =
+    typeof payload.seen === "string" && typeof payload.okayedAt === "number"
+      ? { seenHash: payload.seen, okayedAt: new Date(payload.okayedAt) }
+      : undefined;
 
   try {
-    const outcome = await queueSend(workspace.id, id, { editedBody });
+    const outcome = await queueSend(workspace.id, id, { editedBody, offline });
     if (outcome.status === "gaps_unfilled") {
       return NextResponse.json(
         { error: "Fill in every highlighted gap before sending." },

@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { ForgetOffline } from "@/components/app/forget-offline";
 import Link from "next/link";
 import { SiteFooter } from "@/components/app/site-footer";
 import { Headline } from "@/components/brand/headline";
@@ -9,6 +10,7 @@ export const metadata: Metadata = { title: "Account deleted · Squared Away" };
 export default function GoodbyePage() {
   return (
     <div className="mx-auto flex w-full max-w-xl flex-1 flex-col px-4 py-6">
+      <ForgetOffline />
       <header>
         <Link href="/" className="inline-flex min-h-tap items-center">
           <Wordmark />

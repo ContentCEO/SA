@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { ForgetOffline } from "@/components/app/forget-offline";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { auth } from "@/auth";
@@ -115,6 +116,7 @@ export default async function HomePage() {
 
   return (
     <div className="flex flex-1 flex-col">
+      <ForgetOffline />
       <header className="sticky top-0 z-10 border-b border-stone/60 bg-paper/90 px-4 backdrop-blur">
         <div className="mx-auto flex w-full max-w-5xl items-center justify-between py-2">
           <Link

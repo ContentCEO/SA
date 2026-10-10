@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, useTransition } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore, useTransition } from "react";
 import { useFormStatus } from "react-dom";
 import { Button } from "@/components/ui/button";
 import { addNeverSayAction } from "../settings/wording-actions";
@@ -9,6 +9,14 @@ import type { ConfidenceLabel } from "@/config/drafting";
 import { BodyWithGaps, ConfidenceTag, WhyThis } from "./draft-parts";
 import { SayAChange, TweakChips } from "./revise-controls";
 import { RemindMe, type SnoozeOption } from "./remind-me";
+import {
+  addIntent,
+  intentsServerSnapshot,
+  intentsSnapshot,
+  removeIntent,
+  sha256Hex,
+  subscribeIntents,
+} from "@/lib/offline-intents";
 import {
   discardDraftAction,
   holdAutopilotAction,
@@ -32,6 +40,8 @@ export type DraftCardProps = {
   label: ConfidenceLabel;
   /** Plan #1: profile facts and voice traits the drafter used (keys). */
   usedFacts: string[];
+  /** Plan #10: this phone keeps okays given with no signal (opt-in). */
+  offlineEnabled?: boolean;
   /** Plan #9: mirror the swipes and the button order for a left thumb. */
   leftHanded?: boolean;
   /** Quick tweaks / voice edits left (0 hides them). */
@@ -87,6 +97,23 @@ export function DraftCard(p: DraftCardProps) {
   const sendArea = useRef<HTMLDivElement>(null);
   const discardForm = useRef<HTMLFormElement>(null);
   const [discardIn, setDiscardIn] = useState<number | null>(null);
+  // Plan #10: an okay this phone is holding until it's back online.
+  const intents = useSyncExternalStore(subscribeIntents, intentsSnapshot, intentsServerSnapshot);
+  const waitingForSignal = intents.includes(`"draftId":"${p.draftId}"`);
+  const okayOffline = (e: React.FormEvent<HTMLFormElement>) => {
+    if (!p.offlineEnabled || navigator.onLine) return;
+    e.preventDefault();
+    const shown = p.body;
+    void sha256Hex(shown).then((seen) =>
+      addIntent({
+        draftId: p.draftId,
+        seen,
+        body: body !== shown ? body : undefined,
+        at: Date.now(),
+        to: p.customer.split(/[\s,@]+/)[0] || "them",
+      }),
+    );
+  };
   // Right thumb: right opens for sending. Left thumb: mirrored.
   const toSend = p.leftHanded ? -1 : 1;
 
@@ -332,8 +359,23 @@ export function DraftCard(p: DraftCardProps) {
                 >
                   Fill in {gapsLeft} gap{gapsLeft === 1 ? "" : "s"} to send
                 </div>
+              ) : p.canSend && waitingForSignal ? (
+                <div role="note" tabIndex={-1} className="flex flex-col gap-2">
+                  <p className="font-black">Will send when you&apos;re back online.</p>
+                  <p className="text-sm text-muted-foreground">
+                    It&apos;s checked again first — if it changed, it waits for you.
+                  </p>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="w-full"
+                    onClick={() => removeIntent(p.draftId)}
+                  >
+                    Don&apos;t send it
+                  </Button>
+                </div>
               ) : p.canSend ? (
-                <form action={sendDraftAction}>
+                <form action={sendDraftAction} onSubmit={okayOffline}>
                   <input type="hidden" name="draftId" value={p.draftId} />
                   {body !== p.body ? <input type="hidden" name="body" value={body} /> : null}
                   <Pending label="Send reply" busy="Sending…" size="lg" className="w-full" />

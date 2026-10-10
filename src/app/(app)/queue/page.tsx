@@ -17,6 +17,7 @@ import { OnboardingChecklist } from "@/components/app/onboarding-checklist";
 import { checklistFor } from "@/server/onboarding";
 import { DraftCard } from "./draft-card";
 import { UndoSend } from "./undo-send";
+import { OfflineQueue } from "./offline-queue";
 import { devicePrefs } from "@/lib/device-prefs";
 import { RemindMe } from "./remind-me";
 import { SNOOZE_LABELS, snoozeOptions } from "@/server/snooze-rules";
@@ -157,6 +158,8 @@ export default async function QueuePage(props: PageProps<"/queue">) {
       {doneMsg ? <Notice>{doneMsg}</Notice> : null}
       {errorMsg ? <Notice strong>{errorMsg}</Notice> : null}
 
+      <OfflineQueue enabled={device.offline} />
+
       <OnboardingChecklist list={checklist} dismissAction={dismissChecklistAction} />
 
       {boxes.length === 0 ? (
@@ -236,6 +239,7 @@ export default async function QueuePage(props: PageProps<"/queue">) {
               tag={`${i.backFromSnooze ? "Back from snooze · " : ""}${tag(i)}`}
               threadId={i.threadId}
               leftHanded={device.leftHanded}
+              offlineEnabled={device.offline}
               remindOptions={remindOptions(i)}
               summary={i.summary}
               reason={i.reason ?? ""}

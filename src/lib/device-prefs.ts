@@ -8,14 +8,16 @@ import { cookies } from "next/headers";
  */
 export const HAND_COOKIE = "sa_hand";
 export const CONTRAST_COOKIE = "sa_contrast";
+export const OFFLINE_COOKIE = "sa_offline";
 export const DEVICE_COOKIE_MAX_AGE = 60 * 60 * 24 * 400; // the browser maximum
 
-export type DevicePrefs = { leftHanded: boolean; sunlight: boolean };
+export type DevicePrefs = { leftHanded: boolean; sunlight: boolean; offline: boolean };
 
 export async function devicePrefs(): Promise<DevicePrefs> {
   const jar = await cookies();
   return {
     leftHanded: jar.get(HAND_COOKIE)?.value === "left",
     sunlight: jar.get(CONTRAST_COOKIE)?.value === "high",
+    offline: jar.get(OFFLINE_COOKIE)?.value === "on",
   };
 }
