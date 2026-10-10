@@ -50,6 +50,7 @@ describe("job wiring", () => {
         "renew-gmail-watches",
         "purge-expired-bodies",
         "send-after-undo",
+        "voice-ideas",
       ].sort(),
     );
   });

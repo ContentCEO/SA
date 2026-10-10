@@ -36,6 +36,7 @@ import { smsConfigured } from "@/lib/sms";
 import { formatUsPhone } from "@/server/sms-alerts";
 import { DisconnectButton } from "./disconnect-button";
 import {
+  decideVoiceIdeaAction,
   relearnVoiceAction,
   saveDigestSettingsAction,
   setAutopilotAction,
@@ -45,6 +46,7 @@ import { TimeZoneInput } from "@/components/forms/time-zone-input";
 import { GetTheApp } from "@/components/app/get-the-app";
 import { devicePrefs } from "@/lib/device-prefs";
 import { saveHandAction } from "./device-actions";
+import { openSuggestions } from "@/server/edit-learning";
 
 const done: Record<string, string> = {
   connected: "Gmail connected.",
@@ -64,6 +66,8 @@ const done: Record<string, string> = {
   autopilot_off: "Autopilot is off for that kind of email. Those replies wait for your tap again.",
   relearn: "Re-reading your sent mail. This takes a minute or two.",
   hand: "Saved for this phone.",
+  idea_yes: "Done. New drafts will be written that way.",
+  idea_no: "Okay — nothing changed.",
 };
 
 const errors: Record<string, string> = {
@@ -114,6 +118,7 @@ export default async function SettingsPage(props: PageProps<"/settings">) {
   );
   const params = await props.searchParams;
   const device = await devicePrefs();
+  const ideas = await openSuggestions(workspace.id);
   const doneMsg = typeof params.done === "string" ? done[params.done] : undefined;
   const errorMsg = typeof params.error === "string" ? errors[params.error] : undefined;
   const canAddMore = mailboxes.length < mailboxLimit(workspace);
@@ -276,6 +281,34 @@ export default async function SettingsPage(props: PageProps<"/settings">) {
             </p>
           ) : null}
         </div>
+        {ideas.length ? (
+          <div className="flex flex-col gap-2" aria-label="Ideas from your edits" role="group">
+            <p className="font-semibold">Ideas from your edits</p>
+            {ideas.map((idea) => (
+              <form
+                key={idea.id}
+                action={decideVoiceIdeaAction}
+                className="flex flex-col gap-2 rounded-xl border-2 border-charcoal p-3"
+              >
+                <input type="hidden" name="ideaId" value={idea.id} />
+                <p>{idea.text}</p>
+                <div className="grid grid-cols-2 gap-2">
+                  <Button type="submit" name="answer" value="yes">
+                    {idea.kind === "signoff" || idea.kind === "greeting"
+                      ? "Yes, I'll type it"
+                      : "Yes, do that"}
+                  </Button>
+                  <Button type="submit" name="answer" value="no" variant="outline">
+                    No thanks
+                  </Button>
+                </div>
+              </form>
+            ))}
+            <p className="text-sm text-muted-foreground">
+              From how you&apos;ve edited drafts this month. Nothing changes unless you say yes.
+            </p>
+          </div>
+        ) : null}
         <Link
           href="/settings/voice"
           className={cn(buttonVariants({ variant: "outline" }), "w-full")}

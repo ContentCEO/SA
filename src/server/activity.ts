@@ -79,6 +79,10 @@ export function describeActivity(
       return "Lost access to Gmail — reconnect to carry on";
     case "voice_learned":
       return "Learned how you write from your sent mail";
+    case "voice_idea_accepted":
+      return "You took an idea from your edits for how drafts are written";
+    case "voice_idea_ignored":
+      return "You passed on an idea from your edits";
     case "voice_profile_edited":
       return "You edited how you write";
     case "business_profile_saved":

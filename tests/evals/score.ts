@@ -32,6 +32,10 @@ export type Scores = {
   invoiceStatusAccuracy: number;
   draftPassRate: number;
   priorityAccuracy: number;
+  /** Quick tweaks / spoken changes that kept to the rules (revise prompt). 1 when not run. */
+  revisePassRate: number;
+  /** Tone of an owner's edit named correctly (edit-tone prompt). 1 when not run. */
+  toneAccuracy: number;
 };
 
 const ratio = (hit: number, of: number) => (of === 0 ? 1 : Math.round((hit / of) * 1000) / 1000);
@@ -76,6 +80,8 @@ export function score(cases: EvalCase[], results: EvalResult[]): Scores {
       drafted.length,
     ),
     priorityAccuracy: among(prio, (c, r) => r.priority === c.expect.priority),
+    revisePassRate: 1,
+    toneAccuracy: 1,
   };
 }
 

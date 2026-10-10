@@ -4,6 +4,7 @@ import { setModelTransportForTests, type Transport } from "@/ai/client";
 import { CATEGORIES, type ModelClassification } from "@/ai/prompts/classify.v2";
 import { TRADES } from "@/config/trades";
 import { EVAL_CASES, type EvalCase } from "../evals/cases";
+import { REVISE_CASES, TONE_CASES } from "../evals/edits";
 import { runEvals } from "../evals/run";
 import { regressions, score, type Baseline, type Scores } from "../evals/score";
 import { classification } from "../support/fake-model";
@@ -18,6 +19,11 @@ describe("evaluation set (#46)", () => {
     for (const t of TRADES) expect(trades).toContain(t);
     expect(EVAL_CASES.filter((c) => c.expect.injection).length).toBeGreaterThanOrEqual(5);
     expect(EVAL_CASES.filter((c) => c.expect.municipal).length).toBeGreaterThanOrEqual(3);
+  });
+
+  it("covers the draft-editing prompts too", () => {
+    expect(REVISE_CASES.length).toBeGreaterThanOrEqual(8);
+    expect(TONE_CASES.length).toBeGreaterThanOrEqual(5);
   });
 
   it("uses only invented addresses", () => {
@@ -66,18 +72,31 @@ describe("evaluation set (#46)", () => {
       };
     };
     let i = -1;
+    let tone = -1;
     const transport: Transport = async (req) => {
-      const isDraft = req.system[0]!.text.startsWith("You write email replies");
-      if (!isDraft) i++;
-      const parsed = isDraft
-        ? {
-            body: "Hi,\n\nHappy to help — what's the address?\n\nThanks,\nAlex",
-            reason: "Asked for the address.",
-            flags: [],
-            confidence: 0.9,
-            used_facts: [],
-          }
-        : oracle(EVAL_CASES[i]!);
+      const sys = req.system[0]!.text;
+      const isDraft = sys.startsWith("You write email replies");
+      const isRevise = sys.startsWith("You revise a reply");
+      const isTone = sys.startsWith("You compare two versions");
+      if (!isDraft && !isRevise && !isTone) i++;
+      const revised = req.user.includes("{{price}}")
+        ? "Hi Sam,\n\nIt's {{price}} and I can come {{date}}.\n\nAlex"
+        : req.user.includes("out loud")
+          ? "Hi Jordan,\n\nThursday morning works, and it's 180 for the visit. What's the address?\n\nAlex"
+          : "Hi Jordan,\n\nWhat's the address? A photo or two helps.\n\nAlex";
+      const parsed = isTone
+        ? { tone_shift: TONE_CASES[++tone]!.expect[0] }
+        : isRevise
+          ? { body: revised, reason: "Changed.", flags: [], confidence: 0.9, used_facts: [] }
+          : isDraft
+            ? {
+                body: "Hi,\n\nHappy to help — what's the address?\n\nThanks,\nAlex",
+                reason: "Asked for the address.",
+                flags: [],
+                confidence: 0.9,
+                used_facts: [],
+              }
+            : oracle(EVAL_CASES[i]!);
       return {
         parsed,
         usage: { inputTokens: 100, outputTokens: 20, cacheReadTokens: 0, cacheWriteTokens: 0 },
@@ -98,6 +117,8 @@ describe("evaluation set (#46)", () => {
       permitAccuracy: 1,
       invoiceStatusAccuracy: 1,
       draftPassRate: 1,
+      revisePassRate: 1,
+      toneAccuracy: 1,
     });
     expect(run.tokens.input).toBeGreaterThan(0);
   }, 120_000);

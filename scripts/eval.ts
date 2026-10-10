@@ -32,6 +32,8 @@ async function main() {
   );
   const misses = run.results.filter((r) => r.draftProblems?.length);
   for (const m of misses) console.log(`draft ${m.id}: ${m.draftProblems!.join("; ")}`);
+  for (const [id, problems] of Object.entries(run.reviseProblems))
+    console.log(`revise ${id}: ${problems.join("; ")}`);
 
   if (args.has("--update-baseline")) {
     const next: Baseline = {

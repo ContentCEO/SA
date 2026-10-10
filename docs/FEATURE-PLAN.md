@@ -131,7 +131,7 @@ _Re-checked 2026-10-10: brief scope complete with tests; nothing else filed here
 - [x] **#41 Proof-of-okay receipt.** _(Done 2026-10-10.)_ Every sent item has "See record": who approved it, when, from
       which device type, edited or not, tweaks used, undo window, Gmail message ID. Read from
       `activity_log`. This is the answer to "did the AI send that on its own?".
-- [ ] **#21 Learn from edits.** When a draft is sent edited, store a content-free diff summary
+- [x] **#21 Learn from edits.** _(Done 2026-10-10.)_ When a draft is sent edited, store a content-free diff summary
       (length change, opening/sign-off changed, sentences removed, tone shift — computed by Haiku,
       stored as structured fields, not text). Weekly job proposes voice-profile updates in plain
       words ("You always cut the first sentence. Start shorter?") that the owner accepts or ignores

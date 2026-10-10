@@ -8,6 +8,8 @@ import { classifyEmail } from "@/ai/classify";
 import { callStructured } from "@/ai/client";
 import { checkDraft } from "@/ai/draft-checks";
 import { CLASSIFY_PROMPT_VERSION } from "@/ai/prompts/classify.v2";
+import { EDIT_TONE_PROMPT_VERSION } from "@/ai/prompts/edit-tone.v1";
+import { REVISE_PROMPT_VERSION } from "@/ai/prompts/revise.v1";
 import {
   conversationBlock,
   DRAFT_INSTRUCTIONS,
@@ -19,11 +21,14 @@ import { usage } from "@/db/schema";
 import { ensureUserAndWorkspace } from "@/server/accounts";
 import { createTestDb } from "../support/db";
 import type { EvalCase } from "./cases";
+import { runEditEvals } from "./edits";
 import { score, type EvalResult } from "./score";
 
 export const PROMPT_VERSIONS = {
   classify: CLASSIFY_PROMPT_VERSION,
   draft: DRAFT_PROMPT_VERSION,
+  revise: REVISE_PROMPT_VERSION,
+  editTone: EDIT_TONE_PROMPT_VERSION,
 };
 
 /** A neutral, invented business so drafts have something to work from — and no prices. */
@@ -134,6 +139,15 @@ export async function runEvals(
     opts.onProgress?.(++done, cases.length);
   }
 
+  const scores = score(cases, results);
+  let reviseProblems: Record<string, string[]> = {};
+  if (opts.drafts !== false) {
+    const edits = await runEditEvals(workspace.id);
+    scores.revisePassRate = edits.revisePassRate;
+    scores.toneAccuracy = edits.toneAccuracy;
+    reviseProblems = edits.reviseProblems;
+  }
+
   const [cost] = await database
     .select({ centiCents: sum(usage.estimatedCostCentiCents).mapWith(Number) })
     .from(usage);
@@ -145,7 +159,8 @@ export async function runEvals(
     .from(usage);
   return {
     results,
-    scores: score(cases, results),
+    scores,
+    reviseProblems,
     costDollars: (cost?.centiCents ?? 0) / 10_000,
     tokens: { input: tokens?.in ?? 0, output: tokens?.out ?? 0 },
   };

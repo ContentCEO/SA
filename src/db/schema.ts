@@ -427,6 +427,53 @@ export const seasonalNotes = pgTable(
   (t) => [index("seasonal_notes_workspace_idx").on(t.workspaceId, t.endsOn)],
 );
 
+/**
+ * Plan #21: what one edited send changed — counts and yes/no only, never the
+ * words. One row per draft. Kept after the draft text is purged.
+ */
+export const editSignals = pgTable(
+  "edit_signals",
+  {
+    draftId: uuid("draft_id")
+      .primaryKey()
+      .references(() => drafts.id, { onDelete: "cascade" }),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    wordsBefore: integer("words_before").notNull(),
+    wordsAfter: integer("words_after").notNull(),
+    openingChanged: boolean("opening_changed").notNull(),
+    signoffChanged: boolean("signoff_changed").notNull(),
+    firstSentenceCut: boolean("first_sentence_cut").notNull(),
+    sentencesRemoved: integer("sentences_removed").notNull(),
+    sentencesAdded: integer("sentences_added").notNull(),
+    /** none | warmer | cooler | more_formal | more_casual; null if the model call failed. */
+    toneShift: text("tone_shift"),
+    createdAt: createdAt(),
+  },
+  (t) => [index("edit_signals_workspace_idx").on(t.workspaceId, t.createdAt)],
+);
+
+/** Plan #21: an idea from the owner's edits. Nothing changes until they say yes. */
+export const voiceSuggestions = pgTable(
+  "voice_suggestions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    kind: text("kind").notNull(),
+    /** The plain-language question, built from counts only. */
+    text: text("text").notNull(),
+    targetWords: integer("target_words"),
+    /** open | accepted | ignored */
+    status: text("status").notNull().default("open"),
+    createdAt: createdAt(),
+    decidedAt: timestamp("decided_at", { withTimezone: true }),
+  },
+  (t) => [index("voice_suggestions_workspace_idx").on(t.workspaceId, t.status)],
+);
+
 /** App-wide settings Davi's admin tools write (e.g. the Stripe webhook secret, encrypted). */
 export const appSettings = pgTable("app_settings", {
   key: text("key").primaryKey(),

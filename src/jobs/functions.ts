@@ -10,6 +10,7 @@ import {
   renewWatches,
 } from "@/server/sync";
 import { classifyPending } from "@/server/classification";
+import { captureEditSignals, proposeVoiceUpdates } from "@/server/edit-learning";
 import {
   createDraftForThread,
   deliverQueuedSend,
@@ -296,6 +297,15 @@ export const refreshVoices = inngest.createFunction(
   },
 );
 
+/** Weekly (plan #21): ideas from the owner's edits. Nothing changes until they say yes. */
+export const voiceIdeas = inngest.createFunction(
+  { id: "voice-ideas", triggers: [cron("37 8 * * 1")] },
+  async ({ step }) => {
+    await step.run("capture", () => captureEditSignals());
+    return { created: await step.run("propose", () => proposeVoiceUpdates()) };
+  },
+);
+
 /** Every 5 minutes: poll every active mailbox, and start any backfill that never ran. */
 export const pollMailboxes = inngest.createFunction(
   { id: "poll-mailboxes", triggers: [cron("*/5 * * * *")] },
@@ -371,6 +381,8 @@ export const purgeBodies = inngest.createFunction(
   async ({ step }) => {
     // Keep each quote's amount before the owner's reply text is purged.
     await step.run("capture-quote-amounts", () => captureQuoteAmounts());
+    // And what each edit did (counts only), for "ideas from your edits" (plan #21).
+    await step.run("capture-edit-signals", () => captureEditSignals());
     const purged = await step.run("purge", () => purgeExpiredBodies());
     await step.run("purge-rate-limits", () => purgeRateLimits());
     await step.run("purge-expired-notes", () => purgeExpiredNotes());
@@ -393,4 +405,5 @@ export const functions = [
   morningDigest,
   autopilotSend,
   sendAfterUndo,
+  voiceIdeas,
 ];
