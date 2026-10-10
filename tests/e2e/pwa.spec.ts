@@ -18,8 +18,19 @@ test("installable: manifest opens on the queue, full screen, with real icons", a
     expect(img.ok(), icon.src).toBe(true);
     expect(img.headers()["content-type"]).toContain("image/png");
   }
-  expect((await request.get("/app-icon/apple-180")).ok()).toBe(true);
-  expect((await request.get("/app-icon/nope")).status()).toBe(404);
+  for (const f of ["/apple-touch-icon.png", "/favicon-32x32.png", "/favicon-16x16.png"]) {
+    expect((await request.get(f)).headers()["content-type"], f).toContain("image/png");
+  }
+  expect((await request.get("/favicon.ico")).ok()).toBe(true);
+});
+
+test("pages point browsers and iPhones at the sa. icons", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.locator('link[rel="apple-touch-icon"]')).toHaveAttribute(
+    "href",
+    "/apple-touch-icon.png",
+  );
+  await expect(page.locator('link[rel="icon"][href="/favicon-32x32.png"]')).toHaveCount(1);
 });
 
 test("service worker is always fresh, and the offline page explains plainly", async ({

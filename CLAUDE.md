@@ -184,7 +184,8 @@ In a sandbox with preinstalled Chromium: `PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-brows
 - Forms use `useActionState`; on error, focus + scroll to the first invalid field (phones).
 - "Toasts" are currently `?done=` / `?error=` query params rendered as `<Notice>` (role=status/alert).
 - Playwright's mobile project uses Chromium at 375×812 (not WebKit) to keep CI fast and single-browser.
-- Favicon and wordmark are text placeholders until Davi's icon pack arrives (`public/brand/`).
+- Favicon/app icons: Davi's `sa.` icon pack (`public/*.png`, `favicon.ico`). The wordmark is still text
+  (the pack had no wordmark file).
 - `/api/health` returns `{ ok, service, commit }` — used by Playwright's webServer check and for
   deploy verification.
 - **Drafts + Queue (M5):** `src/server/drafts.ts`, prompt `draft.v1` (Sonnet, effort medium, one
@@ -395,8 +396,8 @@ In a sandbox with preinstalled Chromium: `PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-brows
   email, hidden "website" honeypot); joining does NOT allow sign-in — Davi taps Invite in
   /admin → Waitlist (`inviteFromWaitlist`). `QueuePreview` is an HTML still of the queue.
 - **Installable app (PWA, 2026-10-05):** Davi wants website + downloadable app. `src/app/manifest.ts`
-  (start_url /queue, standalone), icons from `src/app/app-icon/[size]/route.tsx` (ImageResponse
-  placeholder until the icon pack), Apple web-app metadata, and `public/sw.js` which **never caches
+  (start_url /queue, standalone), icons from Davi's `sa.` icon pack in `public/` (favicons, android-chrome 192/512,
+  maskable 512, apple-touch-icon; brought in 2026-10-10 from branch `merge-local-build`), Apple web-app metadata, and `public/sw.js` which **never caches
   pages or data** — only `public/offline.html`. Settings → "Get the app" (Install button on
   Android/Chrome, Share → Add to Home Screen steps on iPhone). App-store listings later (Apple
   $99/yr, Google $25) need Davi's okay; a Capacitor/TWA wrapper can reuse this site.
@@ -433,7 +434,7 @@ In a sandbox with preinstalled Chromium: `PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-brows
 - Rotate the Neon password and Google client secret that were pasted in chat; delete the old
   Google secret.
 - Add each invited owner as a Google Cloud test user (Google Auth Platform → Audience).
-- Icon pack (`sa.` monogram, stacked wordmark); `docs/terms.md`, `docs/privacy-policy.md` drafts;
+- Stacked wordmark file (icons arrived 2026-10-10); `docs/terms.md`, `docs/privacy-policy.md` drafts;
   `SUPPORT_EMAIL`; production domain.
 
 ## Launch blockers to remember
