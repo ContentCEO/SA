@@ -7,6 +7,7 @@ import { addNeverSayAction } from "../settings/wording-actions";
 import { findGaps } from "@/ai/gaps";
 import type { ConfidenceLabel } from "@/config/drafting";
 import { BodyWithGaps, ConfidenceTag, WhyThis } from "./draft-parts";
+import { SayAChange, TweakChips } from "./revise-controls";
 import {
   discardDraftAction,
   holdAutopilotAction,
@@ -27,6 +28,8 @@ export type DraftCardProps = {
   label: ConfidenceLabel;
   /** Plan #1: profile facts and voice traits the drafter used (keys). */
   usedFacts: string[];
+  /** Quick tweaks / voice edits left (0 hides them). */
+  revisionsLeft?: number;
   needsOwnerReason: string | null;
   canSend: boolean;
   /** Read-only account: show the draft, but no edit, discard or swipe. */
@@ -199,7 +202,16 @@ export function DraftCard(p: DraftCardProps) {
             Cancel
           </Button>
         </form>
-      ) : (
+      ) : null}
+      {editing && (p.revisionsLeft ?? 0) > 0 ? (
+        <div className="flex flex-col gap-2 border-t pt-3">
+          <p className="text-sm text-muted-foreground">
+            Or let us rewrite it — this replaces the draft with a new version to read.
+          </p>
+          <SayAChange draftId={p.draftId} />
+        </div>
+      ) : null}
+      {editing ? null : (
         <>
           <div className="rounded-lg border bg-paper p-3">
             <BodyWithGaps
@@ -219,6 +231,10 @@ export function DraftCard(p: DraftCardProps) {
           </div>
 
           <WhyThis reason={p.reason} usedFacts={p.usedFacts} flags={p.flags} />
+
+          {!p.readOnly && !confirmDiscard && (p.revisionsLeft ?? 0) > 0 ? (
+            <TweakChips draftId={p.draftId} />
+          ) : null}
 
           {confirmDiscard ? (
             <form

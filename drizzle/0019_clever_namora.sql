@@ -1,0 +1,1 @@
+ALTER TABLE "drafts" ADD COLUMN "revisions" integer DEFAULT 0 NOT NULL;

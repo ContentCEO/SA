@@ -21,6 +21,7 @@ const done: Record<string, string> = {
   discarded: "Draft discarded.",
   saved: "Changes saved. It's updated in Gmail too.",
   drafted: "Reply drafted. It's below, and in your Gmail drafts.",
+  revised: "Draft changed. Read it below — it's updated in Gmail too.",
   held: "Held. It won't send until you tap Send reply.",
 };
 const errors: Record<string, string> = {
@@ -36,6 +37,7 @@ const errors: Record<string, string> = {
   replied: "You've already replied to that one.",
   notext: "There's no email text left to reply to (older than 30 days).",
   capped: "Today's drafting limit is used up. It resets tomorrow.",
+  revisions: "That draft has been changed as many times as it can be. Edit it by hand instead.",
   draftfailed: "Couldn't write a draft for that one. Try again in a minute.",
   readonly:
     "Your account is read-only right now, so nothing was changed. The note at the top says why.",
@@ -176,6 +178,7 @@ export default async function QueuePage(props: PageProps<"/queue">) {
                 gaps: findGaps(i.body ?? "").length,
               })}
               usedFacts={i.usedFacts}
+              revisionsLeft={i.revisionsLeft}
               needsOwnerReason={i.needsOwnerReason}
               canSend={sending}
               readOnly={readOnly}

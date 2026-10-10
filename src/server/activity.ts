@@ -39,6 +39,10 @@ export function describeActivity(
       return `You sent the draft${to} from Gmail`;
     case "draft_discarded":
       return `You discarded the draft${to}`;
+    case "draft_revised":
+      return detail.via === "voice"
+        ? `You changed the draft${to} by voice`
+        : `You changed the draft${to} with a quick tweak`;
     case "draft_expired":
       return `Withdrew an out-of-date draft${to}`;
     case "marked_needs_owner":

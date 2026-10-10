@@ -3,7 +3,14 @@
 import { redirect } from "next/navigation";
 import { z } from "zod";
 import { holdAutopilot } from "@/server/autopilot";
-import { createDraftForThread, discardDraft, saveDraftEdit, sendDraft } from "@/server/drafts";
+import { isTweak } from "@/ai/prompts/revise.v1";
+import {
+  createDraftForThread,
+  discardDraft,
+  reviseDraft,
+  saveDraftEdit,
+  sendDraft,
+} from "@/server/drafts";
 import { ReadOnlyError, SendingBlockedError } from "@/server/lifecycle";
 import { hitLimit } from "@/server/rate-limit";
 import { dismissChecklist } from "@/server/onboarding";
@@ -99,6 +106,37 @@ export async function draftReplyAction(formData: FormData) {
     read_only: "readonly",
   };
   redirect(`/queue?error=${reasons[r.reason] ?? "draftfailed"}`);
+}
+
+/** Quick tweak chips (plan #3) and "Say a change" (plan #4). Rewrites the draft; never sends. */
+export async function reviseDraftAction(formData: FormData) {
+  const { workspace } = await requireOwner();
+  const draftId = id.safeParse(formData.get("draftId"));
+  if (!draftId.success) redirect("/queue?error=unknown");
+  const tweak = formData.get("tweak");
+  const spoken = z.string().trim().min(2).max(500).safeParse(formData.get("spoken"));
+  if (!isTweak(tweak) && !spoken.success) redirect("/queue?error=unknown");
+  if (!(await hitLimit("revise", workspace.id)).allowed) redirect("/queue?error=busy");
+  let r;
+  try {
+    r = await reviseDraft(
+      workspace.id,
+      draftId.data,
+      isTweak(tweak) ? { tweak } : { spoken: spoken.data! },
+    );
+  } catch (err) {
+    if (err instanceof ReadOnlyError) redirect("/queue?error=readonly");
+    throw err;
+  }
+  const errors: Record<string, string> = {
+    limit: "revisions",
+    model_failed: "draftfailed",
+    capped: "capped",
+    deleted_in_gmail: "deleted",
+    reconnect_needed: "reconnect",
+    not_found: "unknown",
+  };
+  redirect(r.status === "revised" ? "/queue?done=revised" : `/queue?error=${errors[r.status]}`);
 }
 
 /** "Hold it": autopilot stands down; the draft waits for the owner like any other. */

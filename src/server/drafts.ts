@@ -1,7 +1,15 @@
 import "server-only";
-import { and, asc, desc, eq, gt, inArray, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, lte, sql } from "drizzle-orm";
 import { callStructured } from "@/ai/client";
 import { checkDraft, REGENERATE_ON } from "@/ai/draft-checks";
+import {
+  REVISE_INSTRUCTIONS,
+  REVISE_PROMPT_VERSION,
+  reviseTask,
+  TWEAKS,
+  type Tweak,
+} from "@/ai/prompts/revise.v1";
+import { MAX_REVISIONS_PER_DRAFT } from "@/config/drafting";
 import { hasUnfilledGap } from "@/ai/gaps";
 import {
   conversationBlock,
@@ -628,6 +636,184 @@ export async function saveDraftEdit(
   }
 }
 
+export type ReviseOutcome =
+  | { status: "revised"; flags: string[] }
+  | { status: "limit" }
+  | { status: "model_failed" }
+  | { status: "capped" }
+  | { status: "deleted_in_gmail" }
+  | { status: "reconnect_needed" }
+  | { status: "not_found" };
+
+/**
+ * Quick tweaks and voice edits (plan #3, #4): rewrite a pending draft with the
+ * same guardrails as a new one — the #43 checks run on the new text (a
+ * tweak can't hide a problem the check would raise), an invented price or
+ * date gets one more try, then a flag. The Gmail draft is updated; nothing is
+ * sent. At most MAX_REVISIONS_PER_DRAFT per draft.
+ */
+export async function reviseDraft(
+  workspaceId: string,
+  draftId: string,
+  change: { tweak: Tweak } | { spoken: string },
+  opts: DraftDeps = {},
+): Promise<ReviseOutcome> {
+  const row = await loadOwnedDraft(workspaceId, draftId);
+  if (!row || row.draft.status !== "pending" || !row.draft.gmailDraftId)
+    return { status: "not_found" };
+  const { draft, mailbox, thread, workspace } = row;
+  const now = opts.now?.() ?? new Date();
+  if (!jobsAllowed(workspace, now)) throw new ReadOnlyError(effectiveStatus(workspace, now));
+  if (mailbox.status !== "active") return { status: "reconnect_needed" };
+  if (draft.revisions >= MAX_REVISIONS_PER_DRAFT) return { status: "limit" };
+
+  const spoken = "spoken" in change ? change.spoken.trim().slice(0, 500) : null;
+  const ask = spoken ?? TWEAKS[(change as { tweak: Tweak }).tweak].ask;
+
+  const recent = (
+    await db()
+      .select()
+      .from(messages)
+      .where(and(eq(messages.threadId, draft.threadId), lte(messages.sentAt, draft.createdAt)))
+      .orderBy(desc(messages.sentAt))
+      .limit(CONVERSATION_MESSAGES)
+  ).reverse();
+  const withText = recent
+    .map((m) => ({
+      m,
+      text: prepareBody(m.bodyText ?? m.snippet ?? "").slice(0, PER_MESSAGE_CHARS),
+    }))
+    .filter((x) => x.text.length > 0);
+  const ctx = await workspaceContext(workspace.id, workspace, now);
+  const checkContext = {
+    sourceText: [
+      withText.map((x) => x.text).join("\n"),
+      ctx.pricingNotes,
+      ctx.hours,
+      ctx.leadTime,
+      ctx.policies,
+      ctx.paymentTerms,
+      ...ctx.seasonalNotes.map((n) => n.text),
+      // What the owner said counts as a fact they gave us (plan #4).
+      spoken,
+      // Facts already in a clean draft stay allowed. A flagged draft's text
+      // doesn't count, so a tweak can never launder a flag away.
+      (draft.flags ?? []).length === 0 ? draft.body : null,
+    ]
+      .filter(Boolean)
+      .join("\n"),
+    doNotPromise: ctx.doNotPromise,
+    phrasesAvoided: ctx.voice?.phrasesAvoided ?? [],
+    neverSay: ctx.neverSay,
+  };
+  const convo = conversationBlock({
+    subject: thread.subject,
+    category: thread.category,
+    summary: thread.summary,
+    extracted: thread.extracted,
+    task: reviseTask(draft.body ?? "", ask, spoken !== null),
+    messages: withText.map(({ m, text }) => ({
+      from: m.direction === "out" ? mailbox.email : (m.fromName ?? m.fromAddress ?? "customer"),
+      direction: m.direction,
+      sentAt: m.sentAt,
+      body: text,
+    })),
+  });
+  const request = {
+    workspaceId: workspace.id,
+    role: "draft" as const,
+    promptVersion: REVISE_PROMPT_VERSION,
+    maxTokens: 2048,
+    effort: "medium" as const,
+    system: [
+      { text: REVISE_INSTRUCTIONS, cache: false },
+      { text: workspaceBlock(ctx), cache: true },
+    ],
+    user: convo,
+    schema: draftSchema,
+    now,
+  };
+  let result;
+  try {
+    result = (await callStructured(request)) ?? (await callStructured(request));
+    if (result?.body.trim()) {
+      const first = checkDraft(result.body.trim(), checkContext);
+      if (first.hits.some((h) => REGENERATE_ON.includes(h))) {
+        const retry = await callStructured({
+          ...request,
+          user: `${convo}\n\nYour last attempt broke the owner's rules: ${first.flags.join(" ")} Write it again without that.`,
+        });
+        if (retry?.body.trim()) result = retry;
+      }
+    }
+  } catch (err) {
+    if (err instanceof AiCapReachedError) return { status: "capped" };
+    throw err;
+  }
+  if (!result || !result.body.trim()) return { status: "model_failed" };
+
+  const body = result.body.trim();
+  const checks = checkDraft(body, checkContext);
+  const flags = [
+    ...new Set([...result.flags.map((f) => f.trim()).filter(Boolean), ...checks.flags]),
+  ].slice(0, 6);
+  const confidence = Math.round(
+    Math.max(0, Math.min(1, result.confidence, checks.confidenceCap)) * 100,
+  );
+
+  const writer = (opts.writerFor ?? defaultWriter)(mailbox);
+  try {
+    const remote = await writer.getDraft(draft.gmailDraftId!);
+    if (!remote) {
+      await closeDraft(
+        draft,
+        workspaceId,
+        "discarded",
+        "You deleted or sent this draft in Gmail.",
+        now,
+      );
+      return { status: "deleted_in_gmail" };
+    }
+    await writer.updateDraft(draft.gmailDraftId!, {
+      threadId: thread.gmailThreadId,
+      raw: mimeFor(draft, mailbox, body, await replyToHeaders(draft)),
+    });
+  } catch (err) {
+    if (err instanceof MailboxAuthError) {
+      await markReconnectNeeded(mailbox);
+      return { status: "reconnect_needed" };
+    }
+    throw err;
+  }
+  await db()
+    .update(drafts)
+    .set({
+      body,
+      flags,
+      confidence,
+      reason: result.reason.trim().slice(0, 200) || draft.reason,
+      usedFacts: [...new Set(result.used_facts ?? [])],
+      revisions: sql`${drafts.revisions} + 1`,
+      // The owner changed it, so autopilot stands down.
+      autoSendAt: null,
+    })
+    .where(eq(drafts.id, draft.id));
+  await db()
+    .insert(activityLog)
+    .values({
+      workspaceId,
+      actor: "owner",
+      action: "draft_revised",
+      threadId: draft.threadId,
+      // Content-free: which tweak, or that it was spoken — never the words.
+      detail: {
+        draftId: draft.id,
+        via: spoken !== null ? "voice" : (change as { tweak: Tweak }).tweak,
+      },
+    });
+  return { status: "revised", flags };
+}
+
 async function closeDraft(
   d: Pick<Draft, "id" | "threadId">,
   workspaceId: string,
@@ -789,6 +975,8 @@ export type QueueItem = {
   confidence: number | null;
   /** Profile facts / voice traits the drafter relied on (keys). */
   usedFacts: string[];
+  /** Quick tweaks / voice edits left on this draft (plan #3, #4). */
+  revisionsLeft: number;
   gmailThreadId: string;
   mailboxEmail: string;
   lastMessageAt: Date | null;
@@ -862,6 +1050,7 @@ export async function listQueue(
       flags: [],
       confidence: null,
       usedFacts: [],
+      revisionsLeft: 0,
       gmailThreadId: t.gmailThreadId,
       mailboxEmail: emailOf.get(t.mailboxId) ?? "",
       lastMessageAt: t.lastMessageAt,
@@ -881,6 +1070,7 @@ export async function listQueue(
       flags: draft.flags,
       confidence: draft.confidence,
       usedFacts: draft.usedFacts,
+      revisionsLeft: Math.max(0, MAX_REVISIONS_PER_DRAFT - draft.revisions),
       gmailThreadId: thread.gmailThreadId,
       mailboxEmail: emailOf.get(draft.mailboxId) ?? "",
       lastMessageAt: thread.lastMessageAt,

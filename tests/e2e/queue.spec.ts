@@ -29,7 +29,16 @@ test("queue: needs-you first, then drafts; sending is off until setup, and it sa
   await card.getByRole("button", { name: "Edit" }).click();
   await expect(card.getByLabel("Your reply")).toHaveValue(/What's the address/);
   await expect(card.getByRole("button", { name: "Save changes" })).toBeVisible();
+  // Plan #4: a change can be said or typed; the button appears once there's something to use.
+  await expect(card.getByLabel("Tell it what to change")).toBeVisible();
+  await expect(card.getByRole("button", { name: "Change the draft" })).toHaveCount(0);
+  await card.getByLabel("Tell it what to change").fill("make it Tuesday");
+  await expect(card.getByRole("button", { name: "Change the draft" })).toBeVisible();
   await card.getByRole("button", { name: "Cancel" }).click();
+  // Plan #3: one-tap tweaks on the card.
+  const tweaks = card.getByRole("form", { name: "Quick changes" });
+  for (const name of ["Shorter", "Warmer", "More formal", "Ask for photos", "Add my availability"])
+    await expect(tweaks.getByRole("button", { name })).toBeVisible();
 
   await card.getByRole("button", { name: "Discard" }).click();
   await expect(card.getByRole("button", { name: "Discard draft" })).toBeVisible();

@@ -103,11 +103,11 @@ _Re-checked 2026-10-10: brief scope complete with tests; nothing else filed here
 - [x] **#8 Confidence in words.** _(Done 2026-10-10.)_ Map confidence + flags to three labels, shown by weight not
       colour: Ready / Check the details / Check everything. Flags always force at least "Check the
       details". Thresholds in `src/config/drafting.ts`.
-- [ ] **#3 Quick-tweak chips.** "Shorter", "Warmer", "More formal", "Ask for photos", "Add my
+- [x] **#3 Quick-tweak chips.** _(Done 2026-10-10.)_ "Shorter", "Warmer", "More formal", "Ask for photos", "Add my
       availability" (uses seasonal notes/hours only). Each regenerates with the same guardrails and
       #43 check, updates the Gmail draft, and logs `draft_revised` (content-free). Rate-limited per
       draft (5). Tests: a tweak can't remove a flag the check would raise.
-- [ ] **#4 Voice-to-edit.** _(Davi 2026-10-09: go ahead. Browsers send speech to Google/Apple for transcription, so "audio never leaves the device" can't be promised — show a plain note by the button instead.)_ Hold-to-talk button in the editor. Use the browser's Web Speech API (no
+- [x] **#4 Voice-to-edit.** _(Done 2026-10-10.)_ _(Davi 2026-10-09: go ahead. Browsers send speech to Google/Apple for transcription, so "audio never leaves the device" can't be promised — show a plain note by the button instead.)_ Hold-to-talk button in the editor. Use the browser's Web Speech API (no
       new paid provider); hide the button where unsupported. The transcript is an instruction ("tell
       her Thursday works, 450") → drafter revises → owner sees the result before sending. Facts the
       owner dictated count as source facts for #43. Audio never leaves the device.

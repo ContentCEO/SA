@@ -275,6 +275,8 @@ export const drafts = pgTable(
     confidence: integer("confidence_pct").notNull().default(0),
     /** Which profile facts / voice traits the drafter says it used (keys only — plan #1). */
     usedFacts: jsonb("used_facts").$type<string[]>().notNull().default([]),
+    /** Quick tweaks / voice edits so far (plan #3: at most 5 per draft). */
+    revisions: integer("revisions").notNull().default(0),
     promptVersion: text("prompt_version"),
     /** Why it left the queue without being sent from here (deleted in Gmail, superseded…). */
     closedNote: text("closed_note"),
