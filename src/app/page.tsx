@@ -10,15 +10,30 @@ import { WaitlistForm } from "@/components/marketing/waitlist-form";
 import { formatDollars, pricing } from "@/config/pricing";
 import { siteConfig } from "@/config/site";
 import { cn } from "@/lib/utils";
+import { Phone } from "lucide-react";
+import { AboutDavi } from "@/components/marketing/about-davi";
+
+const telHref = `+1${siteConfig.phone.replace(/\D/g, "")}`;
+
+const description =
+  "Built for carpenters, and the trades they work with: Squared Away sorts your business email, drafts replies in your voice, and chases quiet quotes — and nothing goes out without your okay.";
 
 export const metadata: Metadata = {
   title: "Squared Away — your inbox, handled.",
-  description:
-    "For carpenters, plumbers and electricians: Squared Away sorts your business email, drafts replies in your voice, and chases quiet quotes — and nothing goes out without your okay.",
+  description,
+  alternates: { canonical: "/" },
   openGraph: {
+    type: "website",
+    siteName: "Squared Away",
     title: "Squared Away — your inbox, handled.",
     description:
-      "Sorts your business email, drafts replies in your voice, and waits for your okay before anything goes out.",
+      "Built for carpenters and the trades they work with. Sorts your business email, drafts replies in your voice, and waits for your okay before anything goes out.",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "Squared Away — your inbox, handled.",
+    description:
+      "Built for carpenters and the trades they work with. Nothing goes out without your okay.",
   },
 };
 
@@ -55,7 +70,7 @@ const features = [
   },
   {
     title: "Morning summary",
-    body: "One short email at the time you choose: what's waiting and what needs you. Skipped on quiet mornings.",
+    body: "When you're set up, it sends one short email at the time you choose: what's waiting and what needs you. Skipped on quiet mornings.",
   },
   {
     title: "Autopilot, when you're ready",
@@ -78,7 +93,11 @@ const faqs = [
   },
   {
     q: "Can it see all my email?",
-    a: "It reads the last 30 days of your business email to sort it, and your recent sent mail to learn how you write. It can't delete, archive or move anything — it doesn't have permission to.",
+    a: "It has permission to read your Gmail. It only reads the last 30 days of business email in your inbox, and your recent sent mail to learn how you write. It can't delete, archive or move anything.",
+  },
+  {
+    q: "Does it work with Outlook?",
+    a: "Gmail only for now, including Google Workspace. Outlook is on the list.",
   },
   {
     q: "What does the trial look like?",
@@ -148,7 +167,9 @@ export default async function HomePage() {
         <Section label="Introduction" className="pt-10 sm:pt-16">
           <div className="grid items-center gap-12 lg:grid-cols-[1.1fr_1fr]">
             <div className="flex flex-col gap-6">
-              <p className="font-semibold text-slate">For carpenters, plumbers and electricians</p>
+              <p className="font-semibold text-slate">
+                Built for carpenters, and the trades they work with
+              </p>
               <Headline serif="your inbox," heavy="handled." size="xl" />
               <p className="max-w-lg text-xl leading-relaxed">
                 Squared Away sorts your business email, drafts replies in your own voice, and chases
@@ -216,6 +237,8 @@ export default async function HomePage() {
           </ul>
         </Section>
 
+        <AboutDavi />
+
         <Section id="pricing" label="Pricing" className="border-t border-stone">
           <Headline as="h2" serif="simple pricing," heavy="no contract." />
           <div className="flex flex-col gap-2 rounded-2xl border-2 border-charcoal p-6 sm:flex-row sm:items-center sm:justify-between">
@@ -254,9 +277,23 @@ export default async function HomePage() {
               </li>
             ))}
           </ul>
+          <p className="text-lg font-semibold">
+            On every plan, each reply waits for your okay, and follow-ups are two at most, ever.
+            Where autopilot is included, it stays off until you earn it, and every autopilot reply
+            waits 10 minutes so you can stop it.
+          </p>
           <p className="text-slate">
             Prices in US dollars. Month to month — stop any time. Every plan starts with the
             three-day trial.
+          </p>
+          <p className="text-lg">
+            Questions about which plan fits?{" "}
+            <a
+              href={`tel:${telHref}`}
+              className="inline-flex min-h-tap items-center font-semibold underline underline-offset-4"
+            >
+              Call {siteConfig.operator} at {siteConfig.phone}
+            </a>
           </p>
         </Section>
 
@@ -288,16 +325,16 @@ export default async function HomePage() {
                 We onboard a few shops at a time and set each one up by hand, so it works properly
                 from the first morning.
               </p>
-              <p className="text-lg text-slate">
-                Rather talk? Call {siteConfig.operator} at{" "}
+              <div className="flex flex-col gap-2">
+                <p className="text-lg text-slate">Rather talk? Call {siteConfig.operator}.</p>
                 <a
-                  href={`tel:${siteConfig.phone}`}
-                  className="font-semibold text-charcoal underline underline-offset-4"
+                  href={`tel:${telHref}`}
+                  className="inline-flex min-h-tap items-center justify-center gap-2 self-start rounded-lg border-2 border-charcoal px-5 text-lg font-semibold"
                 >
-                  {siteConfig.phone}
+                  <Phone aria-hidden className="size-5" />
+                  Call {siteConfig.phone}
                 </a>
-                .
-              </p>
+              </div>
             </div>
             <div className="rounded-2xl border bg-card p-6">
               <WaitlistForm />

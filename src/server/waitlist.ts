@@ -24,18 +24,11 @@ export const waitlistInput = z.object({
     .string()
     .trim()
     .toLowerCase()
+    .min(1, "Tell us your email address.")
     .email("That doesn't look like an email address. Use the Gmail you run the business from."),
   phone: optional(40),
-  trade: z
-    .enum(tradeEnum.enumValues, { message: "Pick your trade." })
-    .nullable()
-    .optional()
-    .transform((v) => v ?? null),
-  teamSize: z
-    .enum(TEAM_SIZES, { message: "Pick how many people work with you." })
-    .nullable()
-    .optional()
-    .transform((v) => v ?? null),
+  trade: z.enum(tradeEnum.enumValues, { message: "Pick your trade." }),
+  teamSize: z.enum(TEAM_SIZES, { message: "Pick how many people work with you." }),
   note: optional(1000),
 });
 

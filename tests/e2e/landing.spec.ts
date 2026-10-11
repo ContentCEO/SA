@@ -38,12 +38,26 @@ test("waitlist: plain errors, then a confirmation, saved once", async ({ page })
   await expect(form.getByText("Tell us your name.")).toBeVisible();
   await expect(form.getByLabel("Your name")).toBeFocused();
 
+  // Required fields are marked for browsers and screen readers; the server is the real check.
+  for (const label of ["Your name", /Business Gmail/, "Trade", "People in the business"])
+    await expect(form.getByLabel(label)).toHaveAttribute("required", "");
+  await expect(form.getByLabel(/Business Gmail/)).toHaveAttribute("autocomplete", "email");
+  await expect(form.getByLabel(/^Phone/)).toHaveAttribute("inputmode", "tel");
+
+  await form.getByLabel("Your name").fill("Mike Torres");
+  await form.getByLabel(/Business Gmail/).fill("mike@");
+  await form.getByLabel("Trade").selectOption("carpentry");
+  await form.getByLabel("People in the business").selectOption("2–5");
+  await form.getByRole("button", { name: "Join the waitlist" }).click();
+  await expect(form.getByText(/doesn't look like an email address/)).toBeVisible();
+  await expect(form.getByLabel(/Business Gmail/)).toBeFocused();
+
   await form.getByLabel("Your name").fill("Mike Torres");
   await form.getByLabel(/Business Gmail/).fill(email);
   await form.getByLabel("Trade").selectOption("electrical");
   await form.getByLabel("People in the business").selectOption("2–5");
   await form.getByRole("button", { name: "Join the waitlist" }).click();
-  await expect(form.getByText("you're on the list,")).toBeVisible();
+  await expect(form.getByText("You're on the list. Davi will be in touch.")).toBeVisible();
 
   const rows = await testDb.select().from(schema.waitlist).where(eq(schema.waitlist.email, email));
   expect(rows).toHaveLength(1);
@@ -58,7 +72,7 @@ test("waitlist: bots that fill the hidden field are ignored", async ({ page }) =
   await form.getByLabel(/Business Gmail/).fill(email);
   await page.locator('input[name="website"]').fill("http://spam.example", { force: true });
   await form.getByRole("button", { name: "Join the waitlist" }).click();
-  await expect(form.getByText("you're on the list,")).toBeVisible();
+  await expect(form.getByText("You're on the list. Davi will be in touch.")).toBeVisible();
   expect(
     await testDb.select().from(schema.waitlist).where(eq(schema.waitlist.email, email)),
   ).toHaveLength(0);

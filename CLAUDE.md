@@ -387,6 +387,18 @@ In a sandbox with preinstalled Chromium: `PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-brows
   endpoint) and fixed two things they found: a garbled Pub/Sub payload made `/api/gmail/push` throw
   (→ endless Pub/Sub retries; now acknowledged with 204), and `renewWatches` renewed watches for
   read-only accounts (now skipped via `jobsAllowed`).
+- **Public site pass (2026-10-11, branch `claude/homepage-fixes`, PR — Davi reviews before merge):**
+  `/privacy` and `/terms` render `docs/privacy-policy.md` / `docs/terms.md` (drafts, "Draft — not
+  yet reviewed", `[To confirm]` items) through `src/lib/markdown.tsx` (tiny renderer, React elements
+  only) with contact details substituted from `site.ts` + `SUPPORT_EMAIL`; footer links on every page.
+  Marketing rules: present tense only for what's live on production; never say the app "can't send"
+  in general; no shop counts, testimonials, invented numbers or logos; no "GC" (MA = CSL), no license
+  number until Davi confirms. Live check 2026-10-11: sorting runs on prod (classify.v2 calls in
+  logs); morning summary is not live for owners (Resend test sender) → copy says "When you're set
+  up". Security headers in `src/config/security-headers.ts` (CSP with `unsafe-inline` scripts —
+  nonces would make every page dynamic; form-action allows Google + Stripe for OAuth/Checkout
+  redirects; microphone=(self) kept for M5 voice-to-edit). OG image from committed OFL TTFs in
+  `src/app/_og/`; `metadataBase` from `appUrl()`. Waitlist trade + team size are now required.
 - **Sending requires a real payment (Davi, 2026-10-10):** `canSend` = status in `SENDING_ALLOWED`
   **and** `workspaces.setup_paid_via` ∈ {`stripe`, `house`}. `stripe` is set only by the signed
   webhook's paid checkout that included the setup fee; `house` only by the admin move
