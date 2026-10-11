@@ -1,0 +1,129 @@
+import "server-only";
+import { and, eq, gte, sql, sum } from "drizzle-orm";
+import { utcDay } from "@/ai/usage";
+import { dailyAiCallCap } from "@/config/models";
+import { formatDollars, type PlanId } from "@/config/pricing";
+import { db } from "@/db";
+import { appSettings, usage, users, workspaces } from "@/db/schema";
+import { sendEmail, type EmailSender } from "@/lib/email";
+import { appUrl } from "@/lib/app-url";
+import { COST_ALERT_SHARE, costAlertDue, costLine } from "./admin-cost-rules";
+
+export type CostRow = {
+  workspaceId: string;
+  /** The owner's own business name / sign-in email — never anything from their customers. */
+  label: string;
+  status: string;
+  plan: PlanId | null;
+  costCents: number;
+  revenueCents: number;
+  marginCents: number;
+  costShare: number | null;
+  calls: number;
+  busiestDayCalls: number;
+  cap: number;
+  alert: boolean;
+};
+
+/** Plan #45: this month, per account, worst margin first. Counts and money only. */
+export async function costRows(now: Date = new Date()): Promise<CostRow[]> {
+  const monthStart = `${utcDay(now).slice(0, 7)}-01`;
+  const per = db()
+    .select({
+      workspaceId: usage.workspaceId,
+      calls: sum(usage.aiCalls).mapWith(Number).as("calls"),
+      cost: sum(usage.estimatedCostCentiCents).mapWith(Number).as("cost"),
+      busiest: sql<number>`max(${usage.aiCalls})::int`.as("busiest"),
+    })
+    .from(usage)
+    .where(gte(usage.period, monthStart))
+    .groupBy(usage.workspaceId)
+    .as("per");
+  const rows = await db()
+    .select({
+      workspaceId: workspaces.id,
+      businessName: workspaces.businessName,
+      email: users.email,
+      status: workspaces.status,
+      plan: workspaces.plan,
+      calls: per.calls,
+      cost: per.cost,
+      busiest: per.busiest,
+    })
+    .from(workspaces)
+    .innerJoin(users, eq(users.id, workspaces.ownerUserId))
+    .leftJoin(per, eq(per.workspaceId, workspaces.id));
+  const cap = dailyAiCallCap();
+  return rows
+    .map((r) => {
+      const input = { status: r.status, plan: r.plan, costCentiCents: r.cost ?? 0 };
+      return {
+        workspaceId: r.workspaceId,
+        label: r.businessName || r.email,
+        status: r.status,
+        plan: r.plan,
+        ...costLine(input),
+        calls: r.calls ?? 0,
+        busiestDayCalls: r.busiest ?? 0,
+        cap,
+        alert: costAlertDue(input),
+      };
+    })
+    .sort((a, b) => a.marginCents - b.marginCents || b.costCents - a.costCents);
+}
+
+/**
+ * Daily: email Davi once per account per month when its AI cost passes 40% of
+ * its plan price. Money and the owner's business name only.
+ */
+export async function sendCostAlerts(
+  now: Date = new Date(),
+  deps: { send?: EmailSender } = {},
+): Promise<{ sent: number }> {
+  const to = process.env.ADMIN_EMAIL;
+  if (!to) return { sent: 0 };
+  const send = deps.send ?? sendEmail;
+  const month = utcDay(now).slice(0, 7);
+  let sent = 0;
+  for (const r of (await costRows(now)).filter((x) => x.alert)) {
+    const key = `cost_alert:${r.workspaceId}:${month}`;
+    const [seen] = await db().select().from(appSettings).where(eq(appSettings.key, key));
+    if (seen) continue;
+    const share = Math.round((r.costShare ?? 0) * 100);
+    const text = [
+      `${r.label}: AI cost this month is ${formatDollars(r.costCents)}, ${share}% of their ${formatDollars(r.revenueCents)} plan (alert line: ${Math.round(COST_ALERT_SHARE * 100)}%).`,
+      `Margin so far: ${formatDollars(r.marginCents)}. Busiest day: ${r.busiestDayCalls} of ${r.cap} calls.`,
+      `See ${appUrl("/admin/costs")}`,
+    ].join("\n\n");
+    const result = await send({
+      to,
+      subject: `AI cost alert: ${r.label} at ${share}% of plan`,
+      text,
+      html: text
+        .split("\n\n")
+        .map(
+          (p) =>
+            `<p>${p.replace(/[<>&]/g, (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;" })[c]!)}</p>`,
+        )
+        .join(""),
+      idempotencyKey: `cost-${r.workspaceId}-${month}`,
+    });
+    if (result !== "sent") return { sent };
+    await db().insert(appSettings).values({ key, value: now.toISOString() }).onConflictDoNothing();
+    sent++;
+  }
+  return { sent };
+}
+
+/** Old alert markers aren't needed once their month is over. */
+export async function purgeCostAlertMarkers(now: Date = new Date()) {
+  const month = utcDay(now).slice(0, 7);
+  await db()
+    .delete(appSettings)
+    .where(
+      and(
+        sql`${appSettings.key} like 'cost_alert:%'`,
+        sql`right(${appSettings.key}, 7) < ${month}`,
+      ),
+    );
+}

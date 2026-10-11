@@ -73,7 +73,7 @@ const PER_MESSAGE_CHARS = 3_000;
 
 export type DraftDeps = { writerFor?: (m: Mailbox) => MailboxWriter; now?: () => Date };
 
-const defaultWriter = (m: Mailbox) =>
+export const defaultWriter = (m: Mailbox) =>
   createGmailReader({ refreshToken: decryptSecret(m.encryptedRefreshToken) });
 
 export type CreateOutcome =

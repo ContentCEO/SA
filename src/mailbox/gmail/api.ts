@@ -247,6 +247,15 @@ export function createGmailReader(opts: GmailReaderOptions): MailboxReader & Mai
       return { messageId: r.id, threadId: r.threadId };
     },
 
+    async sendMessage(raw) {
+      const r = await call<{ id: string }>("/messages/send", {
+        method: "POST",
+        body: { raw },
+      });
+      if (!r) throw new Error("Gmail send failed.");
+      return { messageId: r.id };
+    },
+
     async watch(topicName) {
       const r = await call<{ historyId: string; expiration: string }>("/watch", {
         method: "POST",

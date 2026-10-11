@@ -58,6 +58,13 @@ export class FakeWriter implements MailboxWriter {
     this.calls.push("deleteDraft");
     this.drafts.delete(draftId);
   }
+  /** Practice sends (#40): brand-new messages, recorded with their raw MIME. */
+  messages: string[] = [];
+  async sendMessage(raw: string) {
+    this.calls.push("sendMessage");
+    this.messages.push(raw);
+    return { messageId: `msg-${this.messages.length}` };
+  }
   async sendDraft(draftId: string) {
     this.calls.push("sendDraft");
     const d = this.drafts.get(draftId);

@@ -131,4 +131,9 @@ export interface MailboxWriter {
   /** Must not throw if it's already gone. */
   deleteDraft(draftId: string): Promise<void>;
   sendDraft(draftId: string): Promise<{ messageId: string; threadId: string }>;
+  /**
+   * Send a brand-new message (not a draft, not in any thread). Used only for
+   * practice sends to the owner's own address during evaluation (plan #40).
+   */
+  sendMessage(raw: string): Promise<{ messageId: string }>;
 }

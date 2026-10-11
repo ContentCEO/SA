@@ -10,6 +10,7 @@ import {
   renewWatches,
 } from "@/server/sync";
 import { classifyPending } from "@/server/classification";
+import { purgeCostAlertMarkers, sendCostAlerts } from "@/server/admin-costs";
 import { captureEditSignals, proposeVoiceUpdates } from "@/server/edit-learning";
 import {
   createDraftForThread,
@@ -391,6 +392,9 @@ export const purgeBodies = inngest.createFunction(
     const purged = await step.run("purge", () => purgeExpiredBodies());
     await step.run("purge-rate-limits", () => purgeRateLimits());
     await step.run("purge-expired-notes", () => purgeExpiredNotes());
+    // Plan #45: tell Davi when an account's AI cost passes 40% of its plan.
+    await step.run("cost-alerts", () => sendCostAlerts());
+    await step.run("purge-cost-markers", () => purgeCostAlertMarkers());
     return { purged };
   },
 );

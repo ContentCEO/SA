@@ -8,7 +8,15 @@ import { confidenceLabel } from "@/config/drafting";
 import { gmailThreadLink } from "@/lib/gmail-link";
 import { relativeTime } from "@/lib/relative-time";
 import { listQueue, sentDraftSummary, type QueueItem } from "@/server/drafts";
-import { canSend, isReadOnly, sendingBlockedReason, sendingOffLabel } from "@/server/lifecycle";
+import {
+  canPracticeSend,
+  canSend,
+  isReadOnly,
+  PRACTICE_SEND_LIMIT,
+  sendingBlockedReason,
+  sendingOffLabel,
+} from "@/server/lifecycle";
+import { practiceSendsUsed } from "@/server/practice";
 import { listMailboxes } from "@/server/mailboxes";
 import { getBusinessProfile } from "@/server/profile";
 import { requireOwner } from "@/server/session";
@@ -29,6 +37,8 @@ const done: Record<string, string> = {
   saved: "Changes saved. It's updated in Gmail too.",
   drafted: "Reply drafted. It's below, and in your Gmail drafts.",
   revised: "Draft changed. Read it below — it's updated in Gmail too.",
+  practice:
+    "Practice copy sent to your own inbox — your customer got nothing. The draft is still below.",
   undone: "Stopped. Nothing was sent — it's back below.",
   snoozed: "Snoozed. It'll come back to the top of the queue.",
   held: "Held. It won't send until you tap Send reply.",
@@ -47,6 +57,7 @@ const errors: Record<string, string> = {
   notext: "There's no email text left to reply to (older than 30 days).",
   capped: "Today's drafting limit is used up. It resets tomorrow.",
   revisions: "That draft has been changed as many times as it can be. Edit it by hand instead.",
+  practice_limit: "That's all 10 practice sends. The real thing turns on once setup is paid.",
   toolate: "Too late to undo — that reply has already gone.",
   snooze: "That can't be put off that long — it looks urgent. Pick an earlier time.",
   draftfailed: "Couldn't write a draft for that one. Try again in a minute.",
@@ -106,6 +117,10 @@ export default async function QueuePage(props: PageProps<"/queue">) {
   const readOnly = isReadOnly(workspace);
   const empty = queue.needsYou.length === 0 && queue.drafts.length === 0;
   const now = new Date();
+  // Plan #40: practice sends only exist during the three days.
+  const practiceLeft = canPracticeSend(workspace, now)
+    ? Math.max(0, PRACTICE_SEND_LIMIT - (await practiceSendsUsed(workspace.id)))
+    : null;
   const device = await devicePrefs();
   const remindOptions = (i: QueueItem) =>
     snoozeOptions(now, timeZone, i.emergency).map((o) => ({
@@ -258,6 +273,7 @@ export default async function QueuePage(props: PageProps<"/queue">) {
               autoSendAt={i.autoSendAt ? clock.format(i.autoSendAt) : null}
               sendingOffLabel={sendingOffLabel(workspace)}
               sendingOffDetail={sendingBlockedReason(workspace)}
+              practiceLeft={practiceLeft}
             />
           ))}
         </section>

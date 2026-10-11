@@ -428,6 +428,13 @@ In a sandbox with preinstalled Chromium: `PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-brows
     server refuses `changed_since_seen` / `intent_expired` (>12h). Signed-out screens and
     sign-out delete the copy.
   - #37 sunlight: tokens under `:root:has([data-contrast="high"])` in theme.css; header toggle.
+- **Plan M6 (2026-10-11, branch `claude/milestone-6-8`):** #40 practice sends — `practiceSend`
+  (`src/server/practice.ts`) only while `effectiveStatus === evaluating`, a NEW unthreaded message
+  via `MailboxWriter.sendMessage` to the owner's own address, subject "[Practice] …", and
+  `onlyToOwner()` re-checks To/Cc/Bcc on the exact MIME before Gmail; max 10 (`practice_sent` log).
+  Real sends stay 403. #45 `/admin/costs` (`admin-costs.ts`, rules in `admin-cost-rules.ts`):
+  revenue = plan price for setup_paid/active/past_due; alert email to `ADMIN_EMAIL` when AI cost
+  > 40% of plan, once per account per month (marker in `app_settings`), daily in the purge job.
 - **Sending requires a real payment (Davi, 2026-10-10):** `canSend` = status in `SENDING_ALLOWED`
   **and** `workspaces.setup_paid_via` ∈ {`stripe`, `house`}. `stripe` is set only by the signed
   webhook's paid checkout that included the setup fee; `house` only by the admin move

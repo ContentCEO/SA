@@ -1,3 +1,4 @@
+import Link from "next/link";
 import type { Metadata } from "next";
 import { Notice } from "@/components/app/notice";
 import { Headline } from "@/components/brand/headline";
@@ -262,6 +263,12 @@ export default async function AdminPage(props: PageProps<"/admin">) {
   return (
     <>
       <Headline serif="behind the counter," heavy="admin." />
+      <Link
+        href="/admin/costs"
+        className="inline-flex min-h-tap items-center font-semibold underline underline-offset-4"
+      >
+        AI costs and margins this month
+      </Link>
       <p className="text-muted-foreground">
         Health and money only. No email content or customer names are shown here.
       </p>

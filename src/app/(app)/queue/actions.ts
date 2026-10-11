@@ -17,6 +17,7 @@ import {
   undoSend,
 } from "@/server/drafts";
 import { isSnoozeChoice } from "@/server/snooze-rules";
+import { practiceSend } from "@/server/practice";
 import { snoozeThread } from "@/server/snooze";
 import { ReadOnlyError, SendingBlockedError } from "@/server/lifecycle";
 import { hitLimit } from "@/server/rate-limit";
@@ -70,6 +71,28 @@ export async function sendDraftAction(formData: FormData) {
 async function device(): Promise<"phone" | "computer"> {
   const ua = (await headers()).get("user-agent") ?? "";
   return /Mobi|Android|iPhone|iPad/i.test(ua) ? "phone" : "computer";
+}
+
+/** Plan #40: during the three days, send a practice copy to the owner only. */
+export async function practiceSendAction(formData: FormData) {
+  const { workspace } = await requireOwner();
+  const draftId = id.safeParse(formData.get("draftId"));
+  if (!draftId.success) redirect("/queue?error=unknown");
+  const edited = formData.get("body");
+  if (!(await hitLimit("send", workspace.id)).allowed) redirect("/queue?error=busy");
+  let r;
+  try {
+    r = await practiceSend(workspace.id, draftId.data, {
+      editedBody: typeof edited === "string" ? edited : undefined,
+    });
+  } catch (err) {
+    if (err instanceof SendingBlockedError) redirect("/queue?error=blocked");
+    throw err;
+  }
+  if (r.status === "sent") redirect(`/queue?done=practice&left=${r.left}`);
+  redirect(
+    `/queue?error=${r.status === "limit" ? "practice_limit" : r.status === "reconnect_needed" ? "reconnect" : "unknown"}`,
+  );
 }
 
 /** Plan #7: Undo, inside the window. */

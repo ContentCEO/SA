@@ -43,6 +43,8 @@ export function describeActivity(
       return detail.via === "voice"
         ? `You changed the draft${to} by voice`
         : `You changed the draft${to} with a quick tweak`;
+    case "practice_sent":
+      return `You sent yourself a practice copy of the reply${to} — they got nothing`;
     case "send_undone":
       return `You stopped the reply${to} before it went`;
     case "send_stopped":

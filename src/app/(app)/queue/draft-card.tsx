@@ -20,6 +20,7 @@ import {
 import {
   discardDraftAction,
   holdAutopilotAction,
+  practiceSendAction,
   saveDraftEditAction,
   sendDraftAction,
 } from "./actions";
@@ -54,6 +55,8 @@ export type DraftCardProps = {
   autoSendAt?: string | null;
   sendingOffLabel: string;
   sendingOffDetail: string;
+  /** Plan #40: practice sends left during the three days; null outside them. */
+  practiceLeft?: number | null;
 };
 
 function Pending({
@@ -381,14 +384,38 @@ export function DraftCard(p: DraftCardProps) {
                   <Pending label="Send reply" busy="Sending…" size="lg" className="w-full" />
                 </form>
               ) : (
-                <div
-                  role="note"
-                  tabIndex={-1}
-                  className="sa-inverted flex min-h-12 flex-col justify-center rounded-lg px-4 py-2"
-                >
-                  <span className="font-black">{p.sendingOffLabel}</span>
-                  <span className="text-sm text-ash">{p.sendingOffDetail}</span>
-                </div>
+                <>
+                  <div
+                    role="note"
+                    tabIndex={-1}
+                    className="sa-inverted flex min-h-12 flex-col justify-center rounded-lg px-4 py-2"
+                  >
+                    <span className="font-black">{p.sendingOffLabel}</span>
+                    <span className="text-sm text-ash">{p.sendingOffDetail}</span>
+                  </div>
+                  {p.practiceLeft != null && !p.readOnly ? (
+                    p.practiceLeft > 0 ? (
+                      <form action={practiceSendAction} className="flex flex-col gap-1">
+                        <input type="hidden" name="draftId" value={p.draftId} />
+                        {body !== p.body ? <input type="hidden" name="body" value={body} /> : null}
+                        <Pending
+                          label="Send it to yourself instead"
+                          busy="Sending to you…"
+                          variant="outline"
+                          className="w-full"
+                        />
+                        <span className="text-sm text-muted-foreground">
+                          A practice copy to your own inbox to see how it reads. Your customer gets
+                          nothing. {p.practiceLeft} left.
+                        </span>
+                      </form>
+                    ) : (
+                      <span className="text-sm text-muted-foreground">
+                        You&apos;ve used all your practice sends.
+                      </span>
+                    )
+                  ) : null}
+                </>
               )}
               {p.readOnly ? null : (
                 <div className="grid grid-cols-2 gap-2">

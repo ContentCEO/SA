@@ -152,14 +152,14 @@ _Re-checked 2026-10-10: brief scope complete with tests; nothing else filed here
 
 ## Milestone 6 — Workspace lifecycle
 
-- [ ] **#40 Practice sends during evaluation.** Exact rule: during `evaluating`, Send reply on any
+- [x] **#40 Practice sends during evaluation.** _(Done 2026-10-11.)_ Exact rule: during `evaluating`, Send reply on any
       draft opens "Send it to yourself instead?" — it sends a copy only to the owner's own connected
       mailbox address, subject prefixed "[Practice]", never to the customer and never in the
       customer's thread. Server-side: in `evaluating`, a send is allowed only if the full recipient
       list (to/cc/bcc) equals exactly the owner's own address; anything else stays 403. Max 10
       practice sends per workspace. Guardrail tests: customer recipient → 403; cc to a customer →
       403; 11th practice send → 403.
-- [ ] **#45 Admin cost dashboard.** `/admin/costs`: per workspace, this month's AI cost (from
+- [x] **#45 Admin cost dashboard.** _(Done 2026-10-11.)_ `/admin/costs`: per workspace, this month's AI cost (from
       `usage`), plan revenue, margin, calls vs daily cap. Sort by worst margin. Alert Davi (email via
       Resend) when a workspace's AI cost passes 40% of its plan price. No email content or customer
       names, ever.
