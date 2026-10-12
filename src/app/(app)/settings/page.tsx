@@ -139,6 +139,7 @@ export default async function SettingsPage(props: PageProps<"/settings">) {
     ["Area", profile?.serviceArea],
     ["Never promise", profile?.doNotPromise.length ? profile.doNotPromise.join(" · ") : null],
     ["Always send me", profile?.vipSenders.length ? profile.vipSenders.join(", ") : null],
+    ["Review link", profile?.reviewUrl],
     [
       "Flag amounts over",
       profile ? `$${profile.amountThresholdDollars.toLocaleString("en-US")}` : null,

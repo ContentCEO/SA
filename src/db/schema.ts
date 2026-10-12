@@ -133,6 +133,12 @@ export const mailboxes = pgTable(
 
 export const directionEnum = pgEnum("direction", ["in", "out"]);
 
+export const QUOTE_OUTCOME_SOURCES = ["owner", "auto"] as const;
+export type QuoteOutcomeSource = (typeof QUOTE_OUTCOME_SOURCES)[number];
+/** `not_owed`: the owner hid the row ("Not owed to me"); it counts as neither owed nor paid. */
+export const INVOICE_PAID_SOURCES = ["owner", "auto", "not_owed"] as const;
+export type InvoicePaidSource = (typeof INVOICE_PAID_SOURCES)[number];
+
 export const threads = pgTable(
   "threads",
   {
@@ -171,6 +177,19 @@ export const threads = pgTable(
      * captured before bodies are purged) or typed by the owner. Kept after the purge.
      */
     quoteAmountCents: integer("quote_amount_cents"),
+    /**
+     * Who set quote_outcome: the owner ("owner") or our guess ("auto"). The owner always wins.
+     * Rows set before this column existed (outcome set, source null) are the owner's.
+     */
+    quoteOutcomeSource: text("quote_outcome_source").$type<QuoteOutcomeSource>(),
+    /** Plan #27: when this invoice was marked paid (or hidden as "Not owed to me"). Null = owed. */
+    invoicePaidAt: timestamp("invoice_paid_at", { withTimezone: true }),
+    invoicePaidSource: text("invoice_paid_source").$type<InvoicePaidSource>(),
+    /**
+     * First time this thread was classified as a complaint. Sticky: never cleared, so a later
+     * "looks great" can't make an unhappy customer look like a review prospect.
+     */
+    complainedAt: timestamp("complained_at", { withTimezone: true }),
     createdAt: createdAt(),
   },
   (t) => [
@@ -241,6 +260,12 @@ export const draftStatusEnum = pgEnum("draft_status", [
   "expired",
 ]);
 export const draftKindEnum = pgEnum("draft_kind", ["reply", "followup"]);
+/**
+ * Owner-asked special replies (plan #26 #28 #29). They are kind `reply` with a purpose, so
+ * follow-up counts never change. Null = an ordinary reply or follow-up.
+ */
+export const DRAFT_PURPOSES = ["deposit", "review_request", "closing_question"] as const;
+export type DraftPurpose = (typeof DRAFT_PURPOSES)[number];
 
 /**
  * A reply we wrote. It lives as a real Gmail draft (`gmail_draft_id`) so the
@@ -295,6 +320,8 @@ export const drafts = pgTable(
     sendAfter: timestamp("send_after", { withTimezone: true }),
     /** Set by the one job allowed to send it; a stale claim (crash) can be retaken. */
     sendClaimedAt: timestamp("send_claimed_at", { withTimezone: true }),
+    /** Plan #26 #28 #29: deposit / review request / closing question. Null = ordinary. */
+    purpose: text("purpose").$type<DraftPurpose>(),
   },
   (t) => [
     index("drafts_mailbox_status_idx").on(t.mailboxId, t.status),
@@ -302,6 +329,10 @@ export const drafts = pgTable(
     uniqueIndex("drafts_one_pending_per_thread")
       .on(t.threadId)
       .where(sql`status = 'pending'`),
+    // Plan #26: "did you go another way?" is asked once per thread, ever (any status).
+    uniqueIndex("drafts_one_closing_question_per_thread")
+      .on(t.threadId)
+      .where(sql`purpose = 'closing_question'`),
   ],
 );
 
@@ -318,6 +349,8 @@ export const businessProfiles = pgTable("business_profile", {
   paymentTerms: text("payment_terms"),
   policies: text("policies"),
   signature: text("signature"),
+  /** Plan #29: where happy customers leave a review (https only). Added to a draft only on a tap. */
+  reviewUrl: text("review_url"),
   doNotPromise: jsonb("do_not_promise").$type<string[]>().notNull().default([]),
   vipSenders: jsonb("vip_senders").$type<string[]>().notNull().default([]),
   /** The owner's "Never say this" list (plan #23). Kept apart from the learned voice so a re-learn can't drop it. */
@@ -518,6 +551,34 @@ export const stripeEvents = pgTable("stripe_events", {
   receivedAt: timestamp("received_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+/**
+ * Plan #15 price memory: what the owner quoted for a kind of job, one row per quote thread.
+ * Owner-only. Never sent to the AI and never shown outside the queue/inbox quote items
+ * (enforced by a static test). Goes with the thread (disconnect) or the workspace (delete).
+ */
+export const priceHistory = pgTable(
+  "price_history",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    threadId: uuid("thread_id")
+      .notNull()
+      .references(() => threads.id, { onDelete: "cascade" }),
+    /** The kind of job (classification's service_requested), not the customer's words. */
+    service: text("service").notNull(),
+    amountCents: integer("amount_cents").notNull(),
+    quotedAt: timestamp("quoted_at", { withTimezone: true }).notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex("price_history_thread_uq").on(t.threadId),
+    index("price_history_ws_quoted_idx").on(t.workspaceId, t.quotedAt),
+  ],
+);
+
+export type PriceHistory = typeof priceHistory.$inferSelect;
 export type User = typeof users.$inferSelect;
 export type BusinessProfile = typeof businessProfiles.$inferSelect;
 export type VoiceProfile = typeof voiceProfiles.$inferSelect;

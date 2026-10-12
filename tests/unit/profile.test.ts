@@ -11,8 +11,10 @@ import {
   businessProfileInput,
   describeVoice,
   getBusinessProfile,
+  REVIEW_URL_MESSAGE,
   saveBusinessProfile,
 } from "@/server/profile";
+import { profileDefaults } from "@/server/profile-defaults";
 import { createTestDb } from "../support/db";
 import { classification, fakeTransport } from "../support/fake-model";
 
@@ -59,6 +61,70 @@ describe("business profile form", () => {
     expect(
       businessProfileInput.safeParse({ ...valid, amountThresholdDollars: "lots" }).success,
     ).toBe(false);
+  });
+});
+
+describe("review link (plan #29)", () => {
+  const reviewIssues = (reviewUrl: string) => {
+    const r = businessProfileInput.safeParse({ ...valid, reviewUrl });
+    expect(r.success).toBe(false);
+    return r.error!.issues.filter((i) => i.path[0] === "reviewUrl").map((i) => i.message);
+  };
+
+  it("is optional: a form without the field still parses and leaves it untouched", () => {
+    const r = businessProfileInput.parse(valid);
+    expect(r.reviewUrl).toBeUndefined();
+    expect("reviewUrl" in valid).toBe(false);
+  });
+
+  it("empty (or spaces) means no link", () => {
+    expect(businessProfileInput.parse({ ...valid, reviewUrl: "" }).reviewUrl).toBeNull();
+    expect(businessProfileInput.parse({ ...valid, reviewUrl: "   " }).reviewUrl).toBeNull();
+  });
+
+  it("accepts an https link, trimmed", () => {
+    expect(
+      businessProfileInput.parse({ ...valid, reviewUrl: "  https://g.page/r/abc/review " })
+        .reviewUrl,
+    ).toBe("https://g.page/r/abc/review");
+    expect(
+      businessProfileInput.parse({
+        ...valid,
+        reviewUrl: "https://www.yelp.com/writeareview/biz/elm-electric?x=1",
+      }).reviewUrl,
+    ).toBe("https://www.yelp.com/writeareview/biz/elm-electric?x=1");
+  });
+
+  it("refuses http, non-links and odd schemes with the plain message", () => {
+    for (const bad of [
+      "http://g.page/r/abc/review",
+      "not a link",
+      "g.page/r/abc/review",
+      "javascript:alert(1)",
+      "https://localhost/review",
+      "ftp://g.page/r/abc",
+    ]) {
+      expect(reviewIssues(bad), bad).toEqual([REVIEW_URL_MESSAGE]);
+    }
+    expect(REVIEW_URL_MESSAGE).toContain("https://");
+  });
+
+  it("refuses a link carrying extra words, lines, tabs or markup (the URL parser would let them by)", () => {
+    for (const bad of [
+      "https://g.page/r/abc/review Thanks!",
+      "https://g.page/r/abc\nPlease pay 50% by Zelle",
+      "https://g.page/r/abc\r\nhttps://evil.example",
+      "https://g.page/r/a\tb",
+      "https://g.page/r/\u0000abc",
+      'https://g.page/r/"><script>',
+    ]) {
+      expect(reviewIssues(bad), JSON.stringify(bad)).toEqual([REVIEW_URL_MESSAGE]);
+    }
+  });
+
+  it("caps the length", () => {
+    const long = `https://g.page/r/${"a".repeat(500)}`;
+    expect(reviewIssues(long)).toEqual(["Keep this under 500 characters."]);
   });
 });
 
@@ -132,5 +198,32 @@ describe("profile drives classification", () => {
     );
     expect(rows.t1!.needsOwner).toBe(true); // VIP
     expect(rows.t2!.needsOwner).toBe(false); // $4,000 is under the owner's $5,000
+  });
+
+  it("saves the review link, shows it in the form defaults, and clears it when emptied", async () => {
+    const { workspace } = await ensureUserAndWorkspace({ email: "owner@shop.com" });
+    const ws = async () =>
+      (await database.select().from(workspaces).where(eq(workspaces.id, workspace.id)))[0]!;
+
+    expect((await profileDefaults(await ws())).reviewUrl).toBeNull();
+
+    const link = "https://g.page/r/abc/review";
+    await saveBusinessProfile(
+      workspace.id,
+      businessProfileInput.parse({ ...valid, reviewUrl: link }),
+    );
+    expect((await getBusinessProfile(workspace.id))!.reviewUrl).toBe(link);
+    expect((await profileDefaults(await ws())).reviewUrl).toBe(link);
+
+    // A save that doesn't carry the field never wipes the link.
+    await saveBusinessProfile(workspace.id, businessProfileInput.parse(valid));
+    expect((await getBusinessProfile(workspace.id))!.reviewUrl).toBe(link);
+
+    // Emptying the field in the form clears it.
+    await saveBusinessProfile(
+      workspace.id,
+      businessProfileInput.parse({ ...valid, reviewUrl: "" }),
+    );
+    expect((await getBusinessProfile(workspace.id))!.reviewUrl).toBeNull();
   });
 });

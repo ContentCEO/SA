@@ -18,6 +18,7 @@ export type ProfileDefaults = {
   paymentTerms: string | null;
   policies: string | null;
   signature: string | null;
+  reviewUrl: string | null;
   doNotPromise: string[];
   vipSenders: string[];
   amountThresholdDollars: number;
@@ -126,6 +127,14 @@ export function BusinessProfileForm({
         defaultValue={v("signature", defaults.signature) as string}
         error={e.signature}
         rows={3}
+      />
+      <TextField
+        name="reviewUrl"
+        type="url"
+        label="Your review link"
+        hint="Where happy customers can leave a review (Google, Yelp…). We only add it to a draft when you tap Ask for a review."
+        defaultValue={v("reviewUrl", defaults.reviewUrl) as string}
+        error={e.reviewUrl}
       />
       <TextArea
         name="doNotPromise"

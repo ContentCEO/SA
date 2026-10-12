@@ -162,6 +162,13 @@
       "when": 1791670900637,
       "tag": "0022_conscious_wasp",
       "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1791772671517,
+      "tag": "0023_solid_slyde",
+      "breakpoints": true
     }
   ]
 }
