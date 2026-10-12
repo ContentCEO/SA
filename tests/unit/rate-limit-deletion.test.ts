@@ -7,6 +7,7 @@ import {
   activityLog,
   businessProfiles,
   mailboxes,
+  priceHistory,
   rateLimits,
   threads,
   users,
@@ -88,10 +89,19 @@ describe("delete my account", () => {
       grantedScopes: [],
     });
     const [mb] = await database.select().from(mailboxes);
-    await database
+    const [t] = await database
       .insert(threads)
-      .values({ mailboxId: mb!.id, gmailThreadId: "t1", subject: "Panel upgrade" } as never);
+      .values({ mailboxId: mb!.id, gmailThreadId: "t1", subject: "Panel upgrade" } as never)
+      .returning();
     await database.insert(businessProfiles).values({ workspaceId: workspace.id } as never);
+    // Plan #15: price memory goes with the account (A20).
+    await database.insert(priceHistory).values({
+      workspaceId: workspace.id,
+      threadId: t!.id,
+      service: "Panel upgrade",
+      amountCents: 180000,
+      quotedAt: new Date(),
+    });
     return { user, workspace };
   }
 
@@ -110,7 +120,15 @@ describe("delete my account", () => {
     expect(r).toEqual({ mailboxes: 1, revoked: 1, subscriptionCanceled: true });
     expect(revoked).toEqual(["refresh-1"]);
     expect(canceled).toEqual(["sub_1"]);
-    for (const table of [users, workspaces, mailboxes, threads, businessProfiles, activityLog]) {
+    for (const table of [
+      users,
+      workspaces,
+      mailboxes,
+      threads,
+      businessProfiles,
+      activityLog,
+      priceHistory,
+    ]) {
       expect(await database.select().from(table)).toHaveLength(0);
     }
   });

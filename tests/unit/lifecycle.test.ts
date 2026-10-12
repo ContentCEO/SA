@@ -7,6 +7,7 @@ import {
   activityLog,
   drafts,
   messages,
+  priceHistory,
   threads,
   usage,
   workspaces,
@@ -442,6 +443,14 @@ describe("lifecycle in the database", () => {
         bodyText: "SECRET-BODY",
         sentAt: T0,
       });
+      // Plan #15: a remembered price is the owner's alone too.
+      await database.insert(priceHistory).values({
+        workspaceId,
+        threadId: t!.id,
+        service: "SECRET-SERVICE",
+        amountCents: 4242400,
+        quotedAt: T0,
+      });
 
       const [row] = await adminOverview(at(0.1));
       expect(row).toMatchObject({
@@ -451,7 +460,9 @@ describe("lifecycle in the database", () => {
         drafts: { pending: 1, createdThisMonth: 1 },
         ai: { callsToday: 7, callsThisMonth: 7, costCentsThisMonth: 123 },
       });
-      expect(JSON.stringify(row)).not.toMatch(/SECRET|secret-customer|Zelda|98765|987\.65/);
+      expect(JSON.stringify(row)).not.toMatch(
+        /SECRET|secret-customer|Zelda|98765|987\.65|42424|42,424/,
+      );
     });
   });
 });

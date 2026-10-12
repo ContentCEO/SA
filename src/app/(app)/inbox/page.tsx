@@ -11,6 +11,8 @@ import { listInboxThreads, type InboxFilter, type InboxRow } from "@/server/inbo
 import { listMailboxes } from "@/server/mailboxes";
 import { isReadOnly } from "@/server/lifecycle";
 import { threadOffers } from "@/server/offers";
+import { priceMemoryFor, type PriceMemoryItem } from "@/server/price-memory";
+import { getBusinessProfile } from "@/server/profile";
 import { requireOwner } from "@/server/session";
 import { draftReplyAction } from "../queue/actions";
 import { markNeedsOwnerAction } from "./actions";
@@ -86,6 +88,19 @@ function Details({ row }: { row: InboxRow }) {
   );
 }
 
+/** Plan #15: the owner's past prices for similar jobs, as text. Only they see it. */
+function PastPricesLine({ prices }: { prices: PriceMemoryItem[] | undefined }) {
+  if (!prices?.length) return null;
+  return (
+    <p className="text-sm">
+      <span className="font-semibold">
+        {prices.length === 1 ? "Your last similar quote:" : `Last ${prices.length} similar quotes:`}
+      </span>{" "}
+      {prices.map((p) => `${p.value} (${p.month})`).join(", ")}
+    </p>
+  );
+}
+
 export default async function InboxPage(props: PageProps<"/inbox">) {
   const { workspace } = await requireOwner();
   const readOnly = isReadOnly(workspace);
@@ -101,6 +116,12 @@ export default async function InboxPage(props: PageProps<"/inbox">) {
   const offers = await threadOffers(
     workspace.id,
     rows.map((r) => r.id),
+  );
+  const timeZone = (await getBusinessProfile(workspace.id))?.timeZone ?? "America/New_York";
+  const pastPrices = await priceMemoryFor(
+    workspace.id,
+    rows.filter((r) => r.category === "quote_request").map((r) => r.id),
+    { timeZone },
   );
 
   return (
@@ -184,6 +205,7 @@ export default async function InboxPage(props: PageProps<"/inbox">) {
                     }
                   />
                   <Details row={row} />
+                  <PastPricesLine prices={pastPrices.get(row.id)} />
                   {row.category !== "noise" && !readOnly ? (
                     <form action={draftReplyAction}>
                       <input type="hidden" name="threadId" value={row.id} />

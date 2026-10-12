@@ -19,6 +19,7 @@ import {
 import { practiceSendsUsed } from "@/server/practice";
 import { listMailboxes } from "@/server/mailboxes";
 import { getBusinessProfile } from "@/server/profile";
+import { priceMemoryFor } from "@/server/price-memory";
 import { requireOwner } from "@/server/session";
 import { dismissChecklistAction, draftReplyAction } from "./actions";
 import { OnboardingChecklist } from "@/components/app/onboarding-checklist";
@@ -134,6 +135,13 @@ export default async function QueuePage(props: PageProps<"/queue">) {
     }));
   const readyCount =
     sending && !readOnly ? (await batchCandidates(workspace.id, BATCH_CATEGORIES)).length : 0;
+  // Plan #15: the owner's own past prices for similar jobs, on quote-request drafts only.
+  // Shown here and tapped in by the owner — never sent to the drafter.
+  const priceMemory = await priceMemoryFor(
+    workspace.id,
+    queue.drafts.filter((i) => i.category === "quote_request").map((i) => i.threadId),
+    { timeZone, now },
+  );
 
   return (
     <>
@@ -279,6 +287,7 @@ export default async function QueuePage(props: PageProps<"/queue">) {
               sendingOffLabel={sendingOffLabel(workspace)}
               sendingOffDetail={sendingBlockedReason(workspace)}
               practiceLeft={practiceLeft}
+              priceMemory={priceMemory.get(i.threadId)}
             />
           ))}
         </section>

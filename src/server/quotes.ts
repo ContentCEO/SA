@@ -2,7 +2,7 @@ import "server-only";
 import { and, desc, eq, inArray, isNotNull, isNull, or, sql, type SQL } from "drizzle-orm";
 import { prepareBody } from "@/ai/classify";
 import { db } from "@/db";
-import { activityLog, mailboxes, messages, threads, workspaces } from "@/db/schema";
+import { activityLog, mailboxes, messages, priceHistory, threads, workspaces } from "@/db/schema";
 import { expirePendingNudge, flagPendingNudge, followupSettings, type DraftDeps } from "./drafts";
 import { effectiveStatus, JOBS_ALLOWED, jobsAllowed, ReadOnlyError } from "./lifecycle";
 import {
@@ -177,23 +177,26 @@ export async function setQuoteOutcome(
   const t = await ownedThread(workspaceId, threadId);
   if (!t) return false;
   if (!jobsAllowed(t.workspace, now)) throw new ReadOnlyError(effectiveStatus(t.workspace, now));
-  await db()
-    .update(threads)
-    .set({
-      quoteOutcome: outcome,
-      quoteOutcomeSource: "owner",
-      quoteOutcomeAt: outcome ? now : null,
-      ...(amountCents !== undefined && amountCents !== null
-        ? { quoteAmountCents: amountCents }
-        : {}),
-    })
-    .where(eq(threads.id, threadId));
-  await db().insert(activityLog).values({
-    workspaceId,
-    actor: "owner",
-    action: "quote_marked",
-    threadId,
-    detail: { outcome },
+  const typed = amountCents !== undefined && amountCents !== null;
+  // One transaction, so price memory never sees a typed amount without its mark.
+  await db().transaction(async (tx) => {
+    await tx
+      .update(threads)
+      .set({
+        quoteOutcome: outcome,
+        quoteOutcomeSource: "owner",
+        quoteOutcomeAt: outcome ? now : null,
+        ...(typed ? { quoteAmountCents: amountCents } : {}),
+      })
+      .where(eq(threads.id, threadId));
+    await tx.insert(activityLog).values({
+      workspaceId,
+      actor: "owner",
+      action: "quote_marked",
+      threadId,
+      // `amountTyped` (yes/no, never the amount): a typed Won amount stays out of price memory.
+      detail: typed ? { outcome, amountTyped: true } : { outcome },
+    });
   });
   // A decided quote is never chased, so a nudge still waiting in the queue goes too
   // (here and in Gmail). The mark stands even if Gmail can't be reached right now.
@@ -389,10 +392,19 @@ export async function guessNoAnswers(
  * Remember what each quote was for while the owner's reply text still exists
  * (bodies are purged after the retention window; the amount is kept). Never
  * overwrites an amount that's already set.
+ *
+ * Plan #15: a captured amount on a thread whose kind of job is known also goes
+ * into the owner's price memory (one row per thread, write-only from here). The
+ * amount the owner types when marking a quote Won does not (it may be the final
+ * bill, not the quote) — see `backfillPriceMemory`.
  */
 export async function captureQuoteAmounts(workspaceId?: string): Promise<number> {
   const open = await db()
-    .select({ id: threads.id })
+    .select({
+      id: threads.id,
+      workspaceId: mailboxes.workspaceId,
+      extracted: threads.extracted,
+    })
     .from(threads)
     .innerJoin(mailboxes, eq(mailboxes.id, threads.mailboxId))
     .where(
@@ -402,33 +414,116 @@ export async function captureQuoteAmounts(workspaceId?: string): Promise<number>
         isNull(threads.quoteAmountCents),
       ),
     )
+    // Newest first, so quotes with no figure in them can't crowd out today's.
+    .orderBy(desc(threads.lastMessageAt))
     .limit(500);
-  if (!open.length) return 0;
-  const outbound = await db()
-    .select({ threadId: messages.threadId, body: messages.bodyText, sentAt: messages.sentAt })
-    .from(messages)
+  let captured = 0;
+  if (open.length) {
+    const outbound = await db()
+      .select({ threadId: messages.threadId, body: messages.bodyText, sentAt: messages.sentAt })
+      .from(messages)
+      .where(
+        and(
+          inArray(
+            messages.threadId,
+            open.map((t) => t.id),
+          ),
+          eq(messages.direction, "out"),
+          isNotNull(messages.bodyText),
+        ),
+      )
+      .orderBy(desc(messages.sentAt));
+    const byThread = new Map<string, { cents: number; sentAt: Date }>();
+    for (const m of outbound) {
+      if (byThread.has(m.threadId)) continue; // newest reply with a figure wins
+      const cents = amountFromOwnerText(prepareBody(m.body ?? ""));
+      if (cents) byThread.set(m.threadId, { cents, sentAt: m.sentAt });
+    }
+    const info = new Map(open.map((t) => [t.id, t]));
+    for (const [id, { cents, sentAt }] of byThread) {
+      const set = await db()
+        .update(threads)
+        .set({ quoteAmountCents: cents })
+        .where(and(eq(threads.id, id), isNull(threads.quoteAmountCents)))
+        .returning({ id: threads.id });
+      if (!set.length) continue;
+      captured++;
+      const t = info.get(id)!;
+      const service = serviceOf(t.extracted);
+      if (!service) continue;
+      await db()
+        .insert(priceHistory)
+        .values({
+          workspaceId: t.workspaceId,
+          threadId: id,
+          service,
+          amountCents: cents,
+          quotedAt: sentAt,
+        })
+        .onConflictDoNothing();
+    }
+  }
+  await backfillPriceMemory(workspaceId);
+  return captured;
+}
+
+/** The kind of job sorting found, trimmed for price memory; null if there isn't one. */
+function serviceOf(extracted: unknown): string | null {
+  const s = (extracted as { service_requested?: unknown } | null)?.service_requested;
+  if (typeof s !== "string") return null;
+  const t = s.trim().slice(0, 200);
+  return t || null;
+}
+
+/**
+ * Price memory for quotes that had an amount before it existed (amendment 8), or
+ * whose kind of job became known later. Skips any thread whose amount the owner
+ * typed when marking it Won (the `amountTyped` mark on that activity row) — only
+ * prices from the owner's own sent quotes go in. Idempotent: one row per thread.
+ */
+async function backfillPriceMemory(workspaceId?: string): Promise<number> {
+  const service = sql<string | null>`btrim(${threads.extracted}->>'service_requested')`;
+  const rows = await db()
+    .select({
+      threadId: threads.id,
+      workspaceId: mailboxes.workspaceId,
+      extracted: threads.extracted,
+      amountCents: threads.quoteAmountCents,
+      quotedAt: sql<
+        string | Date
+      >`coalesce(${lastOutSql()}, ${threads.quoteOutcomeAt}, ${threads.createdAt})`,
+    })
+    .from(threads)
+    .innerJoin(mailboxes, eq(mailboxes.id, threads.mailboxId))
     .where(
       and(
-        inArray(
-          messages.threadId,
-          open.map((t) => t.id),
-        ),
-        eq(messages.direction, "out"),
-        isNotNull(messages.bodyText),
+        workspaceId ? eq(mailboxes.workspaceId, workspaceId) : undefined,
+        quoteThreadSql(),
+        isNotNull(threads.quoteAmountCents),
+        sql`coalesce(${service}, '') <> ''`,
+        sql`not exists (select 1 from price_history ph where ph.thread_id = ${threads.id})`,
+        // Scoped by workspace so activity_log's (workspace_id, created_at) index applies —
+        // this runs on every Quotes view, and the log grows with every account.
+        sql`not exists (select 1 from activity_log a where a.workspace_id = ${mailboxes.workspaceId} and a.thread_id = ${threads.id} and a.action = 'quote_marked' and a.detail->>'amountTyped' = 'true')`,
       ),
     )
-    .orderBy(desc(messages.sentAt));
-  const byThread = new Map<string, number>();
-  for (const m of outbound) {
-    if (byThread.has(m.threadId)) continue; // newest reply with a figure wins
-    const cents = amountFromOwnerText(prepareBody(m.body ?? ""));
-    if (cents) byThread.set(m.threadId, cents);
+    .limit(500);
+  let added = 0;
+  for (const r of rows) {
+    const s = serviceOf(r.extracted);
+    if (!s || !r.amountCents) continue;
+    const inserted = await db()
+      .insert(priceHistory)
+      .values({
+        workspaceId: r.workspaceId,
+        threadId: r.threadId,
+        service: s,
+        amountCents: r.amountCents,
+        quotedAt: new Date(r.quotedAt),
+      })
+      .onConflictDoNothing()
+      .returning({ id: priceHistory.id });
+    added += inserted.length;
   }
-  for (const [id, cents] of byThread) {
-    await db()
-      .update(threads)
-      .set({ quoteAmountCents: cents })
-      .where(and(eq(threads.id, id), isNull(threads.quoteAmountCents)));
-  }
-  return byThread.size;
+  return added;
 }

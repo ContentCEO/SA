@@ -4,9 +4,9 @@ import { useEffect, useRef, useState, useSyncExternalStore, useTransition } from
 import { useFormStatus } from "react-dom";
 import { Button } from "@/components/ui/button";
 import { addNeverSayAction } from "../settings/wording-actions";
-import { findGaps } from "@/ai/gaps";
+import { fillGap, findGaps } from "@/ai/gaps";
 import type { ConfidenceLabel } from "@/config/drafting";
-import { BodyWithGaps, ConfidenceTag, WhyThis } from "./draft-parts";
+import { BodyWithGaps, ConfidenceTag, PastPrices, WhyThis, type PastPrice } from "./draft-parts";
 import { SayAChange, TweakChips } from "./revise-controls";
 import { RemindMe, type SnoozeOption } from "./remind-me";
 import {
@@ -57,6 +57,11 @@ export type DraftCardProps = {
   sendingOffDetail: string;
   /** Plan #40: practice sends left during the three days; null outside them. */
   practiceLeft?: number | null;
+  /**
+   * Plan #15: what the owner quoted for similar jobs (quote requests only). Owner-only:
+   * a figure reaches the draft only when they tap it into a {{price}} gap.
+   */
+  priceMemory?: PastPrice[];
 };
 
 function Pending({
@@ -133,6 +138,12 @@ export function DraftCard(p: DraftCardProps) {
   // The body as the owner sees it — gaps they fill in change it before sending.
   const [body, setBody] = useState(p.body);
   const gapsLeft = findGaps(body).length;
+  const priceGap = findGaps(body).findIndex((g) => g.kind === "price");
+  // Only ever on the owner's tap, and only into a {{price}} gap.
+  const usePrice = (value: string) => {
+    if (priceGap >= 0) setBody(fillGap(body, priceGap, value));
+  };
+  const pastPrices = p.priceMemory ?? [];
   const [neverSayNote, setNeverSayNote] = useState<string | null>(null);
   const [savingPhrase, startSaving] = useTransition();
   const neverSay = () => {
@@ -299,6 +310,7 @@ export function DraftCard(p: DraftCardProps) {
               onChange={setBody}
               expanded={expanded}
               readOnly={p.readOnly}
+              priceSuggestions={pastPrices}
             />
             <button
               type="button"
@@ -309,6 +321,15 @@ export function DraftCard(p: DraftCardProps) {
               {expanded ? "Show less" : "Show full draft"}
             </button>
           </div>
+
+          {pastPrices.length ? (
+            <PastPrices
+              prices={pastPrices}
+              canFill={priceGap >= 0 && !p.readOnly}
+              readOnly={p.readOnly}
+              onUse={usePrice}
+            />
+          ) : null}
 
           <WhyThis reason={p.reason} usedFacts={p.usedFacts} flags={p.flags} />
 

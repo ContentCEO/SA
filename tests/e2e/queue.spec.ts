@@ -198,3 +198,84 @@ test("review all ready: lists who and how it starts, then asks once before sendi
   await page.getByRole("button", { name: "Not yet" }).click();
   await expect(page.getByRole("button", { name: "Send 2 replies" })).toBeVisible();
 });
+
+test("price memory: past prices for similar jobs, and a tap fills only the price gap (plan #15)", async ({
+  page,
+  context,
+}) => {
+  const owner = await seedOwner({ mailbox: true, backfilled: true });
+  await setWorkspace(owner.workspaceId, {
+    status: "setup_paid",
+    setupPaidAt: new Date(),
+    setupPaidVia: "stripe",
+  });
+  const { quote, draft } = await seedQueue(owner.mailboxId!);
+  await testDb
+    .update(schema.threads)
+    .set({ extracted: { service_requested: "panel upgrade" } })
+    .where(eq(schema.threads.id, quote.t.id));
+  await testDb
+    .update(schema.drafts)
+    .set({
+      body: "Hey Priya,\n\nThe panel upgrade is {{price}} including the permit.\n\nThanks, Davi",
+      flags: [],
+    })
+    .where(eq(schema.drafts.id, draft.id));
+  // Two earlier panel quotes (not in the inbox any more), remembered from the owner's replies.
+  const year = new Date().getUTCFullYear();
+  for (const [service, cents, month] of [
+    ["200 amp panel upgrade", 180000, 2],
+    ["Panel upgrade", 210000, 5],
+  ] as const) {
+    const [t] = await testDb
+      .insert(schema.threads)
+      .values({
+        mailboxId: owner.mailboxId!,
+        gmailThreadId: `old-${month}-${owner.mailboxId}`,
+        category: "quote_request",
+        inInbox: false,
+      })
+      .returning();
+    await testDb.insert(schema.priceHistory).values({
+      workspaceId: owner.workspaceId,
+      threadId: t!.id,
+      service,
+      amountCents: cents,
+      quotedAt: new Date(Date.UTC(year, month, 15, 16)),
+    });
+  }
+  await signInAs(context, owner);
+
+  await page.goto("/queue");
+  const card = page.getByRole("article", { name: "Draft reply to Priya" });
+  const memory = card.getByRole("region", { name: "Last 2 similar quotes:" });
+  await expect(memory).toBeVisible();
+  await expect(memory).toContainText("Only you see these.");
+  await expect(card.getByRole("button", { name: "Fill in price" })).toBeVisible();
+  await expect(card.getByRole("note")).toContainText("Fill in 1 gap to send");
+  await expect(card.getByRole("button", { name: "Send reply" })).toHaveCount(0);
+  // Amounts are visible text only — never in an aria-label (A9).
+  await expect(page.locator('[aria-label*="$"]')).toHaveCount(0);
+
+  // The same figures are offered inside the price gap's own form.
+  await card.getByRole("button", { name: "Fill in price" }).click();
+  await expect(card.getByText("Or use one of your past prices:")).toBeVisible();
+  await card.getByRole("button", { name: "Cancel" }).click();
+
+  await memory.getByRole("button", { name: "Use $1,800 (Mar)" }).click();
+  await expect(card.getByRole("button", { name: "Fill in price" })).toHaveCount(0);
+  await expect(card).toContainText("The panel upgrade is $1,800 including the permit.");
+  await expect(card.getByRole("button", { name: "Send reply" })).toBeEnabled();
+  await expect(memory).toContainText("No price gap left to fill.");
+  await expect(memory.getByRole("button", { name: "Use $2,100 (Jun)" })).toBeDisabled();
+
+  // The Inbox row shows the same figures, as text.
+  await page.goto("/inbox?c=quote_request");
+  await page.getByText("Panel upgrade quote.").click();
+  await expect(page.getByText("Last 2 similar quotes: $2,100 (Jun), $1,800 (Mar)")).toBeVisible();
+
+  const overflow = await page.evaluate(
+    () => document.documentElement.scrollWidth > document.documentElement.clientWidth,
+  );
+  expect(overflow).toBe(false);
+});

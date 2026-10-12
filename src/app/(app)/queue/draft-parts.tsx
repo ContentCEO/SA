@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useId, useState } from "react";
 import { findGaps, fillGap } from "@/ai/gaps";
 import { Button } from "@/components/ui/button";
 import { confidenceWords, type ConfidenceLabel } from "@/config/drafting";
@@ -31,11 +31,14 @@ export function BodyWithGaps({
   onChange,
   expanded,
   readOnly,
+  priceSuggestions,
 }: {
   body: string;
   onChange: (next: string) => void;
   expanded: boolean;
   readOnly?: boolean;
+  /** Plan #15: the owner's past prices for similar jobs, offered in an open price gap. */
+  priceSuggestions?: PastPrice[];
 }) {
   const [open, setOpen] = useState<number | null>(null);
   const [value, setValue] = useState("");
@@ -99,6 +102,26 @@ export function BodyWithGaps({
               className="min-h-14 rounded-lg border border-input bg-paper px-3 text-2xl"
             />
           </label>
+          {gaps[open].kind === "price" && priceSuggestions?.length ? (
+            <div className="flex flex-col gap-1.5">
+              <span className="text-sm font-semibold">Or use one of your past prices:</span>
+              <div className="flex flex-wrap gap-2">
+                {priceSuggestions.map((s, i) => (
+                  <Button
+                    key={i}
+                    type="button"
+                    variant="outline"
+                    onClick={() => {
+                      onChange(fillGap(body, open, s.value));
+                      setOpen(null);
+                    }}
+                  >
+                    <PastPriceText price={s} />
+                  </Button>
+                ))}
+              </div>
+            </div>
+          ) : null}
           <div className="grid grid-cols-2 gap-2">
             <Button type="submit">Fill in</Button>
             <Button type="button" variant="ghost" onClick={() => setOpen(null)}>
@@ -108,6 +131,66 @@ export function BodyWithGaps({
         </form>
       ) : null}
     </div>
+  );
+}
+
+/** One past price the owner quoted for a similar job: "$1,800" and "Mar". */
+export type PastPrice = { cents: number; value: string; month: string };
+
+/**
+ * The button text: "Use" for screen readers, then the figure. Never an aria-label —
+ * error reports copy those from taps, and an amount must never leave (A9).
+ */
+function PastPriceText({ price }: { price: PastPrice }) {
+  return (
+    <>
+      <span className="sr-only">Use </span>
+      {price.value} ({price.month})
+    </>
+  );
+}
+
+/**
+ * Plan #15 price memory: what the owner quoted for similar jobs. Only they see it,
+ * and a figure goes into the draft only when they tap it — into a {{price}} gap.
+ */
+export function PastPrices({
+  prices,
+  canFill,
+  readOnly,
+  onUse,
+}: {
+  prices: PastPrice[];
+  canFill: boolean;
+  readOnly?: boolean;
+  onUse: (value: string) => void;
+}) {
+  const id = useId();
+  return (
+    <section aria-labelledby={id} className="flex flex-col gap-2 rounded-lg border p-3">
+      <p id={id} className="font-semibold">
+        {prices.length === 1 ? "Your last similar quote:" : `Last ${prices.length} similar quotes:`}
+      </p>
+      <div className="flex flex-wrap gap-2">
+        {prices.map((p, i) => (
+          <Button
+            key={i}
+            type="button"
+            variant="outline"
+            disabled={!canFill}
+            onClick={() => onUse(p.value)}
+          >
+            <PastPriceText price={p} />
+          </Button>
+        ))}
+      </div>
+      {!canFill && !readOnly ? (
+        <p className="text-sm font-semibold">No price gap left to fill.</p>
+      ) : null}
+      <p className="text-sm text-muted-foreground">
+        Only you see these. They never go into a draft unless you tap.
+      </p>
+    </section>
   );
 }
 
