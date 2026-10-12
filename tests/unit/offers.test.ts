@@ -191,6 +191,7 @@ async function reviewOnFile(
   status: (typeof drafts.$inferInsert)["status"],
   days: number,
   to = DANA,
+  sentDays = days,
 ) {
   const t = await jobDone({}, to.toLowerCase());
   await database.insert(drafts).values({
@@ -204,7 +205,7 @@ async function reviewOnFile(
     body: `A review? ${REVIEW_URL}`,
     reason: "Review request.",
     createdAt: at(days),
-    decidedAt: status === "pending" ? null : at(days),
+    decidedAt: status === "pending" ? null : at(sentDays),
   });
 }
 
@@ -630,6 +631,200 @@ describe("GUARDRAIL: never to complaint threads (server-side)", () => {
       .where(eq(threads.id, earlier));
     expect(await reviewAllowed(workspaceId, t, NOW)).toBeNull();
   });
+
+  const owed42 = {
+    invoice: { invoice_number: "42", amount: 1200, due_date: null, status: "unpaid" as const },
+    invoice_thread: true,
+  };
+  /** Invoice #42 for $1,200 went out; Dana owes it. Sorted. */
+  async function invoiceOwed() {
+    const t = await makeThread(
+      {
+        category: "invoice_payment",
+        extracted: owed42,
+        summary: "Invoice 42.",
+        classifiedAt: at(-8),
+      },
+      [
+        { direction: "in", days: -9, body: "Can you send the bill?" },
+        { direction: "out", days: -8, body: "Invoice 42 attached: $1,200. Davi" },
+      ],
+    );
+    await database
+      .update(messages)
+      .set({ classifiedAt: at(-9) })
+      .where(eq(messages.threadId, t));
+    return t;
+  }
+  const paidBalance = () =>
+    classification({
+      category: "invoice_payment",
+      summary: "Dana paid the balance.",
+      extracted: {
+        ...classification().extracted,
+        service_requested: null,
+        invoice: { invoice_number: "42", amount: null, due_date: null, status: "paid" },
+      },
+    });
+  async function ownerSortsItOut(t: string) {
+    await database.insert(messages).values({
+      threadId: t,
+      mailboxId,
+      gmailMessageId: `${t}-sorted`,
+      direction: "out",
+      fromAddress: "owner@shop.com",
+      toAddresses: [DANA],
+      subject: "Invoice",
+      bodyText: "Sorry Dana — we'll finish the trim Monday. Davi",
+      sentAt: at(-5),
+    });
+    // Sending the reply clears needs-owner (sendDraft does this).
+    await database.update(threads).set({ needsOwner: false }).where(eq(threads.id, t));
+  }
+
+  it("GUARDRAIL: a disputed charge is a complaint — paid later, still no review, no model call", async () => {
+    await profile();
+    const t = await invoiceOwed();
+    // "I'm disputing this charge, the work wasn't finished." Sorted invoice_payment (the
+    // prompt's own rule for amount disputes) with the model's own reason, not ours.
+    const disputed = await resort(
+      t,
+      -6,
+      "I'm disputing this charge, the work wasn't finished.",
+      classification({
+        category: "invoice_payment",
+        needs_owner: true,
+        needs_owner_reason: "Dana disputes invoice 42.",
+        summary: "Dana disputes the invoice.",
+        signals: { ...classification().signals, mentions_refund_or_dispute: true },
+        extracted: { ...classification().extracted, invoice: owed42.invoice },
+      }),
+    );
+    expect(disputed).toMatchObject({ category: "invoice_payment", needsOwner: true });
+    expect(disputed.extracted).toMatchObject({ disputed: true });
+    expect(disputed.complainedAt).toEqual(at(-6));
+
+    await ownerSortsItOut(t);
+    // "OK, paid the balance." → our paid guess, needs-owner off: everything else says yes.
+    const paid = await resort(t, -1 / 24, "OK, paid the balance.", paidBalance());
+    expect(paid).toMatchObject({ needsOwner: false, invoicePaidSource: "auto" });
+    expect(paid.extracted).not.toHaveProperty("disputed");
+    expect(paid.complainedAt).toEqual(at(-6));
+
+    expect((await threadOffers(workspaceId, [t], NOW)).get(t)?.review).toBe(false);
+    const calls = model(reviewBody);
+    expect(await askReview(t)).toEqual({ status: "skipped", reason: "complaint" });
+    expect(calls).toHaveLength(0);
+    expect(writer.calls).toEqual([]);
+    // Nor on their other jobs for 12 months.
+    const other = await jobDone();
+    expect(await reviewAllowed(workspaceId, other, NOW)).toBe("complaint");
+  });
+
+  it("…a legal threat too", async () => {
+    await profile();
+    const t = await invoiceOwed();
+    const legal = await resort(
+      t,
+      -6,
+      "If this isn't fixed I'll file a lien.",
+      classification({
+        category: "invoice_payment",
+        summary: "Dana threatens a lien.",
+        signals: { ...classification().signals, mentions_legal: true },
+        extracted: { ...classification().extracted, invoice: owed42.invoice },
+      }),
+    );
+    expect(legal.complainedAt).toEqual(at(-6));
+    await ownerSortsItOut(t);
+    await resort(t, -1 / 24, "OK, paid the balance.", paidBalance());
+    const calls = model(reviewBody);
+    expect(await askReview(t)).toEqual({ status: "skipped", reason: "complaint" });
+    expect(calls).toHaveLength(0);
+  });
+
+  it("a dispute sorted before `disputed` existed (only its reason shows) still blocks", async () => {
+    await profile();
+    // Older code: needs-owner with our dispute reason, no mark, no flag.
+    const t = await jobDone({
+      category: "invoice_payment",
+      needsOwner: false,
+      needsOwnerReason: "Asks for money back or disputes a charge.",
+      extracted: { job_done: true },
+      complainedAt: null,
+    });
+    expect(await reviewAllowed(workspaceId, t, NOW)).toBe("complaint");
+    const other = await jobDone();
+    expect(await reviewAllowed(workspaceId, other, NOW)).toBe("complaint");
+    // A quote whose customer disputed something isn't asked "did you go another way?" either.
+    process.env.FEATURE_CLOSING_QUESTION = "on";
+    const quiet = await quietQuote({ needsOwnerReason: "Mentions something legal." });
+    expect(await closingQuestionAllowed(workspaceId, quiet, NOW)).toBe("complaint");
+    // The next email gives it the sticky mark.
+    await database.update(messages).set({ classifiedAt: at(-1) });
+    const later = await resort(t, -1 / 48, "Thanks again!", happy());
+    expect(later.complainedAt).not.toBeNull();
+    expect(await reviewAllowed(workspaceId, other, NOW)).toBe("complaint");
+  });
+});
+
+describe("a deposit is not the job being paid (#29)", () => {
+  it("GUARDRAIL: 'Let's do it, sent the $500 deposit' on a quote → no paid mark, no review offer", async () => {
+    await profile();
+    const t = await makeThread(
+      {
+        category: "quote_request",
+        extracted: {},
+        summary: "Dana wants a panel.",
+        classifiedAt: at(-5),
+      },
+      [
+        { direction: "in", days: -6, body: "How much for a 200 amp panel?" },
+        { direction: "out", days: -5, body: "It's $2,400 including the permit. Davi" },
+      ],
+    );
+    await database
+      .update(messages)
+      .set({ classifiedAt: at(-6) })
+      .where(eq(messages.threadId, t));
+    await database.insert(messages).values({
+      threadId: t,
+      mailboxId,
+      gmailMessageId: `${t}-deposit`,
+      direction: "in",
+      fromAddress: DANA,
+      toAddresses: ["owner@shop.com"],
+      subject: "Panel",
+      bodyText: "Let's do it, just sent the $500 deposit by Zelle.",
+      labelIds: ["INBOX"],
+      sentAt: at(-1),
+    });
+    setModelTransportForTests(
+      fakeTransport([
+        classification({
+          category: "invoice_payment",
+          summary: "Dana accepts and sent the deposit.",
+          signals: { ...classification().signals, accepts_quote: true },
+          extracted: {
+            ...classification().extracted,
+            invoice: { invoice_number: null, amount: 500, due_date: null, status: "paid" },
+          },
+        }),
+      ]).transport,
+    );
+    await classifyPending(mailboxId, { now: at(-1) });
+    const [row] = await database.select().from(threads).where(eq(threads.id, t));
+    expect(row).toMatchObject({
+      invoicePaidAt: null,
+      invoicePaidSource: null,
+      quoteOutcome: "won",
+    });
+    expect((await threadOffers(workspaceId, [t], NOW)).get(t)?.review).toBe(false);
+    expect(await reviewAllowed(workspaceId, t, NOW)).toBe("not_eligible");
+    const money = await listMoney(workspaceId, NOW);
+    expect(money.paidRecently).toEqual([]);
+    expect(money.owed).toEqual([]);
+  });
 });
 
 describe("GUARDRAIL: only real customers (A2)", () => {
@@ -692,6 +887,16 @@ describe("GUARDRAIL: one review request per customer address per 12 months", () 
     expect(await reviewAllowed(workspaceId, t, NOW)).toBe("review_recent");
     await database.update(drafts).set({ status: "edited_and_sent" });
     expect(await reviewAllowed(workspaceId, t, NOW)).toBe("review_recent");
+  });
+
+  it("the 12 months count from when it was sent: drafted 370 days ago, sent 340 days ago, blocks", async () => {
+    await profile();
+    await reviewOnFile("sent", -370, DANA, -340);
+    const t = await jobDone();
+    expect(await reviewAllowed(workspaceId, t, NOW)).toBe("review_recent");
+    const calls = model(reviewBody);
+    expect(await askReview(t)).toEqual({ status: "skipped", reason: "review_recent" });
+    expect(calls).toHaveLength(0);
   });
 
   it("a discarded or expired one doesn't; one 366 days ago doesn't", async () => {

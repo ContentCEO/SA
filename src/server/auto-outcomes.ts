@@ -1,6 +1,6 @@
 import "server-only";
 import type { Classification } from "@/ai/classify";
-import { autoMarkInvoicePaid, openInvoices } from "./money";
+import { autoMarkInvoicePaid, openInvoices, settleByReceipt } from "./money";
 import {
   invoiceOf,
   isReceiptSender,
@@ -28,6 +28,13 @@ export async function afterClassified(input: {
     quoteOutcomeSource: string | null;
     /** Was about an invoice before this email (isInvoiceThread). */
     invoiceThread?: boolean;
+    /**
+     * Had an invoice waiting to be paid before this email (`invoiceWasOpen` on the stored
+     * facts; an amount isn't needed). Only then can the customer's "paid" mark the thread
+     * paid — "Let's do it, sent the $500 deposit" is the first invoice fact on a quote
+     * thread, not the job being paid.
+     */
+    openInvoice?: boolean;
   };
   result: Classification;
   /**
@@ -75,11 +82,19 @@ export async function afterClassified(input: {
     // purchase, never a customer paying them.
     if (result.category === "supplier_vendor") return;
     if (!normalizeInvoiceNumber(invoice.invoice_number)) return;
-    const match = matchReceipt(invoice, await openInvoices(input.workspaceId, threadId, now));
-    if (match) await autoMarkInvoicePaid(match, "receipt", now);
+    const open = await openInvoices(input.workspaceId, threadId, now);
+    const match = matchReceipt(invoice, open);
+    if (match) {
+      // Earlier invoices still open on that thread: the oldest becomes current, not paid.
+      await settleByReceipt(match, open.find((o) => o.threadId === match)?.invoice ?? null, now);
+    }
     return;
   }
-  // "Paid it this morning, thanks" on an invoice thread → paid (our guess).
+  // "Paid it this morning, thanks" on a thread with an invoice waiting → paid (our guess).
+  // Never when this email is the thread's first invoice fact (a deposit on a quote thread is
+  // not the job being paid; its facts are stored, nothing is marked), and never while an
+  // earlier invoice is still open (the stored facts then say unpaid: promoteEarlierOpen).
+  if (previous.openInvoice !== true) return;
   if (input.storedInvoice !== undefined && input.storedInvoice?.status !== "paid") return;
   if (
     previous.invoiceThread === true ||

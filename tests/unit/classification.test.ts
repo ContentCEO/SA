@@ -154,7 +154,12 @@ describe("quote acceptance and job done signals (classify.v3)", () => {
 
   /** A quote thread: Dana asked for a price, the owner answered, Dana writes back. */
   async function quoteConversation(
-    opts: { category?: string | null; quoteOutcome?: string | null; ownerReplied?: boolean } = {},
+    opts: {
+      category?: string | null;
+      quoteOutcome?: string | null;
+      ownerReplied?: boolean;
+      quoteBody?: string;
+    } = {},
   ) {
     const t = await thread("q1");
     await database
@@ -171,6 +176,7 @@ describe("quote acceptance and job done signals (classify.v3)", () => {
         direction: "out",
         fromAddress: "owner@shop.com",
         toAddresses: ["dana@x.com"],
+        bodyText: opts.quoteBody ?? "It's $2,400 for the panel upgrade. Davi",
         sentAt: daysAgo(3),
       });
     }
@@ -225,6 +231,11 @@ describe("quote acceptance and job done signals (classify.v3)", () => {
     ["the owner never answered (no quote was given)", { ownerReplied: false }, "quote_request"],
     ["the thread was never a quote", { category: "scheduling" }, "scheduling"],
     ["the thread was never sorted", { category: null }, "customer_question"],
+    [
+      "the owner only offered a visit (no price given)",
+      { quoteBody: "I can come take a look Tuesday. Davi" },
+      "scheduling",
+    ],
   ] as const)(
     "no quote context when %s: the signal is kept, quote_accepted is not",
     async (_label, opts, category) => {
@@ -242,6 +253,7 @@ describe("quote acceptance and job done signals (classify.v3)", () => {
     await message(t, "late", {
       direction: "out",
       fromAddress: "owner@shop.com",
+      bodyText: "It's $2,400. Davi",
       sentAt: new Date(NOW.getTime() - 3600_000),
     });
     setModelTransportForTests(fakeTransport([accepting()]).transport);

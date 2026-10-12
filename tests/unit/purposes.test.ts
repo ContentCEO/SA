@@ -15,6 +15,7 @@ import { activityLog, drafts, messages, threads, workspaces } from "@/db/schema"
 import { ensureUserAndWorkspace } from "@/server/accounts";
 import {
   createDraftForThread,
+  discardDraft,
   listQueue,
   reconcileDrafts,
   reviseDraft,
@@ -485,6 +486,75 @@ describe("deposit (#28)", () => {
     }
   });
 
+  it("a discarded deposit note still counts: the owner sent the details from Gmail, no second request", async () => {
+    await profile({ paymentTerms: "Check or card" });
+    const t = await acceptedQuote();
+    const first = await created(t);
+    expect((await draftRow(first.draftId)).purpose).toBe("deposit");
+    // The owner discards it and writes the deposit details in Gmail instead.
+    expect(await discardDraft(workspaceId, first.draftId, deps())).toBe("discarded");
+    await ownerMessage(t, new Date(NOW.getTime() - 1800_000), "gmail-deposit");
+    // "When can you start?" reads as another acceptance.
+    await database.insert(messages).values({
+      threadId: t,
+      mailboxId,
+      gmailMessageId: `again-${t}`,
+      direction: "in",
+      fromAddress: "dana@customer.com",
+      fromName: "Dana Ruiz",
+      subject: "Re: Panel upgrade",
+      bodyText: "Great. When can you start?",
+      sentAt: new Date(NOW.getTime() - 600_000),
+    });
+    const { draftId, calls } = await created(
+      t,
+      reply({ body: "Hi Dana,\n\nI can start Monday.\n\nDavi" }),
+    );
+    expect((await draftRow(draftId)).purpose).toBeNull();
+    expect(calls[0]!.user).not.toContain("## Task: deposit");
+  });
+
+  it("a deposit note that went stale (the customer wrote again first) is drafted afresh, not dropped", async () => {
+    await profile({ paymentTerms: "Check or card" });
+    const t = await acceptedQuote();
+    const first = await created(t);
+    expect((await draftRow(first.draftId)).purpose).toBe("deposit");
+    // Before the owner taps anything, Dana writes again — another acceptance.
+    const later = new Date(NOW.getTime() + 600_000);
+    await database.insert(messages).values({
+      threadId: t,
+      mailboxId,
+      gmailMessageId: `again-${t}`,
+      rfc822MessageId: `<again-${t}@customer.com>`,
+      direction: "in",
+      fromAddress: "dana@customer.com",
+      fromName: "Dana Ruiz",
+      subject: "Re: Panel upgrade",
+      bodyText: "Monday works. When can you start?",
+      sentAt: later,
+    });
+    const after = new Date(later.getTime() + 600_000);
+    await reconcileDrafts(mailboxId, deps(after));
+    expect((await draftRow(first.draftId)).status).toBe("expired");
+    const { draftId, calls } = await created(t, reply(), { now: () => after });
+    expect((await draftRow(draftId)).purpose).toBe("deposit");
+    expect(calls[0]!.user).toContain("## Task: deposit");
+  });
+
+  it("'Sent the deposit by check. When can you start?' never gets a deposit request, even the first time", async () => {
+    await profile({ paymentTerms: "Check or card" });
+    const t = await acceptedQuote({
+      lastInbound: "Sent the deposit by check. When can you start?",
+      extracted: { accepts_quote: true, quote_accepted: true, payment_said: "paid" },
+    });
+    const { draftId, calls } = await created(
+      t,
+      reply({ body: "Hi Dana,\n\nGot it, thanks. Monday works.\n\nDavi" }),
+    );
+    expect((await draftRow(draftId)).purpose).toBeNull();
+    expect(calls[0]!.user).not.toContain("## Task: deposit");
+  });
+
   it("still one pending draft per thread", async () => {
     await profile({ paymentTerms: "Card" });
     const t = await acceptedQuote();
@@ -787,6 +857,81 @@ describe("no nudges after a purpose note went out (A3)", () => {
       nudgeOn: null,
       lastNudgeUsed: false,
     });
+  });
+
+  it("a sent deposit stops only the quote's nudges: the won job's invoice is still chased", async () => {
+    const { t } = await sentPurpose("deposit");
+    // Later: "Can you send the final invoice?" — sorted invoice_payment; the owner sends it.
+    await database.insert(messages).values({
+      threadId: t,
+      mailboxId,
+      gmailMessageId: `inv-ask-${t}`,
+      rfc822MessageId: `<inv-ask-${t}@customer.com>`,
+      direction: "in",
+      fromAddress: "dana@customer.com",
+      fromName: "Dana Ruiz",
+      subject: "Re: Panel upgrade",
+      bodyText: "All done, thanks! Can you send the final invoice?",
+      sentAt: at(1),
+    });
+    await database
+      .update(threads)
+      .set({
+        category: "invoice_payment",
+        quoteOutcome: "won",
+        quoteOutcomeSource: "auto",
+        extracted: { invoice_thread: true, quote_accepted: true },
+        classifiedAt: at(1),
+      })
+      .where(eq(threads.id, t));
+    await ownerMessage(t, at(2), "invoice");
+    const [invoiceReply] = await database
+      .insert(drafts)
+      .values({
+        threadId: t,
+        mailboxId,
+        kind: "reply",
+        status: "sent",
+        toAddress: "dana@customer.com",
+        subject: "Re: Panel upgrade",
+        body: "Invoice attached. Davi",
+        reason: "Invoice.",
+        createdAt: at(1.5),
+        decidedAt: at(2),
+      })
+      .returning();
+    // Quiet for the follow-up wait → chased, by the scan, the drafter and the promise.
+    expect(await threadsToFollowUp(mailboxId, at(6))).toEqual([t]);
+    expect((await sentDraftSummary(workspaceId, invoiceReply!.id))!.nudgeOn).not.toBeNull();
+    const { transport } = fakeTransport([
+      reply({ body: "Hi Dana,\n\nJust checking in on the invoice.\n\nDavi" }),
+    ]);
+    setModelTransportForTests(transport);
+    expect(await createDraftForThread(t, { trigger: "followup", ...deps(at(6)) })).toMatchObject({
+      status: "created",
+    });
+  });
+
+  it("the customer's newest email said they paid (not marked paid): never nudged, never promised", async () => {
+    const { t, draftId } = await sentPurpose(null);
+    // "Sent the deposit, thanks!" — a deposit isn't the job being paid, so no paid mark,
+    // but they aren't chased right after paying.
+    await database
+      .update(threads)
+      .set({ extracted: { payment_said: "paid" } })
+      .where(eq(threads.id, t));
+    expect(
+      (await database.select().from(threads).where(eq(threads.id, t)))[0]!.invoicePaidAt,
+    ).toBeNull();
+    expect(await threadsToFollowUp(mailboxId, at(5))).toEqual([]);
+    const { transport, calls } = fakeTransport([reply()]);
+    setModelTransportForTests(transport);
+    expect(await createDraftForThread(t, { trigger: "followup", ...deps(at(5)) })).toEqual({
+      status: "skipped",
+      reason: "followup_not_allowed",
+    });
+    expect(calls).toHaveLength(0);
+    expect((await sentDraftSummary(workspaceId, draftId))!.nudgeOn).toBeNull();
   });
 
   it("a discarded purpose note doesn't count: only one that went out stops nudges", async () => {

@@ -29,6 +29,21 @@ export type Extracted = ModelClassification["extracted"] & {
   accepts_quote?: boolean;
   job_done?: boolean;
   quote_accepted?: boolean;
+  /** When the acceptance email was written (ISO), kept with `quote_accepted`. */
+  quote_accepted_at?: string;
+  /**
+   * The customer disputes a charge, asks for money back or mentions something legal
+   * (the model's mentions_refund_or_dispute / mentions_legal signals). Treated as a
+   * complaint for review requests: it sets the sticky `threads.complained_at`. Only ever
+   * present as `true`.
+   */
+  disputed?: boolean;
+  /**
+   * What THIS email says about paying, in its own words (`invoice.status` before the
+   * stored facts are carried over): never carried to the next email. A customer who just
+   * said they paid isn't chased, and isn't asked for a deposit.
+   */
+  payment_said?: "paid" | "partly_paid";
   /**
    * Plan #27: this thread has been about an invoice (sorted invoice_payment at some point).
    * Sticky, set at classification, so a later "use the side gate" re-sorted as a question
@@ -36,6 +51,15 @@ export type Extracted = ModelClassification["extracted"] & {
    */
   invoice_thread?: boolean;
 };
+
+/** The needs-owner reasons a dispute or legal threat gets (when the model gave none). */
+export const LEGAL_REASON = "Mentions something legal.";
+export const DISPUTE_REASON = "Asks for money back or disputes a charge.";
+/**
+ * Threads sorted before `extracted.disputed` existed only kept the reason: one of these
+ * still showing marks a dispute (treated as a complaint for review requests).
+ */
+export const DISPUTE_REASONS: readonly string[] = [LEGAL_REASON, DISPUTE_REASON];
 
 /** Below this, the owner looks. */
 export const CONFIDENCE_THRESHOLD = 0.6;
@@ -95,8 +119,8 @@ export function applyOwnerRules(
   const confidence = Math.max(0, Math.min(1, m.confidence));
   const reasons: [boolean, string][] = [
     [m.category === "complaint", "Complaint — you'll want to handle this yourself."],
-    [m.signals.mentions_legal, "Mentions something legal."],
-    [m.signals.mentions_refund_or_dispute, "Asks for money back or disputes a charge."],
+    [m.signals.mentions_legal, LEGAL_REASON],
+    [m.signals.mentions_refund_or_dispute, DISPUTE_REASON],
     [ctx.senderIsVip, "From someone on your VIP list."],
     [overThreshold, `Mentions more than $${ctx.amountThresholdDollars.toLocaleString("en-US")}.`],
     [ctx.firstTimeSender && m.signals.large_request, "New customer asking about a big job."],
@@ -210,6 +234,9 @@ export async function classifyEmail(
       // Signals only — they never change needs_owner (applyOwnerRules ignores them).
       ...(result.signals.accepts_quote ? { accepts_quote: true } : {}),
       ...(result.signals.job_done ? { job_done: true } : {}),
+      ...(result.signals.mentions_refund_or_dispute || result.signals.mentions_legal
+        ? { disputed: true }
+        : {}),
     },
     unreadable: false,
   };

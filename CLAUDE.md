@@ -443,9 +443,14 @@ In a sandbox with preinstalled Chromium: `PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-brows
   - **classify.v3** adds `signals.accepts_quote` / `signals.job_done`, stored as
     `extracted.accepts_quote` / `extracted.job_done`. `extracted.quote_accepted` is decided in code
     at classification: acceptance AND (the thread was a quote before this email, or is one now) AND
-    the owner has written on it — an acceptance is often re-sorted as scheduling. Kept across later
-    re-sorts until decided. `afterClassified` (auto marks) runs after `classifiedAt` is set, in a
-    try/catch that logs metadata only; injection emails get no auto marks at all.
+    the owner has written on it AND the owner gave a price before it (`quote_amount_cents` known, or
+    a `$` figure in an owner email) — an acceptance is often re-sorted as scheduling; "Sounds good,
+    book us in" after "I can come look Tuesday" is a site visit. A quote sent only as an attached
+    PDF ("Quote attached") has no `$` we can see, so its "Let's do it" is not auto-won and gets no
+    deposit draft; the owner can still tap Won (attachments aren't recorded at sync; see Waiting on
+    Davi). Kept across later re-sorts until decided. `afterClassified` (auto marks) runs after
+    `classifiedAt` is set, in a try/catch that logs metadata only; injection emails get no auto
+    marks at all.
   - **Purpose drafts:** `drafts.kind` stays `reply`; `drafts.purpose` ∈ deposit / review_request /
     closing_question (`purpose.v1`). Purposes **never** autopilot, never batch, never earn autopilot,
     never bump `followup_count`. Autopilot and batch also refuse any draft whose email
@@ -562,6 +567,11 @@ In a sandbox with preinstalled Chromium: `PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-brows
 - **Plan #26 (closing question):** decide whether "Want to ask if they went another way?" may go
   live. Built and tested behind `FEATURE_CLOSING_QUESTION` (off); turning it on = set it to `1` in
   Vercel and redeploy (docs/SETUP.md §6d). Don't set it without his okay.
+- **PDF quotes (#28/#30):** a quote sent only as an attachment ("Quote attached", no `$` in the
+  email) never counts as a price given, so "Let's do it" isn't auto-marked Won, isn't in the close
+  rate until he taps Won, and gets no deposit draft. Conservative on purpose (a site visit isn't a
+  quote). Alternative if he wants it: record "has an attachment" on owner emails at sync (additive
+  column) and count an owner email with an attachment as a price given.
 - **Privacy policy lines for M7** (the draft `docs/privacy-policy.md` is on `claude/homepage-fixes`,
   PR #9, not on this branch — add these when both have merged): under "What we store": "Prices you
   quoted (the amount, the kind of job and the date), kept as your price memory. Only you see them,

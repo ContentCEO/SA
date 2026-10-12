@@ -155,6 +155,9 @@ export function closeRate(c: { won: number; lost: number; noAnswer: number }): n
  *  - a quote context: the thread was a quote (by its previous category or
  *    outcome), or this email itself is sorted as a quote request;
  *  - the owner wrote on the thread before this email (no quote, no acceptance);
+ *  - the owner gave a price before this email (`priceGiven`: the quote's amount is known,
+ *    or an owner message has a dollar figure) — "I can come look Tuesday" → "Sounds good,
+ *    book us in" is a site visit: no won guess, no deposit note;
  *  - the email didn't try to instruct the assistant.
  */
 export function quoteAccepted(f: {
@@ -167,12 +170,14 @@ export function quoteAccepted(f: {
   };
   category: string;
   ownerWroteBefore: boolean;
+  priceGiven: boolean;
 }): boolean {
   return (
     f.acceptsQuote === true &&
     !f.injection &&
     (isQuoteThread(f.previous) || f.category === "quote_request") &&
-    f.ownerWroteBefore
+    f.ownerWroteBefore &&
+    f.priceGiven
   );
 }
 

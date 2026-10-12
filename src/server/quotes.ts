@@ -73,6 +73,74 @@ const quoteThreadSql = () =>
     isNotNull(threads.quoteOutcomeSource),
   );
 
+/**
+ * An owner message on the thread that is NOT a purpose note the app sent (deposit details,
+ * a review request, a closing question): those carry the deposit or no price at all, never
+ * the quote.
+ */
+const notPurposeNote = () =>
+  sql`not exists (select 1 from drafts d where d.thread_id = ${messages.threadId} and d.purpose is not null and d.sent_gmail_message_id = ${messages.gmailMessageId})`;
+
+/**
+ * The quote's price as written by the owner: the newest owner message with a dollar figure
+ * that isn't a purpose note, sent before `before` (null = any time). Quoted text is stripped.
+ */
+async function ownerQuotedCents(
+  threadIds: string[],
+  before: (threadId: string) => Date | null,
+): Promise<Map<string, { cents: number; sentAt: Date }>> {
+  const out = new Map<string, { cents: number; sentAt: Date }>();
+  if (threadIds.length === 0) return out;
+  const outbound = await db()
+    .select({ threadId: messages.threadId, body: messages.bodyText, sentAt: messages.sentAt })
+    .from(messages)
+    .where(
+      and(
+        inArray(messages.threadId, threadIds),
+        eq(messages.direction, "out"),
+        isNotNull(messages.bodyText),
+        notPurposeNote(),
+      ),
+    )
+    .orderBy(desc(messages.sentAt));
+  for (const m of outbound) {
+    if (out.has(m.threadId)) continue; // newest reply with a figure wins
+    const cutoff = before(m.threadId);
+    if (cutoff && new Date(m.sentAt).getTime() >= cutoff.getTime()) continue;
+    const cents = amountFromOwnerText(prepareBody(m.body ?? ""));
+    if (cents) out.set(m.threadId, { cents, sentAt: new Date(m.sentAt) });
+  }
+  return out;
+}
+
+/**
+ * Evidence the owner gave a price on this thread before `before` (an acceptance needs one,
+ * plan #28): the quote's amount is already known, or an owner message (not a purpose note)
+ * has a dollar figure. "I can come look Tuesday" → "Sounds good, book us in" is a site
+ * visit, not a won quote.
+ */
+export async function ownerGavePrice(
+  thread: { id: string; quoteAmountCents: number | null },
+  before: Date,
+): Promise<boolean> {
+  if (thread.quoteAmountCents != null) return true;
+  return (await ownerQuotedCents([thread.id], () => before)).has(thread.id);
+}
+
+/**
+ * When the quote was decided, for price memory: the customer's acceptance email
+ * (`extracted.quote_accepted_at`) or the outcome's time, whichever is earlier. Owner
+ * messages from then on (deposit details, the invoice) are never the quote.
+ */
+function decidedAt(t: { extracted: unknown; quoteOutcomeAt: Date | null }): Date | null {
+  const raw = (t.extracted as { quote_accepted_at?: unknown } | null)?.quote_accepted_at;
+  const accepted = typeof raw === "string" ? new Date(raw) : null;
+  const times = [accepted, t.quoteOutcomeAt ? new Date(t.quoteOutcomeAt) : null].filter(
+    (d): d is Date => d != null && Number.isFinite(d.getTime()),
+  );
+  return times.length ? new Date(Math.min(...times.map((d) => d.getTime()))) : null;
+}
+
 /** Quote-request threads (and anything that has had an outcome) for one workspace. */
 export async function listQuotes(workspaceId: string, now: Date = new Date()) {
   await captureQuoteAmounts(workspaceId);
@@ -404,6 +472,7 @@ export async function captureQuoteAmounts(workspaceId?: string): Promise<number>
       id: threads.id,
       workspaceId: mailboxes.workspaceId,
       extracted: threads.extracted,
+      quoteOutcomeAt: threads.quoteOutcomeAt,
     })
     .from(threads)
     .innerJoin(mailboxes, eq(mailboxes.id, threads.mailboxId))
@@ -419,27 +488,13 @@ export async function captureQuoteAmounts(workspaceId?: string): Promise<number>
     .limit(500);
   let captured = 0;
   if (open.length) {
-    const outbound = await db()
-      .select({ threadId: messages.threadId, body: messages.bodyText, sentAt: messages.sentAt })
-      .from(messages)
-      .where(
-        and(
-          inArray(
-            messages.threadId,
-            open.map((t) => t.id),
-          ),
-          eq(messages.direction, "out"),
-          isNotNull(messages.bodyText),
-        ),
-      )
-      .orderBy(desc(messages.sentAt));
-    const byThread = new Map<string, { cents: number; sentAt: Date }>();
-    for (const m of outbound) {
-      if (byThread.has(m.threadId)) continue; // newest reply with a figure wins
-      const cents = amountFromOwnerText(prepareBody(m.body ?? ""));
-      if (cents) byThread.set(m.threadId, { cents, sentAt: m.sentAt });
-    }
     const info = new Map(open.map((t) => [t.id, t]));
+    // The newest owner figure from before the quote was decided — never the deposit note
+    // or an invoice sent after "go ahead" (nor any purpose note the app sent).
+    const byThread = await ownerQuotedCents(
+      open.map((t) => t.id),
+      (id) => decidedAt(info.get(id)!),
+    );
     for (const [id, { cents, sentAt }] of byThread) {
       const set = await db()
         .update(threads)

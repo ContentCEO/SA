@@ -293,16 +293,131 @@ describe("capture: only from the owner's own sent quotes", () => {
     expect((await historyRows()).map((r) => r.amountCents)).toEqual([180000]);
   });
 
-  it("a won quote the customer's 'go ahead' re-sorted as scheduling is still captured (A17)", async () => {
-    const t = await quoted({
-      category: "scheduling",
-      quoteOutcome: "won",
-      quoteOutcomeSource: "auto",
+  it.each([
+    ["says nothing", null],
+    ["gives a blank", "   "],
+  ])(
+    "a won quote the customer's 'go ahead' re-sorted as scheduling is still captured (A17; the model %s)",
+    async (_, service) => {
+      // Sorted as a quote request; the owner quoted $1,800.
+      const t = await quoted({ classifiedAt: at(-6) });
+      await database
+        .update(messages)
+        .set({ classifiedAt: at(-6) })
+        .where(eq(messages.threadId, t));
+      // "Go ahead, when can you start?" — sorted before any capture ran. The email doesn't say
+      // what the job is (service_requested null or blank): the kind of job carries over.
+      await database.insert(messages).values({
+        threadId: t,
+        mailboxId,
+        gmailMessageId: `go-${t}`,
+        direction: "in",
+        fromAddress: "dana@customer.com",
+        fromName: "Dana Ruiz",
+        bodyText: "Go ahead, when can you start?",
+        labelIds: ["INBOX"],
+        sentAt: at(-1),
+      });
+      setModelTransportForTests(
+        fakeTransport([
+          classification({
+            category: "scheduling",
+            summary: "Dana says go ahead.",
+            signals: { ...classification().signals, accepts_quote: true },
+            extracted: { ...classification().extracted, service_requested: service },
+          }),
+        ]).transport,
+      );
+      await classifyPending(mailboxId, { now: NOW });
+      const [sorted] = await database.select().from(threads).where(eq(threads.id, t));
+      expect(sorted).toMatchObject({
+        category: "scheduling",
+        quoteOutcome: "won",
+        quoteOutcomeSource: "auto",
+        extracted: { service_requested: "  Panel upgrade ", quote_accepted: true },
+      });
+      expect(await captureQuoteAmounts(workspaceId)).toBe(1);
+      expect(await historyRows()).toEqual([
+        expect.objectContaining({ threadId: t, amountCents: 180000, service: "Panel upgrade" }),
+      ]);
+    },
+  );
+
+  it("deposit details the app sent are never the quote (a PDF quote has no $ in the email)", async () => {
+    const t = await quoted({}, "Quote attached. Davi");
+    await database.insert(messages).values({
+      threadId: t,
+      mailboxId,
+      gmailMessageId: `dep-${t}`,
+      direction: "out",
+      fromAddress: "owner@shop.com",
+      toAddresses: ["dana@customer.com"],
+      bodyText: "A deposit of $1,200 holds your spot. Davi",
+      sentAt: at(-2),
     });
-    expect(await captureQuoteAmounts(workspaceId)).toBe(1);
-    expect(await historyRows()).toEqual([
-      expect.objectContaining({ threadId: t, amountCents: 180000 }),
-    ]);
+    await database.insert(drafts).values({
+      threadId: t,
+      mailboxId,
+      kind: "reply",
+      purpose: "deposit",
+      status: "sent",
+      toAddress: "dana@customer.com",
+      subject: "Re: Panel upgrade",
+      body: "A deposit of $1,200 holds your spot. Davi",
+      reason: "Deposit details.",
+      sentGmailMessageId: `dep-${t}`,
+      createdAt: at(-2),
+      decidedAt: at(-2),
+    });
+    expect(await captureQuoteAmounts(workspaceId)).toBe(0);
+    expect(await historyRows()).toEqual([]);
+    const [row] = await database.select().from(threads).where(eq(threads.id, t));
+    expect(row!.quoteAmountCents).toBeNull();
+  });
+
+  it("after the acceptance, the owner's deposit or invoice isn't the quote: the figure before it is", async () => {
+    const msgs: Msg[] = [
+      { direction: "in", days: -6, body: "How much for a panel upgrade?" },
+      { direction: "out", days: -5, body: "$2,400 for the panel upgrade. Davi" },
+      { direction: "in", days: -3, body: "Go ahead!" },
+      // Typed in Gmail (no app draft): only the acceptance time tells it apart.
+      {
+        direction: "out",
+        days: -2,
+        body: "Great — a $1,200 deposit by check holds the date. Davi",
+      },
+    ];
+    // Accepted 3 days ago (our guess marked it won a moment later)…
+    const auto = await makeThread(
+      {
+        category: "scheduling",
+        quoteOutcome: "won",
+        quoteOutcomeSource: "auto",
+        quoteOutcomeAt: at(-1),
+        extracted: {
+          service_requested: "Panel upgrade",
+          quote_accepted: true,
+          quote_accepted_at: at(-3).toISOString(),
+        },
+      },
+      msgs,
+    );
+    // …or the owner marked it won 3 days ago (no acceptance time on file).
+    const owner = await makeThread(
+      {
+        category: "scheduling",
+        quoteOutcome: "won",
+        quoteOutcomeSource: "owner",
+        quoteOutcomeAt: at(-3),
+        extracted: { service_requested: "Panel upgrade" },
+      },
+      msgs,
+    );
+    expect(await captureQuoteAmounts(workspaceId)).toBe(2);
+    const rows = await database.select().from(threads);
+    expect(rows.find((r) => r.id === auto)!.quoteAmountCents).toBe(240000);
+    expect(rows.find((r) => r.id === owner)!.quoteAmountCents).toBe(240000);
+    expect((await historyRows()).map((r) => r.amountCents)).toEqual([240000, 240000]);
   });
 
   it("other kinds of thread are never captured", async () => {

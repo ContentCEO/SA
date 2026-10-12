@@ -113,8 +113,35 @@ export function isOwed(f: {
 }): boolean {
   if (f.paidAt) return false;
   if (f.paidSource === "owner") return true;
-  if (!f.invoice || !(f.invoice.amount && f.invoice.amount > 0)) return false;
-  return f.invoice.status === "unpaid" || f.invoice.status === "partly_paid";
+  return holdsOwedInvoice(f.invoice);
+}
+
+/**
+ * The invoice facts themselves say money is owed, whatever the marks: the current invoice
+ * has an amount and is unpaid / partly paid, or an earlier invoice on the thread is still
+ * open (`earlier_open` only ever holds entries with an amount). "Got #42 for phase 2" with
+ * no amount, while #41's $500 is open, still owes the $500.
+ */
+export function holdsOwedInvoice(invoice: InvoiceFacts | null): boolean {
+  if (!invoice) return false;
+  if ((invoice.earlier_open ?? []).some((e) => (e.amount ?? 0) > 0)) return true;
+  if (!(invoice.amount && invoice.amount > 0)) return false;
+  return invoice.status === "unpaid" || invoice.status === "partly_paid";
+}
+
+/**
+ * Before a customer's "paid", the thread already had an invoice waiting to be paid: the
+ * current one says unpaid / partly paid (with or without an amount — "Got your invoice,
+ * will pay Friday"), or an earlier one is still open. Only then can "Paid it, thanks" mark
+ * the thread paid. Unlike `holdsOwedInvoice` no amount is needed: this decides the paid
+ * guess, not what shows on Money owed. A first invoice fact (nothing stored, or only
+ * paid / unknown) never qualifies — "Let's do it, sent the $500 deposit" on a quote thread
+ * is not the job being paid.
+ */
+export function invoiceWasOpen(invoice: InvoiceFacts | null): boolean {
+  if (!invoice) return false;
+  if ((invoice.earlier_open ?? []).length > 0) return true;
+  return invoice.status === "unpaid" || invoice.status === "partly_paid";
 }
 
 /** What a row adds to the total owed: its invoice plus any earlier ones still open, in cents. */
@@ -295,6 +322,42 @@ export function isNewInvoice(prev: InvoiceFacts | null, next: InvoiceFacts | nul
 }
 
 /**
+ * Whether this email takes OUR paid guess off the thread (an 'auto' mark only — the owner's
+ * marks follow `isNewInvoice`, and "Not owed to me" is never cleared). It does when the email
+ * says money is still owed, with an amount, and that is not simply the invoice we guessed was
+ * paid: a different number, an earlier invoice with no number ("Sent the $900 deposit", then
+ * "Got invoice #1043 for $3,000"), or a different amount.
+ */
+export function clearsAutoPaid(prev: InvoiceFacts | null, next: InvoiceFacts | null): boolean {
+  if (!next) return false;
+  if (next.status !== "unpaid" && next.status !== "partly_paid") return false;
+  if (!(next.amount && next.amount > 0)) return false;
+  if (!prev) return true;
+  if (isNewInvoice(prev, next)) return true;
+  if (normalizeInvoiceNumber(prev.invoice_number) === null) return true;
+  return !prev.amount || toCents(prev.amount) !== toCents(next.amount);
+}
+
+/**
+ * The current invoice is paid but earlier ones on the thread are still open: the oldest
+ * open one becomes the current invoice (still to be paid), so the thread stays owed and is
+ * never marked paid while money is left (only the paid one drops off). Anything else is
+ * returned unchanged.
+ */
+export function promoteEarlierOpen(invoice: InvoiceFacts | null): InvoiceFacts | null {
+  if (!invoice || invoice.status !== "paid") return invoice;
+  const [oldest, ...rest] = invoice.earlier_open ?? [];
+  if (!oldest) return invoice;
+  return {
+    invoice_number: oldest.invoice_number,
+    amount: oldest.amount,
+    due_date: null,
+    status: "unpaid",
+    ...(rest.length ? { earlier_open: rest } : {}),
+  };
+}
+
+/**
  * Every classification replaces the thread's facts, so a "paid, thanks" (no amount) or a
  * "use the side gate" (no invoice at all) would drop the amount and the row with it (A11).
  * Keeps the earlier invoice when the new email has none, and fills the gaps when it's the
@@ -319,13 +382,13 @@ export function carryInvoiceFacts(
     earlier.some((e) => normalizeInvoiceNumber(e.invoice_number) === b)
   ) {
     const left = earlier.filter((e) => normalizeInvoiceNumber(e.invoice_number) !== b);
-    return {
+    return promoteEarlierOpen({
       invoice_number: prev.invoice_number,
       amount: prev.amount,
       due_date: prev.due_date,
       status: prev.status,
       ...(left.length ? { earlier_open: left } : {}),
-    };
+    });
   }
   if (a && b && a !== b) {
     const stillOpen = [
@@ -334,22 +397,33 @@ export function carryInvoiceFacts(
         ? [{ invoice_number: prev.invoice_number, amount: prev.amount }]
         : []),
     ].filter((e) => normalizeInvoiceNumber(e.invoice_number) !== b);
-    return {
+    return promoteEarlierOpen({
       invoice_number: next.invoice_number,
       amount: next.amount,
       due_date: next.due_date,
       status: next.status,
       ...(stillOpen.length ? { earlier_open: stillOpen.slice(-MAX_EARLIER_OPEN) } : {}),
-    };
+    });
   }
-  return {
+  // "Paid invoice 42" while #41 is still open: #42 is settled and #41 becomes the current
+  // invoice (promoteEarlierOpen), so the thread is never marked paid with money left.
+  return promoteEarlierOpen({
     invoice_number: next.invoice_number ?? prev.invoice_number,
     amount: next.amount ?? prev.amount,
     due_date: next.due_date ?? prev.due_date,
     // "Can you resend invoice 42?" doesn't say whether it's paid: the earlier word stands.
     status: next.status === "unknown" ? prev.status : next.status,
     ...(earlier.length ? { earlier_open: earlier } : {}),
-  };
+  });
+}
+
+/**
+ * What the newest customer email said about paying, in its own words (`extracted.payment_said`,
+ * set at classification and never carried over). Null when it said nothing of the kind.
+ */
+export function paymentSaid(extracted: unknown): "paid" | "partly_paid" | null {
+  const v = (extracted as { payment_said?: unknown } | null | undefined)?.payment_said;
+  return v === "paid" || v === "partly_paid" ? v : null;
 }
 
 /** Added to a waiting nudge when we think the invoice was paid (a guess never deletes it, A8). */

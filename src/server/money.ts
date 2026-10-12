@@ -13,6 +13,7 @@ import {
   owedCents,
   PAID_GUESS_FLAG,
   PAID_NOTE,
+  promoteEarlierOpen,
   sortOwed,
   toCents,
   type InvoiceFacts,
@@ -57,8 +58,15 @@ async function moneyThreads(workspaceId: string, now: Date, opts: { openOnly?: b
   const unmarkedOwed = and(
     isNull(threads.invoicePaidAt),
     isNull(threads.invoicePaidSource),
-    sql`${threads.extracted}->'invoice'->>'status' in ('unpaid', 'partly_paid')`,
-    sql`${threads.extracted}->'invoice'->>'amount' is not null`,
+    // SQL twin of `holdsOwedInvoice` (a superset): the current invoice is owed with an
+    // amount, or an earlier one on the thread is still open, amount or not on the current.
+    or(
+      and(
+        sql`${threads.extracted}->'invoice'->>'status' in ('unpaid', 'partly_paid')`,
+        sql`${threads.extracted}->'invoice'->>'amount' is not null`,
+      ),
+      sql`${threads.extracted}->'invoice'->'earlier_open' is not null`,
+    ),
   );
   const putBack = and(isNull(threads.invoicePaidAt), eq(threads.invoicePaidSource, "owner"));
   const canShow = opts.openOnly
@@ -297,6 +305,38 @@ async function ownerMark(
     }
   }
   return true;
+}
+
+/**
+ * A payment receipt for the thread's current invoice. While earlier invoices on the thread
+ * are still open, the thread is not paid: the oldest open one becomes the current invoice
+ * (`promoteEarlierOpen`) and nothing is marked. Otherwise it is our paid guess
+ * (`autoMarkInvoicePaid`). The facts are only rewritten while the thread is unmarked and
+ * still holds the invoice the receipt matched.
+ */
+export async function settleByReceipt(
+  threadId: string,
+  invoice: InvoiceFacts | null,
+  now: Date,
+): Promise<boolean> {
+  const promoted = promoteEarlierOpen(invoice ? { ...invoice, status: "paid" } : null);
+  if (!invoice || !promoted || promoted.status === "paid") {
+    return autoMarkInvoicePaid(threadId, "receipt", now);
+  }
+  const changed = await db()
+    .update(threads)
+    .set({
+      extracted: sql`jsonb_set(coalesce(${threads.extracted}, '{}'::jsonb), '{invoice}', ${JSON.stringify(promoted)}::jsonb)`,
+    })
+    .where(
+      and(
+        eq(threads.id, threadId),
+        isNull(threads.invoicePaidAt),
+        sql`${threads.extracted}->'invoice'->>'invoice_number' is not distinct from ${invoice.invoice_number}::text`,
+      ),
+    )
+    .returning({ id: threads.id });
+  return changed.length > 0;
 }
 
 /**

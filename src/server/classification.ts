@@ -1,7 +1,7 @@
 import "server-only";
 import { looksMunicipal } from "@/ai/guards";
 import { and, count, desc, eq, gte, inArray, isNull, lt, sql } from "drizzle-orm";
-import { classifyEmail, type Classification } from "@/ai/classify";
+import { classifyEmail, DISPUTE_REASONS, type Classification } from "@/ai/classify";
 import { AiCapReachedError } from "@/ai/usage";
 import { db } from "@/db";
 import {
@@ -17,13 +17,16 @@ import { unflagPendingNudge } from "./drafts";
 import { jobsAllowed } from "./lifecycle";
 import {
   carryInvoiceFacts,
+  clearsAutoPaid,
   invoiceOf,
+  invoiceWasOpen,
   isInvoiceThread,
   isNewInvoice,
   isOwed,
   PAID_GUESS_FLAG,
 } from "./money-rules";
 import { keepQuoteAccepted, quoteAccepted } from "./quote-rules";
+import { ownerGavePrice } from "./quotes";
 
 /** Classify inbound mail from this far back on the first pass; everything new after that. */
 export const CLASSIFY_LOOKBACK_DAYS = 14;
@@ -143,6 +146,8 @@ export async function classifyPending(
         quoteOutcomeSource: threads.quoteOutcomeSource,
         invoicePaidAt: threads.invoicePaidAt,
         invoicePaidSource: threads.invoicePaidSource,
+        needsOwnerReason: threads.needsOwnerReason,
+        quoteAmountCents: threads.quoteAmountCents,
       })
       .from(threads)
       .where(eq(threads.id, m.threadId));
@@ -211,24 +216,45 @@ export async function classifyPending(
             },
             category: result.category,
             ownerWroteBefore: (ownerBefore?.n ?? 0) > 0,
+            priceGiven: await ownerGavePrice(
+              { id: m.threadId, quoteAmountCents: thread?.quoteAmountCents ?? null },
+              m.sentAt,
+            ),
           })
         ) {
-          result = { ...result, extracted: { ...result.extracted, quote_accepted: true } };
+          result = {
+            ...result,
+            extracted: {
+              ...result.extracted,
+              quote_accepted: true,
+              quote_accepted_at: new Date(m.sentAt).toISOString(),
+            },
+          };
         }
       }
     }
     // Every classification replaces `extracted`, so an earlier acceptance would vanish with the
     // customer's next "use the side gate" (and the re-sorted category can't re-derive it).
-    if (
-      result.extracted.quote_accepted !== true &&
-      thread &&
+    // It keeps the FIRST acceptance's time: a later "sent the deposit, when can you start?"
+    // reads as another acceptance, but the quote was decided at the first one.
+    const keptAcceptance =
+      thread != null &&
       keepQuoteAccepted({
         extracted: thread.extracted,
         quoteOutcome: thread.quoteOutcome,
         quoteOutcomeSource: thread.quoteOutcomeSource,
-      })
-    ) {
-      result = { ...result, extracted: { ...result.extracted, quote_accepted: true } };
+      });
+    if (keptAcceptance) {
+      const at = (thread.extracted as { quote_accepted_at?: unknown } | null)?.quote_accepted_at;
+      const firstAt = typeof at === "string" ? at : result.extracted.quote_accepted_at;
+      result = {
+        ...result,
+        extracted: {
+          ...result.extracted,
+          quote_accepted: true,
+          ...(firstAt ? { quote_accepted_at: firstAt } : {}),
+        },
+      };
     }
 
     // The invoice facts carry over (A11): a "paid, thanks" keeps the amount, and a "use the
@@ -256,13 +282,39 @@ export async function classifyPending(
     // the same write that stores the new one, and Activity says so. The owner's "Not owed
     // to me" is never cleared — the guard is in the UPDATE itself, so a tap racing this
     // write still wins. Never on an email that tries to instruct us (A8).
+    // Our own paid guess also goes when the email says money is still owed with an amount
+    // that isn't simply the invoice we guessed was paid (clearsAutoPaid): "Sent the $900
+    // deposit" then "Got invoice #1043 for $3,000" is owed again.
+    const thisInvoice = invoiceOf(result.extracted);
     const reopen =
       !injection &&
       thread?.invoicePaidSource !== "not_owed" &&
-      isNewInvoice(prevInvoice, invoiceOf(result.extracted));
+      (isNewInvoice(prevInvoice, thisInvoice) ||
+        (thread?.invoicePaidSource === "auto" && clearsAutoPaid(prevInvoice, thisInvoice)));
+    // A dispute or legal threat counts as a complaint for review requests (it isn't always
+    // sorted as one: "I'm disputing this charge" is invoice_payment). A thread sorted before
+    // `disputed` existed is recognised by its reason, if that still shows. (An earlier
+    // `extracted.disputed` needs no check: this same UPDATE set the mark with it.)
+    const disputedNow = result.category === "complaint" || result.extracted.disputed === true;
+    const disputedBefore =
+      thread?.category === "complaint" ||
+      (thread?.needsOwnerReason != null && DISPUTE_REASONS.includes(thread.needsOwnerReason));
+    // A kind of job only counts when it says something (the same test as `serviceOf`): a
+    // blank one from the model never overwrites the one stored.
+    const said = (v: unknown) => (typeof v === "string" && v.trim() ? v : null);
+    const prevService = said(
+      (thread?.extracted as { service_requested?: unknown } | null)?.service_requested,
+    );
+    const paymentSaid = injection ? null : thisInvoice?.status;
     const stored = {
       ...result.extracted,
+      // The kind of job carries over like the invoice facts: "Go ahead, when can you start?"
+      // doesn't say it again, and price memory needs it (plan #15).
+      service_requested: said(result.extracted.service_requested) ?? prevService,
       invoice: storedInvoice,
+      ...(paymentSaid === "paid" || paymentSaid === "partly_paid"
+        ? { payment_said: paymentSaid }
+        : {}),
       ...(wasInvoiceThread || result.category === "invoice_payment"
         ? { invoice_thread: true }
         : {}),
@@ -284,11 +336,12 @@ export async function classifyPending(
         // 12-month rule counts from the most recent one), and a thread that was sorted as a
         // complaint before this column existed (or by older code still running) gets its mark
         // from that earlier sort when the next email re-sorts it.
-        ...(result.category === "complaint"
+        // A dispute or legal threat is a complaint here too (disputedNow / disputedBefore).
+        ...(disputedNow
           ? {
               complainedAt: sql`greatest(${threads.complainedAt}, ${now.toISOString()}::timestamptz)`,
             }
-          : thread?.category === "complaint"
+          : disputedBefore
             ? {
                 complainedAt: sql`coalesce(${threads.complainedAt}, ${threads.classifiedAt}, ${now.toISOString()}::timestamptz)`,
               }
@@ -340,6 +393,7 @@ export async function classifyPending(
             quoteOutcome: thread?.quoteOutcome ?? null,
             quoteOutcomeSource: thread?.quoteOutcomeSource ?? null,
             invoiceThread: wasInvoiceThread,
+            openInvoice: invoiceWasOpen(prevInvoice),
           },
           result,
           storedInvoice,

@@ -68,6 +68,7 @@ import {
   SendingBlockedError,
 } from "./lifecycle";
 import { batchEligible, firstLine } from "./batch-rules";
+import { isInvoiceThread, paymentSaid } from "./money-rules";
 import { quoteStopsNudges } from "./quote-rules";
 import { BACK_ON_TOP_MS, isEmergency } from "./snooze-rules";
 import { closingQuestionAllowed, recentReviewAddresses, reviewAllowed } from "./offers";
@@ -158,8 +159,13 @@ export async function countSentFollowups(threadId: string): Promise<number> {
 /**
  * A deposit, review request or closing question went out on this thread (A3). After that
  * the thread is never nudged: the customer accepted, was thanked, or was asked once already.
+ * A deposit note only stops the QUOTE's nudges: once the thread is about an invoice
+ * (`invoiceThread`, isInvoiceThread), the won job's invoice is still chased.
  */
-export async function purposeSentOn(threadId: string): Promise<boolean> {
+export async function purposeSentOn(
+  threadId: string,
+  opts: { invoiceThread?: boolean } = {},
+): Promise<boolean> {
   const [row] = await db()
     .select({ id: drafts.id })
     .from(drafts)
@@ -167,6 +173,7 @@ export async function purposeSentOn(threadId: string): Promise<boolean> {
       and(
         eq(drafts.threadId, threadId),
         isNotNull(drafts.purpose),
+        opts.invoiceThread ? sql`${drafts.purpose} <> 'deposit'` : undefined,
         inArray(drafts.status, ["sent", "edited_and_sent"]),
       ),
     )
@@ -175,9 +182,26 @@ export async function purposeSentOn(threadId: string): Promise<boolean> {
 }
 
 /**
- * Deposit details already went out on this thread, or are waiting in the queue. A customer
- * who writes again ("Sent the deposit by check. When can you start?") often reads as another
- * acceptance; they get an ordinary reply, never a second request for the deposit.
+ * Why a quiet thread is never nudged, apart from the outcome and paid marks: the customer's
+ * newest email said they paid (we may not have marked it — a deposit is not the job being
+ * paid — but they aren't chased right after paying), or a purpose note went out (A3).
+ */
+async function nudgeBlocked(thread: {
+  id: string;
+  category: string | null;
+  extracted: unknown;
+}): Promise<boolean> {
+  if (paymentSaid(thread.extracted) === "paid") return true;
+  return purposeSentOn(thread.id, { invoiceThread: isInvoiceThread(thread) });
+}
+
+/**
+ * A deposit note was drafted on this thread and the owner saw it through: sent, still
+ * waiting, or discarded (the owner may have sent the deposit details from Gmail themselves).
+ * A customer who writes again ("Great. When can you start?") often reads as another
+ * acceptance; they get an ordinary reply, never a second request for the deposit. An
+ * `expired` one doesn't count: it went stale because the customer wrote again before the
+ * owner tapped anything, so the deposit request is drafted afresh.
  */
 async function depositAlreadyOn(threadId: string): Promise<boolean> {
   const [row] = await db()
@@ -187,7 +211,7 @@ async function depositAlreadyOn(threadId: string): Promise<boolean> {
       and(
         eq(drafts.threadId, threadId),
         eq(drafts.purpose, "deposit"),
-        inArray(drafts.status, ["sent", "edited_and_sent", "pending"]),
+        inArray(drafts.status, ["pending", "sent", "edited_and_sent", "discarded"]),
       ),
     )
     .limit(1);
@@ -424,8 +448,9 @@ export async function createDraftForThread(
       // Nor a paid invoice (the owner's mark or our guess) or one that isn't owed (#27).
       thread.invoicePaidAt != null ||
       !FOLLOWUP_CATEGORIES.includes(thread.category as (typeof FOLLOWUP_CATEGORIES)[number]) ||
-      // Nor a thread where a deposit, review request or closing question went out (A3).
-      (await purposeSentOn(threadId))
+      // Nor a thread where a deposit, review request or closing question went out (A3) —
+      // a deposit only while it's a quote — or whose customer just said they paid.
+      (await nudgeBlocked(thread))
     ) {
       return { status: "skipped", reason: "followup_not_allowed" };
     }
@@ -434,11 +459,15 @@ export async function createDraftForThread(
     nudgeNumber = sentNudges === 0 ? 1 : 2;
   }
   // The owner's purpose, or deposit details when the newest email accepts the quote (#28, A5).
-  // Only once per thread: after deposit details went out, a later "when can you start?" is
-  // answered as an ordinary reply.
+  // Only once per thread: after a deposit note was drafted (whatever became of it), or when
+  // the email itself says it paid ("Sent the deposit, when can you start?"), it is answered
+  // as an ordinary reply.
   const purpose: DraftPurpose | null =
     opts.purpose ??
-    (!followup && isQuoteAcceptance(thread) && !(await depositAlreadyOn(threadId))
+    (!followup &&
+    isQuoteAcceptance(thread) &&
+    paymentSaid(thread.extracted) === null &&
+    !(await depositAlreadyOn(threadId))
       ? "deposit"
       : null);
 
@@ -1846,7 +1875,7 @@ export async function sentDraftSummary(workspaceId: string, draftId: string) {
     !quoteStopsNudges(row.thread) &&
     row.thread.invoicePaidAt == null &&
     FOLLOWUP_CATEGORIES.includes(row.thread.category as (typeof FOLLOWUP_CATEGORIES)[number]) &&
-    !(await purposeSentOn(row.thread.id));
+    !(await nudgeBlocked(row.thread));
   const sentNudges = chased ? await countSentFollowups(row.thread.id) : 0;
   const decidedAt = row.draft.decidedAt ?? sendingAt ?? new Date();
   return {

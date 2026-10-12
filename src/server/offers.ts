@@ -1,5 +1,6 @@
 import "server-only";
 import { and, eq, gte, inArray, isNotNull, or, sql } from "drizzle-orm";
+import { DISPUTE_REASONS } from "@/ai/classify";
 import { featureOn } from "@/config/features";
 import { db } from "@/db";
 import { businessProfiles, drafts, mailboxes, messages, threads, workspaces } from "@/db/schema";
@@ -38,6 +39,7 @@ async function threadFacts(workspaceId: string, threadIds: string[]) {
       category: threads.category,
       needsOwner: threads.needsOwner,
       needsOwnerManual: threads.needsOwnerManual,
+      needsOwnerReason: threads.needsOwnerReason,
       extracted: threads.extracted,
       complainedAt: threads.complainedAt,
       invoicePaidAt: threads.invoicePaidAt,
@@ -77,6 +79,22 @@ async function threadFacts(workspaceId: string, threadIds: string[]) {
 }
 
 /**
+ * This thread holds a complaint: the sticky mark (A1, which a dispute or legal threat also
+ * sets — `extracted.disputed` is written in the same UPDATE, so it never needs checking
+ * apart), or a thread sorted before that mark existed whose dispute reason still shows.
+ * Disputes count as complaints for offers.
+ */
+function threadComplained(f: {
+  complainedAt: Date | null;
+  needsOwnerReason: string | null;
+}): boolean {
+  return (
+    f.complainedAt != null ||
+    (f.needsOwnerReason != null && DISPUTE_REASONS.includes(f.needsOwnerReason))
+  );
+}
+
+/**
  * Addresses (lowercased) that wrote in on a thread with a complaint in the last 12 months
  * (A1; complained_at is the latest complaint), or one still sorted as a complaint. A customer
  * who complained on one job isn't asked for a review on another.
@@ -93,9 +111,15 @@ async function complainedAddresses(workspaceId: string, now: Date): Promise<Set<
         eq(mailboxes.workspaceId, workspaceId),
         eq(messages.direction, "in"),
         isNotNull(messages.fromAddress),
-        // A thread still sorted as a complaint counts whatever its mark says: one sorted
-        // before complained_at existed (or by older code) may not have the mark yet.
-        or(gte(threads.complainedAt, since), eq(threads.category, "complaint")),
+        // A thread still sorted as a complaint (or still showing a dispute reason) counts
+        // whatever its mark says: one sorted before complained_at existed (or by older code)
+        // may not have the mark yet. `extracted.disputed` is always written together with
+        // the mark, so it needs no check of its own.
+        or(
+          gte(threads.complainedAt, since),
+          eq(threads.category, "complaint"),
+          inArray(threads.needsOwnerReason, [...DISPUTE_REASONS]),
+        ),
       ),
     );
   return new Set(rows.map((r) => r.address));
@@ -120,7 +144,16 @@ export async function recentReviewAddresses(
         eq(mailboxes.workspaceId, workspaceId),
         eq(drafts.purpose, "review_request"),
         inArray(drafts.status, [...LIVE_OR_SENT]),
-        gte(drafts.createdAt, since),
+        // The 12 months count from when it reached the customer: a sent one by when it was
+        // sent (a note drafted 370 days ago but sent 340 days ago still blocks), a waiting
+        // one by when it was drafted.
+        or(
+          and(eq(drafts.status, "pending"), gte(drafts.createdAt, since)),
+          and(
+            inArray(drafts.status, ["sent", "edited_and_sent"]),
+            sql`coalesce(${drafts.decidedAt}, ${drafts.createdAt}) >= ${since.toISOString()}::timestamptz`,
+          ),
+        ),
       ),
     );
   return new Set(rows.map((r) => r.address));
@@ -154,7 +187,7 @@ function cheapReviewReason(
     category: f.category,
     needsOwner: f.needsOwner,
     needsOwnerManual: f.needsOwnerManual,
-    complained: f.complainedAt != null || (address != null && ctx.complained.has(address)),
+    complained: threadComplained(f) || (address != null && ctx.complained.has(address)),
     untrusted: marks.injection === true || marks.municipal === true,
     jobDone: marks.job_done === true,
     // "Not owed to me" also sets invoice_paid_at; only a real paid mark counts.
@@ -202,7 +235,7 @@ function closingReason(f: Facts, on: boolean, now: Date): ClosingQuestionReason 
       isQuoteThread: isQuoteThread(f),
       category: f.category,
       needsOwner: f.needsOwner || f.needsOwnerManual,
-      complained: f.complainedAt != null,
+      complained: threadComplained(f),
       outcome: f.quoteOutcome,
       sentNudges: f.sentNudges,
       lastInboundAt: f.lastInboundAt,

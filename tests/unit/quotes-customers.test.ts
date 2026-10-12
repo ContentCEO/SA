@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { beforeEach, describe, expect, it } from "vitest";
 import { setModelTransportForTests } from "@/ai/client";
 import type { Database } from "@/db";
@@ -211,6 +211,7 @@ describe("quote acceptance context (A5)", () => {
     previous: { category: "quote_request", quoteOutcome: null, quoteOutcomeSource: null },
     category: "scheduling",
     ownerWroteBefore: true,
+    priceGiven: true,
   };
   it("needs the signal, a quote context, an owner reply before it, and no injection", () => {
     expect(quoteAccepted(base)).toBe(true);
@@ -224,6 +225,8 @@ describe("quote acceptance context (A5)", () => {
     expect(quoteAccepted({ ...base, acceptsQuote: false })).toBe(false);
     expect(quoteAccepted({ ...base, ownerWroteBefore: false })).toBe(false);
     expect(quoteAccepted({ ...base, injection: true })).toBe(false);
+    // "I can come look Tuesday" → "Sounds good, book us in": no price given, no acceptance.
+    expect(quoteAccepted({ ...base, priceGiven: false })).toBe(false);
     expect(
       quoteAccepted({
         ...base,
@@ -609,6 +612,33 @@ describe("win/loss auto-guess", () => {
     await classifyWith(accepting());
     expect((await rowOf(fresh!.id)).quoteOutcome).toBeNull();
     expect(await guesses()).toEqual([]);
+  });
+
+  it("GUARDRAIL: 'Sounds good, book us in' after 'I can come look Tuesday' is a site visit, not a won quote", async () => {
+    const t = await quoteGiven();
+    // The owner's only reply offered a visit — no price anywhere.
+    await database
+      .update(messages)
+      .set({ bodyText: "I can come take a look Tuesday morning. Davi" })
+      .where(and(eq(messages.threadId, t), eq(messages.direction, "out")));
+    await customerWrites(t, 1);
+    await classifyWith(accepting());
+    const row = await rowOf(t);
+    // The signal is kept; the acceptance and everything it drives are not.
+    expect(row.extracted).toMatchObject({ accepts_quote: true });
+    expect(row.extracted).not.toHaveProperty("quote_accepted");
+    expect(row).toMatchObject({ quoteOutcome: null, quoteOutcomeSource: null });
+    expect(await guesses()).toEqual([]);
+
+    // Once a price is known (captured or typed), the same words are an acceptance.
+    await database.update(threads).set({ quoteAmountCents: 240_000 }).where(eq(threads.id, t));
+    await customerWrites(t, 0.5);
+    await classifyWith(accepting());
+    expect(await rowOf(t)).toMatchObject({
+      quoteOutcome: "won",
+      quoteOutcomeSource: "auto",
+      extracted: { quote_accepted: true, quote_accepted_at: daysAgo(0.5).toISOString() },
+    });
   });
 
   it("an email that tries to instruct the assistant never marks a quote (A8)", async () => {

@@ -16,7 +16,9 @@ import { saveConnectedMailbox } from "@/server/mailboxes";
 import { autoMarkInvoicePaid, listMoney, setInvoiceNotOwed, setInvoicePaid } from "@/server/money";
 import {
   carryInvoiceFacts,
+  clearsAutoPaid,
   dueLabel,
+  holdsOwedInvoice,
   invoiceOf,
   isNewInvoice,
   isOwed,
@@ -25,6 +27,8 @@ import {
   normalizeInvoiceNumber,
   PAID_GUESS_FLAG,
   PAID_NOTE,
+  paymentSaid,
+  promoteEarlierOpen,
   sortOwed,
   type InvoiceFacts,
 } from "@/server/money-rules";
@@ -263,6 +267,79 @@ describe("money rules", () => {
     expect(
       carryInvoiceFacts(both, inv({ invoice_number: "INV-42", amount: null, status: "paid" })),
     ).toEqual(other);
+  });
+
+  it("paying the current invoice while an earlier one is open promotes the earlier one", () => {
+    // #42 $2,000 is current, #41 $500 still open. "Paid invoice 42" settles #42 only.
+    const cur = inv({
+      invoice_number: "42",
+      amount: 2000,
+      earlier_open: [
+        { invoice_number: "41", amount: 500 },
+        { invoice_number: "40", amount: 250 },
+      ],
+    });
+    expect(
+      carryInvoiceFacts(cur, inv({ invoice_number: "42", amount: null, status: "paid" })),
+    ).toEqual({
+      invoice_number: "41",
+      amount: 500,
+      due_date: null,
+      status: "unpaid",
+      earlier_open: [{ invoice_number: "40", amount: 250 }],
+    });
+    // "Paid, thanks" with no number is the current one too.
+    expect(carryInvoiceFacts(cur, inv({ amount: null, status: "paid" }))).toMatchObject({
+      invoice_number: "41",
+      status: "unpaid",
+    });
+    // Nothing left open: paid is paid.
+    expect(promoteEarlierOpen(inv({ status: "paid" }))).toEqual(inv({ status: "paid" }));
+    expect(promoteEarlierOpen(null)).toBeNull();
+    // Not paid: unchanged.
+    expect(promoteEarlierOpen(cur)).toEqual(cur);
+  });
+
+  it("an earlier open invoice is owed even when the current one has no amount", () => {
+    // #41 $500 unpaid, then "Got invoice #42 for phase 2" (no amount).
+    const carried = carryInvoiceFacts(
+      inv({ invoice_number: "41", amount: 500 }),
+      inv({ invoice_number: "42", amount: null }),
+    );
+    expect(carried).toMatchObject({ amount: null, earlier_open: [{ amount: 500 }] });
+    expect(holdsOwedInvoice(carried)).toBe(true);
+    expect(isOwed({ invoice: carried, paidAt: null, paidSource: null })).toBe(true);
+    expect(isOwed({ invoice: carried, paidAt: NOW, paidSource: "auto" })).toBe(false);
+    expect(holdsOwedInvoice(inv({ amount: null }))).toBe(false);
+    expect(holdsOwedInvoice(inv({ status: "paid" }))).toBe(false);
+    expect(holdsOwedInvoice(null)).toBe(false);
+  });
+
+  it("our paid guess is cleared by a new amount owed — never by the same invoice again", () => {
+    const deposit = inv({ amount: 900, status: "paid" });
+    // A deposit with no number, then "Got invoice #1043 for $3,000": owed again.
+    expect(clearsAutoPaid(deposit, inv({ invoice_number: "1043", amount: 3000 }))).toBe(true);
+    // A new number.
+    const paid42 = inv({ invoice_number: "42", amount: 2000, status: "paid" });
+    expect(clearsAutoPaid(paid42, inv({ invoice_number: "43", amount: 300 }))).toBe(true);
+    // The same number, a different amount ("I paid $1,000 of 42, rest next week").
+    expect(
+      clearsAutoPaid(paid42, inv({ invoice_number: "42", amount: 1000, status: "partly_paid" })),
+    ).toBe(true);
+    // The same invoice, the same amount, or no amount: the guess stands.
+    expect(clearsAutoPaid(paid42, inv({ invoice_number: "INV-42", amount: 2000 }))).toBe(false);
+    expect(clearsAutoPaid(paid42, inv({ invoice_number: "43", amount: null }))).toBe(false);
+    expect(clearsAutoPaid(paid42, inv({ invoice_number: "43", status: "paid" }))).toBe(false);
+    expect(clearsAutoPaid(paid42, inv({ invoice_number: "43", status: "unknown" }))).toBe(false);
+    expect(clearsAutoPaid(paid42, null)).toBe(false);
+  });
+
+  it("reads what the newest email said about paying, and nothing else", () => {
+    expect(paymentSaid({ payment_said: "paid" })).toBe("paid");
+    expect(paymentSaid({ payment_said: "partly_paid" })).toBe("partly_paid");
+    expect(paymentSaid({ payment_said: "unpaid" })).toBeNull();
+    expect(paymentSaid({ invoice: { status: "paid" } })).toBeNull();
+    expect(paymentSaid(null)).toBeNull();
   });
 
   it("says what happened in plain words, with no amounts", () => {
@@ -1144,6 +1221,161 @@ describe("auto paid", () => {
     await classifyWith(paidSays({ invoice_number: "INV-0041", status: "unpaid" }));
     expect((await rowOf(t)).invoicePaidSource).toBe("owner");
     expect((await listMoney(workspaceId, NOW)).owed).toEqual([]);
+  });
+
+  it("GUARDRAIL: a deposit is not the job being paid — the first invoice fact on a quote marks nothing", async () => {
+    // The owner quoted; Dana: "Let's do it, just sent the $500 deposit by Zelle."
+    const t = await invoiceThread({
+      category: "quote_request",
+      invoice: null,
+      inAgo: 12,
+      outAgo: 11,
+    });
+    await writes(t, "dana@customer.com", "Dana Ruiz", 10);
+    await classifyWith(
+      paidSays({ amount: 500 }, { signals: { ...classification().signals, accepts_quote: true } }),
+    );
+    let row = await rowOf(t);
+    expect(row).toMatchObject({ invoicePaidAt: null, invoicePaidSource: null });
+    expect(await paidLogs()).toEqual([]);
+    // The facts are kept, and what the email said about paying.
+    expect(invoiceOf(row.extracted)).toMatchObject({ amount: 500, status: "paid" });
+    expect(row.extracted).toMatchObject({ payment_said: "paid", invoice_thread: true });
+    let money = await listMoney(workspaceId, NOW);
+    expect(money.owed).toEqual([]);
+    expect(money.paidRecently).toEqual([]);
+    // The owner says thanks; a customer who just paid is never chased.
+    await database.insert(messages).values({
+      threadId: t,
+      mailboxId,
+      gmailMessageId: `o${++g}`,
+      direction: "out",
+      fromAddress: "owner@shop.com",
+      toAddresses: ["dana@customer.com"],
+      bodyText: "Got it, thanks Dana. See you Monday.",
+      sentAt: daysAgo(9),
+    });
+    expect(await threadsToFollowUp(mailboxId, NOW)).toEqual([]);
+
+    // Later: "Got invoice #1043 for $3,000, will pay next week" — owed, and chased.
+    await writes(t, "dana@customer.com", "Dana Ruiz", 8);
+    await classifyWith(paidSays({ invoice_number: "1043", amount: 3000, status: "unpaid" }));
+    row = await rowOf(t);
+    expect(row.extracted).not.toHaveProperty("payment_said");
+    money = await listMoney(workspaceId, NOW);
+    expect(money.owed).toMatchObject([
+      { threadId: t, amountCents: 300_000, invoiceNumber: "1043" },
+    ]);
+    expect(money.totalOwedCents).toBe(300_000);
+    await database.insert(messages).values({
+      threadId: t,
+      mailboxId,
+      gmailMessageId: `o${++g}`,
+      direction: "out",
+      fromAddress: "owner@shop.com",
+      toAddresses: ["dana@customer.com"],
+      bodyText: "Thanks Dana.",
+      sentAt: daysAgo(5),
+    });
+    expect(await threadsToFollowUp(mailboxId, NOW)).toEqual([t]);
+  });
+
+  it("our paid guess on a deposit with no number is cleared by the job's invoice (#1043 $3,000)", async () => {
+    // A deposit invoice ($900, no number) was owed, and Dana said she paid it.
+    const t = await invoiceThread({ inAgo: 12, outAgo: 11, invoice: { amount: 900 } });
+    await writes(t, "dana@customer.com", "Dana Ruiz", 10);
+    await classifyWith(paidSays({ amount: 900 }));
+    expect((await rowOf(t)).invoicePaidSource).toBe("auto");
+
+    await writes(t, "dana@customer.com", "Dana Ruiz", 9);
+    await classifyWith(paidSays({ invoice_number: "1043", amount: 3000, status: "unpaid" }));
+    expect(await rowOf(t)).toMatchObject({ invoicePaidAt: null, invoicePaidSource: null });
+    const money = await listMoney(workspaceId, NOW);
+    expect(money.owed).toMatchObject([
+      { threadId: t, amountCents: 300_000, invoiceNumber: "1043" },
+    ]);
+    expect(money.paidRecently).toEqual([]);
+    expect(
+      await database.select().from(activityLog).where(eq(activityLog.action, "invoice_reopened")),
+    ).toMatchObject([{ threadId: t, detail: { source: "auto", why: "new_invoice" } }]);
+  });
+
+  it("'Paid invoice 42' while #41 is still open: #41 stays owed, the thread isn't marked paid", async () => {
+    const t = await invoiceThread({
+      invoice: {
+        invoice_number: "42",
+        amount: 2000,
+        earlier_open: [{ invoice_number: "41", amount: 500 }],
+      },
+    });
+    await writes(t);
+    await classifyWith(paidSays({ invoice_number: "42" }));
+    expect(await rowOf(t)).toMatchObject({ invoicePaidAt: null, invoicePaidSource: null });
+    expect(await paidLogs()).toEqual([]);
+    const money = await listMoney(workspaceId, NOW);
+    expect(money.owed).toMatchObject([
+      { threadId: t, amountCents: 50_000, invoiceNumber: "41", earlierOpen: [] },
+    ]);
+    expect(money.totalOwedCents).toBe(50_000);
+  });
+
+  it("'Paid invoice 43 ($800)' while #42's $2,000 is open: #42 stays owed, nothing marked paid", async () => {
+    const t = await invoiceThread({ invoice: { invoice_number: "42", amount: 2000 } });
+    await writes(t);
+    await classifyWith(paidSays({ invoice_number: "43", amount: 800 }));
+    expect(await rowOf(t)).toMatchObject({ invoicePaidAt: null, invoicePaidSource: null });
+    expect(await paidLogs()).toEqual([]);
+    const money = await listMoney(workspaceId, NOW);
+    expect(money.owed).toMatchObject([
+      { threadId: t, amountCents: 200_000, invoiceNumber: "42", earlierOpen: [] },
+    ]);
+    expect(money.totalOwedCents).toBe(200_000);
+  });
+
+  it("an invoice waiting with no amount ('Got it, will pay Friday'), then 'Paid it': our paid guess", async () => {
+    const t = await invoiceThread({ invoice: { invoice_number: "1043", amount: null } });
+    expect((await listMoney(workspaceId, NOW)).owed).toEqual([]);
+    await writes(t);
+    await classifyWith(paidSays({}));
+    expect((await rowOf(t)).invoicePaidSource).toBe("auto");
+    expect(await paidLogs()).toHaveLength(1);
+  });
+
+  it("…and a receipt for #42 does the same", async () => {
+    const t = await invoiceThread({
+      invoice: {
+        invoice_number: "42",
+        amount: 2000,
+        earlier_open: [{ invoice_number: "41", amount: 500 }],
+      },
+    });
+    await receiptThread("receipts@stripe.com");
+    await classifyWith(paidSays({ invoice_number: "INV-42", amount: 2000 }));
+    expect(await rowOf(t)).toMatchObject({ invoicePaidAt: null, invoicePaidSource: null });
+    expect(invoiceOf((await rowOf(t)).extracted)).toMatchObject({
+      invoice_number: "41",
+      amount: 500,
+      status: "unpaid",
+    });
+    expect(await paidLogs()).toEqual([]);
+    expect((await listMoney(workspaceId, NOW)).totalOwedCents).toBe(50_000);
+  });
+
+  it("a new invoice with no amount keeps the earlier open one on the list and the total", async () => {
+    const t = await invoiceThread({ invoice: { invoice_number: "41", amount: 500 } });
+    await writes(t);
+    // "Got invoice #42 for phase 2, thanks" — no amount.
+    await classifyWith(paidSays({ invoice_number: "42", amount: null, status: "unpaid" }));
+    const money = await listMoney(workspaceId, NOW);
+    expect(money.owed).toMatchObject([
+      {
+        threadId: t,
+        amountCents: null,
+        invoiceNumber: "42",
+        earlierOpen: [{ invoiceNumber: "41", amountCents: 50_000 }],
+      },
+    ]);
+    expect(money.totalOwedCents).toBe(50_000);
   });
 });
 

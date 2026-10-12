@@ -15,7 +15,9 @@ export const FOLLOWUP_MAX_AGE_DAYS = 21;
  * - not a paid invoice: marked paid (the owner's mark or our guess) or "not owed to me"
  *   is never chased (plan #27);
  * - no deposit, review request or closing question was ever sent on it (A3): the customer
- *   accepted, was thanked, or was already asked once;
+ *   accepted, was thanked, or was already asked once — a deposit only while it's a quote:
+ *   once the thread is about an invoice, the won job's invoice is still chased;
+ * - the customer's newest email didn't say they paid (`payment_said`);
  * - the owner wrote last, at least `days` ago (and not ages ago);
  * - the customer has written at least once (someone to nudge);
  * - fewer than two nudges sent, ever;
@@ -42,8 +44,11 @@ export async function threadsToFollowUp(
   const lastDraft = sql`(select max(d.created_at) from drafts d where d.thread_id = ${threads.id})`;
   const sentNudges = sql`(select count(*) from drafts d where d.thread_id = ${threads.id} and d.kind = 'followup' and d.status in ('sent', 'edited_and_sent'))`;
   const pending = sql`exists (select 1 from drafts d where d.thread_id = ${threads.id} and d.status = 'pending')`;
-  // SQL twin of `purposeSentOn` (drafts.ts).
-  const purposeSent = sql`exists (select 1 from drafts d where d.thread_id = ${threads.id} and d.purpose is not null and d.status in ('sent', 'edited_and_sent'))`;
+  // SQL twin of `nudgeBlocked` / `purposeSentOn` (drafts.ts) and `isInvoiceThread`.
+  // Never NULL (a NULL here would make `not (...)` NULL and hide every purpose note).
+  const invoiceThread = sql`(${threads.category} is not distinct from 'invoice_payment' or (${threads.extracted}->>'invoice_thread') is not distinct from 'true')`;
+  const purposeSent = sql`exists (select 1 from drafts d where d.thread_id = ${threads.id} and d.purpose is not null and not (d.purpose = 'deposit' and ${invoiceThread}) and d.status in ('sent', 'edited_and_sent'))`;
+  const saidPaid = sql`coalesce(${threads.extracted}->>'payment_said', '') = 'paid'`;
 
   const rows = await db()
     .select({ id: threads.id })
@@ -64,6 +69,7 @@ export async function threadsToFollowUp(
         sql`(${lastDraft} is null or ${lastDraft} < ${lastOut})`,
         sql`not ${pending}`,
         sql`not ${purposeSent}`,
+        sql`not ${saidPaid}`,
       ),
     )
     .orderBy(desc(threads.lastMessageAt))
