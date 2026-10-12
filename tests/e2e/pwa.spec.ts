@@ -28,7 +28,10 @@ test("service worker is always fresh, and the offline page explains plainly", as
   const sw = await request.get("/sw.js");
   expect(sw.ok()).toBe(true);
   expect(sw.headers()["cache-control"]).toContain("no-cache");
-  expect(await sw.text()).toContain("never caches pages or");
+  const swText = await sw.text();
+  expect(swText).toContain("never caches pages or");
+  // Plan #34: a notification tap opens the link it carries (allow-listed), not always /queue.
+  expect(swText).toContain("notification.data");
   const offline = await request.get("/offline.html");
   expect(await offline.text()).toContain("nothing lost.");
 });

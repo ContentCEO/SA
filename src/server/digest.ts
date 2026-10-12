@@ -22,8 +22,11 @@ import {
   type NeedsYouItem,
 } from "./digest-rules";
 import { queueMembership } from "./drafts";
+import { leadsAtRisk } from "./leads-at-risk";
+import { atRiskDigestLine, atRiskOffQueueLine } from "./leads-at-risk-rules";
 import { jobsAllowed } from "./lifecycle";
 import { weeklyScorecard } from "./scorecard";
+import { workspaceTimeZone } from "./snooze";
 import { scorecardIsEmpty, scorecardLines, weekBounds } from "./scorecard-rules";
 import { localParts, localWeekday, usableTimeZone } from "./snooze-rules";
 
@@ -54,6 +57,14 @@ export type DigestCounts = {
   needsYou: NeedsYouItem[];
   sentYesterday: number;
   sortedYesterday: number;
+  /** Plan #34: quote requests waiting past the at-risk mark (a count, never which). */
+  leadsAtRisk: number;
+  /**
+   * Of those, the ones with no card on the queue (no draft waiting and not set aside for the
+   * owner: the draft was never made, or the model couldn't). They are still waiting on the
+   * owner, so they count as waiting, and the summary sends them to the quote list.
+   */
+  leadsAtRiskOffQueue: number;
 };
 
 /**
@@ -62,7 +73,11 @@ export type DigestCounts = {
  * agree: snoozed items and replies in their undo window are left out exactly as the queue
  * leaves them out. Only ids, categories, priority and times are read here.
  */
-export async function digestCounts(workspaceId: string, now: Date): Promise<DigestCounts> {
+export async function digestCounts(
+  workspaceId: string,
+  now: Date,
+  timeZone?: string,
+): Promise<DigestCounts> {
   const boxes = (
     await db()
       .select({ id: mailboxes.id })
@@ -70,7 +85,15 @@ export async function digestCounts(workspaceId: string, now: Date): Promise<Dige
       .where(eq(mailboxes.workspaceId, workspaceId))
   ).map((b) => b.id);
   if (!boxes.length)
-    return { repliesReady: 0, nudgesReady: 0, needsYou: [], sentYesterday: 0, sortedYesterday: 0 };
+    return {
+      repliesReady: 0,
+      nudgesReady: 0,
+      needsYou: [],
+      sentYesterday: 0,
+      sortedYesterday: 0,
+      leadsAtRisk: 0,
+      leadsAtRiskOffQueue: 0,
+    };
   const dayAgo = new Date(now.getTime() - 86_400_000);
 
   // Who is waiting, and since when (the customer's first email after the owner last wrote, A14).
@@ -91,12 +114,20 @@ export async function digestCounts(workspaceId: string, now: Date): Promise<Dige
     .from(threads)
     .where(and(inArray(threads.mailboxId, boxes), gte(threads.classifiedAt, dayAgo)));
 
+  // Plan #34: shown whether or not the owner has phone notifications — the summary is the
+  // morning catch-up, and a count is harmless. Counts only.
+  const tz = usableTimeZone(timeZone ?? (await workspaceTimeZone(workspaceId)));
+  const atRisk = await leadsAtRisk(workspaceId, now, tz);
+  const onQueue = new Set([...q.needsYou, ...q.drafts].map((m) => m.threadId));
+
   return {
     repliesReady: q.drafts.filter((d) => d.kind === "reply").length,
     nudgesReady: q.drafts.filter((d) => d.kind === "followup").length,
     needsYou: q.needsYou.map(toNeedsYouItem),
     sentYesterday: sent?.n ?? 0,
     sortedYesterday: sorted?.n ?? 0,
+    leadsAtRisk: atRisk.length,
+    leadsAtRiskOffQueue: atRisk.filter((l) => !onQueue.has(l.threadId)).length,
   };
 }
 
@@ -104,6 +135,8 @@ const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? o
 
 export type DigestLinks = {
   queueUrl: string;
+  /** The quote list: where a waiting lead with no card on the queue is (plan #34). */
+  quotesUrl: string;
   settingsUrl: string;
   /** A deep link to one card on the queue (`<queue>#t-<uuid>`). */
   threadUrl: (threadId: string) => string;
@@ -123,7 +156,15 @@ export function buildDigest(
   extras: { now: Date; timeZone: string; lastWeek?: string[] },
 ) {
   const header = needsYouHeader(c.needsYou, extras.now, extras.timeZone, links.threadUrl);
+  // A lead going cold with no card on the queue still needs the owner: it goes under "Needs
+  // you" (so the email never says "Nothing needs you" or "all clear" beside it) with a link
+  // to the quote list, where it shows as waiting on them.
+  const offQueue = c.leadsAtRiskOffQueue
+    ? { text: atRiskOffQueueLine(c.leadsAtRiskOffQueue), href: links.quotesUrl }
+    : null;
+  const needsNothing = header.empty && !offQueue;
   const lines = [
+    atRiskDigestLine(c.leadsAtRisk),
     c.repliesReady
       ? `${plural(c.repliesReady, "reply", "replies")} drafted and waiting for your okay.`
       : null,
@@ -135,7 +176,8 @@ export function buildDigest(
       : null,
   ].filter((l): l is string => !!l);
   const lastWeek = extras.lastWeek ?? [];
-  const waiting = c.needsYou.length + c.repliesReady + c.nudgesReady;
+  const onQueue = c.needsYou.length + c.repliesReady + c.nudgesReady;
+  const waiting = onQueue + c.leadsAtRiskOffQueue;
   const subject = waiting
     ? `${plural(waiting, "thing")} waiting on you`
     : "Nothing waiting on you this morning";
@@ -144,16 +186,17 @@ export function buildDigest(
     "Good morning.",
     "",
     "Needs you:",
-    ...(header.empty
+    ...(needsNothing
       ? [NOTHING_NEEDS_YOU]
       : [
           ...header.lines.map((l) => `• ${l.text}: ${l.href}`),
           ...(header.more ? [moreInQueue(header.more)] : []),
+          ...(offQueue ? [`• ${offQueue.text}: ${offQueue.href}`] : []),
         ]),
     ...(lines.length ? ["", ...lines] : []),
     ...(lastWeek.length ? ["", ...lastWeek] : []),
     "",
-    ...(waiting ? [`Open your queue: ${links.queueUrl}`, ""] : []),
+    ...(onQueue ? [`Open your queue: ${links.queueUrl}`, ""] : []),
     `Nothing is sent without your okay. Change or turn off this email: ${links.settingsUrl}`,
     siteConfig.copyright,
   ].join("\n");
@@ -162,16 +205,16 @@ export function buildDigest(
     s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
   const para = (l: string) =>
     `<p style="margin:0 0 12px;font-size:17px;line-height:1.45">${esc(l)}</p>`;
-  const needsHtml = header.empty
+  const needsLink = (l: { href: string; text: string }) =>
+    `<p style="margin:0"><a href="${esc(l.href)}" style="display:block;padding:12px 0;color:#1b1b1b;font-size:17px;font-weight:700;line-height:1.35;text-decoration:underline">${esc(l.text)}</a></p>`;
+  const needsHtml = needsNothing
     ? para(NOTHING_NEEDS_YOU)
     : [
-        ...header.lines.map(
-          (l) =>
-            `<p style="margin:0"><a href="${esc(l.href)}" style="display:block;padding:12px 0;color:#1b1b1b;font-size:17px;font-weight:700;line-height:1.35;text-decoration:underline">${esc(l.text)}</a></p>`,
-        ),
+        ...header.lines.map(needsLink),
         header.more
           ? `<p style="margin:0"><a href="${esc(links.queueUrl)}" style="display:block;padding:12px 0;color:#5e5d59;font-size:16px;line-height:1.35">${esc(moreInQueue(header.more))}</a></p>`
           : "",
+        offQueue ? needsLink(offQueue) : "",
       ].join("\n");
   const html = `<!doctype html><html><body style="margin:0;background:#f7f6f3;color:#1b1b1b;font-family:Inter,Helvetica,Arial,sans-serif">
 <div style="max-width:480px;margin:0 auto;padding:24px 16px">
@@ -184,7 +227,7 @@ ${lines.map(para).join("\n")}
 </div>
 ${lastWeek.length ? `<div style="margin:20px 0 0;padding:16px 0 0;border-top:1px solid #1b1b1b">\n${lastWeek.map(para).join("\n")}\n</div>` : ""}
 ${
-  waiting
+  onQueue
     ? `<p style="margin:24px 0"><a href="${esc(links.queueUrl)}" style="display:inline-block;background:#1b1b1b;color:#efeeea;text-decoration:none;font-weight:700;font-size:17px;padding:14px 22px;border-radius:10px">Open your queue</a></p>`
     : ""
 }
@@ -197,7 +240,7 @@ ${
     subject,
     text,
     html,
-    worthSending: !header.empty || lines.length > 0 || lastWeek.length > 0,
+    worthSending: !needsNothing || lines.length > 0 || lastWeek.length > 0,
   };
 }
 
@@ -260,9 +303,10 @@ export async function sendDigests(
     const timeZone = usableTimeZone(settings.timeZone);
     const queueUrl = appUrl("/queue");
     const digest = buildDigest(
-      await digestCounts(r.workspace.id, now),
+      await digestCounts(r.workspace.id, now, timeZone),
       {
         queueUrl,
+        quotesUrl: appUrl("/quotes"),
         settingsUrl: appUrl("/settings#digest"),
         threadUrl: (id) => queueThreadUrl(queueUrl, id),
       },

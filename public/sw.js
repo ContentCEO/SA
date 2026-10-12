@@ -81,6 +81,22 @@ self.addEventListener("fetch", (event) => {
 });
 
 /*
+ * Where a notification tap may go (plan #34): the queue, the quote tracker, or
+ * one queue card by its thread id, `/queue?t=<uuid>#t-<uuid>` (the query makes
+ * it a real page load, so an open queue shows the new card). Anything else —
+ * whatever the summary said — opens the queue. Kept in step with
+ * isNotificationUrl in src/server/leads-at-risk-rules.ts.
+ */
+const CARD_URL =
+  /^\/queue\?t=([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})#t-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
+function safeUrl(u) {
+  if (u === "/queue" || u === "/quotes") return u;
+  if (typeof u !== "string") return "/queue";
+  const m = CARD_URL.exec(u);
+  return m && m[1].toLowerCase() === m[2].toLowerCase() ? u : "/queue";
+}
+
+/*
  * Phone notifications (plan #36). The push is empty — the push service never
  * sees anything — so ask the app for today's counts and show those. If the
  * phone is signed out, a plain line instead.
@@ -97,7 +113,7 @@ self.addEventListener("push", (event) => {
           badge: "/app-icon/192",
           tag: "sa-queue",
           renotify: true,
-          data: { url: "/queue" },
+          data: { url: safeUrl(s && s.url) },
         }),
       ),
   );
@@ -105,11 +121,22 @@ self.addEventListener("push", (event) => {
 
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
+  const url = safeUrl(event.notification.data && event.notification.data.url);
   event.waitUntil(
     self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((wins) => {
       const open = wins.find((w) => new URL(w.url).origin === self.location.origin);
-      if (open) return open.navigate("/queue").then((w) => (w || open).focus());
-      return self.clients.openWindow("/queue");
+      if (open) {
+        // Going to the page a window is already on with only a #hash added or changed is a
+        // jump within the page: no reload, so a stale queue would stay stale and no new card
+        // would appear. Then go to it without the hash, which always loads afresh; the queue
+        // finds the card from `?t=` instead.
+        const here = new URL(open.url);
+        const there = new URL(url, self.location.origin);
+        const same = here.pathname === there.pathname && here.search === there.search;
+        const go = same ? there.pathname + there.search : url;
+        return open.navigate(go).then((w) => (w || open).focus());
+      }
+      return self.clients.openWindow(url);
     }),
   );
 });

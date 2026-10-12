@@ -98,6 +98,18 @@ describe("#36 phone notifications", () => {
     expect(pushSummaryText({ replies: 0, needsYou: 0 })).toBe("Your queue is up to date.");
   });
 
+  it("leads at risk come first, as a count (plan #34)", () => {
+    expect(pushSummaryText({ replies: 1, needsYou: 0, atRisk: 2 })).toBe(
+      "2 quote requests have waited over 4 hours · 1 reply ready to send",
+    );
+    expect(pushSummaryText({ replies: 0, needsYou: 1, atRisk: 1 })).toBe(
+      "1 quote request has waited over 4 hours · 1 email needs you",
+    );
+    expect(pushSummaryText({ replies: 0, needsYou: 0, atRisk: 0 })).toBe(
+      "Your queue is up to date.",
+    );
+  });
+
   describe("sending", () => {
     let database: Database;
     let workspaceId: string;

@@ -156,6 +156,47 @@ test("a link from the morning summary lands on its card (plan #31)", async ({ pa
   await expect(page.getByText("That email isn't on your queue right now.")).toBeVisible();
 });
 
+test("a notification tap from an open queue reloads it and lands on the new card (plan #34)", async ({
+  page,
+  context,
+}) => {
+  const owner = await seedOwner({ mailbox: true, backfilled: true });
+  await seedQueue(owner.mailboxId!);
+  for (let i = 0; i < 8; i++)
+    await testDb.insert(schema.threads).values({
+      mailboxId: owner.mailboxId!,
+      gmailThreadId: `older-${i}-${owner.mailboxId}`,
+      inInbox: true,
+      category: "customer_question",
+      needsOwner: true,
+      needsOwnerReason: `Older question ${i}.`,
+      lastMessageAt: new Date(Date.now() - (i + 1) * 3600_000),
+    });
+  await signInAs(context, owner);
+  await page.goto("/queue");
+  await expect(page.getByRole("heading", { name: "Needs you" })).toBeVisible();
+
+  // A quote request arrives (oldest, so its card sits low on the page) while the queue is open.
+  const [lead] = await testDb
+    .insert(schema.threads)
+    .values({
+      mailboxId: owner.mailboxId!,
+      gmailThreadId: `lead-${owner.mailboxId}`,
+      inInbox: true,
+      category: "quote_request",
+      needsOwner: true,
+      needsOwnerReason: "Big kitchen job, check before quoting.",
+      lastMessageAt: new Date(Date.now() - 20 * 3600_000),
+    })
+    .returning();
+  // What the service worker navigates to: the query makes it a real load, not a hash jump.
+  await page.goto(`/queue?t=${lead!.id}#t-${lead!.id}`);
+  const card = page.locator(`article#t-${lead!.id}`);
+  await expect(card).toContainText("Big kitchen job");
+  await expect(card).toBeInViewport({ ratio: 0.5 });
+  await expect(page.getByText("That email isn't on your queue right now.")).toHaveCount(0);
+});
+
 test("empty queue says so plainly", async ({ page, context }) => {
   const owner = await seedOwner({ mailbox: true, backfilled: true });
   await signInAs(context, owner);

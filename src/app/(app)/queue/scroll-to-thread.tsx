@@ -3,8 +3,17 @@
 import { useEffect, useState } from "react";
 import { Notice } from "@/components/app/notice";
 
-/** `#t-<uuid>`: a link from the morning summary (or a notification) to one card. */
+/**
+ * `#t-<uuid>`: a link from the morning summary (or a notification) to one card. A
+ * notification opens `/queue?t=<uuid>#t-<uuid>` (a real page load); the `?t=` alone also works.
+ */
 const THREAD_HASH = /^#t-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function linkedHash(): string {
+  if (window.location.hash) return window.location.hash;
+  const t = new URLSearchParams(window.location.search).get("t");
+  return t ? `#t-${t}` : "";
+}
 
 /**
  * Plan #31: brings the linked card into view, centred (so the fixed phone tab bar can't
@@ -17,7 +26,7 @@ export function ScrollToThread() {
   const [missing, setMissing] = useState(false);
   useEffect(() => {
     const go = () => {
-      const hash = window.location.hash;
+      const hash = linkedHash();
       if (!THREAD_HASH.test(hash)) return setMissing(false);
       const card = document.getElementById(hash.slice(1).toLowerCase());
       setMissing(!card);

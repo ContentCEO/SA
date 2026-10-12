@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { RetryAfterError } from "inngest";
 import { describe, expect, it } from "vitest";
 import { afterSync, functions, politely } from "@/jobs/functions";
@@ -53,6 +54,25 @@ describe("job wiring", () => {
         "voice-ideas",
       ].sort(),
     );
+  });
+});
+
+describe("the 15-minute workspace-lifecycle job", () => {
+  it("runs the lead-at-risk pushes (plan #34), after the new-lead pushes and the M7 backfill (A29)", () => {
+    const src = readFileSync("src/jobs/functions.ts", "utf8");
+    const head = "export const workspaceLifecycle = inngest.createFunction(";
+    const start = src.indexOf(head);
+    expect(start).toBeGreaterThan(-1);
+    const next = src.indexOf("inngest.createFunction(", start + head.length);
+    const body = src.slice(start, next === -1 ? undefined : next);
+    const atRisk = body.indexOf('step.run("lead-at-risk-pushes", () => sendLeadAtRiskPushes())');
+    expect(atRisk).toBeGreaterThan(-1);
+    const backfill = body.indexOf('step.run("m7-backfill"');
+    const pushes = body.indexOf('step.run("push-alerts"');
+    expect(backfill).toBeGreaterThan(-1);
+    expect(pushes).toBeGreaterThan(-1);
+    expect(atRisk).toBeGreaterThan(backfill);
+    expect(atRisk).toBeGreaterThan(pushes);
   });
 });
 

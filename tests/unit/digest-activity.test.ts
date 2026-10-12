@@ -54,6 +54,7 @@ describe("digest content", () => {
   const T2 = "22222222-2222-4222-8222-222222222222";
   const links = {
     queueUrl: "https://app/queue",
+    quotesUrl: "https://app/quotes",
     settingsUrl: "https://app/settings",
     threadUrl: (id: string) => queueThreadUrl("https://app/queue", id),
   };
@@ -77,6 +78,8 @@ describe("digest content", () => {
     ],
     sentYesterday: 2,
     sortedYesterday: 14,
+    leadsAtRisk: 0,
+    leadsAtRiskOffQueue: 0,
   };
   const quiet = {
     repliesReady: 0,
@@ -84,6 +87,8 @@ describe("digest content", () => {
     needsYou: [],
     sentYesterday: 0,
     sortedYesterday: 0,
+    leadsAtRisk: 0,
+    leadsAtRiskOffQueue: 0,
   };
 
   it("opens with what needs you, each a link to its card, then what's ready (plan #31)", () => {
@@ -677,6 +682,7 @@ describe("digest: needs-you header, queue agreement and Monday's last week (plan
     // Every link, in both versions, is on the allow-list — nothing else, ever.
     const allowed = new Set([
       appUrl("/queue"),
+      appUrl("/quotes"),
       appUrl("/settings#digest"),
       ...[complaint, invoice, quote].map((t) => `${appUrl("/queue")}#t-${t.id}`),
     ]);

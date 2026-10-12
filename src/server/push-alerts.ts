@@ -4,6 +4,7 @@ import { db } from "@/db";
 import { activityLog, businessProfiles, pushSubscriptions, workspaces } from "@/db/schema";
 import { pushConfigured, sendPush, type PushSender } from "@/lib/web-push";
 import { jobsAllowed } from "./lifecycle";
+import { atRiskPushPart } from "./leads-at-risk-rules";
 import { freshLeads, inQuietHours, leadCounts, SMS } from "./sms-alerts";
 
 /**
@@ -41,15 +42,58 @@ export async function savePushSubscription(workspaceId: string, endpoint: string
   return true;
 }
 
-/** What the phone shows when a push arrives: counts only, never names or words. */
-export function pushSummaryText(c: { replies: number; needsYou: number }): string {
+/**
+ * What the phone shows when a push arrives: counts only, never names or words. Quote
+ * requests waiting past the at-risk mark (plan #34) come first.
+ */
+export function pushSummaryText(c: { replies: number; needsYou: number; atRisk?: number }): string {
   const parts = [
+    c.atRisk ? atRiskPushPart(c.atRisk) : null,
     c.needsYou
       ? `${c.needsYou} email${c.needsYou === 1 ? "" : "s"} need${c.needsYou === 1 ? "s" : ""} you`
       : null,
     c.replies ? `${c.replies} repl${c.replies === 1 ? "y" : "ies"} ready to send` : null,
   ].filter(Boolean);
   return parts.length ? parts.join(" · ") : "Your queue is up to date.";
+}
+
+/**
+ * Claim this owner's phone-notification slot, atomically: true for exactly one caller when no
+ * push went out in the last 10 minutes. New-lead pushes (plan #36) and lead-at-risk pushes
+ * (#34) share it, so the phone never buzzes twice inside the gap. `extra` is written with it.
+ */
+export async function claimPushSlot(
+  workspaceId: string,
+  now: Date,
+  extra: Partial<{ pushAlertCursor: Date }> = {},
+): Promise<boolean> {
+  const set = { pushLastSentAt: now, ...extra };
+  const claimed = await db()
+    .insert(businessProfiles)
+    .values({ workspaceId, ...set })
+    .onConflictDoUpdate({
+      target: businessProfiles.workspaceId,
+      set,
+      setWhere: or(
+        isNull(businessProfiles.pushLastSentAt),
+        lt(businessProfiles.pushLastSentAt, new Date(now.getTime() - SMS.minGapMs)),
+      ),
+    })
+    .returning({ id: businessProfiles.workspaceId });
+  return claimed.length > 0;
+}
+
+/**
+ * Hand back a slot claimed at `now` when nothing reached a phone: put the earlier time back,
+ * only where this claim is still the one stored (a later claim is left alone).
+ */
+export async function releasePushSlot(workspaceId: string, now: Date, previous: Date | null) {
+  await db()
+    .update(businessProfiles)
+    .set({ pushLastSentAt: previous })
+    .where(
+      and(eq(businessProfiles.workspaceId, workspaceId), eq(businessProfiles.pushLastSentAt, now)),
+    );
 }
 
 export async function removePushSubscription(workspaceId: string, endpoint: string) {
@@ -60,19 +104,25 @@ export async function removePushSubscription(workspaceId: string, endpoint: stri
     );
 }
 
+/** Each owner's phones (push endpoints), by workspace; one workspace when given. */
+export async function pushEndpointsByWorkspace(workspaceId?: string) {
+  const subs = await db()
+    .select({ workspaceId: pushSubscriptions.workspaceId, endpoint: pushSubscriptions.endpoint })
+    .from(pushSubscriptions)
+    .where(workspaceId ? eq(pushSubscriptions.workspaceId, workspaceId) : undefined);
+  const byWorkspace = new Map<string, string[]>();
+  for (const s of subs)
+    byWorkspace.set(s.workspaceId, [...(byWorkspace.get(s.workspaceId) ?? []), s.endpoint]);
+  return byWorkspace;
+}
+
 export async function sendPushAlerts(
   now: Date = new Date(),
   deps: { push?: PushSender; workspaceId?: string } = {},
 ) {
   const push = deps.push ?? sendPush;
   if (!deps.push && !pushConfigured()) return { sent: 0, notConfigured: true };
-  const subs = await db()
-    .select()
-    .from(pushSubscriptions)
-    .where(deps.workspaceId ? eq(pushSubscriptions.workspaceId, deps.workspaceId) : undefined);
-  const byWorkspace = new Map<string, string[]>();
-  for (const s of subs)
-    byWorkspace.set(s.workspaceId, [...(byWorkspace.get(s.workspaceId) ?? []), s.endpoint]);
+  const byWorkspace = await pushEndpointsByWorkspace(deps.workspaceId);
   if (!byWorkspace.size) return { sent: 0 };
 
   const rows = await db()
@@ -103,20 +153,7 @@ export async function sendPushAlerts(
     if (!fresh.length) continue;
 
     // Claim the slot first so two runs can't both buzz the phone.
-    const set = { pushLastSentAt: now, pushAlertCursor: fresh[0]!.classifiedAt! };
-    const claimed = await db()
-      .insert(businessProfiles)
-      .values({ workspaceId: w.id, ...set })
-      .onConflictDoUpdate({
-        target: businessProfiles.workspaceId,
-        set,
-        setWhere: or(
-          isNull(businessProfiles.pushLastSentAt),
-          lt(businessProfiles.pushLastSentAt, new Date(now.getTime() - SMS.minGapMs)),
-        ),
-      })
-      .returning({ id: businessProfiles.workspaceId });
-    if (!claimed.length) continue;
+    if (!(await claimPushSlot(w.id, now, { pushAlertCursor: fresh[0]!.classifiedAt! }))) continue;
 
     let delivered = 0;
     for (const endpoint of byWorkspace.get(w.id) ?? []) {

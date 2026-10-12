@@ -1,9 +1,9 @@
 import { randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { eq } from "drizzle-orm";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Database } from "@/db";
-import { drafts, messages, threads, workspaces } from "@/db/schema";
+import { drafts, mailboxes, messages, threads, workspaces } from "@/db/schema";
 import { ensureUserAndWorkspace } from "@/server/accounts";
 import { saveConnectedMailbox } from "@/server/mailboxes";
 import { createTestDb } from "../support/db";
@@ -73,7 +73,11 @@ async function draft(threadId: string, over: Partial<typeof drafts.$inferInsert>
 }
 const summary = async () => {
   const res = await GET();
-  return { status: res.status, json: (await res.json()) as Record<string, unknown> };
+  return {
+    status: res.status,
+    headers: res.headers,
+    json: (await res.json()) as Record<string, unknown>,
+  };
 };
 
 describe("/api/push/summary counts like the queue (plan #36, M8 A1)", () => {
@@ -120,9 +124,97 @@ describe("/api/push/summary counts like the queue (plan #36, M8 A1)", () => {
     expect((await summary()).status).toBe(401);
   });
 
-  it("the route's source imports queueCounts and never listQueue", () => {
+  it("the route's source counts from the content-free membership and never listQueue", () => {
     const src = readFileSync("src/app/api/push/summary/route.ts", "utf8");
-    expect(src).toMatch(/import\s*\{[^}]*\bqueueCounts\b[^}]*\}\s*from\s*"@\/server\/drafts"/);
+    expect(src).toMatch(
+      /import\s*\{[^}]*\b(queueCounts|queueMembership)\b[^}]*\}\s*from\s*"@\/server\/drafts"/,
+    );
     expect(src).not.toMatch(/\blistQueue\s*[(,}]/);
+  });
+});
+
+/* Plan #34: leads at risk on the phone, and where a tap goes (A25, A26). */
+describe("/api/push/summary with leads at risk", () => {
+  // Tuesday 1:01pm New York; the customer wrote at 9:00am (4 business hours and a minute).
+  const NOW = new Date("2026-10-13T17:01:00Z");
+  const NINE = new Date("2026-10-13T13:00:00Z");
+  const ALLOWED = /^\/(queue|quotes)$|^\/queue\?t=([0-9a-f-]{36})#t-\2$/;
+
+  beforeEach(async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(NOW);
+    process.env.TOKEN_ENCRYPTION_KEY = randomBytes(32).toString("base64");
+    database = await createTestDb();
+    const { user, workspace } = await ensureUserAndWorkspace({ email: "owner@shop.com" });
+    session.userId = user.id;
+    await database
+      .update(workspaces)
+      .set({ status: "active" })
+      .where(eq(workspaces.id, workspace.id));
+    mailboxId = (
+      await saveConnectedMailbox(workspace, {
+        email: "owner@shop.com",
+        refreshToken: "rt",
+        grantedScopes: [],
+      })
+    ).id;
+    await database.update(mailboxes).set({ lastSyncedAt: NOW }).where(eq(mailboxes.id, mailboxId));
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  const quoteRequest = async (over: Partial<typeof threads.$inferInsert> = {}) => {
+    const t = await thread({ category: "quote_request", lastMessageAt: NINE, ...over });
+    await database.update(messages).set({ sentAt: NINE }).where(eq(messages.threadId, t.id));
+    return t;
+  };
+
+  it("GUARDRAIL: exactly title, body and url; counts only; the link is on the allow-list", async () => {
+    const t = await quoteRequest({ needsOwner: true, needsOwnerReason: "SECRET-REASON" });
+    const { status, headers, json } = await summary();
+    expect(status).toBe(200);
+    // Never kept by a cache: the link points at a card that may be gone by the next push.
+    expect(headers.get("cache-control")).toContain("no-store");
+    expect(Object.keys(json).sort()).toEqual(["body", "title", "url"]);
+    expect(json.body).toBe("1 quote request has waited over 4 hours · 1 email needs you");
+    expect(json.url).toBe(`/queue?t=${t.id}#t-${t.id}`);
+    expect(json.url).toMatch(ALLOWED);
+    expect(JSON.stringify(json)).not.toMatch(/SECRET|@/i);
+  });
+
+  it("an at-risk lead with a draft waiting links to its draft card", async () => {
+    const t = await quoteRequest();
+    await draft(t.id);
+    const { json } = await summary();
+    expect(json.body).toBe("1 quote request has waited over 4 hours · 1 reply ready to send");
+    expect(json.url).toBe(`/queue?t=${t.id}#t-${t.id}`);
+  });
+
+  it("A26: an at-risk lead with no card on the queue (no draft, not needs-you) → the quote tracker", async () => {
+    const t = await quoteRequest();
+    // Something else is on the queue — the link still doesn't point at a card that isn't there.
+    const other = await thread({ needsOwner: true, needsOwnerReason: "SECRET-REASON" });
+    const { json } = await summary();
+    expect(json.body).toBe("1 quote request has waited over 4 hours · 1 email needs you");
+    expect(json.url).toBe("/quotes");
+    expect(json.url).not.toContain(t.id);
+    expect(json.url).not.toContain(other.id);
+  });
+
+  it("A12: a lead whose draft was discarded is still waiting, off the queue → the quote tracker", async () => {
+    const t = await quoteRequest();
+    await draft(t.id, { status: "discarded", decidedAt: at(-30) });
+    const { json } = await summary();
+    expect(json.body).toBe("1 quote request has waited over 4 hours");
+    expect(json.url).toBe("/quotes");
+  });
+
+  it("no lead at risk: the first needs-you card, else the queue", async () => {
+    expect((await summary()).json.url).toBe("/queue");
+    const t = await thread({ needsOwner: true, needsOwnerReason: "SECRET-REASON" });
+    const { json } = await summary();
+    expect(json.body).toBe("1 email needs you");
+    expect(json.url).toBe(`/queue?t=${t.id}#t-${t.id}`);
   });
 });

@@ -27,6 +27,7 @@ import { sendAccessLostAlerts } from "@/server/alerts";
 import { captureQuoteAmounts, guessNoAnswers } from "@/server/quotes";
 import { sendLeadAlerts } from "@/server/sms-alerts";
 import { sendPushAlerts } from "@/server/push-alerts";
+import { sendLeadAtRiskPushes } from "@/server/leads-at-risk";
 import { purgeExpiredNotes } from "@/server/seasonal-notes";
 import { learnVoice, workspacesDueForVoiceRefresh, workspacesNeedingVoice } from "@/server/voice";
 import { expireEvaluations, startPendingEvaluations } from "@/server/workspace-lifecycle";
@@ -377,6 +378,8 @@ export const workspaceLifecycle = inngest.createFunction(
     await step.run("push-alerts", () => sendPushAlerts());
     // One-shot M7 data fix, from new code once it's live (no-op after the first run).
     await step.run("m7-backfill", () => runM7Backfill());
+    // Plan #34: a quote request waiting over 4 business hours → one phone notification.
+    await step.run("lead-at-risk-pushes", () => sendLeadAtRiskPushes());
     return { started, expired, voiceRestarted: voice.length, accessAlerts: alerts.sent };
   },
 );

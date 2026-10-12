@@ -1559,6 +1559,7 @@ describe("privacy: invoice facts stay on the owner's screen", () => {
       counts,
       {
         queueUrl: "https://app.example/queue",
+        quotesUrl: "https://app.example/quotes",
         settingsUrl: "https://app.example/settings",
         threadUrl: (id) => queueThreadUrl("https://app.example/queue", id),
       },

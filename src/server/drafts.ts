@@ -1860,12 +1860,18 @@ export async function queueMembership(
   };
 }
 
+export type QueueTotals = { needsYou: number; replies: number; nudges: number; drafts: number };
+
 /** The queue's numbers, from the same membership as the screen (plan M8 A1): counts only. */
 export async function queueCounts(
   workspaceId: string,
   now: Date = new Date(),
-): Promise<{ needsYou: number; replies: number; nudges: number; drafts: number }> {
-  const q = await queueMembership(workspaceId, now);
+): Promise<QueueTotals> {
+  return countQueue(await queueMembership(workspaceId, now));
+}
+
+/** The totals of a membership already loaded. */
+export function countQueue(q: QueueMembership): QueueTotals {
   const replies = q.drafts.filter((d) => d.kind === "reply").length;
   return {
     needsYou: q.needsYou.length,
@@ -1878,6 +1884,27 @@ export async function queueCounts(
 /** How many "Needs you" cards the queue screen shows at once (the counts above have no cap). */
 const NEEDS_YOU_SHOWN = 50;
 
+/**
+ * The needs-you members the queue screen renders as cards: the newest 50, plus whatever the
+ * morning summary links to (its top picks are the oldest and most urgent, which are exactly
+ * the ones past 50), so every `#t-<id>` it sends lands.
+ */
+function shownNeedsYou(members: QueueMembership) {
+  const linked = headerPickIds(members.needsYou.map(toNeedsYouItem));
+  return members.needsYou.filter((m, i) => i < NEEDS_YOU_SHOWN || linked.has(m.threadId));
+}
+
+/**
+ * The thread ids that have a card on the queue screen (`id="t-<uuid>"`), from the same rules
+ * listQueue renders with — so a notification only deep-links to a card that's there (A26).
+ */
+export function queueCardIds(members: QueueMembership): Set<string> {
+  return new Set([
+    ...shownNeedsYou(members).map((m) => m.threadId),
+    ...members.drafts.map((m) => m.threadId),
+  ]);
+}
+
 /** The queue: threads that need the owner with no draft first, then drafts waiting for a decision. */
 export async function listQueue(
   workspaceId: string,
@@ -1886,12 +1913,7 @@ export async function listQueue(
   // Membership (and order) come from the content-free rules, so the screen and every count
   // agree by construction; this only adds what the owner reads on the cards.
   const members = await queueMembership(workspaceId, now);
-  // The newest 50, plus whatever the morning summary links to (its top picks are the oldest
-  // and most urgent, which are exactly the ones past 50), so every `#t-<id>` it sends lands.
-  const linked = headerPickIds(members.needsYou.map(toNeedsYouItem));
-  const shownNeeds = members.needsYou.filter(
-    (m, i) => i < NEEDS_YOU_SHOWN || linked.has(m.threadId),
-  );
+  const shownNeeds = shownNeedsYou(members);
   if (shownNeeds.length === 0 && members.drafts.length === 0) return { needsYou: [], drafts: [] };
 
   const boxes = await db()

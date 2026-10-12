@@ -4,6 +4,7 @@ import { categoryLabels, categoryTag, isCategory } from "@/config/categories";
 import { db } from "@/db";
 import { activityLog, drafts, mailboxes, messages, threads } from "@/db/schema";
 import { MINUTES_PER_SENT_REPLY } from "@/config/drafting";
+import { atRiskActivityLine } from "./leads-at-risk-rules";
 import { closeRate, isQuoteOutcome, type QuoteOutcome } from "./quote-rules";
 import { workspaceTimeZone } from "./snooze";
 import { localMonthStart, usableTimeZone } from "./snooze-rules";
@@ -110,6 +111,8 @@ export function describeActivity(
       return "You disconnected Gmail";
     case "push_alert_sent":
       return "Sent a notification to your phone about new emails that need you";
+    case "lead_at_risk_push_sent":
+      return atRiskActivityLine(detail.leads);
     case "sms_alert_sent":
       return "Texted you about new emails that need you";
     case "sms_alerts_changed":

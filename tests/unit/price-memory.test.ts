@@ -828,6 +828,7 @@ describe("GUARDRAIL: never in the morning summary, admin, phone notifications or
       counts,
       {
         queueUrl: "https://app.example/queue",
+        quotesUrl: "https://app.example/quotes",
         settingsUrl: "https://app.example/settings",
         threadUrl: (id) => queueThreadUrl("https://app.example/queue", id),
       },
@@ -905,6 +906,8 @@ describe("GUARDRAIL: price-memory module boundary", () => {
       "src/server/admin.ts",
       "src/server/sms-alerts.ts",
       "src/server/push-alerts.ts",
+      "src/server/leads-at-risk.ts",
+      "src/server/scorecard.ts",
       "src/server/edit-learning.ts",
       "src/app/api/push/summary/route.ts",
       "src/ai/client.ts",
