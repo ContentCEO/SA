@@ -2,7 +2,12 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { Headline } from "@/components/brand/headline";
 import { relativeTime } from "@/lib/relative-time";
-import { listActivity, MINUTES_PER_SENT_REPLY, monthSummary } from "@/server/activity";
+import {
+  listActivity,
+  MINUTES_PER_SENT_REPLY,
+  monthCloseRate,
+  monthSummary,
+} from "@/server/activity";
 import { requireOwner } from "@/server/session";
 
 export const metadata: Metadata = { title: "Activity" };
@@ -16,10 +21,12 @@ function timeSaved(minutes: number) {
 export default async function ActivityPage() {
   const { workspace } = await requireOwner();
   const now = new Date();
-  const [entries, month] = await Promise.all([
+  const [entries, month, close] = await Promise.all([
     listActivity(workspace.id),
     monthSummary(workspace.id, now),
+    monthCloseRate(workspace.id, now),
   ]);
+  const decided = close.won + close.lost + close.noAnswer;
   const monthName = now.toLocaleString("en-US", { month: "long", timeZone: "UTC" });
 
   return (
@@ -54,6 +61,45 @@ export default async function ActivityPage() {
             Sorting isn&apos;t counted.
           </span>
         </p>
+      </section>
+
+      <section aria-labelledby="close-rate" className="flex flex-col gap-3 rounded-xl border p-4">
+        <h2 id="close-rate" className="text-lg font-black">
+          Quotes decided this month
+        </h2>
+        {close.ratePct !== null ? (
+          <>
+            <p className="text-lg">
+              {`You won ${close.won} of ${decided} quote${decided === 1 ? "" : "s"} decided this month (${close.ratePct}%).`}
+            </p>
+            <dl className="grid grid-cols-3 gap-3">
+              {[
+                ["Won", close.won],
+                ["Lost", close.lost],
+                ["No answer", close.noAnswer],
+              ].map(([label, value]) => (
+                <div key={label} className="flex flex-col">
+                  <dt className="text-sm text-muted-foreground">{label}</dt>
+                  <dd className="text-2xl font-black">{value}</dd>
+                </div>
+              ))}
+            </dl>
+            <p className="text-sm text-muted-foreground">
+              &ldquo;No answer&rdquo; and &ldquo;Won&rdquo; can be our guess — change any quote on
+              Quotes.
+            </p>
+          </>
+        ) : (
+          <p className="text-lg">
+            No quotes decided yet this month. Mark how they ended on Quotes.
+          </p>
+        )}
+        <Link
+          href="/quotes"
+          className="inline-flex min-h-tap items-center font-semibold underline underline-offset-4"
+        >
+          Go to Quotes
+        </Link>
       </section>
 
       <section aria-labelledby="log" className="flex flex-col gap-3">

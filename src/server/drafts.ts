@@ -53,6 +53,7 @@ import {
   SendingBlockedError,
 } from "./lifecycle";
 import { batchEligible, firstLine } from "./batch-rules";
+import { quoteStopsNudges } from "./quote-rules";
 import { BACK_ON_TOP_MS, isEmergency } from "./snooze-rules";
 import { markReconnectNeeded } from "./sync";
 
@@ -238,6 +239,9 @@ export async function createDraftForThread(
     // Checked here, where the draft is made, whatever selected the thread.
     if (
       thread.needsOwner ||
+      // A decided quote (lost / no answer, any source; won, unless it's now the job's
+      // invoice) is never chased.
+      quoteStopsNudges(thread) ||
       !FOLLOWUP_CATEGORIES.includes(thread.category as (typeof FOLLOWUP_CATEGORIES)[number])
     ) {
       return { status: "skipped", reason: "followup_not_allowed" };
@@ -425,6 +429,24 @@ export async function createDraftForThread(
     // Lost a race with another run; don't leave an orphan in Gmail.
     await writer.deleteDraft(created.draftId);
     return { status: "skipped", reason: "already_pending" };
+  }
+  if (followup) {
+    // The owner may have decided the quote while the model was writing. Checked after the
+    // insert: setQuoteOutcome writes the outcome before it looks for a waiting nudge, so
+    // either it finds this row, or this re-read sees its outcome. Whoever removes the row
+    // removes the Gmail draft.
+    const [fresh] = await db()
+      .select({ quoteOutcome: threads.quoteOutcome, category: threads.category })
+      .from(threads)
+      .where(eq(threads.id, threadId));
+    if (fresh && quoteStopsNudges(fresh)) {
+      const gone = await db()
+        .delete(drafts)
+        .where(and(eq(drafts.id, row2.id), eq(drafts.status, "pending")))
+        .returning({ id: drafts.id });
+      if (gone.length) await writer.deleteDraft(created.draftId);
+      return { status: "skipped", reason: "followup_not_allowed" };
+    }
   }
 
   await bumpUsageCounter(workspace.id, "draftsCreated", now);
@@ -1194,6 +1216,72 @@ export async function discardDraft(
   return "discarded";
 }
 
+/** A nudge still waiting for the owner: pending, and not already tapped Send (undo window). */
+const waitingNudge = (threadId: string) =>
+  and(
+    eq(drafts.threadId, threadId),
+    eq(drafts.kind, "followup"),
+    eq(drafts.status, "pending"),
+    isNull(drafts.sendAfter),
+  );
+
+/**
+ * The owner closed the matter (decided the quote; later: marked the invoice paid), so the
+ * thread's waiting nudge goes — here and in Gmail. A nudge already tapped Send is the owner's
+ * call and is left alone. The nudge always closes here: lost Google access → reconnect
+ * banner; any other Gmail failure (rate limit, outage) or a mailbox that isn't working →
+ * the Gmail draft is left in Gmail, as on the reconnect path. Returns whether one was closed.
+ */
+export async function expirePendingNudge(
+  threadId: string,
+  note: string,
+  opts: DraftDeps = {},
+): Promise<boolean> {
+  const now = opts.now?.() ?? new Date();
+  const [row] = await db()
+    .select({ draft: drafts, mailbox: mailboxes })
+    .from(drafts)
+    .innerJoin(mailboxes, eq(mailboxes.id, drafts.mailboxId))
+    .where(waitingNudge(threadId))
+    .limit(1);
+  if (!row) return false;
+  if (row.draft.gmailDraftId && row.mailbox.status === "active") {
+    try {
+      await (opts.writerFor ?? defaultWriter)(row.mailbox).deleteDraft(row.draft.gmailDraftId);
+    } catch (err) {
+      if (err instanceof MailboxAuthError) {
+        await markReconnectNeeded(row.mailbox);
+      } else {
+        // Metadata only.
+        console.error("nudge_gmail_delete_failed", {
+          workspaceId: row.mailbox.workspaceId,
+          draftId: row.draft.id,
+          error: err instanceof Error ? err.name : "unknown",
+        });
+      }
+    }
+  }
+  await closeDraft(row.draft, row.mailbox.workspaceId, "expired", note, now);
+  return true;
+}
+
+/**
+ * Our own guess closed the matter (a quote outcome; later: an invoice we think was paid).
+ * A guess never deletes anything: the waiting nudge stays, with a flag asking the owner to
+ * check, and any autopilot countdown is cleared. Idempotent.
+ */
+export async function flagPendingNudge(threadId: string, flag: string): Promise<boolean> {
+  const rows = await db()
+    .update(drafts)
+    .set({
+      flags: sql`case when ${drafts.flags} @> jsonb_build_array(${flag}::text) then ${drafts.flags} else ${drafts.flags} || jsonb_build_array(${flag}::text) end`,
+      autoSendAt: null,
+    })
+    .where(waitingNudge(threadId))
+    .returning({ id: drafts.id });
+  return rows.length > 0;
+}
+
 /**
  * Keep the queue honest about what happened in Gmail:
  * - draft gone and the owner replied in the thread → they sent it from Gmail;
@@ -1478,6 +1566,7 @@ export async function sentDraftSummary(workspaceId: string, draftId: string) {
   const chased =
     settings.enabled &&
     !row.thread.needsOwner &&
+    !quoteStopsNudges(row.thread) &&
     FOLLOWUP_CATEGORIES.includes(row.thread.category as (typeof FOLLOWUP_CATEGORIES)[number]);
   const sentNudges = chased ? await countSentFollowups(row.thread.id) : 0;
   const decidedAt = row.draft.decidedAt ?? sendingAt ?? new Date();

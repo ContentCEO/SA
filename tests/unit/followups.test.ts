@@ -371,3 +371,114 @@ describe("writing and sending a nudge", () => {
     expect(calls).toHaveLength(0);
   });
 });
+
+describe("a decided quote is never chased (plan #30, amendment A3)", () => {
+  const decide = (threadId: string, outcome: string, source: "owner" | "auto") =>
+    database
+      .update(threads)
+      .set({ quoteOutcome: outcome, quoteOutcomeSource: source, quoteOutcomeAt: daysAgo(1) })
+      .where(eq(threads.id, threadId));
+
+  it.each([
+    ["won by the owner", "won", "owner"],
+    ["won — our guess", "won", "auto"],
+    ["lost", "lost", "owner"],
+    ["no answer — our guess", "no_answer", "auto"],
+  ] as const)("%s → no nudge, even if asked directly", async (_l, outcome, source) => {
+    const open = await quietThread({ ownerRepliedDaysAgo: 4 });
+    const decided = await quietThread({ ownerRepliedDaysAgo: 4 });
+    await decide(decided, outcome, source);
+    expect(await threadsToFollowUp(mailboxId, NOW)).toEqual([open]);
+
+    const { transport, calls } = fakeTransport([nudge()]);
+    setModelTransportForTests(transport);
+    expect(await createDraftForThread(decided, { trigger: "followup", ...deps() })).toEqual({
+      status: "skipped",
+      reason: "followup_not_allowed",
+    });
+    expect(calls).toHaveLength(0);
+    expect(writer.calls).toEqual([]);
+  });
+
+  it("a won job's invoice is still chased; a lost one's isn't", async () => {
+    const won = await quietThread({ category: "invoice_payment", ownerRepliedDaysAgo: 4 });
+    const lost = await quietThread({ category: "invoice_payment", ownerRepliedDaysAgo: 4 });
+    await decide(won, "won", "auto");
+    await decide(lost, "lost", "owner");
+    expect(await threadsToFollowUp(mailboxId, NOW)).toEqual([won]);
+
+    const { transport } = fakeTransport([nudge(), nudge()]);
+    setModelTransportForTests(transport);
+    expect(await createDraftForThread(won, { trigger: "followup", ...deps() })).toMatchObject({
+      status: "created",
+    });
+    expect(await createDraftForThread(lost, { trigger: "followup", ...deps() })).toEqual({
+      status: "skipped",
+      reason: "followup_not_allowed",
+    });
+  });
+
+  it("decided while the nudge was being written → no nudge, and no Gmail draft left behind", async () => {
+    const t = await quietThread({ ownerRepliedDaysAgo: 4 });
+    const { transport } = fakeTransport([nudge()]);
+    setModelTransportForTests(transport);
+    const create = writer.createDraft.bind(writer);
+    writer.createDraft = async (input) => {
+      const made = await create(input);
+      // The owner taps Lost on Quotes while we're saving the draft.
+      await decide(t, "lost", "owner");
+      return made;
+    };
+    expect(await createDraftForThread(t, { trigger: "followup", ...deps() })).toEqual({
+      status: "skipped",
+      reason: "followup_not_allowed",
+    });
+    expect(writer.calls).toEqual(["createDraft", "deleteDraft"]);
+    expect(writer.drafts.size).toBe(0);
+    expect(await database.select().from(drafts).where(eq(drafts.threadId, t))).toEqual([]);
+    const logged = await database
+      .select()
+      .from(activityLog)
+      .where(eq(activityLog.action, "followup_drafted"));
+    expect(logged).toEqual([]);
+  });
+
+  it("a reopened quote is chased again", async () => {
+    const t = await quietThread({ ownerRepliedDaysAgo: 4 });
+    await database
+      .update(threads)
+      .set({ quoteOutcome: null, quoteOutcomeSource: "owner" })
+      .where(eq(threads.id, t));
+    expect(await threadsToFollowUp(mailboxId, NOW)).toEqual([t]);
+  });
+
+  it("the sent screen promises no nudge on a won quote", async () => {
+    await database
+      .update(workspaces)
+      .set({ status: "active", setupPaidVia: "stripe" })
+      .where(eq(workspaces.id, workspaceId));
+    const t = await quietThread({ ownerRepliedDaysAgo: 10 });
+    await sentNudge(t, 4); // one nudge used, so "the last one" can't be claimed either
+    const [d] = await database
+      .insert(drafts)
+      .values({
+        threadId: t,
+        mailboxId,
+        gmailDraftId: "sent-reply",
+        toAddress: "dana@customer.com",
+        subject: "Re: Panel upgrade",
+        body: "See you Monday.",
+        originalBody: "See you Monday.",
+        status: "sent",
+        reason: "reply",
+        promptVersion: "draft.v5",
+        decidedAt: NOW,
+      })
+      .returning();
+    const before = await sentDraftSummary(workspaceId, d!.id);
+    expect(before!.nudgeOn).not.toBeNull();
+    await decide(t, "won", "auto");
+    const summary = await sentDraftSummary(workspaceId, d!.id);
+    expect(summary).toMatchObject({ nudgeOn: null, lastNudgeUsed: false });
+  });
+});

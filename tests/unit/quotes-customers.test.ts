@@ -1,22 +1,42 @@
 import { randomBytes } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { beforeEach, describe, expect, it } from "vitest";
+import { setModelTransportForTests } from "@/ai/client";
 import type { Database } from "@/db";
-import { messages, threads } from "@/db/schema";
+import { activityLog, drafts, mailboxes, messages, threads, workspaces } from "@/db/schema";
+import { MailboxAuthError } from "@/mailbox/connector";
 import { ensureUserAndWorkspace } from "@/server/accounts";
+import { classifyPending } from "@/server/classification";
+import { threadsToFollowUp } from "@/server/followups";
+import { afterClassified } from "@/server/auto-outcomes";
+import { flagPendingNudge } from "@/server/drafts";
 import { customerByKey, customerDetail, listCustomers } from "@/server/customers";
+import { ReadOnlyError } from "@/server/lifecycle";
 import { saveConnectedMailbox } from "@/server/mailboxes";
 import {
   amountFromOwnerText,
+  canAutoSet,
+  closeRate,
   formatCents,
+  guessNoAnswer,
   isQuoteThread,
   keepQuoteAccepted,
+  quoteStopsNudges,
   parseDollars,
+  QUOTE_GUESS_FLAG,
   quoteAccepted,
   quoteStage,
 } from "@/server/quote-rules";
-import { captureQuoteAmounts, listQuotes, setQuoteOutcome } from "@/server/quotes";
+import {
+  autoSetQuoteOutcome,
+  captureQuoteAmounts,
+  guessNoAnswers,
+  listQuotes,
+  setQuoteOutcome,
+} from "@/server/quotes";
 import { createTestDb } from "../support/db";
+import { classification, fakeTransport } from "../support/fake-model";
+import { FakeWriter } from "../support/fake-writer";
 
 const DAY = 86_400_000;
 const NOW = new Date("2026-10-10T14:00:00Z");
@@ -38,6 +58,49 @@ describe("quote rules", () => {
     );
     expect(quoteStage(f({ outcome: "won" }), NOW, 3)).toBe("won");
     expect(quoteStage(f({ outcome: "lost", lastOutboundAt: daysAgo(9) }), NOW, 3)).toBe("lost");
+    expect(quoteStage(f({ outcome: "no_answer", lastOutboundAt: daysAgo(9) }), NOW, 3)).toBe(
+      "no_answer",
+    );
+    // Anything else in the column is ignored rather than shown.
+    expect(quoteStage(f({ outcome: "maybe" }), NOW, 3)).toBe("waiting_on_you");
+  });
+
+  it("guesses no answer a week after two nudges, or after three quiet weeks", () => {
+    const q = (outAgo: number, sentNudges: number, inAgo = outAgo + 2) => ({
+      lastInboundAt: daysAgo(inAgo),
+      lastOutboundAt: daysAgo(outAgo),
+      sentNudges,
+    });
+    expect(guessNoAnswer(q(7, 2), NOW)).toBe("two_nudges");
+    expect(guessNoAnswer(q(6, 2), NOW)).toBeNull();
+    expect(guessNoAnswer(q(10, 1), NOW)).toBeNull();
+    // Follow-ups off (or the nudges were discarded): three weeks.
+    expect(guessNoAnswer(q(21, 0), NOW)).toBe("three_weeks");
+    expect(guessNoAnswer(q(20, 0), NOW)).toBeNull();
+    // The customer wrote last → still open.
+    expect(guessNoAnswer(q(30, 2, 1), NOW)).toBeNull();
+    // The customer never wrote → nobody to have answered.
+    expect(
+      guessNoAnswer({ lastInboundAt: null, lastOutboundAt: daysAgo(30), sentNudges: 2 }, NOW),
+    ).toBeNull();
+    // The owner never wrote → no quote was given.
+    expect(
+      guessNoAnswer({ lastInboundAt: daysAgo(30), lastOutboundAt: null, sentNudges: 0 }, NOW),
+    ).toBeNull();
+  });
+
+  it("close rate counts no answer as decided", () => {
+    expect(closeRate({ won: 2, lost: 1, noAnswer: 1 })).toBe(50);
+    expect(closeRate({ won: 0, lost: 0, noAnswer: 0 })).toBeNull();
+    expect(closeRate({ won: 1, lost: 0, noAnswer: 2 })).toBe(33);
+  });
+
+  it("our guess never goes over the owner's choice (A13)", () => {
+    expect(canAutoSet(null, null)).toBe(true);
+    expect(canAutoSet("no_answer", "auto")).toBe(true);
+    expect(canAutoSet("lost", "owner")).toBe(false);
+    expect(canAutoSet(null, "owner")).toBe(false); // the owner reopened it
+    expect(canAutoSet("lost", null)).toBe(false); // set before the column existed
   });
   it("reads the quoted amount from the owner's words", () => {
     expect(amountFromOwnerText("It's $2,400 incl. permit, $150 deposit")).toBe(240_000);
@@ -117,17 +180,35 @@ async function convo(opts: {
 }
 
 describe("quote acceptance context (A5)", () => {
-  it("a quote thread is a quote request, or anything with an outcome", () => {
-    expect(isQuoteThread({ category: "quote_request", quoteOutcome: null })).toBe(true);
-    expect(isQuoteThread({ category: "scheduling", quoteOutcome: "won" })).toBe(true);
-    expect(isQuoteThread({ category: "scheduling", quoteOutcome: null })).toBe(false);
-    expect(isQuoteThread({ category: null, quoteOutcome: null })).toBe(false);
+  it("a quote thread is a quote request, or anything that has ever had an outcome", () => {
+    const t = (category: string | null, quoteOutcome: string | null, src: string | null = null) =>
+      isQuoteThread({ category, quoteOutcome, quoteOutcomeSource: src });
+    expect(t("quote_request", null)).toBe(true);
+    expect(t("scheduling", "won", "auto")).toBe(true);
+    // Our no-answer guess was cleared when the customer wrote back, and that reply was
+    // sorted as scheduling: still a quote. Same for an owner's reopen.
+    expect(t("scheduling", null, "auto")).toBe(true);
+    expect(t("customer_question", null, "owner")).toBe(true);
+    expect(t("scheduling", null)).toBe(false);
+    expect(t(null, null)).toBe(false);
+  });
+
+  it("lost / no answer stop every nudge; won stops quote nudges but not the job's invoice", () => {
+    const stops = (quoteOutcome: string | null, category: string) =>
+      quoteStopsNudges({ quoteOutcome, category });
+    expect(stops(null, "quote_request")).toBe(false);
+    expect(stops("won", "quote_request")).toBe(true);
+    expect(stops("lost", "quote_request")).toBe(true);
+    expect(stops("no_answer", "quote_request")).toBe(true);
+    expect(stops("won", "invoice_payment")).toBe(false);
+    expect(stops("lost", "invoice_payment")).toBe(true);
+    expect(stops("no_answer", "invoice_payment")).toBe(true);
   });
 
   const base = {
     acceptsQuote: true,
     injection: false,
-    previous: { category: "quote_request", quoteOutcome: null },
+    previous: { category: "quote_request", quoteOutcome: null, quoteOutcomeSource: null },
     category: "scheduling",
     ownerWroteBefore: true,
   };
@@ -136,7 +217,7 @@ describe("quote acceptance context (A5)", () => {
     expect(
       quoteAccepted({
         ...base,
-        previous: { category: null, quoteOutcome: null },
+        previous: { category: null, quoteOutcome: null, quoteOutcomeSource: null },
         category: "quote_request",
       }),
     ).toBe(true);
@@ -144,15 +225,26 @@ describe("quote acceptance context (A5)", () => {
     expect(quoteAccepted({ ...base, ownerWroteBefore: false })).toBe(false);
     expect(quoteAccepted({ ...base, injection: true })).toBe(false);
     expect(
-      quoteAccepted({ ...base, previous: { category: "scheduling", quoteOutcome: null } }),
+      quoteAccepted({
+        ...base,
+        previous: { category: "scheduling", quoteOutcome: null, quoteOutcomeSource: null },
+      }),
     ).toBe(false);
+    // A cleared guess still counts as a quote context.
+    expect(
+      quoteAccepted({
+        ...base,
+        previous: { category: "scheduling", quoteOutcome: null, quoteOutcomeSource: "auto" },
+        category: "customer_question",
+      }),
+    ).toBe(true);
   });
   it("a fresh quote request without the signal is never an acceptance (precedence guard)", () => {
     expect(
       quoteAccepted({
         ...base,
         acceptsQuote: false,
-        previous: { category: null, quoteOutcome: null },
+        previous: { category: null, quoteOutcome: null, quoteOutcomeSource: null },
         category: "quote_request",
       }),
     ).toBe(false);
@@ -254,7 +346,69 @@ describe("quote tracker", () => {
     const t = await convo({ from: "d@x.com", name: "D", category: "quote_request", inAgo: 1 });
     const { workspace: other } = await ensureUserAndWorkspace({ email: "other@shop.com" });
     expect(await setQuoteOutcome(other.id, t, "won")).toBe(false);
+    expect(await setQuoteOutcome(other.id, t, "no_answer")).toBe(false);
     expect((await listQuotes(other.id, NOW)).quotes).toHaveLength(0);
+    const [row] = await database.select().from(threads).where(eq(threads.id, t));
+    expect(row).toMatchObject({ quoteOutcome: null, quoteOutcomeSource: null });
+  });
+
+  it("the win rate counts no answer (ours or the owner's) as decided", async () => {
+    const won = await convo({
+      from: "sam@z.com",
+      name: "Sam",
+      category: "quote_request",
+      inAgo: 10,
+      outAgo: 9,
+    });
+    // Answered 25 days ago, never heard back: listQuotes guesses no answer.
+    const quiet = await convo({
+      from: "kim@z.com",
+      name: "Kim",
+      category: "quote_request",
+      inAgo: 26,
+      outAgo: 25,
+    });
+    await setQuoteOutcome(workspaceId, won, "won", undefined, NOW);
+    const { quotes, totals } = await listQuotes(workspaceId, NOW);
+    const by = Object.fromEntries(quotes.map((q) => [q.threadId, q]));
+    expect(by[quiet]).toMatchObject({ stage: "no_answer", outcomeGuessed: true });
+    expect(by[won]).toMatchObject({ stage: "won", outcomeGuessed: false });
+    expect(totals.winRatePct).toBe(50);
+  });
+
+  it("the owner's mark is always the owner's — reopening too", async () => {
+    const t = await convo({ from: "d@x.com", name: "D", category: "quote_request", inAgo: 2 });
+    await setQuoteOutcome(workspaceId, t, "no_answer", undefined, NOW);
+    let [row] = await database.select().from(threads).where(eq(threads.id, t));
+    expect(row).toMatchObject({ quoteOutcome: "no_answer", quoteOutcomeSource: "owner" });
+    await setQuoteOutcome(workspaceId, t, null, undefined, NOW);
+    [row] = await database.select().from(threads).where(eq(threads.id, t));
+    expect(row).toMatchObject({
+      quoteOutcome: null,
+      quoteOutcomeSource: "owner",
+      quoteOutcomeAt: null,
+    });
+    const log = await database
+      .select()
+      .from(activityLog)
+      .where(eq(activityLog.action, "quote_marked"));
+    expect(log.map((l) => l.detail)).toEqual([{ outcome: "no_answer" }, { outcome: null }]);
+  });
+
+  it("read-only accounts can't mark quotes (amendment Q9)", async () => {
+    const t = await convo({ from: "d@x.com", name: "D", category: "quote_request", inAgo: 2 });
+    await database
+      .update(workspaces)
+      .set({ status: "evaluation_expired" })
+      .where(eq(workspaces.id, workspaceId));
+    await expect(setQuoteOutcome(workspaceId, t, "won", undefined, NOW)).rejects.toBeInstanceOf(
+      ReadOnlyError,
+    );
+    const [row] = await database.select().from(threads).where(eq(threads.id, t));
+    expect(row!.quoteOutcome).toBeNull();
+    expect(
+      await database.select().from(activityLog).where(eq(activityLog.action, "quote_marked")),
+    ).toEqual([]);
   });
 });
 
@@ -299,5 +453,657 @@ describe("customer list", () => {
     expect(await customerDetail(other.id, "dana@x.com")).toBeNull();
     const [mine] = await listCustomers(workspaceId, NOW);
     expect(await customerByKey(other.id, mine!.key)).toBeNull();
+  });
+});
+
+describe("win/loss auto-guess", () => {
+  const signals = classification().signals;
+  const accepting = (over: Parameters<typeof classification>[0] = {}) =>
+    classification({ signals: { ...signals, accepts_quote: true }, ...over });
+
+  /** Dana asked for a price (5 days ago), the owner quoted (3 days ago); all sorted. */
+  async function quoteGiven(
+    over: Partial<typeof threads.$inferInsert> = {},
+    { askAgo = 5, quoteAgo = 3 }: { askAgo?: number; quoteAgo?: number } = {},
+  ) {
+    const id = `qa${++g}`;
+    const [t] = await database
+      .insert(threads)
+      .values({
+        mailboxId,
+        gmailThreadId: id,
+        inInbox: true,
+        subject: "Panel",
+        category: "quote_request",
+        classifiedAt: daysAgo(askAgo),
+        lastMessageAt: daysAgo(quoteAgo),
+        ...over,
+      })
+      .returning();
+    await database.insert(messages).values([
+      {
+        threadId: t!.id,
+        mailboxId,
+        gmailMessageId: `${id}-ask`,
+        direction: "in",
+        fromAddress: "dana@x.com",
+        fromName: "Dana Ruiz",
+        bodyText: "Can you quote a panel upgrade?",
+        labelIds: ["INBOX"],
+        sentAt: daysAgo(askAgo),
+        classifiedAt: daysAgo(askAgo),
+      },
+      {
+        threadId: t!.id,
+        mailboxId,
+        gmailMessageId: `${id}-quote`,
+        direction: "out",
+        fromAddress: "owner@shop.com",
+        toAddresses: ["dana@x.com"],
+        bodyText: "It's $2,400.",
+        sentAt: daysAgo(quoteAgo),
+      },
+    ]);
+    return t!.id;
+  }
+  /** Dana writes again (unsorted until classifyPending runs). */
+  async function customerWrites(threadId: string, ago: number) {
+    await database.insert(messages).values({
+      threadId,
+      mailboxId,
+      gmailMessageId: `w${++g}`,
+      direction: "in",
+      fromAddress: "dana@x.com",
+      fromName: "Dana Ruiz",
+      bodyText: "Let's do it.",
+      labelIds: ["INBOX"],
+      sentAt: daysAgo(ago),
+    });
+  }
+  async function sentNudges(threadId: string, agos: number[]) {
+    for (const ago of agos) {
+      await database.insert(drafts).values({
+        threadId,
+        mailboxId,
+        kind: "followup",
+        gmailDraftId: `n${++g}`,
+        toAddress: "dana@x.com",
+        subject: "Re: Panel",
+        body: "nudge",
+        originalBody: "nudge",
+        status: "sent",
+        reason: "nudge",
+        promptVersion: "followup.v3",
+        createdAt: daysAgo(ago + 0.1),
+        decidedAt: daysAgo(ago),
+      });
+      await database.insert(messages).values({
+        threadId,
+        mailboxId,
+        gmailMessageId: `nm${++g}`,
+        direction: "out",
+        fromAddress: "owner@shop.com",
+        bodyText: "nudge",
+        sentAt: daysAgo(ago),
+      });
+    }
+  }
+  const classifyWith = async (...outputs: unknown[]) => {
+    const fake = fakeTransport(outputs);
+    setModelTransportForTests(fake.transport);
+    await classifyPending(mailboxId, { now: NOW });
+    return fake.calls;
+  };
+  const rowOf = async (id: string) =>
+    (await database.select().from(threads).where(eq(threads.id, id)))[0]!;
+  const guesses = async () =>
+    database.select().from(activityLog).where(eq(activityLog.action, "quote_outcome_guessed"));
+
+  beforeEach(() => {
+    process.env.AI_DAILY_CALL_CAP = "100";
+  });
+
+  it("the customer says go ahead on a quote → won (our guess)", async () => {
+    const t = await quoteGiven();
+    await customerWrites(t, 1);
+    await classifyWith(accepting());
+    expect(await rowOf(t)).toMatchObject({
+      quoteOutcome: "won",
+      quoteOutcomeSource: "auto",
+      quoteOutcomeAt: NOW,
+    });
+    const log = await guesses();
+    expect(log).toHaveLength(1);
+    expect(log[0]).toMatchObject({
+      workspaceId,
+      threadId: t,
+      actor: "squared_away",
+      detail: { outcome: "won", why: "accepted" },
+    });
+    const [q] = (await listQuotes(workspaceId, NOW)).quotes;
+    expect(q).toMatchObject({ stage: "won", outcomeGuessed: true });
+  });
+
+  it("…also when the acceptance is sorted as scheduling (the previous category decides)", async () => {
+    const t = await quoteGiven();
+    await customerWrites(t, 1);
+    await classifyWith(accepting({ category: "scheduling" }));
+    expect(await rowOf(t)).toMatchObject({
+      category: "scheduling",
+      quoteOutcome: "won",
+      quoteOutcomeSource: "auto",
+    });
+  });
+
+  it("a plain reply, or a fresh quote request, is never marked won", async () => {
+    const t = await quoteGiven();
+    await customerWrites(t, 1);
+    await classifyWith(classification());
+    expect((await rowOf(t)).quoteOutcome).toBeNull();
+    // A brand-new request saying "go ahead" with no quote from the owner yet.
+    const [fresh] = await database
+      .insert(threads)
+      .values({ mailboxId, gmailThreadId: "fresh", inInbox: true, lastMessageAt: daysAgo(1) })
+      .returning();
+    await customerWrites(fresh!.id, 1);
+    await classifyWith(accepting());
+    expect((await rowOf(fresh!.id)).quoteOutcome).toBeNull();
+    expect(await guesses()).toEqual([]);
+  });
+
+  it("an email that tries to instruct the assistant never marks a quote (A8)", async () => {
+    const t = await quoteGiven();
+    await customerWrites(t, 1);
+    await classifyWith(
+      accepting({
+        signals: { ...signals, accepts_quote: true, tries_to_instruct_assistant: true },
+      }),
+    );
+    expect((await rowOf(t)).quoteOutcome).toBeNull();
+    expect(await guesses()).toEqual([]);
+  });
+
+  it("GUARDRAIL (A8): an injection email never marks, even with an acceptance carried over", async () => {
+    const t = await quoteGiven();
+    // Called directly with quote_accepted already set (as keepQuoteAccepted carries it from
+    // an earlier email), so only afterClassified's own injection check stands in the way.
+    await afterClassified({
+      workspaceId,
+      threadId: t,
+      fromAddress: "dana@x.com",
+      previous: { category: "quote_request", quoteOutcome: null, quoteOutcomeSource: null },
+      result: {
+        category: "scheduling",
+        priority: "normal",
+        needsOwner: true,
+        needsOwnerReason: "Tries to instruct the assistant.",
+        summary: "Dana says go ahead.",
+        confidence: 0.9,
+        extracted: {
+          ...classification().extracted,
+          accepts_quote: true,
+          quote_accepted: true,
+          injection: true,
+        },
+        unreadable: false,
+      },
+      now: NOW,
+    });
+    expect(await rowOf(t)).toMatchObject({ quoteOutcome: null, quoteOutcomeSource: null });
+    expect(await guesses()).toEqual([]);
+
+    // Through classification too: the thread carries an earlier acceptance, and the
+    // customer's next email is an injection attempt that also "accepts".
+    await database
+      .update(threads)
+      .set({ extracted: { quote_accepted: true } })
+      .where(eq(threads.id, t));
+    await customerWrites(t, 1);
+    await classifyWith(
+      accepting({
+        signals: { ...signals, accepts_quote: true, tries_to_instruct_assistant: true },
+      }),
+    );
+    expect(await rowOf(t)).toMatchObject({
+      quoteOutcome: null,
+      extracted: expect.objectContaining({ quote_accepted: true, injection: true }),
+    });
+    expect(await guesses()).toEqual([]);
+  });
+
+  describe("GUARDRAIL: auto never overwrites an owner choice", () => {
+    /** The SQL guard itself refuses, whatever the early checks say, and nothing is logged. */
+    async function sqlGuardRefuses(t: string) {
+      const before = await rowOf(t);
+      const logsBefore = await database.select().from(activityLog);
+      expect(await autoSetQuoteOutcome(t, "won", NOW)).toBe(false);
+      expect(await autoSetQuoteOutcome(t, "no_answer", NOW)).toBe(false);
+      expect(await autoSetQuoteOutcome(t, "lost", NOW)).toBe(false);
+      expect(await rowOf(t)).toEqual(before);
+      expect(await database.select().from(activityLog)).toEqual(logsBefore);
+    }
+
+    it("the owner marked it lost → a later go-ahead leaves it lost", async () => {
+      const t = await quoteGiven();
+      await setQuoteOutcome(workspaceId, t, "lost", undefined, daysAgo(2));
+      await customerWrites(t, 1);
+      await classifyWith(accepting({ category: "scheduling" }));
+      expect(await rowOf(t)).toMatchObject({ quoteOutcome: "lost", quoteOutcomeSource: "owner" });
+      expect(await guesses()).toEqual([]);
+      await sqlGuardRefuses(t);
+    });
+
+    it("an outcome set before the source column existed is the owner's (A13)", async () => {
+      const t = await quoteGiven({ quoteOutcome: "lost", quoteOutcomeAt: daysAgo(2) });
+      await customerWrites(t, 1);
+      await classifyWith(accepting());
+      expect(await rowOf(t)).toMatchObject({ quoteOutcome: "lost", quoteOutcomeSource: null });
+      expect(await guesses()).toEqual([]);
+      await sqlGuardRefuses(t);
+    });
+
+    it("the owner reopened it → we never guess no answer", async () => {
+      const t = await quoteGiven({}, { askAgo: 26, quoteAgo: 25 });
+      await setQuoteOutcome(workspaceId, t, "won", undefined, daysAgo(10));
+      await setQuoteOutcome(workspaceId, t, null, undefined, daysAgo(9));
+      expect(await guessNoAnswers(NOW)).toBe(0);
+      expect(await rowOf(t)).toMatchObject({ quoteOutcome: null, quoteOutcomeSource: "owner" });
+      // listQuotes guesses too — and leaves it alone as well.
+      expect((await listQuotes(workspaceId, NOW)).quotes[0]!.stage).toBe("quiet");
+      await sqlGuardRefuses(t);
+    });
+
+    it("the owner said no answer → a later go-ahead doesn't make it won", async () => {
+      const t = await quoteGiven();
+      await setQuoteOutcome(workspaceId, t, "no_answer", undefined, daysAgo(2));
+      await customerWrites(t, 1);
+      await classifyWith(accepting());
+      expect(await rowOf(t)).toMatchObject({
+        quoteOutcome: "no_answer",
+        quoteOutcomeSource: "owner",
+      });
+      expect(await guesses()).toEqual([]);
+      await sqlGuardRefuses(t);
+    });
+  });
+
+  it("auto may update its own guess: no answer, then the customer says go ahead → won", async () => {
+    const t = await quoteGiven({}, { askAgo: 12, quoteAgo: 11 });
+    await sentNudges(t, [10, 8]);
+    expect(await guessNoAnswers(NOW)).toBe(1);
+    expect(await rowOf(t)).toMatchObject({ quoteOutcome: "no_answer", quoteOutcomeSource: "auto" });
+    expect((await guesses())[0]!.detail).toEqual({ outcome: "no_answer", why: "two_nudges" });
+
+    await customerWrites(t, 0.5);
+    await classifyWith(accepting({ category: "scheduling" }));
+    expect(await rowOf(t)).toMatchObject({ quoteOutcome: "won", quoteOutcomeSource: "auto" });
+    expect((await guesses()).map((l) => l.detail.outcome).sort()).toEqual(["no_answer", "won"]);
+    // …and a won guess is never turned back into no answer.
+    expect(await guessNoAnswers(new Date(NOW.getTime() + 30 * DAY))).toBe(0);
+  });
+
+  it("no answer waits for two nudges + a week, or three weeks", async () => {
+    const old = { askAgo: 15, quoteAgo: 12 };
+    const twoNudges = await quoteGiven({}, old);
+    await sentNudges(twoNudges, [9, 7]);
+    const twoNudgesTooSoon = await quoteGiven({}, old);
+    await sentNudges(twoNudgesTooSoon, [9, 6]);
+    const oneNudge = await quoteGiven({}, old);
+    await sentNudges(oneNudge, [10]);
+    const threeWeeks = await quoteGiven({}, { askAgo: 23, quoteAgo: 21 });
+    const answered = await quoteGiven({}, old);
+    await sentNudges(answered, [10, 8]);
+    await customerWrites(answered, 1);
+
+    expect(await guessNoAnswers(NOW)).toBe(2);
+    expect((await rowOf(twoNudges)).quoteOutcome).toBe("no_answer");
+    expect((await rowOf(threeWeeks)).quoteOutcome).toBe("no_answer");
+    expect((await rowOf(oneNudge)).quoteOutcome).toBeNull();
+    expect((await rowOf(twoNudgesTooSoon)).quoteOutcome).toBeNull();
+    expect((await rowOf(answered)).quoteOutcome).toBeNull();
+    const why = (await guesses()).map((l) => l.detail.why).sort();
+    expect(why).toEqual(["three_weeks", "two_nudges"]);
+  });
+
+  it("guessNoAnswers is idempotent: a second run sets nothing and logs nothing", async () => {
+    const t = await quoteGiven({}, { askAgo: 15, quoteAgo: 12 });
+    await sentNudges(t, [9, 7]);
+    expect(await guessNoAnswers(NOW)).toBe(1);
+    expect(await guessNoAnswers(NOW)).toBe(0);
+    expect(await guessNoAnswers(new Date(NOW.getTime() + DAY))).toBe(0);
+    expect(await guesses()).toHaveLength(1);
+    // The same holds for won.
+    expect(await autoSetQuoteOutcome(t, "won", NOW)).toBe(true);
+    expect(await autoSetQuoteOutcome(t, "won", NOW)).toBe(false);
+    expect(await guesses()).toHaveLength(2);
+  });
+
+  it("GUARDRAIL: read-only accounts get no auto-marks", async () => {
+    const accepted = await quoteGiven();
+    await customerWrites(accepted, 1);
+    const quiet = await quoteGiven({}, { askAgo: 15, quoteAgo: 12 });
+    await sentNudges(quiet, [9, 7]);
+    await database
+      .update(workspaces)
+      .set({ status: "evaluation_expired" })
+      .where(eq(workspaces.id, workspaceId));
+
+    const calls = await classifyWith(accepting());
+    expect(calls).toHaveLength(0);
+    expect(await guessNoAnswers(NOW)).toBe(0);
+    expect(await guessNoAnswers(NOW, workspaceId)).toBe(0);
+    await listQuotes(workspaceId, NOW);
+    expect((await rowOf(accepted)).quoteOutcome).toBeNull();
+    expect((await rowOf(quiet)).quoteOutcome).toBeNull();
+    expect(await guesses()).toEqual([]);
+  });
+
+  it("only guesses within the workspace it was asked about", async () => {
+    const t = await quoteGiven({}, { askAgo: 15, quoteAgo: 12 });
+    await sentNudges(t, [9, 7]);
+    const { workspace: other } = await ensureUserAndWorkspace({ email: "other@shop.com" });
+    expect(await guessNoAnswers(NOW, other.id)).toBe(0);
+    expect((await rowOf(t)).quoteOutcome).toBeNull();
+    expect(await guessNoAnswers(NOW, workspaceId)).toBe(1);
+  });
+
+  describe("the customer writes back after our no-answer guess", () => {
+    it("re-opens the quote, and it can be chased again", async () => {
+      // Quoted 22 days ago, never nudged (follow-ups were off): we guess no answer.
+      const t = await quoteGiven({}, { askAgo: 23, quoteAgo: 22 });
+      expect(await guessNoAnswers(NOW)).toBe(1);
+      expect(await rowOf(t)).toMatchObject({
+        quoteOutcome: "no_answer",
+        quoteOutcomeSource: "auto",
+      });
+
+      // "Sorry, was away, still keen, can you do March?" — not an acceptance.
+      await customerWrites(t, 0.5);
+      await classifyWith(classification());
+      expect(await rowOf(t)).toMatchObject({
+        quoteOutcome: null,
+        quoteOutcomeAt: null,
+        // Still ours, so we may guess again if it goes quiet a second time.
+        quoteOutcomeSource: "auto",
+      });
+      const [q] = (await listQuotes(workspaceId, NOW)).quotes;
+      expect(q).toMatchObject({ stage: "waiting_on_you", outcomeGuessed: false });
+
+      // The owner answers; once the follow-up days pass, it's due a nudge again.
+      await database.insert(messages).values({
+        threadId: t,
+        mailboxId,
+        gmailMessageId: `ans${++g}`,
+        direction: "out",
+        fromAddress: "owner@shop.com",
+        bodyText: "March works.",
+        sentAt: NOW,
+      });
+      const later = new Date(NOW.getTime() + 4 * DAY);
+      expect(await guessNoAnswers(later)).toBe(0);
+      expect(await threadsToFollowUp(mailboxId, later)).toEqual([t]);
+    });
+
+    it("stays on Quotes when that reply is sorted as something else, and a later go-ahead wins it", async () => {
+      const t = await quoteGiven({}, { askAgo: 23, quoteAgo: 22 });
+      expect(await guessNoAnswers(NOW)).toBe(1);
+
+      // "Sorry, was away — can you do March?" sorted as scheduling, not an acceptance.
+      await customerWrites(t, 0.5);
+      await classifyWith(classification({ category: "scheduling" }));
+      expect(await rowOf(t)).toMatchObject({
+        category: "scheduling",
+        quoteOutcome: null,
+        quoteOutcomeSource: "auto",
+      });
+      const { quotes } = await listQuotes(workspaceId, NOW);
+      expect(quotes.map((q) => q.threadId)).toEqual([t]);
+      expect(quotes[0]).toMatchObject({ stage: "waiting_on_you", outcomeGuessed: false });
+      expect((await listCustomers(workspaceId, NOW))[0]).toMatchObject({ openQuotes: 1 });
+
+      // The owner answers, then Dana says go ahead — sorted as a question this time.
+      await database.insert(messages).values({
+        threadId: t,
+        mailboxId,
+        gmailMessageId: `ans${++g}`,
+        direction: "out",
+        fromAddress: "owner@shop.com",
+        bodyText: "March works.",
+        sentAt: daysAgo(0.3),
+      });
+      await customerWrites(t, 0.1);
+      await classifyWith(accepting({ category: "customer_question" }));
+      expect(await rowOf(t)).toMatchObject({
+        category: "customer_question",
+        quoteOutcome: "won",
+        quoteOutcomeSource: "auto",
+      });
+      expect((await listQuotes(workspaceId, NOW)).quotes[0]).toMatchObject({
+        threadId: t,
+        stage: "won",
+      });
+    });
+
+    it("a re-sorted quote can be guessed no answer again if it goes quiet a second time", async () => {
+      const t = await quoteGiven({}, { askAgo: 23, quoteAgo: 22 });
+      expect(await guessNoAnswers(NOW)).toBe(1);
+      await customerWrites(t, 0.5);
+      await classifyWith(classification({ category: "scheduling" }));
+      await database.insert(messages).values({
+        threadId: t,
+        mailboxId,
+        gmailMessageId: `ans${++g}`,
+        direction: "out",
+        fromAddress: "owner@shop.com",
+        bodyText: "March works.",
+        sentAt: daysAgo(0.3),
+      });
+      // Past the 3-day trial by then, so make it a paying account.
+      await database
+        .update(workspaces)
+        .set({ status: "active" })
+        .where(eq(workspaces.id, workspaceId));
+      expect(await guessNoAnswers(new Date(NOW.getTime() + 22 * DAY))).toBe(1);
+      expect(await rowOf(t)).toMatchObject({
+        quoteOutcome: "no_answer",
+        quoteOutcomeSource: "auto",
+      });
+    });
+
+    it("an acceptance goes straight to won", async () => {
+      const t = await quoteGiven({}, { askAgo: 23, quoteAgo: 22 });
+      expect(await guessNoAnswers(NOW)).toBe(1);
+      await customerWrites(t, 0.5);
+      await classifyWith(accepting({ category: "scheduling" }));
+      expect(await rowOf(t)).toMatchObject({ quoteOutcome: "won", quoteOutcomeSource: "auto" });
+    });
+
+    it("a reply we haven't sorted yet still re-opens it (the scan's backstop)", async () => {
+      const t = await quoteGiven({}, { askAgo: 23, quoteAgo: 22 });
+      expect(await guessNoAnswers(NOW)).toBe(1);
+      await customerWrites(t, 0.5); // unsorted: the AI cap was reached, say
+      expect(await guessNoAnswers(NOW)).toBe(0);
+      expect(await rowOf(t)).toMatchObject({ quoteOutcome: null, quoteOutcomeSource: "auto" });
+    });
+
+    it("GUARDRAIL: the owner's own no answer is left alone", async () => {
+      const t = await quoteGiven();
+      await setQuoteOutcome(workspaceId, t, "no_answer", undefined, daysAgo(2));
+      await customerWrites(t, 1);
+      await classifyWith(classification());
+      await guessNoAnswers(NOW);
+      expect(await rowOf(t)).toMatchObject({
+        quoteOutcome: "no_answer",
+        quoteOutcomeSource: "owner",
+      });
+      expect((await listQuotes(workspaceId, NOW)).quotes[0]!.stage).toBe("no_answer");
+    });
+  });
+
+  it("a page full of read-only and not-yet-due quotes never hides a due one", async () => {
+    // Read-only accounts: an expired trial, and one whose 3 days ran out but no cron moved it yet.
+    for (const [email, set] of [
+      ["expired@shop.com", { status: "evaluation_expired" as const }],
+      ["late@shop.com", { status: "evaluating" as const, evaluationEndsAt: daysAgo(1) }],
+    ] as const) {
+      const { workspace } = await ensureUserAndWorkspace({ email });
+      const box = await saveConnectedMailbox(workspace, {
+        email,
+        refreshToken: "rt",
+        grantedScopes: [],
+      });
+      await database.update(workspaces).set(set).where(eq(workspaces.id, workspace.id));
+      for (let i = 0; i < 3; i++)
+        await quoteGiven({ mailboxId: box.id }, { askAgo: 30, quoteAgo: 25 });
+    }
+    // Not due yet: quoted 5 days ago, and one nudge 10 days ago.
+    for (let i = 0; i < 3; i++) await quoteGiven();
+    const oneNudge = await quoteGiven({}, { askAgo: 15, quoteAgo: 12 });
+    await sentNudges(oneNudge, [10]);
+    // Due: more than one page of them.
+    const due = [
+      await quoteGiven({}, { askAgo: 30, quoteAgo: 25 }),
+      await quoteGiven({}, { askAgo: 30, quoteAgo: 22 }),
+      await quoteGiven({}, { askAgo: 40, quoteAgo: 35 }),
+    ];
+
+    expect(await guessNoAnswers(NOW, undefined, { pageSize: 2 })).toBe(3);
+    for (const t of due) expect((await rowOf(t)).quoteOutcome).toBe("no_answer");
+    const all = await database.select().from(threads);
+    expect(
+      all
+        .filter((t) => t.quoteOutcome != null)
+        .map((t) => t.id)
+        .sort(),
+    ).toEqual([...due].sort());
+  });
+
+  describe("a nudge waiting in the queue when the quote is decided", () => {
+    async function pendingNudge(threadId: string) {
+      const [d] = await database
+        .insert(drafts)
+        .values({
+          threadId,
+          mailboxId,
+          kind: "followup",
+          gmailDraftId: "gd-nudge",
+          toAddress: "dana@x.com",
+          subject: "Re: Panel",
+          body: "Just checking in on that quote.",
+          originalBody: "Just checking in on that quote.",
+          status: "pending",
+          reason: "nudge",
+          promptVersion: "followup.v3",
+          autoSendAt: new Date(NOW.getTime() + 10 * 60_000),
+        })
+        .returning();
+      return d!;
+    }
+    const draftOf = async (id: string) =>
+      (await database.select().from(drafts).where(eq(drafts.id, id)))[0]!;
+
+    it("the owner's mark expires it, here and in Gmail", async () => {
+      const t = await quoteGiven();
+      const d = await pendingNudge(t);
+      const writer = new FakeWriter();
+      expect(
+        await setQuoteOutcome(workspaceId, t, "won", undefined, NOW, { writerFor: () => writer }),
+      ).toBe(true);
+      expect(writer.calls).toEqual(["deleteDraft"]);
+      expect(await draftOf(d.id)).toMatchObject({
+        status: "expired",
+        closedNote: "You marked this quote won.",
+        decidedAt: NOW,
+      });
+    });
+
+    it("lost Google access: the mark stands, the nudge closes, reconnect is asked", async () => {
+      const t = await quoteGiven();
+      const d = await pendingNudge(t);
+      const writer = new FakeWriter();
+      writer.deleteDraft = async () => {
+        throw new MailboxAuthError();
+      };
+      await setQuoteOutcome(workspaceId, t, "lost", undefined, NOW, { writerFor: () => writer });
+      expect(await rowOf(t)).toMatchObject({ quoteOutcome: "lost", quoteOutcomeSource: "owner" });
+      expect((await draftOf(d.id)).status).toBe("expired");
+      const [box] = await database.select().from(mailboxes).where(eq(mailboxes.id, mailboxId));
+      expect(box!.status).toBe("reconnect_needed");
+    });
+
+    it("Gmail down or rate-limited: the mark stands and the nudge still closes", async () => {
+      const t = await quoteGiven();
+      const d = await pendingNudge(t);
+      const writer = new FakeWriter();
+      writer.deleteDraft = async () => {
+        writer.calls.push("deleteDraft");
+        throw new Error("Gmail 503");
+      };
+      expect(
+        await setQuoteOutcome(workspaceId, t, "lost", undefined, NOW, { writerFor: () => writer }),
+      ).toBe(true);
+      expect(writer.calls).toEqual(["deleteDraft"]);
+      expect(await draftOf(d.id)).toMatchObject({
+        status: "expired",
+        closedNote: "You marked this quote lost.",
+      });
+      const [box] = await database.select().from(mailboxes).where(eq(mailboxes.id, mailboxId));
+      expect(box!.status).toBe("active");
+    });
+
+    it("a mailbox that needs reconnecting isn't asked; the nudge still closes", async () => {
+      const t = await quoteGiven();
+      const d = await pendingNudge(t);
+      await database
+        .update(mailboxes)
+        .set({ status: "reconnect_needed" })
+        .where(eq(mailboxes.id, mailboxId));
+      const writer = new FakeWriter();
+      await setQuoteOutcome(workspaceId, t, "no_answer", undefined, NOW, {
+        writerFor: () => writer,
+      });
+      expect(writer.calls).toEqual([]);
+      expect((await draftOf(d.id)).status).toBe("expired");
+    });
+
+    it("a won job's invoice nudge stays — it's still chased", async () => {
+      const t = await quoteGiven({ category: "invoice_payment" });
+      const d = await pendingNudge(t);
+      const writer = new FakeWriter();
+      await setQuoteOutcome(workspaceId, t, "won", undefined, NOW, { writerFor: () => writer });
+      expect(writer.calls).toEqual([]);
+      expect(await draftOf(d.id)).toMatchObject({ status: "pending", flags: [] });
+    });
+
+    it("our won guess on a job's invoice thread doesn't flag its nudge", async () => {
+      const t = await quoteGiven({ category: "invoice_payment" });
+      const d = await pendingNudge(t);
+      expect(await autoSetQuoteOutcome(t, "won", NOW)).toBe(true);
+      expect(await draftOf(d.id)).toMatchObject({ status: "pending", flags: [] });
+    });
+
+    it("reopening leaves it alone", async () => {
+      const t = await quoteGiven();
+      const d = await pendingNudge(t);
+      const writer = new FakeWriter();
+      await setQuoteOutcome(workspaceId, t, null, undefined, NOW, { writerFor: () => writer });
+      expect(writer.calls).toEqual([]);
+      expect((await draftOf(d.id)).status).toBe("pending");
+    });
+
+    it("our guess only flags it — nothing is deleted", async () => {
+      const t = await quoteGiven({}, { askAgo: 23, quoteAgo: 22 });
+      const d = await pendingNudge(t);
+      expect(await guessNoAnswers(NOW)).toBe(1);
+      expect(await draftOf(d.id)).toMatchObject({
+        status: "pending",
+        gmailDraftId: "gd-nudge",
+        flags: [QUOTE_GUESS_FLAG],
+        autoSendAt: null,
+      });
+      // Flagging twice never doubles the flag.
+      expect(await flagPendingNudge(t, QUOTE_GUESS_FLAG)).toBe(true);
+      expect((await draftOf(d.id)).flags).toEqual([QUOTE_GUESS_FLAG]);
+    });
   });
 });

@@ -10,6 +10,8 @@ export const FOLLOWUP_MAX_AGE_DAYS = 21;
 /**
  * Threads due a nudge, for the daily scan:
  * - a quote or invoice thread that isn't flagged for the owner;
+ * - not a decided quote: lost / no answer (the owner's or our guess) stops every nudge,
+ *   won stops the quote nudges but a won job's invoice is still chased (quoteStopsNudges);
  * - the owner wrote last, at least `days` ago (and not ages ago);
  * - the customer has written at least once (someone to nudge);
  * - fewer than two nudges sent, ever;
@@ -44,6 +46,8 @@ export async function threadsToFollowUp(
       and(
         eq(threads.mailboxId, mailboxId),
         eq(threads.needsOwner, false),
+        // SQL twin of `quoteStopsNudges`.
+        sql`(${threads.quoteOutcome} is null or (${threads.quoteOutcome} = 'won' and ${threads.category} = 'invoice_payment'))`,
         inArray(threads.category, [...FOLLOWUP_CATEGORIES]),
         sql`${lastIn} is not null`,
         sql`${lastOut} > ${lastIn}`,

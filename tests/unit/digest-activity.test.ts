@@ -5,7 +5,7 @@ import type { Database } from "@/db";
 import { activityLog, businessProfiles, drafts, messages, threads, workspaces } from "@/db/schema";
 import type { OutgoingEmail } from "@/lib/email";
 import { ensureUserAndWorkspace } from "@/server/accounts";
-import { describeActivity, listActivity, monthSummary } from "@/server/activity";
+import { describeActivity, listActivity, monthCloseRate, monthSummary } from "@/server/activity";
 import { buildDigest, digestDue, localParts, sendDigests } from "@/server/digest";
 import { saveConnectedMailbox } from "@/server/mailboxes";
 import { digestSettingsInput, saveDigestSettings } from "@/server/profile";
@@ -90,6 +90,38 @@ describe("activity wording", () => {
       /didn't go through/,
     );
     expect(describeActivity("something_internal", {}, null)).toBeNull();
+  });
+
+  it("says who marked a quote, and that our guesses can be changed (plan #30)", () => {
+    const who = { name: "Dana Ruiz", category: "scheduling" };
+    expect(describeActivity("quote_marked", { outcome: "won" }, who)).toBe(
+      "You marked a quote from Dana as won",
+    );
+    expect(describeActivity("quote_marked", { outcome: "lost" }, who)).toBe(
+      "You marked a quote from Dana as lost",
+    );
+    expect(describeActivity("quote_marked", { outcome: "no_answer" }, who)).toBe(
+      "You marked a quote from Dana as no answer",
+    );
+    expect(describeActivity("quote_marked", { outcome: null }, who)).toBe(
+      "You reopened a quote from Dana",
+    );
+    expect(describeActivity("quote_marked", { outcome: "won" }, null)).toBe(
+      "You marked a quote as won",
+    );
+    expect(
+      describeActivity("quote_outcome_guessed", { outcome: "won", why: "accepted" }, who),
+    ).toBe("Marked a quote from Dana as won — they said go ahead. Change it on Quotes");
+    expect(
+      describeActivity("quote_outcome_guessed", { outcome: "no_answer", why: "two_nudges" }, who),
+    ).toBe(
+      "Marked a quote from Dana as no answer after two nudges and a quiet week. Change it on Quotes",
+    );
+    expect(
+      describeActivity("quote_outcome_guessed", { outcome: "no_answer", why: "three_weeks" }, who),
+    ).toBe("Marked a quote from Dana as no answer after three quiet weeks. Change it on Quotes");
+    // We never guess lost; an odd row is hidden rather than worded wrong.
+    expect(describeActivity("quote_outcome_guessed", { outcome: "lost" }, who)).toBeNull();
   });
 });
 
@@ -238,6 +270,56 @@ describe("in the database", () => {
       sentAfterEditing: 1,
       nudgesSent: 1,
       minutesSaved: 9,
+    });
+  });
+
+  it("close rate counts only quotes decided this UTC month, whoever decided them", async () => {
+    const empty = await monthCloseRate(workspaceId, NOW);
+    expect(empty).toEqual({ won: 0, lost: 0, noAnswer: 0, ratePct: null });
+
+    const start = new Date(Date.UTC(NOW.getUTCFullYear(), NOW.getUTCMonth(), 1));
+    const quote = async (gid: string, outcome: string, at: Date, source = "owner") =>
+      database.insert(threads).values({
+        mailboxId,
+        gmailThreadId: gid,
+        category: "quote_request",
+        quoteOutcome: outcome,
+        quoteOutcomeSource: source as "owner" | "auto",
+        quoteOutcomeAt: at,
+      });
+    await quote("w1", "won", start);
+    await quote("w2", "won", NOW, "auto");
+    await quote("l1", "lost", NOW);
+    await quote("n1", "no_answer", NOW, "auto");
+    await quote("old", "won", new Date(start.getTime() - 1)); // last month
+    // A reopened quote (no outcome) doesn't count.
+    await database.insert(threads).values({
+      mailboxId,
+      gmailThreadId: "re",
+      category: "quote_request",
+      quoteOutcomeSource: "owner",
+    });
+    // Another workspace's quotes never count.
+    const { workspace: other } = await ensureUserAndWorkspace({ email: "other@shop.com" });
+    const otherBox = await saveConnectedMailbox(other, {
+      email: "other@shop.com",
+      refreshToken: "rt",
+      grantedScopes: [],
+    });
+    await database.insert(threads).values({
+      mailboxId: otherBox.id,
+      gmailThreadId: "x1",
+      category: "quote_request",
+      quoteOutcome: "lost",
+      quoteOutcomeSource: "owner",
+      quoteOutcomeAt: NOW,
+    });
+
+    expect(await monthCloseRate(workspaceId, NOW)).toEqual({
+      won: 2,
+      lost: 1,
+      noAnswer: 1,
+      ratePct: 50,
     });
   });
 });

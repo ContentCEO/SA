@@ -24,7 +24,7 @@ import { threadsToFollowUp } from "@/server/followups";
 import { getMailboxWorkspace } from "@/server/mailboxes";
 import { purgeRateLimits } from "@/server/rate-limit";
 import { sendAccessLostAlerts } from "@/server/alerts";
-import { captureQuoteAmounts } from "@/server/quotes";
+import { captureQuoteAmounts, guessNoAnswers } from "@/server/quotes";
 import { sendLeadAlerts } from "@/server/sms-alerts";
 import { sendPushAlerts } from "@/server/push-alerts";
 import { purgeExpiredNotes } from "@/server/seasonal-notes";
@@ -219,6 +219,9 @@ export const draftMailbox = inngest.createFunction(
 export const followupScan = inngest.createFunction(
   { id: "followup-scan", triggers: [cron("TZ=America/New_York 11 9 * * *")], retries: 3 },
   async ({ step }) => {
+    // Quotes that went quiet after the nudges get our "no answer" guess first (plan #30);
+    // a decided quote is never nudged again.
+    await step.run("guess-no-answer", () => guessNoAnswers());
     const boxes = await step.run("mailboxes", () => listSyncableMailboxes());
     let created = 0;
     for (const box of boxes) {

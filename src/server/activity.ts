@@ -1,8 +1,9 @@
 import "server-only";
-import { and, count, desc, eq, gte, inArray } from "drizzle-orm";
+import { and, count, desc, eq, gte, inArray, isNotNull } from "drizzle-orm";
 import { categoryLabels, categoryTag, isCategory } from "@/config/categories";
 import { db } from "@/db";
 import { activityLog, drafts, mailboxes, messages, threads } from "@/db/schema";
+import { closeRate, isQuoteOutcome, type QuoteOutcome } from "./quote-rules";
 
 /**
  * The time-saved estimate, and the only assumption behind it. Shown next to
@@ -11,6 +12,12 @@ import { activityLog, drafts, mailboxes, messages, threads } from "@/db/schema";
 export const MINUTES_PER_SENT_REPLY = 3;
 
 type Who = { name: string | null; category: string | null };
+
+const OUTCOME_WORDS: Record<QuoteOutcome, string> = {
+  won: "won",
+  lost: "lost",
+  no_answer: "no answer",
+};
 
 /**
  * One activity row in plain words. The log itself is content-free; the
@@ -25,6 +32,7 @@ export function describeActivity(
   const name = who?.name?.split(/[\s,]+/)[0] || null;
   const to = name ? ` to ${name}` : "";
   const about = who?.category && isCategory(who.category) ? ` · ${categoryTag[who.category]}` : "";
+  const from = name ? ` from ${name}` : "";
   switch (action) {
     case "draft_created":
       return `Drafted a reply${to}${about}`;
@@ -61,6 +69,18 @@ export function describeActivity(
       return `You put off the conversation${name ? ` with ${name}` : ""} till later`;
     case "draft_expired":
       return `Withdrew an out-of-date draft${to}`;
+    case "quote_marked":
+      return isQuoteOutcome(detail.outcome)
+        ? `You marked a quote${from} as ${OUTCOME_WORDS[detail.outcome]}`
+        : `You reopened a quote${from}`;
+    case "quote_outcome_guessed":
+      if (detail.outcome === "won")
+        return `Marked a quote${from} as won — they said go ahead. Change it on Quotes`;
+      if (detail.outcome === "no_answer")
+        return `Marked a quote${from} as no answer after ${
+          detail.why === "three_weeks" ? "three quiet weeks" : "two nudges and a quiet week"
+        }. Change it on Quotes`;
+      return null;
     case "marked_needs_owner":
       return `You marked a conversation${name ? ` with ${name}` : ""} as needing you`;
     case "mailbox_connected":
@@ -240,4 +260,38 @@ export async function monthSummary(
     nudgesSent: sentRows.filter((d) => d.kind === "followup").length,
     minutesSaved: sent * MINUTES_PER_SENT_REPLY,
   };
+}
+
+export type MonthCloseRate = {
+  won: number;
+  lost: number;
+  noAnswer: number;
+  /** Won out of all three, as a whole percent; null when nothing was decided. */
+  ratePct: number | null;
+};
+
+/**
+ * Plan #30: quotes decided this calendar month (UTC) — by when the outcome was set,
+ * whoever set it (the owner, or our guess the owner left alone).
+ */
+export async function monthCloseRate(
+  workspaceId: string,
+  now: Date = new Date(),
+): Promise<MonthCloseRate> {
+  const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+  const rows = await db()
+    .select({ outcome: threads.quoteOutcome, n: count() })
+    .from(threads)
+    .innerJoin(mailboxes, eq(mailboxes.id, threads.mailboxId))
+    .where(
+      and(
+        eq(mailboxes.workspaceId, workspaceId),
+        isNotNull(threads.quoteOutcome),
+        gte(threads.quoteOutcomeAt, start),
+      ),
+    )
+    .groupBy(threads.quoteOutcome);
+  const n = (o: QuoteOutcome) => Number(rows.find((r) => r.outcome === o)?.n ?? 0);
+  const c = { won: n("won"), lost: n("lost"), noAnswer: n("no_answer") };
+  return { ...c, ratePct: closeRate(c) };
 }

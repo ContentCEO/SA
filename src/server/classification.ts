@@ -12,6 +12,7 @@ import {
   threads,
   workspaces,
 } from "@/db/schema";
+import { afterClassified } from "./auto-outcomes";
 import { jobsAllowed } from "./lifecycle";
 import { keepQuoteAccepted, quoteAccepted } from "./quote-rules";
 
@@ -123,6 +124,7 @@ export async function classifyPending(
   let capped = false;
   for (const m of batch) {
     let result: Classification;
+    let viaModel = false;
     const [thread] = await db()
       .select({
         summary: threads.summary,
@@ -175,6 +177,7 @@ export async function classifyPending(
         }
         throw err;
       }
+      viaModel = true;
       if (result.extracted.accepts_quote) {
         const [ownerBefore] = await db()
           .select({ n: count() })
@@ -193,6 +196,7 @@ export async function classifyPending(
             previous: {
               category: thread?.category ?? null,
               quoteOutcome: thread?.quoteOutcome ?? null,
+              quoteOutcomeSource: thread?.quoteOutcomeSource ?? null,
             },
             category: result.category,
             ownerWroteBefore: (ownerBefore?.n ?? 0) > 0,
@@ -231,6 +235,32 @@ export async function classifyPending(
       .where(eq(threads.id, m.threadId));
     await db().update(messages).set({ classifiedAt: now }).where(eq(messages.id, m.id));
     classified++;
+
+    // After the message is marked classified, so a failure here never re-bills the model;
+    // the auto-marks are idempotent, and a failure never stops the batch (A18).
+    if (viaModel) {
+      try {
+        await afterClassified({
+          workspaceId: box.workspace.id,
+          threadId: m.threadId,
+          fromAddress: m.fromAddress,
+          previous: {
+            category: thread?.category ?? null,
+            quoteOutcome: thread?.quoteOutcome ?? null,
+            quoteOutcomeSource: thread?.quoteOutcomeSource ?? null,
+          },
+          result,
+          now,
+        });
+      } catch (err) {
+        // Metadata only — never the email, the address or the customer.
+        console.error("auto_outcome_failed", {
+          workspaceId: box.workspace.id,
+          threadId: m.threadId,
+          error: err instanceof Error ? err.name : "unknown",
+        });
+      }
+    }
   }
 
   const remaining = Math.max(0, newestPerThread.size - classified);
