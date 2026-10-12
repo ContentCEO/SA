@@ -3,7 +3,7 @@ import { eq } from "drizzle-orm";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { setModelTransportForTests } from "@/ai/client";
 import type { Database } from "@/db";
-import { messages, threads } from "@/db/schema";
+import { messages, threads, workspaces } from "@/db/schema";
 import { ensureUserAndWorkspace } from "@/server/accounts";
 import * as autoOutcomes from "@/server/auto-outcomes";
 import { classifyPending, markNeedsOwner } from "@/server/classification";
@@ -421,5 +421,171 @@ describe("inbox", () => {
     ]);
     const other = await ensureUserAndWorkspace({ email: "someone@else.com" });
     expect(await listInboxThreads(other.workspace.id, { kind: "all" })).toEqual([]);
+  });
+});
+
+describe("sticky quote-request facts (M8 A11)", () => {
+  const rowOf = async (id: string) =>
+    (await database.select().from(threads).where(eq(threads.id, id)))[0]!;
+  async function electrician() {
+    await database
+      .update(workspaces)
+      .set({ trade: "electrical" })
+      .where(eq(workspaces.id, workspaceId));
+  }
+  const withService = (category: string, service: string | null) =>
+    classification({
+      category: category as "quote_request",
+      extracted: { ...classification().extracted, service_requested: service },
+    });
+
+  it("a quote request records when it came in and OUR label for the job, never the words", async () => {
+    await electrician();
+    const t = await thread("q1");
+    await message(t.id, "ask", { sentAt: daysAgo(2) });
+    setModelTransportForTests(
+      fakeTransport([withService("quote_request", "Panel upgrade to 200A at 12 Elm St")]).transport,
+    );
+    await classifyPending(mailboxId, { now: NOW });
+    const row = await rowOf(t.id);
+    expect(row.quoteRequestedAt).toEqual(daysAgo(2));
+    expect(row.jobKind).toBe("Panel upgrades");
+  });
+
+  it("re-sorted as scheduling, it is still a quote request with the same kind of job", async () => {
+    await electrician();
+    const t = await thread("q1");
+    await message(t.id, "ask", { sentAt: daysAgo(3) });
+    setModelTransportForTests(
+      fakeTransport([withService("quote_request", "EV charger")]).transport,
+    );
+    await classifyPending(mailboxId, { now: NOW });
+    await message(t.id, "reply", {
+      direction: "out",
+      fromAddress: "owner@shop.com",
+      sentAt: daysAgo(2),
+    });
+    await message(t.id, "tuesday", { sentAt: daysAgo(1) });
+    // "Tuesday works" says nothing about the job; then a later email names another one.
+    setModelTransportForTests(fakeTransport([withService("scheduling", null)]).transport);
+    await classifyPending(mailboxId, { now: NOW });
+    let row = await rowOf(t.id);
+    expect(row.category).toBe("scheduling");
+    expect(row.quoteRequestedAt).toEqual(daysAgo(3));
+    expect(row.jobKind).toBe("EV chargers");
+
+    await message(t.id, "also", { sentAt: new Date(NOW.getTime() - 3600_000) });
+    setModelTransportForTests(
+      fakeTransport([withService("quote_request", "new recessed lights")]).transport,
+    );
+    await classifyPending(mailboxId, { now: NOW });
+    row = await rowOf(t.id);
+    // Never cleared or moved: the first request's time and the first real kind stay.
+    expect(row.quoteRequestedAt).toEqual(daysAgo(3));
+    expect(row.jobKind).toBe("EV chargers");
+  });
+
+  it("'Other jobs' is replaced once a real kind of job is known", async () => {
+    await electrician();
+    const t = await thread("q1");
+    await message(t.id, "ask", { sentAt: daysAgo(2) });
+    setModelTransportForTests(fakeTransport([withService("quote_request", null)]).transport);
+    await classifyPending(mailboxId, { now: NOW });
+    expect((await rowOf(t.id)).jobKind).toBe("Other jobs");
+
+    await message(t.id, "more", { sentAt: daysAgo(1) });
+    setModelTransportForTests(
+      fakeTransport([withService("scheduling", "add two GFCI outlets")]).transport,
+    );
+    await classifyPending(mailboxId, { now: NOW });
+    expect((await rowOf(t.id)).jobKind).toBe("Outlets and circuits");
+  });
+
+  it("a thread sorted as a quote by older code keeps that when the next email re-sorts it", async () => {
+    await electrician();
+    const t = await thread("q1");
+    await database
+      .update(threads)
+      .set({
+        category: "quote_request",
+        // Old code re-sorted it after the owner's reply: the last sort isn't the request.
+        classifiedAt: daysAgo(3),
+        extracted: { service_requested: "panel upgrade" },
+      })
+      .where(eq(threads.id, t.id));
+    await message(t.id, "ask", { sentAt: daysAgo(5), classifiedAt: daysAgo(5) });
+    await message(t.id, "reply", {
+      direction: "out",
+      fromAddress: "owner@shop.com",
+      sentAt: daysAgo(4),
+    });
+    await message(t.id, "budget", { sentAt: daysAgo(3), classifiedAt: daysAgo(3) });
+    await message(t.id, "tuesday", { sentAt: daysAgo(1) });
+    setModelTransportForTests(fakeTransport([withService("scheduling", null)]).transport);
+    await classifyPending(mailboxId, { now: NOW });
+    const row = await rowOf(t.id);
+    expect(row.category).toBe("scheduling");
+    expect(row.quoteRequestedAt).toEqual(daysAgo(5));
+    // The kind of job carried over in `extracted` is mapped to our label.
+    expect(row.jobKind).toBe("Panel upgrades");
+  });
+
+  it("a request and its follow-up sorted in one run date from the first email", async () => {
+    await electrician();
+    const t = await thread("q1");
+    await message(t.id, "ask", { sentAt: new Date(NOW.getTime() - 3 * 3600_000) });
+    await message(t.id, "photos", { sentAt: new Date(NOW.getTime() - 2 * 3600_000) });
+    const { calls, transport } = fakeTransport([withService("quote_request", "panel upgrade")]);
+    setModelTransportForTests(transport);
+    await classifyPending(mailboxId, { now: NOW });
+    // Only the newest email went to the model; the time is still the first one's.
+    expect(calls).toHaveLength(1);
+    expect((await rowOf(t.id)).quoteRequestedAt).toEqual(new Date(NOW.getTime() - 3 * 3600_000));
+  });
+
+  it("an email that tries to instruct the assistant leaves neither mark", async () => {
+    await electrician();
+    const t = await thread("q1");
+    await message(t.id, "ask", { sentAt: daysAgo(2) });
+    const base = withService("quote_request", "panel upgrade");
+    setModelTransportForTests(
+      fakeTransport([{ ...base, signals: { ...base.signals, tries_to_instruct_assistant: true } }])
+        .transport,
+    );
+    await classifyPending(mailboxId, { now: NOW });
+    const row = await rowOf(t.id);
+    expect((row.extracted as { injection?: boolean }).injection).toBe(true);
+    expect(row.quoteRequestedAt).toBeNull();
+    expect(row.jobKind).toBeNull();
+  });
+
+  it("other mail never gets either mark", async () => {
+    await electrician();
+    const question = await thread("q1");
+    await message(question.id, "ask", { sentAt: daysAgo(2) });
+    const promo = await thread("p1");
+    await message(promo.id, "promo", {
+      sentAt: daysAgo(2),
+      labelIds: ["INBOX", "CATEGORY_PROMOTIONS"],
+    });
+    setModelTransportForTests(
+      fakeTransport([withService("customer_question", "panel upgrade")]).transport,
+    );
+    await classifyPending(mailboxId, { now: NOW });
+    for (const id of [question.id, promo.id]) {
+      const row = await rowOf(id);
+      expect(row.quoteRequestedAt).toBeNull();
+      expect(row.jobKind).toBeNull();
+    }
+  });
+
+  it("without a trade the 'other' list is used", async () => {
+    const t = await thread("q1");
+    await message(t.id, "ask", { sentAt: daysAgo(2) });
+    setModelTransportForTests(
+      fakeTransport([withService("quote_request", "kitchen remodel")]).transport,
+    );
+    await classifyPending(mailboxId, { now: NOW });
+    expect((await rowOf(t.id)).jobKind).toBe("Remodels and renovations");
   });
 });

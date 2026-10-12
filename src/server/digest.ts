@@ -15,29 +15,11 @@ import {
 import { appUrl } from "@/lib/app-url";
 import { sendEmail, type EmailSender } from "@/lib/email";
 import { jobsAllowed } from "./lifecycle";
+import { localParts } from "./snooze-rules";
 
-/** The owner's local date and hour, from an IANA time zone. Falls back to Eastern. */
-export function localParts(now: Date, timeZone: string): { date: string; hour: number } {
-  let tz = timeZone;
-  try {
-    new Intl.DateTimeFormat("en-US", { timeZone: tz });
-  } catch {
-    tz = "America/New_York";
-  }
-  const parts = Object.fromEntries(
-    new Intl.DateTimeFormat("en-CA", {
-      timeZone: tz,
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-      hour: "2-digit",
-      hourCycle: "h23",
-    })
-      .formatToParts(now)
-      .map((p) => [p.type, p.value]),
-  );
-  return { date: `${parts.year}-${parts.month}-${parts.day}`, hour: Number(parts.hour) };
-}
+// Pure time helpers live in snooze-rules (so the *-rules files stay pure); re-exported here
+// for the callers that always imported them from the digest.
+export { localParts } from "./snooze-rules";
 
 /** Due once a day, in the owner's chosen hour or any hour after it (so a missed run catches up). */
 export function digestDue(

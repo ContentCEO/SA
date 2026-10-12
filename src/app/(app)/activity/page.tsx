@@ -11,16 +11,11 @@ import {
   monthCloseRate,
   monthSummary,
 } from "@/server/activity";
+import { timeSavedPhrase } from "@/server/scorecard-rules";
 import { requireOwner } from "@/server/session";
 import { workspaceTimeZone } from "@/server/snooze";
 
 export const metadata: Metadata = { title: "Activity" };
-
-function timeSaved(minutes: number) {
-  if (minutes < 60) return `about ${minutes} minute${minutes === 1 ? "" : "s"}`;
-  const hours = Math.round((minutes / 60) * 2) / 2;
-  return `about ${hours} hour${hours === 1 ? "" : "s"}`;
-}
 
 export default async function ActivityPage() {
   const { workspace } = await requireOwner();
@@ -66,7 +61,7 @@ export default async function ActivityPage() {
           ))}
         </dl>
         <p className="text-lg">
-          <span className="font-black">Time saved: {timeSaved(month.minutesSaved)}.</span>{" "}
+          <span className="font-black">Time saved: {timeSavedPhrase(month.minutesSaved)}.</span>{" "}
           <span className="text-muted-foreground">
             That&apos;s an estimate: {MINUTES_PER_SENT_REPLY} minutes for each drafted reply you
             sent{month.sentAfterEditing ? ` (${month.sentAfterEditing} after editing)` : ""}.

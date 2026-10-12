@@ -3,6 +3,7 @@ import { looksMunicipal } from "@/ai/guards";
 import { and, count, desc, eq, gte, inArray, isNull, lt, sql } from "drizzle-orm";
 import { classifyEmail, DISPUTE_REASONS, type Classification } from "@/ai/classify";
 import { AiCapReachedError } from "@/ai/usage";
+import { OTHER_JOB_KIND } from "@/config/job-kinds";
 import { db } from "@/db";
 import {
   activityLog,
@@ -25,6 +26,7 @@ import {
   isOwed,
   PAID_GUESS_FLAG,
 } from "./money-rules";
+import { jobKindOf } from "./monthly-rules";
 import { keepQuoteAccepted, quoteAccepted } from "./quote-rules";
 import { ownerGavePrice } from "./quotes";
 
@@ -148,6 +150,7 @@ export async function classifyPending(
         invoicePaidSource: threads.invoicePaidSource,
         needsOwnerReason: threads.needsOwnerReason,
         quoteAmountCents: threads.quoteAmountCents,
+        quoteRequestedAt: threads.quoteRequestedAt,
       })
       .from(threads)
       .where(eq(threads.id, m.threadId));
@@ -320,6 +323,30 @@ export async function classifyPending(
         : {}),
     };
 
+    // Sticky quote-request facts (M8 A11), content-free. A quote request re-sorted as
+    // scheduling ("Tuesday works") still counts as one in the scorecard and the monthly
+    // summary. The time is the customer's FIRST email on the thread (what response time and
+    // the monthly counts measure from): only the newest email of a sync is sorted, so a
+    // request and its "photos attached" arrive as one, and a thread sorted as a quote by older
+    // code has no record of which email that was. The kind of job is OUR fixed label, never
+    // the customer's words; a real kind replaces "Other jobs", but never another real kind.
+    // An email that tries to instruct us leaves no mark (no automatic marks from it): these
+    // drive counts and "a lead is waiting" alerts, and they are never cleared.
+    const prevInjection = (thread?.extracted as { injection?: unknown } | null)?.injection === true;
+    const legacyQuote = thread?.category === "quote_request" && !prevInjection;
+    const wasQuote =
+      legacyQuote ||
+      thread?.quoteRequestedAt != null ||
+      thread?.quoteOutcome != null ||
+      thread?.quoteOutcomeSource != null;
+    const isQuoteNow = result.category === "quote_request";
+    const markQuote = !injection && (legacyQuote || isQuoteNow);
+    const requestAt = new Date(m.sentAt).toISOString();
+    const jobKind =
+      !injection && (wasQuote || isQuoteNow)
+        ? jobKindOf(box.workspace.trade, stored.service_requested ?? null)
+        : null;
+
     await db()
       .update(threads)
       .set({
@@ -346,6 +373,18 @@ export async function classifyPending(
                 complainedAt: sql`coalesce(${threads.complainedAt}, ${threads.classifiedAt}, ${now.toISOString()}::timestamptz)`,
               }
             : {}),
+        ...(markQuote
+          ? {
+              quoteRequestedAt: sql`coalesce(${threads.quoteRequestedAt}, (select min(${messages.sentAt}) from ${messages} where ${messages.threadId} = ${threads.id} and ${messages.direction} = 'in'), ${requestAt}::timestamptz)`,
+            }
+          : {}),
+        ...(jobKind === null
+          ? {}
+          : jobKind === OTHER_JOB_KIND
+            ? { jobKind: sql`coalesce(${threads.jobKind}, ${jobKind})` }
+            : {
+                jobKind: sql`case when ${threads.jobKind} is null or ${threads.jobKind} = ${OTHER_JOB_KIND} then ${jobKind} else ${threads.jobKind} end`,
+              }),
         ...(reopen
           ? {
               invoicePaidAt: sql`case when ${threads.invoicePaidSource} = 'not_owed' then ${threads.invoicePaidAt} else null end`,

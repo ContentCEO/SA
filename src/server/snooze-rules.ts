@@ -52,6 +52,73 @@ export function atLocalHour(now: Date, timeZone: string, dayOffset: number, hour
   return new Date(guess);
 }
 
+/** The zone used when the owner's is missing or not a real IANA zone. */
+export const FALLBACK_TIME_ZONE = "America/New_York";
+
+/** The owner's time zone if it's a real one, Eastern otherwise (as everywhere else). */
+export function usableTimeZone(timeZone: string | null | undefined): string {
+  if (!timeZone) return FALLBACK_TIME_ZONE;
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone });
+    return timeZone;
+  } catch {
+    return FALLBACK_TIME_ZONE;
+  }
+}
+
+/** The owner's local date ('YYYY-MM-DD') and hour, from an IANA time zone. Falls back to Eastern. */
+export function localParts(now: Date, timeZone: string): { date: string; hour: number } {
+  const parts = Object.fromEntries(
+    new Intl.DateTimeFormat("en-CA", {
+      timeZone: usableTimeZone(timeZone),
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      hourCycle: "h23",
+    })
+      .formatToParts(now)
+      .map((p) => [p.type, p.value]),
+  );
+  return { date: `${parts.year}-${parts.month}-${parts.day}`, hour: Number(parts.hour) };
+}
+
+const ISO_WEEKDAY: Record<string, number> = {
+  Mon: 1,
+  Tue: 2,
+  Wed: 3,
+  Thu: 4,
+  Fri: 5,
+  Sat: 6,
+  Sun: 7,
+};
+
+/** The owner's local day of the week, ISO style: 1 = Monday … 7 = Sunday. */
+export function localWeekday(now: Date, timeZone: string): number {
+  const name = new Intl.DateTimeFormat("en-US", {
+    timeZone: usableTimeZone(timeZone),
+    weekday: "short",
+  }).format(now);
+  return ISO_WEEKDAY[name] ?? 1;
+}
+
+/**
+ * The instant the owner's current calendar month began: midnight on the 1st, in their time
+ * zone. A Pacific owner at 6pm on Oct 31 is still in October, though it's November in UTC.
+ */
+export function localMonthStart(now: Date, timeZone: string): Date {
+  const tz = usableTimeZone(timeZone);
+  const day = Number(
+    new Intl.DateTimeFormat("en-US", { timeZone: tz, day: "numeric" }).format(now),
+  );
+  return atLocalHour(now, tz, 1 - day, 0);
+}
+
+/** The owner's current month by name ("October"), in their time zone. */
+export function localMonthName(now: Date, timeZone: string): string {
+  return now.toLocaleString("en-US", { month: "long", timeZone: usableTimeZone(timeZone) });
+}
+
 /** Emergencies (high priority and needs the owner) can't be put off past tonight. */
 export const isEmergency = (t: { priority: string | null; needsOwner: boolean }) =>
   t.priority === "high" && t.needsOwner;

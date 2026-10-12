@@ -3,15 +3,13 @@ import { and, count, desc, eq, gte, inArray, isNotNull } from "drizzle-orm";
 import { categoryLabels, categoryTag, isCategory } from "@/config/categories";
 import { db } from "@/db";
 import { activityLog, drafts, mailboxes, messages, threads } from "@/db/schema";
+import { MINUTES_PER_SENT_REPLY } from "@/config/drafting";
 import { closeRate, isQuoteOutcome, type QuoteOutcome } from "./quote-rules";
 import { workspaceTimeZone } from "./snooze";
-import { atLocalHour } from "./snooze-rules";
+import { localMonthStart, usableTimeZone } from "./snooze-rules";
 
-/**
- * The time-saved estimate, and the only assumption behind it. Shown next to
- * the number so the owner can judge it for themselves.
- */
-export const MINUTES_PER_SENT_REPLY = 3;
+// The time-saved assumption lives in config (pure files read it too); re-exported for old callers.
+export { MINUTES_PER_SENT_REPLY } from "@/config/drafting";
 
 type Who = { name: string | null; category: string | null };
 
@@ -248,39 +246,12 @@ export type MonthSummary = {
   minutesSaved: number;
 };
 
-const FALLBACK_TIME_ZONE = "America/New_York";
-
-/** The owner's time zone if it's a real one, Eastern otherwise (as everywhere else). */
-function usableZone(timeZone: string | null | undefined): string {
-  if (!timeZone) return FALLBACK_TIME_ZONE;
-  try {
-    new Intl.DateTimeFormat("en-US", { timeZone });
-    return timeZone;
-  } catch {
-    return FALLBACK_TIME_ZONE;
-  }
-}
-
-/**
- * The instant the owner's current calendar month began: midnight on the 1st, in their time
- * zone. A Pacific owner at 6pm on Oct 31 is still in October, though it's November in UTC.
- */
-export function localMonthStart(now: Date, timeZone: string): Date {
-  const tz = usableZone(timeZone);
-  const day = Number(
-    new Intl.DateTimeFormat("en-US", { timeZone: tz, day: "numeric" }).format(now),
-  );
-  return atLocalHour(now, tz, 1 - day, 0);
-}
-
-/** The owner's current month by name ("October"), in their time zone. */
-export function localMonthName(now: Date, timeZone: string): string {
-  return now.toLocaleString("en-US", { month: "long", timeZone: usableZone(timeZone) });
-}
+// The month helpers are pure and live with the other time rules; re-exported for old callers.
+export { localMonthName, localMonthStart } from "./snooze-rules";
 
 /** The time zone the month is counted in: the one given, or the owner's from their profile. */
 async function monthZone(workspaceId: string, timeZone?: string): Promise<string> {
-  return usableZone(timeZone ?? (await workspaceTimeZone(workspaceId)));
+  return usableTimeZone(timeZone ?? (await workspaceTimeZone(workspaceId)));
 }
 
 /** This calendar month (in the owner's time zone), in counts. */

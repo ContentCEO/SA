@@ -176,6 +176,13 @@
       "when": 1791792034986,
       "tag": "0024_complaint_backfill",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1791820074562,
+      "tag": "0025_m8_alerts_monthly",
+      "breakpoints": true
     }
   ]
 }

@@ -47,11 +47,12 @@ describe("migration 0023 (plan M7 foundation)", () => {
     }
   });
 
-  it("is followed in the journal only by the complaint backfill", () => {
+  it("is followed in the journal by the complaint backfill", () => {
     const journal = JSON.parse(readFileSync("drizzle/meta/_journal.json", "utf8")) as {
       entries: { tag: string }[];
     };
-    expect(journal.entries.slice(-2).map((e) => e.tag)).toEqual([M7, BACKFILL]);
+    const tags = journal.entries.map((e) => e.tag);
+    expect(tags.slice(tags.indexOf(M7), tags.indexOf(M7) + 2)).toEqual([M7, BACKFILL]);
   });
 
   it("the backfill (0024) only fills complained_at on complaint threads that lack it", () => {

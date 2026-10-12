@@ -1,10 +1,11 @@
 import "server-only";
-import { and, desc, eq, inArray, isNotNull, isNull, or, sql, type SQL } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, isNull, sql, type SQL } from "drizzle-orm";
 import { prepareBody } from "@/ai/classify";
 import { db } from "@/db";
 import { activityLog, mailboxes, messages, priceHistory, threads, workspaces } from "@/db/schema";
 import { expirePendingNudge, flagPendingNudge, followupSettings, type DraftDeps } from "./drafts";
 import { effectiveStatus, JOBS_ALLOWED, jobsAllowed, ReadOnlyError } from "./lifecycle";
+import { asDate, lastInSql, lastOutSql, quoteThreadSql } from "./thread-sql";
 import {
   amountFromOwnerText,
   canAutoSet,
@@ -37,19 +38,8 @@ export type QuoteRow = {
   startedAt: Date;
 };
 
-const asDate = (v: unknown) => (v ? new Date(v as string | Date) : null);
 const DAY_MS = 86_400_000;
 const WINDOW_MS = 30 * DAY_MS;
-
-/** When the customer / the owner last wrote on the thread (correlated subqueries). */
-const lastInSql = () =>
-  sql<
-    string | Date | null
-  >`(select max(m.sent_at) from messages m where m.thread_id = ${threads.id} and m.direction = 'in')`;
-const lastOutSql = () =>
-  sql<
-    string | Date | null
-  >`(select max(m.sent_at) from messages m where m.thread_id = ${threads.id} and m.direction = 'out')`;
 
 /**
  * SQL twin of `jobsAllowed` for the joined workspace, so a cron never pages through rows
@@ -60,17 +50,6 @@ const workspaceJobsAllowedSql = (now: Date) =>
   and(
     inArray(workspaces.status, [...JOBS_ALLOWED]),
     sql`(${workspaces.status} <> 'evaluating' or ${workspaces.evaluationEndsAt} is null or ${workspaces.evaluationEndsAt} > ${now.toISOString()}::timestamptz)`,
-  );
-
-/**
- * SQL twin of `isQuoteThread`: sorted as a quote request, or has ever had an outcome
- * (a cleared guess or an owner's reopen keeps its source), whatever its category now.
- */
-const quoteThreadSql = () =>
-  or(
-    eq(threads.category, "quote_request"),
-    isNotNull(threads.quoteOutcome),
-    isNotNull(threads.quoteOutcomeSource),
   );
 
 /**

@@ -32,3 +32,9 @@ export const UNDO_WINDOW_SECONDS = 20;
 
 /** Quick tweaks / voice edits allowed per draft (plan #3). */
 export const MAX_REVISIONS_PER_DRAFT = 5;
+
+/**
+ * The time-saved estimate, and the only assumption behind it: minutes each drafted reply
+ * the owner sent would have taken to write. Shown next to every figure built on it.
+ */
+export const MINUTES_PER_SENT_REPLY = 3;

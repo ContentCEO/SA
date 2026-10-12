@@ -190,6 +190,21 @@ export const threads = pgTable(
      * "looks great" can't make an unhappy customer look like a review prospect.
      */
     complainedAt: timestamp("complained_at", { withTimezone: true }),
+    /**
+     * Plan M8 (A11): set when this thread is first sorted as a quote request, to the time of the
+     * customer's FIRST email on the thread (what response time and the monthly counts measure
+     * from). Sticky like complained_at: a customer's later "Tuesday works" re-sorts the thread
+     * as scheduling, but it still counts as a quote request in the scorecard and summaries.
+     * Never set from an email that tries to instruct the assistant.
+     */
+    quoteRequestedAt: timestamp("quote_requested_at", { withTimezone: true }),
+    /**
+     * Plan M8 (A11): the kind of job as one of OUR fixed labels (src/config/job-kinds.ts), never
+     * the customer's words. Set at classification; null on threads sorted before it existed.
+     */
+    jobKind: text("job_kind"),
+    /** Plan #34: when we last pushed "a lead is waiting" for this thread's current wait. */
+    atRiskAlertedAt: timestamp("at_risk_alerted_at", { withTimezone: true }),
     createdAt: createdAt(),
   },
   (t) => [
@@ -381,6 +396,8 @@ export const businessProfiles = pgTable("business_profile", {
   pushLastSentAt: timestamp("push_last_sent_at", { withTimezone: true }),
   pushAlertCursor: timestamp("push_alert_cursor", { withTimezone: true }),
   smsLastSentAt: timestamp("sms_last_sent_at", { withTimezone: true }),
+  /** Plan #35: the owner's local month ('YYYY-MM') last summarized (sent, or skipped as empty). */
+  monthlySummaryLastSentFor: text("monthly_summary_last_sent_for"),
   completedAt: timestamp("completed_at", { withTimezone: true }),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
