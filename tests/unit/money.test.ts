@@ -9,6 +9,7 @@ import { ensureUserAndWorkspace } from "@/server/accounts";
 import { describeActivity, listActivity } from "@/server/activity";
 import { classifyPending } from "@/server/classification";
 import { buildDigest, digestCounts } from "@/server/digest";
+import { queueThreadUrl } from "@/server/digest-rules";
 import {
   createDraftForThread,
   expirePendingNudge,
@@ -1554,7 +1555,15 @@ describe("privacy: invoice facts stay on the owner's screen", () => {
       over: { needsOwner: true, needsOwnerReason: "Big amount." },
     });
     const counts = await digestCounts(workspaceId, NOW);
-    const digest = buildDigest(counts, "https://app.example/queue", "https://app.example/settings");
+    const digest = buildDigest(
+      counts,
+      {
+        queueUrl: "https://app.example/queue",
+        settingsUrl: "https://app.example/settings",
+        threadUrl: (id) => queueThreadUrl("https://app.example/queue", id),
+      },
+      { now: NOW, timeZone: "America/New_York" },
+    );
     const push = pushSummaryText({
       replies: counts.repliesReady,
       needsYou: counts.needsYou.length,

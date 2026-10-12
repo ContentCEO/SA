@@ -53,21 +53,29 @@ export function averageMinutes(pairs: { from: Date; to: Date }[]): number | null
 /**
  * "You answered quote requests in 2 h 10 min on average this week (last week: 3 h 40 min)."
  * With nothing answered: "No quote requests answered yet this week (last week: 3 h 40 min on
- * average)." — so last week's figure is said either way. Requests still waiting are always
+ * average)." — so last week's figure is said either way. With none in at all (`answered` and
+ * `unanswered` both 0): "No quote requests came in last week." Requests still waiting are always
  * said out loud, so a fast average can't hide them.
  */
 export function responseTimeSentence(
-  thisWeek: { avgMinutes: number | null; unanswered: number },
+  thisWeek: { avgMinutes: number | null; unanswered: number; answered?: number },
   lastWeek: { avgMinutes: number | null } | null,
   period: "this week" | "last week" = "this week",
 ): string {
   const before = period === "this week" ? "last week" : "the week before";
   const earlier = lastWeek?.avgMinutes != null ? formatDuration(lastWeek.avgMinutes) : null;
+  // None came in at all (only known when `answered` is given): say so, rather than "none
+  // answered", which reads as if the owner missed some.
+  const noneCameIn = thisWeek.answered === 0 && Math.round(thisWeek.unanswered) <= 0;
   let s =
     thisWeek.avgMinutes == null
-      ? (period === "this week"
-          ? "No quote requests answered yet this week"
-          : "No quote requests answered last week") +
+      ? (noneCameIn
+          ? period === "this week"
+            ? "No quote requests have come in yet this week"
+            : "No quote requests came in last week"
+          : period === "this week"
+            ? "No quote requests answered yet this week"
+            : "No quote requests answered last week") +
         (earlier ? ` (${before}: ${earlier} on average).` : ".")
       : `You answered quote requests in ${formatDuration(thisWeek.avgMinutes)} on average ${period}` +
         (earlier ? ` (${before}: ${earlier}).` : ".");

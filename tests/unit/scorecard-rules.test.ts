@@ -161,6 +161,13 @@ describe("responseTimeSentence", () => {
     expect(
       responseTimeSentence({ avgMinutes: null, unanswered: 0 }, { avgMinutes: 60 }, "last week"),
     ).toBe("No quote requests answered last week (the week before: 1 h on average).");
+    expect(
+      responseTimeSentence(
+        { avgMinutes: null, answered: 0, unanswered: 0 },
+        { avgMinutes: 60 },
+        "last week",
+      ),
+    ).toBe("No quote requests came in last week (the week before: 1 h on average).");
   });
 
   it("is only numbers and fixed words", () => {
@@ -256,7 +263,20 @@ describe("scorecardIsEmpty / scorecardLines (#32)", () => {
       "Last week: 12 replies sent, 3 follow-ups sent, 4 quotes out.",
       "Time saved: about 45 minutes (an estimate: 3 minutes per reply sent from the app).",
     ]);
-    expect(scorecardLines(zero, "This week")[1]).toBe("No quote requests answered yet this week.");
+    // None came in at all: said as that, not as "none answered".
+    expect(scorecardLines(zero, "This week")[1]).toBe(
+      "No quote requests have come in yet this week.",
+    );
+    expect(scorecardLines({ ...zero, repliesSent: 2 }, "Last week")[1]).toBe(
+      "No quote requests came in last week.",
+    );
+    // Some came in and none were answered: that's still said plainly.
+    expect(
+      scorecardLines(
+        { ...zero, response: { avgMinutes: null, answered: 0, unanswered: 2 } },
+        "Last week",
+      )[1],
+    ).toBe("No quote requests answered last week. 2 are still waiting for an answer.");
   });
 
   it("the Activity card: last week's response time and its waiting requests are always said", () => {

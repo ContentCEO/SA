@@ -5,7 +5,7 @@ import { db } from "@/db";
 import { activityLog, businessProfiles, mailboxes, threads, workspaces } from "@/db/schema";
 import { appUrl } from "@/lib/app-url";
 import { sendSms, type SmsSender } from "@/lib/sms";
-import { localParts } from "./digest";
+import { localParts } from "./snooze-rules";
 import { jobsAllowed } from "./lifecycle";
 import { hitLimit } from "./rate-limit";
 

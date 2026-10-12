@@ -3,7 +3,7 @@ import { and, asc, count, eq, gte, lt } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/db";
 import { activityLog, businessProfiles, seasonalNotes } from "@/db/schema";
-import { localParts } from "./digest";
+import { localParts } from "./snooze-rules";
 
 /** Seasonal notes (plan #25). */
 export const MAX_ACTIVE_NOTES = 5;

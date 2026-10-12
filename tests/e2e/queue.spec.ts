@@ -88,6 +88,74 @@ test("after sending: the squared-away moment", async ({ page, context }) => {
   await expect(page.getByText(/I'll nudge Priya on \w+day if there's no reply\./)).toBeVisible();
 });
 
+test("a link from the morning summary lands on its card (plan #31)", async ({ page, context }) => {
+  const owner = await seedOwner({ mailbox: true, backfilled: true });
+  const { quote } = await seedQueue(owner.mailboxId!);
+  // Enough waiting above it that the oldest card starts well below the fold on a phone.
+  const ids: string[] = [];
+  for (let i = 0; i < 8; i++) {
+    const [t] = await testDb
+      .insert(schema.threads)
+      .values({
+        mailboxId: owner.mailboxId!,
+        gmailThreadId: `anchor-${i}-${owner.mailboxId}`,
+        inInbox: true,
+        category: "customer_question",
+        needsOwner: true,
+        needsOwnerReason: `Question number ${i}.`,
+        lastMessageAt: new Date(Date.now() - (i + 1) * 3600_000),
+      })
+      .returning();
+    ids.push(t!.id);
+  }
+  const oldest = ids.at(-1)!;
+  await signInAs(context, owner);
+
+  await page.goto(`/queue#t-${oldest}`);
+  const card = page.locator(`article#t-${oldest}`);
+  await expect(card).toContainText("Question number 7.");
+  await expect(card).toBeInViewport({ ratio: 0.5 });
+  // The page didn't simply open at the top.
+  await expect(page.getByRole("heading", { name: "Needs you" })).not.toBeInViewport();
+  // Centred, which only ScrollToThread does: the browser's own jump to a #fragment puts the
+  // card at the very top (scroll-mt-4), far from the middle of the screen.
+  const viewport = page.viewportSize()!;
+  await expect
+    .poll(async () => {
+      const box = (await card.boundingBox())!;
+      return Math.abs(box.y + box.height / 2 - viewport.height / 2) / viewport.height;
+    })
+    .toBeLessThan(0.25);
+  // On a phone, the fixed tab bar at the bottom doesn't cover it.
+  const tabBar = page.locator('nav[aria-label="Main"].fixed');
+  if (await tabBar.isVisible()) {
+    const bar = (await tabBar.boundingBox())!;
+    const box = (await card.boundingBox())!;
+    expect(box.y + box.height).toBeLessThanOrEqual(bar.y);
+  }
+
+  // Draft cards carry the same anchor, and a hash change on the page moves to it.
+  await page.evaluate((id) => {
+    window.location.hash = `t-${id}`;
+  }, quote.t.id);
+  await expect(page.getByRole("article", { name: "Draft reply to Priya" })).toHaveAttribute(
+    "id",
+    `t-${quote.t.id}`,
+  );
+  await expect(page.getByRole("article", { name: "Draft reply to Priya" })).toBeInViewport({
+    ratio: 0.3,
+  });
+
+  const overflow = await page.evaluate(
+    () => document.documentElement.scrollWidth > document.documentElement.clientWidth,
+  );
+  expect(overflow).toBe(false);
+
+  // A link to something no longer on the queue says so, rather than leaving them at the top.
+  await page.goto(`/queue#t-00000000-0000-4000-8000-000000000000`);
+  await expect(page.getByText("That email isn't on your queue right now.")).toBeVisible();
+});
+
 test("empty queue says so plainly", async ({ page, context }) => {
   const owner = await seedOwner({ mailbox: true, backfilled: true });
   await signInAs(context, owner);

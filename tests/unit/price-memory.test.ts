@@ -20,6 +20,7 @@ import { ensureUserAndWorkspace } from "@/server/accounts";
 import { adminOverview } from "@/server/admin";
 import { classifyPending } from "@/server/classification";
 import { buildDigest, digestCounts } from "@/server/digest";
+import { queueThreadUrl } from "@/server/digest-rules";
 import { createDraftForThread, listQueue, reviseDraft } from "@/server/drafts";
 import { captureEditSignals } from "@/server/edit-learning";
 import { disconnectMailbox, saveConnectedMailbox } from "@/server/mailboxes";
@@ -823,7 +824,15 @@ describe("GUARDRAIL: never in the morning summary, admin, phone notifications or
     );
 
     const counts = await digestCounts(workspaceId, NOW);
-    const digest = buildDigest(counts, "https://app.example/queue", "https://app.example/settings");
+    const digest = buildDigest(
+      counts,
+      {
+        queueUrl: "https://app.example/queue",
+        settingsUrl: "https://app.example/settings",
+        threadUrl: (id) => queueThreadUrl("https://app.example/queue", id),
+      },
+      { now: NOW, timeZone: "America/New_York" },
+    );
     const queue = await listQueue(workspaceId, NOW);
     const push = pushSummaryText({ replies: queue.drafts.length, needsYou: queue.needsYou.length });
     const sms = leadAlertBody(

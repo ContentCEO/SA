@@ -71,6 +71,8 @@ import { batchEligible, firstLine } from "./batch-rules";
 import { isInvoiceThread, paymentSaid } from "./money-rules";
 import { quoteStopsNudges } from "./quote-rules";
 import { BACK_ON_TOP_MS, isEmergency } from "./snooze-rules";
+import { headerPickIds, toNeedsYouItem } from "./digest-rules";
+import { asDate, waitingSinceSql } from "./thread-sql";
 import { closingQuestionAllowed, recentReviewAddresses, reviewAllowed } from "./offers";
 import { lockReviewAddress } from "./review-lock";
 import { markReconnectNeeded } from "./sync";
@@ -1756,18 +1758,55 @@ export type QueueItem = {
   lastMessageAt: Date | null;
 };
 
-/** The queue: threads that need the owner with no draft first, then drafts waiting for a decision. */
-export async function listQueue(
+/** Plan #6: back from a snooze within the last day — pinned on top. */
+const backFromSnoozeAt = (snoozedUntil: Date | null, now: Date) =>
+  !!snoozedUntil && snoozedUntil <= now && now.getTime() - snoozedUntil.getTime() < BACK_ON_TOP_MS;
+
+/** One queue entry with no content: ids, category, flags and times only (plan M8 A1). */
+export type QueueMember = {
+  threadId: string;
+  category: string | null;
+  /** Plan #6: high priority and needs the owner. */
+  emergency: boolean;
+  backFromSnooze: boolean;
+  lastMessageAt: Date | null;
+};
+export type QueueMembership = {
+  /** `waitingSince`: the customer's first email since the owner last wrote (plan M8 A14). */
+  needsYou: (QueueMember & { waitingSince: Date | null })[];
+  drafts: (QueueMember & { draftId: string; kind: "reply" | "followup" })[];
+};
+
+/**
+ * Who is on the queue, and nothing else (plan M8 A1): the same rules the queue screen uses —
+ * needs the owner, in the inbox, no draft waiting, not snoozed; drafts pending and not in
+ * their undo window (plan #7), not snoozed; items back from a snooze first. It selects only
+ * ids, category, priority, kind and times — no names, addresses, summaries, reasons, bodies
+ * or mailbox rows — so the morning summary, phone notifications and the badge can count from
+ * it without ever holding an email's content. No row cap: totals are real totals (A19).
+ */
+export async function queueMembership(
   workspaceId: string,
   now: Date = new Date(),
-): Promise<{ needsYou: QueueItem[]; drafts: QueueItem[] }> {
-  const boxes = await db().select().from(mailboxes).where(eq(mailboxes.workspaceId, workspaceId));
-  if (boxes.length === 0) return { needsYou: [], drafts: [] };
-  const boxIds = boxes.map((b) => b.id);
-  const emailOf = new Map(boxes.map((b) => [b.id, b.email]));
+): Promise<QueueMembership> {
+  const boxIds = (
+    await db()
+      .select({ id: mailboxes.id })
+      .from(mailboxes)
+      .where(eq(mailboxes.workspaceId, workspaceId))
+  ).map((b) => b.id);
+  if (boxIds.length === 0) return { needsYou: [], drafts: [] };
 
-  const pendingDrafts = await db()
-    .select({ draft: drafts, thread: threads })
+  const threadCols = {
+    threadId: threads.id,
+    category: threads.category,
+    priority: threads.priority,
+    needsOwner: threads.needsOwner,
+    snoozedUntil: threads.snoozedUntil,
+    lastMessageAt: threads.lastMessageAt,
+  };
+  const pending = await db()
+    .select({ draftId: drafts.id, kind: drafts.kind, ...threadCols })
     .from(drafts)
     .innerJoin(threads, eq(threads.id, drafts.threadId))
     .where(
@@ -1780,18 +1819,10 @@ export async function listQueue(
     )
     .orderBy(desc(threads.lastMessageAt));
   // Every pending draft's thread counts as handled for "Needs you", snoozed or not.
-  const draftedThreads = new Set(pendingDrafts.map((r) => r.thread.id));
-  const snoozed = (t: typeof threads.$inferSelect) => !!t.snoozedUntil && t.snoozedUntil > now;
-  const back = (t: typeof threads.$inferSelect) =>
-    !!t.snoozedUntil &&
-    t.snoozedUntil <= now &&
-    now.getTime() - t.snoozedUntil.getTime() < BACK_ON_TOP_MS;
-  const backFirst = <T extends { thread: typeof threads.$inferSelect }>(rows: T[]) =>
-    [...rows].sort((a, b) => Number(back(b.thread)) - Number(back(a.thread)));
-
+  const draftedThreads = new Set(pending.map((r) => r.threadId));
   const needs = (
     await db()
-      .select()
+      .select({ ...threadCols, waitingSince: waitingSinceSql() })
       .from(threads)
       .where(
         and(
@@ -1801,10 +1832,94 @@ export async function listQueue(
         ),
       )
       .orderBy(desc(threads.lastMessageAt))
-      .limit(50)
-  ).filter((t) => !draftedThreads.has(t.id) && !snoozed(t));
-  const shownDrafts = backFirst(pendingDrafts.filter((r) => !snoozed(r.thread)));
-  const shownNeeds = backFirst(needs.map((thread) => ({ thread }))).map((r) => r.thread);
+  ).filter((t) => !draftedThreads.has(t.threadId));
+
+  const snoozed = (t: { snoozedUntil: Date | null }) => !!t.snoozedUntil && t.snoozedUntil > now;
+  const member = (t: (typeof pending)[number] | (typeof needs)[number]): QueueMember => ({
+    threadId: t.threadId,
+    category: t.category,
+    emergency: isEmergency(t),
+    backFromSnooze: backFromSnoozeAt(t.snoozedUntil, now),
+    lastMessageAt: t.lastMessageAt,
+  });
+  // A stable sort: newest first, with anything back from a snooze on top.
+  const backFirst = <T extends QueueMember>(rows: T[]) =>
+    [...rows].sort((a, b) => Number(b.backFromSnooze) - Number(a.backFromSnooze));
+
+  return {
+    needsYou: backFirst(
+      needs
+        .filter((t) => !snoozed(t))
+        .map((t) => ({ ...member(t), waitingSince: asDate(t.waitingSince) })),
+    ),
+    drafts: backFirst(
+      pending
+        .filter((r) => !snoozed(r))
+        .map((r) => ({ ...member(r), draftId: r.draftId, kind: r.kind })),
+    ),
+  };
+}
+
+/** The queue's numbers, from the same membership as the screen (plan M8 A1): counts only. */
+export async function queueCounts(
+  workspaceId: string,
+  now: Date = new Date(),
+): Promise<{ needsYou: number; replies: number; nudges: number; drafts: number }> {
+  const q = await queueMembership(workspaceId, now);
+  const replies = q.drafts.filter((d) => d.kind === "reply").length;
+  return {
+    needsYou: q.needsYou.length,
+    replies,
+    nudges: q.drafts.length - replies,
+    drafts: q.drafts.length,
+  };
+}
+
+/** How many "Needs you" cards the queue screen shows at once (the counts above have no cap). */
+const NEEDS_YOU_SHOWN = 50;
+
+/** The queue: threads that need the owner with no draft first, then drafts waiting for a decision. */
+export async function listQueue(
+  workspaceId: string,
+  now: Date = new Date(),
+): Promise<{ needsYou: QueueItem[]; drafts: QueueItem[] }> {
+  // Membership (and order) come from the content-free rules, so the screen and every count
+  // agree by construction; this only adds what the owner reads on the cards.
+  const members = await queueMembership(workspaceId, now);
+  // The newest 50, plus whatever the morning summary links to (its top picks are the oldest
+  // and most urgent, which are exactly the ones past 50), so every `#t-<id>` it sends lands.
+  const linked = headerPickIds(members.needsYou.map(toNeedsYouItem));
+  const shownNeeds = members.needsYou.filter(
+    (m, i) => i < NEEDS_YOU_SHOWN || linked.has(m.threadId),
+  );
+  if (shownNeeds.length === 0 && members.drafts.length === 0) return { needsYou: [], drafts: [] };
+
+  const boxes = await db()
+    .select({ id: mailboxes.id, email: mailboxes.email })
+    .from(mailboxes)
+    .where(eq(mailboxes.workspaceId, workspaceId));
+  const boxIds = boxes.map((b) => b.id);
+  const emailOf = new Map(boxes.map((b) => [b.id, b.email]));
+
+  const needIds = shownNeeds.map((m) => m.threadId);
+  const draftIds = members.drafts.map((m) => m.draftId);
+  const [needRows, draftRows] = await Promise.all([
+    needIds.length
+      ? db()
+          .select()
+          .from(threads)
+          .where(and(inArray(threads.id, needIds), inArray(threads.mailboxId, boxIds)))
+      : Promise.resolve([]),
+    draftIds.length
+      ? db()
+          .select({ draft: drafts, thread: threads })
+          .from(drafts)
+          .innerJoin(threads, eq(threads.id, drafts.threadId))
+          .where(and(inArray(drafts.id, draftIds), inArray(drafts.mailboxId, boxIds)))
+      : Promise.resolve([]),
+  ]);
+  const threadById = new Map(needRows.map((t) => [t.id, t]));
+  const draftById = new Map(draftRows.map((r) => [r.draft.id, r]));
 
   const senders = async (threadIds: string[]) => {
     if (!threadIds.length)
@@ -1824,58 +1939,68 @@ export async function listQueue(
       if (!out.has(r.threadId)) out.set(r.threadId, { name: r.name, address: r.address });
     return out;
   };
-  const who = await senders([
-    ...shownNeeds.map((t) => t.id),
-    ...shownDrafts.map((r) => r.thread.id),
-  ]);
+  const who = await senders([...needIds, ...members.drafts.map((m) => m.threadId)]);
 
   return {
-    needsYou: shownNeeds.map((t) => ({
-      draftId: null,
-      kind: null,
-      purpose: null,
-      autoSendAt: null,
-      threadId: t.id,
-      customerName: who.get(t.id)?.name ?? null,
-      customerAddress: who.get(t.id)?.address ?? null,
-      category: t.category,
-      summary: t.summary,
-      needsOwnerReason: t.needsOwnerReason,
-      reason: null,
-      body: null,
-      flags: [],
-      confidence: null,
-      usedFacts: [],
-      revisionsLeft: 0,
-      emergency: isEmergency(t),
-      backFromSnooze: back(t),
-      gmailThreadId: t.gmailThreadId,
-      mailboxEmail: emailOf.get(t.mailboxId) ?? "",
-      lastMessageAt: t.lastMessageAt,
-    })),
-    drafts: shownDrafts.map(({ draft, thread }) => ({
-      draftId: draft.id,
-      kind: draft.kind,
-      purpose: draft.purpose ?? null,
-      autoSendAt: draft.autoSendAt,
-      threadId: thread.id,
-      customerName: who.get(thread.id)?.name ?? null,
-      customerAddress: who.get(thread.id)?.address ?? draft.toAddress,
-      category: thread.category,
-      summary: thread.summary,
-      needsOwnerReason: thread.needsOwner ? thread.needsOwnerReason : null,
-      reason: draft.reason,
-      body: draft.body,
-      flags: draft.flags,
-      confidence: draft.confidence,
-      usedFacts: draft.usedFacts,
-      revisionsLeft: Math.max(0, MAX_REVISIONS_PER_DRAFT - draft.revisions),
-      emergency: isEmergency(thread),
-      backFromSnooze: back(thread),
-      gmailThreadId: thread.gmailThreadId,
-      mailboxEmail: emailOf.get(draft.mailboxId) ?? "",
-      lastMessageAt: thread.lastMessageAt,
-    })),
+    needsYou: shownNeeds.flatMap((m) => {
+      const t = threadById.get(m.threadId);
+      if (!t) return [];
+      return [
+        {
+          draftId: null,
+          kind: null,
+          purpose: null,
+          autoSendAt: null,
+          threadId: t.id,
+          customerName: who.get(t.id)?.name ?? null,
+          customerAddress: who.get(t.id)?.address ?? null,
+          category: t.category,
+          summary: t.summary,
+          needsOwnerReason: t.needsOwnerReason,
+          reason: null,
+          body: null,
+          flags: [],
+          confidence: null,
+          usedFacts: [],
+          revisionsLeft: 0,
+          emergency: m.emergency,
+          backFromSnooze: m.backFromSnooze,
+          gmailThreadId: t.gmailThreadId,
+          mailboxEmail: emailOf.get(t.mailboxId) ?? "",
+          lastMessageAt: t.lastMessageAt,
+        } satisfies QueueItem,
+      ];
+    }),
+    drafts: members.drafts.flatMap((m) => {
+      const r = draftById.get(m.draftId);
+      if (!r) return [];
+      const { draft, thread } = r;
+      return [
+        {
+          draftId: draft.id,
+          kind: draft.kind,
+          purpose: draft.purpose ?? null,
+          autoSendAt: draft.autoSendAt,
+          threadId: thread.id,
+          customerName: who.get(thread.id)?.name ?? null,
+          customerAddress: who.get(thread.id)?.address ?? draft.toAddress,
+          category: thread.category,
+          summary: thread.summary,
+          needsOwnerReason: thread.needsOwner ? thread.needsOwnerReason : null,
+          reason: draft.reason,
+          body: draft.body,
+          flags: draft.flags,
+          confidence: draft.confidence,
+          usedFacts: draft.usedFacts,
+          revisionsLeft: Math.max(0, MAX_REVISIONS_PER_DRAFT - draft.revisions),
+          emergency: m.emergency,
+          backFromSnooze: m.backFromSnooze,
+          gmailThreadId: thread.gmailThreadId,
+          mailboxEmail: emailOf.get(draft.mailboxId) ?? "",
+          lastMessageAt: thread.lastMessageAt,
+        } satisfies QueueItem,
+      ];
+    }),
   };
 }
 

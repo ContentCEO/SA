@@ -29,6 +29,7 @@ import { UndoSend } from "./undo-send";
 import { OfflineQueue } from "./offline-queue";
 import { devicePrefs } from "@/lib/device-prefs";
 import { RemindMe } from "./remind-me";
+import { ScrollToThread } from "./scroll-to-thread";
 import { SNOOZE_LABELS, snoozeOptions } from "@/server/snooze-rules";
 import { batchCandidates } from "@/server/drafts";
 import { BATCH_CATEGORIES } from "@/server/batch-rules";
@@ -188,6 +189,7 @@ export default async function QueuePage(props: PageProps<"/queue">) {
       {errorMsg ? <Notice strong>{errorMsg}</Notice> : null}
 
       <OfflineQueue enabled={device.offline} />
+      <ScrollToThread />
 
       <OnboardingChecklist list={checklist} dismissAction={dismissChecklistAction} />
 
@@ -209,7 +211,11 @@ export default async function QueuePage(props: PageProps<"/queue">) {
             Needs you
           </h2>
           {queue.needsYou.map((i) => (
-            <article key={i.threadId} className="sa-inverted flex flex-col gap-2 rounded-xl p-4">
+            <article
+              key={i.threadId}
+              id={`t-${i.threadId}`}
+              className="sa-inverted flex scroll-mt-4 scroll-mb-28 flex-col gap-2 rounded-xl p-4 sm:scroll-mb-4"
+            >
               <div className="flex items-baseline justify-between gap-3">
                 <span className="truncate text-lg font-black">{who(i)}</span>
                 <span className="shrink-0 text-sm text-ash">

@@ -191,8 +191,9 @@ export function DraftCard(p: DraftCardProps) {
 
   return (
     <article
+      id={`t-${p.threadId}`}
       aria-label={`Draft reply to ${p.customer}`}
-      className="flex touch-pan-y flex-col gap-3 rounded-xl border bg-card p-4 transition-transform motion-reduce:transition-none"
+      className="flex touch-pan-y scroll-mt-4 scroll-mb-28 flex-col gap-3 rounded-xl border bg-card p-4 transition-transform motion-reduce:transition-none sm:scroll-mb-4"
       style={{ transform: dx ? `translateX(${dx}px)` : undefined }}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}

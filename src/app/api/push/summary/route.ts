@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/auth";
 import { getWorkspaceForUser } from "@/server/accounts";
-import { listQueue } from "@/server/drafts";
+import { queueCounts } from "@/server/drafts";
 import { pushSummaryText } from "@/server/push-alerts";
 
 export const dynamic = "force-dynamic";
@@ -14,11 +14,12 @@ export async function GET() {
   const session = await auth();
   const workspace = session?.user?.id ? await getWorkspaceForUser(session.user.id) : null;
   if (!workspace) return NextResponse.json({ error: "Sign in first." }, { status: 401 });
-  const q = await listQueue(workspace.id);
+  // Content-free counts from the queue's own membership (plan M8 A1) — never listQueue.
+  const q = await queueCounts(workspace.id);
   return NextResponse.json(
     {
       title: "Squared Away",
-      body: pushSummaryText({ replies: q.drafts.length, needsYou: q.needsYou.length }),
+      body: pushSummaryText({ replies: q.drafts, needsYou: q.needsYou }),
     },
     { headers: { "Cache-Control": "no-store" } },
   );
