@@ -11,7 +11,13 @@ import {
   monthCloseRate,
   monthSummary,
 } from "@/server/activity";
-import { timeSavedPhrase } from "@/server/scorecard-rules";
+import { weekScorecards } from "@/server/scorecard";
+import {
+  responseTimeSentence,
+  scorecardIsEmpty,
+  scorecardLines,
+  timeSavedPhrase,
+} from "@/server/scorecard-rules";
 import { requireOwner } from "@/server/session";
 import { workspaceTimeZone } from "@/server/snooze";
 
@@ -22,11 +28,13 @@ export default async function ActivityPage() {
   const now = new Date();
   // One month for the whole screen, in the owner's own time zone.
   const timeZone = await workspaceTimeZone(workspace.id);
-  const [entries, month, close] = await Promise.all([
+  const [entries, month, close, weeks] = await Promise.all([
     listActivity(workspace.id),
     monthSummary(workspace.id, now, timeZone),
     monthCloseRate(workspace.id, now, timeZone),
+    weekScorecards(workspace.id, now, timeZone),
   ]);
+  const { thisWeek, lastWeek } = weeks;
   const decided = close.won + close.lost + close.noAnswer;
   const monthName = localMonthName(now, timeZone);
 
@@ -41,6 +49,39 @@ export default async function ActivityPage() {
       </Link>
 
       <section
+        aria-labelledby="week"
+        className="flex flex-col gap-3 rounded-xl border-2 border-charcoal p-4"
+      >
+        <h2 id="week" className="text-lg font-black">
+          This week so far
+        </h2>
+        <dl className="grid grid-cols-2 gap-x-4 gap-y-2">
+          {[
+            ["Replies sent", thisWeek.repliesSent],
+            ["Follow-ups sent", thisWeek.followupsSent],
+            ["Quotes out", thisWeek.quotesOut],
+            ["Time saved (estimate)", timeSavedPhrase(thisWeek.minutesSaved)],
+          ].map(([label, value]) => (
+            <div key={label} className="flex flex-col">
+              <dt className="text-sm text-muted-foreground">{label}</dt>
+              <dd className="text-2xl font-black">{value}</dd>
+            </div>
+          ))}
+        </dl>
+        <p className="text-lg">{responseTimeSentence(thisWeek.response, lastWeek.response)}</p>
+        <p>
+          {scorecardIsEmpty(lastWeek)
+            ? "Nothing sent last week."
+            : scorecardLines(lastWeek, "Last week", { average: false }).join(" ")}
+        </p>
+        <p className="text-sm text-muted-foreground">
+          That&apos;s an estimate: {MINUTES_PER_SENT_REPLY} minutes for each drafted reply you sent.
+          Weeks start on Monday. Response time runs from a customer&apos;s first email asking for a
+          quote to your first reply.
+        </p>
+      </section>
+
+      <section
         aria-labelledby="month"
         className="flex flex-col gap-3 rounded-xl border-2 border-charcoal p-4"
       >
@@ -51,7 +92,8 @@ export default async function ActivityPage() {
           {[
             ["Emails sorted", month.sorted],
             ["Replies drafted", month.drafted],
-            ["Replies you sent", month.sent],
+            // Replies only, like the week's figure; follow-ups have their own line.
+            ["Replies you sent", month.sent - month.nudgesSent],
             ["Follow-ups sent", month.nudgesSent],
           ].map(([label, value]) => (
             <div key={label} className="flex flex-col">

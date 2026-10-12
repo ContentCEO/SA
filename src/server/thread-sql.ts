@@ -1,6 +1,7 @@
 import "server-only";
-import { eq, isNotNull, or, sql } from "drizzle-orm";
+import { eq, isNotNull, or, sql, type SQL } from "drizzle-orm";
 import { threads } from "@/db/schema";
+import { NO_REPLY_LOCAL_PATTERN } from "./sender-rules";
 
 /**
  * SQL pieces about a thread, shared by the quote tracker, the scorecard and the summaries.
@@ -30,3 +31,17 @@ export const quoteThreadSql = () =>
     isNotNull(threads.quoteOutcome),
     isNotNull(threads.quoteOutcomeSource),
   );
+
+/**
+ * A quote request, even one later re-sorted (plan M8 A11): the sticky `quote_requested_at`
+ * mark from classification, or the current quote-thread rule (older threads have no mark).
+ */
+export const quoteRequestSql = () => or(isNotNull(threads.quoteRequestedAt), quoteThreadSql());
+
+/**
+ * SQL twin of `isNoReplyAddress` for an address expression: the local part before the last
+ * "@" matches the shared no-reply pattern. Used only inside WHERE clauses, so the address
+ * itself never leaves the database.
+ */
+export const noReplySql = (address: SQL) =>
+  sql`(position('@' in coalesce(${address}, '')) > 1 and regexp_replace(lower(trim(${address})), '@[^@]*$', '') ~ ${NO_REPLY_LOCAL_PATTERN})`;

@@ -274,15 +274,28 @@ export async function monthSummary(
     .select({ n: count() })
     .from(threads)
     .where(and(inArray(threads.mailboxId, boxes), gte(threads.classifiedAt, start)));
-  const made = await db()
-    .select({ status: drafts.status, kind: drafts.kind, decidedAt: drafts.decidedAt })
+  const [made] = await db()
+    .select({ n: count() })
     .from(drafts)
     .where(and(inArray(drafts.mailboxId, boxes), gte(drafts.createdAt, start)));
-  const sentRows = made.filter((d) => d.status === "sent" || d.status === "edited_and_sent");
+  // Sent is counted by when the owner okayed it (decided_at), like the weekly scorecard, so a
+  // draft made last month and sent this month counts here, and the week and the month agree
+  // on the days they share (plan M8 A18; a week that started last month also counts last
+  // month's days). Drafted stays on when it was made.
+  const sentRows = await db()
+    .select({ status: drafts.status, kind: drafts.kind })
+    .from(drafts)
+    .where(
+      and(
+        inArray(drafts.mailboxId, boxes),
+        inArray(drafts.status, ["sent", "edited_and_sent"]),
+        gte(drafts.decidedAt, start),
+      ),
+    );
   const sent = sentRows.length;
   return {
     sorted: sorted?.n ?? 0,
-    drafted: made.length,
+    drafted: made?.n ?? 0,
     sent,
     sentAfterEditing: sentRows.filter((d) => d.status === "edited_and_sent").length,
     nudgesSent: sentRows.filter((d) => d.kind === "followup").length,

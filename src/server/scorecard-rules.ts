@@ -3,6 +3,7 @@
  * 00:00 → next Monday 00:00 in the owner's time zone (DST-safe: built with atLocalHour).
  * Every sentence here is numbers and fixed words only — never a name or an email's text.
  */
+import { MINUTES_PER_SENT_REPLY } from "@/config/drafting";
 import { atLocalHour, localWeekday, usableTimeZone } from "./snooze-rules";
 
 export { localWeekday } from "./snooze-rules";
@@ -51,8 +52,9 @@ export function averageMinutes(pairs: { from: Date; to: Date }[]): number | null
 
 /**
  * "You answered quote requests in 2 h 10 min on average this week (last week: 3 h 40 min)."
- * With nothing answered: "No quote requests answered yet this week." Requests still
- * waiting are always said out loud, so a fast average can't hide them.
+ * With nothing answered: "No quote requests answered yet this week (last week: 3 h 40 min on
+ * average)." — so last week's figure is said either way. Requests still waiting are always
+ * said out loud, so a fast average can't hide them.
  */
 export function responseTimeSentence(
   thisWeek: { avgMinutes: number | null; unanswered: number },
@@ -60,18 +62,28 @@ export function responseTimeSentence(
   period: "this week" | "last week" = "this week",
 ): string {
   const before = period === "this week" ? "last week" : "the week before";
+  const earlier = lastWeek?.avgMinutes != null ? formatDuration(lastWeek.avgMinutes) : null;
   let s =
     thisWeek.avgMinutes == null
-      ? period === "this week"
-        ? "No quote requests answered yet this week."
-        : "No quote requests answered last week."
+      ? (period === "this week"
+          ? "No quote requests answered yet this week"
+          : "No quote requests answered last week") +
+        (earlier ? ` (${before}: ${earlier} on average).` : ".")
       : `You answered quote requests in ${formatDuration(thisWeek.avgMinutes)} on average ${period}` +
-        (lastWeek?.avgMinutes != null
-          ? ` (${before}: ${formatDuration(lastWeek.avgMinutes)}).`
-          : ".");
+        (earlier ? ` (${before}: ${earlier}).` : ".");
   const n = Math.max(0, Math.round(thisWeek.unanswered));
   if (n > 0) s += ` ${n} ${n === 1 ? "is" : "are"} still waiting for an answer.`;
   return s;
+}
+
+/** "1 quote request from last week is still waiting for an answer." (null when none are) */
+export function stillWaitingSentence(
+  unanswered: number,
+  period: "this week" | "last week",
+): string | null {
+  const n = Math.max(0, Math.round(unanswered));
+  if (n === 0) return null;
+  return `${plural(n, "quote request")} from ${period} ${n === 1 ? "is" : "are"} still waiting for an answer.`;
 }
 
 /** The time-saved estimate in words: "about 9 minutes", "about 1.5 hours". */
@@ -79,4 +91,63 @@ export function timeSavedPhrase(minutes: number): string {
   if (minutes < 60) return `about ${minutes} minute${minutes === 1 ? "" : "s"}`;
   const hours = Math.round((minutes / 60) * 2) / 2;
   return `about ${hours} hour${hours === 1 ? "" : "s"}`;
+}
+
+/** A week's numbers (the shape `weeklyScorecard` returns), typed here so this file stays pure. */
+export type ScorecardNumbers = {
+  repliesSent: number;
+  followupsSent: number;
+  quotesOut: number;
+  response: { avgMinutes: number | null; answered: number; unanswered: number };
+  minutesSaved: number;
+};
+
+/** Nothing sent, no quotes out and no quote requests in: a week not worth a line. */
+export function scorecardIsEmpty(s: ScorecardNumbers): boolean {
+  return (
+    s.repliesSent === 0 &&
+    s.followupsSent === 0 &&
+    s.quotesOut === 0 &&
+    s.response.answered === 0 &&
+    s.response.unanswered === 0
+  );
+}
+
+/** "Last week: 12 replies sent, 3 follow-ups sent, 4 quotes out." */
+export function scorecardCountsLine(
+  s: ScorecardNumbers,
+  period: "This week" | "Last week",
+): string {
+  const replies = `${s.repliesSent} ${s.repliesSent === 1 ? "reply" : "replies"}`;
+  return `${period}: ${replies} sent, ${plural(s.followupsSent, "follow-up")} sent, ${plural(
+    s.quotesOut,
+    "quote",
+  )} out.`;
+}
+
+/** "Time saved: about 45 minutes (an estimate: 3 minutes per reply sent from the app)." */
+export function timeSavedLine(minutes: number): string {
+  return `Time saved: ${timeSavedPhrase(minutes)} (an estimate: ${MINUTES_PER_SENT_REPLY} minutes per reply sent from the app).`;
+}
+
+/**
+ * The week in plain sentences — counts and fixed words only, never a name, an address or
+ * an email's text: the counts line, the response-time sentence and time saved. With
+ * `{ average: false }` (where the average is already said beside this week's) the
+ * response-time sentence shrinks to the requests still waiting, which are never dropped.
+ */
+export function scorecardLines(
+  s: ScorecardNumbers,
+  period: "This week" | "Last week",
+  options: { average?: boolean } = {},
+): string[] {
+  const lower = period === "This week" ? "this week" : "last week";
+  const lines = [scorecardCountsLine(s, period)];
+  if (options.average !== false) lines.push(responseTimeSentence(s.response, null, lower));
+  else {
+    const waiting = stillWaitingSentence(s.response.unanswered, lower);
+    if (waiting) lines.push(waiting);
+  }
+  lines.push(timeSavedLine(s.minutesSaved));
+  return lines;
 }

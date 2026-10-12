@@ -314,6 +314,50 @@ describe("in the database", () => {
     });
   });
 
+  it("sent replies count in the month they were sent, not the month they were drafted (A18)", async () => {
+    const [t] = await database.select().from(threads);
+    const base = {
+      threadId: t!.id,
+      mailboxId,
+      toAddress: "x@y.com",
+      subject: "Re",
+      body: "b",
+      originalBody: "b",
+      reason: "r",
+      promptVersion: "draft.v1",
+    };
+    const sept30 = new Date("2026-09-30T18:00:00Z");
+    await database.insert(drafts).values([
+      // Drafted Sep 30, sent Oct 1: October's reply (and October's time saved)…
+      {
+        ...base,
+        gmailDraftId: "a",
+        status: "sent",
+        createdAt: sept30,
+        decidedAt: new Date("2026-10-01T13:00:00Z"),
+      },
+      // …a follow-up drafted and sent in September is not…
+      {
+        ...base,
+        gmailDraftId: "b",
+        status: "sent",
+        kind: "followup",
+        createdAt: sept30,
+        decidedAt: new Date("2026-09-30T19:00:00Z"),
+      },
+      // …and one drafted this month but not sent counts as drafted only.
+      { ...base, gmailDraftId: "c", status: "discarded", createdAt: NOW, decidedAt: NOW },
+    ]);
+    expect(await monthSummary(workspaceId, NOW)).toEqual({
+      sorted: 1,
+      drafted: 1,
+      sent: 1,
+      sentAfterEditing: 0,
+      nudgesSent: 0,
+      minutesSaved: 3,
+    });
+  });
+
   it("close rate counts only quotes decided this month (owner's zone, Eastern by default), whoever decided them", async () => {
     const empty = await monthCloseRate(workspaceId, NOW);
     expect(empty).toEqual({ won: 0, lost: 0, noAnswer: 0, ratePct: null });

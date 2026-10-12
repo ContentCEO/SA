@@ -4,8 +4,11 @@ import {
   formatDuration,
   localWeekday,
   responseTimeSentence,
+  scorecardIsEmpty,
+  scorecardLines,
   timeSavedPhrase,
   weekBounds,
+  type ScorecardNumbers,
 } from "@/server/scorecard-rules";
 
 const iso = (d: Date) => d.toISOString();
@@ -136,6 +139,13 @@ describe("responseTimeSentence", () => {
     expect(responseTimeSentence({ avgMinutes: null, unanswered: 1 }, null)).toBe(
       "No quote requests answered yet this week. 1 is still waiting for an answer.",
     );
+    // Nothing answered yet this week (every Monday morning): last week's figure still shows.
+    expect(responseTimeSentence({ avgMinutes: null, unanswered: 0 }, { avgMinutes: 220 })).toBe(
+      "No quote requests answered yet this week (last week: 3 h 40 min on average).",
+    );
+    expect(responseTimeSentence({ avgMinutes: null, unanswered: 2 }, { avgMinutes: 220 })).toBe(
+      "No quote requests answered yet this week (last week: 3 h 40 min on average). 2 are still waiting for an answer.",
+    );
     expect(responseTimeSentence({ avgMinutes: 30, unanswered: 3 }, { avgMinutes: 60 })).toBe(
       "You answered quote requests in 30 min on average this week (last week: 1 h). 3 are still waiting for an answer.",
     );
@@ -148,6 +158,9 @@ describe("responseTimeSentence", () => {
     expect(responseTimeSentence({ avgMinutes: null, unanswered: 0 }, null, "last week")).toBe(
       "No quote requests answered last week.",
     );
+    expect(
+      responseTimeSentence({ avgMinutes: null, unanswered: 0 }, { avgMinutes: 60 }, "last week"),
+    ).toBe("No quote requests answered last week (the week before: 1 h on average).");
   });
 
   it("is only numbers and fixed words", () => {
@@ -181,5 +194,114 @@ describe("timeSavedPhrase", () => {
 
   it("matches the old wording everywhere", () => {
     for (let m = 0; m <= 3000; m += 3) expect(timeSavedPhrase(m)).toBe(oldTimeSaved(m));
+  });
+});
+
+describe("scorecardIsEmpty / scorecardLines (#32)", () => {
+  const zero: ScorecardNumbers = {
+    repliesSent: 0,
+    followupsSent: 0,
+    quotesOut: 0,
+    response: { avgMinutes: null, answered: 0, unanswered: 0 },
+    minutesSaved: 0,
+  };
+
+  it("an all-zero week is empty; any count, or a request still waiting, is not", () => {
+    expect(scorecardIsEmpty(zero)).toBe(true);
+    expect(scorecardIsEmpty({ ...zero, repliesSent: 1 })).toBe(false);
+    expect(scorecardIsEmpty({ ...zero, followupsSent: 1 })).toBe(false);
+    expect(scorecardIsEmpty({ ...zero, quotesOut: 1 })).toBe(false);
+    expect(
+      scorecardIsEmpty({ ...zero, response: { avgMinutes: 30, answered: 1, unanswered: 0 } }),
+    ).toBe(false);
+    expect(
+      scorecardIsEmpty({ ...zero, response: { avgMinutes: null, answered: 0, unanswered: 1 } }),
+    ).toBe(false);
+  });
+
+  it("says the week in plain sentences", () => {
+    const s: ScorecardNumbers = {
+      repliesSent: 12,
+      followupsSent: 3,
+      quotesOut: 4,
+      response: { avgMinutes: 130, answered: 4, unanswered: 1 },
+      minutesSaved: 45,
+    };
+    expect(scorecardLines(s, "Last week")).toEqual([
+      "Last week: 12 replies sent, 3 follow-ups sent, 4 quotes out.",
+      "You answered quote requests in 2 h 10 min on average last week. 1 is still waiting for an answer.",
+      "Time saved: about 45 minutes (an estimate: 3 minutes per reply sent from the app).",
+    ]);
+    expect(
+      scorecardLines(
+        { ...s, repliesSent: 1, followupsSent: 1, quotesOut: 1, minutesSaved: 6 },
+        "This week",
+        { average: false },
+      ),
+    ).toEqual([
+      "This week: 1 reply sent, 1 follow-up sent, 1 quote out.",
+      "1 quote request from this week is still waiting for an answer.",
+      "Time saved: about 6 minutes (an estimate: 3 minutes per reply sent from the app).",
+    ]);
+    // Without the average, a week with nothing waiting is just counts and time saved.
+    expect(
+      scorecardLines(
+        { ...s, response: { avgMinutes: 130, answered: 4, unanswered: 0 } },
+        "Last week",
+        {
+          average: false,
+        },
+      ),
+    ).toEqual([
+      "Last week: 12 replies sent, 3 follow-ups sent, 4 quotes out.",
+      "Time saved: about 45 minutes (an estimate: 3 minutes per reply sent from the app).",
+    ]);
+    expect(scorecardLines(zero, "This week")[1]).toBe("No quote requests answered yet this week.");
+  });
+
+  it("the Activity card: last week's response time and its waiting requests are always said", () => {
+    // What the page renders: this week's sentence (with last week alongside) + last week's lines.
+    const card = (thisWeek: ScorecardNumbers, lastWeek: ScorecardNumbers) =>
+      [
+        responseTimeSentence(thisWeek.response, lastWeek.response),
+        ...scorecardLines(lastWeek, "Last week", { average: false }),
+      ].join(" ");
+    const lastWeek: ScorecardNumbers = {
+      ...zero,
+      repliesSent: 3,
+      quotesOut: 2,
+      response: { avgMinutes: 220, answered: 2, unanswered: 0 },
+      minutesSaved: 9,
+    };
+    // Monday morning: nothing answered yet this week.
+    expect(card(zero, lastWeek)).toContain("3 h 40 min");
+    // Last week had only a request nobody answered: it is said, not "0 replies sent" alone.
+    const waitingOnly: ScorecardNumbers = {
+      ...zero,
+      response: { avgMinutes: null, answered: 0, unanswered: 1 },
+    };
+    expect(scorecardIsEmpty(waitingOnly)).toBe(false);
+    expect(card(zero, waitingOnly)).toContain(
+      "1 quote request from last week is still waiting for an answer.",
+    );
+  });
+
+  it("lines contain only numbers and fixed words", () => {
+    const SAFE_LINE = /^[A-Za-z0-9 .,:()\-]+$/;
+    for (const n of [0, 1, 2, 17, 1000])
+      for (const avg of [null, 0, 59, 61, 1500, 90_000])
+        for (const period of ["This week", "Last week"] as const)
+          for (const line of scorecardLines(
+            {
+              repliesSent: n,
+              followupsSent: n,
+              quotesOut: n,
+              response: { avgMinutes: avg, answered: n, unanswered: n },
+              minutesSaved: n * 3,
+            },
+            period,
+            { average: n % 2 === 0 },
+          ))
+            expect(line).toMatch(SAFE_LINE);
   });
 });

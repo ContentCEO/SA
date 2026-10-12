@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { expect, test } from "@playwright/test";
 import { eq } from "drizzle-orm";
 import * as schema from "../../src/db/schema";
+import { localMonthName } from "../../src/server/snooze-rules";
 import { seedOwner, seedQueue, signInAs, testDb } from "./support";
 
 test("activity: plain log, honest estimate, reachable from the menu", async ({ page, context }) => {
@@ -37,9 +38,34 @@ test("activity: plain log, honest estimate, reachable from the menu", async ({ p
   await expect(page).toHaveURL(/\/activity$/);
   await expect(page.getByText("You sent a reply to Priya")).toBeVisible();
   await expect(page.getByText("Drafted a reply to Priya · Quote request")).toBeVisible();
-  await expect(page.getByText("Time saved: about 3 minutes.")).toBeVisible();
+  // The month card (no profile → Eastern) and the week card each say it once.
+  const month = page.getByRole("region", {
+    name: `${localMonthName(new Date(), "America/New_York")} so far`,
+  });
+  await expect(month.getByText("Time saved: about 3 minutes.")).toBeVisible();
   await expect(
-    page.getByText(/That's an estimate: 3 minutes for each drafted reply you sent/),
+    month.getByText(/That's an estimate: 3 minutes for each drafted reply you sent/),
+  ).toBeVisible();
+
+  // Plan #32/#33: this week so far — the reply just sent from the app answers the quote
+  // request at once (sync hasn't brought in its email yet), so the quote is out.
+  const week = page.getByRole("region", { name: "This week so far" });
+  await expect(week).toBeVisible();
+  const figure = (label: string) =>
+    week.locator("div").filter({ has: page.getByRole("term").filter({ hasText: label }) });
+  await expect(figure("Replies sent").getByRole("definition")).toHaveText("1");
+  await expect(figure("Follow-ups sent").getByRole("definition")).toHaveText("0");
+  await expect(figure("Quotes out").getByRole("definition")).toHaveText("1");
+  await expect(figure("Time saved (estimate)").getByRole("definition")).toHaveText(
+    "about 3 minutes",
+  );
+  await expect(week).toContainText(
+    "You answered quote requests in under a minute on average this week.",
+  );
+  await expect(week).not.toContainText("still waiting");
+  await expect(week).toContainText("Nothing sent last week.");
+  await expect(
+    week.getByText(/That's an estimate: 3 minutes for each drafted reply you sent/),
   ).toBeVisible();
 
   const overflow = await page.evaluate(
@@ -89,6 +115,11 @@ test("activity at 375px: monthly close rate counts owner and auto outcomes, Mone
   await signInAs(context, owner);
 
   await page.goto("/activity");
+  // The week card renders at phone width, with the estimate labelled as one.
+  const week = page.getByRole("region", { name: "This week so far" });
+  await expect(week.getByRole("heading", { name: "This week so far" })).toBeVisible();
+  await expect(week.getByText("Time saved (estimate)")).toBeVisible();
+  await expect(week.getByText(/That's an estimate/)).toBeVisible();
   const close = page.getByRole("region", { name: "Quotes decided this month" });
   await expect(close).toContainText("You won 1 of 3 quotes decided this month (33%).");
   // Won / Lost / No answer: one each — the auto "no answer" counts as decided.

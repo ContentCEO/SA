@@ -5,6 +5,10 @@
  * by itself.
  */
 import { isReceiptSender } from "./money-rules";
+import { isNoReplyAddress } from "./sender-rules";
+
+// The no-reply rule is shared with response time and leads at risk (plan M8 A13).
+export { isNoReplyAddress } from "./sender-rules";
 
 /** One review request per customer address in this many days (pending or sent counts). */
 export const REVIEW_REQUEST_WINDOW_DAYS = 365;
@@ -17,16 +21,12 @@ export const CLOSING_AFTER_NUDGES = 2;
 
 const DAY_MS = 86_400_000;
 
-/** Local parts that are a machine, never a person who could leave a review (A2). */
-const NO_REPLY_LOCAL =
-  /^(no-?reply|do-?not-?reply|donotreply|notifications?|mailer-daemon)([+.-]|$)/;
-
 /** A payment receipt or an automated sender: never asked for a review (A2). */
 export function isAutomatedSender(address: string | null | undefined): boolean {
   const s = (address ?? "").trim().toLowerCase();
-  const at = s.lastIndexOf("@");
-  if (at <= 0) return false;
-  return NO_REPLY_LOCAL.test(s.slice(0, at)) || isReceiptSender(s);
+  if (s.lastIndexOf("@") <= 0) return false;
+  // A machine (no-reply, notifications…) is never a person who could leave a review (A2).
+  return isNoReplyAddress(s) || isReceiptSender(s);
 }
 
 export type ReviewOfferReason = "complaint" | "not_eligible" | "no_review_link" | "review_recent";
