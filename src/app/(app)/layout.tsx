@@ -1,3 +1,5 @@
+import { Suspense } from "react";
+import { AppBadge } from "@/components/app/app-badge";
 import { AppHeader } from "@/components/app/app-header";
 import { devicePrefs } from "@/lib/device-prefs";
 import { ReconnectBanner } from "@/components/app/reconnect-banner";
@@ -12,6 +14,9 @@ export default async function AppLayout({ children }: { children: React.ReactNod
       className="mx-auto flex w-full max-w-xl flex-1 flex-col gap-8 px-4 pt-6 pb-28 sm:pb-6"
     >
       <AppHeader sunlight={sunlight} />
+      <Suspense fallback={null}>
+        <AppBadge />
+      </Suspense>
       <ReconnectBanner />
       <StatusBanner />
       <main className="flex flex-1 flex-col gap-8">{children}</main>

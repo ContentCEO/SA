@@ -106,6 +106,8 @@ describe("/api/push/summary counts like the queue (plan #36, M8 A1)", () => {
     const { status, json } = await summary();
     expect(status).toBe(200);
     expect(json.body).toBe("Your queue is up to date.");
+    // Plan #38: nothing waiting → the badge clears.
+    expect(json.count).toBe(0);
   });
 
   it("counts what is on the queue, and says nothing about it but numbers", async () => {
@@ -116,6 +118,8 @@ describe("/api/push/summary counts like the queue (plan #36, M8 A1)", () => {
 
     const { json } = await summary();
     expect(json.body).toBe("1 email needs you · 1 reply ready to send");
+    // Plan #38: the badge number = replies + needs-you, the same numbers as the body.
+    expect(json.count).toBe(2);
     expect(JSON.stringify(json)).not.toMatch(/SECRET|@example\.com/i);
   });
 
@@ -170,13 +174,15 @@ describe("/api/push/summary with leads at risk", () => {
     return t;
   };
 
-  it("GUARDRAIL: exactly title, body and url; counts only; the link is on the allow-list", async () => {
+  it("GUARDRAIL: exactly title, body, url and count; counts only; the link is on the allow-list", async () => {
     const t = await quoteRequest({ needsOwner: true, needsOwnerReason: "SECRET-REASON" });
     const { status, headers, json } = await summary();
     expect(status).toBe(200);
     // Never kept by a cache: the link points at a card that may be gone by the next push.
     expect(headers.get("cache-control")).toContain("no-store");
-    expect(Object.keys(json).sort()).toEqual(["body", "title", "url"]);
+    expect(Object.keys(json).sort()).toEqual(["body", "count", "title", "url"]);
+    // An at-risk lead isn't counted twice: the badge is what's on the queue.
+    expect(json.count).toBe(1);
     expect(json.body).toBe("1 quote request has waited over 4 hours · 1 email needs you");
     expect(json.url).toBe(`/queue?t=${t.id}#t-${t.id}`);
     expect(json.url).toMatch(ALLOWED);

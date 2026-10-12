@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/auth";
 import { getWorkspaceForUser } from "@/server/accounts";
+import { badgeCountOf } from "@/server/badge";
 import { headerPicks, toNeedsYouItem } from "@/server/digest-rules";
 import { countQueue, queueCardIds, queueMembership } from "@/server/drafts";
 import { leadsAtRisk } from "@/server/leads-at-risk";
@@ -15,7 +16,8 @@ export const dynamic = "force-dynamic";
  * Plan #36: the service worker asks this when an (empty) push arrives, with
  * the owner's own cookie, and shows the answer. Counts only, plus where a tap
  * goes: a queue card by its thread id (a uuid), the quote tracker or the queue
- * (plan #34) — never a name, an address or a subject.
+ * (plan #34) — never a name, an address or a subject. `count` is the number for the
+ * home-screen badge (plan #38): replies + needs-you, 0 for a read-only account (M8 A6).
  */
 export async function GET() {
   const session = await auth();
@@ -45,6 +47,7 @@ export async function GET() {
         atRisk: atRisk.length,
       }),
       url,
+      count: badgeCountOf(workspace, counts, now),
     },
     { headers: { "Cache-Control": "no-store" } },
   );

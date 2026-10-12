@@ -114,3 +114,98 @@ describe("service worker: where a notification tap goes", () => {
     expect(bare.openWindow).toHaveBeenCalledWith("/queue");
   });
 });
+
+/* Plan #38: a push also updates the number on the home-screen icon (A31). */
+describe("service worker: the home-screen badge on a push", () => {
+  function badgeWorker(
+    answer: () => Promise<{ ok: boolean; status: number; json: () => Promise<unknown> }>,
+    navigator: object | undefined = {
+      setAppBadge: vi.fn(async () => {}),
+      clearAppBadge: vi.fn(async () => {}),
+    },
+  ) {
+    const listeners: Record<string, (e: unknown) => void> = {};
+    const shown: string[] = [];
+    runInNewContext(SRC, {
+      self: {
+        location: { origin: "https://sa.example" },
+        navigator,
+        addEventListener: (type: string, fn: (e: unknown) => void) => (listeners[type] = fn),
+        registration: { showNotification: async (title: string) => void shown.push(title) },
+        clients: {},
+      },
+      URL,
+      caches: {},
+      fetch: answer,
+    });
+    const run = async () => {
+      let done: Promise<unknown> = Promise.resolve();
+      listeners.push!({ waitUntil: (p: Promise<unknown>) => (done = p) });
+      await done;
+    };
+    return {
+      run,
+      shown,
+      nav: navigator as {
+        setAppBadge: ReturnType<typeof vi.fn>;
+        clearAppBadge: ReturnType<typeof vi.fn>;
+      },
+    };
+  }
+  const ok = (body: unknown) => async () => ({ ok: true, status: 200, json: async () => body });
+
+  it("shows the summary's count, capped at 99; 0 clears it", async () => {
+    const three = badgeWorker(ok({ title: "Squared Away", body: "x", url: "/queue", count: 3 }));
+    await three.run();
+    expect(three.nav.setAppBadge).toHaveBeenCalledWith(3);
+    expect(three.shown).toHaveLength(1);
+    const many = badgeWorker(ok({ count: 250 }));
+    await many.run();
+    expect(many.nav.setAppBadge).toHaveBeenCalledWith(99);
+    const zero = badgeWorker(ok({ count: 0 }));
+    await zero.run();
+    expect(zero.nav.clearAppBadge).toHaveBeenCalled();
+    expect(zero.nav.setAppBadge).not.toHaveBeenCalled();
+  });
+
+  it("signed out (401) clears it; no signal or a server error leaves it alone", async () => {
+    const out = badgeWorker(async () => ({ ok: false, status: 401, json: async () => ({}) }));
+    await out.run();
+    expect(out.nav.clearAppBadge).toHaveBeenCalled();
+    expect(out.shown).toHaveLength(1);
+
+    for (const answer of [
+      async () => Promise.reject(new TypeError("Failed to fetch")),
+      async () => ({ ok: false, status: 500, json: async () => ({ count: 0 }) }),
+      ok({ title: "Squared Away" }), // an older server: no count
+      ok(null),
+    ]) {
+      const w = badgeWorker(answer);
+      await w.run();
+      expect(w.nav.setAppBadge).not.toHaveBeenCalled();
+      expect(w.nav.clearAppBadge).not.toHaveBeenCalled();
+      // The notification still shows.
+      expect(w.shown).toHaveLength(1);
+    }
+  });
+
+  it("a phone without the Badging API, or one that refuses, still gets the notification", async () => {
+    const none = badgeWorker(ok({ count: 2 }), undefined);
+    await none.run();
+    expect(none.shown).toHaveLength(1);
+    const refuses = badgeWorker(ok({ count: 2 }), {
+      setAppBadge: () => Promise.reject(new Error("NotAllowedError")),
+      clearAppBadge: async () => {},
+    });
+    await refuses.run();
+    expect(refuses.shown).toHaveLength(1);
+    const throws = badgeWorker(ok({ count: 2 }), {
+      setAppBadge: () => {
+        throw new Error("boom");
+      },
+      clearAppBadge: async () => {},
+    });
+    await throws.run();
+    expect(throws.shown).toHaveLength(1);
+  });
+});

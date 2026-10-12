@@ -97,6 +97,30 @@ function safeUrl(u) {
 }
 
 /*
+ * The number on the home-screen icon (plan #38), where the phone supports it.
+ * Signed out (401) or nothing waiting → cleared. No signal or a server error
+ * leaves it as it was. Never throws, and never holds up the notification.
+ */
+function updateBadge(status, s) {
+  try {
+    const nav = self.navigator;
+    if (!nav || typeof nav.setAppBadge !== "function") return Promise.resolve();
+    const count = s && typeof s.count === "number" && isFinite(s.count) ? s.count : null;
+    if (status === 401 || count === 0) {
+      return typeof nav.clearAppBadge === "function"
+        ? Promise.resolve(nav.clearAppBadge()).catch(() => {})
+        : Promise.resolve();
+    }
+    if (count !== null && count > 0) {
+      return Promise.resolve(nav.setAppBadge(Math.min(Math.floor(count), 99) || 1)).catch(() => {});
+    }
+  } catch {
+    // A badge is never worth an error.
+  }
+  return Promise.resolve();
+}
+
+/*
  * Phone notifications (plan #36). The push is empty — the push service never
  * sees anything — so ask the app for today's counts and show those. If the
  * phone is signed out, a plain line instead.
@@ -104,17 +128,22 @@ function safeUrl(u) {
 self.addEventListener("push", (event) => {
   event.waitUntil(
     fetch("/api/push/summary", { credentials: "same-origin", cache: "no-store" })
-      .then((r) => (r.ok ? r.json() : null))
-      .catch(() => null)
-      .then((s) =>
-        self.registration.showNotification((s && s.title) || "Squared Away", {
-          body: (s && s.body) || "Something new is waiting in your queue.",
-          icon: "/app-icon/192",
-          badge: "/app-icon/192",
-          tag: "sa-queue",
-          renotify: true,
-          data: { url: safeUrl(s && s.url) },
-        }),
+      .then((r) =>
+        r.ok ? r.json().then((s) => ({ status: r.status, s })) : { status: r.status, s: null },
+      )
+      .catch(() => ({ status: 0, s: null }))
+      .then(({ status, s }) =>
+        Promise.all([
+          self.registration.showNotification((s && s.title) || "Squared Away", {
+            body: (s && s.body) || "Something new is waiting in your queue.",
+            icon: "/app-icon/192",
+            badge: "/app-icon/192",
+            tag: "sa-queue",
+            renotify: true,
+            data: { url: safeUrl(s && s.url) },
+          }),
+          updateBadge(status, s),
+        ]),
       ),
   );
 });
