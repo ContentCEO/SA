@@ -239,6 +239,7 @@ describe("plan M5 sending: undo (#7), batch (#5), snooze (#6)", () => {
       amountsInEmail: [],
       untrusted: false,
       autopilotCounting: false,
+      acceptsQuote: false,
     };
     const all = ["quote_request", "customer_question", "scheduling", "invoice_payment"];
 
@@ -253,6 +254,8 @@ describe("plan M5 sending: undo (#7), batch (#5), snooze (#6)", () => {
       expect(batchEligible({ ...base, confidencePct: 70 }, all)).toBe(false);
       expect(batchEligible({ ...base, untrusted: true }, all)).toBe(false);
       expect(batchEligible({ ...base, autopilotCounting: true }, all)).toBe(false);
+      // A quote acceptance is a commitment: always one at a time, as with autopilot.
+      expect(batchEligible({ ...base, acceptsQuote: true }, all)).toBe(false);
       expect(
         batchEligible({ ...base, category: "invoice_payment", amountsInEmail: [1200] }, all),
       ).toBe(false);

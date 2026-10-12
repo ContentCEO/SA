@@ -10,18 +10,25 @@ import {
   type Category,
   type EmailInput,
   type ModelClassification,
-} from "./prompts/classify.v2";
+} from "./prompts/classify.v3";
 import { INJECTION_REASON, injectionCheck, looksMunicipal } from "./guards";
 
 /**
- * What we keep about an email. The model's facts, plus two flags set in code:
- * `municipal` (building dept / inspector — never noise, never auto-drafted) and
+ * What we keep about an email. The model's facts, plus flags:
+ * `municipal` (building dept / inspector — never noise, never auto-drafted),
  * `injection` (tries to instruct the assistant — needs the owner, never
- * auto-drafted, never autopilot).
+ * auto-drafted, never autopilot), the model's `accepts_quote` / `job_done`
+ * signals (classify.v3; only ever present as `true`), and `quote_accepted`,
+ * set at classification when the acceptance lands on a thread that really
+ * was a quote the owner answered (see `quoteAccepted` in quote-rules).
+ * Rows written before v3 simply lack the newer keys — read them as optional.
  */
 export type Extracted = ModelClassification["extracted"] & {
   municipal?: boolean;
   injection?: boolean;
+  accepts_quote?: boolean;
+  job_done?: boolean;
+  quote_accepted?: boolean;
 };
 
 /** Below this, the owner looks. */
@@ -194,6 +201,9 @@ export async function classifyEmail(
       ...result.extracted,
       ...(injection ? { injection: true } : {}),
       ...(municipal ? { municipal: true } : {}),
+      // Signals only — they never change needs_owner (applyOwnerRules ignores them).
+      ...(result.signals.accepts_quote ? { accepts_quote: true } : {}),
+      ...(result.signals.job_done ? { job_done: true } : {}),
     },
     unreadable: false,
   };

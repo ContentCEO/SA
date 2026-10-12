@@ -88,6 +88,7 @@ describe("per-email guardrails (layer 3)", () => {
     ["invoices with an amount", { category: "invoice_payment", amountsInEmail: [450] }],
     ["any draft that mentions money", { draftBody: "That's $95 for the call-out." }],
     ["people the owner has never written to", { knownCustomer: false }],
+    ["quote acceptances", { acceptsQuote: true }],
   ])("never: %s", (_label, change) => {
     expect(guardrailReasons({ ...ok, ...change }).length).toBeGreaterThan(0);
   });
@@ -352,6 +353,29 @@ describe("in the database", () => {
       if (r.status !== "created") throw new Error("expected a draft");
       expect(await considerAutopilot(r.draftId, NOW)).toBeNull();
       expect(await overdueAutopilotDrafts(later(60))).toEqual([]);
+    });
+
+    it("never starts for a quote acceptance, even one re-sorted as scheduling (A5)", async () => {
+      // The owner reopened the quote (no outcome, set by the owner), then the
+      // customer's "Let's do it, can you start Monday?" was sorted as scheduling,
+      // which is on autopilot. The acceptance signal alone keeps it with the owner.
+      const accepted = await conversation();
+      await database
+        .update(threads)
+        .set({
+          quoteOutcome: null,
+          quoteOutcomeSource: "owner",
+          extracted: { accepts_quote: true, quote_accepted: true, dollar_amounts: [] },
+        })
+        .where(eq(threads.id, accepted));
+      const draftId = await drafted(accepted);
+      expect(await considerAutopilot(draftId, NOW)).toBeNull();
+      expect(
+        (await database.select().from(drafts).where(eq(drafts.id, draftId)))[0]!.autoSendAt,
+      ).toBeNull();
+      // The same conversation without the signal would have gone.
+      const control = await drafted(await conversation());
+      expect(await considerAutopilot(control, NOW)).toEqual(later(GRACE_MINUTES));
     });
 
     it(`stops after ${DAILY_AUTOPILOT_CAP} a day`, async () => {

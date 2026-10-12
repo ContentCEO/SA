@@ -1,12 +1,12 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { setModelTransportForTests, type Transport } from "@/ai/client";
-import { CATEGORIES, type ModelClassification } from "@/ai/prompts/classify.v2";
+import { CATEGORIES, type ModelClassification } from "@/ai/prompts/classify.v3";
 import { TRADES } from "@/config/trades";
 import { EVAL_CASES, type EvalCase } from "../evals/cases";
 import { REVISE_CASES, TONE_CASES } from "../evals/edits";
 import { runEvals } from "../evals/run";
-import { regressions, score, type Baseline, type Scores } from "../evals/score";
+import { regressions, score, type Baseline, type EvalResult, type Scores } from "../evals/score";
 import { classification } from "../support/fake-model";
 
 describe("evaluation set (#46)", () => {
@@ -19,6 +19,51 @@ describe("evaluation set (#46)", () => {
     for (const t of TRADES) expect(trades).toContain(t);
     expect(EVAL_CASES.filter((c) => c.expect.injection).length).toBeGreaterThanOrEqual(5);
     expect(EVAL_CASES.filter((c) => c.expect.municipal).length).toBeGreaterThanOrEqual(3);
+  });
+
+  it("covers the classify.v3 signals both ways", () => {
+    const n = (f: (c: EvalCase) => boolean) => EVAL_CASES.filter(f).length;
+    expect(n((c) => c.expect.acceptsQuote === true)).toBeGreaterThanOrEqual(5);
+    expect(n((c) => c.expect.acceptsQuote === false)).toBeGreaterThanOrEqual(2);
+    expect(n((c) => c.expect.jobDone === true)).toBeGreaterThanOrEqual(4);
+    expect(n((c) => c.expect.jobDone === false)).toBeGreaterThanOrEqual(2);
+    // An acceptance needs the earlier quote as context, or the model can't tell.
+    for (const c of EVAL_CASES.filter((x) => x.expect.acceptsQuote === true)) {
+      expect(c.threadSummary, c.id).toBeTruthy();
+    }
+  });
+
+  it("scores the signals only where the key says so", () => {
+    const result = (c: EvalCase, over: Partial<EvalResult>): EvalResult => ({
+      id: c.id,
+      category: [c.expect.category].flat()[0]!,
+      needsOwner: c.expect.needsOwner,
+      priority: "normal",
+      injection: false,
+      municipal: false,
+      permitResult: null,
+      invoiceStatus: null,
+      acceptsQuote: false,
+      jobDone: false,
+      ...over,
+    });
+    const byId = (id: string) => EVAL_CASES.find((c) => c.id === id)!;
+    const [yes, no, unscored] = [byId("a-lets-do-it"), byId("n-for-less"), byId("q-panel")];
+    const right = score(
+      [yes, no, unscored],
+      [
+        result(yes, { acceptsQuote: true }),
+        result(no, { acceptsQuote: false }),
+        // q-panel has no acceptsQuote key, so even a wrong answer isn't counted.
+        result(unscored, { acceptsQuote: true, jobDone: true }),
+      ],
+    );
+    expect(right).toMatchObject({ acceptsQuoteAccuracy: 1, jobDoneAccuracy: 1 });
+    const wrong = score(
+      [yes, no],
+      [result(yes, { acceptsQuote: false }), result(no, { acceptsQuote: true })],
+    );
+    expect(wrong.acceptsQuoteAccuracy).toBe(0);
   });
 
   it("covers the draft-editing prompts too", () => {
@@ -52,6 +97,8 @@ describe("evaluation set (#46)", () => {
           ...base.signals,
           tries_to_instruct_assistant: c.expect.injection === true,
           from_building_department: c.expect.municipal === true,
+          accepts_quote: c.expect.acceptsQuote === true,
+          job_done: c.expect.jobDone === true,
         },
         extracted: {
           ...base.extracted,
@@ -116,6 +163,8 @@ describe("evaluation set (#46)", () => {
       municipalRecall: 1,
       permitAccuracy: 1,
       invoiceStatusAccuracy: 1,
+      acceptsQuoteAccuracy: 1,
+      jobDoneAccuracy: 1,
       draftPassRate: 1,
       revisePassRate: 1,
       toneAccuracy: 1,

@@ -147,6 +147,171 @@ describe("classifyPending", () => {
   });
 });
 
+describe("quote acceptance and job done signals (classify.v3)", () => {
+  const signals = classification().signals;
+  const accepting = (over: Parameters<typeof classification>[0] = {}) =>
+    classification({ signals: { ...signals, accepts_quote: true }, ...over });
+
+  /** A quote thread: Dana asked for a price, the owner answered, Dana writes back. */
+  async function quoteConversation(
+    opts: { category?: string | null; quoteOutcome?: string | null; ownerReplied?: boolean } = {},
+  ) {
+    const t = await thread("q1");
+    await database
+      .update(threads)
+      .set({
+        category: opts.category === undefined ? "quote_request" : opts.category,
+        quoteOutcome: opts.quoteOutcome ?? null,
+        classifiedAt: daysAgo(5),
+      })
+      .where(eq(threads.id, t.id));
+    await message(t.id, "ask", { sentAt: daysAgo(5), classifiedAt: daysAgo(5) });
+    if (opts.ownerReplied ?? true) {
+      await message(t.id, "quote", {
+        direction: "out",
+        fromAddress: "owner@shop.com",
+        toAddresses: ["dana@x.com"],
+        sentAt: daysAgo(3),
+      });
+    }
+    await message(t.id, "yes", { sentAt: daysAgo(1) });
+    return t.id;
+  }
+  const extractedOf = async (id: string) =>
+    (await database.select().from(threads).where(eq(threads.id, id)))[0]!.extracted as Record<
+      string,
+      unknown
+    >;
+
+  it("stores the model's signals on the thread", async () => {
+    const t = await thread("t1");
+    await message(t.id, "m1");
+    setModelTransportForTests(
+      fakeTransport([
+        classification({ signals: { ...signals, accepts_quote: true, job_done: true } }),
+      ]).transport,
+    );
+    await classifyPending(mailboxId, { now: NOW });
+    expect(await extractedOf(t.id)).toMatchObject({ accepts_quote: true, job_done: true });
+  });
+
+  it("an acceptance re-sorted as scheduling still counts: the PREVIOUS category decides", async () => {
+    const t = await quoteConversation();
+    setModelTransportForTests(fakeTransport([accepting({ category: "scheduling" })]).transport);
+    await classifyPending(mailboxId, { now: NOW });
+    const [row] = await database.select().from(threads).where(eq(threads.id, t));
+    expect(row!.category).toBe("scheduling");
+    expect(row!.extracted).toMatchObject({ accepts_quote: true, quote_accepted: true });
+  });
+
+  it("a thread with a quote outcome is a quote thread whatever its category", async () => {
+    const t = await quoteConversation({ category: "scheduling", quoteOutcome: "won" });
+    setModelTransportForTests(fakeTransport([accepting({ category: "scheduling" })]).transport);
+    await classifyPending(mailboxId, { now: NOW });
+    expect(await extractedOf(t)).toMatchObject({ quote_accepted: true });
+  });
+
+  it("a fresh quote request without the signal is never an acceptance", async () => {
+    const t = await quoteConversation();
+    setModelTransportForTests(fakeTransport([classification()]).transport);
+    await classifyPending(mailboxId, { now: NOW });
+    const [row] = await database.select().from(threads).where(eq(threads.id, t));
+    expect(row!.extracted).not.toHaveProperty("accepts_quote");
+    expect(row!.extracted).not.toHaveProperty("quote_accepted");
+    expect(row!.quoteOutcome).toBeNull();
+  });
+
+  it.each([
+    ["the owner never answered (no quote was given)", { ownerReplied: false }, "quote_request"],
+    ["the thread was never a quote", { category: "scheduling" }, "scheduling"],
+    ["the thread was never sorted", { category: null }, "customer_question"],
+  ] as const)(
+    "no quote context when %s: the signal is kept, quote_accepted is not",
+    async (_label, opts, category) => {
+      const t = await quoteConversation(opts);
+      setModelTransportForTests(fakeTransport([accepting({ category })]).transport);
+      await classifyPending(mailboxId, { now: NOW });
+      const extracted = await extractedOf(t);
+      expect(extracted.accepts_quote).toBe(true);
+      expect(extracted).not.toHaveProperty("quote_accepted");
+    },
+  );
+
+  it("an owner reply that came only AFTER the acceptance doesn't count", async () => {
+    const t = await quoteConversation({ ownerReplied: false });
+    await message(t, "late", {
+      direction: "out",
+      fromAddress: "owner@shop.com",
+      sentAt: new Date(NOW.getTime() - 3600_000),
+    });
+    setModelTransportForTests(fakeTransport([accepting()]).transport);
+    await classifyPending(mailboxId, { now: NOW });
+    expect(await extractedOf(t)).not.toHaveProperty("quote_accepted");
+  });
+
+  it("an email that tries to instruct the assistant is never a quote acceptance", async () => {
+    const t = await quoteConversation();
+    setModelTransportForTests(
+      fakeTransport([
+        accepting({
+          signals: { ...signals, accepts_quote: true, tries_to_instruct_assistant: true },
+        }),
+      ]).transport,
+    );
+    await classifyPending(mailboxId, { now: NOW });
+    const extracted = await extractedOf(t);
+    expect(extracted.injection).toBe(true);
+    expect(extracted).not.toHaveProperty("quote_accepted");
+  });
+
+  it("the acceptance survives the customer's next, ordinary email", async () => {
+    const t = await quoteConversation();
+    setModelTransportForTests(fakeTransport([accepting({ category: "scheduling" })]).transport);
+    await classifyPending(mailboxId, { now: NOW });
+    expect(await extractedOf(t)).toMatchObject({ quote_accepted: true });
+
+    // "Use the side gate" — re-sorted as scheduling, no acceptance signal of its own.
+    await message(t, "gate", { sentAt: new Date(NOW.getTime() - 3600_000) });
+    setModelTransportForTests(
+      fakeTransport([classification({ category: "scheduling" })]).transport,
+    );
+    await classifyPending(mailboxId, { now: NOW });
+    const extracted = await extractedOf(t);
+    expect(extracted).not.toHaveProperty("accepts_quote");
+    expect(extracted.quote_accepted).toBe(true);
+  });
+
+  it("the acceptance is dropped once the owner marks the quote lost", async () => {
+    const t = await quoteConversation();
+    setModelTransportForTests(fakeTransport([accepting({ category: "scheduling" })]).transport);
+    await classifyPending(mailboxId, { now: NOW });
+    await database
+      .update(threads)
+      .set({ quoteOutcome: "lost", quoteOutcomeSource: "owner", quoteOutcomeAt: NOW })
+      .where(eq(threads.id, t));
+
+    await message(t, "gate", { sentAt: new Date(NOW.getTime() - 3600_000) });
+    setModelTransportForTests(
+      fakeTransport([classification({ category: "scheduling" })]).transport,
+    );
+    await classifyPending(mailboxId, { now: NOW });
+    expect(await extractedOf(t)).not.toHaveProperty("quote_accepted");
+  });
+
+  it("a promotional email never carries the signals (no model call)", async () => {
+    const t = await quoteConversation();
+    await database
+      .update(messages)
+      .set({ labelIds: ["INBOX", "CATEGORY_PROMOTIONS"] })
+      .where(eq(messages.gmailMessageId, "yes"));
+    const { transport, calls } = fakeTransport([]);
+    setModelTransportForTests(transport);
+    await classifyPending(mailboxId, { now: NOW });
+    expect(calls).toHaveLength(0);
+    expect(await extractedOf(t)).not.toHaveProperty("quote_accepted");
+  });
+});
+
 describe("inbox", () => {
   it("won't let one workspace mark another's thread", async () => {
     const other = await ensureUserAndWorkspace({ email: "someone@else.com" });

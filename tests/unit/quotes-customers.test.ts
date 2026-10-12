@@ -6,7 +6,15 @@ import { messages, threads } from "@/db/schema";
 import { ensureUserAndWorkspace } from "@/server/accounts";
 import { customerByKey, customerDetail, listCustomers } from "@/server/customers";
 import { saveConnectedMailbox } from "@/server/mailboxes";
-import { amountFromOwnerText, formatCents, parseDollars, quoteStage } from "@/server/quote-rules";
+import {
+  amountFromOwnerText,
+  formatCents,
+  isQuoteThread,
+  keepQuoteAccepted,
+  parseDollars,
+  quoteAccepted,
+  quoteStage,
+} from "@/server/quote-rules";
 import { captureQuoteAmounts, listQuotes, setQuoteOutcome } from "@/server/quotes";
 import { createTestDb } from "../support/db";
 
@@ -107,6 +115,83 @@ async function convo(opts: {
   }
   return t!.id;
 }
+
+describe("quote acceptance context (A5)", () => {
+  it("a quote thread is a quote request, or anything with an outcome", () => {
+    expect(isQuoteThread({ category: "quote_request", quoteOutcome: null })).toBe(true);
+    expect(isQuoteThread({ category: "scheduling", quoteOutcome: "won" })).toBe(true);
+    expect(isQuoteThread({ category: "scheduling", quoteOutcome: null })).toBe(false);
+    expect(isQuoteThread({ category: null, quoteOutcome: null })).toBe(false);
+  });
+
+  const base = {
+    acceptsQuote: true,
+    injection: false,
+    previous: { category: "quote_request", quoteOutcome: null },
+    category: "scheduling",
+    ownerWroteBefore: true,
+  };
+  it("needs the signal, a quote context, an owner reply before it, and no injection", () => {
+    expect(quoteAccepted(base)).toBe(true);
+    expect(
+      quoteAccepted({
+        ...base,
+        previous: { category: null, quoteOutcome: null },
+        category: "quote_request",
+      }),
+    ).toBe(true);
+    expect(quoteAccepted({ ...base, acceptsQuote: false })).toBe(false);
+    expect(quoteAccepted({ ...base, ownerWroteBefore: false })).toBe(false);
+    expect(quoteAccepted({ ...base, injection: true })).toBe(false);
+    expect(
+      quoteAccepted({ ...base, previous: { category: "scheduling", quoteOutcome: null } }),
+    ).toBe(false);
+  });
+  it("a fresh quote request without the signal is never an acceptance (precedence guard)", () => {
+    expect(
+      quoteAccepted({
+        ...base,
+        acceptsQuote: false,
+        previous: { category: null, quoteOutcome: null },
+        category: "quote_request",
+      }),
+    ).toBe(false);
+  });
+  it("an earlier acceptance carries over unless the owner decided otherwise", () => {
+    const accepted = {
+      extracted: { quote_accepted: true },
+      quoteOutcome: null,
+      quoteOutcomeSource: null,
+    };
+    expect(keepQuoteAccepted(accepted)).toBe(true);
+    expect(keepQuoteAccepted({ ...accepted, extracted: { accepts_quote: true } })).toBe(false);
+    expect(keepQuoteAccepted({ ...accepted, extracted: null })).toBe(false);
+    // Our own guesses never undo it; the owner's "won" keeps it.
+    expect(
+      keepQuoteAccepted({ ...accepted, quoteOutcome: "won", quoteOutcomeSource: "auto" }),
+    ).toBe(true);
+    expect(
+      keepQuoteAccepted({ ...accepted, quoteOutcome: "no_answer", quoteOutcomeSource: "auto" }),
+    ).toBe(true);
+    expect(
+      keepQuoteAccepted({ ...accepted, quoteOutcome: "won", quoteOutcomeSource: "owner" }),
+    ).toBe(true);
+    // The owner marked it lost / no answer, or reopened it.
+    expect(
+      keepQuoteAccepted({ ...accepted, quoteOutcome: "lost", quoteOutcomeSource: "owner" }),
+    ).toBe(false);
+    expect(
+      keepQuoteAccepted({ ...accepted, quoteOutcome: "no_answer", quoteOutcomeSource: "owner" }),
+    ).toBe(false);
+    expect(
+      keepQuoteAccepted({ ...accepted, quoteOutcome: null, quoteOutcomeSource: "owner" }),
+    ).toBe(false);
+    // An outcome without a source predates the column: the owner's.
+    expect(keepQuoteAccepted({ ...accepted, quoteOutcome: "lost", quoteOutcomeSource: null })).toBe(
+      false,
+    );
+  });
+});
 
 describe("quote tracker", () => {
   it("lists quotes with stages, amounts and 30-day totals", async () => {

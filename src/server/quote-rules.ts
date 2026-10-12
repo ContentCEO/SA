@@ -36,6 +36,57 @@ export function quoteStage(q: QuoteFacts, now: Date, quietDays: number): QuoteSt
   return now.getTime() - q.lastOutboundAt.getTime() >= quietMs ? "quiet" : "talking";
 }
 
+/** A quote thread: sorted as a quote request, or the quote already has an outcome. */
+export function isQuoteThread(t: {
+  category: string | null;
+  quoteOutcome: string | null;
+}): boolean {
+  return t.category === "quote_request" || t.quoteOutcome != null;
+}
+
+/**
+ * Whether a newly classified email accepts a quote the owner really gave.
+ * Decided at classification time from the thread as it was BEFORE this email,
+ * because an acceptance ("Let's do it — can you start Monday?") is often
+ * re-sorted as scheduling, which overwrites the thread's category. Needs:
+ *  - the model's accepts_quote signal;
+ *  - a quote context: the thread was a quote (by its previous category or
+ *    outcome), or this email itself is sorted as a quote request;
+ *  - the owner wrote on the thread before this email (no quote, no acceptance);
+ *  - the email didn't try to instruct the assistant.
+ */
+export function quoteAccepted(f: {
+  acceptsQuote: boolean;
+  injection: boolean;
+  previous: { category: string | null; quoteOutcome: string | null };
+  category: string;
+  ownerWroteBefore: boolean;
+}): boolean {
+  return (
+    f.acceptsQuote === true &&
+    !f.injection &&
+    (isQuoteThread(f.previous) || f.category === "quote_request") &&
+    f.ownerWroteBefore
+  );
+}
+
+/**
+ * Whether a thread's earlier quote acceptance carries over to its next classification
+ * (which replaces `extracted` wholesale). Kept unless the owner has since decided the
+ * quote any other way than won — marked lost / no answer, or reopened it.
+ */
+export function keepQuoteAccepted(t: {
+  extracted: Record<string, unknown> | null;
+  quoteOutcome: string | null;
+  quoteOutcomeSource: string | null;
+}): boolean {
+  if (t.extracted?.quote_accepted !== true) return false;
+  // An outcome with no source predates the column and is the owner's.
+  const ownerDecided =
+    t.quoteOutcomeSource === "owner" || (t.quoteOutcomeSource == null && t.quoteOutcome != null);
+  return !(ownerDecided && t.quoteOutcome !== "won");
+}
+
 /**
  * The amount the owner quoted: the largest dollar figure in their own words
  * (quoted text from the customer already stripped). Null if none.

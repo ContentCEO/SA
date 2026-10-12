@@ -13,6 +13,7 @@ import {
   workspaces,
 } from "@/db/schema";
 import { jobsAllowed } from "./lifecycle";
+import { keepQuoteAccepted, quoteAccepted } from "./quote-rules";
 
 /** Classify inbound mail from this far back on the first pass; everything new after that. */
 export const CLASSIFY_LOOKBACK_DAYS = 14;
@@ -122,6 +123,16 @@ export async function classifyPending(
   let capped = false;
   for (const m of batch) {
     let result: Classification;
+    const [thread] = await db()
+      .select({
+        summary: threads.summary,
+        category: threads.category,
+        extracted: threads.extracted,
+        quoteOutcome: threads.quoteOutcome,
+        quoteOutcomeSource: threads.quoteOutcomeSource,
+      })
+      .from(threads)
+      .where(eq(threads.id, m.threadId));
     if (
       m.labelIds.some((l) => NOISE_LABELS.includes(l)) &&
       // A building department landing in Promotions still gets read.
@@ -142,10 +153,6 @@ export async function classifyPending(
             lt(messages.sentAt, m.sentAt),
           ),
         );
-      const [thread] = await db()
-        .select({ summary: threads.summary })
-        .from(threads)
-        .where(eq(threads.id, m.threadId));
       try {
         result = await classifyEmail(
           box.workspace.id,
@@ -168,6 +175,45 @@ export async function classifyPending(
         }
         throw err;
       }
+      if (result.extracted.accepts_quote) {
+        const [ownerBefore] = await db()
+          .select({ n: count() })
+          .from(messages)
+          .where(
+            and(
+              eq(messages.threadId, m.threadId),
+              eq(messages.direction, "out"),
+              lt(messages.sentAt, m.sentAt),
+            ),
+          );
+        if (
+          quoteAccepted({
+            acceptsQuote: true,
+            injection: result.extracted.injection === true,
+            previous: {
+              category: thread?.category ?? null,
+              quoteOutcome: thread?.quoteOutcome ?? null,
+            },
+            category: result.category,
+            ownerWroteBefore: (ownerBefore?.n ?? 0) > 0,
+          })
+        ) {
+          result = { ...result, extracted: { ...result.extracted, quote_accepted: true } };
+        }
+      }
+    }
+    // Every classification replaces `extracted`, so an earlier acceptance would vanish with the
+    // customer's next "use the side gate" (and the re-sorted category can't re-derive it).
+    if (
+      result.extracted.quote_accepted !== true &&
+      thread &&
+      keepQuoteAccepted({
+        extracted: thread.extracted,
+        quoteOutcome: thread.quoteOutcome,
+        quoteOutcomeSource: thread.quoteOutcomeSource,
+      })
+    ) {
+      result = { ...result, extracted: { ...result.extracted, quote_accepted: true } };
     }
 
     await db()

@@ -864,6 +864,7 @@ export async function batchCandidates(
       dollar_amounts?: number[];
       injection?: boolean;
       municipal?: boolean;
+      accepts_quote?: boolean;
     };
     const ok = batchEligible(
       {
@@ -875,6 +876,7 @@ export async function batchCandidates(
         amountsInEmail: extracted.dollar_amounts ?? [],
         untrusted: extracted.injection === true || extracted.municipal === true,
         autopilotCounting: draft.autoSendAt !== null,
+        acceptsQuote: extracted.accepts_quote === true,
       },
       picked,
     );

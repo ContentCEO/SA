@@ -69,6 +69,8 @@ export type GuardrailInput = {
   /** The email tried to instruct the assistant, or came from a building department. */
   untrusted?: boolean;
   municipal?: boolean;
+  /** The customer's email accepts a quote (classify.v3 signal) — the owner answers those. */
+  acceptsQuote?: boolean;
 };
 
 /** Layer 3. Every reason this email must wait for the owner; empty = may go. */
@@ -87,6 +89,7 @@ export function guardrailReasons(g: GuardrailInput): string[] {
   if (!g.knownCustomer) out.push("You haven't written to this person before.");
   if (g.untrusted) out.push("This email tried to give instructions to the assistant.");
   if (g.municipal) out.push("Building departments always wait for you.");
+  if (g.acceptsQuote) out.push("Quote acceptances always wait for you.");
   return out;
 }
 
@@ -250,6 +253,7 @@ async function blockers(row: NonNullable<Awaited<ReturnType<typeof loadForAutopi
     dollar_amounts?: number[];
     injection?: boolean;
     municipal?: boolean;
+    accepts_quote?: boolean;
   };
   return guardrailReasons({
     category: thread.category,
@@ -260,6 +264,7 @@ async function blockers(row: NonNullable<Awaited<ReturnType<typeof loadForAutopi
     amountsInEmail: extracted.dollar_amounts ?? [],
     untrusted: extracted.injection === true,
     municipal: extracted.municipal === true,
+    acceptsQuote: extracted.accepts_quote === true,
     draftBody: draft.body ?? "",
     knownCustomer: await knownCustomer(mailbox.id, customer?.address ?? null, draft.createdAt),
   });

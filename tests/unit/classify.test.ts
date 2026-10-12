@@ -1,9 +1,10 @@
 import { randomBytes } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { applyOwnerRules, classifyEmail, prepareBody } from "@/ai/classify";
 import { setModelTransportForTests } from "@/ai/client";
 import { estimateCostCentiCents } from "@/ai/cost";
-import { emailBlock } from "@/ai/prompts/classify.v2";
+import { emailBlock } from "@/ai/prompts/classify.v3";
 import { AiCapReachedError, reserveAiCall } from "@/ai/usage";
 import type { Database } from "@/db";
 import { usage } from "@/db/schema";
@@ -178,6 +179,64 @@ describe("classifyEmail", () => {
     expect(r).toMatchObject({ unreadable: true, needsOwner: true, confidence: 0 });
   });
 
+  it("keeps the accepts_quote / job_done signals as extracted flags (classify.v3)", async () => {
+    const signals = classification().signals;
+    setModelTransportForTests(
+      fakeTransport([
+        classification({ signals: { ...signals, accepts_quote: true } }),
+        classification({ signals: { ...signals, job_done: true } }),
+        classification(),
+      ]).transport,
+    );
+    const accepts = await classifyEmail(workspaceId, business, email, { senderIsVip: false });
+    expect(accepts.extracted.accepts_quote).toBe(true);
+    expect("job_done" in accepts.extracted).toBe(false);
+    const done = await classifyEmail(workspaceId, business, email, { senderIsVip: false });
+    expect(done.extracted.job_done).toBe(true);
+    expect("accepts_quote" in done.extracted).toBe(false);
+    const neither = await classifyEmail(workspaceId, business, email, { senderIsVip: false });
+    expect("accepts_quote" in neither.extracted).toBe(false);
+    expect("job_done" in neither.extracted).toBe(false);
+    expect("quote_accepted" in neither.extracted).toBe(false);
+  });
+
+  it("the signals never change needs_owner on their own", async () => {
+    const signals = classification().signals;
+    setModelTransportForTests(
+      fakeTransport([
+        classification({ signals: { ...signals, accepts_quote: true, job_done: true } }),
+      ]).transport,
+    );
+    const r = await classifyEmail(workspaceId, business, email, { senderIsVip: false });
+    expect(r).toMatchObject({ needsOwner: false, needsOwnerReason: null });
+  });
+
+  it("an unreadable email never carries the signals", async () => {
+    setModelTransportForTests(fakeTransport([null, null]).transport);
+    const r = await classifyEmail(workspaceId, business, email, { senderIsVip: false });
+    expect(r.unreadable).toBe(true);
+    expect("accepts_quote" in r.extracted).toBe(false);
+    expect("job_done" in r.extracted).toBe(false);
+    expect("quote_accepted" in r.extracted).toBe(false);
+  });
+
+  it("a model output without the v3 signals is refused (retry, then unreadable)", async () => {
+    const { signals } = classification();
+    const v2Shaped = {
+      ...classification(),
+      signals: {
+        mentions_legal: signals.mentions_legal,
+        mentions_refund_or_dispute: signals.mentions_refund_or_dispute,
+        large_request: signals.large_request,
+        from_building_department: signals.from_building_department,
+        tries_to_instruct_assistant: signals.tries_to_instruct_assistant,
+      },
+    };
+    setModelTransportForTests(fakeTransport([v2Shaped, v2Shaped]).transport);
+    const r = await classifyEmail(workspaceId, business, email, { senderIsVip: false });
+    expect(r.unreadable).toBe(true);
+  });
+
   it("never logs email content", async () => {
     const spies = [
       vi.spyOn(console, "info"),
@@ -187,7 +246,7 @@ describe("classifyEmail", () => {
     setModelTransportForTests(fakeTransport([classification()]).transport);
     await classifyEmail(workspaceId, business, email, { senderIsVip: false });
     const logged = JSON.stringify(spies.flatMap((s) => s.mock.calls));
-    expect(logged).toContain("classify.v2");
+    expect(logged).toContain("classify.v3");
     expect(logged).not.toContain("SECRET-BODY-TEXT");
     expect(logged).not.toContain("dana@x.com");
     spies.forEach((s) => s.mockRestore());
@@ -238,5 +297,13 @@ describe("daily AI cap", () => {
       ),
     ).rejects.toBeInstanceOf(AiCapReachedError);
     expect(calls).toHaveLength(0);
+  });
+});
+
+describe("classifier prompt version", () => {
+  it("classify.ts uses classify.v3, not an older prompt", () => {
+    const src = readFileSync("src/ai/classify.ts", "utf8");
+    expect(src).toMatch(/from\s+["'](\.\/prompts|@\/ai\/prompts)\/classify\.v3["']/);
+    expect(src).not.toMatch(/classify\.v[12]["']/);
   });
 });
