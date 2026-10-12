@@ -259,7 +259,7 @@ export async function lastWeekLines(
   return scorecardIsEmpty(lastWeek) ? [] : scorecardLines(lastWeek, "Last week");
 }
 
-export type DigestRun = { sent: number; skipped: number; notConfigured: boolean };
+export type DigestRun = { sent: number; skipped: number; failed: number; notConfigured: boolean };
 
 /**
  * Hourly: send each owner their digest once a day at their hour. Quiet days
@@ -288,7 +288,7 @@ export async function sendDigests(
       sql`exists (select 1 from ${mailboxes} where ${mailboxes.workspaceId} = ${workspaces.id})`,
     );
 
-  const run: DigestRun = { sent: 0, skipped: 0, notConfigured: false };
+  const run: DigestRun = { sent: 0, skipped: 0, failed: 0, notConfigured: false };
   for (const r of rows) {
     if (!jobsAllowed(r.workspace, now)) continue;
     const settings = {
@@ -300,47 +300,62 @@ export async function sendDigests(
     const { due, localDate } = digestDue(settings, now);
     if (!due) continue;
 
-    const timeZone = usableTimeZone(settings.timeZone);
-    const queueUrl = appUrl("/queue");
-    const digest = buildDigest(
-      await digestCounts(r.workspace.id, now, timeZone),
-      {
-        queueUrl,
-        quotesUrl: appUrl("/quotes"),
-        settingsUrl: appUrl("/settings#digest"),
-        threadUrl: (id) => queueThreadUrl(queueUrl, id),
-      },
-      { now, timeZone, lastWeek: await lastWeekLines(r.workspace.id, now, timeZone) },
-    );
-    if (digest.worthSending) {
-      const outcome = await send({
-        to: r.ownerEmail,
-        subject: digest.subject,
-        html: digest.html,
-        text: digest.text,
-        idempotencyKey: `digest-${r.workspace.id}-${localDate}`,
-      });
-      if (outcome === "not_configured") {
-        run.notConfigured = true;
-        return run;
+    // One owner's trouble (a bad address, an email-service refusal) never stops the others,
+    // nor the monthly summary that runs after this in the same job. Nothing is marked, so the
+    // next hourly run tries again. Metadata only (A3).
+    try {
+      const timeZone = usableTimeZone(settings.timeZone);
+      const queueUrl = appUrl("/queue");
+      const digest = buildDigest(
+        await digestCounts(r.workspace.id, now, timeZone),
+        {
+          queueUrl,
+          quotesUrl: appUrl("/quotes"),
+          settingsUrl: appUrl("/settings#digest"),
+          threadUrl: (id) => queueThreadUrl(queueUrl, id),
+        },
+        { now, timeZone, lastWeek: await lastWeekLines(r.workspace.id, now, timeZone) },
+      );
+      if (digest.worthSending) {
+        const outcome = await send({
+          to: r.ownerEmail,
+          subject: digest.subject,
+          html: digest.html,
+          text: digest.text,
+          idempotencyKey: `digest-${r.workspace.id}-${localDate}`,
+        });
+        if (outcome === "not_configured") {
+          run.notConfigured = true;
+          return run;
+        }
       }
-      run.sent++;
-      await db().insert(activityLog).values({
+      // The day's marker and its Activity row go in together (no double "sent" row on retry).
+      await db().transaction(async (tx) => {
+        await tx
+          .insert(businessProfiles)
+          .values({ workspaceId: r.workspace.id, digestLastSentOn: localDate })
+          .onConflictDoUpdate({
+            target: businessProfiles.workspaceId,
+            set: { digestLastSentOn: localDate },
+          });
+        if (digest.worthSending) {
+          await tx.insert(activityLog).values({
+            workspaceId: r.workspace.id,
+            actor: "squared_away",
+            action: "digest_sent",
+            detail: {},
+          });
+        }
+      });
+      if (digest.worthSending) run.sent++;
+      else run.skipped++;
+    } catch (err) {
+      run.failed++;
+      console.error("digest_failed", {
         workspaceId: r.workspace.id,
-        actor: "squared_away",
-        action: "digest_sent",
-        detail: {},
+        error: err instanceof Error ? err.name : "unknown",
       });
-    } else {
-      run.skipped++;
     }
-    await db()
-      .insert(businessProfiles)
-      .values({ workspaceId: r.workspace.id, digestLastSentOn: localDate })
-      .onConflictDoUpdate({
-        target: businessProfiles.workspaceId,
-        set: { digestLastSentOn: localDate },
-      });
   }
   return run;
 }

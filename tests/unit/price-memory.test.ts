@@ -16,10 +16,13 @@ import {
   workspaces,
 } from "@/db/schema";
 import type { MailboxConnector } from "@/mailbox/connector";
+import type { OutgoingEmail } from "@/lib/email";
 import { ensureUserAndWorkspace } from "@/server/accounts";
 import { adminOverview } from "@/server/admin";
 import { classifyPending } from "@/server/classification";
 import { buildDigest, digestCounts } from "@/server/digest";
+import { buildMonthlySummary } from "@/server/monthly-rules";
+import { monthlyStats, sendMonthlySummaries } from "@/server/monthly-summary";
 import { queueThreadUrl } from "@/server/digest-rules";
 import { createDraftForThread, listQueue, reviseDraft } from "@/server/drafts";
 import { captureEditSignals } from "@/server/edit-learning";
@@ -856,6 +859,48 @@ describe("GUARDRAIL: never in the morning summary, admin, phone notifications or
     ])
       expectNoLeak(out);
   });
+
+  it("the monthly summary (plan #35) carries no remembered price either", async () => {
+    await profile();
+    await seedHistory();
+    await setStatus("active");
+    // An October quote request for a panel, and a won quote with its amount.
+    await makeThread(
+      {
+        category: "quote_request",
+        extracted: { service_requested: "panel upgrade" },
+        quoteOutcome: "won",
+        quoteOutcomeAt: NOW,
+        quoteAmountCents: 777700,
+      },
+      [{ direction: "in", days: -0.1, body: "Can you quote a 200 amp panel upgrade?" }],
+    );
+    const start = new Date("2026-10-01T04:00:00Z");
+    const end = new Date("2026-11-01T04:00:00Z");
+    const stats = await monthlyStats(workspaceId, "electrical", start, end);
+    expect(stats.quoteRequests).toBeGreaterThan(0);
+    const email = buildMonthlySummary(stats, "October", {
+      activityUrl: "https://app.example/activity",
+      settingsUrl: "https://app.example/settings#digest",
+    });
+    const sent: OutgoingEmail[] = [];
+    await sendMonthlySummaries(new Date("2026-11-01T12:05:00Z"), {
+      send: async (e) => {
+        sent.push(e);
+        return "sent";
+      },
+    });
+    expect(sent).toHaveLength(1);
+    for (const out of [
+      JSON.stringify(stats),
+      email.subject,
+      email.text,
+      email.html,
+      sent[0]!.text,
+      sent[0]!.html,
+    ])
+      expectNoLeak(out);
+  });
 });
 
 /* ------------------------------------------------------------------------------------------
@@ -908,6 +953,8 @@ describe("GUARDRAIL: price-memory module boundary", () => {
       "src/server/push-alerts.ts",
       "src/server/leads-at-risk.ts",
       "src/server/scorecard.ts",
+      "src/server/monthly-summary.ts",
+      "src/server/monthly-rules.ts",
       "src/server/edit-learning.ts",
       "src/app/api/push/summary/route.ts",
       "src/ai/client.ts",

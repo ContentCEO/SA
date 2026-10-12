@@ -1,7 +1,13 @@
 import { readFileSync } from "node:fs";
 import { RetryAfterError } from "inngest";
 import { describe, expect, it } from "vitest";
-import { afterSync, functions, politely } from "@/jobs/functions";
+import {
+  afterSync,
+  functions,
+  politely,
+  reportSummaryFailures,
+  SummaryFailuresError,
+} from "@/jobs/functions";
 import { MailboxAuthError, MailboxRateLimitError } from "@/mailbox/connector";
 
 describe("job wiring", () => {
@@ -30,6 +36,30 @@ describe("job wiring", () => {
       }),
     ).rejects.toBeInstanceOf(MailboxAuthError);
     await expect(politely(async () => 7)).resolves.toBe(7);
+  });
+
+  it("a failed morning or monthly summary still fails the run (so it reaches error alerts), counts only", () => {
+    expect(() => reportSummaryFailures({ failed: 0 }, { failed: 0 })).not.toThrow();
+    for (const [d, m] of [
+      [1, 0],
+      [0, 2],
+    ] as const) {
+      let err: unknown;
+      try {
+        reportSummaryFailures({ failed: d }, { failed: m });
+      } catch (e) {
+        err = e;
+      }
+      expect(err).toBeInstanceOf(SummaryFailuresError);
+      expect((err as Error).name).toBe("SummaryFailuresError");
+      expect((err as Error).message).toBe(`Summaries failed: ${d} morning, ${m} monthly.`);
+    }
+    // It runs after both steps, so a morning failure can't stop the monthly step.
+    const src = readFileSync("src/jobs/functions.ts", "utf8");
+    const body = src.slice(src.indexOf('id: "morning-digest"'));
+    const report = body.indexOf("reportSummaryFailures(digests, monthly)");
+    expect(report).toBeGreaterThan(body.indexOf('step.run("monthly"'));
+    expect(body.indexOf('step.run("monthly"')).toBeGreaterThan(body.indexOf('step.run("send"'));
   });
 
   it("registers every job with Inngest", () => {

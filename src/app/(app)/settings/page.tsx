@@ -531,10 +531,14 @@ export default async function SettingsPage(props: PageProps<"/settings">) {
               type="checkbox"
               name="enabled"
               defaultChecked={profile?.digestEnabled ?? true}
+              aria-describedby="digest-monthly-note"
               className="size-6 accent-charcoal"
             />
             <span className="font-semibold">Email me a summary each morning</span>
           </label>
+          <p id="digest-monthly-note" className="-mt-2 pl-9 text-muted-foreground">
+            (and a short one on the 1st of each month)
+          </p>
           <label className="flex flex-col gap-1.5">
             <span className="font-semibold">Send it at</span>
             <select
@@ -552,7 +556,8 @@ export default async function SettingsPage(props: PageProps<"/settings">) {
           <TimeZoneInput fallback={profile?.timeZone ?? "America/New_York"} />
           <p className="text-muted-foreground">
             Just counts — how many replies are waiting and what needs you. No customer names or
-            email text go in it. Skipped on mornings with nothing to say.
+            email text go in it. Skipped on mornings with nothing to say. On the 1st of each month
+            you also get a short summary of the month (counts only).
           </p>
           <Button type="submit" variant="outline" className="w-full">
             Save morning summary

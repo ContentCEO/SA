@@ -20,6 +20,7 @@ import {
   threadsToAutoDraft,
 } from "@/server/drafts";
 import { sendDigests } from "@/server/digest";
+import { sendMonthlySummaries } from "@/server/monthly-summary";
 import { threadsToFollowUp } from "@/server/followups";
 import { getMailboxWorkspace } from "@/server/mailboxes";
 import { purgeRateLimits } from "@/server/rate-limit";
@@ -242,11 +243,41 @@ export const followupScan = inngest.createFunction(
   },
 );
 
-/** Hourly: each owner's morning summary goes out once a day at their hour. */
+/**
+ * Hourly: each owner's morning summary goes out once a day at their hour, and on their 1st
+ * the summary of the month just ended (plan #35).
+ */
 export const morningDigest = inngest.createFunction(
   { id: "morning-digest", triggers: [cron("3 * * * *")], retries: 3 },
-  async ({ step }) => step.run("send", () => sendDigests()),
+  async ({ step }) => {
+    const digests = await step.run("send", () => sendDigests());
+    // Plan #35: on the owner's 1st, the month just ended (same switch and hour). Both senders
+    // catch each owner's failure, so one owner's refused email can't stop this step.
+    const monthly = await step.run("monthly", () => sendMonthlySummaries());
+    // ...but a failure must still reach the error alerts: fail the run AFTER both steps.
+    // Retries replay the finished steps (nothing is re-sent); the last attempt goes through
+    // ReportFinalFailures. The next hourly run tries the failed owners again.
+    reportSummaryFailures(digests, monthly);
+    return { digests, monthly };
+  },
 );
+
+/** Thrown when some owners' summaries failed. Counts only — no ids, addresses or messages. */
+export class SummaryFailuresError extends Error {
+  override readonly name = "SummaryFailuresError";
+}
+
+/** Fails the morning-digest run when any owner's morning or monthly summary failed. */
+export function reportSummaryFailures(
+  digests: { failed: number },
+  monthly: { failed: number },
+): void {
+  if (digests.failed > 0 || monthly.failed > 0) {
+    throw new SummaryFailuresError(
+      `Summaries failed: ${digests.failed} morning, ${monthly.failed} monthly.`,
+    );
+  }
+}
 
 /**
  * Autopilot's grace window: wait until the send time (the owner can hold or

@@ -1,5 +1,5 @@
 import "server-only";
-import { and, count, desc, eq, gte, inArray, isNotNull } from "drizzle-orm";
+import { and, count, desc, eq, gte, inArray, isNotNull, lt } from "drizzle-orm";
 import { categoryLabels, categoryTag, isCategory } from "@/config/categories";
 import { db } from "@/db";
 import { activityLog, drafts, mailboxes, messages, threads } from "@/db/schema";
@@ -171,6 +171,8 @@ export function describeActivity(
             : "Your plan was updated";
     case "digest_sent":
       return "Sent your morning summary";
+    case "monthly_summary_sent":
+      return "Sent your monthly summary";
     case "evaluation_started":
       return "Your three days started";
     case "evaluation_expired":
@@ -324,6 +326,18 @@ export async function monthCloseRate(
   timeZone?: string,
 ): Promise<MonthCloseRate> {
   const start = localMonthStart(now, await monthZone(workspaceId, timeZone));
+  return closeRateBetween(workspaceId, start, null);
+}
+
+/**
+ * Quotes decided in [start, end) — by when the outcome was set, whoever set it. `end` null
+ * means no upper bound (this month so far); the monthly summary passes last month's bounds.
+ */
+export async function closeRateBetween(
+  workspaceId: string,
+  start: Date,
+  end: Date | null,
+): Promise<MonthCloseRate> {
   const rows = await db()
     .select({ outcome: threads.quoteOutcome, n: count() })
     .from(threads)
@@ -333,6 +347,7 @@ export async function monthCloseRate(
         eq(mailboxes.workspaceId, workspaceId),
         isNotNull(threads.quoteOutcome),
         gte(threads.quoteOutcomeAt, start),
+        end ? lt(threads.quoteOutcomeAt, end) : undefined,
       ),
     )
     .groupBy(threads.quoteOutcome);
