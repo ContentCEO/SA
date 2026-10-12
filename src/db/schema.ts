@@ -4,6 +4,7 @@
  */
 import { sql } from "drizzle-orm";
 import {
+  type AnyPgColumn,
   boolean,
   index,
   integer,
@@ -54,6 +55,13 @@ export const invites = pgTable("invites", {
   note: text("note"),
   invitedAt: timestamp("invited_at", { withTimezone: true }).notNull().defaultNow(),
   acceptedAt: timestamp("accepted_at", { withTimezone: true }),
+  /**
+   * Plan #47 (behind FEATURE_REFERRALS): the workspace whose referral link this owner came
+   * from. Used up (set back to null) at the first sign-in, when it moves onto their workspace.
+   */
+  referredByWorkspaceId: uuid("referred_by_workspace_id").references(() => workspaces.id, {
+    onDelete: "set null",
+  }),
 });
 
 /** People who asked for access on the public site. Davi invites from /admin. */
@@ -66,6 +74,8 @@ export const waitlist = pgTable("waitlist", {
   note: text("note"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   invitedAt: timestamp("invited_at", { withTimezone: true }),
+  /** Plan #47: the referral code from the link they came from (format-checked; flag on only). */
+  referralCode: text("referral_code"),
 });
 
 export const workspaces = pgTable(
@@ -92,9 +102,19 @@ export const workspaces = pgTable(
     stripeCustomerId: text("stripe_customer_id"),
     stripeSubscriptionId: text("stripe_subscription_id"),
     createdAt: createdAt(),
+    /** Plan #47: this workspace's own referral code (random, made the first time it's shown). */
+    referralCode: text("referral_code"),
+    /** Plan #47: who referred this workspace. Set once, at the first sign-in; never overwritten. */
+    referredByWorkspaceId: uuid("referred_by_workspace_id").references(
+      (): AnyPgColumn => workspaces.id,
+      { onDelete: "set null" },
+    ),
   },
-  // One owner per workspace for the MVP.
-  (t) => [uniqueIndex("workspaces_owner_uq").on(t.ownerUserId)],
+  (t) => [
+    // One owner per workspace for the MVP.
+    uniqueIndex("workspaces_owner_uq").on(t.ownerUserId),
+    uniqueIndex("workspaces_referral_code_uq").on(t.referralCode),
+  ],
 );
 
 export const mailboxes = pgTable(
@@ -596,6 +616,54 @@ export const priceHistory = pgTable(
 );
 
 export type PriceHistory = typeof priceHistory.$inferSelect;
+
+/** Plan #47: who a referral credit is for — the owner who shared the link, or the new owner. */
+export const REFERRAL_SIDES = ["referrer", "referred"] as const;
+export type ReferralSide = (typeof REFERRAL_SIDES)[number];
+/**
+ * pending = waiting to be added in Stripe (e.g. no Stripe customer yet); applied = added;
+ * failed = Stripe refused it for good (shown in /admin, never retried); skipped = the referral
+ * was settled with nothing to pay (the feature was off or had no amount when it went active).
+ */
+export const REFERRAL_CREDIT_STATUSES = ["pending", "applied", "failed", "skipped"] as const;
+export type ReferralCreditStatus = (typeof REFERRAL_CREDIT_STATUSES)[number];
+
+/**
+ * Plan #47 referral credits. Each referral is settled once, the first time the referred
+ * workspace becomes active: one row per side paid (or one `skipped` row). Rows outlive account
+ * deletion (workspace ids go null) and are keyed by a salted hash of the referred owner's
+ * email, so deleting an account and signing up again can't earn a second credit.
+ * No names, emails or customer data.
+ */
+export const referralCredits = pgTable(
+  "referral_credits",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    referredWorkspaceId: uuid("referred_workspace_id").references(() => workspaces.id, {
+      onDelete: "set null",
+    }),
+    /** sha256 of the referred owner's normalized email, salted with AUTH_SECRET. */
+    referredEmailSha256: text("referred_email_sha256").notNull(),
+    beneficiaryWorkspaceId: uuid("beneficiary_workspace_id").references(() => workspaces.id, {
+      onDelete: "set null",
+    }),
+    side: text("side").$type<ReferralSide>().notNull(),
+    amountCents: integer("amount_cents").notNull(),
+    status: text("status").$type<ReferralCreditStatus>().notNull().default("pending"),
+    stripeBalanceTransactionId: text("stripe_balance_transaction_id"),
+    /** Tries at Stripe that failed, and the last Stripe error code (a fixed code, never text). */
+    attempts: integer("attempts").notNull().default(0),
+    lastErrorCode: text("last_error_code"),
+    createdAt: createdAt(),
+    appliedAt: timestamp("applied_at", { withTimezone: true }),
+  },
+  (t) => [
+    // Once per referral, ever.
+    uniqueIndex("referral_credits_email_side_uq").on(t.referredEmailSha256, t.side),
+    index("referral_credits_status_idx").on(t.status),
+  ],
+);
+export type ReferralCredit = typeof referralCredits.$inferSelect;
 export type User = typeof users.$inferSelect;
 export type BusinessProfile = typeof businessProfiles.$inferSelect;
 export type VoiceProfile = typeof voiceProfiles.$inferSelect;

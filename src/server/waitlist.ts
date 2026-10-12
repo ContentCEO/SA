@@ -5,6 +5,8 @@ import { db } from "@/db";
 import { tradeEnum, waitlist } from "@/db/schema";
 import { inviteOwner } from "./admin";
 import { normalizeEmail } from "./accounts";
+import { isReferralCode, referralsVisible } from "./referral-rules";
+import { workspaceByReferralCode } from "./referrals";
 
 export const TEAM_SIZES = ["Just me", "2–5", "6–15", "16+"] as const;
 
@@ -37,13 +39,23 @@ export const waitlistInput = z.object({
     .optional()
     .transform((v) => v ?? null),
   note: optional(1000),
+  /** Plan #47: the code from a referral link (?ref=). Anything malformed is dropped, not an error. */
+  referralCode: z
+    .unknown()
+    .optional()
+    .transform((v) => (isReferralCode(v) ? v : null)),
 });
 
 /** Idempotent: signing up twice keeps the first entry. */
 export async function joinWaitlist(input: z.output<typeof waitlistInput>) {
   const [row] = await db()
     .insert(waitlist)
-    .values({ ...input, email: normalizeEmail(input.email) })
+    .values({
+      ...input,
+      email: normalizeEmail(input.email),
+      // Plan #47: kept only while referrals are switched on (flag and amount).
+      referralCode: referralsVisible() ? (input.referralCode ?? null) : null,
+    })
     .onConflictDoNothing()
     .returning({ email: waitlist.email });
   return row ? ("joined" as const) : ("already" as const);
@@ -60,7 +72,16 @@ export async function inviteFromWaitlist(email: string, now: Date = new Date()) 
     .from(waitlist)
     .where(eq(waitlist.email, normalizeEmail(email)));
   if (!entry) return "not_found" as const;
-  await inviteOwner({ email: entry.email, trade: entry.trade, note: entry.note });
+  // Plan #47: carry the referral only while referrals are on; an unknown code is ignored.
+  const referredByWorkspaceId = referralsVisible()
+    ? await workspaceByReferralCode(entry.referralCode)
+    : null;
+  await inviteOwner({
+    email: entry.email,
+    trade: entry.trade,
+    note: entry.note,
+    referredByWorkspaceId,
+  });
   await db().update(waitlist).set({ invitedAt: now }).where(eq(waitlist.email, entry.email));
   return "invited" as const;
 }

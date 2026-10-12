@@ -1,5 +1,6 @@
 import "server-only";
 import { and, count, desc, eq, gte, inArray, max, sql, sum } from "drizzle-orm";
+import { alias } from "drizzle-orm/pg-core";
 import { utcDay } from "@/ai/usage";
 import { db } from "@/db";
 import {
@@ -7,6 +8,7 @@ import {
   drafts,
   invites,
   mailboxes,
+  referralCredits,
   threads,
   tradeEnum,
   usage,
@@ -15,6 +17,7 @@ import {
 } from "@/db/schema";
 import { normalizeEmail } from "./accounts";
 import { effectiveStatus, jobsAllowed } from "./lifecycle";
+import { referralsVisible } from "./referral-rules";
 
 export function isAdminEmail(email: string | null | undefined): boolean {
   const admin = process.env.ADMIN_EMAIL;
@@ -37,6 +40,13 @@ export type AdminRow = {
   ai: { callsToday: number; callsThisMonth: number; costCentsThisMonth: number };
   /** When each part of the pipeline last did something for this account. */
   health: { lastSortedAt: Date | null; lastDraftAt: Date | null; lastDigestAt: Date | null };
+  /**
+   * Plan #47: the referrer's business name (nothing else about them; only while referrals are
+   * on), and this account's referral credits still waiting or refused by Stripe (always, so
+   * money owed never disappears from /admin when the switch goes off).
+   */
+  referredByName: string | null;
+  referralCredits: { waiting: number; failed: number; lastErrorCode: string | null };
   createdAt: Date;
 };
 
@@ -135,6 +145,36 @@ export async function adminOverview(now: Date = new Date()): Promise<AdminRow[]>
     .innerJoin(mailboxes, eq(mailboxes.id, drafts.mailboxId))
     .where(inArray(mailboxes.workspaceId, ids))
     .groupBy(mailboxes.workspaceId);
+  const referrals = referralsVisible();
+  const referrer = alias(workspaces, "referrer");
+  const referredBy = referrals
+    ? await db()
+        .select({ workspaceId: workspaces.id, name: referrer.businessName })
+        .from(workspaces)
+        .innerJoin(referrer, eq(referrer.id, workspaces.referredByWorkspaceId))
+        .where(inArray(workspaces.id, ids))
+    : [];
+  // Credits still waiting or refused by Stripe show whatever the switch says now: they're
+  // money owed (or a fix needed in Stripe) even if referrals were switched off since.
+  const credits = await db()
+    .select({
+      workspaceId: referralCredits.beneficiaryWorkspaceId,
+      waiting: sql<number>`count(*) filter (where ${referralCredits.status} = 'pending')::int`,
+      failed: sql<number>`count(*) filter (where ${referralCredits.status} = 'failed')::int`,
+      // The most recently created refused credit's code (not an alphabetical max).
+      lastErrorCode: sql<
+        string | null
+      >`(array_agg(${referralCredits.lastErrorCode} order by ${referralCredits.createdAt} desc, ${referralCredits.id} desc) filter (where ${referralCredits.status} = 'failed'))[1]`,
+    })
+    .from(referralCredits)
+    .where(
+      and(
+        inArray(referralCredits.beneficiaryWorkspaceId, ids),
+        inArray(referralCredits.status, ["pending", "failed"]),
+      ),
+    )
+    .groupBy(referralCredits.beneficiaryWorkspaceId);
+
   const digests = await db()
     .select({ workspaceId: activityLog.workspaceId, at: max(activityLog.createdAt) })
     .from(activityLog)
@@ -149,6 +189,8 @@ export async function adminOverview(now: Date = new Date()): Promise<AdminRow[]>
   const hs = by(sorted);
   const hd = by(drafted);
   const hg = by(digests);
+  const rb = by(referredBy);
+  const rc = new Map(credits.map((c) => [c.workspaceId, c]));
 
   return ws.map((w) => ({
     workspaceId: w.id,
@@ -181,6 +223,12 @@ export async function adminOverview(now: Date = new Date()): Promise<AdminRow[]>
       lastSortedAt: hs.get(w.id)?.at ?? null,
       lastDraftAt: hd.get(w.id)?.at ?? null,
       lastDigestAt: hg.get(w.id)?.at ?? null,
+    },
+    referredByName: rb.get(w.id) ? (rb.get(w.id)!.name ?? "a business with no name yet") : null,
+    referralCredits: {
+      waiting: rc.get(w.id)?.waiting ?? 0,
+      failed: rc.get(w.id)?.failed ?? 0,
+      lastErrorCode: rc.get(w.id)?.failed ? (rc.get(w.id)?.lastErrorCode ?? null) : null,
     },
   }));
 }
@@ -225,11 +273,18 @@ export async function inviteOwner(input: {
   email: string;
   trade?: Trade | null;
   note?: string | null;
+  /** Plan #47: the workspace whose referral link they came from (only while referrals are on). */
+  referredByWorkspaceId?: string | null;
 }) {
   const email = normalizeEmail(input.email);
   const [row] = await db()
     .insert(invites)
-    .values({ email, trade: input.trade ?? null, note: input.note?.trim() || null })
+    .values({
+      email,
+      trade: input.trade ?? null,
+      note: input.note?.trim() || null,
+      referredByWorkspaceId: input.referredByWorkspaceId ?? null,
+    })
     .onConflictDoNothing()
     .returning({ email: invites.email });
   return row ? "invited" : "already_invited";

@@ -586,6 +586,12 @@ In a sandbox with preinstalled Chromium: `PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-brows
   which customers were sent a review request. Under "What you tell us": your review link. Under
   "How long we keep it": these stay after the 30-day email-text purge, until you disconnect that
   Gmail address or delete your account.
+- **Privacy policy line for #47 referrals** (before `FEATURE_REFERRALS` goes on): "If you were
+  referred, we keep a scrambled one-way fingerprint of your email and the credit record after you
+  delete your account, so a referral is only paid once." (Otherwise the FAQ's "erases everything
+  we hold" isn't literally true.) Also his call: a referrer who deletes their account before the
+  new owner is active voids the referral for both sides; repeat waitlist joins and plain invites
+  carry no referral (docs/SETUP.md §6d).
 
 ## Launch blockers to remember
 

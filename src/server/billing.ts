@@ -23,6 +23,7 @@ import {
   statusAfterCheckout,
   statusAfterSubscription,
 } from "./billing-rules";
+import { creditReferralSafely } from "./referrals";
 
 let client: Stripe | undefined;
 let override: Stripe | undefined;
@@ -42,6 +43,11 @@ function stripe(): Stripe {
   if (!key) throw new Error("STRIPE_SECRET_KEY is not set.");
   client ??= new Stripe(key);
   return client;
+}
+
+/** The one Stripe client (or the test fake), for other server modules (plan #47 credits). */
+export function stripeClient(): Stripe {
+  return stripe();
 }
 
 export const WEBHOOK_PATH = "/api/stripe/webhook";
@@ -283,6 +289,8 @@ export async function applyCheckoutCompleted(session: Stripe.Checkout.Session, n
     })
     .where(eq(workspaces.id, w.id));
   await log(w.id, "payment_received", { plan, includesSetup, from: w.status, to });
+  // Plan #47: a referral is settled the first time the account is active. Never fails the webhook.
+  if (to === "active") await creditReferralSafely(w.id, now);
   return "applied";
 }
 
@@ -306,6 +314,7 @@ export async function applySubscription(sub: Stripe.Subscription, now = new Date
   if (to !== w.status || plan !== w.plan) {
     await log(w.id, "subscription_changed", { stripeStatus: sub.status, from: w.status, to, plan });
   }
+  if (to === "active") await creditReferralSafely(w.id, now);
   return "applied";
 }
 

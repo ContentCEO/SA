@@ -2,6 +2,7 @@ import "server-only";
 import { eq, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { invites, users, workspaces, type User, type Workspace } from "@/db/schema";
+import { referralRefusal, referralsVisible } from "./referral-rules";
 
 export function normalizeEmail(email: string) {
   return email.trim().toLowerCase();
@@ -36,10 +37,26 @@ export async function ensureUserAndWorkspace(input: {
   if (!user) throw new Error("Could not create user.");
 
   const [invite] = await db().select().from(invites).where(eq(invites.email, email));
-  await db()
-    .insert(workspaces)
-    .values({ ownerUserId: user.id, trade: invite?.trade ?? null })
-    .onConflictDoNothing({ target: workspaces.ownerUserId });
+  // Plan #47: only while referrals are switched on (flag and amount) does a referral carry.
+  const referral =
+    invite?.referredByWorkspaceId && referralsVisible() ? invite.referredByWorkspaceId : null;
+  const referredBy = referral ? await allowedReferrer(referral, email) : null;
+  await db().transaction(async (tx) => {
+    const [created] = await tx
+      .insert(workspaces)
+      .values({
+        ownerUserId: user.id,
+        trade: invite?.trade ?? null,
+        referredByWorkspaceId: referredBy,
+      })
+      .onConflictDoNothing({ target: workspaces.ownerUserId })
+      .returning({ id: workspaces.id });
+    // The invite's referral is used up by the first workspace (A5): deleting the account and
+    // signing in again never links it to the referrer a second time.
+    if (created && referral) {
+      await tx.update(invites).set({ referredByWorkspaceId: null }).where(eq(invites.email, email));
+    }
+  });
   const [workspace] = await db()
     .select()
     .from(workspaces)
@@ -50,6 +67,21 @@ export async function ensureUserAndWorkspace(input: {
     await db().update(invites).set({ acceptedAt: new Date() }).where(eq(invites.email, email));
   }
   return { user, workspace };
+}
+
+/** The referrer's workspace id if this sign-up may count as their referral, else null. */
+async function allowedReferrer(referrerId: string, email: string): Promise<string | null> {
+  const [referrer] = await db()
+    .select({ email: users.email })
+    .from(workspaces)
+    .innerJoin(users, eq(users.id, workspaces.ownerUserId))
+    .where(eq(workspaces.id, referrerId));
+  if (!referrer) return null;
+  const refusal = referralRefusal(
+    { workspaceId: referrerId, ownerEmail: referrer.email },
+    { workspaceId: "", ownerEmail: email },
+  );
+  return refusal ? null : referrerId;
 }
 
 export async function getWorkspaceForUser(userId: string): Promise<Workspace | undefined> {

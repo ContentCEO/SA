@@ -27,6 +27,7 @@ import {
 import { PendingButton } from "@/components/app/pending-button";
 import { stripeConfigured, stripeConnectedAt } from "@/server/billing";
 import { listWaitlist } from "@/server/waitlist";
+import { referralsVisible } from "@/server/referral-rules";
 import { pricing } from "@/config/pricing";
 
 export const metadata: Metadata = { title: "Admin", robots: { index: false } };
@@ -191,6 +192,20 @@ function WorkspaceCard({ w, now }: { w: AdminRow; now: Date }) {
         />
         <Stat label="AI calls today" value={w.ai.callsToday} />
         <Stat label="AI cost this month" value={`${dollars(w.ai.costCentsThisMonth)} (est.)`} />
+        {w.referredByName ? <Stat label="Referred by" value={w.referredByName} /> : null}
+        {w.referralCredits.waiting || w.referralCredits.failed ? (
+          <Stat
+            label="Referral credit"
+            value={[
+              w.referralCredits.waiting ? `${w.referralCredits.waiting} waiting` : null,
+              w.referralCredits.failed
+                ? `${w.referralCredits.failed} refused by Stripe${w.referralCredits.lastErrorCode ? ` (${w.referralCredits.lastErrorCode})` : ""}`
+                : null,
+            ]
+              .filter(Boolean)
+              .join(", ")}
+          />
+        ) : null}
       </dl>
       <form action={setPlanAction} className="flex gap-2">
         <input type="hidden" name="workspaceId" value={w.workspaceId} />
@@ -242,6 +257,7 @@ export default async function AdminPage(props: PageProps<"/admin">) {
   await requireAdmin();
   const params = await props.searchParams;
   const now = new Date();
+  const referrals = referralsVisible();
   const [rows, total, invited, waiting, stripeAt, system] = await Promise.all([
     adminOverview(now),
     countWorkspaces(),
@@ -372,6 +388,9 @@ export default async function AdminPage(props: PageProps<"/admin">) {
                     .join(" · ")}
                 </span>
                 {w.note ? <p className="text-muted-foreground">“{w.note}”</p> : null}
+                {referrals && w.referralCode ? (
+                  <span className="text-sm font-semibold">Came from a referral link</span>
+                ) : null}
                 {w.invitedAt ? (
                   <span className="font-semibold">Invited {relativeTime(w.invitedAt, now)}</span>
                 ) : (

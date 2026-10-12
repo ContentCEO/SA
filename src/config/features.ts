@@ -5,6 +5,12 @@
 export const FEATURE_ENV = {
   /** Plan #26: "Want to ask if they went another way?" on quiet quotes. ASK DAVI before turning on. */
   closingQuestion: "FEATURE_CLOSING_QUESTION",
+  /**
+   * Plan #47: referral links and a Stripe balance credit once per referral. Off until Davi picks
+   * the amount and who gets it — and even when on, nothing happens while REFERRAL_CREDIT_CENTS
+   * (src/config/pricing.ts) is null. ASK DAVI before turning on.
+   */
+  referrals: "FEATURE_REFERRALS",
 } as const;
 
 export type Feature = keyof typeof FEATURE_ENV;

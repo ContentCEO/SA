@@ -8,6 +8,7 @@ import { Headline } from "@/components/brand/headline";
 import { Wordmark } from "@/components/brand/wordmark";
 import { QueuePreview } from "@/components/marketing/queue-preview";
 import { WaitlistForm } from "@/components/marketing/waitlist-form";
+import { isReferralCode, referralsVisible } from "@/server/referral-rules";
 import { formatDollars, pricing } from "@/config/pricing";
 import { siteConfig } from "@/config/site";
 import { cn } from "@/lib/utils";
@@ -109,9 +110,12 @@ function Section({
   );
 }
 
-export default async function HomePage() {
+export default async function HomePage(props: PageProps<"/">) {
   const session = await auth();
   if (session?.user?.id) redirect("/queue");
+  // Plan #47: a referral link's code rides along on the waitlist form — only while it's switched on.
+  const { ref } = await props.searchParams;
+  const referralCode = referralsVisible() && isReferralCode(ref) ? ref : undefined;
   const plans = Object.values(pricing.plans);
 
   return (
@@ -302,7 +306,7 @@ export default async function HomePage() {
               </p>
             </div>
             <div className="rounded-2xl border bg-card p-6">
-              <WaitlistForm />
+              <WaitlistForm referralCode={referralCode} />
             </div>
           </div>
         </Section>

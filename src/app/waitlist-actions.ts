@@ -39,6 +39,7 @@ export async function joinWaitlistAction(
     trade: raw.trade || null,
     teamSize: raw.teamSize || null,
     note: raw.note || null,
+    referralCode: raw.ref || null,
   });
   if (!parsed.success) {
     return {

@@ -33,6 +33,7 @@ import { purgeExpiredNotes } from "@/server/seasonal-notes";
 import { learnVoice, workspacesDueForVoiceRefresh, workspacesNeedingVoice } from "@/server/voice";
 import { expireEvaluations, startPendingEvaluations } from "@/server/workspace-lifecycle";
 import { runM7Backfill } from "@/server/m7-backfill";
+import { applyPendingReferralCredits } from "@/server/referrals";
 import { considerAutopilot, overdueAutopilotDrafts, runAutopilotSend } from "@/server/autopilot";
 import {
   autopilotSendRequested,
@@ -411,6 +412,8 @@ export const workspaceLifecycle = inngest.createFunction(
     await step.run("m7-backfill", () => runM7Backfill());
     // Plan #34: a quote request waiting over 4 business hours → one phone notification.
     await step.run("lead-at-risk-pushes", () => sendLeadAtRiskPushes());
+    // Plan #47 (off unless FEATURE_REFERRALS and an amount): add referral credits still waiting.
+    await step.run("referral-credits", () => applyPendingReferralCredits());
     return { started, expired, voiceRestarted: voice.length, accessAlerts: alerts.sent };
   },
 );

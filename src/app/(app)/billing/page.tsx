@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { CopyLink } from "@/components/app/copy-link";
 import { Notice } from "@/components/app/notice";
 import { RefreshUntil } from "@/components/app/refresh-until";
 import { Headline } from "@/components/brand/headline";
@@ -9,6 +10,8 @@ import { cn } from "@/lib/utils";
 import { stripeConfigured } from "@/server/billing";
 import { checkoutTerms, PLAN_IDS } from "@/server/billing-rules";
 import { effectiveStatus } from "@/server/lifecycle";
+import { referralCredit } from "@/server/referral-rules";
+import { referralLinkFor } from "@/server/referrals";
 import { requireOwner } from "@/server/session";
 import { openPortalAction, startCheckoutAction } from "./actions";
 
@@ -37,6 +40,9 @@ export default async function BillingPage(props: PageProps<"/billing">) {
   const waitingForStripe = paidJustNow && terms.allowed;
   const errorMsg = typeof params.error === "string" ? errors[params.error] : undefined;
   const current = workspace.plan ? pricing.plans[workspace.plan as PlanId] : null;
+  // Plan #47: only while referrals are switched on (flag and an amount) — hidden entirely otherwise.
+  const referral = referralCredit();
+  const shareLink = referral ? await referralLinkFor(workspace.id) : null;
 
   return (
     <>
@@ -140,6 +146,26 @@ export default async function BillingPage(props: PageProps<"/billing">) {
             </p>
           </section>
         )
+      ) : null}
+
+      {referral && shareLink ? (
+        <section aria-labelledby="refer" className="flex flex-col gap-3 rounded-xl border p-4">
+          <h2 id="refer" className="text-xl font-black">
+            Share Squared Away
+          </h2>
+          <p>
+            Know another contractor who&apos;d like this? Send them your link. Once they&apos;ve
+            paid and finished their setup call,{" "}
+            {referral.sides.length === 2
+              ? `you each get ${formatDollars(referral.cents)} off your bill`
+              : referral.sides[0] === "referrer"
+                ? `you get ${formatDollars(referral.cents)} off your bill`
+                : `they get ${formatDollars(referral.cents)} off their bill`}
+            . Once per new business. They need to join the waitlist from your link, or it won&apos;t
+            count.
+          </p>
+          <CopyLink url={shareLink} label="Your link" />
+        </section>
       ) : null}
     </>
   );

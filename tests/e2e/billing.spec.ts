@@ -1,5 +1,7 @@
 import { expect, test } from "@playwright/test";
-import { seedAdmin, seedOwner, setWorkspace, signInAs } from "./support";
+import { eq } from "drizzle-orm";
+import * as schema from "../../src/db/schema";
+import { seedAdmin, seedOwner, setWorkspace, signInAs, testDb } from "./support";
 
 const DAY = 86_400_000;
 
@@ -58,6 +60,14 @@ test("a paying account sees its plan and the way to manage it", async ({ page, c
   await expect(page.getByRole("heading", { name: /Crew · \$199/ })).toBeVisible();
   await expect(page.getByRole("button", { name: "Manage billing" })).toBeVisible();
   await expect(page.getByRole("button", { name: /^Choose / })).toHaveCount(0);
+  // Plan #47 is off (no FEATURE_REFERRALS, no amount): no referral link and no code made.
+  await expect(page.getByRole("region", { name: "Share Squared Away" })).toHaveCount(0);
+  await expect(page.getByText(/referral|\?ref=/i)).toHaveCount(0);
+  const [w] = await testDb
+    .select({ code: schema.workspaces.referralCode })
+    .from(schema.workspaces)
+    .where(eq(schema.workspaces.id, owner.workspaceId));
+  expect(w?.code).toBeNull();
 });
 
 test("past due: the banner says update payment", async ({ page, context }) => {

@@ -173,6 +173,8 @@ export function describeActivity(
       return "Sent your morning summary";
     case "monthly_summary_sent":
       return "Sent your monthly summary";
+    case "referral_credit_applied":
+      return "A referral credit was added to your account";
     case "evaluation_started":
       return "Your three days started";
     case "evaluation_expired":

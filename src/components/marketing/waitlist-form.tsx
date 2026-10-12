@@ -22,7 +22,8 @@ function Submit() {
   );
 }
 
-export function WaitlistForm() {
+/** `referralCode`: from a referral link (?ref=), only passed while referrals are switched on. */
+export function WaitlistForm({ referralCode }: { referralCode?: string } = {}) {
   const [state, action] = useActionState<WaitlistState, FormData>(joinWaitlistAction, {
     status: "idle",
   });
@@ -88,6 +89,9 @@ export function WaitlistForm() {
         error={e.note}
         rows={3}
       />
+      {referralCode ? (
+        <input type="hidden" name="ref" defaultValue={v.ref ?? referralCode} />
+      ) : null}
       {/* Left empty by people; bots fill it in. */}
       <div aria-hidden className="absolute -left-[9999px] h-0 w-0 overflow-hidden">
         <label>

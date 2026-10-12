@@ -151,7 +151,39 @@ exactly `1`, `true` or `on` (any case); empty, missing or anything else means of
   the owner's tap writes the draft (never a job), once per thread ever, never on a complaint, and
   it goes through the normal queue. It is not a nudge and doesn't count as one.
 
-**Ask Davi before turning `FEATURE_CLOSING_QUESTION` on.** To turn it on: Vercel → sa → Environment
+- `FEATURE_REFERRALS` (plan #47, default **off**): each account gets a referral link in Plan &
+  billing (`/?ref=<code>`). The code rides on the waitlist form, onto the invite when Davi taps
+  Invite, and onto the new workspace at its first sign-in (used up there). The first time the
+  referred account is **active** (paid through Stripe and the setup call done), the referral is
+  settled once, ever: a Stripe balance credit for the sides in `REFERRAL_CREDIT_TO`. Self and
+  same-business-domain referrals never count (gmail.com, yahoo.com, outlook.com, icloud.com and
+  other public webmail are fine). A side with no Stripe customer waits and is added by the
+  15-minute job; one Stripe refuses for good shows on the /admin card. **It also needs an amount:**
+  `REFERRAL_CREDIT_CENTS` in `src/config/pricing.ts` is `null`, and while it is null nothing
+  happens at all, even with the switch on (no link, no code saved, nothing carried, no credit).
+  Referrals that become active while the switch is off (or the amount is null) are settled as
+  "skipped" and are **never paid later**, even if it's turned on again. Changing the amount or
+  `REFERRAL_CREDIT_TO` only affects referrals settled after the change. A refused (self or
+  same-domain) referral is settled as "skipped" too. Credits still waiting or refused by Stripe
+  stay on the /admin card even after the switch goes off.
+  Known gaps, by design until Davi decides otherwise: if the referrer deletes their account
+  before the new owner is active, the referral is void (neither side is paid — the link is
+  cleared with the account). Only a waitlist sign-up from the link counts: someone already on the
+  waitlist who joins again from a link keeps their first (code-less) entry, and an owner invited
+  with the plain "Invite an owner" form is never linked to anyone.
+  **Privacy policy, before turning it on:** referral records outlive account deletion so a
+  referral is only paid once. Add a line such as "If you were referred, we keep a scrambled
+  one-way fingerprint of your email and the credit record after you delete your account, so a
+  referral is only paid once." — the FAQ's "erases everything we hold" is otherwise not literally
+  true once referrals are on.
+  **Don't rotate `AUTH_SECRET` once referrals have been paid** (or know what it costs): the
+  "paid once, ever" check matches that fingerprint, which is salted with `AUTH_SECRET`. After a
+  rotation, earlier referrals no longer match, so an owner who deleted their account and is
+  linked again from a referral link could be paid a second time (both sides). Rotating it also
+  signs everyone out. If it must be rotated, settle it with Davi first.
+
+**Ask Davi before turning `FEATURE_CLOSING_QUESTION` or `FEATURE_REFERRALS` on** (and for the
+referral amount and who gets it). To turn it on: Vercel → sa → Environment
 Variables → add it with value `1` (Production only, unless Davi says otherwise) → Redeploy. To turn
 it off again, delete the variable (or set it empty) and redeploy; the offer disappears, and any
 closing-question drafts already in the queue stay there for the owner to send or discard.

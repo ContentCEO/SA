@@ -50,6 +50,20 @@ test("waitlist: plain errors, then a confirmation, saved once", async ({ page })
   expect(rows[0]).toMatchObject({ name: "Mike Torres", trade: "electrical", teamSize: "2–5" });
 });
 
+test("waitlist: a referral link does nothing while referrals are off (#47)", async ({ page }) => {
+  // The e2e server runs without FEATURE_REFERRALS and REFERRAL_CREDIT_CENTS is null.
+  const email = unique();
+  await page.goto("/?ref=AbCdEf123_-x#waitlist");
+  const form = page.getByRole("region", { name: "Join the waitlist" });
+  await expect(page.locator('input[name="ref"]')).toHaveCount(0);
+  await form.getByLabel("Your name").fill("Ana Ruiz");
+  await form.getByLabel(/Business Gmail/).fill(email);
+  await form.getByRole("button", { name: "Join the waitlist" }).click();
+  await expect(form.getByText("you're on the list,")).toBeVisible();
+  const [row] = await testDb.select().from(schema.waitlist).where(eq(schema.waitlist.email, email));
+  expect(row?.referralCode).toBeNull();
+});
+
 test("waitlist: bots that fill the hidden field are ignored", async ({ page }) => {
   const email = unique();
   await page.goto("/#waitlist");

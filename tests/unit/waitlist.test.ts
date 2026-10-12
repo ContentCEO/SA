@@ -1,14 +1,19 @@
 import { eq } from "drizzle-orm";
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { Database } from "@/db";
 import { invites, waitlist } from "@/db/schema";
 import { isAllowedToSignIn } from "@/server/accounts";
+import { setReferralConfigForTests } from "@/server/referral-rules";
 import { inviteFromWaitlist, joinWaitlist, waitlistInput } from "@/server/waitlist";
 import { createTestDb } from "../support/db";
 
 let database: Database;
 beforeEach(async () => {
   database = await createTestDb();
+});
+afterEach(() => {
+  delete process.env.FEATURE_REFERRALS;
+  setReferralConfigForTests(undefined);
 });
 
 describe("waitlist", () => {
@@ -46,5 +51,26 @@ describe("waitlist", () => {
     const [w] = await database.select().from(waitlist);
     expect(w?.invitedAt).not.toBeNull();
     expect(await inviteFromWaitlist("nobody@x.com")).toBe("not_found");
+  });
+
+  it("keeps a referral code (#47) only while referrals are on, and only a well-formed one", async () => {
+    const code = "AbCdEf123_-x";
+    const parsed = waitlistInput.parse({ name: "Ann", email: "ann@yahoo.com", referralCode: code });
+    expect(parsed.referralCode).toBe(code);
+    expect(
+      waitlistInput.parse({ name: "Ann", email: "ann@yahoo.com", referralCode: "bad code" })
+        .referralCode,
+    ).toBeNull();
+    expect(waitlistInput.parse({ name: "Ann", email: "ann@yahoo.com" }).referralCode).toBeNull();
+
+    // Off (the default): accepted by the form, but not stored.
+    await joinWaitlist(parsed);
+    // On, with an amount: stored.
+    process.env.FEATURE_REFERRALS = "1";
+    setReferralConfigForTests({ cents: 1_000, to: "both" });
+    await joinWaitlist({ ...parsed, email: "bo@yahoo.com" });
+    const rows = await database.select().from(waitlist);
+    const byEmail = Object.fromEntries(rows.map((r) => [r.email, r.referralCode]));
+    expect(byEmail).toEqual({ "ann@yahoo.com": null, "bo@yahoo.com": code });
   });
 });
