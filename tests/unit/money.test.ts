@@ -567,7 +567,20 @@ describe("money owed list", () => {
     await invoiceThread({ from: "a@c.com", invoice: { status: "paid" } });
     await invoiceThread({ from: "b@c.com", invoice: { amount: null } });
     await invoiceThread({ from: "c@c.com", category: "noise" });
-    await invoiceThread({ from: "bills@lumber.com", category: "supplier_vendor" });
+    // The supplier's bill looks owed in every other way (an invoice thread, an unpaid amount):
+    // only its category keeps it off.
+    const supplier = await invoiceThread({
+      from: "bills@lumber.com",
+      category: "supplier_vendor",
+      over: {
+        extracted: {
+          dates: [],
+          dollar_amounts: [],
+          invoice: inv({ amount: 1200 }),
+          invoice_thread: true,
+        },
+      },
+    });
     await invoiceThread({ from: "e@c.com", category: "quote_request" });
     // Another workspace's invoice.
     const { workspace: other } = await ensureUserAndWorkspace({ email: "other@shop.com" });
@@ -594,6 +607,8 @@ describe("money owed list", () => {
     expect(money.totalOwedCents).toBe(120_000 + 45_050 + 30_000);
     expect(money.paidRecently).toEqual([]);
     expect(money.hidden).toEqual([]);
+    for (const list of [money.owed, money.paidRecently, money.hidden])
+      expect(list.map((r) => r.threadId)).not.toContain(supplier);
   });
 
   it("a later email without invoice facts keeps the row and its amount (A11)", async () => {

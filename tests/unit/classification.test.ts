@@ -1,10 +1,11 @@
 import { randomBytes } from "node:crypto";
 import { eq } from "drizzle-orm";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { setModelTransportForTests } from "@/ai/client";
 import type { Database } from "@/db";
 import { messages, threads } from "@/db/schema";
 import { ensureUserAndWorkspace } from "@/server/accounts";
+import * as autoOutcomes from "@/server/auto-outcomes";
 import { classifyPending, markNeedsOwner } from "@/server/classification";
 import { listInboxThreads } from "@/server/inbox";
 import { saveConnectedMailbox } from "@/server/mailboxes";
@@ -144,6 +145,73 @@ describe("classifyPending", () => {
     setModelTransportForTests(fakeTransport([classification(), classification()]).transport);
     const r = await classifyPending(mailboxId, { now: NOW });
     expect(r).toMatchObject({ classified: 1, capped: true });
+  });
+
+  it("a failing auto-mark never stops the batch, never re-bills the model, never logs the email (A18)", async () => {
+    const seeded = [
+      {
+        address: "maria.lopez@example.org",
+        name: "Maria Lopez",
+        subject: "Leaking kitchen faucet",
+        body: "The faucet at 41 Birch Lane drips all night.",
+      },
+      {
+        address: "tom.baker@example.net",
+        name: "Tom Baker",
+        subject: "Breaker keeps tripping",
+        body: "Our garage breaker trips whenever the freezer starts.",
+      },
+    ];
+    const ids: string[] = [];
+    for (const [i, s] of seeded.entries()) {
+      const t = await thread(`fails-${i}`);
+      ids.push(t.id);
+      await message(t.id, `fails-m${i}`, {
+        fromAddress: s.address,
+        fromName: s.name,
+        subject: s.subject,
+        bodyText: s.body,
+      });
+    }
+    // The error itself carries the customer's details, as a real one might.
+    const failing = vi
+      .spyOn(autoOutcomes, "afterClassified")
+      .mockRejectedValue(new Error(`Couldn't mark ${seeded[0]!.address}: ${seeded[0]!.body}`));
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const { transport, calls } = fakeTransport([classification(), classification()]);
+      setModelTransportForTests(transport);
+
+      const r = await classifyPending(mailboxId, { now: NOW });
+      expect(r).toMatchObject({ classified: 2, remaining: 0, capped: false });
+      expect(failing).toHaveBeenCalledTimes(2);
+      // Both threads are sorted and both emails marked done, despite the failures…
+      for (const id of ids) {
+        const [row] = await database.select().from(threads).where(eq(threads.id, id));
+        expect(row).toMatchObject({ category: "quote_request", classifiedAt: NOW });
+      }
+      const sorted = await database.select().from(messages);
+      expect(sorted.every((m) => m.classifiedAt?.getTime() === NOW.getTime())).toBe(true);
+      // …each after exactly one model call, and a second run never asks the model again.
+      expect(calls).toHaveLength(2);
+      for (const s of seeded) expect(calls.filter((c) => c.user.includes(s.body))).toHaveLength(1);
+      expect(await classifyPending(mailboxId, { now: NOW })).toMatchObject({ classified: 0 });
+      expect(calls).toHaveLength(2);
+
+      // Logged once per failure, with metadata only.
+      const failures = errors.mock.calls.filter((c) => c[0] === "auto_outcome_failed");
+      expect(failures).toHaveLength(2);
+      expect(failures.map((c) => (c[1] as { threadId: string }).threadId).sort()).toEqual(
+        [...ids].sort(),
+      );
+      const logged = JSON.stringify(errors.mock.calls).toLowerCase();
+      for (const s of seeded)
+        for (const secret of [s.address, s.name, s.subject, s.body, "birch", "freezer"])
+          expect(logged).not.toContain(secret.toLowerCase());
+    } finally {
+      failing.mockRestore();
+      errors.mockRestore();
+    }
   });
 });
 

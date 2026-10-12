@@ -17,6 +17,7 @@ import {
   createDraftForThread,
   discardDraft,
   listQueue,
+  queueSend,
   reconcileDrafts,
   reviseDraft,
   sendDraft,
@@ -932,6 +933,59 @@ describe("no nudges after a purpose note went out (A3)", () => {
     });
     expect(calls).toHaveLength(0);
     expect((await sentDraftSummary(workspaceId, draftId))!.nudgeOn).toBeNull();
+  });
+
+  it("a deposit still in its undo window promises no nudge, even on an undecided quote", async () => {
+    await profile({ paymentTerms: "Card" });
+    await setStatus("active");
+    const t = await acceptedQuote();
+    const { draftId } = await created(t, reply({ body: "Hi Dana,\n\nGreat.\n\nDavi" }));
+    expect((await draftRow(draftId)).purpose).toBe("deposit");
+    expect(await queueSend(workspaceId, draftId, deps())).toMatchObject({ status: "queued" });
+    const d = await draftRow(draftId);
+    expect(d).toMatchObject({ status: "pending" });
+    expect(d.sendAfter).not.toBeNull();
+    // Nothing else stops the nudges: the quote is undecided and nothing has gone out yet.
+    const [thread] = await database.select().from(threads).where(eq(threads.id, t));
+    expect(thread).toMatchObject({ category: "quote_request", quoteOutcome: null });
+    expect(await sentDraftSummary(workspaceId, draftId)).toMatchObject({
+      purpose: "deposit",
+      sendingAt: d.sendAfter,
+      nudgeOn: null,
+      lastNudgeUsed: false,
+    });
+  });
+
+  it("an ordinary reply sent after the deposit went out promises no nudge either", async () => {
+    const { t } = await sentPurpose("deposit");
+    // "Great. When can you start?" — the deposit note already went, so an ordinary reply.
+    const when = new Date(NOW.getTime() + 5 * 60_000);
+    await database.insert(messages).values({
+      threadId: t,
+      mailboxId,
+      gmailMessageId: `again-${t}`,
+      rfc822MessageId: `<again-${t}@customer.com>`,
+      direction: "in",
+      fromAddress: "dana@customer.com",
+      fromName: "Dana Ruiz",
+      subject: "Re: Panel upgrade",
+      bodyText: "Great. When can you start?",
+      sentAt: new Date(NOW.getTime() + 2 * 60_000),
+    });
+    const { draftId } = await created(
+      t,
+      reply({ body: "Hi Dana,\n\nI'll confirm a start date shortly.\n\nDavi" }),
+      deps(when),
+    );
+    expect((await draftRow(draftId)).purpose).toBeNull();
+    expect(await sendDraft(workspaceId, draftId, deps(when))).toMatchObject({ status: "sent" });
+    const [thread] = await database.select().from(threads).where(eq(threads.id, t));
+    expect(thread).toMatchObject({ category: "quote_request", quoteOutcome: null });
+    expect(await sentDraftSummary(workspaceId, draftId)).toMatchObject({
+      purpose: null,
+      nudgeOn: null,
+      lastNudgeUsed: false,
+    });
   });
 
   it("a discarded purpose note doesn't count: only one that went out stops nudges", async () => {

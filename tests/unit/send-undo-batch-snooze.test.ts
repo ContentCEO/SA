@@ -314,6 +314,24 @@ describe("plan M5 sending: undo (#7), batch (#5), snooze (#6)", () => {
       for (const x of notes) expect((await row(x.draft.id)).sendAfter).toBeNull();
     });
 
+    it("GUARDRAIL: a ready ordinary reply to a quote acceptance is never in a batch (A5)", async () => {
+      const ok = await seed();
+      // No purpose (the deposit note already went, say), clean, confident, no gaps, a picked
+      // category — only the customer's acceptance keeps it one at a time.
+      const accepted = await seed({
+        category: "scheduling",
+        extracted: { accepts_quote: true, quote_accepted: true },
+      });
+      expect(accepted.draft.purpose).toBeNull();
+      expect((await batchCandidates(workspaceId, all)).map((c) => c.draftId)).toEqual([
+        ok.draft.id,
+      ]);
+      const r = await batchSend(workspaceId, [ok.draft.id, accepted.draft.id], all, deps());
+      expect(r.queued.map((q) => q.draftId)).toEqual([ok.draft.id]);
+      expect(r.refused).toBe(1);
+      expect((await row(accepted.draft.id)).sendAfter).toBeNull();
+    });
+
     it("each batch send has its own window and its own log entry; blocked accounts send none", async () => {
       const a = await seed();
       const b = await seed();

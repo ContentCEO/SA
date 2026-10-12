@@ -395,11 +395,41 @@ describe("in the database", () => {
           extracted: { accepts_quote: true, quote_accepted: true, dollar_amounts: [] },
         })
         .where(eq(threads.id, accepted));
+      // The deposit details already went out on this thread, so the new draft is an
+      // ordinary reply (no purpose): only the acceptance guard can keep it with the owner.
+      await database.insert(drafts).values({
+        threadId: accepted,
+        mailboxId,
+        gmailDraftId: `deposit-${accepted}`,
+        sentGmailMessageId: `deposit-sent-${accepted}`,
+        toAddress: "dana@customer.com",
+        subject: "Re: Visit",
+        body: "Deposit details.",
+        originalBody: "Deposit details.",
+        status: "sent",
+        purpose: "deposit",
+        reason: "Deposit details.",
+        promptVersion: "purpose.v1",
+        createdAt: new Date(NOW.getTime() - 2 * 3600_000),
+        decidedAt: new Date(NOW.getTime() - 2 * 3600_000),
+      });
       const draftId = await drafted(accepted);
+      const row = async () =>
+        (await database.select().from(drafts).where(eq(drafts.id, draftId)))[0]!;
+      expect((await row()).purpose).toBeNull();
       expect(await considerAutopilot(draftId, NOW)).toBeNull();
-      expect(
-        (await database.select().from(drafts).where(eq(drafts.id, draftId)))[0]!.autoSendAt,
-      ).toBeNull();
+      expect((await row()).autoSendAt).toBeNull();
+      // Even a countdown that somehow got set stands down at send time, for that reason.
+      await database
+        .update(drafts)
+        .set({ autoSendAt: later(GRACE_MINUTES) })
+        .where(eq(drafts.id, draftId));
+      const r = await runAutopilotSend(draftId, deps(later(GRACE_MINUTES)));
+      expect(r).toMatchObject({ status: "stood_down" });
+      expect(r.status === "stood_down" && r.reasons).toContain(
+        "Quote acceptances always wait for you.",
+      );
+      expect(writer.sent).toHaveLength(0);
       // The same conversation without the signal would have gone.
       const control = await drafted(await conversation());
       expect(await considerAutopilot(control, NOW)).toEqual(later(GRACE_MINUTES));
