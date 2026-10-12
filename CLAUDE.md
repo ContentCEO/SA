@@ -435,6 +435,71 @@ In a sandbox with preinstalled Chromium: `PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-brows
   Real sends stay 403. #45 `/admin/costs` (`admin-costs.ts`, rules in `admin-cost-rules.ts`):
   revenue = plan price for setup_paid/active/past_due; alert email to `ADMIN_EMAIL` when AI cost
   > 40% of plan, once per account per month (marker in `app_settings`), daily in the purge job.
+- **Plan M7 (2026-10-12, branch `claude/milestone-6-8`; #27 #28 #29 #30 #15 done, #26 behind a flag):**
+  One additive migration (0023: `drafts.purpose`, `threads.quote_outcome_source` /
+  `invoice_paid_at` / `invoice_paid_source` / `complained_at`, `business_profile.review_url`,
+  `price_history`) plus hand-written backfills (legacy outcomes → source `owner`; 0024 marks
+  threads still sorted `complaint`). Any `Date` in raw `sql` is `.toISOString()::timestamptz`.
+  - **classify.v3** adds `signals.accepts_quote` / `signals.job_done`, stored as
+    `extracted.accepts_quote` / `extracted.job_done`. `extracted.quote_accepted` is decided in code
+    at classification: acceptance AND (the thread was a quote before this email, or is one now) AND
+    the owner has written on it — an acceptance is often re-sorted as scheduling. Kept across later
+    re-sorts until decided. `afterClassified` (auto marks) runs after `classifiedAt` is set, in a
+    try/catch that logs metadata only; injection emails get no auto marks at all.
+  - **Purpose drafts:** `drafts.kind` stays `reply`; `drafts.purpose` ∈ deposit / review_request /
+    closing_question (`purpose.v1`). Purposes **never** autopilot, never batch, never earn autopilot,
+    never bump `followup_count`. Autopilot and batch also refuse any draft whose email
+    `accepts_quote` ("Quote acceptances always wait for you."). Deposit = the next draft on a thread
+    with `quote_accepted`, once per thread; no payment terms → `{{custom:deposit instructions}}`
+    gap + `NO_PAYMENT_TERMS_FLAG` first in the flags (survives the 6-flag cap), confidence ≤ 0.3.
+    `checkDraft({ checkTerms })` (deposit + review only): a %, way to pay or discount/free/gift
+    word not in the source → `terms` hit, one regenerate, then flag (cap 0.3); review requests
+    also flag any URL other than the review link.
+  - **#30 outcomes:** `quote_outcome_source` owner | auto — **the owner always wins**
+    (`canAutoSet`; the auto UPDATE's WHERE re-checks it, uses `.returning()`, and only then logs).
+    Auto-won on `quote_accepted`; auto no answer (`guessNoAnswers`, on Quotes load and a step in
+    `followup-scan`) after 2 sent nudges + 7 quiet days, or 21 quiet days with fewer. A quote
+    thread = category quote_request OR an outcome ever set. Lost / no answer stop all nudges; won
+    stops quote nudges (a won job's invoice is still chased until paid). Auto guesses don't delete
+    a waiting nudge — they add a "check before sending" flag; an owner decision expires it (and
+    deletes its Gmail draft). Read-only accounts can't mark quotes (`?error=readonly`). Activity:
+    "You won N of M quotes decided this month (P%)." (UTC month, by `quote_outcome_at`).
+  - **#27 `/money`:** invoice threads (`extracted.invoice`, or `invoice_thread` kept across
+    re-sorts; facts carried when a later email has none or the same number), oldest due first.
+    Excludes supplier_vendor and threads whose newest sender is a receipt domain
+    (`RECEIPT_SENDER_DOMAINS` stripe.com / quickbooks.com / intuit.com). Owner Mark paid / Undo,
+    "Not owed to me" (`invoice_paid_source = not_owed`, out of both lists) / Put back via
+    `?show=hidden`. Auto-paid: a customer's same-thread "paid" (never from a receipt sender), or a
+    receipt that names the invoice number (normalized; **no amount-only match**). A paid or
+    not-owed invoice is never chased; owner Mark paid expires the waiting nudge and deletes its
+    Gmail draft (`expirePendingNudge`), an auto-paid mark only flags it ("We think this was paid").
+    A later email naming a different invoice number reopens the row: the paid mark (ours or the
+    owner's) is cleared and logged as `invoice_reopened`. "Not owed to me" is never cleared, and
+    injection emails never reopen.
+    A3: a sent purpose note, any quote outcome or a paid invoice stops nudges, and the sent screen
+    then promises none.
+  - **#29 review request:** `business_profile.review_url` (https only). "Ask for a review" on Inbox
+    rows and paid Money rows, owner tap only, when `job_done` or the invoice is paid. Never a
+    complaint: `threads.complained_at` is sticky, and any complaint from that address in the last
+    12 months blocks it. Never no-reply/receipt senders, supplier_vendor, injection/municipal mail,
+    or an address the owner never wrote to (`knownCustomer`). One per address per 12 months,
+    serialized by `pg_advisory_xact_lock` (`src/server/review-lock.ts`).
+  - **#26 closing question:** built behind `FEATURE_CLOSING_QUESTION` (`src/config/features.ts`;
+    on only for "1"/"true"/"on"; off in every env until Davi says so). Offer on Quotes after 2 sent
+    nudges + 7 quiet days; owner tap only (never a job), once per thread ever (partial unique index
+    `drafts_one_closing_question_per_thread`; a lost race returns `already_asked`/`already_pending`
+    and deletes the extra Gmail draft); separate from `followup_count`.
+  - **#15 price memory:** `price_history` (amount, kind of job, date; one row per thread) written by
+    `captureQuoteAmounts` from the owner's own sent quotes (plus a one-off backfill of existing
+    captured amounts); owner-typed Won amounts never go in. Similarity in code (job-word overlap,
+    `SIMILAR_AT` 0.5, top 3). Shown only on quote requests ("Last 3 similar"): on Queue (tap a
+    figure to fill `{{price}}`) and as plain text on Inbox. **Never sent to the AI** and never in digest/admin/push/SMS:
+    a static boundary test lists the only files that may touch it, plus per-prompt tests. Kept
+    past the body purge; goes with the mailbox / account.
+  - Sentry: `ui.*` breadcrumbs lose message and data (`scrubEvent`). M7's new controls (Money
+    cards, past-price buttons) use aria-labelledby or visible text, never an aria-label with an
+    amount or name. Older labels (draft card, quote card, seasonal-note remove, admin waitlist)
+    still carry a name or owner text and are kept out of Sentry only by the `ui.*` scrub.
 - **Sending requires a real payment (Davi, 2026-10-10):** `canSend` = status in `SENDING_ALLOWED`
   **and** `workspaces.setup_paid_via` ∈ {`stripe`, `house`}. `stripe` is set only by the signed
   webhook's paid checkout that included the setup fee; `house` only by the admin move
@@ -494,6 +559,17 @@ In a sandbox with preinstalled Chromium: `PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-brows
 - Add each invited owner as a Google Cloud test user (Google Auth Platform → Audience).
 - Icon pack (`sa.` monogram, stacked wordmark); `docs/terms.md`, `docs/privacy-policy.md` drafts;
   `SUPPORT_EMAIL`; production domain.
+- **Plan #26 (closing question):** decide whether "Want to ask if they went another way?" may go
+  live. Built and tested behind `FEATURE_CLOSING_QUESTION` (off); turning it on = set it to `1` in
+  Vercel and redeploy (docs/SETUP.md §6d). Don't set it without his okay.
+- **Privacy policy lines for M7** (the draft `docs/privacy-policy.md` is on `claude/homepage-fixes`,
+  PR #9, not on this branch — add these when both have merged): under "What we store": "Prices you
+  quoted (the amount, the kind of job and the date), kept as your price memory. Only you see them,
+  and they are never sent to the AI." Also: which invoices are marked paid (or "not owed to me"), a
+  marker on threads that were ever a complaint (so we never ask that customer for a review), and
+  which customers were sent a review request. Under "What you tell us": your review link. Under
+  "How long we keep it": these stay after the 30-day email-text purge, until you disconnect that
+  Gmail address or delete your account.
 
 ## Launch blockers to remember
 

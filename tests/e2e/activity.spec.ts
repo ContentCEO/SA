@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { expect, test } from "@playwright/test";
 import { eq } from "drizzle-orm";
 import * as schema from "../../src/db/schema";
@@ -45,6 +46,67 @@ test("activity: plain log, honest estimate, reachable from the menu", async ({ p
     () => document.documentElement.scrollWidth > document.documentElement.clientWidth,
   );
   expect(overflow).toBe(false);
+});
+
+test("activity at 375px: monthly close rate counts owner and auto outcomes, Money owed link works", async ({
+  page,
+  context,
+}) => {
+  await page.setViewportSize({ width: 375, height: 812 });
+  const owner = await seedOwner({ mailbox: true, backfilled: true });
+  const now = new Date();
+  const decided = [
+    { name: "Ana", outcome: "won", source: "owner" },
+    { name: "Ben", outcome: "lost", source: "owner" },
+    { name: "Cy", outcome: "no_answer", source: "auto" },
+  ] as const;
+  for (const d of decided) {
+    const gid = `close-${d.name}-${randomUUID().slice(0, 8)}`;
+    const [t] = await testDb
+      .insert(schema.threads)
+      .values({
+        mailboxId: owner.mailboxId!,
+        gmailThreadId: gid,
+        inInbox: true,
+        category: "quote_request",
+        summary: `${d.name} wants a quote.`,
+        lastMessageAt: now,
+        quoteOutcome: d.outcome,
+        quoteOutcomeSource: d.source,
+        quoteOutcomeAt: now,
+      })
+      .returning();
+    await testDb.insert(schema.messages).values({
+      threadId: t!.id,
+      mailboxId: owner.mailboxId!,
+      gmailMessageId: `${gid}-in`,
+      direction: "in",
+      fromName: d.name,
+      fromAddress: `${d.name.toLowerCase()}@customer.com`,
+      sentAt: now,
+    });
+  }
+  await signInAs(context, owner);
+
+  await page.goto("/activity");
+  const close = page.getByRole("region", { name: "Quotes decided this month" });
+  await expect(close).toContainText("You won 1 of 3 quotes decided this month (33%).");
+  // Won / Lost / No answer: one each — the auto "no answer" counts as decided.
+  await expect(close.getByRole("definition")).toHaveText(["1", "1", "1"]);
+  for (const label of ["Won", "Lost", "No answer"]) {
+    await expect(
+      close.getByRole("term").filter({ hasText: new RegExp(`^${label}$`) }),
+    ).toBeVisible();
+  }
+
+  const overflow = await page.evaluate(
+    () => document.documentElement.scrollWidth > document.documentElement.clientWidth,
+  );
+  expect(overflow).toBe(false);
+
+  await page.getByRole("link", { name: "Money owed →" }).click();
+  await expect(page).toHaveURL(/\/money$/);
+  await expect(page.getByRole("region", { name: "Owed to you" })).toBeVisible();
 });
 
 test("settings: morning summary time and time zone are saved", async ({ page, context }) => {

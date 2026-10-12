@@ -166,25 +166,25 @@ _Re-checked 2026-10-10: brief scope complete with tests; nothing else filed here
 
 ## Milestone 7 — Follow-ups
 
-- [ ] **#26 Ask why a quote went quiet.** ASK DAVI before merging — it touches the two-nudge rule.
+- [ ] **#26 Ask why a quote went quiet.** _(Built 2026-10-12 behind `FEATURE_CLOSING_QUESTION` (off) — waiting on Davi. Turning it on needs his okay; see `docs/SETUP.md` §6d.)_ ASK DAVI before merging — it touches the two-nudge rule.
       Default design that keeps the rule: this is not a nudge and is never automatic. After a thread
       has used both nudges and gone 7 more days quiet, the thread shows an offer: "Want to ask if
       they went another way?" Only an owner tap creates the draft; it goes through the normal queue.
       Once per thread, ever. Logged as `closing_question`, separate from `followup_count`. Tests:
       never created by a job; never twice.
-- [ ] **#27 Invoice ageing view.** "Money owed" screen from `extracted.invoice`: customer, amount,
+- [x] **#27 Invoice ageing view.** _(Done 2026-10-12.)_ _(How: `/money` (linked from Quotes and Activity): oldest due first, Mark paid / Undo, "Not owed to me" / Put back; a customer's "paid" email or a Stripe/QuickBooks receipt that names the invoice number marks it paid; paid invoices are never chased; a later email naming a different invoice number reopens a paid row, but never one marked "Not owed to me".)_ "Money owed" screen from `extracted.invoice`: customer, amount,
       days past due, nudges used. Sorted by oldest. Paid signals ("sent payment", Stripe/QuickBooks
       receipts) mark it paid with an undo. No accounting integration.
-- [ ] **#28 Deposit reminder.** When a reply accepts a quote ("let's do it", "go ahead"), draft the
+- [x] **#28 Deposit reminder.** _(Done 2026-10-12.)_ _(How: classify.v3 `accepts_quote` on a quote the owner really gave → the next draft is deposit details (`purpose.v1`, `drafts.purpose = deposit`) from payment terms, or a `{{custom:deposit instructions}}` gap + flag when there are none; a terms check flags any %, way to pay or discount not in the terms.)_ When a reply accepts a quote ("let's do it", "go ahead"), draft the
       owner's deposit instructions from `business_profile.payment_terms`. If payment terms are empty,
       flag instead of inventing. Normal approval.
-- [ ] **#29 Review request.** When a thread signals the job is finished ("looks great", final
+- [x] **#29 Review request.** _(Done 2026-10-12.)_ _(How: "Ask for a review" on Inbox rows and paid Money rows, owner tap only, when the customer said the job is done or the invoice is paid; never a complaint thread or a customer who complained in the last 12 months (sticky `complained_at`), never strangers/no-reply/receipt senders, one per address per 12 months (advisory lock).)_ When a thread signals the job is finished ("looks great", final
       invoice paid), offer a short review-request draft with the owner's review link
       (`business_profile.review_url`, new field). One per customer per 12 months. Never to complaint
       threads. Normal approval.
-- [ ] **#30 Win/loss.** Each quote thread gets `outcome`: won / lost / no answer (auto-guessed, owner
+- [x] **#30 Win/loss.** _(Done 2026-10-12.)_ _(How: `quote_outcome` + `quote_outcome_source` (owner always wins); auto-won on an accepted quote, auto no answer after 2 nudges + 7 quiet days or 21 quiet days; one tap on Quotes; Activity shows "You won N of M quotes decided this month (P%)."; a decided quote stops nudges.)_ Each quote thread gets `outcome`: won / lost / no answer (auto-guessed, owner
       can change with one tap). Monthly close rate on Activity.
-- [ ] **#15 Price memory (owner-only).** From the owner's own sent quotes, extract service + price +
+- [x] **#15 Price memory (owner-only).** _(Done 2026-10-12.)_ _(How: `price_history` (amount, kind of job, date) from captured quote amounts (and a one-off backfill); "Last 3 similar" on quote requests, shown on Queue (tap a figure to fill `{{price}}`) and as text on Inbox; a static boundary test plus per-prompt tests prove it never reaches a prompt, digest, admin, push or SMS.)_ From the owner's own sent quotes, extract service + price +
       date into `price_history`. In the queue, a quote request shows "Last 3 similar: $1,800 (Mar),
       $2,100 (Jun)…" to the owner only. Never inserted into a draft automatically; the owner can tap
       a figure to fill a `{{price}}` gap (#2). Tests: drafter prompt never receives price history.

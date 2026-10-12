@@ -140,6 +140,22 @@ for the number plus about $0.01 per text, and a one-time US carrier (A2P 10DLC) 
 5. Vercel → sa → Environment Variables (Production): `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`
    (sensitive), `TWILIO_MESSAGING_SERVICE_SID`. Redeploy.
 
+### 6d. Feature switches (off by default)
+
+Some features are built and tested but wait on Davi's okay. Each one is off unless its env var is
+exactly `1`, `true` or `on` (any case); empty, missing or anything else means off
+(`src/config/features.ts`).
+
+- `FEATURE_CLOSING_QUESTION` (plan #26, default **off**): on a quote that has had both follow-up
+  nudges and then 7 more quiet days, Quotes offers "Want to ask if they went another way?". Only
+  the owner's tap writes the draft (never a job), once per thread ever, never on a complaint, and
+  it goes through the normal queue. It is not a nudge and doesn't count as one.
+
+**Ask Davi before turning `FEATURE_CLOSING_QUESTION` on.** To turn it on: Vercel → sa → Environment
+Variables → add it with value `1` (Production only, unless Davi says otherwise) → Redeploy. To turn
+it off again, delete the variable (or set it empty) and redeploy; the offer disappears, and any
+closing-question drafts already in the queue stay there for the owner to send or discard.
+
 ## 7. Inviting an owner
 
 ```bash
