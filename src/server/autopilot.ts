@@ -1,6 +1,6 @@
 import "server-only";
 import { hasUnfilledGap } from "@/ai/gaps";
-import { and, count, desc, eq, gte, inArray, isNotNull, isNull, lt, lte, sql } from "drizzle-orm";
+import { and, count, desc, eq, gte, inArray, isNotNull, isNull, lte, sql } from "drizzle-orm";
 import { pricing } from "@/config/pricing";
 import { db } from "@/db";
 import {
@@ -15,6 +15,9 @@ import {
 } from "@/db/schema";
 import { AUTO_DRAFT_CATEGORIES, sendDraft, type DraftDeps, type SendOutcome } from "./drafts";
 import { effectiveStatus } from "./lifecycle";
+import { knownCustomer } from "./known-customer";
+
+export { knownCustomer };
 
 /**
  * Autopilot: the owner's explicit exception to "nothing leaves without your
@@ -95,22 +98,6 @@ export function guardrailReasons(g: GuardrailInput): string[] {
   if (g.acceptsQuote) out.push("Quote acceptances always wait for you.");
   if (g.purpose != null) out.push("Deposit, review and closing notes always wait for you.");
   return out;
-}
-
-async function knownCustomer(mailboxId: string, address: string | null, before: Date) {
-  if (!address) return false;
-  const [row] = await db()
-    .select({ n: count() })
-    .from(messages)
-    .where(
-      and(
-        eq(messages.mailboxId, mailboxId),
-        eq(messages.direction, "out"),
-        lt(messages.sentAt, before),
-        sql`${messages.toAddresses} @> ${JSON.stringify([address.toLowerCase()])}::jsonb`,
-      ),
-    );
-  return (row?.n ?? 0) > 0;
 }
 
 /** Layer 2's evidence: replies in each category the owner sent exactly as drafted. */

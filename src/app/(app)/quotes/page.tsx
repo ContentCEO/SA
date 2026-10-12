@@ -1,12 +1,14 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { Notice } from "@/components/app/notice";
+import { OfferButtons } from "@/components/app/offer-buttons";
 import { Headline } from "@/components/brand/headline";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { gmailThreadLink } from "@/lib/gmail-link";
 import { relativeTime } from "@/lib/relative-time";
 import { cn } from "@/lib/utils";
 import { isReadOnly } from "@/server/lifecycle";
+import { threadOffers, type ThreadOffers } from "@/server/offers";
 import {
   formatCents,
   isDecidedStage,
@@ -51,7 +53,17 @@ const markLabel: Record<QuoteOutcome, string> = {
   no_answer: "Mark no answer",
 };
 
-function QuoteCard({ q, filter, readOnly }: { q: QuoteRow; filter: Filter; readOnly: boolean }) {
+function QuoteCard({
+  q,
+  filter,
+  readOnly,
+  offers,
+}: {
+  q: QuoteRow;
+  filter: Filter;
+  readOnly: boolean;
+  offers: ThreadOffers | undefined;
+}) {
   const name = q.customerName ?? q.customerAddress ?? "Someone";
   const decided = isDecidedStage(q.stage);
   return (
@@ -78,6 +90,13 @@ function QuoteCard({ q, filter, readOnly }: { q: QuoteRow; filter: Filter; readO
         ) : null}
       </div>
       {q.summary ? <p className="opacity-80">{q.summary}</p> : null}
+      {readOnly ? null : (
+        // Plan #26: only on a quote that went quiet after both nudges (the server decides).
+        <OfferButtons
+          threadId={q.threadId}
+          offers={offers ? { review: false, closingQuestion: offers.closingQuestion } : undefined}
+        />
+      )}
 
       {readOnly ? null : decided ? (
         // One tap to change it — our guess or the owner's own mark.
@@ -155,6 +174,10 @@ export default async function QuotesPage(props: PageProps<"/quotes">) {
   const shown = quotes.filter((q) =>
     filter === "open" ? OPEN.includes(q.stage) : q.stage === filter,
   );
+  const offers = await threadOffers(
+    workspace.id,
+    shown.map((q) => q.threadId),
+  );
   const count = (f: Filter) =>
     quotes.filter((q) => (f === "open" ? OPEN.includes(q.stage) : q.stage === f)).length;
   const doneMsg = typeof params.done === "string" ? done[params.done] : undefined;
@@ -218,7 +241,13 @@ export default async function QuotesPage(props: PageProps<"/quotes">) {
       {shown.length ? (
         <div className="flex flex-col gap-3">
           {shown.map((q) => (
-            <QuoteCard key={q.threadId} q={q} filter={filter} readOnly={readOnly} />
+            <QuoteCard
+              key={q.threadId}
+              q={q}
+              filter={filter}
+              readOnly={readOnly}
+              offers={offers.get(q.threadId)}
+            />
           ))}
         </div>
       ) : (

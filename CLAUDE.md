@@ -499,3 +499,9 @@ In a sandbox with preinstalled Chromium: `PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-brows
 
 - Previews share the production database. Before real customers: give previews their own Neon
   branch (Neon's Vercel integration does this) so a preview can't touch customer data.
+- **M7 merge timing (complaint memory, A1):** the first preview build of the M7 branch runs
+  migration 0024 (marks threads still sorted `complaint` with `complained_at`). Until M7 merges,
+  production's older code keeps re-sorting threads without setting the mark, so a complaint that
+  turns into "fixed now, thanks" in that window leaves no trace and could later be offered "Ask
+  for a review" (owner tap only, and it's a draft). The same goes for complaints re-sorted before
+  M7. That data can't be recovered: merge M7 soon after its first preview build.

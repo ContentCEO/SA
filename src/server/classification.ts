@@ -279,6 +279,20 @@ export async function classifyPending(
         summary: result.summary,
         extracted: stored,
         classifiedAt: now,
+        // Sticky (A1): a later "looks great" never makes a complaint look like a happy
+        // customer, so the mark is never cleared. It holds the LATEST complaint (the
+        // 12-month rule counts from the most recent one), and a thread that was sorted as a
+        // complaint before this column existed (or by older code still running) gets its mark
+        // from that earlier sort when the next email re-sorts it.
+        ...(result.category === "complaint"
+          ? {
+              complainedAt: sql`greatest(${threads.complainedAt}, ${now.toISOString()}::timestamptz)`,
+            }
+          : thread?.category === "complaint"
+            ? {
+                complainedAt: sql`coalesce(${threads.complainedAt}, ${threads.classifiedAt}, ${now.toISOString()}::timestamptz)`,
+              }
+            : {}),
         ...(reopen
           ? {
               invoicePaidAt: sql`case when ${threads.invoicePaidSource} = 'not_owed' then ${threads.invoicePaidAt} else null end`,

@@ -16,6 +16,8 @@ import { createTestDb } from "../support/db";
 
 /** Milestone 7 foundation: one additive migration (0023) for every new column and table. */
 const M7 = "0023_solid_slyde";
+/** A1 follow-up: data-only backfill of the sticky complaint mark. */
+const BACKFILL = "0024_complaint_backfill";
 
 describe("migration 0023 (plan M7 foundation)", () => {
   const sqlText = readFileSync(join("drizzle", `${M7}.sql`), "utf8");
@@ -45,11 +47,22 @@ describe("migration 0023 (plan M7 foundation)", () => {
     }
   });
 
-  it("is the newest migration in the journal", () => {
+  it("is followed in the journal only by the complaint backfill", () => {
     const journal = JSON.parse(readFileSync("drizzle/meta/_journal.json", "utf8")) as {
       entries: { tag: string }[];
     };
-    expect(journal.entries.at(-1)!.tag).toBe(M7);
+    expect(journal.entries.slice(-2).map((e) => e.tag)).toEqual([M7, BACKFILL]);
+  });
+
+  it("the backfill (0024) only fills complained_at on complaint threads that lack it", () => {
+    const backfill = readFileSync(join("drizzle", `${BACKFILL}.sql`), "utf8")
+      .split("\n")
+      .filter((l) => l.trim() && !l.trim().startsWith("--"))
+      .join("\n")
+      .trim();
+    expect(backfill).toBe(
+      `UPDATE "threads" SET "complained_at" = coalesce("classified_at", "last_message_at", now()) WHERE "category" = 'complaint' AND "complained_at" IS NULL;`,
+    );
   });
 
   describe("marks Won/Lost set before it as the owner's (amendment A13)", () => {
@@ -61,12 +74,13 @@ describe("migration 0023 (plan M7 foundation)", () => {
       const before = mkdtempSync(join(tmpdir(), "sa-m7-"));
       dirs.push(before);
       cpSync("drizzle", before, { recursive: true });
-      rmSync(join(before, `${M7}.sql`));
       const journalPath = join(before, "meta", "_journal.json");
       const journal = JSON.parse(readFileSync(journalPath, "utf8")) as {
         entries: { tag: string }[];
       };
-      journal.entries = journal.entries.filter((e) => e.tag !== M7);
+      const from = journal.entries.findIndex((e) => e.tag === M7);
+      for (const e of journal.entries.slice(from)) rmSync(join(before, `${e.tag}.sql`));
+      journal.entries = journal.entries.slice(0, from);
       writeFileSync(journalPath, JSON.stringify(journal));
       expect(readdirSync(before).some((f) => f.startsWith("0023"))).toBe(false);
 
@@ -85,6 +99,10 @@ describe("migration 0023 (plan M7 foundation)", () => {
           ('00000000-0000-0000-0000-000000000003', 'won', 'won', now()),
           ('00000000-0000-0000-0000-000000000003', 'lost', 'lost', now()),
           ('00000000-0000-0000-0000-000000000003', 'open', NULL, NULL);
+        INSERT INTO threads (mailbox_id, gmail_thread_id, category, classified_at, last_message_at) VALUES
+          ('00000000-0000-0000-0000-000000000003', 'complaint', 'complaint', '2026-09-01T12:00:00Z', '2026-09-02T12:00:00Z'),
+          ('00000000-0000-0000-0000-000000000003', 'complaint-unsorted-time', 'complaint', NULL, '2026-09-03T12:00:00Z'),
+          ('00000000-0000-0000-0000-000000000003', 'question', 'customer_question', '2026-09-01T12:00:00Z', NULL);
       `);
 
       await migrate(database, { migrationsFolder: "./drizzle" });
@@ -96,8 +114,11 @@ describe("migration 0023 (plan M7 foundation)", () => {
       for (const t of rows) {
         expect(t.invoicePaidAt).toBeNull();
         expect(t.invoicePaidSource).toBeNull();
-        expect(t.complainedAt).toBeNull();
       }
+      // 0024: complaints sorted before the sticky mark existed get it (A1); nothing else does.
+      expect(by.complaint!.complainedAt).toEqual(new Date("2026-09-01T12:00:00Z"));
+      expect(by["complaint-unsorted-time"]!.complainedAt).toEqual(new Date("2026-09-03T12:00:00Z"));
+      for (const g of ["won", "lost", "open", "question"]) expect(by[g]!.complainedAt).toBeNull();
       await client.close();
     }, 60_000); // two full migration runs on PGlite
   });

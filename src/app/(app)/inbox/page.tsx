@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { Headline } from "@/components/brand/headline";
+import { OfferButtons } from "@/components/app/offer-buttons";
 import { PermitCard } from "@/components/app/permit-card";
 import { Button } from "@/components/ui/button";
 import { CATEGORIES } from "@/ai/prompts/classify.v3";
@@ -9,6 +10,7 @@ import { cn } from "@/lib/utils";
 import { listInboxThreads, type InboxFilter, type InboxRow } from "@/server/inbox";
 import { listMailboxes } from "@/server/mailboxes";
 import { isReadOnly } from "@/server/lifecycle";
+import { threadOffers } from "@/server/offers";
 import { requireOwner } from "@/server/session";
 import { draftReplyAction } from "../queue/actions";
 import { markNeedsOwnerAction } from "./actions";
@@ -94,6 +96,12 @@ export default async function InboxPage(props: PageProps<"/inbox">) {
     listMailboxes(workspace.id),
   ]);
   const active = filterKey(filter);
+  // "Ask for a review" / the closing question, only where the server's rules allow (#29 #26).
+  // Read-only accounts get none.
+  const offers = await threadOffers(
+    workspace.id,
+    rows.map((r) => r.id),
+  );
 
   return (
     <>
@@ -183,6 +191,9 @@ export default async function InboxPage(props: PageProps<"/inbox">) {
                         Draft a reply
                       </Button>
                     </form>
+                  ) : null}
+                  {!readOnly ? (
+                    <OfferButtons threadId={row.id} offers={offers.get(row.id)} />
                   ) : null}
                   {!row.needsOwner ? (
                     <form action={markNeedsOwnerAction}>

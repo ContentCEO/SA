@@ -70,6 +70,8 @@ import {
 import { batchEligible, firstLine } from "./batch-rules";
 import { quoteStopsNudges } from "./quote-rules";
 import { BACK_ON_TOP_MS, isEmergency } from "./snooze-rules";
+import { closingQuestionAllowed, recentReviewAddresses, reviewAllowed } from "./offers";
+import { lockReviewAddress } from "./review-lock";
 import { markReconnectNeeded } from "./sync";
 
 /** Categories we draft for without being asked. Complaints and noise never are. */
@@ -383,6 +385,17 @@ export async function createDraftForThread(
   if (opts.purpose === "closing_question" && !featureOn("closingQuestion")) {
     return { status: "skipped", reason: "feature_off" };
   }
+  // The same rules as the buttons, checked here before any model call whatever the screen
+  // showed (plan #29 #26): never a complaint, a known customer with a finished job, once a
+  // year per address; the closing question only after both nudges and a quiet week, once ever.
+  if (opts.purpose === "review_request") {
+    const why = await reviewAllowed(workspace.id, threadId, now);
+    if (why) return { status: "skipped", reason: why };
+  }
+  if (opts.purpose === "closing_question") {
+    const why = await closingQuestionAllowed(workspace.id, threadId, now);
+    if (why) return { status: "skipped", reason: why };
+  }
 
   const marks = (thread.extracted ?? {}) as { municipal?: boolean; injection?: boolean };
   // Only the owner's tap drafts for these (feature plan #17, #42) — never a job.
@@ -595,34 +608,63 @@ export async function createDraftForThread(
     throw err;
   }
 
-  const [row2] = await db()
-    .insert(drafts)
-    .values({
-      threadId,
-      mailboxId: mailbox.id,
-      replyToMessageId: last.id,
-      // Purpose notes are replies, so they never count as a nudge (followup_count).
-      kind: followup ? "followup" : "reply",
-      purpose,
-      gmailDraftId: created.draftId,
-      gmailMessageId: created.messageId,
-      toAddress: to,
-      subject,
-      body,
-      originalBody: body,
-      reason:
-        result.reason.trim().slice(0, 200) || (followup ? "Follow-up nudge." : "Reply drafted."),
-      flags,
-      confidence,
-      usedFacts: [...new Set(result.used_facts ?? [])],
-      promptVersion,
-      createdAt: now,
-    })
-    .onConflictDoNothing()
-    .returning({ id: drafts.id });
+  const insertDraft = (q: Pick<ReturnType<typeof db>, "insert">) =>
+    q
+      .insert(drafts)
+      .values({
+        threadId,
+        mailboxId: mailbox.id,
+        replyToMessageId: last.id,
+        // Purpose notes are replies, so they never count as a nudge (followup_count).
+        kind: followup ? "followup" : "reply",
+        purpose,
+        gmailDraftId: created.draftId,
+        gmailMessageId: created.messageId,
+        toAddress: to,
+        subject,
+        body,
+        originalBody: body,
+        reason:
+          result.reason.trim().slice(0, 200) || (followup ? "Follow-up nudge." : "Reply drafted."),
+        flags,
+        confidence,
+        usedFacts: [...new Set(result.used_facts ?? [])],
+        promptVersion,
+        createdAt: now,
+      })
+      .onConflictDoNothing()
+      .returning({ id: drafts.id });
+
+  let row2: { id: string } | undefined;
+  let reviewTaken = false;
+  if (purpose === "review_request") {
+    // One review request per address a year, even with two taps on two threads at once
+    // (A16): the check and the insert run under a lock on this workspace + address.
+    await db().transaction(async (tx) => {
+      await lockReviewAddress(tx, workspace.id, to);
+      if ((await recentReviewAddresses(workspace.id, now, tx)).has(to.toLowerCase())) {
+        reviewTaken = true;
+        return;
+      }
+      [row2] = await insertDraft(tx);
+    });
+  } else {
+    [row2] = await insertDraft(db());
+  }
   if (!row2) {
     // Lost a race with another run; don't leave an orphan in Gmail.
     await writer.deleteDraft(created.draftId);
+    if (reviewTaken) return { status: "skipped", reason: "review_recent" };
+    // The insert skips on any unique index: tell "asked once already" (the closing question's
+    // own index, A7) apart from "a draft is already waiting".
+    if (purpose === "closing_question") {
+      const [asked] = await db()
+        .select({ id: drafts.id })
+        .from(drafts)
+        .where(and(eq(drafts.threadId, threadId), eq(drafts.purpose, "closing_question")))
+        .limit(1);
+      if (asked) return { status: "skipped", reason: "already_asked" };
+    }
     return { status: "skipped", reason: "already_pending" };
   }
   if (followup) {

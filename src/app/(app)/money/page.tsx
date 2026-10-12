@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { Notice } from "@/components/app/notice";
+import { OfferButtons } from "@/components/app/offer-buttons";
 import { Headline } from "@/components/brand/headline";
 import { Button } from "@/components/ui/button";
 import { gmailThreadLink } from "@/lib/gmail-link";
@@ -9,6 +10,7 @@ import { cn } from "@/lib/utils";
 import { MAX_FOLLOWUPS } from "@/server/drafts";
 import { isReadOnly } from "@/server/lifecycle";
 import { listMoney, type MoneyRow } from "@/server/money";
+import { threadOffers, type ThreadOffers } from "@/server/offers";
 import { formatCents } from "@/server/quote-rules";
 import { requireOwner } from "@/server/session";
 import {
@@ -109,11 +111,13 @@ function SettledRow({
   readOnly,
   now,
   kind,
+  offers,
 }: {
   r: MoneyRow;
   readOnly: boolean;
   now: Date;
   kind: "paid" | "hidden";
+  offers?: ThreadOffers;
 }) {
   const nameId = `${kind}-${r.threadId}`;
   return (
@@ -132,6 +136,13 @@ function SettledRow({
           {r.paidSource === "auto" ? " (we spotted the payment)" : ""}
         </p>
       ) : null}
+      {readOnly || kind !== "paid" ? null : (
+        // Plan #29: paid, so the job's done — offered only where the server's rules allow.
+        <OfferButtons
+          threadId={r.threadId}
+          offers={offers ? { review: offers.review, closingQuestion: false } : undefined}
+        />
+      )}
       {readOnly ? null : (
         <form action={kind === "paid" ? undoInvoicePaidAction : putBackAction}>
           <input type="hidden" name="threadId" value={r.threadId} />
@@ -153,6 +164,11 @@ export default async function MoneyPage(props: PageProps<"/money">) {
   const showHidden = params.show === "hidden";
   const doneMsg = typeof params.done === "string" ? done[params.done] : undefined;
   const errorMsg = typeof params.error === "string" ? errors[params.error] : undefined;
+  const offers = await threadOffers(
+    workspace.id,
+    paidRecently.map((r) => r.threadId),
+    now,
+  );
   const pastDue = owed.filter((r) => (r.due.daysPastDue ?? 0) > 0).length;
 
   return (
@@ -199,7 +215,14 @@ export default async function MoneyPage(props: PageProps<"/money">) {
           </h2>
           <ul className="flex flex-col divide-y rounded-xl border bg-card">
             {paidRecently.map((r) => (
-              <SettledRow key={r.threadId} r={r} readOnly={readOnly} now={now} kind="paid" />
+              <SettledRow
+                key={r.threadId}
+                r={r}
+                readOnly={readOnly}
+                now={now}
+                kind="paid"
+                offers={offers.get(r.threadId)}
+              />
             ))}
           </ul>
         </section>

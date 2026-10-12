@@ -174,6 +174,32 @@ async function ownerMessage(threadId: string, when: Date, n: string) {
   });
 }
 
+/**
+ * Both follow-up nudges went out before the owner's last message: with a quiet week after
+ * it (`QUIET`), the closing question can be asked (plan #26).
+ */
+async function nudgesSent(threadId: string) {
+  for (const days of [-3, -2]) {
+    await database.insert(drafts).values({
+      threadId,
+      mailboxId,
+      kind: "followup",
+      status: "sent",
+      toAddress: "dana@customer.com",
+      subject: "Re: Panel upgrade",
+      body: "Just checking in on the quote.",
+      reason: "Follow-up nudge.",
+      createdAt: at(days),
+      decidedAt: at(days),
+    });
+  }
+}
+/**
+ * A week and a day after the owner's last message in `acceptedQuote({ lastDirection: "out" })`.
+ * Past the 3-day trial, so tests asking then make the account paid first.
+ */
+const QUIET = at(8);
+
 async function draftRow(id: string) {
   return (await database.select().from(drafts).where(eq(drafts.id, id)))[0]!;
 }
@@ -632,20 +658,32 @@ describe("review request and closing question plumbing (#29 #26)", () => {
 
   it("closing question (flag on): follows the owner's last message; its own activity; never a nudge", async () => {
     process.env.FEATURE_CLOSING_QUESTION = "on";
+    await setStatus("active");
     // The customer wrote last → nothing to ask yet.
     const answered = await acceptedQuote({ extracted: {} });
+    await nudgesSent(answered);
     setModelTransportForTests(fakeTransport([reply()]).transport);
-    expect(await ask(answered, "closing_question")).toEqual({
-      status: "skipped",
-      reason: "customer_replied",
-    });
+    expect(
+      await createDraftForThread(answered, {
+        trigger: "owner",
+        workspaceId,
+        purpose: "closing_question",
+        ...deps(QUIET),
+      }),
+    ).toEqual({ status: "skipped", reason: "not_eligible" });
 
     const t = await acceptedQuote({ extracted: {}, lastDirection: "out" });
+    await nudgesSent(t);
     const body =
       "Hi Dana,\n\nDid you go another way, or did the timing change? Either is fine.\n\nDavi";
     const { transport, calls } = fakeTransport([reply({ body })]);
     setModelTransportForTests(transport);
-    const r = await ask(t, "closing_question");
+    const r = await createDraftForThread(t, {
+      trigger: "owner",
+      workspaceId,
+      purpose: "closing_question",
+      ...deps(QUIET),
+    });
     expect(r.status).toBe("created");
     expect(calls[0]!.user).toContain("## Task: closing question");
     const d = await draftRow((r as { draftId: string }).draftId);
@@ -657,8 +695,7 @@ describe("review request and closing question plumbing (#29 #26)", () => {
       false,
     );
 
-    await setStatus("active");
-    expect(await sendDraft(workspaceId, d.id, deps())).toMatchObject({ status: "sent" });
+    expect(await sendDraft(workspaceId, d.id, deps(QUIET))).toMatchObject({ status: "sent" });
     const [thread] = await database.select().from(threads).where(eq(threads.id, t));
     expect(thread!.followupCount).toBe(0);
     const summary = await sentDraftSummary(workspaceId, d.id);
@@ -886,7 +923,9 @@ describe("a tweak keeps every purpose guard (A4, A6)", () => {
 describe("a waiting closing question goes when the owner writes some other way (#26)", () => {
   it("expired, noted, and the Gmail draft deleted", async () => {
     process.env.FEATURE_CLOSING_QUESTION = "on";
+    await setStatus("active");
     const t = await acceptedQuote({ extracted: {}, lastDirection: "out" });
+    await nudgesSent(t);
     setModelTransportForTests(
       fakeTransport([reply({ body: "Hi Dana,\n\nDid the timing change? Either is fine.\n\nDavi" })])
         .transport,
@@ -895,12 +934,12 @@ describe("a waiting closing question goes when the owner writes some other way (
       trigger: "owner",
       workspaceId,
       purpose: "closing_question",
-      ...deps(),
+      ...deps(QUIET),
     });
-    expect(r.status).toBe("created");
+    expect(r).toEqual({ status: "created", draftId: expect.any(String) });
     const id = (r as { draftId: string }).draftId;
-    await ownerMessage(t, at(1), "gmail");
-    await reconcileDrafts(mailboxId, deps(at(1)));
+    await ownerMessage(t, at(9), "gmail");
+    await reconcileDrafts(mailboxId, deps(at(9)));
     const after = await draftRow(id);
     expect(after.status).toBe("expired");
     expect(after.closedNote).toBe("You wrote to them since, so this note was out of date.");
