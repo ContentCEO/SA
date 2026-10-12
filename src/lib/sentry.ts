@@ -26,9 +26,15 @@ export function scrubEvent(event: ErrorEvent): ErrorEvent {
   event.user = event.user?.id ? { id: String(event.user.id) } : undefined;
   event.message = mask(event.message);
   for (const ex of event.exception?.values ?? []) ex.value = mask(ex.value);
+  // A click/input breadcrumb ("ui.click") describes the tapped element, aria-label and all —
+  // which can carry an amount or a customer's name. Keep only that something was tapped.
   event.breadcrumbs = (event.breadcrumbs ?? [])
     .filter((b) => b.category !== "console")
-    .map((b) => ({ ...b, message: mask(b.message), data: undefined }));
+    .map((b) => ({
+      ...b,
+      message: b.category?.startsWith("ui.") ? undefined : mask(b.message),
+      data: undefined,
+    }));
   delete event.extra;
   return event;
 }

@@ -1,7 +1,9 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { Headline } from "@/components/brand/headline";
+import { buttonVariants } from "@/components/ui/button";
 import { relativeTime } from "@/lib/relative-time";
+import { cn } from "@/lib/utils";
 import {
   listActivity,
   MINUTES_PER_SENT_REPLY,
@@ -32,6 +34,12 @@ export default async function ActivityPage() {
   return (
     <>
       <Headline serif="what got done," heavy="activity." />
+      <Link
+        href="/money"
+        className={cn(buttonVariants({ variant: "outline" }), "min-h-tap self-start")}
+      >
+        Money owed →
+      </Link>
 
       <section
         aria-labelledby="month"

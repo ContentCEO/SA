@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { Notice } from "@/components/app/notice";
 import { Headline } from "@/components/brand/headline";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { gmailThreadLink } from "@/lib/gmail-link";
 import { relativeTime } from "@/lib/relative-time";
 import { cn } from "@/lib/utils";
@@ -163,6 +163,12 @@ export default async function QuotesPage(props: PageProps<"/quotes">) {
   return (
     <>
       <Headline serif="your quotes," heavy="won and waiting." />
+      <Link
+        href="/money"
+        className={cn(buttonVariants({ variant: "outline" }), "min-h-tap self-start")}
+      >
+        Money owed →
+      </Link>
       {doneMsg ? <Notice>{doneMsg}</Notice> : null}
       {errorMsg ? <Notice strong>{errorMsg}</Notice> : null}
 

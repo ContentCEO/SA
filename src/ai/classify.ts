@@ -29,6 +29,12 @@ export type Extracted = ModelClassification["extracted"] & {
   accepts_quote?: boolean;
   job_done?: boolean;
   quote_accepted?: boolean;
+  /**
+   * Plan #27: this thread has been about an invoice (sorted invoice_payment at some point).
+   * Sticky, set at classification, so a later "use the side gate" re-sorted as a question
+   * keeps the invoice on Money owed. Only ever present as `true`.
+   */
+  invoice_thread?: boolean;
 };
 
 /** Below this, the owner looks. */

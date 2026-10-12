@@ -413,6 +413,35 @@ describe("lifecycle in the database", () => {
       await database
         .insert(usage)
         .values({ workspaceId, period: "2026-10-01", aiCalls: 7, estimatedCostCentiCents: 12_345 });
+      // Plan #27: an invoice the owner is owed, marked paid — its facts are the owner's alone.
+      const [inv] = await database
+        .insert(threads)
+        .values({
+          mailboxId,
+          gmailThreadId: "g10",
+          category: "invoice_payment",
+          extracted: {
+            invoice: {
+              invoice_number: "SECRET-INV",
+              amount: 98765,
+              due_date: "2026-09-01",
+              status: "unpaid",
+            },
+          },
+          invoicePaidAt: T0,
+          invoicePaidSource: "owner",
+        })
+        .returning();
+      await database.insert(messages).values({
+        threadId: inv!.id,
+        mailboxId,
+        gmailMessageId: "g10-in",
+        direction: "in",
+        fromAddress: "secret-customer@x.com",
+        fromName: "SECRET Zelda",
+        bodyText: "SECRET-BODY",
+        sentAt: T0,
+      });
 
       const [row] = await adminOverview(at(0.1));
       expect(row).toMatchObject({
@@ -422,7 +451,7 @@ describe("lifecycle in the database", () => {
         drafts: { pending: 1, createdThisMonth: 1 },
         ai: { callsToday: 7, callsThisMonth: 7, costCentsThisMonth: 123 },
       });
-      expect(JSON.stringify(row)).not.toMatch(/SECRET|secret-customer/);
+      expect(JSON.stringify(row)).not.toMatch(/SECRET|secret-customer|Zelda|98765|987\.65/);
     });
   });
 });

@@ -1,5 +1,5 @@
 import "server-only";
-import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { mailboxes, threads } from "@/db/schema";
 import { FOLLOWUP_CATEGORIES, followupSettings, MAX_FOLLOWUPS } from "./drafts";
@@ -12,6 +12,8 @@ export const FOLLOWUP_MAX_AGE_DAYS = 21;
  * - a quote or invoice thread that isn't flagged for the owner;
  * - not a decided quote: lost / no answer (the owner's or our guess) stops every nudge,
  *   won stops the quote nudges but a won job's invoice is still chased (quoteStopsNudges);
+ * - not a paid invoice: marked paid (the owner's mark or our guess) or "not owed to me"
+ *   is never chased (plan #27);
  * - the owner wrote last, at least `days` ago (and not ages ago);
  * - the customer has written at least once (someone to nudge);
  * - fewer than two nudges sent, ever;
@@ -48,6 +50,7 @@ export async function threadsToFollowUp(
         eq(threads.needsOwner, false),
         // SQL twin of `quoteStopsNudges`.
         sql`(${threads.quoteOutcome} is null or (${threads.quoteOutcome} = 'won' and ${threads.category} = 'invoice_payment'))`,
+        isNull(threads.invoicePaidAt),
         inArray(threads.category, [...FOLLOWUP_CATEGORIES]),
         sql`${lastIn} is not null`,
         sql`${lastOut} > ${lastIn}`,

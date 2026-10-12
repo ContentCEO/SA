@@ -81,6 +81,19 @@ export function describeActivity(
           detail.why === "three_weeks" ? "three quiet weeks" : "two nudges and a quiet week"
         }. Change it on Quotes`;
       return null;
+    case "invoice_marked_paid": {
+      const whose = name ? `${name}'s invoice` : "an invoice";
+      if (detail.source !== "auto") return `You marked ${whose} paid`;
+      return detail.via === "receipt"
+        ? `Marked ${whose} paid — a payment receipt matched it. Undo on Money owed`
+        : `Marked ${whose} paid — they said they paid. Undo on Money owed`;
+    }
+    case "invoice_marked_unpaid":
+      return `You put ${name ? `${name}'s invoice` : "an invoice"} back on the owed list`;
+    case "invoice_marked_not_owed":
+      return `You said ${name ? `${name}'s invoice` : "an invoice"} isn't owed to you`;
+    case "invoice_reopened":
+      return `${name ? `${name}'s conversation` : "A conversation"} mentions a new invoice, so it's back on Money owed`;
     case "marked_needs_owner":
       return `You marked a conversation${name ? ` with ${name}` : ""} as needing you`;
     case "mailbox_connected":

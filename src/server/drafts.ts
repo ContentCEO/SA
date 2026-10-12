@@ -242,6 +242,8 @@ export async function createDraftForThread(
       // A decided quote (lost / no answer, any source; won, unless it's now the job's
       // invoice) is never chased.
       quoteStopsNudges(thread) ||
+      // Nor a paid invoice (the owner's mark or our guess) or one that isn't owed (#27).
+      thread.invoicePaidAt != null ||
       !FOLLOWUP_CATEGORIES.includes(thread.category as (typeof FOLLOWUP_CATEGORIES)[number])
     ) {
       return { status: "skipped", reason: "followup_not_allowed" };
@@ -431,15 +433,20 @@ export async function createDraftForThread(
     return { status: "skipped", reason: "already_pending" };
   }
   if (followup) {
-    // The owner may have decided the quote while the model was writing. Checked after the
-    // insert: setQuoteOutcome writes the outcome before it looks for a waiting nudge, so
-    // either it finds this row, or this re-read sees its outcome. Whoever removes the row
-    // removes the Gmail draft.
+    // The owner may have decided the quote (or marked the invoice paid) while the model was
+    // writing. Checked after the insert: setQuoteOutcome / setInvoicePaid write their mark
+    // before they look for a waiting nudge, so either they find this row, or this re-read
+    // sees the mark. Whoever removes the row removes the Gmail draft. Our own paid guess
+    // lands here too: a nudge being written as it happens is simply dropped.
     const [fresh] = await db()
-      .select({ quoteOutcome: threads.quoteOutcome, category: threads.category })
+      .select({
+        quoteOutcome: threads.quoteOutcome,
+        category: threads.category,
+        invoicePaidAt: threads.invoicePaidAt,
+      })
       .from(threads)
       .where(eq(threads.id, threadId));
-    if (fresh && quoteStopsNudges(fresh)) {
+    if (fresh && (quoteStopsNudges(fresh) || fresh.invoicePaidAt != null)) {
       const gone = await db()
         .delete(drafts)
         .where(and(eq(drafts.id, row2.id), eq(drafts.status, "pending")))
@@ -1226,7 +1233,7 @@ const waitingNudge = (threadId: string) =>
   );
 
 /**
- * The owner closed the matter (decided the quote; later: marked the invoice paid), so the
+ * The owner closed the matter (decided the quote, marked the invoice paid or not owed), so the
  * thread's waiting nudge goes — here and in Gmail. A nudge already tapped Send is the owner's
  * call and is left alone. The nudge always closes here: lost Google access → reconnect
  * banner; any other Gmail failure (rate limit, outage) or a mailbox that isn't working →
@@ -1266,7 +1273,7 @@ export async function expirePendingNudge(
 }
 
 /**
- * Our own guess closed the matter (a quote outcome; later: an invoice we think was paid).
+ * Our own guess closed the matter (a quote outcome, or an invoice we think was paid).
  * A guess never deletes anything: the waiting nudge stays, with a flag asking the owner to
  * check, and any autopilot countdown is cleared. Idempotent.
  */
@@ -1278,6 +1285,16 @@ export async function flagPendingNudge(threadId: string, flag: string): Promise<
       autoSendAt: null,
     })
     .where(waitingNudge(threadId))
+    .returning({ id: drafts.id });
+  return rows.length > 0;
+}
+
+/** Takes a flag back off the thread's waiting nudge (the owner said otherwise). Idempotent. */
+export async function unflagPendingNudge(threadId: string, flag: string): Promise<boolean> {
+  const rows = await db()
+    .update(drafts)
+    .set({ flags: sql`${drafts.flags} - ${flag}::text` })
+    .where(and(waitingNudge(threadId), sql`${drafts.flags} @> jsonb_build_array(${flag}::text)`))
     .returning({ id: drafts.id });
   return rows.length > 0;
 }
@@ -1567,6 +1584,7 @@ export async function sentDraftSummary(workspaceId: string, draftId: string) {
     settings.enabled &&
     !row.thread.needsOwner &&
     !quoteStopsNudges(row.thread) &&
+    row.thread.invoicePaidAt == null &&
     FOLLOWUP_CATEGORIES.includes(row.thread.category as (typeof FOLLOWUP_CATEGORIES)[number]);
   const sentNudges = chased ? await countSentFollowups(row.thread.id) : 0;
   const decidedAt = row.draft.decidedAt ?? sendingAt ?? new Date();

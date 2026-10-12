@@ -13,7 +13,16 @@ import {
   workspaces,
 } from "@/db/schema";
 import { afterClassified } from "./auto-outcomes";
+import { unflagPendingNudge } from "./drafts";
 import { jobsAllowed } from "./lifecycle";
+import {
+  carryInvoiceFacts,
+  invoiceOf,
+  isInvoiceThread,
+  isNewInvoice,
+  isOwed,
+  PAID_GUESS_FLAG,
+} from "./money-rules";
 import { keepQuoteAccepted, quoteAccepted } from "./quote-rules";
 
 /** Classify inbound mail from this far back on the first pass; everything new after that. */
@@ -132,6 +141,8 @@ export async function classifyPending(
         extracted: threads.extracted,
         quoteOutcome: threads.quoteOutcome,
         quoteOutcomeSource: threads.quoteOutcomeSource,
+        invoicePaidAt: threads.invoicePaidAt,
+        invoicePaidSource: threads.invoicePaidSource,
       })
       .from(threads)
       .where(eq(threads.id, m.threadId));
@@ -220,6 +231,43 @@ export async function classifyPending(
       result = { ...result, extracted: { ...result.extracted, quote_accepted: true } };
     }
 
+    // The invoice facts carry over (A11): a "paid, thanks" keeps the amount, and a "use the
+    // side gate" keeps the invoice on Money owed (so does `invoice_thread`, whatever the
+    // email is sorted as next). Only what's stored is carried; the auto-marks below read
+    // this email's own words.
+    const wasInvoiceThread = thread ? isInvoiceThread(thread) : false;
+    const prevInvoice = invoiceOf(thread?.extracted);
+    const injection = result.extracted.injection === true;
+    // An email that tries to instruct us never changes the invoice facts either (A8): its
+    // "invoice 41 is paid" would otherwise drop the row off Money owed with no mark to undo.
+    const storedInvoice = injection
+      ? prevInvoice
+      : carryInvoiceFacts(
+          prevInvoice,
+          invoiceOf(result.extracted),
+          isOwed({
+            invoice: prevInvoice,
+            paidAt: thread?.invoicePaidAt ?? null,
+            paidSource: thread?.invoicePaidSource ?? null,
+          }),
+        );
+    // A different invoice number, still to be paid ("#42 for phase 2" after #41 was paid):
+    // a paid mark (ours or the owner's) was about the earlier invoice, so it is cleared in
+    // the same write that stores the new one, and Activity says so. The owner's "Not owed
+    // to me" is never cleared — the guard is in the UPDATE itself, so a tap racing this
+    // write still wins. Never on an email that tries to instruct us (A8).
+    const reopen =
+      !injection &&
+      thread?.invoicePaidSource !== "not_owed" &&
+      isNewInvoice(prevInvoice, invoiceOf(result.extracted));
+    const stored = {
+      ...result.extracted,
+      invoice: storedInvoice,
+      ...(wasInvoiceThread || result.category === "invoice_payment"
+        ? { invoice_thread: true }
+        : {}),
+    };
+
     await db()
       .update(threads)
       .set({
@@ -229,12 +277,41 @@ export async function classifyPending(
         needsOwner: sql`${threads.needsOwnerManual} or ${result.needsOwner}`,
         needsOwnerReason: sql`case when ${threads.needsOwnerManual} then ${threads.needsOwnerReason} else ${result.needsOwnerReason} end`,
         summary: result.summary,
-        extracted: result.extracted,
+        extracted: stored,
         classifiedAt: now,
+        ...(reopen
+          ? {
+              invoicePaidAt: sql`case when ${threads.invoicePaidSource} = 'not_owed' then ${threads.invoicePaidAt} else null end`,
+              invoicePaidSource: sql`case when ${threads.invoicePaidSource} = 'not_owed' then ${threads.invoicePaidSource} else null end`,
+            }
+          : {}),
       })
       .where(eq(threads.id, m.threadId));
     await db().update(messages).set({ classifiedAt: now }).where(eq(messages.id, m.id));
     classified++;
+
+    if (reopen && thread?.invoicePaidAt) {
+      // The paid mark just cleared was visible on Money owed: say why the row is back, and
+      // take "we think this was paid" off a waiting nudge. Content-free.
+      try {
+        await db()
+          .insert(activityLog)
+          .values({
+            workspaceId: box.workspace.id,
+            actor: "squared_away",
+            action: "invoice_reopened",
+            threadId: m.threadId,
+            detail: { source: "auto", why: "new_invoice" },
+          });
+        await unflagPendingNudge(m.threadId, PAID_GUESS_FLAG);
+      } catch (err) {
+        console.error("invoice_reopen_log_failed", {
+          workspaceId: box.workspace.id,
+          threadId: m.threadId,
+          error: err instanceof Error ? err.name : "unknown",
+        });
+      }
+    }
 
     // After the message is marked classified, so a failure here never re-bills the model;
     // the auto-marks are idempotent, and a failure never stops the batch (A18).
@@ -248,8 +325,10 @@ export async function classifyPending(
             category: thread?.category ?? null,
             quoteOutcome: thread?.quoteOutcome ?? null,
             quoteOutcomeSource: thread?.quoteOutcomeSource ?? null,
+            invoiceThread: wasInvoiceThread,
           },
           result,
+          storedInvoice,
           now,
         });
       } catch (err) {
