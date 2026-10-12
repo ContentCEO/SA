@@ -7,10 +7,12 @@ import { cn } from "@/lib/utils";
 import {
   listActivity,
   MINUTES_PER_SENT_REPLY,
+  localMonthName,
   monthCloseRate,
   monthSummary,
 } from "@/server/activity";
 import { requireOwner } from "@/server/session";
+import { workspaceTimeZone } from "@/server/snooze";
 
 export const metadata: Metadata = { title: "Activity" };
 
@@ -23,13 +25,15 @@ function timeSaved(minutes: number) {
 export default async function ActivityPage() {
   const { workspace } = await requireOwner();
   const now = new Date();
+  // One month for the whole screen, in the owner's own time zone.
+  const timeZone = await workspaceTimeZone(workspace.id);
   const [entries, month, close] = await Promise.all([
     listActivity(workspace.id),
-    monthSummary(workspace.id, now),
-    monthCloseRate(workspace.id, now),
+    monthSummary(workspace.id, now, timeZone),
+    monthCloseRate(workspace.id, now, timeZone),
   ]);
   const decided = close.won + close.lost + close.noAnswer;
-  const monthName = now.toLocaleString("en-US", { month: "long", timeZone: "UTC" });
+  const monthName = localMonthName(now, timeZone);
 
   return (
     <>

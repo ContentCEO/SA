@@ -62,6 +62,8 @@ export async function sendDraftAction(formData: FormData) {
       redirect("/queue?error=deleted");
     case "reconnect_needed":
       redirect("/queue?error=reconnect");
+    case "not_found":
+      redirect("/queue?error=gone");
     default:
       redirect("/queue?error=unknown");
   }

@@ -468,7 +468,9 @@ In a sandbox with preinstalled Chromium: `PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-brows
     stops quote nudges (a won job's invoice is still chased until paid). Auto guesses don't delete
     a waiting nudge — they add a "check before sending" flag; an owner decision expires it (and
     deletes its Gmail draft). Read-only accounts can't mark quotes (`?error=readonly`). Activity:
-    "You won N of M quotes decided this month (P%)." (UTC month, by `quote_outcome_at`).
+    "You won N of M quotes decided this month (P%)." (by `quote_outcome_at`, in the owner's month:
+    `business_profile.time_zone`, Eastern by default, via `localMonthStart`; the Activity month
+    label and month counts use the same zone).
   - **#27 `/money`:** invoice threads (`extracted.invoice`, or `invoice_thread` kept across
     re-sorts; facts carried when a later email has none or the same number), oldest due first.
     Excludes supplier_vendor and threads whose newest sender is a receipt domain
@@ -482,7 +484,9 @@ In a sandbox with preinstalled Chromium: `PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-brows
     owner's) is cleared and logged as `invoice_reopened`. "Not owed to me" is never cleared, and
     injection emails never reopen.
     A3: a sent purpose note, any quote outcome or a paid invoice stops nudges, and the sent screen
-    then promises none.
+    then promises none. `expirePendingNudge` claims the nudge in one conditional UPDATE (pending,
+    Send not tapped) before touching Gmail or Activity: a Send tapped first wins, and a double
+    "Mark paid" closes it once.
   - **#29 review request:** `business_profile.review_url` (https only). "Ask for a review" on Inbox
     rows and paid Money rows, owner tap only, when `job_done` or the invoice is paid. Never a
     complaint: `threads.complained_at` is sticky, and any complaint from that address in the last
@@ -501,7 +505,9 @@ In a sandbox with preinstalled Chromium: `PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-brows
     figure to fill `{{price}}`) and as plain text on Inbox. **Never sent to the AI** and never in digest/admin/push/SMS:
     a static boundary test lists the only files that may touch it, plus per-prompt tests. Kept
     past the body purge; goes with the mailbox / account.
-  - Sentry: `ui.*` breadcrumbs lose message and data (`scrubEvent`). M7's new controls (Money
+  - Sentry: `ui.*` breadcrumbs lose message and data (`scrubEvent`). A failed query's bound
+    values never leave: `scrubEvent` cuts every exception value (causes too), `message` and
+    `logentry` at `\nparams:` and keeps only the first line of anything starting `Failed query:`. M7's new controls (Money
     cards, past-price buttons) use aria-labelledby or visible text, never an aria-label with an
     amount or name. Older labels (draft card, quote card, seasonal-note remove, admin waitlist)
     still carry a name or owner text and are kept out of Sentry only by the `ui.*` scrub.
@@ -590,4 +596,11 @@ In a sandbox with preinstalled Chromium: `PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-brows
   production's older code keeps re-sorting threads without setting the mark, so a complaint that
   turns into "fixed now, thanks" in that window leaves no trace and could later be offered "Ask
   for a review" (owner tap only, and it's a draft). The same goes for complaints re-sorted before
-  M7. That data can't be recovered: merge M7 soon after its first preview build.
+  M7. That data can't be recovered (no category history is kept): merge M7 soon after its first
+  preview build. What _can_ be recovered is redone from new code once production runs it:
+  `runM7Backfill` (`src/server/m7-backfill.ts`), a one-shot step in the 15-minute
+  `workspace-lifecycle` job gated by the `app_settings` key `backfill:m7-v1`, marks threads still
+  sorted `complaint` / showing a dispute or legal reason / `extracted.disputed`, and sets
+  `quote_outcome_source = 'owner'` wherever the owner's newest `quote_marked` tap is newer than our
+  newest `quote_outcome_guessed` (an old-code Won/Lost over our guess, or an old-code Reopen).
+  0023/0024 stay as they are — they already ran on the shared DB; never edit an applied migration.

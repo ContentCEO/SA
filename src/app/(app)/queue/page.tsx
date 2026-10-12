@@ -60,6 +60,7 @@ const errors: Record<string, string> = {
   revisions: "That draft has been changed as many times as it can be. Edit it by hand instead.",
   practice_limit: "That's all 10 practice sends. The real thing turns on once setup is paid.",
   toolate: "Too late to undo — that reply has already gone.",
+  gone: "That draft isn't waiting any more, so nothing was sent.",
   snooze: "That can't be put off that long — it looks urgent. Pick an earlier time.",
   draftfailed: "Couldn't write a draft for that one. Try again in a minute.",
   readonly:

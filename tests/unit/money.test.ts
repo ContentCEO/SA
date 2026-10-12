@@ -9,7 +9,12 @@ import { ensureUserAndWorkspace } from "@/server/accounts";
 import { describeActivity, listActivity } from "@/server/activity";
 import { classifyPending } from "@/server/classification";
 import { buildDigest, digestCounts } from "@/server/digest";
-import { createDraftForThread, sentDraftSummary } from "@/server/drafts";
+import {
+  createDraftForThread,
+  expirePendingNudge,
+  queueSend,
+  sentDraftSummary,
+} from "@/server/drafts";
 import { threadsToFollowUp } from "@/server/followups";
 import { ReadOnlyError } from "@/server/lifecycle";
 import { saveConnectedMailbox } from "@/server/mailboxes";
@@ -721,6 +726,150 @@ describe("owner marks", () => {
     expect((await draftOf(d.id)).status).toBe("expired");
     const [box] = await database.select().from(mailboxes).where(eq(mailboxes.id, mailboxId));
     expect(box!.status).toBe("reconnect_needed");
+  });
+
+  /** A nudge whose Gmail draft really exists, on an account that can send. */
+  async function sendableNudge(t: string, writer: FakeWriter) {
+    await database
+      .update(workspaces)
+      .set({ status: "active", setupPaidVia: "stripe" })
+      .where(eq(workspaces.id, workspaceId));
+    const body = "Just checking in on the invoice.";
+    const raw = Buffer.from(
+      `Subject: Re: Invoice\r\n\r\n${Buffer.from(body).toString("base64")}`,
+    ).toString("base64url");
+    const { draftId } = await writer.createDraft({ threadId: "gt", raw });
+    writer.calls = [];
+    return pendingNudge(t, draftId);
+  }
+  const expiredLogs = () =>
+    database.select().from(activityLog).where(eq(activityLog.action, "draft_expired"));
+
+  it("two marks at once close the waiting nudge once: one Gmail delete, one Activity line", async () => {
+    const t = await invoiceThread();
+    const writer = new FakeWriter();
+    const d = await sendableNudge(t, writer);
+    const slow = writer.deleteDraft.bind(writer);
+    writer.deleteDraft = async (id: string) => {
+      await new Promise((r) => setTimeout(r, 20));
+      await slow(id);
+    };
+    const opts = { writerFor: () => writer, now: () => NOW };
+    const results = await Promise.all([
+      expirePendingNudge(t, PAID_NOTE, opts),
+      expirePendingNudge(t, PAID_NOTE, opts),
+    ]);
+    expect(results.sort()).toEqual([false, true]);
+    expect(writer.calls).toEqual(["deleteDraft"]);
+    expect(await expiredLogs()).toHaveLength(1);
+    expect(await draftOf(d.id)).toMatchObject({ status: "expired", closedNote: PAID_NOTE });
+  });
+
+  it("Send tapped while the nudge is being closed: the owner is never told it went when it didn't", async () => {
+    const t = await invoiceThread();
+    const writer = new FakeWriter();
+    const d = await sendableNudge(t, writer);
+    let tapped: Awaited<ReturnType<typeof queueSend>> | undefined;
+    const del = writer.deleteDraft.bind(writer);
+    // The owner taps Send on another device while Gmail is deleting the nudge.
+    writer.deleteDraft = async (id: string) => {
+      tapped = await queueSend(workspaceId, d.id, { writerFor: () => writer, now: () => NOW });
+      await del(id);
+    };
+    expect(
+      await expirePendingNudge(t, PAID_NOTE, { writerFor: () => writer, now: () => NOW }),
+    ).toBe(true);
+    // The close came first, so the tap finds nothing to send — it is not "Reply sent."
+    expect(tapped).toEqual({ status: "not_found" });
+    const row = await draftOf(d.id);
+    expect(row).toMatchObject({ status: "expired", sendAfter: null });
+    expect(await expiredLogs()).toHaveLength(1);
+    const approved = await database
+      .select()
+      .from(activityLog)
+      .where(eq(activityLog.action, "send_approved"));
+    expect(approved).toEqual([]);
+  });
+
+  const logsOf = (action: string) =>
+    database.select().from(activityLog).where(eq(activityLog.action, action));
+
+  it("the nudge is closed in the middle of a Send tap: the tap is not 'Reply sent.' and nothing is queued", async () => {
+    const t = await invoiceThread();
+    const writer = new FakeWriter();
+    const d = await sendableNudge(t, writer);
+    const opts = { writerFor: () => writer, now: () => NOW };
+    const read = writer.getDraft.bind(writer);
+    // Gmail hands the tap the text, and "Mark paid" lands on another device before it returns.
+    writer.getDraft = async (id: string) => {
+      const remote = await read(id);
+      expect(await expirePendingNudge(t, PAID_NOTE, opts)).toBe(true);
+      return remote;
+    };
+    const tapped = await queueSend(workspaceId, d.id, opts);
+    expect(tapped).toEqual({ status: "not_found" });
+    expect(await draftOf(d.id)).toMatchObject({
+      status: "expired",
+      closedNote: PAID_NOTE,
+      sendAfter: null,
+    });
+    expect(await logsOf("draft_expired")).toHaveLength(1);
+    expect(await logsOf("send_approved")).toEqual([]);
+  });
+
+  it("the nudge is closed (and its Gmail draft deleted) before the tap reads it: the close stands", async () => {
+    const t = await invoiceThread();
+    const writer = new FakeWriter();
+    const d = await sendableNudge(t, writer);
+    const opts = { writerFor: () => writer, now: () => NOW };
+    const read = writer.getDraft.bind(writer);
+    writer.getDraft = async (id: string) => {
+      expect(await expirePendingNudge(t, PAID_NOTE, opts)).toBe(true);
+      return read(id); // gone from Gmail now
+    };
+    const tapped = await queueSend(workspaceId, d.id, opts);
+    expect(tapped).toEqual({ status: "not_found" });
+    // Still the paid close, not "You deleted or sent this draft in Gmail."
+    expect(await draftOf(d.id)).toMatchObject({ status: "expired", closedNote: PAID_NOTE });
+    expect(await logsOf("draft_expired")).toHaveLength(1);
+    expect(await logsOf("draft_discarded")).toEqual([]);
+    expect(await logsOf("send_approved")).toEqual([]);
+  });
+
+  it("two Send taps at once: the second is told it's already sending", async () => {
+    const t = await invoiceThread();
+    const writer = new FakeWriter();
+    const d = await sendableNudge(t, writer);
+    const opts = { writerFor: () => writer, now: () => NOW };
+    const read = writer.getDraft.bind(writer);
+    let second: Awaited<ReturnType<typeof queueSend>> | undefined;
+    writer.getDraft = async (id: string) => {
+      const remote = await read(id);
+      if (!second) {
+        second = { status: "not_found" }; // placeholder so the inner tap doesn't recurse
+        second = await queueSend(workspaceId, d.id, opts);
+      }
+      return remote;
+    };
+    const first = await queueSend(workspaceId, d.id, opts);
+    expect(second).toMatchObject({ status: "queued" });
+    expect(first).toEqual({ status: "already_sending" });
+    expect(await logsOf("send_approved")).toHaveLength(1);
+  });
+
+  it("a Send already tapped is left alone: no Gmail delete, no Activity line, still sending", async () => {
+    const t = await invoiceThread();
+    const writer = new FakeWriter();
+    const d = await sendableNudge(t, writer);
+    const opts = { writerFor: () => writer, now: () => NOW };
+    expect(await queueSend(workspaceId, d.id, opts)).toMatchObject({ status: "queued" });
+    writer.calls = [];
+    expect(await expirePendingNudge(t, PAID_NOTE, opts)).toBe(false);
+    expect(writer.calls).toEqual([]);
+    expect(await expiredLogs()).toEqual([]);
+    const row = await draftOf(d.id);
+    expect(row.status).toBe("pending");
+    expect(row.sendAfter).not.toBeNull();
   });
 
   it("a sent reply on a paid invoice never promises a nudge", async () => {

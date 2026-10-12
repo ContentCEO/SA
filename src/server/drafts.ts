@@ -905,6 +905,22 @@ export async function sendDraft(
   }
 }
 
+/**
+ * A tap that lost a race: "already sending" only if another tap really did start the undo
+ * window; anything else (closed, expired, discarded) is "not found" — never shown as sent.
+ */
+async function whyNotQueued(draftId: string): Promise<{ status: "already_sending" | "not_found" }> {
+  const [row] = await db()
+    .select({ status: drafts.status, sendAfter: drafts.sendAfter })
+    .from(drafts)
+    .where(eq(drafts.id, draftId));
+  const sending =
+    (row?.status === "pending" && row.sendAfter != null) ||
+    row?.status === "sent" ||
+    row?.status === "edited_and_sent";
+  return sending ? { status: "already_sending" } : { status: "not_found" };
+}
+
 export type QueueSendOutcome =
   | { status: "queued"; sendAfter: Date }
   | { status: "changed_since_seen" }
@@ -956,23 +972,36 @@ export async function queueSend(
 
   const writer = (opts.writerFor ?? defaultWriter)(mailbox);
   let body = draft.body ?? "";
+  // Everything below runs while the row may change under us (another device closing the
+  // nudge, say), so each write only lands on a draft that is still waiting for this tap.
+  const stillWaiting = and(
+    eq(drafts.id, draft.id),
+    eq(drafts.status, "pending"),
+    isNull(drafts.sendAfter),
+  );
   try {
     const remote = await writer.getDraft(draft.gmailDraftId!);
     if (!remote) {
-      await closeDraft(
-        draft,
-        workspaceId,
-        "discarded",
-        "You deleted or sent this draft in Gmail.",
-        now,
-      );
+      const [closed] = await db()
+        .update(drafts)
+        .set({
+          status: "discarded",
+          closedNote: "You deleted or sent this draft in Gmail.",
+          decidedAt: now,
+        })
+        .where(stillWaiting)
+        .returning({ id: drafts.id });
+      if (!closed) return await whyNotQueued(draft.id);
+      await logClosed(draft, workspaceId, "discarded", "squared_away");
       return { status: "deleted_in_gmail" };
     }
     if (!sameText(remote.bodyText, draft.body)) {
-      await db()
+      const [taken] = await db()
         .update(drafts)
         .set({ body: remote.bodyText, autoSendAt: null })
-        .where(eq(drafts.id, draft.id));
+        .where(stillWaiting)
+        .returning({ id: drafts.id });
+      if (!taken) return await whyNotQueued(draft.id);
       return { status: "changed_in_gmail" };
     }
     if (opts.editedBody !== undefined && !sameText(opts.editedBody, body)) {
@@ -994,10 +1023,11 @@ export async function queueSend(
   const queued = await db()
     .update(drafts)
     .set({ body, sendAfter, sendClaimedAt: null, autoSendAt: null })
-    .where(and(eq(drafts.id, draft.id), eq(drafts.status, "pending"), isNull(drafts.sendAfter)))
+    .where(stillWaiting)
     .returning({ id: drafts.id });
-  // Two taps at once: only the first starts a window.
-  if (!queued.length) return { status: "already_sending" };
+  // Two taps at once: only the first starts a window. Anything else that got there first
+  // (the nudge closed on another device) means nothing is going out, and the owner is told so.
+  if (!queued.length) return await whyNotQueued(draft.id);
   await db()
     .insert(activityLog)
     .values({
@@ -1459,6 +1489,15 @@ async function closeDraft(
     .update(drafts)
     .set({ status, closedNote: note, decidedAt: now })
     .where(eq(drafts.id, d.id));
+  await logClosed(d, workspaceId, status, actor);
+}
+
+async function logClosed(
+  d: Pick<Draft, "id" | "threadId">,
+  workspaceId: string,
+  status: "discarded" | "expired" | "sent",
+  actor: "owner" | "squared_away",
+) {
   await db()
     .insert(activityLog)
     .values({
@@ -1514,6 +1553,10 @@ const waitingNudge = (threadId: string) =>
  * call and is left alone. The nudge always closes here: lost Google access → reconnect
  * banner; any other Gmail failure (rate limit, outage) or a mailbox that isn't working →
  * the Gmail draft is left in Gmail, as on the reconnect path. Returns whether one was closed.
+ *
+ * The row is claimed first, in one conditional UPDATE (still pending, Send not tapped), and
+ * only the call that claimed it touches Gmail or writes Activity: a Send tapped a moment
+ * earlier on another device wins, and a double-submitted "Mark paid" closes it once.
  */
 export async function expirePendingNudge(
   threadId: string,
@@ -1521,13 +1564,19 @@ export async function expirePendingNudge(
   opts: DraftDeps = {},
 ): Promise<boolean> {
   const now = opts.now?.() ?? new Date();
-  const [row] = await db()
-    .select({ draft: drafts, mailbox: mailboxes })
-    .from(drafts)
-    .innerJoin(mailboxes, eq(mailboxes.id, drafts.mailboxId))
+  const [claimed] = await db()
+    .update(drafts)
+    .set({ status: "expired", closedNote: note, decidedAt: now })
     .where(waitingNudge(threadId))
-    .limit(1);
-  if (!row) return false;
+    .returning({
+      id: drafts.id,
+      threadId: drafts.threadId,
+      gmailDraftId: drafts.gmailDraftId,
+      mailboxId: drafts.mailboxId,
+    });
+  if (!claimed) return false;
+  const [mailbox] = await db().select().from(mailboxes).where(eq(mailboxes.id, claimed.mailboxId));
+  const row = { draft: claimed, mailbox };
   if (row.draft.gmailDraftId && row.mailbox.status === "active") {
     try {
       await (opts.writerFor ?? defaultWriter)(row.mailbox).deleteDraft(row.draft.gmailDraftId);
@@ -1544,7 +1593,7 @@ export async function expirePendingNudge(
       }
     }
   }
-  await closeDraft(row.draft, row.mailbox.workspaceId, "expired", note, now);
+  await logClosed(row.draft, row.mailbox.workspaceId, "expired", "squared_away");
   return true;
 }
 

@@ -4,6 +4,8 @@ import { categoryLabels, categoryTag, isCategory } from "@/config/categories";
 import { db } from "@/db";
 import { activityLog, drafts, mailboxes, messages, threads } from "@/db/schema";
 import { closeRate, isQuoteOutcome, type QuoteOutcome } from "./quote-rules";
+import { workspaceTimeZone } from "./snooze";
+import { atLocalHour } from "./snooze-rules";
 
 /**
  * The time-saved estimate, and the only assumption behind it. Shown next to
@@ -246,12 +248,48 @@ export type MonthSummary = {
   minutesSaved: number;
 };
 
-/** This calendar month (UTC), in counts. */
+const FALLBACK_TIME_ZONE = "America/New_York";
+
+/** The owner's time zone if it's a real one, Eastern otherwise (as everywhere else). */
+function usableZone(timeZone: string | null | undefined): string {
+  if (!timeZone) return FALLBACK_TIME_ZONE;
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone });
+    return timeZone;
+  } catch {
+    return FALLBACK_TIME_ZONE;
+  }
+}
+
+/**
+ * The instant the owner's current calendar month began: midnight on the 1st, in their time
+ * zone. A Pacific owner at 6pm on Oct 31 is still in October, though it's November in UTC.
+ */
+export function localMonthStart(now: Date, timeZone: string): Date {
+  const tz = usableZone(timeZone);
+  const day = Number(
+    new Intl.DateTimeFormat("en-US", { timeZone: tz, day: "numeric" }).format(now),
+  );
+  return atLocalHour(now, tz, 1 - day, 0);
+}
+
+/** The owner's current month by name ("October"), in their time zone. */
+export function localMonthName(now: Date, timeZone: string): string {
+  return now.toLocaleString("en-US", { month: "long", timeZone: usableZone(timeZone) });
+}
+
+/** The time zone the month is counted in: the one given, or the owner's from their profile. */
+async function monthZone(workspaceId: string, timeZone?: string): Promise<string> {
+  return usableZone(timeZone ?? (await workspaceTimeZone(workspaceId)));
+}
+
+/** This calendar month (in the owner's time zone), in counts. */
 export async function monthSummary(
   workspaceId: string,
   now: Date = new Date(),
+  timeZone?: string,
 ): Promise<MonthSummary> {
-  const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+  const start = localMonthStart(now, await monthZone(workspaceId, timeZone));
   const boxes = (
     await db()
       .select({ id: mailboxes.id })
@@ -290,14 +328,15 @@ export type MonthCloseRate = {
 };
 
 /**
- * Plan #30: quotes decided this calendar month (UTC) — by when the outcome was set,
- * whoever set it (the owner, or our guess the owner left alone).
+ * Plan #30: quotes decided this calendar month, in the owner's time zone — by when the
+ * outcome was set, whoever set it (the owner, or our guess the owner left alone).
  */
 export async function monthCloseRate(
   workspaceId: string,
   now: Date = new Date(),
+  timeZone?: string,
 ): Promise<MonthCloseRate> {
-  const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+  const start = localMonthStart(now, await monthZone(workspaceId, timeZone));
   const rows = await db()
     .select({ outcome: threads.quoteOutcome, n: count() })
     .from(threads)

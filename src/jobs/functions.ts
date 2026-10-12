@@ -30,6 +30,7 @@ import { sendPushAlerts } from "@/server/push-alerts";
 import { purgeExpiredNotes } from "@/server/seasonal-notes";
 import { learnVoice, workspacesDueForVoiceRefresh, workspacesNeedingVoice } from "@/server/voice";
 import { expireEvaluations, startPendingEvaluations } from "@/server/workspace-lifecycle";
+import { runM7Backfill } from "@/server/m7-backfill";
 import { considerAutopilot, overdueAutopilotDrafts, runAutopilotSend } from "@/server/autopilot";
 import {
   autopilotSendRequested,
@@ -374,6 +375,8 @@ export const workspaceLifecycle = inngest.createFunction(
     // Backstop for text alerts held overnight or throttled.
     await step.run("text-alerts", () => sendLeadAlerts());
     await step.run("push-alerts", () => sendPushAlerts());
+    // One-shot M7 data fix, from new code once it's live (no-op after the first run).
+    await step.run("m7-backfill", () => runM7Backfill());
     return { started, expired, voiceRestarted: voice.length, accessAlerts: alerts.sent };
   },
 );

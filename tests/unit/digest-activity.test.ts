@@ -6,7 +6,14 @@ import type { Database } from "@/db";
 import { activityLog, businessProfiles, drafts, messages, threads, workspaces } from "@/db/schema";
 import type { OutgoingEmail } from "@/lib/email";
 import { ensureUserAndWorkspace } from "@/server/accounts";
-import { describeActivity, listActivity, monthCloseRate, monthSummary } from "@/server/activity";
+import {
+  describeActivity,
+  listActivity,
+  localMonthName,
+  localMonthStart,
+  monthCloseRate,
+  monthSummary,
+} from "@/server/activity";
 import { buildDigest, digestDue, localParts, sendDigests } from "@/server/digest";
 import { saveConnectedMailbox } from "@/server/mailboxes";
 import { digestSettingsInput, saveDigestSettings } from "@/server/profile";
@@ -307,11 +314,13 @@ describe("in the database", () => {
     });
   });
 
-  it("close rate counts only quotes decided this UTC month, whoever decided them", async () => {
+  it("close rate counts only quotes decided this month (owner's zone, Eastern by default), whoever decided them", async () => {
     const empty = await monthCloseRate(workspaceId, NOW);
     expect(empty).toEqual({ won: 0, lost: 0, noAnswer: 0, ratePct: null });
 
-    const start = new Date(Date.UTC(NOW.getUTCFullYear(), NOW.getUTCMonth(), 1));
+    // No profile yet: Eastern, so October began at 04:00 UTC on Oct 1.
+    const start = localMonthStart(NOW, "America/New_York");
+    expect(start.toISOString()).toBe("2026-10-01T04:00:00.000Z");
     const quote = async (gid: string, outcome: string, at: Date, source = "owner") =>
       database.insert(threads).values({
         mailboxId,
@@ -355,5 +364,72 @@ describe("in the database", () => {
       noAnswer: 1,
       ratePct: 50,
     });
+  });
+
+  it("a Pacific owner at 6pm on Oct 31 is still in October: the evening's decisions count there", async () => {
+    await database
+      .insert(businessProfiles)
+      .values({ workspaceId, timeZone: "America/Los_Angeles" })
+      .onConflictDoUpdate({
+        target: businessProfiles.workspaceId,
+        set: { timeZone: "America/Los_Angeles" },
+      });
+    // 6pm PDT on Oct 31 is 01:00 UTC on Nov 1.
+    const evening = new Date("2026-11-01T01:00:00Z");
+    const quote = async (gid: string, outcome: string, at: Date) =>
+      database.insert(threads).values({
+        mailboxId,
+        gmailThreadId: gid,
+        category: "quote_request",
+        quoteOutcome: outcome,
+        quoteOutcomeSource: "owner",
+        quoteOutcomeAt: at,
+      });
+    // Three marked Won that evening (00:30–00:55 UTC Nov 1)…
+    for (const [i, m] of [30, 45, 55].entries())
+      await quote(`w${i}`, "won", new Date(`2026-11-01T00:${m}:00Z`));
+    // …one Lost on Oct 2 local (and 1 minute before October began locally: September).
+    await quote("l1", "lost", new Date("2026-10-02T17:00:00Z"));
+    await quote("sep", "lost", new Date("2026-10-01T06:59:00Z"));
+
+    expect(await monthCloseRate(workspaceId, evening)).toEqual({
+      won: 3,
+      lost: 1,
+      noAnswer: 0,
+      ratePct: 75,
+    });
+    expect(localMonthStart(evening, "America/Los_Angeles").toISOString()).toBe(
+      "2026-10-01T07:00:00.000Z",
+    );
+    expect(localMonthName(evening, "America/Los_Angeles")).toBe("October");
+    // An hour after local midnight it's November there too, and the evening is last month.
+    const nov = new Date("2026-11-01T08:00:00Z");
+    expect(localMonthName(nov, "America/Los_Angeles")).toBe("November");
+    expect(await monthCloseRate(workspaceId, nov)).toEqual({
+      won: 0,
+      lost: 0,
+      noAnswer: 0,
+      ratePct: null,
+    });
+    // The month's counts follow the same zone: a reply sent that evening is October's.
+    const [t] = await database.select().from(threads).where(eq(threads.gmailThreadId, "w0"));
+    await database.insert(drafts).values({
+      threadId: t!.id,
+      mailboxId,
+      gmailDraftId: "pac",
+      toAddress: "x@y.com",
+      subject: "Re",
+      body: "b",
+      originalBody: "b",
+      reason: "r",
+      promptVersion: "draft.v1",
+      status: "sent",
+      createdAt: new Date("2026-11-01T00:40:00Z"),
+      decidedAt: new Date("2026-11-01T00:41:00Z"),
+    });
+    expect((await monthSummary(workspaceId, evening)).sent).toBe(1);
+    expect((await monthSummary(workspaceId, nov)).sent).toBe(0);
+    // A broken zone falls back to Eastern rather than failing the screen.
+    expect(localMonthStart(NOW, "Not/AZone").toISOString()).toBe("2026-10-01T04:00:00.000Z");
   });
 });
