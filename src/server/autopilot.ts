@@ -1,6 +1,6 @@
 import "server-only";
 import { hasUnfilledGap } from "@/ai/gaps";
-import { and, count, desc, eq, gte, inArray, isNotNull, lt, lte, sql } from "drizzle-orm";
+import { and, count, desc, eq, gte, inArray, isNotNull, isNull, lt, lte, sql } from "drizzle-orm";
 import { pricing } from "@/config/pricing";
 import { db } from "@/db";
 import {
@@ -24,7 +24,8 @@ import { effectiveStatus } from "./lifecycle";
  * 2. Category: the owner turned it on, and it has earned it — at least
  *    EARN_THRESHOLD drafts in that category approved without edits.
  * 3. Each email: never complaints, money, flagged threads, people the owner
- *    has never written to, follow-ups, or anything the checks were unsure of.
+ *    has never written to, follow-ups, deposit / review / closing notes, or
+ *    anything the checks were unsure of.
  *
  * Then a grace window: the reply sits in the queue for GRACE_MINUTES saying
  * when it will go, with "Hold it". Everything is checked again just before
@@ -71,6 +72,8 @@ export type GuardrailInput = {
   municipal?: boolean;
   /** The customer's email accepts a quote (classify.v3 signal) — the owner answers those. */
   acceptsQuote?: boolean;
+  /** Deposit details, review request or closing question (plan #26 #28 #29). */
+  purpose: string | null;
 };
 
 /** Layer 3. Every reason this email must wait for the owner; empty = may go. */
@@ -90,6 +93,7 @@ export function guardrailReasons(g: GuardrailInput): string[] {
   if (g.untrusted) out.push("This email tried to give instructions to the assistant.");
   if (g.municipal) out.push("Building departments always wait for you.");
   if (g.acceptsQuote) out.push("Quote acceptances always wait for you.");
+  if (g.purpose != null) out.push("Deposit, review and closing notes always wait for you.");
   return out;
 }
 
@@ -120,6 +124,8 @@ export async function earnedCounts(workspaceId: string): Promise<Map<string, num
       and(
         eq(mailboxes.workspaceId, workspaceId),
         eq(drafts.kind, "reply"),
+        // Deposit / review / closing notes never earn autopilot: it can never send them.
+        isNull(drafts.purpose),
         eq(drafts.status, "sent"),
         sql`${drafts.sentGmailMessageId} is not null`,
       ),
@@ -265,6 +271,7 @@ async function blockers(row: NonNullable<Awaited<ReturnType<typeof loadForAutopi
     untrusted: extracted.injection === true,
     municipal: extracted.municipal === true,
     acceptsQuote: extracted.accepts_quote === true,
+    purpose: draft.purpose ?? null,
     draftBody: draft.body ?? "",
     knownCustomer: await knownCustomer(mailbox.id, customer?.address ?? null, draft.createdAt),
   });

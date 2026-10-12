@@ -35,7 +35,13 @@ export function describeActivity(
   const from = name ? ` from ${name}` : "";
   switch (action) {
     case "draft_created":
+      // Deposit details are always about a quote, even if the acceptance was sorted as scheduling.
+      if (detail.purpose === "deposit")
+        return `Drafted deposit details${name ? ` for ${name}` : ""}${who ? ` · ${categoryTag.quote_request}` : ""}`;
+      if (detail.purpose === "review_request") return `Drafted a review request${to}`;
       return `Drafted a reply${to}${about}`;
+    case "closing_question":
+      return `Drafted a question${to} asking if they went another way`;
     case "followup_drafted":
       return `Drafted a follow-up${to}${detail.nudgeNumber === 2 ? " (the last one)" : ""}${about}`;
     case "reply_sent":

@@ -223,6 +223,7 @@ describe("in the pipeline", () => {
         amountsInEmail: [],
         draftBody: "Works for me — see you {{date}}.",
         knownCustomer: true,
+        purpose: null,
       }),
     ).toContain("Has gaps for you to fill in.");
   });

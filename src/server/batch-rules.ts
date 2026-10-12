@@ -28,6 +28,8 @@ export type BatchCandidate = {
   autopilotCounting: boolean;
   /** The customer's email accepts a quote: a commitment, always one at a time (as autopilot). */
   acceptsQuote: boolean;
+  /** Deposit details, review request or closing question: always one at a time (#26 #28 #29). */
+  purpose: string | null;
 };
 
 /**
@@ -37,6 +39,7 @@ export type BatchCandidate = {
 export function batchEligible(c: BatchCandidate, picked: readonly string[]): boolean {
   if (!isBatchCategory(c.category) || !picked.includes(c.category)) return false;
   if (c.needsOwner || c.untrusted || c.autopilotCounting || c.acceptsQuote) return false;
+  if (c.purpose != null) return false;
   if (c.flags.length > 0 || hasUnfilledGap(c.body)) return false;
   if (c.category === "invoice_payment" && c.amountsInEmail.length > 0) return false;
   return confidenceLabel({ confidencePct: c.confidencePct, flags: 0, gaps: 0 }) === "ready";

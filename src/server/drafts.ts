@@ -2,7 +2,7 @@ import "server-only";
 import { createHash } from "node:crypto";
 import { and, asc, desc, eq, gt, inArray, isNotNull, isNull, lt, lte, or, sql } from "drizzle-orm";
 import { callStructured } from "@/ai/client";
-import { checkDraft, REGENERATE_ON } from "@/ai/draft-checks";
+import { checkDraft, hasLink, REGENERATE_ON, type CheckResult } from "@/ai/draft-checks";
 import {
   REVISE_INSTRUCTIONS,
   REVISE_PROMPT_VERSION,
@@ -26,7 +26,21 @@ import {
   FOLLOWUP_PROMPT_VERSION,
   followupTask,
 } from "@/ai/prompts/followup.v3";
+import {
+  closingQuestionTask,
+  depositTask,
+  PURPOSE_PROMPT_VERSION,
+  reviewRequestTask,
+} from "@/ai/prompts/purpose.v1";
+import {
+  ensureDepositGap,
+  isQuoteAcceptance,
+  NO_PAYMENT_TERMS_FLAG,
+  PURPOSE_FLAG_CONFIDENCE_CAP,
+  REVIEW_LINK_MISSING_FLAG,
+} from "@/ai/purpose";
 import { AiCapReachedError, bumpUsageCounter } from "@/ai/usage";
+import { featureOn } from "@/config/features";
 import { activeNotes } from "./seasonal-notes";
 import { db } from "@/db";
 import {
@@ -39,6 +53,7 @@ import {
   voiceProfiles,
   workspaces,
   type Draft,
+  type DraftPurpose,
   type Mailbox,
 } from "@/db/schema";
 import { decryptSecret } from "@/lib/crypto";
@@ -97,7 +112,15 @@ export type CreateOutcome =
         | "customer_replied"
         | "followup_cap"
         | "untrusted"
-        | "municipal";
+        | "municipal"
+        // Purpose drafts (plan #26 #28 #29). S6 adds the per-purpose eligibility reasons.
+        | "purpose_not_allowed"
+        | "feature_off"
+        | "already_asked"
+        | "no_review_link"
+        | "review_recent"
+        | "complaint"
+        | "not_eligible";
     }
   | { status: "reconnect_needed" };
 
@@ -111,8 +134,12 @@ async function loadThread(threadId: string) {
   return row;
 }
 
+/** Purposes only the owner's tap may ask for. Deposit is never asked for: it's derived (#28). */
+export const OWNER_PURPOSES = ["review_request", "closing_question"] as const;
+export type OwnerPurpose = (typeof OWNER_PURPOSES)[number];
+
 /** Nudges actually sent in this thread (from the app or from Gmail). Discarded ones don't count. */
-async function countSentFollowups(threadId: string): Promise<number> {
+export async function countSentFollowups(threadId: string): Promise<number> {
   const rows = await db()
     .select({ id: drafts.id })
     .from(drafts)
@@ -124,6 +151,45 @@ async function countSentFollowups(threadId: string): Promise<number> {
       ),
     );
   return rows.length;
+}
+
+/**
+ * A deposit, review request or closing question went out on this thread (A3). After that
+ * the thread is never nudged: the customer accepted, was thanked, or was asked once already.
+ */
+export async function purposeSentOn(threadId: string): Promise<boolean> {
+  const [row] = await db()
+    .select({ id: drafts.id })
+    .from(drafts)
+    .where(
+      and(
+        eq(drafts.threadId, threadId),
+        isNotNull(drafts.purpose),
+        inArray(drafts.status, ["sent", "edited_and_sent"]),
+      ),
+    )
+    .limit(1);
+  return !!row;
+}
+
+/**
+ * Deposit details already went out on this thread, or are waiting in the queue. A customer
+ * who writes again ("Sent the deposit by check. When can you start?") often reads as another
+ * acceptance; they get an ordinary reply, never a second request for the deposit.
+ */
+async function depositAlreadyOn(threadId: string): Promise<boolean> {
+  const [row] = await db()
+    .select({ id: drafts.id })
+    .from(drafts)
+    .where(
+      and(
+        eq(drafts.threadId, threadId),
+        eq(drafts.purpose, "deposit"),
+        inArray(drafts.status, ["sent", "edited_and_sent", "pending"]),
+      ),
+    )
+    .limit(1);
+  return !!row;
 }
 
 export async function followupSettings(workspaceId: string) {
@@ -145,11 +211,94 @@ async function customerOf(threadId: string) {
   return m ?? null;
 }
 
-async function workspaceContext(
+type DraftContext = WorkspaceContext & { reviewUrl: string | null };
+
+/**
+ * The terms check for deposit and review notes (A4). Percentages, amounts, ways to pay and
+ * anything offered must come from the owner: their written terms, or what they wrote this customer
+ * themselves. Never from the customer's emails — "can I pay by Venmo?" isn't a yes.
+ * A review request has no terms to draw on: it never mentions payment or offers anything.
+ */
+function termsCheck(
+  purpose: DraftPurpose | null,
+  ctx: DraftContext,
+  owner: { wrote: (string | null)[]; terms?: (string | null)[] },
+) {
+  if (purpose !== "deposit" && purpose !== "review_request") return {};
+  const join = (xs: (string | null | undefined)[]) => xs.filter(Boolean).join("\n");
+  return {
+    checkTerms: true,
+    termsSource:
+      purpose === "deposit"
+        ? join([
+            ctx.paymentTerms,
+            ctx.policies,
+            ctx.pricingNotes,
+            ...ctx.seasonalNotes.map((n) => n.text),
+            ...(owner.terms ?? []),
+          ])
+        : "",
+    ownerWrote: purpose === "deposit" ? join(owner.wrote) : "",
+    review: purpose === "review_request" ? { url: ctx.reviewUrl } : undefined,
+  };
+}
+
+/**
+ * What a purpose note needs after every model call — a new draft or a tweak alike, so a
+ * rewrite can never drop it: a deposit with no payment terms always carries the deposit gap
+ * (the send gate holds until it's filled), and a review request must still carry the link.
+ */
+function purposeGuards(purpose: DraftPurpose | null, body: string, ctx: DraftContext) {
+  const flags: string[] = [];
+  if (purpose === "deposit" && !ctx.paymentTerms?.trim()) {
+    body = ensureDepositGap(body);
+    flags.push(NO_PAYMENT_TERMS_FLAG);
+  }
+  if (purpose === "review_request" && !(ctx.reviewUrl && hasLink(body, ctx.reviewUrl))) {
+    flags.push(REVIEW_LINK_MISSING_FLAG);
+  }
+  return { body, flags };
+}
+
+/**
+ * Flags and confidence (0–100) for a finished draft. Purpose flags go first, so the cut to six
+ * can't drop them, and they cap confidence on their own (A6).
+ */
+function scoreDraft(
+  result: { flags: string[]; confidence: number },
+  checks: CheckResult,
+  purposeFlags: string[],
+) {
+  const flags = [
+    ...new Set([
+      ...purposeFlags,
+      ...result.flags.map((f) => f.trim()).filter(Boolean),
+      ...checks.flags,
+    ]),
+  ].slice(0, 6);
+  const confidence = Math.round(
+    Math.max(
+      0,
+      Math.min(
+        1,
+        result.confidence,
+        checks.confidenceCap,
+        purposeFlags.length ? PURPOSE_FLAG_CONFIDENCE_CAP : 1,
+      ),
+    ) * 100,
+  );
+  return { flags, confidence };
+}
+
+/**
+ * Everything the drafter knows about the business. `reviewUrl` rides along for the review
+ * request task only; it is never part of the cached business block.
+ */
+export async function workspaceContext(
   workspaceId: string,
   ws: { businessName: string | null; trade: string | null },
   now: Date = new Date(),
-) {
+): Promise<DraftContext> {
   const [profile] = await db()
     .select()
     .from(businessProfiles)
@@ -189,7 +338,7 @@ async function workspaceContext(
           }
         : null,
   };
-  return ctx;
+  return { ...ctx, reviewUrl: profile?.reviewUrl ?? null };
 }
 
 /**
@@ -197,6 +346,10 @@ async function workspaceContext(
  * conversation. `trigger: "auto"` follows the rules (never noise, complaints,
  * or anything that needs the owner); `trigger: "owner"` is the owner asking
  * from the Inbox, which can draft anything that has text to reply to.
+ *
+ * Purpose drafts (plan #26 #28 #29) are ordinary replies with `drafts.purpose` set: a
+ * deposit draft is written, whatever the trigger, when the newest email accepts a quote
+ * the owner gave; a review request or closing question only when the owner taps for one.
  */
 export async function createDraftForThread(
   threadId: string,
@@ -206,6 +359,8 @@ export async function createDraftForThread(
     ownerNote?: string | null;
     /** Required when the owner triggers it: the thread must belong to them. */
     workspaceId?: string;
+    /** A special note only the owner's tap may ask for. */
+    purpose?: OwnerPurpose;
   } = { trigger: "auto" },
 ): Promise<CreateOutcome> {
   const now = opts.now?.() ?? new Date();
@@ -217,6 +372,17 @@ export async function createDraftForThread(
   const { thread, mailbox, workspace } = row;
   if (!jobsAllowed(workspace, now)) return { status: "skipped", reason: "read_only" };
   if (mailbox.status !== "active") return { status: "skipped", reason: "mailbox_inactive" };
+  // Review requests and closing questions come from the owner's tap, never a job.
+  if (
+    opts.purpose !== undefined &&
+    (opts.trigger !== "owner" || !(OWNER_PURPOSES as readonly string[]).includes(opts.purpose))
+  ) {
+    return { status: "skipped", reason: "purpose_not_allowed" };
+  }
+  // Plan #26 waits on Davi: off unless FEATURE_CLOSING_QUESTION is on.
+  if (opts.purpose === "closing_question" && !featureOn("closingQuestion")) {
+    return { status: "skipped", reason: "feature_off" };
+  }
 
   const marks = (thread.extracted ?? {}) as { municipal?: boolean; injection?: boolean };
   // Only the owner's tap drafts for these (feature plan #17, #42) — never a job.
@@ -244,7 +410,9 @@ export async function createDraftForThread(
       quoteStopsNudges(thread) ||
       // Nor a paid invoice (the owner's mark or our guess) or one that isn't owed (#27).
       thread.invoicePaidAt != null ||
-      !FOLLOWUP_CATEGORIES.includes(thread.category as (typeof FOLLOWUP_CATEGORIES)[number])
+      !FOLLOWUP_CATEGORIES.includes(thread.category as (typeof FOLLOWUP_CATEGORIES)[number]) ||
+      // Nor a thread where a deposit, review request or closing question went out (A3).
+      (await purposeSentOn(threadId))
     ) {
       return { status: "skipped", reason: "followup_not_allowed" };
     }
@@ -252,6 +420,14 @@ export async function createDraftForThread(
     if (sentNudges >= MAX_FOLLOWUPS) return { status: "skipped", reason: "followup_cap" };
     nudgeNumber = sentNudges === 0 ? 1 : 2;
   }
+  // The owner's purpose, or deposit details when the newest email accepts the quote (#28, A5).
+  // Only once per thread: after deposit details went out, a later "when can you start?" is
+  // answered as an ordinary reply.
+  const purpose: DraftPurpose | null =
+    opts.purpose ??
+    (!followup && isQuoteAcceptance(thread) && !(await depositAlreadyOn(threadId))
+      ? "deposit"
+      : null);
 
   const [pending] = await db()
     .select({ id: drafts.id })
@@ -269,21 +445,25 @@ export async function createDraftForThread(
   ).reverse();
   const last = recent.at(-1);
   if (!last) return { status: "skipped", reason: "no_text" };
-  if (followup && last.direction !== "out")
+  // A nudge or closing question follows the owner's own last message; a review request
+  // may follow either; everything else answers the customer.
+  const afterOwner = followup || purpose === "closing_question";
+  if (afterOwner && last.direction !== "out")
     return { status: "skipped", reason: "customer_replied" };
-  if (!followup && last.direction !== "in")
+  if (!afterOwner && purpose !== "review_request" && last.direction !== "in")
     return { status: "skipped", reason: "owner_replied_last" };
-  // Who the reply goes to: the customer. For a nudge, that's whoever last wrote in.
-  const customer = followup
-    ? (
-        await db()
-          .select()
-          .from(messages)
-          .where(and(eq(messages.threadId, threadId), eq(messages.direction, "in")))
-          .orderBy(desc(messages.sentAt))
-          .limit(1)
-      )[0]
-    : last;
+  // Who the reply goes to: the customer — whoever last wrote in.
+  const customer =
+    last.direction !== "in"
+      ? (
+          await db()
+            .select()
+            .from(messages)
+            .where(and(eq(messages.threadId, threadId), eq(messages.direction, "in")))
+            .orderBy(desc(messages.sentAt))
+            .limit(1)
+        )[0]
+      : last;
   if (!customer) return { status: "skipped", reason: "no_text" };
   const withText = recent
     .map((m) => ({
@@ -294,6 +474,10 @@ export async function createDraftForThread(
   if (!withText.some((x) => x.m.id === last.id)) return { status: "skipped", reason: "no_text" };
 
   const ctx = await workspaceContext(workspace.id, workspace, now);
+  // Nothing to ask with: never call the model for a review request without the link.
+  if (purpose === "review_request" && !ctx.reviewUrl)
+    return { status: "skipped", reason: "no_review_link" };
+  const daysQuiet = Math.max(1, Math.round((now.getTime() - last.sentAt.getTime()) / 86_400_000));
   const wsBlock = workspaceBlock(ctx);
   const convo = conversationBlock({
     subject: thread.subject,
@@ -302,11 +486,14 @@ export async function createDraftForThread(
     extracted: thread.extracted,
     ownerNote: opts.ownerNote,
     task: followup
-      ? followupTask({
-          nudgeNumber,
-          daysQuiet: Math.max(1, Math.round((now.getTime() - last.sentAt.getTime()) / 86_400_000)),
-        })
-      : undefined,
+      ? followupTask({ nudgeNumber, daysQuiet })
+      : purpose === "deposit"
+        ? depositTask({ paymentTerms: ctx.paymentTerms })
+        : purpose === "review_request"
+          ? reviewRequestTask({ reviewUrl: ctx.reviewUrl! })
+          : purpose === "closing_question"
+            ? closingQuestionTask({ daysQuiet })
+            : undefined,
     messages: withText.map(({ m, text }) => ({
       from: m.direction === "out" ? mailbox.email : (m.fromName ?? m.fromAddress ?? "customer"),
       direction: m.direction,
@@ -331,14 +518,23 @@ export async function createDraftForThread(
     doNotPromise: ctx.doNotPromise,
     phrasesAvoided: ctx.voice?.phrasesAvoided ?? [],
     neverSay: ctx.neverSay,
+    // Deposit and review notes: no percentage, way to pay or incentive the owner never set (A4).
+    ...termsCheck(purpose, ctx, {
+      wrote: withText.filter((x) => x.m.direction === "out").map((x) => x.text),
+    }),
   };
+  const promptVersion = followup
+    ? FOLLOWUP_PROMPT_VERSION
+    : purpose
+      ? `${DRAFT_PROMPT_VERSION}+${PURPOSE_PROMPT_VERSION}`
+      : DRAFT_PROMPT_VERSION;
 
   let result;
   try {
     const request = {
       workspaceId: workspace.id,
       role: "draft" as const,
-      promptVersion: followup ? FOLLOWUP_PROMPT_VERSION : DRAFT_PROMPT_VERSION,
+      promptVersion,
       maxTokens: 2048,
       effort: "medium" as const,
       system: [
@@ -367,14 +563,9 @@ export async function createDraftForThread(
   }
   if (!result || !result.body.trim()) return { status: "skipped", reason: "model_failed" };
 
-  const body = result.body.trim();
-  const checks = checkDraft(body, checkContext);
-  const flags = [
-    ...new Set([...result.flags.map((f) => f.trim()).filter(Boolean), ...checks.flags]),
-  ].slice(0, 6);
-  const confidence = Math.round(
-    Math.max(0, Math.min(1, result.confidence, checks.confidenceCap)) * 100,
-  );
+  // What the owner must sort before a purpose note can go (A6).
+  const { body, flags: purposeFlags } = purposeGuards(purpose, result.body.trim(), ctx);
+  const { flags, confidence } = scoreDraft(result, checkDraft(body, checkContext), purposeFlags);
 
   const to = customer.fromAddress;
   if (!to) return { status: "skipped", reason: "no_text" };
@@ -410,7 +601,9 @@ export async function createDraftForThread(
       threadId,
       mailboxId: mailbox.id,
       replyToMessageId: last.id,
+      // Purpose notes are replies, so they never count as a nudge (followup_count).
       kind: followup ? "followup" : "reply",
+      purpose,
       gmailDraftId: created.draftId,
       gmailMessageId: created.messageId,
       toAddress: to,
@@ -422,7 +615,7 @@ export async function createDraftForThread(
       flags,
       confidence,
       usedFacts: [...new Set(result.used_facts ?? [])],
-      promptVersion: followup ? FOLLOWUP_PROMPT_VERSION : DRAFT_PROMPT_VERSION,
+      promptVersion,
       createdAt: now,
     })
     .onConflictDoNothing()
@@ -462,7 +655,12 @@ export async function createDraftForThread(
     .values({
       workspaceId: workspace.id,
       actor: "squared_away",
-      action: followup ? "followup_drafted" : "draft_created",
+      action:
+        purpose === "closing_question"
+          ? "closing_question"
+          : followup
+            ? "followup_drafted"
+            : "draft_created",
       threadId,
       detail: {
         draftId: row2.id,
@@ -470,6 +668,7 @@ export async function createDraftForThread(
         confidence,
         flagCount: flags.length,
         ...(followup ? { nudgeNumber } : {}),
+        ...(purpose ? { purpose } : {}),
       },
     });
   return { status: "created", draftId: row2.id };
@@ -906,6 +1105,7 @@ export async function batchCandidates(
         untrusted: extracted.injection === true || extracted.municipal === true,
         autopilotCounting: draft.autoSendAt !== null,
         acceptsQuote: extracted.accepts_quote === true,
+        purpose: draft.purpose ?? null,
       },
       picked,
     );
@@ -1062,6 +1262,15 @@ export async function reviseDraft(
     doNotPromise: ctx.doNotPromise,
     phrasesAvoided: ctx.voice?.phrasesAvoided ?? [],
     neverSay: ctx.neverSay,
+    // A tweak on a deposit or review note keeps the terms check (A4): "friendlier" can't add
+    // Venmo or "10% off". What the owner said, and a clean draft's text, are theirs.
+    ...termsCheck(draft.purpose, ctx, {
+      wrote: [
+        ...withText.filter((x) => x.m.direction === "out").map((x) => x.text),
+        (draft.flags ?? []).length === 0 ? draft.body : null,
+      ],
+      terms: [spoken],
+    }),
   };
   const convo = conversationBlock({
     subject: thread.subject,
@@ -1109,14 +1318,10 @@ export async function reviseDraft(
   }
   if (!result || !result.body.trim()) return { status: "model_failed" };
 
-  const body = result.body.trim();
-  const checks = checkDraft(body, checkContext);
-  const flags = [
-    ...new Set([...result.flags.map((f) => f.trim()).filter(Boolean), ...checks.flags]),
-  ].slice(0, 6);
-  const confidence = Math.round(
-    Math.max(0, Math.min(1, result.confidence, checks.confidenceCap)) * 100,
-  );
+  // The same purpose guards as a new draft: a tweak can't drop the deposit gap or the review
+  // link, nor lift their flags and confidence cap.
+  const { body, flags: purposeFlags } = purposeGuards(draft.purpose, result.body.trim(), ctx);
+  const { flags, confidence } = scoreDraft(result, checkDraft(body, checkContext), purposeFlags);
 
   const writer = (opts.writerFor ?? defaultWriter)(mailbox);
   try {
@@ -1365,14 +1570,21 @@ export async function reconcileDrafts(mailboxId: string, opts: DraftDeps = {}) {
             .where(eq(threads.id, d.threadId));
         }
         closed++;
-      } else if (d.kind === "followup" && newer.some((m) => m.direction === "out")) {
-        // The owner wrote to them some other way since; this nudge would repeat it.
+      } else if (
+        (d.kind === "followup" ||
+          d.purpose === "closing_question" ||
+          d.purpose === "review_request") &&
+        newer.some((m) => m.direction === "out")
+      ) {
+        // The owner wrote to them some other way since; this nudge or note would repeat it.
         await writer.deleteDraft(d.gmailDraftId!);
         await closeDraft(
           d,
           mailbox.workspaceId,
           "expired",
-          "You wrote to them since, so this nudge was out of date.",
+          d.kind === "followup"
+            ? "You wrote to them since, so this nudge was out of date."
+            : "You wrote to them since, so this note was out of date.",
           now,
         );
         closed++;
@@ -1397,6 +1609,8 @@ export async function reconcileDrafts(mailboxId: string, opts: DraftDeps = {}) {
 export type QueueItem = {
   draftId: string | null;
   kind: "reply" | "followup" | null;
+  /** Deposit details / review request / closing question (plan #26 #28 #29). Null = ordinary. */
+  purpose: DraftPurpose | null;
   /** Autopilot will send this at this time unless held. */
   autoSendAt: Date | null;
   threadId: string;
@@ -1499,6 +1713,7 @@ export async function listQueue(
     needsYou: shownNeeds.map((t) => ({
       draftId: null,
       kind: null,
+      purpose: null,
       autoSendAt: null,
       threadId: t.id,
       customerName: who.get(t.id)?.name ?? null,
@@ -1521,6 +1736,7 @@ export async function listQueue(
     drafts: shownDrafts.map(({ draft, thread }) => ({
       draftId: draft.id,
       kind: draft.kind,
+      purpose: draft.purpose ?? null,
       autoSendAt: draft.autoSendAt,
       threadId: thread.id,
       customerName: who.get(thread.id)?.name ?? null,
@@ -1582,10 +1798,13 @@ export async function sentDraftSummary(workspaceId: string, draftId: string) {
   const settings = await followupSettings(workspaceId);
   const chased =
     settings.enabled &&
+    // A deposit, review request or closing question is never followed by a nudge (A3).
+    row.draft.purpose == null &&
     !row.thread.needsOwner &&
     !quoteStopsNudges(row.thread) &&
     row.thread.invoicePaidAt == null &&
-    FOLLOWUP_CATEGORIES.includes(row.thread.category as (typeof FOLLOWUP_CATEGORIES)[number]);
+    FOLLOWUP_CATEGORIES.includes(row.thread.category as (typeof FOLLOWUP_CATEGORIES)[number]) &&
+    !(await purposeSentOn(row.thread.id));
   const sentNudges = chased ? await countSentFollowups(row.thread.id) : 0;
   const decidedAt = row.draft.decidedAt ?? sendingAt ?? new Date();
   return {
@@ -1596,6 +1815,7 @@ export async function sentDraftSummary(workspaceId: string, draftId: string) {
     toAddress: row.draft.toAddress,
     category: row.thread.category,
     kind: row.draft.kind,
+    purpose: row.draft.purpose ?? null,
     /** When we'll nudge if they go quiet; null if we won't. */
     nudgeOn:
       chased && sentNudges < MAX_FOLLOWUPS

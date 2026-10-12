@@ -2,7 +2,7 @@ import Link from "next/link";
 import { Notice } from "@/components/app/notice";
 import { Headline } from "@/components/brand/headline";
 import { Button } from "@/components/ui/button";
-import { categoryTag, isCategory } from "@/config/categories";
+import { draftTag } from "@/config/categories";
 import { findGaps } from "@/ai/gaps";
 import { confidenceLabel } from "@/config/drafting";
 import { gmailThreadLink } from "@/lib/gmail-link";
@@ -63,14 +63,19 @@ const errors: Record<string, string> = {
   draftfailed: "Couldn't write a draft for that one. Try again in a minute.",
   readonly:
     "Your account is read-only right now, so nothing was changed. The note at the top says why.",
+  // Deposit / review / closing notes (plan #26 #28 #29).
+  purpose_not_allowed: "That one isn't ready for that kind of note.",
+  not_eligible: "That one isn't ready for that kind of note.",
+  feature_off: "That isn't switched on for your account yet.",
+  already_asked: "You've already asked them once.",
+  no_review_link: "Add your review link in Settings → Business profile first.",
+  review_recent: "You asked them for a review in the last 12 months.",
+  complaint: "Not for a complaint — reply to that one yourself.",
   unknown: "That didn't work. Refresh and try again.",
 };
 
 const who = (i: QueueItem) => i.customerName || i.customerAddress || "Unknown sender";
-const tag = (i: QueueItem) => {
-  const category = isCategory(i.category) ? categoryTag[i.category] : "Email";
-  return i.kind === "followup" ? `Follow-up · ${category}` : category;
-};
+const tag = (i: QueueItem) => draftTag(i);
 
 const weekday = new Intl.DateTimeFormat("en-US", { weekday: "long", timeZone: "America/New_York" });
 

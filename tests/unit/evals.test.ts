@@ -5,6 +5,7 @@ import { CATEGORIES, type ModelClassification } from "@/ai/prompts/classify.v3";
 import { TRADES } from "@/config/trades";
 import { EVAL_CASES, type EvalCase } from "../evals/cases";
 import { REVISE_CASES, TONE_CASES } from "../evals/edits";
+import { PURPOSE_CASES } from "../evals/purposes";
 import { runEvals } from "../evals/run";
 import { regressions, score, type Baseline, type EvalResult, type Scores } from "../evals/score";
 import { classification } from "../support/fake-model";
@@ -71,6 +72,16 @@ describe("evaluation set (#46)", () => {
     expect(TONE_CASES.length).toBeGreaterThanOrEqual(5);
   });
 
+  it("covers every purpose draft (#26 #28 #29), with and without payment terms", () => {
+    expect(PURPOSE_CASES.length).toBeGreaterThanOrEqual(6);
+    expect(new Set(PURPOSE_CASES.map((c) => c.id)).size).toBe(PURPOSE_CASES.length);
+    const n = (f: (c: (typeof PURPOSE_CASES)[number]) => boolean) => PURPOSE_CASES.filter(f).length;
+    expect(n((c) => c.purpose === "deposit" && c.paymentTerms !== null)).toBeGreaterThanOrEqual(2);
+    expect(n((c) => c.purpose === "deposit" && c.paymentTerms === null)).toBeGreaterThanOrEqual(1);
+    expect(n((c) => c.purpose === "review_request")).toBeGreaterThanOrEqual(2);
+    expect(n((c) => c.purpose === "closing_question")).toBeGreaterThanOrEqual(1);
+  });
+
   it("uses only invented addresses", () => {
     for (const c of EVAL_CASES) {
       expect(c.fromAddress).toMatch(/@([a-z0-9-]+\.)*(example\.(com|gov)|[a-z0-9-]+\.test)$/);
@@ -131,13 +142,24 @@ describe("evaluation set (#46)", () => {
         : req.user.includes("out loud")
           ? "Hi Jordan,\n\nThursday morning works, and it's 180 for the visit. What's the address?\n\nAlex"
           : "Hi Jordan,\n\nWhat's the address? A photo or two helps.\n\nAlex";
+      // Purpose drafts (#28 #29): echo the payment terms / the review link, as a good model would.
+      const terms = /- Payment terms: (.*)/.exec(req.system[1]?.text ?? "")?.[1]?.trim();
+      const purposeBody = req.user.includes("## Task: deposit")
+        ? terms && terms !== "not given"
+          ? `Hi Sam,\n\nGreat, thanks for going ahead. For the deposit: ${terms}.\n\nThanks,\nAlex`
+          : "Hi Sam,\n\nGreat, thanks for going ahead. I'll be in touch to book it in.\n\nThanks,\nAlex"
+        : req.user.includes("## Task: review request")
+          ? `Hi Casey,\n\nThanks again for having us out. If you have a minute, a short review would mean a lot:\n${/https:\/\/\S+/.exec(req.user)![0]}\n\nThanks,\nAlex`
+          : req.user.includes("## Task: closing question")
+            ? "Hi Drew,\n\nDid you go another way, or did the timing change? Either answer is fine.\n\nThanks,\nAlex"
+            : null;
       const parsed = isTone
         ? { tone_shift: TONE_CASES[++tone]!.expect[0] }
         : isRevise
           ? { body: revised, reason: "Changed.", flags: [], confidence: 0.9, used_facts: [] }
           : isDraft
             ? {
-                body: "Hi,\n\nHappy to help — what's the address?\n\nThanks,\nAlex",
+                body: purposeBody ?? "Hi,\n\nHappy to help — what's the address?\n\nThanks,\nAlex",
                 reason: "Asked for the address.",
                 flags: [],
                 confidence: 0.9,
@@ -168,7 +190,9 @@ describe("evaluation set (#46)", () => {
       draftPassRate: 1,
       revisePassRate: 1,
       toneAccuracy: 1,
+      purposePassRate: 1,
     });
+    expect(run.purposeProblems).toEqual({});
     expect(run.tokens.input).toBeGreaterThan(0);
   }, 120_000);
 

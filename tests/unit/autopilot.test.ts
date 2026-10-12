@@ -20,6 +20,7 @@ import {
   considerAutopilot,
   DAILY_AUTOPILOT_CAP,
   EARN_THRESHOLD,
+  earnedCounts,
   GRACE_MINUTES,
   guardrailReasons,
   holdAutopilot,
@@ -73,6 +74,7 @@ describe("per-email guardrails (layer 3)", () => {
     amountsInEmail: [],
     draftBody: "Thursday works.",
     knownCustomer: true,
+    purpose: null,
   };
   it("a clean reply to a known customer may go", () => {
     expect(guardrailReasons(ok)).toEqual([]);
@@ -89,8 +91,18 @@ describe("per-email guardrails (layer 3)", () => {
     ["any draft that mentions money", { draftBody: "That's $95 for the call-out." }],
     ["people the owner has never written to", { knownCustomer: false }],
     ["quote acceptances", { acceptsQuote: true }],
+    ["deposit details (#28)", { purpose: "deposit" }],
+    ["review requests (#29)", { purpose: "review_request" }],
+    ["closing questions (#26)", { purpose: "closing_question" }],
   ])("never: %s", (_label, change) => {
     expect(guardrailReasons({ ...ok, ...change }).length).toBeGreaterThan(0);
+  });
+  it("purpose notes always wait for the owner, with a plain reason", () => {
+    for (const purpose of ["deposit", "review_request", "closing_question"]) {
+      expect(guardrailReasons({ ...ok, purpose })).toContain(
+        "Deposit, review and closing notes always wait for you.",
+      );
+    }
   });
   it("an invoice question with no amount is allowed", () => {
     expect(guardrailReasons({ ...ok, category: "invoice_payment" })).toEqual([]);
@@ -213,6 +225,21 @@ describe("in the database", () => {
       await setAutopilot(await ws(), "scheduling", true, NOW);
       const [r] = await database.select().from(rules);
       expect(r).toMatchObject({ category: "scheduling", mode: "autopilot" });
+    });
+
+    it("GUARDRAIL: deposit, review and closing notes sent as drafted never count toward earning it", async () => {
+      await earn("scheduling", EARN_THRESHOLD);
+      // Mark three of them as purpose notes (#26 #28 #29): autopilot can never send those,
+      // so approving them proves nothing about ordinary replies.
+      const rows = await database.select({ id: drafts.id }).from(drafts);
+      const purposes = ["deposit", "review_request", "closing_question"] as const;
+      for (const [i, purpose] of purposes.entries()) {
+        await database.update(drafts).set({ purpose }).where(eq(drafts.id, rows[i]!.id));
+      }
+      expect((await earnedCounts(workspaceId)).get("scheduling")).toBe(EARN_THRESHOLD - 3);
+      await expect(setAutopilot(await ws(), "scheduling", true, NOW)).rejects.toThrow(
+        /Needs 3 more/,
+      );
     });
 
     it("is refused on the wrong plan or before setup is done, and never for complaints", async () => {
@@ -376,6 +403,26 @@ describe("in the database", () => {
       // The same conversation without the signal would have gone.
       const control = await drafted(await conversation());
       expect(await considerAutopilot(control, NOW)).toEqual(later(GRACE_MINUTES));
+    });
+
+    it("GUARDRAIL: never starts a countdown for, or sends, a deposit / review / closing note", async () => {
+      for (const purpose of ["deposit", "review_request", "closing_question"] as const) {
+        const draftId = await drafted(await conversation());
+        await database.update(drafts).set({ purpose }).where(eq(drafts.id, draftId));
+        expect(await considerAutopilot(draftId, NOW)).toBeNull();
+        // Even a countdown that somehow got set stands down at send time.
+        await database
+          .update(drafts)
+          .set({ autoSendAt: later(GRACE_MINUTES) })
+          .where(eq(drafts.id, draftId));
+        const r = await runAutopilotSend(draftId, deps(later(GRACE_MINUTES)));
+        expect(r).toMatchObject({ status: "stood_down" });
+        expect(r.status === "stood_down" && r.reasons).toContain(
+          "Deposit, review and closing notes always wait for you.",
+        );
+      }
+      expect(writer.sent).toHaveLength(0);
+      expect(writer.calls).not.toContain("sendDraft");
     });
 
     it(`stops after ${DAILY_AUTOPILOT_CAP} a day`, async () => {

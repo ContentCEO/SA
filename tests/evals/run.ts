@@ -9,6 +9,7 @@ import { callStructured } from "@/ai/client";
 import { checkDraft } from "@/ai/draft-checks";
 import { CLASSIFY_PROMPT_VERSION } from "@/ai/prompts/classify.v3";
 import { EDIT_TONE_PROMPT_VERSION } from "@/ai/prompts/edit-tone.v1";
+import { PURPOSE_PROMPT_VERSION } from "@/ai/prompts/purpose.v1";
 import { REVISE_PROMPT_VERSION } from "@/ai/prompts/revise.v1";
 import {
   conversationBlock,
@@ -22,6 +23,7 @@ import { ensureUserAndWorkspace } from "@/server/accounts";
 import { createTestDb } from "../support/db";
 import type { EvalCase } from "./cases";
 import { runEditEvals } from "./edits";
+import { DEFAULT_PAYMENT_TERMS, runPurposeEvals } from "./purposes";
 import { score, type EvalResult } from "./score";
 
 export const PROMPT_VERSIONS = {
@@ -29,6 +31,7 @@ export const PROMPT_VERSIONS = {
   draft: DRAFT_PROMPT_VERSION,
   revise: REVISE_PROMPT_VERSION,
   editTone: EDIT_TONE_PROMPT_VERSION,
+  purpose: PURPOSE_PROMPT_VERSION,
 };
 
 /** A neutral, invented business so drafts have something to work from — and no prices. */
@@ -39,7 +42,7 @@ const PROFILE = {
   hours: "Mon–Fri 7am–4pm",
   leadTime: "About two weeks out",
   pricingNotes: null,
-  paymentTerms: "Due on completion; check or card",
+  paymentTerms: DEFAULT_PAYMENT_TERMS,
   policies: null,
   signature: "Thanks,\nAlex",
   doNotPromise: ["same-day service"],
@@ -143,11 +146,15 @@ export async function runEvals(
 
   const scores = score(cases, results);
   let reviseProblems: Record<string, string[]> = {};
+  let purposeProblems: Record<string, string[]> = {};
   if (opts.drafts !== false) {
     const edits = await runEditEvals(workspace.id);
     scores.revisePassRate = edits.revisePassRate;
     scores.toneAccuracy = edits.toneAccuracy;
     reviseProblems = edits.reviseProblems;
+    const purposes = await runPurposeEvals(workspace.id);
+    scores.purposePassRate = purposes.purposePassRate;
+    purposeProblems = purposes.purposeProblems;
   }
 
   const [cost] = await database
@@ -163,6 +170,7 @@ export async function runEvals(
     results,
     scores,
     reviseProblems,
+    purposeProblems,
     costDollars: (cost?.centiCents ?? 0) / 10_000,
     tokens: { input: tokens?.in ?? 0, output: tokens?.out ?? 0 },
   };

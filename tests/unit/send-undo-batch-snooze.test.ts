@@ -7,6 +7,7 @@ import { activityLog, drafts, messages, threads, workspaces } from "@/db/schema"
 import { ensureUserAndWorkspace } from "@/server/accounts";
 import { batchEligible, firstLine, type BatchCandidate } from "@/server/batch-rules";
 import {
+  batchCandidates,
   batchSend,
   bodyHash,
   deliverQueuedSend,
@@ -67,6 +68,7 @@ describe("plan M5 sending: undo (#7), batch (#5), snooze (#6)", () => {
       body?: string;
       flags?: string[];
       confidence?: number;
+      purpose?: "deposit" | "review_request" | "closing_question";
     } = {},
   ) {
     const g = `t${++n}`;
@@ -121,6 +123,7 @@ describe("plan M5 sending: undo (#7), batch (#5), snooze (#6)", () => {
         reason: "Asked for the address.",
         flags: over.flags ?? [],
         confidence: over.confidence ?? 92,
+        purpose: over.purpose ?? null,
         createdAt: new Date(NOW.getTime() - 60_000),
       })
       .returning();
@@ -240,6 +243,7 @@ describe("plan M5 sending: undo (#7), batch (#5), snooze (#6)", () => {
       untrusted: false,
       autopilotCounting: false,
       acceptsQuote: false,
+      purpose: null,
     };
     const all = ["quote_request", "customer_question", "scheduling", "invoice_payment"];
 
@@ -256,6 +260,10 @@ describe("plan M5 sending: undo (#7), batch (#5), snooze (#6)", () => {
       expect(batchEligible({ ...base, autopilotCounting: true }, all)).toBe(false);
       // A quote acceptance is a commitment: always one at a time, as with autopilot.
       expect(batchEligible({ ...base, acceptsQuote: true }, all)).toBe(false);
+      // GUARDRAIL (#26 #28 #29): deposit, review and closing notes are always one at a time.
+      expect(batchEligible({ ...base, purpose: "deposit" }, all)).toBe(false);
+      expect(batchEligible({ ...base, purpose: "review_request" }, all)).toBe(false);
+      expect(batchEligible({ ...base, purpose: "closing_question" }, all)).toBe(false);
       expect(
         batchEligible({ ...base, category: "invoice_payment", amountsInEmail: [1200] }, all),
       ).toBe(false);
@@ -282,6 +290,28 @@ describe("plan M5 sending: undo (#7), batch (#5), snooze (#6)", () => {
       expect(r.refused).toBe(5);
       for (const x of [complaint, flagged, needsYou, bill, unsure])
         expect((await row(x.draft.id)).sendAfter).toBeNull();
+    });
+
+    it("GUARDRAIL: a ready deposit / review / closing note is never in a batch (#26 #28 #29)", async () => {
+      const ok = await seed();
+      const notes = [
+        await seed({ purpose: "deposit" }),
+        await seed({ purpose: "review_request" }),
+        await seed({ purpose: "closing_question" }),
+      ];
+      // Each would be Ready on its own: clean, confident, no gaps, a picked category.
+      expect((await batchCandidates(workspaceId, all)).map((c) => c.draftId)).toEqual([
+        ok.draft.id,
+      ]);
+      const r = await batchSend(
+        workspaceId,
+        [ok, ...notes].map((x) => x.draft.id),
+        all,
+        deps(),
+      );
+      expect(r.queued.map((q) => q.draftId)).toEqual([ok.draft.id]);
+      expect(r.refused).toBe(3);
+      for (const x of notes) expect((await row(x.draft.id)).sendAfter).toBeNull();
     });
 
     it("each batch send has its own window and its own log entry; blocked accounts send none", async () => {

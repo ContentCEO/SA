@@ -75,6 +75,7 @@ describe("prompt-injection check (#42)", () => {
       amountsInEmail: [],
       draftBody: "Thursday works.",
       knownCustomer: true,
+      purpose: null,
     };
     expect(guardrailReasons(ok)).toEqual([]);
     expect(guardrailReasons({ ...ok, untrusted: true }).join()).toMatch(/instructions/);

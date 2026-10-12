@@ -14,6 +14,8 @@ export const FOLLOWUP_MAX_AGE_DAYS = 21;
  *   won stops the quote nudges but a won job's invoice is still chased (quoteStopsNudges);
  * - not a paid invoice: marked paid (the owner's mark or our guess) or "not owed to me"
  *   is never chased (plan #27);
+ * - no deposit, review request or closing question was ever sent on it (A3): the customer
+ *   accepted, was thanked, or was already asked once;
  * - the owner wrote last, at least `days` ago (and not ages ago);
  * - the customer has written at least once (someone to nudge);
  * - fewer than two nudges sent, ever;
@@ -40,6 +42,8 @@ export async function threadsToFollowUp(
   const lastDraft = sql`(select max(d.created_at) from drafts d where d.thread_id = ${threads.id})`;
   const sentNudges = sql`(select count(*) from drafts d where d.thread_id = ${threads.id} and d.kind = 'followup' and d.status in ('sent', 'edited_and_sent'))`;
   const pending = sql`exists (select 1 from drafts d where d.thread_id = ${threads.id} and d.status = 'pending')`;
+  // SQL twin of `purposeSentOn` (drafts.ts).
+  const purposeSent = sql`exists (select 1 from drafts d where d.thread_id = ${threads.id} and d.purpose is not null and d.status in ('sent', 'edited_and_sent'))`;
 
   const rows = await db()
     .select({ id: threads.id })
@@ -59,6 +63,7 @@ export async function threadsToFollowUp(
         sql`${sentNudges} < ${MAX_FOLLOWUPS}`,
         sql`(${lastDraft} is null or ${lastDraft} < ${lastOut})`,
         sql`not ${pending}`,
+        sql`not ${purposeSent}`,
       ),
     )
     .orderBy(desc(threads.lastMessageAt))

@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { beforeEach, describe, expect, it } from "vitest";
+import { draftTag } from "@/config/categories";
 import type { Database } from "@/db";
 import { activityLog, businessProfiles, drafts, messages, threads, workspaces } from "@/db/schema";
 import type { OutgoingEmail } from "@/lib/email";
@@ -90,6 +91,39 @@ describe("activity wording", () => {
       /didn't go through/,
     );
     expect(describeActivity("something_internal", {}, null)).toBeNull();
+  });
+
+  it("names deposit details, review requests and closing questions (plan #26 #28 #29)", () => {
+    const who = { name: "Dana Ruiz", category: "quote_request" };
+    expect(describeActivity("draft_created", { purpose: "deposit" }, who)).toBe(
+      "Drafted deposit details for Dana · Quote request",
+    );
+    // An acceptance re-sorted as scheduling is still a quote (A5).
+    expect(
+      describeActivity("draft_created", { purpose: "deposit" }, { ...who, category: "scheduling" }),
+    ).toBe("Drafted deposit details for Dana · Quote request");
+    expect(draftTag({ category: "scheduling", kind: "reply", purpose: "deposit" })).toBe(
+      "Deposit details · Quote request",
+    );
+    expect(draftTag({ category: "quote_request", kind: "followup", purpose: null })).toBe(
+      "Follow-up · Quote request",
+    );
+    expect(draftTag({ category: "scheduling", kind: "reply", purpose: "review_request" })).toBe(
+      "Review request",
+    );
+    expect(describeActivity("draft_created", { purpose: "review_request" }, who)).toBe(
+      "Drafted a review request to Dana",
+    );
+    expect(describeActivity("closing_question", { purpose: "closing_question" }, who)).toBe(
+      "Drafted a question to Dana asking if they went another way",
+    );
+    // No name on file: still plain.
+    expect(describeActivity("draft_created", { purpose: "deposit" }, null)).toBe(
+      "Drafted deposit details",
+    );
+    expect(describeActivity("closing_question", {}, null)).toBe(
+      "Drafted a question asking if they went another way",
+    );
   });
 
   it("says who marked a quote, and that our guesses can be changed (plan #30)", () => {
