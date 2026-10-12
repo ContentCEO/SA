@@ -40,7 +40,12 @@ export function BodyWithGaps({
   /** Plan #15: the owner's past prices for similar jobs, offered in an open price gap. */
   priceSuggestions?: PastPrice[];
 }) {
-  const [open, setOpen] = useState<number | null>(null);
+  // The form belongs to the text it was opened on. If that text changes from outside (a past
+  // price tapped below the draft fills an earlier gap), the gaps shift under it, so the form
+  // closes instead of putting the owner's answer into a different gap.
+  const [openOn, setOpenOn] = useState<{ index: number; body: string } | null>(null);
+  const open = openOn && openOn.body === body ? openOn.index : null;
+  const setOpen = (index: number | null) => setOpenOn(index === null ? null : { index, body });
   const [value, setValue] = useState("");
   const gaps = findGaps(body);
 

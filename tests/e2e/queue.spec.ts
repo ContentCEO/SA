@@ -217,7 +217,7 @@ test("price memory: past prices for similar jobs, and a tap fills only the price
   await testDb
     .update(schema.drafts)
     .set({
-      body: "Hey Priya,\n\nThe panel upgrade is {{price}} including the permit.\n\nThanks, Davi",
+      body: "Hey Priya,\n\nThe panel upgrade is {{price}} including the permit. I can come {{date}} at {{time}}.\n\nThanks, Davi",
       flags: [],
     })
     .where(eq(schema.drafts.id, draft.id));
@@ -252,7 +252,7 @@ test("price memory: past prices for similar jobs, and a tap fills only the price
   await expect(memory).toBeVisible();
   await expect(memory).toContainText("Only you see these.");
   await expect(card.getByRole("button", { name: "Fill in price" })).toBeVisible();
-  await expect(card.getByRole("note")).toContainText("Fill in 1 gap to send");
+  await expect(card.getByRole("note")).toContainText("Fill in 3 gaps to send");
   await expect(card.getByRole("button", { name: "Send reply" })).toHaveCount(0);
   // Amounts are visible text only — never in an aria-label (A9).
   await expect(page.locator('[aria-label*="$"]')).toHaveCount(0);
@@ -262,12 +262,27 @@ test("price memory: past prices for similar jobs, and a tap fills only the price
   await expect(card.getByText("Or use one of your past prices:")).toBeVisible();
   await card.getByRole("button", { name: "Cancel" }).click();
 
+  // A past price tapped while another gap's form is open: the gaps shift, so that form closes
+  // rather than put the owner's answer into a different gap.
+  await card.getByRole("button", { name: "Fill in date" }).click();
+  await card.getByLabel("What should “date” say?").fill("Thursday");
   await memory.getByRole("button", { name: "Use $1,800 (Mar)" }).click();
   await expect(card.getByRole("button", { name: "Fill in price" })).toHaveCount(0);
+  await expect(card.getByLabel("What should “time” say?")).toHaveCount(0);
+  await expect(card.getByLabel("What should “date” say?")).toHaveCount(0);
   await expect(card).toContainText("The panel upgrade is $1,800 including the permit.");
-  await expect(card.getByRole("button", { name: "Send reply" })).toBeEnabled();
   await expect(memory).toContainText("No price gap left to fill.");
   await expect(memory.getByRole("button", { name: "Use $2,100 (Jun)" })).toBeDisabled();
+
+  // The other gaps are still there, each filling its own place.
+  await card.getByRole("button", { name: "Fill in date" }).click();
+  await card.getByLabel("What should “date” say?").fill("Thursday");
+  await card.getByRole("button", { name: "Fill in", exact: true }).click();
+  await card.getByRole("button", { name: "Fill in time" }).click();
+  await card.getByLabel("What should “time” say?").fill("8am");
+  await card.getByRole("button", { name: "Fill in", exact: true }).click();
+  await expect(card).toContainText("I can come Thursday at 8am.");
+  await expect(card.getByRole("button", { name: "Send reply" })).toBeEnabled();
 
   // The Inbox row shows the same figures, as text.
   await page.goto("/inbox?c=quote_request");
