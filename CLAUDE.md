@@ -511,6 +511,95 @@ In a sandbox with preinstalled Chromium: `PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-brows
     cards, past-price buttons) use aria-labelledby or visible text, never an aria-label with an
     amount or name. Older labels (draft card, quote card, seasonal-note remove, admin waitlist)
     still carry a name or owner text and are kept out of Sentry only by the `ui.*` scrub.
+- **Plan M8 (2026-10-12, branch `claude/milestone-6-8`; #31 #32 #33 #34 #35 #38 done):**
+  Migration 0025 (additive, no backfill): `threads.quote_requested_at` (set once when a thread is
+  first sorted quote_request, never cleared, like `complained_at`), `threads.job_kind` (one of our
+  fixed labels, set at classification; only replaced while null or "Other jobs"; injection emails
+  leave no mark), `threads.at_risk_alerted_at`, `business_profile.monthly_summary_last_sent_for`
+  ('YYYY-MM'). Queries count a quote request as `quote_requested_at IS NOT NULL OR` the current
+  quote rule (`quoteRequestSql`), so a request re-sorted as scheduling still counts.
+  - **Queue numbers have one source:** `queueMembership` / `queueCounts` (`src/server/drafts.ts`)
+    share listQueue's filter but select only ids, category, priority, kind and times, with no
+    50-row cap. The digest, `/api/push/summary` and `/api/badge` use them, never `listQueue`. This
+    also fixed the digest counting snoozed threads and sends still in their undo window.
+  - **#31 Needs you:** up to 3, emergencies first then oldest waiting; waiting since = the
+    customer's first email after the owner last wrote (owner wrote last → noun only, sorted last).
+    Fixed category nouns (`digest-rules.ts`), never the needs-owner reason. Links are only
+    `/queue`, `/settings#digest`, `/quotes` and `/queue#t-<uuid>` (allow-list test, no `@` or `?`).
+    Queue cards carry `id="t-<uuid>"`. The (app) header isn't sticky, so cards use `scroll-mt-4`
+    plus `scroll-mb-28` on phones (the bottom tab bar), and `ScrollToThread` scrolls a streamed card
+    into view (the browser's own hash scroll fires before the card exists).
+  - **#32/#33 week:** Monday 00:00 → Monday 00:00 in the owner's zone (`weekBounds`, DST-safe;
+    pure date code lives in `snooze-rules.ts`: `localParts`, `localMonthStart/Name`, re-exported).
+    `src/server/scorecard.ts`: replies and follow-ups by `decided_at`; quotes out = each quote
+    request once, in the week of the owner's first answer; response time = customer's first email
+    → owner's first answer (synced email, sent draft, or a send in its undo window), calendar time,
+    filed under the week the request came in, plus how many are still unanswered. No-reply senders
+    (`src/server/sender-rules.ts`, SQL twin in `thread-sql.ts`) count as neither. Time saved =
+    `MINUTES_PER_SENT_REPLY` (now in `src/config/drafting.ts`) × (replies + follow-ups sent).
+    `monthSummary` now counts sent items by `decided_at` too, so a week can't beat its month.
+    Activity: "This week so far" card with last week alongside; Monday's morning summary gets a
+    "Last week" section (skipped if all zero).
+  - **#34 leads at risk** (`leads-at-risk.ts`, rules in `leads-at-risk-rules.ts`): business hours
+    are one default in `src/config/business-hours.ts` (Mon–Sat 7am–6pm, owner's zone; the free-text
+    `business_profile.hours` is for drafting only and is **not** parsed), `LEAD_AT_RISK_HOURS` 4
+    (`businessMinutesBetween`), `LEAD_AT_RISK_MAX_AGE_HOURS` 72 calendar hours (so the 30-day
+    backfill can't flood alerts), `LEAD_AT_RISK_PUSHES_PER_DAY` 3. Answered = an owner email after
+    waiting-since, a sent draft decided since then, or a send queued / claimed. Only mailboxes that
+    are active and synced in the last 30 min count (a stale mailbox can't see the owner's replies).
+    Snoozed, decided, out-of-inbox and no-reply leads are skipped. A push step in the 15-minute
+    lifecycle job (after `m7-backfill`): inside business hours and outside quiet hours, claims the
+    shared push slot (10-minute gap with new-lead pushes), marks each lead once per **waiting
+    episode** (`at_risk_alerted_at < waiting since` re-arms it), counts the day's cap from
+    `lead_at_risk_push_sent` activity rows; if no phone got it, the marks and the slot are handed
+    back and nothing goes in Activity. The tap opens `/queue?t=<uuid>#t-<uuid>` (a real
+    navigation; `sw.js` `safeUrl` allows only that or `/queue`), or `/quotes` when the lead has no
+    queue card. The morning summary always has the counts-only "N quote requests have waited more
+    than 4 hours." line, push or not (harmless catch-up), plus a Needs-you line linking to Quotes
+    for at-risk leads with no card.
+  - **#35 monthly summary** (`monthly-summary.ts`, rules in `monthly-rules.ts`): a second step of
+    the hourly `morning-digest` job; follows `digest_enabled`; due on local day 1–3 **at/after**
+    `digest_hour` for the previous month in the owner's zone; Resend idempotency key
+    `monthly-<workspace>-<YYYY-MM>`; marker set only after a send (no Resend env → nothing sent or
+    marked); quiet months and read-only accounts get none. Contents: quote requests, top 3 job
+    kinds (`src/config/job-kinds.ts`, per trade, whole-word keyword match on the model's
+    `service_requested`, "Other jobs" fallback — only the label is stored or sent), top 3 lead
+    sources (`src/config/lead-sources.ts`; domains split in SQL so no address reaches JS; Google
+    only as the exact hosts `localservices.google.com` / `business.google.com`; facebookmail.com
+    left out as too broad; else "Direct email"), repeat customers (an earlier inbound on a
+    **different** thread before the month, one SQL count) and win rate (`closeRateBetween`).
+  - **#38 badge:** `src/lib/app-badge.ts` + `AppBadge` in the (app) layout fetch the count-only
+    `/api/badge` (`{ count }`, 401 signed out) at most once a minute, after a queue action and on
+    becoming visible; `sw.js` sets it after a push. Count = replies ready + needs-you, capped at 99,
+    0 for read-only accounts. Cleared at 0, on a 401 and on signed-out screens; a network error
+    leaves it alone. True lock-screen widgets aren't possible for a web app (no API for them).
+  - Logs: `console.error('<event>', { ids, error: err.name })` — never `err.message` (Stripe
+    errors echo customer ids). `*-rules.ts` files never import `server-only` or `@/db` (test).
+- **#47 referral credit (2026-10-12, built behind `FEATURE_REFERRALS`, off; no amount):**
+  `src/server/referrals.ts`, rules in `referral-rules.ts`. Migration 0026 (additive):
+  `workspaces.referral_code` (unique, 12 chars base64url, random) / `referred_by_workspace_id`,
+  `waitlist.referral_code`, `invites.referred_by_workspace_id`, and `referral_credits` (unique
+  `(referred_email_sha256, side)`; `referred_workspace_id` / `beneficiary_workspace_id` ON DELETE
+  SET NULL; status pending / applied / failed / skipped; attempts, last error code).
+  `REFERRAL_CREDIT_CENTS = null` and `REFERRAL_CREDIT_TO = "both"` in `src/config/pricing.ts`;
+  `referralsVisible()` = flag on **and** a positive amount — otherwise no link, no code stored,
+  nothing carried, no credit, no Stripe call. Path: `/?ref=<code>` → waitlist (hidden field) →
+  `inviteFromWaitlist` → first sign-in copies it to the workspace and clears it on the invite (used
+  once). Settled **once ever**, the first time the referred account is `active` with
+  `setup_paid_via = 'stripe'` (not house, not legacy null): one insert of the sides in the config
+  at that moment, or a single `skipped` row (flag off, no amount, self, same business domain —
+  public webmail like gmail.com exempt). Later config changes add nothing. The email fingerprint
+  (sha256 of the normalized email, salted with `AUTH_SECRET`) survives account deletion, so
+  delete + re-sign-up can't be paid twice. Each credit = a negative Stripe balance transaction with
+  `Idempotency-Key: referral-<referred workspace>-<side>`, and first a check of the customer's
+  balance transactions for `metadata.referralCreditId` (Stripe idempotency keys expire after 24h).
+  Hooks: any admin move that lands on `active` (setup call done, resume) and the webhook
+  (`billing.ts`) call `creditReferralSafely` (never fails the move; settles only once); the
+  15-minute sweep (after `m7-backfill`) applies pending rows once the beneficiary has a Stripe
+  customer and settles missed actives; permanent Stripe errors (resource_missing / invalid
+  request) → `failed`, shown on the /admin card. `stripeClient()` is exported from `billing.ts` (one
+  client). Activity `referral_credit_applied` carries the side only. Test seam:
+  `setReferralConfigForTests`.
 - **Sending requires a real payment (Davi, 2026-10-10):** `canSend` = status in `SENDING_ALLOWED`
   **and** `workspaces.setup_paid_via` ∈ {`stripe`, `house`}. `stripe` is set only by the signed
   webhook's paid checkout that included the setup fee; `house` only by the admin move
@@ -573,6 +662,15 @@ In a sandbox with preinstalled Chromium: `PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-brows
 - **Plan #26 (closing question):** decide whether "Want to ask if they went another way?" may go
   live. Built and tested behind `FEATURE_CLOSING_QUESTION` (off); turning it on = set it to `1` in
   Vercel and redeploy (docs/SETUP.md §6d). Don't set it without his okay.
+- **Plan #47 (referral credit):** built and tested behind `FEATURE_REFERRALS` (off), and it does
+  nothing until he answers: (1) the credit amount in dollars (`REFERRAL_CREDIT_CENTS` in
+  `src/config/pricing.ts` is `null`); (2) who gets it: both (the spec's default), the referrer only,
+  or the new customer only (`REFERRAL_CREDIT_TO`); (3) whether he wants the same-domain block at
+  all (as built: two owners on the same business domain never count, public webmail like gmail.com
+  is exempt). Before turning it on, add the referral-fingerprint line to the privacy policy (the
+  "Privacy policy line for #47" item below; docs/SETUP.md §6d), and don't rotate `AUTH_SECRET` once
+  referrals have been paid (the "paid once" fingerprint is salted with it). Then set the switch
+  (docs/SETUP.md §6d). Referrals that go active while it's off are never paid later.
 - **PDF quotes (#28/#30):** a quote sent only as an attachment ("Quote attached", no `$` in the
   email) never counts as a price given, so "Let's do it" isn't auto-marked Won, isn't in the close
   rate until he taps Won, and gets no deposit draft. Conservative on purpose (a site visit isn't a

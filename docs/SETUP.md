@@ -182,11 +182,25 @@ exactly `1`, `true` or `on` (any case); empty, missing or anything else means of
   linked again from a referral link could be paid a second time (both sides). Rotating it also
   signs everyone out. If it must be rotated, settle it with Davi first.
 
-**Ask Davi before turning `FEATURE_CLOSING_QUESTION` or `FEATURE_REFERRALS` on** (and for the
-referral amount and who gets it). To turn it on: Vercel → sa → Environment
+**Ask Davi before turning `FEATURE_CLOSING_QUESTION` on.** To turn it on: Vercel → sa → Environment
 Variables → add it with value `1` (Production only, unless Davi says otherwise) → Redeploy. To turn
 it off again, delete the variable (or set it empty) and redeploy; the offer disappears, and any
 closing-question drafts already in the queue stay there for the owner to send or discard.
+
+**Ask Davi before turning `FEATURE_REFERRALS` on** — he decides the amount, who gets it (both,
+the referrer only, or the new customer only) and whether the same-domain block stays. In order:
+
+1. Set `REFERRAL_CREDIT_CENTS` in `src/config/pricing.ts` to his amount in cents (and
+   `REFERRAL_CREDIT_TO` if it isn't "both"), with the privacy-policy line above, and deploy that
+   code. While the amount is `null` the switch does nothing at all.
+2. Vercel → sa → Environment Variables → add `FEATURE_REFERRALS` with value `1` (Production only,
+   unless Davi says otherwise) → Redeploy.
+
+To turn it off again, delete the variable (or set it empty) and redeploy: the Share section and
+links disappear, new codes aren't carried, and no new credits are made (credits waiting for a
+Stripe customer wait, and are added if it's turned back on). Credits already added stay on the
+owners' Stripe balances. Referrals whose account went active while it was off are settled as
+"skipped" and are never paid later.
 
 ## 7. Inviting an owner
 

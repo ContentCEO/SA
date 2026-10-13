@@ -191,24 +191,24 @@ _Re-checked 2026-10-10: brief scope complete with tests; nothing else filed here
 
 ## Milestone 8 — Digest + Activity
 
-- [ ] **#31 "Needs you" header** at the top of the digest: max 3 items, each a deep link into the
+- [x] **#31 "Needs you" header** _(Done 2026-10-12.)_ _(How: the morning summary opens with up to 3 needs-you emails, emergencies first then oldest waiting, each a fixed noun and how long it has waited ("A complaint — waiting since yesterday") linking to `/queue#t-<thread id>`; "+ N more in your queue", or "Nothing needs you today."; numbers come from the content-free `queueCounts`, the same membership as the queue (snoozed and undo-window items left out, no 50-row cap).)_ at the top of the digest: max 3 items, each a deep link into the
       queue. If nothing needs them, say so in one line.
-- [ ] **#32 Weekly scorecard.** Monday digest section + Activity card: replies sent, average
+- [x] **#32 Weekly scorecard.** _(Done 2026-10-12.)_ _(How: weeks run Monday 00:00 → Monday 00:00 in the owner's time zone (DST-safe); Activity has a "This week so far" card with last week alongside, and the morning summary on the owner's local Monday has a "Last week" section (skipped when it's all zero); replies and follow-ups sent count by when the owner okayed them, "quotes out" = each quote request once, in the week of the owner's first answer; time saved = 3 minutes × replies and follow-ups sent, labelled an estimate.)_ Monday digest section + Activity card: replies sent, average
       response time, quotes out, follow-ups sent, estimated time saved with the assumption shown and
       labelled "estimate".
-- [ ] **#33 Response-time stat.** Average time from inbound quote request to owner reply, this week
+- [x] **#33 Response-time stat.** _(Done 2026-10-12.)_ _(How: from the customer's first email on a quote request to the owner's first answer (synced email, sent draft or a send in its undo window), in calendar time, counted in the week the request came in, with the number still unanswered said too; no-reply senders left out; a quote request later re-sorted still counts (sticky `quote_requested_at`).)_ Average time from inbound quote request to owner reply, this week
       vs last. Plain sentence, no charts with colour.
-- [ ] **#34 Leads at risk.** A quote request with no reply after 4 hours (config, inside business
+- [x] **#34 Leads at risk.** _(Done 2026-10-12.)_ _(How: a quote request the customer has waited on for 4+ business hours (Mon–Sat 7am–6pm in the owner's zone, `src/config/business-hours.ts`; at most 72 calendar hours old), not answered, snoozed, decided or from a no-reply sender, on a mailbox that synced in the last 30 min; the 15-minute job sends a content-free push inside business hours and outside quiet hours, ≤ 3 per local day, once per waiting episode, sharing the 10-minute push slot; the tap opens that card; the morning summary always has a counts-only "N quote requests have waited more than 4 hours." line.)_ A quote request with no reply after 4 hours (config, inside business
       hours only) → push notification (#36) or, without push, a line in the next digest. Max 3
       pushes a day.
-- [ ] **#35 Monthly summary.** First-of-month email: busiest services, where leads came from, repeat
+- [x] **#35 Monthly summary.** _(Done 2026-10-12.)_ _(How: follows the morning-summary switch; due on the owner's local 1st at/after their digest hour (catch-up on the 2nd/3rd, never before the hour), for last month in their zone; Resend `Idempotency-Key: monthly-<workspace>-<YYYY-MM>`; quote requests, top 3 job kinds and lead sources as OUR fixed labels (`src/config/job-kinds.ts`, `src/config/lead-sources.ts`), repeat customers and win rate — counts only; quiet months and read-only accounts get none.)_ First-of-month email: busiest services, where leads came from, repeat
       customers count, win rate. Counts and categories only.
-- [ ] **#38 Badge count.** Home-screen badge with the number of items waiting (Badging API, where
+- [x] **#38 Badge count.** _(Done 2026-10-12.)_ _(How: Badging API from the page (`AppBadge`, at most once a minute, after a queue action and on coming back into view, via the count-only `/api/badge`) and from the service worker after a push; replies ready + needs-you, capped at 99; 0 for read-only accounts; cleared at 0, on sign-out and on a 401, left alone on a network failure.)_ Home-screen badge with the number of items waiting (Badging API, where
       supported). True lock-screen widgets aren't possible for a web app; note that in Decisions.
 
 ## Milestone 10 — Billing
 
-- [ ] **#47 Referral credit.** ASK DAVI: the credit amount and who gets it. Do not pick a number.
+- [ ] **#47 Referral credit.** _(Built 2026-10-12 behind `FEATURE_REFERRALS` (off) — waiting on Davi: the credit amount in dollars, who gets it (both / referrer only / new customer only), and whether to keep the same-domain block (public webmail like gmail.com is exempt). `REFERRAL_CREDIT_CENTS` is `null`, so nothing happens even with the switch on; see `docs/SETUP.md` §6d.)_ ASK DAVI: the credit amount and who gets it. Do not pick a number.
       Each workspace gets a referral link; when the referred workspace becomes `active`, both get a
       credit applied as a Stripe customer balance credit. Amount lives in `src/config/pricing.ts`.
       Self-referral and same-domain referrals blocked. Tests: credit only on `active`, once.
