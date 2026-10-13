@@ -13,17 +13,6 @@ jobs:
   check:
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    services:
-      postgres:
-        # Amazon's public mirror of the official image: Docker Hub pulls kept failing on runners.
-        image: public.ecr.aws/docker/library/postgres:16
-        env:
-          POSTGRES_USER: sa
-          POSTGRES_PASSWORD: sa
-          POSTGRES_DB: squared_away
-        ports: ["5432:5432"]
-        options: >-
-          --health-cmd "pg_isready -U sa" --health-interval 5s --health-timeout 5s --health-retries 10
     # Throwaway values for CI only. Nothing here talks to real Google or a real database.
     env:
       APP_URL: http://localhost:3100
@@ -36,6 +25,14 @@ jobs:
       ADMIN_EMAIL: admin@example.com
     steps:
       - uses: actions/checkout@v4
+      # PostgreSQL 16 comes preinstalled on GitHub's Ubuntu runners: start it instead of pulling a
+      # container image (Docker Hub, then Amazon's mirror, both hit download limits on shared runners).
+      - name: Start Postgres
+        run: |
+          sudo systemctl start postgresql.service
+          pg_isready -h localhost -p 5432 -t 30
+          sudo -u postgres psql -v ON_ERROR_STOP=1 -c "CREATE ROLE sa LOGIN SUPERUSER PASSWORD 'sa';"
+          sudo -u postgres createdb -O sa squared_away
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
