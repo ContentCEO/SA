@@ -1,14 +1,10 @@
 "use client";
 
-import { useEffect, useRef } from "react";
-import { growthCopy } from "./growth-copy";
+import { useEffect, useRef, useSyncExternalStore } from "react";
+import { DEFAULT_LOOK, lookFor, lookIdFrom, type LookId } from "./looks";
 import {
-  IN_DONE_MS,
-  IN_REALIGN_AT_MS,
-  IN_THEME_AT_MS,
   LINES,
   NAV_MS,
-  OUT_DONE_MS,
   SETTLE_MS,
   jumpMode,
   nextMode,
@@ -19,6 +15,18 @@ import {
 
 const THEME = "data-sa-theme";
 const SWITCHING = "data-sa-switching";
+/** Which look plays (TEMPORARY preview chooser, see looks/look-rules.ts); unset for "current". */
+const LOOK = "data-sa-look";
+
+/*
+ * TEMPORARY preview chooser: `?look=1` … `?look=5` picks a candidate look (looks/index.ts), read
+ * on the client only, so the server and hydration render the current look. Remove once a look
+ * is picked. The search string doesn't change without a navigation that re-renders the page,
+ * so there is nothing to subscribe to.
+ */
+const noSubscribe = () => () => {};
+const lookFromUrl = (): LookId => lookIdFrom(window.location.search);
+const defaultLook = (): LookId => DEFAULT_LOOK;
 /** Swallowed (capture phase, on the document) while the full show covers the screen. */
 const TAP_EVENTS = ["click", "pointerup", "mousedown"] as const;
 /** Scrolling input, also stopped while the full show covers the screen (the page holds still). */
@@ -57,10 +65,16 @@ const EDITABLE = 'input, textarea, select, [contenteditable=""], [contenteditabl
  * The stage is decorative: aria-hidden, inert, pointer-events none. While the full show covers the
  * screen, taps are swallowed, so nothing hidden under the cover (a tel: link, a form) can be hit,
  * and scrolling is held.
- * Mounted only on `/`; unmounting removes both attributes so no other page is affected.
+ * Mounted only on `/`; unmounting removes its attributes so no other page is affected.
+ *
+ * The picture and its clock come from the chosen look (looks/index.ts; TEMPORARY `?look=`
+ * preview chooser, default = the current look). Everything above is the same for every look.
  */
 export function GrowthSwitch() {
   const playedFull = useRef(false);
+  const look = lookFor(useSyncExternalStore(noSubscribe, lookFromUrl, defaultLook));
+  const lookId = look.id;
+  const { themeAtMs, realignAtMs, doneMs, quietDoneMs } = look.timing;
 
   useEffect(() => {
     const root = document.documentElement;
@@ -74,6 +88,8 @@ export function GrowthSwitch() {
 
     let mode: HalfMode = nextMode("app", topNow(), vh());
     root.setAttribute(THEME, mode);
+    if (lookId === DEFAULT_LOOK) root.removeAttribute(LOOK);
+    else root.setAttribute(LOOK, lookId);
 
     const timers = new Set<number>();
     const later = (fn: () => void, ms: number) => {
@@ -172,15 +188,15 @@ export function GrowthSwitch() {
           root.setAttribute(THEME, "growth");
           runUnderCover();
           land();
-        }, IN_THEME_AT_MS);
-        later(land, IN_REALIGN_AT_MS);
+        }, themeAtMs);
+        later(land, realignAtMs);
         finishCurrent = () => finish("growth");
-        later(finishCurrent, IN_DONE_MS);
+        later(finishCurrent, doneMs);
       } else {
         root.setAttribute(THEME, next);
         root.setAttribute(SWITCHING, next === "growth" ? "in-quiet" : "out");
         finishCurrent = () => finish(next);
-        later(finishCurrent, OUT_DONE_MS);
+        later(finishCurrent, quietDoneMs);
       }
     };
 
@@ -361,32 +377,20 @@ export function GrowthSwitch() {
       else reduce.removeListener(onReduce);
       root.removeAttribute(THEME);
       root.removeAttribute(SWITCHING);
+      root.removeAttribute(LOOK);
     };
-  }, []);
+  }, [lookId, themeAtMs, realignAtMs, doneMs, quietDoneMs]);
 
-  const c = growthCopy.switch;
-  const label = "text-xl font-black sm:text-3xl";
+  const Stage = look.Stage;
   return (
-    <div className="sa-switch-stage" aria-hidden="true" inert data-sa-switch-stage>
-      <div className="sa-switch-flood">
-        <span className="sa-switch-edge" data-edge="top" />
-        <span className="sa-switch-edge" data-edge="bottom" />
-        <div className="sa-switch-center">
-          <div className="sa-switch-graphic">
-            <span className="sa-switch-knob" />
-            {/* Off-white words on charcoal, and a charcoal copy clipped to the knob's shape on
-                top: the words invert exactly where the knob passes, never blank. */}
-            <span className="sa-switch-labels" data-ink="light">
-              <span className={label}>{c.from}</span>
-              <span className={label}>{c.to}</span>
-            </span>
-            <span className="sa-switch-labels" data-ink="dark">
-              <span className={label}>{c.from}</span>
-              <span className={label}>{c.to}</span>
-            </span>
-          </div>
-        </div>
-      </div>
+    <div
+      className="sa-switch-stage"
+      aria-hidden="true"
+      inert
+      data-sa-switch-stage
+      data-sa-look-stage={lookId}
+    >
+      <Stage />
     </div>
   );
 }
