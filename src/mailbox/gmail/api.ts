@@ -9,10 +9,8 @@ import {
   type MailboxWriter,
   type MailMessage,
 } from "../connector";
+import { googleEndpoints } from "@/config/e2e";
 import { extractBodyText, toMailMessage, type GmailMessageResource } from "./parse";
-
-const API = "https://gmail.googleapis.com/gmail/v1/users/me";
-const TOKEN_URL = "https://oauth2.googleapis.com/token";
 
 type Fetch = typeof fetch;
 type Sleep = (ms: number) => Promise<void>;
@@ -61,7 +59,7 @@ export function createGmailReader(opts: GmailReaderOptions): MailboxReader & Mai
     const clientSecret = process.env.AUTH_GOOGLE_SECRET;
     if (!clientId || !clientSecret) throw new Error("Google OAuth client is not configured.");
     for (let attempt = 0; ; attempt++) {
-      const res = await fetchImpl(TOKEN_URL, {
+      const res = await fetchImpl(googleEndpoints().token, {
         method: "POST",
         headers: { "content-type": "application/x-www-form-urlencoded" },
         body: new URLSearchParams({
@@ -96,7 +94,7 @@ export function createGmailReader(opts: GmailReaderOptions): MailboxReader & Mai
     let refreshedAfter401 = false;
     for (let attempt = 0; ; attempt++) {
       const token = accessToken ?? (await refresh());
-      const res = await fetchImpl(`${API}${path}`, {
+      const res = await fetchImpl(`${googleEndpoints().gmailApi}${path}`, {
         method: init?.method ?? "GET",
         headers: {
           authorization: `Bearer ${token}`,

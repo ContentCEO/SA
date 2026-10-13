@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { contentSecurityPolicy, securityHeaders } from "@/config/security-headers";
+import { contentSecurityPolicy, securityHeaders, type HeaderEnv } from "@/config/security-headers";
 
 const csp = (env = {}) =>
   Object.fromEntries(
@@ -35,6 +35,26 @@ describe("security headers", () => {
     ]);
     // Fonts are self-hosted by next/font: no Google Fonts host needed.
     expect(contentSecurityPolicy({})).not.toMatch(/fonts\.(googleapis|gstatic)\.com/);
+  });
+
+  it("GUARDRAIL (M11 S1): the e2e switch never changes any header (consent stays at Google)", () => {
+    const e2e = {
+      SA_E2E: "1",
+      SA_E2E_GOOGLE_BASE_URL: "http://127.0.0.1:3301",
+      SA_E2E_ANTHROPIC_BASE_URL: "http://127.0.0.1:3301",
+      SA_E2E_HOOK_SECRET: "s".repeat(32),
+      DATABASE_URL: "postgres://u@localhost/db",
+    };
+    for (const env of [{}, { NODE_ENV: "production" }, { VERCEL_ENV: "preview" }]) {
+      expect(securityHeaders({ ...env, ...e2e } as HeaderEnv)).toEqual(securityHeaders(env));
+      expect(csp({ ...env, ...e2e })["form-action"]).toEqual([
+        "'self'",
+        "https://accounts.google.com",
+        "https://checkout.stripe.com",
+        "https://billing.stripe.com",
+      ]);
+    }
+    expect(contentSecurityPolicy({ ...e2e } as HeaderEnv)).not.toContain("127.0.0.1");
   });
 
   it("only previews allow Vercel's toolbar; only development allows eval", () => {

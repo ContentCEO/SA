@@ -2,6 +2,7 @@ import "server-only";
 import Anthropic from "@anthropic-ai/sdk";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import type { z } from "zod";
+import { anthropicClientOptions } from "@/config/e2e";
 import { models, type ModelRole } from "@/config/models";
 import { estimateCostCentiCents, type TokenUsage } from "./cost";
 import { recordAiUsage, reserveAiCall } from "./usage";
@@ -27,7 +28,7 @@ export type Transport = (req: StructuredRequest) => Promise<TransportResult>;
 let client: Anthropic | undefined;
 
 const anthropicTransport: Transport = async (req) => {
-  client ??= new Anthropic();
+  client ??= new Anthropic(anthropicClientOptions());
   const response = await client.messages.parse({
     model: req.model,
     max_tokens: req.maxTokens,
