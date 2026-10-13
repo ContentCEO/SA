@@ -33,23 +33,37 @@ const outlined =
   "inline-flex min-h-tap items-center justify-center rounded-lg border-2 border-offwhite px-5 font-semibold";
 
 /**
- * Squared Away Growth, on charcoal: the homepage's second chapter (h2, inside the flip) and the
- * whole of /growth (h1, standalone, with "who does the work" and a way back to the app).
+ * Squared Away Growth, on charcoal: the homepage's second part (h2, after the scroll switch in
+ * growth-switch.tsx; `openerId="growth"` puts the `#growth` anchor on the opener) and the whole
+ * of /growth (h1, standalone, with "who does the work" and a way back to the app).
+ * The opener headline carries `sa-land`: on the homepage it lands as the switch's cover lifts.
  * Every string is in growth-copy.ts.
  */
 export function GrowthChapter({
   headingLevel,
   standalone,
+  openerId,
 }: {
   headingLevel: "h1" | "h2";
   standalone: boolean;
+  openerId?: string;
 }) {
   return (
     <>
-      <section aria-label={c.opener.region} className="px-4 py-16 sm:py-24">
+      <section
+        id={openerId}
+        aria-label={c.opener.region}
+        className={cn("px-4 py-16 sm:py-24", openerId && "scroll-mt-18")}
+      >
         <div className="mx-auto flex w-full max-w-5xl flex-col gap-6">
           <p className="font-semibold text-ash">{c.opener.eyebrow}</p>
-          <Headline as={headingLevel} size="xl" serif={c.opener.serif} heavy={c.opener.heavy} />
+          <Headline
+            as={headingLevel}
+            size="xl"
+            serif={c.opener.serif}
+            heavy={c.opener.heavy}
+            className="sa-land"
+          />
           <p className="max-w-2xl text-xl leading-relaxed">{c.opener.body}</p>
           {standalone ? null : (
             <p className="max-w-2xl text-xl leading-relaxed">{c.opener.homeOnly}</p>

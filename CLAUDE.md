@@ -429,11 +429,11 @@ In a sandbox with preinstalled Chromium: `PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-brows
   M3/M4 regressions. `tests/unit/jobs.test.ts` fails if a `createFunction` isn't registered.
 - **Squared Away Growth (2026-10-12, branch `claude/growth-page`, stacked on PR #9):** a separate
   one-on-one marketing service (ads, posts, Google Business Profile, reviews, websites) for anyone
-  in the trades. `/growth` (public, static, charcoal edge to edge) and a second, charcoal chapter at
-  the bottom of `/` after the app's waitlist: `GrowthBridge` (paper) → `GrowthWipe` (CSS-only
-  scroll-timeline wipe in theme.css, `.sa-flip`; no support or reduced motion = an instant switch;
-  e2e asserts `animation-timeline: --sa-flip` so Lightning CSS can't fold it away) → the
-  `.sa-inverted[data-growth-chapter]` wrapper with a sticky chapter bar. All copy in
+  in the trades. `/growth` (public, static, charcoal edge to edge; no switch, no `data-sa-half`, no
+  theme attribute) and the second half of `/`: `<div data-sa-half="app">` (hero … waitlist, then
+  `GrowthBridge`, `growth-bridge.tsx`, the paper hinge, no id) and
+  `<div class="sa-inverted" data-growth-chapter data-sa-half="growth">` (sticky chapter bar, then
+  the opener, which carries `#growth` via `openerId` + `scroll-mt-18`, … Book a free call). All copy in
   `src/components/marketing/growth/growth-copy.ts` (names/phone/company from `siteConfig`; guard
   test bans prices, unlaunched features, he/him/his and "builder"). No Growth prices on the site.
   Services in `src/config/growth.ts`.
@@ -457,8 +457,76 @@ In a sandbox with preinstalled Chromium: `PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-brows
     verbatim from M7 (`src/lib/sentry.ts`) so a failed insert's params never leave;
     `tests/unit/sentry.test.ts` is M7's file minus its price_history case (merges cleanly), and the
     Growth case lives in `tests/unit/growth-sentry.test.ts`.
+  - **Scroll switch (2026-10-13, Davi: "it's not a tap, they're just scrolling down… it switches,
+    boom, to the one-on-one"):** replaces the old CSS scroll-timeline wipe (`GrowthWipe`, `.sa-flip`,
+    and the e2e that asserted `animation-timeline` are gone; don't bring them back). `GrowthSwitch`
+    (`growth-switch.tsx`, mounted once on `/`, last child) sets `<html data-sa-theme="app|growth">`
+    in an effect only (absent without JS, removed on unmount) and `data-sa-switching="in|in-quiet|out"`
+    while a transition plays. Two IntersectionObservers on the Growth wrapper (`rootMarginFor`:
+    −15% / 0% bottom), no scroll listeners; `nextMode` (`switch-rules.ts`, pure): growth at top ≤
+    0.85·vh (the chapter bar just came up: the opener is never readable on paper first), app at ≥
+    1.0·vh (back off the bottom edge), else unchanged (hysteresis band, no strobing). Each reading
+    is decided against the height **its observer measured** (`rootHeight`, from the entry's
+    `rootBounds.bottom` and its line), never `innerHeight` (phone toolbars / pinch zoom make them
+    differ, which could strand a reading in the band). Instant (no show) until both observers reported + load + 2 rAFs +
+    `SETTLE_MS` 500, and afterwards only for real navigation: a `#` link click, `hashchange`,
+    `popstate`, keyboard focus moving into Growth (capture `focusin` inside the wrapper while on the
+    app side, last input a key, not a pointer: Tab from the waitlist must not hide the focused link
+    under the cover) (readings for `NAV_MS` 1000 after it are instant and band-free via `jumpMode`, line
+    at 0.925·vh; a short passive scroll listener covers a landing that crosses no line), bfcache
+    `pageshow` (also `jumpMode`), a hidden tab or reduced motion (live matchMedia). No distance-
+    based jump rule (a fast flick across both lines must still play the show). A **pointer** tap on
+    a `#growth` link (hero, header) while on the app side, settled and before the show has played
+    is the switch too: default and Next's Link are stopped, the show plays, and under full cover
+    `pushState(null, "", "#growth")` adds the entry the link would have (pushed **before** the page
+    moves, so Back returns to where the tap was); keyboard activation keeps the native jump. The
+    full show ("in": charcoal flood sweeps up with only its leading edge, theme swaps at 360 ms
+    under full cover **and the page moves to the opener** (`#growth`, `scrollIntoView` instant; again
+    at `IN_REALIGN_AT_MS` 1150 in case a fling's momentum carried on), so every full show lands on
+    the one-on-one opener with its `.sa-land` headline on screen, however fast or slow the scroll
+    (review 2026-10-13: a flick went 3000px past the opener under the cover, and a slow scroll
+    lifted the cover onto the bridge with the opener below the fold); not when navigation (Back
+    etc.) happened during the show. The decorative pill's knob slides 220 ms from 420 ms with no
+    overshoot while a charcoal copy of the labels clipped to the knob (`clip-path: inset()`) inverts
+    the words exactly where it passes, "One-on-one" holds alone 610 ms, the flood lifts at 1250 ms
+    with only its trailing edge, opener headline `.sa-land` lands; cleanup at 1740 re-applies the
+    theme then drops the attribute) plays **once per page view**. While it covers the screen, taps
+    are swallowed (capture-phase click / pointerup / mousedown on the document, added in `play()`,
+    removed in `finish()` and cleanup), so nothing hidden under it (tel: link, form) can be hit, and
+    the page is held still (non-passive wheel / touchmove `preventDefault`, and PageUp/Down, Space,
+    arrows, Home/End unless typed in a field). The hold stays 610 ms (not shortened: with scrolling
+    held, the blind time no longer skips anything).
+    Later crossings are quiet transform-only wipes, never fades ("out": a charcoal panel slides down
+    off the screen; "in-quiet": a paper panel slides up off it, i.e. charcoal rising; 260 ms,
+    cleanup 300). Decisions during a show queue as `pending` and play quietly at cleanup, or
+    instantly when they came from navigation (`pendingInstant`). Timings
+    live in `switch-rules.ts`, mirrored in theme.css (comment and declarations unit-checked). The
+    pill is centred at `50svh` (Lightning CSS drops the `50%` fallback: every target supports svh);
+    the flood stays 100vh. There is **no interactive switch**: the stage is aria-hidden, inert,
+    pointer-events none, display none unless switching (and in print / reduced motion).
+  - theme.css: the seven colours are written once as `--sa-k-*` constants and the palette points at
+    them. `:root[data-sa-theme="growth"]` swaps the palette in place (paper↔charcoal, offwhite↔graphite,
+    stone→graphite, slate↔ash, `--input` ash), so the whole site (header, body, cards, AboutDavi,
+    the waitlist form) flips with no per-component code; `.sa-inverted` / `.sa-light` get the
+    canonical seven plus popover/secondary/accent/destructive back (growth-scoped restore). In app
+    mode `[data-sa-half="growth"]` is mapped the other way (paper with charcoal text) so nothing
+    dark shows before the switch; its `.sa-light` gets the canonical seven. Every rule is scoped by
+    `data-sa-theme`, so nothing changes off `/`.
+    `tests/unit/growth-switch.test.ts` guards this and bans literal colours in page.tsx, marketing
+    components and the footer (QueuePreview's shadow is allow-listed).
+  - **Merging with claude/milestone-6-8 / claude/launch-integration (main-line):** sunlight mode
+    (#37, `:root:has([data-contrast="high"])`) writes literal hexes (#111111, #fffef9, #000000) onto
+    `--sa-*`, which fails the "each brand colour written once" test. The two never meet at runtime
+    (`data-contrast` is only on the signed-in app's wrapper and `/` redirects signed-in owners to
+    /queue; `data-sa-theme` exists only on `/`), so on merge: make them constants
+    (`--sa-k-hc-charcoal` / `--sa-k-hc-offwhite` / `--sa-k-hc-black` on `:root`), point the sunlight
+    block at them, and add the three to the test's allowed list. launch-integration still carries
+    the old `.sa-flip` / `view-timeline` block: drop it (the test bans it).
+  - AboutDavi stays in the app part (its "builder" / "He" wording predates this and is still
+    waiting on Davi for a rewording; it's outside the Growth copy guard).
   - The homepage chapter bar is opaque charcoal and stays pinned to the end of the page (the footer
-    is shorter than the screen), so the paper header never comes back. Intended.
+    is shorter than the screen), so the site header (charcoal by then, after the switch) never
+    comes back. Intended.
   - /admin → "Waitlist and Growth calls": chips, the request, Call link, growth-only explanation.
   - Homepage trial FAQ / "Our promise" wording left as on PR #9 (awaiting Davi's review there).
 

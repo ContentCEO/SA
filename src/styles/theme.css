@@ -7,14 +7,24 @@
  */
 
 :root {
+  /* Brand constants: each colour written once. Only the palette below points at them, plus the
+     homepage switch rules, which must name a colour that never swaps. */
+  --sa-k-charcoal: #1b1b1b;
+  --sa-k-offwhite: #efeeea;
+  --sa-k-paper: #f7f6f3;
+  --sa-k-stone: #d9d7d0;
+  --sa-k-ash: #9a9994;
+  --sa-k-slate: #5e5d59;
+  --sa-k-graphite: #262625;
+
   /* Brand palette */
-  --sa-charcoal: #1b1b1b;
-  --sa-offwhite: #efeeea;
-  --sa-paper: #f7f6f3;
-  --sa-stone: #d9d7d0; /* borders on light */
-  --sa-ash: #9a9994; /* muted text on charcoal */
-  --sa-slate: #5e5d59; /* muted text on light */
-  --sa-graphite: #262625; /* raised panels on charcoal */
+  --sa-charcoal: var(--sa-k-charcoal);
+  --sa-offwhite: var(--sa-k-offwhite);
+  --sa-paper: var(--sa-k-paper);
+  --sa-stone: var(--sa-k-stone); /* borders on light */
+  --sa-ash: var(--sa-k-ash); /* muted text on charcoal */
+  --sa-slate: var(--sa-k-slate); /* muted text on light */
+  --sa-graphite: var(--sa-k-graphite); /* raised panels on charcoal */
 
   /* Type */
   --sa-heavy-word-spacing: 0.14em;
@@ -64,43 +74,6 @@
   color: var(--foreground);
 }
 
-/* Growth flip: a paper band that charcoal sweeps up through as it scrolls into view.
-   Resting state = fully charcoal, so no support / reduced motion = an instant switch. */
-.sa-flip {
-  position: relative;
-  overflow: hidden;
-  contain: paint;
-  height: clamp(10rem, 40svh, 24rem);
-  background-color: var(--sa-paper);
-  view-timeline-name: --sa-flip;
-  view-timeline-axis: block;
-}
-.sa-flip-ink {
-  position: absolute;
-  inset: 0;
-  background-color: var(--sa-charcoal);
-}
-@keyframes sa-flip-wipe {
-  from {
-    transform: translateY(100%);
-  }
-  to {
-    transform: translateY(0);
-  }
-}
-@media (prefers-reduced-motion: no-preference) {
-  @supports (animation-timeline: view()) {
-    .sa-flip-ink {
-      animation-name: sa-flip-wipe;
-      animation-timing-function: linear;
-      animation-fill-mode: both;
-      animation-timeline: --sa-flip; /* must come after any animation shorthand */
-      animation-range: entry 0% cover 50%;
-      will-change: transform;
-    }
-  }
-}
-
 /* Light card on a dark surface (the Growth form). Restores the :root tokens.
    Off-white card behind paper inputs, same as the waitlist card. Unlayered, so it beats utilities. */
 .sa-light {
@@ -123,6 +96,307 @@
 /* /growth is charcoal edge to edge: no paper flash on overscroll. */
 html:has([data-growth-page]) {
   background-color: var(--sa-charcoal);
+}
+
+/*
+ * Homepage switch: the app (paper) → Squared Away Growth (charcoal), played by GrowthSwitch
+ * (src/components/marketing/growth/growth-switch.tsx), which alone sets <html data-sa-theme>
+ * ("app" | "growth") and, while a transition plays, data-sa-switching ("in" | "in-quiet" | "out").
+ * Both exist only on `/`, so every rule below does nothing anywhere else. Without JS neither is
+ * set: the Growth wrapper keeps its own .sa-inverted charcoal and the stage never shows.
+ *
+ * Growth mode swaps the palette in place on :root. The semantic tokens are declared on the same
+ * element, so they resolve against the swapped palette, and Tailwind palette utilities read
+ * var(--sa-*) where they're used: the header, body, cards and forms all flip with no per-component
+ * code. Charcoal islands (.sa-inverted) and light cards (.sa-light) get the canonical palette back.
+ */
+:root[data-sa-theme="growth"] {
+  --sa-paper: var(--sa-k-charcoal);
+  --sa-charcoal: var(--sa-k-offwhite);
+  --sa-offwhite: var(--sa-k-graphite);
+  --sa-graphite: var(--sa-k-paper);
+  --sa-stone: var(--sa-k-graphite);
+  --sa-slate: var(--sa-k-ash);
+  --sa-ash: var(--sa-k-slate);
+  /* Waitlist inputs sit on a graphite card: ash keeps the edge at 3:1 or better (WCAG 1.4.11). */
+  --input: var(--sa-k-ash);
+  background-color: var(--sa-k-charcoal);
+}
+:root[data-sa-theme="growth"] .sa-inverted,
+:root[data-sa-theme="growth"] .sa-light {
+  --sa-charcoal: var(--sa-k-charcoal);
+  --sa-offwhite: var(--sa-k-offwhite);
+  --sa-paper: var(--sa-k-paper);
+  --sa-stone: var(--sa-k-stone);
+  --sa-ash: var(--sa-k-ash);
+  --sa-slate: var(--sa-k-slate);
+  --sa-graphite: var(--sa-k-graphite);
+  /* The tokens neither class declares, at their :root values. */
+  --popover: var(--sa-k-paper);
+  --popover-foreground: var(--sa-k-charcoal);
+  --secondary: var(--sa-k-offwhite);
+  --secondary-foreground: var(--sa-k-charcoal);
+  --accent: var(--sa-k-offwhite);
+  --accent-foreground: var(--sa-k-charcoal);
+  --destructive: var(--sa-k-charcoal);
+}
+
+/* App mode: the part of Growth peeking up from below reads as paper until the switch.
+   Same element as .sa-inverted, higher specificity, so its charcoal tokens resolve to paper. */
+:root[data-sa-theme="app"] [data-sa-half="growth"] {
+  --sa-charcoal: var(--sa-k-paper);
+  --sa-offwhite: var(--sa-k-charcoal);
+  --sa-graphite: var(--sa-k-offwhite);
+  --sa-ash: var(--sa-k-slate);
+  --sa-stone: var(--sa-k-stone);
+  --sa-slate: var(--sa-k-slate);
+  --sa-paper: var(--sa-k-charcoal);
+  --border: var(--sa-k-stone);
+  --input: var(--sa-k-stone);
+}
+:root[data-sa-theme="app"] [data-sa-half="growth"] .sa-light {
+  --sa-charcoal: var(--sa-k-charcoal);
+  --sa-offwhite: var(--sa-k-offwhite);
+  --sa-paper: var(--sa-k-paper);
+  --sa-stone: var(--sa-k-stone);
+  --sa-ash: var(--sa-k-ash);
+  --sa-slate: var(--sa-k-slate);
+  --sa-graphite: var(--sa-k-graphite);
+}
+
+/*
+ * The stage: a fixed, decorative overlay shown only while data-sa-switching is set.
+ * Timings mirror src/components/marketing/growth/switch-rules.ts (change both together; a unit
+ * test reads the declarations below):
+ *   "in": flood-in 300ms (fill both: full cover from 300 to 1250) · top edge fades 120ms from
+ *   300ms · IN_THEME_AT_MS = 360 (theme swaps and the page moves to the opener under full cover;
+ *   IN_REALIGN_AT_MS = 1150 puts it back if a fling moved it) · knob and dark labels 220ms from
+ *   420ms, no overshoot (land at 640, then "One-on-one" holds alone for 610ms) · flood-out 240ms
+ *   from 1250ms (forwards only), bottom edge shown from 1250ms · sa-land 300ms, delays 930ms /
+ *   990ms after the swap at 360 · IN_DONE_MS = 1740 (cleanup).
+ *   "out": a charcoal wipe slides down off the screen, revealing paper · "in-quiet": a paper wipe
+ *   slides up off the screen, revealing charcoal (charcoal rising) · both 260ms ·
+ *   OUT_DONE_MS = 300 (cleanup).
+ * The flood is 100vh (the large viewport on phones, so a collapsing toolbar can't open a gap); the
+ * pill is centred in the small viewport (50svh), so it sits in the visible middle on iOS too.
+ * Transform and opacity only, except the dark labels' clip-path (a small box). Two tones only.
+ */
+.sa-switch-stage {
+  display: none;
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 100vh;
+  z-index: 50;
+  pointer-events: none;
+  overflow: hidden;
+}
+:root[data-sa-switching] .sa-switch-stage {
+  display: block;
+}
+.sa-switch-flood {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 100%;
+  background-color: var(--sa-k-charcoal);
+  transform: translateY(100%);
+}
+:root[data-sa-switching="in"] .sa-switch-flood {
+  will-change: transform;
+  /* Flood-out is forwards only: a backwards fill would hold translateY(0) from 0ms. */
+  animation:
+    sa-switch-flood-in 300ms cubic-bezier(0.7, 0, 0.3, 1) both,
+    sa-switch-flood-out 240ms cubic-bezier(0.5, 0, 0.75, 0) 1250ms forwards;
+}
+/* The quiet paths are wipes, never fades: no third tone, and they move with the scroll. */
+:root[data-sa-switching="out"] .sa-switch-flood {
+  will-change: transform;
+  animation: sa-switch-wipe-down 260ms cubic-bezier(0.65, 0, 0.35, 1) both;
+}
+:root[data-sa-switching="in-quiet"] .sa-switch-flood {
+  background-color: var(--sa-k-paper);
+  will-change: transform;
+  animation: sa-switch-wipe-up 260ms cubic-bezier(0.65, 0, 0.35, 1) both;
+}
+.sa-switch-edge {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 6px;
+  background-color: var(--sa-k-offwhite);
+}
+/* Only the moving edge shows: the top one leads the flood up, the bottom one trails the lift. */
+.sa-switch-edge[data-edge="top"] {
+  top: 0;
+}
+/* The flood's real bottom (100vh), not 100svh: as the cover lifts, the edge trails it exactly. */
+.sa-switch-edge[data-edge="bottom"] {
+  bottom: 0;
+}
+:root[data-sa-switching="in"] .sa-switch-edge[data-edge="top"] {
+  animation: sa-switch-edge-off 120ms ease-out 300ms forwards;
+}
+:root[data-sa-switching="in"] .sa-switch-edge[data-edge="bottom"] {
+  opacity: 0;
+  animation: sa-switch-edge-on 1ms linear 1250ms forwards;
+}
+.sa-switch-center {
+  position: absolute;
+  top: 50%;
+  top: 50svh;
+  left: 0;
+  right: 0;
+  transform: translateY(-50%);
+  display: flex;
+  justify-content: center;
+}
+:root[data-sa-switching="out"] .sa-switch-edge,
+:root[data-sa-switching="in-quiet"] .sa-switch-edge,
+:root[data-sa-switching="out"] .sa-switch-center,
+:root[data-sa-switching="in-quiet"] .sa-switch-center {
+  display: none;
+}
+.sa-switch-graphic {
+  position: relative;
+  width: min(88vw, 36rem);
+  height: clamp(4rem, 14vw, 6.5rem);
+  border: 3px solid var(--sa-k-offwhite);
+  border-radius: 9999px;
+  overflow: hidden;
+}
+.sa-switch-knob {
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  left: 4px;
+  width: calc(50% - 4px);
+  border-radius: 9999px;
+  background-color: var(--sa-k-offwhite);
+  transform: translateX(0);
+}
+.sa-switch-labels {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  align-items: center;
+  text-align: center;
+  white-space: nowrap;
+  line-height: 1;
+}
+.sa-switch-labels[data-ink="light"] {
+  color: var(--sa-k-offwhite);
+}
+/* Clipped to exactly the knob's box (left 4px, 50% wide less 4px, 4px top and bottom). */
+.sa-switch-labels[data-ink="dark"] {
+  color: var(--sa-k-charcoal);
+  clip-path: inset(4px 50% 4px 4px round 9999px);
+}
+:root[data-sa-switching="in"] .sa-switch-knob {
+  will-change: transform;
+  animation: sa-switch-knob 220ms cubic-bezier(0.65, 0, 0.35, 1) 420ms forwards;
+}
+:root[data-sa-switching="in"] .sa-switch-labels[data-ink="dark"] {
+  animation: sa-switch-ink 220ms cubic-bezier(0.65, 0, 0.35, 1) 420ms forwards;
+}
+/* The opener headline lands as the cover lifts. Matches only from the swap at 360ms (under full
+   cover), so it can never blink out on screen; ends at opacity 1 and stops at cleanup. */
+:root[data-sa-theme="growth"][data-sa-switching="in"] .sa-land > span {
+  animation: sa-land 300ms cubic-bezier(0.2, 0.9, 0.2, 1) 930ms both;
+}
+:root[data-sa-theme="growth"][data-sa-switching="in"] .sa-land > span + span {
+  animation-delay: 990ms;
+}
+@keyframes sa-switch-flood-in {
+  from {
+    transform: translateY(100%);
+  }
+  to {
+    transform: translateY(0);
+  }
+}
+@keyframes sa-switch-flood-out {
+  from {
+    transform: translateY(0);
+  }
+  to {
+    transform: translateY(-100%);
+  }
+}
+@keyframes sa-switch-wipe-down {
+  from {
+    transform: translateY(0);
+  }
+  to {
+    transform: translateY(100%);
+  }
+}
+@keyframes sa-switch-wipe-up {
+  from {
+    transform: translateY(0);
+  }
+  to {
+    transform: translateY(-100%);
+  }
+}
+@keyframes sa-switch-edge-off {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+@keyframes sa-switch-edge-on {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes sa-switch-knob {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(100%);
+  }
+}
+@keyframes sa-switch-ink {
+  from {
+    clip-path: inset(4px 50% 4px 4px round 9999px);
+  }
+  to {
+    clip-path: inset(4px 4px 4px 50% round 9999px);
+  }
+}
+@keyframes sa-land {
+  from {
+    opacity: 0;
+    transform: translateY(0.35em);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+/* The global reduced-motion rule zeroes durations but not delays, so this is needed too. */
+@media (prefers-reduced-motion: reduce) {
+  .sa-switch-stage {
+    display: none !important;
+  }
+  .sa-land > span {
+    animation: none !important;
+  }
+}
+@media print {
+  .sa-switch-stage {
+    display: none !important;
+  }
 }
 
 @theme inline {

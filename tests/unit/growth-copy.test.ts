@@ -8,7 +8,9 @@ const SOURCES = [
   "src/components/marketing/growth/growth-copy.ts",
   "src/components/marketing/growth/growth-chapter.tsx",
   "src/components/marketing/growth/growth-chapter-bar.tsx",
-  "src/components/marketing/growth/growth-flip.tsx",
+  "src/components/marketing/growth/growth-bridge.tsx",
+  "src/components/marketing/growth/growth-switch.tsx",
+  "src/components/marketing/growth/switch-rules.ts",
   "src/components/marketing/growth/growth-call-form.tsx",
   "src/config/growth.ts",
   "src/app/growth/page.tsx",
@@ -102,6 +104,10 @@ describe("Squared Away Growth copy", () => {
     );
     expect(source).not.toMatch(/-(?:red|green|blue)-\d/);
     expect(source).not.toMatch(/fbq|gtag|googletagmanager|facebook\.net|analytics|pixel/i);
+  });
+
+  it("labels the decorative switch plainly", () => {
+    expect(growthCopy.switch).toEqual({ from: "The app", to: "One-on-one" });
   });
 
   it("the homepage hero link and header link come from the copy file", () => {
