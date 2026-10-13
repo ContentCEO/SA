@@ -98,6 +98,67 @@
   border-width: 3px;
 }
 
+/* Growth flip: a paper band that charcoal sweeps up through as it scrolls into view.
+   Resting state = fully charcoal, so no support / reduced motion = an instant switch. */
+.sa-flip {
+  position: relative;
+  overflow: hidden;
+  contain: paint;
+  height: clamp(10rem, 40svh, 24rem);
+  background-color: var(--sa-paper);
+  view-timeline-name: --sa-flip;
+  view-timeline-axis: block;
+}
+.sa-flip-ink {
+  position: absolute;
+  inset: 0;
+  background-color: var(--sa-charcoal);
+}
+@keyframes sa-flip-wipe {
+  from {
+    transform: translateY(100%);
+  }
+  to {
+    transform: translateY(0);
+  }
+}
+@media (prefers-reduced-motion: no-preference) {
+  @supports (animation-timeline: view()) {
+    .sa-flip-ink {
+      animation-name: sa-flip-wipe;
+      animation-timing-function: linear;
+      animation-fill-mode: both;
+      animation-timeline: --sa-flip; /* must come after any animation shorthand */
+      animation-range: entry 0% cover 50%;
+      will-change: transform;
+    }
+  }
+}
+
+/* Light card on a dark surface (the Growth form). Restores the :root tokens.
+   Off-white card behind paper inputs, same as the waitlist card. Unlayered, so it beats utilities. */
+.sa-light {
+  --background: var(--sa-offwhite);
+  --foreground: var(--sa-charcoal);
+  --card: var(--sa-offwhite);
+  --card-foreground: var(--sa-charcoal);
+  --primary: var(--sa-charcoal);
+  --primary-foreground: var(--sa-offwhite);
+  --muted: var(--sa-offwhite);
+  --muted-foreground: var(--sa-slate);
+  --border: var(--sa-stone);
+  /* Slate, not stone: a stone edge on off-white (~1.2:1) disappears in sunlight (WCAG 1.4.11). */
+  --input: var(--sa-slate);
+  --ring: var(--sa-charcoal);
+  background-color: var(--sa-offwhite);
+  color: var(--sa-charcoal);
+}
+
+/* /growth is charcoal edge to edge: no paper flash on overscroll. */
+html:has([data-growth-page]) {
+  background-color: var(--sa-charcoal);
+}
+
 @theme inline {
   --color-charcoal: var(--sa-charcoal);
   --color-offwhite: var(--sa-offwhite);

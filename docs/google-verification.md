@@ -66,7 +66,9 @@ We deliberately do **not** request `gmail.modify` or full `https://mail.google.c
   (`src/lib/crypto.ts`) and never logged or sent to the browser.
 - **Disconnect:** revokes our token at Google (`oauth2.googleapis.com/revoke`) and deletes the
   mailbox record. (`src/server/mailboxes.ts`)
-- **Delete my data:** wipes the workspace and revokes the Google token. _(Milestone 11.)_
+- **Delete my account** (Settings, one confirmation): cancels the subscription, revokes the Google
+  token for each mailbox, and deletes the account and everything in it
+  (`src/server/account-deletion.ts`). Drafts already in the owner's Gmail stay there.
 - **Admin view:** shows only operational health (status, counts, cost). No email content or
   customer names — the query selects none (`adminOverview` in `src/server/admin.ts`, tested in
   `tests/unit/lifecycle.test.ts`).
@@ -77,4 +79,4 @@ We deliberately do **not** request `gmail.modify` or full `https://mail.google.c
 ## Keep this file honest
 
 Any change to requested scopes, where email content goes, or retention must update this file and the
-privacy policy in the same commit.
+privacy policy (`docs/privacy-policy.md`, served at `/privacy`) in the same commit.

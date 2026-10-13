@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { Instrument_Serif, Inter_Tight } from "next/font/google";
 import "./globals.css";
 import { ServiceWorker } from "@/components/app/service-worker";
+import { appUrl } from "@/lib/app-url";
 
 const interTight = Inter_Tight({
   variable: "--font-inter-tight",
@@ -19,6 +20,8 @@ const instrumentSerif = Instrument_Serif({
 });
 
 export const metadata: Metadata = {
+  // Absolute URLs for the share image, canonical links and sitemap — from APP_URL, never hardcoded.
+  metadataBase: new URL(appUrl()),
   title: "Squared Away",
   description: "Your inbox, handled.",
   applicationName: "Squared Away",

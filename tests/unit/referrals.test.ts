@@ -191,9 +191,14 @@ async function referrer(email = "rosa@gmail.com", over: Partial<Workspace> = {})
   return load(workspace.id);
 }
 
+/** The waitlist form's required fields (PR #9). */
+const appFields = { trade: "carpentry", teamSize: "Just me" } as const;
+
 /** Waitlist with the referral link → Davi's invite → first sign-in. */
 async function referredViaLink(code: string, email = "mike@yahoo.com") {
-  await joinWaitlist(waitlistInput.parse({ name: "Mike", email, referralCode: code }));
+  await joinWaitlist(
+    waitlistInput.parse({ ...appFields, name: "Mike", email, referralCode: code }),
+  );
   expect(await inviteFromWaitlist(email)).toBe("invited");
   const { workspace, user } = await ensureUserAndWorkspace({ email });
   await set(workspace.id, {
@@ -462,7 +467,12 @@ describe("GATE: switched off, or no amount", () => {
       .insert(waitlist)
       .values({ email: "old@yahoo.com", name: "Old", referralCode: code });
     await joinWaitlist(
-      waitlistInput.parse({ name: "Mike", email: "mike@yahoo.com", referralCode: code }),
+      waitlistInput.parse({
+        ...appFields,
+        name: "Mike",
+        email: "mike@yahoo.com",
+        referralCode: code,
+      }),
     );
     const [joined] = await database
       .select()
@@ -594,7 +604,12 @@ describe("referral credit (switched on)", () => {
     await referrer();
     await referredViaLink("unknownCode1", "a@yahoo.com");
     await joinWaitlist(
-      waitlistInput.parse({ name: "B", email: "b@yahoo.com", referralCode: "<script>bad" }),
+      waitlistInput.parse({
+        ...appFields,
+        name: "B",
+        email: "b@yahoo.com",
+        referralCode: "<script>bad",
+      }),
     );
     const [b] = await database.select().from(waitlist).where(eq(waitlist.email, "b@yahoo.com"));
     expect(b?.referralCode).toBeNull();

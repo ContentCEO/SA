@@ -600,6 +600,18 @@ In a sandbox with preinstalled Chromium: `PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-brows
   request) → `failed`, shown on the /admin card. `stripeClient()` is exported from `billing.ts` (one
   client). Activity `referral_credit_applied` carries the side only. Test seam:
   `setReferralConfigForTests`.
+- **Public site pass (2026-10-11, branch `claude/homepage-fixes`, PR — Davi reviews before merge):**
+  `/privacy` and `/terms` render `docs/privacy-policy.md` / `docs/terms.md` (drafts, "Draft — not
+  yet reviewed", `[To confirm]` items) through `src/lib/markdown.tsx` (tiny renderer, React elements
+  only) with contact details substituted from `site.ts` + `SUPPORT_EMAIL`; footer links on every page.
+  Marketing rules: present tense only for what's live on production; never say the app "can't send"
+  in general; no shop counts, testimonials, invented numbers or logos; no "GC" (MA = CSL), no license
+  number until Davi confirms. Live check 2026-10-11: sorting runs on prod (classify.v2 calls in
+  logs); morning summary is not live for owners (Resend test sender) → copy says "When you're set
+  up". Security headers in `src/config/security-headers.ts` (CSP with `unsafe-inline` scripts —
+  nonces would make every page dynamic; form-action allows Google + Stripe for OAuth/Checkout
+  redirects; microphone=(self) kept for M5 voice-to-edit). OG image from committed OFL TTFs in
+  `src/app/_og/`; `metadataBase` from `appUrl()`. Waitlist trade + team size are now required.
 - **Sending requires a real payment (Davi, 2026-10-10):** `canSend` = status in `SENDING_ALLOWED`
   **and** `workspaces.setup_paid_via` ∈ {`stripe`, `house`}. `stripe` is set only by the signed
   webhook's paid checkout that included the setup fee; `house` only by the admin move
@@ -628,6 +640,52 @@ In a sandbox with preinstalled Chromium: `PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-brows
   `::timestamptz` (PGlite tolerates it, so unit tests won't catch it; e2e did).
 - Lesson: scripted `str.replace` edits must `assert old in s` — silent no-ops after Prettier caused
   M3/M4 regressions. `tests/unit/jobs.test.ts` fails if a `createFunction` isn't registered.
+- **Squared Away Growth (2026-10-12, branch `claude/growth-page`, stacked on PR #9):** a separate
+  one-on-one marketing service (ads, posts, Google Business Profile, reviews, websites) for anyone
+  in the trades. `/growth` (public, static, charcoal edge to edge) and a second, charcoal chapter at
+  the bottom of `/` after the app's waitlist: `GrowthBridge` (paper) → `GrowthWipe` (CSS-only
+  scroll-timeline wipe in theme.css, `.sa-flip`; no support or reduced motion = an instant switch;
+  e2e asserts `animation-timeline: --sa-flip` so Lightning CSS can't fold it away) → the
+  `.sa-inverted[data-growth-chapter]` wrapper with a sticky chapter bar. All copy in
+  `src/components/marketing/growth/growth-copy.ts` (names/phone/company from `siteConfig`; guard
+  test bans prices, unlaunched features, he/him/his and "builder"). No Growth prices on the site.
+  Services in `src/config/growth.ts`.
+  - "Book a free call" (`requestGrowthCallAction`) → the existing `waitlist` table, **no migration**.
+    Conventions: `team_size = 'growth-only'` marks a row that exists only for Growth; the note is
+    the app note, then ONE `[Growth call]` block (newest request replaces the previous one;
+    identical resubmit is a no-op). Read them only through `describeWaitlistEntry`
+    (`src/server/growth-note.ts`). Typed `[Growth call]` is scrubbed (both forms). A Growth request
+    never changes name/team size/created/invited, **never invites** (`inviteFromWaitlist` →
+    `growth_only`; mixed rows invite with the app note only); an app join upgrades a growth-only row.
+    `waitlist.phone` is the newest Growth number on a growth-only row, and only the app form's own
+    number on an app row (a Growth number lives in its block, so a replaced request leaves no old
+    number behind, as the privacy policy says). Email capped at 254 characters (both forms).
+  - Shares the `waitlist` hashed-IP limit bucket (10/h across both forms). Content-free notice to
+    `ADMIN_EMAIL` ("New Growth call request", Resend idempotency key = HMAC(AUTH_SECRET, email) +
+    local date), awaited but capped at 5 s (`GROWTH_NOTIFY_TIMEOUT_MS`) so a hung Resend can't hold
+    the form. Logs only `growth_call_requested {existing, services}`. Both form actions catch a
+    failed save, log `growth_request_failed` / `waitlist_join_failed {error: name}` and throw a
+    content-free error (Next logs whatever an action throws, and a Drizzle error's message carries
+    every bound value). Sentry scrub ported
+    verbatim from M7 (`src/lib/sentry.ts`) so a failed insert's params never leave;
+    `tests/unit/sentry.test.ts` is M7's file (its price_history case included since the launch
+    merge), and the Growth case lives in `tests/unit/growth-sentry.test.ts`.
+  - The homepage chapter bar is opaque charcoal and stays pinned to the end of the page (the footer
+    is shorter than the screen), so the paper header never comes back. Intended.
+  - /admin → "Waitlist and Growth calls": chips, the request, Call link, growth-only explanation.
+  - Homepage trial FAQ / "Our promise" wording left as on PR #9 (awaiting Davi's review there).
+- **Launch merge (2026-10-13, branch `claude/launch-integration`):** M5–M8 + #47 and PR #9 + Growth
+  in one tree. Referrals and Growth share the waitlist: the code is stored only while
+  `referralsVisible()` (flag on AND an amount); a Growth request never stores one; an app join that
+  upgrades a growth-only row stores its code (if visible and none was kept) and takes the app
+  form's trade (required there, and it is what the invite uses); a different Growth trade stays in
+  the block as "Trade given" (`withBlockTradeGiven`). robots.txt also disallows `/money` and
+  `/record`. `inviteFromWaitlist`
+  refuses growth-only rows (`growth_only`) before looking at any referral, then carries
+  `referredByWorkspaceId` only while visible. /admin's "Came from a referral link" sits on the
+  Growth-aware `WaitlistEntry` card (app sign-ups only, visible only). The homepage keeps
+  `ForgetOffline` and Growth's opaque header (no backdrop blur). theme.css holds sunlight mode
+  (#37) and the Growth flip / `.sa-light` / `/growth` background side by side.
 
 ## Milestones
 
@@ -676,20 +734,27 @@ In a sandbox with preinstalled Chromium: `PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-brows
   rate until he taps Won, and gets no deposit draft. Conservative on purpose (a site visit isn't a
   quote). Alternative if he wants it: record "has an attachment" on owner emails at sync (additive
   column) and count an owner email with an attachment as a price given.
-- **Privacy policy lines for M7** (the draft `docs/privacy-policy.md` is on `claude/homepage-fixes`,
-  PR #9, not on this branch — add these when both have merged): under "What we store": "Prices you
-  quoted (the amount, the kind of job and the date), kept as your price memory. Only you see them,
-  and they are never sent to the AI." Also: which invoices are marked paid (or "not owed to me"), a
-  marker on threads that were ever a complaint (so we never ask that customer for a review), and
-  which customers were sent a review request. Under "What you tell us": your review link. Under
-  "How long we keep it": these stay after the 30-day email-text purge, until you disconnect that
-  Gmail address or delete your account.
+- **Privacy policy lines for M5/M7 (added to the draft at the launch merge, Davi to review):**
+  `docs/privacy-policy.md` now covers the price memory (never sent to the AI), invoice paid /
+  "not owed to me" marks, the complaint marker, review requests and the review link, seasonal
+  notes, web push (#36: the endpoint is stored; Google/Apple/Mozilla/Microsoft push services
+  deliver an empty ping; deleted on turn-off, a gone phone or account deletion), the per-phone
+  display cookies and the offline-approvals queue copy (#9/#37/#10), and that these M7 records
+  stay past the 30-day purge until the mailbox or account goes.
 - **Privacy policy line for #47 referrals** (before `FEATURE_REFERRALS` goes on): "If you were
   referred, we keep a scrambled one-way fingerprint of your email and the credit record after you
   delete your account, so a referral is only paid once." (Otherwise the FAQ's "erases everything
   we hold" isn't literally true.) Also his call: a referrer who deletes their account before the
   new owner is active voids the referral for both sides; repeat waitlist joins and plain invites
   carry no referral (docs/SETUP.md §6d).
+- **Growth (2026-10-12):** confirm all seven services are offered today (websites and ad management
+  especially) and the ground rules (no fake reviews, price before any work, Growth never touches
+  the inbox). No Growth terms of service yet. A Settings link to /growth for signed-in owners needs
+  his okay. No tracking pixels on /growth without a privacy-policy change and his okay. Removing a
+  Growth request is done by hand in the database for now (policy says call, text or email us).
+  Only the newest Growth request per email is kept and a growth-only row's phone becomes the
+  newest number, so anyone who knows a lead's email can replace their number: check an
+  unfamiliar number before calling.
 
 ## Launch blockers to remember
 

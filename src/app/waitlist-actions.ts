@@ -48,6 +48,13 @@ export async function joinWaitlistAction(
       values: raw,
     };
   }
-  await joinWaitlist(parsed.data);
+  try {
+    await joinWaitlist(parsed.data);
+  } catch (err) {
+    // A failed query's message carries every bound value, and Next logs whatever an action
+    // throws. Log the error's name only and throw a content-free one.
+    console.error("waitlist_join_failed", { error: err instanceof Error ? err.name : "unknown" });
+    throw new Error("waitlist_join_failed");
+  }
   return { status: "joined" };
 }

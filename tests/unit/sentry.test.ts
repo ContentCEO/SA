@@ -130,5 +130,7 @@ describe("error alerts never carry customer details", () => {
     );
     expect(scrubbed.message).toMatch(/^Failed query: insert into "price_history"/);
     expect(scrubbed.exception?.values?.[0]?.value).toContain("params: [dropped]");
-  });
+    // Builds a whole in-memory database (migrations included) inside the test, like
+    // growth-sentry.test.ts: the 5 s default isn't enough on a busy machine.
+  }, 30_000);
 });

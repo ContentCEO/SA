@@ -1,0 +1,222 @@
+import { GROWTH_SERVICES } from "@/config/growth";
+import { siteConfig } from "@/config/site";
+
+/**
+ * Every Squared Away Growth string. Names, the company and the phone number come
+ * from siteConfig, never typed here. tests/unit/growth-copy.test.ts guards this
+ * file: no prices, no promises we can't keep, no features that aren't live, and
+ * no pronouns for Davi: use the name, or "personally".
+ */
+const operator = siteConfig.operator;
+const davi = operator.split(" ")[0]!;
+const company = siteConfig.company;
+const phone = siteConfig.phone;
+
+export const growthCopy = {
+  hero: {
+    link: "Want more work coming in? See Squared Away Growth",
+  },
+  header: {
+    link: "Growth",
+  },
+  bridge: {
+    region: "Introducing Squared Away Growth",
+    serif: "The app keeps you squared away.",
+    heavy: "Want more work coming in? That's what we do one-on-one.",
+    body: "Squared Away Growth is a separate service, for anyone in the trades. You don't need the app to use it.",
+  },
+  bar: {
+    label: "Squared Away Growth",
+    nav: "Growth",
+    link: "Book a free call",
+  },
+  opener: {
+    region: "Squared Away Growth",
+    eyebrow: "Squared Away Growth · for anyone in the trades",
+    serif: "the marketing side,",
+    heavy: "done for you.",
+    body: "Google ads, Facebook and Instagram ads, social media posts, your Google Business Profile, reviews and your website. We do the work, one-on-one, so you can stay on the job.",
+    homeOnly: `For now, ${operator} does every job personally — the same person who builds the app.`,
+    button: "Book a free call",
+    call: `Call ${phone}`,
+  },
+  services: {
+    region: "What we take on",
+    serif: "what we take on,",
+    heavy: "so you don't have to.",
+    items: GROWTH_SERVICES.map((s) => ({ title: s.label, body: s.blurb })),
+  },
+  how: {
+    region: "How Growth works",
+    serif: "how it works,",
+    heavy: "one call to start.",
+    steps: [
+      {
+        title: "Book a free call",
+        body: "Tell us about your business and the work you want more of. It costs nothing, and there's no obligation.",
+      },
+      {
+        title: "We make a plan",
+        body: `${davi} looks at what you have today — your Google listing, your pages, your site, your reviews — and tells you plainly what to do first and what it costs.`,
+      },
+      {
+        title: "We do the work",
+        body: "You keep running jobs. We handle the setup and the upkeep, and keep you posted in plain words.",
+      },
+    ],
+  },
+  rules: {
+    region: "Ground rules",
+    serif: "the ground rules,",
+    heavy: "in plain words.",
+    items: [
+      {
+        title: "Your email stays out of it",
+        body: "Growth never touches your inbox. If you use the Squared Away app, your email is only used to run the app for you (sorting, drafts, follow-ups and your quote list), never for Growth ads, posts or anything else outside the app.",
+      },
+      {
+        title: "No made-up reviews",
+        body: "We help you ask real customers. We never write reviews, buy followers or post photos of someone else's work.",
+      },
+      {
+        title: "A clear price before any work",
+        body: "Every shop needs something different, so there's no price list here. You'll get a clear price before anything starts.",
+      },
+      {
+        title: "App or no app",
+        body: "You don't need the app to work with us, and you don't need Growth to use the app.",
+      },
+    ],
+  },
+  who: {
+    region: "Who does the work",
+    serif: "who does the work,",
+    heavy: `${davi}, personally.`,
+    body: `For now, every Growth job is done by ${operator}, who runs ${company}, a remodeling company in Massachusetts, and builds the Squared Away app too. You talk to the person doing the work.`,
+  },
+  faq: {
+    region: "Growth questions",
+    serif: "before you call,",
+    heavy: "fair questions.",
+    items: [
+      {
+        q: "Do I need the Squared Away app?",
+        a: "No. Growth is for anyone in the trades — carpenters, plumbers, electricians, roofers, painters, landscapers, heating and cooling, and more. If you use the app too, the two are kept separate.",
+      },
+      {
+        q: "What does it cost?",
+        a: "It depends on what you need. We talk it through on the free call and give you a clear price before any work starts.",
+      },
+      {
+        q: "Is the call really free?",
+        a: "Yes. No cost and no obligation. If we don't think we can help, we'll tell you.",
+      },
+      {
+        q: "Will you see my customers' emails?",
+        /** Rendered as before + a link to /privacy + after. */
+        a: {
+          before:
+            "Growth work never uses your inbox. Nothing the app reads from your email is used for ads, posts or anything else we do for Growth. The app's ",
+          link: "privacy policy",
+          after: " explains the few times a person might look, such as when you ask us for help.",
+        },
+      },
+      {
+        q: "Who will I be dealing with?",
+        a: `${operator}, directly. For now, ${davi} does the work personally.`,
+      },
+    ],
+  },
+  call: {
+    region: "Book a free call",
+    serif: "want more work,",
+    heavy: "book a free call.",
+    body: `Leave your number and what you want help with. ${davi} calls you back personally.`,
+    talkNow: "Rather talk now?",
+    callLink: `Call ${phone}`,
+    textLink: `Text ${phone}`,
+  },
+  form: {
+    name: "Your name",
+    phone: "Phone",
+    phoneHint: `${davi} will call you on this number.`,
+    email: "Email",
+    emailHint: "In case we can't reach you by phone.",
+    trade: "Trade",
+    otherTrade: "Another trade",
+    servicesLegend: "What do you want help with?",
+    servicesHint: "Pick all that apply.",
+    note: "Anything else? (optional)",
+    noteHint: "The towns you work in, the jobs you want more of — anything that helps.",
+    honeypot: "Website",
+    submit: "Book a free call",
+    pending: "Booking…",
+    privacy:
+      "We only use this to contact you about Squared Away Growth. No newsletters, and we never sell it.",
+  },
+  errors: {
+    nameEmpty: "Tell us your name.",
+    nameLong: "That name is too long.",
+    phoneEmpty: `Tell us a phone number so ${davi} can call you.`,
+    phoneBad: "That number doesn't look right. Use a 10-digit number, like 617-555-0142.",
+    emailEmpty: "Tell us your email address.",
+    emailBad: "That doesn't look like an email address.",
+    trade: "Pick your trade.",
+    servicesNone: "Pick at least one thing you want help with.",
+    serviceUnknown: "Pick from the list.",
+    noteLong: "Keep it under 500 characters.",
+    rateLimited: `Too many tries from here. Try again in an hour, or call or text ${phone}.`,
+  },
+  success: {
+    serif: "thanks,",
+    heavy: "we'll call you.",
+    // The phone they gave goes between these two, kept on one line so it's easy to check.
+    withPhoneBefore: `${davi} will call you at `,
+    withPhoneAfter: " to find a time for your free call.",
+    noPhone: `${davi} will call you soon to find a time for your free call.`,
+    soonerBefore: "Want to talk sooner? Call or text ",
+    soonerAfter: ".",
+    done: "Nothing else to do for now.",
+  },
+  closing: {
+    region: "The app",
+    body: "Squared Away also makes an inbox app for the trades. It sorts your business email and drafts replies in your own voice, and nothing goes out without your okay.",
+    link: "See the app",
+  },
+  page: {
+    homeLabel: "Squared Away home",
+    appLink: "The app",
+    callLink: "Book a free call",
+  },
+  meta: {
+    title: "Squared Away Growth — ads, reviews and your website, done for you.",
+    description:
+      "Google ads, Facebook and Instagram ads, social media posts, Google Business Profile, reviews and websites for anyone in the trades. Done for you, one-on-one. Book a free call.",
+    twitterDescription:
+      "Ads, posts, reviews, your Google listing and your website, done for you, one-on-one. For anyone in the trades. Book a free call.",
+  },
+  admin: {
+    heading: (n: number) => `Waitlist and Growth calls (${n})`,
+    empty: "Nobody yet. Both forms are on the public home page.",
+    growthChip: "Growth call",
+    appChip: "App waitlist",
+    wants: (labels: string[]) => `Wants help with: ${labels.join(", ")}`,
+    asked: (when: string) => `Asked for a call ${when}`,
+    call: (p: string) => `Call ${p}`,
+    nameGiven: (n: string) => `Name given: ${n}`,
+    tradeGiven: (t: string) => `Trade given: ${t}`,
+    growthOnly: "Not on the app waitlist. A Growth call never invites anyone to the app.",
+    growthOnlyError: "That's a Growth call request, not an app sign-up, so nobody was invited.",
+  },
+  notify: {
+    subject: "New Growth call request",
+    serif: "new request,",
+    heavy: "call them back.",
+    lines: [
+      "Someone asked for a free Growth call on the website.",
+      "Open the admin page to see who it is and call them back.",
+    ],
+    button: "Open admin",
+    footer: "Names and numbers stay in the admin page, not in this email.",
+  },
+} as const;

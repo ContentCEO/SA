@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { siteConfig } from "@/config/site";
 
 export function SiteFooter() {
@@ -17,6 +18,20 @@ export function SiteFooter() {
         ) : null}
         .
       </span>
+      <nav aria-label="Legal" className="flex gap-4">
+        <Link
+          href="/privacy"
+          className="inline-flex min-h-tap min-w-tap items-center justify-center underline underline-offset-4"
+        >
+          Privacy
+        </Link>
+        <Link
+          href="/terms"
+          className="inline-flex min-h-tap min-w-tap items-center justify-center underline underline-offset-4"
+        >
+          Terms
+        </Link>
+      </nav>
       <span>{siteConfig.copyright}</span>
     </footer>
   );

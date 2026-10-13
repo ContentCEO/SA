@@ -28,6 +28,9 @@ import { PendingButton } from "@/components/app/pending-button";
 import { stripeConfigured, stripeConnectedAt } from "@/server/billing";
 import { listWaitlist } from "@/server/waitlist";
 import { referralsVisible } from "@/server/referral-rules";
+import { describeWaitlistEntry, formatStamp } from "@/server/growth-note";
+import { growthCopy } from "@/components/marketing/growth/growth-copy";
+import { phoneHref } from "@/lib/phone-href";
 import { pricing } from "@/config/pricing";
 
 export const metadata: Metadata = { title: "Admin", robots: { index: false } };
@@ -89,6 +92,7 @@ const errors: Record<string, string> = {
   stripe: "Couldn't connect Stripe. Check the STRIPE_SECRET_KEY in Vercel, then try again.",
   move: "That change isn't allowed from the account's current status. Refresh and look again.",
   invite: "That doesn't look like an email address.",
+  growth_only: growthCopy.admin.growthOnlyError,
   unknown: "That didn't work. Refresh and try again.",
 };
 
@@ -101,6 +105,98 @@ const et = new Intl.DateTimeFormat("en-US", {
   timeZoneName: "short",
 });
 const dollars = (cents: number) => `$${(cents / 100).toFixed(2)}`;
+
+const ga = growthCopy.admin;
+const CALLABLE = /^\d{3}-\d{3}-\d{4}$/;
+
+/**
+ * One waitlist row: an app sign-up, a Squared Away Growth call request, or both. The Growth
+ * conventions are read only through describeWaitlistEntry. A Growth-only row is never invited.
+ */
+function WaitlistEntry({
+  w,
+  now,
+  referrals,
+}: {
+  w: Awaited<ReturnType<typeof listWaitlist>>[number];
+  now: Date;
+  /** Plan #47: referralsVisible(), so a stored code shows only while referrals are on. */
+  referrals: boolean;
+}) {
+  const facts = describeWaitlistEntry(w);
+  const request = facts.growth[0];
+  const callLink = (phone: string | null) =>
+    phone && CALLABLE.test(phone) ? (
+      <a
+        href={phoneHref("tel", phone)}
+        className="inline-flex min-h-tap items-center self-start font-semibold underline underline-offset-4"
+      >
+        {ga.call(phone)}
+      </a>
+    ) : null;
+  return (
+    <li
+      aria-label={`Waitlist: ${w.email}`}
+      className="flex flex-col gap-2 rounded-xl border bg-card p-4"
+    >
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <span className="text-lg font-black">{w.name}</span>
+        <span className="text-sm text-muted-foreground">{relativeTime(w.createdAt, now)}</span>
+      </div>
+      <div className="flex flex-wrap gap-2">
+        {request ? (
+          <span className="sa-inverted rounded px-2 py-0.5 text-sm font-black">
+            {ga.growthChip}
+          </span>
+        ) : null}
+        {facts.app ? (
+          <span className="rounded border-2 border-charcoal px-2 py-0.5 text-sm font-black">
+            {ga.appChip}
+          </span>
+        ) : null}
+      </div>
+      <span className="break-all">{w.email}</span>
+      <span className="text-sm">
+        {(facts.app
+          ? [
+              w.trade ? tradeLabel[w.trade] : null,
+              w.teamSize ? `${w.teamSize} people` : null,
+              w.phone,
+            ]
+          : [w.trade ? tradeLabel[w.trade] : null]
+        )
+          .filter(Boolean)
+          .join(" · ")}
+      </span>
+      {facts.appNote ? <p className="text-muted-foreground">“{facts.appNote}”</p> : null}
+      {referrals && facts.app && w.referralCode ? (
+        <span className="text-sm font-semibold">Came from a referral link</span>
+      ) : null}
+      {request ? (
+        <div className="flex flex-col gap-1 border-t border-stone pt-2">
+          <span className="font-semibold">{ga.wants(request.services)}</span>
+          <span className="text-sm">{ga.asked(formatStamp(request.at))}</span>
+          {callLink(request.phone)}
+          {request.nameGiven ? <span>{ga.nameGiven(request.nameGiven)}</span> : null}
+          {request.tradeGiven ? <span>{ga.tradeGiven(request.tradeGiven)}</span> : null}
+          {request.note ? <p className="text-muted-foreground">“{request.note}”</p> : null}
+        </div>
+      ) : null}
+      {!facts.app ? (
+        <span className="font-semibold">{ga.growthOnly}</span>
+      ) : w.invitedAt ? (
+        <span className="font-semibold">Invited {relativeTime(w.invitedAt, now)}</span>
+      ) : (
+        <form action={inviteFromWaitlistAction}>
+          <input type="hidden" name="email" value={w.email} />
+          <Button type="submit" className="w-full">
+            Invite {w.name.split(" ")[0]}
+          </Button>
+        </form>
+      )}
+    </li>
+  );
+}
 
 function Stat({ label, value }: { label: string; value: React.ReactNode }) {
   return (
@@ -363,45 +459,14 @@ export default async function AdminPage(props: PageProps<"/admin">) {
 
       <section id="waitlist" aria-labelledby="waitlist-heading" className="flex flex-col gap-3">
         <h2 id="waitlist-heading" className="text-xl font-black">
-          Waitlist ({waiting.length})
+          {ga.heading(waiting.length)}
         </h2>
         {waiting.length === 0 ? (
-          <p>Nobody yet. The form is on the public home page.</p>
+          <p>{ga.empty}</p>
         ) : (
           <ul className="flex flex-col gap-3">
             {waiting.map((w) => (
-              <li
-                key={w.email}
-                aria-label={`Waitlist: ${w.email}`}
-                className="flex flex-col gap-2 rounded-xl border bg-card p-4"
-              >
-                <div className="flex flex-wrap items-baseline justify-between gap-2">
-                  <span className="text-lg font-black">{w.name}</span>
-                  <span className="text-sm text-muted-foreground">
-                    {relativeTime(w.createdAt, now)}
-                  </span>
-                </div>
-                <span className="break-all">{w.email}</span>
-                <span className="text-sm">
-                  {[w.trade, w.teamSize ? `${w.teamSize} people` : null, w.phone]
-                    .filter(Boolean)
-                    .join(" · ")}
-                </span>
-                {w.note ? <p className="text-muted-foreground">“{w.note}”</p> : null}
-                {referrals && w.referralCode ? (
-                  <span className="text-sm font-semibold">Came from a referral link</span>
-                ) : null}
-                {w.invitedAt ? (
-                  <span className="font-semibold">Invited {relativeTime(w.invitedAt, now)}</span>
-                ) : (
-                  <form action={inviteFromWaitlistAction}>
-                    <input type="hidden" name="email" value={w.email} />
-                    <Button type="submit" className="w-full">
-                      Invite {w.name.split(" ")[0]}
-                    </Button>
-                  </form>
-                )}
-              </li>
+              <WaitlistEntry key={w.email} w={w} now={now} referrals={referrals} />
             ))}
           </ul>
         )}
