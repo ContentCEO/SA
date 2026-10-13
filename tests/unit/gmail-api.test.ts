@@ -275,6 +275,8 @@ describe("history", () => {
     const url = new URL(String(f.mock.calls[1]![0]));
     expect(url.pathname).toMatch(/\/threads\/t$/);
     expect(url.searchParams.get("format")).toBe("minimal");
+    // Not even the snippet (minimal still returns it): ids and labels only.
+    expect(url.searchParams.get("fields")).toBe("messages(id,labelIds)");
     expect(await r.threadDraftMessageIds("gone")).toEqual([]);
   });
 

@@ -250,9 +250,10 @@ export function createGmailReader(opts: GmailReaderOptions): MailboxReader & Mai
     },
 
     async threadDraftMessageIds(threadId) {
-      // format=minimal: ids and labels only, no headers or text.
+      // format=minimal still carries each message's snippet (body text), so the `fields` mask
+      // asks Google for message ids and labels only: no headers, snippet or text reach us.
       const r = await call<{ messages?: { id: string; labelIds?: string[] }[] }>(
-        `/threads/${encodeURIComponent(threadId)}?format=minimal`,
+        `/threads/${encodeURIComponent(threadId)}?format=minimal&fields=${encodeURIComponent("messages(id,labelIds)")}`,
       );
       return (r?.messages ?? [])
         .filter((m) => (m.labelIds ?? []).includes("DRAFT") && !(m.labelIds ?? []).includes("SENT"))

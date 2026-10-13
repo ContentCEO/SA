@@ -1,54 +1,80 @@
 # Local setup
 
-Goal: a new developer runs Squared Away locally in under 30 minutes.
+Goal: a new developer runs Squared Away locally, and both test suites, in under 30 minutes.
 
-## 1. Prerequisites
+## 1. New developer in under 30 minutes
 
-- Node.js 22 or newer (`node -v`)
-- pnpm 10 (`corepack enable` then `pnpm -v`)
-- Git
-- Postgres 16 running locally (or Docker: `docker run -d -p 5432:5432 -e POSTGRES_USER=sa -e POSTGRES_PASSWORD=sa -e POSTGRES_DB=squared_away postgres:16`)
-
-## 2. Install
+You need Node.js 22 or newer (`node -v`), pnpm 10 (`corepack enable`, then `pnpm -v`), Git, and
+Postgres 16 on this machine. The quickest Postgres is Docker:
 
 ```bash
-git clone https://github.com/contentceo/sa.git
-cd sa
-pnpm install
-cp .env.example .env.local
+docker run -d --name sa-postgres -p 5432:5432 \
+  -e POSTGRES_USER=sa -e POSTGRES_PASSWORD=sa -e POSTGRES_DB=squared_away postgres:16
 ```
 
-Fill in `.env.local`. Each variable has a comment saying where to get it and which milestone first
-needs it. For local work you need at least:
+1. **Install.**
 
-```bash
-APP_URL=http://localhost:3000
-DATABASE_URL=postgres://sa:sa@localhost:5432/squared_away
-AUTH_SECRET=$(openssl rand -base64 32)
-AUTH_TRUST_HOST=true
-TOKEN_ENCRYPTION_KEY=$(openssl rand -base64 32)
-AUTH_GOOGLE_ID=...        # a Google OAuth client with http://localhost:3000 redirect URIs
-AUTH_GOOGLE_SECRET=...
-ADMIN_EMAIL=you@example.com
-```
+   ```bash
+   git clone https://github.com/contentceo/sa.git
+   cd sa
+   pnpm install
+   ```
 
-Then create the tables and invite yourself (sign-in is invite-only):
+2. **Local Postgres.** Two databases: one for `pnpm dev`, and a disposable one the browser tests
+   fill with test rows.
 
-```bash
-pnpm db:migrate
-pnpm invite you@example.com plumbing
-```
+   ```bash
+   docker exec sa-postgres psql -U sa -d squared_away -c 'create database squared_away_e2e'
+   # or, with psql installed: psql postgres://sa:sa@localhost:5432/squared_away -c '…'
+   ```
 
-## 3. Run
+   The browser tests create the tables in it themselves.
 
-```bash
-pnpm dev            # http://localhost:3000
-```
+3. **`.env.local` from `.env.example`.** `cp .env.example .env.local`, then fill in at least
+   these (every variable is explained in §4 and in `.env.example`):
 
-Open http://localhost:3000 — you should see _your inbox,_ / **handled.** and **Sign in with Google**.
-Open http://localhost:3000/api/health — you should see `{"ok":true,...}`.
+   ```bash
+   APP_URL=http://localhost:3000
+   DATABASE_URL=postgres://sa:sa@localhost:5432/squared_away
+   AUTH_SECRET=...           # openssl rand -base64 32
+   AUTH_TRUST_HOST=true
+   TOKEN_ENCRYPTION_KEY=...  # openssl rand -base64 32
+   AUTH_GOOGLE_ID=...        # a Google OAuth client with the localhost redirect URIs (§8)
+   AUTH_GOOGLE_SECRET=...
+   ADMIN_EMAIL=you@example.com
+   ```
 
-## 4. Checks (same as CI)
+   Sorting and drafting also need `ANTHROPIC_API_KEY`, and background jobs need Inngest (§6).
+   Everything else is optional and stays off when empty.
+
+4. **Create the tables.** `pnpm db:migrate`
+
+5. **Invite yourself** (sign-in is invite-only; `ADMIN_EMAIL` is always let in):
+   `pnpm invite you@example.com plumbing`
+
+6. **Run it.** `pnpm dev`, then open:
+   - http://localhost:3000 — the public homepage (_your inbox,_ / **handled.**).
+   - http://localhost:3000/signin — **Sign in with Google**. After signing in you land on the Queue.
+   - http://localhost:3000/api/health — `{"ok":true,...}`.
+
+7. **Unit tests.** `pnpm test`. No database or keys needed: database tests run on an in-memory
+   Postgres (PGlite) with the real migrations.
+
+8. **Browser tests.** Stop `pnpm dev` first, then:
+
+   ```bash
+   pnpm exec playwright install chromium   # first time only
+   pnpm build
+   APP_URL=http://localhost:3100 \
+   DATABASE_URL=postgres://sa:sa@localhost:5432/squared_away_e2e \
+   pnpm test:e2e
+   ```
+
+   They start the built app on port 3100 and the fake Google / Anthropic servers on 3101, migrate
+   the e2e database, and sign in without Google (§3). Values on the command line win over
+   `.env.local`.
+
+## 2. Checks (same as CI)
 
 ```bash
 pnpm lint
@@ -56,12 +82,96 @@ pnpm format:check   # pnpm format to fix
 pnpm typecheck
 pnpm test           # unit tests (Vitest)
 pnpm build
-pnpm exec playwright install chromium   # first time only
-pnpm test:e2e       # browser tests against the production build (needs DATABASE_URL — it writes test rows)
+pnpm test:e2e       # browser tests against the production build (see §1 step 8 and §3)
 ```
 
-The browser tests sign in without Google by minting a session cookie with `AUTH_SECRET`
-(`tests/e2e/support.ts`). Point them only at a disposable database.
+## 3. End-to-end tests with fake Google and Anthropic
+
+The browser tests drive the real app (`pnpm start`, the production build) against local fakes of
+Google sign-in consent, Gmail and the Anthropic API (`tests/e2e/fakes`), so the whole journey —
+Connect Gmail, reading mail, sorting, a Gmail draft, Send reply — runs with nothing leaving the
+machine. Sign-in itself is skipped by minting the Auth.js session cookie with `AUTH_SECRET`
+(`tests/e2e/support.ts`).
+
+`playwright.config.ts` sets these four variables itself, only for the app server it starts. Don't
+put them in `.env.local`, and **never** set them on Vercel:
+
+- `SA_E2E` — `1` turns e2e mode on (`src/config/e2e.ts`, the only file that reads these).
+- `SA_E2E_GOOGLE_BASE_URL` — where the server sends Google token, userinfo, revoke and Gmail API
+  calls instead of Google (the fake, `http://127.0.0.1:<PORT+1>/google`).
+- `SA_E2E_ANTHROPIC_BASE_URL` — where the AI calls go instead of Anthropic (the fake's
+  `/anthropic`), with a fake key.
+- `SA_E2E_HOOK_SECRET` — a random secret (made fresh each run) that unlocks
+  `/api/test-hooks/run`, which runs the job steps (backfill, sync, sorting, drafting, the send
+  after the undo window) the way Inngest would.
+
+E2e mode is on only when **all** of these hold, so it can't switch on anywhere real: `SA_E2E` is
+exactly `1`; `VERCEL` and `VERCEL_ENV` are both absent (it's ignored on any Vercel deploy); both
+base URLs are http(s) on `localhost`, `127.0.0.1` or `[::1]`; and `DATABASE_URL` points at this
+machine. The hook route also answers 404 unless the request itself came to a loopback host. Keep
+Vercel's **"Automatically expose System Environment Variables"** setting on (Settings →
+Environment Variables): it is what sets `VERCEL`/`VERCEL_ENV` (and `VERCEL_BRANCH_URL`, which
+preview URLs depend on).
+
+The app server is also given neutral stand-ins (`AUTH_GOOGLE_ID=e2e-client-id`, a fake Google
+secret and Anthropic key, an empty `INNGEST_EVENT_KEY`) and every other outside service blanked
+(Resend, Stripe, Twilio, web push, Pub/Sub, Sentry at runtime), so a test run can't email, charge,
+text or push anyone, and your real keys never reach the fakes. In e2e mode the AI client also
+drops any headers from `ANTHROPIC_CUSTOM_HEADERS`, and a `DATABASE_URL` with no host counts as
+local only if `PGHOST` is too (that is where postgres.js would connect). Build for e2e without
+`NEXT_PUBLIC_SENTRY_DSN` set (it is fixed at `pnpm build`).
+
+Other knobs (test-only, never in the app): `PORT` (default 3100; `APP_URL` must be
+`http://localhost:<PORT>` or the config stops with a message saying so), `E2E_FAKES_PORT`
+(default `PORT+1`), `PLAYWRIGHT_CHROMIUM_PATH` (use a preinstalled Chromium instead of
+`playwright install`), and `PLAYWRIGHT_BASE_URL` (a smoke run against a deployed site: no
+servers, no fakes, and the specs that need fakes skip themselves). The global setup refuses a
+`DATABASE_URL` that isn't on this machine unless `PLAYWRIGHT_BASE_URL` is set, and it clears
+`rate_limits` before each run. Outside CI, Playwright reuses a server already listening on
+`PORT` or `PORT+1`; a `pnpm dev` or `pnpm start` you started yourself there lacks the e2e
+variables, so stop it first.
+
+In a sandbox with a preinstalled Chromium:
+`PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-browsers/chromium pnpm test:e2e`.
+
+## 4. Environment variables
+
+Every variable the code reads. "Environments" says where it belongs in Vercel (Settings →
+Environment Variables); a change there needs a redeploy. Previews and production share one
+database today, so secrets that touch the database are on both. `tests/unit/env-docs.test.ts`
+fails if the code reads a variable that isn't in this table (and, unless Vercel or Playwright
+sets it, in `.env.example`).
+
+| Variable                                                                              | Required?                | What it turns on                                                                                                                                                                                            | Where to get it                                                                        | Environments                      |
+| ------------------------------------------------------------------------------------- | ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- | --------------------------------- |
+| `APP_URL`                                                                             | Production: yes          | Absolute links, OAuth redirect URIs, cookies, emails. Previews fall back to `VERCEL_BRANCH_URL`, local to `http://localhost:3000`.                                                                          | The production domain, no trailing slash.                                              | Prod only; local                  |
+| `DATABASE_URL`                                                                        | Yes                      | The database (postgres.js).                                                                                                                                                                                 | Neon → Connect → pooled string. Local: `postgres://sa:sa@localhost:5432/squared_away`. | Prod + Preview (sensitive); local |
+| `AUTH_SECRET`                                                                         | Yes                      | Signs sessions; salts hashed IPs and referral fingerprints. Rotating it signs everyone out.                                                                                                                 | `openssl rand -base64 32`                                                              | Prod + Preview (sensitive); local |
+| `AUTH_TRUST_HOST`                                                                     | Outside Vercel           | Lets Auth.js trust the host header (`pnpm start`, CI). Vercel handles it itself.                                                                                                                            | `true`                                                                                 | Local, CI                         |
+| `AUTH_GOOGLE_ID`, `AUTH_GOOGLE_SECRET`                                                | Yes                      | Google sign-in and Connect Gmail (one OAuth client).                                                                                                                                                        | Google Cloud → APIs & Services → Credentials (§8).                                     | Prod + Preview (secret sensitive) |
+| `TOKEN_ENCRYPTION_KEY`                                                                | Yes                      | Encrypts Gmail refresh tokens (AES-256-GCM). Losing it means every mailbox reconnects.                                                                                                                      | `openssl rand -base64 32`                                                              | Prod + Preview (sensitive); local |
+| `ADMIN_EMAIL`                                                                         | Yes                      | The only address allowed into `/admin`; always allowed to sign in; gets cost alerts.                                                                                                                        | Davi's address.                                                                        | Prod + Preview                    |
+| `SUPPORT_EMAIL`                                                                       | Before launch            | Support address in the footer, status banner, not-invited page and legal pages (§6f).                                                                                                                       | Davi provides it.                                                                      | Prod + Preview                    |
+| `ANTHROPIC_API_KEY`                                                                   | For sorting and drafting | Every AI call (sorting, drafts, voice, rewording) and `pnpm eval`.                                                                                                                                          | console.anthropic.com → API Keys.                                                      | Prod + Preview (sensitive); local |
+| `AI_DAILY_CALL_CAP`                                                                   | No (default 500)         | Per-account daily ceiling on AI calls; warning at 80%.                                                                                                                                                      | A number.                                                                              | Prod                              |
+| `INNGEST_EVENT_KEY`, `INNGEST_SIGNING_KEY`                                            | Production: yes          | Background jobs (sync, sorting, drafting, sends after undo, crons).                                                                                                                                         | Set by the Inngest Vercel integration (§6).                                            | Prod + Preview                    |
+| `INNGEST_DEV`                                                                         | Local only               | `1` = use the local Inngest dev server.                                                                                                                                                                     | —                                                                                      | Local                             |
+| `GMAIL_PUBSUB_TOPIC`, `GMAIL_PUSH_VERIFICATION_TOKEN`                                 | No                       | Gmail instant notifications; without them the 5-minute poll picks up mail.                                                                                                                                  | §6a.                                                                                   | Prod (token sensitive)            |
+| `RESEND_API_KEY`, `EMAIL_FROM`                                                        | No                       | Morning and monthly summaries, Gmail-access-lost emails, cost and Growth notices. Without both, nothing is emailed.                                                                                         | §7b.                                                                                   | Prod (key sensitive)              |
+| `STRIPE_SECRET_KEY`                                                                   | For payments             | Checkout, billing portal, webhook, Connect Stripe in `/admin`.                                                                                                                                              | §7c.                                                                                   | Prod (sensitive)                  |
+| `STRIPE_WEBHOOK_SECRET`                                                               | No                       | Overrides the signing secret Connect Stripe stores. Leave unset in Vercel (a stale test value breaks every live webhook).                                                                                   | `stripe listen` locally.                                                               | Local only                        |
+| `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`                                             | No                       | Text alerts to the owner's own phone (both plus one sender below).                                                                                                                                          | §6c.                                                                                   | Prod (token sensitive)            |
+| `TWILIO_MESSAGING_SERVICE_SID`, `TWILIO_FROM_NUMBER`                                  | One of them, for texts   | The sender: a Messaging Service (preferred: STOP/HELP and A2P 10DLC) or, for quick tests, a number in E.164.                                                                                                | §6c.                                                                                   | Prod                              |
+| `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`                                               | No                       | Phone notifications (web push). Public key alone shows the switch; both are needed to send.                                                                                                                 | §6e.                                                                                   | Prod (private key sensitive)      |
+| `VAPID_SUBJECT`                                                                       | No (default `APP_URL`)   | Contact the push services can reach.                                                                                                                                                                        | `mailto:` address or https URL.                                                        | Prod                              |
+| `NEXT_PUBLIC_SENTRY_DSN`                                                              | No                       | Error alerts (scrubbed). Read at build time: redeploy after setting.                                                                                                                                        | §6b.                                                                                   | Prod                              |
+| `FEATURE_CLOSING_QUESTION`                                                            | No (off)                 | Plan #26. **Ask Davi first.**                                                                                                                                                                               | `1` (§6d).                                                                             | Prod, only with Davi's okay       |
+| `FEATURE_REFERRALS`                                                                   | No (off)                 | Plan #47. **Ask Davi first**; does nothing while `REFERRAL_CREDIT_CENTS` is null.                                                                                                                           | `1` (§6d).                                                                             | Prod, only with Davi's okay       |
+| `RETENTION_BODY_DAYS`                                                                 | No (default 30)          | Days before email text is purged. The privacy policy and homepage promise 30: don't change it without changing them.                                                                                        | A number.                                                                              | Prod                              |
+| `VERCEL`, `VERCEL_ENV`, `VERCEL_BRANCH_URL`, `VERCEL_GIT_COMMIT_SHA`                  | Set by Vercel            | Deploy detection (turns e2e mode off), preview URLs, preview-only CSP, Sentry environment and release, `/api/health`'s `commit`.                                                                            | Automatic, while "Automatically expose System Environment Variables" is on.            | Vercel sets them                  |
+| `NODE_ENV`                                                                            | Set by Next              | Development vs production behaviour.                                                                                                                                                                        | Automatic.                                                                             | —                                 |
+| `SA_E2E`, `SA_E2E_GOOGLE_BASE_URL`, `SA_E2E_ANTHROPIC_BASE_URL`, `SA_E2E_HOOK_SECRET` | Set by Playwright        | Local e2e mode (§3).                                                                                                                                                                                        | `playwright.config.ts` sets them.                                                      | **Never** on Vercel               |
+| `PGHOST`, `ANTHROPIC_CUSTOM_HEADERS`                                                  | Not ours                 | Read by postgres.js and the Anthropic SDK. We never set them; e2e mode checks `PGHOST` (when `DATABASE_URL` names no host) and drops any `ANTHROPIC_CUSTOM_HEADERS` so nothing real reaches the fakes (§3). | —                                                                                      | Not set                           |
 
 ## 5. Database
 
@@ -204,6 +314,41 @@ Stripe customer wait, and are added if it's turned back on). Credits already add
 owners' Stripe balances. Referrals whose account went active while it was off are settled as
 "skipped" and are never paid later.
 
+### 6e. Phone notifications (VAPID, optional)
+
+Owners can turn on phone notifications (Settings) for new quote requests, emails that need them
+and leads waiting too long. The push is **empty**: the push service (Google, Apple, Mozilla or
+Microsoft) only sees a ping, and the phone then fetches the counts from us (`src/lib/web-push.ts`,
+`public/sw.js`). Free; no account needed.
+
+1. Make one key pair (P-256, base64url) on any machine with Node:
+
+   ```bash
+   node -e "const c=require('crypto');const{privateKey:k}=c.generateKeyPairSync('ec',{namedCurve:'P-256'});const j=k.export({format:'jwk'});console.log('VAPID_PUBLIC_KEY='+Buffer.concat([Buffer.from([4]),Buffer.from(j.x,'base64url'),Buffer.from(j.y,'base64url')]).toString('base64url'));console.log('VAPID_PRIVATE_KEY='+j.d)"
+   ```
+
+   (Any VAPID key generator works too, for example `npx web-push generate-vapid-keys`.)
+
+2. Vercel → sa → Environment Variables (Production): `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`
+   (sensitive) and, optionally, `VAPID_SUBJECT` (`mailto:` the support address; defaults to
+   `APP_URL`). Redeploy.
+3. How to know it worked: Settings shows the phone-notification switch; turn it on from an installed
+   app (on iPhone, only from the Home Screen app) and the first new quote request buzzes the phone.
+
+Keep the pair once owners use it: after a change, each phone has to switch notifications off and
+on again.
+
+### 6f. SUPPORT_EMAIL
+
+The address owners write to for help. It appears in the site footer, the account status banner
+(expired, past due, paused…), the "not invited" page and the privacy policy and terms (their
+contact block). It is read from the environment, never typed into the code. Empty means those
+places show the phone number only and the legal pages leave out the email line.
+
+Set it in Vercel → sa → Environment Variables (Production and Preview) to the address Davi gives
+us, then redeploy. How to know it worked: the footer of https://<domain>/ and the contact block of
+`/privacy` show it.
+
 ## 7. Inviting an owner
 
 ```bash
@@ -256,10 +401,16 @@ APIs & Services → Credentials, the client needs two redirect URIs per environm
 - `{APP_URL}/api/gmail/callback`
 
 Registered today: production `https://sa-dac3.vercel.app` and the working-branch preview
-`https://sa-git-claude-squared-away-mvp-ddxl7s-dac3.vercel.app`.
+`https://sa-git-claude-squared-away-mvp-ddxl7s-dac3.vercel.app`. For local work add
+`http://localhost:3000/api/auth/callback/google` and `http://localhost:3000/api/gmail/callback`
+(the browser tests don't need them: they never talk to Google).
 
-The Gmail API must be enabled, and while unverified, each owner must be added under OAuth consent
-screen → Test users. See `docs/google-verification.md` for why we ask for each scope.
+The Gmail API must be enabled. While the app's publishing status (Google Auth Platform →
+Audience) is **Testing**, each owner must be added there as a test user (at most 100), and Google's
+refresh tokens for Gmail scopes expire after 7 days, so every owner has to reconnect weekly. Switch
+it to **In production** before real owners connect; until Google's verification passes, owners see
+Google's "unverified app" warning. See `docs/google-verification.md` for why we ask for each scope,
+the demo-video script and the reviewer account.
 
 ## 9. Deploys (Vercel)
 
@@ -275,6 +426,9 @@ Vercel runs `pnpm vercel-build`, which applies pending migrations (`scripts/migr
 keep migrations additive.
 The Production branch must be `main` (Settings → Environments → Production → Branch Tracking).
 Changing an environment variable only takes effect after a redeploy.
+Keep **Settings → Environment Variables → "Automatically expose System Environment Variables"** on:
+preview URLs (`VERCEL_BRANCH_URL`) and the "this is a Vercel deploy" check that keeps e2e mode off
+(`VERCEL`, `VERCEL_ENV`; §3) depend on it.
 Deployment Protection (Vercel login) is on for previews, so only team members can see them.
 
 ## 10. Prompt evals (before a release)

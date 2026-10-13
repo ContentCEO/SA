@@ -7,8 +7,8 @@
  * Nothing is seeded but the signed-in owner (and, for the paid test, where they are in the
  * commercial flow). Google, Gmail and the AI model are the local fakes (tests/e2e/fakes),
  * the jobs run through /api/test-hooks/run (the same functions Inngest calls), and every gate
- * runs as in production. The step titles double as the Google verification demo script
- * (docs/google-verification.md).
+ * runs as in production. Each step title maps to a step of the Google verification demo-video
+ * script (docs/google-verification.md; tests/unit/verification-doc.test.ts keeps the two in step).
  */
 import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
 import { and, count, desc, eq } from "drizzle-orm";
@@ -346,7 +346,7 @@ test("a trial owner sees the draft but nothing can be sent to the customer", asy
   });
   const { draft } = await readSortAndDraft(page, request, owner, mailbox.id);
 
-  const card = await test.step("The draft waits on the Queue with what the customer wants", () =>
+  const card = await test.step("On the trial account the draft waits on the Queue", () =>
     draftCardOnQueue(page));
 
   await test.step("During the trial the card says sending is off, and there's no Send reply", async () => {
