@@ -21,8 +21,11 @@ export type PlanId = keyof typeof pricing.plans;
  */
 export const REFERRAL_CREDIT_CENTS: number | null = null;
 
-/** Plan #47: who gets the credit. "both" is the spec's default. ASK DAVI before changing. */
-export const REFERRAL_CREDIT_TO: "both" | "referrer" | "referred" = "both";
+/**
+ * Plan #47: who gets the credit. Davi, 2026-10-13: only the owner who shared the link (the new
+ * customer gets nothing). Ask Davi before changing.
+ */
+export const REFERRAL_CREDIT_TO: "both" | "referrer" | "referred" = "referrer";
 
 export function formatDollars(cents: number): string {
   const dollars = cents / 100;

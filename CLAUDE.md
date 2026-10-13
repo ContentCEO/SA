@@ -59,8 +59,10 @@ drizzle/            generated migrations — commit them
 scripts/invite.ts   pnpm invite owner@shop.com [trade] ["note"] (or /admin → Invite an owner)
 src/styles/theme.css   THE theme file — every color/token
 tests/unit/         Vitest; DB tests use in-memory PGlite (tests/support/db.ts)
-tests/e2e/          Playwright (mobile 375px + desktop); real Postgres; forged Auth.js cookie
-docs/               BRIEF.md, SETUP.md, google-verification.md, legal drafts
+tests/e2e/          Playwright (mobile 375px + desktop); real Postgres; forged Auth.js cookie;
+                    fakes/ = fake Google consent + Gmail + Anthropic (127.0.0.1, PORT+1)
+docs/               BRIEF.md, SETUP.md, LAUNCH.md (Davi's launch checklist),
+                    google-verification.md, legal drafts
 ```
 
 ## Commands
@@ -68,6 +70,10 @@ docs/               BRIEF.md, SETUP.md, google-verification.md, legal drafts
 `pnpm dev` · `pnpm lint` · `pnpm format` · `pnpm typecheck` (runs `next typegen` first) ·
 `pnpm test` · `pnpm build && pnpm test:e2e` · `pnpm db:generate` / `pnpm db:migrate`.
 In a sandbox with preinstalled Chromium: `PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-browsers/chromium pnpm test:e2e`.
+e2e needs no real keys: Playwright starts the fakes itself on `PORT+1` (app 3100 / fakes 3101 by
+default, CI too) and refuses a non-local `DATABASE_URL` or an `APP_URL` that isn't
+`http://localhost:<PORT>`. Stop any `pnpm dev`/`pnpm start` on those ports first. In the
+`/home/user/SA-launch` worktree use `PORT=3300` (fakes 3301, database `squared_away_launch`).
 
 ## Conventions
 
@@ -613,7 +619,8 @@ In a sandbox with preinstalled Chromium: `PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-brows
   `waitlist.referral_code`, `invites.referred_by_workspace_id`, and `referral_credits` (unique
   `(referred_email_sha256, side)`; `referred_workspace_id` / `beneficiary_workspace_id` ON DELETE
   SET NULL; status pending / applied / failed / skipped; attempts, last error code).
-  `REFERRAL_CREDIT_CENTS = null` and `REFERRAL_CREDIT_TO = "both"` in `src/config/pricing.ts`;
+  `REFERRAL_CREDIT_CENTS = null` and `REFERRAL_CREDIT_TO = "referrer"` (Davi, 2026-10-13: only the
+  owner who shared the link gets it) in `src/config/pricing.ts`;
   `referralsVisible()` = flag on **and** a positive amount — otherwise no link, no code stored,
   nothing carried, no credit, no Stripe call. Path: `/?ref=<code>` → waitlist (hidden field) →
   `inviteFromWaitlist` → first sign-in copies it to the workspace and clears it on the invite (used
@@ -817,6 +824,37 @@ In a sandbox with preinstalled Chromium: `PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-brows
   tax; a lawyer's review of both drafts; the #47 referral-fingerprint line before
   `FEATURE_REFERRALS` goes on; how to honour a waitlist / Growth removal request (the policy says
   "ask us and we'll delete it", and there is no admin tool — done by hand in the database).
+- **Milestone 11 summary (2026-10-13, branch `claude/launch-integration`, not deployed):**
+  - **e2e seams (S1/S2):** `src/config/e2e.ts` is the only reader of `SA_E2E*`. `e2eMode()` is on
+    only when `SA_E2E === "1"`, `VERCEL`/`VERCEL_ENV` are unset, both `SA_E2E_GOOGLE_BASE_URL` and
+    `SA_E2E_ANTHROPIC_BASE_URL` are set with an http(s) hostname of exactly localhost / 127.0.0.1
+    / [::1], and `DATABASE_URL` is loopback or a unix socket (`PGHOST` checked when it names no
+    host). Otherwise `googleEndpoints()` / Anthropic options are the real ones and
+    `e2eHookSecret()` is null. `/api/test-hooks/run` (POST; backfill, sync, voice, classify,
+    draft, deliver through the same functions the jobs call) is 404 unless e2e mode, a ≥32-char
+    secret (constant-time) and a loopback request host; errors return `err.name` only. Fakes in
+    `tests/e2e/fakes` (loopback only, record no secrets, Gmail-faithful drafts/history).
+    `tests/e2e/full-flow.spec.ts` is the whole owner journey (paid: connect → backfill → voice →
+    classify → draft → sync → Send reply → exactly one threaded `drafts/send` → Delete my account
+    → one revoke, no rows; trial: 403 + practice copy to self only), and its steps map to the
+    demo-video script in `docs/google-verification.md` (tested).
+  - **Purge and deletion (S3):** see the M11 notes under the retention purge and Delete my account
+    above (draft flags, extracted free text, cleared send timers; invite + cost/email markers in
+    one transaction; waitlist kept). `tests/unit/data-lifecycle.test.ts` is the gate.
+  - **Security (S4):** see "M11 security audit" above (HSTS, `poll` / `gmailWrite` limits,
+    `sendPush` allow-list re-check, Origin parsing → 403, read-only gates as the UI behaves,
+    Stripe error codes, static surface tests incl. C15: every Sentry path goes through
+    `scrubEvent`; no "send a test error" button on purpose).
+  - **Docs (S5–S7):** legal drafts (above); `docs/google-verification.md` + `docs/SETUP.md`
+    (every env var the code reads, `tests/unit/env-docs.test.ts`; verification facts and the
+    demo-script mapping, `tests/unit/verification-doc.test.ts`); **`docs/LAUNCH.md`**, Davi's
+    plain-words launch checklist (Google verification first, merge, preview database, secret
+    rotation, env per environment, domain, Resend, Stripe live, Sentry, VAPID, Twilio/Pub/Sub,
+    Inngest check, smoke test, every open decision). `tests/unit/launch-doc.test.ts`: no
+    secret-looking value in any doc (also CLAUDE.md, AGENTS.md, .env.example), links and anchors
+    resolve, every setting SETUP.md marks required is in its table, and the screens, setting keys
+    and job names it tells Davi to look for exist in the code. Keep LAUNCH.md in step with the
+    code: a renamed screen line or job fails that test.
 
 ## Milestones
 
@@ -833,15 +871,20 @@ In a sandbox with preinstalled Chromium: `PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-brows
       waits on a Resend API key (and a verified domain for owners other than Davi)
 - [x] **9. Autopilot** — three-layer guardrails, earned per category, 10-minute grace window
 - [x] **10. Billing** — Stripe Checkout + portal + webhook; Connect Stripe in /admin
-- [ ] 11. Hardening and launch
+- [ ] 11. Hardening and launch — built and tested on `claude/launch-integration`; waits on Davi
+      (merge = production deploy) and the steps in `docs/LAUNCH.md`
 
 ## Waiting on Davi
 
+- **The launch checklist is `docs/LAUNCH.md`** (in order, where to click, how to know it worked,
+  and every open decision in its step 13). The items below are the same list in engineering words.
 - **Gmail draft send behaviour (M8 review):** not yet checked live whether Gmail keeps a draft's
   id when it's sent. Counts-only check on the shared DB: join `drafts.sent_gmail_message_id` to
   `messages.gmail_message_id` and count the matches whose `label_ids` hold `SENT` vs `DRAFT`.
   Many DRAFT matches = same-id sends. The code is safe either way; this only says which path is
-  live.
+  live. **Run it before the launch merge** (`docs/LAUNCH.md` step 1): after it, the one-time
+  `runDraftMessagesCleanup` (`markRecordedSends`) relabels every matched row DRAFT → SENT, so the
+  count always reads 0 DRAFT.
 - Phone notifications (#36): add `VAPID_PUBLIC_KEY` + `VAPID_PRIVATE_KEY` (free; any VAPID key
   generator) to Vercel Production, then redeploy. Off until then.
 - `ANTHROPIC_API_KEY` repo secret for the "Prompt evals" action (baseline still empty).
@@ -850,7 +893,8 @@ In a sandbox with preinstalled Chromium: `PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-brows
 - Optional: Gmail instant notifications (docs/SETUP.md §6a) and Sentry error alerts (§6b).
 - Rotate the Neon password and Google client secret that were pasted in chat; delete the old
   Google secret.
-- Add each invited owner as a Google Cloud test user (Google Auth Platform → Audience).
+- Only while Google Auth Platform is in Testing: add each invited owner as a test user (Audience).
+  Ends at docs/LAUNCH.md step 0c (In production).
 - Icon pack (`sa.` monogram, stacked wordmark); `docs/terms.md`, `docs/privacy-policy.md` drafts;
   `SUPPORT_EMAIL`; production domain.
 - **Plan #26 (closing question):** decide whether "Want to ask if they went another way?" may go
@@ -858,10 +902,9 @@ In a sandbox with preinstalled Chromium: `PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-brows
   Vercel and redeploy (docs/SETUP.md §6d). Don't set it without his okay.
 - **Plan #47 (referral credit):** built and tested behind `FEATURE_REFERRALS` (off), and it does
   nothing until he answers: (1) the credit amount in dollars (`REFERRAL_CREDIT_CENTS` in
-  `src/config/pricing.ts` is `null`); (2) who gets it: both (the spec's default), the referrer only,
-  or the new customer only (`REFERRAL_CREDIT_TO`); (3) whether he wants the same-domain block at
-  all (as built: two owners on the same business domain never count, public webmail like gmail.com
-  is exempt). Before turning it on, add the referral-fingerprint line to the privacy policy (the
+  `src/config/pricing.ts` is `null`; options sent 2026-10-13); (2) decided 2026-10-13: the referrer
+  only (`REFERRAL_CREDIT_TO = "referrer"`); (3) decided 2026-10-13: keep the same-domain block (two
+  owners on the same business domain never count; public webmail like gmail.com is exempt). Before turning it on, add the referral-fingerprint line to the privacy policy (the
   "Privacy policy line for #47" item below; docs/SETUP.md §6d), and don't rotate `AUTH_SECRET` once
   referrals have been paid (the "paid once" fingerprint is salted with it). Then set the switch
   (docs/SETUP.md §6d). Referrals that go active while it's off are never paid later.
@@ -882,7 +925,7 @@ In a sandbox with preinstalled Chromium: `PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-brows
   delete your account, so a referral is only paid once." (Otherwise the policy's Delete my account
   section and the homepage FAQ's "deletes your account and everything in it" aren't literally
   true.) Also his call: a referrer who deletes their account before the
-  new owner is active voids the referral for both sides; repeat waitlist joins and plain invites
+  new owner is active voids the referral (the referrer's credit); repeat waitlist joins and plain invites
   carry no referral (docs/SETUP.md §6d).
 - **Growth (2026-10-12):** confirm all seven services are offered today (websites and ad management
   especially) and the ground rules (no fake reviews, price before any work, Growth never touches
@@ -895,8 +938,16 @@ In a sandbox with preinstalled Chromium: `PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-brows
 
 ## Launch blockers to remember
 
-- Previews share the production database. Before real customers: give previews their own Neon
-  branch (Neon's Vercel integration does this) so a preview can't touch customer data.
+- Previews share the production database. Before real customers: give previews their own
+  database so a preview can't touch customer data — `docs/LAUNCH.md` step 2 (Neon-managed
+  integration with its own Preview `AUTH_SECRET` / `TOKEN_ENCRYPTION_KEY`, or an empty preview
+  project; Davi picks). `DATABASE_URL`, `AUTH_SECRET`, `TOKEN_ENCRYPTION_KEY` and `AUTH_GOOGLE_*`
+  are each ONE Vercel entry for Production + Preview: split them (untick Preview, Add New for
+  Preview); deleting or editing the shared entry changes production.
+- Google OAuth is still in **Testing** (7-day Gmail tokens, ≤100 hand-added users): switch to In
+  production and submit verification + CASA — `docs/LAUNCH.md` step 0.
+- Stripe live mode: test-mode customer ids / `setup_paid_via = 'stripe'` from test checkouts stay
+  in the shared DB; Davi decides how to reset them (`docs/LAUNCH.md` step 7a).
 - **M7 merge timing (complaint memory, A1):** the first preview build of the M7 branch runs
   migration 0024 (marks threads still sorted `complaint` with `complained_at`). Until M7 merges,
   production's older code keeps re-sorting threads without setting the mark, so a complaint that
@@ -910,3 +961,5 @@ In a sandbox with preinstalled Chromium: `PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-brows
   `quote_outcome_source = 'owner'` wherever the owner's newest `quote_marked` tap is newer than our
   newest `quote_outcome_guessed` (an old-code Won/Lost over our guess, or an old-code Reopen).
   0023/0024 stay as they are — they already ran on the shared DB; never edit an applied migration.
+  The window is open now: merge as soon as Davi has reviewed, then check `backfill:m7-v1` in
+  `app_settings` (`docs/LAUNCH.md` step 1).
