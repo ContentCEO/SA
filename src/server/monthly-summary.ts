@@ -232,17 +232,23 @@ export async function sendMonthlySummaries(
           run.notConfigured = true;
           return run;
         }
+        // "already_sent": the owner got this month's email on an earlier try whose marker
+        // didn't save, and Resend refused a retry whose body had changed. Recorded as done.
       }
       // The month's marker and its Activity row go in together: a marker that fails to save
-      // leaves no "Sent your monthly summary" behind, so the retry can't log it twice.
-      await db().transaction(async (tx) => {
-        await tx
+      // leaves no "Sent your monthly summary" behind, so the retry can't log it twice. Only the
+      // run that moves the marker logs it (an overlapping run that found it set adds nothing).
+      const marked = await db().transaction(async (tx) => {
+        const [row] = await tx
           .insert(businessProfiles)
           .values({ workspaceId: r.workspace.id, monthlySummaryLastSentFor: monthKey })
           .onConflictDoUpdate({
             target: businessProfiles.workspaceId,
             set: { monthlySummaryLastSentFor: monthKey },
-          });
+            setWhere: sql`${businessProfiles.monthlySummaryLastSentFor} is distinct from ${monthKey}`,
+          })
+          .returning({ workspaceId: businessProfiles.workspaceId });
+        if (!row) return false;
         if (email.worthSending) {
           await tx.insert(activityLog).values({
             workspaceId: r.workspace.id,
@@ -252,8 +258,9 @@ export async function sendMonthlySummaries(
             createdAt: now,
           });
         }
+        return true;
       });
-      if (email.worthSending) run.sent++;
+      if (marked && email.worthSending) run.sent++;
       else run.skipped++;
     } catch (err) {
       // One account's trouble never stops the others; the next hourly run tries again

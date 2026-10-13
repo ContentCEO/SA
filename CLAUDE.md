@@ -252,6 +252,15 @@ In a sandbox with preinstalled Chromium: `PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-brows
   to the AI provider). Quiet days are skipped. Resend via plain fetch with
   `Idempotency-Key: digest-<workspace>-<local date>`; without `RESEND_API_KEY`/`EMAIL_FROM` nothing is
   sent and the day isn't marked done. Read-only accounts get none.
+- **Resend 409s (2026-10-13, M8 review):** a retry whose body changed (summaries say how long
+  things waited) gets 409 `invalid_idempotent_request`. `sendEmail` reports `already_sent` (the
+  digest, monthly summary, cost alert and Gmail-access alert then mark it done) **only** when we
+  hold our own `app_settings` `email-sent:<idempotency key>` row, written right after a 2xx
+  (outside any marker transaction; purged daily after 2 days). Resend's docs don't say whether a
+  key is kept when the first request was refused (e.g. 403 while `EMAIL_FROM` is
+  onboarding@resend.dev); **not checked live** (no Resend key in the sandbox). To check: send to a
+  forbidden address with a test key, retry the same key with a different body, and see 409 vs 403.
+  Either way the code never marks an email sent without our 2xx. Any other 409 stays an error.
 - Voice learning reads sent mail 3 at a time (8 tripped Gmail's limit live and the learn died at
   "learning"). Retries 6; `workspace-lifecycle` (15 min) restarts voice for read mailboxes with no
   profile or stuck in "learning" > 30 min (`workspacesNeedingVoice`).

@@ -24,6 +24,7 @@ import { sendMonthlySummaries } from "@/server/monthly-summary";
 import { threadsToFollowUp } from "@/server/followups";
 import { getMailboxWorkspace } from "@/server/mailboxes";
 import { purgeRateLimits } from "@/server/rate-limit";
+import { purgeEmailSentRecords } from "@/lib/email";
 import { sendAccessLostAlerts } from "@/server/alerts";
 import { captureQuoteAmounts, guessNoAnswers } from "@/server/quotes";
 import { sendLeadAlerts } from "@/server/sms-alerts";
@@ -441,6 +442,7 @@ export const purgeBodies = inngest.createFunction(
     // Plan #45: tell Davi when an account's AI cost passes 40% of its plan.
     await step.run("cost-alerts", () => sendCostAlerts());
     await step.run("purge-cost-markers", () => purgeCostAlertMarkers());
+    await step.run("purge-email-sent-records", () => purgeEmailSentRecords());
     return { purged };
   },
 );

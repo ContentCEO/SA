@@ -101,5 +101,16 @@ describe("#45 admin costs", () => {
       });
       expect(await sendCostAlerts(new Date("2026-11-02T12:00:00Z"), { send })).toEqual({ sent: 1 });
     });
+
+    it("an alert Resend says it already sent (changed body, same key) is marked, not retried daily", async () => {
+      const calls: string[] = [];
+      const already = async (e: OutgoingEmail) => {
+        calls.push(e.idempotencyKey);
+        return "already_sent" as const;
+      };
+      await sendCostAlerts(NOW, { send: already });
+      await sendCostAlerts(NOW, { send: already });
+      expect(calls).toEqual([`cost-${dear}-2026-10`]);
+    });
   });
 });

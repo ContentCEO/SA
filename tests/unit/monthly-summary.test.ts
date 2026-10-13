@@ -6,6 +6,7 @@ import { DIRECT_EMAIL, LEAD_SOURCES } from "@/config/lead-sources";
 import { TRADES, type Trade } from "@/config/trades";
 import type { Database } from "@/db";
 import { activityLog, businessProfiles, messages, threads, workspaces } from "@/db/schema";
+import { reportSummaryFailures } from "@/jobs/functions";
 import { appUrl } from "@/lib/app-url";
 import type { OutgoingEmail } from "@/lib/email";
 import { ensureUserAndWorkspace } from "@/server/accounts";
@@ -673,6 +674,98 @@ describe("sendMonthlySummaries", () => {
 
     expect(await sendMonthlySummaries(NOW, { send: sender })).toMatchObject({ sent: 2, failed: 0 });
     expect(sent.map((e) => e.to).sort()).toEqual(["owner@shop.com", "second@shop.com"]);
+  });
+
+  describe("Resend answers 'already sent' (409 invalid_idempotent_request: same key, changed body)", () => {
+    // An earlier try got the email out but its marker didn't save; the retry's body moved on
+    // ("waiting 41 minutes"), so Resend refuses it. The owner already has the email.
+    const already = async (e: OutgoingEmail) => {
+      sent.push(e);
+      return "already_sent" as const;
+    };
+    const digestMarker = async () =>
+      (
+        await database
+          .select({ d: businessProfiles.digestLastSentOn })
+          .from(businessProfiles)
+          .where(eq(businessProfiles.workspaceId, workspaceId))
+      )[0]?.d ?? null;
+    const digestRows = () =>
+      database
+        .select()
+        .from(activityLog)
+        .where(eq(activityLog.workspaceId, workspaceId))
+        .then((rows) => rows.filter((r) => r.action === "digest_sent"));
+    async function seedWithSomethingWaiting() {
+      await seedOctober();
+      // Something waiting today, so the morning summary is worth sending too.
+      await request(T("2026-10-31T20:00:00Z"), "kim@gmail.com", {
+        category: "complaint",
+        needsOwner: true,
+      });
+    }
+
+    it("both summaries record it as sent: marked, one Activity row each, no failure, no error alert", async () => {
+      await seedWithSomethingWaiting();
+      const digests = await sendDigests(NOW, { send: already });
+      const monthly = await sendMonthlySummaries(NOW, { send: already });
+      expect(sent.map((e) => e.idempotencyKey)).toEqual([
+        `digest-${workspaceId}-2026-11-01`,
+        `monthly-${workspaceId}-2026-10`,
+      ]);
+      expect(digests).toMatchObject({ sent: 1, failed: 0 });
+      expect(monthly).toMatchObject({ sent: 1, failed: 0 });
+      expect(() => reportSummaryFailures(digests, monthly)).not.toThrow();
+      expect(await digestMarker()).toBe("2026-11-01");
+      expect(await marker()).toBe("2026-10");
+      expect(await digestRows()).toHaveLength(1);
+      expect(await monthlyRows()).toHaveLength(1);
+
+      // The next hourly run is done for the day and the month: no send, no failure.
+      const later = T("2026-11-01T13:05:00Z");
+      expect(await sendDigests(later, { send: sender })).toMatchObject({ sent: 0, failed: 0 });
+      expect(await sendMonthlySummaries(later, { send: sender })).toMatchObject({
+        sent: 0,
+        failed: 0,
+      });
+      expect(sent).toHaveLength(2);
+      expect(await digestRows()).toHaveLength(1);
+      expect(await monthlyRows()).toHaveLength(1);
+    });
+
+    it("a run that overlapped one which already marked the day and month adds no second Activity row", async () => {
+      await seedWithSomethingWaiting();
+      // While this run's send is in flight, the other run finishes: marker + Activity row.
+      const otherRunFinishedFirst = async (e: OutgoingEmail) => {
+        sent.push(e);
+        const monthly = e.idempotencyKey.startsWith("monthly-");
+        await database
+          .insert(businessProfiles)
+          .values({ workspaceId })
+          .onConflictDoNothing({ target: businessProfiles.workspaceId });
+        await database
+          .update(businessProfiles)
+          .set(
+            monthly ? { monthlySummaryLastSentFor: "2026-10" } : { digestLastSentOn: "2026-11-01" },
+          )
+          .where(eq(businessProfiles.workspaceId, workspaceId));
+        await database.insert(activityLog).values({
+          workspaceId,
+          actor: "squared_away",
+          action: monthly ? "monthly_summary_sent" : "digest_sent",
+          detail: {},
+        });
+        return "already_sent" as const;
+      };
+      const digests = await sendDigests(NOW, { send: otherRunFinishedFirst });
+      const monthly = await sendMonthlySummaries(NOW, { send: otherRunFinishedFirst });
+      expect(digests).toMatchObject({ sent: 0, skipped: 1, failed: 0 });
+      expect(monthly).toMatchObject({ sent: 0, skipped: 1, failed: 0 });
+      expect(await digestMarker()).toBe("2026-11-01");
+      expect(await marker()).toBe("2026-10");
+      expect(await digestRows()).toHaveLength(1);
+      expect(await monthlyRows()).toHaveLength(1);
+    });
   });
 });
 
