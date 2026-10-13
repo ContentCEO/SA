@@ -108,7 +108,8 @@ export async function sendCostAlerts(
         .join(""),
       idempotencyKey: `cost-${r.workspaceId}-${month}`,
     });
-    if (result !== "sent") return { sent };
+    // "already_sent": an earlier try this month got through but its marker didn't save.
+    if (result === "not_configured") return { sent };
     await db().insert(appSettings).values({ key, value: now.toISOString() }).onConflictDoNothing();
     sent++;
   }

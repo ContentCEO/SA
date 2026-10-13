@@ -345,6 +345,28 @@ describe("quote tracker", () => {
     expect((await listQuotes(workspaceId, NOW)).quotes[0]!.stage).toBe("talking");
   });
 
+  it("an unsent Gmail draft is neither the owner's answer nor a price (stage, amount)", async () => {
+    const t = await convo({
+      from: "dana@x.com",
+      name: "Dana",
+      category: "quote_request",
+      inAgo: 3,
+    });
+    // Stored by the old sync: the auto-draft, quoting the price list, never sent.
+    await database.insert(messages).values({
+      threadId: t,
+      mailboxId,
+      gmailMessageId: `${t}-draft`,
+      direction: "out",
+      fromAddress: "owner@shop.com",
+      labelIds: ["DRAFT"],
+      bodyText: "That'll be $1,800.",
+      sentAt: daysAgo(2),
+    });
+    const [q] = (await listQuotes(workspaceId, NOW)).quotes;
+    expect(q).toMatchObject({ stage: "waiting_on_you", amountCents: null });
+  });
+
   it("can't touch another workspace's thread", async () => {
     const t = await convo({ from: "d@x.com", name: "D", category: "quote_request", inAgo: 1 });
     const { workspace: other } = await ensureUserAndWorkspace({ email: "other@shop.com" });

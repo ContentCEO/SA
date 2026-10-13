@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { beforeEach, describe, expect, it } from "vitest";
 import type { Database } from "@/db";
-import { mailboxes, workspaces } from "@/db/schema";
+import { activityLog, mailboxes, workspaces } from "@/db/schema";
 import type { OutgoingEmail } from "@/lib/email";
 import { ensureUserAndWorkspace } from "@/server/accounts";
 import { accessLostEmail, ACCESS_REMINDER_AFTER_MS, sendAccessLostAlerts } from "@/server/alerts";
@@ -94,6 +94,30 @@ describe("Gmail access lost alerts", () => {
     expect(r.notConfigured).toBe(true);
     const [mb] = await database.select().from(mailboxes);
     expect(mb!.accessAlertsSent).toBe(0);
+  });
+
+  it("GUARD: an earlier try that got through (already sent) is counted once, not resent", async () => {
+    const { workspace, mailboxId } = await seed();
+    await markReconnectNeeded({ id: mailboxId, workspaceId: workspace.id });
+    const alreadySent = async (e: OutgoingEmail) => {
+      sent.push(e);
+      return "already_sent" as const;
+    };
+    expect((await sendAccessLostAlerts(NOW, { send: alreadySent })).sent).toBe(1);
+    const [mb] = await database.select().from(mailboxes);
+    expect(mb!.accessAlertsSent).toBe(1);
+    const logged = await database
+      .select()
+      .from(activityLog)
+      .where(eq(activityLog.action, "access_alert_sent"));
+    expect(logged).toHaveLength(1);
+
+    // Within the two-day window nothing more goes out (and nothing more is logged).
+    expect((await sendAccessLostAlerts(after(60 * 60_000), { send: alreadySent })).sent).toBe(0);
+    expect(sent).toHaveLength(1);
+    expect(
+      await database.select().from(activityLog).where(eq(activityLog.action, "access_alert_sent")),
+    ).toHaveLength(1);
   });
 
   it("names only the owner's own mailbox", () => {

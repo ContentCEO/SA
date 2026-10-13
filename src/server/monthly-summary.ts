@@ -27,7 +27,7 @@ import {
   type MonthlyStats,
 } from "./monthly-rules";
 import { localMonthName, usableTimeZone } from "./snooze-rules";
-import { noReplySql, quoteRequestSql } from "./thread-sql";
+import { noReplySql, quoteRequestSql, requestAtSql, requestSenderSql } from "./thread-sql";
 
 /**
  * Plan #35: the first-of-month summary. Counts and OUR fixed labels only.
@@ -81,13 +81,14 @@ export function monthlyStatsQueries(
   start: Date,
   end: Date,
 ) {
-  // A quote request belongs to the month its customer FIRST wrote in (re-sorted threads
-  // still count, A11).
-  const firstIn = sql`(select min(m.sent_at) from messages m where m.thread_id = ${outerThreadId()} and m.direction = 'in')`;
-  // Only the domain of the first sender, cut out in the database (A2).
+  // A quote request belongs to the month it was asked for (re-sorted threads still count,
+  // A11; a new job asked for on an old conversation counts when it was asked for).
+  const requestedAt = requestAtSql();
+  // Only the domain of whoever asked, cut out in the database (A2).
+  const requester = requestSenderSql();
   const firstDomain = sql<
     string | null
-  >`(select case when position('@' in m.from_address) > 0 then regexp_replace(lower(trim(m.from_address)), '^.*@', '') end from messages m where m.thread_id = ${outerThreadId()} and m.direction = 'in' order by m.sent_at asc, m.id asc limit 1)`;
+  >`(case when position('@' in ${requester}) > 0 then regexp_replace(lower(trim(${requester})), '^.*@', '') end)`;
   const requests = db()
     .select({
       jobKind: threads.jobKind,
@@ -103,15 +104,19 @@ export function monthlyStatsQueries(
       and(
         eq(mailboxes.workspaceId, workspaceId),
         quoteRequestSql(),
-        sql`${firstIn} >= ${at(start)}`,
-        sql`${firstIn} < ${at(end)}`,
+        sql`${requestedAt} >= ${at(start)}`,
+        sql`${requestedAt} < ${at(end)}`,
       ),
     );
 
-  // Repeat customers: different addresses that wrote a quote request or a question this
-  // month and had written in before it on ANOTHER thread (one conversation spanning the
-  // month's start is not a repeat, A17). A no-reply sender or a lead platform's own address
-  // is a platform, not a customer.
+  // Repeat customers: different addresses that wrote a NEW quote request or question this
+  // month — a conversation that began this month, or a quote asked for this month — and had
+  // written in before the month on ANOTHER thread. One conversation spanning the month's
+  // start is not a repeat (A17), and neither is one job split over two September threads that
+  // carries on in October. A no-reply sender or a lead platform's own address is a platform,
+  // not a customer.
+  const firstIn = sql`(select min(m.sent_at) from messages m where m.thread_id = ${outerThreadId()} and m.direction = 'in')`;
+  const inMonth = (t: SQL) => sql`(${t} >= ${at(start)} and ${t} < ${at(end)})`;
   // One count, computed in the database: no address is returned.
   const repeat = db()
     .select({ n: sql<number>`count(distinct lower(trim(${messages.fromAddress})))` })
@@ -125,6 +130,7 @@ export function monthlyStatsQueries(
         gte(messages.sentAt, start),
         lt(messages.sentAt, end),
         or(quoteRequestSql(), eq(threads.category, "customer_question")),
+        sql`(${inMonth(firstIn)} or ${inMonth(sql`${threads.quoteRequestedAt}`)})`,
         sql`position('@' in coalesce(${messages.fromAddress}, '')) > 1`,
         sql`not ${noReplySql(sql`${messages.fromAddress}`)}`,
         sql`not ${leadPlatformSql(sql`${messages.fromAddress}`)}`,
@@ -232,17 +238,23 @@ export async function sendMonthlySummaries(
           run.notConfigured = true;
           return run;
         }
+        // "already_sent": the owner got this month's email on an earlier try whose marker
+        // didn't save, and Resend refused a retry whose body had changed. Recorded as done.
       }
       // The month's marker and its Activity row go in together: a marker that fails to save
-      // leaves no "Sent your monthly summary" behind, so the retry can't log it twice.
-      await db().transaction(async (tx) => {
-        await tx
+      // leaves no "Sent your monthly summary" behind, so the retry can't log it twice. Only the
+      // run that moves the marker logs it (an overlapping run that found it set adds nothing).
+      const marked = await db().transaction(async (tx) => {
+        const [row] = await tx
           .insert(businessProfiles)
           .values({ workspaceId: r.workspace.id, monthlySummaryLastSentFor: monthKey })
           .onConflictDoUpdate({
             target: businessProfiles.workspaceId,
             set: { monthlySummaryLastSentFor: monthKey },
-          });
+            setWhere: sql`${businessProfiles.monthlySummaryLastSentFor} is distinct from ${monthKey}`,
+          })
+          .returning({ workspaceId: businessProfiles.workspaceId });
+        if (!row) return false;
         if (email.worthSending) {
           await tx.insert(activityLog).values({
             workspaceId: r.workspace.id,
@@ -252,8 +264,9 @@ export async function sendMonthlySummaries(
             createdAt: now,
           });
         }
+        return true;
       });
-      if (email.worthSending) run.sent++;
+      if (marked && email.worthSending) run.sent++;
       else run.skipped++;
     } catch (err) {
       // One account's trouble never stops the others; the next hourly run tries again

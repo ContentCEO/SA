@@ -162,10 +162,12 @@ exactly `1`, `true` or `on` (any case); empty, missing or anything else means of
   `REFERRAL_CREDIT_CENTS` in `src/config/pricing.ts` is `null`, and while it is null nothing
   happens at all, even with the switch on (no link, no code saved, nothing carried, no credit).
   Referrals that become active while the switch is off (or the amount is null) are settled as
-  "skipped" and are **never paid later**, even if it's turned on again. Changing the amount or
-  `REFERRAL_CREDIT_TO` only affects referrals settled after the change. A refused (self or
-  same-domain) referral is settled as "skipped" too. Credits still waiting or refused by Stripe
-  stay on the /admin card even after the switch goes off.
+  "skipped" and are **never paid later**, even if it's turned on again. The same goes for an
+  owner whose first sign-in happens while it's off: the invite's referral is used up then without
+  linking them, so deleting the account and signing up again once it's on earns nothing.
+  Changing the amount or `REFERRAL_CREDIT_TO` only affects referrals settled after the change. A
+  refused (self or same-domain) referral is settled as "skipped" too. Credits still waiting or
+  refused by Stripe stay on the /admin card even after the switch goes off.
   Known gaps, by design until Davi decides otherwise: if the referrer deletes their account
   before the new owner is active, the referral is void (neither side is paid — the link is
   cleared with the account). Only a waitlist sign-up from the link counts: someone already on the

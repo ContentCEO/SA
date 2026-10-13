@@ -6,6 +6,7 @@ import { DIRECT_EMAIL, LEAD_SOURCES } from "@/config/lead-sources";
 import { TRADES, type Trade } from "@/config/trades";
 import type { Database } from "@/db";
 import { activityLog, businessProfiles, messages, threads, workspaces } from "@/db/schema";
+import { reportSummaryFailures } from "@/jobs/functions";
 import { appUrl } from "@/lib/app-url";
 import type { OutgoingEmail } from "@/lib/email";
 import { ensureUserAndWorkspace } from "@/server/accounts";
@@ -399,6 +400,37 @@ describe("monthlyStats: quote requests, busiest kinds and lead sources", () => {
     expect(JSON.stringify(rows)).not.toMatch(/SECRET|dana/i);
   });
 
+  it("a new job asked for on an older thread counts in the month it was asked for", async () => {
+    // Sep 10 a question, Sep 11 the owner's answer; Oct 12 a new job asked for on the same
+    // thread (classification marks when). October counts it; September never did.
+    const t = await thread({ quoteRequestedAt: oct(12), jobKind: "EV chargers" });
+    await msg(t, sep(10), "dana@gmail.com");
+    await msg(t, sep(11), "owner@shop.com", "out");
+    await msg(t, oct(12), "dana@gmail.com");
+    // A thread from before the mark existed still dates from its first email.
+    await request(oct(14), "lee@yahoo.com", { jobKind: "Panel upgrades" });
+
+    const s = await stats();
+    expect(s.quoteRequests).toBe(2);
+    expect(s.jobKinds.map((k) => k.label).sort()).toEqual(["EV chargers", "Panel upgrades"]);
+    expect(s.leadSources).toEqual([{ label: DIRECT_EMAIL, count: 2 }]);
+    const september = await monthlyStats(
+      workspaceId,
+      "electrical",
+      T("2026-09-01T04:00:00Z"),
+      OCT.start,
+    );
+    expect(september.quoteRequests).toBe(0);
+  });
+
+  it("the lead source is whoever asked for the quote, not who started the thread", async () => {
+    const t = await thread({ quoteRequestedAt: oct(12) });
+    await msg(t, sep(10), "dana@gmail.com");
+    await msg(t, sep(11), "owner@shop.com", "out");
+    await msg(t, oct(12), "leads@mail.thumbtack.com");
+    expect((await stats()).leadSources).toEqual([{ label: "Thumbtack", count: 1 }]);
+  });
+
   it("A10: no Date reaches the driver from the monthly queries", () => {
     const q = monthlyStatsQueries(workspaceId, "electrical", OCT.start, OCT.end);
     for (const query of [q.requests, q.repeat]) {
@@ -451,6 +483,35 @@ describe("monthlyStats: repeat customers", () => {
     await request(T("2026-11-01T05:00:00Z"), "ann@x.com");
 
     expect((await stats()).repeatCustomers).toBe(1);
+  });
+
+  it("one job over two September threads that carries on in October is not a repeat customer", async () => {
+    // Dana: a quote request Sep 25 (thread A), her photos as a new email Sep 26 (thread B),
+    // then "When can you start?" on thread A on Oct 2. Same job, same conversation.
+    const a = await request(sep(25), "dana@x.com", { quoteRequestedAt: sep(25) });
+    await request(sep(26), "dana@x.com", { category: "customer_question" });
+    await msg(a, oct(2), "dana@x.com");
+    // Its question thread carrying on in October isn't new either.
+    const q = await request(sep(20), "dana2@x.com", { category: "customer_question" });
+    await request(sep(21), "dana2@x.com");
+    await msg(q, oct(3), "dana2@x.com");
+    expect((await stats()).repeatCustomers).toBe(0);
+  });
+
+  it("a past customer asking for a new job counts: a new thread, or a new request on an old one", async () => {
+    // Ed: a quote in September (thread X), a question in September (thread Y), then in
+    // October a new job asked for on Y — the request is new this month.
+    await request(sep(5), "ed@x.com", { quoteRequestedAt: sep(5) });
+    const y = await request(sep(15), "ed@x.com", {
+      category: "quote_request",
+      quoteRequestedAt: oct(6),
+    });
+    await msg(y, sep(16), "owner@shop.com", "out");
+    await msg(y, oct(6), "ed@x.com");
+    // Flo: a September job, then a brand-new thread in October.
+    await request(sep(8), "flo@x.com", { quoteRequestedAt: sep(8) });
+    await request(oct(9), "flo@x.com", { quoteRequestedAt: oct(9) });
+    expect((await stats()).repeatCustomers).toBe(2);
   });
 });
 
@@ -673,6 +734,98 @@ describe("sendMonthlySummaries", () => {
 
     expect(await sendMonthlySummaries(NOW, { send: sender })).toMatchObject({ sent: 2, failed: 0 });
     expect(sent.map((e) => e.to).sort()).toEqual(["owner@shop.com", "second@shop.com"]);
+  });
+
+  describe("Resend answers 'already sent' (409 invalid_idempotent_request: same key, changed body)", () => {
+    // An earlier try got the email out but its marker didn't save; the retry's body moved on
+    // ("waiting 41 minutes"), so Resend refuses it. The owner already has the email.
+    const already = async (e: OutgoingEmail) => {
+      sent.push(e);
+      return "already_sent" as const;
+    };
+    const digestMarker = async () =>
+      (
+        await database
+          .select({ d: businessProfiles.digestLastSentOn })
+          .from(businessProfiles)
+          .where(eq(businessProfiles.workspaceId, workspaceId))
+      )[0]?.d ?? null;
+    const digestRows = () =>
+      database
+        .select()
+        .from(activityLog)
+        .where(eq(activityLog.workspaceId, workspaceId))
+        .then((rows) => rows.filter((r) => r.action === "digest_sent"));
+    async function seedWithSomethingWaiting() {
+      await seedOctober();
+      // Something waiting today, so the morning summary is worth sending too.
+      await request(T("2026-10-31T20:00:00Z"), "kim@gmail.com", {
+        category: "complaint",
+        needsOwner: true,
+      });
+    }
+
+    it("both summaries record it as sent: marked, one Activity row each, no failure, no error alert", async () => {
+      await seedWithSomethingWaiting();
+      const digests = await sendDigests(NOW, { send: already });
+      const monthly = await sendMonthlySummaries(NOW, { send: already });
+      expect(sent.map((e) => e.idempotencyKey)).toEqual([
+        `digest-${workspaceId}-2026-11-01`,
+        `monthly-${workspaceId}-2026-10`,
+      ]);
+      expect(digests).toMatchObject({ sent: 1, failed: 0 });
+      expect(monthly).toMatchObject({ sent: 1, failed: 0 });
+      expect(() => reportSummaryFailures(digests, monthly)).not.toThrow();
+      expect(await digestMarker()).toBe("2026-11-01");
+      expect(await marker()).toBe("2026-10");
+      expect(await digestRows()).toHaveLength(1);
+      expect(await monthlyRows()).toHaveLength(1);
+
+      // The next hourly run is done for the day and the month: no send, no failure.
+      const later = T("2026-11-01T13:05:00Z");
+      expect(await sendDigests(later, { send: sender })).toMatchObject({ sent: 0, failed: 0 });
+      expect(await sendMonthlySummaries(later, { send: sender })).toMatchObject({
+        sent: 0,
+        failed: 0,
+      });
+      expect(sent).toHaveLength(2);
+      expect(await digestRows()).toHaveLength(1);
+      expect(await monthlyRows()).toHaveLength(1);
+    });
+
+    it("a run that overlapped one which already marked the day and month adds no second Activity row", async () => {
+      await seedWithSomethingWaiting();
+      // While this run's send is in flight, the other run finishes: marker + Activity row.
+      const otherRunFinishedFirst = async (e: OutgoingEmail) => {
+        sent.push(e);
+        const monthly = e.idempotencyKey.startsWith("monthly-");
+        await database
+          .insert(businessProfiles)
+          .values({ workspaceId })
+          .onConflictDoNothing({ target: businessProfiles.workspaceId });
+        await database
+          .update(businessProfiles)
+          .set(
+            monthly ? { monthlySummaryLastSentFor: "2026-10" } : { digestLastSentOn: "2026-11-01" },
+          )
+          .where(eq(businessProfiles.workspaceId, workspaceId));
+        await database.insert(activityLog).values({
+          workspaceId,
+          actor: "squared_away",
+          action: monthly ? "monthly_summary_sent" : "digest_sent",
+          detail: {},
+        });
+        return "already_sent" as const;
+      };
+      const digests = await sendDigests(NOW, { send: otherRunFinishedFirst });
+      const monthly = await sendMonthlySummaries(NOW, { send: otherRunFinishedFirst });
+      expect(digests).toMatchObject({ sent: 0, skipped: 1, failed: 0 });
+      expect(monthly).toMatchObject({ sent: 0, skipped: 1, failed: 0 });
+      expect(await digestMarker()).toBe("2026-11-01");
+      expect(await marker()).toBe("2026-10");
+      expect(await digestRows()).toHaveLength(1);
+      expect(await monthlyRows()).toHaveLength(1);
+    });
   });
 });
 

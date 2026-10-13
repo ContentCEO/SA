@@ -28,6 +28,7 @@ import {
   queueDeepLink,
 } from "@/server/leads-at-risk-rules";
 import { saveConnectedMailbox } from "@/server/mailboxes";
+import { listQuotes } from "@/server/quotes";
 import { savePushSubscription } from "@/server/push-alerts";
 import { createTestDb } from "../support/db";
 
@@ -59,6 +60,8 @@ const TUE_12_59_NY = new Date("2026-10-13T16:59:00Z");
 const FRI_17_NY = new Date("2026-10-16T21:00:00Z");
 const SAT_17_NY = new Date("2026-10-17T21:00:00Z");
 const MON_9_NY = new Date("2026-10-19T13:00:00Z");
+/** A forward's subject (Gmail keeps the forward in the customer's conversation). */
+const FWD = "Fwd: SECRET-SUBJECT";
 
 let database: Database;
 let workspaceId: string;
@@ -82,12 +85,19 @@ async function synced(now: Date, box = mailboxId) {
   await database.update(mailboxes).set({ lastSyncedAt: now }).where(eq(mailboxes.id, box));
 }
 
+/**
+ * An email on the thread. The customer's come from `from`; the owner's go to `from` (the
+ * customer) unless `to` says otherwise, lowercased as sync stores them. A forward is told
+ * apart by its subject ("Fwd: …").
+ */
 async function msg(
   threadId: string,
   direction: "in" | "out",
   sentAt: Date,
   from = "SECRET-dana@customer.example",
   box = mailboxId,
+  to = direction === "in" ? "owner@shop.com" : from,
+  subject = "SECRET-SUBJECT",
 ) {
   n += 1;
   await database.insert(messages).values({
@@ -97,7 +107,8 @@ async function msg(
     direction,
     fromName: direction === "in" ? "SECRET Dana" : "Owner",
     fromAddress: direction === "in" ? from : "owner@shop.com",
-    subject: "SECRET-SUBJECT",
+    toAddresses: [to.toLowerCase()],
+    subject,
     bodyText: "SECRET-BODY",
     sentAt,
   });
@@ -247,6 +258,40 @@ describe("#34 which leads are at risk", () => {
     expect(await ids(TUE_13_01_NY)).toEqual([big, drafted]);
   });
 
+  it("GUARDRAIL: a Gmail draft older sync stored as the owner's mail is no answer, checked or not", async () => {
+    // Old sync stored every Gmail draft (ours too) as an 'out' message from the owner. A sent
+    // draft is a new message in Gmail, so a row still labelled DRAFT never answers the lead —
+    // before the cleanup has looked at it, and in a mailbox the cleanup had to skip.
+    const ownerRow = async (threadId: string, labelIds: string[], sentAt: Date) => {
+      n += 1;
+      await database.insert(messages).values({
+        threadId,
+        mailboxId,
+        gmailMessageId: `m-${n}`,
+        direction: "out",
+        fromAddress: "owner@shop.com",
+        toAddresses: ["secret-dana@customer.example"],
+        labelIds,
+        sentAt,
+      });
+      await database.update(threads).set({ lastMessageAt: sentAt }).where(eq(threads.id, threadId));
+    };
+    const drafted = await lead(TUE_9_NY);
+    await draft(drafted);
+    await ownerRow(drafted, ["DRAFT"], plus(TUE_9_NY, min(1)));
+    // Real sent mail answers it: SENT, or DRAFT and SENT together.
+    const sent = await lead(TUE_9_NY);
+    await ownerRow(sent, ["SENT"], plus(TUE_9_NY, min(1)));
+    const both = await lead(TUE_9_NY);
+    await ownerRow(both, ["DRAFT", "SENT"], plus(TUE_9_NY, min(1)));
+    await synced(TUE_13_01_NY);
+
+    const leads = await leadsAtRisk(workspaceId, TUE_13_01_NY, NY);
+    expect(leads.map((l) => l.threadId)).toEqual([drafted]);
+    // Waiting since the customer's email, not since the draft.
+    expect(leads[0]!.waitingSince.toISOString()).toBe(TUE_9_NY.toISOString());
+  });
+
   it("waits from the first email after the owner's last one (customer wrote twice)", async () => {
     const now = new Date("2026-10-13T21:00:00Z"); // Tue 5pm
     const t = await lead(plus(TUE_9_NY, -hrs(24))); // Monday 9am
@@ -256,6 +301,360 @@ describe("#34 which leads are at risk", () => {
     await synced(now);
     const [l] = await leadsAtRisk(workspaceId, now, NY);
     expect(l!.waitingSince.toISOString()).toBe(TUE_9_NY.toISOString());
+  });
+
+  it("a lead forwarded to the crew is still waiting; a forward that includes the customer answers it", async () => {
+    const t = await lead(TUE_9_NY);
+    // 9:05: the owner forwards it to the estimator; Gmail keeps the forward in the thread.
+    await msg(t, "out", plus(TUE_9_NY, min(5)), undefined, mailboxId, "crew@shop.com", FWD);
+    await synced(TUE_13_01_NY);
+    const [l] = await leadsAtRisk(workspaceId, TUE_13_01_NY, NY);
+    expect(l?.threadId).toBe(t);
+    expect(l!.waitingSince.toISOString()).toBe(TUE_9_NY.toISOString());
+
+    // A forward with the customer in Cc does answer them.
+    n += 1;
+    await database.insert(messages).values({
+      threadId: t,
+      mailboxId,
+      gmailMessageId: `m-${n}`,
+      direction: "out",
+      fromAddress: "owner@shop.com",
+      toAddresses: ["spouse@customer.example"],
+      ccAddresses: ["secret-dana@customer.example"],
+      subject: FWD,
+      sentAt: plus(TUE_9_NY, hrs(1)),
+    });
+    expect(await ids(TUE_13_01_NY)).toEqual([]);
+  });
+
+  it("the crew's reply to a forward is no wait: once the owner has answered the customer, the lead is answered", async () => {
+    const t = await lead(TUE_9_NY);
+    await msg(t, "out", plus(TUE_9_NY, min(5)), undefined, mailboxId, "crew@shop.com", FWD);
+    // 9:30 the estimator replies to the forward, inside the same Gmail thread.
+    await msg(
+      t,
+      "in",
+      plus(TUE_9_NY, min(30)),
+      "crew@shop.com",
+      mailboxId,
+      "owner@shop.com",
+      `Re: ${FWD}`,
+    );
+    await synced(TUE_13_01_NY);
+    // Still the customer waiting, since 9:00 (not the crew since 9:30).
+    const [l] = await leadsAtRisk(workspaceId, TUE_13_01_NY, NY);
+    expect(l?.threadId).toBe(t);
+    expect(l!.waitingSince.toISOString()).toBe(TUE_9_NY.toISOString());
+
+    // 10:00 the owner replies to the customer: answered at 2:01pm.
+    await msg(t, "out", plus(TUE_9_NY, hrs(1)));
+    const at1401 = new Date("2026-10-13T18:01:00Z");
+    await synced(at1401);
+    expect(await ids(at1401)).toEqual([]);
+
+    // The crew writes again on the forward afterwards ("RE: FW:", any case): still answered.
+    await msg(
+      t,
+      "in",
+      plus(TUE_9_NY, hrs(2)),
+      "crew@shop.com",
+      mailboxId,
+      "owner@shop.com",
+      "RE: FW: x",
+    );
+    // Hours later (past 4 business hours from the crew's email), still answered.
+    const at1601 = new Date("2026-10-13T20:01:00Z");
+    await synced(at1601);
+    expect(await ids(at1601)).toEqual([]);
+  });
+
+  it("the customer's own forward (\"Fwd: photos\") after the owner's answer is a new wait", async () => {
+    const t = await lead(TUE_9_NY);
+    await msg(t, "out", plus(TUE_9_NY, min(30)));
+    await msg(t, "in", plus(TUE_9_NY, hrs(1)), undefined, mailboxId, "owner@shop.com", FWD);
+    const at1401 = new Date("2026-10-13T18:01:00Z");
+    await synced(at1401);
+    const [l] = await leadsAtRisk(workspaceId, at1401, NY);
+    expect(l?.threadId).toBe(t);
+    expect(l!.waitingSince.toISOString()).toBe(plus(TUE_9_NY, hrs(1)).toISOString());
+  });
+
+  it("a Cc'd spouse's '+1' before the owner's reply to the customer leaves nothing waiting", async () => {
+    const t = await lead(TUE_9_NY);
+    await msg(t, "in", plus(TUE_9_NY, min(10)), "spouse@customer.example");
+    await msg(t, "out", plus(TUE_9_NY, hrs(1))); // to the customer only
+    await synced(TUE_13_01_NY);
+    expect(await ids(TUE_13_01_NY)).toEqual([]);
+  });
+
+  it("a contact-form lead answered from Gmail (to the Reply-To address) is answered", async () => {
+    // The form's relay sends it with Reply-To set to the customer (not stored); the owner's
+    // reply goes to the customer's own address, never back to the relay.
+    const t = await lead(TUE_9_NY, {}, { from: "wordpress@secret-site.example" });
+    await msg(t, "out", plus(TUE_9_NY, hrs(1)), "secret-dana@customer.example");
+    await synced(TUE_13_01_NY);
+    expect(await ids(TUE_13_01_NY)).toEqual([]);
+  });
+
+  it("a bounce after the owner's reply to the customer leaves no lead waiting", async () => {
+    const t = await lead(TUE_9_NY);
+    await msg(t, "out", plus(TUE_9_NY, min(30)));
+    await msg(t, "in", plus(TUE_9_NY, min(31)), "mailer-daemon@googlemail.com");
+    await synced(TUE_13_01_NY);
+    expect(await ids(TUE_13_01_NY)).toEqual([]);
+  });
+
+  it("a forward doesn't count as the owner having written on a re-sorted quote request (A11)", async () => {
+    const t = await lead(plus(TUE_9_NY, -hrs(1)), {
+      category: "customer_question",
+      quoteRequestedAt: plus(TUE_9_NY, -hrs(1)),
+    });
+    await msg(t, "out", plus(TUE_9_NY, -min(30)), undefined, mailboxId, "crew@shop.com", FWD);
+    await msg(t, "in", TUE_9_NY);
+    await synced(TUE_13_01_NY);
+    const [l] = await leadsAtRisk(workspaceId, TUE_13_01_NY, NY);
+    expect(l?.threadId).toBe(t);
+    expect(l!.waitingSince.toISOString()).toBe(plus(TUE_9_NY, -hrs(1)).toISOString());
+  });
+
+  it("GUARDRAIL: an unsent Gmail draft to the customer isn't the owner having written on a re-sorted quote request", async () => {
+    const t = await lead(TUE_9_NY, { category: "customer_question", quoteRequestedAt: TUE_9_NY });
+    n += 1;
+    await database.insert(messages).values({
+      threadId: t,
+      mailboxId,
+      gmailMessageId: `m-${n}`,
+      direction: "out",
+      fromAddress: "owner@shop.com",
+      toAddresses: ["secret-dana@customer.example"],
+      labelIds: ["DRAFT"],
+      // Before the customer's latest email, so only the "has the owner written" check sees it.
+      sentAt: plus(TUE_9_NY, -min(30)),
+    });
+    await msg(t, "in", plus(TUE_9_NY, min(1)));
+    await synced(TUE_13_01_NY);
+    const [l] = await leadsAtRisk(workspaceId, TUE_13_01_NY, NY);
+    expect(l?.threadId).toBe(t);
+  });
+
+  it("a forwarded lead with no queue card links to Quotes, where it's waiting on you", async () => {
+    const t = await lead(TUE_9_NY);
+    await msg(t, "out", plus(TUE_9_NY, min(5)), undefined, mailboxId, "crew@shop.com", FWD);
+    await msg(
+      t,
+      "in",
+      plus(TUE_9_NY, min(30)),
+      "crew@shop.com",
+      mailboxId,
+      "owner@shop.com",
+      `Re: ${FWD}`,
+    );
+    await synced(TUE_13_01_NY);
+    expect(await ids(TUE_13_01_NY)).toEqual([t]);
+    const c = await digestCounts(workspaceId, TUE_13_01_NY, NY);
+    expect(c.leadsAtRiskOffQueue).toBe(1);
+    const { quotes } = await listQuotes(workspaceId, TUE_13_01_NY);
+    expect(quotes.find((q) => q.threadId === t)?.stage).toBe("waiting_on_you");
+  });
+
+  it("on Quotes, the crew's reply to a forward after the owner's quote isn't the customer writing", async () => {
+    const t = await lead(TUE_9_NY);
+    await msg(t, "out", plus(TUE_9_NY, hrs(1))); // the quote, to the customer
+    await msg(t, "out", plus(TUE_9_NY, hrs(1.5)), undefined, mailboxId, "crew@shop.com", FWD);
+    await msg(
+      t,
+      "in",
+      plus(TUE_9_NY, hrs(2)),
+      "crew@shop.com",
+      mailboxId,
+      "owner@shop.com",
+      `Re: ${FWD}`,
+    );
+    const { quotes } = await listQuotes(workspaceId, TUE_13_01_NY);
+    expect(quotes.find((q) => q.threadId === t)?.stage).toBe("talking");
+  });
+
+  /** Any email on the thread, with explicit To / Cc and subject (addresses as sync stores them). */
+  async function mail(
+    threadId: string,
+    m: {
+      direction: "in" | "out";
+      at: Date;
+      from?: string;
+      to: string[];
+      cc?: string[];
+      subject: string;
+    },
+  ) {
+    n += 1;
+    await database.insert(messages).values({
+      threadId,
+      mailboxId,
+      gmailMessageId: `m-${n}`,
+      direction: m.direction,
+      fromAddress: m.from ?? "owner@shop.com",
+      toAddresses: m.to,
+      ccAddresses: m.cc ?? [],
+      subject: m.subject,
+      sentAt: m.at,
+    });
+  }
+  /** A lead that arrived as someone else's forward (a friend, an office, a property manager). */
+  async function forwardedLead(from: string, cc: string[], subject = "Fwd: SECRET-SUBJECT") {
+    n += 1;
+    const [t] = await database
+      .insert(threads)
+      .values({
+        mailboxId,
+        gmailThreadId: `t-${n}`,
+        inInbox: true,
+        category: "quote_request",
+        priority: "normal",
+        subject,
+        classifiedAt: TUE_9_NY,
+        lastMessageAt: TUE_9_NY,
+      })
+      .returning();
+    await mail(t!.id, { direction: "in", at: TUE_9_NY, from, to: ["owner@shop.com"], cc, subject });
+    return t!.id;
+  }
+  const at1401 = new Date("2026-10-13T18:01:00Z");
+
+  it("a friend's referral with the customer in Cc: the customer's 'Re: Fwd:' after the owner's reply-all is a wait", async () => {
+    const t = await forwardedLead("friend@pal.example", ["cust@home.example"]);
+    // 9:30 the owner replies to all (the friend, the customer in Cc).
+    await mail(t, {
+      direction: "out",
+      at: plus(TUE_9_NY, min(30)),
+      to: ["friend@pal.example"],
+      cc: ["cust@home.example"],
+      subject: "Re: Fwd: SECRET-SUBJECT",
+    });
+    // 10:00 the customer asks for a price, in the same thread.
+    await mail(t, {
+      direction: "in",
+      at: plus(TUE_9_NY, hrs(1)),
+      from: "cust@home.example",
+      to: ["owner@shop.com"],
+      cc: ["friend@pal.example"],
+      subject: "Re: Fwd: SECRET-SUBJECT",
+    });
+    await synced(at1401);
+    const [l] = await leadsAtRisk(workspaceId, at1401, NY);
+    expect(l?.threadId).toBe(t);
+    expect(l!.waitingSince.toISOString()).toBe(plus(TUE_9_NY, hrs(1)).toISOString());
+    const { quotes } = await listQuotes(workspaceId, at1401);
+    expect(quotes.find((q) => q.threadId === t)?.stage).toBe("waiting_on_you");
+  });
+
+  it("a property manager's forward with the tenant in Cc: the owner's reply to the tenant answers it", async () => {
+    const t = await forwardedLead("office@pm.example", ["tenant@home.example"]);
+    await mail(t, {
+      direction: "out",
+      at: plus(TUE_9_NY, min(30)),
+      to: ["tenant@home.example"],
+      subject: "Re: Fwd: SECRET-SUBJECT",
+    });
+    await synced(TUE_13_01_NY);
+    expect(await ids(TUE_13_01_NY)).toEqual([]);
+  });
+
+  it("an office's forward with the customer only in the text: the owner's 'Re: Fwd:' to the customer answers it", async () => {
+    // The customer was never on a header; the lead itself arrived as a forward.
+    const t = await forwardedLead("office@pm.example", []);
+    await mail(t, {
+      direction: "out",
+      at: plus(TUE_9_NY, min(30)),
+      to: ["tenant@home.example"],
+      subject: "Re: Fwd: SECRET-SUBJECT",
+    });
+    await synced(TUE_13_01_NY);
+    expect(await ids(TUE_13_01_NY)).toEqual([]);
+  });
+
+  it("someone the customer Cc'd is on the customer's side: a forward to them answers the lead", async () => {
+    const t = await lead(TUE_9_NY);
+    await database
+      .update(messages)
+      .set({ ccAddresses: ["spouse@customer.example"] })
+      .where(eq(messages.threadId, t));
+    await mail(t, {
+      direction: "out",
+      at: plus(TUE_9_NY, min(30)),
+      to: ["spouse@customer.example"],
+      subject: FWD,
+    });
+    await synced(TUE_13_01_NY);
+    expect(await ids(TUE_13_01_NY)).toEqual([]);
+  });
+
+  it("a 'Re:' sent only to the crew on the owner's own domain answers nobody (nor does their reply)", async () => {
+    const t = await lead(TUE_9_NY);
+    // 9:05 the owner hits Reply, changes To to the estimator: "Can you price this?"
+    await mail(t, {
+      direction: "out",
+      at: plus(TUE_9_NY, min(5)),
+      to: ["crew@shop.com"],
+      subject: "Re: SECRET-SUBJECT",
+    });
+    await mail(t, {
+      direction: "in",
+      at: plus(TUE_9_NY, min(30)),
+      from: "crew@shop.com",
+      to: ["owner@shop.com"],
+      subject: "Re: SECRET-SUBJECT",
+    });
+    // 9:40 the owner answers the estimator again: still the crew.
+    await mail(t, {
+      direction: "out",
+      at: plus(TUE_9_NY, min(40)),
+      to: ["crew@shop.com"],
+      subject: "Re: SECRET-SUBJECT",
+    });
+    await synced(TUE_13_01_NY);
+    const [l] = await leadsAtRisk(workspaceId, TUE_13_01_NY, NY);
+    expect(l?.threadId).toBe(t);
+    expect(l!.waitingSince.toISOString()).toBe(TUE_9_NY.toISOString());
+  });
+
+  it("the estimator introduced to the customer ('Dana, meet Mike'): Mike's reply-all isn't the customer writing", async () => {
+    const t = await lead(TUE_9_NY);
+    await mail(t, {
+      direction: "out",
+      at: plus(TUE_9_NY, min(30)),
+      to: ["secret-dana@customer.example"],
+      cc: ["crew@shop.com"],
+      subject: "Re: SECRET-SUBJECT",
+    });
+    await mail(t, {
+      direction: "in",
+      at: plus(TUE_9_NY, hrs(1)),
+      from: "crew@shop.com",
+      to: ["owner@shop.com"],
+      cc: ["secret-dana@customer.example"],
+      subject: "Re: SECRET-SUBJECT",
+    });
+    await synced(at1401);
+    expect(await ids(at1401)).toEqual([]);
+  });
+
+  it("on a webmail mailbox, a 'Re:' to another webmail address answers the lead (a contact-form customer)", async () => {
+    // owner@gmail.com and the customer's dana@gmail.com share a domain with strangers.
+    await database
+      .update(mailboxes)
+      .set({ email: "owner@gmail.com" })
+      .where(eq(mailboxes.id, mailboxId));
+    const t = await lead(TUE_9_NY, {}, { from: "wordpress@secret-site.example" });
+    await mail(t, {
+      direction: "out",
+      at: plus(TUE_9_NY, hrs(1)),
+      from: "owner@gmail.com",
+      to: ["dana@gmail.com"],
+      subject: "Re: SECRET-SUBJECT",
+    });
+    await synced(TUE_13_01_NY);
+    expect(await ids(TUE_13_01_NY)).toEqual([]);
   });
 
   it("emergencies first, then whoever has waited longest", async () => {
@@ -497,6 +896,73 @@ describe("#34 the push", () => {
     const wed7LA = new Date("2026-10-14T14:00:00Z");
     await synced(wed7LA);
     expect(await sendLeadAtRiskPushes(wed7LA, { push })).toEqual({ sent: 1 });
+  });
+
+  it("the 3 a day are each owner's own: two owners each get 3, and one at the cap never stops another", async () => {
+    const other = await ensureUserAndWorkspace({ email: "other@shop.com" });
+    await database
+      .update(workspaces)
+      .set({ status: "active", setupPaidVia: "stripe" })
+      .where(eq(workspaces.id, other.workspace.id));
+    await setTimeZone(NY, other.workspace.id);
+    const box = (
+      await saveConnectedMailbox(other.workspace, {
+        email: "other@shop.com",
+        refreshToken: "rt",
+        grantedScopes: [],
+      })
+    ).id;
+    const OTHER = "https://fcm.googleapis.com/fcm/send/other";
+    await savePushSubscription(other.workspace.id, OTHER);
+
+    // Tue 5:00, 5:11, 5:22, 5:33pm New York: a new lead for each owner every run.
+    const runs = [0, 11, 22, 33].map((m) => plus(new Date("2026-10-13T21:00:00Z"), min(m)));
+    const results = [];
+    for (const now of runs) {
+      await lead(TUE_9_NY);
+      await lead(TUE_9_NY, {}, { box });
+      await synced(now);
+      await synced(now, box);
+      results.push((await sendLeadAtRiskPushes(now, { push })).sent);
+    }
+    expect(results).toEqual([2, 2, 2, 0]);
+    const rows = await logs();
+    expect(rows.filter((r) => r.workspaceId === workspaceId)).toHaveLength(3);
+    expect(rows.filter((r) => r.workspaceId === other.workspace.id)).toHaveLength(3);
+  });
+
+  it("another owner's 3 pushes today don't use up this owner's allowance", async () => {
+    const other = await ensureUserAndWorkspace({ email: "other@shop.com" });
+    await database
+      .update(workspaces)
+      .set({ status: "active", setupPaidVia: "stripe" })
+      .where(eq(workspaces.id, other.workspace.id));
+    await setTimeZone(NY, other.workspace.id);
+    const box = (
+      await saveConnectedMailbox(other.workspace, {
+        email: "other@shop.com",
+        refreshToken: "rt",
+        grantedScopes: [],
+      })
+    ).id;
+    const OTHER = "https://fcm.googleapis.com/fcm/send/other";
+    await savePushSubscription(other.workspace.id, OTHER);
+    // The other owner already had their 3 today (Tue 10am, 11am, noon New York).
+    for (const h of [14, 15, 16])
+      await database.insert(activityLog).values({
+        workspaceId: other.workspace.id,
+        actor: "squared_away",
+        action: "lead_at_risk_push_sent",
+        detail: { leads: 1, phones: 1 },
+        createdAt: new Date(`2026-10-13T${h}:00:00Z`),
+      });
+    await lead(TUE_9_NY);
+    await lead(TUE_9_NY, {}, { box });
+    await synced(TUE_13_01_NY);
+    await synced(TUE_13_01_NY, box);
+
+    expect(await sendLeadAtRiskPushes(TUE_13_01_NY, { push })).toEqual({ sent: 1 });
+    expect(pushed).toEqual([FCM]);
   });
 
   it("only inside business hours, and never in quiet hours whatever the business hours say", async () => {

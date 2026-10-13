@@ -5,7 +5,7 @@ import type { Database } from "@/db";
 import { activityLog, mailboxes, messages, threads } from "@/db/schema";
 import { ensureUserAndWorkspace } from "@/server/accounts";
 import { saveConnectedMailbox } from "@/server/mailboxes";
-import { incrementalSync, purgeExpiredBodies, runBackfill } from "@/server/sync";
+import { incrementalSync, purgeExpiredBodies, recordSentMessage, runBackfill } from "@/server/sync";
 import { createTestDb } from "../support/db";
 import { FakeMailbox } from "../support/fake-mailbox";
 
@@ -104,6 +104,114 @@ describe("incremental sync", () => {
       status: "skipped",
       reason: "not_ready",
     });
+  });
+
+  it("never stores a Gmail draft; the SENT message that replaces it is stored as the owner's", async () => {
+    const owner = (id: string) => ({
+      from: "Owner <owner@shop.com>",
+      to: "customer-t1@example.com",
+      subject: "Re: Subject t1",
+      messageId: `<${id}@shop.com>`,
+    });
+    fake.add({ id: "m1", threadId: "t1", daysAgo: 2 });
+    // A draft already there at backfill (ours or the owner's), and a draft-only thread.
+    fake.add({ id: "d0", threadId: "t1", labelIds: ["DRAFT"], headers: owner("d0"), daysAgo: 1 });
+    fake.add({ id: "d9", threadId: "t9", labelIds: ["DRAFT"], headers: owner("d9"), daysAgo: 1 });
+    expect(await runBackfill(mailboxId, deps())).toMatchObject({ status: "ok", ingested: 1 });
+
+    // History reports a new draft (messageAdded), then — if Gmail sends it as a new message —
+    // the sent copy (new id, SENT). The same-id case is the next test.
+    fake.add({ id: "d1", threadId: "t1", labelIds: ["DRAFT"], headers: owner("d1"), daysAgo: 0.5 });
+    expect(await incrementalSync(mailboxId, deps())).toMatchObject({ status: "ok", ingested: 0 });
+    const [t1] = await database.select().from(threads).where(eq(threads.gmailThreadId, "t1"));
+    expect(t1!.lastMessageAt!.getTime()).toBe(NOW.getTime() - 2 * 86_400_000); // didn't move
+    fake.add({ id: "s1", threadId: "t1", labelIds: ["SENT"], headers: owner("s1"), daysAgo: 0.25 });
+    expect(await incrementalSync(mailboxId, deps())).toMatchObject({ status: "ok", ingested: 1 });
+
+    const rows = await database.select().from(messages);
+    expect(rows.map((r) => [r.gmailMessageId, r.direction]).sort()).toEqual([
+      ["m1", "in"],
+      ["s1", "out"],
+    ]);
+    expect(await database.select().from(threads)).toHaveLength(1); // no thread for d9
+    const [after] = await database.select().from(threads).where(eq(threads.gmailThreadId, "t1"));
+    expect(after!.lastMessageAt!.getTime()).toBe(NOW.getTime() - 0.25 * 86_400_000);
+  });
+
+  it("a draft Gmail sends under the same id (DRAFT → SENT) is stored as the owner's reply", async () => {
+    const owner = {
+      from: "Owner <owner@shop.com>",
+      to: "customer-t1@example.com",
+      subject: "Re: Subject t1",
+      messageId: "<d1@shop.com>",
+    };
+    fake.add({ id: "m1", threadId: "t1", daysAgo: 2 });
+    await runBackfill(mailboxId, deps());
+    fake.add({ id: "d1", threadId: "t1", labelIds: ["DRAFT"], headers: owner, daysAgo: 0.5 });
+    expect(await incrementalSync(mailboxId, deps())).toMatchObject({ ingested: 0 });
+    // Sent: Gmail keeps the id and swaps the label; history reports the SENT label added.
+    fake.relabel("d1", ["SENT"], 0.25);
+    expect(await incrementalSync(mailboxId, deps())).toMatchObject({ status: "ok", ingested: 1 });
+    const [d1] = await database.select().from(messages).where(eq(messages.gmailMessageId, "d1"));
+    expect(d1).toMatchObject({ direction: "out", labelIds: ["SENT"] });
+    const [t1] = await database.select().from(threads).where(eq(threads.gmailThreadId, "t1"));
+    expect(t1!.lastMessageAt!.getTime()).toBe(NOW.getTime() - 0.25 * 86_400_000);
+  });
+
+  it("a row older code stored as a draft is updated in place once Gmail says it was sent", async () => {
+    fake.add({ id: "m1", threadId: "t1", daysAgo: 2 });
+    await runBackfill(mailboxId, deps());
+    const [t1] = await database.select().from(threads);
+    // Stored by the old sync while it was a draft (the app's own, say).
+    await database.insert(messages).values({
+      threadId: t1!.id,
+      mailboxId,
+      gmailMessageId: "old-draft",
+      direction: "out",
+      fromAddress: "owner@shop.com",
+      labelIds: ["DRAFT"],
+      bodyText: "Draft text",
+      sentAt: new Date(NOW.getTime() - 86_400_000),
+    });
+    fake.add({
+      id: "old-draft",
+      threadId: "t1",
+      labelIds: ["DRAFT"],
+      headers: { from: "owner@shop.com", to: "customer-t1@example.com" },
+      daysAgo: 1,
+    });
+    fake.relabel("old-draft", ["SENT"], 0.5);
+    // A label change on mail already stored as real mail is never refetched or rewritten.
+    fake.relabel("m1", ["INBOX", "IMPORTANT"]);
+    fake.bodyFetches = [];
+    const calls = fake.calls;
+    expect(await incrementalSync(mailboxId, deps())).toMatchObject({ status: "ok", ingested: 1 });
+    const rows = await database.select().from(messages);
+    const byId = Object.fromEntries(rows.map((r) => [r.gmailMessageId, r]));
+    expect(rows).toHaveLength(2);
+    expect(byId["old-draft"]).toMatchObject({
+      direction: "out",
+      labelIds: ["SENT"],
+      sentAt: new Date(NOW.getTime() - 0.5 * 86_400_000),
+    });
+    expect(byId.m1!.labelIds).toEqual(["INBOX"]);
+    // history + metadata and body for old-draft only.
+    expect(fake.calls - calls).toBe(3);
+    expect(fake.bodyFetches).toEqual(["old-draft"]);
+  });
+
+  it("a thread's time comes from its stored messages, not from what was read before", async () => {
+    fake.add({ id: "m1", threadId: "t1", daysAgo: 3 });
+    await runBackfill(mailboxId, deps());
+    // A time no stored message has (a draft row the cleanup removed after sync read the thread).
+    await database
+      .update(threads)
+      .set({ lastMessageAt: new Date(NOW.getTime() - 0.1 * 86_400_000) })
+      .where(eq(threads.gmailThreadId, "t1"));
+    fake.add({ id: "m2", threadId: "t1", daysAgo: 2 });
+    await incrementalSync(mailboxId, deps());
+    const [t1] = await database.select().from(threads);
+    expect(t1!.lastMessageAt!.getTime()).toBe(NOW.getTime() - 2 * 86_400_000);
   });
 
   it("falls back to re-reading the last week when the cursor has expired", async () => {
@@ -217,5 +325,46 @@ describe("retention purge", () => {
 
     // Running it again does nothing.
     expect(await purgeExpiredBodies(later, 30)).toBe(0);
+  });
+});
+
+describe("storing an app send alongside a sync", () => {
+  it("merges the thread's addresses: a sync writing meanwhile loses none", async () => {
+    const [mailbox] = await database.select().from(mailboxes).where(eq(mailboxes.id, mailboxId));
+    await database.insert(threads).values({
+      mailboxId,
+      gmailThreadId: "t1",
+      inInbox: true,
+      participants: ["dana@customer.com"],
+      lastMessageAt: new Date(NOW.getTime() - 3_600_000),
+    });
+    const sentMessage = {
+      providerMessageId: "sent-1",
+      providerThreadId: "t1",
+      labelIds: ["SENT"],
+      snippet: "",
+      internalDate: NOW.getTime(),
+      headers: { from: "owner@shop.com", to: "dana@customer.com", cc: "sam@customer.com" },
+    };
+    const reader = {
+      getMessage: async (_id: string, { withBody }: { withBody: boolean }) => {
+        // After the send read the thread, a sync of the same thread adds an address.
+        if (withBody)
+          await database
+            .update(threads)
+            .set({ participants: ["dana@customer.com", "lee@customer.com"] })
+            .where(eq(threads.gmailThreadId, "t1"));
+        return { ...sentMessage, bodyText: withBody ? "Thursday works." : undefined };
+      },
+    };
+    expect(await recordSentMessage(mailbox!, reader, { id: "sent-1", threadId: "t1" }, NOW)).toBe(
+      1,
+    );
+    const [t] = await database.select().from(threads).where(eq(threads.gmailThreadId, "t1"));
+    expect([...t!.participants].sort()).toEqual([
+      "dana@customer.com",
+      "lee@customer.com",
+      "sam@customer.com",
+    ]);
   });
 });

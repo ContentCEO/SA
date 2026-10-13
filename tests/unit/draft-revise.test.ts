@@ -129,6 +129,41 @@ describe("#3 quick tweaks and #4 voice edits", () => {
     expect(after!.flags.join(" ")).toContain("$700");
   });
 
+  it("GUARDRAIL: an unsent Gmail draft stored by old sync is no part of the conversation", async () => {
+    const d = await pendingDraft();
+    // Old sync stored the owner's unsent Gmail draft as their mail, before this draft.
+    const stored = async (labelIds: string[], id: string) =>
+      database.insert(messages).values({
+        threadId: d.threadId,
+        mailboxId,
+        gmailMessageId: id,
+        direction: "out",
+        fromAddress: "owner@shop.com",
+        labelIds,
+        bodyText: `SECRET-${id}: it's $1,234 all in.`,
+        sentAt: new Date(d.createdAt.getTime() - 60_000),
+      });
+    await stored(["DRAFT"], "unsent");
+    const reply = draft("Hi Dana, it's $1,234 all in.");
+    const { transport, calls } = fakeTransport([reply, reply]);
+    setModelTransportForTests(transport);
+    await reviseDraft(workspaceId, d.id, { tweak: "warmer" }, deps());
+    // Never shown to the model, and its figure isn't a fact the reply may use.
+    expect(JSON.stringify(calls)).not.toContain("SECRET-unsent");
+    const [after] = await database.select().from(drafts);
+    expect(after!.flags.join(" ")).toContain("$1,234");
+
+    // Really sent (labelled SENT as well): it's the owner's mail, and the figure is theirs.
+    await stored(["DRAFT", "SENT"], "sent");
+    await database.update(drafts).set({ flags: [] }).where(eq(drafts.id, d.id));
+    const again = fakeTransport([reply]);
+    setModelTransportForTests(again.transport);
+    await reviseDraft(workspaceId, d.id, { tweak: "warmer" }, deps());
+    expect(JSON.stringify(again.calls)).toContain("SECRET-sent");
+    const [last] = await database.select().from(drafts);
+    expect(last!.flags.join(" ")).not.toContain("$1,234");
+  });
+
   it("what the owner says counts as a fact; the log never holds their words", async () => {
     const d = await pendingDraft();
     const said = "make it Tuesday at 8am and say it's $450";

@@ -40,6 +40,19 @@ export class FakeMailbox {
     });
   }
 
+  /**
+   * Change a message's labels in place (same id), as Gmail may do when a draft is sent
+   * (DRAFT → SENT). History reports it (a label added), so it shows up in `listHistory`.
+   */
+  relabel(id: string, labelIds: string[], daysAgo?: number) {
+    const m = this.messages.find((x) => x.providerMessageId === id)!;
+    this.history += 1;
+    m.labelIds = labelIds;
+    m.historyId = this.history;
+    if (daysAgo !== undefined)
+      m.internalDate = new Date("2026-09-28T12:00:00Z").getTime() - daysAgo * 86_400_000;
+  }
+
   reader(pageSize = 2): MailboxReader {
     const guard = () => {
       this.calls++;

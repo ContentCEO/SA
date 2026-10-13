@@ -3,6 +3,7 @@ import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { mailboxes, threads } from "@/db/schema";
 import { FOLLOWUP_CATEGORIES, followupSettings, MAX_FOLLOWUPS } from "./drafts";
+import { lastInSql, lastOutSql } from "./thread-sql";
 
 /** Don't chase anything the owner last wrote about more than this long ago. */
 export const FOLLOWUP_MAX_AGE_DAYS = 21;
@@ -39,8 +40,10 @@ export async function threadsToFollowUp(
 
   const quietSince = new Date(now.getTime() - settings.days * 86_400_000).toISOString();
   const notBefore = new Date(now.getTime() - FOLLOWUP_MAX_AGE_DAYS * 86_400_000).toISOString();
-  const lastIn = sql`(select max(m.sent_at) from messages m where m.thread_id = ${threads.id} and m.direction = 'in')`;
-  const lastOut = sql`(select max(m.sent_at) from messages m where m.thread_id = ${threads.id} and m.direction = 'out')`;
+  // The shared "who wrote last": an unsent Gmail draft isn't the owner writing, and a lead
+  // forwarded to the crew was never quoted, so it gets no "following up on my quote" nudge.
+  const lastIn = lastInSql();
+  const lastOut = lastOutSql();
   const lastDraft = sql`(select max(d.created_at) from drafts d where d.thread_id = ${threads.id})`;
   const sentNudges = sql`(select count(*) from drafts d where d.thread_id = ${threads.id} and d.kind = 'followup' and d.status in ('sent', 'edited_and_sent'))`;
   const pending = sql`exists (select 1 from drafts d where d.thread_id = ${threads.id} and d.status = 'pending')`;

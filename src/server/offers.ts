@@ -15,6 +15,7 @@ import {
   type ReviewOfferReason,
 } from "./offer-rules";
 import { isQuoteThread } from "./quote-rules";
+import { notDraftSql } from "./thread-sql";
 
 /**
  * Which owner-tap offers a thread gets (plan #29 "Ask for a review", #26 "Want to ask if
@@ -54,7 +55,7 @@ async function threadFacts(workspaceId: string, threadIds: string[]) {
       >`(select max(m.sent_at) from messages m where m.thread_id = ${threads.id} and m.direction = 'in')`,
       lastOutboundAt: sql<
         string | Date | null
-      >`(select max(m.sent_at) from messages m where m.thread_id = ${threads.id} and m.direction = 'out')`,
+      >`(select max(m.sent_at) from messages m where m.thread_id = ${threads.id} and m.direction = 'out' and ${notDraftSql("m")})`,
       sentNudges: sql<number>`(select count(*) from drafts d where d.thread_id = ${threads.id} and d.kind = 'followup' and d.status in ('sent', 'edited_and_sent'))::int`,
       askedClosing: sql<boolean>`exists (select 1 from drafts d where d.thread_id = ${threads.id} and d.purpose = 'closing_question')`,
       // Two things the create path refuses that the rules don't know about: a draft already

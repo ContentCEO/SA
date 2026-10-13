@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { setModelTransportForTests } from "@/ai/client";
 import type { Database } from "@/db";
@@ -48,6 +48,7 @@ async function message(
 beforeEach(async () => {
   process.env.TOKEN_ENCRYPTION_KEY = randomBytes(32).toString("base64");
   process.env.AI_DAILY_CALL_CAP = "100";
+  // Like postgres.js in production, it refuses a Date bound into raw SQL (A10).
   database = await createTestDb();
   const { workspace } = await ensureUserAndWorkspace({ email: "owner@shop.com" });
   workspaceId = workspace.id;
@@ -329,6 +330,24 @@ describe("quote acceptance and job done signals (classify.v3)", () => {
     expect(await extractedOf(t)).not.toHaveProperty("quote_accepted");
   });
 
+  it("an unsent Gmail draft is not the owner having written (even with an amount on file)", async () => {
+    const t = await quoteConversation({ ownerReplied: false });
+    // Stored by the old sync, and its figure captured as the quote's amount by old code.
+    await message(t, "unsent", {
+      direction: "out",
+      fromAddress: "owner@shop.com",
+      labelIds: ["DRAFT"],
+      bodyText: "It's $2,400 for the panel upgrade. Davi",
+      sentAt: daysAgo(3),
+    });
+    await database.update(threads).set({ quoteAmountCents: 240_000 }).where(eq(threads.id, t));
+    setModelTransportForTests(fakeTransport([accepting({ category: "scheduling" })]).transport);
+    await classifyPending(mailboxId, { now: NOW });
+    const extracted = await extractedOf(t);
+    expect(extracted.accepts_quote).toBe(true);
+    expect(extracted).not.toHaveProperty("quote_accepted");
+  });
+
   it("an email that tries to instruct the assistant is never a quote acceptance", async () => {
     const t = await quoteConversation();
     setModelTransportForTests(
@@ -541,6 +560,142 @@ describe("sticky quote-request facts (M8 A11)", () => {
     // Only the newest email went to the model; the time is still the first one's.
     expect(calls).toHaveLength(1);
     expect((await rowOf(t.id)).quoteRequestedAt).toEqual(new Date(NOW.getTime() - 3 * 3600_000));
+  });
+
+  it("a new job asked for on an older thread the owner already answered dates from the request", async () => {
+    await electrician();
+    const t = await thread("q1");
+    // Last week: a question, the owner's answer. This week, on the same thread: a quote request.
+    await message(t.id, "question", { sentAt: daysAgo(8), classifiedAt: daysAgo(8) });
+    await database
+      .update(threads)
+      .set({ category: "customer_question", classifiedAt: daysAgo(8) })
+      .where(eq(threads.id, t.id));
+    await message(t.id, "answer", {
+      direction: "out",
+      fromAddress: "owner@shop.com",
+      toAddresses: ["dana@x.com"],
+      sentAt: daysAgo(7),
+    });
+    await message(t.id, "ask", { sentAt: daysAgo(2) });
+    // GUARDRAIL: an unsent Gmail draft between the request and its photos is not the owner
+    // writing (else the request would date from the photos).
+    await message(t.id, "draft", {
+      direction: "out",
+      fromAddress: "owner@shop.com",
+      toAddresses: ["dana@x.com"],
+      labelIds: ["DRAFT"],
+      sentAt: daysAgo(1.5),
+    });
+    await message(t.id, "photos", { sentAt: daysAgo(1) });
+    setModelTransportForTests(
+      fakeTransport([withService("quote_request", "panel upgrade")]).transport,
+    );
+    await classifyPending(mailboxId, { now: NOW });
+    const row = await rowOf(t.id);
+    // Not the old question's time; the request and its photos date from the request.
+    expect(row.quoteRequestedAt).toEqual(daysAgo(2));
+  });
+
+  it("the crew's reply to a forward is not the customer asking: a new request dates from the customer's email", async () => {
+    await electrician();
+    const t = await thread("q1");
+    // Last week: a question and the owner's answer, then a forward of the thread to the crew.
+    await message(t.id, "question", { sentAt: daysAgo(8), classifiedAt: daysAgo(8) });
+    await database
+      .update(threads)
+      .set({ category: "customer_question", classifiedAt: daysAgo(8) })
+      .where(eq(threads.id, t.id));
+    await message(t.id, "answer", {
+      direction: "out",
+      fromAddress: "owner@shop.com",
+      toAddresses: ["dana@x.com"],
+      labelIds: ["SENT"],
+      sentAt: daysAgo(7),
+    });
+    await message(t.id, "fwd", {
+      direction: "out",
+      fromAddress: "owner@shop.com",
+      toAddresses: ["crew@shop.com"],
+      labelIds: ["SENT"],
+      subject: "Fwd: Panel",
+      sentAt: daysAgo(3),
+    });
+    // The crew replies in the thread before the customer asks for a quote.
+    await message(t.id, "crew", {
+      fromAddress: "crew@shop.com",
+      subject: "Re: Fwd: Panel",
+      sentAt: daysAgo(2.5),
+      classifiedAt: daysAgo(2.5),
+    });
+    await message(t.id, "ask", { sentAt: daysAgo(2) });
+    setModelTransportForTests(
+      fakeTransport([withService("quote_request", "panel upgrade")]).transport,
+    );
+    await classifyPending(mailboxId, { now: NOW });
+    expect((await rowOf(t.id)).quoteRequestedAt).toEqual(daysAgo(2));
+  });
+
+  it("forwarding the request to the crew (and their reply) isn't the owner answering it: the request keeps its time", async () => {
+    await electrician();
+    const t = await thread("q1");
+    await message(t.id, "ask", { sentAt: daysAgo(2) });
+    // The owner forwards it to the estimator, who replies in the same Gmail thread.
+    await message(t.id, "fwd", {
+      direction: "out",
+      fromAddress: "owner@shop.com",
+      toAddresses: ["crew@shop.com"],
+      labelIds: ["SENT"],
+      subject: "Fwd: Panel",
+      sentAt: daysAgo(1.6),
+      classifiedAt: daysAgo(1.6),
+    });
+    await message(t.id, "crew", {
+      fromAddress: "crew@shop.com",
+      subject: "Re: Fwd: Panel",
+      sentAt: daysAgo(1.5),
+      classifiedAt: daysAgo(1.5),
+    });
+    await message(t.id, "photos", { sentAt: daysAgo(1) });
+    setModelTransportForTests(
+      fakeTransport([withService("quote_request", "panel upgrade")]).transport,
+    );
+    await classifyPending(mailboxId, { now: NOW });
+    expect((await rowOf(t.id)).quoteRequestedAt).toEqual(daysAgo(2));
+  });
+
+  it("A10: the quote-request write binds its time as a string, never a Date", async () => {
+    await electrician();
+    const t = await thread("q1");
+    await message(t.id, "ask", { sentAt: daysAgo(2) });
+    setModelTransportForTests(
+      fakeTransport([withService("quote_request", "panel upgrade")]).transport,
+    );
+    const client = (database as unknown as { $client: { query: (...a: unknown[]) => unknown } })
+      .$client;
+    const seen: { q: string; params: unknown[] }[] = [];
+    const query = client.query.bind(client);
+    client.query = (q: unknown, params?: unknown, ...rest: unknown[]) => {
+      seen.push({ q: String(q), params: (params as unknown[]) ?? [] });
+      return query(q, params, ...rest);
+    };
+    await classifyPending(mailboxId, { now: NOW });
+    const write = seen.find((x) => /update "threads"[\s\S]*"quote_requested_at"/i.test(x.q));
+    expect(write).toBeDefined();
+    expect(write!.params).toContain(daysAgo(2).toISOString());
+    for (const p of write!.params) expect(p).not.toBeInstanceOf(Date);
+    expect((await rowOf(t.id)).quoteRequestedAt).toEqual(daysAgo(2));
+  });
+
+  it("the test database refuses a Date in raw SQL, as postgres.js does (so the A10 guard is real)", async () => {
+    const err = await database.execute(sql`select ${NOW}::timestamptz`).then(
+      () => null,
+      (e: unknown) => e as { cause?: unknown },
+    );
+    expect(String(err?.cause ?? err)).toMatch(/A Date was bound into SQL/);
+    await expect(
+      database.execute(sql`select ${NOW.toISOString()}::timestamptz as t`),
+    ).resolves.toBeDefined();
   });
 
   it("an email that tries to instruct the assistant leaves neither mark", async () => {

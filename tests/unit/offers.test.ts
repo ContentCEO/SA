@@ -1026,6 +1026,26 @@ describe("GUARDRAIL: closing question never created by a job", () => {
   });
 });
 
+describe("closing question: an unsent Gmail draft isn't the owner writing", () => {
+  it("a draft stored by old sync two days ago doesn't restart the 7 quiet days", async () => {
+    process.env.FEATURE_CLOSING_QUESTION = "on";
+    await profile();
+    const t = await quietQuote();
+    await database.insert(messages).values({
+      threadId: t,
+      mailboxId,
+      gmailMessageId: `${t}-unsent`,
+      direction: "out",
+      fromAddress: "owner@shop.com",
+      toAddresses: [DANA],
+      labelIds: ["DRAFT"],
+      bodyText: "Draft never sent.",
+      sentAt: at(-2),
+    });
+    expect((await threadOffers(workspaceId, [t], NOW)).get(t)?.closingQuestion).toBe(true);
+  });
+});
+
 describe("GUARDRAIL: closing question never twice", () => {
   it("asked once (own activity, not a nudge); after a discard, a second tap is refused", async () => {
     process.env.FEATURE_CLOSING_QUESTION = "on";

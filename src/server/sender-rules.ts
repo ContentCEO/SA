@@ -21,3 +21,26 @@ export function isNoReplyAddress(address: string | null | undefined): boolean {
   if (at <= 0) return false;
   return NO_REPLY_LOCAL.test(s.slice(0, at));
 }
+
+/**
+ * Public webmail: everyone on these shares the domain with strangers, so "same domain" means
+ * nothing there (the referral same-domain block, and an owner's email to their own crew).
+ */
+export const PUBLIC_WEBMAIL_DOMAINS = new Set([
+  "gmail.com",
+  "googlemail.com",
+  "yahoo.com",
+  "outlook.com",
+  "hotmail.com",
+  "live.com",
+  "msn.com",
+  "icloud.com",
+  "me.com",
+  "mac.com",
+  "aol.com",
+  "proton.me",
+  "protonmail.com",
+  "comcast.net",
+  "att.net",
+  "verizon.net",
+]);

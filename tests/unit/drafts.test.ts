@@ -238,6 +238,34 @@ describe("writing drafts", () => {
     expect(writer.drafts.size).toBe(1);
   });
 
+  it("an unsent Gmail draft stored by old sync isn't the owner replying, or text for the model", async () => {
+    const staleDraft = async (threadId: string) =>
+      database.insert(messages).values({
+        threadId,
+        mailboxId,
+        gmailMessageId: `${threadId}-draft`,
+        direction: "out",
+        fromAddress: "owner@shop.com",
+        labelIds: ["DRAFT"],
+        bodyText: "SECRET-UNSENT-DRAFT",
+        sentAt: ago(0.5),
+      });
+    const t = await seedThread();
+    await staleDraft(t.id);
+    // Not auto-drafted until the cleanup has checked it with Gmail (if Gmail sent it under the
+    // same id it would be the owner's answer), but the owner's tap isn't refused as "you replied".
+    expect(await threadsToAutoDraft(mailboxId)).toEqual([]);
+    const { transport, calls } = fakeTransport([modelDraft()]);
+    setModelTransportForTests(transport);
+    expect(
+      await createDraftForThread(t.id, { trigger: "owner", workspaceId, ...deps() }),
+    ).toMatchObject({ status: "created" });
+    expect(JSON.stringify(calls)).not.toContain("SECRET-UNSENT-DRAFT");
+    // Threaded to the customer's email, not to the draft.
+    const raw = [...writer.drafts.values()][0]!.raw;
+    expect(FakeWriter.headersOf(raw)).toContain("In-Reply-To: <gt1-m1@mail.x.com>");
+  });
+
   it("flags a made-up price and drops confidence", async () => {
     setModelTransportForTests(
       fakeTransport([modelDraft({ body: "Hey Dana, that'll run about $1,800. Thanks, Davi" })])
@@ -298,6 +326,60 @@ describe("sending — the gate", () => {
     expect(log!.detail).toMatchObject({ editedByOwner: false });
     const [thread] = await database.select().from(threads);
     expect(thread!.awaitingReplySince).toEqual(NOW);
+  });
+
+  it("stores the sent email as the owner's at once, whatever Gmail's history later says", async () => {
+    // The Gmail client reads as well as writes; this stand-in does too.
+    class ReadingWriter extends FakeWriter {
+      looked: string[] = [];
+      sentLoggedFirst: boolean[] = [];
+      async getMessage(id: string) {
+        this.looked.push(id);
+        // The record of the send comes first: storing the email may retry for a while.
+        this.sentLoggedFirst.push(
+          (await database.select().from(activityLog).where(eq(activityLog.action, "reply_sent")))
+            .length === 1,
+        );
+        return {
+          providerMessageId: id,
+          providerThreadId: "gt1",
+          labelIds: ["SENT"],
+          snippet: "Hey Dana",
+          internalDate: NOW.getTime(),
+          headers: { from: "Owner <owner@shop.com>", to: "dana@x.com", subject: "Re: Panel" },
+        };
+      }
+    }
+    const reading = new ReadingWriter();
+    writer = reading;
+    const d = await pendingDraft();
+    await setStatus("active");
+    expect(await sendDraft(workspaceId, d.id, deps())).toMatchObject({ status: "sent" });
+    expect(reading.looked).toContain("sent-d1");
+    expect(reading.sentLoggedFirst.every(Boolean)).toBe(true);
+    const [m] = await database
+      .select()
+      .from(messages)
+      .where(eq(messages.gmailMessageId, "sent-d1"));
+    expect(m).toMatchObject({ direction: "out", labelIds: ["SENT"], sentAt: NOW });
+    const [t] = await database.select().from(threads);
+    expect(m!.threadId).toBe(t!.id);
+  });
+
+  it("a failure storing the sent email doesn't fail the send, and logs no content", async () => {
+    class BrokenReader extends FakeWriter {
+      async getMessage(): Promise<null> {
+        throw new TypeError("SECRET-dana@x.com");
+      }
+    }
+    writer = new BrokenReader();
+    const d = await pendingDraft();
+    await setStatus("active");
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    expect(await sendDraft(workspaceId, d.id, deps())).toMatchObject({ status: "sent" });
+    expect(JSON.stringify(errors.mock.calls)).toContain("sent_message_record_failed");
+    expect(JSON.stringify(errors.mock.calls)).not.toMatch(/SECRET|@/);
+    errors.mockRestore();
   });
 
   it("an active account without a real setup payment can't send, and Gmail is never touched", async () => {
@@ -436,6 +518,27 @@ describe("reconciling with Gmail", () => {
     expect(byThread[edited.t.id]).toMatchObject({ status: "pending", body: "Edited in Gmail" });
     expect(byThread[outdated.t.id]!.status).toBe("expired");
     expect(writer.drafts.has(outdated.d.gmailDraftId!)).toBe(false);
+  });
+
+  it("a newer unsent Gmail draft (DRAFT label) doesn't make a deleted draft 'sent'", async () => {
+    // Editing in Gmail makes a new draft message; old sync stored those as owner mail.
+    const deleted = await draftOn("e");
+    writer.drafts.delete(deleted.d.gmailDraftId!);
+    await database.insert(messages).values({
+      threadId: deleted.t.id,
+      mailboxId,
+      gmailMessageId: "e-draft",
+      direction: "out",
+      fromAddress: "owner@shop.com",
+      labelIds: ["DRAFT"],
+      sentAt: new Date(NOW.getTime() + 3600_000),
+    });
+    expect((await reconcileDrafts(mailboxId, deps())).closed).toBe(1);
+    const [d] = await database.select().from(drafts).where(eq(drafts.id, deleted.d.id));
+    expect(d).toMatchObject({
+      status: "discarded",
+      closedNote: "You deleted this draft in Gmail.",
+    });
   });
 });
 

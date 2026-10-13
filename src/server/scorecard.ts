@@ -4,7 +4,15 @@ import { MINUTES_PER_SENT_REPLY } from "@/config/drafting";
 import { db } from "@/db";
 import { drafts, mailboxes, threads } from "@/db/schema";
 import { averageMinutes, weekBounds, type ScorecardNumbers } from "./scorecard-rules";
-import { asDate, noReplySql, quoteRequestSql } from "./thread-sql";
+import {
+  asDate,
+  noReplySql,
+  notDraftSql,
+  quoteRequestSql,
+  requestAtSql,
+  requestSenderSql,
+  sideEmailSql,
+} from "./thread-sql";
 
 /**
  * Plan #32 weekly scorecard and #33 response time, in counts. Content-free: the queries
@@ -20,12 +28,14 @@ const at = (d: Date) => sql`${d.toISOString()}::timestamptz`;
  * When the owner first answered on the thread after `after` (a SQL timestamp), up to `now`:
  * the earliest of an email from the owner that sync brought in, a draft sent from the app
  * (when it was okayed), or a send waiting out its undo window (as leadsAtRisk, A12). A reply
- * sent from the app counts at once, before the next sync brings in its email.
+ * sent from the app counts at once, before the next sync brings in its email. Forwarding the
+ * request to the crew answers nobody (`sideEmailSql`, the same rule as leads at risk), but a
+ * reply to a contact-form lead's Reply-To address does.
  */
 function firstAnswerSql(after: SQL, now: Date): SQL {
   const queued = sql`least(coalesce(d.send_after, d.send_claimed_at), ${at(now)})`;
   return sql`least(
-    (select min(o.sent_at) from messages o where o.thread_id = ${threads.id} and o.direction = 'out' and o.sent_at > ${after} and o.sent_at <= ${at(now)}),
+    (select min(o.sent_at) from messages o where o.thread_id = ${threads.id} and o.direction = 'out' and ${notDraftSql("o")} and o.sent_at > ${after} and o.sent_at <= ${at(now)} and not ${sideEmailSql("o")}),
     (select min(d.decided_at) from drafts d where d.thread_id = ${threads.id} and d.status in ('sent', 'edited_and_sent') and d.decided_at > ${after} and d.decided_at <= ${at(now)}),
     (select min(${queued}) from drafts d where d.thread_id = ${threads.id} and d.status = 'pending' and (d.send_after is not null or d.send_claimed_at is not null) and ${queued} > ${after})
   )`;
@@ -52,13 +62,16 @@ export function scorecardQueries(workspaceId: string, start: Date, end: Date, no
     )
     .groupBy(drafts.kind);
 
-  // The customer's first email on the thread, and the owner's first answer after it.
-  const firstIn = sql`(select min(m.sent_at) from messages m where m.thread_id = ${threads.id} and m.direction = 'in')`;
-  const answer = firstAnswerSql(firstIn, now);
+  // When the quote was asked for (the sticky mark from classification; the thread's first
+  // customer email on older threads), who asked, and the owner's first answer after it. A
+  // request sent on an older conversation dates from the request, not the old chat.
+  const requestedAt = requestAtSql();
+  const requester = requestSenderSql();
+  const answer = firstAnswerSql(requestedAt, now);
 
   // Quotes out: each quote request once, in the week its quote went out — the owner's first
-  // answer to the customer's first email. Not a nudge or later chat on a quote already out,
-  // and not a cold email (nothing came in before it).
+  // answer to the request. Not a nudge or later chat on a quote already out, and not a cold
+  // email (nothing came in before it).
   const quotesOut = db()
     .select({ n: count() })
     .from(threads)
@@ -72,15 +85,14 @@ export function scorecardQueries(workspaceId: string, start: Date, end: Date, no
       ),
     );
 
-  // Response time: quote requests whose customer FIRST wrote this week (the week of the
-  // request), to the owner's first answer after it, up to now. Calendar time. A no-reply
-  // sender (a lead platform's notice) is answered on the platform, never here (A13).
+  // Response time: quote requests asked for this week (the week of the request), to the
+  // owner's first answer after it, up to now. Calendar time. A no-reply sender (a lead
+  // platform's notice) is answered on the platform, never here (A13).
   // `settled`: the owner marked how it ended (say, after a phone call) — handled, so never
   // "still waiting", though there's no email to time.
-  const firstSender = sql`(select m.from_address from messages m where m.thread_id = ${threads.id} and m.direction = 'in' order by m.sent_at asc, m.id asc limit 1)`;
   const response = db()
     .select({
-      firstIn: sql<string | Date | null>`${firstIn}`,
+      firstIn: sql<string | Date | null>`${requestedAt}`,
       firstOut: sql<string | Date | null>`${answer}`,
       settled: sql<boolean>`(${threads.quoteOutcome} is not null and coalesce(${threads.quoteOutcomeSource}, 'owner') = 'owner')`,
     })
@@ -90,9 +102,9 @@ export function scorecardQueries(workspaceId: string, start: Date, end: Date, no
       and(
         eq(mailboxes.workspaceId, workspaceId),
         quoteRequestSql(),
-        sql`${firstIn} >= ${at(start)}`,
-        sql`${firstIn} < ${at(end)}`,
-        sql`not ${noReplySql(firstSender)}`,
+        sql`${requestedAt} >= ${at(start)}`,
+        sql`${requestedAt} < ${at(end)}`,
+        sql`not ${noReplySql(requester)}`,
       ),
     );
 

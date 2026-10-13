@@ -57,7 +57,7 @@ import {
   type Mailbox,
 } from "@/db/schema";
 import { decryptSecret } from "@/lib/crypto";
-import { MailboxAuthError, type MailboxWriter } from "@/mailbox/connector";
+import { MailboxAuthError, type MailboxReader, type MailboxWriter } from "@/mailbox/connector";
 import { createGmailReader } from "@/mailbox/gmail/api";
 import { buildReplyMime, replySubject, sameText, toGmailRaw } from "@/mailbox/mime";
 import {
@@ -72,10 +72,10 @@ import { isInvoiceThread, paymentSaid } from "./money-rules";
 import { quoteStopsNudges } from "./quote-rules";
 import { BACK_ON_TOP_MS, isEmergency } from "./snooze-rules";
 import { headerPickIds, toNeedsYouItem } from "./digest-rules";
-import { asDate, waitingSinceSql } from "./thread-sql";
+import { asDate, notDraftMessage, sideEmailSql, waitingSinceSql } from "./thread-sql";
 import { closingQuestionAllowed, recentReviewAddresses, reviewAllowed } from "./offers";
 import { lockReviewAddress } from "./review-lock";
-import { markReconnectNeeded } from "./sync";
+import { markReconnectNeeded, recordSentMessage } from "./sync";
 
 /** Categories we draft for without being asked. Complaints and noise never are. */
 export const AUTO_DRAFT_CATEGORIES = [
@@ -479,19 +479,28 @@ export async function createDraftForThread(
     .where(and(eq(drafts.threadId, threadId), eq(drafts.status, "pending")));
   if (pending) return { status: "skipped", reason: "already_pending" };
 
+  // A nudge or closing question follows the owner's own last message; a review request
+  // may follow either; everything else answers the customer.
+  const afterOwner = followup || purpose === "closing_question";
+  // An unsent Gmail draft is not part of the conversation: never "the owner wrote", never
+  // text for the model or the checks, never what a nudge is threaded to (notDraftMessage).
+  // For a nudge or closing question, neither is a side conversation (a forward to the crew
+  // and the crew's reply, `sideEmailSql`): the same "who wrote last" as the follow-up scan,
+  // so a thread it picks isn't skipped here, and the note is threaded to — and only shows
+  // the model — the conversation with the customer.
+  const conversation = afterOwner
+    ? and(eq(messages.threadId, threadId), notDraftMessage(), sql`not ${sideEmailSql("messages")}`)
+    : and(eq(messages.threadId, threadId), notDraftMessage());
   const recent = (
     await db()
       .select()
       .from(messages)
-      .where(eq(messages.threadId, threadId))
+      .where(conversation)
       .orderBy(desc(messages.sentAt))
       .limit(CONVERSATION_MESSAGES)
   ).reverse();
   const last = recent.at(-1);
   if (!last) return { status: "skipped", reason: "no_text" };
-  // A nudge or closing question follows the owner's own last message; a review request
-  // may follow either; everything else answers the customer.
-  const afterOwner = followup || purpose === "closing_question";
   if (afterOwner && last.direction !== "out")
     return { status: "skipped", reason: "customer_replied" };
   if (!afterOwner && purpose !== "review_request" && last.direction !== "in")
@@ -503,7 +512,7 @@ export async function createDraftForThread(
           await db()
             .select()
             .from(messages)
-            .where(and(eq(messages.threadId, threadId), eq(messages.direction, "in")))
+            .where(and(conversation, eq(messages.direction, "in")))
             .orderBy(desc(messages.sentAt))
             .limit(1)
         )[0]
@@ -897,6 +906,9 @@ export async function sendDraft(
           ...(opts.by === "autopilot" ? { autopilot: true } : {}),
         },
       });
+    // Last, after the record of the send: storing the sent email is a nice-to-have (Gmail
+    // reads can retry for a while), the activity row is what Activity and /record rely on.
+    await recordSent(mailbox, writer, sent, now);
     return { status: "sent", edited, toName: (await customerOf(thread.id))?.name ?? null };
   } catch (err) {
     if (err instanceof MailboxAuthError) {
@@ -904,6 +916,35 @@ export async function sendDraft(
       return { status: "reconnect_needed" };
     }
     throw err;
+  }
+}
+
+/**
+ * Store the email a send just made as the owner's mail, now. How Gmail's history reports a sent
+ * draft (a new message, or the draft's own id relabelled SENT) then doesn't matter for app
+ * sends. The Gmail client reads as well as writes; a writer that can't read (tests) skips this.
+ * Best effort: it's already sent, and the next sync picks the message up anyway.
+ */
+async function recordSent(
+  mailbox: Mailbox,
+  writer: MailboxWriter,
+  sent: { messageId: string; threadId: string },
+  now: Date,
+) {
+  const reader = writer as Partial<Pick<MailboxReader, "getMessage">>;
+  if (typeof reader.getMessage !== "function") return;
+  try {
+    await recordSentMessage(
+      mailbox,
+      { getMessage: reader.getMessage.bind(writer) },
+      { id: sent.messageId, threadId: sent.threadId },
+      now,
+    );
+  } catch (err) {
+    console.error("sent_message_record_failed", {
+      mailboxId: mailbox.id,
+      error: err instanceof Error ? err.name : "unknown",
+    });
   }
 }
 
@@ -1334,7 +1375,13 @@ export async function reviseDraft(
     await db()
       .select()
       .from(messages)
-      .where(and(eq(messages.threadId, draft.threadId), lte(messages.sentAt, draft.createdAt)))
+      .where(
+        and(
+          eq(messages.threadId, draft.threadId),
+          lte(messages.sentAt, draft.createdAt),
+          notDraftMessage(),
+        ),
+      )
       .orderBy(desc(messages.sentAt))
       .limit(CONVERSATION_MESSAGES)
   ).reverse();
@@ -1660,7 +1707,14 @@ export async function reconcileDrafts(mailboxId: string, opts: DraftDeps = {}) {
       const newer = await db()
         .select({ direction: messages.direction })
         .from(messages)
-        .where(and(eq(messages.threadId, d.threadId), gt(messages.sentAt, d.createdAt)));
+        .where(
+          and(
+            eq(messages.threadId, d.threadId),
+            gt(messages.sentAt, d.createdAt),
+            // An unsent Gmail draft (an edit of this one, or the owner's own) isn't mail sent.
+            notDraftMessage(),
+          ),
+        );
       if (newer.some((m) => m.direction === "in")) {
         if (d.gmailDraftId) await writer.deleteDraft(d.gmailDraftId);
         await closeDraft(
@@ -2033,6 +2087,10 @@ export async function listQueue(
  */
 export async function threadsToAutoDraft(mailboxId: string, limit = 10): Promise<string[]> {
   const lastIn = sql`(select max(m.sent_at) from messages m where m.thread_id = ${threads.id} and m.direction = 'in')`;
+  // Deliberately counts a Gmail draft older sync stored as owner mail (not notDraftSql): until
+  // draft-message-cleanup has checked it with Gmail it might be the owner's answer, sent under
+  // the same id, and an auto-draft could go out on autopilot. No reply drafted until checked;
+  // the owner's own "Draft a reply" still works.
   const lastOut = sql`(select max(m.sent_at) from messages m where m.thread_id = ${threads.id} and m.direction = 'out')`;
   const lastDraft = sql`(select max(d.created_at) from drafts d where d.thread_id = ${threads.id})`;
   const rows = await db()

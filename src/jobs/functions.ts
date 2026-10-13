@@ -24,6 +24,7 @@ import { sendMonthlySummaries } from "@/server/monthly-summary";
 import { threadsToFollowUp } from "@/server/followups";
 import { getMailboxWorkspace } from "@/server/mailboxes";
 import { purgeRateLimits } from "@/server/rate-limit";
+import { purgeEmailSentRecords } from "@/lib/email";
 import { sendAccessLostAlerts } from "@/server/alerts";
 import { captureQuoteAmounts, guessNoAnswers } from "@/server/quotes";
 import { sendLeadAlerts } from "@/server/sms-alerts";
@@ -32,6 +33,7 @@ import { sendLeadAtRiskPushes } from "@/server/leads-at-risk";
 import { purgeExpiredNotes } from "@/server/seasonal-notes";
 import { learnVoice, workspacesDueForVoiceRefresh, workspacesNeedingVoice } from "@/server/voice";
 import { expireEvaluations, startPendingEvaluations } from "@/server/workspace-lifecycle";
+import { runDraftMessagesCleanup } from "@/server/draft-message-cleanup";
 import { runM7Backfill } from "@/server/m7-backfill";
 import { applyPendingReferralCredits } from "@/server/referrals";
 import { considerAutopilot, overdueAutopilotDrafts, runAutopilotSend } from "@/server/autopilot";
@@ -410,6 +412,8 @@ export const workspaceLifecycle = inngest.createFunction(
     await step.run("push-alerts", () => sendPushAlerts());
     // One-shot M7 data fix, from new code once it's live (no-op after the first run).
     await step.run("m7-backfill", () => runM7Backfill());
+    // One-shot: drop Gmail drafts the old sync stored as owner mail (no-op after the first run).
+    await step.run("draft-messages-cleanup", () => runDraftMessagesCleanup());
     // Plan #34: a quote request waiting over 4 business hours → one phone notification.
     await step.run("lead-at-risk-pushes", () => sendLeadAtRiskPushes());
     // Plan #47 (off unless FEATURE_REFERRALS and an amount): add referral credits still waiting.
@@ -438,6 +442,7 @@ export const purgeBodies = inngest.createFunction(
     // Plan #45: tell Davi when an account's AI cost passes 40% of its plan.
     await step.run("cost-alerts", () => sendCostAlerts());
     await step.run("purge-cost-markers", () => purgeCostAlertMarkers());
+    await step.run("purge-email-sent-records", () => purgeEmailSentRecords());
     return { purged };
   },
 );

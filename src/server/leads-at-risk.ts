@@ -24,10 +24,10 @@ import { inQuietHours } from "./sms-alerts";
 import { atLocalHour, usableTimeZone } from "./snooze-rules";
 import {
   asDate,
-  lastInSql,
   lastOutSql,
   noReplySql,
   quoteRequestSql,
+  waitingSenderSql,
   waitingSinceSql,
 } from "./thread-sql";
 
@@ -41,7 +41,7 @@ export { unalerted } from "./leads-at-risk-rules";
 export type LeadAtRisk = {
   threadId: string;
   priority: string | null;
-  /** The customer's first email since the owner last wrote. */
+  /** The customer's first email since the owner last wrote to them. */
   waitingSince: Date;
   /** When we last pushed about this thread (any wait). */
   alertedAt: Date | null;
@@ -54,28 +54,34 @@ export type LeadAtRisk = {
  *
  * A lead waits when: it's sorted as a quote request, in the inbox, not won / lost / no answer,
  * not snoozed, the customer wrote last (within the last LEAD_AT_RISK_MAX_AGE_HOURS), and
- * nothing answered it — no email from the owner after it, no reply sent from the app since the
- * wait began, and no send waiting out its undo window (the email of a reply sent from the app
- * only arrives with the next sync: A12). A needs-you thread still counts (a big job is still a
- * lead), and so does one with a draft waiting (a draft isn't an answer).
+ * nothing answered it — no email from the owner after it (a forward to the crew or a
+ * supplier, and the crew's reply to it, are a side conversation: `sideEmailSql`), no reply
+ * sent from the app since the wait began, and no send waiting out its undo window (the email
+ * of a reply sent from the app only arrives with the next sync: A12). A needs-you thread still counts (a big job is still a
+ * lead), and so does one with a draft waiting (a draft isn't an answer). The same goes for a
+ * Gmail draft older sync stored as the owner's mail: `lastOutSql` ignores it (a sent draft is a
+ * new message in Gmail), so an unsent draft never hides a lead, checked by Gmail or not.
  *
  * A draft the owner threw away (Discard here, or deleted in Gmail) is NOT an answer (A12 lists
  * what is): a wrong draft is often discarded by someone meaning to write their own later, and
  * that is exactly the lead that goes cold. It drops off the queue, so the push links to /quotes.
  *
  * A quote request the classifier later re-sorted still counts while the owner has never written
- * on it: "Just checking you got my message?" is often sorted as a question, at the very moment
- * the lead is most at risk (the sticky `quote_requested_at` mark, A11). Once the owner has
- * written, only a thread still sorted as a quote request re-arms — a "Thanks, I'll let you know"
- * re-sorted after the owner's quote isn't a waiting lead — and a re-sort to noise never counts.
+ * on it (a forward to the crew isn't writing): "Just checking you got my message?" is often
+ * sorted as a question, at the very moment the lead is most at risk (the sticky
+ * `quote_requested_at` mark, A11). Once the owner has written, only a thread still sorted as a
+ * quote request re-arms — a "Thanks, I'll let you know" re-sorted after the owner's quote
+ * isn't a waiting lead — and a re-sort to noise never counts.
  *
  * Left out: a mailbox we can't see clearly — lost access, paused, or not synced in the last 30
  * minutes — because we couldn't see the owner's replies either (A12); and a wait that began
  * with a no-reply sender (a lead platform's notice, answered on the platform: A13).
  */
 export function leadsAtRiskQuery(workspaceId: string, now: Date) {
+  // The same "the owner wrote" as Quotes' stages and the digest (`lastOutSql`): a lead
+  // forwarded to the crew (Gmail keeps the forward in the conversation) is still waiting.
   const waitingSince = waitingSinceSql();
-  const waitingSender = sql`(select w.from_address from messages w where w.thread_id = ${threads.id} and w.direction = 'in' and w.sent_at > coalesce(${lastOutSql()}, '-infinity'::timestamptz) order by w.sent_at asc, w.id asc limit 1)`;
+  const waitingSender = waitingSenderSql();
   const answeredInApp = sql`exists (select 1 from drafts d where d.thread_id = ${threads.id} and (
     (d.status in ('sent', 'edited_and_sent') and d.decided_at >= ${waitingSince})
     or (d.status = 'pending' and (d.send_after is not null or d.send_claimed_at is not null))
@@ -102,7 +108,7 @@ export function leadsAtRiskQuery(workspaceId: string, now: Date) {
         isNull(threads.quoteOutcome),
         or(isNull(threads.snoozedUntil), lte(threads.snoozedUntil, now)),
         gt(threads.lastMessageAt, new Date(now.getTime() - LEAD_AT_RISK_MAX_AGE_HOURS * 3_600_000)),
-        sql`${lastInSql()} > coalesce(${lastOutSql()}, '-infinity'::timestamptz)`,
+        sql`${waitingSince} is not null`,
         sql`not ${noReplySql(waitingSender)}`,
         sql`not ${answeredInApp}`,
       ),

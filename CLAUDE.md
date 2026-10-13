@@ -252,6 +252,15 @@ In a sandbox with preinstalled Chromium: `PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-brows
   to the AI provider). Quiet days are skipped. Resend via plain fetch with
   `Idempotency-Key: digest-<workspace>-<local date>`; without `RESEND_API_KEY`/`EMAIL_FROM` nothing is
   sent and the day isn't marked done. Read-only accounts get none.
+- **Resend 409s (2026-10-13, M8 review):** a retry whose body changed (summaries say how long
+  things waited) gets 409 `invalid_idempotent_request`. `sendEmail` reports `already_sent` (the
+  digest, monthly summary, cost alert and Gmail-access alert then mark it done) **only** when we
+  hold our own `app_settings` `email-sent:<idempotency key>` row, written right after a 2xx
+  (outside any marker transaction; purged daily after 2 days). Resend's docs don't say whether a
+  key is kept when the first request was refused (e.g. 403 while `EMAIL_FROM` is
+  onboarding@resend.dev); **not checked live** (no Resend key in the sandbox). To check: send to a
+  forbidden address with a test key, retry the same key with a different body, and see 409 vs 403.
+  Either way the code never marks an email sent without our 2xx. Any other 409 stays an error.
 - Voice learning reads sent mail 3 at a time (8 tripped Gmail's limit live and the learn died at
   "learning"). Retries 6; `workspace-lifecycle` (15 min) restarts voice for read mailboxes with no
   profile or stuck in "learning" > 30 min (`workspacesNeedingVoice`).
@@ -513,7 +522,10 @@ In a sandbox with preinstalled Chromium: `PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-brows
     still carry a name or owner text and are kept out of Sentry only by the `ui.*` scrub.
 - **Plan M8 (2026-10-12, branch `claude/milestone-6-8`; #31 #32 #33 #34 #35 #38 done):**
   Migration 0025 (additive, no backfill): `threads.quote_requested_at` (set once when a thread is
-  first sorted quote_request, never cleared, like `complained_at`), `threads.job_kind` (one of our
+  first sorted quote_request, never cleared, like `complained_at`; the time is the customer's
+  first email since the owner last wrote — "wrote" as in `lastOutSql`, see "Side conversations"
+  below — so a new job asked for on an old conversation dates from the request; threads sorted
+  as quotes by older code fall back to the thread's first inbound), `threads.job_kind` (one of our
   fixed labels, set at classification; only replaced while null or "Other jobs"; injection emails
   leave no mark), `threads.at_risk_alerted_at`, `business_profile.monthly_summary_last_sent_for`
   ('YYYY-MM'). Queries count a quote request as `quote_requested_at IS NOT NULL OR` the current
@@ -532,8 +544,9 @@ In a sandbox with preinstalled Chromium: `PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-brows
   - **#32/#33 week:** Monday 00:00 → Monday 00:00 in the owner's zone (`weekBounds`, DST-safe;
     pure date code lives in `snooze-rules.ts`: `localParts`, `localMonthStart/Name`, re-exported).
     `src/server/scorecard.ts`: replies and follow-ups by `decided_at`; quotes out = each quote
-    request once, in the week of the owner's first answer; response time = customer's first email
-    → owner's first answer (synced email, sent draft, or a send in its undo window), calendar time,
+    request once, in the week of the owner's first answer; response time = the request time
+    (`requestAtSql`: `quote_requested_at`, else the thread's first inbound) → owner's first answer
+    (synced email that isn't a side email, sent draft, or a send in its undo window), calendar time,
     filed under the week the request came in, plus how many are still unanswered. No-reply senders
     (`src/server/sender-rules.ts`, SQL twin in `thread-sql.ts`) count as neither. Time saved =
     `MINUTES_PER_SENT_REPLY` (now in `src/config/drafting.ts`) × (replies + follow-ups sent).
@@ -566,8 +579,12 @@ In a sandbox with preinstalled Chromium: `PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-brows
     `service_requested`, "Other jobs" fallback — only the label is stored or sent), top 3 lead
     sources (`src/config/lead-sources.ts`; domains split in SQL so no address reaches JS; Google
     only as the exact hosts `localservices.google.com` / `business.google.com`; facebookmail.com
-    left out as too broad; else "Direct email"), repeat customers (an earlier inbound on a
-    **different** thread before the month, one SQL count) and win rate (`closeRateBetween`).
+    left out as too broad; else "Direct email"; the domain is the requester's,
+    `requestSenderSql`), quote requests by `requestAtSql`, repeat customers (an address with a
+    **new** request in the month — a conversation that began in the month or a quote asked for in
+    it — and an earlier inbound on a **different** thread before the month, one SQL count; one job
+    split over two September threads that carries on in October is not a repeat) and win rate
+    (`closeRateBetween`).
   - **#38 badge:** `src/lib/app-badge.ts` + `AppBadge` in the (app) layout fetch the count-only
     `/api/badge` (`{ count }`, 401 signed out) at most once a minute, after a queue action and on
     becoming visible; `sw.js` sets it after a push. Count = replies ready + needs-you, capped at 99,
@@ -585,7 +602,8 @@ In a sandbox with preinstalled Chromium: `PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-brows
   `referralsVisible()` = flag on **and** a positive amount — otherwise no link, no code stored,
   nothing carried, no credit, no Stripe call. Path: `/?ref=<code>` → waitlist (hidden field) →
   `inviteFromWaitlist` → first sign-in copies it to the workspace and clears it on the invite (used
-  once). Settled **once ever**, the first time the referred account is `active` with
+  once; a first sign-in while it's off still uses up the invite's referral, unlinked). Settled
+  **once ever**, the first time the referred account is `active` with
   `setup_paid_via = 'stripe'` (not house, not legacy null): one insert of the sides in the config
   at that moment, or a single `skipped` row (flag off, no amount, self, same business domain —
   public webmail like gmail.com exempt). Later config changes add nothing. The email fingerprint
@@ -686,6 +704,75 @@ In a sandbox with preinstalled Chromium: `PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-brows
   Growth-aware `WaitlistEntry` card (app sign-ups only, visible only). The homepage keeps
   `ForgetOffline` and Growth's opaque header (no backdrop blur). theme.css holds sunlight mode
   (#37) and the Growth flip / `.sa-light` / `/growth` background side by side.
+- **Gmail drafts are not mail (2026-10-13, M8 review):** a Gmail draft is a message with the
+  DRAFT label and no SENT. Sync used to store every draft (ours included) as owner mail ('out'),
+  so an unsent draft read as "the owner answered". Sync now skips DRAFT-without-SENT
+  (`isUnsentDraft`; no row, no thread, no `last_message_at` move). Google's drafts guide says a
+  sent draft becomes a new message; not checked live, so the code is also right if Gmail kept
+  the id: `listHistory` asks for `messageAdded` **and** `labelAdded` (ids that gain SENT);
+  `ingest` re-fetches a stored row that is still an unsent draft and updates it in place
+  (`setWhere`), never other stored rows; `sendDraft` stores its own sent message
+  (`recordSentMessage`, best effort, **after** the `reply_sent` row, only when the writer can
+  read). Thread `participants` are merged in SQL on upsert (an app send can run alongside a
+  sync). "The owner wrote" reads ignore unsent drafts with one predicate (`notDraftSql` /
+  `notDraftMessage` in `thread-sql.ts`, same rule as `isUnsentDraft`: DRAFT+SENT is mail):
+  lastOutSql (so leads at risk, digest waits, no-answer guesses, price memory), follow-ups,
+  scorecard, reconcile, knownCustomer, createDraftForThread / revise conversation,
+  classification's ownerWroteBefore, ownerQuotedCents, Quotes' stage, the closing-question
+  timing. **A stored draft never answers a lead** (alert even before the cleanup). The
+  exceptions are on purpose and only matter for rows old sync stored: whatever could send on
+  its own treats an unchecked row as a possible answer — `threadsToAutoDraft` still counts it
+  as the owner's last write, autopilot layer 3 refuses a thread with one after the customer's
+  email ("You might already have answered this in Gmail."), and `runAutopilotSend`'s
+  newer-mail check counts it; sms-alerts' newest-direction check doesn't filter them either.
+  **Autopilot asks Gmail before sending** (`MailboxWriter.threadDraftMessageIds`,
+  threads.get format=minimal, ids only): any unsent draft on the thread other than ours →
+  stood down "You're writing a reply in Gmail." (the owner's autosaved reply is no longer
+  synced). Only asked when `canSend` and the mailbox is active (no Google call when blocked).
+  One-shot `runDraftMessagesCleanup` (`src/server/draft-message-cleanup.ts`, 15-min job after
+  `m7-backfill`): rows an app send recorded (`sent_gmail_message_id`) become SENT without Gmail;
+  every other stored draft is looked up in Gmail (100 per mailbox per run) — sent → updated, gone
+  or still a draft → deleted; pending drafts threaded to a deleted row are re-pointed to the
+  newest real message; a quote amount / price-memory row taken from a deleted draft's text is
+  cleared (unless the figure is in real sent mail, the owner typed it, or any real owner email
+  on the thread has lost its text to the purge) so `captureQuoteAmounts` redoes it;
+  `last_message_at` recomputed. **Done per mailbox** (`app_settings`
+  `cleanup:draft-messages-v1:<mailboxId>`): a mailbox we can't read (lost access, read-only
+  account) keeps its rows and no marker, and is checked again every run (one query) until it
+  can be read; the run-wide key `cleanup:draft-messages-v1` is written only when every mailbox is
+  done (nothing failed, skipped or left over). Not repaired: `extracted.quote_accepted` /
+  auto-Won outcomes decided while a draft counted (the owner can change them). Ingest sets
+  `last_message_at` = greatest(new messages, stored messages' max) so a stale read can't put a
+  deleted draft's time back.
+- **Side conversations (2026-10-13, M8 review):** Gmail keeps the owner's forward of a lead to
+  the crew (and the crew's reply) in the customer's conversation, so "the owner wrote" counted a
+  forward as an answer. `sideEmailSql` (`thread-sql.ts`) now leaves out side emails everywhere
+  "who wrote last" is asked: `lastInSql` / `lastOutSql` / `waitingSinceSql` (leads at risk,
+  Quotes' stages, digest waits, no-answer guesses, follow-ups), the scorecard's first answer,
+  the `quote_requested_at` timing, and `createDraftForThread` for nudges / closing questions
+  (`last`, the addressee, the threading and the model's conversation). Decided by **who the
+  owner wrote to**, never by one "customer" address: the customer's side = anyone on the
+  thread's inbound mail (sender, To or Cc). An owner email is side when it goes to someone,
+  none of its recipients is on the customer's side (crew replies don't count as that), and it
+  is a forward the owner started (subject `Fwd:` / `Re: Fwd:` on a thread whose lead didn't
+  itself arrive as a forward) **or** every recipient is on the mailbox's own business domain
+  (crew@shop.com; never on public webmail, `PUBLIC_WEBMAIL_DOMAINS` in `sender-rules.ts`).
+  An inbound email is side when its sender got the lead from the owner (a recipient of such an
+  owner email, or of any owner email when on the owner's business domain: "Dana, meet Mike")
+  and had never been on the thread's inbound mail before. Not a strict "To/Cc holds the
+  customer" rule because a contact-form lead's customer is answered at the form's Reply-To,
+  which sync doesn't store (an additive `messages.reply_to_addresses` would allow the strict
+  rule). **Known gaps:** a plain "Re:" sent only to an outside address answers the lead (the
+  contact-form case); on a lead that arrived as a forward (a friend, an office or a property
+  manager), the owner's forward to an outside crew counts as an answer.
+  **Known limitation (A11):** `quote_requested_at` is sticky, so a returning customer asking for
+  a new job on their old, already decided quote thread keeps the first request's time: the
+  scorecard, the monthly count and the repeat-customer check miss the new request (no history of
+  requests is kept). Re-stamping it when the outcome is decided would also need the outcome and
+  Quotes' stage to move with it — not built.
+  **A10 in every unit test:** `createTestDb` calls `refuseDateParams`
+  (`tests/support/no-date-params.ts`), so PGlite refuses a JS `Date` bound into raw SQL as
+  postgres.js does.
 
 ## Milestones
 
@@ -706,6 +793,11 @@ In a sandbox with preinstalled Chromium: `PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-brows
 
 ## Waiting on Davi
 
+- **Gmail draft send behaviour (M8 review):** not yet checked live whether Gmail keeps a draft's
+  id when it's sent. Counts-only check on the shared DB: join `drafts.sent_gmail_message_id` to
+  `messages.gmail_message_id` and count the matches whose `label_ids` hold `SENT` vs `DRAFT`.
+  Many DRAFT matches = same-id sends. The code is safe either way; this only says which path is
+  live.
 - Phone notifications (#36): add `VAPID_PUBLIC_KEY` + `VAPID_PRIVATE_KEY` (free; any VAPID key
   generator) to Vercel Production, then redeploy. Off until then.
 - `ANTHROPIC_API_KEY` repo secret for the "Prompt evals" action (baseline still empty).

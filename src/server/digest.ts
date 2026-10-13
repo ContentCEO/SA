@@ -328,16 +328,24 @@ export async function sendDigests(
           run.notConfigured = true;
           return run;
         }
+        // "already_sent": the owner got today's email on an earlier try whose marker didn't
+        // save (the body has moved on since, so Resend refused the retry). Record it as done
+        // below, or every hourly run today would fail the same way.
       }
       // The day's marker and its Activity row go in together (no double "sent" row on retry).
-      await db().transaction(async (tx) => {
-        await tx
+      // Only the run that moves the marker to today logs it: a run that overlapped one which
+      // already marked today (its retry answered "already sent") adds nothing.
+      const marked = await db().transaction(async (tx) => {
+        const [row] = await tx
           .insert(businessProfiles)
           .values({ workspaceId: r.workspace.id, digestLastSentOn: localDate })
           .onConflictDoUpdate({
             target: businessProfiles.workspaceId,
             set: { digestLastSentOn: localDate },
-          });
+            setWhere: sql`${businessProfiles.digestLastSentOn} is distinct from ${localDate}`,
+          })
+          .returning({ workspaceId: businessProfiles.workspaceId });
+        if (!row) return false;
         if (digest.worthSending) {
           await tx.insert(activityLog).values({
             workspaceId: r.workspace.id,
@@ -346,8 +354,9 @@ export async function sendDigests(
             detail: {},
           });
         }
+        return true;
       });
-      if (digest.worthSending) run.sent++;
+      if (marked && digest.worthSending) run.sent++;
       else run.skipped++;
     } catch (err) {
       run.failed++;

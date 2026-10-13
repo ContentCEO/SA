@@ -3,6 +3,7 @@ import { featureOn } from "@/config/features";
 import { REFERRAL_CREDIT_CENTS, REFERRAL_CREDIT_TO } from "@/config/pricing";
 import type { ReferralSide } from "@/db/schema";
 import { appUrl } from "@/lib/app-url";
+import { PUBLIC_WEBMAIL_DOMAINS } from "./sender-rules";
 
 /**
  * Plan #47 referral credit — pure rules. Everything is off unless FEATURE_REFERRALS is on AND
@@ -10,24 +11,7 @@ import { appUrl } from "@/lib/app-url";
  */
 
 /** Owners on these share a domain with strangers, so the same-domain block doesn't apply. */
-export const PUBLIC_WEBMAIL_DOMAINS = new Set([
-  "gmail.com",
-  "googlemail.com",
-  "yahoo.com",
-  "outlook.com",
-  "hotmail.com",
-  "live.com",
-  "msn.com",
-  "icloud.com",
-  "me.com",
-  "mac.com",
-  "aol.com",
-  "proton.me",
-  "protonmail.com",
-  "comcast.net",
-  "att.net",
-  "verizon.net",
-]);
+export { PUBLIC_WEBMAIL_DOMAINS };
 
 /** 12 characters of base64url: 9 random bytes, nothing about the owner in it. */
 const CODE = /^[A-Za-z0-9_-]{12}$/;

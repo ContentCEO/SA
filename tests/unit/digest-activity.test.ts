@@ -346,13 +346,44 @@ describe("in the database", () => {
     expect(digestSettingsInput.safeParse({ hour: "3", timeZone: "UTC" }).success).toBe(false);
   });
 
-  it("read-only accounts get no digest", async () => {
+  it.each([
+    ["evaluation_expired", null],
+    ["canceled", null],
+    ["paused", null],
+    ["past_due", null],
+    // Stored as evaluating, but the three days ended (A7): no cron has to move it first.
+    ["evaluating", new Date("2026-10-05T00:00:00Z")],
+  ] as const)(
+    "GATE read-only (%s): no digest, no marker, no activity row",
+    async (status, evaluationEndsAt) => {
+      // The seeded complaint is waiting on the owner, so the digest would be worth sending.
+      await database
+        .update(workspaces)
+        .set({ status, evaluationEndsAt })
+        .where(eq(workspaces.id, workspaceId));
+      const run = await sendDigests(NOW, { send: sender });
+      expect(run).toMatchObject({ sent: 0, skipped: 0, failed: 0 });
+      expect(sent).toHaveLength(0);
+      const [p] = await database
+        .select()
+        .from(businessProfiles)
+        .where(eq(businessProfiles.workspaceId, workspaceId));
+      expect(p?.digestLastSentOn ?? null).toBeNull();
+      const rows = await database
+        .select()
+        .from(activityLog)
+        .where(eq(activityLog.workspaceId, workspaceId));
+      expect(rows.filter((r) => r.action === "digest_sent")).toHaveLength(0);
+    },
+  );
+
+  it("the same account still evaluating (end date ahead) does get it: the gate is the end date", async () => {
     await database
       .update(workspaces)
-      .set({ status: "evaluation_expired" })
+      .set({ status: "evaluating", evaluationEndsAt: new Date("2026-10-08T00:00:00Z") })
       .where(eq(workspaces.id, workspaceId));
-    await sendDigests(NOW, { send: sender });
-    expect(sent).toHaveLength(0);
+    expect(await sendDigests(NOW, { send: sender })).toMatchObject({ sent: 1 });
+    expect(sent).toHaveLength(1);
   });
 
   it("without email set up, nothing is sent and the day isn't marked done", async () => {
@@ -814,7 +845,12 @@ describe("digest: needs-you header, queue agreement and Monday's last week (plan
       .toSQL();
     // A bare "id" inside `from messages m` would be the message's own id.
     expect(text).not.toMatch(/thread_id = "id"/);
-    expect(text.match(/thread_id = "threads"\."id"/g)).toHaveLength(4);
+    // Every thread match is on the outer thread, except the side-conversation check's, which
+    // match a message's own thread (`sx_….thread_id = <alias>.thread_id`).
+    const all = text.match(/thread_id = /g) ?? [];
+    const own = text.match(/\.thread_id = [a-z_]+\.thread_id/g) ?? [];
+    expect(all.length - own.length).toBeGreaterThanOrEqual(4);
+    expect(text.match(/thread_id = "threads"\."id"/g)).toHaveLength(all.length - own.length);
   });
 
   it("a quiet day says 'No emails need a decision from you today.' only to itself: skipped, and the day is marked", async () => {

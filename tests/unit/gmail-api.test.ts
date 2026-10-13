@@ -182,6 +182,58 @@ describe("history", () => {
     });
   });
 
+  it("asks for new messages and SENT labels added (a sent draft may keep its id)", async () => {
+    const f = vi
+      .fn()
+      .mockResolvedValueOnce(token())
+      .mockResolvedValueOnce(
+        json({
+          historyId: "9",
+          history: [
+            {
+              labelsAdded: [
+                { message: { id: "d", threadId: "t", labelIds: ["SENT"] }, labelIds: ["SENT"] },
+              ],
+            },
+            { labelsAdded: [{ message: { id: "s", threadId: "t" }, labelIds: ["STARRED"] }] },
+            { messagesAdded: [{ message: { id: "a", threadId: "t" } }] },
+          ],
+        }),
+      );
+    const page = await reader(f).r.listHistory({ startHistoryId: "1" });
+    expect(page.added).toEqual([
+      { id: "d", threadId: "t" },
+      { id: "a", threadId: "t" },
+    ]);
+    const url = new URL(String(f.mock.calls[1]![0]));
+    expect(url.searchParams.getAll("historyTypes").sort()).toEqual(["labelAdded", "messageAdded"]);
+  });
+
+  it("lists a thread's unsent drafts by id only (format=minimal); [] when the thread is gone", async () => {
+    const f = vi
+      .fn()
+      .mockResolvedValueOnce(token())
+      .mockResolvedValueOnce(
+        json({
+          id: "t",
+          messages: [
+            { id: "in", labelIds: ["INBOX"] },
+            { id: "ours", labelIds: ["DRAFT"] },
+            { id: "sent", labelIds: ["DRAFT", "SENT"] },
+            { id: "owner", labelIds: ["DRAFT", "CATEGORY_PERSONAL"] },
+            { id: "bare" },
+          ],
+        }),
+      )
+      .mockResolvedValueOnce(json({ error: { code: 404 } }, 404));
+    const { r } = reader(f);
+    expect(await r.threadDraftMessageIds("t")).toEqual(["ours", "owner"]);
+    const url = new URL(String(f.mock.calls[1]![0]));
+    expect(url.pathname).toMatch(/\/threads\/t$/);
+    expect(url.searchParams.get("format")).toBe("minimal");
+    expect(await r.threadDraftMessageIds("gone")).toEqual([]);
+  });
+
   it("asks for metadata only unless a body is needed", async () => {
     const f = vi
       .fn()
