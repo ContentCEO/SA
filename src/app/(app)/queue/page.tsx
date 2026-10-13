@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import Link from "next/link";
 import { Notice } from "@/components/app/notice";
 import { Headline } from "@/components/brand/headline";
@@ -189,7 +190,9 @@ export default async function QueuePage(props: PageProps<"/queue">) {
       {errorMsg ? <Notice strong>{errorMsg}</Notice> : null}
 
       <OfflineQueue enabled={device.offline} />
-      <ScrollToThread />
+      {/* A fresh key per server render: a later navigation or action remounts it, so a
+          "not on your queue" notice from an earlier link doesn't linger (finding M8-7). */}
+      <ScrollToThread key={randomUUID()} />
 
       <OnboardingChecklist list={checklist} dismissAction={dismissChecklistAction} />
 
