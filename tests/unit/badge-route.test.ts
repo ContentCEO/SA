@@ -3,10 +3,11 @@ import { readFileSync } from "node:fs";
 import { eq } from "drizzle-orm";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Database } from "@/db";
-import { drafts, messages, threads, workspaces } from "@/db/schema";
+import { drafts, messages, rateLimits, threads, workspaces } from "@/db/schema";
 import { ensureUserAndWorkspace } from "@/server/accounts";
 import { queueCounts } from "@/server/drafts";
 import { saveConnectedMailbox } from "@/server/mailboxes";
+import { LIMITS } from "@/server/rate-limit";
 import { createTestDb } from "../support/db";
 
 // The signed-in owner, without Auth.js: the routes only read `session.user.id`.
@@ -185,6 +186,37 @@ describe("/api/badge — the home-screen number (plan #38, M8 A32)", () => {
         expect(summary.status).toBe(200);
         expect(summary.json.count).toBe(0);
       });
+    }
+  });
+
+  it("M11 C8: past the poll limit both routes answer 429 with Retry-After, uncached", async () => {
+    // Use up this window's allowance (the badge and the push summary share one bucket).
+    const { max, windowSec } = LIMITS.poll;
+    const windowMs = windowSec * 1000;
+    // Pin the clock mid-window so the routes' own window is the one seeded here.
+    const windowStart = new Date(Math.floor(Date.now() / windowMs) * windowMs);
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(windowStart.getTime() + windowMs / 2);
+    try {
+      await database.insert(rateLimits).values({
+        key: `poll:${workspaceId}`,
+        windowStart,
+        count: max,
+      });
+      for (const get of [badgeGET, summaryGET]) {
+        const res = await call(get);
+        expect(res.status).toBe(429);
+        expect(Number(res.headers.get("Retry-After"))).toBeGreaterThan(0);
+        expect(Number(res.headers.get("Retry-After"))).toBeLessThanOrEqual(windowSec);
+        expect(res.headers.get("Cache-Control")).toBe("no-store");
+        expect(res.json).not.toHaveProperty("count");
+      }
+      // Another owner isn't affected.
+      const other = await ensureUserAndWorkspace({ email: "other@shop.com" });
+      session.userId = other.user.id;
+      expect((await call(badgeGET)).status).toBe(200);
+    } finally {
+      vi.useRealTimers();
     }
   });
 

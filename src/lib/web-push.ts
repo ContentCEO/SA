@@ -1,6 +1,7 @@
 import "server-only";
 import { createPrivateKey, sign, type KeyObject } from "node:crypto";
 import { appUrl } from "./app-url";
+import { isPushEndpoint } from "./push-endpoint";
 
 /**
  * Web Push (plan #36) over plain fetch, with VAPID (RFC 8292) signing in Node
@@ -68,6 +69,9 @@ export type PushSender = (endpoint: string) => Promise<PushResult>;
 /** Send one empty push. "gone" = the phone unsubscribed; forget that endpoint. */
 export const sendPush: PushSender = async (endpoint) => {
   if (!pushConfigured()) return "not_configured";
+  // Defence in depth (M11 C6): only real push services are ever fetched, whatever is stored.
+  // "gone" makes the caller forget the row.
+  if (!isPushEndpoint(endpoint)) return "gone";
   try {
     const res = await fetch(endpoint, {
       method: "POST",

@@ -7,6 +7,7 @@ import { countQueue, queueCardIds, queueMembership } from "@/server/drafts";
 import { leadsAtRisk } from "@/server/leads-at-risk";
 import { notificationUrl } from "@/server/leads-at-risk-rules";
 import { pushSummaryText } from "@/server/push-alerts";
+import { hitLimit } from "@/server/rate-limit";
 import { workspaceTimeZone } from "@/server/snooze";
 import { usableTimeZone } from "@/server/snooze-rules";
 
@@ -23,6 +24,17 @@ export async function GET() {
   const session = await auth();
   const workspace = session?.user?.id ? await getWorkspaceForUser(session.user.id) : null;
   if (!workspace) return NextResponse.json({ error: "Sign in first." }, { status: 401 });
+  // M11 C8: a script polling this can't hammer the database (phones ask far less often).
+  const limit = await hitLimit("poll", workspace.id);
+  if (!limit.allowed) {
+    return NextResponse.json(
+      { error: "Too many requests. Try again shortly." },
+      {
+        status: 429,
+        headers: { "Retry-After": String(limit.retryAfterSec), "Cache-Control": "no-store" },
+      },
+    );
+  }
   const now = new Date();
   // Content-free membership of the queue (plan M8 A1) — the same rules as queueCounts, never
   // listQueue — and the leads that have waited past the mark (ids and times only).

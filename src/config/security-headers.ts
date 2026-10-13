@@ -10,6 +10,10 @@
  *   redirect: Google sign-in / Gmail connect and Stripe Checkout / Portal.
  * - Nobody may frame the site (clickjacking).
  * - Vercel's preview toolbar is allowed on preview deploys only.
+ * - HTTPS only, remembered for a year (Strict-Transport-Security). Vercel already sends this on
+ *   its own domains; we send it ourselves so a custom domain gets it too. No includeSubDomains
+ *   or preload: Davi's other subdomains are not ours to pin. Browsers ignore it over plain http
+ *   (localhost), so local development and e2e are unaffected.
  */
 export type HeaderEnv = {
   NODE_ENV?: string;
@@ -59,6 +63,7 @@ export function contentSecurityPolicy(env: HeaderEnv = process.env): string {
 export function securityHeaders(env: HeaderEnv = process.env) {
   return [
     { key: "Content-Security-Policy", value: contentSecurityPolicy(env) },
+    { key: "Strict-Transport-Security", value: "max-age=31536000" },
     { key: "X-Frame-Options", value: "DENY" },
     { key: "X-Content-Type-Options", value: "nosniff" },
     { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },

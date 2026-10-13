@@ -18,6 +18,7 @@ import {
   sendDraft,
   undoSend,
 } from "@/server/drafts";
+import { markNeedsOwner } from "@/server/classification";
 import { SendingBlockedError } from "@/server/lifecycle";
 import { saveConnectedMailbox } from "@/server/mailboxes";
 import { sendRecord } from "@/server/send-record";
@@ -414,6 +415,33 @@ describe("plan M5 sending: undo (#7), batch (#5), snooze (#6)", () => {
       });
     });
   });
+
+  it(
+    "M11 C9 (accepted on purpose): a read-only account may still snooze and say 'This one " +
+      "needs me' — the screens offer both there; they only reorder the owner's own list, " +
+      "with no Gmail call, no model call and no change to any draft",
+    async () => {
+      const { thread, draft } = await seed();
+      const other = await seed();
+      for (const values of [
+        { status: "evaluation_expired" as const, evaluationEndsAt: later(-3600) },
+        { status: "past_due" as const },
+        { status: "paused" as const },
+        { status: "canceled" as const },
+      ]) {
+        await database.update(workspaces).set(values).where(eq(workspaces.id, workspaceId));
+        expect((await snoozeThread(workspaceId, thread.id, "after_job", NOW)).status).toBe(
+          "snoozed",
+        );
+        expect(await markNeedsOwner(workspaceId, other.thread.id)).toBe(true);
+      }
+      expect(writer.calls).toEqual([]);
+      const d = await row(draft.id);
+      expect(d.status).toBe("pending");
+      expect(d.body).toBe(READY_BODY);
+      expect(d.sendAfter).toBeNull();
+    },
+  );
 
   describe("#41 proof-of-okay record", () => {
     it("says you okayed it, from which device, what changed, the undo window and the Gmail id", async () => {

@@ -214,5 +214,31 @@ describe("#36 phone notifications", () => {
         false,
       );
     });
+
+    it("GUARDRAIL (M11 C6): a stored row outside the allow-list is never fetched", async () => {
+      // A row that skipped savePushSubscription (a bug, a hand edit): the server must still
+      // never fetch an internal address with it.
+      const internal = "http://169.254.169.254/x";
+      await database.insert(pushSubscriptions).values({ workspaceId, endpoint: internal });
+      const k = vapidKeys();
+      process.env.VAPID_PUBLIC_KEY = k.pub;
+      process.env.VAPID_PRIVATE_KEY = k.priv;
+      const fetchMock = vi.fn(async () => new Response(null, { status: 201 }));
+      vi.stubGlobal("fetch", fetchMock);
+
+      expect(await sendPush(internal)).toBe("gone");
+      expect(await sendPush("https://fcm.googleapis.com.evil.example/x")).toBe("gone");
+      expect(fetchMock).not.toHaveBeenCalled();
+
+      // The real sender through the alert job: the push service gets its ping, the internal
+      // address gets nothing and the row is forgotten.
+      await lead(new Date(NOON_NY.getTime() - 60_000));
+      expect(await sendPushAlerts(NOON_NY)).toEqual({ sent: 1 });
+      const fetched = fetchMock.mock.calls.map((c) => String((c as unknown[])[0]));
+      expect(fetched).toEqual([FCM]);
+      expect(fetched.some((u) => u.includes("169.254"))).toBe(false);
+      const left = await database.select().from(pushSubscriptions);
+      expect(left.map((s) => s.endpoint)).toEqual([FCM]);
+    });
   });
 });

@@ -7,6 +7,7 @@ import { inviteOwner } from "@/server/admin";
 import { inviteFromWaitlist } from "@/server/waitlist";
 import { connectStripe } from "@/server/billing";
 import { requireAdmin } from "@/server/session";
+import { stripeErrorReason } from "@/server/stripe-error-rules";
 import { isAdminMove } from "@/server/lifecycle";
 import {
   applyAdminMove,
@@ -75,14 +76,14 @@ export async function connectStripeAction() {
   try {
     mode = (await connectStripe()).mode;
   } catch (err) {
-    // Stripe's messages say what's wrong ("Invalid API Key", a missing permission) and carry
-    // no customer data; Davi sees it on his own admin page.
-    const reason = err instanceof Error ? err.message.slice(0, 200) : "unknown";
+    // M11 C10: never Stripe's own message (it can echo ids and request details) in the URL or
+    // the logs — a fixed code, which the admin page turns into a plain sentence.
+    const reason = stripeErrorReason(err);
     console.error("stripe_connect_failed", {
-      name: err instanceof Error ? err.name : "unknown",
-      message: reason,
+      error: err instanceof Error ? err.name : "unknown",
+      reason,
     });
-    redirect(`/admin?error=stripe&reason=${encodeURIComponent(reason)}#stripe`);
+    redirect(`/admin?error=stripe&reason=${reason}#stripe`);
   }
   redirect(`/admin?done=stripe_${mode}#stripe`);
 }

@@ -315,6 +315,9 @@ In a sandbox with preinstalled Chromium: `PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-brows
   API → 429 with Retry-After), Draft a reply 30/h, re-learn voice 3/day, billing 10/h, Gmail connect
   10/h. Waitlist 10/h per **hashed** IP (salted with AUTH_SECRET; raw IPs never stored). Webhooks
   are signature/token-checked instead. Purged daily with bodies. e2e global setup clears the table.
+  **M11 (S4):** `poll` 300/10 min on `/api/badge` and `/api/push/summary` (429 + Retry-After,
+  no-store; phones ask ≤1/min) and `gmailWrite` 120/10 min on save-edit and discard
+  (`?error=busy`). No window may exceed a day (`MAX_WINDOW_SEC`; the purge drops 2-day-old rows).
 - **Error alerts (2026-10-06):** `@sentry/nextjs`, off unless `NEXT_PUBLIC_SENTRY_DSN` is set.
   `src/instrumentation.ts` (server init + `onRequestError`), `src/instrumentation-client.ts` (SDK
   loaded lazily only with a DSN), Inngest middleware `ReportFinalFailures` (final attempt only, then
@@ -785,6 +788,20 @@ In a sandbox with preinstalled Chromium: `PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-brows
   **A10 in every unit test:** `createTestDb` calls `refuseDateParams`
   (`tests/support/no-date-params.ts`), so PGlite refuses a JS `Date` bound into raw SQL as
   postgres.js does.
+- **M11 security audit (S4, 2026-10-13):** static tests guard the surface —
+  `tests/unit/security-surface.test.ts` (C1 every server action awaits `requireOwner` /
+  `requireAdmin` first, reviewed public/inline allow-lists; C2 admin pages + no `loading.tsx` over
+  must-404 screens; C3 every route handler in a table with its guard, a new route fails; C4 no
+  redirect-target query param read, by property access or destructuring) and
+  `tests/unit/no-content-logs.test.ts` (C11). Fixes: the send API answers 403 for an
+  unparseable Origin (was a 500); `sendPush` re-checks the push-endpoint allow-list
+  (`src/lib/push-endpoint.ts`) and never fetches anything else (returns `gone`); HSTS
+  `max-age=31536000` (no includeSubDomains/preload); Connect Stripe failures travel as fixed
+  codes (`src/server/stripe-error-rules.ts`) and /admin shows our sentence, never Stripe's text.
+  **C9 accepted as the UI behaves today:** read-only accounts may still snooze and tap "This one
+  needs me" (both only reorder the owner's own list; no Gmail or model call; tested).
+  Verified, no change: push endpoint re-homing on upsert, the Gmail push `?token=`, the health
+  commit SHA, CSP `'unsafe-inline'`, JWT-trusted admin email, `x-forwarded-for` on Vercel.
 
 ## Milestones
 

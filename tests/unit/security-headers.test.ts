@@ -57,6 +57,14 @@ describe("security headers", () => {
     expect(contentSecurityPolicy({ ...e2e } as HeaderEnv)).not.toContain("127.0.0.1");
   });
 
+  it("M11 C7: HTTPS is remembered for a year, for this host only (no subdomains, no preload)", () => {
+    for (const env of [{}, { NODE_ENV: "production" }, { VERCEL_ENV: "preview" }]) {
+      const h = Object.fromEntries(securityHeaders(env).map((x) => [x.key, x.value]));
+      expect(h["Strict-Transport-Security"]).toBe("max-age=31536000");
+      expect(h["Strict-Transport-Security"]).not.toMatch(/includeSubDomains|preload/i);
+    }
+  });
+
   it("only previews allow Vercel's toolbar; only development allows eval", () => {
     expect(contentSecurityPolicy({})).not.toContain("vercel.live");
     expect(csp({ VERCEL_ENV: "preview" })["script-src"]).toContain("https://vercel.live");

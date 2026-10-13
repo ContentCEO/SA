@@ -19,7 +19,7 @@ import { ensureUserAndWorkspace, isAllowedToSignIn } from "@/server/accounts";
 import { deleteAccount, SubscriptionCancelError } from "@/server/account-deletion";
 import { setStripeForTests } from "@/server/billing";
 import { saveConnectedMailbox } from "@/server/mailboxes";
-import { hitLimit, ipKey, LIMITS, purgeRateLimits } from "@/server/rate-limit";
+import { hitLimit, ipKey, LIMITS, MAX_WINDOW_SEC, purgeRateLimits } from "@/server/rate-limit";
 import { createTestDb } from "../support/db";
 
 let database: Database;
@@ -46,6 +46,28 @@ describe("rate limits", () => {
 
     const next = new Date(T.getTime() + windowSec * 1000);
     expect((await hitLimit("send", "w1", next)).allowed).toBe(true);
+  });
+
+  it("M11 C8: polling the counts and Gmail-writing taps have their own limits", async () => {
+    for (const name of ["poll", "gmailWrite"] as const) {
+      const { max } = LIMITS[name];
+      for (let i = 0; i < max; i++) expect((await hitLimit(name, "w1", T)).allowed).toBe(true);
+      const over = await hitLimit(name, "w1", T);
+      expect(over.allowed, name).toBe(false);
+      expect(over.retryAfterSec).toBeGreaterThan(0);
+      // Per workspace: another owner isn't slowed down.
+      expect((await hitLimit(name, "w2", T)).allowed).toBe(true);
+    }
+    // Generous: a phone asking once a minute plus after every tap stays far inside it.
+    expect(LIMITS.poll.max).toBeGreaterThanOrEqual(3 * (LIMITS.poll.windowSec / 60));
+  });
+
+  it("every window fits inside the daily purge (windows older than 2 days are deleted)", () => {
+    for (const [name, l] of Object.entries(LIMITS)) {
+      expect(l.windowSec, name).toBeLessThanOrEqual(MAX_WINDOW_SEC);
+      expect(l.windowSec, name).toBeLessThanOrEqual(86_400);
+      expect(l.max, name).toBeGreaterThan(0);
+    }
   });
 
   it("re-learning voice is limited to three a day", async () => {

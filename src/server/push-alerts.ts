@@ -2,6 +2,7 @@ import "server-only";
 import { and, count, eq, gte, inArray, isNull, lt, or } from "drizzle-orm";
 import { db } from "@/db";
 import { activityLog, businessProfiles, pushSubscriptions, workspaces } from "@/db/schema";
+import { isPushEndpoint } from "@/lib/push-endpoint";
 import { pushConfigured, sendPush, type PushSender } from "@/lib/web-push";
 import { jobsAllowed } from "./lifecycle";
 import { atRiskPushPart } from "./leads-at-risk-rules";
@@ -14,24 +15,8 @@ import { freshLeads, inQuietHours, leadCounts, SMS } from "./sms-alerts";
  * phone fetches the counts (pushSummary) to show.
  */
 
-/** Push services we deliver to. Anything else is refused at subscribe time. */
-const PUSH_HOSTS = [
-  /^fcm\.googleapis\.com$/,
-  /^updates\.push\.services\.mozilla\.com$/,
-  /(^|\.)push\.services\.mozilla\.com$/,
-  /^web\.push\.apple\.com$/,
-  /\.notify\.windows\.com$/,
-];
-
-export function isPushEndpoint(endpoint: unknown): endpoint is string {
-  if (typeof endpoint !== "string" || endpoint.length > 1000) return false;
-  try {
-    const u = new URL(endpoint);
-    return u.protocol === "https:" && PUSH_HOSTS.some((h) => h.test(u.hostname));
-  } catch {
-    return false;
-  }
-}
+/** Push services we deliver to. Anything else is refused at subscribe time (and by sendPush). */
+export { isPushEndpoint };
 
 export async function savePushSubscription(workspaceId: string, endpoint: string) {
   if (!isPushEndpoint(endpoint)) return false;

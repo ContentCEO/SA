@@ -147,6 +147,7 @@ export async function saveDraftEditAction(formData: FormData) {
   const text = body.safeParse(formData.get("body"));
   if (!draftId.success) redirect("/queue?error=unknown");
   if (!text.success) redirect("/queue?error=empty");
+  if (!(await hitLimit("gmailWrite", workspace.id)).allowed) redirect("/queue?error=busy");
   let r;
   try {
     r = await saveDraftEdit(workspace.id, draftId.data, text.data);
@@ -167,6 +168,7 @@ export async function discardDraftAction(formData: FormData) {
   const { workspace } = await requireOwner();
   const draftId = id.safeParse(formData.get("draftId"));
   if (!draftId.success) redirect("/queue?error=unknown");
+  if (!(await hitLimit("gmailWrite", workspace.id)).allowed) redirect("/queue?error=busy");
   try {
     await discardDraft(workspace.id, draftId.data);
   } catch (err) {

@@ -9,15 +9,24 @@ import { hitLimit } from "@/server/rate-limit";
 
 export const dynamic = "force-dynamic";
 
+function sameOrigin(origin: string | null, host: string | null): boolean {
+  if (!origin || !host) return false;
+  try {
+    return new URL(origin).host === host;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * JSON endpoint for sending a draft. The UI uses a server action, but the gate
  * is the same function, so hitting this directly during evaluation gets a 403.
  * Like a tap, it starts the undo window (plan #7): 202 with the send time.
  */
 export async function POST(request: NextRequest, ctx: RouteContext<"/api/drafts/[id]/send">) {
-  // CSRF: only same-origin requests may send.
-  const origin = request.headers.get("origin");
-  if (!origin || new URL(origin).host !== request.headers.get("host")) {
+  // CSRF: only same-origin requests may send. A missing, "null" (sandboxed frame, file://) or
+  // garbled Origin is refused the same way — never a 500 (M11 C5).
+  if (!sameOrigin(request.headers.get("origin"), request.headers.get("host"))) {
     return NextResponse.json({ error: "Cross-site request refused." }, { status: 403 });
   }
   const session = await auth();

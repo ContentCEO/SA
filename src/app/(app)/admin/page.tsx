@@ -26,6 +26,7 @@ import {
 } from "./actions";
 import { PendingButton } from "@/components/app/pending-button";
 import { stripeConfigured, stripeConnectedAt } from "@/server/billing";
+import { stripeReasonText } from "@/server/stripe-error-rules";
 import { listWaitlist } from "@/server/waitlist";
 import { referralsVisible } from "@/server/referral-rules";
 import { describeWaitlistEntry, formatStamp } from "@/server/growth-note";
@@ -89,7 +90,7 @@ const done: Record<string, string> = {
   already_invited: "That address was already invited.",
 };
 const errors: Record<string, string> = {
-  stripe: "Couldn't connect Stripe. Check the STRIPE_SECRET_KEY in Vercel, then try again.",
+  stripe: "Couldn't connect Stripe.",
   move: "That change isn't allowed from the account's current status. Refresh and look again.",
   invite: "That doesn't look like an email address.",
   growth_only: growthCopy.admin.growthOnlyError,
@@ -370,7 +371,8 @@ export default async function AdminPage(props: PageProps<"/admin">) {
     typeof params.error === "string" && !isStripe(params.error) ? errors[params.error] : undefined;
   const stripeDone = isStripe(params.done) ? done[params.done as string] : undefined;
   const stripeError = isStripe(params.error) ? errors[params.error as string] : undefined;
-  const stripeReason = typeof params.reason === "string" ? params.reason.slice(0, 200) : null;
+  // Only a fixed code travels in the URL (M11 C10); anything else shows nothing.
+  const stripeReason = stripeReasonText(params.reason);
 
   return (
     <>
@@ -435,7 +437,7 @@ export default async function AdminPage(props: PageProps<"/admin">) {
         {stripeError ? (
           <Notice strong>
             {stripeError}
-            {stripeReason ? ` Stripe said: “${stripeReason}”` : null}
+            {stripeReason ? ` ${stripeReason}` : null}
           </Notice>
         ) : null}
         {stripeConfigured() ? (
