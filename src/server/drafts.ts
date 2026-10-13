@@ -72,7 +72,7 @@ import { isInvoiceThread, paymentSaid } from "./money-rules";
 import { quoteStopsNudges } from "./quote-rules";
 import { BACK_ON_TOP_MS, isEmergency } from "./snooze-rules";
 import { headerPickIds, toNeedsYouItem } from "./digest-rules";
-import { asDate, notDraftMessage, waitingSinceSql } from "./thread-sql";
+import { asDate, notDraftMessage, sideEmailSql, waitingSinceSql } from "./thread-sql";
 import { closingQuestionAllowed, recentReviewAddresses, reviewAllowed } from "./offers";
 import { lockReviewAddress } from "./review-lock";
 import { markReconnectNeeded, recordSentMessage } from "./sync";
@@ -479,21 +479,28 @@ export async function createDraftForThread(
     .where(and(eq(drafts.threadId, threadId), eq(drafts.status, "pending")));
   if (pending) return { status: "skipped", reason: "already_pending" };
 
+  // A nudge or closing question follows the owner's own last message; a review request
+  // may follow either; everything else answers the customer.
+  const afterOwner = followup || purpose === "closing_question";
   // An unsent Gmail draft is not part of the conversation: never "the owner wrote", never
   // text for the model or the checks, never what a nudge is threaded to (notDraftMessage).
+  // For a nudge or closing question, neither is a side conversation (a forward to the crew
+  // and the crew's reply, `sideEmailSql`): the same "who wrote last" as the follow-up scan,
+  // so a thread it picks isn't skipped here, and the note is threaded to — and only shows
+  // the model — the conversation with the customer.
+  const conversation = afterOwner
+    ? and(eq(messages.threadId, threadId), notDraftMessage(), sql`not ${sideEmailSql("messages")}`)
+    : and(eq(messages.threadId, threadId), notDraftMessage());
   const recent = (
     await db()
       .select()
       .from(messages)
-      .where(and(eq(messages.threadId, threadId), notDraftMessage()))
+      .where(conversation)
       .orderBy(desc(messages.sentAt))
       .limit(CONVERSATION_MESSAGES)
   ).reverse();
   const last = recent.at(-1);
   if (!last) return { status: "skipped", reason: "no_text" };
-  // A nudge or closing question follows the owner's own last message; a review request
-  // may follow either; everything else answers the customer.
-  const afterOwner = followup || purpose === "closing_question";
   if (afterOwner && last.direction !== "out")
     return { status: "skipped", reason: "customer_replied" };
   if (!afterOwner && purpose !== "review_request" && last.direction !== "in")
@@ -505,9 +512,7 @@ export async function createDraftForThread(
           await db()
             .select()
             .from(messages)
-            .where(
-              and(eq(messages.threadId, threadId), eq(messages.direction, "in"), notDraftMessage()),
-            )
+            .where(and(conversation, eq(messages.direction, "in")))
             .orderBy(desc(messages.sentAt))
             .limit(1)
         )[0]

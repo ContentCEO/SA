@@ -29,7 +29,7 @@ import {
 import { jobKindOf } from "./monthly-rules";
 import { keepQuoteAccepted, quoteAccepted } from "./quote-rules";
 import { ownerGavePrice } from "./quotes";
-import { notDraftMessage } from "./thread-sql";
+import { notDraftMessage, notDraftSql, sideEmailSql } from "./thread-sql";
 
 /** Classify inbound mail from this far back on the first pass; everything new after that. */
 export const CLASSIFY_LOOKBACK_DAYS = 14;
@@ -328,11 +328,15 @@ export async function classifyPending(
 
     // Sticky quote-request facts (M8 A11), content-free. A quote request re-sorted as
     // scheduling ("Tuesday works") still counts as one in the scorecard and the monthly
-    // summary. The time is the customer's FIRST email on the thread (what response time and
-    // the monthly counts measure from): only the newest email of a sync is sorted, so a
-    // request and its "photos attached" arrive as one, and a thread sorted as a quote by older
-    // code has no record of which email that was. The kind of job is OUR fixed label, never
-    // the customer's words; a real kind replaces "Other jobs", but never another real kind.
+    // summary. The time (what response time and the monthly counts measure from) is the
+    // customer's first email since the owner last wrote: only the newest email of a sync is
+    // sorted, so a request and its "photos attached" arrive as one, while a new job asked for
+    // on an older conversation the owner already answered dates from the new request, not the
+    // old chat. "The owner wrote" is the same rule as everywhere (`lastOutSql`): not an unsent
+    // Gmail draft, not a forward to the crew (nor the crew's reply to it). A thread sorted as a
+    // quote by older code has no record of which email that was, so it takes the thread's
+    // first customer email. The kind of job is OUR fixed label, never the customer's words; a
+    // real kind replaces "Other jobs", but never another real kind.
     // An email that tries to instruct us leaves no mark (no automatic marks from it): these
     // drive counts and "a lead is waiting" alerts, and they are never cleared.
     const prevInjection = (thread?.extracted as { injection?: unknown } | null)?.injection === true;
@@ -378,7 +382,13 @@ export async function classifyPending(
             : {}),
         ...(markQuote
           ? {
-              quoteRequestedAt: sql`coalesce(${threads.quoteRequestedAt}, (select min(${messages.sentAt}) from ${messages} where ${messages.threadId} = ${threads.id} and ${messages.direction} = 'in'), ${requestAt}::timestamptz)`,
+              // `requestAt` is an ISO string, never a Date: postgres.js can't bind a Date
+              // inside raw SQL (A10; the classification tests' driver refuses one).
+              quoteRequestedAt: sql`coalesce(${threads.quoteRequestedAt}, ${
+                legacyQuote
+                  ? sql`(select min(i.sent_at) from messages i where i.thread_id = ${threads.id} and i.direction = 'in')`
+                  : sql`(select min(i.sent_at) from messages i where i.thread_id = ${threads.id} and i.direction = 'in' and not ${sideEmailSql("i")} and i.sent_at <= ${requestAt}::timestamptz and i.sent_at > coalesce((select max(o.sent_at) from messages o where o.thread_id = ${threads.id} and o.direction = 'out' and ${notDraftSql("o")} and not ${sideEmailSql("o")} and o.sent_at < ${requestAt}::timestamptz), '-infinity'::timestamptz))`
+              }, ${requestAt}::timestamptz)`,
             }
           : {}),
         ...(jobKind === null

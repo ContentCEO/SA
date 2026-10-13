@@ -52,12 +52,20 @@ async function thread(over: ThreadOver = {}, box = mailboxId) {
   return t!.id;
 }
 
+const CUSTOMER = "SECRET-CUSTOMER@customer.com";
+
+/**
+ * An email on the thread; the owner's go to the customer unless `to` says otherwise. The
+ * subject is the conversation's ("Re: …") unless a forward is being tested.
+ */
 async function msg(
   threadId: string,
   direction: "in" | "out",
   sentAt: Date,
-  from = direction === "in" ? "SECRET-CUSTOMER@customer.com" : "owner@shop.com",
+  from = direction === "in" ? CUSTOMER : "owner@shop.com",
   box = mailboxId,
+  to = direction === "in" ? "owner@shop.com" : CUSTOMER,
+  subject = "Re: SECRET-SUBJECT",
 ) {
   await database.insert(messages).values({
     threadId,
@@ -66,6 +74,9 @@ async function msg(
     direction,
     fromName: direction === "in" ? "SECRET-NAME" : "Owner",
     fromAddress: from,
+    // As sync stores them: lowercased.
+    toAddresses: [to.toLowerCase()],
+    subject,
     bodyText: "SECRET-BODY",
     sentAt,
   });
@@ -179,6 +190,129 @@ describe("weeklyScorecard: quotes out (#32)", () => {
     const s = await week();
     expect(s.quotesOut).toBe(1);
     expect(s.response).toEqual({ avgMinutes: 120, answered: 1, unanswered: 0 });
+  });
+});
+
+describe("weeklyScorecard: a quote request is dated from when it was asked for", () => {
+  it("a new job asked for on an older thread counts in the week of the request, not the old chat's", async () => {
+    // Last week the customer asked a question and the owner answered an hour later. This week
+    // they ask for a quote on the same Gmail thread (classification marks the request's time).
+    const t = await thread({ quoteRequestedAt: day(1, 9) });
+    await msg(t, "in", day(-5, 9));
+    await msg(t, "out", day(-5, 10));
+    await msg(t, "in", day(1, 9));
+
+    // Not yet answered: this week has one waiting request; last week has none.
+    let s = await week();
+    expect(s.quotesOut).toBe(0);
+    expect(s.response).toEqual({ avgMinutes: null, answered: 0, unanswered: 1 });
+    let last = await weeklyScorecard(workspaceId, WEEK.lastStart, WEEK.start, NOW);
+    expect(last.quotesOut).toBe(0);
+    expect(last.response).toEqual({ avgMinutes: null, answered: 0, unanswered: 0 });
+
+    // The owner quotes two hours later: this week's quote out, timed from the request.
+    await msg(t, "out", day(1, 11));
+    s = await week();
+    expect(s.quotesOut).toBe(1);
+    expect(s.response).toEqual({ avgMinutes: 120, answered: 1, unanswered: 0 });
+    last = await weeklyScorecard(workspaceId, WEEK.lastStart, WEEK.start, NOW);
+    expect(last.quotesOut).toBe(0);
+    expect(last.response.answered).toBe(0);
+  });
+});
+
+describe("weeklyScorecard: a forward to the crew answers nobody", () => {
+  it("forwarding the request to the crew (and the crew's reply) is no answer and no response time; replying is", async () => {
+    const t = await thread();
+    await msg(t, "in", day(0, 9));
+    // 9:05: the owner forwards the lead to their estimator (Gmail keeps it in the thread);
+    // 9:30 the estimator replies to the forward, in the same thread.
+    const fwd = "Fwd: SECRET-SUBJECT";
+    await msg(t, "out", day(0, 9, 5), "owner@shop.com", mailboxId, "crew@shop.com", fwd);
+    await msg(t, "in", day(0, 9, 30), "crew@shop.com", mailboxId, "owner@shop.com", `Re: ${fwd}`);
+    // 9:40: the owner answers the estimator ("RE: FW:", any case) — still not the customer.
+    await msg(t, "out", day(0, 9, 40), "owner@shop.com", mailboxId, "crew@shop.com", "RE: FW: x");
+    let s = await week();
+    expect(s.quotesOut).toBe(0);
+    expect(s.response).toEqual({ avgMinutes: null, answered: 0, unanswered: 1 });
+
+    // 11:00: the real reply, to the customer.
+    await msg(t, "out", day(0, 11));
+    s = await week();
+    expect(s.quotesOut).toBe(1);
+    expect(s.response).toEqual({ avgMinutes: 120, answered: 1, unanswered: 0 });
+  });
+
+  it("forwarding something to the customer (To or Cc) answers them", async () => {
+    const t = await thread();
+    await msg(t, "in", day(0, 9));
+    await database.insert(messages).values({
+      threadId: t,
+      mailboxId,
+      gmailMessageId: `m-${randomUUID()}`,
+      direction: "out",
+      fromAddress: "owner@shop.com",
+      toAddresses: ["spouse@customer.com"],
+      // Any case: addresses compare lowercased.
+      ccAddresses: [CUSTOMER],
+      subject: "Fwd: SECRET-SUBJECT",
+      sentAt: day(0, 9, 30),
+    });
+    expect((await week()).response).toEqual({ avgMinutes: 30, answered: 1, unanswered: 0 });
+  });
+
+  it("a 'Re:' sent only to the crew on the owner's own domain is no answer: the request stays unanswered", async () => {
+    const t = await thread();
+    await msg(t, "in", day(0, 9));
+    // The owner hits Reply and changes To to the estimator; the estimator replies.
+    await msg(t, "out", day(0, 9, 5), "owner@shop.com", mailboxId, "crew@shop.com");
+    await msg(t, "in", day(0, 9, 30), "crew@shop.com", mailboxId, "owner@shop.com");
+    let s = await week();
+    expect(s.quotesOut).toBe(0);
+    expect(s.response).toEqual({ avgMinutes: null, answered: 0, unanswered: 1 });
+    await msg(t, "out", day(0, 10));
+    s = await week();
+    expect(s.quotesOut).toBe(1);
+    expect(s.response).toEqual({ avgMinutes: 60, answered: 1, unanswered: 0 });
+  });
+
+  it("a lead forwarded in by a property manager, Cc'ing the tenant: the owner's reply to the tenant is the answer", async () => {
+    const t = await thread();
+    const fwd = "Fwd: SECRET-SUBJECT";
+    await database.insert(messages).values({
+      threadId: t,
+      mailboxId,
+      gmailMessageId: `m-${randomUUID()}`,
+      direction: "in",
+      fromAddress: "office@pm.example",
+      toAddresses: ["owner@shop.com"],
+      ccAddresses: ["tenant@home.example"],
+      subject: fwd,
+      sentAt: day(0, 9),
+    });
+    await msg(
+      t,
+      "out",
+      day(0, 9, 20),
+      "owner@shop.com",
+      mailboxId,
+      "tenant@home.example",
+      `Re: ${fwd}`,
+    );
+    const s = await week();
+    expect(s.quotesOut).toBe(1);
+    expect(s.response).toEqual({ avgMinutes: 20, answered: 1, unanswered: 0 });
+  });
+
+  it("a contact-form lead answered from Gmail (to the Reply-To address) counts as answered and as a quote out", async () => {
+    // The form's relay sends it; the owner's Re: goes to the customer's own address (the
+    // Reply-To, which isn't stored), never back to the relay.
+    const t = await thread();
+    await msg(t, "in", day(0, 9), "wordpress@SECRET-site.com");
+    await msg(t, "out", day(0, 9, 45), "owner@shop.com", mailboxId, CUSTOMER);
+    const s = await week();
+    expect(s.quotesOut).toBe(1);
+    expect(s.response).toEqual({ avgMinutes: 45, answered: 1, unanswered: 0 });
   });
 });
 
@@ -302,6 +436,7 @@ describe("weeklyScorecard: response time (#33)", () => {
         gmailMessageId: `m-${randomUUID()}`,
         direction: "out",
         fromAddress: "owner@shop.com",
+        toAddresses: [CUSTOMER.toLowerCase()],
         labelIds,
         sentAt,
       });

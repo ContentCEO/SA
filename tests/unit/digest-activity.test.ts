@@ -845,7 +845,12 @@ describe("digest: needs-you header, queue agreement and Monday's last week (plan
       .toSQL();
     // A bare "id" inside `from messages m` would be the message's own id.
     expect(text).not.toMatch(/thread_id = "id"/);
-    expect(text.match(/thread_id = "threads"\."id"/g)).toHaveLength(4);
+    // Every thread match is on the outer thread, except the side-conversation check's, which
+    // match a message's own thread (`sx_….thread_id = <alias>.thread_id`).
+    const all = text.match(/thread_id = /g) ?? [];
+    const own = text.match(/\.thread_id = [a-z_]+\.thread_id/g) ?? [];
+    expect(all.length - own.length).toBeGreaterThanOrEqual(4);
+    expect(text.match(/thread_id = "threads"\."id"/g)).toHaveLength(all.length - own.length);
   });
 
   it("a quiet day says 'No emails need a decision from you today.' only to itself: skipped, and the day is marked", async () => {

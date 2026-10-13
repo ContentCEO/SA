@@ -210,6 +210,57 @@ describe("which threads get a nudge", () => {
     expect(await threadsToFollowUp(mailboxId, NOW)).toEqual([answered]);
   });
 
+  it('a lead only forwarded to the crew was never quoted: no "following up on my quote" nudge', async () => {
+    const [t] = await database
+      .insert(threads)
+      .values({
+        mailboxId,
+        gmailThreadId: `g${++g}`,
+        inInbox: true,
+        subject: "Panel upgrade",
+        category: "quote_request",
+        classifiedAt: daysAgo(9),
+        lastMessageAt: daysAgo(4),
+      })
+      .returning();
+    await database.insert(messages).values([
+      {
+        threadId: t!.id,
+        mailboxId,
+        gmailMessageId: `${t!.id}-in`,
+        direction: "in",
+        fromAddress: "dana@customer.com",
+        subject: "Panel upgrade",
+        sentAt: daysAgo(5),
+      },
+      {
+        // Gmail keeps the forward in the customer's conversation.
+        threadId: t!.id,
+        mailboxId,
+        gmailMessageId: `${t!.id}-fwd`,
+        direction: "out",
+        fromAddress: "owner@shop.com",
+        toAddresses: ["crew@shop.com"],
+        labelIds: ["SENT"],
+        subject: "Fwd: Panel upgrade",
+        sentAt: daysAgo(4),
+      },
+    ]);
+    // A quote the owner did send, then forwarded to the crew: still chased from the quote.
+    const quoted = await quietThread({ ownerRepliedDaysAgo: 4 });
+    await database.insert(messages).values({
+      threadId: quoted,
+      mailboxId,
+      gmailMessageId: `${quoted}-fwd`,
+      direction: "out",
+      fromAddress: "owner@shop.com",
+      toAddresses: ["crew@shop.com"],
+      subject: "Fwd: Panel upgrade",
+      sentAt: daysAgo(3.5),
+    });
+    expect(await threadsToFollowUp(mailboxId, NOW)).toEqual([quoted]);
+  });
+
   it("not if it went quiet weeks ago", async () => {
     await quietThread({ ownerRepliedDaysAgo: 30 });
     expect(await threadsToFollowUp(mailboxId, NOW)).toEqual([]);
@@ -292,6 +343,50 @@ describe("writing and sending a nudge", () => {
       .where(eq(activityLog.action, "followup_drafted"));
     expect(log!.detail).toMatchObject({ nudgeNumber: 1 });
     expect(JSON.stringify(log!.detail)).not.toMatch(/Dana|panel|2,400/i);
+  });
+
+  it("after a forward to the crew and the crew's reply, the scan and the nudge agree: to the customer, threaded to the quote", async () => {
+    const t = await quietThread({ ownerRepliedDaysAgo: 4 });
+    await database.insert(messages).values([
+      {
+        threadId: t,
+        mailboxId,
+        gmailMessageId: `${t}-fwd`,
+        rfc822MessageId: `<${t}-fwd@shop.com>`,
+        direction: "out",
+        fromAddress: "owner@shop.com",
+        toAddresses: ["crew@shop.com"],
+        subject: "Fwd: Panel upgrade",
+        bodyText: "SECRET-CREW can you check the panel size?",
+        sentAt: daysAgo(3.9),
+      },
+      {
+        threadId: t,
+        mailboxId,
+        gmailMessageId: `${t}-crew`,
+        rfc822MessageId: `<${t}-crew@shop.com>`,
+        direction: "in",
+        fromAddress: "crew@shop.com",
+        toAddresses: ["owner@shop.com"],
+        subject: "Re: Fwd: Panel upgrade",
+        bodyText: "SECRET-CREW 200 amp is fine, $2,000 would be my price",
+        sentAt: daysAgo(3.8),
+      },
+    ]);
+    expect(await threadsToFollowUp(mailboxId, NOW)).toEqual([t]);
+
+    const { transport, calls } = fakeTransport([nudge()]);
+    setModelTransportForTests(transport);
+    expect((await createDraftForThread(t, { trigger: "followup", ...deps() })).status).toBe(
+      "created",
+    );
+    const [d] = await database.select().from(drafts).where(eq(drafts.threadId, t));
+    expect(d!.toAddress).toBe("dana@customer.com");
+    const raw = [...writer.drafts.values()][0]!.raw;
+    expect(FakeWriter.headersOf(raw)).toMatch(/In-Reply-To: <g\d+-out@shop.com>/);
+    // Quiet since the quote (4 days), and the crew's talk is never shown to the model.
+    expect(calls[0]!.user).toMatch(/hasn't replied for 4 days/);
+    expect(calls[0]!.user).not.toMatch(/SECRET-CREW/);
   });
 
   it("a newer unsent Gmail draft is skipped: threaded to the sent email, its text never shown to the model", async () => {

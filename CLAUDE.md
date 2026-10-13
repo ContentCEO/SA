@@ -522,7 +522,10 @@ In a sandbox with preinstalled Chromium: `PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-brows
     still carry a name or owner text and are kept out of Sentry only by the `ui.*` scrub.
 - **Plan M8 (2026-10-12, branch `claude/milestone-6-8`; #31 #32 #33 #34 #35 #38 done):**
   Migration 0025 (additive, no backfill): `threads.quote_requested_at` (set once when a thread is
-  first sorted quote_request, never cleared, like `complained_at`), `threads.job_kind` (one of our
+  first sorted quote_request, never cleared, like `complained_at`; the time is the customer's
+  first email since the owner last wrote — "wrote" as in `lastOutSql`, see "Side conversations"
+  below — so a new job asked for on an old conversation dates from the request; threads sorted
+  as quotes by older code fall back to the thread's first inbound), `threads.job_kind` (one of our
   fixed labels, set at classification; only replaced while null or "Other jobs"; injection emails
   leave no mark), `threads.at_risk_alerted_at`, `business_profile.monthly_summary_last_sent_for`
   ('YYYY-MM'). Queries count a quote request as `quote_requested_at IS NOT NULL OR` the current
@@ -541,8 +544,9 @@ In a sandbox with preinstalled Chromium: `PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-brows
   - **#32/#33 week:** Monday 00:00 → Monday 00:00 in the owner's zone (`weekBounds`, DST-safe;
     pure date code lives in `snooze-rules.ts`: `localParts`, `localMonthStart/Name`, re-exported).
     `src/server/scorecard.ts`: replies and follow-ups by `decided_at`; quotes out = each quote
-    request once, in the week of the owner's first answer; response time = customer's first email
-    → owner's first answer (synced email, sent draft, or a send in its undo window), calendar time,
+    request once, in the week of the owner's first answer; response time = the request time
+    (`requestAtSql`: `quote_requested_at`, else the thread's first inbound) → owner's first answer
+    (synced email that isn't a side email, sent draft, or a send in its undo window), calendar time,
     filed under the week the request came in, plus how many are still unanswered. No-reply senders
     (`src/server/sender-rules.ts`, SQL twin in `thread-sql.ts`) count as neither. Time saved =
     `MINUTES_PER_SENT_REPLY` (now in `src/config/drafting.ts`) × (replies + follow-ups sent).
@@ -575,8 +579,12 @@ In a sandbox with preinstalled Chromium: `PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-brows
     `service_requested`, "Other jobs" fallback — only the label is stored or sent), top 3 lead
     sources (`src/config/lead-sources.ts`; domains split in SQL so no address reaches JS; Google
     only as the exact hosts `localservices.google.com` / `business.google.com`; facebookmail.com
-    left out as too broad; else "Direct email"), repeat customers (an earlier inbound on a
-    **different** thread before the month, one SQL count) and win rate (`closeRateBetween`).
+    left out as too broad; else "Direct email"; the domain is the requester's,
+    `requestSenderSql`), quote requests by `requestAtSql`, repeat customers (an address with a
+    **new** request in the month — a conversation that began in the month or a quote asked for in
+    it — and an earlier inbound on a **different** thread before the month, one SQL count; one job
+    split over two September threads that carries on in October is not a repeat) and win rate
+    (`closeRateBetween`).
   - **#38 badge:** `src/lib/app-badge.ts` + `AppBadge` in the (app) layout fetch the count-only
     `/api/badge` (`{ count }`, 401 signed out) at most once a minute, after a queue action and on
     becoming visible; `sw.js` sets it after a push. Count = replies ready + needs-you, capped at 99,
@@ -677,6 +685,35 @@ In a sandbox with preinstalled Chromium: `PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-brows
   auto-Won outcomes decided while a draft counted (the owner can change them). Ingest sets
   `last_message_at` = greatest(new messages, stored messages' max) so a stale read can't put a
   deleted draft's time back.
+- **Side conversations (2026-10-13, M8 review):** Gmail keeps the owner's forward of a lead to
+  the crew (and the crew's reply) in the customer's conversation, so "the owner wrote" counted a
+  forward as an answer. `sideEmailSql` (`thread-sql.ts`) now leaves out side emails everywhere
+  "who wrote last" is asked: `lastInSql` / `lastOutSql` / `waitingSinceSql` (leads at risk,
+  Quotes' stages, digest waits, no-answer guesses, follow-ups), the scorecard's first answer,
+  the `quote_requested_at` timing, and `createDraftForThread` for nudges / closing questions
+  (`last`, the addressee, the threading and the model's conversation). Decided by **who the
+  owner wrote to**, never by one "customer" address: the customer's side = anyone on the
+  thread's inbound mail (sender, To or Cc). An owner email is side when it goes to someone,
+  none of its recipients is on the customer's side (crew replies don't count as that), and it
+  is a forward the owner started (subject `Fwd:` / `Re: Fwd:` on a thread whose lead didn't
+  itself arrive as a forward) **or** every recipient is on the mailbox's own business domain
+  (crew@shop.com; never on public webmail, `PUBLIC_WEBMAIL_DOMAINS` in `sender-rules.ts`).
+  An inbound email is side when its sender got the lead from the owner (a recipient of such an
+  owner email, or of any owner email when on the owner's business domain: "Dana, meet Mike")
+  and had never been on the thread's inbound mail before. Not a strict "To/Cc holds the
+  customer" rule because a contact-form lead's customer is answered at the form's Reply-To,
+  which sync doesn't store (an additive `messages.reply_to_addresses` would allow the strict
+  rule). **Known gaps:** a plain "Re:" sent only to an outside address answers the lead (the
+  contact-form case); on a lead that arrived as a forward (a friend, an office or a property
+  manager), the owner's forward to an outside crew counts as an answer.
+  **Known limitation (A11):** `quote_requested_at` is sticky, so a returning customer asking for
+  a new job on their old, already decided quote thread keeps the first request's time: the
+  scorecard, the monthly count and the repeat-customer check miss the new request (no history of
+  requests is kept). Re-stamping it when the outcome is decided would also need the outcome and
+  Quotes' stage to move with it — not built.
+  **A10 in every unit test:** `createTestDb` calls `refuseDateParams`
+  (`tests/support/no-date-params.ts`), so PGlite refuses a JS `Date` bound into raw SQL as
+  postgres.js does.
 
 ## Milestones
 
