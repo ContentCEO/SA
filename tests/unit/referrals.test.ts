@@ -509,7 +509,7 @@ describe("GATE: switched off, or no amount", () => {
     expect(stripeCalls()).toBe(0);
   });
 
-  it("off: an invite that already carries a referral isn't carried or used up", async () => {
+  it("off: an invite that already carries a referral isn't carried, but is used up (A5)", async () => {
     const ref = await referrer();
     await database
       .insert(invites)
@@ -517,7 +517,59 @@ describe("GATE: switched off, or no amount", () => {
     const { workspace } = await ensureUserAndWorkspace({ email: "mike@yahoo.com" });
     expect(workspace.referredByWorkspaceId).toBeNull();
     const [inv] = await database.select().from(invites).where(eq(invites.email, "mike@yahoo.com"));
-    expect(inv?.referredByWorkspaceId).toBe(ref.id);
+    expect(inv?.referredByWorkspaceId).toBeNull();
+    // Turning it on afterwards links nothing on a later sign-in.
+    turnOn();
+    const { workspace: again } = await ensureUserAndWorkspace({ email: "mike@yahoo.com" });
+    expect(again.id).toBe(workspace.id);
+    expect(again.referredByWorkspaceId).toBeNull();
+  });
+
+  it("off at first sign-in: never paid later, even after delete + on + sign up again (A5/A9)", async () => {
+    turnOn();
+    const ref = await referrer();
+    const code = await ensureReferralCode(ref.id);
+    await joinWaitlist(
+      waitlistInput.parse({ name: "Mike", email: "mike@yahoo.com", referralCode: code }),
+    );
+    expect(await inviteFromWaitlist("mike@yahoo.com")).toBe("invited");
+    const invite = async () =>
+      (await database.select().from(invites).where(eq(invites.email, "mike@yahoo.com")))[0];
+    expect((await invite())?.referredByWorkspaceId).toBe(ref.id);
+
+    // Switched off before Mike's first sign-in: the invite is used up, his workspace isn't linked.
+    delete process.env.FEATURE_REFERRALS;
+    const { workspace, user } = await ensureUserAndWorkspace({ email: "mike@yahoo.com" });
+    expect(workspace.referredByWorkspaceId).toBeNull();
+    expect((await invite())?.referredByWorkspaceId).toBeNull();
+    const startEvaluation = (id: string) =>
+      set(id, {
+        status: "evaluating",
+        evaluationStartedAt: NOW,
+        evaluationEndsAt: new Date(NOW.getTime() + 3 * 86_400_000),
+      });
+    await startEvaluation(workspace.id);
+    await payAndFinishSetup(workspace.id);
+    expect((await load(workspace.id)).status).toBe("active");
+
+    const connector = { revoke: async () => {} } as unknown as MailboxConnector;
+    await deleteAccount(user.id, connector);
+
+    // On again, Mike signs up again and goes active: nothing links him, nothing is paid.
+    turnOn();
+    const { workspace: again } = await ensureUserAndWorkspace({ email: "mike@yahoo.com" });
+    expect(again.id).not.toBe(workspace.id);
+    expect(again.referredByWorkspaceId).toBeNull();
+    await startEvaluation(again.id);
+    await payAndFinishSetup(again.id);
+    expect((await load(again.id)).status).toBe("active");
+    expect(await creditReferralOnActive(again.id, NOW)).toBe("skipped");
+    await applyPendingReferralCredits(NOW);
+    await applySubscription(subscription(again.id, "active"), NOW);
+
+    expect(creates()).toHaveLength(0);
+    expect(calls.filter((c) => c.method.startsWith("customers."))).toHaveLength(0);
+    expect(await rows()).toHaveLength(0);
   });
 
   it("off: crediting is skipped, Stripe is never called, and the sweep does nothing", async () => {

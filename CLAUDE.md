@@ -602,7 +602,8 @@ In a sandbox with preinstalled Chromium: `PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-brows
   `referralsVisible()` = flag on **and** a positive amount — otherwise no link, no code stored,
   nothing carried, no credit, no Stripe call. Path: `/?ref=<code>` → waitlist (hidden field) →
   `inviteFromWaitlist` → first sign-in copies it to the workspace and clears it on the invite (used
-  once). Settled **once ever**, the first time the referred account is `active` with
+  once; a first sign-in while it's off still uses up the invite's referral, unlinked). Settled
+  **once ever**, the first time the referred account is `active` with
   `setup_paid_via = 'stripe'` (not house, not legacy null): one insert of the sides in the config
   at that moment, or a single `skipped` row (flag off, no amount, self, same business domain —
   public webmail like gmail.com exempt). Later config changes add nothing. The email fingerprint
