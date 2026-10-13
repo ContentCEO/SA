@@ -235,7 +235,7 @@ ${
 <p style="margin:0;font-size:14px;color:#5e5d59">${esc(siteConfig.copyright)}</p>
 </div></body></html>`;
 
-  // "Nothing needs you today." on its own doesn't make a quiet day worth an email.
+  // "No emails need a decision from you today." on its own doesn't make a quiet day worth an email.
   return {
     subject,
     text,

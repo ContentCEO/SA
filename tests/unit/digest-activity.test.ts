@@ -138,14 +138,14 @@ describe("digest content", () => {
 
   it("nothing needs you: one line, and a day with nothing else isn't worth an email", () => {
     const d = buildDigest(quiet, links, at);
-    expect(d.text).toContain("Nothing needs you today.");
-    expect(d.html).toContain("Nothing needs you today.");
+    expect(d.text).toContain("No emails need a decision from you today.");
+    expect(d.html).toContain("No emails need a decision from you today.");
     expect(d.text).not.toContain("Open your queue");
     expect(d.worthSending).toBe(false);
     // Something ready but nobody waiting: worth it, and the header still says so plainly.
     const ready = buildDigest({ ...quiet, repliesReady: 1 }, links, at);
     expect(ready.worthSending).toBe(true);
-    expect(ready.text).toContain("Nothing needs you today.");
+    expect(ready.text).toContain("No emails need a decision from you today.");
     expect(ready.text).toContain("Open your queue: https://app/queue");
   });
 
@@ -155,7 +155,9 @@ describe("digest content", () => {
     expect(d.worthSending).toBe(true);
     expect(d.text).toContain(lastWeek[0]);
     expect(d.html).toContain(lastWeek[0]);
-    expect(d.text.indexOf("Nothing needs you today.")).toBeLessThan(d.text.indexOf("Last week:"));
+    expect(d.text.indexOf("No emails need a decision from you today.")).toBeLessThan(
+      d.text.indexOf("Last week:"),
+    );
   });
 });
 
@@ -815,7 +817,7 @@ describe("digest: needs-you header, queue agreement and Monday's last week (plan
     expect(text.match(/thread_id = "threads"\."id"/g)).toHaveLength(4);
   });
 
-  it("a quiet day says 'Nothing needs you today.' only to itself: skipped, and the day is marked", async () => {
+  it("a quiet day says 'No emails need a decision from you today.' only to itself: skipped, and the day is marked", async () => {
     const run = await sendDigests(NOW, { send: sender });
     expect(run).toMatchObject({ sent: 0, skipped: 1 });
     expect(sent).toHaveLength(0);

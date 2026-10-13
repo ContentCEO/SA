@@ -761,7 +761,7 @@ describe("#34 in the morning summary and on the phone (counts only)", () => {
     expect(d.subject).not.toMatch(/nothing waiting/i);
     expect(d.html).toContain("1 thing waiting.");
     expect(d.html).not.toContain("all clear.");
-    expect(`${d.text}${d.html}`).not.toContain("Nothing needs you today.");
+    expect(`${d.text}${d.html}`).not.toContain("No emails need a decision from you today.");
     expect(d.text).toContain("1 quote request has waited more than 4 hours.");
     expect(d.text).toContain(
       "• 1 quote request waiting with no reply drafted — see your quotes: https://app/quotes",

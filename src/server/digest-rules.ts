@@ -121,5 +121,5 @@ export function needsYouHeader(
   };
 }
 
-export const NOTHING_NEEDS_YOU = "Nothing needs you today.";
+export const NOTHING_NEEDS_YOU = "No emails need a decision from you today.";
 export const moreInQueue = (n: number) => `+ ${n} more in your queue`;
