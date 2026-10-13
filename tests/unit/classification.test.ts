@@ -329,6 +329,24 @@ describe("quote acceptance and job done signals (classify.v3)", () => {
     expect(await extractedOf(t)).not.toHaveProperty("quote_accepted");
   });
 
+  it("an unsent Gmail draft is not the owner having written (even with an amount on file)", async () => {
+    const t = await quoteConversation({ ownerReplied: false });
+    // Stored by the old sync, and its figure captured as the quote's amount by old code.
+    await message(t, "unsent", {
+      direction: "out",
+      fromAddress: "owner@shop.com",
+      labelIds: ["DRAFT"],
+      bodyText: "It's $2,400 for the panel upgrade. Davi",
+      sentAt: daysAgo(3),
+    });
+    await database.update(threads).set({ quoteAmountCents: 240_000 }).where(eq(threads.id, t));
+    setModelTransportForTests(fakeTransport([accepting({ category: "scheduling" })]).transport);
+    await classifyPending(mailboxId, { now: NOW });
+    const extracted = await extractedOf(t);
+    expect(extracted.accepts_quote).toBe(true);
+    expect(extracted).not.toHaveProperty("quote_accepted");
+  });
+
   it("an email that tries to instruct the assistant is never a quote acceptance", async () => {
     const t = await quoteConversation();
     setModelTransportForTests(

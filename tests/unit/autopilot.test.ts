@@ -29,7 +29,7 @@ import {
   setAutopilot,
   type GuardrailInput,
 } from "@/server/autopilot";
-import { createDraftForThread, saveDraftEdit } from "@/server/drafts";
+import { createDraftForThread, saveDraftEdit, threadsToAutoDraft } from "@/server/drafts";
 import { saveConnectedMailbox } from "@/server/mailboxes";
 import { setWorkspacePlan } from "@/server/workspace-lifecycle";
 import { createTestDb } from "../support/db";
@@ -94,6 +94,7 @@ describe("per-email guardrails (layer 3)", () => {
     ["deposit details (#28)", { purpose: "deposit" }],
     ["review requests (#29)", { purpose: "review_request" }],
     ["closing questions (#26)", { purpose: "closing_question" }],
+    ["a stored Gmail draft after the email, not yet checked", { maybeAnswered: true }],
   ])("never: %s", (_label, change) => {
     expect(guardrailReasons({ ...ok, ...change }).length).toBeGreaterThan(0);
   });
@@ -337,6 +338,72 @@ describe("in the database", () => {
       expect(writer.sent).toHaveLength(0);
     });
 
+    it("GUARDRAIL: the owner writing their own reply in Gmail stands it down", async () => {
+      const t = await conversation();
+      const draftId = await drafted(t);
+      await considerAutopilot(draftId, NOW);
+      // During the window the owner starts a reply in Gmail: an autosaved draft on the thread.
+      const [thread] = await database.select().from(threads).where(eq(threads.id, t));
+      await writer.createDraft({ threadId: thread!.gmailThreadId, raw: "" });
+      const r = await runAutopilotSend(draftId, deps(later(GRACE_MINUTES)));
+      expect(r).toEqual({ status: "stood_down", reasons: ["You're writing a reply in Gmail."] });
+      expect(writer.sent).toHaveLength(0);
+      const [d] = await database.select().from(drafts).where(eq(drafts.id, draftId));
+      expect(d).toMatchObject({ status: "pending", autoSendAt: null });
+      // A draft on another thread, or ours alone, doesn't hold it.
+      const other = await conversation();
+      const second = await drafted(other);
+      await considerAutopilot(second, NOW);
+      await writer.createDraft({ threadId: "some-other-thread", raw: "" });
+      expect(await runAutopilotSend(second, deps(later(GRACE_MINUTES)))).toEqual({
+        status: "sent",
+      });
+    });
+
+    it("asks Gmail about other drafts only when sending is allowed (no Google call when blocked)", async () => {
+      const draftId = await drafted(await conversation());
+      await considerAutopilot(draftId, NOW);
+      // Marked active by hand before real payment: sending is blocked.
+      await database.update(workspaces).set({ setupPaidVia: null });
+      writer.calls = [];
+      await expect(runAutopilotSend(draftId, deps(later(GRACE_MINUTES)))).rejects.toThrow();
+      expect(writer.calls).toEqual([]);
+    });
+
+    it("GUARDRAIL: waits while a stored draft after the customer's email isn't checked with Gmail", async () => {
+      // Old sync stored Gmail drafts as owner mail. If Gmail sent this one under the same id,
+      // the owner already answered: no auto-draft, no countdown, until the cleanup checks it.
+      const storedDraft = async (threadId: string, labelIds: string[]) => {
+        await database.insert(messages).values({
+          threadId,
+          mailboxId,
+          gmailMessageId: `${threadId}-stored-${labelIds.join("-")}`,
+          direction: "out",
+          fromAddress: "owner@shop.com",
+          toAddresses: ["dana@customer.com"],
+          labelIds,
+          sentAt: new Date(NOW.getTime() - 30 * 60_000),
+        });
+      };
+      const t = await conversation();
+      await storedDraft(t, ["DRAFT"]);
+      expect(await threadsToAutoDraft(mailboxId)).not.toContain(t);
+      // A draft written anyway (as the owner's "Draft a reply" would) never counts down.
+      const draftId = await drafted(t);
+      expect(await considerAutopilot(draftId, NOW)).toBeNull();
+
+      // The same thread without that row: drafted, and the countdown starts.
+      const clean = await conversation();
+      expect(await threadsToAutoDraft(mailboxId)).toContain(clean);
+      expect(await considerAutopilot(await drafted(clean), NOW)).toEqual(later(GRACE_MINUTES));
+
+      // Gmail said it was sent under the same id (relabelled SENT): the owner answered, so
+      // still no auto-draft.
+      const answered = await conversation();
+      await storedDraft(answered, ["DRAFT", "SENT"]);
+      expect(await threadsToAutoDraft(mailboxId)).not.toContain(answered);
+    });
+
     it("switching autopilot off, a plan change, or a paused account all stop a countdown", async () => {
       const a = await drafted(await conversation());
       await considerAutopilot(a, NOW);
@@ -380,6 +447,30 @@ describe("in the database", () => {
       if (r.status !== "created") throw new Error("expected a draft");
       expect(await considerAutopilot(r.draftId, NOW)).toBeNull();
       expect(await overdueAutopilotDrafts(later(60))).toEqual([]);
+    });
+
+    it("GUARDRAIL: an unsent Gmail draft to someone isn't 'written to them before'", async () => {
+      // Old sync stored Gmail drafts as owner mail; a draft never sent can't make them known.
+      const writtenBefore = async (from: string, labelIds: string[]) => {
+        const t = await conversation({ known: false, from });
+        await database.insert(messages).values({
+          threadId: t,
+          mailboxId,
+          gmailMessageId: `${t}-earlier-${labelIds.join("-")}`,
+          direction: "out",
+          fromAddress: "owner@shop.com",
+          toAddresses: [from],
+          labelIds,
+          bodyText: "Earlier note.",
+          sentAt: new Date(NOW.getTime() - 2 * 86_400_000),
+        });
+        return drafted(t);
+      };
+      const onlyDraft = await writtenBefore("fresh@person.com", ["DRAFT"]);
+      expect(await considerAutopilot(onlyDraft, NOW)).toBeNull();
+      // The same with a real sent email: they're known, and the countdown starts.
+      const sent = await writtenBefore("known@person.com", ["SENT"]);
+      expect(await considerAutopilot(sent, NOW)).toEqual(later(GRACE_MINUTES));
     });
 
     it("never starts for a quote acceptance, even one re-sorted as scheduling (A5)", async () => {

@@ -23,6 +23,7 @@ import {
 import { createGmailReader } from "@/mailbox/gmail/api";
 import { parseAddressList } from "@/mailbox/gmail/parse";
 import { jobsAllowed } from "./lifecycle";
+import { unsentDraftMessage } from "./thread-sql";
 
 /** How far back the first sync reaches. */
 export const BACKFILL_DAYS = 30;
@@ -46,7 +47,7 @@ export type SyncOutcome =
   | { status: "skipped"; reason: "not_found" | "not_active" | "not_ready" | "read_only" }
   | { status: "reconnect_needed" };
 
-const defaultReaderFor = (m: Mailbox) =>
+export const defaultReaderFor = (m: Mailbox) =>
   createGmailReader({ refreshToken: decryptSecret(m.encryptedRefreshToken) });
 
 async function mapLimit<T, R>(
@@ -140,6 +141,21 @@ async function guarded(mailbox: Mailbox, fn: () => Promise<SyncOutcome>): Promis
   }
 }
 
+/**
+ * A Gmail draft not yet sent: a message carrying the DRAFT label and not SENT. A draft is
+ * never stored: from the owner, it would read as the owner having replied (every "the owner
+ * wrote" check, and autopilot's "has written to this address before") when nothing was sent.
+ *
+ * We don't rely on what Gmail does to the id when a draft is sent. If the sent email is a new
+ * message, history reports it as added. If Gmail keeps the draft's id and swaps DRAFT for SENT,
+ * history reports a SENT label added (listHistory asks for both), and an app send records its
+ * own sent message (`recordSentMessage`). Either way the sent email is stored; a row stored as
+ * a draft by older code is fetched again and updated in place (`ingest`).
+ */
+export function isUnsentDraft(labelIds: readonly string[]): boolean {
+  return labelIds.includes("DRAFT") && !labelIds.includes("SENT");
+}
+
 function windowQuery(days: number) {
   return `newer_than:${days}d`;
 }
@@ -151,7 +167,7 @@ function windowQuery(days: number) {
  */
 async function ingest(
   mailbox: Mailbox,
-  reader: MailboxReader,
+  reader: Pick<MailboxReader, "getMessage">,
   refs: MessageRef[],
   now: Date,
 ): Promise<number> {
@@ -159,7 +175,7 @@ async function ingest(
   if (unique.length === 0) return 0;
 
   const existing = await db()
-    .select({ id: messages.gmailMessageId })
+    .select({ id: messages.gmailMessageId, labelIds: messages.labelIds })
     .from(messages)
     .where(
       and(
@@ -170,13 +186,19 @@ async function ingest(
         ),
       ),
     );
-  const have = new Set(existing.map((e) => e.id));
+  // A row older code stored as an unsent draft is fetched again: Gmail may have sent it under
+  // the same id, and then it's updated in place below.
+  const have = new Set(existing.filter((e) => !isUnsentDraft(e.labelIds)).map((e) => e.id));
   const todo = unique.filter((r) => !have.has(r.id));
   if (todo.length === 0) return 0;
 
   const meta = (
     await mapLimit(todo, FETCH_CONCURRENCY, (r) => reader.getMessage(r.id, { withBody: false }))
-  ).filter((m): m is MailMessage => m !== null);
+  )
+    .filter((m): m is MailMessage => m !== null)
+    // Drafts are skipped before anything is written: no row, no thread, no lastMessageAt move.
+    .filter((m) => !isUnsentDraft(m.labelIds));
+  if (meta.length === 0) return 0;
 
   const threadIds = [...new Set(meta.map((m) => m.providerThreadId))];
   const knownThreads = await db()
@@ -213,10 +235,10 @@ async function ingest(
         if (a.email !== self) participants.add(a.email);
       }
     }
-    const newest = Math.max(
-      ...msgs.map((m) => m.internalDate),
-      prior?.lastMessageAt?.getTime() ?? 0,
-    );
+    // From these messages only. On an existing thread the stored messages' newest time is
+    // read inside the upsert (not from `prior`, read earlier): a time a draft row gave the
+    // thread, removed meanwhile by draft-message-cleanup, never comes back.
+    const newest = Math.max(...msgs.map((m) => m.internalDate));
     const oldest = msgs.reduce((a, b) => (a.internalDate <= b.internalDate ? a : b));
 
     const [thread] = await db()
@@ -232,8 +254,11 @@ async function ingest(
       .onConflictDoUpdate({
         target: [threads.mailboxId, threads.gmailThreadId],
         set: {
-          participants: [...participants],
-          lastMessageAt: new Date(newest),
+          // Merged in the database, not overwritten with what was read above: an app send
+          // (recordSentMessage) can run alongside a sync of the same thread, and neither may
+          // lose the other's addresses.
+          participants: sql`(select coalesce(jsonb_agg(distinct p), '[]'::jsonb) from jsonb_array_elements_text(${threads.participants} || excluded.participants) as p)`,
+          lastMessageAt: sql`greatest(excluded.last_message_at, (select max(m.sent_at) from messages m where m.thread_id = ${threads.id}))`,
           inInbox: sql`${threads.inInbox} or excluded.in_inbox`,
           subject: sql`coalesce(${threads.subject}, excluded.subject)`,
         },
@@ -261,14 +286,41 @@ async function ingest(
         sentAt: new Date(m.internalDate),
       };
     });
+    // New messages are inserted. A stored row that is still an unsent draft (older code
+    // stored drafts) and is now sent mail takes the sent message's labels, direction and time;
+    // anything else already stored is left as it is.
     const inserted = await db()
       .insert(messages)
       .values(rows)
-      .onConflictDoNothing({ target: [messages.mailboxId, messages.gmailMessageId] })
+      .onConflictDoUpdate({
+        target: [messages.mailboxId, messages.gmailMessageId],
+        set: {
+          labelIds: sql`excluded.label_ids`,
+          direction: sql`excluded.direction`,
+          sentAt: sql`excluded.sent_at`,
+          bodyText: sql`coalesce(excluded.body_text, ${messages.bodyText})`,
+          snippet: sql`coalesce(excluded.snippet, ${messages.snippet})`,
+        },
+        setWhere: unsentDraftMessage(),
+      })
       .returning({ id: messages.id });
     ingested += inserted.length;
   }
   return ingested;
+}
+
+/**
+ * Store the email an app send just made (Gmail's id from drafts.send), without waiting for
+ * sync to come across it — so the owner's answer never depends on how Gmail's history reports
+ * a sent draft. Same path as sync: idempotent, bodies only for inbox threads in retention.
+ */
+export async function recordSentMessage(
+  mailbox: Mailbox,
+  reader: Pick<MailboxReader, "getMessage">,
+  sent: MessageRef,
+  now: Date,
+): Promise<number> {
+  return ingest(mailbox, reader, [sent], now);
 }
 
 /**

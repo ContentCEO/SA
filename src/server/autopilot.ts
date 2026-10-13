@@ -13,9 +13,18 @@ import {
   workspaces,
   type Workspace,
 } from "@/db/schema";
-import { AUTO_DRAFT_CATEGORIES, sendDraft, type DraftDeps, type SendOutcome } from "./drafts";
-import { effectiveStatus } from "./lifecycle";
+import { MailboxAuthError } from "@/mailbox/connector";
+import {
+  AUTO_DRAFT_CATEGORIES,
+  defaultWriter,
+  sendDraft,
+  type DraftDeps,
+  type SendOutcome,
+} from "./drafts";
+import { canSend, effectiveStatus } from "./lifecycle";
 import { knownCustomer } from "./known-customer";
+import { markReconnectNeeded } from "./sync";
+import { unsentDraftMessage } from "./thread-sql";
 
 export { knownCustomer };
 
@@ -77,6 +86,11 @@ export type GuardrailInput = {
   acceptsQuote?: boolean;
   /** Deposit details, review request or closing question (plan #26 #28 #29). */
   purpose: string | null;
+  /**
+   * A Gmail draft older sync stored after the customer's email, not yet checked with Gmail
+   * (draft-message-cleanup): if Gmail sent it under the same id, the owner already answered.
+   */
+  maybeAnswered?: boolean;
 };
 
 /** Layer 3. Every reason this email must wait for the owner; empty = may go. */
@@ -97,6 +111,7 @@ export function guardrailReasons(g: GuardrailInput): string[] {
   if (g.municipal) out.push("Building departments always wait for you.");
   if (g.acceptsQuote) out.push("Quote acceptances always wait for you.");
   if (g.purpose != null) out.push("Deposit, review and closing notes always wait for you.");
+  if (g.maybeAnswered) out.push("You might already have answered this in Gmail.");
   return out;
 }
 
@@ -237,11 +252,26 @@ async function blockers(row: NonNullable<Awaited<ReturnType<typeof loadForAutopi
   const mode = (await modes(workspace.id)).get(thread.category ?? "");
   if (mode !== "autopilot") return ["Autopilot is off for this kind of email."];
   const [customer] = await db()
-    .select({ address: messages.fromAddress })
+    .select({ address: messages.fromAddress, sentAt: messages.sentAt })
     .from(messages)
     .where(and(eq(messages.threadId, thread.id), eq(messages.direction, "in")))
     .orderBy(desc(messages.sentAt))
     .limit(1);
+  const maybeAnswered = customer
+    ? (
+        await db()
+          .select({ id: messages.id })
+          .from(messages)
+          .where(
+            and(
+              eq(messages.threadId, thread.id),
+              unsentDraftMessage(),
+              gte(messages.sentAt, customer.sentAt),
+            ),
+          )
+          .limit(1)
+      ).length > 0
+    : false;
   const extracted = (thread.extracted ?? {}) as {
     dollar_amounts?: number[];
     injection?: boolean;
@@ -259,6 +289,7 @@ async function blockers(row: NonNullable<Awaited<ReturnType<typeof loadForAutopi
     municipal: extracted.municipal === true,
     acceptsQuote: extracted.accepts_quote === true,
     purpose: draft.purpose ?? null,
+    maybeAnswered,
     draftBody: draft.body ?? "",
     knownCustomer: await knownCustomer(mailbox.id, customer?.address ?? null, draft.createdAt),
   });
@@ -305,8 +336,9 @@ export type AutopilotSendResult =
 
 /**
  * When the grace window ends: check everything again — the owner may have
- * held it, edited it, switched autopilot off, the customer may have written
- * again, or the account may have changed — and only then send.
+ * held it, edited it, switched autopilot off, started their own reply in
+ * Gmail, the customer may have written again, or the account may have
+ * changed — and only then send.
  */
 export async function runAutopilotSend(
   draftId: string,
@@ -332,6 +364,26 @@ export async function runAutopilotSend(
     ...(await blockers(row, now)),
     ...(newer.length ? ["There's newer mail in this conversation."] : []),
   ];
+  // The owner may be writing their own reply in Gmail right now: sync doesn't store drafts,
+  // so only Gmail can say. Asked only when sending is otherwise allowed — a blocked account
+  // or a lost mailbox gets no Google call (sendDraft refuses those before any).
+  if (!reasons.length && canSend(row.workspace, now) && row.mailbox.status === "active") {
+    const writer = (opts.writerFor ?? defaultWriter)(row.mailbox);
+    try {
+      const own = row.draft.gmailDraftId ? await writer.getDraft(row.draft.gmailDraftId) : null;
+      const ours = new Set([own?.messageId, row.draft.gmailMessageId].filter(Boolean));
+      const others = (await writer.threadDraftMessageIds(row.thread.gmailThreadId)).filter(
+        (id) => !ours.has(id),
+      );
+      if (others.length) reasons.push("You're writing a reply in Gmail.");
+    } catch (err) {
+      if (err instanceof MailboxAuthError) {
+        await markReconnectNeeded(row.mailbox);
+        return { status: "failed", outcome: "reconnect_needed" };
+      }
+      throw err;
+    }
+  }
   if (reasons.length) {
     await db().update(drafts).set({ autoSendAt: null }).where(eq(drafts.id, draftId));
     await db()

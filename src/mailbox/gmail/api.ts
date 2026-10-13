@@ -188,15 +188,28 @@ export function createGmailReader(opts: GmailReaderOptions): MailboxReader & Mai
     },
 
     async listHistory({ startHistoryId, pageToken }): Promise<HistoryPage> {
-      const qs = new URLSearchParams({ startHistoryId, historyTypes: "messageAdded" });
+      // New messages, and messages that gained SENT: a sent draft may keep its id (DRAFT
+      // swapped for SENT), which history reports as a label change, not a new message.
+      const qs = new URLSearchParams({ startHistoryId });
+      qs.append("historyTypes", "messageAdded");
+      qs.append("historyTypes", "labelAdded");
       if (pageToken) qs.set("pageToken", pageToken);
+      type Ref = { id: string; threadId: string };
       const r = await call<{
-        history?: { messagesAdded?: { message: { id: string; threadId: string } }[] }[];
+        history?: {
+          messagesAdded?: { message: Ref }[];
+          labelsAdded?: { message: Ref; labelIds?: string[] }[];
+        }[];
         nextPageToken?: string;
         historyId: string;
       }>(`/history?${qs}`);
       if (!r) throw new HistoryExpiredError();
-      const added = (r.history ?? []).flatMap((h) => (h.messagesAdded ?? []).map((m) => m.message));
+      const added = (r.history ?? []).flatMap((h) => [
+        ...(h.messagesAdded ?? []).map((m) => m.message),
+        ...(h.labelsAdded ?? [])
+          .filter((l) => (l.labelIds ?? []).includes("SENT"))
+          .map((l) => ({ id: l.message.id, threadId: l.message.threadId })),
+      ]);
       return { added, nextPageToken: r.nextPageToken, historyId: r.historyId };
     },
 
@@ -236,6 +249,16 @@ export function createGmailReader(opts: GmailReaderOptions): MailboxReader & Mai
 
     async deleteDraft(draftId) {
       await call(`/drafts/${encodeURIComponent(draftId)}`, { method: "DELETE" });
+    },
+
+    async threadDraftMessageIds(threadId) {
+      // format=minimal: ids and labels only, no headers or text.
+      const r = await call<{ messages?: { id: string; labelIds?: string[] }[] }>(
+        `/threads/${encodeURIComponent(threadId)}?format=minimal`,
+      );
+      return (r?.messages ?? [])
+        .filter((m) => (m.labelIds ?? []).includes("DRAFT") && !(m.labelIds ?? []).includes("SENT"))
+        .map((m) => m.id);
     },
 
     async sendDraft(draftId) {

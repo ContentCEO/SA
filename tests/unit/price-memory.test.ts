@@ -914,6 +914,9 @@ const ALLOWED = new Set([
   "src/server/quotes.ts",
   "src/app/(app)/queue/page.tsx",
   "src/app/(app)/inbox/page.tsx",
+  // Data repair only: deletes a row captured from an unsent Gmail draft (M8 review). Reads the
+  // amount inside one transaction to compare it; nothing leaves the database.
+  "src/server/draft-message-cleanup.ts",
 ]);
 
 function sourceFiles(dir: string): string[] {

@@ -57,7 +57,9 @@ export type LeadAtRisk = {
  * nothing answered it — no email from the owner after it, no reply sent from the app since the
  * wait began, and no send waiting out its undo window (the email of a reply sent from the app
  * only arrives with the next sync: A12). A needs-you thread still counts (a big job is still a
- * lead), and so does one with a draft waiting (a draft isn't an answer).
+ * lead), and so does one with a draft waiting (a draft isn't an answer). The same goes for a
+ * Gmail draft older sync stored as the owner's mail: `lastOutSql` ignores it (a sent draft is a
+ * new message in Gmail), so an unsent draft never hides a lead, checked by Gmail or not.
  *
  * A draft the owner threw away (Discard here, or deleted in Gmail) is NOT an answer (A12 lists
  * what is): a wrong draft is often discarded by someone meaning to write their own later, and

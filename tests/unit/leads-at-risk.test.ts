@@ -247,6 +247,39 @@ describe("#34 which leads are at risk", () => {
     expect(await ids(TUE_13_01_NY)).toEqual([big, drafted]);
   });
 
+  it("GUARDRAIL: a Gmail draft older sync stored as the owner's mail is no answer, checked or not", async () => {
+    // Old sync stored every Gmail draft (ours too) as an 'out' message from the owner. A sent
+    // draft is a new message in Gmail, so a row still labelled DRAFT never answers the lead —
+    // before the cleanup has looked at it, and in a mailbox the cleanup had to skip.
+    const ownerRow = async (threadId: string, labelIds: string[], sentAt: Date) => {
+      n += 1;
+      await database.insert(messages).values({
+        threadId,
+        mailboxId,
+        gmailMessageId: `m-${n}`,
+        direction: "out",
+        fromAddress: "owner@shop.com",
+        labelIds,
+        sentAt,
+      });
+      await database.update(threads).set({ lastMessageAt: sentAt }).where(eq(threads.id, threadId));
+    };
+    const drafted = await lead(TUE_9_NY);
+    await draft(drafted);
+    await ownerRow(drafted, ["DRAFT"], plus(TUE_9_NY, min(1)));
+    // Real sent mail answers it: SENT, or DRAFT and SENT together.
+    const sent = await lead(TUE_9_NY);
+    await ownerRow(sent, ["SENT"], plus(TUE_9_NY, min(1)));
+    const both = await lead(TUE_9_NY);
+    await ownerRow(both, ["DRAFT", "SENT"], plus(TUE_9_NY, min(1)));
+    await synced(TUE_13_01_NY);
+
+    const leads = await leadsAtRisk(workspaceId, TUE_13_01_NY, NY);
+    expect(leads.map((l) => l.threadId)).toEqual([drafted]);
+    // Waiting since the customer's email, not since the draft.
+    expect(leads[0]!.waitingSince.toISOString()).toBe(TUE_9_NY.toISOString());
+  });
+
   it("waits from the first email after the owner's last one (customer wrote twice)", async () => {
     const now = new Date("2026-10-13T21:00:00Z"); // Tue 5pm
     const t = await lead(plus(TUE_9_NY, -hrs(24))); // Monday 9am

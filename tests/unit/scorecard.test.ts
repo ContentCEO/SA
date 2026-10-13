@@ -293,6 +293,33 @@ describe("weeklyScorecard: response time (#33)", () => {
     });
   });
 
+  it("an unsent Gmail draft (DRAFT label) isn't the answer: not in response time or quotes out", async () => {
+    // Old sync stored every Gmail draft — the app's own auto-draft too — as an 'out' message.
+    const ownerRow = (threadId: string, labelIds: string[], sentAt: Date) =>
+      database.insert(messages).values({
+        threadId,
+        mailboxId,
+        gmailMessageId: `m-${randomUUID()}`,
+        direction: "out",
+        fromAddress: "owner@shop.com",
+        labelIds,
+        sentAt,
+      });
+    // Drafted a minute after the request, never sent: still waiting, not "1 min".
+    const drafted = await thread();
+    await msg(drafted, "in", day(0, 9));
+    await ownerRow(drafted, ["DRAFT"], day(0, 9, 1));
+    // Drafted at 9:01, actually sent at 10:00 (Gmail's SENT copy): 60 minutes.
+    const sent = await thread();
+    await msg(sent, "in", day(1, 9));
+    await ownerRow(sent, ["DRAFT"], day(1, 9, 1));
+    await ownerRow(sent, ["SENT"], day(1, 10));
+
+    const s = await week();
+    expect(s.response).toEqual({ avgMinutes: 60, answered: 1, unanswered: 1 });
+    expect(s.quotesOut).toBe(1);
+  });
+
   it("a lead platform's no-reply notice is never answered here, so it never counts (A13)", async () => {
     const lead = await thread();
     await msg(lead, "in", day(0, 9), "noreply@thumbtack.com");

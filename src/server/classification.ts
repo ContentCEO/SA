@@ -29,6 +29,7 @@ import {
 import { jobKindOf } from "./monthly-rules";
 import { keepQuoteAccepted, quoteAccepted } from "./quote-rules";
 import { ownerGavePrice } from "./quotes";
+import { notDraftMessage } from "./thread-sql";
 
 /** Classify inbound mail from this far back on the first pass; everything new after that. */
 export const CLASSIFY_LOOKBACK_DAYS = 14;
@@ -205,6 +206,8 @@ export async function classifyPending(
             and(
               eq(messages.threadId, m.threadId),
               eq(messages.direction, "out"),
+              // An unsent Gmail draft isn't the owner having written.
+              notDraftMessage(),
               lt(messages.sentAt, m.sentAt),
             ),
           );

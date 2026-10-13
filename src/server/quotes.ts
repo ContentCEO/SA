@@ -5,7 +5,14 @@ import { db } from "@/db";
 import { activityLog, mailboxes, messages, priceHistory, threads, workspaces } from "@/db/schema";
 import { expirePendingNudge, flagPendingNudge, followupSettings, type DraftDeps } from "./drafts";
 import { effectiveStatus, JOBS_ALLOWED, jobsAllowed, ReadOnlyError } from "./lifecycle";
-import { asDate, lastInSql, lastOutSql, quoteThreadSql } from "./thread-sql";
+import {
+  asDate,
+  lastInSql,
+  lastOutSql,
+  notDraftMessage,
+  notDraftSql,
+  quoteThreadSql,
+} from "./thread-sql";
 import {
   amountFromOwnerText,
   canAutoSet,
@@ -77,6 +84,8 @@ async function ownerQuotedCents(
       and(
         inArray(messages.threadId, threadIds),
         eq(messages.direction, "out"),
+        // An unsent Gmail draft (an auto-draft quotes the price list) is no price given.
+        notDraftMessage(),
         isNotNull(messages.bodyText),
         notPurposeNote(),
       ),
@@ -138,7 +147,7 @@ export async function listQuotes(workspaceId: string, now: Date = new Date()) {
       lastMessageAt: threads.lastMessageAt,
       startedAt: threads.createdAt,
       lastIn: sql<Date | null>`(select max(m.sent_at) from messages m where m.thread_id = ${threads.id} and m.direction = 'in')`,
-      lastOut: sql<Date | null>`(select max(m.sent_at) from messages m where m.thread_id = ${threads.id} and m.direction = 'out')`,
+      lastOut: sql<Date | null>`(select max(m.sent_at) from messages m where m.thread_id = ${threads.id} and m.direction = 'out' and ${notDraftSql("m")})`,
       firstAt: sql<Date | null>`(select min(m.sent_at) from messages m where m.thread_id = ${threads.id})`,
       customerName: sql<
         string | null

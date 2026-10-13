@@ -171,6 +171,45 @@ describe("which threads get a nudge", () => {
     expect(await threadsToFollowUp(mailboxId, NOW)).toEqual([]);
   });
 
+  it("an unsent Gmail draft (DRAFT label) isn't the owner writing last", async () => {
+    const draftRow = (threadId: string, at: Date) =>
+      database.insert(messages).values({
+        threadId,
+        mailboxId,
+        gmailMessageId: `${threadId}-draft`,
+        direction: "out",
+        fromAddress: "owner@shop.com",
+        toAddresses: ["dana@customer.com"],
+        labelIds: ["DRAFT"],
+        sentAt: at,
+      });
+    // The customer asked; the owner only ever drafted an answer: nothing to chase.
+    const [onlyDrafted] = await database
+      .insert(threads)
+      .values({
+        mailboxId,
+        gmailThreadId: `g${++g}`,
+        inInbox: true,
+        category: "quote_request",
+        classifiedAt: daysAgo(9),
+        lastMessageAt: daysAgo(4),
+      })
+      .returning();
+    await database.insert(messages).values({
+      threadId: onlyDrafted!.id,
+      mailboxId,
+      gmailMessageId: `${onlyDrafted!.id}-in`,
+      direction: "in",
+      fromAddress: "dana@customer.com",
+      sentAt: daysAgo(10),
+    });
+    await draftRow(onlyDrafted!.id, daysAgo(4));
+    // The owner answered 4 days ago and started a draft yesterday: still due from the answer.
+    const answered = await quietThread({ ownerRepliedDaysAgo: 4 });
+    await draftRow(answered, daysAgo(1));
+    expect(await threadsToFollowUp(mailboxId, NOW)).toEqual([answered]);
+  });
+
   it("not if it went quiet weeks ago", async () => {
     await quietThread({ ownerRepliedDaysAgo: 30 });
     expect(await threadsToFollowUp(mailboxId, NOW)).toEqual([]);
@@ -253,6 +292,41 @@ describe("writing and sending a nudge", () => {
       .where(eq(activityLog.action, "followup_drafted"));
     expect(log!.detail).toMatchObject({ nudgeNumber: 1 });
     expect(JSON.stringify(log!.detail)).not.toMatch(/Dana|panel|2,400/i);
+  });
+
+  it("a newer unsent Gmail draft is skipped: threaded to the sent email, its text never shown to the model", async () => {
+    const t = await quietThread({ ownerRepliedDaysAgo: 4 });
+    // Stored by the old sync: the owner's draft, never sent, with a figure in it.
+    await database.insert(messages).values({
+      threadId: t,
+      mailboxId,
+      gmailMessageId: "unsent",
+      rfc822MessageId: "<unsent@shop.com>",
+      direction: "out",
+      fromAddress: "owner@shop.com",
+      toAddresses: ["dana@customer.com"],
+      labelIds: ["DRAFT"],
+      bodyText: "SECRET-UNSENT maybe $1,950 if you book this week",
+      sentAt: daysAgo(1),
+    });
+    const { transport, calls } = fakeTransport([
+      nudge({ body: "Hi Dana, still happy to do it for $1,950. Thanks, Davi" }),
+      nudge({ body: "Hi Dana, still happy to do it for $1,950. Thanks, Davi" }),
+    ]);
+    setModelTransportForTests(transport);
+
+    expect((await createDraftForThread(t, { trigger: "followup", ...deps() })).status).toBe(
+      "created",
+    );
+    expect(JSON.stringify(calls)).not.toContain("SECRET-UNSENT");
+    // 4 days quiet since the email the customer got, not 1 since the draft.
+    expect(calls[0]!.user).toMatch(/hasn't replied for 4 days/);
+    const raw = [...writer.drafts.values()][0]!.raw;
+    expect(FakeWriter.headersOf(raw)).toMatch(/In-Reply-To: <g\d+-out@shop.com>/);
+    expect(FakeWriter.headersOf(raw)).not.toContain("unsent@shop.com");
+    // The unsent figure isn't a fact the owner gave: it's flagged, not taken as source.
+    const [d] = await database.select().from(drafts).where(eq(drafts.threadId, t));
+    expect(d!.flags.join(" ")).toContain("$1,950");
   });
 
   it("the second nudge is the last, and offers an easy out", async () => {

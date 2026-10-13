@@ -1,6 +1,6 @@
 import "server-only";
 import { eq, isNotNull, or, sql, type SQL } from "drizzle-orm";
-import { threads } from "@/db/schema";
+import { messages, threads } from "@/db/schema";
 import { NO_REPLY_LOCAL_PATTERN } from "./sender-rules";
 
 /**
@@ -18,6 +18,26 @@ export const asDate = (v: unknown): Date | null => (v ? new Date(v as string | D
  */
 const outerThreadId = () => sql`${threads.id}`;
 
+/**
+ * An unsent Gmail draft, for a messages alias (`m`, `o`, …): DRAFT label and no SENT label —
+ * the same rule as `isUnsentDraft` in sync.ts, so a row sync keeps is never one these checks
+ * hide. Sync no longer stores drafts and a one-shot cleanup re-checks the old rows with Gmail,
+ * but every "the owner wrote" check also says this so an unsent draft never counts as the
+ * owner's answer. `label_ids` is NOT NULL, so the negation is never null.
+ */
+export const unsentDraftSql = (alias: string) =>
+  sql.raw(
+    `(${alias}.label_ids @> '["DRAFT"]'::jsonb and not (${alias}.label_ids @> '["SENT"]'::jsonb))`,
+  );
+
+/** Not an unsent Gmail draft, for a messages alias. */
+export const notDraftSql = (alias: string) => sql`not ${unsentDraftSql(alias)}`;
+
+/** The same, as a condition on the messages table in a query-builder WHERE. */
+export const unsentDraftMessage = () =>
+  sql`(${messages.labelIds} @> '["DRAFT"]'::jsonb and not (${messages.labelIds} @> '["SENT"]'::jsonb))`;
+export const notDraftMessage = () => sql`not ${unsentDraftMessage()}`;
+
 /** When the customer / the owner last wrote on the thread (correlated subqueries). */
 export const lastInSql = () =>
   sql<
@@ -26,7 +46,7 @@ export const lastInSql = () =>
 export const lastOutSql = () =>
   sql<
     string | Date | null
-  >`(select max(m.sent_at) from messages m where m.thread_id = ${outerThreadId()} and m.direction = 'out')`;
+  >`(select max(m.sent_at) from messages m where m.thread_id = ${outerThreadId()} and m.direction = 'out' and ${notDraftSql("m")})`;
 
 /**
  * Since when the customer has been waiting (plan M8 A14): their first message after the

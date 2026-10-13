@@ -628,6 +628,46 @@ In a sandbox with preinstalled Chromium: `PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-brows
   `::timestamptz` (PGlite tolerates it, so unit tests won't catch it; e2e did).
 - Lesson: scripted `str.replace` edits must `assert old in s` — silent no-ops after Prettier caused
   M3/M4 regressions. `tests/unit/jobs.test.ts` fails if a `createFunction` isn't registered.
+- **Gmail drafts are not mail (2026-10-13, M8 review):** a Gmail draft is a message with the
+  DRAFT label and no SENT. Sync used to store every draft (ours included) as owner mail ('out'),
+  so an unsent draft read as "the owner answered". Sync now skips DRAFT-without-SENT
+  (`isUnsentDraft`; no row, no thread, no `last_message_at` move). Google's drafts guide says a
+  sent draft becomes a new message; not checked live, so the code is also right if Gmail kept
+  the id: `listHistory` asks for `messageAdded` **and** `labelAdded` (ids that gain SENT);
+  `ingest` re-fetches a stored row that is still an unsent draft and updates it in place
+  (`setWhere`), never other stored rows; `sendDraft` stores its own sent message
+  (`recordSentMessage`, best effort, **after** the `reply_sent` row, only when the writer can
+  read). Thread `participants` are merged in SQL on upsert (an app send can run alongside a
+  sync). "The owner wrote" reads ignore unsent drafts with one predicate (`notDraftSql` /
+  `notDraftMessage` in `thread-sql.ts`, same rule as `isUnsentDraft`: DRAFT+SENT is mail):
+  lastOutSql (so leads at risk, digest waits, no-answer guesses, price memory), follow-ups,
+  scorecard, reconcile, knownCustomer, createDraftForThread / revise conversation,
+  classification's ownerWroteBefore, ownerQuotedCents, Quotes' stage, the closing-question
+  timing. **A stored draft never answers a lead** (alert even before the cleanup). The
+  exceptions are on purpose and only matter for rows old sync stored: whatever could send on
+  its own treats an unchecked row as a possible answer — `threadsToAutoDraft` still counts it
+  as the owner's last write, autopilot layer 3 refuses a thread with one after the customer's
+  email ("You might already have answered this in Gmail."), and `runAutopilotSend`'s
+  newer-mail check counts it; sms-alerts' newest-direction check doesn't filter them either.
+  **Autopilot asks Gmail before sending** (`MailboxWriter.threadDraftMessageIds`,
+  threads.get format=minimal, ids only): any unsent draft on the thread other than ours →
+  stood down "You're writing a reply in Gmail." (the owner's autosaved reply is no longer
+  synced). Only asked when `canSend` and the mailbox is active (no Google call when blocked).
+  One-shot `runDraftMessagesCleanup` (`src/server/draft-message-cleanup.ts`, 15-min job after
+  `m7-backfill`): rows an app send recorded (`sent_gmail_message_id`) become SENT without Gmail;
+  every other stored draft is looked up in Gmail (100 per mailbox per run) — sent → updated, gone
+  or still a draft → deleted; pending drafts threaded to a deleted row are re-pointed to the
+  newest real message; a quote amount / price-memory row taken from a deleted draft's text is
+  cleared (unless the figure is in real sent mail, the owner typed it, or any real owner email
+  on the thread has lost its text to the purge) so `captureQuoteAmounts` redoes it;
+  `last_message_at` recomputed. **Done per mailbox** (`app_settings`
+  `cleanup:draft-messages-v1:<mailboxId>`): a mailbox we can't read (lost access, read-only
+  account) keeps its rows and no marker, and is checked again every run (one query) until it
+  can be read; the run-wide key `cleanup:draft-messages-v1` is written only when every mailbox is
+  done (nothing failed, skipped or left over). Not repaired: `extracted.quote_accepted` /
+  auto-Won outcomes decided while a draft counted (the owner can change them). Ingest sets
+  `last_message_at` = greatest(new messages, stored messages' max) so a stale read can't put a
+  deleted draft's time back.
 
 ## Milestones
 
@@ -648,6 +688,11 @@ In a sandbox with preinstalled Chromium: `PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-brows
 
 ## Waiting on Davi
 
+- **Gmail draft send behaviour (M8 review):** not yet checked live whether Gmail keeps a draft's
+  id when it's sent. Counts-only check on the shared DB: join `drafts.sent_gmail_message_id` to
+  `messages.gmail_message_id` and count the matches whose `label_ids` hold `SENT` vs `DRAFT`.
+  Many DRAFT matches = same-id sends. The code is safe either way; this only says which path is
+  live.
 - Phone notifications (#36): add `VAPID_PUBLIC_KEY` + `VAPID_PRIVATE_KEY` (free; any VAPID key
   generator) to Vercel Production, then redeploy. Off until then.
 - `ANTHROPIC_API_KEY` repo secret for the "Prompt evals" action (baseline still empty).

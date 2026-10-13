@@ -4,7 +4,7 @@ import { MINUTES_PER_SENT_REPLY } from "@/config/drafting";
 import { db } from "@/db";
 import { drafts, mailboxes, threads } from "@/db/schema";
 import { averageMinutes, weekBounds, type ScorecardNumbers } from "./scorecard-rules";
-import { asDate, noReplySql, quoteRequestSql } from "./thread-sql";
+import { asDate, noReplySql, notDraftSql, quoteRequestSql } from "./thread-sql";
 
 /**
  * Plan #32 weekly scorecard and #33 response time, in counts. Content-free: the queries
@@ -25,7 +25,7 @@ const at = (d: Date) => sql`${d.toISOString()}::timestamptz`;
 function firstAnswerSql(after: SQL, now: Date): SQL {
   const queued = sql`least(coalesce(d.send_after, d.send_claimed_at), ${at(now)})`;
   return sql`least(
-    (select min(o.sent_at) from messages o where o.thread_id = ${threads.id} and o.direction = 'out' and o.sent_at > ${after} and o.sent_at <= ${at(now)}),
+    (select min(o.sent_at) from messages o where o.thread_id = ${threads.id} and o.direction = 'out' and ${notDraftSql("o")} and o.sent_at > ${after} and o.sent_at <= ${at(now)}),
     (select min(d.decided_at) from drafts d where d.thread_id = ${threads.id} and d.status in ('sent', 'edited_and_sent') and d.decided_at > ${after} and d.decided_at <= ${at(now)}),
     (select min(${queued}) from drafts d where d.thread_id = ${threads.id} and d.status = 'pending' and (d.send_after is not null or d.send_claimed_at is not null) and ${queued} > ${after})
   )`;
