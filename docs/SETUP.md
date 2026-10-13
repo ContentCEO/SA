@@ -189,12 +189,12 @@ Variables → add it with value `1` (Production only, unless Davi says otherwise
 it off again, delete the variable (or set it empty) and redeploy; the offer disappears, and any
 closing-question drafts already in the queue stay there for the owner to send or discard.
 
-**Ask Davi before turning `FEATURE_REFERRALS` on** — he decides the amount, who gets it (both,
-the referrer only, or the new customer only) and whether the same-domain block stays. In order:
+**Ask Davi before turning `FEATURE_REFERRALS` on** — he decides the amount and whether the
+same-domain block stays. Who gets it is decided (Davi, 2026-10-13): only the owner who shared the
+link (`REFERRAL_CREDIT_TO = "referrer"`). In order:
 
-1. Set `REFERRAL_CREDIT_CENTS` in `src/config/pricing.ts` to his amount in cents (and
-   `REFERRAL_CREDIT_TO` if it isn't "both"), with the privacy-policy line above, and deploy that
-   code. While the amount is `null` the switch does nothing at all.
+1. Set `REFERRAL_CREDIT_CENTS` in `src/config/pricing.ts` to his amount in cents, with the
+   privacy-policy line above, and deploy that code. While the amount is `null` the switch does nothing at all.
 2. Vercel → sa → Environment Variables → add `FEATURE_REFERRALS` with value `1` (Production only,
    unless Davi says otherwise) → Redeploy.
 

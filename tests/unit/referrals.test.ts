@@ -236,9 +236,9 @@ const rows = () => database.select().from(referralCredits);
 // --- Pure rules -----------------------------------------------------------------------------
 
 describe("referral rules", () => {
-  it("the committed config picks no amount (ASK DAVI) and defaults to both sides", () => {
+  it("the committed config picks no amount (ASK DAVI) and credits only the referrer (Davi)", () => {
     expect(REFERRAL_CREDIT_CENTS).toBeNull();
-    expect(REFERRAL_CREDIT_TO).toBe("both");
+    expect(REFERRAL_CREDIT_TO).toBe("referrer");
     expect(referralCredit(ON)).toBeNull();
     expect(referralsVisible(ON)).toBe(false);
   });
