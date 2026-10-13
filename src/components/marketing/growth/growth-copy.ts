@@ -129,7 +129,7 @@ export const growthCopy = {
   },
   call: {
     region: "Book a free call",
-    serif: "want more work?,",
+    serif: "want more work,",
     heavy: "book a free call.",
     body: `Leave your number and what you want help with. ${davi} calls you back personally.`,
     talkNow: "Rather talk now?",
