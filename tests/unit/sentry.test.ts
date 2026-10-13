@@ -38,4 +38,34 @@ describe("error alerts never carry customer details", () => {
     expect(out).toContain("https://app.example/queue");
     expect(out).not.toContain('"category":"console"');
   });
+
+  it("keeps no element text from taps: amounts and names in aria-labels never leave (A9)", () => {
+    const event = {
+      type: undefined,
+      breadcrumbs: [
+        {
+          category: "ui.click",
+          message: 'li > button[aria-label="Use $1,800 for the price"]',
+          data: { label: "Zelda Secretname" },
+        },
+        {
+          category: "ui.input",
+          message: 'article[aria-label="Invoice for Zelda Secretname"] > input',
+        },
+        { category: "navigation", message: "/money", data: { from: "/quotes" } },
+      ],
+    } as unknown as ErrorEvent;
+    const scrubbed = scrubEvent(event);
+    const out = JSON.stringify(scrubbed);
+    for (const leak of ["$1,800", "1,800", "Zelda", "Secretname"]) {
+      expect(out).not.toContain(leak);
+    }
+    // The tap itself is still there, for the timeline.
+    expect(scrubbed.breadcrumbs?.map((b) => b.category)).toEqual([
+      "ui.click",
+      "ui.input",
+      "navigation",
+    ]);
+    expect(out).toContain("/money");
+  });
 });

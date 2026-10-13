@@ -27,7 +27,7 @@ test("the CSP breaks nothing: public pages and a signed-in screen load with no c
   context,
 }) => {
   const errors = watchErrors(page);
-  for (const path of ["/", "/privacy", "/terms", "/signin"]) {
+  for (const path of ["/", "/growth", "/privacy", "/terms", "/signin"]) {
     await page.goto(path);
     await page.waitForLoadState("networkidle");
   }
@@ -68,7 +68,8 @@ test("robots.txt, sitemap.xml and the share image", async ({ request }) => {
   }
   expect(robots).toMatch(/Sitemap: https?:\/\/[^\s]+\/sitemap\.xml/);
   const sitemap = await (await request.get("/sitemap.xml")).text();
-  for (const path of ["/privacy", "/terms"]) expect(sitemap).toContain(`${path}</loc>`);
+  for (const path of ["/growth", "/privacy", "/terms"]) expect(sitemap).toContain(`${path}</loc>`);
+  expect(robots).toContain("Allow: /growth");
 
   const og = await request.get("/opengraph-image");
   expect(og.status()).toBe(200);
@@ -102,18 +103,40 @@ test("homepage: share card tags, the call button and the trial clock in the phon
   );
 });
 
-test("tap targets: every link and button on the homepage is at least 44px tall", async ({
+test("/growth has the share card too (its own openGraph would otherwise drop it)", async ({
+  page,
+  request,
+}) => {
+  await page.goto("/growth");
+  const og = page.locator('meta[property="og:image"]');
+  await expect(og).toHaveAttribute("content", /\/opengraph-image$/);
+  await expect(page.locator('meta[name="twitter:image"]')).toHaveAttribute(
+    "content",
+    /\/opengraph-image$/,
+  );
+  await expect(page.locator('meta[name="twitter:card"]')).toHaveAttribute(
+    "content",
+    "summary_large_image",
+  );
+  const image = await request.get(new URL((await og.getAttribute("content"))!).pathname);
+  expect(image.status()).toBe(200);
+  expect(image.headers()["content-type"]).toBe("image/png");
+});
+
+test("tap targets: every link and button on the homepage and /growth is at least 44px tall", async ({
   page,
 }) => {
-  await page.goto("/");
-  const small = await page.evaluate(() =>
-    [...document.querySelectorAll("a, button, summary, select, input:not([type=hidden])")]
-      .filter((el) => {
-        const r = (el as HTMLElement).getBoundingClientRect();
-        const hidden = r.width === 0 || r.height === 0 || el.closest("[aria-hidden=true]");
-        return !hidden && r.height < 44;
-      })
-      .map((el) => `${el.tagName} ${(el.textContent ?? "").trim().slice(0, 40)}`),
-  );
-  expect(small).toEqual([]);
+  for (const path of ["/", "/growth"]) {
+    await page.goto(path);
+    const small = await page.evaluate(() =>
+      [...document.querySelectorAll("a, button, summary, select, input:not([type=hidden])")]
+        .filter((el) => {
+          const r = (el as HTMLElement).getBoundingClientRect();
+          const hidden = r.width === 0 || r.height === 0 || el.closest("[aria-hidden=true]");
+          return !hidden && r.height < 44;
+        })
+        .map((el) => `${el.tagName} ${(el.textContent ?? "").trim().slice(0, 40)}`),
+    );
+    expect(small).toEqual([]);
+  }
 });

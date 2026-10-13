@@ -11,10 +11,15 @@ type Common = {
   className?: string;
   /** Marks the field required for browsers and screen readers. The server is still the real check. */
   required?: boolean;
+  /** Prefix for the hint and error ids (defaults to `name`), for two forms on one page. */
+  idBase?: string;
 };
 
-const describedBy = (p: Pick<Common, "name" | "hint" | "error">) =>
-  [p.hint ? `${p.name}-hint` : null, p.error?.length ? `${p.name}-error` : null]
+const describedBy = (p: Pick<Common, "name" | "hint" | "error" | "idBase">) =>
+  [
+    p.hint ? `${p.idBase ?? p.name}-hint` : null,
+    p.error?.length ? `${p.idBase ?? p.name}-error` : null,
+  ]
     .filter(Boolean)
     .join(" ") || undefined;
 
@@ -50,9 +55,9 @@ export function TextField({
   );
 }
 
-function Hint(p: Pick<Common, "name" | "hint">) {
+function Hint(p: Pick<Common, "name" | "hint" | "idBase">) {
   return p.hint ? (
-    <span id={`${p.name}-hint`} className="text-sm text-muted-foreground">
+    <span id={`${p.idBase ?? p.name}-hint`} className="text-sm text-muted-foreground">
       {p.hint}
     </span>
   ) : null;
@@ -112,10 +117,10 @@ export function SelectField({
   );
 }
 
-function FieldError({ name, error }: Pick<Common, "name" | "error">) {
+function FieldError({ name, error, idBase }: Pick<Common, "name" | "error" | "idBase">) {
   if (!error?.length) return null;
   return (
-    <span id={`${name}-error`} className="font-semibold">
+    <span id={`${idBase ?? name}-error`} className="font-semibold">
       {error[0]}
     </span>
   );

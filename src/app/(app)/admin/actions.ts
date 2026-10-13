@@ -65,6 +65,7 @@ export async function inviteFromWaitlistAction(formData: FormData) {
   const email = z.string().email().safeParse(formData.get("email"));
   if (!email.success) redirect("/admin?error=unknown");
   const r = await inviteFromWaitlist(email.data);
+  if (r === "growth_only") redirect("/admin?error=growth_only#waitlist");
   redirect(r === "invited" ? "/admin?done=invited#waitlist" : "/admin?error=unknown");
 }
 

@@ -12,8 +12,13 @@ import { siteConfig } from "@/config/site";
 import { cn } from "@/lib/utils";
 import { Phone } from "lucide-react";
 import { AboutDavi } from "@/components/marketing/about-davi";
+import { GrowthChapter } from "@/components/marketing/growth/growth-chapter";
+import { GrowthChapterBar } from "@/components/marketing/growth/growth-chapter-bar";
+import { growthCopy } from "@/components/marketing/growth/growth-copy";
+import { GrowthBridge, GrowthWipe } from "@/components/marketing/growth/growth-flip";
+import { phoneHref } from "@/lib/phone-href";
 
-const telHref = `+1${siteConfig.phone.replace(/\D/g, "")}`;
+const telHref = phoneHref("tel", siteConfig.phone);
 
 const description =
   "Built for carpenters, and the trades they work with: Squared Away sorts your business email, drafts replies in your voice, and chases quiet quotes — and nothing goes out without your okay.";
@@ -134,7 +139,7 @@ export default async function HomePage() {
 
   return (
     <div className="flex flex-1 flex-col">
-      <header className="sticky top-0 z-10 border-b border-stone/60 bg-paper/90 px-4 backdrop-blur">
+      <header className="sticky top-0 z-10 border-b border-stone/60 bg-paper px-4">
         <div className="mx-auto flex w-full max-w-5xl items-center justify-between py-2">
           <Link
             href="/"
@@ -144,6 +149,12 @@ export default async function HomePage() {
             <Wordmark />
           </Link>
           <nav aria-label="Site" className="flex items-center gap-1">
+            <Link
+              href="#growth"
+              className="hidden min-h-tap items-center px-3 font-semibold sm:inline-flex"
+            >
+              {growthCopy.header.link}
+            </Link>
             <Link
               href="#pricing"
               className="hidden min-h-tap items-center px-3 font-semibold sm:inline-flex"
@@ -193,6 +204,15 @@ export default async function HomePage() {
                 Works with Gmail · On the web or as an app on your phone · Three-day trial on your
                 real inbox.
               </p>
+              <Link
+                href="#growth"
+                className="min-h-tap self-start py-2.5 font-semibold underline underline-offset-4"
+              >
+                {/* A plain block (not inline-flex), so a wrapped line keeps the arrow by the last word. */}
+                {growthCopy.hero.link}
+                {"\u00a0"}
+                <span aria-hidden>↓</span>
+              </Link>
             </div>
             <QueuePreview />
           </div>
@@ -289,7 +309,7 @@ export default async function HomePage() {
           <p className="text-lg">
             Questions about which plan fits?{" "}
             <a
-              href={`tel:${telHref}`}
+              href={telHref}
               className="inline-flex min-h-tap items-center font-semibold underline underline-offset-4"
             >
               Call {siteConfig.operator} at {siteConfig.phone}
@@ -328,7 +348,7 @@ export default async function HomePage() {
               <div className="flex flex-col gap-2">
                 <p className="text-lg text-slate">Rather talk? Call {siteConfig.operator}.</p>
                 <a
-                  href={`tel:${telHref}`}
+                  href={telHref}
                   className="inline-flex min-h-tap items-center justify-center gap-2 self-start rounded-lg border-2 border-charcoal px-5 text-lg font-semibold"
                 >
                   <Phone aria-hidden className="size-5" />
@@ -341,10 +361,20 @@ export default async function HomePage() {
             </div>
           </div>
         </Section>
+
+        {/* Squared Away Growth: a paper introduction, the wipe, then the charcoal chapter. */}
+        <GrowthBridge />
+        <GrowthWipe />
+        <div className="sa-inverted" data-growth-chapter>
+          <GrowthChapterBar />
+          <GrowthChapter headingLevel="h2" standalone={false} />
+        </div>
       </main>
 
-      <div className="mx-auto w-full max-w-5xl px-4 pb-6">
-        <SiteFooter />
+      <div className="sa-inverted">
+        <div className="mx-auto w-full max-w-5xl px-4 pb-6">
+          <SiteFooter />
+        </div>
       </div>
     </div>
   );

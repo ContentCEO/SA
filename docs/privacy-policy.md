@@ -3,7 +3,7 @@
 
 # Privacy Policy
 
-_Last updated: October 11, 2026_
+_Last updated: October 12, 2026_
 
 Squared Away is run by {{OPERATOR}}, {{LOCATION}}. It helps small trade businesses answer their
 email: it sorts incoming business email, writes reply drafts in the owner's own voice, and holds
@@ -23,8 +23,9 @@ The short version:
 ## Who this policy covers
 
 This policy covers the owners and staff who sign in to Squared Away ("you"), and people who join
-our waitlist on our website. It also explains how we handle information about the people who email
-your business (your customers and suppliers), because their messages pass through Squared Away.
+our waitlist or book a free Squared Away Growth call on our website. It also explains how we handle
+information about the people who email your business (your customers and suppliers), because their
+messages pass through Squared Away.
 
 Squared Away is a tool for businesses. It is not meant for children, and we don't knowingly
 collect information from anyone under 16.
@@ -34,7 +35,14 @@ collect information from anyone under 16.
 **When you join the waitlist:** your name, email address, trade, team size, and anything you choose
 to add (phone number, a note). To stop spam, we briefly keep a scrambled (hashed) version of your
 IP address to limit how many times a form can be sent; it can't be turned back into your IP
-address and is deleted daily.
+address and is deleted within three days.
+
+**When you book a free Growth call:** your name, phone number, email address, trade, the services
+you want help with (for example Google ads or reviews), when you asked, and anything you add in the
+note. We use it only to contact you about Squared Away Growth. If you're already on the app
+waitlist, we add your request to that entry and keep everything you gave us before. Booking a call
+doesn't sign you up for the app or let you sign in. The same scrambled IP address limit applies to
+this form.
 
 **When you sign in with Google:** your name and email address. Sign-in asks Google only for "who you are" (`openid`, `email`, `profile`). It does not give us
 access to your email.
@@ -104,6 +112,15 @@ reply that mentions a price or an amount. Every autopilot reply waits in
 your queue for 10 minutes with a **Hold it** button before it is sent, and every check runs again
 just before sending.
 
+## Squared Away Growth
+
+Squared Away Growth is a separate, one-on-one service: we help trade businesses with ads, social
+media posts, their Google Business Profile, reviews and websites. Growth never uses Squared Away's
+access to anyone's Gmail. Nothing from your email, or your customers' email, is used for Growth
+work, ads or posts. Gmail data we receive through Google's APIs is never used for Growth (see
+Limited Use below). If you hire us for Growth, what we need from you (such as photos or access to
+your ad accounts) is agreed with you directly, outside this app.
+
 ## Where your information goes
 
 We use these service providers. Each gets only what it needs:
@@ -118,8 +135,9 @@ We use these service providers. Each gets only what it needs:
 - **Neon** — hosts our database (in the United States).
 - **Inngest** — runs our background jobs. It sees IDs and counts, not email text.
 - **Stripe** — takes payments.
-- **Resend** — delivers our emails to you (the morning summary and account alerts). These contain
-  counts and categories only.
+- **Resend** — delivers our emails to you (the morning summary and account alerts), which contain
+  counts and categories only, and a short notice to us when someone books a Growth call, which says
+  only that a request came in, with no name, number or email address.
 - **Twilio** — only if you turn on text alerts: delivers texts to your own phone, with counts only.
 - **Sentry** — only if switched on: receives error reports with email addresses masked and no
   email content.
@@ -152,6 +170,9 @@ In plain words:
 - **Who, when, subject, summaries and categories** are kept so your inbox, quotes and activity
   history keep working, until you disconnect that Gmail address or delete your account.
 - **Waitlist entries** are kept until you ask us to remove them, or until we invite you.
+- **Growth call requests** are kept until you ask us to remove them (call, text or email us). If
+  you send another request from the same email address, the newest one replaces the one before;
+  the name and trade from your first entry stay on it.
 - If your trial ends or a payment fails, we stop reading your mailbox and stop using the AI, but
   we don't delete your data for that reason alone.
 
@@ -163,7 +184,9 @@ In plain words:
 - **Delete my account** (Settings, one confirmation): cancels your subscription, removes our
   access at Google, and deletes your account and everything in it. Drafts already in your Gmail
   Drafts folder stay in your Gmail. Our database provider keeps short-term backups for recovery,
-  so deleted data can remain in those backups for a short time before it is gone for good.
+  so deleted data can remain in those backups for a short time before it is gone for good. This
+  doesn't remove a waitlist entry or Growth call request you sent from our website; ask us and
+  we'll delete it.
 - You can also remove our access any time at
   [myaccount.google.com/permissions](https://myaccount.google.com/permissions).
 - To see, correct or delete what we hold about you — including if you are a customer of one of
@@ -174,7 +197,8 @@ In plain words:
 Connections are encrypted (HTTPS). Google access tokens are encrypted before they are stored and
 are never shown in the browser or written to logs. Our logs never contain email text, access
 tokens or customers' personal details. Only the account owner can see their mail in the app; our
-admin page shows account health and counts only.
+admin page shows account health and counts, plus the waitlist and Growth call requests people send
+us from the website.
 
 ## Changes
 
