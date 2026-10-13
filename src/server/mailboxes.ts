@@ -116,9 +116,12 @@ export async function saveConnectedMailbox(
 }
 
 /**
- * Disconnect: revoke our access at Google, then delete the mailbox (and, via
- * cascade in later milestones, everything synced from it). Scoped to the
- * caller's workspace so nobody can disconnect someone else's mailbox.
+ * Disconnect: revoke our access at Google, then delete the mailbox; the cascade
+ * removes everything synced from it (threads, messages, drafts and their edit
+ * counts, price memory). Workspace-level rows stay: writing style and style
+ * suggestions, business details, activity history, usage counts, seasonal notes,
+ * phone notifications. Scoped to the caller's workspace so nobody can disconnect
+ * someone else's mailbox.
  */
 export async function disconnectMailbox(
   workspaceId: string,

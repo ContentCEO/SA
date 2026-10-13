@@ -485,6 +485,12 @@ export async function renewWatches(deps: SyncDeps = {}): Promise<number> {
 /**
  * Retention: drop body text and Gmail's preview snippet from anything older
  * than the window. Metadata (who, when, subject) and our summaries stay.
+ * Draft text goes too (body, original text and the check flags, which quote it), and the
+ * email's own words in `threads.extracted` (street address, dates, an inspector's
+ * corrections) once the conversation's newest email is past the window. The content-free
+ * facts Money, Quotes, price memory and the permit card still need are kept: the kind of
+ * job, dollar figures, urgency, invoice number / amount / due date / status, permit number /
+ * issuing body / inspection time / result, and our own true/false marks.
  */
 export async function purgeExpiredBodies(
   now: Date = new Date(),
@@ -501,16 +507,43 @@ export async function purgeExpiredBodies(
       ),
     )
     .returning({ id: messages.id });
-  // Draft text is email text too. Anything still pending that old is stale; expire it.
+  // Draft text is email text too. Anything still pending that old is stale; expire it, and
+  // drop any send it was queued for or autopilot countdown, so nothing can pick it up again.
   await db()
     .update(drafts)
-    .set({ status: "expired", closedNote: "Expired after the retention window.", decidedAt: now })
+    .set({
+      status: "expired",
+      closedNote: "Expired after the retention window.",
+      decidedAt: now,
+      sendAfter: null,
+      sendClaimedAt: null,
+      autoSendAt: null,
+    })
     .where(and(eq(drafts.status, "pending"), lt(drafts.createdAt, cutoff)));
+  // The flags quote the draft's own words ("Mentions $4,200", "Says “guaranteed”").
   await db()
     .update(drafts)
-    .set({ body: null, originalBody: null })
+    .set({ body: null, originalBody: null, flags: [] })
     .where(
-      and(lt(drafts.createdAt, cutoff), or(isNotNull(drafts.body), isNotNull(drafts.originalBody))),
+      and(
+        lt(drafts.createdAt, cutoff),
+        or(
+          isNotNull(drafts.body),
+          isNotNull(drafts.originalBody),
+          sql`${drafts.flags} <> '[]'::jsonb`,
+        ),
+      ),
+    );
+  // The email's own words the classifier pulled out. `#-` leaves a thread without a permit
+  // (or with a null one) as it is.
+  await db()
+    .update(threads)
+    .set({ extracted: sql`(${threads.extracted} - 'address' - 'dates') #- '{permit,corrections}'` })
+    .where(
+      and(
+        sql`${threads.lastMessageAt} < ${cutoff.toISOString()}::timestamptz`,
+        sql`(${threads.extracted} ? 'address' or ${threads.extracted} ? 'dates' or ${threads.extracted} -> 'permit' ? 'corrections')`,
+      ),
     );
   return purged.length;
 }

@@ -1233,7 +1233,12 @@ describe("referral credit (switched on)", () => {
     expect(kept).toHaveLength(2);
     expect(kept.every((r) => r.referredWorkspaceId === null)).toBe(true);
 
-    // Same email back: the invite's referral was used up, so nothing links them...
+    // Deleting the account removed the invite: coming back takes a new one (S3).
+    expect(
+      await database.select().from(invites).where(eq(invites.email, "mike@yahoo.com")),
+    ).toHaveLength(0);
+    // Same email back on a plain new invite: nothing links them...
+    await database.insert(invites).values({ email: "mike@yahoo.com" });
     const { workspace: again } = await ensureUserAndWorkspace({ email: "mike@yahoo.com" });
     expect(again.referredByWorkspaceId).toBeNull();
     // ...and even if something did, the email key says it was already paid.

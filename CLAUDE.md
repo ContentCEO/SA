@@ -146,7 +146,13 @@ In a sandbox with preinstalled Chromium: `PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-brows
 - `MailboxAuthError` anywhere → `status = reconnect_needed` + one `mailbox_access_lost` log; every
   job skips non-active mailboxes before touching Google. Banner on every signed-in screen.
 - Retention purge nulls `body_text` AND `snippet` (Gmail snippets are body text) past
-  `RETENTION_BODY_DAYS`; runs daily. Bodies capped at 20k chars.
+  `RETENTION_BODY_DAYS`; runs daily. Bodies capped at 20k chars. **M11 (S3):** it also empties
+  `drafts.flags` (they quote draft text) with the draft body / original text, clears `send_after`,
+  `send_claimed_at` and `auto_send_at` on the pending drafts it expires, and strips `address`,
+  `dates` and `permit.corrections` from `threads.extracted` once the thread's newest email is past
+  the window (content-free facts stay: invoice number/amount/due date/status, permit number /
+  issuing body / inspection time / result, service, dollar figures, our true/false marks).
+  `tests/unit/data-lifecycle.test.ts` is the gate.
 - Jobs (Inngest v4, `triggers` in options): backfill (singleton per mailbox), sync (concurrency 1 +
   20s debounce per mailbox), poll every 5 min (also starts missed backfills), watch renewal daily
   (only if `GMAIL_PUBSUB_TOPIC`), purge daily. `enqueue()` swallows send failures; the poll recovers.
@@ -297,7 +303,13 @@ In a sandbox with preinstalled Chromium: `PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-brows
   **nothing** is deleted; an already-gone subscription is fine) → revoke Google for each mailbox (best
   effort) → delete the `users` row (everything cascades) → sign out → `/goodbye`. Gmail drafts stay
   in the owner's Gmail. Logs counts only. `/signin` only bounces to /queue if the account still
-  exists (a deleted account's JWT would otherwise loop).
+  exists (a deleted account's JWT would otherwise loop). **M11 (S3):** the database part is one
+  transaction that also deletes the owner's `invites` row (coming back needs a new invite) and the
+  `app_settings` markers `cost_alert:<ws>:%` and `email-sent:%-<ws|mailbox>-%`. Kept on purpose
+  (Davi, amendment 2): waitlist rows (may hold a Growth call request); also referral_credits (salted
+  hash, ids SET NULL), stripe_events, rate_limits (purged in 2 days), the draft-cleanup per-mailbox
+  marker (bare uuid). `tests/unit/data-lifecycle.test.ts` is the gate: a new table or a new
+  non-cascade foreign key fails it until its lifecycle is decided (KEPT / SET_NULL lists there).
 - **Rate limits (2026-10-06):** `src/server/rate-limit.ts`, fixed windows in the `rate_limits` table
   (one atomic upsert; holds across serverless instances). Per workspace: send 60/10 min (action +
   API → 429 with Retry-After), Draft a reply 30/h, re-learn voice 3/day, billing 10/h, Gmail connect

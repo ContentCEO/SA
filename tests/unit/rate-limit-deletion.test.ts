@@ -6,6 +6,7 @@ import type { Database } from "@/db";
 import {
   activityLog,
   businessProfiles,
+  invites,
   mailboxes,
   priceHistory,
   rateLimits,
@@ -14,7 +15,7 @@ import {
   workspaces,
 } from "@/db/schema";
 import type { MailboxConnector } from "@/mailbox/connector";
-import { ensureUserAndWorkspace } from "@/server/accounts";
+import { ensureUserAndWorkspace, isAllowedToSignIn } from "@/server/accounts";
 import { deleteAccount, SubscriptionCancelError } from "@/server/account-deletion";
 import { setStripeForTests } from "@/server/billing";
 import { saveConnectedMailbox } from "@/server/mailboxes";
@@ -162,6 +163,27 @@ describe("delete my account", () => {
     expect(revoked).toEqual([]);
     expect(await database.select().from(users)).toHaveLength(1);
     expect(await database.select().from(mailboxes)).toHaveLength(1);
+  });
+
+  it("a deleted owner can no longer sign in without a new invite", async () => {
+    await database.insert(invites).values({ email: "owner@shop.com", trade: "electrical" });
+    const { user } = await seed();
+    expect(await isAllowedToSignIn("owner@shop.com")).toBe(true);
+    await deleteAccount(user.id, connector);
+    expect(await database.select().from(invites)).toHaveLength(0);
+    expect(await isAllowedToSignIn("Owner@Shop.com")).toBe(false);
+
+    // Davi's admin address is always allowed, invite or not.
+    const prev = process.env.ADMIN_EMAIL;
+    process.env.ADMIN_EMAIL = "davi@shop.com";
+    try {
+      const { user: admin } = await ensureUserAndWorkspace({ email: "davi@shop.com" });
+      await deleteAccount(admin.id, connector);
+      expect(await isAllowedToSignIn("davi@shop.com")).toBe(true);
+    } finally {
+      if (prev === undefined) delete process.env.ADMIN_EMAIL;
+      else process.env.ADMIN_EMAIL = prev;
+    }
   });
 
   it("a subscription Stripe already ended doesn't block deletion", async () => {
