@@ -3,7 +3,7 @@
 
 # Terms of Service
 
-_Last updated: October 11, 2026_
+_Last updated: October 13, 2026_
 
 These terms are an agreement between you and {{OPERATOR}}, {{LOCATION}}, who runs Squared Away
 ("we", "us"). By creating an account or using Squared Away, you agree to them. If you use Squared
@@ -18,8 +18,11 @@ explained in our [Privacy Policy](/privacy).
 
 ## You approve what gets sent
 
-Squared Away sends a reply only when you tap **Send reply**, or — if you choose to switch it on for
-a kind of email — through autopilot, which waits 10 minutes before each send so you can stop it.
+Squared Away sends a reply only when you approve it in the app (for example by tapping **Send
+reply**), or — if you choose to switch it on for a kind of email — through autopilot. Autopilot is
+only available on plans that include it, after your setup call, one kind of email at a time, and
+only within the limits described in our Privacy Policy; it waits 10 minutes before each send so
+you can stop it.
 The replies are drafted by AI and can be wrong. You are responsible for reading a reply before you
 send it and for what you send from your account, including replies sent by autopilot you switched
 on. Drafts may leave gaps or flags where a price, date or promise is needed; we don't fill those
@@ -36,15 +39,16 @@ in for you.
 ## The trial
 
 New accounts start with a three-day trial on your real inbox. During the trial Squared Away sorts
-and drafts, but sending to customers is switched off. When the trial ends, your account becomes
-read-only until you choose a plan.
+and drafts, but sending to customers is switched off; you can only send yourself practice copies,
+to your own address. When the trial ends, your account becomes read-only until you choose a plan.
 
 ## Plans and payment
 
 - Prices are shown on our website when you sign up: a one-time setup fee and a monthly plan, in US
   dollars, plus any taxes. Payments are handled by Stripe.
 - Plans renew every month until you cancel. You can cancel or change your plan at any time from
-  **Plan & billing**; cancelling stops future charges.
+  **Plan & billing**; cancelling there stops the plan renewing, and it stays on until the end of
+  the period you've paid for. **Delete my account** in Settings cancels your plan straight away.
 - **[To confirm]** Whether the setup fee and the current month are refundable, and in which cases.
 - If a payment fails, sending and background work pause until it's sorted. We don't delete your
   data because a payment failed.

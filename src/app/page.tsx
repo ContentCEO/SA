@@ -100,7 +100,7 @@ const faqs = [
   },
   {
     q: "Can it see all my email?",
-    a: "It has permission to read your Gmail. It only reads the last 30 days of business email in your inbox, and your recent sent mail to learn how you write. It can't delete, archive or move anything.",
+    a: "It has permission to read your Gmail. When you connect, it reads the last 30 days of your email (the text only for your inbox), then new mail as it arrives, and up to 200 of your sent emails from the last year to learn how you write. It keeps email text for 30 days. It can't delete, archive or move anything.",
   },
   {
     q: "Does it work with Outlook?",
@@ -108,11 +108,11 @@ const faqs = [
   },
   {
     q: "What does the trial look like?",
-    a: "Three days with your real inbox. It sorts and drafts so you can judge the replies — nothing can send during the trial. If it's not for you, disconnect and you're done.",
+    a: "Three days with your real inbox. It sorts and drafts so you can judge the replies — nothing can go to a customer during the trial. If it's not for you, disconnect and you're done.",
   },
   {
     q: "What if I stop?",
-    a: "Disconnect Gmail in Settings and our access is removed at Google straight away. Want it all gone? Delete my account in Settings erases everything we hold, in one tap. Month to month, no contract.",
+    a: "Disconnect Gmail in Settings and our access is removed at Google straight away. Want it all gone? Delete my account in Settings deletes your account and everything in it from Squared Away, after one confirmation. Stripe keeps its own payment records. Month to month, no contract.",
   },
 ];
 
@@ -245,8 +245,8 @@ export default async function HomePage(props: PageProps<"/">) {
             </p>
             <p className="max-w-2xl text-xl leading-relaxed text-ash">
               Squared Away drafts; you decide. Replies sit in your queue until you tap Send reply —
-              and during your three-day trial, sending is switched off entirely, in the code, not
-              just hidden behind a button.
+              and during your three-day trial, sending to customers is switched off, in the code,
+              not just hidden behind a button.
             </p>
           </div>
         </section>

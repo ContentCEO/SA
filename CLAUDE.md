@@ -802,6 +802,21 @@ In a sandbox with preinstalled Chromium: `PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-brows
   needs me" (both only reorder the owner's own list; no Gmail or model call; tested).
   Verified, no change: push endpoint re-homing on upsert, the Gmail push `?token=`, the health
   commit SHA, CSP `'unsafe-inline'`, JWT-trusted admin email, `x-forwarded-for` on Vercel.
+- **M11 legal drafts (S5, 2026-10-13):** `docs/privacy-policy.md` and `docs/terms.md` checked
+  against the code; `tests/unit/legal-docs.test.ts` is the gate (numbers read from config/code,
+  the scope table from `GMAIL_SCOPES`, the three terms `[To confirm]` items unchanged, no
+  referral text while #47 is off). Limited Use uses Google's template sentence word for word and
+  the merger clause says "only after asking for your explicit permission first". The deletion
+  sentence ("Delete my account in Settings deletes your account and everything in it from Squared
+  Away, after one confirmation. Stripe keeps its own payment records.") is shared word for word by
+  the policy and the homepage FAQ (tested). Trial wording everywhere: nothing can go to a
+  customer, practice copies to yourself only — never "sending is switched off completely" (the
+  connect explainer and homepage are tested). `outputFileTracingIncludes` ships docs/*.md with
+  /privacy and /terms. **Open for Davi (S7 carries these):** the three terms `[To confirm]` items
+  (refunds, liability cap, governing law and venue); "plus any taxes" while Stripe collects no
+  tax; a lawyer's review of both drafts; the #47 referral-fingerprint line before
+  `FEATURE_REFERRALS` goes on; how to honour a waitlist / Growth removal request (the policy says
+  "ask us and we'll delete it", and there is no admin tool — done by hand in the database).
 
 ## Milestones
 
@@ -864,8 +879,9 @@ In a sandbox with preinstalled Chromium: `PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-brows
   stay past the 30-day purge until the mailbox or account goes.
 - **Privacy policy line for #47 referrals** (before `FEATURE_REFERRALS` goes on): "If you were
   referred, we keep a scrambled one-way fingerprint of your email and the credit record after you
-  delete your account, so a referral is only paid once." (Otherwise the FAQ's "erases everything
-  we hold" isn't literally true.) Also his call: a referrer who deletes their account before the
+  delete your account, so a referral is only paid once." (Otherwise the policy's Delete my account
+  section and the homepage FAQ's "deletes your account and everything in it" aren't literally
+  true.) Also his call: a referrer who deletes their account before the
   new owner is active voids the referral for both sides; repeat waitlist joins and plain invites
   carry no referral (docs/SETUP.md §6d).
 - **Growth (2026-10-12):** confirm all seven services are offered today (websites and ad management

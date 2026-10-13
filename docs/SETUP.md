@@ -176,8 +176,8 @@ exactly `1`, `true` or `on` (any case); empty, missing or anything else means of
   **Privacy policy, before turning it on:** referral records outlive account deletion so a
   referral is only paid once. Add a line such as "If you were referred, we keep a scrambled
   one-way fingerprint of your email and the credit record after you delete your account, so a
-  referral is only paid once." — the FAQ's "erases everything we hold" is otherwise not literally
-  true once referrals are on.
+  referral is only paid once." — the policy's "Delete my account" section (and the homepage FAQ's
+  "deletes your account and everything in it") is otherwise not literally true once referrals are on.
   **Don't rotate `AUTH_SECRET` once referrals have been paid** (or know what it costs): the
   "paid once, ever" check matches that fingerprint, which is salted with `AUTH_SECRET`. After a
   rotation, earlier referrals no longer match, so an owner who deleted their account and is

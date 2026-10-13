@@ -21,7 +21,9 @@ test("explains what it will and won't do, then sends you to Google with the mini
 
   await expect(page).toHaveURL(/\/connect$/);
   await expect(page.getByRole("heading", { name: "What it won't do" })).toBeVisible();
-  await expect(page.getByText(/sending is switched off completely/)).toBeVisible();
+  await expect(
+    page.getByText(/nothing can go to a customer: you can only send yourself practice copies/),
+  ).toBeVisible();
   await noHorizontalScroll(page);
 
   // Stop at Google's door and inspect what we asked for.

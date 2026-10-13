@@ -16,8 +16,8 @@ The short version:
 - Email text is sent to one outside service, Anthropic (the company behind the Claude AI), only to
   do that work. It is not used to train AI models.
 - We delete email body text after 30 days.
-- Nothing is sent from your Gmail unless you tap **Send reply**, or you have switched on autopilot
-  for a kind of email yourself.
+- Nothing is sent from your Gmail unless you approve it in the app (for example by tapping **Send
+  reply**), or you have switched on autopilot for a kind of email yourself.
 - You can disconnect Gmail or delete your account at any time from Settings.
 
 ## Who this policy covers
@@ -50,27 +50,34 @@ access to your email.
 **When you connect Gmail:** this is a separate step, after a screen that explains what Squared Away
 will and won't do. We ask Google for three Gmail permissions:
 
-| Permission                         | Why we need it                                                                                                                                             | What we never do with it                                    |
-| ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
-| Read your email (`gmail.readonly`) | To sort incoming business email and write a reply, and to read up to 200 of your recent sent emails once, so drafts sound like you.                        | We never delete, archive, move or label your mail.          |
-| Manage drafts (`gmail.compose`)    | To put reply drafts in your own Gmail Drafts folder, in the right conversation, and to update or remove drafts we created when you change them in the app. | We don't touch drafts we didn't create.                     |
-| Send email (`gmail.send`)          | To send a draft when you tap **Send reply** — or, only if you switch it on for a kind of email, autopilot (see below).                                     | We never send anything you haven't approved or switched on. |
+| Permission                         | Why we need it                                                                                                                                                                                                    | What we never do with it                                    |
+| ---------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
+| Read your email (`gmail.readonly`) | To sort incoming business email and write a reply, and to read up to 200 of your sent emails from the last year so drafts sound like you (see "How you write" below).                                             | We never delete, archive, move or label your mail.          |
+| Manage drafts (`gmail.compose`)    | To put reply drafts in your own Gmail Drafts folder, in the right conversation, and to update or remove drafts we created when you change them in the app.                                                        | We don't touch drafts we didn't create.                     |
+| Send email (`gmail.send`)          | To send a draft when you approve it (**Send reply**) or, only if you switch it on for a kind of email, by autopilot (see below); and, during the trial, to send a practice copy to your own address when you ask. | We never send anything you haven't approved or switched on. |
 
 If you untick any of these on Google's screen, we remove what was granted and save nothing.
 
 **What we store from Gmail:**
 
-- For the last 30 days of mail: who each message is from and to, the subject, and the date.
+- Who each message is from and to, the subject, and the date. When you connect, we read the last
+  30 days of mail; after that, new mail is added as it arrives.
 - For conversations in your inbox: the text of the messages, so we can sort them and write replies.
   We don't download the text of mail outside your inbox (for example archived newsletters).
 - A one-line summary of what each conversation is about (for example "Wants a quote for a deck
-  repair"), the category we sorted it into, and facts pulled from it, such as an address, a date
-  or an amount mentioned.
-- The reply drafts we write, so you can review them in the app.
-- A description of how you write (your usual greeting, sign-off, length and common phrases) and up
-  to five short example replies in your style. These examples are written by the AI with
-  placeholders in place of names, addresses, phone numbers, emails and prices. The sent emails
-  used to learn your style are read once and never stored.
+  repair"), the category we sorted it into, and facts pulled from it: the kind of job, a street
+  address, dates, amounts mentioned, invoice details (number, amount, due date, paid or not) and
+  building-permit details (permit number, who issued it, inspection time and result, and any
+  corrections the inspector asked for).
+- The reply drafts we write, so you can review them in the app, and the notes our checks put on
+  them (for example "Mentions $450 — that price isn't in the email or your profile").
+- **How you write:** a description of your writing (your usual greeting, sign-off, length and
+  common phrases) and up to five short example replies in your style. These examples are written
+  by the AI with placeholders in place of names, addresses, phone numbers, emails and prices. To
+  learn it we read up to 200 of your sent emails from the last year: when you first connect,
+  again about once a week (skipped if you have edited your style yourself), when you tap
+  **Re-learn from my sent mail**, and again automatically if a read stops part-way. Those sent
+  emails are used only for that and are never stored.
 - Prices you quoted (the amount, the kind of job and the date), kept as your price memory. Only
   you see them, and they are never sent to the AI.
 - Which invoices are marked paid (or "not owed to me"), a marker on conversations that were ever
@@ -91,40 +98,54 @@ counts to show, so no counts, names or email content pass through the push servi
 and subscription IDs and your plan.
 
 **What happens in the app:** a record of actions (for example "draft created", "reply sent",
-"Gmail connected"), whether you edited a reply before sending it, and daily counts of AI use and
-estimated cost. These records hold IDs and counts, not email text.
+"Gmail connected"), including for each reply you approved when you approved it and whether from a
+phone or a computer; daily counts of AI use and estimated cost; and, for replies you edited
+before sending, counts of what you changed (how many words, whether you changed the greeting or
+sign-off) and the change in tone, which we use to suggest updates to your writing style. These
+records hold IDs, counts and yes/no marks, not email text.
 
 **Cookies:** we use only the cookies needed to keep you signed in and to protect the Gmail
 connection step from forgery, plus small cookies that remember this phone's display choices
 (left-handed layout, high contrast, offline approvals). We don't use advertising or tracking
 cookies, and we don't run analytics that follow you. If you switch on offline approvals, your
-phone keeps a copy of your queue so you can approve replies without signal; signing out deletes
-it.
+phone keeps a copy of your queue (in the browser's storage) and the approvals you make without
+signal until they reach us; signing out deletes them.
 
 ## How we use it
 
 - To sort your business email and put what needs you first.
 - To write reply drafts and follow-up drafts (at most two per conversation, ever) for you to
-  approve.
-- To send a reply when you tap **Send reply**.
-- To send you your morning summary and, if you turn them on, text alerts and phone
-  notifications — all contain counts and categories only, never a customer's name or words.
+  approve, and notes you can send: asking for the deposit after a customer accepts your quote, or
+  asking for a review when you tap **Ask for a review**.
+- To reword a draft when you ask, by tapping a quick change or telling it what to change. If you
+  speak the change, your browser turns your words into text using its own speech service (run by
+  Google or Apple, depending on your phone); we receive only the text.
+- To keep your quotes, money owed and customers in order, and to remember the prices you quoted.
+- To send a reply when you approve it, and, during your trial, a practice copy to your own address
+  when you tap **Send it to yourself instead**.
+- To send you your morning summary, a monthly summary at the start of each month, an email if
+  Google stops letting us read your Gmail (plus one reminder two days later), and, if you turn them
+  on, text alerts and phone notifications. The morning summary lists the kinds of email waiting and how long they have waited, with links into the app; the monthly summary has counts, your most common kinds of job and where requests came from; the Gmail alert names your own Gmail address; texts and notifications have counts only. None of them contain a customer's name or words.
 - To run your account: billing, support, keeping the service working and secure.
 
 We don't sell your information or your customers' information. We don't use it for advertising.
 
 ## Sending and autopilot
 
-Every reply waits in your queue until you tap **Send reply**. During your three-day trial, sending
-to customers is switched off in the code.
+Every reply waits in your queue until you approve it, by tapping **Send reply** (or **Send N
+replies** after reviewing several together). You then have 20 seconds to undo it before it goes.
+During your three-day trial, sending to customers is switched off in the code. You can still send
+yourself a practice copy of a draft: it goes only to your own Gmail address, as a new email marked
+"[Practice]", never to the customer.
 
 Autopilot is off unless you turn it on, one kind of email at a time, and only on plans that
 include it after your setup call. It only becomes available for a kind of email after you have
 sent ten of those replies exactly as drafted. It never answers complaints, bills with an amount on
 them, anything flagged for you, or someone you haven't written to before, and it never sends a
-reply that mentions a price or an amount. Every autopilot reply waits in
-your queue for 10 minutes with a **Hold it** button before it is sent, and every check runs again
-just before sending.
+reply that mentions a price or an amount. Follow-ups, deposit and review notes, and replies to a
+customer accepting a quote always wait for you. Every autopilot reply waits in your queue for 10
+minutes with a **Hold it** button before it is sent, and every check runs again just before
+sending.
 
 ## Squared Away Growth
 
@@ -141,29 +162,36 @@ We use these service providers. Each gets only what it needs:
 
 - **Google** — your Gmail, through the permissions above.
 - **Anthropic** — the text of the emails being sorted or answered, your business details and your
-  writing-style description, sent for the task at hand only (sorting a message, learning your
-  style, or writing a draft). Under Anthropic's commercial terms, this data is not used to train
-  their models. Anthropic may keep it for a limited time under its own policies, for example to
-  prevent misuse.
+  writing-style description, sent for the task at hand only: sorting a message, learning your
+  style from your sent mail, writing a draft, follow-up, deposit or review note, rewording a draft
+  when you ask, or comparing a reply before and after you edited it to see how the tone changed.
+  Your price memory is never sent. Under Anthropic's commercial terms, this data is not used to
+  train their models. Anthropic may keep it for a limited time under its own policies, for example
+  to prevent misuse.
 - **Vercel** — hosts the website and app.
 - **Neon** — hosts our database (in the United States).
 - **Inngest** — runs our background jobs. It sees IDs and counts, not email text.
-- **Stripe** — takes payments.
-- **Resend** — delivers our emails to you (the morning summary and account alerts), which contain
-  counts and categories only, and a short notice to us when someone books a Growth call, which says
-  only that a request came in, with no name, number or email address.
-- **Twilio** — only if you turn on text alerts: delivers texts to your own phone, with counts only.
+- **Stripe** — takes payments. It receives your email address and your business name (or your
+  name, if no business name is set), and keeps its own payment and customer records.
+- **Resend** — delivers our emails to you (the morning summary, the monthly summary and the
+  Gmail-access alert and reminder), which never contain a customer's name or words, and two kinds
+  of notice to us: when someone books a Growth call (it says only that a request came in, with no
+  name, number or email address), and when an account's AI cost runs high for its plan (the
+  business name, or the owner's email address if no business name is set, and the account's AI
+  cost, plan price and usage counts).
+- **Twilio** — only if you turn on text alerts: delivers texts to your own phone (the code that
+  confirms your number, then counts and a link).
 - **Your browser's push service** (Google, Apple, Mozilla or Microsoft) — only if you turn on
   phone notifications: delivers an empty ping to your phone.
-- **Sentry** — only if switched on: receives error reports with email addresses masked and no
-  email content.
+- **Sentry** — only if switched on: receives reports of errors only, with your account ID, email
+  addresses masked, and no email content.
 
 We may also share information if the law requires it, or to protect the safety of people or the
 service.
 
 ## Google API Services: Limited Use
 
-Squared Away's use and transfer of information received from Google APIs to any other app will
+Squared Away's use and transfer to any other app of information received from Google APIs will
 adhere to the [Google API Services User Data Policy](https://developers.google.com/terms/api-services-user-data-policy),
 including the Limited Use requirements.
 
@@ -172,8 +200,8 @@ In plain words:
 - We use Gmail data only to provide the features described in this policy, which you can see in
   the app.
 - We transfer Gmail data to others only as needed to provide those features (to Anthropic, to
-  write and sort), to comply with the law, or as part of a merger or sale of the business with
-  your rights protected.
+  write and sort), to comply with the law, or, if the business is merged or sold, only after
+  asking for your explicit permission first.
 - We don't use Gmail data for advertising, and we don't sell it.
 - We don't use Gmail data to train AI models, and our AI provider doesn't either.
 - People don't read your Gmail data, unless you ask us to (for example when you need help), it is
@@ -181,16 +209,25 @@ In plain words:
 
 ## How long we keep it
 
-- **Email text** (message bodies, Gmail's preview text, and draft text) is deleted after 30 days
-  by a daily job. Mail older than 30 days is never stored with its text in the first place.
-- **Who, when, subject, summaries and categories** are kept so your inbox, quotes and activity
-  history keep working, until you disconnect that Gmail address or delete your account.
-- **Your price memory, invoice paid marks, complaint markers and review-request records** stay
-  after the 30-day email-text purge, until you disconnect that Gmail address or delete your
+- **Email text** (message bodies, Gmail's preview text, draft text and the check notes on drafts)
+  is deleted after 30 days by a daily job. The street address, dates and inspector's corrections
+  pulled from a conversation are deleted once its newest email is more than 30 days old. Mail
+  older than 30 days is never stored with its text in the first place.
+- **Who, when, subject, summaries and categories**, the kind of job, amounts mentioned, invoice
+  details (number, amount, due date, paid or not) and permit details (permit number, who issued
+  it, inspection time and result) are kept so your inbox, quotes, money owed and activity history
+  keep working, until you disconnect that Gmail address or delete your account.
+- **Your price memory, quote won/lost marks, invoice paid marks, complaint markers,
+  review-request records and the counts and tone change of edited replies** stay after the
+  30-day email-text purge, until you disconnect that Gmail address or delete your account.
+- **Your writing style, style suggestions, business details, settings, activity history and AI
+  usage counts** are kept until you delete your account.
+- **Your mobile number for text alerts** is kept until you remove it in Settings or delete your
   account.
 - **Phone notification addresses** are deleted when you turn notifications off, when that phone
   stops accepting them, or when you delete your account.
-- **Waitlist entries** are kept until you ask us to remove them, or until we invite you.
+- **Waitlist entries** are kept until you ask us to remove them. When we invite you, we note the
+  date on your entry.
 - **Growth call requests** are kept until you ask us to remove them (call, text or email us). If
   you send another request from the same email address, the newest one replaces the one before;
   the name and trade from your first entry stay on it.
@@ -200,14 +237,20 @@ In plain words:
 ## Your choices
 
 - **Disconnect Gmail** (Settings): removes our access at Google straight away and deletes
-  everything we stored from that Gmail address — messages, conversations and drafts. Your writing
-  style description and business details stay until you delete your account.
-- **Delete my account** (Settings, one confirmation): cancels your subscription, removes our
-  access at Google, and deletes your account and everything in it. Drafts already in your Gmail
-  Drafts folder stay in your Gmail. Our database provider keeps short-term backups for recovery,
-  so deleted data can remain in those backups for a short time before it is gone for good. This
-  doesn't remove a waitlist entry or Growth call request you sent from our website; ask us and
-  we'll delete it.
+  everything we stored from that Gmail address — messages, conversations, drafts, the counts of
+  what you changed in those drafts, and the prices remembered from them. Your writing style and
+  any style suggestions waiting for you, your business details, your activity history and your AI
+  usage counts stay until you delete your account.
+- **Delete my account** (Settings): deletes your account and everything in it from Squared Away,
+  after one confirmation. Stripe keeps its own payment records. First it cancels your subscription
+  straight away (not at the end of the paid period) and removes our access at Google. It also
+  removes your invite, so coming back needs a new one. Stripe also keeps its customer record of
+  you (your email address and your business name, or your name if no business name is set).
+  Counters we use to limit how often things can be done hold only an account ID and a count; they
+  are deleted within three days. Drafts already in your Gmail Drafts folder stay in your Gmail. Our database provider keeps short-term backups for
+  recovery, so deleted data can remain in those backups for a short time before it is gone for
+  good. This doesn't remove a waitlist entry or Growth call request you sent from our website; ask
+  us and we'll delete it.
 - You can also remove our access any time at
   [myaccount.google.com/permissions](https://myaccount.google.com/permissions).
 - To see, correct or delete what we hold about you — including if you are a customer of one of
