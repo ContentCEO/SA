@@ -96,6 +96,9 @@ export function isReadOnly(w: Clocked, now: Date = new Date()): boolean {
   return !jobsAllowed(w, now);
 }
 
+/** What the send API answers (403) when the send gate refuses: the trial, unpaid, read-only. */
+export const SENDING_BLOCKED_MESSAGE = "Sending is not allowed for this account right now.";
+
 export class SendingBlockedError extends Error {
   constructor(public readonly status: Status) {
     super(`Sending is blocked for workspaces in status "${status}".`);

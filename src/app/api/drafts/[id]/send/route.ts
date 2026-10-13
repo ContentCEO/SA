@@ -4,7 +4,7 @@ import { auth } from "@/auth";
 import { getWorkspaceForUser } from "@/server/accounts";
 import { draftSendQueued, enqueue } from "@/jobs/client";
 import { queueSend } from "@/server/drafts";
-import { SendingBlockedError } from "@/server/lifecycle";
+import { SENDING_BLOCKED_MESSAGE, SendingBlockedError } from "@/server/lifecycle";
 import { hitLimit } from "@/server/rate-limit";
 
 export const dynamic = "force-dynamic";
@@ -64,10 +64,7 @@ export async function POST(request: NextRequest, ctx: RouteContext<"/api/drafts/
     return NextResponse.json(outcome, { status: outcome.status === "not_found" ? 404 : 409 });
   } catch (err) {
     if (err instanceof SendingBlockedError) {
-      return NextResponse.json(
-        { error: "Sending is not allowed for this account right now." },
-        { status: 403 },
-      );
+      return NextResponse.json({ error: SENDING_BLOCKED_MESSAGE }, { status: 403 });
     }
     throw err;
   }

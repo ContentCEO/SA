@@ -57,6 +57,8 @@ jobs:
             exit 1
           }
       - run: pnpm exec playwright install --with-deps chromium
+      # Playwright starts the e2e fakes (fake Google / Gmail / Anthropic, tsx) on 3101 next to
+      # the app on 3100, in local e2e mode with neutral credentials: no new secrets needed.
       - run: pnpm test:e2e
       - uses: actions/upload-artifact@v4
         if: failure()
