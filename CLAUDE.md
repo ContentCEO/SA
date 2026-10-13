@@ -758,7 +758,7 @@ In a sandbox with preinstalled Chromium: `PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-brows
 - **Plan #47 (referral credit):** built and tested behind `FEATURE_REFERRALS` (off), and it does
   nothing until he answers: (1) the credit amount in dollars (`REFERRAL_CREDIT_CENTS` in
   `src/config/pricing.ts` is `null`; options sent 2026-10-13); (2) decided 2026-10-13: the referrer
-  only (`REFERRAL_CREDIT_TO = "referrer"`); (3) whether he wants the same-domain block at
+  only (`REFERRAL_CREDIT_TO = "referrer"`); (3) decided 2026-10-13: keep the same-domain block. Was: whether he wants the same-domain block at
   all (as built: two owners on the same business domain never count, public webmail like gmail.com
   is exempt). Before turning it on, add the referral-fingerprint line to the privacy policy (the
   "Privacy policy line for #47" item below; docs/SETUP.md §6d), and don't rotate `AUTH_SECRET` once
