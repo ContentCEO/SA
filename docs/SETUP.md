@@ -392,6 +392,22 @@ never the browser redirect.
    future date, any CVC. The page shows "finishing up" until the webhook lands, then the account is
    `setup_paid` (sending on). Admin still marks the setup call done (→ `active`).
 4. Going live: swap in the live secret key, redeploy, tap Connect Stripe again.
+5. Sales tax (Stripe Tax; Davi turned it on 2026-10-14). The app never configures tax — it only
+   asks Stripe whether Stripe Tax is **active**. In Stripe (test mode and live mode are separate,
+   so do it in each): Settings → Tax → add the origin (business) address, a default product tax
+   code (Stripe suggests one for software as a service; your accountant can confirm it, and
+   whether the setup call needs a different one) and a registration for every state where you
+   collect sales tax, until the status reads active. Then tap **Connect Stripe again** in `/admin`: prices made before
+   have no tax behavior, and Connect Stripe sets each of those to **exclusive** (tax on top; the
+   one change Stripe allows — a price already inclusive or exclusive is left alone). New prices are
+   always made exclusive. While Stripe Tax is active, every checkout turns on automatic tax and
+   asks for the owner's billing address, which Stripe saves on their customer record (Squared Away
+   doesn't store it). `/admin` → Payments shows "Sales tax: on / off / couldn't check". If Stripe
+   can't be asked at checkout time, the checkout fails rather than charging without tax. Customer
+   portal: Connect Stripe lets owners update their address only when it creates the portal
+   settings; if they already existed, tick Stripe → Settings → Billing → Customer portal →
+   Customer information → **Billing address**. Subscriptions started before Stripe Tax was active
+   keep running without tax until changed in Stripe.
 
 What payments do: checkout paid → `setup_paid` (or back to `active` if setup was finished before);
 payment fails → `past_due` (jobs pause, nothing deleted); recovers → back; subscription ends →

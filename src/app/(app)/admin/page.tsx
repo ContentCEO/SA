@@ -25,7 +25,8 @@ import {
   setPlanAction,
 } from "./actions";
 import { PendingButton } from "@/components/app/pending-button";
-import { stripeConfigured, stripeConnectedAt } from "@/server/billing";
+import { salesTaxStatus, stripeConfigured, stripeConnectedAt } from "@/server/billing";
+import { SALES_TAX_LINES } from "@/server/billing-rules";
 import { stripeReasonText } from "@/server/stripe-error-rules";
 import { listWaitlist } from "@/server/waitlist";
 import { referralsVisible } from "@/server/referral-rules";
@@ -368,13 +369,14 @@ export default async function AdminPage(props: PageProps<"/admin">) {
   const params = await props.searchParams;
   const now = new Date();
   const referrals = referralsVisible();
-  const [rows, total, invited, waiting, stripeAt, system] = await Promise.all([
+  const [rows, total, invited, waiting, stripeAt, system, salesTax] = await Promise.all([
     adminOverview(now),
     countWorkspaces(),
     listInvites(),
     listWaitlist(),
     stripeConnectedAt(),
     systemHealth(now),
+    salesTaxStatus(),
   ]);
   // Payment messages show inside the Payments section (the page scrolls there), not at the top.
   const isStripe = (k: unknown) => typeof k === "string" && k.startsWith("stripe");
@@ -458,10 +460,11 @@ export default async function AdminPage(props: PageProps<"/admin">) {
             <p className="font-semibold">
               {stripeAt ? `Connected · last set up ${et.format(stripeAt)}` : "Not connected yet."}
             </p>
+            {salesTax ? <p>{SALES_TAX_LINES[salesTax]}</p> : null}
             <p>
               Sets up the four prices from the price list, the customer billing page, and the
               payment notifications that switch accounts on and off. Takes about 10 seconds. Safe to
-              tap again.
+              tap again. After setting up Stripe Tax, tap it again so the prices add tax on top.
             </p>
             <PendingButton pending="Connecting to Stripe…" className="w-full">
               {stripeAt ? "Connect Stripe again" : "Connect Stripe"}

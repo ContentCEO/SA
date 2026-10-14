@@ -86,8 +86,11 @@ describe("terms", () => {
     expect(terms).toContain(
       "**[To confirm]** That these terms are governed by the laws of the Commonwealth of Massachusetts and where disputes are heard.",
     );
-    // A legal choice for Davi, listed for him, not decided here.
+    // Davi, 2026-10-14: Stripe Tax. Prices are tax-exclusive, so tax goes on top, as written.
     expect(terms).toContain("plus any taxes");
+    expect(readFileSync("src/server/billing.ts", "utf8")).toContain(
+      'const TAX_BEHAVIOR = "exclusive" as const;',
+    );
   });
 
   it("names no price: prices render from src/config/pricing.ts", () => {
@@ -211,6 +214,17 @@ describe("privacy policy", () => {
     expect(readFileSync("src/server/billing.ts", "utf8")).toContain(
       "name: workspace.businessName ?? owner?.name ?? undefined,",
     );
+  });
+
+  it("the billing address Stripe asks for (sales tax) is named, and we don't keep it", () => {
+    expect(policy).toContain(
+      "Its checkout page may also ask for your billing address, which Stripe uses to work out sales tax; Squared Away doesn't store it.",
+    );
+    // As billing does: Stripe collects it at checkout; no column of ours holds an address.
+    expect(readFileSync("src/server/billing.ts", "utf8")).toContain(
+      'billing_address_collection: "required"',
+    );
+    expect(readFileSync("src/db/schema.ts", "utf8")).not.toMatch(/billing_address|billingAddress/);
   });
 
   it("the cost alert to us is described with everything it carries", () => {

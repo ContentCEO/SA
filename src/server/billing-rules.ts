@@ -37,6 +37,22 @@ export function planFromLookupKey(key: string | null | undefined): PlanId | null
   return m && isPlanId(m[1]) ? m[1] : null;
 }
 
+/**
+ * Sales tax (Davi, 2026-10-14: "turn on Stripe Tax"). Davi sets Stripe Tax up in Stripe's
+ * dashboard; the app only notices whether it's active. "unknown" = Stripe couldn't be asked.
+ */
+export type SalesTaxStatus = "on" | "off" | "unknown";
+
+/** The /admin Payments line for each state. Content-free. */
+export const SALES_TAX_LINES: Record<SalesTaxStatus, string> = {
+  on: "Sales tax: on (Stripe Tax is set up).",
+  off: "Sales tax: off. Set up Stripe Tax in Stripe to charge it.",
+  unknown: "Sales tax: couldn't check.",
+};
+
+/** The owner-facing note next to plan prices (homepage and /billing). */
+export const SALES_TAX_NOTE = "Plus sales tax where it applies.";
+
 /** Where they go once paid: as far as they'd got, at least setup_paid. */
 function restored(w: W): Status {
   return w.setupCallCompletedAt ? "active" : "setup_paid";

@@ -3,7 +3,7 @@
 
 # Privacy Policy
 
-_Last updated: October 13, 2026_
+_Last updated: October 14, 2026_
 
 Squared Away is run by {{OPERATOR}}, {{LOCATION}}. It helps small trade businesses answer their
 email: it sorts incoming business email, writes reply drafts in the owner's own voice, and holds
@@ -172,7 +172,9 @@ We use these service providers. Each gets only what it needs:
 - **Neon** — hosts our database (in the United States).
 - **Inngest** — runs our background jobs. It sees IDs and counts, not email text.
 - **Stripe** — takes payments. It receives your email address and your business name (or your
-  name, if no business name is set), and keeps its own payment and customer records.
+  name, if no business name is set), and keeps its own payment and customer records. Its checkout
+  page may also ask for your billing address, which Stripe uses to work out sales tax; Squared Away
+  doesn't store it.
 - **Resend** — delivers our emails to you (the morning summary, the monthly summary and the
   Gmail-access alert and reminder), which never contain a customer's name or words, and two kinds
   of notice to us: when someone books a Growth call (it says only that a request came in, with no

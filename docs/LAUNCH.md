@@ -470,10 +470,25 @@ fails), and those accounts can send without a real payment.
   sets it when live mode had no portal settings yet.
 - Worked when: the portal page shows that option saved.
 
-**7e. One real purchase.**
+**7e. Sales tax (Stripe Tax).** You decided on 2026-10-14 to turn it on. The app doesn't set
+anything up for tax; it only checks whether Stripe Tax is active.
+
+- Where: Stripe (live) → Settings → **Tax**. Add your business address, a default product tax
+  code, and a registration for each state where you collect sales tax (which states is a question
+  for your accountant). Live mode and test mode are set up separately.
+- Then: Stripe → Settings → Billing → **Customer portal** → Customer information → tick **Billing
+  address**, so an owner can correct the address their tax is worked out from (Connect Stripe only
+  ticks it when it creates the portal settings). Then `/admin` → Payments → **Connect Stripe
+  again**: it makes the prices add tax on top.
+- Worked when: `/admin` → Payments reads "Sales tax: on (Stripe Tax is set up)." "Sales tax:
+  couldn't check." means Stripe didn't answer: reload in a minute. While Stripe can't be asked, a
+  checkout fails rather than going through without tax. More in [SETUP.md](SETUP.md) §7c.
+
+**7f. One real purchase.**
 
 - Invite a second address of yours in `/admin`, sign in with it, Settings → Plan & billing →
-  Choose a plan, pay with your own card.
+  Choose a plan, pay with your own card. With sales tax on, Stripe's page asks for a billing
+  address and shows the tax on top.
 - Worked when: the billing page moves past "Payment received — finishing up.", and `/admin` shows
   that account as setup paid with "Yes, through Stripe". Refunding it in Stripe → Payments is up to you; a refund
   doesn't move the account back, so cancel its subscription in Stripe too (the account then shows
@@ -562,8 +577,9 @@ Nothing here is switched on or changed until you say so.
 - **Test-mode Stripe accounts** ([step 7a](#7-stripe-live-mode)): whether to reset accounts that
   "paid" with a test card (clear their Stripe ids and setup payment, so they pay for real), or how
   else to handle them.
-- **Taxes:** the terms say prices are "plus any taxes", but Stripe isn't set up to collect tax.
-  Either turn on Stripe Tax or change the terms.
+- **Taxes:** decided 2026-10-14: charge sales tax with Stripe Tax (set up in
+  [step 7e](#7-stripe-live-mode)). Still yours, with your accountant: which states to register in,
+  and the product tax code.
 - **Terms, three [To confirm] items:** refunds (setup fee and current month), the liability cap,
   and governing law and venue. Plus a lawyer's review of the privacy policy and terms before
   launch.

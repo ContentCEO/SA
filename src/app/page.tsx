@@ -9,6 +9,7 @@ import { Wordmark } from "@/components/brand/wordmark";
 import { QueuePreview } from "@/components/marketing/queue-preview";
 import { WaitlistForm } from "@/components/marketing/waitlist-form";
 import { isReferralCode, referralsVisible } from "@/server/referral-rules";
+import { SALES_TAX_NOTE } from "@/server/billing-rules";
 import { formatDollars, pricing } from "@/config/pricing";
 import { siteConfig } from "@/config/site";
 import { cn } from "@/lib/utils";
@@ -303,6 +304,7 @@ export default async function HomePage(props: PageProps<"/">) {
               </li>
             ))}
           </ul>
+          <p className="text-slate">{SALES_TAX_NOTE}</p>
           <p className="text-lg font-semibold">
             On every plan, each reply waits for your okay, and follow-ups are two at most, ever.
             Where autopilot is included, it stays off until you earn it, and every autopilot reply

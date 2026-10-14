@@ -16,6 +16,8 @@ test("home page: promise, pricing from config, and a way in", async ({ page }) =
   for (const text of ["$499 once", "Solo", "$99", "Crew", "$199", "Company", "$299"]) {
     await expect(pricing).toContainText(text);
   }
+  // Stripe Tax (Davi, 2026-10-14): prices are tax-exclusive, and the page says so.
+  await expect(pricing.getByText("Plus sales tax where it applies.")).toBeVisible();
   await page
     .getByRole("navigation", { name: "Site" })
     .getByRole("link", { name: "Sign in" })

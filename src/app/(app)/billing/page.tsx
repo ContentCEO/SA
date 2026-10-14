@@ -8,7 +8,7 @@ import { formatDollars, pricing, type PlanId } from "@/config/pricing";
 import { siteConfig } from "@/config/site";
 import { cn } from "@/lib/utils";
 import { stripeConfigured } from "@/server/billing";
-import { checkoutTerms, PLAN_IDS } from "@/server/billing-rules";
+import { checkoutTerms, PLAN_IDS, SALES_TAX_NOTE } from "@/server/billing-rules";
 import { effectiveStatus } from "@/server/lifecycle";
 import { referralCredit } from "@/server/referral-rules";
 import { referralLinkFor } from "@/server/referrals";
@@ -141,6 +141,7 @@ export default async function BillingPage(props: PageProps<"/billing">) {
                 );
               })}
             </ul>
+            <p className="text-sm text-muted-foreground">{SALES_TAX_NOTE}</p>
             <p className="text-sm text-muted-foreground">
               Paid securely through Stripe. Month to month — cancel any time from Manage billing.
             </p>

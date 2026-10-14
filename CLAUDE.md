@@ -839,8 +839,8 @@ default, CI too) and refuses a non-local `DATABASE_URL` or an `APP_URL` that isn
   customer, practice copies to yourself only — never "sending is switched off completely" (the
   connect explainer and homepage are tested). `outputFileTracingIncludes` ships docs/*.md with
   /privacy and /terms. **Open for Davi (S7 carries these):** the three terms `[To confirm]` items
-  (refunds, liability cap, governing law and venue); "plus any taxes" while Stripe collects no
-  tax; a lawyer's review of both drafts; the #47 referral-fingerprint line before
+  (refunds, liability cap, governing law and venue); "plus any taxes" (settled 2026-10-14: Stripe
+  Tax, below); a lawyer's review of both drafts; the #47 referral-fingerprint line before
   `FEATURE_REFERRALS` goes on; how to honour a waitlist / Growth removal request (the policy says
   "ask us and we'll delete it", and there is no admin tool — done by hand in the database).
 - **Milestone 11 summary (2026-10-13, branch `claude/launch-integration`, not deployed):**
@@ -882,6 +882,29 @@ default, CI too) and refuses a non-local `DATABASE_URL` or an `APP_URL` that isn
     resolve, every setting SETUP.md marks required is in its table, and the screens, setting keys
     and job names it tells Davi to look for exist in the code. Keep LAUNCH.md in step with the
     code: a renamed screen line or job fails that test.
+- **Stripe Tax (Davi, 2026-10-14: "turn on Stripe Tax"):** detect, don't configure. Davi
+  activates Stripe Tax in Stripe's dashboard (origin address, registrations, default tax code);
+  `stripeTaxActive()` (`src/server/billing.ts`) = `tax.settings.retrieve()` status `active`. No
+  env var. `createCheckout` asks **first** (nothing is created in Stripe if it can't answer); a
+  failure logs `stripe_tax_check_failed` {workspaceId, err.name} and rethrows into the existing
+  path (the action rethrows anything but `CheckoutNotAllowedError`) — never an untaxed checkout
+  once tax might be on. Active → `automatic_tax: {enabled: true}`, `customer_update: {address:
+"auto", name: "auto"}` (our customers are made without an address; note Checkout then saves
+  the name typed there over the business name) and `billing_address_collection: "required"`;
+  inactive → the session is exactly as before (tested by key set). Prices: new ones are
+  `tax_behavior: "exclusive"` (tax on top, matching the terms' "plus any taxes");
+  `ensurePrices({ fixTaxBehavior: true })` — **only from connectStripe** — sets found prices with
+  no / `unspecified` tax behavior to exclusive (the one change Stripe allows) and never touches
+  inclusive/exclusive ones. So after activating Stripe Tax, Davi taps Connect Stripe again
+  (LAUNCH.md 7e). A newly created portal configuration also allows `customer_update`
+  `["address"]`; an existing one is left alone (docs tell Davi to tick Billing address).
+  `/admin` Payments: `salesTaxStatus()` (5 s timeout, no retries, never throws; null without
+  Stripe) → `SALES_TAX_LINES` in `billing-rules.ts` ("Sales tax: on (Stripe Tax is set up)." /
+  "off. Set up Stripe Tax in Stripe to charge it." / "couldn't check."). Owner copy:
+  `SALES_TAX_NOTE` "Plus sales tax where it applies." under the plan cards on the homepage and
+  /billing (static: true whether or not tax is on). Privacy policy: Stripe's checkout may ask
+  for the billing address; we don't store it (tested; no address column). Subscriptions made
+  before Stripe Tax was active keep running untaxed until changed in Stripe.
 
 ## Milestones
 
