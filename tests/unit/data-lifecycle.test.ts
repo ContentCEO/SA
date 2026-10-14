@@ -29,13 +29,14 @@ import {
   workspaces,
 } from "@/db/schema";
 import type { MailboxConnector } from "@/mailbox/connector";
-import { ensureUserAndWorkspace } from "@/server/accounts";
+import { ensureUserAndWorkspace, isAllowedToSignIn } from "@/server/accounts";
 import { deleteAccount } from "@/server/account-deletion";
 import { listActivity } from "@/server/activity";
 import { setStripeForTests } from "@/server/billing";
 import { disconnectMailbox, saveConnectedMailbox } from "@/server/mailboxes";
 import { listMoney } from "@/server/money";
 import { purgeExpiredBodies } from "@/server/sync";
+import { inviteFromWaitlist, listWaitlist } from "@/server/waitlist";
 import { createTestDb } from "../support/db";
 
 /**
@@ -383,6 +384,38 @@ describe("delete my account", () => {
     expect(credits).toHaveLength(1);
     expect(credits[0]!.referredWorkspaceId).toBeNull();
     expect(credits[0]!.beneficiaryWorkspaceId).toBe(other.workspaceId);
+  });
+
+  it("a deleted owner's waitlist entry offers Invite again, and inviting lets them back in", async () => {
+    const owner = await seedOwner("owner@shop.com", "owner");
+    // Davi invited them from the waitlist before they signed up.
+    await database
+      .update(waitlist)
+      .set({ invitedAt: daysAgo(20) })
+      .where(eq(waitlist.email, "owner@shop.com"));
+    const card = async () => (await listWaitlist()).find((w) => w.email === "owner@shop.com")!;
+    expect((await card()).inviteState).toBe("invited");
+
+    setStripeForTests({
+      subscriptions: { cancel: async () => {} },
+    } as unknown as Stripe);
+    await deleteAccount(owner.userId, connector);
+
+    // The entry is kept and still remembers the old invite, but the card must not say
+    // "Invited": the invite is gone and they can't sign in.
+    const after = await card();
+    expect(after.invitedAt).not.toBeNull();
+    expect(after.inviteState).toBe("invite_gone");
+    expect(after.inviteAt).toBeNull();
+    expect(await isAllowedToSignIn("owner@shop.com")).toBe(false);
+
+    expect(await inviteFromWaitlist("owner@shop.com", NOW)).toBe("invited");
+    const again = await card();
+    expect(again.inviteState).toBe("invited");
+    expect(again.inviteAt).not.toBeNull();
+    expect(await isAllowedToSignIn("owner@shop.com")).toBe(true);
+    const [inv] = await database.select().from(invites).where(eq(invites.email, "owner@shop.com"));
+    expect(inv?.acceptedAt ?? null).toBeNull();
   });
 
   it("nothing is deleted if the database part fails halfway (one transaction)", async () => {

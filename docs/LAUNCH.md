@@ -540,7 +540,9 @@ Nothing here is switched on or changed until you say so.
   referral; a Growth call request never carries a referral (only an app waitlist sign-up from the
   link does).
 - **Deleted owners:** Delete my account also removes their invite, so someone who deletes their
-  account needs a new invite from `/admin` to come back. Okay?
+  account needs a new invite from `/admin` to come back (if they were invited from their
+  waitlist entry, that card then says the invite is gone and shows "Invite … again"; otherwise
+  use Invite an owner). Okay?
 - **Waitlist and Growth removals:** Delete my account keeps waitlist entries and Growth call
   requests (they're a separate service). Removing one on request is done by hand in the database
   for now; the policy says "ask us and we'll delete it".

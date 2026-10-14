@@ -6,7 +6,13 @@ import { ensureUserAndWorkspace, isAllowedToSignIn } from "@/server/accounts";
 import { growthInput, requestGrowthCall } from "@/server/growth";
 import { splitWaitlistNote } from "@/server/growth-note";
 import { setReferralConfigForTests } from "@/server/referral-rules";
-import { inviteFromWaitlist, joinWaitlist, listWaitlist, waitlistInput } from "@/server/waitlist";
+import {
+  inviteFromWaitlist,
+  joinWaitlist,
+  listWaitlist,
+  waitlistInput,
+  waitlistInviteState,
+} from "@/server/waitlist";
 import { joinWaitlistAction } from "@/app/waitlist-actions";
 import { createTestDb } from "../support/db";
 
@@ -64,6 +70,57 @@ describe("waitlist", () => {
     const [w] = await database.select().from(waitlist);
     expect(w?.invitedAt).not.toBeNull();
     expect(await inviteFromWaitlist("nobody@x.com")).toBe("not_found");
+  });
+
+  it("the admin card's invite state comes from the invite list, not only the old invite date", async () => {
+    const at = new Date("2026-09-01T12:00:00Z");
+    expect(waitlistInviteState({ invitedAt: null, inviteExists: false, hasAccount: false })).toBe(
+      "not_invited",
+    );
+    expect(waitlistInviteState({ invitedAt: at, inviteExists: true, hasAccount: true })).toBe(
+      "invited",
+    );
+    // Invited with the "Invite an owner" form, never from this entry: still invited.
+    expect(waitlistInviteState({ invitedAt: null, inviteExists: true, hasAccount: false })).toBe(
+      "invited",
+    );
+    // Delete my account removed the invite: the old date alone doesn't count.
+    expect(waitlistInviteState({ invitedAt: at, inviteExists: false, hasAccount: false })).toBe(
+      "invite_gone",
+    );
+    expect(waitlistInviteState({ invitedAt: null, inviteExists: false, hasAccount: true })).toBe(
+      "has_account",
+    );
+
+    const entry = (email: string, name: string) =>
+      joinWaitlist(waitlistInput.parse({ name, email, trade: "plumbing", teamSize: "Just me" }));
+    await entry("new@shop.com", "New");
+    await entry("gone@shop.com", "Gone");
+    await entry("form@shop.com", "Form");
+    await entry("admin@shop.com", "Admin");
+    await entry("caps@shop.com", "Caps");
+    await database
+      .update(waitlist)
+      .set({ invitedAt: at })
+      .where(eq(waitlist.email, "gone@shop.com"));
+    await database.insert(invites).values({ email: "form@shop.com", invitedAt: at });
+    // A hand-typed invite row with capitals: the sign-in gate matches exactly and turns this
+    // person away, so the card must not call them invited either.
+    await database.insert(invites).values({ email: "Caps@Shop.com", invitedAt: at });
+    expect(await isAllowedToSignIn("caps@shop.com")).toBe(false);
+    expect(await isAllowedToSignIn("form@shop.com")).toBe(true);
+    await ensureUserAndWorkspace({ email: "admin@shop.com" });
+
+    const states = Object.fromEntries(
+      (await listWaitlist()).map((w) => [w.email, [w.inviteState, w.inviteAt]]),
+    );
+    expect(states).toEqual({
+      "new@shop.com": ["not_invited", null],
+      "gone@shop.com": ["invite_gone", null],
+      "form@shop.com": ["invited", at],
+      "admin@shop.com": ["has_account", null],
+      "caps@shop.com": ["not_invited", null],
+    });
   });
 
   it("keeps a referral code (#47) only while referrals are on, and only a well-formed one", async () => {

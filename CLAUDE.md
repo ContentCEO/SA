@@ -312,7 +312,10 @@ default, CI too) and refuses a non-local `DATABASE_URL` or an `APP_URL` that isn
   exists (a deleted account's JWT would otherwise loop). **M11 (S3):** the database part is one
   transaction that also deletes the owner's `invites` row (coming back needs a new invite) and the
   `app_settings` markers `cost_alert:<ws>:%` and `email-sent:%-<ws|mailbox>-%`. Kept on purpose
-  (Davi, amendment 2): waitlist rows (may hold a Growth call request); also referral_credits (salted
+  (Davi, amendment 2): waitlist rows (may hold a Growth call request; /admin's waitlist card reads
+  the invite list, not only `waitlist.invited_at`, so a deleted owner's card offers "Invite … again"
+  instead of a stale "Invited" — `waitlistInviteState`, matched with the sign-in gate's own
+  `inviteForEmails`); also referral_credits (salted
   hash, ids SET NULL), stripe_events, rate_limits (purged in 2 days), the draft-cleanup per-mailbox
   marker (bare uuid). `tests/unit/data-lifecycle.test.ts` is the gate: a new table or a new
   non-cascade foreign key fails it until its lifecycle is decided (KEPT / SET_NULL lists there).

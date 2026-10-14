@@ -1,11 +1,11 @@
 import "server-only";
-import { desc, eq, like } from "drizzle-orm";
+import { desc, eq, inArray, like, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/db";
 import { tradeLabel } from "@/config/trades";
-import { tradeEnum, waitlist } from "@/db/schema";
+import { invites, tradeEnum, users, waitlist } from "@/db/schema";
 import { inviteOwner } from "./admin";
-import { normalizeEmail } from "./accounts";
+import { inviteForEmails, normalizeEmail } from "./accounts";
 import {
   describeWaitlistEntry,
   GROWTH_MARK,
@@ -102,10 +102,60 @@ export async function joinWaitlist(input: z.output<typeof waitlistInput>) {
 }
 
 /**
+ * Where a waitlist entry stands with sign-in, read from the invite list itself, not only from
+ * `waitlist.invited_at` (that only says Davi once tapped Invite). Delete my account removes the
+ * owner's invite but keeps the waitlist entry, so a deleted owner's entry is `invite_gone`: the
+ * card offers Invite again instead of a stale "Invited".
+ */
+export type WaitlistInviteState = "not_invited" | "invited" | "has_account" | "invite_gone";
+
+export function waitlistInviteState(input: {
+  invitedAt: Date | null;
+  inviteExists: boolean;
+  hasAccount: boolean;
+}): WaitlistInviteState {
+  if (input.inviteExists) return "invited";
+  if (input.hasAccount) return "has_account";
+  return input.invitedAt ? "invite_gone" : "not_invited";
+}
+
+/**
  * The newest entries plus every entry carrying a Growth call request (so a request added to an
- * old app entry always shows), newest activity first.
+ * old app entry always shows), newest activity first. Each carries its `inviteState` (and the
+ * live invite's date, when there is one).
  */
 export async function listWaitlist(limit = 200) {
+  const rows = await waitlistRows(limit);
+  const emails = [...new Set(rows.map((r) => normalizeEmail(r.email)))];
+  const [inviteRows, userRows] = emails.length
+    ? await Promise.all([
+        db()
+          .select({ email: invites.email, invitedAt: invites.invitedAt })
+          .from(invites)
+          .where(inviteForEmails(emails)),
+        db()
+          .select({ email: sql<string>`lower(${users.email})` })
+          .from(users)
+          .where(inArray(sql`lower(${users.email})`, emails)),
+      ])
+    : [[], []];
+  const inviteAt = new Map(inviteRows.map((r) => [r.email, r.invitedAt]));
+  const accounts = new Set(userRows.map((r) => r.email));
+  return rows.map((row) => {
+    const e = normalizeEmail(row.email);
+    return {
+      ...row,
+      inviteState: waitlistInviteState({
+        invitedAt: row.invitedAt,
+        inviteExists: inviteAt.has(e),
+        hasAccount: accounts.has(e),
+      }),
+      inviteAt: inviteAt.get(e) ?? null,
+    };
+  });
+}
+
+async function waitlistRows(limit: number) {
   const [newest, growth] = await Promise.all([
     db().select().from(waitlist).orderBy(desc(waitlist.createdAt)).limit(limit),
     db()

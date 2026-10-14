@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { eq } from "drizzle-orm";
 import * as schema from "../../src/db/schema";
-import { seedOwner, signInAs, testDb } from "./support";
+import { newOwnerEmail, seedAdmin, seedOwner, signInAs, testDb } from "./support";
 
 test("delete my account: one clear confirmation, then everything is gone", async ({
   page,
@@ -26,6 +26,47 @@ test("delete my account: one clear confirmation, then everything is gone", async
   expect(rows).toHaveLength(0);
   await page.goto("/queue");
   await expect(page).toHaveURL(/\/signin$/);
+});
+
+test("after Delete my account, the admin's waitlist card offers Invite again", async ({
+  page,
+  context,
+  browser,
+}) => {
+  const email = newOwnerEmail();
+  // Davi invited them from the waitlist, and they signed up.
+  await testDb
+    .insert(schema.waitlist)
+    .values({ email, name: "Nina Park", trade: "plumbing", invitedAt: new Date() });
+  const owner = await seedOwner({ email });
+  await signInAs(context, await seedAdmin());
+  await page.goto("/admin#waitlist");
+  const card = page.getByRole("listitem", { name: `Waitlist: ${email}` });
+  await expect(card).toContainText("Invited");
+  await expect(card.getByRole("button")).toHaveCount(0);
+
+  const ownerContext = await browser.newContext();
+  const ownerPage = await ownerContext.newPage();
+  await signInAs(ownerContext, owner);
+  await ownerPage.goto("/settings");
+  await ownerPage.getByRole("button", { name: "Delete my account" }).click();
+  await ownerPage.getByRole("button", { name: "Yes, delete everything" }).click();
+  await expect(ownerPage).toHaveURL(/\/goodbye$/);
+  await ownerContext.close();
+
+  // A real reload: going to the same URL with only a hash is a same-page jump.
+  await page.reload();
+  await expect(card).toContainText("that invite is gone");
+  await card.getByRole("button", { name: "Invite Nina again" }).click();
+  await expect(page.getByRole("listitem", { name: `Waitlist: ${email}` })).toContainText(
+    /Invited (just now|\d)/,
+  );
+  await expect(card.getByRole("button")).toHaveCount(0);
+  const [invite] = await testDb
+    .select()
+    .from(schema.invites)
+    .where(eq(schema.invites.email, email));
+  expect(invite?.trade).toBe("plumbing");
 });
 
 test("a session for a deleted account lands on sign-in, not a redirect loop", async ({

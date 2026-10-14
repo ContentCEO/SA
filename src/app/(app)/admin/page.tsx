@@ -185,13 +185,26 @@ function WaitlistEntry({
       ) : null}
       {!facts.app ? (
         <span className="font-semibold">{ga.growthOnly}</span>
-      ) : w.invitedAt ? (
-        <span className="font-semibold">Invited {relativeTime(w.invitedAt, now)}</span>
+      ) : w.inviteState === "invited" ? (
+        <span className="font-semibold">
+          Invited {relativeTime(w.inviteAt ?? w.invitedAt ?? w.createdAt, now)}
+        </span>
+      ) : w.inviteState === "has_account" ? (
+        <span className="font-semibold">Has an account</span>
       ) : (
-        <form action={inviteFromWaitlistAction}>
+        <form action={inviteFromWaitlistAction} className="flex flex-col gap-2">
+          {w.inviteState === "invite_gone" ? (
+            // Delete my account removes the invite but keeps this entry.
+            <span className="text-sm">
+              Invited before, but that invite is gone (Delete my account removes it), so they
+              can&apos;t sign in.
+            </span>
+          ) : null}
           <input type="hidden" name="email" value={w.email} />
           <Button type="submit" className="w-full">
-            Invite {w.name.split(" ")[0]}
+            {w.inviteState === "invite_gone"
+              ? `Invite ${w.name.split(" ")[0]} again`
+              : `Invite ${w.name.split(" ")[0]}`}
           </Button>
         </form>
       )}

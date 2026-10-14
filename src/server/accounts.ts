@@ -1,11 +1,20 @@
 import "server-only";
-import { eq, sql } from "drizzle-orm";
+import { eq, inArray, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { invites, users, workspaces, type User, type Workspace } from "@/db/schema";
 import { referralRefusal, referralsVisible } from "./referral-rules";
 
 export function normalizeEmail(email: string) {
   return email.trim().toLowerCase();
+}
+
+/**
+ * The invite rows that let these addresses sign in: an exact match on the normalized address,
+ * the same test the sign-in gate uses. Shared with the /admin waitlist card so it never shows
+ * "Invited" for someone the gate would turn away.
+ */
+export function inviteForEmails(emails: string[]) {
+  return inArray(invites.email, emails.map(normalizeEmail));
 }
 
 /** Invite-only: the email must be on the invite list, or be Davi's admin address. */
@@ -16,7 +25,7 @@ export async function isAllowedToSignIn(email: string): Promise<boolean> {
   const [row] = await db()
     .select({ email: invites.email })
     .from(invites)
-    .where(eq(invites.email, e));
+    .where(inviteForEmails([e]));
   return Boolean(row);
 }
 
