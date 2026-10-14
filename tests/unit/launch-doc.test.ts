@@ -390,22 +390,38 @@ describe("LAUNCH.md structure", () => {
     expect(mailboxes).toContain("if (!isReconnect && existing.length >= limit)");
   });
 
-  it("the preview step gives previews their own secrets and both database options", () => {
+  it("the preview step is Davi's choice (an empty sa-preview project) with its own secrets", () => {
     const previews = flat(sections.find((s) => s.n === 2)!.body);
     for (const phrase of [
-      "Option A",
-      "Option B",
+      // Davi, 2026-10-14: option B, a separate empty Neon project. Copies of production are out.
+      "`sa-preview`",
+      "**Connection pooling** is on",
+      "`-pooler`",
+      "type **Secret**, tick **Preview** only",
       "TOKEN_ENCRYPTION_KEY",
       "AUTH_SECRET",
-      // Copied rows keep production's ids: preview jobs must not reach production's Inngest.
-      "Branch** environment",
-      "INNGEST_EVENT_KEY",
+      '"Accounts (1)"',
       // Google allows no wildcard redirect URIs: sign-in only works on a registered branch address.
       "/api/auth/callback/google",
       "/api/gmail/callback",
     ]) {
       expect(previews, phrase).toContain(phrase);
     }
+    expect(previews).not.toMatch(/Option A|Neon branches per preview|preview branching/);
+    // Who does what: Davi creates the project and pastes the string; the engineers untick Preview
+    // on the shared entry (a target-only change) and add the Preview-only secrets.
+    const step2 = sections.find((s) => s.n === 2)!.body;
+    const sub = (id: string) =>
+      flat(step2.slice(step2.indexOf(`**${id}.`)).split(/\n\*\*2[a-e]\./)[0]!);
+    expect(sub("2a")).toContain("(you, in Neon");
+    expect(sub("2b")).toContain("(you, in Neon)");
+    expect(sub("2c")).toContain("(the engineers)");
+    expect(sub("2c")).toContain("production's value isn't touched");
+    expect(sub("2d")).toContain("(you, in Vercel)");
+    expect(sub("2e")).toContain("(the engineers)");
+    // True of the code: /admin counts accounts in its heading.
+    const admin = readFileSync(join(ROOT, "src/app/(app)/admin/page.tsx"), "utf8");
+    expect(admin).toMatch(/Accounts \(\{/);
   });
 
   it("the preview step splits the shared entries and never edits or deletes production's", () => {
@@ -483,21 +499,41 @@ describe("LAUNCH.md structure", () => {
   it("sales tax: prices fixed first, and 'on' isn't counted as proof without registrations", () => {
     const step7 = sections.find((s) => s.n === 7)!.body;
     const e = flat(step7.slice(step7.indexOf("**7e."), step7.indexOf("**7f.")));
-    // Connect Stripe makes the prices exclusive whether or not tax is on: before the tax settings.
+    // Davi, 2026-10-14: Massachusetts first (Stripe can't register a seller in its home state),
+    // then Connect Stripe makes the prices exclusive whether or not tax is on: before the tax
+    // settings, and the Stripe registration last.
+    const state = e.indexOf("**Register with Massachusetts first.**");
     const connect = e.indexOf("**Connect Stripe again**");
     const settings = e.indexOf("Settings → **Tax**");
-    const registrations = e.indexOf("Tax → **Registrations**");
-    expect(connect).toBeGreaterThan(0);
+    const registrations = e.indexOf("Tax → **Locations**");
+    expect(state).toBeGreaterThan(0);
+    expect(connect).toBeGreaterThan(state);
     expect(settings).toBeGreaterThan(connect);
     expect(registrations).toBeGreaterThan(settings);
+    for (const phrase of [
+      "MassTaxConnect",
+      "`txcd_10103001`",
+      "`txcd_20120002`",
+      "**Exclusive**",
+      "**I've already registered**",
+      "$0 tax and warns about nothing",
+      "0.5%",
+      "within 30 days after its period ends",
+    ]) {
+      expect(e, phrase).toContain(phrase);
+    }
     // Stripe's "active" only needs the business address; tax is charged only where registered.
-    const worked = e.slice(e.indexOf("Worked when:"));
+    const worked = e.slice(e.indexOf("Worked when:", e.indexOf("**Start collecting**")));
     expect(worked).toContain('"Sales tax: on (Stripe Tax is set up)." **and**');
-    expect(worked).toContain("Tax → Registrations lists every state you collect in");
+    expect(worked).toContain('Tax → Locations shows Massachusetts as "Collecting tax"');
+    // The questions for an accountant are listed once.
+    expect(flat(launch).split("Questions for your accountant").length - 1).toBe(1);
     const s5 = flat(setup.slice(setup.indexOf("5. Sales tax"), setup.indexOf("What payments do:")));
     expect(s5).not.toContain("until the status reads active");
+    expect(s5.indexOf("MassTaxConnect")).toBeLessThan(s5.indexOf("**Connect Stripe again**"));
     expect(s5.indexOf("**Connect Stripe again**")).toBeLessThan(s5.indexOf("Settings → Tax"));
-    expect(s5).toContain("Tax → Registrations lists every state you collect in");
+    expect(s5).toContain('Tax → Locations shows Massachusetts as "Collecting tax"');
+    expect(flat(setup)).not.toContain("Customer portal → Customer information");
     // …and the admin card says the same under "on".
     const admin = readFileSync(join(ROOT, "src/app/(app)/admin/page.tsx"), "utf8");
     expect(admin).toContain('{salesTax === "on" ? <p>{SALES_TAX_ON_NOTE}</p> : null}');
@@ -541,29 +577,112 @@ describe("LAUNCH.md structure", () => {
     expect(flat(sections[13]!.body)).toContain("referrer only");
   });
 
+  /** Step 13's three parts: what's decided, what's open, and what Davi still has to hand over. */
+  function step13Parts() {
+    const body = sections[13]!.body;
+    const decided = body.indexOf("### Decided on 2026-10-14");
+    const open = body.indexOf("### Still open");
+    const needed = body.indexOf("### Still needed from you");
+    expect(decided, "a Decided part").toBeGreaterThan(0);
+    expect(open, "a Still open part after it").toBeGreaterThan(decided);
+    expect(needed, "a Still needed part last").toBeGreaterThan(open);
+    return {
+      decided: flat(body.slice(decided, open)),
+      open: flat(body.slice(open, needed)),
+      needed: flat(body.slice(needed)),
+    };
+  }
+
   it("the decisions list carries every open question", () => {
-    const decisions = flat(sections[13]!.body);
+    const { open } = step13Parts();
     for (const phrase of [
-      "#26",
-      "FEATURE_CLOSING_QUESTION",
+      "Neon plan",
       "#47",
       "FEATURE_REFERRALS",
       "referral-fingerprint line",
       "PDF quotes",
       "Growth",
-      "Test-mode Stripe accounts",
-      "Taxes",
       "[To confirm]",
+      "option A for each",
+      "I agree to the Terms",
       "lawyer",
       "demo video",
       "gmail.send",
       "CASA",
       "Deleted owners",
-      "option A",
+      "Option B (new)",
       "Gmail draft check",
     ]) {
-      expect(decisions, phrase).toContain(phrase);
+      expect(open, phrase).toContain(phrase);
     }
+  });
+
+  it("Davi's 2026-10-14 decisions are recorded as decided, not asked again", () => {
+    const { decided, open } = step13Parts();
+    for (const phrase of [
+      "Merge and deploy",
+      "`sa-preview`",
+      "Test-mode Stripe accounts",
+      "**Reset test payments**",
+      "Stripe Tax",
+      "#26 closing question",
+      "`FEATURE_CLOSING_QUESTION` to `1` in Vercel (Production and Preview)",
+      "all seven services",
+      '"Big words"',
+    ]) {
+      expect(decided, phrase).toContain(phrase);
+    }
+    for (const settled of [
+      "Test-mode Stripe accounts",
+      "FEATURE_CLOSING_QUESTION",
+      "option B (an empty preview project)",
+      "confirm all seven services",
+    ]) {
+      expect(open, settled).not.toContain(settled);
+    }
+    // #26 is on in Vercel; the code default stays off (the env var is the switch).
+    const features = readFileSync(join(ROOT, "src/config/features.ts"), "utf8");
+    expect(features).toContain("Turned on by Davi 2026-10-14");
+    expect(features).not.toMatch(/closing[^\n]*ASK DAVI/i);
+  });
+
+  it("the referral amount options are listed, with the ones that need more code marked", () => {
+    const { open } = step13Parts();
+    for (const option of ["A $50", "B $99", "C $199", "D $250", "E one free month", "F like E"]) {
+      expect(open, option).toContain(option);
+    }
+    expect(open).toContain("E and F need code beyond what's built today");
+  });
+
+  it("the still-needed list keeps every hand-over item", () => {
+    const { needed } = step13Parts();
+    for (const phrase of [
+      "production domain",
+      "`SUPPORT_EMAIL`",
+      "icon pack",
+      "your photo and the exact license wording",
+      "`ANTHROPIC_API_KEY` repository secret",
+      "Massachusetts sales tax registration",
+      "Neon plan check",
+      "`sa-preview` Neon project",
+      "phone-notification keys",
+    ]) {
+      expect(needed, phrase).toContain(phrase);
+    }
+  });
+
+  it("the Neon plan check comes before step 0 and says where to look and what it costs", () => {
+    const at = launch.indexOf("## Check your Neon plan now (this week)");
+    expect(at).toBeGreaterThan(0);
+    expect(at).toBeLessThan(launch.indexOf("## 0. "));
+    const neon = flat(launch.slice(at, launch.indexOf("## 0. ")));
+    for (const phrase of ["**Billing**", "**Usage** box", "100 CU-hours", "$19–20 a month"]) {
+      expect(neon, phrase).toContain(phrase);
+    }
+    expect(neon).toMatch(/Worked when/);
+    // True of the code: the poll that keeps the database awake runs every 5 minutes.
+    const functions = readFileSync(join(ROOT, "src/jobs/functions.ts"), "utf8");
+    expect(functions).toContain('"*/5 * * * *"');
   });
 
   it("SQL it asks Davi to run reads counts or setting names only", () => {

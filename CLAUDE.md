@@ -120,7 +120,8 @@ default, CI too) and refuses a non-local `DATABASE_URL` or an `APP_URL` that isn
   `revokedAtProvider: false`). Deleting is what the owner asked for.
 - `activity_log` created early (M1) to record connect/reconnect/disconnect; detail is content-free.
 - Neon: project `autumn-term-70302192`, branch `production`, pooled URL in Vercel `DATABASE_URL`
-  (prod+preview share it). Migration 0000 applied 2026-09-28.
+  (prod+preview share it until the `sa-preview` split; see "Davi's decisions, 2026-10-14").
+  Migration 0000 applied 2026-09-28.
 - Cloud sandboxes can't reach Postgres port 5432; use `pnpm db:migrate:http` (Neon HTTPS driver,
   same migrations table as drizzle-kit). `@neondatabase/serverless` is a devDependency for this only.
 - **Branches:** `main` = production (sa-dac3.vercel.app; Vercel Production branch = `main`). Work
@@ -532,7 +533,8 @@ default, CI too) and refuses a non-local `DATABASE_URL` or an `APP_URL` that isn
     or an address the owner never wrote to (`knownCustomer`). One per address per 12 months,
     serialized by `pg_advisory_xact_lock` (`src/server/review-lock.ts`).
   - **#26 closing question:** built behind `FEATURE_CLOSING_QUESTION` (`src/config/features.ts`;
-    on only for "1"/"true"/"on"; off in every env until Davi says so). Offer on Quotes after 2 sent
+    on only for "1"/"true"/"on"; the code default stays off). **On since 2026-10-14** (Davi): `1`
+    in Vercel on Production and Preview, live from the next deploy (the launch merge). Offer on Quotes after 2 sent
     nudges + 7 quiet days; owner tap only (never a job), once per thread ever (partial unique index
     `drafts_one_closing_question_per_thread`; a lost race returns `already_asked`/`already_pending`
     and deletes the extra Gmail draft); separate from `followup_count`.
@@ -1043,6 +1045,97 @@ default, CI too) and refuses a non-local `DATABASE_URL` or an `APP_URL` that isn
   the owner's switches are kept). Referral settlement needs `setup_paid_via = 'stripe'`, so a
   reset account settles only after it really pays. `/admin/costs` still counts setup_paid/active
   as revenue (status-based). LAUNCH.md 7c ends with one more **Check test payments**.
+- **Davi's decisions, 2026-10-14** (all in `docs/LAUNCH.md`: the "Decided" and "Still open"
+  parts of step 13; research with sources was gathered that day, facts marked unconfirmed are
+  worded as such in the docs):
+  - **Merge: okay.** The engineers open the pull request `claude/launch-integration` → `main`
+    once CI and the preview are green; Davi presses Merge (the production deploy). Nobody else
+    merges.
+  - **Preview database: option B**, a separate, empty Neon project `sa-preview` in the same Neon
+    organization and region as production, Postgres service only. Option A (Neon branch copies of
+    production) is gone from LAUNCH.md step 2; the "how to split a setting" explanation, the
+    shared-entry warnings, the branch-address sign-in notes and the optional preview Google
+    client stay. Division of work: Davi creates the project, opens Connect with "Connection
+    pooling" on, copies the pooled string (host contains `-pooler`) and tells the engineers; the
+    engineers untick Preview on the existing `DATABASE_URL` entry through the Vercel API (a
+    target-only edit; production's value is never sent or touched); Davi adds `DATABASE_URL` as a
+    new **Secret** with only Preview ticked and pastes the string; the engineers add Preview-only
+    `AUTH_SECRET` and `TOKEN_ENCRYPTION_KEY` (fresh random values, same split) and redeploy the
+    preview, whose `vercel-build` migrates the empty project (build log "Migrations applied.").
+    Worked when: the preview's `/admin` shows "Accounts (1)" after Davi signs in at the branch
+    address, and production's `/admin` is unchanged. Why not a second database in the production
+    project: same host and compute (and, on Free, the same 100 CU-hours), and every role made in
+    Neon's console joins `neon_superuser` (can read and write production). Background jobs need no
+    change: every id a job event carries is a random UUID, so a stray preview event can't match a
+    production row (previews are behind Vercel login anyway). **Not checked live:** Neon's console
+    strings end `&channel_binding=require`, postgres.js 3.4.9 forwards unknown URL parameters as
+    startup parameters and Neon's pooler accepts only a few; production's string (saved
+    2026-09-28) works, so it's probably fine. If the first preview build fails with
+    `Migration failed` mentioning `channel_binding` / an unsupported startup parameter, drop that
+    parameter from the Preview value. `ANTHROPIC_API_KEY` and `AUTH_GOOGLE_SECRET` are still
+    shared prod+preview Secrets (metadata checked 2026-10-14). Cost: $0 on Neon Free (own 100
+    CU-hours, 1 GB); cents a month on Launch (estimate).
+  - **Neon plan (new, urgent, Davi's money decision):** `poll-mailboxes` (every 5 min),
+    `workspace-lifecycle` (15 min) and `morning-digest` (hourly) query the database, and Neon only
+    suspends a compute after 5 idle minutes, so production rarely sleeps: about 180 CU-hours a
+    30-day month at 0.25 CU (more if it autoscales) against Free's 100 per project, so on Free it
+    would likely be suspended around day 16–17 of each billing period. Launch = $0.106/CU-hour,
+    about $19–20 a month for that compute (estimate from Neon's prices). Production's plan isn't
+    visible to the engineers. LAUNCH.md "Check your Neon plan now (this week)", before step 0.
+  - **Test-mode Stripe accounts: reset them** with the built `/admin` → Payments → Reset test
+    payments after the live key swap (LAUNCH.md 7b; see "Reset test payments" above).
+  - **Sales tax: Stripe Tax on** (built; see "Stripe Tax" above). LAUNCH.md 7e is now the whole
+    job: register with Massachusetts first on MassTaxConnect (Davi is in Concord; Stripe can't
+    register an in-state seller; SSN for a sole owner with no employees, else EIN; free and about
+    3–10 business days per third-party guides, not confirmed on mass.gov), then Stripe → Settings
+    → Tax: head office = the Concord address, preset code `txcd_10103001` (SaaS - business use),
+    Include tax in prices = Exclusive; the setup product `txcd_20120002` (SaaS Implementation and
+    Setup Services - Mandatory) unless the accountant says otherwise; Tax → **Locations** → Add
+    registration → Massachusetts → I've already registered. Stripe's docs call that page
+    Locations (its URL ends `/tax/registrations`); `SALES_TAX_ON_NOTE` still says "Tax →
+    Registrations" (not changed here; the docs bridge it). Without the Massachusetts
+    registration Stripe charges $0 tax and warns about nothing (its threshold alerts never cover
+    the home state). The portal section is "Billing information" (not "Customer information").
+    Tax Basic = 0.5% of each taxed payment, no monthly fee, no filing: Davi files on
+    MassTaxConnect from Stripe's report (state sets the frequency; each return due within 30 days
+    after its period). Accountant questions are listed once, in 7e.
+  - **Terms: still open** (Davi reads later). Recommended option A for each of the three
+    `[To confirm]` items (refunds: cancel any time, no partial months, setup fee refundable only
+    before the setup call, Delete my account ends the plan with no refund for the rest of the
+    month; liability: mutual cap at the greater of $100 or 12 months' fees, carve-outs; law:
+    Massachusetts, 30-day contact-first step, Middlesex County state courts or D. Mass., small
+    claims allowed, no arbitration). New open question: assent. Stripe Checkout
+    `consent_collection.terms_of_service = "required"` (terms URL in Stripe's public details) and
+    an "I agree" checkbox at sign-in for trial users (Kauders v. Uber 2021, Good v. Uber 2024):
+    code changes that need Davi's yes. Lawyer review about $750–$2,500 (Boston Bar referral: 30
+    minutes for $25 at most); questions on an LLC, insurance and "no contract". `docs/terms.md`
+    wording is unchanged.
+  - **Google review: still open, two questions.** (a) Demo account: option A (house account with
+    the demo Gmail swapped in, as google-verification.md describes) or **option B** (new: a
+    separate demo account invited from `/admin`, paid with Stripe's test card while production
+    Stripe is in test mode so `setup_paid_via = 'stripe'` lets it send; nothing of Davi's touched;
+    delete it or let Reset test payments clear it before Stripe goes live; needs an engineer's
+    dry run on a preview first). (b) Drop `gmail.send`: recommended yes (`users.drafts.send`
+    accepts only mail.google.com / gmail.modify / gmail.compose; `users.messages.send` also takes
+    gmail.compose; doesn't avoid CASA; small change, no reconnect since `mailboxes.scopes` is
+    never read after connect; not tried on a preview). CASA facts now in LAUNCH.md 0g and
+    google-verification.md: AL1/AL2 chosen by Google, TAC Security $675/$855 (AL1) and $5,400
+    (AL2), budget about $700–$1,000/yr (AL1) or $4,500–$5,400+ (AL2), don't pay until Google's
+    email names the level, two quotes, 2–6 weeks lab, 1–3 months whole review, renews every 12
+    months. The unverified app's 100-new-user cap is for the project's lifetime (can't be reset):
+    keep sign-up invite-only.
+  - **#47 referral amount: still open.** Options A $50, B $99 (one free Solo month), C $199,
+    D $250, E one free month of the referrer's own plan, F = E but a Solo owner's free month is
+    on Crew (to try autopilot). Recommended F (or B for the simplest). A–D only need
+    `REFERRAL_CREDIT_CENTS`; E and F need code beyond today's build (a plan-dependent credit).
+  - **#26 closing question: on** (see Plan M7 above). The env var stays the switch; no code
+    default change.
+  - **Growth:** Davi confirmed all seven services and the ground rules. Still open: a written
+    agreement (Growth terms), a Settings link to `/growth`, an admin Remove button (waitlist /
+    Growth removals are by hand today), and whether a Growth request may carry a referral.
+  - **Homepage:** "Big words", replaying every time (scroll into Growth and every tap on a
+    `#growth` link from the app side). Built on `claude/growth-page`, merged into this branch; the
+    details are under "Squared Away Growth" above.
 
 ## Milestones
 
@@ -1059,13 +1152,26 @@ default, CI too) and refuses a non-local `DATABASE_URL` or an `APP_URL` that isn
       waits on a Resend API key (and a verified domain for owners other than Davi)
 - [x] **9. Autopilot** — three-layer guardrails, earned per category, 10-minute grace window
 - [x] **10. Billing** — Stripe Checkout + portal + webhook; Connect Stripe in /admin
-- [ ] 11. Hardening and launch — built and tested on `claude/launch-integration`; waits on Davi
-      (merge = production deploy) and the steps in `docs/LAUNCH.md`
+- [ ] 11. Hardening and launch — built and tested on `claude/launch-integration`. Davi okayed the
+      merge on 2026-10-14: the engineers open the pull request once it's green and Davi presses
+      Merge (the production deploy). Then the steps in `docs/LAUNCH.md`.
 
 ## Waiting on Davi
 
 - **The launch checklist is `docs/LAUNCH.md`** (in order, where to click, how to know it worked,
-  and every open decision in its step 13). The items below are the same list in engineering words.
+  and every open decision in its step 13, split into "Decided on 2026-10-14", "Still open" and
+  "Still needed from you"). The items below are the same list in engineering words.
+- **Neon plan (urgent, this week):** check Neon → Billing and production's Usage box; on Free the
+  5-minute poll likely uses up the 100 CU-hours mid-period and pauses production. Launch is about
+  $19–20 a month (LAUNCH.md "Check your Neon plan now"). His money decision.
+- **Preview database (decided: option B):** Davi creates the Neon project `sa-preview`, copies
+  its pooled string and tells the engineers; they untick Preview on the shared `DATABASE_URL`
+  (Vercel API, target only); Davi adds `DATABASE_URL` as a Preview-only Secret with that string;
+  the engineers add Preview-only `AUTH_SECRET` / `TOKEN_ENCRYPTION_KEY` and redeploy the preview
+  (LAUNCH.md step 2).
+- **Massachusetts sales tax registration** on MassTaxConnect before any Stripe tax setup; then
+  Stripe's tax settings and the Massachusetts registration in Stripe (LAUNCH.md 7e). Questions
+  for his accountant are listed there.
 - **Gmail draft send behaviour (M8 review):** not yet checked live whether Gmail keeps a draft's
   id when it's sent. Counts-only check on the shared DB: join `drafts.sent_gmail_message_id` to
   `messages.gmail_message_id` and count the matches whose `label_ids` hold `SENT` vs `DRAFT`.
@@ -1073,8 +1179,17 @@ default, CI too) and refuses a non-local `DATABASE_URL` or an `APP_URL` that isn
   live. **Run it before the launch merge** (`docs/LAUNCH.md` step 1): after it, the one-time
   `runDraftMessagesCleanup` (`markRecordedSends`) relabels every matched row DRAFT → SENT, so the
   count always reads 0 DRAFT.
-- Phone notifications (#36): add `VAPID_PUBLIC_KEY` + `VAPID_PRIVATE_KEY` (free; any VAPID key
-  generator) to Vercel Production, then redeploy. Off until then.
+- **Terms (open; Davi reads later):** the three `[To confirm]` items (recommended option A for
+  each, in LAUNCH.md step 13); the new assent question (Stripe Checkout terms checkbox +
+  "I agree" at sign-in for trial users, code changes that need his yes); a lawyer's review of both
+  legal drafts (questions: LLC, insurance, "no contract" wording).
+- **Google review (open):** (a) demo account, option A (house account, demo Gmail swapped in) or
+  option B (separate demo account on Stripe's test card; needs an engineer's dry run on a preview
+  first); (b) drop `gmail.send` (recommended yes; small code change). Both before filming. CASA:
+  nothing to pay until Google's email names the level.
+- **Phone notifications (#36):** `VAPID_PUBLIC_KEY` + `VAPID_PRIVATE_KEY` (free) in Vercel
+  Production, then redeploy. Off until then. The engineers can generate and add them if Davi says
+  so.
 - `ANTHROPIC_API_KEY` repo secret for the "Prompt evals" action (baseline still empty).
 - Resend: verify the production domain in Resend and switch `EMAIL_FROM` off `onboarding@resend.dev`
   (until then the digest only reaches the Resend account's own address).
@@ -1083,14 +1198,14 @@ default, CI too) and refuses a non-local `DATABASE_URL` or an `APP_URL` that isn
   Google secret.
 - Only while Google Auth Platform is in Testing: add each invited owner as a test user (Audience).
   Ends at docs/LAUNCH.md step 0c (In production).
-- Icon pack (`sa.` monogram, stacked wordmark); `docs/terms.md`, `docs/privacy-policy.md` drafts;
-  `SUPPORT_EMAIL`; production domain.
-- **Plan #26 (closing question):** decide whether "Want to ask if they went another way?" may go
-  live. Built and tested behind `FEATURE_CLOSING_QUESTION` (off); turning it on = set it to `1` in
-  Vercel and redeploy (docs/SETUP.md §6d). Don't set it without his okay.
+- Icon pack (`sa.` monogram, stacked wordmark); his photo and the exact license wording for the
+  homepage's About section (PR #9; no license number until he confirms); `SUPPORT_EMAIL`;
+  production domain.
 - **Plan #47 (referral credit):** built and tested behind `FEATURE_REFERRALS` (off), and it does
-  nothing until he answers: (1) the credit amount in dollars (`REFERRAL_CREDIT_CENTS` in
-  `src/config/pricing.ts` is `null`; options sent 2026-10-13); (2) decided 2026-10-13: the referrer
+  nothing until he answers: (1) the amount (`REFERRAL_CREDIT_CENTS` in `src/config/pricing.ts` is
+  `null`): options A $50, B $99 (one free Solo month), C $199, D $250, E one free month of the
+  referrer's own plan, F = E but a Solo owner's month is on Crew; recommended F (or B for the
+  simplest); E and F need code beyond today's build; (2) decided 2026-10-13: the referrer
   only (`REFERRAL_CREDIT_TO = "referrer"`); (3) decided 2026-10-13: keep the same-domain block (two
   owners on the same business domain never count; public webmail like gmail.com is exempt). Before turning it on, add the referral-fingerprint line to the privacy policy (the
   "Privacy policy line for #47" item below; docs/SETUP.md §6d), and don't rotate `AUTH_SECRET` once
@@ -1115,28 +1230,39 @@ default, CI too) and refuses a non-local `DATABASE_URL` or an `APP_URL` that isn
   true.) Also his call: a referrer who deletes their account before the
   new owner is active voids the referral (the referrer's credit); repeat waitlist joins and plain invites
   carry no referral (docs/SETUP.md §6d).
-- **Growth (2026-10-12):** confirm all seven services are offered today (websites and ad management
-  especially) and the ground rules (no fake reviews, price before any work, Growth never touches
-  the inbox). No Growth terms of service yet. A Settings link to /growth for signed-in owners needs
-  his okay. No tracking pixels on /growth without a privacy-policy change and his okay. Removing a
-  Growth request is done by hand in the database for now (policy says call, text or email us).
-  Only the newest Growth request per email is kept and a growth-only row's phone becomes the
+- **Growth:** confirmed 2026-10-14: all seven services are offered today and the ground rules
+  stand (no fake reviews, price before any work, Growth never touches the inbox). Still open: a
+  written agreement (no Growth terms of service yet), a Settings link to /growth for signed-in
+  owners, an admin Remove button (removing a waitlist entry or Growth request is done by hand in
+  the database for now; the policy says call, text or email us), and whether a Growth request may
+  ever carry a referral. No tracking pixels on /growth without a privacy-policy change and his
+  okay. Only the newest Growth request per email is kept and a growth-only row's phone becomes the
   newest number, so anyone who knows a lead's email can replace their number: check an
   unfamiliar number before calling.
 
 ## Launch blockers to remember
 
+- **Neon plan:** if production is on Neon Free, the 5-minute poll likely exhausts its 100
+  CU-hours mid-period and Neon suspends the compute (the whole app stops until the next period).
+  Davi checks Billing / Usage this week and decides on Launch (about $19–20 a month).
 - Previews share the production database. Before real customers: give previews their own
-  database so a preview can't touch customer data — `docs/LAUNCH.md` step 2 (Neon-managed
-  integration with its own Preview `AUTH_SECRET` / `TOKEN_ENCRYPTION_KEY`, or an empty preview
-  project; Davi picks). `DATABASE_URL`, `AUTH_SECRET`, `TOKEN_ENCRYPTION_KEY` and `AUTH_GOOGLE_*`
-  are each ONE Vercel entry for Production + Preview: split them (untick Preview, Add New for
-  Preview); deleting or editing the shared entry changes production.
+  database so a preview can't touch customer data — `docs/LAUNCH.md` step 2, decided 2026-10-14:
+  an empty Neon project `sa-preview` (Davi creates it and pastes the Preview `DATABASE_URL`; the
+  engineers untick Preview on the shared entry via the Vercel API and add Preview-only
+  `AUTH_SECRET` / `TOKEN_ENCRYPTION_KEY`). `DATABASE_URL`, `AUTH_SECRET`, `TOKEN_ENCRYPTION_KEY`
+  and `AUTH_GOOGLE_*` are each ONE Vercel entry for Production + Preview: split them (untick
+  Preview, Add New for Preview); deleting or editing the shared entry's value changes production.
 - Google OAuth is still in **Testing** (7-day Gmail tokens, ≤100 hand-added users): switch to In
-  production and submit verification + CASA — `docs/LAUNCH.md` step 0.
+  production and submit verification + CASA — `docs/LAUNCH.md` step 0. Until approval the app
+  has a lifetime cap of 100 new users (can't be reset): keep sign-up invite-only.
 - Stripe live mode: test-mode customer ids / `setup_paid_via = 'stripe'` from test checkouts stay
   in the shared DB until Davi taps /admin → Payments → Reset test payments after the key swap
   (`docs/LAUNCH.md` step 7b; decided 2026-10-14).
+- Sales tax: Stripe Tax charges **$0** until Davi is registered with Massachusetts and has added
+  the registration in Stripe → Tax → Locations (`docs/LAUNCH.md` 7e). Stripe never warns about the
+  home state.
+- Terms assent: the terms are only a footer link today (no "I agree" at sign-in or Checkout). Open
+  for Davi (LAUNCH.md step 13), with a lawyer's review before launch.
 - **M7 merge timing (complaint memory, A1):** the first preview build of the M7 branch runs
   migration 0024 (marks threads still sorted `complaint` with `complained_at`). Until M7 merges,
   production's older code keeps re-sorting threads without setting the mark, so a complaint that

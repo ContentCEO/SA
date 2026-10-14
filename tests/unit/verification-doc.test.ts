@@ -119,6 +119,18 @@ describe("the demo video script matches the end-to-end journey", () => {
     expect(adminPage).toContain('label: "Give 3 more days"');
   });
 
+  it("option B (a separate demo account on Stripe's test card) is cleared before Stripe goes live", () => {
+    const r = flat(section("Reviewer test account"));
+    expect(r).toContain("**Option A** (the house account)");
+    const at = r.indexOf("**Option B**");
+    expect(at, "an option B").toBeGreaterThanOrEqual(0);
+    const b = r.slice(at);
+    expect(b).toContain("needs Davi's yes and an engineer's dry run on a preview first");
+    expect(b).toContain("Stripe's test card");
+    expect(b).toContain("only while production Stripe is still in test mode");
+    expect(b).toMatch(/before Stripe goes live[^.]*delete it[^.]*Reset test payments/);
+  });
+
   it("before Part 1, the house-account move comes first, with the admin page's real labels", () => {
     const start = scriptSteps.indexOf("**Before recording Part 1 on the house account**");
     const end = scriptSteps.indexOf("**Part 1");

@@ -143,7 +143,9 @@ In a sandbox with a preinstalled Chromium:
 
 Every variable the code reads. "Environments" says where it belongs in Vercel (Settings →
 Environment Variables); a change there needs a redeploy. Previews and production share one
-database today, so secrets that touch the database are on both. `tests/unit/env-docs.test.ts`
+database until the preview split (`docs/LAUNCH.md` step 2: an empty Neon project, `sa-preview`,
+Davi's choice on 2026-10-14). After it, `DATABASE_URL`, `AUTH_SECRET` and `TOKEN_ENCRYPTION_KEY`
+each have a separate Preview-only entry. `tests/unit/env-docs.test.ts`
 fails if the code reads a variable that isn't in this table (and, unless Vercel or Playwright
 sets it, in `.env.example`).
 
@@ -170,7 +172,7 @@ sets it, in `.env.example`).
 | `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`                                               | No                       | Phone notifications (web push). Public key alone shows the switch; both are needed to send.                                                                                                                 | §6e.                                                                                   | Prod (private key sensitive)      |
 | `VAPID_SUBJECT`                                                                       | No (default `APP_URL`)   | Contact the push services can reach.                                                                                                                                                                        | `mailto:` address or https URL.                                                        | Prod                              |
 | `NEXT_PUBLIC_SENTRY_DSN`                                                              | No                       | Error alerts (scrubbed). Read at build time: redeploy after setting.                                                                                                                                        | §6b.                                                                                   | Prod                              |
-| `FEATURE_CLOSING_QUESTION`                                                            | No (off)                 | Plan #26. **Ask Davi first.**                                                                                                                                                                               | `1` (§6d).                                                                             | Prod, only with Davi's okay       |
+| `FEATURE_CLOSING_QUESTION`                                                            | No (off when unset)      | Plan #26. **On** in Vercel since 2026-10-14 (Davi's okay); live from the next deploy.                                                                                                                       | `1` (§6d).                                                                             | Prod + Preview                    |
 | `FEATURE_REFERRALS`                                                                   | No (off)                 | Plan #47. **Ask Davi first**; does nothing while `REFERRAL_CREDIT_CENTS` is null.                                                                                                                           | `1` (§6d).                                                                             | Prod, only with Davi's okay       |
 | `RETENTION_BODY_DAYS`                                                                 | No (default 30)          | Days before email text is purged. The privacy policy and homepage promise 30: don't change it without changing them.                                                                                        | A number.                                                                              | Prod                              |
 | `VERCEL`, `VERCEL_ENV`, `VERCEL_BRANCH_URL`, `VERCEL_GIT_COMMIT_SHA`                  | Set by Vercel            | Deploy detection (turns e2e mode off), preview URLs, preview-only CSP, Sentry environment and release, `/api/health`'s `commit`.                                                                            | Automatic, while "Automatically expose System Environment Variables" is on.            | Vercel sets them                  |
@@ -257,14 +259,15 @@ for the number plus about $0.01 per text, and a one-time US carrier (A2P 10DLC) 
 
 ### 6d. Feature switches (off by default)
 
-Some features are built and tested but wait on Davi's okay. Each one is off unless its env var is
-exactly `1`, `true` or `on` (any case); empty, missing or anything else means off
-(`src/config/features.ts`).
+Some features are built and tested behind a switch that only Davi's okay turns on. Each one is off
+unless its env var is exactly `1`, `true` or `on` (any case); empty, missing or anything else means
+off (`src/config/features.ts`). The code default stays off: the env var is the switch.
 
-- `FEATURE_CLOSING_QUESTION` (plan #26, default **off**): on a quote that has had both follow-up
-  nudges and then 7 more quiet days, Quotes offers "Want to ask if they went another way?". Only
-  the owner's tap writes the draft (never a job), once per thread ever, never on a complaint, and
-  it goes through the normal queue. It is not a nudge and doesn't count as one.
+- `FEATURE_CLOSING_QUESTION` (plan #26, **on in Vercel since 2026-10-14**, Davi's okay): on a quote
+  that has had both follow-up nudges and then 7 more quiet days, Quotes offers "Want to ask if they
+  went another way?". Only the owner's tap writes the draft (never a job), once per thread ever,
+  never on a complaint, and it goes through the normal queue. It is not a nudge and doesn't count
+  as one.
 
 - `FEATURE_REFERRALS` (plan #47, default **off**): each account gets a referral link in Plan &
   billing (`/?ref=<code>`). The code rides on the waitlist form, onto the invite when Davi taps
@@ -299,14 +302,18 @@ exactly `1`, `true` or `on` (any case); empty, missing or anything else means of
   linked again from a referral link could be paid a second time (the referrer's credit). Rotating it also
   signs everyone out. If it must be rotated, settle it with Davi first.
 
-**Ask Davi before turning `FEATURE_CLOSING_QUESTION` on.** To turn it on: Vercel → sa → Environment
-Variables → add it with value `1` (Production only, unless Davi says otherwise) → Redeploy. To turn
-it off again, delete the variable (or set it empty) and redeploy; the offer disappears, and any
-closing-question drafts already in the queue stay there for the owner to send or discard.
+**`FEATURE_CLOSING_QUESTION` is on** (Davi, 2026-10-14). The engineers set it to `1` in Vercel →
+sa → Environment Variables on Production and Preview that day, at his request; it takes effect with
+the next deploy (the launch merge). Turning it off needs his okay too: delete the variable (or set
+it empty) and redeploy; the offer disappears, and any closing-question drafts already in the queue
+stay there for the owner to send or discard.
 
 **Ask Davi before turning `FEATURE_REFERRALS` on** — he decides the amount. Decided (Davi,
 2026-10-13): only the owner who shared the link gets it (`REFERRAL_CREDIT_TO = "referrer"`), and
-the same-domain block stays. In order:
+the same-domain block stays. The amount is still open (options in `docs/LAUNCH.md` step 13: a fixed
+$50 / $99 / $199 / $250, or one free month of the referrer's plan, possibly on Crew for a Solo
+owner; a fixed amount only needs `REFERRAL_CREDIT_CENTS`, the free-month options need new code
+because the credit would depend on the plan). In order:
 
 1. Set `REFERRAL_CREDIT_CENTS` in `src/config/pricing.ts` to his amount in cents, with the
    privacy-policy line above, and deploy that code. While the amount is `null` the switch does nothing at all.
@@ -396,23 +403,33 @@ never the browser redirect.
    Stripe ids, and a setup paid that way goes back to unpaid, so they pay for real; only works
    with the live key, safe to tap again), then tap Connect Stripe again (`docs/LAUNCH.md` step 7).
 5. Sales tax (Stripe Tax; Davi turned it on 2026-10-14). The app never configures tax — it only
-   asks Stripe whether Stripe Tax is **active**. Test mode and live mode are separate, so do this
-   in each, in this order:
-   - First tap **Connect Stripe again** in `/admin`. Prices made before have no tax behavior, and
+   asks Stripe whether Stripe Tax is **active**. Davi's click-by-click steps are `docs/LAUNCH.md`
+   7e. Test mode and live mode are separate, so do the Stripe part in each, in this order:
+   - Before anything in Stripe: Davi registers for Massachusetts sales and use tax on
+     MassTaxConnect (he's based in Concord; Stripe can't register a seller in its home state).
+     Without that registration Stripe charges $0 tax and warns about nothing.
+   - Tap **Connect Stripe again** in `/admin`. Prices made before have no tax behavior, and
      Connect Stripe sets each of those to **exclusive** (tax on top; the one change Stripe allows —
      a price already inclusive or exclusive is left alone) whether or not tax is on yet, so no
      checkout ever runs with tax on and a price that has no tax behavior. New prices are always
      made exclusive.
-   - Stripe → Settings → Tax: add the origin (business) address and a default product tax code
-     (Stripe suggests one for software as a service; your accountant can confirm it, and whether
-     the setup call needs a different one). Stripe calls the settings **active** as soon as the
-     origin address is saved. That only means Stripe can work tax out, not that it charges any.
-   - Stripe → Tax → **Registrations**: add each state where you collect sales tax. Stripe charges
-     tax only where a registration exists; with none, checkouts still ask for an address but
-     charge no tax.
+   - Stripe → Settings → Tax: head office = the Concord business address; preset product tax
+     code **Software as a service (SaaS) - business use** (`txcd_10103001`); Include tax in
+     prices = **Exclusive**. Stripe calls the settings **active** as soon as the head office is
+     saved. That only means Stripe can work tax out, not that it charges any.
+   - Product catalog → **Squared Away — Setup** → Product tax code **SaaS Implementation and Setup
+     Services - Mandatory** (`txcd_20120002`), unless the accountant says otherwise (setup is
+     required before sending, and Massachusetts' rules tax a required service sold with software).
+   - Stripe → Tax → **Locations** (the page the admin card calls Tax → Registrations; its address
+     ends `/tax/registrations`) → Add registration → Massachusetts → I've already registered.
+     Stripe charges tax only where a registration exists; with none, checkouts still ask for an
+     address but charge no tax.
    - Worked when: `/admin` → Payments reads "Sales tax: on (Stripe Tax is set up)." **and**
-     Stripe → Tax → Registrations lists every state you collect in. The "on" line alone doesn't
-     prove tax is being charged anywhere (the admin card says so under it).
+     Stripe → Tax → Locations shows Massachusetts as "Collecting tax". The "on" line alone
+     doesn't prove tax is being charged anywhere (the admin card says so under it).
+   - Tax Basic costs 0.5% of each taxed payment (tax included), no monthly fee, and doesn't file:
+     Davi files the Massachusetts returns on MassTaxConnect from Stripe's report (frequency set by
+     the state; each due within 30 days after its period).
 
    While Stripe Tax is active, every checkout turns on automatic tax and asks for the owner's
    billing address, which Stripe saves on their customer record together with the name typed on
@@ -423,7 +440,7 @@ never the browser redirect.
    Stripe-side and usually pass; `auth` / `permission` mean `STRIPE_SECRET_KEY` is wrong or restricted
    and every checkout keeps failing until it's fixed. Customer portal: Connect Stripe lets owners
    update their address only when it creates the portal settings; if they already existed, tick
-   Stripe → Settings → Billing → Customer portal → Customer information → **Billing address**.
+   Stripe → Settings → Billing → Customer portal → Billing information → **Billing address**.
    Subscriptions started before Stripe Tax was active keep running without tax until changed in
    Stripe.
 
@@ -463,8 +480,8 @@ The Vercel project is `sa` in the **DAC** team. To make every push deploy automa
 
 After that: every push to a branch makes a Preview deployment; `main` deploys to production.
 Vercel runs `pnpm vercel-build`, which applies pending migrations (`scripts/migrate.ts`) before
-`next build`. Previews and production share one database today, so a preview build migrates it too —
-keep migrations additive.
+`next build`. Until previews get their own database (`docs/LAUNCH.md` step 2, the `sa-preview` Neon
+project), a preview build migrates the production database too — keep migrations additive.
 The Production branch must be `main` (Settings → Environments → Production → Branch Tracking).
 Changing an environment variable only takes effect after a redeploy.
 Keep **Settings → Environment Variables → "Automatically expose System Environment Variables"** on:

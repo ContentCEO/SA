@@ -166,7 +166,7 @@ _Re-checked 2026-10-10: brief scope complete with tests; nothing else filed here
 
 ## Milestone 7 — Follow-ups
 
-- [ ] **#26 Ask why a quote went quiet.** _(Built 2026-10-12 behind `FEATURE_CLOSING_QUESTION` (off) — waiting on Davi. Turning it on needs his okay; see `docs/SETUP.md` §6d.)_ ASK DAVI before merging — it touches the two-nudge rule.
+- [x] **#26 Ask why a quote went quiet.** _(Built 2026-10-12 behind `FEATURE_CLOSING_QUESTION`. Davi said turn it on, 2026-10-14: set to `1` in Vercel on Production and Preview, live from the next deploy; see `docs/SETUP.md` §6d.)_
       Default design that keeps the rule: this is not a nudge and is never automatic. After a thread
       has used both nudges and gone 7 more days quiet, the thread shows an offer: "Want to ask if
       they went another way?" Only an owner tap creates the draft; it goes through the normal queue.
@@ -208,7 +208,7 @@ _Re-checked 2026-10-10: brief scope complete with tests; nothing else filed here
 
 ## Milestone 10 — Billing
 
-- [ ] **#47 Referral credit.** _(Built 2026-10-12 behind `FEATURE_REFERRALS` (off) — waiting on Davi: the credit amount in dollars, who gets it (both / referrer only / new customer only), and whether to keep the same-domain block (public webmail like gmail.com is exempt). `REFERRAL_CREDIT_CENTS` is `null`, so nothing happens even with the switch on; see `docs/SETUP.md` §6d.)_ ASK DAVI: the credit amount and who gets it. Do not pick a number.
+- [ ] **#47 Referral credit.** _(Built 2026-10-12 behind `FEATURE_REFERRALS` (off). Decided 2026-10-13: the referrer only, and the same-domain block stays (public webmail like gmail.com is exempt). Still waiting on Davi: the amount (options A–F in `docs/LAUNCH.md` step 13; the free-month options E and F need more code). `REFERRAL_CREDIT_CENTS` is `null`, so nothing happens even with the switch on; see `docs/SETUP.md` §6d.)_ ASK DAVI: the credit amount and who gets it. Do not pick a number.
       Each workspace gets a referral link; when the referred workspace becomes `active`, both get a
       credit applied as a Stripe customer balance credit. Amount lives in `src/config/pricing.ts`.
       Self-referral and same-domain referrals blocked. Tests: credit only on `active`, once.

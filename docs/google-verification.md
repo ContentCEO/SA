@@ -2,10 +2,11 @@
 
 Google treats Gmail read and compose access as **restricted scopes**. Until Squared Away passes
 Google's OAuth verification (including a yearly third-party security assessment, CASA), Google
-shows its "unverified app" warning and caps the app at 100 users; while the app's publishing
-status is still **Testing**, only test users added by hand can connect at all. This document is the
-plain-language answer we give Google, and it has to match what the code does. Code references are
-included so a reviewer (or we) can check.
+shows its "unverified app" warning and allows at most 100 new users **in total, for the life of
+the project** (Google says the cap can't be reset or changed), so sign-up stays invite-only until
+then; while the app's publishing status is still **Testing**, only test users added by hand can
+connect at all. This document is the plain-language answer we give Google, and it has to match what
+the code does. Code references are included so a reviewer (or we) can check.
 
 **What goes to Google:** the sections "Two separate consent steps", "Scopes", "Google API Services:
 Limited Use" and "Data handling" are the answer pasted into Google's verification form; the demo
@@ -175,9 +176,9 @@ in plain words. Upload it as an unlisted video and paste the link into the verif
   after Part 1 is recorded: Part 2 needs a fresh email to draft, because Dana's was answered in
   Part 1.
 
-**Before recording Part 1 on the house account** (Davi's own workspace, the only one that can
-send without a Stripe payment; whether to record this way is Davi's decision, see "Reviewer test
-account"):
+**Before recording Part 1 on the house account** (option A: Davi's own workspace, the only one
+that can send without a Stripe payment; whether to record this way is Davi's decision, see
+"Reviewer test account", which also has option B, a separate demo account):
 
 - **Make your workspace the house account** (once; without it the draft card at step 9 has no
   **Send reply** button: it says "Sending is off during your three days" or "Waiting on your setup
@@ -211,10 +212,12 @@ account"):
   keep that line out of shot.
 - Afterwards, disconnect the demo Gmail (step 14) and reconnect your own Gmail.
 
-**Part 1 — a business that can send** (the demo Gmail connected to Davi's house account):
+**Part 1 — a business that can send** (the demo Gmail connected to Davi's house account; with
+option B, the separate demo account after its test-card payment):
 
 1. **Sign in.** Open the production site, tap Sign in and sign in as Davi (the `ADMIN_EMAIL`
-   account; the house account is his). Point out that sign-in asks only for name and email.
+   account; the house account is his), or with option B as the demo Gmail's own Google account.
+   Point out that sign-in asks only for name and email.
 2. **Settings → Connect Gmail.** Show that no Gmail is connected yet and tap Connect Gmail.
 3. **The explainer.** Scroll the "before you connect" screen, including "What it won't do", then
    tap Connect Gmail.
@@ -301,18 +304,34 @@ written. Their account is on the three-day trial, so sending to customers is blo
 practice copies to themselves, and Davi can give them more days from `/admin` (Give 3 more days).
 
 **For Davi (not pasted into Google's form).** How to show the send part is **Davi's decision** (it
-is listed for him in the launch checklist). Only the house account can send without a Stripe
-payment, and it is his own workspace with his real Gmail connected:
+is listed for him in the launch checklist, step 13; still open on 2026-10-14). Google's page asks
+the video to show what each permission is used for; it doesn't say a send must be filmed, but the
+app sends replies with `gmail.compose`, so filming one is the safer choice. A trial account can't
+send. Two kinds of account can send without real money today: the house account (his own
+workspace, with his real Gmail connected) and any account that paid with Stripe's test card while
+production Stripe is still in test mode.
 
-- **Recommended:** record Part 1 of the video on the house account with the dedicated demo Gmail as
-  the **only** mailbox on it while filming (see "Before recording Part 1 on the house account"); the
-  reviewer gets an invite and sees Part 2 for themselves. The cost: his Queue has to be cleared
+- **Option A** (the house account): record Part 1 of the video on the house account with the
+  dedicated demo Gmail as the **only** mailbox on it while filming (see "Before recording Part 1 on
+  the house account"); the reviewer gets an invite and sees Part 2 for themselves. The cost: his Queue has to be cleared
   first (every waiting reply sent or discarded, any autopilot countdown held, any leftover Squared
   Away draft deleted by hand in Gmail → Drafts, since disconnecting leaves Gmail drafts behind in
   customer conversations); his own Gmail is then disconnected, which deletes what was stored from it (messages, conversations, drafts and their edit
   counts, price memory, quote and invoice marks); reconnecting afterwards reads only the last 30
   days again; and his writing style is re-learned from the demo mailbox, then from his own mail
   again. This costs least if it is recorded before his own mailbox's history matters.
+- **Option B** (new, 2026-10-14; needs Davi's yes and an engineer's dry run on a preview first):
+  a separate demo-only account. Invite the demo Gmail in `/admin` → Invite an owner (while the
+  app is still in Testing, also add it as a Google test user; after publishing it uses one of the
+  100 places). It signs in as its own account and connects the demo Gmail, so nothing of Davi's is
+  touched: his Gmail, Queue and stored mail stay as they are. Film the trial part while it is on
+  its three days (sending off, a practice copy to itself), then Settings → Plan & billing → Choose
+  a plan and pay with Stripe's test card. That works only while production Stripe is still in test
+  mode; no real money moves, and the account can then send, so film the send. The dry run settles
+  the recording order (a practice copy leaves the draft waiting, so one quote request can serve
+  both parts). Keep the account until Google approves, in case they ask for a new recording, and
+  before Stripe goes live (launch checklist step 7) delete it (Delete my account) or let **Reset
+  test payments** clear it, since it carries a test payment.
 - Or put the house account on a plan with more than one mailbox and connect the demo Gmail next to
   his own. The Queue, Inbox and Activity then mix both mailboxes, so real customer mail would be
   filmed: **not acceptable** for the video.
@@ -321,12 +340,19 @@ payment, and it is his own workspace with his real Gmail connected:
 
 ## Before submitting (for Davi only; never pasted into Google's form)
 
-- **Is `gmail.send` needed?** Google's API reference lists `gmail.compose` as enough for both
-  `drafts.send` (every customer reply) and `messages.send` (practice copies), so reviewers may ask
-  why we also ask for `gmail.send`. Dropping it is a change to the requested scopes (code, the
-  connect explainer, the privacy policy and their tests) and needs Davi's okay; until then this
-  document describes exactly what is requested today. It is listed for him in the launch
-  checklist's decisions ("drop `gmail.send`?").
+- **Is `gmail.send` needed?** Recommended: drop it (still Davi's call on 2026-10-14; the
+  original brief listed it). Google's API reference lists `gmail.compose` as enough for both
+  `drafts.send` (every customer reply) and `messages.send` (practice copies), while `drafts.send`
+  doesn't accept `gmail.send` at all, so reviewers may ask why we also ask for it (Google's form
+  asks why fewer permissions wouldn't do). Dropping it doesn't remove CASA: `gmail.readonly` and
+  `gmail.compose` are restricted, `gmail.send` only sensitive. It is a small change to the
+  requested scopes (code, the connect explainer, the privacy policy, this document, the launch
+  checklist and their tests, plus removing it under Google Auth Platform → Data Access). Owners
+  already connected should keep working with no reconnect: the granted scopes are stored at connect and
+  never checked again, and both send calls work with `gmail.compose` (not yet tried on a
+  preview). Decide before filming: the video shows the permission list. Until then this document
+  describes exactly what is requested today. It is listed for him in the launch checklist's
+  decisions ("drop `gmail.send`?").
 - Verify the production domain in Google Search Console, add it under Google Auth Platform →
   Branding → Authorized domains, and point the homepage, privacy policy and terms links there.
 - Switch Audience → Publishing status to **In production** before real owners connect: in Testing,
@@ -334,8 +360,16 @@ payment, and it is his own workspace with his real Gmail connected:
   weekly) and only hand-added test users (at most 100) can connect. Access given while the app was
   still in Testing keeps its 7-day end, so everyone who connected then reconnects once after the
   switch (launch checklist step 0c).
-- The restricted-scope security assessment (CASA) is required, renews yearly, and its cost and
-  timing are Davi's call.
+- The restricted-scope security assessment (CASA) is required and renews every 12 months,
+  counted from the lab's letter (Google's team gets in touch when it's due). Google assigns the
+  level, AL1 or AL2 (older pages say Tier 2 / Tier 3), from user count, scopes and other signals;
+  its email says which. **Don't pay a lab until that email names the level**, then get written
+  quotes from two labs on the App Defense Alliance's authorized list (for example TAC Security,
+  NetSentries, Bishop Fox, DEKRA; Google's own pages name none) and ask whether the price covers
+  the yearly renewal. TAC Security's posted prices (checked 2026-10-14): $675 or $855 for AL1,
+  $5,400 for AL2. Budget about $700–$1,000 a year for AL1, about $4,500–$5,400 or more for AL2.
+  Allow 2–6 weeks for the lab and 1–3 months for the whole review (Google says "several weeks";
+  the range is our planning figure from Google's and the labs' pages).
 
 ## Keep this file honest
 

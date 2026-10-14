@@ -4,12 +4,13 @@ For Davi. Plain steps, in order. Each step says **where** to click, **what to pa
 know it worked**. This file only ever names a setting (like `STRIPE_SECRET_KEY`); the value itself
 goes straight into Vercel, Google or Stripe and is never written here, in chat or in an email.
 
-Nothing in this checklist has been done for you: merging, deploying and every switch below are
-your call. Engineering details live in [SETUP.md](SETUP.md); this page links to it where a step
-needs more.
+Where a step says "the engineers", they do that part and tell you when it's done. Everything else
+here is yours to do or decide: merging, deploying and every other switch. Engineering details live
+in [SETUP.md](SETUP.md); this page links to it where a step needs more.
 
 Contents:
 
+- [Check your Neon plan now (this week)](#check-your-neon-plan-now-this-week)
 - [0. Start now: Google verification (takes weeks)](#0-start-now-google-verification-takes-weeks)
 - [1. Merge the launch branch](#1-merge-the-launch-branch)
 - [2. Give previews their own database](#2-give-previews-their-own-database)
@@ -25,13 +26,45 @@ Contents:
 - [12. Smoke test after each production deploy](#12-smoke-test-after-each-production-deploy)
 - [13. Decisions waiting on you](#13-decisions-waiting-on-you)
 
+## Check your Neon plan now (this week)
+
+**A money decision, and it can't wait for the launch.** The app checks every connected Gmail for
+new mail every 5 minutes, and each check uses the database. Neon only lets a database sleep after
+5 minutes with no use, so production's database probably never sleeps. Neon's **Free** plan gives
+each project 100 "CU-hours" of database time a month (about 400 hours at the smallest size), and a
+month has about 720 hours. So on Free, production would likely run out around the middle of each
+month (about day 16 or 17 of Neon's billing period) and **pause until the next one**: the app
+stops for everyone, you included. That's the engineers' estimate from Neon's published limits, not
+something Neon has told us.
+
+- Where: console.neon.tech → the menu at the top right → your organization → **Billing**
+  (console.neon.tech/app/billing). "This month's summary" shows your plan and the billing period.
+- Then: Projects → `autumn-term-70302192` → its first page → the **Usage** box. It shows the
+  database time ("compute") used so far this period. It can be about an hour behind.
+- What the numbers mean: on Free the limit is 100 CU-hours per project per period. If you're on
+  Free and the number is already close to 100 before the period ends, decide this week.
+- The fix is Neon's paid **Launch** plan: no monthly minimum, $0.106 per CU-hour plus $0.35 per GB
+  of storage a month. A database that never sleeps uses about 180 CU-hours a month at the smallest
+  size, so about **$19–20 a month** for that time, more if it grows. That's worked out from Neon's
+  prices, not a quote. Plans are changed on the same Billing page.
+- Paste: nothing.
+- Worked when: you know which plan production is on and how much it has used this period, and
+  either it's on Launch or you've chosen to stay on Free knowing it may pause mid-month. Tell the
+  engineers which.
+
 ## 0. Start now: Google verification (takes weeks)
 
 Gmail read and draft access are what Google calls **restricted scopes**. Until Google verifies the
 app, every owner sees Google's "unverified app" warning when they connect Gmail, and at most 100
-people can use it. This is the slowest part of the launch, so start it first. The full answer for
-Google (why we ask for each permission, the demo-video script, the reviewer account) is in
-[google-verification.md](google-verification.md).
+people can use it. This is the slowest part of the launch, so start it first: plan on 1 to 3 months
+from submitting to approved. The full answer for Google (why we ask for each permission, the
+demo-video script, the reviewer account) is in [google-verification.md](google-verification.md).
+
+**The 100 is for life.** Google allows an unverified app 100 new users **in total, for the life of
+the project**, and the count can't be reset. Each Gmail address that connects before approval
+likely takes one place: yours, the demo Gmail and the reviewer's included. Signing in to Squared
+Away doesn't count (it only asks Google for name and email); connecting Gmail does. So keep sign-up
+invite-only until Google approves the app.
 
 Today the app's publishing status is **Testing**. In Testing, Google's Gmail access for each owner
 **runs out after 7 days**, so every owner would have to reconnect Gmail once a week, and only people
@@ -90,11 +123,13 @@ that doesn't open and a reviewer would see old screens. Each rejection costs wee
   word. It uses the real Google consent screen, shows the OAuth client id in the address bar, and
   shows each of `gmail.readonly`, `gmail.compose` and `gmail.send` in use. Record on a dedicated
   demo Gmail with invented emails, never your real customers' mail.
-- Which account records the send part is your decision (see
-  [step 13](#13-decisions-waiting-on-you); the options are under "Reviewer test account" in
-  google-verification.md).
-- If you record it on your own workspace (the recommended option), make it the house account
-  first, or it can't send on camera: `/admin` → your own card (always shown first) → **Use as my
+- Decide two things first ([step 13](#13-decisions-waiting-on-you)): whether to drop `gmail.send`
+  (the video shows the list of permissions), and which account records the send part. Option A is
+  your own workspace with the demo Gmail swapped in; option B is a separate demo account paid with
+  Stripe's test card, only while Stripe is still in test mode. Both are under "Reviewer test
+  account" in google-verification.md.
+- If you pick option A (your own workspace), make it the house account first, or it can't send on
+  camera: `/admin` → your own card (always shown first) → **Use as my
   own test account** → **Yes, this is my account**. It only ever shows on your own card. Worked
   when: the notice says "Your account can send now (marked as your own test account)." and your
   card's **Setup paid** line reads "Your own test account". If it already reads that, the button
@@ -129,17 +164,34 @@ that doesn't open and a reviewer would see old screens. Each rejection costs wee
 
 **0g. The security assessment (CASA).**
 
-- Restricted Gmail scopes also need a yearly third-party security assessment (CASA). Google's
-  review email explains it and lists the approved assessors. The cost and when to pay for it are your call
-  (listed in [step 13](#13-decisions-waiting-on-you)); it renews every year.
+- Restricted Gmail scopes also need a yearly security test by an outside lab (CASA). It's needed
+  with or without `gmail.send`: `gmail.readonly` and `gmail.compose` are both restricted.
+- Level: Google picks it, **AL1** (the lower one) or **AL2**, from user count, permissions and
+  other signals, and its email says which. Companies that help with these reviews say a small app
+  like this one usually gets AL1, but Google decides.
+- **Don't pay anything until Google's email names the level.** Then get written quotes from two
+  labs, and ask each whether the price covers the yearly renewal. Approved labs are listed by the
+  App Defense Alliance (appdefensealliance.org → authorized labs), for example TAC Security,
+  NetSentries, Bishop Fox and DEKRA. Google's own pages name none.
+- Cost: TAC Security's posted prices today are $675 or $855 for AL1 and $5,400 for AL2 (up about
+  25% since August 2025). Budget about $700–$1,000 a year for AL1, and about $4,500–$5,400 or
+  more for AL2. Prices are from the labs' sites and can change.
+- Time: allow 2–6 weeks for the lab (more if it finds something to fix), inside the 1 to 3 months
+  of the whole review.
+- It renews every 12 months, counted from the lab's letter, and Google contacts you when it's due.
+  Set a reminder 60–90 days before.
 - Worked when: Verification Center shows the assessment as passed and the app as verified; the
   "unverified app" warning disappears from the Connect Gmail screen.
 
 ## 1. Merge the launch branch
 
 Everything waiting is in **one** pull request: `claude/launch-integration` into `main`. It already
-holds the public site (PR #9), Squared Away Growth, Milestones 5–8 and the Milestone 11 launch work.
-**Merging it is a production deploy.** That's your decision, nobody else's.
+holds the public site (PR #9), Squared Away Growth (with the "Big words" homepage switch you
+picked), Milestones 5–8 and the Milestone 11 launch work. **Merging it is a production deploy.**
+
+You said okay to the merge on 2026-10-14. The engineers open the pull request once every check is
+green and tell you; you press **Merge pull request**. The closing question (#26, step 13) is
+already switched on in Vercel and starts working with this deploy.
 
 Merge it **as soon as you have reviewed it**. The window it closes is already open: the database
 already has the new complaint marker, but production still runs older code that doesn't set it.
@@ -188,8 +240,9 @@ could later be offered "Ask for a review" (only on your tap, and only as a draft
 ## 2. Give previews their own database
 
 **Launch blocker: do this before real customers.** Today every preview build uses the production
-database, so a preview can read and change customer data. Two ways to fix it; which one is your
-call (listed in [step 13](#13-decisions-waiting-on-you)).
+database, so a preview can read and change customer data. You chose on 2026-10-14 to give previews
+a separate, **empty** Neon project called `sa-preview`. Customer email never goes there. Some of
+it is yours (2a, 2b, 2d) and some is the engineers' (2c, 2e).
 
 **Read this first: production and previews share one entry today.** In Vercel, `DATABASE_URL`,
 `AUTH_SECRET`, `TOKEN_ENCRYPTION_KEY`, `AUTH_GOOGLE_ID` and `AUTH_GOOGLE_SECRET` are each **one**
@@ -201,7 +254,7 @@ planned changes in [step 3](#3-change-the-passwords-that-were-pasted-in-chat) (t
 password changes `DATABASE_URL`, the new Google client secret changes `AUTH_GOOGLE_SECRET`).
 Split them instead:
 
-**How to split a setting** (used below; splitting never changes production's value):
+**How to split a setting** (2c–2e work this way; splitting never changes production's value):
 
 1. Vercel → sa → Settings → Environment Variables → the existing entry → **Edit**.
 2. Untick **Preview** only. Leave Production ticked and **leave the value alone** → Save.
@@ -212,47 +265,60 @@ same way as the first ([SETUP.md](SETUP.md) §4: `openssl rand -base64 32`), dif
 production's. Then Gmail access copied into a preview can't be unlocked, and a preview sign-in
 can't be used on production.
 
-**Option A: Neon branches per preview.**
+**What it costs.** `sa-preview` is billed under the same Neon organization as production. On the
+Free plan it costs $0: it gets its own 100 CU-hours a month and 1 GB, separate from production's,
+and if it ever runs out it pauses until the next month (Free never sends a bill). On the paid
+Launch plan there's no monthly fee and no charge just for having a second project; you pay only
+while it's awake, and it sleeps after 5 minutes of no use, so expect a few cents a month (maybe a
+dollar or two in a busy month). That's worked out from Neon's prices, not a quote.
 
-- First: split `DATABASE_URL` (steps 1–2 only: untick **Preview** on the existing entry and save;
-  don't add a Preview one, the integration does that).
-- Where: Neon console → project `autumn-term-70302192` → **Integrations** → **Vercel** (the
-  Neon-managed integration, not the Vercel Marketplace one) → connect it to the Vercel project
-  `sa`, with preview branching **on** and parent branch `production`. If it offers to set
-  variables for **Production** or Development, say no: Preview only. It may also add Preview
-  variables starting with `PG`; leave those.
-- Know this: each preview branch is a **copy of production**, customer email included, with the
-  same account, mailbox and draft numbers. So also split `AUTH_SECRET` and `TOKEN_ENCRYPTION_KEY`
-  (all three steps above, new random Preview values), and ideally give previews their own Google
-  OAuth client (see "A separate Google client for previews" below).
-- **Background jobs:** Inngest dashboard (Vercel → sa → Integrations → Inngest) → the environment
-  switcher at the top. Preview deployments must show up under a **Branch** environment, never
-  under **Production**. Otherwise a tap on a preview (Draft a reply, Send) would start a
-  production job for a production draft with the same number, in a real customer's Gmail. If you
-  can't confirm it, split `INNGEST_EVENT_KEY` and `INNGEST_SIGNING_KEY` and leave the Preview ones
-  out (steps 1–2 only): previews then start no background jobs at all.
-- Worked when:
-  1. after the next push, Neon → Branches shows a `preview/<branch name>` branch;
-  2. Vercel → Environment Variables still shows the **Production** `DATABASE_URL` entry exactly as
-     before (pooled string, branch `production`, value not edited);
-  3. Inngest shows preview deployments only under a Branch environment (or Preview has no
-     `INNGEST_…` entries);
-  4. production's `/admin` is unchanged (an invite you make on the preview doesn't appear there).
-     Sign in on the preview at its **branch address** (see "Which preview address to sign in on"
-     below).
+**2a. Create the `sa-preview` project (you, in Neon, about 10 minutes).**
 
-**Option B: a separate, empty Neon project for previews.**
+- Where: console.neon.tech → the menu at the top right → pick your organization. Check that its
+  project list shows your real project, `autumn-term-70302192`. If the organization's name starts
+  with "Vercel:", stop and tell the engineers.
+- Then: **New Project** → Project name `sa-preview` → Region: the **same region** as
+  `autumn-term-70302192` → Services: leave only **Postgres database** on → **Create project**. Add
+  nothing else: the first preview build creates the tables.
+- Worked when: the organization's project list shows `sa-preview` next to `autumn-term-70302192`.
 
-- Where: Neon console → New project (for example `sa-preview`) → Connect → copy the **pooled**
-  connection string → split `DATABASE_URL` (all three steps above) with that string as the new
-  Preview value.
-- Also split `AUTH_SECRET` and `TOKEN_ENCRYPTION_KEY`, as in option A.
-- Previews then start empty: sign in with your admin address and invite test accounts there.
-- Worked when: on the preview's **branch address** (below), after you sign in, `/admin` →
-  Accounts shows only your own account ("Accounts (1)"), and production's `/admin` is unchanged.
+**2b. Copy its pooled connection string (you, in Neon).**
 
-Option B keeps customer email out of previews completely; option A is less set-up per preview but
-copies production data into each one.
+- Where: check that the page says `sa-preview`, not your real project. Click **Connect**, make sure
+  **Connection pooling** is on, and copy the connection string.
+- Worked when: the address you copied contains `-pooler`.
+- Paste it only into Vercel (2d), never into a chat or an email. Tell the engineers you have it
+  (not the string itself).
+
+**2c. Untick Preview on the existing `DATABASE_URL` (the engineers).**
+
+- They untick **Preview** on the existing entry through Vercel's API. That changes only where the
+  entry applies: production's value isn't touched and Production stays ticked. They tell you when
+  it's done.
+
+**2d. Add the Preview `DATABASE_URL` (you, in Vercel).**
+
+- Where: Vercel → sa → Settings → Environment Variables → **Add New**.
+- Paste: name `DATABASE_URL`, type **Secret**, tick **Preview** only, value = the string from 2b →
+  Save. Then tell the engineers.
+
+**2e. Preview-only secrets and a redeploy (the engineers).**
+
+- They add Preview-only `AUTH_SECRET` and `TOKEN_ENCRYPTION_KEY` with fresh random values (split
+  the same way), then redeploy the preview. That first preview build creates every table in
+  `sa-preview`.
+- Background jobs need no change: in an empty database every account, mailbox and draft gets a new
+  random id, so a preview's job can never match a production row.
+
+Worked when:
+
+1. Vercel → Environment Variables shows two `DATABASE_URL` rows: Production (unchanged) and
+   Preview.
+2. On the preview's **branch address** (see "Which preview address to sign in on" below), after
+   you sign in with your admin address, `/admin` shows only your own account: "Accounts (1)".
+3. Production's `/admin` is unchanged (an invite you make on the preview doesn't appear there).
+
+Previews then start empty: invite test accounts there from the preview's own `/admin`.
 
 **Which preview address to sign in on.** Google only lets you sign in at addresses listed on the
 OAuth client, and it allows no wildcards. Each branch has one fixed address,
@@ -264,8 +330,8 @@ redirect URIs → add `https://<branch address>/api/auth/callback/google` and
 `https://<branch address>/api/gmail/callback` → Save (it can take a few minutes). Worked when:
 signing in and Connect Gmail work on that branch address.
 
-**A separate Google client for previews (optional).** Skipping it is fine with option B (an
-empty database); it matters most with option A.
+**A separate Google client for previews (optional).** With an empty preview database it's fine to
+skip this.
 
 1. Google Auth Platform → **Clients** → Create client → Web application, name it
    `sa preview`.
@@ -279,7 +345,7 @@ empty database); it matters most with option A.
 Worked when: signing in and Connect Gmail work on the preview's branch address, and still work on
 production.
 
-Either way: Vercel → sa → Settings → Environment Variables → keep **"Automatically expose System
+Also: Vercel → sa → Settings → Environment Variables → keep **"Automatically expose System
 Environment Variables"** on. Preview addresses and the safety switch that keeps test mode off on
 every Vercel deploy depend on it.
 
@@ -317,19 +383,20 @@ The Neon database password and the Google client secret were once pasted into a 
 ## 4. Settings in Vercel, per environment
 
 Where: Vercel → sa → Settings → Environment Variables. A change only takes effect after a
-**Redeploy**. Mark secrets **Sensitive**. Full explanations: [SETUP.md](SETUP.md) §4.
+**Redeploy**. Mark secrets **Sensitive** (newer Vercel screens call this type **Secret**). Full
+explanations: [SETUP.md](SETUP.md) §4.
 
 | Setting                                                                               | Production                                                     | Preview                                               |
 | ------------------------------------------------------------------------------------- | -------------------------------------------------------------- | ----------------------------------------------------- |
 | `APP_URL`                                                                             | Yes: `https://<your domain>` (step 5)                          | No (previews use their own address)                   |
-| `DATABASE_URL`                                                                        | Yes: Neon pooled string, branch `production` (sensitive)       | Its own database (step 2)                             |
+| `DATABASE_URL`                                                                        | Yes: Neon pooled string, branch `production` (sensitive)       | Its own: the `sa-preview` project (step 2)            |
 | `AUTH_SECRET`                                                                         | Yes (sensitive)                                                | Yes, its own value (step 2)                           |
 | `TOKEN_ENCRYPTION_KEY`                                                                | Yes (sensitive). Never change it: every owner would reconnect. | Yes, its own value (step 2)                           |
 | `AUTH_GOOGLE_ID`, `AUTH_GOOGLE_SECRET`                                                | Yes (secret sensitive)                                         | Yes; ideally a separate preview client                |
 | `ADMIN_EMAIL`                                                                         | Yes                                                            | Yes                                                   |
 | `SUPPORT_EMAIL`                                                                       | Yes (step 5)                                                   | Yes                                                   |
 | `ANTHROPIC_API_KEY`                                                                   | Yes (sensitive)                                                | Optional (as today)                                   |
-| `INNGEST_EVENT_KEY`, `INNGEST_SIGNING_KEY`                                            | Set by the Inngest integration                                 | Integration (Branch env), or none (step 2)            |
+| `INNGEST_EVENT_KEY`, `INNGEST_SIGNING_KEY`                                            | Set by the Inngest integration                                 | Set by the Inngest integration (as today)             |
 | `RESEND_API_KEY`, `EMAIL_FROM`                                                        | Yes (step 6; key sensitive)                                    | No                                                    |
 | `STRIPE_SECRET_KEY`                                                                   | Yes: the live key (step 7; sensitive)                          | No                                                    |
 | `NEXT_PUBLIC_SENTRY_DSN`                                                              | Optional (step 8)                                              | No                                                    |
@@ -339,7 +406,8 @@ Where: Vercel → sa → Settings → Environment Variables. A change only takes
 | `TWILIO_FROM_NUMBER`                                                                  | Only instead of the Messaging Service, for a quick test        | No                                                    |
 | `GMAIL_PUBSUB_TOPIC`, `GMAIL_PUSH_VERIFICATION_TOKEN`                                 | Optional (step 10; token sensitive)                            | No                                                    |
 | `AI_DAILY_CALL_CAP`, `RETENTION_BODY_DAYS`                                            | Leave unset (the defaults are what the policy promises)        | Leave unset                                           |
-| `FEATURE_CLOSING_QUESTION`, `FEATURE_REFERRALS`                                       | Only after you decide (step 13)                                | No                                                    |
+| `FEATURE_CLOSING_QUESTION`                                                            | `1` (set 2026-10-14 at your request; step 13)                  | `1` (set 2026-10-14)                                  |
+| `FEATURE_REFERRALS`                                                                   | Only after you decide (step 13)                                | No                                                    |
 | `STRIPE_WEBHOOK_SECRET`                                                               | **Never set on Vercel** (Connect Stripe stores its own)        | **Never set on Vercel**                               |
 | `SA_E2E`, `SA_E2E_GOOGLE_BASE_URL`, `SA_E2E_ANTHROPIC_BASE_URL`, `SA_E2E_HOOK_SECRET` | **Never set on Vercel** (test-only, this machine)              | **Never set on Vercel**                               |
 | `INNGEST_DEV`                                                                         | **Never set on Vercel** (local only; see below)                | **Never set on Vercel**                               |
@@ -355,10 +423,9 @@ Google client secret (a new `AUTH_GOOGLE_SECRET`).
 `INNGEST_DEV` is for this machine only: on Vercel it would stop the jobs **and** switch off the
 check that only Inngest can run them, so anyone could start them.
 
-Worked when: Vercel's list matches this table; after step 2, each of `DATABASE_URL` (option B; in
-option A the Preview one comes from the Neon integration), `AUTH_SECRET`, `TOKEN_ENCRYPTION_KEY`
-(and `AUTH_GOOGLE_ID` / `AUTH_GOOGLE_SECRET` if you made a preview client) shows **two separate
-rows**, one Production and one Preview; and no `SA_E2E…`, `INNGEST_DEV` or `STRIPE_WEBHOOK_SECRET`
+Worked when: Vercel's list matches this table; after step 2, each of `DATABASE_URL`,
+`AUTH_SECRET`, `TOKEN_ENCRYPTION_KEY` (and `AUTH_GOOGLE_ID` / `AUTH_GOOGLE_SECRET` if you made a
+preview client) shows **two separate rows**, one Production and one Preview; and no `SA_E2E…`, `INNGEST_DEV` or `STRIPE_WEBHOOK_SECRET`
 row exists in any environment.
 
 ## 5. Support email and the production domain
@@ -483,27 +550,80 @@ reset them.
   sets it when live mode had no portal settings yet.
 - Worked when: the portal page shows that option saved.
 
-**7e. Sales tax (Stripe Tax).** You decided on 2026-10-14 to turn it on. The app doesn't set
-anything up for tax; it only checks whether Stripe Tax is active. Live mode and test mode are set
-up separately. In this order:
+**7e. Sales tax (Stripe Tax).** You decided on 2026-10-14 to turn it on. Stripe works out the tax
+and adds it at checkout. Registering with the state and filing the returns are yours: Stripe can't
+register you in your home state, and on its pay-as-you-go plan it doesn't file. The app sets
+nothing up for tax; it turns tax on at checkout whenever Stripe's tax settings read "active". Live
+mode and test mode are set up separately. In this order:
 
-- First: `/admin` → Payments → **Connect Stripe again** (safe even if you just did in 7c). It
-  makes the prices add tax on top whether or not tax is on yet, so do it before Stripe's tax
-  settings.
-- Where: Stripe (live) → Settings → **Tax**. Add your business address and a default product tax
-  code. Stripe calls tax "active" as soon as the business address is saved: that only means it
-  can work tax out, not that it charges any.
-- Then: Stripe → Tax → **Registrations**. Add each state where you collect sales tax (which states
-  is a question for your accountant). Stripe charges tax only in the states listed there.
-- Then: Stripe → Settings → Billing → **Customer portal** → Customer information → tick **Billing
-  address**, so an owner can correct the address their tax is worked out from (Connect Stripe only
-  ticks it when it creates the portal settings).
+1. **Register with Massachusetts first.** You're based in Concord, so you collect Massachusetts
+   sales tax from your first sale there, whatever your sales total.
+   - Where: MassTaxConnect (mass.gov/masstaxconnect) → Register a New Business → sales and use
+     tax.
+   - Have ready: your SSN if you're a sole owner with no employees (otherwise an EIN), your
+     business and mailing addresses, and the start date your accountant picks.
+   - Cost and time: guides say it's free and takes about 3–10 business days. The state's own site
+     wouldn't load for the engineers, so check both in MassTaxConnect.
+   - Worked when: you have a Massachusetts sales tax account and its registration certificate
+     (Form ST-1).
+2. **Fix the prices:** `/admin` → Payments → **Connect Stripe again** (safe even if you just did in
+   7c). It makes the prices add tax on top whether or not tax is on yet, so do it before Stripe's
+   tax settings.
+3. **Stripe's tax settings.** Stripe (live) → Settings → **Tax**:
+   - Head office: your Concord business address.
+   - Preset product tax code: **Software as a service (SaaS) - business use** (`txcd_10103001`).
+   - Include tax in prices: **Exclusive** (tax on top, as the terms and "Plus sales tax where it
+     applies." say).
+
+   Stripe calls tax "active" as soon as the head office is saved. That only means it can work tax
+   out, not that it charges any.
+
+4. **The setup fee's own code.** Stripe (live) → Product catalog → **Squared Away — Setup** → Edit
+   → Product tax code → **SaaS Implementation and Setup Services - Mandatory** (`txcd_20120002`),
+   unless your accountant says otherwise. The setup is required before sending turns on, and
+   Massachusetts' rules tax a service that is a required part of a software sale. The three plan
+   products keep the preset code. If that code isn't in Stripe's list, leave the preset and tell
+   your accountant.
+5. **Add Massachusetts in Stripe.** Stripe (live) → Tax → **Locations** (the `/admin` card calls
+   this page Tax → Registrations) → **Add registration** → United States → Massachusetts → **I've
+   already registered** → start collecting now, or schedule it for the date your state
+   registration starts → check the rate (6.25%) → **Start collecting**. Without this step Stripe
+   charges **$0 tax and warns about nothing**: its alerts only watch other states, never your home
+   state.
+6. **Customer portal.** Stripe → Settings → Billing → **Customer portal** → **Billing information**
+   → make sure **Billing address** is on, so an owner can correct the address their tax is worked
+   out from. (Connect Stripe only sets it when it creates the portal settings.)
+7. **A test checkout (optional, and only before 7a).** While production still has the test key,
+   you can set up test mode the same way: Test mode on, items 2–6 again (with a test Massachusetts
+   registration). Then, as a test owner, Choose a plan with Stripe's test card and a Massachusetts
+   billing address. Stripe's page should show 6.25% tax on top (for example $6.19 on Solo). An
+   address in a state you aren't registered in shows $0 tax: that's expected. After the key swap,
+   7f's real purchase is the check.
+
 - Worked when: `/admin` → Payments reads "Sales tax: on (Stripe Tax is set up)." **and** Stripe →
-  Tax → Registrations lists every state you collect in. "On" alone doesn't prove tax is charged
+  Tax → Locations shows Massachusetts as "Collecting tax". "On" alone doesn't prove tax is charged
   anywhere. "Sales tax: couldn't check." means Stripe didn't answer: reload in a minute. If it
   still says that, check `STRIPE_SECRET_KEY` is the standard secret key (not a restricted one):
   while Stripe can't be asked, every checkout fails rather than going through without tax. More
   in [SETUP.md](SETUP.md) §7c.
+- Cost: Stripe Tax Basic has no monthly fee. It takes 0.5% of each taxed payment, tax included,
+  and only in states where you're registered: about 53 cents on a Solo renewal in Massachusetts.
+- Subscriptions that started before tax was on keep running without tax. Find them: Stripe →
+  Subscriptions → Filter → Automatic tax → Disabled. Turn automatic tax on in each one; it applies
+  from the next billing period.
+- **Filing (yours).** Massachusetts sets how often you file from the tax you expect to owe in a
+  year: once a year if $100 or less, every 3 months from $101 to $1,200, monthly above that. Each
+  return is due within 30 days after its period ends, usually the 30th of the next month (some
+  guides still say the 20th; that changed in 2021). Each time: take the numbers from Stripe's
+  Massachusetts tax report (under Stripe → Tax), then file and pay on MassTaxConnect. File even
+  when nothing is due, and keep the records at least 3 years. Stripe's Tax Complete plan (from $90
+  a month on a one-year contract) would file for you; it isn't needed while you only collect in
+  Massachusetts.
+- Other states: register nowhere else until Stripe tells you to. It emails you when your sales in
+  another state get near that state's limit (most states: $100,000 a year).
+- Questions for your accountant: does Squared Away count as taxable software in Massachusetts
+  (most guides say yes)? Is the setup fee taxable? Are you set up as a sole owner or an LLC? What
+  start date should the Massachusetts registration use?
 
 **7f. One real purchase.**
 
@@ -527,7 +647,8 @@ up separately. In this order:
 
 ## 9. Phone notifications (VAPID keys)
 
-- Where: [SETUP.md](SETUP.md) §6e (one command makes the key pair; free, no account).
+- Where: [SETUP.md](SETUP.md) §6e (one command makes the key pair; free, no account). If you'd
+  rather not, say so and the engineers make the pair and add it for you.
 - Paste: Vercel → `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` (sensitive) and optionally
   `VAPID_SUBJECT` (Production) → Redeploy. Keep the pair afterwards: changing it makes every phone
   switch notifications off and on again.
@@ -588,52 +709,119 @@ fixed.
 
 ## 13. Decisions waiting on you
 
-Nothing here is switched on or changed until you say so.
+### Decided on 2026-10-14
 
-- **Merge and deploy** ([step 1](#1-merge-the-launch-branch)): when.
-- **Preview database** ([step 2](#2-give-previews-their-own-database)): option A (Neon branch
-  copies) or option B (an empty preview project). With option A, previews must use an Inngest
-  Branch environment (or have no `INNGEST_…` keys), since the copied drafts carry production's
-  numbers; option B has no such overlap.
-- **Test-mode Stripe accounts** ([step 7b](#7-stripe-live-mode)): whether to reset accounts that
-  "paid" with a test card (clear their Stripe ids and setup payment, so they pay for real), or how
-  else to handle them.
-- **Taxes:** decided 2026-10-14: charge sales tax with Stripe Tax (set up in
-  [step 7e](#7-stripe-live-mode)). Still yours, with your accountant: which states to register in,
-  and the product tax code.
-- **Terms, three [To confirm] items:** refunds (setup fee and current month), the liability cap,
-  and governing law and venue. Plus a lawyer's review of the privacy policy and terms before
-  launch.
-- **Google review:** (1) which account records the send part of the demo video (options under
-  "Reviewer test account" in [google-verification.md](google-verification.md)); (2) drop
-  `gmail.send`? Google says `gmail.compose` is enough to send; dropping it is a code change (see
-  "Before submitting" in google-verification.md); (3) the CASA assessment's cost and timing.
-- **#26 closing question** ("Want to ask if they went another way?"): built and tested, off
-  (`FEATURE_CLOSING_QUESTION`). Turning it on: [SETUP.md](SETUP.md) §6d.
-- **#47 referral credit:** built and tested, off (`FEATURE_REFERRALS`). Decided 2026-10-13: the
-  credit goes to the referrer only, and the same-domain block stays. Still open: the amount in
-  dollars. Before turning it on, the privacy policy needs the referral-fingerprint line (in
+Recorded here so nobody asks again.
+
+- **Merge and deploy** ([step 1](#1-merge-the-launch-branch)): okay. The engineers open the pull
+  request once every check is green; you press Merge (the production deploy).
+- **Preview database** ([step 2](#2-give-previews-their-own-database)): a separate, empty Neon
+  project, `sa-preview`. Yours: create it, copy its pooled string, and add it in Vercel (2a, 2b,
+  2d). The engineers do the rest.
+- **Test-mode Stripe accounts** ([step 7b](#7-stripe-live-mode)): reset them. After the live key
+  is in, tap **Reset test payments** in `/admin`: those accounts keep their data and pay the setup
+  fee for real.
+- **Sales tax:** charged with Stripe Tax, starting with Massachusetts. Register with the state
+  first, then set Stripe up ([step 7e](#7-stripe-live-mode); the questions for your accountant
+  are there).
+- **#26 closing question** ("Want to ask if they went another way?"): on. At your request the
+  engineers set `FEATURE_CLOSING_QUESTION` to `1` in Vercel (Production and Preview) on
+  2026-10-14; it starts working with the next deploy, the merge. Turning it off again:
+  [SETUP.md](SETUP.md) §6d.
+- **Growth:** all seven services are offered today, and the ground rules stand (no fake reviews,
+  price before any work, Growth never touches the inbox).
+- **Homepage:** the "Big words" switch, and it plays every time (scrolling from the app into
+  Growth, and every tap on a Growth link on the app side). Built; it goes live with the merge.
+
+### Still open
+
+Nothing below is switched on or changed until you say so.
+
+- **Your Neon plan** ([check it this week](#check-your-neon-plan-now-this-week)): stay on Free
+  (production may pause mid-month) or move to Launch (about $19–20 a month).
+- **Terms: the three [To confirm] items.** The wording in `docs/terms.md` stays as it is until
+  you pick. Recommended (option A for each):
+  - Refunds: monthly plans can be cancelled any time and stay on to the end of the paid month, with
+    no refund for part of a month. The setup fee is refunded in full if they cancel before the
+    setup call, and not after it. Delete my account ends the plan at once, with no refund for the
+    rest of that month (that's what the app does today; the terms should say so). If you stop the
+    service, or close an account that broke no rules, refund the unused part of the month (and
+    the setup fee if the call hasn't happened).
+  - Liability cap, both ways: at most the greater of $100 or what they paid you in the 12 months
+    before the problem. No lost profits, lost jobs or other knock-on losses. It repeats that the
+    owner approves every send and that autopilot is their choice. It doesn't cover unpaid fees,
+    fraud, harm done on purpose or gross negligence.
+  - Law and courts: Massachusetts law. Contact us first and try for 30 days to sort it out; after
+    that, the state courts in Middlesex County or the federal court for Massachusetts. Either side
+    may use small claims court. No arbitration (with the usual group, AAA, a claim under
+    $75,000 costs $1,450 to file plus $1,150 if it reaches a hearing, before the arbitrator's pay).
+- **"I agree to the Terms" (new, needs your yes):** today the terms are only a link at the bottom
+  of the page, and nobody ticks a box. Massachusetts' top court said online terms only bind people
+  who were properly shown them and agreed to them (Kauders v. Uber, 2021), and that a tick box
+  plus a button is enough (Good v. Uber, 2024). Two small code changes: a required "I agree to
+  the Terms of Service" box on Stripe's checkout page (Stripe's
+  `consent_collection.terms_of_service` = required; you add the terms address in Stripe →
+  Settings → Business → Public details), and an "I agree" checkbox at sign-in for trial users,
+  who never see Stripe.
+- **A lawyer's review** of the terms and privacy policy before launch: roughly $750–$2,500 (an
+  estimate from published averages). A cheap first step: the Boston Bar Association's lawyer
+  referral service gives a first 30-minute talk for $25 at most. Questions to bring: the three
+  options above; whether the "I agree" boxes make the terms binding; whether to form an LLC (the
+  terms name you personally; a Massachusetts LLC costs about $500 to start and $500 a year);
+  whether any insurance is worth having; and whether the homepage's "Month to month, no contract."
+  should say "no long-term contract".
+- **Google review, two questions** (decide both before recording the demo video in
+  [0d](#0-start-now-google-verification-takes-weeks)):
+  1. Which account records the send part. Option A: your own workspace as the house account, with
+     the demo Gmail swapped in for your own (your Queue is cleared first, what the app stored from
+     your mailbox is deleted, and reconnecting reads back only the last 30 days). Option B (new):
+     a separate demo account invited from `/admin` and paid with Stripe's test card while Stripe
+     is still in test mode, so it can send; nothing of yours is touched. It has to be reset or
+     deleted before Stripe goes live, and an engineer tries it on a preview first. Both are under
+     "Reviewer test account" in [google-verification.md](google-verification.md).
+  2. Should we drop `gmail.send`? Recommended: yes. Google's own reference says `gmail.compose`
+     can send a draft and a new email, which covers both kinds of sending the app does, while
+     `gmail.send` can't even send a draft. Dropping it doesn't avoid the CASA test, and it's a
+     small code change. Nobody should have to reconnect (the engineers try it on a preview
+     first). The original brief listed it, so it's your call.
+
+  The CASA test itself needs no decision yet: don't pay until Google's email names the level
+  ([0g](#0-start-now-google-verification-takes-weeks)).
+
+- **#47 referral credit amount:** built and tested, off (`FEATURE_REFERRALS`). Decided 2026-10-13:
+  the credit goes to the referrer only, and the same-domain block stays. Still open: how much.
+  Options: A $50; B $99 (one free Solo month); C $199; D $250; E one free month of their own plan;
+  F like E, but a Solo owner's free month is on Crew, so they can try autopilot. Recommended: F (or
+  B for the simplest). A to D only need the amount set; E and F need code beyond what's built
+  today. Before turning it on, the privacy policy needs the referral-fingerprint line (in
   [SETUP.md](SETUP.md) §6d), and `AUTH_SECRET` must not be changed once referrals have been paid.
   Also your call: a referrer who deletes their account before the new owner is active voids the
-  referral; a Growth call request never carries a referral (only an app waitlist sign-up from the
-  link does).
+  referral.
 - **Deleted owners:** Delete my account also removes their invite, so someone who deletes their
   account needs a new invite from `/admin` to come back (if they were invited from their
   waitlist entry, that card then says the invite is gone and shows "Invite … again"; otherwise
   use Invite an owner). Okay?
-- **Waitlist and Growth removals:** Delete my account keeps waitlist entries and Growth call
-  requests (they're a separate service). Removing one on request is done by hand in the database
-  for now; the policy says "ask us and we'll delete it".
 - **PDF quotes:** a quote sent only as an attached PDF (no `$` in the email) isn't counted as a
   price given, so "Let's do it" isn't marked Won automatically and gets no deposit draft. You can
   still tap Won. Change it only if you want it.
-- **Growth:** confirm all seven services are offered today (websites and ad management
-  especially) and the ground rules (no fake reviews, price before any work, Growth never touches
-  the inbox); Growth terms of service; a Settings link to `/growth` for signed-in owners; no
-  tracking pixels on `/growth` without a privacy-policy change.
+- **Growth, still open:** a written agreement (Growth terms of service); a Settings link to
+  `/growth` for signed-in owners; a Remove button in `/admin` for waitlist entries and Growth call
+  requests (Delete my account keeps them, as a separate service, and removing one on request is
+  done by hand in the database for now; the policy says "ask us and we'll delete it"); and whether
+  a Growth call request should ever carry a referral (today only an app waitlist sign-up from the
+  link does). No tracking pixels on `/growth` without a privacy-policy change.
 - **Gmail draft check (counts only, for the engineers):** whether Gmail keeps a draft's id when
   it's sent. The app is safe either way. The query is in [step 1](#1-merge-the-launch-branch);
   run it **before merging**: after the merge it always reads 0.
 
-- **Still needed from you:** the production domain, `SUPPORT_EMAIL`, the icon pack, and the
-  `ANTHROPIC_API_KEY` repository secret for the "Prompt evals" GitHub action.
+### Still needed from you
+
+- The production domain and `SUPPORT_EMAIL` ([step 5](#5-support-email-and-the-production-domain)).
+- The icon pack, and for the homepage's About section (PR #9) your photo and the exact license
+  wording.
+- The `ANTHROPIC_API_KEY` repository secret for the "Prompt evals" GitHub action.
+- Your Massachusetts sales tax registration ([step 7e](#7-stripe-live-mode)).
+- The Neon plan check ([this week](#check-your-neon-plan-now-this-week)).
+- The `sa-preview` Neon project and its pooled string ([step 2](#2-give-previews-their-own-database)).
+- The phone-notification keys ([step 9](#9-phone-notifications-vapid-keys)); the engineers can make
+  and add them if you say so.
