@@ -1,8 +1,10 @@
-import { existsSync, readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join, relative, sep } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   awaitsIn,
+  bindFiles,
   calleeName,
   exportedFunctions,
   type FnLike,
@@ -46,6 +48,38 @@ function guardOf(
 }
 const guardedFirst = (fn: FnLike, locals: Map<string, FnLike>) => guardOf(fn, locals) !== null;
 
+/** The extensions Next serves a route, page or loading file from (its default pageExtensions). */
+const NEXT_FILE = (name: string) => new RegExp(`/${name}\\.(tsx|ts|jsx|js)$`);
+/** JavaScript files: none belong in src/app, which is TypeScript only. */
+const JS_FILE = /\.(js|jsx|mjs|cjs)$/;
+
+/** "use server" files among `files`, and each exported action with the guard it awaits first. */
+function scanActions(files: string[], appDir: string = APP) {
+  const adminDir = join(appDir, "(app)", "admin");
+  const root = dirname(dirname(appDir));
+  const id = (f: string) => relative(root, f).split(sep).join("/");
+  const actionFiles = files.filter((f) => startsWithUseServer(parse(f).statements));
+  const exportedActions = actionFiles.flatMap((f) => {
+    const sf = parse(f);
+    const locals = localFunctions(sf);
+    return exportedFunctions(sf).map(({ name, fn }) => ({
+      id: `${id(f)}#${name}`,
+      admin: f.startsWith(adminDir + "/"),
+      guard: guardOf(fn, locals),
+      guarded: guardedFirst(fn, locals),
+    }));
+  });
+  return { actionFiles, exportedActions };
+}
+
+/** Route handler files under `appDir`, in any extension Next would serve. */
+const routeFilesIn = (files: string[], appDir: string = APP) =>
+  files.filter((f) => f.startsWith(appDir + "/") && NEXT_FILE("route").test(f));
+
+/** JavaScript files under `appDir` (the scan reads them, but they have no place there). */
+const jsFilesIn = (files: string[], appDir: string = APP) =>
+  files.filter((f) => f.startsWith(appDir + "/") && JS_FILE.test(f));
+
 describe("C1: every server action checks who's asking before anything else", () => {
   /** Public on purpose: the forms anyone may use, each with its own hashed-IP limit. */
   const PUBLIC_ACTIONS: Record<string, string> = {
@@ -65,17 +99,7 @@ describe("C1: every server action checks who's asking before anything else", () 
       "deleted account, so it can't require one",
   };
 
-  const actionFiles = ALL.filter((f) => startsWithUseServer(parse(f).statements));
-  const exportedActions = actionFiles.flatMap((f) => {
-    const sf = parse(f);
-    const locals = localFunctions(sf);
-    return exportedFunctions(sf).map(({ name, fn }) => ({
-      id: `${rel(f)}#${name}`,
-      admin: f.startsWith(ADMIN + "/"),
-      guard: guardOf(fn, locals),
-      guarded: guardedFirst(fn, locals),
-    }));
-  });
+  const { actionFiles, exportedActions } = scanActions(ALL);
 
   it("finds the action files (the scan isn't silently empty)", () => {
     expect(actionFiles.length).toBeGreaterThanOrEqual(14);
@@ -147,7 +171,7 @@ describe("C1: every server action checks who's asking before anything else", () 
 
 describe("C2: admin pages 404 for everyone else, and nothing streams a 200 first", () => {
   it("every admin page calls requireAdmin() first", () => {
-    const pages = ALL.filter((f) => f.startsWith(ADMIN) && f.endsWith("page.tsx"));
+    const pages = ALL.filter((f) => f.startsWith(ADMIN) && NEXT_FILE("page").test(f));
     expect(pages.length).toBeGreaterThanOrEqual(2);
     for (const p of pages) {
       const sf = parse(p);
@@ -167,14 +191,15 @@ describe("C2: admin pages 404 for everyone else, and nothing streams a 200 first
       join(APP, "(app)", "customers", "[key]"),
       join(APP, "(app)", "record", "[draftId]"),
     ];
-    const loadings = ALL.filter((f) => /\/loading\.tsx$/.test(f));
+    const loadings = ALL.filter((f) => NEXT_FILE("loading").test(f));
     for (const dir of mustNotFound) {
       expect(existsSync(join(dir, "page.tsx")), rel(dir)).toBe(true);
       // Inside it…
       expect(loadings.filter((l) => l.startsWith(dir + "/")).map(rel), rel(dir)).toEqual([]);
       // …and in any folder above it, which would wrap it too.
       for (let up = dirname(dir); up.startsWith(APP); up = dirname(up)) {
-        expect(existsSync(join(up, "loading.tsx")), rel(up)).toBe(false);
+        for (const ext of ["tsx", "ts", "jsx", "js"])
+          expect(existsSync(join(up, `loading.${ext}`)), rel(up)).toBe(false);
       }
     }
   });
@@ -203,10 +228,17 @@ describe("C3: every route handler is in the table with the guard it uses", () =>
     "src/app/api/health/route.ts": "public",
     "src/app/app-icon/[size]/route.tsx": "public",
   };
-  const routeFiles = ALL.filter((f) => f.startsWith(APP) && /\/route\.tsx?$/.test(f)).map(rel);
+  const routeFiles = routeFilesIn(ALL).map(rel);
 
   it("no route without a row, no row without a route", () => {
     expect(routeFiles.sort()).toEqual(Object.keys(ROUTES).sort());
+  });
+
+  it("src/app is the only router: no Pages Router (src/pages/api is live), no root app/ or pages/", () => {
+    // Next serves src/pages next to src/app, and a root app/ or pages/ would replace src/
+    // entirely; none of them is in the table above, so none may exist.
+    for (const dir of [join(SRC, "pages"), join(ROOT, "app"), join(ROOT, "pages")])
+      expect(existsSync(dir), rel(dir)).toBe(false);
   });
 
   const handlers = (file: string) =>
@@ -274,7 +306,652 @@ describe("C3: every route handler is in the table with the guard it uses", () =>
   }
 });
 
+describe("C1–C3 read JavaScript too (M11 review finding 3)", () => {
+  it("src/app is TypeScript only: no .js / .jsx / .mjs / .cjs file", () => {
+    expect(jsFilesIn(ALL).map(rel)).toEqual([]);
+  });
+
+  it("an unguarded JS route or action is caught (self-test on fixture files)", () => {
+    const dir = mkdtempSync(join(tmpdir(), "sa-surface-"));
+    try {
+      const app = join(dir, "src", "app");
+      const put = (path: string, code: string) => {
+        mkdirSync(dirname(join(app, path)), { recursive: true });
+        writeFileSync(join(app, path), code);
+      };
+      put(
+        "api/leak/route.js",
+        'import { db } from "@/db";\nexport async function GET() {\n  return Response.json(await db().execute("select * from mailboxes"));\n}\n',
+      );
+      put(
+        "probe/actions.js",
+        '"use server";\nimport { disconnectMailbox } from "@/server/mailboxes";\nexport async function evil(fd) {\n  await disconnectMailbox(fd.get("ws"), fd.get("id"));\n}\n',
+      );
+      put(
+        "probe/more-actions.mjs",
+        '"use server";\nexport const wipe = async (fd) => {\n  await deleteEverything(fd.get("ws"));\n};\n',
+      );
+      put(
+        "probe/page.jsx",
+        'export default function Page() {\n  async function go() {\n    "use server";\n    await leak();\n  }\n  return <form action={go} />;\n}\n',
+      );
+      put(
+        "probe/guarded-actions.js",
+        '"use server";\nimport { requireOwner } from "@/server/session";\nexport async function fine() {\n  await requireOwner();\n}\n',
+      );
+      const files = sourceFiles(join(dir, "src"));
+
+      // C1: the JS actions are read, and the unguarded ones are reported.
+      const { exportedActions } = scanActions(files, app);
+      expect(exportedActions.filter((a) => !a.guarded).map((a) => a.id)).toEqual([
+        "src/app/probe/actions.js#evil",
+        "src/app/probe/more-actions.mjs#wipe",
+      ]);
+      expect(exportedActions.find((a) => a.id.endsWith("#fine"))?.guard).toBe("requireOwner");
+      // C1: an inline "use server" block in a .jsx page is read too.
+      const inline = files.flatMap((f) => {
+        const found: string[] = [];
+        walk(parse(f), (n) => {
+          if (isFnLike(n) && n.body && ts.isBlock(n.body) && startsWithUseServer(n.body.statements))
+            found.push(awaitsIn(n).map(calleeName).join(","));
+        });
+        return found;
+      });
+      expect(inline).toEqual(["leak"]);
+      // C3: a route.js is a route, so it needs a row in the table.
+      expect(routeFilesIn(files, app).map((f) => relative(dir, f).split(sep).join("/"))).toEqual([
+        "src/app/api/leak/route.js",
+      ]);
+      // And src/app's TypeScript-only rule names every one of them.
+      expect(jsFilesIn(files, app)).toHaveLength(5);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+/**
+ * C4 by the sinks (M11 review finding 4): every redirect target in src must be visibly one of
+ * our own paths. Reading a list of parameter names (below) can't see `redirect(fd.get("back"))`.
+ */
+const NAV_SINKS = new Set(["redirect", "permanentRedirect"]);
+/** A target that may be followed by anything: "/x…", never "//", "/\\" or "/" + whitespace. */
+const SAFE_PREFIX = /^\/[^/\\\s]/;
+const safeWhole = (text: string) => text === "/" || SAFE_PREFIX.test(text);
+const oneLine = (n: ts.Node) => n.getText().replace(/\s+/g, " ");
+/** The browser's own location object: `location`, `window.location`, `document.location`… */
+const LOCATION_OBJECT = /^(?:(?:window|document|globalThis|self)\.)?location$/;
+/** Location properties whose assignment navigates to another site. */
+const LOCATION_NAV_PROPS = new Set(["href", "host", "hostname", "protocol"]);
+
+/** A file read for C4, with TypeScript's name binding (see `bindFiles`). */
+type Bound = { sf: ts.SourceFile; checker: ts.TypeChecker };
+
+function skipOuter(e: ts.Expression): ts.Expression {
+  while (
+    ts.isParenthesizedExpression(e) ||
+    ts.isAsExpression(e) ||
+    ts.isSatisfiesExpression(e) ||
+    ts.isNonNullExpression(e) ||
+    ts.isTypeAssertionExpression(e) ||
+    ts.isAwaitExpression(e)
+  )
+    e = e.expression;
+  return e;
+}
+
+/** The function a name is declared as at the top of the file (`function f` / `const f = () =>`). */
+function topLevelFunction(
+  sf: ts.SourceFile,
+  name: string,
+): { fn: FnLike; exported: boolean } | null {
+  const exported = (n: ts.Node) =>
+    ts.canHaveModifiers(n) &&
+    (ts.getModifiers(n) ?? []).some((m) => m.kind === ts.SyntaxKind.ExportKeyword);
+  for (const st of sf.statements) {
+    if (ts.isFunctionDeclaration(st) && st.name?.text === name)
+      return { fn: st, exported: exported(st) };
+    if (ts.isVariableStatement(st))
+      for (const d of st.declarationList.declarations)
+        if (
+          ts.isIdentifier(d.name) &&
+          d.name.text === name &&
+          d.initializer &&
+          isFnLike(d.initializer)
+        )
+          return { fn: d.initializer, exported: exported(st) };
+  }
+  return null;
+}
+
+/** What a function can return: an arrow's expression body, else its `return x` statements. */
+function returnsOf(fn: FnLike): ts.Expression[] | null {
+  if (fn.body && !ts.isBlock(fn.body)) return [fn.body];
+  const out: ts.Expression[] = [];
+  let bare = false;
+  const visit = (n: ts.Node) => {
+    if (n !== fn && isFnLike(n)) return;
+    if (ts.isReturnStatement(n)) {
+      if (n.expression) out.push(n.expression);
+      else bare = true;
+    }
+    ts.forEachChild(n, visit);
+  };
+  if (fn.body) ts.forEachChild(fn.body, visit);
+  return bare || out.length === 0 ? null : out;
+}
+
+/** The symbol an identifier means, by TypeScript's scope rules (a shorthand `{ x }` means x). */
+function symbolOf(id: ts.Identifier, { checker }: Bound): ts.Symbol | undefined {
+  if (ts.isShorthandPropertyAssignment(id.parent) && id.parent.name === id)
+    return checker.getShorthandAssignmentValueSymbol(id.parent);
+  return checker.getSymbolAtLocation(id);
+}
+
+/**
+ * The one declaration an identifier binds to, by TypeScript's own scope rules (M11 review: a
+ * for-of / catch / hoisted `var` / inner function of the same name shadows an outer `const`).
+ * Null for an import, a global, or a name declared more than once (a redeclared `var`, an
+ * overload): none of those can be read as "visibly our own path".
+ */
+function declarationOf(id: ts.Identifier, b: Bound): ts.Declaration | null {
+  const sym = symbolOf(id, b);
+  if (!sym || sym.flags & ts.SymbolFlags.Alias) return null;
+  const decls = sym.declarations ?? [];
+  return decls.length === 1 ? decls[0]! : null;
+}
+
+/** True when `id` is written to: `x = …`, `x += …`, `[x] = …`, `({ x } = …)`, `for (x of …)`, `x++`. */
+function isWriteTarget(id: ts.Identifier): boolean {
+  let n: ts.Node = id;
+  for (;;) {
+    const p: ts.Node = n.parent;
+    if (
+      ts.isParenthesizedExpression(p) ||
+      ts.isArrayLiteralExpression(p) ||
+      ts.isObjectLiteralExpression(p) ||
+      ts.isSpreadElement(p) ||
+      ts.isSpreadAssignment(p) ||
+      ts.isShorthandPropertyAssignment(p) ||
+      (ts.isPropertyAssignment(p) && p.initializer === n) ||
+      ts.isNonNullExpression(p) ||
+      ts.isAsExpression(p) ||
+      ts.isSatisfiesExpression(p)
+    ) {
+      n = p;
+      continue;
+    }
+    if (
+      ts.isBinaryExpression(p) &&
+      p.left === n &&
+      p.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+      p.operatorToken.kind <= ts.SyntaxKind.LastAssignment
+    )
+      return true;
+    if ((ts.isForOfStatement(p) || ts.isForInStatement(p)) && p.initializer === n) return true;
+    if (
+      (ts.isPrefixUnaryExpression(p) || ts.isPostfixUnaryExpression(p)) &&
+      (p.operator === ts.SyntaxKind.PlusPlusToken || p.operator === ts.SyntaxKind.MinusMinusToken)
+    )
+      return true;
+    return false;
+  }
+}
+
+/** Every identifier in the file that means `sym`, other than the name in its declaration. */
+function usesOf(sym: ts.Symbol, b: Bound): ts.Identifier[] {
+  const names = new Set((sym.declarations ?? []).map((d) => ts.getNameOfDeclaration(d)));
+  const out: ts.Identifier[] = [];
+  walk(b.sf, (n) => {
+    if (ts.isIdentifier(n) && n.text === sym.name && !names.has(n) && symbolOf(n, b) === sym)
+      out.push(n);
+  });
+  return out;
+}
+
+/** Calls of a function by its symbol, and whether it is ever used any other way. */
+function callsOf(sym: ts.Symbol, b: Bound) {
+  const calls: ts.CallExpression[] = [];
+  let otherUse = false;
+  for (const n of usesOf(sym, b)) {
+    const p = n.parent;
+    if (ts.isCallExpression(p) && p.expression === n) calls.push(p);
+    else otherUse = true;
+  }
+  // `export { f }` / `export default f` hand it to callers we can't see.
+  walk(b.sf, (n) => {
+    if (
+      ts.isIdentifier(n) &&
+      n.text === sym.name &&
+      (ts.isExportSpecifier(n.parent) || ts.isExportAssignment(n.parent))
+    )
+      otherUse = true;
+  });
+  return { calls, otherUse };
+}
+
+/** The function an identifier names, if it is one we can read: a function declaration or a
+ * `const f = () => …`, never written to. */
+function functionNamed(id: ts.Identifier, b: Bound): { fn: FnLike; sym: ts.Symbol } | null {
+  const decl = declarationOf(id, b);
+  const sym = symbolOf(id, b);
+  if (!decl || !sym) return null;
+  if (ts.isFunctionDeclaration(decl))
+    return usesOf(sym, b).some(isWriteTarget) ? null : { fn: decl, sym };
+  if (
+    ts.isVariableDeclaration(decl) &&
+    (ts.getCombinedNodeFlags(decl) & ts.NodeFlags.Const) !== 0 &&
+    decl.initializer &&
+    isFnLike(skipOuter(decl.initializer))
+  )
+    return { fn: skipOuter(decl.initializer) as FnLike, sym };
+  return null;
+}
+
+/** True when `e` can only ever be one of our own paths (or appUrl of one). */
+function safeTarget(e: ts.Expression, b: Bound, seen = new Set<ts.Node>()): boolean {
+  const { sf } = b;
+  e = skipOuter(e);
+  if (seen.has(e)) return false;
+  seen = new Set([...seen, e]);
+  if (ts.isStringLiteral(e) || ts.isNoSubstitutionTemplateLiteral(e)) return safeWhole(e.text);
+  if (ts.isTemplateExpression(e)) return SAFE_PREFIX.test(e.head.text);
+  if (ts.isConditionalExpression(e))
+    return safeTarget(e.whenTrue, b, seen) && safeTarget(e.whenFalse, b, seen);
+  if (ts.isBinaryExpression(e)) {
+    const op = e.operatorToken.kind;
+    if (op === ts.SyntaxKind.QuestionQuestionToken || op === ts.SyntaxKind.BarBarToken)
+      return safeTarget(e.left, b, seen) && safeTarget(e.right, b, seen);
+    if (op === ts.SyntaxKind.PlusToken) {
+      let first: ts.Expression = e;
+      while (ts.isBinaryExpression(first) && first.operatorToken.kind === ts.SyntaxKind.PlusToken)
+        first = skipOuter(first.left);
+      return (
+        (ts.isStringLiteral(first) || ts.isNoSubstitutionTemplateLiteral(first)) &&
+        SAFE_PREFIX.test(first.text)
+      );
+    }
+    return false;
+  }
+  if (ts.isCallExpression(e) && ts.isIdentifier(e.expression)) {
+    const callee = e.expression;
+    // appUrl(path) = our own origin + path, so the path must start with "/". Only our own
+    // appUrl (imported from @/lib/app-url, or unbound in a fixture), never a local of that name.
+    if (callee.text === "appUrl") {
+      const sym = symbolOf(callee, b);
+      const decl = sym?.declarations?.[0];
+      const ours =
+        !sym ||
+        (!!decl &&
+          ts.isImportSpecifier(decl) &&
+          (decl.parent.parent.parent.moduleSpecifier as ts.StringLiteral).text === "@/lib/app-url");
+      return ours && (e.arguments.length === 0 || safeTarget(e.arguments[0]!, b, seen));
+    }
+    // A helper that resolves to a function we can read: every value it can return must be safe.
+    const local = functionNamed(callee, b);
+    const returns = local && returnsOf(local.fn);
+    return !!returns && returns.every((r) => safeTarget(r, b, seen));
+  }
+  if (ts.isIdentifier(e)) {
+    const decl = declarationOf(e, b);
+    if (!decl) return false;
+    // `const x = <safe>`. Never `let` / `var` (it could be written to later), and never a
+    // for-of / for-in / catch binding (no initializer: its value comes from elsewhere).
+    if (ts.isVariableDeclaration(decl))
+      return (
+        !!decl.initializer &&
+        (ts.getCombinedNodeFlags(decl) & ts.NodeFlags.Const) !== 0 &&
+        safeTarget(decl.initializer, b, seen)
+      );
+    // A parameter of a top-level helper in this file that nothing outside can call: every call
+    // passes a safe value, the helper is never passed around, and the parameter is never
+    // written to.
+    if (ts.isParameter(decl) && ts.isIdentifier(decl.name)) {
+      const fn = decl.parent;
+      if (!isFnLike(fn)) return false;
+      const nameNode =
+        ts.isFunctionDeclaration(fn) && fn.name
+          ? fn.name
+          : ts.isVariableDeclaration(fn.parent) && ts.isIdentifier(fn.parent.name)
+            ? fn.parent.name
+            : null;
+      const top = nameNode ? topLevelFunction(sf, nameNode.text) : null;
+      if (!nameNode || !top || top.fn !== fn || top.exported) return false;
+      const param = symbolOf(decl.name, b);
+      if (!param || usesOf(param, b).some(isWriteTarget)) return false;
+      const helper = functionNamed(nameNode, b);
+      if (!helper || helper.fn !== fn) return false;
+      const index = fn.parameters.indexOf(decl);
+      const { calls, otherUse } = callsOf(helper.sym, b);
+      return (
+        !otherUse &&
+        calls.length > 0 &&
+        calls.every((c) => !!c.arguments[index] && safeTarget(c.arguments[index]!, b, seen))
+      );
+    }
+    return false;
+  }
+  return false;
+}
+
+/** A property key as written: `location`, `"Location"`, `["location"]`; else null. */
+function keyText(name: ts.PropertyName): string | null {
+  if (ts.isIdentifier(name) || ts.isStringLiteralLike(name)) return name.text;
+  if (ts.isComputedPropertyName(name) && ts.isStringLiteralLike(skipOuter(name.expression)))
+    return (skipOuter(name.expression) as ts.StringLiteralLike).text;
+  return null;
+}
+
+/**
+ * True when an object or array literal is where headers are given: the value of a `headers:`
+ * property (also nested, as in `headers: [["location", x]]`) or an argument of `new Headers(…)`.
+ */
+function inHeaders(lit: ts.Node): boolean {
+  let n = lit;
+  while (
+    ts.isArrayLiteralExpression(n.parent) ||
+    ts.isParenthesizedExpression(n.parent) ||
+    ts.isAsExpression(n.parent) ||
+    ts.isSatisfiesExpression(n.parent)
+  )
+    n = n.parent;
+  const p = n.parent;
+  if (ts.isPropertyAssignment(p) && p.initializer === n)
+    return keyText(p.name)?.toLowerCase() === "headers";
+  return (
+    ts.isNewExpression(p) &&
+    ts.isIdentifier(p.expression) &&
+    p.expression.text === "Headers" &&
+    !!p.arguments?.some((a) => a === n)
+  );
+}
+
+/** True when `e` is a router from `useRouter()` (called inline, or kept in a const of any name). */
+function isRouter(e: ts.Expression, b: Bound): boolean {
+  e = skipOuter(e);
+  const fromUseRouter = (x: ts.Expression) => {
+    x = skipOuter(x);
+    return (
+      ts.isCallExpression(x) && ts.isIdentifier(x.expression) && x.expression.text === "useRouter"
+    );
+  };
+  if (fromUseRouter(e)) return true;
+  if (!ts.isIdentifier(e)) return false;
+  if (e.text === "router") return true;
+  const decl = declarationOf(e, b);
+  return (
+    !!decl &&
+    ts.isVariableDeclaration(decl) &&
+    !!decl.initializer &&
+    fromUseRouter(decl.initializer)
+  );
+}
+
+/** True when `e` is the browser's location object (not a local variable of that name). */
+function isLocationObject(e: ts.Expression, b: Bound): boolean {
+  e = skipOuter(e);
+  if (!LOCATION_OBJECT.test(e.getText().replace(/\s+/g, ""))) return false;
+  // A bare `location` that resolves to a declaration of ours is a variable, not the browser's.
+  return !(ts.isIdentifier(e) && declarationOf(e, b));
+}
+
+/**
+ * Every navigation in a file whose target isn't visibly our own path, as `sink(target)`.
+ * Server: redirect() / permanentRedirect() (also renamed on import), any `.redirect(…)` such as
+ * NextResponse.redirect / Response.redirect, Auth.js's `redirectTo` option, and a hand-set
+ * Location header (any case; an object key, a `[name, value]` pair, or headers.set/append).
+ * Client: router.push / router.replace on a `useRouter()` router, location.assign / replace,
+ * window.open, and assigning `location` or its href / host / hostname / protocol. A navigation
+ * function passed around as a value is reported too.
+ */
+function unsafeRedirects(b: Bound): string[] {
+  const { sf } = b;
+  const out: string[] = [];
+  const navNames = new Set(NAV_SINKS);
+  for (const st of sf.statements) {
+    if (!ts.isImportDeclaration(st) || !st.importClause?.namedBindings) continue;
+    const nb = st.importClause.namedBindings;
+    if (!ts.isNamedImports(nb)) continue;
+    for (const el of nb.elements)
+      if (NAV_SINKS.has((el.propertyName ?? el.name).text)) navNames.add(el.name.text);
+  }
+  const check = (sink: string, target: ts.Expression | undefined, at: ts.Node) => {
+    if (!target) out.push(`${sink}() with no target: ${oneLine(at)}`);
+    else if (!safeTarget(target, b)) out.push(`${sink}(${oneLine(target)})`);
+  };
+  /** A Location value: checked in a headers position; elsewhere a plain literal is just text. */
+  const checkLocation = (value: ts.Expression | undefined, lit: ts.Node, at: ts.Node) => {
+    const v = value && skipOuter(value);
+    if (v && !inHeaders(lit) && (ts.isStringLiteral(v) || ts.isNoSubstitutionTemplateLiteral(v)))
+      return; // e.g. site.ts's `location: "Massachusetts, United States"` (author's own text)
+    check("Location", value, at);
+  };
+  walk(sf, (n) => {
+    if (ts.isImportSpecifier(n) || ts.isImportClause(n)) return;
+    // redirect(x), permanentRedirect(x), go(x) after `import { redirect as go }`.
+    if (ts.isIdentifier(n) && navNames.has(n.text)) {
+      const p = n.parent;
+      if (ts.isImportSpecifier(p)) return;
+      if (ts.isPropertyAccessExpression(p) && p.name === n) return; // handled below
+      if (ts.isPropertyAssignment(p) && p.name === n) return; // { redirect: … } is a key
+      if (ts.isCallExpression(p) && p.expression === n) check(n.text, p.arguments[0], p);
+      else out.push(`${n.text} used as a value: ${oneLine(p)}`);
+      return;
+    }
+    // NextResponse.redirect(x), Response.redirect(x), nav.redirect(x), x["redirect"](y), and on
+    // the client router.push / router.replace, location.assign / location.replace, window.open.
+    const memberName = ts.isPropertyAccessExpression(n)
+      ? n.name.text
+      : ts.isElementAccessExpression(n) && ts.isStringLiteralLike(n.argumentExpression)
+        ? n.argumentExpression.text
+        : null;
+    if (memberName && (ts.isPropertyAccessExpression(n) || ts.isElementAccessExpression(n))) {
+      const recv = n.expression;
+      const member = NAV_SINKS.has(memberName)
+        ? memberName
+        : (memberName === "push" || memberName === "replace") && isRouter(recv, b)
+          ? memberName
+          : (memberName === "assign" || memberName === "replace") && isLocationObject(recv, b)
+            ? memberName
+            : memberName === "open" && skipOuter(recv).getText() === "window"
+              ? memberName
+              : null;
+      if (member) {
+        const p = n.parent;
+        const sink = `${skipOuter(recv).getText()}.${member}`;
+        if (ts.isCallExpression(p) && p.expression === n) check(sink, p.arguments[0], p);
+        else out.push(`${sink} used as a value: ${oneLine(p)}`);
+        return;
+      }
+    }
+    // window.location = x, location.href = x, document.location.host = x, …
+    if (
+      ts.isBinaryExpression(n) &&
+      n.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+      n.operatorToken.kind <= ts.SyntaxKind.LastAssignment
+    ) {
+      const left = skipOuter(n.left);
+      const navigates =
+        isLocationObject(left, b) ||
+        (ts.isPropertyAccessExpression(left) &&
+          LOCATION_NAV_PROPS.has(left.name.text) &&
+          isLocationObject(left.expression, b));
+      if (navigates) check(`${left.getText()} = `, n.right, n);
+    }
+    // Auth.js: signIn(…, { redirectTo }) / signOut({ redirectTo }).
+    if (ts.isPropertyAssignment(n) && n.name.getText().replace(/["'`]/g, "") === "redirectTo")
+      check("redirectTo", n.initializer, n);
+    if (ts.isShorthandPropertyAssignment(n) && n.name.text === "redirectTo")
+      check("redirectTo", n.name, n);
+    // A Location header set by hand, in any case: { location: x }, { "Location": x },
+    // { ["location"]: x }, { Location } (shorthand), [["location", x]], headers.set("location", x).
+    if (ts.isPropertyAssignment(n) && keyText(n.name)?.toLowerCase() === "location")
+      checkLocation(n.initializer, n.parent, n);
+    if (ts.isShorthandPropertyAssignment(n) && n.name.text.toLowerCase() === "location")
+      check("Location", n.name, n);
+    if (ts.isArrayLiteralExpression(n) && n.elements.length >= 2) {
+      const first = skipOuter(n.elements[0]!);
+      if (ts.isStringLiteralLike(first) && first.text.toLowerCase() === "location")
+        checkLocation(n.elements[1], n, n);
+    }
+    if (
+      ts.isCallExpression(n) &&
+      ts.isPropertyAccessExpression(n.expression) &&
+      ["set", "append"].includes(n.expression.name.text) &&
+      n.arguments[0] &&
+      ts.isStringLiteralLike(n.arguments[0]) &&
+      n.arguments[0].text.toLowerCase() === "location"
+    )
+      check("Location", n.arguments[1], n);
+  });
+  return out;
+}
+
+/** All of src bound together once (about two seconds), for the C4 scan. */
+let SRC_BOUND: { program: ts.Program; checker: ts.TypeChecker } | null = null;
+function boundSource(file: string): Bound {
+  SRC_BOUND ??= bindFiles(new Map(ALL.map((f) => [f, readFileSync(f, "utf8")])));
+  return { sf: SRC_BOUND.program.getSourceFile(file)!, checker: SRC_BOUND.checker };
+}
+/** A fixture bound on its own, as a file in src would be. */
+function boundFixture(code: string, name = "x.ts"): Bound {
+  const file = join(ROOT, "__c4_fixture__", name);
+  const { program, checker } = bindFiles(new Map([[file, code]]));
+  return { sf: program.getSourceFile(file)!, checker };
+}
+
 describe("C4: no open redirects", () => {
+  /**
+   * The only redirects whose target isn't visibly one of our paths, each reviewed. A new one,
+   * or one of these changing shape, fails until it is reviewed here.
+   */
+  const REVIEWED_REDIRECTS: [string, string][] = [
+    [
+      "src/app/(app)/billing/actions.ts: redirect(url)",
+      "Stripe Checkout: the URL createCheckout() got from Stripe, never from the form",
+    ],
+    [
+      "src/app/(app)/billing/actions.ts: redirect(url)",
+      "Stripe Billing Portal: the URL createPortal() got from Stripe, never from the form",
+    ],
+    [
+      "src/app/(app)/connect/actions.ts: redirect(createGmailConnector().authorizationUrl({ state, redirectUri: appUrl(gmailRedirectPath), loginHint: session?.user?.email ?? undefined, }))",
+      "Google's consent screen, built by our connector with our own callback URL",
+    ],
+    [
+      'src/app/(app)/settings/profile-actions.ts: redirect(returnTo.catch("/settings?done=profile").parse(raw.returnTo))',
+      "a z.enum of two fixed paths (pinned by the returnTo test below)",
+    ],
+  ];
+
+  it("every redirect target is one of our own paths, or a reviewed exception", () => {
+    const found = ALL.flatMap((f) => unsafeRedirects(boundSource(f)).map((r) => `${rel(f)}: ${r}`));
+    expect(found.sort()).toEqual(REVIEWED_REDIRECTS.map(([site]) => site).sort());
+    // The two billing targets really are Stripe's own URLs.
+    const billing = readFileSync("src/app/(app)/billing/actions.ts", "utf8");
+    expect(billing).toContain("url = await createCheckout(workspace, plan);");
+    expect(billing).toContain("url = await createPortal(workspace);");
+    expect(billing.match(/\burl = /g)).toHaveLength(2);
+  });
+
+  it("the scan sees the redirects that are there (it isn't silently empty)", () => {
+    let sinks = 0;
+    for (const f of ALL)
+      walk(parse(f), (n) => {
+        if (
+          ts.isCallExpression(n) &&
+          (ts.isIdentifier(n.expression) || ts.isPropertyAccessExpression(n.expression)) &&
+          NAV_SINKS.has(ts.isIdentifier(n.expression) ? n.expression.text : n.expression.name.text)
+        )
+          sinks++;
+      });
+    expect(sinks).toBeGreaterThanOrEqual(100);
+  });
+
+  it("the redirect scan catches targets the old name list missed, and passes our own paths (self-test)", () => {
+    const bad = [
+      // Read from the form or the query under names the old list didn't have.
+      'import { redirect } from "next/navigation";\nexport async function goBack(fd: FormData) {\n  await requireOwner();\n  redirect(String(fd.get("back")));\n}',
+      'import { redirect } from "next/navigation";\nexport async function a(fd: FormData) { redirect(fd.get("to") as string); }',
+      'import { redirect } from "next/navigation";\nexport default async function P(props) { const sp = await props.searchParams; redirect(sp.url); }',
+      'import { redirect } from "next/navigation";\nexport default async function P(props) { const { dest } = await props.searchParams; redirect(dest); }',
+      'import { redirect } from "next/navigation";\nexport async function a(fd: FormData) { const x = fd.get("x") as string; redirect(x); }',
+      'import { redirect } from "next/navigation";\nexport async function a(fd: FormData) { let x = "/queue"; x = String(fd.get("x")); redirect(x); }',
+      // Route handlers: query, headers and route params.
+      'import { NextResponse } from "next/server";\nexport function GET(req) { return NextResponse.redirect(new URL(req.nextUrl.searchParams.get("u")!, req.url)); }',
+      'export function GET(req: Request) { return Response.redirect(req.headers.get("referer")!); }',
+      'import { permanentRedirect } from "next/navigation";\nexport default async function P({ params }) { permanentRedirect(`/${(await params).slug}`); }',
+      // A leading "/" that isn't a path of ours.
+      'import { redirect } from "next/navigation";\nexport async function a(fd: FormData) { redirect("/" + fd.get("to")); }',
+      'import { redirect } from "next/navigation";\nexport async function a(host: string) { redirect(`//${host}`); }',
+      'import { redirect } from "next/navigation";\nexport async function a() { redirect("//evil.example"); }',
+      'import { redirect } from "next/navigation";\nexport async function a() { redirect("/\\\\evil.example"); }',
+      'import { redirect } from "next/navigation";\nexport async function a(fd: FormData) { redirect(fd.get("ok") ? "/queue" : String(fd.get("to"))); }',
+      // Renamed, passed around, or hidden behind a helper.
+      'import { redirect as go } from "next/navigation";\nexport async function a(fd: FormData) { go(String(fd.get("x"))); }',
+      'import { redirect } from "next/navigation";\nconst r = redirect;\nexport async function a(fd: FormData) { r(String(fd.get("x"))); }',
+      'import * as nav from "next/navigation";\nexport async function a(fd: FormData) { nav.redirect(String(fd.get("x"))); }',
+      'import { redirect } from "next/navigation";\nfunction to(p: string) { redirect(p); }\nexport async function a(fd: FormData) { to("/queue"); to(String(fd.get("x"))); }',
+      'import { redirect } from "next/navigation";\nexport function to(p: string) { redirect(p); }',
+      'import { redirect } from "next/navigation";\nconst pick = (fd: FormData) => String(fd.get("x"));\nexport async function a(fd: FormData) { redirect(pick(fd)); }',
+      'import { NextResponse } from "next/server";\nexport function GET(req) { return NextResponse.redirect(appUrl(req.nextUrl.searchParams.get("p"))); }',
+      'import { NextResponse } from "next/server";\nexport function GET() { return NextResponse.redirect(appUrl("@evil.example")); }',
+      // Auth.js's own redirect option and a Location header set by hand.
+      'export async function a(fd: FormData) { await signIn("google", { redirectTo: String(fd.get("cb")) }); }',
+      'export function GET(req: Request) { return new Response(null, { status: 302, headers: { Location: req.headers.get("x")! } }); }',
+      'export function GET(req: Request) { const h = new Headers(); h.set("location", new URL(req.url).searchParams.get("u")!); return new Response(null, { status: 302, headers: h }); }',
+      // …in any case and any shape (M11 review: header names are case-insensitive).
+      'export function GET(req: Request) { return new Response(null, { status: 302, headers: { location: req.headers.get("x")! } }); }',
+      'export function GET(req: Request) { const Location = req.headers.get("x")!; return new Response(null, { status: 302, headers: { Location } }); }',
+      'export function GET(req: Request) { return new Response(null, { status: 302, headers: { ["location"]: req.headers.get("x")! } }); }',
+      'export function GET(req: Request) { return new Response(null, { status: 302, headers: [["location", req.headers.get("x")!]] }); }',
+      'export function GET(req: Request) { return new Response(null, { status: 302, headers: new Headers([["Location", req.headers.get("x")!]]) }); }',
+      'export function GET(req: Request) { return new Response(null, { status: 302, headers: new Headers({ location: req.headers.get("x")! }) }); }',
+      'export function GET(req: Request) { const h = { location: new URL(req.url).searchParams.get("u")! }; return new Response(null, { status: 302, headers: h }); }',
+      'export function GET() { return new Response(null, { status: 302, headers: { location: "https://evil.example" } }); }',
+      // A same-named outer const must not lend its "safe" verdict to a shadowing binding.
+      'import { redirect } from "next/navigation";\nconst to = "/queue";\nexport async function a(fd: FormData) { for (const to of [String(fd.get("x"))]) redirect(to); }',
+      'import { redirect } from "next/navigation";\nconst to = "/queue";\nexport async function a(fd: FormData) { try { throw String(fd.get("x")); } catch (to) { redirect(to as string); } }',
+      'import { redirect } from "next/navigation";\nconst to = "/queue";\nexport async function a(fd: FormData) { if (fd) { var to = String(fd.get("x")); } redirect(to); }',
+      'import { redirect } from "next/navigation";\nconst back = () => "/queue";\nexport async function a(fd: FormData) { { const back = () => String(fd.get("x")); redirect(back()); } }',
+      'import { redirect } from "next/navigation";\nfunction to(p: string) { [p] = [String(globalThis.x)]; redirect(p); }\nexport async function a() { to("/queue"); }',
+      'import { redirect } from "next/navigation";\nconst appUrl = (p: string) => "https://evil.example" + p;\nexport async function a() { redirect(appUrl("/queue")); }',
+      // Client navigation fed by the query.
+      'import { useRouter, useSearchParams } from "next/navigation";\nexport function C() { const r = useRouter(); const sp = useSearchParams(); return () => r.push(sp.get("back")!); }',
+      'import { useRouter, useSearchParams } from "next/navigation";\nexport function C() { const router = useRouter(); const sp = useSearchParams(); return () => router.replace(sp.get("to")!); }',
+      'export function go() { window.location.href = new URLSearchParams(location.search).get("back")!; }',
+      'export function go() { window.location = new URLSearchParams(location.search).get("back")!; }',
+      'export function go() { location.assign(new URLSearchParams(location.search).get("url")!); }',
+      'export function go() { window.location.replace(new URLSearchParams(location.search).get("url")!); }',
+      'export function go() { document.location.host = new URLSearchParams(location.search).get("h")!; }',
+      'export function go() { window.open(new URLSearchParams(location.search).get("url")!); }',
+    ];
+    for (const code of bad)
+      expect(unsafeRedirects(boundFixture(code)).length, code).toBeGreaterThan(0);
+
+    const ok = [
+      'import { redirect } from "next/navigation";\nexport async function a() { redirect("/queue?error=unknown"); }',
+      'import { redirect } from "next/navigation";\nexport async function a() { redirect("/"); }',
+      'import { redirect } from "next/navigation";\nexport async function a(id: string) { redirect(`/queue?sent=${id}`); }',
+      'import { redirect } from "next/navigation";\nexport async function a(ok: boolean, w: string) { redirect(ok ? `/money?done=${w}` : "/money?error=unknown"); }',
+      'import { redirect } from "next/navigation";\nconst back = (q: string) => `/settings?${q}#texts`;\nexport async function a(q: string) { redirect(back(q)); }',
+      'import { redirect } from "next/navigation";\nexport async function a() { const to = "/queue"; redirect(to); }',
+      'import { NextResponse } from "next/server";\nfunction to(path: string) { return NextResponse.redirect(appUrl(path), { status: 303 }); }\nexport async function GET(ok: boolean) { if (ok) return to("/"); return to(ok ? "/settings?done=connected" : "/welcome/profile"); }',
+      'export async function a() { await signOut({ redirectTo: "/goodbye" }); }',
+      'export const site = { location: "Massachusetts, United States" };',
+      // Scope-aware, not just strict: an outer const or helper is still seen as ours.
+      'import { redirect } from "next/navigation";\nconst to = "/queue";\nexport async function a(xs: string[]) { for (const x of xs) redirect(to); }',
+      'import { redirect } from "next/navigation";\nconst back = () => "/queue";\nexport async function a() { { redirect(back()); } }',
+      'import { NextResponse } from "next/server";\nimport { appUrl } from "@/lib/app-url";\nexport function GET() { return NextResponse.redirect(appUrl("/settings?done=connected")); }',
+      'export function GET() { return new Response(null, { status: 303, headers: { location: "/queue" } }); }',
+      // Client: the offline queue's own-path push, and look-alikes that don't navigate.
+      'import { useRouter } from "next/navigation";\nexport function C(qs: string) { const router = useRouter(); return () => router.push(`/queue?${qs}`); }',
+      'export function f(s: string, list: string[]) { list.push(s); return s.replace("a", "b"); }',
+      'export function f(s: string) { let location = "x"; location = s; return location.replace("a", "b"); }',
+    ];
+    for (const code of ok) expect(unsafeRedirects(boundFixture(code)), code).toEqual([]);
+  });
+
   const PARAM = "(callbackUrl|next|returnTo|return_to|redirect|redirectTo|redirect_to)";
   const READS = [
     new RegExp(`\\.get\\(\\s*["'\`]${PARAM}["'\`]\\s*\\)`),

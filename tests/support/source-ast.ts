@@ -12,22 +12,74 @@ export const SRC = join(ROOT, "src");
 /** Repo-relative path with forward slashes ("src/app/(app)/queue/actions.ts"). */
 export const rel = (file: string) => relative(ROOT, file).split(sep).join("/");
 
-/** Every .ts / .tsx file under `dir` (default src/), as absolute paths. */
+/**
+ * Every file a build could run: TypeScript and JavaScript alike. tsconfig has `allowJs` and Next
+ * serves route.js / page.jsx / a "use server" .js file by default, so a scan that read only
+ * .ts / .tsx could be skipped by writing the file in JS (M11 review finding 3).
+ */
+export const SOURCE_FILE = /\.(ts|tsx|mts|cts|js|jsx|mjs|cjs)$/;
+const DECLARATION_FILE = /\.d\.[mc]?ts$/;
+
+/** Every source file (see SOURCE_FILE) under `dir` (default src/), as absolute paths. */
 export function sourceFiles(dir: string = SRC): string[] {
   return (readdirSync(dir, { recursive: true, withFileTypes: true }) as import("node:fs").Dirent[])
-    .filter((d) => d.isFile() && /\.(ts|tsx)$/.test(d.name) && !d.name.endsWith(".d.ts"))
+    .filter((d) => d.isFile() && SOURCE_FILE.test(d.name) && !DECLARATION_FILE.test(d.name))
     .map((d) => join(d.parentPath, d.name))
     .sort();
 }
 
+/** How TypeScript should read a file, by its extension (JS files may hold JSX too). */
+export function scriptKind(file: string): ts.ScriptKind {
+  if (file.endsWith(".tsx")) return ts.ScriptKind.TSX;
+  if (file.endsWith(".jsx")) return ts.ScriptKind.JSX;
+  if (/\.[mc]?js$/.test(file)) return ts.ScriptKind.JS;
+  return ts.ScriptKind.TS;
+}
+
+/** A syntax tree from text, for the self-tests' fixtures; the name picks TS or JS. */
+export function parseText(file: string, code: string): ts.SourceFile {
+  return ts.createSourceFile(file, code, ts.ScriptTarget.Latest, true, scriptKind(file));
+}
+
 export function parse(file: string): ts.SourceFile {
-  return ts.createSourceFile(
-    file,
-    readFileSync(file, "utf8"),
-    ts.ScriptTarget.Latest,
-    true,
-    file.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
-  );
+  return parseText(file, readFileSync(file, "utf8"));
+}
+
+/**
+ * Files (absolute path → text) read as one program, for TypeScript's own scope rules: which
+ * declaration an identifier really means (`checker.getSymbolAtLocation`), so a check can't be
+ * fooled by a same-named outer `const`. No lib and no module resolution: names are bound, not
+ * type-checked, which keeps it cheap enough for the whole of src.
+ */
+export function bindFiles(files: Map<string, string>): {
+  program: ts.Program;
+  checker: ts.TypeChecker;
+} {
+  const options: ts.CompilerOptions = {
+    allowJs: true,
+    noLib: true,
+    noResolve: true,
+    noEmit: true,
+    types: [],
+    jsx: ts.JsxEmit.Preserve,
+    target: ts.ScriptTarget.Latest,
+  };
+  const host: ts.CompilerHost = {
+    getSourceFile: (name) => {
+      const text = files.get(name);
+      return text === undefined ? undefined : parseText(name, text);
+    },
+    getDefaultLibFileName: () => join(ROOT, "__no_lib__.d.ts"),
+    writeFile: () => {},
+    getCurrentDirectory: () => ROOT,
+    getCanonicalFileName: (f) => f,
+    useCaseSensitiveFileNames: () => true,
+    getNewLine: () => "\n",
+    fileExists: (f) => files.has(f),
+    readFile: (f) => files.get(f),
+  };
+  const program = ts.createProgram([...files.keys()], options, host);
+  return { program, checker: program.getTypeChecker() };
 }
 
 export type FnLike =

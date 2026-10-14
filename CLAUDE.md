@@ -798,8 +798,24 @@ default, CI too) and refuses a non-local `DATABASE_URL` or an `APP_URL` that isn
 - **M11 security audit (S4, 2026-10-13):** static tests guard the surface —
   `tests/unit/security-surface.test.ts` (C1 every server action awaits `requireOwner` /
   `requireAdmin` first, reviewed public/inline allow-lists; C2 admin pages + no `loading.tsx` over
-  must-404 screens; C3 every route handler in a table with its guard, a new route fails; C4 no
-  redirect-target query param read, by property access or destructuring) and
+  must-404 screens; C3 every route handler in a table with its guard, a new route fails, and no
+  `src/pages`, root `app/` or root `pages/` may exist (the table covers src/app only); C4 every
+  navigation sink — server: `redirect` / `permanentRedirect` (also renamed), any `.redirect(…)`,
+  Auth.js `redirectTo`, a Location header in any case (object key, string / computed key,
+  shorthand, `[name, value]` pair, `new Headers(…)`, `.set` / `.append`; outside a `headers:`
+  value or `new Headers(…)` a plain string literal is let through, e.g. site.ts's place name);
+  client: `push` / `replace` on a `useRouter()` router (or one named `router`),
+  `location.assign` / `.replace`, `window.open`, and assigning `location` / `window.location` /
+  `document.location` or their `href` / `host` / `hostname` / `protocol` — takes a visible own
+  path (`"/x…"`, a template or concat starting `/x`, our imported `appUrl` of one, a `const` /
+  helper / non-exported top-level helper parameter whose every call passes one and that is never
+  written to), else it must be in the reviewed list (Stripe URLs, Google consent, the profile
+  `returnTo` enum); names are resolved with TypeScript's binder (`bindFiles` in
+  `tests/support/source-ast.ts`), so a for-of / catch / hoisted `var` / inner helper of the same
+  name can't borrow an outer const's verdict; plus the old redirect-target param-name check). Not
+  covered: link `href`s and a computed key held in a variable. The scans read
+  .js/.jsx/.mjs/.cjs as well as TS (`allowJs`; Next serves JS routes), and src/app must hold no JS
+  file (M11 review findings 3–4). Also
   `tests/unit/no-content-logs.test.ts` (C11). Fixes: the send API answers 403 for an
   unparseable Origin (was a 500); `sendPush` re-checks the push-endpoint allow-list
   (`src/lib/push-endpoint.ts`) and never fetches anything else (returns `gone`); HSTS
