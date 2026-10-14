@@ -9,15 +9,17 @@ import {
   appSettings,
   drafts,
   mailboxes,
+  rules,
   threads,
   workspaces,
   type Workspace,
 } from "@/db/schema";
 import { describeActivity } from "@/server/activity";
+import { accountLockReason, considerAutopilot } from "@/server/autopilot";
 import { ensureUserAndWorkspace } from "@/server/accounts";
 import { setStripeForTests, stripeMode } from "@/server/billing";
 import { checkoutTerms, stripeKeyMode } from "@/server/billing-rules";
-import { canSend, sendingBlockedReason } from "@/server/lifecycle";
+import { canSend, jobsAllowed, resumeTarget, sendingBlockedReason } from "@/server/lifecycle";
 import {
   checkTestPayments,
   lastTestPaymentsResult,
@@ -32,6 +34,7 @@ import {
   testPaymentsLine,
   testPaymentsResetNotice,
 } from "@/server/test-payment-rules";
+import { applyAdminMove } from "@/server/workspace-lifecycle";
 import { createTestDb } from "../support/db";
 
 /**
@@ -267,7 +270,9 @@ describe("resetting", () => {
         status, // kept (the 2026-10-10 precedent)
         plan: "crew", // kept: the next checkout sets it
         setupPaidVia: null,
-        setupPaidAt: null,
+        // Kept, like the precedent's hand-marked accounts: Resume reads it, nothing reads it as
+        // "paid", and a real payment records its own date.
+        setupPaidAt: PAID_AT,
         stripeCustomerId: null,
         stripeSubscriptionId: null,
       });
@@ -287,16 +292,39 @@ describe("resetting", () => {
       });
       expect(Object.values(log!.detail).every((v) => typeof v === "boolean")).toBe(true);
       expect(describeActivity(log!.action, log!.detail, null)).toBe(
-        "Your test payment was cleared — choose a plan to switch sending on",
+        "Your test payment was cleared — the setup fee is still due",
       );
     }
+  });
+
+  it("a paused test-paid account resumes to where it was, still unable to send", async () => {
+    const paused = await testPaid("paused");
+    const pausedCallDone = await testPaid("paused", { setupCallCompletedAt: PAID_AT });
+    // The same account, not paused, keeps setup_paid: Resume must bring the paused one there too.
+    const notPaused = await testPaid("setup_paid");
+    expect(await resetTestPayments(NOW)).toEqual({ reset: 3, unchecked: 0 });
+
+    expect((await row(paused)).status).toBe("paused");
+    expect(resumeTarget(await row(paused), NOW)).toBe((await row(notPaused)).status);
+    expect(await applyAdminMove(paused, "resume", NOW)).toBe("setup_paid");
+    expect(await applyAdminMove(pausedCallDone, "resume", NOW)).toBe("active");
+    for (const id of [paused, pausedCallDone]) {
+      const w = await row(id);
+      expect(jobsAllowed(w, NOW)).toBe(true); // not read-only
+      expect(canSend(w, NOW)).toBe(false); // still has to pay for real
+      expect(checkoutTerms(w, NOW)).toEqual({ allowed: true, includeSetupFee: true });
+    }
+    // While paused, checkout is refused, so Activity never says "choose a plan".
+    const [log] = await resetRows(paused);
+    expect(describeActivity(log!.action, log!.detail, null)).not.toMatch(/choose a plan/i);
   });
 
   it("a setup paid through Stripe with no ids at all was a test payment (a live one leaves a customer)", async () => {
     const id = await testPaid("setup_paid", { stripeCustomerId: null, stripeSubscriptionId: null });
     expect(await resetTestPayments(NOW)).toEqual({ reset: 1, unchecked: 0 });
     expect(calls).toEqual([]); // nothing to ask Stripe about
-    expect(await row(id)).toMatchObject({ setupPaidVia: null, setupPaidAt: null });
+    expect(await row(id)).toMatchObject({ setupPaidVia: null, setupPaidAt: PAID_AT });
+    expect(canSend(await row(id), NOW)).toBe(false);
   });
 
   it("a live customer is left alone (and a deleted live customer is still live)", async () => {
@@ -504,11 +532,26 @@ describe("resetting", () => {
     };
     const mine = await countdown(id);
     const theirs = await countdown(other);
+    await database
+      .insert(rules)
+      .values({ workspaceId: id, category: "scheduling", mode: "autopilot", updatedAt: NOW });
     await resetTestPayments(NOW);
     const at = async (draftId: string) =>
       (await database.select().from(drafts).where(eq(drafts.id, draftId)))[0]!.autoSendAt;
     expect(await at(mine)).toBeNull();
     expect(await at(theirs)).not.toBeNull(); // other accounts keep theirs
+
+    // And no new countdown starts on the next draft: autopilot needs a real payment too
+    // (otherwise it would count down to a send the gate refuses, again and again).
+    expect(accountLockReason(await row(id), NOW)).toBe(
+      "Autopilot opens up once your setup payment goes through.",
+    );
+    expect(await considerAutopilot(mine, NOW)).toBeNull();
+    expect(await at(mine)).toBeNull();
+    // The owner's switch is kept for when they pay.
+    expect((await database.select().from(rules).where(eq(rules.workspaceId, id)))[0]!.mode).toBe(
+      "autopilot",
+    );
   });
 });
 

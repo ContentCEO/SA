@@ -48,10 +48,15 @@ const cleanDraft = (over: Partial<ModelDraft> = {}): ModelDraft => ({
 });
 
 describe("account lock (layer 1)", () => {
-  const w = (plan: Workspace["plan"], status: Workspace["status"]) => ({
+  const w = (
+    plan: Workspace["plan"],
+    status: Workspace["status"],
+    setupPaidVia: Workspace["setupPaidVia"] = "stripe",
+  ) => ({
     plan,
     status,
     evaluationEndsAt: null,
+    setupPaidVia,
   });
   it("needs Crew or Company AND a finished setup", () => {
     expect(accountLockReason(w(null, "active"))).toMatch(/Crew and Company/);
@@ -61,6 +66,14 @@ describe("account lock (layer 1)", () => {
     expect(accountLockReason(w("crew", "paused"))).toMatch(/setup call/);
     expect(accountLockReason(w("crew", "active"))).toBeNull();
     expect(accountLockReason(w("company", "active"))).toBeNull();
+    expect(accountLockReason(w("crew", "active", "house"))).toBeNull();
+  });
+
+  it("GUARDRAIL: needs a real setup payment too (hand-marked or reset after a test card)", () => {
+    expect(accountLockReason(w("crew", "active", null))).toBe(
+      "Autopilot opens up once your setup payment goes through.",
+    );
+    expect(accountLockReason(w("company", "active", null))).toMatch(/setup payment/);
   });
 });
 
@@ -363,11 +376,32 @@ describe("in the database", () => {
     it("asks Gmail about other drafts only when sending is allowed (no Google call when blocked)", async () => {
       const draftId = await drafted(await conversation());
       await considerAutopilot(draftId, NOW);
-      // Marked active by hand before real payment: sending is blocked.
+      // Marked active by hand before real payment: sending is blocked, so it stands down (it
+      // used to reach sendDraft and throw, and the backstop retried it forever).
       await database.update(workspaces).set({ setupPaidVia: null });
       writer.calls = [];
-      await expect(runAutopilotSend(draftId, deps(later(GRACE_MINUTES)))).rejects.toThrow();
+      expect(await runAutopilotSend(draftId, deps(later(GRACE_MINUTES)))).toEqual({
+        status: "stood_down",
+        reasons: ["Autopilot opens up once your setup payment goes through."],
+      });
       expect(writer.calls).toEqual([]);
+      const [d] = await database.select().from(drafts).where(eq(drafts.id, draftId));
+      expect(d!.autoSendAt).toBeNull();
+      expect(d!.status).toBe("pending");
+      expect(await overdueAutopilotDrafts(later(60))).not.toContain(draftId);
+    });
+
+    it("GUARDRAIL: an active account without a real setup payment never starts a countdown", async () => {
+      // What "Reset test payments" leaves: active, Crew, autopilot still switched on.
+      await database.update(workspaces).set({ setupPaidVia: null });
+      const draftId = await drafted(await conversation());
+      expect(await considerAutopilot(draftId, NOW)).toBeNull();
+      const [d] = await database.select().from(drafts).where(eq(drafts.id, draftId));
+      expect(d!.autoSendAt).toBeNull();
+      // Its settings stay as they were, and come back once a real payment lands.
+      expect((await database.select().from(rules))[0]!.mode).toBe("autopilot");
+      await database.update(workspaces).set({ setupPaidVia: "stripe" });
+      expect(await considerAutopilot(draftId, NOW)).toEqual(later(GRACE_MINUTES));
     });
 
     it("GUARDRAIL: waits while a stored draft after the customer's email isn't checked with Gmail", async () => {

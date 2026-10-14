@@ -105,7 +105,12 @@ test("marked paid without a real payment: sending stays off and it says how to f
   context,
 }) => {
   const owner = await seedOwner({ mailbox: true, backfilled: true });
-  await setWorkspace(owner.workspaceId, { status: "active", setupPaidAt: new Date() });
+  // Also what "Reset test payments" leaves: status and plan kept, no real payment, no Stripe ids.
+  await setWorkspace(owner.workspaceId, {
+    status: "active",
+    plan: "crew",
+    setupPaidAt: new Date(),
+  });
   await signInAs(context, owner);
   await page.goto("/queue");
   const banner = page
@@ -115,4 +120,13 @@ test("marked paid without a real payment: sending stays off and it says how to f
     "href",
     "/billing",
   );
+  // The page the banner sends them to says the same, never "Setup's paid" or "renews monthly".
+  await banner.getByRole("link", { name: "Choose a plan" }).click();
+  await expect(page).toHaveURL(/\/billing$/);
+  const current = page.getByRole("region", { name: /Crew · \$199/ });
+  await expect(current).toContainText("Sending turns on once your setup payment goes through.");
+  await expect(current).not.toContainText(/renews monthly|Setup.s paid/);
+  // No Stripe customer, so no Manage billing and no sentence about Stripe's page.
+  await expect(page.getByRole("button", { name: "Manage billing" })).toHaveCount(0);
+  await expect(page.getByText(/Stripe.s secure page/)).toHaveCount(0);
 });

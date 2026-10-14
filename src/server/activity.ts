@@ -177,9 +177,9 @@ export function describeActivity(
       return "A referral credit was added to your account";
     case "test_payment_reset":
       // Only worth saying when it turned sending off; clearing old test ids alone changes nothing
-      // the owner can see.
+      // the owner can see. No "choose a plan": a paused account can't (checkoutTerms).
       return detail.setupPaymentCleared
-        ? "Your test payment was cleared — choose a plan to switch sending on"
+        ? "Your test payment was cleared — the setup fee is still due"
         : null;
     case "evaluation_started":
       return "Your three days started";

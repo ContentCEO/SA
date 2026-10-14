@@ -19,12 +19,14 @@ import {
   setStripeForTests,
 } from "@/server/billing";
 import {
+  billingStatusLine,
   checkoutTerms,
   planFromLookupKey,
   planLookupKey,
   SALES_TAX_LINES,
   SALES_TAX_NOTE,
   SALES_TAX_ON_NOTE,
+  SETUP_NOT_PAID_LINE,
   setupLookupKey,
   statusAfterCheckout,
   statusAfterSubscription,
@@ -67,6 +69,28 @@ describe("billing rules", () => {
     expect(checkoutTerms(w("setup_paid", { setupPaidAt: NOW }), NOW).includeSetupFee).toBe(true);
     expect(checkoutTerms(w("active", { stripeSubscriptionId: "sub_1" }), NOW).allowed).toBe(false);
     expect(checkoutTerms(w("paused"), NOW).allowed).toBe(false);
+  });
+
+  it("/billing never tells an account that hasn't really paid that setup's paid or it renews", () => {
+    // Hand-marked before 2026-10-10, or reset after a test card: status kept, no real payment.
+    for (const s of ["setup_paid", "active"] as S[]) {
+      expect(billingStatusLine(w(s, { setupPaidAt: NOW }), NOW)).toBe(SETUP_NOT_PAID_LINE);
+      expect(SETUP_NOT_PAID_LINE).toBe("Sending turns on once your setup payment goes through.");
+    }
+    expect(billingStatusLine(w("setup_paid", { setupPaidVia: "stripe" }), NOW)).toMatch(
+      /^Setup's paid and sending is on/,
+    );
+    expect(billingStatusLine(w("active", { setupPaidVia: "house" }), NOW)).toBe(
+      "All set. Your plan renews monthly.",
+    );
+    expect(billingStatusLine(w("past_due"), NOW)).toMatch(/payment didn't go through/);
+    expect(billingStatusLine(w("evaluating"), NOW)).toBeNull();
+    // The page uses the rule, and only mentions Stripe's page next to Manage billing.
+    const page = readFileSync("src/app/(app)/billing/page.tsx", "utf8");
+    expect(page).toContain("const statusLine = billingStatusLine(workspace);");
+    const portal = page.slice(page.indexOf("{workspace.stripeCustomerId ? ("));
+    expect(portal.indexOf("Stripe&apos;s secure")).toBeGreaterThan(-1);
+    expect(portal.indexOf("Stripe&apos;s secure")).toBeLessThan(portal.indexOf(") : null}"));
   });
 
   it("paying turns sending on, and keeps a finished setup active", () => {
@@ -466,6 +490,20 @@ describe("sales tax (Stripe Tax, Davi 2026-10-14)", () => {
 });
 
 describe("webhook-driven status", () => {
+  it("a real setup payment records its own date, not a hand-marked or test-card one", async () => {
+    const OLD = new Date("2026-10-01T09:00:00Z");
+    // Hand-marked before 2026-10-10, or reset after a test card: a date, but nothing paid.
+    await database
+      .update(workspaces)
+      .set({ status: "setup_paid", setupPaidAt: OLD, setupPaidVia: null })
+      .where(eq(workspaces.id, workspace.id));
+    await applyCheckoutCompleted(paidSession(), NOW);
+    expect((await reload()).setupPaidAt?.toISOString()).toBe(NOW.toISOString());
+    // A second webhook for an already real payment keeps the first date.
+    await applyCheckoutCompleted(paidSession({ id: "cs_2" }), new Date(NOW.getTime() + 60_000));
+    expect((await reload()).setupPaidAt?.toISOString()).toBe(NOW.toISOString());
+  });
+
   it("a paid checkout turns sending on and records the plan and setup fee", async () => {
     expect(await applyCheckoutCompleted(paidSession(), NOW)).toBe("applied");
     const after = await reload();
@@ -551,6 +589,56 @@ describe("webhook endpoint", () => {
     });
     await expect(handleStripeWebhook(body, "good")).rejects.toThrow();
     expect(await database.select().from(stripeEvents)).toHaveLength(0);
+  });
+
+  it("GUARDRAIL: with the live key, test-mode events change nothing (and the other way round)", async () => {
+    // After the switch to live, the stored secret is the test endpoint's until Connect Stripe
+    // runs again (LAUNCH.md 7c): a late test checkout or a test renewal must not put a test
+    // payment back on an account "Reset test payments" cleared.
+    const modeEvent = (id: string, type: string, object: unknown, livemode: boolean) =>
+      JSON.stringify({ id, type, livemode, data: { object } });
+    const before = await reload();
+    const info = vi.spyOn(console, "info").mockImplementation(() => {});
+    vi.stubEnv("STRIPE_SECRET_KEY", "sk_" + "live_" + "fake");
+    try {
+      for (const [id, type, object] of [
+        ["evt_t1", "checkout.session.completed", paidSession()],
+        ["evt_t2", "customer.subscription.updated", subscription("past_due")],
+      ] as const) {
+        expect(await handleStripeWebhook(modeEvent(id, type, object, false), "good")).toEqual({
+          status: 200,
+          body: "Ignored: other Stripe mode.",
+        });
+      }
+      const after = await reload();
+      expect(after).toMatchObject({
+        status: before.status,
+        setupPaidVia: null,
+        stripeCustomerId: before.stripeCustomerId,
+        stripeSubscriptionId: null,
+      });
+      expect(canSend(after)).toBe(false);
+      expect(await database.select().from(stripeEvents)).toHaveLength(0);
+      expect(info).toHaveBeenCalledWith("stripe_event_other_mode", { livemode: false });
+
+      // A live event is handled as always.
+      const live = modeEvent("evt_l1", "checkout.session.completed", paidSession(), true);
+      expect((await handleStripeWebhook(live, "good")).status).toBe(200);
+      expect((await reload()).setupPaidVia).toBe("stripe");
+
+      // A test key ignores live events.
+      vi.stubEnv("STRIPE_SECRET_KEY", "sk_" + "test_" + "fake");
+      const liveSub = modeEvent(
+        "evt_l2",
+        "customer.subscription.updated",
+        subscription("past_due"),
+        true,
+      );
+      expect((await handleStripeWebhook(liveSub, "good")).body).toBe("Ignored: other Stripe mode.");
+      expect((await reload()).status).toBe("setup_paid");
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it("STRIPE_WEBHOOK_SECRET overrides the stored secret", async () => {

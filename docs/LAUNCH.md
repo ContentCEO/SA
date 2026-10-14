@@ -471,6 +471,10 @@ reset them.
   would retry and email you failure warnings that look like a live problem. The accounts you reset
   in 7b no longer point at their test subscriptions; cancel those in test mode → Customers too.
   Worked when: test mode's Webhooks page lists no endpoint for the app.
+- Last: `/admin` → Payments → **Check test payments** once more. The app ignores test-mode
+  notifications once the live key is in, so nothing should have come back since 7b. Worked when:
+  the card reads "Test payments: none left." If it found any, do 7b's **Reset test payments**
+  again.
 
 **7d. Cancellation setting.**
 

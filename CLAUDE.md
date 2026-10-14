@@ -278,7 +278,9 @@ default, CI too) and refuses a non-local `DATABASE_URL` or an `APP_URL` that isn
   profile or stuck in "learning" > 30 min (`workspacesNeedingVoice`).
 - **Autopilot (M9)** — `src/server/autopilot.ts`, approved by Davi 2026-10-03. Three layers, all
   in code with tests: (1) account: plan with `autopilot` (Crew/Company) **and** status `active`
-  (setup call done); (2) category: owner switched it on (`rules` table, mode draft|autopilot) and it
+  (setup call done) **and** setup really paid (`setupReallyPaid`, 2026-10-14: an unpaid active
+  account's countdown could never send; `runAutopilotSend` also stands down when `!canSend`
+  instead of letting `sendDraft` throw); (2) category: owner switched it on (`rules` table, mode draft|autopilot) and it
   has **earned** it — ≥10 replies in that category sent exactly as drafted from the app;
   (3) each email: eligible category (never complaint/noise), not needs_owner (incl. manual), reply
   not follow-up, confidence ≥ 85, no flags, no money in the draft, no amount on invoice emails, and
@@ -293,13 +295,16 @@ default, CI too) and refuses a non-local `DATABASE_URL` or an `APP_URL` that isn
   autopilot switches every category back to draft and clears countdowns.
 - **Billing (M10, 2026-10-05):** Stripe SDK, `src/server/billing.ts` + pure rules in
   `src/server/billing-rules.ts`. Checkout (subscription mode) = plan price + the one-time setup fee
-  only if `setup_paid_at` is empty; one live subscription per workspace; Stripe's Billing Portal for
+  only if the setup wasn't really paid (`setupReallyPaid`; a date alone doesn't count); one live subscription per workspace; Stripe's Billing Portal for
   card/plan/cancel. Prices are found-or-created by lookup key `sa_<plan>_<cents>_month` /
   `sa_setup_<cents>` (amount in the key → config change = new price). **Only the signed webhook**
   (`/api/stripe/webhook`) changes status: paid checkout → setup_paid (active if the setup call was
   already done); past_due/unpaid → past_due; recovered → back; canceled → canceled (subscription id
   cleared, re-checkout allowed without the setup fee). Paused and trial accounts are never moved by
   Stripe. Events are idempotent via `stripe_events` (row deleted on handler error so Stripe retries).
+  Events whose `livemode` doesn't match the key's mode are answered 200 and ignored
+  (`eventFromOtherMode`, 2026-10-14), so test renewals can't undo "Reset test payments" before
+  Connect Stripe swaps the stored secret.
   `/admin` → Payments → **Connect Stripe** sets up prices, the portal config and the webhook, storing
   its signing secret encrypted in `app_settings` (`STRIPE_WEBHOOK_SECRET` env overrides).
   `STRIPE_SECRET_KEY` (test) is on sa Production. Owner screen: `/billing` (Settings → Plan &
@@ -924,24 +929,31 @@ default, CI too) and refuses a non-local `DATABASE_URL` or an `APP_URL` that isn
   `customers.retrieve` / `subscriptions.retrieve` with the live key: `resource_missing` = test
   id, an answer (a `{deleted: true}` customer too) = live, anything else = "couldn't check" (the
   account is left whole). Reset = the 2026-10-10 precedent: clear the test ids; `setup_paid_via`
-  'stripe' → null and `setup_paid_at` → null unless a live customer or subscription is left (a
-  'stripe' setup with no ids counts as test); house keeps house; setup_paid / active stay (can't
+  'stripe' → null unless a live customer or subscription is left (a 'stripe' setup with no ids
+  counts as test); `setup_paid_at` is **kept**, like the precedent's hand-marked accounts
+  (review fix: clearing it made Resume send a paused reset account to evaluation_expired);
+  house keeps house; setup_paid / active stay (can't
   send, setup fee at checkout); past_due → `restored()` (a test subscription can't be paid);
   other statuses and the plan unchanged. One transaction per account with a conditional UPDATE on
   the ids, `setup_paid_via`, status and setup-call nullness (a live checkout meanwhile is never
   overwritten; counted as couldn't check), `clearAutopilotCountdowns` (extracted from
   `setWorkspacePlan`), activity `test_payment_reset` (booleans; Activity shows "Your test payment
-  was cleared — choose a plan to switch sending on" only when the setup payment went). No Stripe
+  was cleared — the setup fee is still due" only when the setup payment went; no "choose a
+  plan", since a paused account can't). No Stripe
   call on a plain page load: **Check test payments** asks Stripe and keeps counts only in
   `app_settings` `stripe_test_payments` (`{found, unchecked, reset, at}`); the card shows "Test
   payments: N accounts still carry a test-mode payment." and, when N or M > 0, **Reset test
   payments** behind the details/confirm pattern ("Yes, reset test payments") → "Test payments
-  reset for N accounts." (+ "Couldn't check M accounts. Tap again."). Readers of `setup_paid_at`
-  afterwards: admin card (Setup paid: Not yet), checkout (fee included; the real payment then
-  records its own date), `resumeTarget` (a paused reset account resumes to its evaluation
-  state, or active if the setup call was done), house move (keeps any date). Referral settlement
-  needs `setup_paid_via = 'stripe'`, so a reset account settles only after it really pays.
-  `/admin/costs` still counts setup_paid/active as revenue (status-based).
+  reset for N accounts." (+ "Couldn't check M accounts. Tap again."). Afterwards: admin card
+  (Setup paid: Not yet, it reads `setup_paid_via`), checkout (fee included; a real payment now
+  records its own `setup_paid_at` unless one was already really paid), `resumeTarget` (unchanged:
+  a paused reset account resumes to setup_paid / active, still unable to send), house move (keeps
+  any date), `/billing` (`billingStatusLine`: "Sending turns on once your setup payment goes
+  through." instead of "Setup's paid…" / "renews monthly"; the Stripe-page sentence only with a
+  customer id), autopilot (locked: "Autopilot opens up once your setup payment goes through.";
+  the owner's switches are kept). Referral settlement needs `setup_paid_via = 'stripe'`, so a
+  reset account settles only after it really pays. `/admin/costs` still counts setup_paid/active
+  as revenue (status-based). LAUNCH.md 7c ends with one more **Check test payments**.
 
 ## Milestones
 

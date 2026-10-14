@@ -59,7 +59,6 @@ async function candidates() {
       id: workspaces.id,
       status: workspaces.status,
       setupPaidVia: workspaces.setupPaidVia,
-      setupPaidAt: workspaces.setupPaidAt,
       setupCallCompletedAt: workspaces.setupCallCompletedAt,
       stripeCustomerId: workspaces.stripeCustomerId,
       stripeSubscriptionId: workspaces.stripeSubscriptionId,

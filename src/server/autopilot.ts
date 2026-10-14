@@ -21,7 +21,7 @@ import {
   type DraftDeps,
   type SendOutcome,
 } from "./drafts";
-import { canSend, effectiveStatus } from "./lifecycle";
+import { canSend, effectiveStatus, setupReallyPaid } from "./lifecycle";
 import { knownCustomer } from "./known-customer";
 import { markReconnectNeeded } from "./sync";
 import { unsentDraftMessage } from "./thread-sql";
@@ -32,7 +32,8 @@ export { knownCustomer };
  * Autopilot: the owner's explicit exception to "nothing leaves without your
  * okay". Every rule here is enforced in code and has a test. Three layers:
  *
- * 1. Account: Crew or Company plan, and setup finished (status `active`).
+ * 1. Account: Crew or Company plan, setup finished (status `active`), and the setup really
+ *    paid (`setupReallyPaid`) — the same payment the send gate needs.
  * 2. Category: the owner turned it on, and it has earned it — at least
  *    EARN_THRESHOLD drafts in that category approved without edits.
  * 3. Each email: never complaints, money, flagged threads, people the owner
@@ -56,7 +57,7 @@ export function isAutopilotCategory(c: unknown): c is Category {
 
 /** Layer 1. Returns why not, in plain words, or null when unlocked. */
 export function accountLockReason(
-  w: Pick<Workspace, "status" | "evaluationEndsAt" | "plan">,
+  w: Pick<Workspace, "status" | "evaluationEndsAt" | "plan" | "setupPaidVia">,
   now: Date = new Date(),
 ): string | null {
   if (!w.plan || !pricing.plans[w.plan].autopilot) {
@@ -64,6 +65,11 @@ export function accountLockReason(
   }
   if (effectiveStatus(w, now) !== "active") {
     return "Autopilot opens up once your setup call is done.";
+  }
+  // An active account that hasn't really paid (marked by hand before 2026-10-10, or reset after
+  // a test-card payment) can't send, so no countdown may start: it could never go.
+  if (!setupReallyPaid(w)) {
+    return "Autopilot opens up once your setup payment goes through.";
   }
   return null;
 }
@@ -147,7 +153,7 @@ export type AutopilotState = {
 };
 
 export async function autopilotState(
-  workspace: Pick<Workspace, "id" | "status" | "evaluationEndsAt" | "plan">,
+  workspace: Pick<Workspace, "id" | "status" | "evaluationEndsAt" | "plan" | "setupPaidVia">,
   now: Date = new Date(),
 ): Promise<AutopilotState> {
   const lockedReason = accountLockReason(workspace, now);
@@ -175,7 +181,7 @@ export class AutopilotNotAllowedError extends Error {
 
 /** The owner's switch. Turning on is checked against layers 1 and 2; turning off always works. */
 export async function setAutopilot(
-  workspace: Pick<Workspace, "id" | "status" | "evaluationEndsAt" | "plan">,
+  workspace: Pick<Workspace, "id" | "status" | "evaluationEndsAt" | "plan" | "setupPaidVia">,
   category: string,
   on: boolean,
   now: Date = new Date(),
@@ -364,6 +370,11 @@ export async function runAutopilotSend(
     ...(await blockers(row, now)),
     ...(newer.length ? ["There's newer mail in this conversation."] : []),
   ];
+  // Layer 1 already needs what the send gate needs. If they ever differ, stand down here rather
+  // than let sendDraft refuse: a refusal throws, and the backstop would retry it forever.
+  if (!reasons.length && !canSend(row.workspace, now)) {
+    reasons.push("Sending isn't switched on for this account.");
+  }
   // The owner may be writing their own reply in Gmail right now: sync doesn't store drafts,
   // so only Gmail can say. Asked only when sending is otherwise allowed — a blocked account
   // or a lost mailbox gets no Google call (sendDraft refuses those before any).

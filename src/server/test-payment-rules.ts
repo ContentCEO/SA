@@ -8,17 +8,14 @@ import { restored } from "./billing-rules";
  *
  * It follows the "Sending requires a real payment" precedent (2026-10-10): an account without
  * `setup_paid_via` can't send, sees "Sending turns on once your setup payment goes through", and
- * pays the setup fee at checkout. No new statuses or rules.
+ * pays the setup fee at checkout. No new statuses or rules. Like those hand-marked accounts, a
+ * reset one keeps `setup_paid_at`: Resume (`resumeTarget`) reads it to bring a paused account back
+ * to where it was, and nothing reads it as "paid" (`setupReallyPaid` reads `setup_paid_via`).
  */
 
 type W = Pick<
   Workspace,
-  | "status"
-  | "setupPaidVia"
-  | "setupPaidAt"
-  | "setupCallCompletedAt"
-  | "stripeCustomerId"
-  | "stripeSubscriptionId"
+  "status" | "setupPaidVia" | "setupCallCompletedAt" | "stripeCustomerId" | "stripeSubscriptionId"
 >;
 
 /**
@@ -37,10 +34,7 @@ export function mayCarryTestPayment(
 }
 
 export type TestPaymentReset = {
-  set: Pick<
-    Workspace,
-    "status" | "setupPaidVia" | "setupPaidAt" | "stripeCustomerId" | "stripeSubscriptionId"
-  >;
+  set: Pick<Workspace, "status" | "setupPaidVia" | "stripeCustomerId" | "stripeSubscriptionId">;
   /** Content-free, for the activity row. */
   detail: {
     customerCleared: boolean;
@@ -55,9 +49,10 @@ export type TestPaymentReset = {
  * ids (then nothing changes — nothing is half-done), null when it carries no test-mode payment.
  *
  * - Test-mode customer / subscription ids are cleared (live Stripe can't use them).
- * - A setup paid through Stripe is cleared (`setup_paid_via` and `setup_paid_at`) unless a live
- *   customer or subscription is left: a live payment always leaves a customer, so a "stripe"
- *   setup with no ids at all was paid in test mode too.
+ * - A setup paid through Stripe is cleared (`setup_paid_via` → null) unless a live customer or
+ *   subscription is left: a live payment always leaves a customer, so a "stripe" setup with no
+ *   ids at all was paid in test mode too. `setup_paid_at` stays (see above); the next real
+ *   payment records its own date.
  * - House accounts keep "house"; only their test-mode ids go.
  * - Status: setup_paid and active stay (the 2026-10-10 precedent: they can't send until they
  *   pay). past_due becomes what a recovered payment restores, because a test subscription can
@@ -76,7 +71,6 @@ export function testPaymentReset(w: W, check: AccountCheck): TestPaymentReset | 
     set: {
       status: statusRestored ? restored(w) : w.status,
       setupPaidVia: setupPaymentCleared ? null : w.setupPaidVia,
-      setupPaidAt: setupPaymentCleared ? null : w.setupPaidAt,
       stripeCustomerId: customerCleared ? null : w.stripeCustomerId,
       stripeSubscriptionId: subscriptionCleared ? null : w.stripeSubscriptionId,
     },

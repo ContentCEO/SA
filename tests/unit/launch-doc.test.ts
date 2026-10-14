@@ -470,6 +470,14 @@ describe("LAUNCH.md structure", () => {
     expect(step7).not.toContain("There is no button for it on purpose");
     // The step 13 entry points at the reset, not the key swap.
     expect(flat(sections[13]!.body)).toContain("([step 7b](#7-stripe-live-mode))");
+    // After Connect Stripe and the test-mode clean-up, one more check: nothing came back.
+    const c = step7.slice(connect, step7.indexOf("**7d."));
+    const recheck = c.indexOf("Payments → **Check test payments** once more");
+    expect(recheck).toBeGreaterThan(c.indexOf("test mode's Webhooks page lists no endpoint"));
+    expect(c.slice(recheck)).toContain('Worked when: the card reads "Test payments: none left."');
+    // True of the code: with the live key, test-mode webhook events change nothing.
+    const billing = readFileSync(join(ROOT, "src/server/billing.ts"), "utf8");
+    expect(billing).toContain("if (eventFromOtherMode(event.livemode, stripeMode())) {");
   });
 
   it("sales tax: prices fixed first, and 'on' isn't counted as proof without registrations", () => {
