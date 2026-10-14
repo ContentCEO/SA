@@ -165,21 +165,27 @@ html:has([data-growth-page]) {
 }
 
 /*
- * The stage: a fixed, decorative overlay shown only while data-sa-switching is set.
- * Timings mirror src/components/marketing/growth/switch-rules.ts (change both together; a unit
- * test reads the declarations below):
- *   "in": flood-in 300ms (fill both: full cover from 300 to 1250) · top edge fades 120ms from
- *   300ms · IN_THEME_AT_MS = 360 (theme swaps and the page moves to the opener under full cover;
- *   IN_REALIGN_AT_MS = 1150 puts it back if a fling moved it) · knob and dark labels 220ms from
- *   420ms, no overshoot (land at 640, then "One-on-one" holds alone for 610ms) · flood-out 240ms
- *   from 1250ms (forwards only), bottom edge shown from 1250ms · sa-land 300ms, delays 930ms /
- *   990ms after the swap at 360 · IN_DONE_MS = 1740 (cleanup).
- *   "out": a charcoal wipe slides down off the screen, revealing paper · "in-quiet": a paper wipe
- *   slides up off the screen, revealing charcoal (charcoal rising) · both 260ms ·
- *   OUT_DONE_MS = 300 (cleanup).
- * The flood is 100vh (the large viewport on phones, so a collapsing toolbar can't open a gap); the
- * pill is centred in the small viewport (50svh), so it sits in the visible middle on iOS too.
- * Transform and opacity only, except the dark labels' clip-path (a small box). Two tones only.
+ * The stage: a fixed, decorative overlay shown only while data-sa-switching is set, playing
+ * "Big words" (src/components/marketing/growth/big-words.tsx). Timings mirror
+ * src/components/marketing/growth/big-words-rules.ts (change both together; a unit test reads the
+ * declarations below):
+ *   "in", the full show, on every crossing from the app into Growth: five charcoal bands slam in
+ *   from alternate sides, the middle one first with "The app" in huge serif; the words tick over
+ *   to "One-on-one" in huge heavy sans, which inverts; the bands fly back out the way they came,
+ *   outer ones first, onto the opener. Bands 240ms each, the middle from 0, its neighbours from
+ *   40ms, the outer two from 80ms (full cover at 320) · BW_THEME_AT_MS = 380 (the theme swaps and
+ *   the page moves to the opener under full cover) · words tick over 240ms from 440ms · chip flips
+ *   at 680ms · BW_REALIGN_AT_MS = 1220 · bands out 160ms each (forwards only), the outer two from
+ *   1300ms, their neighbours from 1340ms, the middle one (with the words) from 1380ms, all gone by
+ *   1540 · sa-land 300ms, delays 960ms / 1020ms after the swap · BW_DONE_MS = 1740 (cleanup).
+ *   "out" / "in-quiet": bands of the old colour fly apart sideways, no words, 260ms
+ *   (BW_QUIET_DONE_MS = 300, cleanup).
+ * The stage is 100vh (the large viewport on phones, so a collapsing toolbar can't open a gap).
+ * Each band reaches 1px into the next, so no paper hairline shows between them; the bands only
+ * ever move sideways, so that overlap holds the whole show. Transforms only, 1ms opacity flips for
+ * the chips (no fades, no third tone). Each word has its own size (serif "The app" min(24vw,
+ * 16vh), heavy "One-on-one" min(14.5vw, 14vh)), so both are big on a phone. min() has a fallback
+ * declared first; longhands, not `inset`, for older iOS.
  */
 .sa-switch-stage {
   display: none;
@@ -195,934 +201,6 @@ html:has([data-growth-page]) {
 :root[data-sa-switching] .sa-switch-stage {
   display: block;
 }
-.sa-switch-flood {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 100%;
-  background-color: var(--sa-k-charcoal);
-  transform: translateY(100%);
-}
-:root[data-sa-switching="in"] .sa-switch-flood {
-  will-change: transform;
-  /* Flood-out is forwards only: a backwards fill would hold translateY(0) from 0ms. */
-  animation:
-    sa-switch-flood-in 300ms cubic-bezier(0.7, 0, 0.3, 1) both,
-    sa-switch-flood-out 240ms cubic-bezier(0.5, 0, 0.75, 0) 1250ms forwards;
-}
-/* The quiet paths are wipes, never fades: no third tone, and they move with the scroll. */
-:root[data-sa-switching="out"] .sa-switch-flood {
-  will-change: transform;
-  animation: sa-switch-wipe-down 260ms cubic-bezier(0.65, 0, 0.35, 1) both;
-}
-:root[data-sa-switching="in-quiet"] .sa-switch-flood {
-  background-color: var(--sa-k-paper);
-  will-change: transform;
-  animation: sa-switch-wipe-up 260ms cubic-bezier(0.65, 0, 0.35, 1) both;
-}
-.sa-switch-edge {
-  position: absolute;
-  left: 0;
-  right: 0;
-  height: 6px;
-  background-color: var(--sa-k-offwhite);
-}
-/* Only the moving edge shows: the top one leads the flood up, the bottom one trails the lift. */
-.sa-switch-edge[data-edge="top"] {
-  top: 0;
-}
-/* The flood's real bottom (100vh), not 100svh: as the cover lifts, the edge trails it exactly. */
-.sa-switch-edge[data-edge="bottom"] {
-  bottom: 0;
-}
-:root[data-sa-switching="in"] .sa-switch-edge[data-edge="top"] {
-  animation: sa-switch-edge-off 120ms ease-out 300ms forwards;
-}
-:root[data-sa-switching="in"] .sa-switch-edge[data-edge="bottom"] {
-  opacity: 0;
-  animation: sa-switch-edge-on 1ms linear 1250ms forwards;
-}
-.sa-switch-center {
-  position: absolute;
-  top: 50%;
-  top: 50svh;
-  left: 0;
-  right: 0;
-  transform: translateY(-50%);
-  display: flex;
-  justify-content: center;
-}
-:root[data-sa-switching="out"] .sa-switch-edge,
-:root[data-sa-switching="in-quiet"] .sa-switch-edge,
-:root[data-sa-switching="out"] .sa-switch-center,
-:root[data-sa-switching="in-quiet"] .sa-switch-center {
-  display: none;
-}
-.sa-switch-graphic {
-  position: relative;
-  width: min(88vw, 36rem);
-  height: clamp(4rem, 14vw, 6.5rem);
-  border: 3px solid var(--sa-k-offwhite);
-  border-radius: 9999px;
-  overflow: hidden;
-}
-.sa-switch-knob {
-  position: absolute;
-  top: 4px;
-  bottom: 4px;
-  left: 4px;
-  width: calc(50% - 4px);
-  border-radius: 9999px;
-  background-color: var(--sa-k-offwhite);
-  transform: translateX(0);
-}
-.sa-switch-labels {
-  position: absolute;
-  inset: 0;
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  align-items: center;
-  text-align: center;
-  white-space: nowrap;
-  line-height: 1;
-}
-.sa-switch-labels[data-ink="light"] {
-  color: var(--sa-k-offwhite);
-}
-/* Clipped to exactly the knob's box (left 4px, 50% wide less 4px, 4px top and bottom). */
-.sa-switch-labels[data-ink="dark"] {
-  color: var(--sa-k-charcoal);
-  clip-path: inset(4px 50% 4px 4px round 9999px);
-}
-:root[data-sa-switching="in"] .sa-switch-knob {
-  will-change: transform;
-  animation: sa-switch-knob 220ms cubic-bezier(0.65, 0, 0.35, 1) 420ms forwards;
-}
-:root[data-sa-switching="in"] .sa-switch-labels[data-ink="dark"] {
-  animation: sa-switch-ink 220ms cubic-bezier(0.65, 0, 0.35, 1) 420ms forwards;
-}
-/* The opener headline lands as the cover lifts. Matches only from the swap at 360ms (under full
-   cover), so it can never blink out on screen; ends at opacity 1 and stops at cleanup. */
-:root[data-sa-theme="growth"][data-sa-switching="in"] .sa-land > span {
-  animation: sa-land 300ms cubic-bezier(0.2, 0.9, 0.2, 1) 930ms both;
-}
-:root[data-sa-theme="growth"][data-sa-switching="in"] .sa-land > span + span {
-  animation-delay: 990ms;
-}
-@keyframes sa-switch-flood-in {
-  from {
-    transform: translateY(100%);
-  }
-  to {
-    transform: translateY(0);
-  }
-}
-@keyframes sa-switch-flood-out {
-  from {
-    transform: translateY(0);
-  }
-  to {
-    transform: translateY(-100%);
-  }
-}
-@keyframes sa-switch-wipe-down {
-  from {
-    transform: translateY(0);
-  }
-  to {
-    transform: translateY(100%);
-  }
-}
-@keyframes sa-switch-wipe-up {
-  from {
-    transform: translateY(0);
-  }
-  to {
-    transform: translateY(-100%);
-  }
-}
-@keyframes sa-switch-edge-off {
-  from {
-    opacity: 1;
-  }
-  to {
-    opacity: 0;
-  }
-}
-@keyframes sa-switch-edge-on {
-  from {
-    opacity: 0;
-  }
-  to {
-    opacity: 1;
-  }
-}
-@keyframes sa-switch-knob {
-  from {
-    transform: translateX(0);
-  }
-  to {
-    transform: translateX(100%);
-  }
-}
-@keyframes sa-switch-ink {
-  from {
-    clip-path: inset(4px 50% 4px 4px round 9999px);
-  }
-  to {
-    clip-path: inset(4px 4px 4px 50% round 9999px);
-  }
-}
-@keyframes sa-land {
-  from {
-    opacity: 0;
-    transform: translateY(0.35em);
-  }
-  to {
-    opacity: 1;
-    transform: none;
-  }
-}
-/*
- * Homepage switch, look 1: light switch (TEMPORARY preview, `/?look=1`; <html data-sa-look="1">,
- * set by GrowthSwitch). A wall rocker switch pops out of the page, flips from "The app" to
- * "One-on-one" and the dark spreads out of it; then the plate sinks back into the wall and the
- * dark drains into it. Timings mirror src/components/marketing/growth/looks/light-switch-rules.ts
- * (a unit test reads the declarations below):
- *   plate pops 220ms from 0 · paddle rocks 140ms from 260ms (impact ≈ 350) · dark disc scale
- *   0.12 → 1 (radius 8.5vmax → 71vmax), 300ms from 260ms on an ease-in-out (past a phone's
- *   corners by ≈455, a 1280×800 screen's by ≈470, a square's by ≈545) · chips swap and the plate
- *   thunks at 350ms · LIGHT_THEME_AT_MS = 600 · LIGHT_REALIGN_AT_MS = 1220 · exit 240ms from
- *   1300ms (forwards only): the plate sinks (scale 1 → 1.05 → 0) and the disc drains (1 → 0), an
- *   off-white rim on its own edge (one disc, one transform: the line is always where the dark
- *   ends) · sa-land 740ms / 800ms after the swap · LIGHT_DONE_MS = 1780.
- *   "out" / "in-quiet": the cover's disc drains into the middle, scale 1 → 0, 240ms on an
- *   ease-out (OUT_DONE_MS = 300).
- * The dark and the cover are discs 142vmax across (radius 71vmax), centred where the plate is (50%,
- * then 50svh where known), so at scale 1 they reach every corner of any viewport (a square's is
- * 70.7vmax from its centre); the stage clips them. They move with transform: scale() only, which
- * the compositor plays in every browser, older iOS included (no clip-path). Only the dark is a
- * layer during the show (one texture, not two). No opacity fades (no third tone): the chips and
- * the rim flip in a single frame. Plain sizes are declared before min()/clamp() for older iOS;
- * longhands, not `inset`.
- */
-.sa-ls-show {
-  display: none;
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 100%;
-}
-:root[data-sa-look="1"][data-sa-switching="in"] .sa-ls-show {
-  display: block;
-}
-.sa-ls-cover,
-.sa-ls-dark {
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  top: 50svh;
-  width: 142vmax;
-  height: 142vmax;
-  margin-left: -71vmax;
-  margin-top: -71vmax;
-  box-sizing: border-box;
-  border-radius: 9999px;
-  transform: scale(0);
-}
-.sa-ls-cover {
-  display: none;
-}
-:root[data-sa-look="1"][data-sa-switching="out"] .sa-ls-cover {
-  display: block;
-  background-color: var(--sa-k-charcoal);
-  will-change: transform;
-  animation: sa-ls-drain 240ms cubic-bezier(0.2, 0.7, 0.3, 1) both;
-}
-:root[data-sa-look="1"][data-sa-switching="in-quiet"] .sa-ls-cover {
-  display: block;
-  background-color: var(--sa-k-paper);
-  will-change: transform;
-  animation: sa-ls-drain 240ms cubic-bezier(0.2, 0.7, 0.3, 1) both;
-}
-/* The rim is the disc's own border: charcoal on charcoal (unseen) until the dark drains, then
-   off-white in one frame, so the line always marks where the dark ends. */
-.sa-ls-dark {
-  border: 6px solid var(--sa-k-charcoal);
-  background-color: var(--sa-k-charcoal);
-}
-/* All forwards only: before 260ms the disc is scale(0), out of sight behind the plate. */
-:root[data-sa-look="1"][data-sa-switching="in"] .sa-ls-dark {
-  will-change: transform;
-  animation:
-    sa-ls-dark 300ms cubic-bezier(0.45, 0, 0.55, 1) 260ms forwards,
-    sa-ls-rim 1ms linear 1300ms forwards,
-    sa-ls-shrink 240ms cubic-bezier(0.3, 0.5, 0.5, 1) 1300ms forwards;
-}
-.sa-ls-center {
-  position: absolute;
-  top: 50%;
-  top: 50svh;
-  left: 0;
-  right: 0;
-  transform: translateY(-50%);
-  display: flex;
-  justify-content: center;
-}
-:root[data-sa-look="1"][data-sa-switching="in"] .sa-ls-pop {
-  will-change: transform;
-  animation:
-    sa-ls-pop 220ms both,
-    sa-ls-unpop 240ms 1300ms forwards;
-}
-.sa-ls-plate {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: space-between;
-  width: 13rem;
-  width: min(clamp(11rem, 52vw, 20rem), 44vh);
-  height: 19.5rem;
-  height: min(clamp(16.5rem, 78vw, 30rem), 66vh);
-  padding: 0.75rem;
-  border: 3px solid var(--sa-k-charcoal);
-  border-radius: 1.25rem;
-  background-color: var(--sa-k-offwhite);
-  color: var(--sa-k-charcoal);
-}
-:root[data-sa-look="1"][data-sa-switching="in"] .sa-ls-plate {
-  animation: sa-ls-thunk 160ms ease-out 350ms;
-}
-.sa-ls-screw {
-  position: relative;
-  width: 0.75rem;
-  height: 0.75rem;
-  border: 2px solid var(--sa-k-charcoal);
-  border-radius: 9999px;
-}
-.sa-ls-screw::after {
-  content: "";
-  position: absolute;
-  left: 1px;
-  right: 1px;
-  top: 50%;
-  height: 2px;
-  margin-top: -1px;
-  background-color: var(--sa-k-charcoal);
-  transform: rotate(-35deg);
-}
-.sa-ls-label {
-  position: relative;
-  display: inline-block;
-  padding: 0.2em 0.6em;
-  line-height: 1;
-  white-space: nowrap;
-}
-.sa-ls-chip {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 9999px;
-  background-color: var(--sa-k-charcoal);
-  color: var(--sa-k-offwhite);
-}
-.sa-ls-label[data-label="to"] .sa-ls-chip {
-  opacity: 0;
-}
-:root[data-sa-look="1"][data-sa-switching="in"] .sa-ls-label[data-label="from"] .sa-ls-chip {
-  animation: sa-switch-edge-off 1ms linear 350ms forwards;
-}
-:root[data-sa-look="1"][data-sa-switching="in"] .sa-ls-label[data-label="to"] .sa-ls-chip {
-  animation: sa-switch-edge-on 1ms linear 350ms forwards;
-}
-.sa-ls-paddle {
-  position: relative;
-  display: block;
-  width: 44%;
-  height: 38%;
-  border: 3px solid var(--sa-k-charcoal);
-  border-radius: 0.75rem;
-  background-color: var(--sa-k-offwhite);
-  transform: perspective(30rem) rotateX(12deg);
-}
-/* Rounded to the paddle's inside corners instead of clipped by it: a moving child inside a
-   rounded, 3D-turned clip made Chrome redraw the clip every frame of the show (long frames from
-   the first one); it never leaves the paddle (top half → bottom half). */
-.sa-ls-press {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 50%;
-  border-radius: calc(0.75rem - 3px);
-  background-color: var(--sa-k-charcoal);
-  transform: translateY(0);
-}
-:root[data-sa-look="1"][data-sa-switching="in"] .sa-ls-paddle {
-  will-change: transform;
-  animation: sa-ls-rock 140ms linear 260ms forwards;
-}
-:root[data-sa-look="1"][data-sa-switching="in"] .sa-ls-press {
-  animation: sa-ls-press 140ms linear 260ms forwards;
-}
-/* The opener lands as the lights come back (1300 + 40 − 600 = 740). Beats both current-look
-   rules. */
-:root[data-sa-look="1"][data-sa-theme="growth"][data-sa-switching="in"] .sa-land > span {
-  animation-delay: 740ms;
-}
-:root[data-sa-look="1"][data-sa-theme="growth"][data-sa-switching="in"] .sa-land > span + span {
-  animation-delay: 800ms;
-}
-@keyframes sa-ls-pop {
-  0% {
-    transform: scale(0.2);
-    animation-timing-function: cubic-bezier(0.2, 0.8, 0.3, 1);
-  }
-  70% {
-    transform: scale(1.05);
-    animation-timing-function: cubic-bezier(0.4, 0, 0.6, 1);
-  }
-  100% {
-    transform: scale(1);
-  }
-}
-/* The pop played back: a little swell, then back into the wall. */
-@keyframes sa-ls-unpop {
-  0% {
-    transform: scale(1);
-    animation-timing-function: cubic-bezier(0.4, 0, 0.6, 1);
-  }
-  30% {
-    transform: scale(1.05);
-    animation-timing-function: cubic-bezier(0.5, 0, 0.75, 0);
-  }
-  100% {
-    transform: scale(0);
-  }
-}
-@keyframes sa-ls-rock {
-  0% {
-    transform: perspective(30rem) rotateX(12deg);
-    animation-timing-function: cubic-bezier(0.6, 0, 1, 1);
-  }
-  64% {
-    transform: perspective(30rem) rotateX(-16deg);
-    animation-timing-function: cubic-bezier(0, 0, 0.4, 1);
-  }
-  100% {
-    transform: perspective(30rem) rotateX(-12deg);
-  }
-}
-@keyframes sa-ls-press {
-  0% {
-    transform: translateY(0);
-    animation-timing-function: cubic-bezier(0.6, 0, 1, 1);
-  }
-  64%,
-  100% {
-    transform: translateY(100%);
-  }
-}
-@keyframes sa-ls-thunk {
-  0% {
-    transform: none;
-  }
-  30% {
-    transform: translateY(0.3rem) scale(0.98);
-  }
-  100% {
-    transform: none;
-  }
-}
-@keyframes sa-ls-dark {
-  from {
-    transform: scale(0.12);
-  }
-  to {
-    transform: scale(1);
-  }
-}
-@keyframes sa-ls-shrink {
-  from {
-    transform: scale(1);
-  }
-  to {
-    transform: scale(0);
-  }
-}
-@keyframes sa-ls-rim {
-  from {
-    border-color: var(--sa-k-charcoal);
-  }
-  to {
-    border-color: var(--sa-k-offwhite);
-  }
-}
-@keyframes sa-ls-drain {
-  from {
-    transform: scale(1);
-  }
-  to {
-    transform: scale(0);
-  }
-}
-/*
- * Homepage switch, look 2: curtains (TEMPORARY preview, `/?look=2`; <html data-sa-look="2">, set
- * by GrowthSwitch). Two charcoal curtains draw shut from the sides, each a 50%-wide window onto a
- * full-width copy of one huge heavy "One-on-one", stacked like a poster ("One-" / "on-" /
- * "one"), so the word is whole only where they meet; it then inverts (an off-white chip: "inversion means status"); the curtains open sideways onto the
- * opener. Timings mirror src/components/marketing/growth/looks/curtains-rules.ts (a unit test reads
- * the declarations below):
- *   close 360ms from 0 (off-white edges lead, off at 300, just before they meet; the charcoal
- *   seam turns on then and fills the last gap, so no page shows between them) ·
- *   CURTAIN_THEME_AT_MS = 420 · chip on at 520ms · CURTAIN_REALIGN_AT_MS = 1180 · open 300ms
- *   from 1260ms (forwards only), edges back at 1380 once the halves have parted, trailing them ·
- *   sa-land 880ms / 940ms after the swap · CURTAIN_DONE_MS = 1740.
- *   "out" / "in-quiet": closed curtains of the old colour open sideways, 260ms (OUT_DONE_MS = 300).
- * Transforms only (two half-screen layers), 1ms opacity flips for the edges, seam and chip (no
- * fades, no third tone). The seam (4% of the width, more than the gap left at 300ms on any
- * screen) sits under both halves, so it only shows in the gap between them. min() has a fallback
- * declared first; longhands, not `inset`, for older iOS.
- */
-.sa-cu-stage {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 100%;
-}
-.sa-cu-half {
-  position: absolute;
-  top: 0;
-  height: 100%;
-  overflow: hidden;
-  background-color: var(--sa-k-charcoal);
-}
-.sa-cu-half[data-side="left"] {
-  left: 0;
-  width: 50%;
-  transform: translateX(-100%);
-}
-.sa-cu-half[data-side="right"] {
-  left: 50%;
-  right: 0;
-  transform: translateX(100%);
-}
-:root[data-sa-look="2"][data-sa-switching="in"] .sa-cu-half[data-side="left"] {
-  will-change: transform;
-  animation:
-    sa-cu-close-left 360ms cubic-bezier(0.6, 0, 0.2, 1) both,
-    sa-cu-open-left 300ms cubic-bezier(0.5, 0, 0.75, 0) 1260ms forwards;
-}
-:root[data-sa-look="2"][data-sa-switching="in"] .sa-cu-half[data-side="right"] {
-  will-change: transform;
-  animation:
-    sa-cu-close-right 360ms cubic-bezier(0.6, 0, 0.2, 1) both,
-    sa-cu-open-right 300ms cubic-bezier(0.5, 0, 0.75, 0) 1260ms forwards;
-}
-:root[data-sa-look="2"][data-sa-switching="out"] .sa-cu-half[data-side="left"],
-:root[data-sa-look="2"][data-sa-switching="in-quiet"] .sa-cu-half[data-side="left"] {
-  will-change: transform;
-  animation: sa-cu-open-left 260ms cubic-bezier(0.65, 0, 0.35, 1) both;
-}
-:root[data-sa-look="2"][data-sa-switching="out"] .sa-cu-half[data-side="right"],
-:root[data-sa-look="2"][data-sa-switching="in-quiet"] .sa-cu-half[data-side="right"] {
-  will-change: transform;
-  animation: sa-cu-open-right 260ms cubic-bezier(0.65, 0, 0.35, 1) both;
-}
-:root[data-sa-look="2"][data-sa-switching="in-quiet"] .sa-cu-half {
-  background-color: var(--sa-k-paper);
-}
-/* The title, edges and seam belong to the full show only; the quiet paths are bare curtains. */
-.sa-cu-card,
-.sa-cu-edge,
-.sa-cu-seam {
-  display: none;
-}
-:root[data-sa-look="2"][data-sa-switching="in"] .sa-cu-card {
-  display: block;
-}
-/* A full-width card, centred on the half's inner edge: the two halves line up when shut. */
-.sa-cu-card {
-  position: absolute;
-  top: 0;
-  width: 200%;
-  height: 100%;
-}
-.sa-cu-half[data-side="left"] .sa-cu-card {
-  left: 0;
-}
-.sa-cu-half[data-side="right"] .sa-cu-card {
-  left: -100%;
-}
-.sa-cu-title {
-  position: absolute;
-  top: 50%;
-  top: 50svh;
-  left: 0;
-  right: 0;
-  transform: translateY(-50%);
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  color: var(--sa-k-offwhite);
-}
-/* One huge word across the seam, stacked like a poster, a part per line ("One-" is about 2.2em,
-   so 30vw keeps the 16px gutter down to 320px; three lines at 19vh fill about 60% of the height). */
-.sa-cu-label {
-  position: relative;
-  display: inline-block;
-  padding: 0.12em 0.2em;
-  font-size: 30vw;
-  font-size: min(30vw, 19vh);
-  text-align: center;
-  white-space: nowrap;
-}
-.sa-cu-line {
-  display: block;
-}
-/* It turns on inverted (an off-white chip on the charcoal curtain): the new status, lit. */
-.sa-cu-chip {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-direction: column;
-  border-radius: 0.25em;
-  background-color: var(--sa-k-offwhite);
-  color: var(--sa-k-charcoal);
-  opacity: 0;
-}
-:root[data-sa-look="2"][data-sa-switching="in"] .sa-cu-chip {
-  animation: sa-switch-edge-on 1ms linear 520ms forwards;
-}
-.sa-cu-edge {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  width: 6px;
-  background-color: var(--sa-k-offwhite);
-}
-.sa-cu-half[data-side="left"] .sa-cu-edge {
-  right: 0;
-}
-.sa-cu-half[data-side="right"] .sa-cu-edge {
-  left: 0;
-}
-:root[data-sa-look="2"][data-sa-switching="in"] .sa-cu-edge {
-  display: block;
-  animation:
-    sa-switch-edge-off 1ms linear 300ms forwards,
-    sa-switch-edge-on 1ms linear 1380ms forwards;
-}
-/* On as the edges go off, filling the last few px of the close (its ease-out tail) so no sliver
-   of the page shows between the halves; off as they open. */
-.sa-cu-seam {
-  position: absolute;
-  top: 0;
-  left: 48%;
-  width: 4%;
-  height: 100%;
-  background-color: var(--sa-k-charcoal);
-  opacity: 0;
-}
-:root[data-sa-look="2"][data-sa-switching="in"] .sa-cu-seam {
-  display: block;
-  animation:
-    sa-switch-edge-on 1ms linear 300ms forwards,
-    sa-switch-edge-off 1ms linear 1260ms forwards;
-}
-/* The opener lands as the curtains open (1260 + 40 − 420 = 880). Beats both current-look rules. */
-:root[data-sa-look="2"][data-sa-theme="growth"][data-sa-switching="in"] .sa-land > span {
-  animation-delay: 880ms;
-}
-:root[data-sa-look="2"][data-sa-theme="growth"][data-sa-switching="in"] .sa-land > span + span {
-  animation-delay: 940ms;
-}
-@keyframes sa-cu-close-left {
-  from {
-    transform: translateX(-100%);
-  }
-  to {
-    transform: translateX(0);
-  }
-}
-@keyframes sa-cu-close-right {
-  from {
-    transform: translateX(100%);
-  }
-  to {
-    transform: translateX(0);
-  }
-}
-@keyframes sa-cu-open-left {
-  from {
-    transform: translateX(0);
-  }
-  to {
-    transform: translateX(-100%);
-  }
-}
-@keyframes sa-cu-open-right {
-  from {
-    transform: translateX(0);
-  }
-  to {
-    transform: translateX(100%);
-  }
-}
-/*
- * Homepage switch, look 3: tide (TEMPORARY preview, `/?look=3`; <html data-sa-look="3">, set by
- * GrowthSwitch). A charcoal tide comes in from the bottom in two surges (a deep pull back between
- * them), its scalloped crest rolling sideways, with one big line riding just behind the crest:
- * "The app", inverted; at the chip moment the line becomes "One-on-one", inverted, in one frame;
- * the tide goes out, down off the screen, the line riding it out, uncovering the opener from the
- * top.
- * Timings mirror src/components/marketing/growth/looks/tide-rules.ts (a unit test reads the
- * declarations below):
- *   tide in 520ms from 0 (100% → 30% → 48% → 0) · TIDE_THEME_AT_MS = 580 · line and chip jump
- *   to "One-on-one" at 640ms ·
- *   TIDE_REALIGN_AT_MS = 1180 · tide out 300ms from 1260ms (forwards only), its off-white crest
- *   line trailing across the charcoal page · crest rolls one bump (10vw) every 800ms, "in" only ·
- *   sa-land 720ms / 780ms after the swap · TIDE_DONE_MS = 1740.
- *   "out": a charcoal tide goes out, down off the screen (with the scroll, which is going up);
- *   "in-quiet": a paper tide recedes up off the screen (with the scroll, going down), its crest
- *   flipped onto its bottom, leading edge · both 260ms (OUT_DONE_MS = 300).
- * The crest is a row of half-ellipses on the water's edge (border-radius, no SVG, no gradients),
- * at most 2.25rem tall, so the water parks and goes out 2.5rem past it. Its off-white outline
- * stays 4px, so the receding line shows on the charcoal page. The rolling crest is its own layer,
- * so the water reaches 1px up under it (a ::before strip in the water's own colour): no hairline
- * of the page where the two meet on a fractional pixel. Transforms only, 1ms opacity flips for the
- * chips (no fades, no third tone). clamp() and svh have fallbacks declared first; longhands, not
- * `inset`, for older iOS.
- */
-.sa-td-water {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 100%;
-  background-color: var(--sa-k-charcoal);
-  transform: translateY(calc(100% + 2.5rem));
-}
-:root[data-sa-look="3"][data-sa-switching="in"] .sa-td-water {
-  will-change: transform;
-  animation:
-    sa-td-in 520ms linear both,
-    sa-td-out 300ms cubic-bezier(0.5, 0, 0.75, 0) 1260ms forwards;
-}
-:root[data-sa-look="3"][data-sa-switching="out"] .sa-td-water {
-  will-change: transform;
-  animation: sa-td-out 260ms cubic-bezier(0.65, 0, 0.35, 1) both;
-}
-:root[data-sa-look="3"][data-sa-switching="in-quiet"] .sa-td-water {
-  will-change: transform;
-  animation: sa-td-recede-up 260ms cubic-bezier(0.65, 0, 0.35, 1) both;
-}
-:root[data-sa-look="3"][data-sa-switching="in-quiet"] .sa-td-water,
-:root[data-sa-look="3"][data-sa-switching="in-quiet"] .sa-td-bump {
-  background-color: var(--sa-k-paper);
-}
-/* 1px of water under the crest's edge (and, going up, under its bottom edge), so the two layers
-   never leave a hairline of the page between them. */
-.sa-td-water::before {
-  content: "";
-  position: absolute;
-  top: -1px;
-  left: 0;
-  right: 0;
-  height: 2px;
-  background-color: inherit;
-}
-:root[data-sa-look="3"][data-sa-switching="in-quiet"] .sa-td-water::before {
-  top: auto;
-  bottom: -1px;
-}
-/* The crest sits on the water's top edge and moves with it. */
-.sa-td-crest {
-  position: absolute;
-  bottom: 100%;
-  left: 0;
-  right: 0;
-  height: 1.25rem;
-  height: clamp(1rem, 4vw, 2.25rem);
-  overflow: hidden;
-}
-/* Going up, the bottom edge leads: the crest moves there, bumps pointing down. */
-:root[data-sa-look="3"][data-sa-switching="in-quiet"] .sa-td-crest {
-  top: 100%;
-  bottom: auto;
-  transform: scaleY(-1);
-}
-.sa-td-roll {
-  display: flex;
-  width: 110vw;
-  height: 100%;
-}
-:root[data-sa-look="3"][data-sa-switching="in"] .sa-td-roll {
-  will-change: transform;
-  animation: sa-td-roll 800ms linear infinite;
-}
-.sa-td-bump {
-  display: block;
-  flex: 0 0 10vw;
-  height: 100%;
-  box-sizing: border-box;
-  border: 4px solid var(--sa-k-offwhite);
-  border-bottom-width: 0;
-  border-radius: 50% 50% 0 0 / 100% 100% 0 0;
-  background-color: var(--sa-k-charcoal);
-}
-/* The title rides the full show only; the quiet paths are a bare tide. */
-.sa-td-card {
-  display: none;
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 100%;
-}
-:root[data-sa-look="3"][data-sa-switching="in"] .sa-td-card {
-  display: block;
-}
-/* One line, riding just behind the crest (8% down the water), the two words in the same place. */
-.sa-td-title {
-  position: absolute;
-  top: 8%;
-  left: 0;
-  right: 0;
-  display: grid;
-  justify-items: center;
-  align-items: center;
-  color: var(--sa-k-offwhite);
-}
-.sa-td-label {
-  position: relative;
-  grid-row: 1;
-  grid-column: 1;
-  display: inline-block;
-  padding: 0.1em 0.3em;
-  white-space: nowrap;
-}
-/* Each word as big as fits: wide on a phone (16px gutter kept, down to 320px), 12vh at most. */
-.sa-td-label[data-label="from"] {
-  font-size: 18vw;
-  font-size: min(18vw, 12vh);
-}
-.sa-td-label[data-label="to"] {
-  font-size: 14vw;
-  font-size: min(14vw, 12vh);
-  opacity: 0;
-}
-:root[data-sa-look="3"][data-sa-switching="in"] .sa-td-label[data-label="from"] {
-  animation: sa-switch-edge-off 1ms linear 640ms forwards;
-}
-:root[data-sa-look="3"][data-sa-switching="in"] .sa-td-label[data-label="to"] {
-  animation: sa-switch-edge-on 1ms linear 640ms forwards;
-}
-/* The active word is inverted (an off-white chip on the charcoal tide). */
-.sa-td-chip {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 9999px;
-  background-color: var(--sa-k-offwhite);
-  color: var(--sa-k-charcoal);
-}
-.sa-td-label[data-label="to"] .sa-td-chip {
-  opacity: 0;
-}
-:root[data-sa-look="3"][data-sa-switching="in"] .sa-td-label[data-label="from"] .sa-td-chip {
-  animation: sa-switch-edge-off 1ms linear 640ms forwards;
-}
-:root[data-sa-look="3"][data-sa-switching="in"] .sa-td-label[data-label="to"] .sa-td-chip {
-  animation: sa-switch-edge-on 1ms linear 640ms forwards;
-}
-/* The opener lands as the tide goes out (1260 + 40 − 580 = 720). Beats both current-look rules. */
-:root[data-sa-look="3"][data-sa-theme="growth"][data-sa-switching="in"] .sa-land > span {
-  animation-delay: 720ms;
-}
-:root[data-sa-look="3"][data-sa-theme="growth"][data-sa-switching="in"] .sa-land > span + span {
-  animation-delay: 780ms;
-}
-/* Two surges: in to 30%, a deep pull back to 48%, then the rest of the way. */
-@keyframes sa-td-in {
-  0% {
-    transform: translateY(100%);
-    animation-timing-function: cubic-bezier(0.3, 0.6, 0.4, 1);
-  }
-  48% {
-    transform: translateY(30%);
-    animation-timing-function: cubic-bezier(0.45, 0, 0.55, 1);
-  }
-  66% {
-    transform: translateY(48%);
-    animation-timing-function: cubic-bezier(0.5, 0, 0.3, 1);
-  }
-  100% {
-    transform: translateY(0);
-  }
-}
-@keyframes sa-td-out {
-  from {
-    transform: translateY(0);
-  }
-  to {
-    transform: translateY(calc(100% + 2.5rem));
-  }
-}
-@keyframes sa-td-recede-up {
-  from {
-    transform: translateY(0);
-  }
-  to {
-    transform: translateY(calc(-100% - 2.5rem));
-  }
-}
-@keyframes sa-td-roll {
-  from {
-    transform: translateX(0);
-  }
-  to {
-    transform: translateX(-10vw);
-  }
-}
-/*
- * Homepage switch, look 4: big words (TEMPORARY preview, `/?look=4`; <html data-sa-look="4">, set
- * by GrowthSwitch). Five charcoal bands slam in from alternate sides, the middle one first with
- * "The app" in huge serif; the words tick over to "One-on-one" in huge heavy sans, which inverts;
- * the bands fly back out the way they came, outer ones first, onto the opener. Timings mirror
- * src/components/marketing/growth/looks/big-words-rules.ts (a unit test reads the declarations
- * below):
- *   bands 240ms each, the middle from 0, its neighbours from 40ms, the outer two from 80ms (full
- *   cover at 320) · BW_THEME_AT_MS = 380 · words tick over 240ms from 440ms · chip flips at
- *   680ms · BW_REALIGN_AT_MS = 1220 · bands out 160ms each (forwards only), the outer two from
- *   1300ms, their neighbours from 1340ms, the middle one (with the words) from 1380ms, all gone by
- *   1540 · sa-land 960ms / 1020ms after the swap · BW_DONE_MS = 1740.
- *   "out" / "in-quiet": bands of the old colour fly apart sideways, 260ms (OUT_DONE_MS = 300).
- * Each band reaches 1px into the next, so no paper hairline shows between them; the bands only
- * ever move sideways, so that overlap holds the whole show. Transforms only, 1ms opacity flips for
- * the chips (no fades, no third tone). Each word has its own size (serif "The app" min(24vw,
- * 16vh), heavy "One-on-one" min(14.5vw, 14vh)), so both are big on a phone. min() has a fallback
- * declared first; longhands, not `inset`, for older iOS.
- */
 .sa-bw-stage {
   position: absolute;
   top: 0;
@@ -1159,52 +237,53 @@ html:has([data-growth-page]) {
 .sa-bw-band[data-side="right"] {
   transform: translateX(100%);
 }
-:root[data-sa-look="4"][data-sa-switching] .sa-bw-band {
+:root[data-sa-switching] .sa-bw-band {
   will-change: transform;
 }
 /* In: the middle band first. Out (forwards only, so it can't hold the bands off before 1300ms):
    the outer bands first, the words last, each back to the side it came from. */
-:root[data-sa-look="4"][data-sa-switching="in"] .sa-bw-band[data-band="2"] {
+:root[data-sa-switching="in"] .sa-bw-band[data-band="2"] {
   animation:
     sa-bw-in-left 240ms cubic-bezier(0.6, 0, 0.2, 1) both,
     sa-bw-out-left 160ms cubic-bezier(0.5, 0, 0.75, 0) 1380ms forwards;
 }
-:root[data-sa-look="4"][data-sa-switching="in"] .sa-bw-band[data-band="1"] {
+:root[data-sa-switching="in"] .sa-bw-band[data-band="1"] {
   animation:
     sa-bw-in-right 240ms cubic-bezier(0.6, 0, 0.2, 1) 40ms both,
     sa-bw-out-right 160ms cubic-bezier(0.5, 0, 0.75, 0) 1340ms forwards;
 }
-:root[data-sa-look="4"][data-sa-switching="in"] .sa-bw-band[data-band="3"] {
+:root[data-sa-switching="in"] .sa-bw-band[data-band="3"] {
   animation:
     sa-bw-in-right 240ms cubic-bezier(0.6, 0, 0.2, 1) 40ms both,
     sa-bw-out-right 160ms cubic-bezier(0.5, 0, 0.75, 0) 1340ms forwards;
 }
-:root[data-sa-look="4"][data-sa-switching="in"] .sa-bw-band[data-band="0"] {
+:root[data-sa-switching="in"] .sa-bw-band[data-band="0"] {
   animation:
     sa-bw-in-left 240ms cubic-bezier(0.6, 0, 0.2, 1) 80ms both,
     sa-bw-out-left 160ms cubic-bezier(0.5, 0, 0.75, 0) 1300ms forwards;
 }
-:root[data-sa-look="4"][data-sa-switching="in"] .sa-bw-band[data-band="4"] {
+:root[data-sa-switching="in"] .sa-bw-band[data-band="4"] {
   animation:
     sa-bw-in-left 240ms cubic-bezier(0.6, 0, 0.2, 1) 80ms both,
     sa-bw-out-left 160ms cubic-bezier(0.5, 0, 0.75, 0) 1300ms forwards;
 }
-:root[data-sa-look="4"][data-sa-switching="out"] .sa-bw-band[data-side="left"],
-:root[data-sa-look="4"][data-sa-switching="in-quiet"] .sa-bw-band[data-side="left"] {
+/* The quiet paths fly apart, never fade: no third tone, and they move with the scroll. */
+:root[data-sa-switching="out"] .sa-bw-band[data-side="left"],
+:root[data-sa-switching="in-quiet"] .sa-bw-band[data-side="left"] {
   animation: sa-bw-out-left 260ms cubic-bezier(0.65, 0, 0.35, 1) both;
 }
-:root[data-sa-look="4"][data-sa-switching="out"] .sa-bw-band[data-side="right"],
-:root[data-sa-look="4"][data-sa-switching="in-quiet"] .sa-bw-band[data-side="right"] {
+:root[data-sa-switching="out"] .sa-bw-band[data-side="right"],
+:root[data-sa-switching="in-quiet"] .sa-bw-band[data-side="right"] {
   animation: sa-bw-out-right 260ms cubic-bezier(0.65, 0, 0.35, 1) both;
 }
-:root[data-sa-look="4"][data-sa-switching="in-quiet"] .sa-bw-band {
+:root[data-sa-switching="in-quiet"] .sa-bw-band {
   background-color: var(--sa-k-paper);
 }
 /* The words belong to the full show only; the quiet paths are bare bands. */
 .sa-bw-words {
   display: none;
 }
-:root[data-sa-look="4"][data-sa-switching="in"] .sa-bw-words {
+:root[data-sa-switching="in"] .sa-bw-words {
   display: block;
 }
 .sa-bw-words {
@@ -1240,13 +319,13 @@ html:has([data-growth-page]) {
   font-size: min(14.5vw, 14vh);
   transform: translateY(100%);
 }
-:root[data-sa-look="4"][data-sa-switching="in"] .sa-bw-word {
+:root[data-sa-switching="in"] .sa-bw-word {
   will-change: transform;
 }
-:root[data-sa-look="4"][data-sa-switching="in"] .sa-bw-word[data-word="from"] {
+:root[data-sa-switching="in"] .sa-bw-word[data-word="from"] {
   animation: sa-bw-tick-out 240ms cubic-bezier(0.6, 0, 0.4, 1) 440ms forwards;
 }
-:root[data-sa-look="4"][data-sa-switching="in"] .sa-bw-word[data-word="to"] {
+:root[data-sa-switching="in"] .sa-bw-word[data-word="to"] {
   animation: sa-bw-tick-in 240ms linear 440ms forwards;
 }
 .sa-bw-label {
@@ -1272,17 +351,19 @@ html:has([data-growth-page]) {
 .sa-bw-word[data-word="to"] .sa-bw-chip {
   opacity: 0;
 }
-:root[data-sa-look="4"][data-sa-switching="in"] .sa-bw-word[data-word="from"] .sa-bw-chip {
-  animation: sa-switch-edge-off 1ms linear 680ms forwards;
+:root[data-sa-switching="in"] .sa-bw-word[data-word="from"] .sa-bw-chip {
+  animation: sa-bw-chip-off 1ms linear 680ms forwards;
 }
-:root[data-sa-look="4"][data-sa-switching="in"] .sa-bw-word[data-word="to"] .sa-bw-chip {
-  animation: sa-switch-edge-on 1ms linear 680ms forwards;
+:root[data-sa-switching="in"] .sa-bw-word[data-word="to"] .sa-bw-chip {
+  animation: sa-bw-chip-on 1ms linear 680ms forwards;
 }
-/* The opener lands as the bands fly out (1300 + 40 − 380 = 960). Beats both current-look rules. */
-:root[data-sa-look="4"][data-sa-theme="growth"][data-sa-switching="in"] .sa-land > span {
-  animation-delay: 960ms;
+/* The opener headline lands as the bands fly out (1300 + 40 − 380 = 960). Matches only from the
+   swap at 380ms (under full cover), so it can never blink out on screen; ends at opacity 1 and
+   stops at cleanup. */
+:root[data-sa-theme="growth"][data-sa-switching="in"] .sa-land > span {
+  animation: sa-land 300ms cubic-bezier(0.2, 0.9, 0.2, 1) 960ms both;
 }
-:root[data-sa-look="4"][data-sa-theme="growth"][data-sa-switching="in"] .sa-land > span + span {
+:root[data-sa-theme="growth"][data-sa-switching="in"] .sa-land > span + span {
   animation-delay: 1020ms;
 }
 @keyframes sa-bw-in-left {
@@ -1339,226 +420,30 @@ html:has([data-growth-page]) {
     transform: translateY(0);
   }
 }
-/*
- * Homepage switch, look 5: blinds (TEMPORARY preview, `/?look=5`; <html data-sa-look="5">, set by
- * GrowthSwitch). A charcoal venetian blind drops over the page with its slats open (plain bars),
- * the slats tilt shut and a word is printed on every slat, eight rows of "The app", inverted; the
- * slats tilt over once and come back with "One-on-one" on every slat instead, inverted, each word
- * squashing with its slat as it turns; then they tilt open onto the opener.
- * Timings mirror src/components/marketing/growth/looks/blinds-rules.ts (a unit test reads the
- * declarations below):
- *   blind drops 280ms from 0, slats open (scaleY 0.18) · slats shut 160ms from 280ms (full cover
- *   at 440: the backing and the title turn on) · BL_THEME_AT_MS = 540 (100ms after full cover, so
- *   a first frame that lands late on a slow phone still swaps under shut slats) · slats tilt over
- *   240ms from 580ms (edge-on at 700, over the backing) · the word and its chip swap at 700ms ·
- *   BL_REALIGN_AT_MS = 1220 · slats tilt open 240ms from 1300ms (forwards only; the backing goes
- *   off at 1300) · sa-land 800ms / 860ms after the swap · BL_DONE_MS = 1740.
- *   "out" / "in-quiet": a shut blind of the old colour tilts open, 260ms (OUT_DONE_MS = 300).
- * Eight slats, each exactly 12.5% tall, each carrying its own word, centred in it and clipped by
- * it. A 1px charcoal box-shadow under each one closes any rounding gap with the next (no paper
- * hairline when shut); it paints outside the slat's clip and carries no content. Transforms only,
- * 1ms opacity flips for the backing, the title and the chips (no fades, no third tone). min() has
- * a fallback declared first; longhands, not `inset`, for older iOS.
- */
-.sa-bl-blind {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 100%;
-}
-:root[data-sa-look="5"][data-sa-switching="in"] .sa-bl-blind {
-  will-change: transform;
-  animation: sa-bl-drop 280ms cubic-bezier(0.5, 0, 0.2, 1) both;
-}
-.sa-bl-slat {
-  position: absolute;
-  left: 0;
-  right: 0;
-  height: 12.5%;
-  overflow: hidden;
-  background-color: var(--sa-k-charcoal);
-  box-shadow: 0 1px 0 var(--sa-k-charcoal);
-}
-.sa-bl-slat[data-slat="0"] {
-  top: 0;
-}
-.sa-bl-slat[data-slat="1"] {
-  top: 12.5%;
-}
-.sa-bl-slat[data-slat="2"] {
-  top: 25%;
-}
-.sa-bl-slat[data-slat="3"] {
-  top: 37.5%;
-}
-.sa-bl-slat[data-slat="4"] {
-  top: 50%;
-}
-.sa-bl-slat[data-slat="5"] {
-  top: 62.5%;
-}
-.sa-bl-slat[data-slat="6"] {
-  top: 75%;
-}
-.sa-bl-slat[data-slat="7"] {
-  top: 87.5%;
-}
-:root[data-sa-look="5"][data-sa-switching] .sa-bl-slat {
-  will-change: transform;
-}
-:root[data-sa-look="5"][data-sa-switching="in"] .sa-bl-slat {
-  animation:
-    sa-bl-shut 160ms cubic-bezier(0.4, 0, 0.2, 1) 280ms both,
-    sa-bl-tilt 240ms linear 580ms forwards,
-    sa-bl-open 240ms cubic-bezier(0.65, 0, 0.35, 1) 1300ms forwards;
-}
-:root[data-sa-look="5"][data-sa-switching="out"] .sa-bl-slat,
-:root[data-sa-look="5"][data-sa-switching="in-quiet"] .sa-bl-slat {
-  animation: sa-bl-open 260ms cubic-bezier(0.65, 0, 0.35, 1) both;
-}
-:root[data-sa-look="5"][data-sa-switching="in-quiet"] .sa-bl-slat {
-  background-color: var(--sa-k-paper);
-  box-shadow: 0 1px 0 var(--sa-k-paper);
-}
-/* The title and backing belong to the full show only; the quiet paths are bare slats. */
-.sa-bl-card,
-.sa-bl-back {
-  display: none;
-}
-/* Printed on the slats only once they're shut: open slats are plain charcoal bars. */
-:root[data-sa-look="5"][data-sa-switching="in"] .sa-bl-card {
-  display: block;
-  animation: sa-switch-edge-on 1ms linear 440ms forwards;
-}
-.sa-bl-card {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 100%;
-  opacity: 0;
-}
-/* A word on every slat (eight rows); on each, the two words share the place and swap. */
-.sa-bl-title {
-  position: absolute;
-  top: 50%;
-  left: 0;
-  right: 0;
-  transform: translateY(-50%);
-  display: grid;
-  justify-items: center;
-  align-items: center;
-  color: var(--sa-k-offwhite);
-}
-.sa-bl-label {
-  position: relative;
-  grid-row: 1;
-  grid-column: 1;
-  display: inline-block;
-  padding: 0.1em 0.22em;
-  white-space: nowrap;
-}
-/* As wide as a phone allows (16px gutter kept, down to 320px; "One-on-one" is about 5.6em), and
-   at most 8.5vh, so each chip sits inside its own slat (12.5vh) with room to spare: no chip edge
-   near a slat boundary, so no stray sliver as they tilt, and each word squashes with its slat. */
-.sa-bl-label[data-label="from"] {
-  font-size: 24vw;
-  font-size: min(24vw, 8.5vh);
-}
-.sa-bl-label[data-label="to"] {
-  font-size: 14.5vw;
-  font-size: min(14.5vw, 8.5vh);
-  opacity: 0;
-}
-:root[data-sa-look="5"][data-sa-switching="in"] .sa-bl-label[data-label="from"] {
-  animation: sa-switch-edge-off 1ms linear 700ms forwards;
-}
-:root[data-sa-look="5"][data-sa-switching="in"] .sa-bl-label[data-label="to"] {
-  animation: sa-switch-edge-on 1ms linear 700ms forwards;
-}
-/* The active word is inverted (an off-white chip on the charcoal slats). */
-.sa-bl-chip {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 9999px;
-  background-color: var(--sa-k-offwhite);
-  color: var(--sa-k-charcoal);
-}
-.sa-bl-label[data-label="to"] .sa-bl-chip {
-  opacity: 0;
-}
-:root[data-sa-look="5"][data-sa-switching="in"] .sa-bl-label[data-label="from"] .sa-bl-chip {
-  animation: sa-switch-edge-off 1ms linear 700ms forwards;
-}
-:root[data-sa-look="5"][data-sa-switching="in"] .sa-bl-label[data-label="to"] .sa-bl-chip {
-  animation: sa-switch-edge-on 1ms linear 700ms forwards;
-}
-.sa-bl-back {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 100%;
-  background-color: var(--sa-k-charcoal);
-  opacity: 0;
-}
-:root[data-sa-look="5"][data-sa-switching="in"] .sa-bl-back {
-  display: block;
-  animation:
-    sa-switch-edge-on 1ms linear 440ms forwards,
-    sa-switch-edge-off 1ms linear 1300ms forwards;
-}
-/* The opener lands as the slats tilt open (1300 + 40 − 540 = 800). Beats both current-look
-   rules. */
-:root[data-sa-look="5"][data-sa-theme="growth"][data-sa-switching="in"] .sa-land > span {
-  animation-delay: 800ms;
-}
-:root[data-sa-look="5"][data-sa-theme="growth"][data-sa-switching="in"] .sa-land > span + span {
-  animation-delay: 860ms;
-}
-@keyframes sa-bl-drop {
+@keyframes sa-bw-chip-off {
   from {
-    transform: translateY(-100%);
+    opacity: 1;
   }
   to {
-    transform: translateY(0);
+    opacity: 0;
   }
 }
-@keyframes sa-bl-shut {
+@keyframes sa-bw-chip-on {
   from {
-    transform: scaleY(0.18);
+    opacity: 0;
   }
   to {
-    transform: scaleY(1);
+    opacity: 1;
   }
 }
-/* Shut → edge-on (halfway, when the chip moves) → shut: one turn of the wand. */
-@keyframes sa-bl-tilt {
-  0% {
-    transform: scaleY(1);
-    animation-timing-function: cubic-bezier(0.5, 0, 1, 1);
-  }
-  50% {
-    transform: scaleY(0.04);
-    animation-timing-function: cubic-bezier(0, 0, 0.5, 1);
-  }
-  100% {
-    transform: scaleY(1);
-  }
-}
-@keyframes sa-bl-open {
+@keyframes sa-land {
   from {
-    transform: scaleY(1);
+    opacity: 0;
+    transform: translateY(0.35em);
   }
   to {
-    transform: scaleY(0);
+    opacity: 1;
+    transform: none;
   }
 }
 /* The global reduced-motion rule zeroes durations but not delays, so this is needed too. */

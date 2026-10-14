@@ -475,35 +475,51 @@ In a sandbox with preinstalled Chromium: `PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-brows
     under the cover) (readings for `NAV_MS` 1000 after it are instant and band-free via `jumpMode`, line
     at 0.925·vh; a short passive scroll listener covers a landing that crosses no line), bfcache
     `pageshow` (also `jumpMode`), a hidden tab or reduced motion (live matchMedia). No distance-
-    based jump rule (a fast flick across both lines must still play the show). A **pointer** tap on
-    a `#growth` link (hero, header) while on the app side, settled and before the show has played
-    is the switch too: default and Next's Link are stopped, the show plays, and under full cover
-    `pushState(null, "", "#growth")` adds the entry the link would have (pushed **before** the page
-    moves, so Back returns to where the tap was); keyboard activation keeps the native jump. The
-    full show ("in": charcoal flood sweeps up with only its leading edge, theme swaps at 360 ms
-    under full cover **and the page moves to the opener** (`#growth`, `scrollIntoView` instant; again
-    at `IN_REALIGN_AT_MS` 1150 in case a fling's momentum carried on), so every full show lands on
-    the one-on-one opener with its `.sa-land` headline on screen, however fast or slow the scroll
-    (review 2026-10-13: a flick went 3000px past the opener under the cover, and a slow scroll
-    lifted the cover onto the bridge with the opener below the fold); not when navigation (Back
-    etc.) happened during the show. The decorative pill's knob slides 220 ms from 420 ms with no
-    overshoot while a charcoal copy of the labels clipped to the knob (`clip-path: inset()`) inverts
-    the words exactly where it passes, "One-on-one" holds alone 610 ms, the flood lifts at 1250 ms
-    with only its trailing edge, opener headline `.sa-land` lands; cleanup at 1740 re-applies the
-    theme then drops the attribute) plays **once per page view**. While it covers the screen, taps
-    are swallowed (capture-phase click / pointerup / mousedown on the document, added in `play()`,
-    removed in `finish()` and cleanup), so nothing hidden under it (tel: link, form) can be hit, and
-    the page is held still (non-passive wheel / touchmove `preventDefault`, and PageUp/Down, Space,
-    arrows, Home/End unless typed in a field). The hold stays 610 ms (not shortened: with scrolling
-    held, the blind time no longer skips anything).
-    Later crossings are quiet transform-only wipes, never fades ("out": a charcoal panel slides down
-    off the screen; "in-quiet": a paper panel slides up off it, i.e. charcoal rising; 260 ms,
-    cleanup 300). Decisions during a show queue as `pending` and play quietly at cleanup, or
-    instantly when they came from navigation (`pendingInstant`). Timings
-    live in `switch-rules.ts`, mirrored in theme.css (comment and declarations unit-checked). The
-    pill is centred at `50svh` (Lightning CSS drops the `50%` fallback: every target supports svh);
-    the flood stays 100vh. There is **no interactive switch**: the stage is aria-hidden, inert,
-    pointer-events none, display none unless switching (and in print / reduced motion).
+    based jump rule (a fast flick across both lines must still play the show).
+  - **The show is "Big words", and it replays (Davi, 2026-10-14: picked look 4 of the five
+    `?look=` previews, and "after one time the animation … doesn't do it ever again … I wanted
+    to see the animation more").** The preview chooser (`?look=`, `data-sa-look`, the light
+    switch / curtains / tide / blinds looks) and the old flood-and-pill cover are gone; don't
+    bring them back. `big-words.tsx` draws it, `big-words-rules.ts` is its clock (mirrored in
+    theme.css, comment and declarations unit-checked in `tests/unit/growth-big-words.test.ts`),
+    `switch-rules.ts` decides: `switchPath(next, instant, queued)` and `tapPlaysShow(...)` (pure,
+    unit-tested). **Every** crossing from the app into Growth plays the full show ("in"), however
+    many times it has played (no once-per-page memory anywhere; a unit test greps for one); the
+    way back up is always the quiet "out". **Every** pointer tap on a `#growth` link (hero,
+    header) while on the app side, settled and not mid-transition plays it too: default and
+    Next's Link are stopped, the show plays, and under full cover `pushState(null, "", "#growth")`
+    adds the entry the link would have (pushed **before** the page moves, so Back returns to where
+    the tap was), or nothing when the address already ends in `#growth` (the link and Next would
+    only replace it, so repeated taps don't stack copies). Keyboard activation keeps the native
+    jump. A `#growth` click that isn't the show while the address already ends in `#growth` (in
+    Growth, keyboard, mid-wipe) is scrolled to the opener by GrowthSwitch itself, because Next's
+    Link doesn't move the page for the address it's already on (e2e caught it).
+    Full show ("in"): five charcoal bands slam in from alternate sides (240 ms each, the middle
+    band first, the outer two from 80 ms, full cover at 320) with "The app" in huge serif in the
+    middle band; the theme swaps at `BW_THEME_AT_MS` 380 under full cover **and the page moves to
+    the opener** (`#growth`, `scrollIntoView` instant; again at `BW_REALIGN_AT_MS` 1220 in case a
+    fling's momentum carried on), so every full show lands on the one-on-one opener with its
+    `.sa-land` headline on screen, however fast or slow the scroll (review 2026-10-13: a flick went
+    3000px past the opener under the cover, and a slow scroll lifted the cover onto the bridge with
+    the opener below the fold); not when navigation (Back etc.) happened during the show. The
+    words tick over to "One-on-one" in huge heavy sans (240 ms from 440), which inverts at 680
+    (1 ms flip), holds 620 ms, then the bands fly back out the way they came, outer ones first,
+    from 1300 (all gone by 1540); `.sa-land` delays 960 / 1020 ms after the swap; cleanup at
+    `BW_DONE_MS` 1740 re-applies the theme then drops the attribute. Each band reaches 1px into
+    the next (no paper hairline); transforms and 1 ms opacity flips only, no clip-path.
+    While it covers the screen, taps are swallowed (capture-phase click / pointerup / mousedown
+    on the document, added in `play()`, removed in `finish()` and cleanup), so nothing hidden under
+    it (tel: link, form) can be hit, and the page is held still (non-passive wheel / touchmove
+    `preventDefault`, and PageUp/Down, Space, arrows, Home/End unless typed in a field). One show
+    at a time: decisions during a show or wipe queue as `pending` and play quietly at cleanup
+    (`queued` → "in-quiet" / "out"), or instantly when they came from navigation
+    (`pendingInstant`); every timer and hold ends in `finish()` before the next can start. A full
+    show forces a style flush of the stage before setting "in" (`getBoundingClientRect`), so one
+    starting in the same frame another ended still restarts its animations.
+    Quiet paths ("out", and "in-quiet" for a queued way down): bands of the old colour fly apart
+    sideways, no words, never fades (`BW_QUIET_MS` 260, cleanup `BW_QUIET_DONE_MS` 300). The stage
+    is 100vh. There is **no interactive switch**: the stage is aria-hidden, inert, pointer-events
+    none, display none unless switching (and in print / reduced motion).
   - theme.css: the seven colours are written once as `--sa-k-*` constants and the palette points at
     them. `:root[data-sa-theme="growth"]` swaps the palette in place (paper↔charcoal, offwhite↔graphite,
     stone→graphite, slate↔ash, `--input` ash), so the whole site (header, body, cards, AboutDavi,

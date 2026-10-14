@@ -7,9 +7,14 @@ import {
   nextMode,
   rootHeight,
   rootMarginFor,
+  switchPath,
+  tapPlaysShow,
 } from "@/components/marketing/growth/switch-rules";
 
-/** The homepage switch from the app to Squared Away Growth: rules and the CSS that plays it. */
+/**
+ * The homepage switch from the app to Squared Away Growth: rules and the theme swap in the CSS.
+ * The show itself ("Big words") is checked in growth-big-words.test.ts.
+ */
 
 const css = readFileSync("src/styles/theme.css", "utf8");
 const PALETTE = ["charcoal", "offwhite", "paper", "stone", "ash", "slate", "graphite"];
@@ -105,113 +110,95 @@ describe("nextMode: hysteresis between 85% and 100% of the screen", () => {
     expect(rootHeight(0, 0.85, 700)).toBe(700);
   });
 
-  it("keeps its timings: the end state holds 600ms+, the whole show stays under 2s", () => {
-    expect(rules.IN_THEME_AT_MS).toBe(360);
-    expect(rules.KNOB_AT_MS).toBe(420);
-    expect(rules.KNOB_MS).toBe(220);
-    expect(rules.FLOOD_OUT_AT_MS).toBe(1250);
-    expect(rules.IN_REALIGN_AT_MS).toBe(1150);
-    expect(rules.IN_DONE_MS).toBe(1740);
-    expect(rules.QUIET_MS).toBe(260);
-    expect(rules.OUT_DONE_MS).toBe(300);
+  it("keeps its settle and navigation windows", () => {
     expect(rules.SETTLE_MS).toBe(500);
     expect(rules.NAV_MS).toBe(1000);
-    const landed = rules.KNOB_AT_MS + rules.KNOB_MS;
-    expect(rules.FLOOD_OUT_AT_MS - landed).toBeGreaterThanOrEqual(600);
-    // The theme swaps under full cover (flood-in is 300ms) and before the knob moves.
-    expect(rules.IN_THEME_AT_MS).toBeGreaterThan(300);
-    expect(rules.IN_THEME_AT_MS).toBeLessThan(rules.KNOB_AT_MS);
-    // The second move to the opener is still under full cover, after the first.
-    expect(rules.IN_REALIGN_AT_MS).toBeGreaterThan(rules.IN_THEME_AT_MS);
-    expect(rules.IN_REALIGN_AT_MS).toBeLessThan(rules.FLOOD_OUT_AT_MS);
-    // Cleanup after the headline has landed (flood-out start + 40 + 60 + 300ms).
-    expect(rules.IN_DONE_MS).toBeGreaterThan(
-      rules.FLOOD_OUT_AT_MS + rules.LAND_AFTER_LIFT_MS + 360,
-    );
-    expect(rules.IN_DONE_MS).toBeLessThan(2000);
-    expect(rules.OUT_DONE_MS).toBeGreaterThan(rules.QUIET_MS);
   });
 
   it("is pure: no server-only, no database, no DOM", () => {
     const src = readFileSync("src/components/marketing/growth/switch-rules.ts", "utf8");
-    expect(src).not.toMatch(/server-only|@\/db|document\.|window\./);
+    expect(src).not.toMatch(/server-only|@\/db|document\.|window\.|import /);
+  });
+});
+
+describe("switchPath: the full show on every move from the app into Growth", () => {
+  it("every move into Growth plays the full show, however many came before", () => {
+    // No memory: the tenth crossing plays exactly like the first.
+    for (let i = 0; i < 10; i++) expect(switchPath("growth", false, false)).toBe("in");
+  });
+
+  it("the way back up is always the quiet wipe", () => {
+    expect(switchPath("app", false, false)).toBe("out");
+    expect(switchPath("app", false, true)).toBe("out");
+  });
+
+  it("a decision that waited for a show or wipe plays quietly: one show at a time", () => {
+    expect(switchPath("growth", false, true)).toBe("in-quiet");
+  });
+
+  it("instant beats everything: navigation, a hidden tab, reduced motion, an unsettled page", () => {
+    for (const next of ["app", "growth"] as const) {
+      for (const queued of [false, true]) expect(switchPath(next, true, queued)).toBe("instant");
+    }
+  });
+});
+
+describe("tapPlaysShow: a #growth tap from the app side plays the show, every time", () => {
+  const tap = {
+    href: "#growth",
+    pointer: true,
+    mode: "app",
+    playing: false,
+    instant: false,
+  } as const;
+
+  it("a pointer tap on #growth from the app side plays it, again and again", () => {
+    for (let i = 0; i < 5; i++) expect(tapPlaysShow(tap)).toBe(true);
+  });
+
+  it("in Growth a tap is a plain jump to the opener", () => {
+    expect(tapPlaysShow({ ...tap, mode: "growth" })).toBe(false);
+  });
+
+  it("never while something plays, when the switch is instant, from the keyboard or elsewhere", () => {
+    expect(tapPlaysShow({ ...tap, playing: true })).toBe(false);
+    expect(tapPlaysShow({ ...tap, instant: true })).toBe(false);
+    expect(tapPlaysShow({ ...tap, pointer: false })).toBe(false);
+    for (const href of ["#growth-call", "#pricing", "#waitlist", "#", "/growth", "#Growth"]) {
+      expect(tapPlaysShow({ ...tap, href }), href).toBe(false);
+    }
+  });
+});
+
+describe("GrowthSwitch: no once-per-page limit and no look chooser", () => {
+  const src = readFileSync("src/components/marketing/growth/growth-switch.tsx", "utf8");
+
+  it("decides every path with switchPath / tapPlaysShow, with nothing that remembers a show", () => {
+    expect(src).toContain("switchPath(");
+    expect(src).toContain("tapPlaysShow(");
+    expect(src).not.toMatch(/playedFull|playedOnce|hasPlayed|sessionStorage|localStorage/);
+  });
+
+  it("reads no ?look= and sets no data-sa-look", () => {
+    expect(src).not.toMatch(/look|useSyncExternalStore|location\.search/i);
   });
 });
 
 describe("theme.css: the switch", () => {
-  it("uses no scroll timelines and no old flip", () => {
-    for (const banned of ["animation-timeline", "view-timeline", "sa-flip"]) {
+  it("uses no scroll timelines, no old flip, no clip-path and none of the old covers", () => {
+    for (const banned of [
+      "animation-timeline",
+      "view-timeline",
+      "sa-flip",
+      "clip-path",
+      "sa-switch-flood",
+      "sa-switch-knob",
+      "data-sa-look",
+    ]) {
       expect(css).not.toContain(banned);
     }
-  });
-
-  it("clip-path only on the switch's dark labels, from the knob's box to the knob's box", () => {
-    const clips = css.replace(/\/\*[\s\S]*?\*\//g, "").match(/clip-path:[^;]*;/g) ?? [];
-    const start = "clip-path: inset(4px 50% 4px 4px round 9999px);";
-    const end = "clip-path: inset(4px 4px 4px 50% round 9999px);";
-    expect(clips).toEqual([start, start, end]);
-    // The knob it follows: 4px in, half the width less 4px, sliding its own width.
-    const knob = block(".sa-switch-knob");
-    expect(knob.get("left")).toBe("4px");
-    expect(knob.get("top")).toBe("4px");
-    expect(knob.get("bottom")).toBe("4px");
-    expect(knob.get("width")).toBe("calc(50% - 4px)");
-    expect(block(".sa-switch-graphic").get("overflow")).toBe("hidden");
-    expect(css).not.toMatch(/steps\(1\)/);
-  });
-
-  it("the animations use the timings in switch-rules.ts", () => {
-    const decl = (sel: string) => block(sel).get("animation") ?? "";
-    const flood = decl(':root[data-sa-switching="in"] .sa-switch-flood');
-    expect(flood).toMatch(/sa-switch-flood-in 300ms .* both/);
-    expect(flood).toContain(
-      `sa-switch-flood-out 240ms cubic-bezier(0.5, 0, 0.75, 0) ${rules.FLOOD_OUT_AT_MS}ms forwards`,
-    );
-    const knob = `${rules.KNOB_MS}ms cubic-bezier(0.65, 0, 0.35, 1) ${rules.KNOB_AT_MS}ms forwards`;
-    expect(decl(':root[data-sa-switching="in"] .sa-switch-knob')).toBe(`sa-switch-knob ${knob}`);
-    expect(decl(':root[data-sa-switching="in"] .sa-switch-labels[data-ink="dark"]')).toBe(
-      `sa-switch-ink ${knob}`,
-    );
-    expect(decl(':root[data-sa-switching="in"] .sa-switch-edge[data-edge="bottom"]')).toContain(
-      `${rules.FLOOD_OUT_AT_MS}ms`,
-    );
-    const land = rules.FLOOD_OUT_AT_MS + rules.LAND_AFTER_LIFT_MS - rules.IN_THEME_AT_MS;
-    expect(decl(':root[data-sa-theme="growth"][data-sa-switching="in"] .sa-land > span')).toContain(
-      ` ${land}ms both`,
-    );
-    expect(
-      block(':root[data-sa-theme="growth"][data-sa-switching="in"] .sa-land > span + span').get(
-        "animation-delay",
-      ),
-    ).toBe(`${land + 60}ms`);
-    for (const [path, wipe] of [
-      ["out", "sa-switch-wipe-down"],
-      ["in-quiet", "sa-switch-wipe-up"],
-    ] as const) {
-      expect(decl(`:root[data-sa-switching="${path}"] .sa-switch-flood`)).toBe(
-        `${wipe} ${rules.QUIET_MS}ms cubic-bezier(0.65, 0, 0.35, 1) both`,
-      );
-    }
-  });
-
-  it("the quiet paths wipe with transforms: no opacity veil, no third tone", () => {
-    expect(css).not.toContain("sa-switch-veil");
-    const quietRules =
-      css.match(/:root\[data-sa-switching="(out|in-quiet)"\] \.sa-switch-flood \{[^}]*\}/g) ?? [];
-    expect(quietRules.length).toBe(2);
-    for (const r of quietRules) expect(r).not.toMatch(/opacity/);
-  });
-
-  it("only the moving edge shows, and the pill is centred in the small viewport", () => {
-    expect(
-      block(':root[data-sa-switching="in"] .sa-switch-edge[data-edge="top"]').get("animation"),
-    ).toMatch(/^sa-switch-edge-off 120ms ease-out 300ms forwards$/);
-    expect(
-      block(':root[data-sa-switching="in"] .sa-switch-edge[data-edge="bottom"]').get("opacity"),
-    ).toBe("0");
-    const center = css.slice(css.indexOf(".sa-switch-center {"));
-    expect(center.indexOf("top: 50%;")).toBeLessThan(center.indexOf("top: 50svh;"));
-    expect(center.indexOf("top: 50svh;")).toBeGreaterThan(0);
+    // None of the other candidate looks' classes are left behind.
+    expect(css).not.toMatch(/\.sa-(ls|cu|td|bl)-/);
   });
 
   it("writes each brand colour once, as a constant on :root", () => {
@@ -257,16 +244,6 @@ describe("theme.css: the switch", () => {
     expect(wrapper.get("--input")).toBe("var(--sa-k-stone)");
   });
 
-  it("the flood leaves forwards only, never both (a backwards fill would kill the sweep)", () => {
-    // Up to the end of the declaration (the commas inside cubic-bezier() are part of it).
-    const uses = css.match(/sa-switch-flood-out \d[^;]*/g) ?? [];
-    expect(uses.length).toBeGreaterThan(0);
-    for (const use of uses) {
-      expect(use).not.toMatch(/\bboth\b/);
-      expect(use).toContain("forwards");
-    }
-  });
-
   it("the stage never takes a tap, and reduced motion hides it", () => {
     const stage = block(".sa-switch-stage");
     expect(stage.get("pointer-events")).toBe("none");
@@ -276,19 +253,6 @@ describe("theme.css: the switch", () => {
     );
     expect(reduced).toMatch(/\.sa-switch-stage\s*\{\s*display: none !important;/);
     expect(reduced).toMatch(/\.sa-land > span\s*\{\s*animation: none !important;/);
-  });
-
-  it("the timing comment matches switch-rules.ts", () => {
-    for (const name of [
-      "IN_THEME_AT_MS",
-      "IN_REALIGN_AT_MS",
-      "IN_DONE_MS",
-      "OUT_DONE_MS",
-    ] as const) {
-      const m = css.match(new RegExp(`${name} = (\\d+)`));
-      expect(m, name).not.toBeNull();
-      expect(Number(m![1])).toBe(rules[name]);
-    }
   });
 });
 

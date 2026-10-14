@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useRef, useSyncExternalStore } from "react";
-import { DEFAULT_LOOK, lookFor, lookIdFrom, type LookId } from "./looks";
+import { useEffect, useRef } from "react";
+import { BigWordsStage } from "./big-words";
+import { BW_DONE_MS, BW_QUIET_DONE_MS, BW_REALIGN_AT_MS, BW_THEME_AT_MS } from "./big-words-rules";
 import {
   LINES,
   NAV_MS,
@@ -10,23 +11,14 @@ import {
   nextMode,
   rootHeight,
   rootMarginFor,
+  switchPath,
+  tapPlaysShow,
   type HalfMode,
+  type SwitchPath,
 } from "./switch-rules";
 
 const THEME = "data-sa-theme";
 const SWITCHING = "data-sa-switching";
-/** Which look plays (TEMPORARY preview chooser, see looks/look-rules.ts); unset for "current". */
-const LOOK = "data-sa-look";
-
-/*
- * TEMPORARY preview chooser: `?look=1` … `?look=5` picks a candidate look (looks/index.ts), read
- * on the client only, so the server and hydration render the current look. Remove once a look
- * is picked. The search string doesn't change without a navigation that re-renders the page,
- * so there is nothing to subscribe to.
- */
-const noSubscribe = () => () => {};
-const lookFromUrl = (): LookId => lookIdFrom(window.location.search);
-const defaultLook = (): LookId => DEFAULT_LOOK;
 /** Swallowed (capture phase, on the document) while the full show covers the screen. */
 const TAP_EVENTS = ["click", "pointerup", "mousedown"] as const;
 /** Scrolling input, also stopped while the full show covers the screen (the page holds still). */
@@ -45,42 +37,41 @@ const SCROLL_KEYS = new Set([
 const EDITABLE = 'input, textarea, select, [contenteditable=""], [contenteditable="true"]';
 
 /**
- * The homepage switch from the app to Squared Away Growth. Scrolling decides it, nothing is
- * tapped: as soon as the Growth part comes up from the bottom of the screen, a charcoal cover
- * sweeps up, the whole site's colours swap underneath it (`data-sa-theme` on <html>, see
- * src/styles/theme.css), the little switch flicks from "The app" to "One-on-one", holds, and the
- * cover lifts off the top onto the one-on-one opener (#growth): under the cover the page is moved
- * there and held still (wheel, touch and scroll keys are stopped), so the switch always lands on
- * the opener, however fast the scroll. Back up until Growth drops off the bottom, a charcoal wipe
- * slides down.
+ * The homepage switch from the app to Squared Away Growth, played as "Big words" (big-words.tsx).
+ * Scrolling decides it, nothing is tapped: every time the Growth part comes up from the bottom of
+ * the screen, five charcoal bands slam in carrying "The app" in huge words, the whole site's
+ * colours swap underneath them (`data-sa-theme` on <html>, see src/styles/theme.css), the words
+ * tick over to "One-on-one", hold, and the bands fly back out onto the one-on-one opener (#growth):
+ * under the bands the page is moved there and held still (wheel, touch and scroll keys are
+ * stopped), so the switch always lands on the opener, however fast the scroll. Back up until
+ * Growth drops off the bottom, and bands of charcoal fly apart onto paper ("out").
  *
- * Rules in switch-rules.ts. Two IntersectionObservers, no scroll listeners (except a short one
- * right after navigation, see markNav, and the wheel / touch / key holds during the full show). The full show plays once per page view; later crossings
- * use the quiet wipes. A pointer tap on a `#growth` link while still on the app side plays the
- * show too (and adds the #growth history entry under the cover). Navigation (other # links,
- * keyboard activation, keyboard focus moving into Growth, back/forward, bfcache), load, a hidden
- * tab and reduced motion get an instant swap.
+ * Rules in switch-rules.ts, the clock in big-words-rules.ts. Two IntersectionObservers, no scroll
+ * listeners (except a short one right after navigation, see markNav, and the wheel / touch / key
+ * holds during the full show). The full show plays on every crossing from the app into Growth,
+ * one at a time: a decision made while a show or wipe plays waits for it and then plays quietly
+ * ("in-quiet" / "out"). A pointer tap on a `#growth` link while on the app side plays the full
+ * show too, every time (and adds the #growth history entry under the cover, as the link would);
+ * in Growth it is a plain jump to the opener. Navigation (other # links, keyboard activation,
+ * keyboard focus moving into Growth, back/forward, bfcache), load, a hidden tab and reduced
+ * motion get an instant swap.
  * Without JS nothing here runs and the Growth part keeps its own charcoal.
  *
  * The stage is decorative: aria-hidden, inert, pointer-events none. While the full show covers the
- * screen, taps are swallowed, so nothing hidden under the cover (a tel: link, a form) can be hit,
- * and scrolling is held.
+ * screen, taps are swallowed, so nothing hidden under the bands (a tel: link, a form) can be hit,
+ * and scrolling is held. Every show's timers and holds end in finish() (or on unmount), before the
+ * next one can start.
  * Mounted only on `/`; unmounting removes its attributes so no other page is affected.
- *
- * The picture and its clock come from the chosen look (looks/index.ts; TEMPORARY `?look=`
- * preview chooser, default = the current look). Everything above is the same for every look.
  */
 export function GrowthSwitch() {
-  const playedFull = useRef(false);
-  const look = lookFor(useSyncExternalStore(noSubscribe, lookFromUrl, defaultLook));
-  const lookId = look.id;
-  const { themeAtMs, realignAtMs, doneMs, quietDoneMs } = look.timing;
+  const stageRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const root = document.documentElement;
     const target = document.querySelector<HTMLElement>('[data-sa-half="growth"]');
     if (!target) return;
     const opener = document.getElementById("growth");
+    const stage = stageRef.current;
 
     const vh = () => window.innerHeight;
     const topNow = () => target.getBoundingClientRect().top;
@@ -88,8 +79,6 @@ export function GrowthSwitch() {
 
     let mode: HalfMode = nextMode("app", topNow(), vh());
     root.setAttribute(THEME, mode);
-    if (lookId === DEFAULT_LOOK) root.removeAttribute(LOOK);
-    else root.setAttribute(LOOK, lookId);
 
     const timers = new Set<number>();
     const later = (fn: () => void, ms: number) => {
@@ -159,7 +148,8 @@ export function GrowthSwitch() {
     };
 
     // The switch lands on the opener: the page is moved there under full cover (and again just
-    // before the lift, in case a fling's momentum carried on), unless navigation took it elsewhere.
+    // before the bands leave, in case a fling's momentum carried on), unless navigation took it
+    // elsewhere.
     const land = () => {
       if (navInShow || !opener) return;
       opener.scrollIntoView({ block: "start", behavior: "instant" });
@@ -176,11 +166,14 @@ export function GrowthSwitch() {
       root.setAttribute(THEME, next);
     };
 
-    const play = (next: HalfMode, quiet: boolean) => {
+    const play = (next: HalfMode, path: Exclude<SwitchPath, "instant">) => {
       playing = true;
       mode = next;
-      if (next === "growth" && !quiet && !playedFull.current) {
-        playedFull.current = true;
+      if (path === "in") {
+        // The stage's style is brought up to date first: a show starting in the same frame as the
+        // last one ended would otherwise find that one's finished animations still attached and
+        // play nothing. (Display none between shows drops them, so each show starts from 0.)
+        stage?.getBoundingClientRect();
         root.setAttribute(SWITCHING, "in");
         swallowTaps(true);
         // Mid full-cover: the swap and the move to the opener are never seen.
@@ -188,22 +181,27 @@ export function GrowthSwitch() {
           root.setAttribute(THEME, "growth");
           runUnderCover();
           land();
-        }, themeAtMs);
-        later(land, realignAtMs);
+        }, BW_THEME_AT_MS);
+        later(land, BW_REALIGN_AT_MS);
         finishCurrent = () => finish("growth");
-        later(finishCurrent, doneMs);
+        later(finishCurrent, BW_DONE_MS);
       } else {
         root.setAttribute(THEME, next);
-        root.setAttribute(SWITCHING, next === "growth" ? "in-quiet" : "out");
+        root.setAttribute(SWITCHING, path);
         finishCurrent = () => finish(next);
-        later(finishCurrent, quietDoneMs);
+        later(finishCurrent, BW_QUIET_DONE_MS);
       }
+    };
+
+    const go = (next: HalfMode, path: SwitchPath) => {
+      if (path === "instant") setInstant(next);
+      else play(next, path);
     };
 
     function finish(applied: HalfMode) {
       clearTimers();
       finishCurrent = null;
-      // Theme first, so a late timer can never lift the cover onto the old colours.
+      // Theme first, so a late timer can never take the bands away onto the old colours.
       root.setAttribute(THEME, applied);
       runUnderCover();
       root.removeAttribute(SWITCHING);
@@ -214,10 +212,7 @@ export function GrowthSwitch() {
       const nav = pendingInstant;
       pending = null;
       pendingInstant = false;
-      if (next && next !== applied) {
-        if (nav || instantNow()) setInstant(next);
-        else play(next, true);
-      }
+      if (next && next !== applied) go(next, switchPath(next, nav || instantNow(), true));
     }
 
     const decide = (next: HalfMode, instant: boolean) => {
@@ -227,8 +222,7 @@ export function GrowthSwitch() {
         return;
       }
       if (next === mode) return;
-      if (instant || instantNow()) setInstant(next);
-      else play(next, false);
+      go(next, switchPath(next, instant || instantNow(), false));
     };
 
     const onEntries = (which: 0 | 1) => (entries: IntersectionObserverEntry[]) => {
@@ -278,29 +272,34 @@ export function GrowthSwitch() {
       if (!a) return;
       const href = a.getAttribute("href") ?? "";
       if (!href.startsWith("#")) return;
-      const pointer =
-        e.detail > 0 && e.button === 0 && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey;
       // The way in from the hero or the header is the switch too. Keyboard activation (detail 0)
       // keeps the native jump, which also moves the focus starting point.
-      if (
-        href === "#growth" &&
-        opener &&
-        pointer &&
-        mode === "app" &&
-        !playing &&
-        !playedFull.current &&
-        !instantNow()
-      ) {
+      const plain = e.button === 0 && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey;
+      const pointer = e.detail > 0 && plain;
+      if (opener && tapPlaysShow({ href, pointer, mode, playing, instant: instantNow() })) {
         e.preventDefault();
         e.stopPropagation(); // Next's <Link> would navigate as well
-        // A new entry, as the link would add, so Back returns to where the tap was. Pushed before
-        // land() moves the page, so the entry left behind keeps the old scroll position. null:
-        // Next's patched pushState copies its own state and syncs the router URL.
-        underCover = () => window.history.pushState(null, "", "#growth");
-        play("growth", false);
+        // The entry the link would add, so Back returns to where the tap was: pushed before land()
+        // moves the page, so the entry left behind keeps the old scroll position. None when the
+        // address already ends in #growth (the link, and Next, would only replace it, so taps
+        // don't stack copies). null: Next's patched pushState copies its own state and syncs
+        // the router URL.
+        underCover =
+          window.location.hash === "#growth"
+            ? null
+            : () => window.history.pushState(null, "", "#growth");
+        play("growth", "in");
         return;
       }
       markNav();
+      // Any other way to #growth while the address already ends in it (in Growth, a keyboard
+      // jump, a tap mid-wipe): Next's <Link> doesn't move the page for the address it's on, so
+      // the page is taken to the opener here, as a plain link would be.
+      if (href === "#growth" && opener && plain && window.location.hash === "#growth") {
+        e.preventDefault();
+        e.stopPropagation();
+        opener.scrollIntoView({ block: "start", behavior: "instant" });
+      }
     };
     document.addEventListener("click", onClick, true);
 
@@ -377,20 +376,12 @@ export function GrowthSwitch() {
       else reduce.removeListener(onReduce);
       root.removeAttribute(THEME);
       root.removeAttribute(SWITCHING);
-      root.removeAttribute(LOOK);
     };
-  }, [lookId, themeAtMs, realignAtMs, doneMs, quietDoneMs]);
+  }, []);
 
-  const Stage = look.Stage;
   return (
-    <div
-      className="sa-switch-stage"
-      aria-hidden="true"
-      inert
-      data-sa-switch-stage
-      data-sa-look-stage={lookId}
-    >
-      <Stage />
+    <div ref={stageRef} className="sa-switch-stage" aria-hidden="true" inert data-sa-switch-stage>
+      <BigWordsStage />
     </div>
   );
 }

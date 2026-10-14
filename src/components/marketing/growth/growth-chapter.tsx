@@ -36,7 +36,7 @@ const outlined =
  * Squared Away Growth, on charcoal: the homepage's second part (h2, after the scroll switch in
  * growth-switch.tsx; `openerId="growth"` puts the `#growth` anchor on the opener) and the whole
  * of /growth (h1, standalone, with "who does the work" and a way back to the app).
- * The opener headline carries `sa-land`: on the homepage it lands as the switch's cover lifts.
+ * The opener headline carries `sa-land`: on the homepage it lands as the switch's bands fly out.
  * Every string is in growth-copy.ts.
  */
 export function GrowthChapter({
