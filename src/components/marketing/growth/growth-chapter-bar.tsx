@@ -2,10 +2,11 @@ import Link from "next/link";
 import { growthCopy } from "./growth-copy";
 
 /**
- * Sticky charcoal bar for the homepage's Growth chapter. Sticky only inside the chapter
- * wrapper, so it covers the paper header there (z-20 over z-10). The chapter runs to the end of
- * the page (the footer below it is shorter than the screen), so the bar stays pinned all the way
- * down and the paper header doesn't come back: that's intended, don't "fix" it.
+ * Sticky charcoal bar for the homepage's Growth part. Sticky only inside the Growth wrapper, so
+ * it covers the site header there (z-20 over z-10; the header itself is charcoal by then, after
+ * the switch). The Growth part runs to the end of the page (the footer below it is shorter than
+ * the screen), so the bar stays pinned all the way down and the header doesn't come back: that's
+ * intended, don't "fix" it.
  * Opaque on purpose: a see-through bar shows the paper header through it as a third grey.
  * A plain div, not <header>, so there's no second banner landmark.
  */

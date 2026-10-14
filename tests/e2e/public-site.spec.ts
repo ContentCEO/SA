@@ -126,9 +126,8 @@ test("/growth has the share card too (its own openGraph would otherwise drop it)
 test("tap targets: every link and button on the homepage and /growth is at least 44px tall", async ({
   page,
 }) => {
-  for (const path of ["/", "/growth"]) {
-    await page.goto(path);
-    const small = await page.evaluate(() =>
+  const check = () =>
+    page.evaluate(() =>
       [...document.querySelectorAll("a, button, summary, select, input:not([type=hidden])")]
         .filter((el) => {
           const r = (el as HTMLElement).getBoundingClientRect();
@@ -137,6 +136,17 @@ test("tap targets: every link and button on the homepage and /growth is at least
         })
         .map((el) => `${el.tagName} ${(el.textContent ?? "").trim().slice(0, 40)}`),
     );
-    expect(small).toEqual([]);
+  for (const path of ["/", "/growth"]) {
+    await page.goto(path);
+    expect(await check()).toEqual([]);
   }
+  // The homepage again after the switch to Growth (the decorative stage is aria-hidden).
+  await page.goto("/");
+  await page.evaluate(() => {
+    const el = document.querySelector('[data-sa-half="growth"]')!;
+    window.scrollTo(0, el.getBoundingClientRect().top + window.scrollY - 0.4 * window.innerHeight);
+  });
+  await expect(page.locator("html")).toHaveAttribute("data-sa-theme", "growth");
+  await expect(page.locator("html")).not.toHaveAttribute("data-sa-switching", /.*/);
+  expect(await check()).toEqual([]);
 });

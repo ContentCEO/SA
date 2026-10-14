@@ -25,6 +25,11 @@ export const growthCopy = {
     heavy: "Want more work coming in? That's what we do one-on-one.",
     body: "Squared Away Growth is a separate service, for anyone in the trades. You don't need the app to use it.",
   },
+  /** Labels on the decorative switch graphic (aria-hidden): never announced. */
+  switch: {
+    from: "The app",
+    to: "One-on-one",
+  },
   bar: {
     label: "Squared Away Growth",
     nav: "Growth",
