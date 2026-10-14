@@ -276,9 +276,51 @@ test("a paid owner connects Gmail and a customer gets one threaded reply", async
   });
 
   await test.step("The next sync sees the owner answered, so nothing new is drafted", async () => {
+    // The send itself stored the sent email as the owner's (recordSentMessage), under the id
+    // Gmail gave it.
+    const [sentDraft] = await testDb
+      .select({ sentGmailMessageId: schema.drafts.sentGmailMessageId })
+      .from(schema.drafts)
+      .where(eq(schema.drafts.id, draft.id));
+    const sentId = sentDraft?.sentGmailMessageId;
+    expect(sentId).toBeTruthy();
+    const sentRow = and(
+      eq(schema.messages.mailboxId, mailbox.id),
+      eq(schema.messages.gmailMessageId, sentId!),
+    );
+    const recorded = await testDb
+      .select({ direction: schema.messages.direction })
+      .from(schema.messages)
+      .where(sentRow);
+    expect(recorded).toEqual([{ direction: "out" }]);
+
+    // Now the sync has to prove it on its own, as for a reply the owner sent from Gmail itself:
+    // forget that row, so only Gmail's history can bring it back.
+    await testDb.delete(schema.messages).where(sentRow);
+    const before = (await calls(request, scenario.id)).length;
     expect(await runHook(request, { step: "sync", mailboxId: mailbox.id })).toMatchObject({
       ok: true,
+      status: "ok",
+      ingested: 1,
     });
+    const bySync = (await calls(request, scenario.id)).slice(before);
+    expect(only(bySync, "gmail.history").length).toBeGreaterThan(0);
+    expect(
+      only(bySync, "gmail.messages.get").some((c) => c.path.endsWith(`/messages/${sentId}`)),
+    ).toBe(true);
+    const [resynced] = await testDb
+      .select({
+        direction: schema.messages.direction,
+        labelIds: schema.messages.labelIds,
+        threadId: schema.messages.threadId,
+      })
+      .from(schema.messages)
+      .where(sentRow);
+    expect(resynced?.direction).toBe("out");
+    expect(resynced?.labelIds).toContain("SENT");
+    expect(resynced?.labelIds).not.toContain("DRAFT");
+    expect(resynced?.threadId).toBe(thread.id);
+
     expect(await runHook(request, { step: "draft", mailboxId: mailbox.id })).toMatchObject({
       ok: true,
       created: 0,
