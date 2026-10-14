@@ -915,6 +915,33 @@ default, CI too) and refuses a non-local `DATABASE_URL` or an `APP_URL` that isn
   class is in `type`. Log `reason: stripeErrorReason(err)` (`stripe-error-rules.ts`, fixed codes)
   next to `err.name`, and build test errors with `new Stripe.errors.<Class>(...)`, never a
   hand-set `err.name`.
+- **Reset test payments (Davi, 2026-10-14):** /admin → Payments, **live key only**
+  (`stripeKeyMode` in `billing-rules.ts`: `sk_live_` / `rk_live_`; `stripeMode()` in billing.ts,
+  also what Connect Stripe's LIVE/TEST notice reads). Test key → the card says "Reset test
+  payments shows up after you switch Stripe to live mode." and both actions refuse
+  (`StripeNotLiveError`) before any Stripe call. `src/server/test-payments.ts`, rules in
+  `test-payment-rules.ts`. Candidates = any Stripe id or `setup_paid_via = 'stripe'`;
+  `customers.retrieve` / `subscriptions.retrieve` with the live key: `resource_missing` = test
+  id, an answer (a `{deleted: true}` customer too) = live, anything else = "couldn't check" (the
+  account is left whole). Reset = the 2026-10-10 precedent: clear the test ids; `setup_paid_via`
+  'stripe' → null and `setup_paid_at` → null unless a live customer or subscription is left (a
+  'stripe' setup with no ids counts as test); house keeps house; setup_paid / active stay (can't
+  send, setup fee at checkout); past_due → `restored()` (a test subscription can't be paid);
+  other statuses and the plan unchanged. One transaction per account with a conditional UPDATE on
+  the ids, `setup_paid_via`, status and setup-call nullness (a live checkout meanwhile is never
+  overwritten; counted as couldn't check), `clearAutopilotCountdowns` (extracted from
+  `setWorkspacePlan`), activity `test_payment_reset` (booleans; Activity shows "Your test payment
+  was cleared — choose a plan to switch sending on" only when the setup payment went). No Stripe
+  call on a plain page load: **Check test payments** asks Stripe and keeps counts only in
+  `app_settings` `stripe_test_payments` (`{found, unchecked, reset, at}`); the card shows "Test
+  payments: N accounts still carry a test-mode payment." and, when N or M > 0, **Reset test
+  payments** behind the details/confirm pattern ("Yes, reset test payments") → "Test payments
+  reset for N accounts." (+ "Couldn't check M accounts. Tap again."). Readers of `setup_paid_at`
+  afterwards: admin card (Setup paid: Not yet), checkout (fee included; the real payment then
+  records its own date), `resumeTarget` (a paused reset account resumes to its evaluation
+  state, or active if the setup call was done), house move (keeps any date). Referral settlement
+  needs `setup_paid_via = 'stripe'`, so a reset account settles only after it really pays.
+  `/admin/costs` still counts setup_paid/active as revenue (status-based).
 
 ## Milestones
 
@@ -1007,7 +1034,8 @@ default, CI too) and refuses a non-local `DATABASE_URL` or an `APP_URL` that isn
 - Google OAuth is still in **Testing** (7-day Gmail tokens, ≤100 hand-added users): switch to In
   production and submit verification + CASA — `docs/LAUNCH.md` step 0.
 - Stripe live mode: test-mode customer ids / `setup_paid_via = 'stripe'` from test checkouts stay
-  in the shared DB; Davi decides how to reset them (`docs/LAUNCH.md` step 7a).
+  in the shared DB until Davi taps /admin → Payments → Reset test payments after the key swap
+  (`docs/LAUNCH.md` step 7b; decided 2026-10-14).
 - **M7 merge timing (complaint memory, A1):** the first preview build of the M7 branch runs
   migration 0024 (marks threads still sorted `complaint` with `complained_at`). Until M7 merges,
   production's older code keeps re-sorting threads without setting the mark, so a complaint that

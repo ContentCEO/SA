@@ -23,6 +23,7 @@ import {
   setupLookupKey,
   statusAfterCheckout,
   statusAfterSubscription,
+  stripeKeyMode,
 } from "./billing-rules";
 import { creditReferralSafely } from "./referrals";
 import { stripeErrorReason } from "./stripe-error-rules";
@@ -37,6 +38,14 @@ export function setStripeForTests(fake: Stripe | undefined) {
 
 export function stripeConfigured() {
   return Boolean(override || process.env.STRIPE_SECRET_KEY);
+}
+
+/**
+ * Live or test mode, from the secret key (`sk_live_` / `rk_live_` = live); null without a key.
+ * Read from the key even when a test fake is swapped in, so tests set the key to pick a mode.
+ */
+export function stripeMode(): "live" | "test" | null {
+  return stripeKeyMode(process.env.STRIPE_SECRET_KEY);
 }
 
 function stripe(): Stripe {
@@ -209,7 +218,7 @@ export async function connectStripe(): Promise<{
   return {
     prices: 1 + PLAN_IDS.length,
     webhookUrl: url,
-    mode: process.env.STRIPE_SECRET_KEY?.startsWith("sk_live") ? "live" : "test",
+    mode: stripeMode() === "live" ? "live" : "test",
   };
 }
 

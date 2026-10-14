@@ -19,15 +19,23 @@ import { isAdminEmail } from "@/server/admin";
 import { ADMIN_MOVES, canMakeMove, type AdminMove } from "@/server/lifecycle";
 import {
   adminMoveAction,
+  checkTestPaymentsAction,
   connectStripeAction,
   inviteAction,
   inviteFromWaitlistAction,
+  resetTestPaymentsAction,
   setPlanAction,
 } from "./actions";
 import { PendingButton } from "@/components/app/pending-button";
-import { salesTaxStatus, stripeConfigured, stripeConnectedAt } from "@/server/billing";
+import { salesTaxStatus, stripeConfigured, stripeConnectedAt, stripeMode } from "@/server/billing";
 import { SALES_TAX_LINES, SALES_TAX_ON_NOTE } from "@/server/billing-rules";
 import { stripeReasonText } from "@/server/stripe-error-rules";
+import { lastTestPaymentsResult } from "@/server/test-payments";
+import {
+  TEST_PAYMENTS_TEST_MODE,
+  testPaymentsLine,
+  testPaymentsResetNotice,
+} from "@/server/test-payment-rules";
 import { listWaitlist } from "@/server/waitlist";
 import { referralsVisible } from "@/server/referral-rules";
 import { describeWaitlistEntry, formatStamp } from "@/server/growth-note";
@@ -87,11 +95,14 @@ const done: Record<string, string> = {
   stripe_test:
     "Stripe connected in TEST mode: prices, billing portal and payment notifications are set up. Use card 4242 4242 4242 4242 to try it.",
   stripe_live: "Stripe connected in LIVE mode. Real cards will be charged.",
+  stripe_test_check: "Test payments checked.",
   invited: "Invited. They can sign in now (add them as a Google test user too).",
   already_invited: "That address was already invited.",
 };
 const errors: Record<string, string> = {
   stripe: "Couldn't connect Stripe.",
+  stripe_test_mode: TEST_PAYMENTS_TEST_MODE,
+  stripe_test_payments: "Couldn't check test payments. Try again in a minute.",
   move: "That change isn't allowed from the account's current status. Refresh and look again.",
   invite: "That doesn't look like an email address.",
   growth_only: growthCopy.admin.growthOnlyError,
@@ -210,6 +221,51 @@ function WaitlistEntry({
         </form>
       )}
     </li>
+  );
+}
+
+/**
+ * "Reset test payments" (Davi, 2026-10-14), live mode only. The line shows the last check's
+ * counts (kept in the database), so loading the page asks Stripe nothing new; "Check test
+ * payments" asks again. The reset sits behind one confirmation and re-checks every account itself.
+ */
+function TestPayments({ result }: { result: Awaited<ReturnType<typeof lastTestPaymentsResult>> }) {
+  return (
+    <div className="flex flex-col gap-2 border-t border-stone pt-3">
+      <p className="font-semibold">
+        {result ? testPaymentsLine(result) : "Test payments: not checked yet."}
+      </p>
+      {result ? (
+        <p className="text-sm text-muted-foreground">Checked {et.format(new Date(result.at))}.</p>
+      ) : null}
+      <p>
+        Accounts that &ldquo;paid&rdquo; with a Stripe test card before you switched to live mode.
+        Checking asks Stripe and changes nothing.
+      </p>
+      <form action={checkTestPaymentsAction}>
+        <PendingButton pending="Checking with Stripe…" variant="outline" className="w-full">
+          Check test payments
+        </PendingButton>
+      </form>
+      {result && (result.found > 0 || result.unchecked > 0) ? (
+        <details className="rounded-lg border">
+          <summary className="flex min-h-tap cursor-pointer items-center px-4 font-semibold">
+            Reset test payments
+          </summary>
+          <form action={resetTestPaymentsAction} className="flex flex-col gap-2 px-4 pb-4">
+            <p>
+              Clears the test-mode Stripe details from those accounts. A setup paid with a test card
+              goes back to unpaid: nothing is deleted, sending stays off until they pay for real,
+              and their next checkout includes the setup fee. Your own test account keeps sending.
+              Safe to tap again.
+            </p>
+            <PendingButton pending="Resetting…" className="w-full">
+              Yes, reset test payments
+            </PendingButton>
+          </form>
+        </details>
+      ) : null}
+    </div>
   );
 }
 
@@ -369,22 +425,34 @@ export default async function AdminPage(props: PageProps<"/admin">) {
   const params = await props.searchParams;
   const now = new Date();
   const referrals = referralsVisible();
-  const [rows, total, invited, waiting, stripeAt, system, salesTax] = await Promise.all([
-    adminOverview(now),
-    countWorkspaces(),
-    listInvites(),
-    listWaitlist(),
-    stripeConnectedAt(),
-    systemHealth(now),
-    salesTaxStatus(),
-  ]);
+  // Test payments can only be told apart with the live key. The counts come from the last check
+  // (database only): a plain page load asks Stripe nothing new.
+  const live = stripeConfigured() && stripeMode() === "live";
+  const [rows, total, invited, waiting, stripeAt, system, salesTax, testPayments] =
+    await Promise.all([
+      adminOverview(now),
+      countWorkspaces(),
+      listInvites(),
+      listWaitlist(),
+      stripeConnectedAt(),
+      systemHealth(now),
+      salesTaxStatus(),
+      live ? lastTestPaymentsResult() : null,
+    ]);
   // Payment messages show inside the Payments section (the page scrolls there), not at the top.
   const isStripe = (k: unknown) => typeof k === "string" && k.startsWith("stripe");
   const doneMsg =
     typeof params.done === "string" && !isStripe(params.done) ? done[params.done] : undefined;
   const errorMsg =
     typeof params.error === "string" && !isStripe(params.error) ? errors[params.error] : undefined;
-  const stripeDone = isStripe(params.done) ? done[params.done as string] : undefined;
+  const stripeDone =
+    params.done === "stripe_test_reset"
+      ? testPayments && testPayments.reset !== null
+        ? testPaymentsResetNotice({ reset: testPayments.reset, unchecked: testPayments.unchecked })
+        : undefined
+      : isStripe(params.done)
+        ? done[params.done as string]
+        : undefined;
   const stripeError = isStripe(params.error) ? errors[params.error as string] : undefined;
   // Only a fixed code travels in the URL (M11 C10); anything else shows nothing.
   const stripeReason = stripeReasonText(params.reason);
@@ -456,22 +524,25 @@ export default async function AdminPage(props: PageProps<"/admin">) {
           </Notice>
         ) : null}
         {stripeConfigured() ? (
-          <form action={connectStripeAction} className="flex flex-col gap-2">
-            <p className="font-semibold">
-              {stripeAt ? `Connected · last set up ${et.format(stripeAt)}` : "Not connected yet."}
-            </p>
-            {salesTax ? <p>{SALES_TAX_LINES[salesTax]}</p> : null}
-            {salesTax === "on" ? <p>{SALES_TAX_ON_NOTE}</p> : null}
-            <p>
-              Sets up the four prices from the price list, the customer billing page, and the
-              payment notifications that switch accounts on and off. Takes about 10 seconds. Safe to
-              tap again. It also makes the prices add tax on top, so tap it once before setting up
-              Stripe Tax.
-            </p>
-            <PendingButton pending="Connecting to Stripe…" className="w-full">
-              {stripeAt ? "Connect Stripe again" : "Connect Stripe"}
-            </PendingButton>
-          </form>
+          <>
+            <form action={connectStripeAction} className="flex flex-col gap-2">
+              <p className="font-semibold">
+                {stripeAt ? `Connected · last set up ${et.format(stripeAt)}` : "Not connected yet."}
+              </p>
+              {salesTax ? <p>{SALES_TAX_LINES[salesTax]}</p> : null}
+              {salesTax === "on" ? <p>{SALES_TAX_ON_NOTE}</p> : null}
+              <p>
+                Sets up the four prices from the price list, the customer billing page, and the
+                payment notifications that switch accounts on and off. Takes about 10 seconds. Safe
+                to tap again. It also makes the prices add tax on top, so tap it once before setting
+                up Stripe Tax.
+              </p>
+              <PendingButton pending="Connecting to Stripe…" className="w-full">
+                {stripeAt ? "Connect Stripe again" : "Connect Stripe"}
+              </PendingButton>
+            </form>
+            {live ? <TestPayments result={testPayments} /> : <p>{TEST_PAYMENTS_TEST_MODE}</p>}
+          </>
         ) : (
           <p>Add STRIPE_SECRET_KEY to the sa project in Vercel first.</p>
         )}

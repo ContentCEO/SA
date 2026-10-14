@@ -391,7 +391,10 @@ never the browser redirect.
 3. Test: as an owner, Settings → Plan & billing → Choose a plan, card `4242 4242 4242 4242`, any
    future date, any CVC. The page shows "finishing up" until the webhook lands, then the account is
    `setup_paid` (sending on). Admin still marks the setup call done (→ `active`).
-4. Going live: swap in the live secret key, redeploy, tap Connect Stripe again.
+4. Going live: swap in the live secret key, redeploy, then `/admin` → Payments → **Check test
+   payments** → **Reset test payments** (accounts that paid with a test card lose their test-mode
+   Stripe ids, and a setup paid that way goes back to unpaid, so they pay for real; only works
+   with the live key, safe to tap again), then tap Connect Stripe again (`docs/LAUNCH.md` step 7).
 5. Sales tax (Stripe Tax; Davi turned it on 2026-10-14). The app never configures tax — it only
    asks Stripe whether Stripe Tax is **active**. Test mode and live mode are separate, so do this
    in each, in this order:

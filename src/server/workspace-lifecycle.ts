@@ -1,6 +1,6 @@
 import "server-only";
 import { and, eq, exists, lte, sql } from "drizzle-orm";
-import { db } from "@/db";
+import { db, type Database } from "@/db";
 import { pricing } from "@/config/pricing";
 import {
   activityLog,
@@ -169,6 +169,22 @@ export async function applyAdminMove(
 }
 
 /**
+ * Stop every autopilot countdown in a workspace: those replies wait for the owner's tap instead.
+ * Used when the plan or the account's payment changes. Takes a transaction when there is one.
+ */
+export async function clearAutopilotCountdowns(
+  workspaceId: string,
+  executor: Pick<Database, "execute"> = db(),
+) {
+  await executor.execute(sql`
+    update ${drafts} set auto_send_at = null
+    where ${drafts.autoSendAt} is not null and ${drafts.status} = 'pending'
+      and ${drafts.mailboxId} in (
+        select ${mailboxes.id} from ${mailboxes} where ${mailboxes.workspaceId} = ${workspaceId}
+      )`);
+}
+
+/**
  * Davi sets the plan by hand until Stripe does (Milestone 10). The plan
  * decides mailbox limits and whether autopilot can be unlocked. Dropping to a
  * plan without autopilot switches it off and stops anything counting down.
@@ -186,12 +202,7 @@ export async function setWorkspacePlan(
       .update(rules)
       .set({ mode: "draft", updatedAt: now })
       .where(eq(rules.workspaceId, workspaceId));
-    await db().execute(sql`
-      update ${drafts} set auto_send_at = null
-      where ${drafts.autoSendAt} is not null and ${drafts.status} = 'pending'
-        and ${drafts.mailboxId} in (
-          select ${mailboxes.id} from ${mailboxes} where ${mailboxes.workspaceId} = ${workspaceId}
-        )`);
+    await clearAutopilotCountdowns(workspaceId);
   }
   await db()
     .insert(activityLog)

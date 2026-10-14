@@ -175,6 +175,12 @@ export function describeActivity(
       return "Sent your monthly summary";
     case "referral_credit_applied":
       return "A referral credit was added to your account";
+    case "test_payment_reset":
+      // Only worth saying when it turned sending off; clearing old test ids alone changes nothing
+      // the owner can see.
+      return detail.setupPaymentCleared
+        ? "Your test payment was cleared — choose a plan to switch sending on"
+        : null;
     case "evaluation_started":
       return "Your three days started";
     case "evaluation_expired":

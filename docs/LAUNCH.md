@@ -421,12 +421,31 @@ Until this is done, morning and monthly summaries only reach the Resend account'
 
 ## 7. Stripe live mode
 
-**7a. Before switching: accounts that paid with a test card.** Every "paid" account today paid in
-Stripe's test mode. Live Stripe doesn't know those customers (their next checkout or billing page
-fails), and those accounts can send without a real payment.
+**7a. Swap the key.**
 
-- Where: `/admin` → each account card's **Setup paid** line: "Yes, through Stripe" means a test
-  payment. For a count, Neon → SQL Editor (branch `production`):
+- Where: Stripe → turn **Test mode** off → Developers → API keys → reveal the live **Secret key**.
+- Paste: Vercel → `STRIPE_SECRET_KEY` (Production, sensitive). Also check that **no**
+  `STRIPE_WEBHOOK_SECRET` exists in Vercel; delete it if it does (a leftover test value would make
+  every live payment notification fail). Redeploy.
+- Worked when: `/admin` → Payments shows **Check test payments** (with the test key it says
+  "Reset test payments shows up after you switch Stripe to live mode." instead).
+
+**7b. Reset test payments.** Every "paid" account today paid with a Stripe test card (on its card
+in `/admin`, **Setup paid** reads "Yes, through Stripe"). Live Stripe doesn't know those
+customers, and those accounts could send without a real payment. You decided on 2026-10-14 to
+reset them.
+
+- Where: `/admin` → Payments → **Check test payments** (asks Stripe, changes nothing). The card
+  then reads "Test payments: N accounts still carry a test-mode payment." Then **Reset test
+  payments** → **Yes, reset test payments**.
+- What it does: clears the test-mode Stripe details from those accounts and puts a setup paid with
+  a test card back to unpaid, so they keep their data, can't send, and pay the setup fee for real
+  at their next checkout (your own test account keeps sending).
+- Worked when: the notice says "Test payments reset for N accounts." and the card reads "Test
+  payments: none left."; those accounts' cards now say **Setup paid**: Not yet. If it adds
+  "Couldn't check M accounts. Tap again.", Stripe didn't answer for those: tap again (it's safe to
+  tap again). For a count from the database (Neon → SQL Editor, branch `production`), before any
+  real customer has paid all three read 0:
 
   ```sql
   select
@@ -435,16 +454,6 @@ fails), and those accounts can send without a real payment.
     count(*) filter (where setup_paid_via = 'stripe') as paid_via_stripe
   from workspaces;
   ```
-
-- If any count isn't 0: whether to reset those accounts is your decision (step 13). There is no
-  button for it on purpose.
-
-**7b. Swap the key.**
-
-- Where: Stripe → turn **Test mode** off → Developers → API keys → reveal the live **Secret key**.
-- Paste: Vercel → `STRIPE_SECRET_KEY` (Production, sensitive). Also check that **no**
-  `STRIPE_WEBHOOK_SECRET` exists in Vercel; delete it if it does (a leftover test value would make
-  every live payment notification fail). Redeploy.
 
 **7c. Connect Stripe.**
 
@@ -459,8 +468,8 @@ fails), and those accounts can send without a real payment.
 - Then clean up test mode: Stripe → turn **Test mode** on → Developers → Webhooks → the endpoint
   ending `/api/stripe/webhook` → **Delete**. Test subscriptions keep renewing and Stripe keeps
   sending their notifications to the same address, which now only accepts live ones, so Stripe
-  would retry and email you failure warnings that look like a live problem. If you decide to reset
-  the test-paid accounts (7a), also cancel their subscriptions in test mode → Customers.
+  would retry and email you failure warnings that look like a live problem. The accounts you reset
+  in 7b no longer point at their test subscriptions; cancel those in test mode → Customers too.
   Worked when: test mode's Webhooks page lists no endpoint for the app.
 
 **7d. Cancellation setting.**
@@ -582,7 +591,7 @@ Nothing here is switched on or changed until you say so.
   copies) or option B (an empty preview project). With option A, previews must use an Inngest
   Branch environment (or have no `INNGEST_…` keys), since the copied drafts carry production's
   numbers; option B has no such overlap.
-- **Test-mode Stripe accounts** ([step 7a](#7-stripe-live-mode)): whether to reset accounts that
+- **Test-mode Stripe accounts** ([step 7b](#7-stripe-live-mode)): whether to reset accounts that
   "paid" with a test card (clear their Stripe ids and setup payment, so they pay for real), or how
   else to handle them.
 - **Taxes:** decided 2026-10-14: charge sales tax with Stripe Tax (set up in

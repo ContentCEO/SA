@@ -454,6 +454,24 @@ describe("LAUNCH.md structure", () => {
     expect(c).toContain('"Couldn\'t connect Stripe."');
   });
 
+  it("going live: swap the key, then reset test payments, then Connect Stripe again", () => {
+    const step7 = flat(sections.find((s) => s.n === 7)!.body);
+    const swap = step7.indexOf("**7a. Swap the key.**");
+    const reset = step7.indexOf("**7b. Reset test payments.**");
+    const connect = step7.indexOf("**7c. Connect Stripe.**");
+    expect(swap).toBeGreaterThanOrEqual(0);
+    expect(reset).toBeGreaterThan(swap);
+    expect(connect).toBeGreaterThan(reset);
+    const b = step7.slice(reset, connect);
+    expect(b).toContain("Payments → **Check test payments**");
+    expect(b).toContain("**Reset test payments** → **Yes, reset test payments**");
+    expect(b).toContain('"Test payments reset for N accounts."');
+    expect(b).toContain("Worked when:");
+    expect(step7).not.toContain("There is no button for it on purpose");
+    // The step 13 entry points at the reset, not the key swap.
+    expect(flat(sections[13]!.body)).toContain("([step 7b](#7-stripe-live-mode))");
+  });
+
   it("sales tax: prices fixed first, and 'on' isn't counted as proof without registrations", () => {
     const step7 = sections.find((s) => s.n === 7)!.body;
     const e = flat(step7.slice(step7.indexOf("**7e."), step7.indexOf("**7f.")));
@@ -582,6 +600,15 @@ describe("what LAUNCH.md tells Davi to look for is what the code shows", () => {
       "Yes, this is my account",
       "Your account can send now (marked as your own test account).",
       "Your own test account",
+      // Reset test payments (7b, Davi 2026-10-14).
+      "Check test payments",
+      "Reset test payments",
+      "Yes, reset test payments",
+      "Reset test payments shows up after you switch Stripe to live mode.",
+      "Test payments: none left.",
+      "Test payments reset for ",
+      "Couldn't check ",
+      "Tap again.",
     ]) {
       expect(flat(launch), `LAUNCH.md quotes "${text}"`).toContain(text);
       expect(code, `the app shows "${text}"`).toContain(text);

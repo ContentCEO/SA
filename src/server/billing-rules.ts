@@ -60,8 +60,17 @@ export const SALES_TAX_ON_NOTE =
 /** The owner-facing note next to plan prices (homepage and /billing). */
 export const SALES_TAX_NOTE = "Plus sales tax where it applies.";
 
+/**
+ * Which Stripe account mode a secret key talks to: live for `sk_live_` / `rk_live_` (standard or
+ * restricted), test for anything else that's set, null when unset. The one place that decides it.
+ */
+export function stripeKeyMode(key: string | null | undefined): "live" | "test" | null {
+  if (!key) return null;
+  return /^(sk|rk)_live_/.test(key) ? "live" : "test";
+}
+
 /** Where they go once paid: as far as they'd got, at least setup_paid. */
-function restored(w: W): Status {
+export function restored(w: Pick<W, "setupCallCompletedAt">): Status {
   return w.setupCallCompletedAt ? "active" : "setup_paid";
 }
 

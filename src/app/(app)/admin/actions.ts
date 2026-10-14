@@ -8,6 +8,7 @@ import { inviteFromWaitlist } from "@/server/waitlist";
 import { connectStripe } from "@/server/billing";
 import { requireAdmin } from "@/server/session";
 import { stripeErrorReason } from "@/server/stripe-error-rules";
+import { checkTestPayments, resetTestPayments, StripeNotLiveError } from "@/server/test-payments";
 import { isAdminMove } from "@/server/lifecycle";
 import {
   applyAdminMove,
@@ -86,4 +87,40 @@ export async function connectStripeAction() {
     redirect(`/admin?error=stripe&reason=${reason}#stripe`);
   }
   redirect(`/admin?done=stripe_${mode}#stripe`);
+}
+
+/**
+ * "Check test payments": asks live Stripe which accounts still carry a test-mode payment and
+ * keeps the counts for the Payments card. Changes no account. Refused in test mode.
+ */
+export async function checkTestPaymentsAction() {
+  await requireAdmin();
+  try {
+    await checkTestPayments();
+  } catch (err) {
+    if (err instanceof StripeNotLiveError) redirect("/admin?error=stripe_test_mode#stripe");
+    console.error("test_payments_check_failed", {
+      error: err instanceof Error ? err.name : "unknown",
+    });
+    redirect("/admin?error=stripe_test_payments#stripe");
+  }
+  redirect("/admin?done=stripe_test_check#stripe");
+}
+
+/**
+ * "Reset test payments" (after one confirmation): resets every account that paid with a Stripe
+ * test card, so it pays for real. Only with the live key; safe to tap again.
+ */
+export async function resetTestPaymentsAction() {
+  await requireAdmin();
+  try {
+    await resetTestPayments();
+  } catch (err) {
+    if (err instanceof StripeNotLiveError) redirect("/admin?error=stripe_test_mode#stripe");
+    console.error("test_payments_reset_failed", {
+      error: err instanceof Error ? err.name : "unknown",
+    });
+    redirect("/admin?error=stripe_test_payments#stripe");
+  }
+  redirect("/admin?done=stripe_test_reset#stripe");
 }
