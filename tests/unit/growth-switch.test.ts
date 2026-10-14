@@ -182,6 +182,17 @@ describe("GrowthSwitch: no once-per-page limit and no look chooser", () => {
   it("reads no ?look= and sets no data-sa-look", () => {
     expect(src).not.toMatch(/look|useSyncExternalStore|location\.search/i);
   });
+
+  it("flushes the stage's style on every path, before any path is set", () => {
+    // A queued path starts in the same task the last one ended, on the same sa-bw-out-* keyframes:
+    // without the flush its bands keep the finished animations and never show (e2e checks it too).
+    const play = src.slice(src.indexOf("const play = "), src.indexOf("const go = "));
+    const flush = play.indexOf("stage?.getBoundingClientRect()");
+    expect(flush).toBeGreaterThan(-1);
+    expect(play.match(/getBoundingClientRect\(\)/g)).toHaveLength(1);
+    expect(flush).toBeLessThan(play.indexOf('if (path === "in")'));
+    expect(flush).toBeLessThan(play.indexOf("root.setAttribute(SWITCHING"));
+  });
 });
 
 describe("theme.css: the switch", () => {

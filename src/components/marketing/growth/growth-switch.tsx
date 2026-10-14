@@ -169,11 +169,13 @@ export function GrowthSwitch() {
     const play = (next: HalfMode, path: Exclude<SwitchPath, "instant">) => {
       playing = true;
       mode = next;
+      // The stage's style is brought up to date first, on every path. A queued decision starts in
+      // the same task as the last show or wipe ended (finish() → go()), and every path's bands run
+      // sa-bw-out-*, so without this the browser would keep that one's finished animations and the
+      // bands would stay off-screen: a bare colour cut. data-sa-switching is always absent here, so
+      // the stage computes display none, which drops them and each path starts from 0.
+      stage?.getBoundingClientRect();
       if (path === "in") {
-        // The stage's style is brought up to date first: a show starting in the same frame as the
-        // last one ended would otherwise find that one's finished animations still attached and
-        // play nothing. (Display none between shows drops them, so each show starts from 0.)
-        stage?.getBoundingClientRect();
         root.setAttribute(SWITCHING, "in");
         swallowTaps(true);
         // Mid full-cover: the swap and the move to the opener are never seen.

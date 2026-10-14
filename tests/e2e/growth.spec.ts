@@ -22,9 +22,14 @@ type SaWindow = Window & {
     at: number;
     stage: boolean;
     graphic: boolean;
-    /** The animations on the five bands, and the middle band's colour. */
-    bands: { anims: string[]; bg: string };
+    /**
+     * The animations on the five bands, whether every one of them starts from 0 (running, not a
+     * finished one kept from the last transition), and the middle band's colour.
+     */
+    bands: { anims: string[]; fresh: boolean; bg: string };
   }[];
+  /** Every frame while a transition plays: which one, and how many bands were on screen. */
+  __saFrames: { v: string; on: number }[];
   /** Where the bands were, and which word was inverted, when the theme swapped in a full show. */
   __saSwap: {
     dt: number;
@@ -48,8 +53,20 @@ async function recordSwitches(page: Page) {
     w.__saLog = [];
     w.__saVis = [];
     w.__saSwap = null;
+    w.__saFrames = [];
     let inAt = 0;
     const bands = () => [...document.querySelectorAll(".sa-bw-band")];
+    // A band is on screen unless it's all the way off to one side.
+    const sample = () => {
+      const v = document.documentElement?.getAttribute("data-sa-switching");
+      if (v) {
+        const vw = window.innerWidth;
+        const on = bands().filter((b) => Math.abs(b.getBoundingClientRect().left) < vw - 1);
+        w.__saFrames.push({ v, on: on.length });
+      }
+      requestAnimationFrame(sample);
+    };
+    requestAnimationFrame(sample);
     const chip = (side: string) =>
       getComputedStyle(document.querySelector(`.sa-bw-word[data-word="${side}"] .sa-bw-chip`)!)
         .opacity;
@@ -84,15 +101,15 @@ async function recordSwitches(page: Page) {
         if (v === "in") inAt = performance.now();
         const all = bands();
         const shown = (s: string) => !!document.querySelector(s)?.checkVisibility();
+        const anims = all.flatMap((b) => b.getAnimations() as CSSAnimation[]);
         w.__saVis.push({
           v,
           at: performance.now(),
           stage: shown("[data-sa-switch-stage]"),
           graphic: shown("[data-sa-switch-graphic]"),
           bands: {
-            anims: all.flatMap((b) =>
-              b.getAnimations().map((a) => (a as CSSAnimation).animationName),
-            ),
+            anims: anims.map((a) => a.animationName),
+            fresh: anims.every((a) => a.playState === "running" && Number(a.currentTime) < 20),
             bg: getComputedStyle(all[2]).backgroundColor,
           },
         });
@@ -109,12 +126,19 @@ async function recordSwitches(page: Page) {
 const saLog = (page: Page) => page.evaluate(() => (window as unknown as SaWindow).__saLog);
 const saVis = (page: Page) => page.evaluate(() => (window as unknown as SaWindow).__saVis);
 const saSwap = (page: Page) => page.evaluate(() => (window as unknown as SaWindow).__saSwap);
+/** How many frames of transition `v` had at least one band on screen. */
+const framesOnScreen = (page: Page, v: string) =>
+  page.evaluate(
+    (t) => (window as unknown as SaWindow).__saFrames.filter((f) => f.v === t && f.on > 0).length,
+    v,
+  );
 const resetLog = (page: Page) =>
   page.evaluate(() => {
     const w = window as unknown as SaWindow;
     w.__saLog = [];
     w.__saVis = [];
     w.__saSwap = null;
+    w.__saFrames = [];
   });
 const count = (log: string[], v: string) => log.filter((x) => x === v).length;
 
@@ -218,6 +242,7 @@ async function expectFullShow(page: Page) {
       "sa-bw-out-right",
     ]),
   );
+  expect(start.bands.fresh).toBe(true);
   expect(start.bands.bg).toBe(CHARCOAL);
   const s = (await saSwap(page))!;
   expect(s).not.toBeNull();
@@ -602,8 +627,10 @@ test.describe("homepage: the way into Squared Away Growth", () => {
         expect.arrayContaining(["sa-bw-out-left", "sa-bw-out-right"]),
       );
       expect(out.bands.anims).toHaveLength(5);
+      expect(out.bands.fresh).toBe(true);
       expect(out.bands.bg).toBe(CHARCOAL);
       expect(out.graphic).toBe(false);
+      expect(await framesOnScreen(page, "out")).toBeGreaterThan(0);
 
       // Down again: the whole show again, onto the opener.
       await resetLog(page);
@@ -664,6 +691,10 @@ test.describe("homepage: the way into Squared Away Growth", () => {
       expect.arrayContaining(["sa-bw-out-left", "sa-bw-out-right"]),
     );
     expect(quiet.bands.anims).toHaveLength(5);
+    // Queued, it starts in the same task the wipe ended: the bands still really fly, from 0 (a
+    // finished wipe's animations kept on would leave them off-screen: a bare colour cut).
+    expect(quiet.bands.fresh).toBe(true);
+    expect(await framesOnScreen(page, "in-quiet")).toBeGreaterThan(0);
     expect(quiet.bands.bg).toBe(PAPER);
     expect(quiet.graphic).toBe(false);
     expect(await noOverflow(page)).toBe(true);
@@ -671,6 +702,50 @@ test.describe("homepage: the way into Squared Away Growth", () => {
     // A clean way up and down again: the full show.
     await stepBoundaryTo(page, 1.1);
     await expectApp(page);
+    await resetLog(page);
+    await stepBoundaryTo(page, 0.4);
+    await expectFullShow(page);
+  });
+
+  test("a way up during the full show waits for it, then the bands fly apart onto paper", async ({
+    page,
+  }) => {
+    await page.goto("/");
+    await settle(page);
+    await stepBoundaryTo(page, 0.4);
+    // Back to the top (a scrollbar drag isn't held) after the last realign, while the bands are
+    // still flying out: the way up waits for the show to end.
+    await page.evaluate(async () => {
+      const w = window as unknown as SaWindow;
+      const at = await new Promise<number>((resolve) => {
+        const tick = () => {
+          const start = w.__saVis.find((x) => x.v === "in");
+          if (start) resolve(start.at);
+          else requestAnimationFrame(tick);
+        };
+        tick();
+      });
+      await new Promise((r) => setTimeout(r, Math.max(0, at + 1400 - performance.now())));
+      window.scrollTo(0, 0);
+    });
+    await expectApp(page);
+    const log = await saLog(page);
+    expect(count(log, "in")).toBe(1);
+    expect(count(log, "out")).toBe(1);
+    expect(log.indexOf("out")).toBeGreaterThan(log.indexOf("in"));
+    expect(log).not.toContain("in-quiet");
+    const out = (await saVis(page)).find((x) => x.v === "out")!;
+    expect(out.bands.anims).toEqual(expect.arrayContaining(["sa-bw-out-left", "sa-bw-out-right"]));
+    expect(out.bands.anims).toHaveLength(5);
+    // Queued, it starts in the same task the show ended, and still flies from 0 on screen.
+    expect(out.bands.fresh).toBe(true);
+    expect(await framesOnScreen(page, "out")).toBeGreaterThan(0);
+    expect(out.bands.bg).toBe(CHARCOAL);
+    expect(out.graphic).toBe(false);
+    await expect(page.locator("body")).toHaveCSS("background-color", PAPER);
+    expect(await page.evaluate(() => window.scrollY)).toBe(0);
+
+    // Down again: the whole show.
     await resetLog(page);
     await stepBoundaryTo(page, 0.4);
     await expectFullShow(page);

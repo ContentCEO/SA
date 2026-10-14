@@ -513,9 +513,13 @@ In a sandbox with preinstalled Chromium: `PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-brows
     `preventDefault`, and PageUp/Down, Space, arrows, Home/End unless typed in a field). One show
     at a time: decisions during a show or wipe queue as `pending` and play quietly at cleanup
     (`queued` → "in-quiet" / "out"), or instantly when they came from navigation
-    (`pendingInstant`); every timer and hold ends in `finish()` before the next can start. A full
-    show forces a style flush of the stage before setting "in" (`getBoundingClientRect`), so one
-    starting in the same frame another ended still restarts its animations.
+    (`pendingInstant`); every timer and hold ends in `finish()` before the next can start. Every
+    path ("in", "in-quiet", "out") forces a style flush of the stage before setting
+    `data-sa-switching` (`getBoundingClientRect` in `play()`, with the attribute absent, so the
+    stage computes display none and drops the old animations). A queued path starts in the same
+    task the last one ended, and all of them run `sa-bw-out-*`, so without the flush the browser
+    keeps the finished animations and the bands stay off-screen: a bare colour cut (review
+    2026-10-14; e2e checks a band is on screen during a queued "in-quiet" and a queued "out").
     Quiet paths ("out", and "in-quiet" for a queued way down): bands of the old colour fly apart
     sideways, no words, never fades (`BW_QUIET_MS` 260, cleanup `BW_QUIET_DONE_MS` 300). The stage
     is 100vh. There is **no interactive switch**: the stage is aria-hidden, inert, pointer-events
