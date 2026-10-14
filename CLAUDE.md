@@ -886,8 +886,8 @@ default, CI too) and refuses a non-local `DATABASE_URL` or an `APP_URL` that isn
   activates Stripe Tax in Stripe's dashboard (origin address, registrations, default tax code);
   `stripeTaxActive()` (`src/server/billing.ts`) = `tax.settings.retrieve()` status `active`. No
   env var. `createCheckout` asks **first** (nothing is created in Stripe if it can't answer); a
-  failure logs `stripe_tax_check_failed` {workspaceId, err.name} and rethrows into the existing
-  path (the action rethrows anything but `CheckoutNotAllowedError`) — never an untaxed checkout
+  failure logs `stripe_tax_check_failed` {workspaceId, err.name, reason} and rethrows into the
+  existing path (the action rethrows anything but `CheckoutNotAllowedError`) — never an untaxed checkout
   once tax might be on. Active → `automatic_tax: {enabled: true}`, `customer_update: {address:
 "auto", name: "auto"}` (our customers are made without an address; note Checkout then saves
   the name typed there over the business name) and `billing_address_collection: "required"`;
@@ -895,16 +895,26 @@ default, CI too) and refuses a non-local `DATABASE_URL` or an `APP_URL` that isn
   `tax_behavior: "exclusive"` (tax on top, matching the terms' "plus any taxes");
   `ensurePrices({ fixTaxBehavior: true })` — **only from connectStripe** — sets found prices with
   no / `unspecified` tax behavior to exclusive (the one change Stripe allows) and never touches
-  inclusive/exclusive ones. So after activating Stripe Tax, Davi taps Connect Stripe again
-  (LAUNCH.md 7e). A newly created portal configuration also allows `customer_update`
+  inclusive/exclusive ones. So Davi taps Connect Stripe again **before** Stripe's tax settings
+  (LAUNCH.md 7e; it works whether or not tax is on, so no checkout runs with tax on and an
+  unspecified price). A newly created portal configuration also allows `customer_update`
   `["address"]`; an existing one is left alone (docs tell Davi to tick Billing address).
   `/admin` Payments: `salesTaxStatus()` (5 s timeout, no retries, never throws; null without
   Stripe) → `SALES_TAX_LINES` in `billing-rules.ts` ("Sales tax: on (Stripe Tax is set up)." /
-  "off. Set up Stripe Tax in Stripe to charge it." / "couldn't check."). Owner copy:
+  "off. Set up Stripe Tax in Stripe to charge it." / "couldn't check."), plus `SALES_TAX_ON_NOTE`
+  under "on": Stripe's status turns `active` once the head-office address is saved — it only
+  means Stripe can calculate tax, and it charges tax only where a registration exists. So 7e's
+  "worked when" is "on" **and** Stripe → Tax → Registrations listing each state. Owner copy:
   `SALES_TAX_NOTE` "Plus sales tax where it applies." under the plan cards on the homepage and
   /billing (static: true whether or not tax is on). Privacy policy: Stripe's checkout may ask
-  for the billing address; we don't store it (tested; no address column). Subscriptions made
+  for the billing address; we don't store it (tested; no address column); Stripe saves it and
+  the typed name on its customer record, which account deletion leaves at Stripe (the "Delete my
+  account" bullet says so; tested against `customer_update` in billing.ts). Subscriptions made
   before Stripe Tax was active keep running untaxed until changed in Stripe.
+  **Stripe error logs:** stripe-node 23's `StripeError` never sets `name` (always "Error"); the
+  class is in `type`. Log `reason: stripeErrorReason(err)` (`stripe-error-rules.ts`, fixed codes)
+  next to `err.name`, and build test errors with `new Stripe.errors.<Class>(...)`, never a
+  hand-set `err.name`.
 
 ## Milestones
 

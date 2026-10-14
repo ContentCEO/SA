@@ -26,7 +26,7 @@ import {
 } from "./actions";
 import { PendingButton } from "@/components/app/pending-button";
 import { salesTaxStatus, stripeConfigured, stripeConnectedAt } from "@/server/billing";
-import { SALES_TAX_LINES } from "@/server/billing-rules";
+import { SALES_TAX_LINES, SALES_TAX_ON_NOTE } from "@/server/billing-rules";
 import { stripeReasonText } from "@/server/stripe-error-rules";
 import { listWaitlist } from "@/server/waitlist";
 import { referralsVisible } from "@/server/referral-rules";
@@ -461,10 +461,12 @@ export default async function AdminPage(props: PageProps<"/admin">) {
               {stripeAt ? `Connected · last set up ${et.format(stripeAt)}` : "Not connected yet."}
             </p>
             {salesTax ? <p>{SALES_TAX_LINES[salesTax]}</p> : null}
+            {salesTax === "on" ? <p>{SALES_TAX_ON_NOTE}</p> : null}
             <p>
               Sets up the four prices from the price list, the customer billing page, and the
               payment notifications that switch accounts on and off. Takes about 10 seconds. Safe to
-              tap again. After setting up Stripe Tax, tap it again so the prices add tax on top.
+              tap again. It also makes the prices add tax on top, so tap it once before setting up
+              Stripe Tax.
             </p>
             <PendingButton pending="Connecting to Stripe…" className="w-full">
               {stripeAt ? "Connect Stripe again" : "Connect Stripe"}

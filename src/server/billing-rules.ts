@@ -50,6 +50,13 @@ export const SALES_TAX_LINES: Record<SalesTaxStatus, string> = {
   unknown: "Sales tax: couldn't check.",
 };
 
+/**
+ * Shown under "on": Stripe calls tax "active" once the business address is saved, which only
+ * means it can work tax out. It charges tax only in the states registered in Stripe.
+ */
+export const SALES_TAX_ON_NOTE =
+  "Stripe only charges it in the states listed in Stripe under Tax → Registrations.";
+
 /** The owner-facing note next to plan prices (homepage and /billing). */
 export const SALES_TAX_NOTE = "Plus sales tax where it applies.";
 

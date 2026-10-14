@@ -471,24 +471,32 @@ fails), and those accounts can send without a real payment.
 - Worked when: the portal page shows that option saved.
 
 **7e. Sales tax (Stripe Tax).** You decided on 2026-10-14 to turn it on. The app doesn't set
-anything up for tax; it only checks whether Stripe Tax is active.
+anything up for tax; it only checks whether Stripe Tax is active. Live mode and test mode are set
+up separately. In this order:
 
-- Where: Stripe (live) → Settings → **Tax**. Add your business address, a default product tax
-  code, and a registration for each state where you collect sales tax (which states is a question
-  for your accountant). Live mode and test mode are set up separately.
+- First: `/admin` → Payments → **Connect Stripe again** (safe even if you just did in 7c). It
+  makes the prices add tax on top whether or not tax is on yet, so do it before Stripe's tax
+  settings.
+- Where: Stripe (live) → Settings → **Tax**. Add your business address and a default product tax
+  code. Stripe calls tax "active" as soon as the business address is saved: that only means it
+  can work tax out, not that it charges any.
+- Then: Stripe → Tax → **Registrations**. Add each state where you collect sales tax (which states
+  is a question for your accountant). Stripe charges tax only in the states listed there.
 - Then: Stripe → Settings → Billing → **Customer portal** → Customer information → tick **Billing
   address**, so an owner can correct the address their tax is worked out from (Connect Stripe only
-  ticks it when it creates the portal settings). Then `/admin` → Payments → **Connect Stripe
-  again**: it makes the prices add tax on top.
-- Worked when: `/admin` → Payments reads "Sales tax: on (Stripe Tax is set up)." "Sales tax:
-  couldn't check." means Stripe didn't answer: reload in a minute. While Stripe can't be asked, a
-  checkout fails rather than going through without tax. More in [SETUP.md](SETUP.md) §7c.
+  ticks it when it creates the portal settings).
+- Worked when: `/admin` → Payments reads "Sales tax: on (Stripe Tax is set up)." **and** Stripe →
+  Tax → Registrations lists every state you collect in. "On" alone doesn't prove tax is charged
+  anywhere. "Sales tax: couldn't check." means Stripe didn't answer: reload in a minute. If it
+  still says that, check `STRIPE_SECRET_KEY` is the standard secret key (not a restricted one):
+  while Stripe can't be asked, every checkout fails rather than going through without tax. More
+  in [SETUP.md](SETUP.md) §7c.
 
 **7f. One real purchase.**
 
 - Invite a second address of yours in `/admin`, sign in with it, Settings → Plan & billing →
   Choose a plan, pay with your own card. With sales tax on, Stripe's page asks for a billing
-  address and shows the tax on top.
+  address and, for an address in a state you registered, shows the tax on top.
 - Worked when: the billing page moves past "Payment received — finishing up.", and `/admin` shows
   that account as setup paid with "Yes, through Stripe". Refunding it in Stripe → Payments is up to you; a refund
   doesn't move the account back, so cancel its subscription in Stripe too (the account then shows

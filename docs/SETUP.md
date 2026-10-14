@@ -393,21 +393,36 @@ never the browser redirect.
    `setup_paid` (sending on). Admin still marks the setup call done (→ `active`).
 4. Going live: swap in the live secret key, redeploy, tap Connect Stripe again.
 5. Sales tax (Stripe Tax; Davi turned it on 2026-10-14). The app never configures tax — it only
-   asks Stripe whether Stripe Tax is **active**. In Stripe (test mode and live mode are separate,
-   so do it in each): Settings → Tax → add the origin (business) address, a default product tax
-   code (Stripe suggests one for software as a service; your accountant can confirm it, and
-   whether the setup call needs a different one) and a registration for every state where you
-   collect sales tax, until the status reads active. Then tap **Connect Stripe again** in `/admin`: prices made before
-   have no tax behavior, and Connect Stripe sets each of those to **exclusive** (tax on top; the
-   one change Stripe allows — a price already inclusive or exclusive is left alone). New prices are
-   always made exclusive. While Stripe Tax is active, every checkout turns on automatic tax and
-   asks for the owner's billing address, which Stripe saves on their customer record (Squared Away
-   doesn't store it). `/admin` → Payments shows "Sales tax: on / off / couldn't check". If Stripe
-   can't be asked at checkout time, the checkout fails rather than charging without tax. Customer
-   portal: Connect Stripe lets owners update their address only when it creates the portal
-   settings; if they already existed, tick Stripe → Settings → Billing → Customer portal →
-   Customer information → **Billing address**. Subscriptions started before Stripe Tax was active
-   keep running without tax until changed in Stripe.
+   asks Stripe whether Stripe Tax is **active**. Test mode and live mode are separate, so do this
+   in each, in this order:
+   - First tap **Connect Stripe again** in `/admin`. Prices made before have no tax behavior, and
+     Connect Stripe sets each of those to **exclusive** (tax on top; the one change Stripe allows —
+     a price already inclusive or exclusive is left alone) whether or not tax is on yet, so no
+     checkout ever runs with tax on and a price that has no tax behavior. New prices are always
+     made exclusive.
+   - Stripe → Settings → Tax: add the origin (business) address and a default product tax code
+     (Stripe suggests one for software as a service; your accountant can confirm it, and whether
+     the setup call needs a different one). Stripe calls the settings **active** as soon as the
+     origin address is saved. That only means Stripe can work tax out, not that it charges any.
+   - Stripe → Tax → **Registrations**: add each state where you collect sales tax. Stripe charges
+     tax only where a registration exists; with none, checkouts still ask for an address but
+     charge no tax.
+   - Worked when: `/admin` → Payments reads "Sales tax: on (Stripe Tax is set up)." **and**
+     Stripe → Tax → Registrations lists every state you collect in. The "on" line alone doesn't
+     prove tax is being charged anywhere (the admin card says so under it).
+
+   While Stripe Tax is active, every checkout turns on automatic tax and asks for the owner's
+   billing address, which Stripe saves on their customer record together with the name typed on
+   its page (that name can replace the business name we sent; Squared Away stores neither). `/admin` →
+   Payments shows "Sales tax: on / off / couldn't check". If Stripe can't be asked at checkout
+   time, the checkout fails rather than charging without tax, and the log line
+   `stripe_tax_check_failed` carries a `reason`: `connection` / `rate_limit` / `api` are
+   Stripe-side and usually pass; `auth` / `permission` mean `STRIPE_SECRET_KEY` is wrong or restricted
+   and every checkout keeps failing until it's fixed. Customer portal: Connect Stripe lets owners
+   update their address only when it creates the portal settings; if they already existed, tick
+   Stripe → Settings → Billing → Customer portal → Customer information → **Billing address**.
+   Subscriptions started before Stripe Tax was active keep running without tax until changed in
+   Stripe.
 
 What payments do: checkout paid → `setup_paid` (or back to `active` if setup was finished before);
 payment fails → `past_due` (jobs pause, nothing deleted); recovers → back; subscription ends →

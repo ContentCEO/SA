@@ -174,7 +174,8 @@ We use these service providers. Each gets only what it needs:
 - **Stripe** — takes payments. It receives your email address and your business name (or your
   name, if no business name is set), and keeps its own payment and customer records. Its checkout
   page may also ask for your billing address, which Stripe uses to work out sales tax; Squared Away
-  doesn't store it.
+  doesn't store it. Stripe saves that address, and the name you enter there, on its customer record
+  of you.
 - **Resend** — delivers our emails to you (the morning summary, the monthly summary and the
   Gmail-access alert and reminder), which never contain a customer's name or words, and two kinds
   of notice to us: when someone books a Growth call (it says only that a request came in, with no
@@ -247,7 +248,9 @@ In plain words:
   after one confirmation. Stripe keeps its own payment records. First it cancels your subscription
   straight away (not at the end of the paid period) and removes our access at Google. It also
   removes your invite, so coming back needs a new one. Stripe also keeps its customer record of
-  you (your email address and your business name, or your name if no business name is set).
+  you (your email address and your business name, or your name if no business name is set; if you
+  paid while sales tax was on, also the billing address you entered on Stripe's checkout page, and
+  the name you entered there in place of the one we sent).
   Counters we use to limit how often things can be done hold only an account ID and a count; they
   are deleted within three days. Drafts already in your Gmail Drafts folder stay in your Gmail. Our database provider keeps short-term backups for
   recovery, so deleted data can remain in those backups for a short time before it is gone for

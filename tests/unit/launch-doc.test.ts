@@ -3,6 +3,7 @@ import { dirname, join, normalize, relative } from "node:path";
 import { describe, expect, it } from "vitest";
 import { models } from "@/config/models";
 import { GMAIL_SCOPES } from "@/mailbox/gmail/scopes";
+import { SALES_TAX_ON_NOTE } from "@/server/billing-rules";
 import { sendingOffLabel } from "@/server/lifecycle";
 import { ROOT, sourceFiles, SRC } from "../support/source-ast";
 
@@ -451,6 +452,30 @@ describe("LAUNCH.md structure", () => {
     expect(admin).toContain("Connected · last set up ${");
     expect(admin).toContain('stripe: "Couldn\'t connect Stripe."');
     expect(c).toContain('"Couldn\'t connect Stripe."');
+  });
+
+  it("sales tax: prices fixed first, and 'on' isn't counted as proof without registrations", () => {
+    const step7 = sections.find((s) => s.n === 7)!.body;
+    const e = flat(step7.slice(step7.indexOf("**7e."), step7.indexOf("**7f.")));
+    // Connect Stripe makes the prices exclusive whether or not tax is on: before the tax settings.
+    const connect = e.indexOf("**Connect Stripe again**");
+    const settings = e.indexOf("Settings → **Tax**");
+    const registrations = e.indexOf("Tax → **Registrations**");
+    expect(connect).toBeGreaterThan(0);
+    expect(settings).toBeGreaterThan(connect);
+    expect(registrations).toBeGreaterThan(settings);
+    // Stripe's "active" only needs the business address; tax is charged only where registered.
+    const worked = e.slice(e.indexOf("Worked when:"));
+    expect(worked).toContain('"Sales tax: on (Stripe Tax is set up)." **and**');
+    expect(worked).toContain("Tax → Registrations lists every state you collect in");
+    const s5 = flat(setup.slice(setup.indexOf("5. Sales tax"), setup.indexOf("What payments do:")));
+    expect(s5).not.toContain("until the status reads active");
+    expect(s5.indexOf("**Connect Stripe again**")).toBeLessThan(s5.indexOf("Settings → Tax"));
+    expect(s5).toContain("Tax → Registrations lists every state you collect in");
+    // …and the admin card says the same under "on".
+    const admin = readFileSync(join(ROOT, "src/app/(app)/admin/page.tsx"), "utf8");
+    expect(admin).toContain('{salesTax === "on" ? <p>{SALES_TAX_ON_NOTE}</p> : null}');
+    expect(SALES_TAX_ON_NOTE).toContain("Tax → Registrations");
   });
 
   it("the 'never change' rule names both planned changes in step 3 (the Neon password too)", () => {

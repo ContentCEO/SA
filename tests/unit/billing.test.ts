@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { eq } from "drizzle-orm";
-import type Stripe from "stripe";
+import Stripe from "stripe";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { pricing } from "@/config/pricing";
 import type { Database } from "@/db";
@@ -24,6 +24,7 @@ import {
   planLookupKey,
   SALES_TAX_LINES,
   SALES_TAX_NOTE,
+  SALES_TAX_ON_NOTE,
   setupLookupKey,
   statusAfterCheckout,
   statusAfterSubscription,
@@ -308,8 +309,10 @@ describe("sales tax (Stripe Tax, Davi 2026-10-14)", () => {
   });
 
   it("if Stripe can't say whether tax is on, no checkout is made and the error goes up", async () => {
-    const err = new Error("Stripe said cus_SECRET owner@shop.com");
-    err.name = "StripeConnectionError";
+    // A real stripe-node error: its name is just "Error"; the class is in `type`.
+    const err = new Stripe.errors.StripeConnectionError({
+      message: "Stripe said cus_SECRET owner@shop.com",
+    });
     account.tax = err;
     const logged = vi.spyOn(console, "error").mockImplementation(() => {});
     await expect(createCheckout(await reload(), "crew")).rejects.toBe(err);
@@ -317,12 +320,30 @@ describe("sales tax (Stripe Tax, Davi 2026-10-14)", () => {
     // Asked first: nothing was created in Stripe either.
     expect(calls.map((c) => c.method)).toEqual(["tax.settings.retrieve"]);
     expect((await reload()).stripeCustomerId).toBeNull();
-    // Content-free log: the error's name, never its message.
+    // Content-free log: the error's name and a fixed reason code, never its message.
     expect(logged).toHaveBeenCalledWith("stripe_tax_check_failed", {
       workspaceId: workspace.id,
-      error: "StripeConnectionError",
+      error: "Error",
+      reason: "connection",
     });
     expect(JSON.stringify(logged.mock.calls)).not.toMatch(/SECRET|owner@shop\.com/);
+  });
+
+  it("a key that can't read the tax settings is logged as a key problem, not a blip", async () => {
+    account.tax = new Stripe.errors.StripePermissionError({
+      message: "The provided key 'rk_live_SECRET' does not have the required permissions",
+    });
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+    await expect(createCheckout(await reload(), "crew")).rejects.toBeInstanceOf(
+      Stripe.errors.StripePermissionError,
+    );
+    expect(calls.map((c) => c.method)).toEqual(["tax.settings.retrieve"]);
+    expect(logged).toHaveBeenCalledWith("stripe_tax_check_failed", {
+      workspaceId: workspace.id,
+      error: "Error",
+      reason: "permission",
+    });
+    expect(JSON.stringify(logged.mock.calls)).not.toContain("SECRET");
   });
 
   it("new prices are tax-exclusive (tax on top)", async () => {
@@ -397,13 +418,15 @@ describe("sales tax (Stripe Tax, Davi 2026-10-14)", () => {
     account.tax = "pending";
     expect(await salesTaxStatus()).toBe("off");
 
-    const err = new Error("Invalid API Key provided: sk_test_SECRET");
-    err.name = "StripeAuthenticationError";
-    account.tax = err;
+    account.tax = new Stripe.errors.StripeAuthenticationError({
+      message: "Invalid API Key provided: sk_test_SECRET",
+    });
     const logged = vi.spyOn(console, "error").mockImplementation(() => {});
     expect(await salesTaxStatus()).toBe("unknown");
+    // The reason code says it's the key (stripe-node errors are all named "Error").
     expect(logged).toHaveBeenCalledWith("stripe_tax_status_failed", {
-      error: "StripeAuthenticationError",
+      error: "Error",
+      reason: "auth",
     });
     expect(JSON.stringify(logged.mock.calls)).not.toContain("SECRET");
     // A short wait at most: the admin page never hangs on Stripe.
@@ -415,6 +438,10 @@ describe("sales tax (Stripe Tax, Davi 2026-10-14)", () => {
       off: "Sales tax: off. Set up Stripe Tax in Stripe to charge it.",
       unknown: "Sales tax: couldn't check.",
     });
+    // "Active" at Stripe only needs the business address; tax is charged where registered.
+    expect(SALES_TAX_ON_NOTE).toBe(
+      "Stripe only charges it in the states listed in Stripe under Tax → Registrations.",
+    );
   });
 
   it("the /admin line isn't shown, and Stripe isn't asked, when Stripe isn't set up", async () => {

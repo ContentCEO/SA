@@ -25,6 +25,7 @@ import {
   statusAfterSubscription,
 } from "./billing-rules";
 import { creditReferralSafely } from "./referrals";
+import { stripeErrorReason } from "./stripe-error-rules";
 
 let client: Stripe | undefined;
 let override: Stripe | undefined;
@@ -76,8 +77,12 @@ export async function salesTaxStatus(): Promise<SalesTaxStatus | null> {
   try {
     return (await stripeTaxActive({ timeout: 5_000, maxNetworkRetries: 0 })) ? "on" : "off";
   } catch (err) {
+    // stripe-node's errors all have the name "Error"; the class is in `type`, so the fixed
+    // reason code is what tells a key problem (auth, permission) from a blip (connection).
+    const reason = stripeErrorReason(err);
     console.error("stripe_tax_status_failed", {
       error: err instanceof Error ? err.name : "unknown",
+      reason,
     });
     return "unknown";
   }
@@ -244,9 +249,11 @@ export async function createCheckout(workspace: Workspace, plan: PlanId): Promis
   try {
     taxOn = await stripeTaxActive();
   } catch (err) {
+    const reason = stripeErrorReason(err);
     console.error("stripe_tax_check_failed", {
       workspaceId: workspace.id,
       error: err instanceof Error ? err.name : "unknown",
+      reason,
     });
     throw err;
   }

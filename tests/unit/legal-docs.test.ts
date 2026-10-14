@@ -227,6 +227,20 @@ describe("privacy policy", () => {
     expect(readFileSync("src/db/schema.ts", "utf8")).not.toMatch(/billing_address|billingAddress/);
   });
 
+  it("what Stripe keeps after deletion includes the tax-time address and name (as checkout saves them)", () => {
+    // With tax on, checkout saves the address and the typed name onto Stripe's customer, and
+    // deleting an account only cancels the subscription: that record stays at Stripe.
+    const billing = readFileSync("src/server/billing.ts", "utf8");
+    expect(billing).toContain('customer_update: { address: "auto", name: "auto" }');
+    expect(readFileSync("src/server/account-deletion.ts", "utf8")).not.toMatch(/customers\.del/);
+    expect(flat(policy)).toContain(
+      "Stripe saves that address, and the name you enter there, on its customer record of you.",
+    );
+    expect(flat(bullet(raw("privacy-policy.md"), "Delete my account"))).toContain(
+      "if you paid while sales tax was on, also the billing address you entered on Stripe's checkout page, and the name you entered there in place of the one we sent",
+    );
+  });
+
   it("the cost alert to us is described with everything it carries", () => {
     expect(policy).toContain("the account's AI cost, plan price and usage counts");
   });
