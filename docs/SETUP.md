@@ -108,10 +108,13 @@ put them in `.env.local`, and **never** set them on Vercel:
 E2e mode is on only when **all** of these hold, so it can't switch on anywhere real: `SA_E2E` is
 exactly `1`; `VERCEL` and `VERCEL_ENV` are both absent (it's ignored on any Vercel deploy); both
 base URLs are http(s) on `localhost`, `127.0.0.1` or `[::1]`; and `DATABASE_URL` points at this
-machine. The hook route also answers 404 unless the request itself came to a loopback host. Keep
-Vercel's **"Automatically expose System Environment Variables"** setting on (Settings →
-Environment Variables): it is what sets `VERCEL`/`VERCEL_ENV` (and `VERCEL_BRANCH_URL`, which
-preview URLs depend on).
+machine (read the way postgres.js reads it: a host list such as `remote,y@localhost`, more
+than one `@` or a `#` in the host part is refused). The hook route doesn't check the request's
+host (under `next start` the app only ever sees its own listen hostname); instead the e2e app is
+started with `--hostname localhost`, so nothing on your network can reach it, and the per-run
+secret is what unlocks the route. Keep Vercel's **"Automatically expose System Environment
+Variables"** setting on (Settings → Environment Variables): it is what sets
+`VERCEL`/`VERCEL_ENV` (and `VERCEL_BRANCH_URL`, which preview URLs depend on).
 
 The app server is also given neutral stand-ins (`AUTH_GOOGLE_ID=e2e-client-id`, a fake Google
 secret and Anthropic key, an empty `INNGEST_EVENT_KEY`) and every other outside service blanked
@@ -125,11 +128,13 @@ Other knobs (test-only, never in the app): `PORT` (default 3100; `APP_URL` must 
 `http://localhost:<PORT>` or the config stops with a message saying so), `E2E_FAKES_PORT`
 (default `PORT+1`), `PLAYWRIGHT_CHROMIUM_PATH` (use a preinstalled Chromium instead of
 `playwright install`), and `PLAYWRIGHT_BASE_URL` (a smoke run against a deployed site: no
-servers, no fakes, and the specs that need fakes skip themselves). The global setup refuses a
-`DATABASE_URL` that isn't on this machine unless `PLAYWRIGHT_BASE_URL` is set, and it clears
-`rate_limits` before each run. Outside CI, Playwright reuses a server already listening on
-`PORT` or `PORT+1`; a `pnpm dev` or `pnpm start` you started yourself there lacks the e2e
-variables, so stop it first.
+servers, no fakes, and **no database** — the global setup returns before connecting, and only the
+specs listed in `tests/e2e/smoke-specs.ts`, which touch no database, run). Otherwise the global
+setup refuses a `DATABASE_URL` that isn't on this machine, migrates the local database and
+clears `rate_limits` before each run; `tests/e2e/support.ts`, which every seeding spec imports,
+refuses a non-local `DATABASE_URL` too, smoke run or not. Outside CI, Playwright reuses a server
+already listening on `PORT` or `PORT+1`; a `pnpm dev` or `pnpm start` you started yourself there
+lacks the e2e variables, so stop it first.
 
 In a sandbox with a preinstalled Chromium:
 `PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-browsers/chromium pnpm test:e2e`.

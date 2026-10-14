@@ -828,11 +828,19 @@ default, CI too) and refuses a non-local `DATABASE_URL` or an `APP_URL` that isn
   - **e2e seams (S1/S2):** `src/config/e2e.ts` is the only reader of `SA_E2E*`. `e2eMode()` is on
     only when `SA_E2E === "1"`, `VERCEL`/`VERCEL_ENV` are unset, both `SA_E2E_GOOGLE_BASE_URL` and
     `SA_E2E_ANTHROPIC_BASE_URL` are set with an http(s) hostname of exactly localhost / 127.0.0.1
-    / [::1], and `DATABASE_URL` is loopback or a unix socket (`PGHOST` checked when it names no
-    host). Otherwise `googleEndpoints()` / Anthropic options are the real ones and
-    `e2eHookSecret()` is null. `/api/test-hooks/run` (POST; backfill, sync, voice, classify,
-    draft, deliver through the same functions the jobs call) is 404 unless e2e mode, a ≥32-char
-    secret (constant-time) and a loopback request host; errors return `err.name` only. Fakes in
+    / [::1], and `DATABASE_URL` is loopback or a unix socket (`isLocalDatabaseUrl`, read the way
+    postgres.js reads it: a comma, a second `@` or a `#` in the raw host part is refused, since
+    postgres.js cuts at the first `@`; `PGHOST` checked when it names no host). Otherwise
+    `googleEndpoints()` / Anthropic options are the real ones and `e2eHookSecret()` is null.
+    `/api/test-hooks/run` (POST; backfill, sync, voice, classify, draft, deliver through the
+    same functions the jobs call) is 404 unless e2e mode and a ≥32-char secret (constant-time);
+    errors return `err.name` only. No request-host check: under `next start`, request.url is
+    the server's own listen hostname, so it could never refuse. Instead playwright.config.ts
+    starts the app with `--hostname localhost` (an e2e spec proves the network addresses are
+    refused). Smoke runs (`PLAYWRIGHT_BASE_URL`) open no database: the global setup returns
+    first and only `tests/e2e/smoke-specs.ts` run (smoke + `security-public.spec.ts`: headers and
+    the hook's 404, Playwright-only imports); `tests/e2e/support.ts` throws at import on a
+    non-local `DATABASE_URL` (`tests/unit/e2e-harness.test.ts`). Fakes in
     `tests/e2e/fakes` (loopback only, record no secrets, Gmail-faithful drafts/history).
     `tests/e2e/full-flow.spec.ts` is the whole owner journey (paid: connect → backfill → voice →
     classify → draft → sync → Send reply → exactly one threaded `drafts/send` → Delete my account

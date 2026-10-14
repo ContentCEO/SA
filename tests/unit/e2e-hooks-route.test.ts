@@ -11,7 +11,8 @@ import { classification, fakeTransport } from "../support/fake-model";
 
 /**
  * GUARDRAIL (Milestone 11 S1, amendments A1/A2): /api/test-hooks/run is absent (404) unless
- * the app is in local e2e mode, the request was made to this machine, and the secret matches.
+ * the app is in local e2e mode and the secret matches. (Other machines are kept off by the
+ * loopback bind in playwright.config.ts — tests/unit/e2e-harness.test.ts — not by the route.)
  * When it does run, it calls the real job functions with the real clock and every gate.
  */
 
@@ -58,15 +59,12 @@ const fetchSpy = vi.fn(async () => {
   throw new Error("no network in this test");
 });
 
-async function hook(
-  body: unknown,
-  opts: { secret?: string | null; url?: string; method?: string } = {},
-) {
+async function hook(body: unknown, opts: { secret?: string | null; method?: string } = {}) {
   const headers: Record<string, string> = { "content-type": "application/json" };
   const secret = opts.secret === undefined ? SECRET : opts.secret;
   if (secret !== null) headers["x-e2e-hook-secret"] = secret;
   const res = await POST(
-    new Request(opts.url ?? "http://localhost:3300/api/test-hooks/run", {
+    new Request("http://localhost:3300/api/test-hooks/run", {
       method: opts.method ?? "POST",
       headers,
       body: JSON.stringify(body),
@@ -152,17 +150,6 @@ describe("/api/test-hooks/run is a 404 everywhere but a local e2e run", () => {
   it("404 when the database isn't on this machine", async () => {
     stubEnv({ DATABASE_URL: "postgresql://u:p@ep-x-pooler.us-east-2.aws.neon.tech/neondb" });
     expect((await hook(step())).status).toBe(404);
-  });
-
-  it("404 for a request made to a non-loopback host, whatever the env says", async () => {
-    for (const url of [
-      "https://sa-dac3.vercel.app/api/test-hooks/run",
-      "http://localhost.evil.com/api/test-hooks/run",
-      "http://127.0.0.1.nip.io/api/test-hooks/run",
-      "http://10.0.0.5:3300/api/test-hooks/run",
-    ]) {
-      expect((await hook(step(), { url })).status, url).toBe(404);
-    }
   });
 
   it("404 for a missing, wrong or short secret", async () => {

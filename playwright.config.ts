@@ -1,12 +1,17 @@
 import { randomBytes } from "node:crypto";
 import { defineConfig, devices } from "@playwright/test";
 import { config } from "dotenv";
+import { SMOKE_SPECS } from "./tests/e2e/smoke-specs";
 
 config({ path: [".env.local", ".env"], quiet: true });
 
 const port = Number(process.env.PORT ?? 3100);
 const baseURL = process.env.PLAYWRIGHT_BASE_URL ?? `http://localhost:${port}`;
-/** PLAYWRIGHT_BASE_URL = a smoke run against a deployed site: no servers, no fakes, no hooks. */
+/**
+ * PLAYWRIGHT_BASE_URL = a smoke run against a deployed site: no servers, no fakes, no hooks, no
+ * database (the global setup returns at once), and only the specs in SMOKE_SPECS, which touch
+ * no database.
+ */
 const startServers = !process.env.PLAYWRIGHT_BASE_URL;
 
 /**
@@ -34,6 +39,7 @@ if (startServers) {
 
 export default defineConfig({
   testDir: "./tests/e2e",
+  ...(startServers ? {} : { testMatch: SMOKE_SPECS.map((name) => `**/${name}`) }),
   globalSetup: "./tests/e2e/global-setup.ts",
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
@@ -69,7 +75,11 @@ export default defineConfig({
           timeout: 30_000,
         },
         {
-          command: `pnpm start --port ${port}`,
+          // Loopback only: without --hostname, `next start` listens on every interface, and
+          // the hook route can't tell where a request came from (request.url is built from
+          // this listen hostname). `localhost` keeps request.url, APP_URL and the cookies on
+          // the same origin as before.
+          command: `pnpm start --port ${port} --hostname localhost`,
           url: `${baseURL}/api/health`,
           // Neutral values only: nothing real (the Google client secret, an Anthropic key, an
           // Inngest key that would wake the production app) is ever handed to the fakes or sent

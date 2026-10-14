@@ -33,9 +33,6 @@ import {
   testDb,
 } from "./support";
 
-// A smoke run against a deployed site has no fakes; this spec would only seed a paid account
-// into whatever database it can see and then fail.
-test.skip(!!process.env.PLAYWRIGHT_BASE_URL, "needs the local fakes");
 test.setTimeout(120_000);
 
 type Owner = Awaited<ReturnType<typeof seedOwner>>;

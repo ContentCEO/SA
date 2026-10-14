@@ -1,11 +1,12 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   anthropicClientOptions,
   e2eHookSecret,
   e2eMode,
   googleEndpoints,
+  isLocalDatabaseUrl,
   isLoopbackHostname,
 } from "@/config/e2e";
 
@@ -149,6 +150,88 @@ describe("e2eMode — every condition is required", () => {
       expect(e2eMode({ ...LOCAL, DATABASE_URL: ok })).toBe(true);
     }
     expect(e2eMode({ ...LOCAL, DATABASE_URL: "postgres:///db", PGHOST: "/tmp" })).toBe(true);
+  });
+
+  // Finding (M11 review, test-seams #2): the URL parser and postgres.js read the host
+  // differently. Each of these is "localhost" (or local) to `new URL()`, but postgres.js
+  // would try a remote host — or the URL is an "@" trick we refuse outright.
+  const ADVERSARIAL = [
+    // postgres.js cuts at the FIRST "@": hosts ["ep-cool…neon.tech", "y@localhost"].
+    "postgres://u:x@ep-cool.us-east-2.aws.neon.tech,y@localhost/neondb",
+    "postgresql://u:x@ep-cool.us-east-2.aws.neon.tech,y@localhost:5432/neondb?sslmode=require",
+    // "#" ends the URL parser's host, not postgres.js's: hosts ["localhost#", "evil.com"].
+    "postgres://u@localhost#,evil.com/db",
+    "postgres://u@localhost#@evil.com/db",
+    // A percent-encoded comma is a host list to postgres.js.
+    "postgres://u@localhost%2Cep-x.neon.tech/db",
+    "postgres://u@ep-x.neon.tech%2Clocalhost/db",
+    // More than one "@" in the authority: refused whatever the driver would do.
+    "postgres://u:p@evil.com@localhost/db",
+    "postgres://u@evil.com:5432@localhost/db",
+    // Not loopback, or not where postgres.js would look.
+    "postgres://u@[2001:db8::1]/db",
+    "postgres://u@[::ffff:7f00:1]/db",
+    "postgres://u@localhost/db?hostaddr=10.0.0.5",
+    "postgres://u@localhost/db?host=localhost&host=ep-x.neon.tech",
+    " postgres://u@localhost/db",
+    "postgres:/db",
+  ];
+
+  it("reads the host the way postgres.js does: comma lists, '@' and '#' tricks are refused", () => {
+    for (const bad of ADVERSARIAL) {
+      expect(e2eMode({ ...LOCAL, DATABASE_URL: bad }), bad).toBe(false);
+      expect(isLocalDatabaseUrl(bad, {}), bad).toBe(false);
+    }
+    // A PGHOST host list is refused too (postgres.js splits it on ",").
+    expect(isLocalDatabaseUrl("postgres:///db", { PGHOST: "localhost,ep-x.neon.tech" })).toBe(
+      false,
+    );
+    // Still local: a comma or "@" that is only in the (encoded) password or user name.
+    for (const ok of [
+      "postgres://u:x%40ep-x.neon.tech,y@localhost/db",
+      "postgres://ep-x.neon.tech,u@localhost/db",
+      "postgres://u:p%40ss@127.0.0.1:5432/db",
+    ]) {
+      expect(isLocalDatabaseUrl(ok, {}), ok).toBe(true);
+    }
+  });
+
+  it("whatever it accepts, the real postgres.js connects only to this machine", async () => {
+    const { default: postgres } = await import("postgres");
+    // What postgres.js may be left holding for a local URL: a loopback host, a socket path, or
+    // a name no resolver answers ("[" is its own split of "[::1]"; "%2F…" an encoded path).
+    const harmless = (h: string) =>
+      ["localhost", "127.0.0.1", "::1", "["].includes(h) || h.startsWith("/") || /^%2F/i.test(h);
+    vi.stubEnv("PGHOST", "");
+    try {
+      const corpus = [
+        ...ADVERSARIAL,
+        "postgres://u@127.0.0.1:5432/db",
+        "postgres://u@localhost/db",
+        "postgresql://u@[::1]/db",
+        "postgres:///db?host=/var/run/postgresql",
+        "postgres://u@%2Fvar%2Frun%2Fpostgresql/db",
+        "postgres:///db",
+        "postgres://u:x%40ep-x.neon.tech,y@localhost/db",
+        "postgres://ep-x.neon.tech,u@localhost/db",
+        "postgresql://u:p@ep-cool-name-123456-pooler.us-east-2.aws.neon.tech/neondb",
+      ];
+      let accepted = 0;
+      for (const url of corpus) {
+        if (!isLocalDatabaseUrl(url, { PGHOST: "" })) continue;
+        accepted++;
+        const hosts = postgres(url).options.host;
+        expect(hosts.every(harmless), `${url} → ${hosts.join(" | ")}`).toBe(true);
+      }
+      expect(accepted).toBeGreaterThanOrEqual(8);
+      // And the finding's URL really is remote to postgres.js while `new URL()` says localhost:
+      // the case this check exists for.
+      const finding = ADVERSARIAL[0]!;
+      expect(new URL(finding).hostname).toBe("localhost");
+      expect(postgres(finding).options.host[0]).toBe("ep-cool.us-east-2.aws.neon.tech");
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it("no real Anthropic credential or custom header reaches the fake", () => {

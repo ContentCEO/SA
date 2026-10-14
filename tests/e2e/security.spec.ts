@@ -1,25 +1,15 @@
 import { randomUUID } from "node:crypto";
+import { connect } from "node:net";
+import { networkInterfaces } from "node:os";
 import { expect, test } from "@playwright/test";
 import { seedOwner, signInAs } from "./support";
 
 /**
- * Milestone 11 S4: the security checks a real browser and server can prove — the headers on
- * every response, /admin's 404, the test hook's 404, the send API's Origin check and the
- * Gmail-connect state cookie.
+ * Milestone 11 S4: the security checks a real browser and server can prove — /admin's 404, the
+ * loopback-only bind of the e2e servers, the send API's Origin check and the Gmail-connect state
+ * cookie. These seed rows, so they run locally only; the database-free checks (headers, the test
+ * hook's 404) are in security-public.spec.ts, which smoke runs include.
  */
-
-test("every response carries the security headers, HSTS included", async ({ request }) => {
-  for (const path of ["/", "/signin", "/api/health"]) {
-    const res = await request.get(path);
-    expect(res.status(), path).toBe(200);
-    const h = res.headers();
-    expect(h["content-security-policy"], path).toContain("frame-ancestors 'none'");
-    expect(h["content-security-policy"], path).toContain("default-src 'self'");
-    expect(h["x-frame-options"], path).toBe("DENY");
-    expect(h["x-content-type-options"], path).toBe("nosniff");
-    expect(h["strict-transport-security"], path).toBe("max-age=31536000");
-  }
-});
 
 test("/admin is a plain 404 for an owner who isn't the admin", async ({ page, context }) => {
   const owner = await seedOwner();
@@ -31,32 +21,37 @@ test("/admin is a plain 404 for an owner who isn't the admin", async ({ page, co
   }
 });
 
-test("the test hook stays hidden without its secret, even with the e2e switch on", async ({
-  request,
-}) => {
-  const step = { step: "sync", mailboxId: randomUUID() };
-  // Positive control (local runs only; a deployed site must 404 every time): with the real
-  // secret the hook answers — the step's own status for a mailbox that isn't there — so the
-  // 404s below are the secret check refusing, not e2e mode being off.
-  if (!process.env.PLAYWRIGHT_BASE_URL) {
-    const secret = process.env.SA_E2E_HOOK_SECRET;
-    expect(secret, "playwright.config.ts sets the hook secret").toBeTruthy();
-    const real = await request.post("/api/test-hooks/run", {
-      data: step,
-      headers: { "x-e2e-hook-secret": secret! },
-    });
-    expect(real.status()).toBe(409);
-    expect(await real.json()).toMatchObject({ ok: false, status: "skipped", reason: "not_found" });
-  }
-  const none = await request.post("/api/test-hooks/run", { data: step });
-  expect(none.status()).toBe(404);
-  expect(await none.text()).toBe("");
-  const wrong = await request.post("/api/test-hooks/run", {
-    data: step,
-    headers: { "x-e2e-hook-secret": "x".repeat(64) },
+/** True if a TCP connection to host:port opens within 2 seconds. */
+function opens(host: string, port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const socket = connect({ host, port });
+    const done = (ok: boolean) => {
+      socket.destroy();
+      resolve(ok);
+    };
+    socket.setTimeout(2_000, () => done(false));
+    socket.once("connect", () => done(true));
+    socket.once("error", () => done(false));
   });
-  expect(wrong.status()).toBe(404);
-  expect(await wrong.text()).toBe("");
+}
+
+test("the e2e app and fakes listen on loopback only, not on this machine's network addresses", async ({
+  baseURL,
+}) => {
+  // Every address this machine has besides loopback (IPv6 link-local needs a zone: left out).
+  const outside = Object.values(networkInterfaces())
+    .flat()
+    .filter((a) => a && !a.internal && !a.address.startsWith("fe80:"))
+    .map((a) => a!.address);
+  test.skip(outside.length === 0, "this machine has no non-loopback address to try");
+  const ports = [Number(new URL(baseURL!).port), Number(new URL(process.env.E2E_FAKES_URL!).port)];
+  for (const port of ports) {
+    // Positive control: the server is up on loopback, so a refusal below is the bind.
+    expect(await opens("localhost", port), `localhost:${port}`).toBe(true);
+    for (const address of outside) {
+      expect(await opens(address, port), `${address}:${port}`).toBe(false);
+    }
+  }
 });
 
 test("the send API refuses a request with no real Origin (403, never a 500)", async ({

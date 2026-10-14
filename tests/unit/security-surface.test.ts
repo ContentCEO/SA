@@ -187,7 +187,7 @@ describe("C3: every route handler is in the table with the guard it uses", () =>
     | "token" // Pub/Sub push: shared token compared in constant time, before anything else
     | "stripe-signature" // Stripe's signature over the raw body
     | "inngest-signature" // the Inngest SDK's signing key check
-    | "e2e-hook" // local e2e only: 404 unless e2e mode + loopback host + secret
+    | "e2e-hook" // local e2e only: 404 unless e2e mode + ≥32-char secret (the e2e app is bound to loopback in playwright.config.ts)
     | "authjs" // Auth.js's own handlers
     | "public"; // static, reads nothing private
   const ROUTES: Record<string, Guard> = {
@@ -257,7 +257,6 @@ describe("C3: every route handler is in the table with the guard it uses", () =>
         case "e2e-hook": {
           const [post] = handlers(file);
           expect(firstStatement(post!.fn)).toBe("const secret = e2eHookSecret();");
-          expect(src).toContain("if (!isLoopbackHostname(hostname)) return notFound();");
           expect(src).toContain('secretMatches(secret, request.headers.get("x-e2e-hook-secret"))');
           break;
         }

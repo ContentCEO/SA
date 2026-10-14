@@ -4,8 +4,19 @@ import { desc, eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/postgres-js";
 import { encode } from "next-auth/jwt";
 import postgres from "postgres";
+import { isLocalDatabaseUrl } from "../../src/config/e2e";
 import * as schema from "../../src/db/schema";
 import { encryptSecret } from "../../src/lib/crypto";
+
+// Every spec that imports this seeds and deletes rows. Refuse, before any client exists, a
+// database that isn't on this machine — in a smoke run (PLAYWRIGHT_BASE_URL) too, so a
+// database-touching spec can never reach the shared production database.
+if (!isLocalDatabaseUrl(process.env.DATABASE_URL, process.env)) {
+  throw new Error(
+    "tests/e2e/support.ts only talks to a Postgres on this machine (localhost, 127.0.0.1, ::1 " +
+      "or a unix socket). Point DATABASE_URL in .env.local at a disposable local database.",
+  );
+}
 
 const client = postgres(process.env.DATABASE_URL!, { max: 2 });
 export const testDb = drizzle(client, { schema });

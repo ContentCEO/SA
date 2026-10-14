@@ -1,5 +1,5 @@
 import { createHash, timingSafeEqual } from "node:crypto";
-import { e2eHookSecret, isLoopbackHostname } from "@/config/e2e";
+import { e2eHookSecret } from "@/config/e2e";
 import { hookStep, runHookStep } from "@/server/test-hooks";
 
 export const dynamic = "force-dynamic";
@@ -18,9 +18,13 @@ function secretMatches(expected: string, received: string | null): boolean {
  * Local end-to-end tests only (Milestone 11): runs one job step (src/server/test-hooks.ts)
  * without Inngest. It looks absent — 404, before anything else is read — unless ALL hold:
  * the app is in local e2e mode with a hook secret of ≥32 characters (src/config/e2e.ts:
- * never on Vercel, only with loopback fakes and a loopback database), the request was made to
- * localhost / 127.0.0.1 / [::1] (on Vercel the host is always the deploy's domain), and the
+ * never on Vercel, only with loopback fakes and a loopback database) and the
  * `x-e2e-hook-secret` header matches. POST only.
+ *
+ * The route doesn't look at the request's host: under `next start`, request.url is built from
+ * the server's own listen hostname, never from where the request came, so such a check would
+ * always pass. What keeps other machines away is the bind: playwright.config.ts starts the e2e
+ * app with `--hostname localhost`. The per-run secret is the gate.
  *
  * 200 = the step did its job; 409 = it ran but stopped (skipped, read-only, not due…) with its
  * real status in the body; 400 = a malformed step; 500 = `{ error: <error name> }` only.
@@ -28,13 +32,6 @@ function secretMatches(expected: string, received: string | null): boolean {
 export async function POST(request: Request) {
   const secret = e2eHookSecret();
   if (!secret) return notFound();
-  let hostname: string;
-  try {
-    hostname = new URL(request.url).hostname;
-  } catch {
-    return notFound();
-  }
-  if (!isLoopbackHostname(hostname)) return notFound();
   if (!secretMatches(secret, request.headers.get("x-e2e-hook-secret"))) return notFound();
 
   const parsed = hookStep.safeParse(await request.json().catch(() => null));

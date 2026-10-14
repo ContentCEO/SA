@@ -44,14 +44,30 @@ function isLoopbackHttpUrl(value: string | undefined): boolean {
 const localHost = (host: string) =>
   !host.includes(",") && (host.startsWith("/") || isLoopbackHostname(host));
 
-/** The database is on this machine: a loopback host or a unix socket. */
-function isLocalDatabaseUrl(value: string | undefined, env: Env): boolean {
+/**
+ * The database is on this machine: a loopback host or a unix socket. Read the way postgres.js
+ * (src/db, the e2e global setup and tests/e2e/support.ts) reads it, not only the way the
+ * WHATWG URL parser does. They disagree: postgres.js takes the host text from the raw
+ * authority after the FIRST "@" (the URL parser: after the LAST), percent-decodes it, and a
+ * comma there makes a host list it tries in turn. So `postgres://u:x@remote,y@localhost/db`
+ * is "localhost" to the URL parser but "remote" first to postgres.js. Refused here: a comma
+ * (raw or encoded), more than one "@" or a "#" in the raw authority, and anything that doesn't
+ * parse. Otherwise postgres.js connects to the URL's hostname, else PGHOST, else localhost.
+ */
+export function isLocalDatabaseUrl(value: string | undefined, env: Env = process.env): boolean {
   if (!value) return false;
   try {
     const url = new URL(value);
     if (url.protocol !== "postgres:" && url.protocol !== "postgresql:") return false;
-    // postgres.js (src/db) ignores ?host= / ?hostaddr=, but other tools (psql, drizzle-kit)
-    // read them, so a host there must be local too.
+    // postgres.js's own cut: after "://", up to the first "/" or "?".
+    if (value.indexOf("://") !== url.protocol.length - 1) return false;
+    const authority = value.slice(url.protocol.length + 2).split(/[?/]/)[0]!;
+    if (authority.split("@").length > 2 || authority.includes("#")) return false;
+    if (decodeURIComponent(authority.slice(authority.indexOf("@") + 1)).includes(",")) {
+      return false;
+    }
+    // postgres.js ignores ?host= / ?hostaddr=, but other tools (psql, drizzle-kit) read
+    // them, so a host there must be local too.
     for (const key of ["host", "hostaddr"]) {
       for (const h of url.searchParams.getAll(key)) if (!localHost(h)) return false;
     }
