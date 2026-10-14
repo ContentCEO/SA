@@ -5,6 +5,7 @@ import { modelPricing, models } from "@/config/models";
 import { bodyRetentionDays } from "@/config/retention";
 import { GMAIL_SCOPES, IDENTITY_SCOPES } from "@/mailbox/gmail/scopes";
 import { EARN_THRESHOLD, GRACE_MINUTES } from "@/server/autopilot";
+import { sendingOffLabel } from "@/server/lifecycle";
 import { MAX_SENT_EMAILS } from "@/server/voice";
 
 /**
@@ -40,6 +41,7 @@ function specStepTitles(): string[] {
   return [...spec.matchAll(/test\.step\(\s*"((?:[^"\\]|\\.)*)"/g)].map((m) => m[1]!);
 }
 
+const adminPage = readFileSync("src/app/(app)/admin/page.tsx", "utf8");
 const script = section("Demo video script");
 const [scriptSteps, mapping] = (() => {
   const i = script.indexOf("### Which test checks each step");
@@ -111,6 +113,84 @@ describe("the demo video script matches the end-to-end journey", () => {
     expect(r).toContain("`/admin` → Invite an owner");
     expect(r).toContain("**Davi's decision**");
     expect(r).toContain("practice copies");
+    // The admin button's real label.
+    expect(r).toContain("`/admin` (Give 3 more days)");
+    expect(r).not.toContain("extend 3 days");
+    expect(adminPage).toContain('label: "Give 3 more days"');
+  });
+
+  it("before Part 1, the house-account move comes first, with the admin page's real labels", () => {
+    const start = scriptSteps.indexOf("**Before recording Part 1 on the house account**");
+    const end = scriptSteps.indexOf("**Part 1");
+    expect(start, "the Part 1 preparation list").toBeGreaterThanOrEqual(0);
+    const bullets = scriptSteps
+      .slice(start, end)
+      .split(/\n- /)
+      .slice(1)
+      .map((b) => flat(b));
+    expect(bullets[0]).toMatch(/^\*\*Make your workspace the house account\*\*/);
+    const labels = [
+      'label: "Use as my own test account"',
+      'confirm: "Yes, this is my account"',
+      'house_account: "Your account can send now (marked as your own test account)."',
+      '? "Your own test account"',
+    ];
+    for (const l of labels) expect(adminPage, l).toContain(l);
+    for (const t of [
+      "`/admin` → your own card (always shown first) → **Use as my own test account** → **Yes, this is my account**",
+      '"Your account can send now (marked as your own test account)."',
+      '"Your own test account"',
+    ]) {
+      expect(bullets[0], t).toContain(t);
+    }
+    // What the draft card shows instead of Send reply is sendingOffLabel's real wording: during
+    // the three days, and on a hand-marked setup_paid / active account with no real payment.
+    const soon = new Date(Date.now() + 86_400_000);
+    const trial = sendingOffLabel({
+      status: "evaluating",
+      evaluationEndsAt: soon,
+      setupPaidVia: null,
+    } as never);
+    expect(trial).toBe("Sending is off during your three days");
+    for (const status of ["setup_paid", "active"]) {
+      const unpaid = sendingOffLabel({
+        status,
+        evaluationEndsAt: null,
+        setupPaidVia: null,
+      } as never);
+      expect(unpaid, status).toBe("Waiting on your setup payment");
+    }
+    expect(bullets[0]).toContain(
+      `has no **Send reply** button: it says "${trial}" or "Waiting on your setup payment"`,
+    );
+    expect(bullets[0]).not.toContain('"sending is off" line');
+  });
+
+  it("the unverified-app screen is described as Google shows it once the app is In production", () => {
+    const step4 = flat(
+      scriptSteps.slice(scriptSteps.indexOf("4. **"), scriptSteps.indexOf("5. **")),
+    );
+    expect(step4).toContain('tap **Advanced**, then the "Go to … (unsafe)" link');
+    expect(step4).toContain(
+      "Only while the app is still in Testing does a test user see a **Continue** button",
+    );
+    expect(step4).not.toMatch(/\(a test user\) taps Continue/);
+    // Nobody has checked live what Google's link names (the app, the project or the domain), so
+    // the script doesn't say: Davi isn't sent looking for a label that may not be there.
+    expect(step4).not.toMatch(/\(it names /);
+    expect(step4).not.toMatch(/production domain/);
+  });
+
+  it("publishing doesn't end the 7-day expiry for access given in Testing: reconnect once", () => {
+    const before = flat(
+      section("Before submitting (for Davi only; never pasted into Google's form)"),
+    );
+    expect(before).toContain(
+      "Switch Audience → Publishing status to **In production** before real owners connect",
+    );
+    expect(before).toContain(
+      "Access given while the app was still in Testing keeps its 7-day end, so everyone who connected then reconnects once after the switch (launch checklist step 0c)",
+    );
   });
 });
 

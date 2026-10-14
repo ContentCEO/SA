@@ -179,6 +179,14 @@ in plain words. Upload it as an unlisted video and paste the link into the verif
 send without a Stripe payment; whether to record this way is Davi's decision, see "Reviewer test
 account"):
 
+- **Make your workspace the house account** (once; without it the draft card at step 9 has no
+  **Send reply** button: it says "Sending is off during your three days" or "Waiting on your setup
+  payment", and may offer a practice copy instead): `/admin` → your own
+  card (always shown first) → **Use as my own test account** → **Yes, this is my account**. The
+  button only shows on your own card, and the server refuses it for any other account. Worked
+  when: the notice says "Your account can send now (marked as your own test account)." and your
+  card's **Setup paid** line reads "Your own test account". If it already reads that, the button
+  isn't shown and there's nothing to do.
 - **Clear your Queue first.** Disconnecting deletes our copy of your drafts but **not** the drafts
   themselves in your Gmail, so every reply still waiting would stay behind in Gmail → Drafts, inside
   real customer conversations, and a stale one could later be sent from Gmail by mistake. Send or
@@ -213,8 +221,10 @@ account"):
 4. **Google's real consent screen.** Google suggests the signed-in address; choose the **demo
    Gmail** instead (tap the address at the top, or "Use another account") and check that the demo
    address shows before going on. Until verification passes, Google first shows its "Google hasn't
-   verified this app" screen: that is expected in the verification video; the demo Gmail (a test
-   user) taps Continue. Then, on the permissions screen, pause here. Show the app name, the three Gmail permissions
+   verified this app" screen: that is expected in the verification video. With the app In
+   production (launch checklist step 0c), tap **Advanced**, then the "Go to … (unsafe)" link.
+   (Only while the app is still in Testing does a test user see a **Continue** button there
+   instead.) Then, on the permissions screen, pause here. Show the app name, the three Gmail permissions
    (`gmail.readonly`, `gmail.compose`, `gmail.send`), and click into the address bar so the
    `client_id=` in the URL is readable. Tap Allow (Continue).
 5. **Connected.** Back in Squared Away, Settings shows the demo Gmail address as connected. Say that
@@ -288,7 +298,7 @@ in `/admin` → Invite an owner. (Once the app's publishing status is "In produc
 user list no longer gates anything; while it is still "Testing", the reviewer must also be added
 there.) The reviewer then signs in, connects their own Gmail and sees their mail sorted and drafts
 written. Their account is on the three-day trial, so sending to customers is blocked; they can send
-practice copies to themselves, and Davi can give them more days from `/admin` (extend 3 days).
+practice copies to themselves, and Davi can give them more days from `/admin` (Give 3 more days).
 
 **For Davi (not pasted into Google's form).** How to show the send part is **Davi's decision** (it
 is listed for him in the launch checklist). Only the house account can send without a Stripe
@@ -321,7 +331,9 @@ payment, and it is his own workspace with his real Gmail connected:
   Branding → Authorized domains, and point the homepage, privacy policy and terms links there.
 - Switch Audience → Publishing status to **In production** before real owners connect: in Testing,
   Google's refresh tokens for Gmail scopes expire after 7 days (every owner would have to reconnect
-  weekly) and only hand-added test users (at most 100) can connect.
+  weekly) and only hand-added test users (at most 100) can connect. Access given while the app was
+  still in Testing keeps its 7-day end, so everyone who connected then reconnects once after the
+  switch (launch checklist step 0c).
 - The restricted-scope security assessment (CASA) is required, renews yearly, and its cost and
   timing are Davi's call.
 

@@ -2,6 +2,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, normalize, relative } from "node:path";
 import { describe, expect, it } from "vitest";
 import { models } from "@/config/models";
+import { GMAIL_SCOPES } from "@/mailbox/gmail/scopes";
 import { sendingOffLabel } from "@/server/lifecycle";
 import { ROOT, sourceFiles, SRC } from "../support/source-ast";
 
@@ -16,6 +17,9 @@ const LAUNCH_PATH = "docs/LAUNCH.md";
 const launch = readFileSync(LAUNCH_PATH, "utf8");
 const setup = readFileSync("docs/SETUP.md", "utf8");
 const flat = (s: string) => s.replace(/\s+/g, " ");
+
+/** Step 0 (Google verification), raw. */
+const sections0 = () => launch.slice(launch.indexOf("## 0. "), launch.indexOf("## 1. "));
 
 /** Folders that hold generated or installed files, never ours. */
 const SKIP_DIRS = new Set([
@@ -331,9 +335,58 @@ describe("LAUNCH.md structure", () => {
     };
     expect(sub("0a")).toContain("(Now.)");
     expect(sub("0c")).toContain("(Now.)");
-    for (const id of ["0b", "0d", "0e"]) expect(sub(id), id).toContain("After steps 1 and 5");
-    expect(sub("0f")).toContain("After 0b, 0d and 0e");
+    for (const id of ["0b", "0d"]) expect(sub(id), id).toContain("After steps 1 and 5");
+    expect(sub("0e")).toContain("After 0b and 0d");
     expect(flat(google)).toContain("**After [step 1](#1-merge-the-launch-branch) (merge)");
+  });
+
+  it("the submission never waits on the reviewer's address (Google only sends it afterwards)", () => {
+    const google = sections[0]!.body;
+    const heads = [...google.matchAll(/^\*\*(0[a-g])\. ([^*]+)\*\*([^\n]*)$/gm)].map((m) => ({
+      id: m[1]!,
+      title: m[2]!,
+      when: m[3]!,
+    }));
+    expect(heads.map((h) => h.id)).toEqual(["0a", "0b", "0c", "0d", "0e", "0f", "0g"]);
+    const submit = heads.findIndex((h) => h.title.startsWith("Submit for verification"));
+    const invite = heads.findIndex((h) => h.title.startsWith("Invite the reviewer"));
+    expect(submit, "a submit sub-step").toBeGreaterThanOrEqual(0);
+    expect(invite, "an invite sub-step").toBeGreaterThan(submit);
+    expect(heads[submit]!.when).not.toContain(heads[invite]!.id);
+    expect(heads[invite]!.when).toContain(heads[submit]!.id);
+    expect(heads[invite]!.when).toContain("Google's email names the address");
+  });
+
+  it("the submission adds the three Gmail scopes on Data Access if they aren't listed", () => {
+    const google = flat(sections[0]!.body);
+    expect(google).toContain("**Add or remove scopes**");
+    expect(google).toContain('"Manually add scopes"');
+    for (const scope of Object.values(GMAIL_SCOPES))
+      expect(google, scope).toContain(`\`${scope}\``);
+  });
+
+  it("publishing tells everyone who connected in Testing to reconnect once (old keys still expire)", () => {
+    const google = sections[0]!.body;
+    const c = flat(google.slice(google.indexOf("**0c."), google.indexOf("**0d.")));
+    expect(c).toContain("**still runs out** 7 days after it was given");
+    expect(c).toContain("open `/connect`");
+    expect(c).toContain("pick the **same** Gmail address");
+    expect(c).toMatch(/Worked when: Audience shows \*\*In production\*\*, and you[^.]*reconnected/);
+    const smoke = flat(sections.find((s) => s.n === 12)!.body);
+    expect(smoke).toMatch(
+      /In production\*\* \(step 0c\)\. The first time after publishing[^.]*reconnected/,
+    );
+    // SETUP.md's Google section says the same, right after telling him to switch.
+    const setupFlat = flat(setup);
+    const switchAt = setupFlat.indexOf("Switch it to **In production** before real owners connect");
+    expect(switchAt, "SETUP.md's In production sentence").toBeGreaterThanOrEqual(0);
+    expect(setupFlat.slice(switchAt, switchAt + 400)).toContain(
+      "Access given while it was still Testing keeps its 7-day end, so everyone who connected then reconnects once after the switch (`/connect` → the same address; `docs/LAUNCH.md` step 0c)",
+    );
+    // True of the code: /connect exists, and the same address replaces the key (no limit hit).
+    expect(existsSync(join(ROOT, "src/app/(app)/connect/page.tsx"))).toBe(true);
+    const mailboxes = readFileSync(join(ROOT, "src/server/mailboxes.ts"), "utf8");
+    expect(mailboxes).toContain("if (!isReconnect && existing.length >= limit)");
   });
 
   it("the preview step gives previews their own secrets and both database options", () => {
@@ -374,12 +427,45 @@ describe("LAUNCH.md structure", () => {
 
   it("the domain change adds Google's redirect addresses before APP_URL, then redirects the old one", () => {
     const step5 = sections.find((s) => s.n === 5)!.body;
+    // Google refuses a redirect address on a domain that isn't an authorized domain yet.
+    const authorized = step5.indexOf("**Branding** → Authorized domains → **Add domain**");
     const google = step5.indexOf("Authorized redirect URIs");
     const appUrl = step5.indexOf("`APP_URL` (Production only)");
-    expect(google).toBeGreaterThan(0);
+    expect(authorized).toBeGreaterThan(0);
+    expect(google).toBeGreaterThan(authorized);
     expect(appUrl).toBeGreaterThan(google);
     expect(flat(step5)).toContain("**Redirect to** your domain");
     expect(flat(step5)).not.toContain("Keep the old address working");
+  });
+
+  it("going live taps the button the page shows, and doesn't count the old Connected line as proof", () => {
+    const step7 = sections.find((s) => s.n === 7)!.body;
+    const c = flat(step7.slice(step7.indexOf("**7c."), step7.indexOf("**7d.")));
+    // Test mode was connected first, so the button already reads "Connect Stripe again".
+    expect(c).toContain("Payments → **Connect Stripe again**");
+    expect(c).not.toMatch(/\*\*Connect Stripe\*\*/);
+    expect(c).toContain('"Connected · last set up …" line was already there from test mode');
+    expect(c).toContain("proves nothing");
+    const admin = readFileSync(join(ROOT, "src/app/(app)/admin/page.tsx"), "utf8");
+    expect(admin).toContain('{stripeAt ? "Connect Stripe again" : "Connect Stripe"}');
+    expect(admin).toContain("Connected · last set up ${");
+    expect(admin).toContain('stripe: "Couldn\'t connect Stripe."');
+    expect(c).toContain('"Couldn\'t connect Stripe."');
+  });
+
+  it("the 'never change' rule names both planned changes in step 3 (the Neon password too)", () => {
+    const step3 = flat(sections.find((s) => s.n === 3)!.body);
+    expect(step3).toMatch(/Reset password[\s\S]*`DATABASE_URL` \(Production/);
+    expect(step3).toContain("`AUTH_GOOGLE_SECRET`");
+    const step2 = flat(sections.find((s) => s.n === 2)!.body);
+    expect(step2).toContain(
+      "apart from the two planned changes in [step 3](#3-change-the-passwords-that-were-pasted-in-chat) (the new Neon password changes `DATABASE_URL`, the new Google client secret changes `AUTH_GOOGLE_SECRET`)",
+    );
+    const step4 = flat(sections.find((s) => s.n === 4)!.body);
+    expect(step4).toContain(
+      "except the two planned changes in step 3: the new Neon password (a new `DATABASE_URL`) and the new Google client secret (a new `AUTH_GOOGLE_SECRET`)",
+    );
+    expect(step4).not.toContain("except the planned Google secret change in step 3");
   });
 
   it("Stripe live mode removes the test-mode endpoint; the Neon reset warns of the outage", () => {
@@ -464,10 +550,32 @@ describe("what LAUNCH.md tells Davi to look for is what the code shows", () => {
       "Payment received — finishing up.",
       "Text me a code",
       "Yes, through Stripe",
+      "Couldn't connect Stripe.",
+      "Reconnect Gmail",
+      // The house-account move (0d): the demo's send part needs a workspace that can send.
+      "Use as my own test account",
+      "Yes, this is my account",
+      "Your account can send now (marked as your own test account).",
+      "Your own test account",
     ]) {
       expect(flat(launch), `LAUNCH.md quotes "${text}"`).toContain(text);
       expect(code, `the app shows "${text}"`).toContain(text);
     }
+  });
+
+  it("the demo video step makes Davi's workspace the house account first (the only way it can send)", () => {
+    const google = sections0();
+    const d = flat(google.slice(google.indexOf("**0d."), google.indexOf("**0e.")));
+    expect(d).toContain(
+      "`/admin` → your own card (always shown first) → **Use as my own test account** → **Yes, this is my account**",
+    );
+    // True of the code: that move is the only one that sets "house", and only for Davi's own card.
+    const lifecycle = readFileSync(join(ROOT, "src/server/workspace-lifecycle.ts"), "utf8");
+    expect(lifecycle).toMatch(
+      /case "house_account": \{[\s\S]*?isAdminEmail[\s\S]*?setupPaidVia: "house"/,
+    );
+    const admin = readFileSync(join(ROOT, "src/app/(app)/admin/page.tsx"), "utf8");
+    expect(admin).toContain('(m !== "house_account" || (own && w.setupPaidVia !== "house"))');
   });
 
   it("the one-time clean-up keys it asks about are the real ones", () => {

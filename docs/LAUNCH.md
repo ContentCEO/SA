@@ -46,7 +46,8 @@ that doesn't open and a reviewer would see old screens. Each rejection costs wee
 
 - **Now** (once the domain is added): 0a and 0c.
 - **After [step 1](#1-merge-the-launch-branch) (merge) and [step 5](#5-support-email-and-the-production-domain) (domain):**
-  0b, 0d, 0e and 0f, then 0g.
+  0b and 0d, then 0e (submit).
+- **After you submit:** 0f once Google's email names the reviewer's address, and 0g.
 
 **0a. Prove you own the domain.** (Now.)
 
@@ -59,9 +60,10 @@ that doesn't open and a reviewer would see old screens. Each rejection costs wee
 
 - Where: console.cloud.google.com (project number 214188340483) → Google Auth Platform →
   **Branding**.
-- Paste: under Authorized domains, the production domain. Application home page
-  `https://<your domain>/`, privacy policy `https://<your domain>/privacy`, terms of service
-  `https://<your domain>/terms`.
+- Paste: Application home page `https://<your domain>/`, privacy policy
+  `https://<your domain>/privacy`, terms of service `https://<your domain>/terms`. (The domain is
+  already under Authorized domains from [step 5](#5-support-email-and-the-production-domain); if
+  it isn't, add it there first.)
 - Worked when: Branding saves with no red warning, and those three links open the homepage, the
   privacy policy and the terms.
 
@@ -69,10 +71,18 @@ that doesn't open and a reviewer would see old screens. Each rejection costs wee
 
 - Where: Google Auth Platform → **Audience** → Publishing status → **Publish app** (it then says
   "In production").
-- Why: ends the 7-day expiry and the hand-added test-user list. Until verification passes, owners
-  still see the "unverified app" warning (they can tap through it), and the 100-user cap stays.
-  Sign-in to Squared Away itself is still invite-only, so publishing doesn't let strangers in.
-- Worked when: Audience shows **In production**.
+- Why: ends the 7-day expiry for Gmail access given **from now on**, and the hand-added test-user
+  list. Until verification passes, owners still see the "unverified app" warning (they can tap
+  through it), and the 100-user cap stays. Sign-in to Squared Away itself is still invite-only, so
+  publishing doesn't let strangers in.
+- Then reconnect once: Gmail access given while the app was in Testing (yours included) **still
+  runs out** 7 days after it was given; publishing doesn't extend it. So right after publishing,
+  you and every owner who connected during Testing reconnect once: open `/connect` (type it in
+  the address bar) → Connect Gmail → pick the **same** Gmail address. Nothing is lost: it only
+  replaces Google's key. Anyone who skips it loses Gmail access within the week; the app then
+  says so on every screen, and its **Reconnect Gmail** button fixes it.
+- Worked when: Audience shows **In production**, and you (and each owner from the Testing days)
+  have reconnected since.
 
 **0d. Record the demo video.** (After steps 1 and 5, on the merged production app.)
 
@@ -83,23 +93,39 @@ that doesn't open and a reviewer would see old screens. Each rejection costs wee
 - Which account records the send part is your decision (see
   [step 13](#13-decisions-waiting-on-you); the options are under "Reviewer test account" in
   google-verification.md).
+- If you record it on your own workspace (the recommended option), make it the house account
+  first, or it can't send on camera: `/admin` → your own card (always shown first) → **Use as my
+  own test account** → **Yes, this is my account**. It only ever shows on your own card. Worked
+  when: the notice says "Your account can send now (marked as your own test account)." and your
+  card's **Setup paid** line reads "Your own test account". If it already reads that, the button
+  isn't shown and there's nothing to do.
 - Worked when: the video is uploaded to YouTube as **Unlisted** and you have its link.
 
-**0e. Invite the reviewer.** (After steps 1 and 5.)
-
-- Where: `/admin` → Invite an owner → the Google address Google's reviewer will use (they name it
-  in their email; if they don't, ask).
-- Worked when: `/admin` → Accounts lists them after they first sign in.
-
-**0f. Submit for verification.** (After 0b, 0d and 0e.)
+**0e. Submit for verification.** (After 0b and 0d.)
 
 - Where: Google Auth Platform → **Data Access** → check the three Gmail scopes are listed, then
   **Verification Center** → Submit for verification.
+- If any of the three is missing (an app in Testing works without them being listed): Data
+  Access → **Add or remove scopes** → under "Manually add scopes" paste these three, one per line
+  → **Add to table** → **Update** → **Save**:
+  - `https://www.googleapis.com/auth/gmail.readonly`
+  - `https://www.googleapis.com/auth/gmail.compose`
+  - `https://www.googleapis.com/auth/gmail.send`
+
+  Worked when: Data Access lists all three (Google files `gmail.readonly` and `gmail.compose`
+  under restricted scopes and `gmail.send` under sensitive scopes).
+
 - Paste: the sections "Two separate consent steps", "Scopes", "Google API Services: Limited Use"
   and "Data handling" from [google-verification.md](google-verification.md) (only those; the
   sections marked "for Davi only" are never pasted), and the video link.
 - Worked when: Verification Center says the submission is **in review**, and Google emails you.
   Answer their emails quickly: the review waits on your replies.
+
+**0f. Invite the reviewer.** (After 0e, once Google's email names the address.)
+
+- Where: `/admin` → Invite an owner → the Google address Google's reviewer will use. It arrives in
+  Google's review emails after you submit; if they don't name one, reply and ask for it.
+- Worked when: `/admin` → Accounts lists them after they first sign in.
 
 **0g. The security assessment (CASA).**
 
@@ -170,9 +196,12 @@ call (listed in [step 13](#13-decisions-waiting-on-you)).
 entry ticked for both Production and Preview. Deleting that entry, or changing its value, changes
 **production** too: a changed `TOKEN_ENCRYPTION_KEY` makes every owner reconnect Gmail, a changed
 `AUTH_SECRET` signs everyone out, and a changed `DATABASE_URL` points production at another
-database. So never delete those entries and never change their values. Split them instead:
+database. So never delete those entries and never change their values, apart from the two
+planned changes in [step 3](#3-change-the-passwords-that-were-pasted-in-chat) (the new Neon
+password changes `DATABASE_URL`, the new Google client secret changes `AUTH_GOOGLE_SECRET`).
+Split them instead:
 
-**How to split a setting** (used below; production's value never changes):
+**How to split a setting** (used below; splitting never changes production's value):
 
 1. Vercel → sa → Settings → Environment Variables → the existing entry → **Edit**.
 2. Untick **Preview** only. Leave Production ticked and **leave the value alone** → Save.
@@ -280,9 +309,9 @@ The Neon database password and the Google client secret were once pasted into a 
 - Where: console.cloud.google.com → Google Auth Platform → **Clients** → the web client →
   **Add secret** → copy the new secret.
 - Paste: Vercel → `AUTH_GOOGLE_SECRET` (every environment that uses this client) → Redeploy.
-- Then: sign out of Squared Away, sign in again, and in Settings tap Connect Gmail (or reconnect)
-  once. When both work, go back to the client in Google and **disable, then delete the old
-  secret**.
+- Then: sign out of Squared Away, sign in again, and reconnect Gmail once (open `/connect` →
+  Connect Gmail → the same Gmail address, as in step 0c). When both work, go back to the client in
+  Google and **disable, then delete the old secret**.
 - Worked when: after the old secret is deleted, sign-in and Connect Gmail still work.
 
 ## 4. Settings in Vercel, per environment
@@ -319,8 +348,9 @@ Where: Vercel → sa → Settings → Environment Variables. A change only takes
 
 "Its own value" means a **separate entry** ticked for Preview only, made by splitting the shared
 one (step 2, "How to split a setting"). Production's values for `DATABASE_URL`, `AUTH_SECRET`,
-`TOKEN_ENCRYPTION_KEY`, `AUTH_GOOGLE_ID` and `AUTH_GOOGLE_SECRET` never change in this checklist
-(except the planned Google secret change in step 3).
+`TOKEN_ENCRYPTION_KEY`, `AUTH_GOOGLE_ID` and `AUTH_GOOGLE_SECRET` never change in this checklist,
+except the two planned changes in step 3: the new Neon password (a new `DATABASE_URL`) and the new
+Google client secret (a new `AUTH_GOOGLE_SECRET`).
 
 `INNGEST_DEV` is for this machine only: on Vercel it would stop the jobs **and** switch off the
 check that only Inngest can run them, so anyone could start them.
@@ -340,19 +370,24 @@ row exists in any environment.
 - Worked when: the footer of the homepage and the contact block of `/privacy` and `/terms` show it.
 
 **Production domain.** Every place below still points at `sa-dac3.vercel.app` until you change it.
-Do the steps in this order: Google first, then `APP_URL`, or Connect Gmail fails in between.
+Do the steps in this order: Google first (authorized domain, then redirect addresses), then
+`APP_URL`, or Connect Gmail fails in between.
 
 1. Vercel → sa → Settings → **Domains** → Add → the domain → add the DNS records it shows at your
    registrar. Worked when: Vercel shows **Valid Configuration**.
-2. Google Cloud → Google Auth Platform → **Clients** → the web client → Authorized redirect URIs →
+2. Google Cloud → Google Auth Platform → **Branding** → Authorized domains → **Add domain** → the
+   production domain → Save. Do [0a](#0-start-now-google-verification-takes-weeks) (Search
+   Console) first: Google wants the domain verified there. Google refuses a redirect address on a
+   domain that isn't on this list, so this comes before item 3. The home page, privacy and terms links
+   wait for step 0b. Worked when: Branding saves and lists the domain under Authorized domains.
+3. Google Auth Platform → **Clients** → the web client → Authorized redirect URIs →
    **add** `https://<your domain>/api/auth/callback/google` and
    `https://<your domain>/api/gmail/callback`. Keep the old `sa-dac3.vercel.app` ones for now →
    Save. Worked when: the list shows both new addresses.
-3. Vercel → `APP_URL` (Production only) = `https://<your domain>`, no trailing slash → Redeploy.
+4. Vercel → `APP_URL` (Production only) = `https://<your domain>`, no trailing slash → Redeploy.
    Worked when: `https://<your domain>/api/health` answers, and signing in and Connect Gmail work
    on the new domain.
-4. Google Auth Platform → Branding: authorized domain and the three links (step 0b).
-5. Stripe: `/admin` → Payments → **Connect Stripe again** (after the redeploy in 3). The payment
+5. Stripe: `/admin` → Payments → **Connect Stripe again** (after the redeploy in item 4). The payment
    notification address comes from `APP_URL`. Then Stripe → Developers → Webhooks → the endpoint
    on the old address (`https://sa-dac3.vercel.app/api/stripe/webhook`) → **Delete**: it can't be
    checked any more, so Stripe would keep retrying it and email you warnings. Worked when: Stripe →
@@ -366,7 +401,7 @@ Do the steps in this order: Google first, then `APP_URL`, or Connect Gmail fails
    email shows up in Inbox within a minute.
 8. Resend: the new domain (step 6).
 9. Once the new domain passes the smoke test (step 12): Vercel → sa → Settings → **Domains** →
-   `sa-dac3.vercel.app` → Edit → **Redirect to** your domain (permanent). After step 3 Connect Gmail
+   `sa-dac3.vercel.app` → Edit → **Redirect to** your domain (permanent). After item 4 above, Connect Gmail
    only works when started on the new domain (Google sends the owner back there, and the old
    address's sign-in check can't be read on the new one), so the old address should forward
    everyone instead of staying a second way in. Worked when: opening
@@ -413,10 +448,14 @@ fails), and those accounts can send without a real payment.
 
 **7c. Connect Stripe.**
 
-- Where: `/admin` → Payments → **Connect Stripe** (more in [SETUP.md](SETUP.md) §7c).
-- Worked when: `/admin` says "Stripe connected in LIVE mode. Real cards will be charged." and
-  "Connected · last set up …". In live Stripe: Product catalog has the setup fee and the three plan
-  prices; Developers → Webhooks shows the endpoint ending `/api/stripe/webhook`.
+- Where: `/admin` → Payments → **Connect Stripe again** (test mode was connected before, so the
+  button already says "again"; more in [SETUP.md](SETUP.md) §7c).
+- Worked when: right after the tap, `/admin` shows the notice "Stripe connected in LIVE mode. Real
+  cards will be charged." (The "Connected · last set up …" line was already there from test mode,
+  so on its own it proves nothing; after the tap its time is today's.) In live Stripe: Product
+  catalog has the setup fee and the three plan prices; Developers → Webhooks shows the endpoint
+  ending `/api/stripe/webhook`. If `/admin` says "Couldn't connect Stripe." instead, it didn't
+  finish: fix what it says and tap again (it's safe to tap again).
 - Then clean up test mode: Stripe → turn **Test mode** on → Developers → Webhooks → the endpoint
   ending `/api/stripe/webhook` → **Delete**. Test subscriptions keep renewing and Stripe keeps
   sending their notifications to the same address, which now only accepts live ones, so Stripe
@@ -507,7 +546,9 @@ fixed.
 6. `/privacy` and `/terms`: no `{{` anywhere, and the support email is shown.
 7. `/admin` loads for you; signed in as anyone else it shows a 404 page ("This page could not be
    found.").
-8. Google Auth Platform → Audience shows **In production** (step 0c).
+8. Google Auth Platform → Audience shows **In production** (step 0c). The first time after
+   publishing, you have also reconnected Gmail once since then (step 0c): access given in Testing
+   still ends 7 days after it was given, even when check 3 passes today.
 
 ## 13. Decisions waiting on you
 

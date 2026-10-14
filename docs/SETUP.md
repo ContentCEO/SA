@@ -414,7 +414,9 @@ The Gmail API must be enabled. While the app's publishing status (Google Auth Pl
 Audience) is **Testing**, each owner must be added there as a test user (at most 100), and Google's
 refresh tokens for Gmail scopes expire after 7 days, so every owner has to reconnect weekly. Switch
 it to **In production** before real owners connect; until Google's verification passes, owners see
-Google's "unverified app" warning. See `docs/google-verification.md` for why we ask for each scope,
+Google's "unverified app" warning. Access given while it was still Testing keeps its 7-day end, so
+everyone who connected then reconnects once after the switch (`/connect` → the same address;
+`docs/LAUNCH.md` step 0c). See `docs/google-verification.md` for why we ask for each scope,
 the demo-video script and the reviewer account.
 
 ## 9. Deploys (Vercel)
