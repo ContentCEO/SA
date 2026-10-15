@@ -12,7 +12,9 @@ concurrency:
 jobs:
   check:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # The unit suite alone takes ~14 minutes on a GitHub runner (1,500+ tests, each DB test on a
+    # fresh in-memory Postgres) and the whole job ~19.5; 20 started cutting off passing runs.
+    timeout-minutes: 45
     # Throwaway values for CI only. Nothing here talks to real Google or a real database.
     env:
       APP_URL: http://localhost:3100
