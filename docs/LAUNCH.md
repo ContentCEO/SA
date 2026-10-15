@@ -12,7 +12,7 @@ Contents:
 
 - [Check your Neon plan now (this week)](#check-your-neon-plan-now-this-week)
 - [Start your sales tax registration now (it takes days)](#start-your-sales-tax-registration-now-it-takes-days)
-- [Add your terms link in Stripe now](#add-your-terms-link-in-stripe-now)
+- [Add your terms link in Stripe (right after step 1)](#add-your-terms-link-in-stripe-right-after-step-1)
 - [0. Start now: Google verification (takes weeks)](#0-start-now-google-verification-takes-weeks)
 - [1. Merge the launch branch](#1-merge-the-launch-branch)
 - [2. Give previews their own database](#2-give-previews-their-own-database)
@@ -74,27 +74,43 @@ whatever your sales total.
 - Worked when: you have a Massachusetts sales tax account and its registration certificate (Form
   ST-1). The Stripe part comes later, in step 7e.
 
-## Add your terms link in Stripe now
+## Add your terms link in Stripe (right after step 1)
 
-Since 2026-10-15, owners tick an "I agree to the Terms of Service and the Privacy Policy" box when
-they sign in, and the app asks Stripe to show a required "I agree" box on its checkout page too.
-Stripe only shows that box once your terms address is saved in Stripe. Until then, checkout still
-works, just without the box (owners have already agreed at sign-in), and `/admin` tells you so.
-Do it now, while Stripe is still in test mode, and check it again in live mode in
+Decided on 2026-10-15: owners tick an "I agree to the Terms of Service and the Privacy Policy" box
+when they sign in, and the app asks Stripe to show a required "I agree" box on its checkout page
+too. Stripe only shows that box once your terms address is saved in Stripe. Until then, checkout
+still works, just without the box (owners have already agreed at sign-in), and `/admin` tells you
+so.
+
+**This comes in two merges, so it is done in two parts.**
+
+- **Step 1's merge** (`claude/launch-integration`) puts the `/terms` and `/privacy` pages live.
+  Today both addresses show "page not found" on production, so don't save them in Stripe before
+  step 1: Stripe's own pages (checkout and the billing page) would link to that.
+- **A second merge**, of `claude/squared-away-mvp-ddxl7s` (built on top of step 1's branch),
+  brings the boxes themselves: the sign-in box, the terms screen, Stripe's checkout box and the
+  `/admin` line below. The engineers open its pull request after step 1's merge; merging it is
+  another production deploy.
+
+Do it in test mode right after step 1, and check it again in live mode in
 [step 7d](#7-stripe-live-mode).
 
+- When: right after [step 1](#1-merge-the-launch-branch).
 - Where: Stripe → Settings → Business → **Public details**.
 - Paste: Terms of service URL `https://<production address>/terms` and Privacy policy URL
   `https://<production address>/privacy`. Until your own domain is set up
   ([step 5](#5-support-email-and-the-production-domain)) the production address is
   `sa-dac3.vercel.app`; change both links when the domain changes.
-- Worked when: Stripe saves both, and each one opens your terms or your privacy policy. Then, after
-  the next checkout (an owner choosing a plan, or your own test purchase), Stripe's checkout page
-  shows the "I agree" tick box above the pay button, and `/admin` → Payments does **not** show
-  "Terms box at checkout: off. Add your terms link in Stripe → Settings → Business → Public
-  details." If that line shows, Stripe didn't have the link at that checkout: save it, and the
-  line goes away after the next checkout that has the box. (The line only changes when someone
-  goes to checkout; opening `/admin` never asks Stripe.)
+- Worked when:
+  1. After step 1: Stripe saves both, and each one opens your terms or your privacy policy.
+  2. After the second merge: after the next checkout (an owner choosing a plan, or your own test
+     purchase), Stripe's checkout page shows the "I agree" tick box above the pay button, and
+     `/admin` → Payments does **not** show "Terms box at checkout: off. Add your terms link in
+     Stripe → Settings → Business → Public details." If that line shows, Stripe didn't have the
+     link at that checkout: save it, and the line goes away after the next checkout that has the
+     box. (The line only changes when someone goes to checkout; opening `/admin` never asks
+     Stripe.) Before the second merge there is no checkout box and no `/admin` line at all,
+     whatever Stripe has saved: that isn't a sign of a wrong setting.
 
 ## 0. Start now: Google verification (takes weeks)
 
@@ -162,6 +178,9 @@ that doesn't open and a reviewer would see old screens. Each rejection costs wee
   have reconnected since.
 
 **0d. Record the demo video.** (After steps 1 and 5, on the merged production app.)
+
+The video's sign-in shows the "I agree" box, which goes live with the second merge (see
+[step 1](#1-merge-the-launch-branch)), so record after that one too.
 
 - Where: follow "Demo video script" in [google-verification.md](google-verification.md) word for
   word. It uses the real Google consent screen, shows the OAuth client id in the address bar, and
@@ -232,9 +251,9 @@ that doesn't open and a reviewer would see old screens. Each rejection costs wee
 
 ## 1. Merge the launch branch
 
-Everything waiting is in **one** pull request: `claude/launch-integration` into `main`. It already
-holds the public site (PR #9), Squared Away Growth (with the "Big words" homepage switch you
-picked), Milestones 5–8 and the Milestone 11 launch work. **Merging it is a production deploy.**
+Almost everything waiting is in **one** pull request: `claude/launch-integration` into `main`. It
+already holds the public site (PR #9), Squared Away Growth (with the "Big words" homepage switch
+you picked), Milestones 5–8 and the Milestone 11 launch work. **Merging it is a production deploy.**
 
 You said okay to the merge on 2026-10-14. The engineers open the pull request once every check is
 green and tell you; you press **Merge pull request**. The closing question (#26, step 13) is
@@ -248,6 +267,13 @@ could later be offered "Ask for a review" (only on your tap, and only as a draft
 The merge also puts the homepage's About section live. Its wording changed on 2026-10-15 (see
 "The homepage's About section" in [step 13](#13-decisions-waiting-on-you)); tell the engineers
 before you tap Merge if you want different words.
+
+**Not in this merge: the "I agree" boxes** (decided on 2026-10-15, [step 13](#13-decisions-waiting-on-you)).
+They are on a second branch, `claude/squared-away-mvp-ddxl7s`, built on top of this one. The
+engineers open its pull request once this merge is live, and you merge it the same way (another
+production deploy, checked the same way as below). This merge does put the `/terms` and `/privacy`
+pages live, so right after it, save them in Stripe:
+[Add your terms link in Stripe](#add-your-terms-link-in-stripe-right-after-step-1).
 
 - Before you tap Merge (one minute, optional but only possible now): the **Gmail draft check**.
   It tells the engineers whether Gmail keeps a draft's id when it's sent. The app is safe either
@@ -638,7 +664,7 @@ test payment back afterwards.
 - Then, with **Test mode** off: Stripe → Settings → Business → **Public details** → Terms of
   service URL `https://<production address>/terms` and Privacy policy URL
   `https://<production address>/privacy` (as in
-  [Add your terms link in Stripe now](#add-your-terms-link-in-stripe-now); add them if live mode
+  [Add your terms link in Stripe](#add-your-terms-link-in-stripe-right-after-step-1); add them if live mode
   doesn't show them already, and use your own domain once it's set up).
 - Worked when: both are saved; then at 7f's real purchase Stripe's page shows the "I agree" tick
   box, and afterwards `/admin` → Payments does **not** show "Terms box at checkout: off. Add your
@@ -805,21 +831,25 @@ fixed.
 
 ### Decided on 2026-10-15
 
-- **"I agree to the Terms": yes, built** (live with the next merge). Massachusetts' top court said
+- **"I agree to the Terms": yes, built** (live with the second merge, after step 1's; see
+  [Add your terms link in Stripe](#add-your-terms-link-in-stripe-right-after-step-1)).
+  Massachusetts' top court said
   online terms only bind people who were properly shown them and agreed to them (Kauders v. Uber,
   2021), and that a tick box plus a button is enough (Good v. Uber, 2024). So:
   - **Sign-in:** an unticked "I agree to the Terms of Service and the Privacy Policy" box (both
     linked) above **Sign in with Google**. Without it the button only says to tick the box; the
     server checks, not just the phone. This covers trial owners, who never see Stripe.
   - **Everyone already signed in** (you included) sees "one thing first, the fine print." with the
-    same box and **Agree and continue** the first time they open the app after the merge, then
-    goes on to the screen they were opening. Whenever the terms' "Last updated" date changes, the
-    engineers change the version in the app with it and everyone is asked again ("we've updated
-    our terms."). Someone who doesn't agree can sign out from that screen; the app keeps checking
-    their mail in the background (it only stops them using the app), so to cancel or delete they
-    call or text you, as the screen says.
+    same box and **Agree and continue** the first time they open the app after that second
+    merge, then goes on to the screen they were opening. Whenever the terms' "Last updated" date
+    changes, the engineers change the version in the app with it and everyone is asked again
+    ("we've updated our terms."). Someone who doesn't agree can still leave from that same
+    screen, as the terms and privacy policy they agreed to promise: **Manage billing** (Stripe's
+    page, to cancel the plan), **Disconnect Gmail**, **Delete my account** (each with the same
+    one confirmation as in Settings) or **Sign out**. Until they agree or leave, the app keeps
+    checking their mail in the background (the screen only stops them using the app).
   - **Stripe's checkout page:** a required "I agree" box too. It needs your terms link in Stripe
-    ([Add your terms link in Stripe now](#add-your-terms-link-in-stripe-now)); until then
+    ([Add your terms link in Stripe](#add-your-terms-link-in-stripe-right-after-step-1)); until then
     checkout works without it and `/admin` → Payments says so.
   - The privacy policy now says we keep when each person agreed and to which version.
 - **Demo video: option B**, a separate demo account, invited from `/admin` and paid with Stripe's

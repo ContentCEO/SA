@@ -742,7 +742,10 @@ describe("LAUNCH.md structure", () => {
       "Kauders v. Uber",
       "Good v. Uber",
       "**Agree and continue**",
-      "[Add your terms link in Stripe now](#add-your-terms-link-in-stripe-now)",
+      "[Add your terms link in Stripe](#add-your-terms-link-in-stripe-right-after-step-1)",
+      // Someone who won't agree can still leave from the terms screen, as the terms promise.
+      "**Manage billing**",
+      "**Delete my account**",
       "**Demo video: option B**",
       "An engineer tries it once on production first",
       // Option B's account can't be reset before the live key (the button needs it).
@@ -765,13 +768,28 @@ describe("LAUNCH.md structure", () => {
     );
   });
 
-  it("the Stripe terms link is a step now and in live mode, checked by the /admin line", () => {
+  it("the Stripe terms link is a step right after step 1 and in live mode, checked by the /admin line", () => {
     const now = flat(
       launch.slice(
-        launch.indexOf("## Add your terms link in Stripe now"),
+        launch.indexOf("## Add your terms link in Stripe (right after step 1)"),
         launch.indexOf("## 0. Start now"),
       ),
     );
+    // The pages ship with step 1's merge; the boxes and the /admin line with a second one.
+    for (const text of [
+      "When: right after [step 1](#1-merge-the-launch-branch).",
+      "1. After step 1:",
+      "2. After the second merge:",
+      "`claude/squared-away-mvp-ddxl7s`",
+      "don't save them in Stripe before step 1",
+    ])
+      expect(now, text).toContain(text);
+    expect(now).not.toMatch(/\bDo it now\b/);
+    const step1 = flat(sections.find((x) => x.n === 1)!.body);
+    expect(step1).toContain('**Not in this merge: the "I agree" boxes**');
+    expect(step1).toContain("`claude/squared-away-mvp-ddxl7s`");
+    expect(step1).not.toContain("Everything waiting is in **one** pull request");
+    expect(launch).not.toContain("live with the next merge");
     const line = TERMS_BOX_OFF_LINE;
     for (const text of [
       "Stripe → Settings → Business → **Public details**",

@@ -1176,6 +1176,11 @@ default, CI too) and refuses a non-local `DATABASE_URL` or an `APP_URL` that isn
     everyone is asked again on their next screen. Migration 0027 (additive): `users.terms_accepted_at`
     / `users.terms_version` (latest acceptance only; no history). Goes with the user row on Delete
     my account (cascade). Rules in `src/server/terms-rules.ts` (pure), DB in `src/server/terms.ts`.
+    **A newer version on record counts as agreed** (`hasCurrentTerms`: stored YYYY-MM-DD ≥
+    TERMS_VERSION; anything not shaped like a date never counts), and `recordTermsAcceptance`
+    never lowers a stored version (`collate "C" <=` in the UPDATE's WHERE): previews share the
+    production DB and a Vercel rollback runs older code, so an exact match would flip owners back
+    and forth between versions and show "we've updated our terms" when nothing changed.
   - **Sign-in:** `/signin` renders `TermsForm` (`src/components/app/terms-form.tsx`, client,
     `useActionState`): an unticked box (no `required`: the server is the gate) + Sign in with
     Google → `signInWithGoogleAction` (`src/app/signin/actions.ts`, public). Without
@@ -1187,9 +1192,9 @@ default, CI too) and refuses a non-local `DATABASE_URL` or an `APP_URL` that isn
   - **Every signed-in screen:** `requireOwner()` / `requireAdmin()` (after the non-admin 404)
     redirect anyone without the current version to `/welcome/terms?next=<path>` ("one thing
     first, the fine print." first time; "we've updated our terms." after a bump; Agree and
-    continue; Sign out; "Don't agree?" points to the phone to cancel or delete). The page is
+    continue; then "Don't agree?" with the ways out). The page is
     `src/app/welcome/terms` (outside the (app) layout, whose nav would loop) and uses
-    `requireSignedIn()` (signed in + workspace, no terms; only that page and its action may use it,
+    `requireSignedIn()` (signed in + workspace, no terms; only that page and its actions may use it,
     static test). `agreeToTermsAction` re-checks the box server-side and redirects to
     `safeNextPath(next)` (one leading `/`, then no `/` or backslash; no backslash, whitespace or
     control characters anywhere; same-origin by URL parse; never `/welcome/terms` or `/api`;
@@ -1203,8 +1208,20 @@ default, CI too) and refuses a non-local `DATABASE_URL` or an `APP_URL` that isn
     (never a redirect) right after the 401 check, before any limit, send or Google code exchange
     (C3 test). The badge leaves the icon as it is on 403; the service worker shows its generic
     line. Background jobs keep running for accounts that haven't agreed (the gate is on the
-    person, not the mailbox), so an owner who won't agree can't cancel in-app: the screen says
-    to call.
+    person, not the mailbox).
+  - **Leaving without agreeing (review fix, 2026-10-15):** the terms and privacy policy an owner
+    already agreed to promise they can cancel, disconnect Gmail or delete their account any time,
+    so `/welcome/terms` → "Don't agree?" offers **Manage billing** (Stripe's portal, only with a
+    Stripe customer; `createPortal(workspace, "/welcome/terms")` returns there), **Disconnect
+    Gmail** per mailbox, **Delete my account** (both with the same confirmations as Settings:
+    `DeleteAccountButton` / `DisconnectButton` moved to `src/components/app/` and take the
+    action as a prop) and Sign out. Their actions (`deleteAccountFromTermsAction`,
+    `disconnectMailboxFromTermsAction`, `openPortalFromTermsAction` in
+    `src/app/welcome/terms/actions.ts`) run the same server code as Settings' / Plan & billing's
+    (same billing rate limit) but are guarded by `requireSignedIn` (requireOwner would loop
+    them back), reviewed in `SIGNED_IN_ONLY` of the C1 test; they only end or remove things.
+    The portal redirect is a reviewed C4 exception (Stripe's URL). Results come back as
+    `/welcome/terms?done=disconnected` / `?error=delete_billing|busy|unknown`.
   - **Stripe Checkout:** `createCheckout` adds `consent_collection.terms_of_service = "required"`
     and `custom_text.terms_of_service_acceptance` ("I agree to the [Terms of Service](APP_URL/terms)
     and the [Privacy Policy](APP_URL/privacy)."). Stripe refuses that until a Terms of Service URL
@@ -1217,15 +1234,19 @@ default, CI too) and refuses a non-local `DATABASE_URL` or an `APP_URL` that isn
     shows `TERMS_BOX_OFF_LINE`; a later checkout with the box deletes it. Writing the note never
     fails a checkout. Any other Stripe error (or a refusal of the retry) goes up as before; no
     third try; no Stripe call on page load.
-  - Docs: LAUNCH.md "Add your terms link in Stripe now" (test mode) and 7d (live mode), both
-    with the admin line as the check; step 13 "Decided on 2026-10-15"; privacy policy: "When you
+  - Docs: LAUNCH.md "Add your terms link in Stripe (right after step 1)" (test mode) and 7d (live
+    mode), both with the admin line as the check. **Two merges:** PR #10 (`claude/launch-integration`)
+    puts `/terms` and `/privacy` live (production 404s them until then); the boxes, the terms
+    screen, Stripe's box and the /admin line ship only with the second merge of
+    `claude/squared-away-mvp-ddxl7s` (LAUNCH.md step 1 says so); step 13 "Decided on 2026-10-15"; privacy policy: "When you
     agree to our terms" (time + version), the short-lived sign-in cookie, and retention (until
     Delete my account). `docs/terms.md` text unchanged; both docs stay dated October 15, 2026.
   - e2e: `signInAs(context, owner)` marks the user as agreed (current version) unless
     `{ agreedToTerms: false }`; `tests/e2e/terms.spec.ts` covers the sign-in box (error + focus,
     stays on /signin; with it, Google's routed consent and the cookie), the hold on
     /welcome/terms (screens redirect, `/api/badge` 403, agree → back to the screen), the
-    "updated" wording, Sign out and a foreign `next`.
+    "updated" wording, Sign out, Disconnect Gmail + Delete my account without agreeing, and a
+    foreign `next`.
 - **Google demo video: option B (Davi, 2026-10-15: "just do b"):** a separate demo account
   invited from `/admin`, paid with Stripe's test card while production Stripe is in test mode; an
   engineer's dry run on production first; delete it before step 7 or Reset test payments clears it
@@ -1290,10 +1311,12 @@ default, CI too) and refuses a non-local `DATABASE_URL` or an `APP_URL` that isn
   each, in LAUNCH.md step 13); a lawyer's review of both legal drafts (questions: LLC, insurance,
   "no contract" wording). The assent question is decided and built (2026-10-15, "I agree" boxes
   above).
-- **Stripe terms link (his, now):** Stripe → Settings → Business → Public details → Terms of
-  service URL `https://<production address>/terms` and Privacy policy URL `.../privacy` (test
-  mode now, checked again in live mode at LAUNCH.md 7d). Until then checkout runs without the box
-  and /admin → Payments says "Terms box at checkout: off. …".
+- **Stripe terms link (his, right after the launch merge):** Stripe → Settings → Business →
+  Public details → Terms of service URL `https://<production address>/terms` and Privacy policy
+  URL `.../privacy` (test mode right after PR #10 merges, since production 404s both pages until
+  then; checked again in live mode at LAUNCH.md 7d). The checkout box and the /admin line
+  ("Terms box at checkout: off. …") only exist once the second merge
+  (`claude/squared-away-mvp-ddxl7s`) is deployed.
 - **Google review (open):** (a) decided 2026-10-15: option B (separate demo account on Stripe's
   test card; needs an engineer's dry run on production first, while Stripe is in test mode — a
   preview can't sync, draft, pay or send); (b) drop `gmail.send`: still open (recommended yes;
@@ -1384,8 +1407,10 @@ default, CI too) and refuses a non-local `DATABASE_URL` or an `APP_URL` that isn
 - Sales tax: Stripe Tax charges **$0** until Davi is registered with Massachusetts and has added
   the registration in Stripe → Tax → Locations (`docs/LAUNCH.md` 7e). Stripe never warns about the
   home state.
-- Terms assent: the terms are only a footer link today (no "I agree" at sign-in or Checkout). Open
-  for Davi (LAUNCH.md step 13), with a lawyer's review before launch.
+- Terms assent: decided and built 2026-10-15 ("I agree" boxes at sign-in, on /welcome/terms and
+  at Stripe Checkout), but live only after the **second merge** (`claude/squared-away-mvp-ddxl7s`,
+  after PR #10); until then production's terms are only a footer link. A lawyer's review of both
+  legal drafts is still due before launch.
 - **M7 merge timing (complaint memory, A1):** the first preview build of the M7 branch runs
   migration 0024 (marks threads still sorted `complaint` with `complained_at`). Until M7 merges,
   production's older code keeps re-sorting threads without setting the mark, so a complaint that
