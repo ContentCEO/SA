@@ -593,7 +593,7 @@ describe("webhook endpoint", () => {
 
   it("GUARDRAIL: with the live key, test-mode events change nothing (and the other way round)", async () => {
     // After the switch to live, the stored secret is the test endpoint's until Connect Stripe
-    // runs again (LAUNCH.md 7c): a late test checkout or a test renewal must not put a test
+    // runs again (LAUNCH.md 7b): a late test checkout or a test renewal must not put a test
     // payment back on an account "Reset test payments" cleared.
     const modeEvent = (id: string, type: string, object: unknown, livemode: boolean) =>
       JSON.stringify({ id, type, livemode, data: { object } });

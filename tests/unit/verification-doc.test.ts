@@ -125,10 +125,41 @@ describe("the demo video script matches the end-to-end journey", () => {
     const at = r.indexOf("**Option B**");
     expect(at, "an option B").toBeGreaterThanOrEqual(0);
     const b = r.slice(at);
-    expect(b).toContain("needs Davi's yes and an engineer's dry run on a preview first");
+    // A preview can't sync, draft, take a payment or send after the database split (jobs and
+    // Stripe only reach production), so the dry run happens on production (2026-10-15 review).
+    expect(b).toContain("needs Davi's yes and an engineer's dry run on production first");
+    expect(b).not.toContain("dry run on a preview");
     expect(b).toContain("Stripe's test card");
     expect(b).toContain("only while production Stripe is still in test mode");
-    expect(b).toMatch(/before Stripe goes live[^.]*delete it[^.]*Reset test payments/);
+    // The reset button only exists with the live key: deleted before step 7, or reset in 7c,
+    // and after that it can't send (a re-recording needs option A or a real card).
+    expect(b).toMatch(/delete it before Stripe goes live[^.]*Reset test payments[^.]*step 7c/);
+    expect(b).toContain("that button only exists with the live key");
+    expect(b).toContain("film that part with option A (the house account) or pay for the demo");
+    expect(adminPage).toContain("TEST_PAYMENTS_TEST_MODE");
+  });
+
+  it("dropping gmail.send is checked live on production, never 'on a preview'", () => {
+    const before = flat(
+      section("Before submitting (for Davi only; never pasted into Google's form)"),
+    );
+    expect(before).not.toContain("tried on a preview");
+    expect(before).toContain("the engineers check it on production with the demo Gmail");
+  });
+
+  it("names the closing question wherever it lists the notes the AI writes (#26 is on)", () => {
+    const handling = flat(section("Data handling"));
+    expect(handling).toContain("deposit or review note or closing question");
+    expect(handling).toContain("**Deposit and review notes, and the closing question:**");
+    expect(handling).toContain("Want to ask if they went another way?");
+    expect(handling).toContain("deposit or review notes, closing questions, quote acceptances");
+    const privacy = flat(readFileSync("docs/privacy-policy.md", "utf8"));
+    expect(privacy).toContain("asking whether the customer went another way, only when you tap it");
+    // True of the code: the button's label, and autopilot never sends a purpose note.
+    const buttons = readFileSync("src/components/app/offer-buttons.tsx", "utf8");
+    expect(buttons).toContain("Want to ask if they went another way?");
+    const autopilot = readFileSync("src/server/autopilot.ts", "utf8");
+    expect(autopilot).toContain("Deposit, review and closing notes always wait for you.");
   });
 
   it("before Part 1, the house-account move comes first, with the admin page's real labels", () => {

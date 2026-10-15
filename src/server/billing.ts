@@ -418,9 +418,9 @@ export async function handleStripeWebhook(rawBody: string, signature: string | n
     return { status: 400 as const, body: "Bad signature." };
   }
   // Only events from the mode the key talks to. Until Connect Stripe runs again after the switch
-  // to live (LAUNCH.md 7c), the stored secret is still the test endpoint's: its renewals and late
+  // to live (LAUNCH.md 7b), the stored secret is still the test endpoint's: its renewals and late
   // test checkouts would otherwise put test ids (and a "paid" setup) back on accounts "Reset test
-  // payments" just cleared. Answered 200, so Stripe stops sending it.
+  // payments" cleared. Answered 200, so Stripe stops sending it.
   if (eventFromOtherMode(event.livemode, stripeMode())) {
     console.info("stripe_event_other_mode", { livemode: event.livemode === true });
     return { status: 200 as const, body: "Ignored: other Stripe mode." };

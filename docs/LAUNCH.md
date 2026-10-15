@@ -11,6 +11,7 @@ in [SETUP.md](SETUP.md); this page links to it where a step needs more.
 Contents:
 
 - [Check your Neon plan now (this week)](#check-your-neon-plan-now-this-week)
+- [Start your sales tax registration now (it takes days)](#start-your-sales-tax-registration-now-it-takes-days)
 - [0. Start now: Google verification (takes weeks)](#0-start-now-google-verification-takes-weeks)
 - [1. Merge the launch branch](#1-merge-the-launch-branch)
 - [2. Give previews their own database](#2-give-previews-their-own-database)
@@ -51,6 +52,26 @@ something Neon has told us.
 - Worked when: you know which plan production is on and how much it has used this period, and
   either it's on Launch or you've chosen to stay on Free knowing it may pause mid-month. Tell the
   engineers which.
+
+## Start your sales tax registration now (it takes days)
+
+You decided on 2026-10-14 to charge sales tax, starting with Massachusetts, and to register with
+the state before Stripe is set up. Registering takes days, and Stripe goes live in
+[step 7](#7-stripe-live-mode), so start now. Otherwise the first real owners would pay with no
+tax added, while you'd likely still owe Massachusetts the tax on those payments.
+
+You're based in Concord, so you collect Massachusetts sales tax from your first sale there,
+whatever your sales total.
+
+- Where: MassTaxConnect (mass.gov/masstaxconnect) → Register a New Business → sales and use tax.
+- Have ready: your SSN if you're a sole owner with no employees (otherwise an EIN), your business
+  and mailing addresses, and the start date your accountant picks (the questions for your
+  accountant are in [step 7e](#7-stripe-live-mode)).
+- Cost and time: guides say it's free and takes about 3–10 business days. The state's own site
+  wouldn't load for the engineers, so check both in MassTaxConnect.
+- Paste: nothing.
+- Worked when: you have a Massachusetts sales tax account and its registration certificate (Form
+  ST-1). The Stripe part comes later, in step 7e.
 
 ## 0. Start now: Google verification (takes weeks)
 
@@ -198,9 +219,14 @@ already has the new complaint marker, but production still runs older code that 
 A complaint that turns into "fixed now, thanks" before the merge leaves no trace, and that customer
 could later be offered "Ask for a review" (only on your tap, and only as a draft).
 
+The merge also puts the homepage's About section live as it is today. Its wording is a question
+for you in [step 13](#13-decisions-waiting-on-you) ("The homepage's About section"): answer it
+before you tap Merge if you want it changed first.
+
 - Before you tap Merge (one minute, optional but only possible now): the **Gmail draft check**.
   It tells the engineers whether Gmail keeps a draft's id when it's sent. The app is safe either
-  way. Neon console → project → SQL Editor (branch `production`), run:
+  way. Neon console → project `autumn-term-70302192` (not `sa-preview`) → SQL Editor (branch
+  `production`), run:
 
   ```sql
   select
@@ -224,8 +250,8 @@ could later be offered "Ask for a review" (only on your tap, and only as a draft
      commit.
   2. `https://<production address>/api/health` shows `"ok":true` and a `commit` equal to the
      first 7 characters of the merge commit (GitHub shows it on the pull request).
-  3. About 30 minutes later, the two one-time clean-ups have run. Neon console → project → SQL
-     Editor (branch `production`), run:
+  3. About 30 minutes later, the two one-time clean-ups have run. Neon console → project
+     `autumn-term-70302192` (not `sa-preview`) → SQL Editor (branch `production`), run:
 
      ```sql
      select key from app_settings
@@ -254,10 +280,13 @@ planned changes in [step 3](#3-change-the-passwords-that-were-pasted-in-chat) (t
 password changes `DATABASE_URL`, the new Google client secret changes `AUTH_GOOGLE_SECRET`).
 Split them instead:
 
-**How to split a setting** (2c–2e work this way; splitting never changes production's value):
+**How to split a setting** (2c–2e follow these steps; done this way, production's value is meant
+to stay as it is):
 
 1. Vercel → sa → Settings → Environment Variables → the existing entry → **Edit**.
-2. Untick **Preview** only. Leave Production ticked and **leave the value alone** → Save.
+2. Untick **Preview** only. Leave Production ticked and **leave the value alone** → Save. If Save
+   asks for a value or shows an error, don't type anything: tap **Cancel** and tell the engineers.
+   They can untick Preview through Vercel's API instead, as in 2c, without touching the value.
 3. **Add New** → the same name → tick **Preview** only → paste the new preview value → Save.
 
 For `AUTH_SECRET` and `TOKEN_ENCRYPTION_KEY` the new preview value is a fresh random one, made the
@@ -309,6 +338,10 @@ dollar or two in a busy month). That's worked out from Neon's prices, not a quot
   `sa-preview`.
 - Background jobs need no change: in an empty database every account, mailbox and draft gets a new
   random id, so a preview's job can never match a production row.
+- What a preview can do after the split: show the screens, sign in and Connect Gmail. Nothing is
+  synced, sorted, drafted or sent there, and Choose a plan doesn't work: background jobs and
+  Stripe only reach production (previews sit behind Vercel's login). So anything that needs mail
+  read, a draft, a payment or a send is tried on production instead (step 13 says where).
 
 Worked when:
 
@@ -320,6 +353,12 @@ Worked when:
 
 Previews then start empty: invite test accounts there from the preview's own `/admin`.
 
+**On a preview, connect only test Gmail addresses**: never your own, a customer's, or the demo
+Gmail while it's connected on production. Previews use the same Google app as production, so a
+**Disconnect** or **Delete my account** on a preview most likely ends Google's access for that
+address on production too (production then asks for a reconnect). A separate preview Google client
+(below) may not keep the two apart either: it is in the same Google project.
+
 **Which preview address to sign in on.** Google only lets you sign in at addresses listed on the
 OAuth client, and it allows no wildcards. Each branch has one fixed address,
 `sa-git-<branch name>-dac3.vercel.app` (Vercel → the deployment → Domains shows it); the
@@ -328,22 +367,23 @@ one-off addresses of single deployments never work for sign-in. The branch addre
 to whichever client previews use: Google Auth Platform → **Clients** → the client → Authorized
 redirect URIs → add `https://<branch address>/api/auth/callback/google` and
 `https://<branch address>/api/gmail/callback` → Save (it can take a few minutes). Worked when:
-signing in and Connect Gmail work on that branch address.
+signing in and Connect Gmail (with a test Gmail address) work on that branch address.
 
 **A separate Google client for previews (optional).** With an empty preview database it's fine to
-skip this.
+skip this. It doesn't make it safe to connect a real Gmail address on a preview (see above).
 
 1. Google Auth Platform → **Clients** → Create client → Web application, name it
    `sa preview`.
 2. Authorized redirect URIs: the two addresses above, for each preview branch address you use.
 3. Copy its Client ID and Client secret, then split `AUTH_GOOGLE_ID` and `AUTH_GOOGLE_SECRET`
-   (all three steps of "How to split a setting") with those as the Preview values → Redeploy the
-   preview.
+   (all three steps of "How to split a setting", including its **Cancel** rule) with those as the
+   Preview values → Redeploy the preview. Or ask the engineers to untick Preview on both entries
+   through Vercel's API first; then you only do step 3 of the split.
 4. While the app is still in Testing (step 0c not done yet), the test users on the Audience page
    apply to this client too; nothing to add.
 
-Worked when: signing in and Connect Gmail work on the preview's branch address, and still work on
-production.
+Worked when: signing in and Connect Gmail (with a test Gmail address) work on the preview's branch
+address, and still work on production.
 
 Also: Vercel → sa → Settings → Environment Variables → keep **"Automatically expose System
 Environment Variables"** on. Preview addresses and the safety switch that keeps test mode off on
@@ -359,8 +399,10 @@ The Neon database password and the Google client secret were once pasted into a 
   screen and background job fails until the new string is saved in Vercel **and** the redeploy is
   live (a few minutes). Do it at a quiet hour (late evening), with Vercel already open, and go
   straight from one step to the next.
-- Where: Neon console → project → Branches → `production` → Roles & Databases → the app's role →
-  **Reset password**. Then Connect → copy the new **pooled** connection string.
+- Where: Neon console → project `autumn-term-70302192` (not `sa-preview`: both have a branch
+  called `production`) → Branches → `production` → Roles & Databases → the app's role → **Reset
+  password**. Before you tap it, check that the page header names `autumn-term-70302192`. Then
+  Connect → copy the new **pooled** connection string.
 - Paste: Vercel → sa → Settings → Environment Variables → `DATABASE_URL` (Production; also
   Preview only if previews still use the production database) → Save → Deployments → Redeploy the
   latest production deployment.
@@ -488,6 +530,20 @@ Until this is done, morning and monthly summaries only reach the Resend account'
 
 ## 7. Stripe live mode
 
+**Before you start:**
+
+- Do 7a, 7b and 7c back to back, in one sitting, at a quiet hour (late evening). Between the key
+  swap (7a) and Connect Stripe (7b), live Stripe has nowhere to send its "payment received"
+  notice. An owner who paid in that gap would be charged and still couldn't send, and there's no
+  button to fix it by hand.
+- Until 7e's "Worked when" passes (sales tax added at checkout), don't ask anyone to pay.
+  Subscriptions that start before then run without tax until each one is changed by hand in Stripe
+  (7e says how).
+- The Massachusetts registration should already be under way
+  ([Start your sales tax registration now](#start-your-sales-tax-registration-now-it-takes-days)).
+- If you want the optional test-mode tax check (7e item 7), do it **before** 7a: it needs the test
+  key.
+
 **7a. Swap the key.**
 
 - Where: Stripe → turn **Test mode** off → Developers → API keys → reveal the live **Secret key**.
@@ -495,37 +551,14 @@ Until this is done, morning and monthly summaries only reach the Resend account'
   `STRIPE_WEBHOOK_SECRET` exists in Vercel; delete it if it does (a leftover test value would make
   every live payment notification fail). Redeploy.
 - Worked when: `/admin` → Payments shows **Check test payments** (with the test key it says
-  "Reset test payments shows up after you switch Stripe to live mode." instead).
+  "Reset test payments shows up after you switch Stripe to live mode." instead). Go straight on to
+  7b.
 
-**7b. Reset test payments.** Every "paid" account today paid with a Stripe test card (on its card
-in `/admin`, **Setup paid** reads "Yes, through Stripe"). Live Stripe doesn't know those
-customers, and those accounts could send without a real payment. You decided on 2026-10-14 to
-reset them.
-
-- Where: `/admin` → Payments → **Check test payments** (asks Stripe, changes nothing). The card
-  then reads "Test payments: N accounts still carry a test-mode payment." Then **Reset test
-  payments** → **Yes, reset test payments**.
-- What it does: clears the test-mode Stripe details from those accounts and puts a setup paid with
-  a test card back to unpaid, so they keep their data, can't send, and pay the setup fee for real
-  at their next checkout (your own test account keeps sending).
-- Worked when: the notice says "Test payments reset for N accounts." and the card reads "Test
-  payments: none left."; those accounts' cards now say **Setup paid**: Not yet. If it adds
-  "Couldn't check M accounts. Tap again.", Stripe didn't answer for those: tap again (it's safe to
-  tap again). For a count from the database (Neon → SQL Editor, branch `production`), before any
-  real customer has paid all three read 0:
-
-  ```sql
-  select
-    count(*) filter (where stripe_customer_id is not null) as with_stripe_customer,
-    count(*) filter (where stripe_subscription_id is not null) as with_subscription,
-    count(*) filter (where setup_paid_via = 'stripe') as paid_via_stripe
-  from workspaces;
-  ```
-
-**7c. Connect Stripe.**
+**7b. Connect Stripe.**
 
 - Where: `/admin` → Payments → **Connect Stripe again** (test mode was connected before, so the
-  button already says "again"; more in [SETUP.md](SETUP.md) §7c).
+  button already says "again"; more in [SETUP.md](SETUP.md) §7c). Do it right after 7a's
+  redeploy: it creates the live payment notifications.
 - Worked when: right after the tap, `/admin` shows the notice "Stripe connected in LIVE mode. Real
   cards will be charged." (The "Connected · last set up …" line was already there from test mode,
   so on its own it proves nothing; after the tap its time is today's.) In live Stripe: Product
@@ -535,13 +568,40 @@ reset them.
 - Then clean up test mode: Stripe → turn **Test mode** on → Developers → Webhooks → the endpoint
   ending `/api/stripe/webhook` → **Delete**. Test subscriptions keep renewing and Stripe keeps
   sending their notifications to the same address, which now only accepts live ones, so Stripe
-  would retry and email you failure warnings that look like a live problem. The accounts you reset
-  in 7b no longer point at their test subscriptions; cancel those in test mode → Customers too.
-  Worked when: test mode's Webhooks page lists no endpoint for the app.
-- Last: `/admin` → Payments → **Check test payments** once more. The app ignores test-mode
-  notifications once the live key is in, so nothing should have come back since 7b. Worked when:
-  the card reads "Test payments: none left." If it found any, do 7b's **Reset test payments**
-  again.
+  would retry and email you failure warnings that look like a live problem. Worked when: test
+  mode's Webhooks page lists no endpoint for the app.
+
+**7c. Reset test payments.** Every "paid" account today paid with a Stripe test card (on its card
+in `/admin`, **Setup paid** reads "Yes, through Stripe"). Live Stripe doesn't know those
+customers, and those accounts could send without a real payment. You decided on 2026-10-14 to
+reset them. The app ignores test-mode notifications once the live key is in, so nothing puts a
+test payment back afterwards.
+
+- Where: `/admin` → Payments → **Check test payments** (asks Stripe, changes nothing). The card
+  then reads "Test payments: N accounts still carry a test-mode payment." Then **Reset test
+  payments** → **Yes, reset test payments**.
+- What it does: clears the test-mode Stripe details from those accounts and puts a setup paid with
+  a test card back to unpaid, so they keep their data, can't send, and pay the setup fee for real
+  at their next checkout (your own test account keeps sending). An account that was past due is
+  switched back on: its new mail is sorted and drafted again (on your AI bill), but it still can't
+  send until it pays. ([Step 13](#13-decisions-waiting-on-you) asks whether that's okay.)
+- Worked when: the notice says "Test payments reset for N accounts." and the card reads "Test
+  payments: none left."; those accounts' cards now say **Setup paid**: Not yet. If it adds
+  "Couldn't check M accounts. Tap again.", Stripe didn't answer for those: tap again (it's safe to
+  tap again). For a count from the database (Neon → project `autumn-term-70302192` (not
+  `sa-preview`) → SQL Editor, branch `production`), before any real customer has paid all three
+  read 0:
+
+  ```sql
+  select
+    count(*) filter (where stripe_customer_id is not null) as with_stripe_customer,
+    count(*) filter (where stripe_subscription_id is not null) as with_subscription,
+    count(*) filter (where setup_paid_via = 'stripe') as paid_via_stripe
+  from workspaces;
+  ```
+
+- Then, optional tidy-up: the accounts you reset no longer point at their test subscriptions, so
+  cancel those in Stripe's test mode → Customers too.
 
 **7d. Cancellation setting.**
 
@@ -556,18 +616,18 @@ register you in your home state, and on its pay-as-you-go plan it doesn't file. 
 nothing up for tax; it turns tax on at checkout whenever Stripe's tax settings read "active". Live
 mode and test mode are set up separately. In this order:
 
-1. **Register with Massachusetts first.** You're based in Concord, so you collect Massachusetts
-   sales tax from your first sale there, whatever your sales total.
-   - Where: MassTaxConnect (mass.gov/masstaxconnect) → Register a New Business → sales and use
-     tax.
-   - Have ready: your SSN if you're a sole owner with no employees (otherwise an EIN), your
-     business and mailing addresses, and the start date your accountant picks.
-   - Cost and time: guides say it's free and takes about 3–10 business days. The state's own site
-     wouldn't load for the engineers, so check both in MassTaxConnect.
-   - Worked when: you have a Massachusetts sales tax account and its registration certificate
-     (Form ST-1).
+1. **Register with Massachusetts first.** You started this on MassTaxConnect at the top of this
+   page ([Start your sales tax registration now](#start-your-sales-tax-registration-now-it-takes-days)).
+   Worked when: you have its registration certificate (Form ST-1).
+
+   If the certificate hasn't come yet, do items 2–4 and 6 anyway: they charge no tax by
+   themselves, and a subscription that starts after item 3 has Stripe's automatic tax on, so it
+   picks up Massachusetts tax once item 5 is done instead of needing a change by hand. Do item 5
+   the day the certificate arrives. Until then, still don't ask anyone to pay: a payment taken
+   before item 5 has no tax added, and you'd likely still owe the state that tax.
+
 2. **Fix the prices:** `/admin` → Payments → **Connect Stripe again** (safe even if you just did in
-   7c). It makes the prices add tax on top whether or not tax is on yet, so do it before Stripe's
+   7b). It makes the prices add tax on top whether or not tax is on yet, so do it before Stripe's
    tax settings.
 3. **Stripe's tax settings.** Stripe (live) → Settings → **Tax**:
    - Head office: your Concord business address.
@@ -718,12 +778,13 @@ Recorded here so nobody asks again.
 - **Preview database** ([step 2](#2-give-previews-their-own-database)): a separate, empty Neon
   project, `sa-preview`. Yours: create it, copy its pooled string, and add it in Vercel (2a, 2b,
   2d). The engineers do the rest.
-- **Test-mode Stripe accounts** ([step 7b](#7-stripe-live-mode)): reset them. After the live key
-  is in, tap **Reset test payments** in `/admin`: those accounts keep their data and pay the setup
-  fee for real.
+- **Test-mode Stripe accounts** ([step 7c](#7-stripe-live-mode)): reset them. After the live key
+  is in and Stripe is connected again, tap **Reset test payments** in `/admin`: those accounts keep
+  their data and pay the setup fee for real.
 - **Sales tax:** charged with Stripe Tax, starting with Massachusetts. Register with the state
-  first, then set Stripe up ([step 7e](#7-stripe-live-mode); the questions for your accountant
-  are there).
+  first ([start it now](#start-your-sales-tax-registration-now-it-takes-days): it takes days),
+  then set Stripe up ([step 7e](#7-stripe-live-mode); the questions for your accountant are
+  there).
 - **#26 closing question** ("Want to ask if they went another way?"): on. At your request the
   engineers set `FEATURE_CLOSING_QUESTION` to `1` in Vercel (Production and Preview) on
   2026-10-14; it starts working with the next deploy, the merge. Turning it off again:
@@ -776,14 +837,20 @@ Nothing below is switched on or changed until you say so.
      the demo Gmail swapped in for your own (your Queue is cleared first, what the app stored from
      your mailbox is deleted, and reconnecting reads back only the last 30 days). Option B (new):
      a separate demo account invited from `/admin` and paid with Stripe's test card while Stripe
-     is still in test mode, so it can send; nothing of yours is touched. It has to be reset or
-     deleted before Stripe goes live, and an engineer tries it on a preview first. Both are under
-     "Reviewer test account" in [google-verification.md](google-verification.md).
+     is still in test mode, so it can send; nothing of yours is touched. An engineer tries it once
+     on production first, with the demo Gmail, while Stripe is still in test mode (a preview can't:
+     it never reads mail, drafts, takes a payment or sends). It can send only until Stripe goes
+     live: delete it before step 7, or **Reset test payments** clears it in step 7c. After that,
+     filming a send again needs option A or a payment with a real card. Both are under "Reviewer
+     test account" in [google-verification.md](google-verification.md).
   2. Should we drop `gmail.send`? Recommended: yes. Google's own reference says `gmail.compose`
      can send a draft and a new email, which covers both kinds of sending the app does, while
      `gmail.send` can't even send a draft. Dropping it doesn't avoid the CASA test, and it's a
-     small code change. Nobody should have to reconnect (the engineers try it on a preview
-     first). The original brief listed it, so it's your call.
+     small code change. Nobody should have to reconnect. A preview can't send, so the engineers
+     check it on production with the demo Gmail right after the change goes live (a practice copy
+     during its trial, then a real reply after a test-card payment, while Stripe is still in test
+     mode) and put `gmail.send` back at once if either fails. The original brief listed it, so
+     it's your call.
 
   The CASA test itself needs no decision yet: don't pay until Google's email names the level
   ([0g](#0-start-now-google-verification-takes-weeks)).
@@ -797,6 +864,16 @@ Nothing below is switched on or changed until you say so.
   [SETUP.md](SETUP.md) §6d), and `AUTH_SECRET` must not be changed once referrals have been paid.
   Also your call: a referrer who deletes their account before the new owner is active voids the
   referral.
+- **The homepage's About section.** Its heading reads "who's behind this, a working builder." and
+  its text ends "He built the tool he needed for his own inbox." Keep that wording, or tell the
+  engineers what it should say (for example, without "builder" and "He"). Unlike the rest of this
+  list, it goes live with the merge ([step 1](#1-merge-the-launch-branch)) as it is unless you
+  answer first. Your photo and the license line are separate (under "Still needed from you").
+- **Reset test payments and past-due accounts.** As built, an account whose test-card renewal had
+  failed (past due: nothing new is read or drafted) is switched back on by the reset: its new mail
+  is sorted and drafted again, on your AI bill, though it still can't send until it pays. Okay?
+  The other way is to keep it read-only until it pays (a small code change). It only matters if a
+  test account is past due when you reach [step 7c](#7-stripe-live-mode).
 - **Deleted owners:** Delete my account also removes their invite, so someone who deletes their
   account needs a new invite from `/admin` to come back (if they were invited from their
   waitlist entry, that card then says the invite is gone and shows "Invite … again"; otherwise
@@ -820,7 +897,8 @@ Nothing below is switched on or changed until you say so.
 - The icon pack, and for the homepage's About section (PR #9) your photo and the exact license
   wording.
 - The `ANTHROPIC_API_KEY` repository secret for the "Prompt evals" GitHub action.
-- Your Massachusetts sales tax registration ([step 7e](#7-stripe-live-mode)).
+- Your Massachusetts sales tax registration: start it now (it takes days;
+  [details](#start-your-sales-tax-registration-now-it-takes-days)), then [step 7e](#7-stripe-live-mode).
 - The Neon plan check ([this week](#check-your-neon-plan-now-this-week)).
 - The `sa-preview` Neon project and its pooled string ([step 2](#2-give-previews-their-own-database)).
 - The phone-notification keys ([step 9](#9-phone-notifications-vapid-keys)); the engineers can make

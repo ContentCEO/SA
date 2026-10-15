@@ -398,16 +398,23 @@ never the browser redirect.
 3. Test: as an owner, Settings → Plan & billing → Choose a plan, card `4242 4242 4242 4242`, any
    future date, any CVC. The page shows "finishing up" until the webhook lands, then the account is
    `setup_paid` (sending on). Admin still marks the setup call done (→ `active`).
-4. Going live: swap in the live secret key, redeploy, then `/admin` → Payments → **Check test
+4. Going live (`docs/LAUNCH.md` step 7, in one sitting): swap in the live secret key, redeploy,
+   then **right away** tap Connect Stripe again. Until then live mode has no webhook endpoint, so a
+   live checkout paid in between would never reach the app (no `checkout.session.completed`, no
+   `setup_paid_via`, and no admin move can set it). Then `/admin` → Payments → **Check test
    payments** → **Reset test payments** (accounts that paid with a test card lose their test-mode
-   Stripe ids, and a setup paid that way goes back to unpaid, so they pay for real; only works
-   with the live key, safe to tap again), then tap Connect Stripe again (`docs/LAUNCH.md` step 7).
+   Stripe ids, and a setup paid that way goes back to unpaid, so they pay for real; a past_due one
+   goes back to setup_paid / active, so its jobs run again but it can't send; only works with the
+   live key, safe to tap again). The order of Connect and the reset doesn't matter to the reset:
+   before Connect, test events are dropped (`eventFromOtherMode`); after it, they fail the live
+   endpoint's signature.
 5. Sales tax (Stripe Tax; Davi turned it on 2026-10-14). The app never configures tax — it only
    asks Stripe whether Stripe Tax is **active**. Davi's click-by-click steps are `docs/LAUNCH.md`
    7e. Test mode and live mode are separate, so do the Stripe part in each, in this order:
    - Before anything in Stripe: Davi registers for Massachusetts sales and use tax on
      MassTaxConnect (he's based in Concord; Stripe can't register a seller in its home state).
-     Without that registration Stripe charges $0 tax and warns about nothing.
+     Without that registration Stripe charges $0 tax and warns about nothing. It takes days, so
+     `docs/LAUNCH.md` has it start before step 0 ("Start your sales tax registration now").
    - Tap **Connect Stripe again** in `/admin`. Prices made before have no tax behavior, and
      Connect Stripe sets each of those to **exclusive** (tax on top; the one change Stripe allows —
      a price already inclusive or exclusive is left alone) whether or not tax is on yet, so no

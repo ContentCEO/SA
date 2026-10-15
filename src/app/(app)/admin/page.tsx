@@ -32,6 +32,7 @@ import { SALES_TAX_LINES, SALES_TAX_ON_NOTE } from "@/server/billing-rules";
 import { stripeReasonText } from "@/server/stripe-error-rules";
 import { lastTestPaymentsResult } from "@/server/test-payments";
 import {
+  PAST_DUE_RESET_NOTE,
   TEST_PAYMENTS_TEST_MODE,
   testPaymentsLine,
   testPaymentsResetNotice,
@@ -259,6 +260,7 @@ function TestPayments({ result }: { result: Awaited<ReturnType<typeof lastTestPa
               and their next checkout includes the setup fee. Your own test account keeps sending.
               Safe to tap again.
             </p>
+            <p>{PAST_DUE_RESET_NOTE}</p>
             <PendingButton pending="Resetting…" className="w-full">
               Yes, reset test payments
             </PendingButton>

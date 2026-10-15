@@ -3,7 +3,7 @@
 
 # Privacy Policy
 
-_Last updated: October 14, 2026_
+_Last updated: October 15, 2026_
 
 Squared Away is run by {{OPERATOR}}, {{LOCATION}}. It helps small trade businesses answer their
 email: it sorts incoming business email, writes reply drafts in the owner's own voice, and holds
@@ -115,8 +115,9 @@ signal until they reach us; signing out deletes them.
 
 - To sort your business email and put what needs you first.
 - To write reply drafts and follow-up drafts (at most two per conversation, ever) for you to
-  approve, and notes you can send: asking for the deposit after a customer accepts your quote, or
-  asking for a review when you tap **Ask for a review**.
+  approve, and notes you can send: asking for the deposit after a customer accepts your quote,
+  asking for a review when you tap **Ask for a review**, or, once a quote has had both follow-ups
+  and a week of quiet, asking whether the customer went another way, only when you tap it.
 - To reword a draft when you ask, by tapping a quick change or telling it what to change. If you
   speak the change, your browser turns your words into text using its own speech service (run by
   Google or Apple, depending on your phone); we receive only the text.

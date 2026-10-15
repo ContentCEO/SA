@@ -15,7 +15,7 @@ import {
   type Workspace,
 } from "@/db/schema";
 import { describeActivity } from "@/server/activity";
-import { accountLockReason, considerAutopilot } from "@/server/autopilot";
+import { accountLockReason } from "@/server/autopilot";
 import { ensureUserAndWorkspace } from "@/server/accounts";
 import { setStripeForTests, stripeMode } from "@/server/billing";
 import { checkoutTerms, stripeKeyMode } from "@/server/billing-rules";
@@ -29,6 +29,7 @@ import {
 } from "@/server/test-payments";
 import {
   parseTestPaymentsResult,
+  PAST_DUE_RESET_NOTE,
   TEST_PAYMENTS_TEST_MODE,
   testPaymentReset,
   testPaymentsLine,
@@ -387,6 +388,7 @@ describe("resetting", () => {
   it("past due goes where a recovered payment would (a test subscription can never be paid)", async () => {
     const noCall = await testPaid("past_due");
     const callDone = await testPaid("past_due", { setupCallCompletedAt: PAID_AT });
+    expect(jobsAllowed(await row(noCall), NOW)).toBe(false); // read-only before
     expect(await resetTestPayments(NOW)).toEqual({ reset: 2, unchecked: 0 });
     expect((await row(noCall)).status).toBe("setup_paid");
     expect((await row(callDone)).status).toBe("active");
@@ -395,7 +397,20 @@ describe("resetting", () => {
       expect(canSend(w, NOW)).toBe(false); // still has to pay for real
       expect(checkoutTerms(w, NOW)).toEqual({ allowed: true, includeSetupFee: true });
       expect((await resetRows(id))[0]!.detail).toMatchObject({ statusRestored: true });
+      // …but it leaves read-only without a payment: sorting and drafting (AI) start again.
+      expect(jobsAllowed(w, NOW)).toBe(true);
     }
+    // That move is said in plain words where Davi taps Reset and in the launch checklist, and step 13
+    // asks whether it's okay (review, 2026-10-15).
+    expect(PAST_DUE_RESET_NOTE).toContain("sorted and drafted again");
+    expect(PAST_DUE_RESET_NOTE).toContain("can't send until it pays");
+    const page = readFileSync("src/app/(app)/admin/page.tsx", "utf8");
+    expect(page).toContain("<p>{PAST_DUE_RESET_NOTE}</p>");
+    const launch = readFileSync("docs/LAUNCH.md", "utf8").replace(/\s+/g, " ");
+    const reset = launch.slice(launch.indexOf("**7c. Reset test payments.**"));
+    expect(reset.slice(0, reset.indexOf("**7d."))).toContain(PAST_DUE_RESET_NOTE);
+    const open = launch.slice(launch.indexOf("### Still open"), launch.indexOf("### Still needed"));
+    expect(open).toContain("**Reset test payments and past-due accounts.**");
   });
 
   it("every other status stays as it is", async () => {
@@ -541,13 +556,14 @@ describe("resetting", () => {
     expect(await at(mine)).toBeNull();
     expect(await at(theirs)).not.toBeNull(); // other accounts keep theirs
 
-    // And no new countdown starts on the next draft: autopilot needs a real payment too
-    // (otherwise it would count down to a send the gate refuses, again and again).
+    // And the account layer now refuses autopilot: it needs a real payment too (otherwise it
+    // would count down to a send the gate refuses, again and again). That a refused account
+    // layer really stops a countdown that every other layer allows is shown in
+    // autopilot.test.ts ("an active account without a real setup payment never starts a
+    // countdown"); this thread wouldn't pass the category and per-email layers anyway.
     expect(accountLockReason(await row(id), NOW)).toBe(
       "Autopilot opens up once your setup payment goes through.",
     );
-    expect(await considerAutopilot(mine, NOW)).toBeNull();
-    expect(await at(mine)).toBeNull();
     // The owner's switch is kept for when they pay.
     expect((await database.select().from(rules).where(eq(rules.workspaceId, id)))[0]!.mode).toBe(
       "autopilot",

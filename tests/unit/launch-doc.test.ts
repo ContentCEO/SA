@@ -440,6 +440,47 @@ describe("LAUNCH.md structure", () => {
     expect(previews).not.toMatch(/delete the \*\*Preview\*\* `DATABASE_URL`/);
     expect(previews).not.toMatch(/edit the \*\*Preview\*\*/);
     expect(flat(sections.find((s) => s.n === 4)!.body)).toContain("**two separate rows**");
+    // Vercel's docs don't say an empty Secret value box keeps the value: never type one in.
+    expect(previews).not.toContain("splitting never changes production's value");
+    expect(previews).toContain(
+      "If Save asks for a value or shows an error, don't type anything: tap **Cancel** and tell the engineers.",
+    );
+    expect(previews).toContain("including its **Cancel** rule");
+  });
+
+  it("a preview after the split: no jobs or Stripe, and only test Gmail addresses", () => {
+    const previews = flat(sections.find((s) => s.n === 2)!.body);
+    // Background jobs and Stripe only reach production, so a preview can't be where a send or a
+    // payment is tried.
+    expect(previews).toContain(
+      "Nothing is synced, sorted, drafted or sent there, and Choose a plan doesn't work",
+    );
+    // One Google app: a revoke on a preview most likely ends production's grant for that address.
+    expect(previews).toContain("**On a preview, connect only test Gmail addresses**");
+    expect(previews).toContain("Connect Gmail (with a test Gmail address)");
+    // True of the code: Disconnect and Delete my account revoke at Google.
+    const connector = readFileSync(join(ROOT, "src/mailbox/gmail/connector.ts"), "utf8");
+    expect(connector).toContain("fetchImpl(googleEndpoints().revoke");
+    // …and the Stripe key is production-only in the settings table.
+    const stripeRow = launchEnvRows().find((r) => r.names.includes("STRIPE_SECRET_KEY"))!;
+    expect(stripeRow.line.split("|")[3]!.trim()).toBe("No");
+  });
+
+  it("every Neon step names the production project (sa-preview also has a production branch)", () => {
+    const flatLaunch = flat(launch);
+    const editors = [...flatLaunch.matchAll(/SQL Editor/g)].map((m) => m.index!);
+    expect(editors.length).toBeGreaterThanOrEqual(3);
+    for (const at of editors) {
+      const lead = flatLaunch.slice(Math.max(0, at - 90), at);
+      expect(lead, flatLaunch.slice(at - 90, at + 10)).toContain(
+        "project `autumn-term-70302192` (not `sa-preview`",
+      );
+    }
+    const step3 = flat(sections.find((s) => s.n === 3)!.body);
+    expect(step3).toContain("project `autumn-term-70302192` (not `sa-preview`");
+    expect(step3).toContain(
+      "Before you tap it, check that the page header names `autumn-term-70302192`.",
+    );
   });
 
   it("the domain change adds Google's redirect addresses before APP_URL, then redirects the old one", () => {
@@ -457,7 +498,7 @@ describe("LAUNCH.md structure", () => {
 
   it("going live taps the button the page shows, and doesn't count the old Connected line as proof", () => {
     const step7 = sections.find((s) => s.n === 7)!.body;
-    const c = flat(step7.slice(step7.indexOf("**7c."), step7.indexOf("**7d.")));
+    const c = flat(step7.slice(step7.indexOf("**7b."), step7.indexOf("**7c.")));
     // Test mode was connected first, so the button already reads "Connect Stripe again".
     expect(c).toContain("Payments → **Connect Stripe again**");
     expect(c).not.toMatch(/\*\*Connect Stripe\*\*/);
@@ -470,30 +511,46 @@ describe("LAUNCH.md structure", () => {
     expect(c).toContain('"Couldn\'t connect Stripe."');
   });
 
-  it("going live: swap the key, then reset test payments, then Connect Stripe again", () => {
+  it("going live: swap the key, Connect Stripe again right away, then reset test payments", () => {
     const step7 = flat(sections.find((s) => s.n === 7)!.body);
     const swap = step7.indexOf("**7a. Swap the key.**");
-    const reset = step7.indexOf("**7b. Reset test payments.**");
-    const connect = step7.indexOf("**7c. Connect Stripe.**");
+    const connect = step7.indexOf("**7b. Connect Stripe.**");
+    const reset = step7.indexOf("**7c. Reset test payments.**");
     expect(swap).toBeGreaterThanOrEqual(0);
-    expect(reset).toBeGreaterThan(swap);
-    expect(connect).toBeGreaterThan(reset);
-    const b = step7.slice(reset, connect);
+    expect(connect).toBeGreaterThan(swap);
+    expect(reset).toBeGreaterThan(connect);
+    // Live mode has no webhook endpoint until Connect Stripe: a live payment in between would
+    // never reach the app, and no admin move can mark it paid. So 7a–7c go in one sitting.
+    const before = step7.slice(0, swap);
+    expect(before).toContain("Do 7a, 7b and 7c back to back, in one sitting");
+    expect(before).toContain("there's no button to fix it by hand");
+    expect(step7.slice(swap, connect)).toContain("Go straight on to 7b.");
+    expect(step7.slice(connect, reset)).toContain("Do it right after 7a's redeploy");
+    const b = step7.slice(reset, step7.indexOf("**7d."));
     expect(b).toContain("Payments → **Check test payments**");
     expect(b).toContain("**Reset test payments** → **Yes, reset test payments**");
     expect(b).toContain('"Test payments reset for N accounts."');
+    expect(b).toContain('the card reads "Test payments: none left."');
     expect(b).toContain("Worked when:");
+    expect(b).toContain("nothing puts a test payment back afterwards");
     expect(step7).not.toContain("There is no button for it on purpose");
+    expect(step7).not.toContain("**Check test payments** once more");
     // The step 13 entry points at the reset, not the key swap.
-    expect(flat(sections[13]!.body)).toContain("([step 7b](#7-stripe-live-mode))");
-    // After Connect Stripe and the test-mode clean-up, one more check: nothing came back.
-    const c = step7.slice(connect, step7.indexOf("**7d."));
-    const recheck = c.indexOf("Payments → **Check test payments** once more");
-    expect(recheck).toBeGreaterThan(c.indexOf("test mode's Webhooks page lists no endpoint"));
-    expect(c.slice(recheck)).toContain('Worked when: the card reads "Test payments: none left."');
-    // True of the code: with the live key, test-mode webhook events change nothing.
+    expect(flat(sections[13]!.body)).toContain("([step 7c](#7-stripe-live-mode))");
+    // The test-mode clean-up stays with Connect Stripe.
+    expect(step7.slice(connect, reset)).toContain("test mode's Webhooks page lists no endpoint");
+    // True of the code: only Connect Stripe creates the webhook endpoint, and with the live key
+    // test-mode events change nothing (so the reset can come after it).
     const billing = readFileSync(join(ROOT, "src/server/billing.ts"), "utf8");
     expect(billing).toContain("if (eventFromOtherMode(event.livemode, stripeMode())) {");
+    expect(billing.split("webhookEndpoints.create(").length - 1).toBe(1);
+    expect(billing).toMatch(/export async function connectStripe[\s\S]*webhookEndpoints\.create\(/);
+    // SETUP.md says the same order.
+    const going = flat(setup.slice(setup.indexOf("4. Going live"), setup.indexOf("5. Sales tax")));
+    expect(going.indexOf("Connect Stripe again")).toBeGreaterThan(0);
+    expect(going.indexOf("Connect Stripe again")).toBeLessThan(
+      going.indexOf("**Reset test payments**"),
+    );
   });
 
   it("sales tax: prices fixed first, and 'on' isn't counted as proof without registrations", () => {
@@ -528,6 +585,20 @@ describe("LAUNCH.md structure", () => {
     expect(worked).toContain('Tax → Locations shows Massachusetts as "Collecting tax"');
     // The questions for an accountant are listed once.
     expect(flat(launch).split("Questions for your accountant").length - 1).toBe(1);
+    // The registration takes days, so it starts at the top of the page, not when Stripe goes
+    // live; payments wait for tax; the test-mode check is flagged before 7a.
+    const top = launch.indexOf("## Start your sales tax registration now (it takes days)");
+    expect(top).toBeGreaterThan(0);
+    expect(top).toBeLessThan(launch.indexOf("## 0. "));
+    const early = flat(launch.slice(top, launch.indexOf("## 0. ")));
+    for (const phrase of ["MassTaxConnect", "3–10 business days", "Form ST-1", "Worked when"]) {
+      expect(early, phrase).toContain(phrase);
+    }
+    expect(e).toContain("(#start-your-sales-tax-registration-now-it-takes-days)");
+    expect(e).toContain("do items 2–4 and 6 anyway");
+    const intro = flat(step7.slice(0, step7.indexOf("**7a.")));
+    expect(intro).toContain("don't ask anyone to pay");
+    expect(intro).toContain("(7e item 7), do it **before** 7a");
     const s5 = flat(setup.slice(setup.indexOf("5. Sales tax"), setup.indexOf("What payments do:")));
     expect(s5).not.toContain("until the status reads active");
     expect(s5.indexOf("MassTaxConnect")).toBeLessThan(s5.indexOf("**Connect Stripe again**"));
@@ -612,9 +683,26 @@ describe("LAUNCH.md structure", () => {
       "Deleted owners",
       "Option B (new)",
       "Gmail draft check",
+      "The homepage's About section",
+      "a working builder.",
+      "Reset test payments and past-due accounts",
     ]) {
       expect(open, phrase).toContain(phrase);
     }
+    // A preview can't read mail, draft, take a payment or send, so the Google checks run on
+    // production, never "on a preview".
+    expect(open).not.toMatch(/on a preview first|tries it on a preview|try it on a preview/);
+    expect(open).toContain("An engineer tries it once on production first");
+    expect(open).toContain("the engineers check it on production with the demo Gmail");
+    // Option B's account can't be reset before the live key (the button needs it).
+    expect(open).toContain(
+      "delete it before step 7, or **Reset test payments** clears it in step 7c",
+    );
+    expect(open).not.toContain("reset or deleted before Stripe goes live");
+    // The About wording ships with the merge, so step 1 points at the question.
+    expect(flat(sections.find((s) => s.n === 1)!.body)).toContain("The homepage's About section");
+    const about = readFileSync(join(ROOT, "src/components/marketing/about-davi.tsx"), "utf8");
+    expect(about).toContain('heavy="a working builder."');
   });
 
   it("Davi's 2026-10-14 decisions are recorded as decided, not asked again", () => {
@@ -727,7 +815,7 @@ describe("what LAUNCH.md tells Davi to look for is what the code shows", () => {
       "Yes, this is my account",
       "Your account can send now (marked as your own test account).",
       "Your own test account",
-      // Reset test payments (7b, Davi 2026-10-14).
+      // Reset test payments (7c, Davi 2026-10-14).
       "Check test payments",
       "Reset test payments",
       "Yes, reset test payments",

@@ -804,8 +804,10 @@ default, CI too) and refuses a non-local `DATABASE_URL` or an `APP_URL` that isn
     once" test lists them. The two never meet at runtime (`data-contrast` is only on the signed-in
     app's wrapper and `/` redirects signed-in owners to /queue; `data-sa-theme` exists only on
     `/`). The old `.sa-flip` / `view-timeline` block is gone from the launch branch too.
-  - AboutDavi stays in the app part (its "builder" / "He" wording predates this and is still
-    waiting on Davi for a rewording; it's outside the Growth copy guard).
+  - AboutDavi stays in the app part (its "builder" / "He" wording predates this; it's outside the
+    Growth copy guard). Asked in LAUNCH.md step 13 "Still open" ("The homepage's About section",
+    2026-10-15 review) and flagged in step 1, since it goes live with the merge. Don't change the
+    copy without his answer.
   - The homepage chapter bar is opaque charcoal and stays pinned to the end of the page (the footer
     is shorter than the screen), so the site header (charcoal by then, after the switch) never
     comes back. Intended.
@@ -1044,7 +1046,14 @@ default, CI too) and refuses a non-local `DATABASE_URL` or an `APP_URL` that isn
   customer id), autopilot (locked: "Autopilot opens up once your setup payment goes through.";
   the owner's switches are kept). Referral settlement needs `setup_paid_via = 'stripe'`, so a
   reset account settles only after it really pays. `/admin/costs` still counts setup_paid/active
-  as revenue (status-based). LAUNCH.md 7c ends with one more **Check test payments**.
+  as revenue (status-based). LAUNCH.md step 7 order (2026-10-15 review): 7a key swap, 7b Connect
+  Stripe again **right away** (only `connectStripe` creates a webhook endpoint, so a live checkout
+  paid before it never reaches the app and nothing can mark it paid; 7a–7c in one sitting), 7c
+  Check / Reset test payments (order-independent: `eventFromOtherMode` drops test events before
+  Connect, and they fail the live endpoint's signature after it). The past_due → `restored()`
+  move leaves read-only without a payment (jobs and AI resume, still can't send):
+  `PAST_DUE_RESET_NOTE` says so on the /admin confirm and in LAUNCH.md 7c, and step 13 asks Davi
+  whether that's okay (keeping past_due read-only would be a small code change).
 - **Davi's decisions, 2026-10-14** (all in `docs/LAUNCH.md`: the "Decided" and "Still open"
   parts of step 13; research with sources was gathered that day, facts marked unconfirmed are
   worded as such in the docs):
@@ -1083,7 +1092,8 @@ default, CI too) and refuses a non-local `DATABASE_URL` or an `APP_URL` that isn
     about $19–20 a month for that compute (estimate from Neon's prices). Production's plan isn't
     visible to the engineers. LAUNCH.md "Check your Neon plan now (this week)", before step 0.
   - **Test-mode Stripe accounts: reset them** with the built `/admin` → Payments → Reset test
-    payments after the live key swap (LAUNCH.md 7b; see "Reset test payments" above).
+    payments after the live key swap and Connect Stripe (LAUNCH.md 7c; see "Reset test
+    payments" above).
   - **Sales tax: Stripe Tax on** (built; see "Stripe Tax" above). LAUNCH.md 7e is now the whole
     job: register with Massachusetts first on MassTaxConnect (Davi is in Concord; Stripe can't
     register an in-state seller; SSN for a sole owner with no employees, else EIN; free and about
@@ -1114,11 +1124,18 @@ default, CI too) and refuses a non-local `DATABASE_URL` or an `APP_URL` that isn
     the demo Gmail swapped in, as google-verification.md describes) or **option B** (new: a
     separate demo account invited from `/admin`, paid with Stripe's test card while production
     Stripe is in test mode so `setup_paid_via = 'stripe'` lets it send; nothing of Davi's touched;
-    delete it or let Reset test payments clear it before Stripe goes live; needs an engineer's
-    dry run on a preview first). (b) Drop `gmail.send`: recommended yes (`users.drafts.send`
+    delete it before step 7 or let Reset test payments clear it in 7c — the button only exists
+    with the live key — after which it can't send, so a re-recording of a send needs option A or
+    a real card; needs an engineer's dry run on **production** first with the demo Gmail while
+    Stripe is in test mode). (b) Drop `gmail.send`: recommended yes (`users.drafts.send`
     accepts only mail.google.com / gmail.modify / gmail.compose; `users.messages.send` also takes
     gmail.compose; doesn't avoid CASA; small change, no reconnect since `mailboxes.scopes` is
-    never read after connect; not tried on a preview). CASA facts now in LAUNCH.md 0g and
+    never read after connect; not tried live: checked on production with the demo Gmail right
+    after it ships — a practice copy, then a test-card payment and a real reply — and reverted at
+    once if either fails). **A preview can't run either check** (2026-10-15 review): after the
+    split no background job reaches a preview's database (Inngest only reaches production;
+    previews sit behind Vercel login) and `STRIPE_SECRET_KEY` is Production-only, so a preview
+    never syncs, drafts, takes a payment or delivers a queued send. CASA facts now in LAUNCH.md 0g and
     google-verification.md: AL1/AL2 chosen by Google, TAC Security $675/$855 (AL1) and $5,400
     (AL2), budget about $700–$1,000/yr (AL1) or $4,500–$5,400+ (AL2), don't pay until Google's
     email names the level, two quotes, 2–6 weeks lab, 1–3 months whole review, renews every 12
@@ -1129,7 +1146,9 @@ default, CI too) and refuses a non-local `DATABASE_URL` or an `APP_URL` that isn
     on Crew (to try autopilot). Recommended F (or B for the simplest). A–D only need
     `REFERRAL_CREDIT_CENTS`; E and F need code beyond today's build (a plan-dependent credit).
   - **#26 closing question: on** (see Plan M7 above). The env var stays the switch; no code
-    default change.
+    default change. The privacy policy ("How we use it"; dated October 15, 2026 with the terms)
+    and google-verification.md (where email content goes, the notes bullet, the autopilot list)
+    name it since the 2026-10-15 review.
   - **Growth:** Davi confirmed all seven services and the ground rules. Still open: a written
     agreement (Growth terms), a Settings link to `/growth`, an admin Remove button (waitlist /
     Growth removals are by hand today), and whether a Growth request may carry a referral.
@@ -1168,10 +1187,19 @@ default, CI too) and refuses a non-local `DATABASE_URL` or an `APP_URL` that isn
   its pooled string and tells the engineers; they untick Preview on the shared `DATABASE_URL`
   (Vercel API, target only); Davi adds `DATABASE_URL` as a Preview-only Secret with that string;
   the engineers add Preview-only `AUTH_SECRET` / `TOKEN_ENCRYPTION_KEY` and redeploy the preview
-  (LAUNCH.md step 2).
+  (LAUNCH.md step 2). After the split a preview shows screens, sign-in and Connect Gmail only
+  (no jobs, no Stripe). Only test Gmail addresses on previews: the Google client (and project)
+  is shared with production, so a preview's Disconnect / Delete my account revoke most likely
+  ends production's grant for that address. Vercel's docs don't say saving a Secret with an
+  empty value box keeps it, so "How to split a setting" says Cancel and ask the engineers (API)
+  if Save asks for a value. Every Neon step names `autumn-term-70302192` (not `sa-preview`; both
+  have a `production` branch), with a header check before Reset password.
 - **Massachusetts sales tax registration** on MassTaxConnect before any Stripe tax setup; then
   Stripe's tax settings and the Massachusetts registration in Stripe (LAUNCH.md 7e). Questions
-  for his accountant are listed there.
+  for his accountant are listed there. It takes about 3–10 business days, so LAUNCH.md has it
+  start before step 0 ("Start your sales tax registration now"); step 7 says not to ask anyone
+  to pay until 7e passes, and 7e lets him do the Stripe tax settings (items 2–4, 6) before the
+  certificate arrives so later subscriptions carry automatic tax.
 - **Gmail draft send behaviour (M8 review):** not yet checked live whether Gmail keeps a draft's
   id when it's sent. Counts-only check on the shared DB: join `drafts.sent_gmail_message_id` to
   `messages.gmail_message_id` and count the matches whose `label_ids` hold `SENT` vs `DRAFT`.
@@ -1184,9 +1212,16 @@ default, CI too) and refuses a non-local `DATABASE_URL` or an `APP_URL` that isn
   "I agree" at sign-in for trial users, code changes that need his yes); a lawyer's review of both
   legal drafts (questions: LLC, insurance, "no contract" wording).
 - **Google review (open):** (a) demo account, option A (house account, demo Gmail swapped in) or
-  option B (separate demo account on Stripe's test card; needs an engineer's dry run on a preview
-  first); (b) drop `gmail.send` (recommended yes; small code change). Both before filming. CASA:
-  nothing to pay until Google's email names the level.
+  option B (separate demo account on Stripe's test card; needs an engineer's dry run on
+  production first, while Stripe is in test mode — a preview can't sync, draft, pay or send);
+  (b) drop `gmail.send` (recommended yes; small code change; checked live on production right
+  after it ships). Both before filming. CASA: nothing to pay until Google's email names the level.
+- **Homepage About section wording (open, ships with the merge):** keep "a working builder." /
+  "He built the tool…" or reword (LAUNCH.md step 13 and step 1). Separate from his photo and
+  license line.
+- **Reset test payments and past_due (open):** as built, a past_due test account goes back to
+  setup_paid / active (jobs and AI resume, can't send); alternative: keep it read-only until it
+  pays (small code change). LAUNCH.md step 13.
 - **Phone notifications (#36):** `VAPID_PUBLIC_KEY` + `VAPID_PRIVATE_KEY` (free) in Vercel
   Production, then redeploy. Off until then. The engineers can generate and add them if Davi says
   so.
@@ -1256,8 +1291,9 @@ default, CI too) and refuses a non-local `DATABASE_URL` or an `APP_URL` that isn
   production and submit verification + CASA — `docs/LAUNCH.md` step 0. Until approval the app
   has a lifetime cap of 100 new users (can't be reset): keep sign-up invite-only.
 - Stripe live mode: test-mode customer ids / `setup_paid_via = 'stripe'` from test checkouts stay
-  in the shared DB until Davi taps /admin → Payments → Reset test payments after the key swap
-  (`docs/LAUNCH.md` step 7b; decided 2026-10-14).
+  in the shared DB until Davi taps /admin → Payments → Reset test payments after the key swap and
+  Connect Stripe (`docs/LAUNCH.md` step 7c; decided 2026-10-14). Key swap → Connect Stripe must
+  be back to back (no live webhook in between).
 - Sales tax: Stripe Tax charges **$0** until Davi is registered with Massachusetts and has added
   the registration in Stripe → Tax → Locations (`docs/LAUNCH.md` 7e). Stripe never warns about the
   home state.

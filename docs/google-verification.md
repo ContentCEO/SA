@@ -61,8 +61,9 @@ In practice:
 
 - **Where email content goes:** our database, and the Anthropic API, only for the task at hand:
   sorting a message, learning the owner's writing style, writing a reply, follow-up, deposit or
-  review note, rewording a draft when the owner asks, or comparing a reply before and after the
-  owner edited it to learn the change in tone (`src/server/edit-learning.ts`). Nowhere else.
+  review note or closing question, rewording a draft when the owner asks, or comparing a reply
+  before and after the owner edited it to learn the change in tone
+  (`src/server/edit-learning.ts`). Nowhere else.
 - **What we store:** who each message is from and to, the subject and the date. When a mailbox is
   connected we read the last 30 days; after that, new mail is added as it arrives, and this
   metadata stays until the owner disconnects that Gmail address or deletes the account. Body text is
@@ -99,10 +100,13 @@ In practice:
 - **Drafts:** reply drafts are created in the owner's Gmail Drafts folder and a copy of the text is
   kept in our database so the owner can review it in the app (purged as above). If the owner edits
   or deletes the draft in Gmail, we follow Gmail (`reconcileDrafts` in `src/server/drafts.ts`).
-- **Deposit and review notes:** a note asking for the deposit after a customer accepts a quote, and
-  a review request only when the owner taps "Ask for a review" (never to someone who complained).
-  Both are ordinary drafts that wait for the owner; they never go out by autopilot
-  (`src/server/drafts.ts`, `src/server/offers.ts`).
+- **Deposit and review notes, and the closing question:** a note asking for the deposit after a
+  customer accepts a quote; a review request only when the owner taps "Ask for a review" (never to
+  someone who complained); and, once a quote has had both follow-ups and a week of quiet, a short
+  note asking whether the customer went another way, only when the owner taps "Want to ask if
+  they went another way?" (once per conversation, never after a complaint). All are ordinary
+  drafts that wait for the owner; they never go out by autopilot (`src/server/drafts.ts`,
+  `src/server/offers.ts`).
 - **Quotes and money owed:** won/lost and paid marks come from the owner's taps or from what the
   classifier already returned for an email; nothing extra is sent anywhere.
 - **Price memory:** the amounts the owner quoted (amount, kind of job, date) are kept so the owner
@@ -110,10 +114,10 @@ In practice:
   boundary test in `tests/unit/price-memory.test.ts` lists the only files that may read them).
 - **Autopilot (opt-in):** only for owners on a plan that includes it, after their setup call, one
   kind of email at a time, and only after they've sent 10 of that kind exactly as drafted. Never for
-  complaints, money, flagged emails, follow-ups, deposit or review notes, quote acceptances, or
-  people the owner hasn't written to before. Each autopilot reply sits in the owner's queue for 10
-  minutes with a "Hold it" button, and every check runs again just before sending
-  (`src/server/autopilot.ts`, tested in `tests/unit/autopilot.test.ts`).
+  complaints, money, flagged emails, follow-ups, deposit or review notes, closing questions, quote
+  acceptances, or people the owner hasn't written to before. Each autopilot reply sits in the
+  owner's queue for 10 minutes with a "Hold it" button, and every check runs again just before
+  sending (`src/server/autopilot.ts`, tested in `tests/unit/autopilot.test.ts`).
 - **Sending:** customer replies go out only through Gmail's `drafts.send`, either after the owner
   taps "Send reply" (then a 20-second undo window) or by autopilot as above, and only when the
   account's setup fee has been paid (or it is our own house account) — checked in code before any call to Google (`src/server/lifecycle.ts`,
@@ -320,7 +324,7 @@ production Stripe is still in test mode.
   counts, price memory, quote and invoice marks); reconnecting afterwards reads only the last 30
   days again; and his writing style is re-learned from the demo mailbox, then from his own mail
   again. This costs least if it is recorded before his own mailbox's history matters.
-- **Option B** (new, 2026-10-14; needs Davi's yes and an engineer's dry run on a preview first):
+- **Option B** (new, 2026-10-14; needs Davi's yes and an engineer's dry run on production first):
   a separate demo-only account. Invite the demo Gmail in `/admin` → Invite an owner (while the
   app is still in Testing, also add it as a Google test user; after publishing it uses one of the
   100 places). It signs in as its own account and connects the demo Gmail, so nothing of Davi's is
@@ -329,9 +333,15 @@ production Stripe is still in test mode.
   a plan and pay with Stripe's test card. That works only while production Stripe is still in test
   mode; no real money moves, and the account can then send, so film the send. The dry run settles
   the recording order (a practice copy leaves the draft waiting, so one quote request can serve
-  both parts). Keep the account until Google approves, in case they ask for a new recording, and
-  before Stripe goes live (launch checklist step 7) delete it (Delete my account) or let **Reset
-  test payments** clear it, since it carries a test payment.
+  both parts). It runs on production with the demo Gmail while production Stripe is still in test
+  mode, and that account can stay as the demo account. A preview can't run it: after the preview
+  database split, background jobs and Stripe only reach production, so a preview never reads mail,
+  drafts, takes a payment or sends. Keep the account until Google approves, in case they ask for a new recording. It
+  carries a test payment, so it can send only until Stripe goes live: either delete it before
+  Stripe goes live (launch checklist step 7; Delete my account), or let **Reset test payments**
+  clear it in step 7c, right after the live key swap (that button only exists with the live key).
+  After that it can't send. If Google asks for a new recording of a send once Stripe is live,
+  film that part with option A (the house account) or pay for the demo account with a real card.
 - Or put the house account on a plan with more than one mailbox and connect the demo Gmail next to
   his own. The Queue, Inbox and Activity then mix both mailboxes, so real customer mail would be
   filmed: **not acceptable** for the video.
@@ -349,9 +359,12 @@ production Stripe is still in test mode.
   requested scopes (code, the connect explainer, the privacy policy, this document, the launch
   checklist and their tests, plus removing it under Google Auth Platform → Data Access). Owners
   already connected should keep working with no reconnect: the granted scopes are stored at connect and
-  never checked again, and both send calls work with `gmail.compose` (not yet tried on a
-  preview). Decide before filming: the video shows the permission list. Until then this document
-  describes exactly what is requested today. It is listed for him in the launch checklist's
+  never checked again, and both send calls work with `gmail.compose` (not yet tried live). A
+  preview can't try it (it never sends), so the engineers check it on production with the demo
+  Gmail right after the change goes live: a practice copy during its trial, then a real reply
+  after a test-card payment while Stripe is still in test mode; if either fails, `gmail.send` goes
+  back at once. Decide before filming: the video shows the permission list. Until then this
+  document describes exactly what is requested today. It is listed for him in the launch checklist's
   decisions ("drop `gmail.send`?").
 - Verify the production domain in Google Search Console, add it under Google Auth Platform →
   Branding → Authorized domains, and point the homepage, privacy policy and terms links there.
