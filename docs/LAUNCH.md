@@ -219,9 +219,9 @@ already has the new complaint marker, but production still runs older code that 
 A complaint that turns into "fixed now, thanks" before the merge leaves no trace, and that customer
 could later be offered "Ask for a review" (only on your tap, and only as a draft).
 
-The merge also puts the homepage's About section live as it is today. Its wording is a question
-for you in [step 13](#13-decisions-waiting-on-you) ("The homepage's About section"): answer it
-before you tap Merge if you want it changed first.
+The merge also puts the homepage's About section live. Its wording changed on 2026-10-15 (see
+"The homepage's About section" in [step 13](#13-decisions-waiting-on-you)); tell the engineers
+before you tap Merge if you want different words.
 
 - Before you tap Merge (one minute, optional but only possible now): the **Gmail draft check**.
   It tells the engineers whether Gmail keeps a draft's id when it's sent. The app is safe either
@@ -864,11 +864,12 @@ Nothing below is switched on or changed until you say so.
   [SETUP.md](SETUP.md) §6d), and `AUTH_SECRET` must not be changed once referrals have been paid.
   Also your call: a referrer who deletes their account before the new owner is active voids the
   referral.
-- **The homepage's About section.** Its heading reads "who's behind this, a working builder." and
-  its text ends "He built the tool he needed for his own inbox." Keep that wording, or tell the
-  engineers what it should say (for example, without "builder" and "He"). Unlike the rest of this
-  list, it goes live with the merge ([step 1](#1-merge-the-launch-branch)) as it is unless you
-  answer first. Your photo and the license line are separate (under "Still needed from you").
+- **The homepage's About section.** It used to say "a working builder." and "He built the tool he
+  needed", which broke the site's own rules (no "builder", no pronouns for you). Since 2026-10-15
+  the heading reads "who's behind this, someone in the trades." and the text ends "It began as
+  the tool for A&C Construction's own inbox." Keep that, or tell the engineers what it should say.
+  Unlike the rest of this list, it goes live with the merge ([step 1](#1-merge-the-launch-branch)).
+  Your photo and the license line are separate (under "Still needed from you").
 - **Reset test payments and past-due accounts.** As built, an account whose test-card renewal had
   failed (past due: nothing new is read or drafted) is switched back on by the reset: its new mail
   is sorted and drafted again, on your AI bill, though it still can't send until it pays. Okay?

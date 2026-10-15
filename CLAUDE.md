@@ -804,10 +804,11 @@ default, CI too) and refuses a non-local `DATABASE_URL` or an `APP_URL` that isn
     once" test lists them. The two never meet at runtime (`data-contrast` is only on the signed-in
     app's wrapper and `/` redirects signed-in owners to /queue; `data-sa-theme` exists only on
     `/`). The old `.sa-flip` / `view-timeline` block is gone from the launch branch too.
-  - AboutDavi stays in the app part (its "builder" / "He" wording predates this; it's outside the
-    Growth copy guard). Asked in LAUNCH.md step 13 "Still open" ("The homepage's About section",
-    2026-10-15 review) and flagged in step 1, since it goes live with the merge. Don't change the
-    copy without his answer.
+  - AboutDavi stays in the app part. Its old "a working builder." / "He built…" wording broke the
+    site's no-"builder" / no-pronouns-for-Davi rule, so on 2026-10-15 (before the production merge)
+    it became "who's behind this, someone in the trades." / "It began as the tool for A&C
+    Construction's own inbox." (`tests/unit/about-davi.test.ts` guards it like the Growth copy).
+    LAUNCH.md step 13 tells Davi and asks if he wants other words.
   - The homepage chapter bar is opaque charcoal and stays pinned to the end of the page (the footer
     is shorter than the screen), so the site header (charcoal by then, after the switch) never
     comes back. Intended.
@@ -1216,9 +1217,10 @@ default, CI too) and refuses a non-local `DATABASE_URL` or an `APP_URL` that isn
   production first, while Stripe is in test mode — a preview can't sync, draft, pay or send);
   (b) drop `gmail.send` (recommended yes; small code change; checked live on production right
   after it ships). Both before filming. CASA: nothing to pay until Google's email names the level.
-- **Homepage About section wording (open, ships with the merge):** keep "a working builder." /
-  "He built the tool…" or reword (LAUNCH.md step 13 and step 1). Separate from his photo and
-  license line.
+- **Homepage About section wording (changed 2026-10-15, ships with the merge):** now "someone in
+  the trades." / "It began as the tool for A&C Construction's own inbox." (no "builder", no
+  pronouns). Davi may want other words (LAUNCH.md step 13). Separate from his photo and license
+  line.
 - **Reset test payments and past_due (open):** as built, a past_due test account goes back to
   setup_paid / active (jobs and AI resume, can't send); alternative: keep it read-only until it
   pays (small code change). LAUNCH.md step 13.

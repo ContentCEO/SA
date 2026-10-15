@@ -684,7 +684,7 @@ describe("LAUNCH.md structure", () => {
       "Option B (new)",
       "Gmail draft check",
       "The homepage's About section",
-      "a working builder.",
+      "someone in the trades.",
       "Reset test payments and past-due accounts",
     ]) {
       expect(open, phrase).toContain(phrase);
@@ -702,7 +702,7 @@ describe("LAUNCH.md structure", () => {
     // The About wording ships with the merge, so step 1 points at the question.
     expect(flat(sections.find((s) => s.n === 1)!.body)).toContain("The homepage's About section");
     const about = readFileSync(join(ROOT, "src/components/marketing/about-davi.tsx"), "utf8");
-    expect(about).toContain('heavy="a working builder."');
+    expect(about).toContain('heavy="someone in the trades."');
   });
 
   it("Davi's 2026-10-14 decisions are recorded as decided, not asked again", () => {
