@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Database } from "@/db";
 import { drafts, messages, threads, workspaces } from "@/db/schema";
 import { ensureUserAndWorkspace } from "@/server/accounts";
+import { recordTermsAcceptance } from "@/server/terms";
 import { saveConnectedMailbox } from "@/server/mailboxes";
 import { createTestDb } from "../support/db";
 import { FakeWriter } from "../support/fake-writer";
@@ -69,6 +70,8 @@ beforeEach(async () => {
   });
   gmail.writer.calls.length = 0;
   const { user, workspace } = await ensureUserAndWorkspace({ email: "owner@shop.com" });
+  // Agreed to the current terms (an owner who hasn't gets a 403: terms-agreement.test.ts).
+  await recordTermsAcceptance(user.id);
   session.userId = user.id;
   workspaceId = workspace.id;
   const mailbox = await saveConnectedMailbox(workspace, {

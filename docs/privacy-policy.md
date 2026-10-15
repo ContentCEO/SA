@@ -47,6 +47,10 @@ this form.
 **When you sign in with Google:** your name and email address. Sign-in asks Google only for "who you are" (`openid`, `email`, `profile`). It does not give us
 access to your email.
 
+**When you agree to our terms:** the date and time you ticked "I agree to the Terms of Service and
+the Privacy Policy" (when you sign in, or when we ask again after the terms change) and which
+version of the terms you agreed to, so we can show that you agreed.
+
 **When you connect Gmail:** this is a separate step, after a screen that explains what Squared Away
 will and won't do. We ask Google for three Gmail permissions:
 
@@ -104,8 +108,9 @@ before sending, counts of what you changed (how many words, whether you changed 
 sign-off) and the change in tone, which we use to suggest updates to your writing style. These
 records hold IDs, counts and yes/no marks, not email text.
 
-**Cookies:** we use only the cookies needed to keep you signed in and to protect the Gmail
-connection step from forgery, plus small cookies that remember this phone's display choices
+**Cookies:** we use only the cookies needed to keep you signed in, to protect the Gmail connection
+step from forgery, and to remember for a few minutes that you ticked "I agree" while Google signs
+you in, plus small cookies that remember this phone's display choices
 (left-handed layout, high contrast, offline approvals). We don't use advertising or tracking
 cookies, and we don't run analytics that follow you. If you switch on offline approvals, your
 phone keeps a copy of your queue (in the browser's storage) and the approvals you make without
@@ -226,6 +231,7 @@ In plain words:
   30-day email-text purge, until you disconnect that Gmail address or delete your account.
 - **Your writing style, style suggestions, business details, settings, activity history and AI
   usage counts** are kept until you delete your account.
+- **When you agreed to the terms, and which version,** is kept until you delete your account.
 - **Your mobile number for text alerts** is kept until you remove it in Settings or delete your
   account.
 - **Phone notification addresses** are deleted when you turn notifications off, when that phone

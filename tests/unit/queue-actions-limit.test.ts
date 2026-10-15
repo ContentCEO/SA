@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Database } from "@/db";
 import { rateLimits, workspaces } from "@/db/schema";
 import { ensureUserAndWorkspace } from "@/server/accounts";
+import { recordTermsAcceptance } from "@/server/terms";
 import { LIMITS } from "@/server/rate-limit";
 import { createTestDb } from "../support/db";
 
@@ -72,6 +73,8 @@ describe("M11 C8: Gmail-writing taps are rate limited (through the actions)", ()
     process.env.TOKEN_ENCRYPTION_KEY = randomBytes(32).toString("base64");
     database = await createTestDb();
     const { user, workspace } = await ensureUserAndWorkspace({ email: "owner@shop.com" });
+    // Agreed to the current terms (else requireOwner sends them to /welcome/terms).
+    await recordTermsAcceptance(user.id);
     session.userId = user.id;
     workspaceId = workspace.id;
     await database
@@ -116,6 +119,7 @@ describe("M11 C8: Gmail-writing taps are rate limited (through the actions)", ()
       .insert(rateLimits)
       .values({ key: `gmailWrite:${workspaceId}`, windowStart, count: max });
     const other = await ensureUserAndWorkspace({ email: "other@shop.com" });
+    await recordTermsAcceptance(other.user.id);
     session.userId = other.user.id;
     expect(await whereTo(discard)).toBe("/queue?done=discarded");
     expect(writes.discardDraft).toHaveBeenCalledWith(other.workspace.id, DRAFT_ID);

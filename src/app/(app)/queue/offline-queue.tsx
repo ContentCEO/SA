@@ -20,6 +20,8 @@ const WHY: Record<string, string> = {
   intent_expired: "you okayed it more than 12 hours ago",
   reconnect_needed: "Gmail needs reconnecting",
   blocked: "sending isn't switched on for your account",
+  // The terms changed while this phone was offline (the API's 403 says which).
+  terms_required: "you need to agree to our updated terms first",
 };
 
 /**
@@ -63,7 +65,12 @@ export function OfflineQueue({ enabled }: { enabled: boolean }) {
           const r = (await res.json().catch(() => ({}))) as { status?: string };
           if (res.status === 202) queued.push(i.draftId);
           else {
-            const why = res.status === 403 ? WHY.blocked : WHY[r.status ?? ""];
+            const why =
+              r.status === "terms_required"
+                ? WHY.terms_required
+                : res.status === 403
+                  ? WHY.blocked
+                  : WHY[r.status ?? ""];
             out.push(
               `Your reply to ${i.to} wasn't sent — ${why ?? "something changed"}. It's below to check again.`,
             );

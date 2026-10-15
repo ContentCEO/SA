@@ -2,13 +2,14 @@ import type { Metadata } from "next";
 import { ForgetOffline } from "@/components/app/forget-offline";
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { auth, signIn } from "@/auth";
+import { auth } from "@/auth";
 import { Notice } from "@/components/app/notice";
 import { SiteFooter } from "@/components/app/site-footer";
+import { TermsForm } from "@/components/app/terms-form";
 import { Headline } from "@/components/brand/headline";
 import { Wordmark } from "@/components/brand/wordmark";
-import { Button } from "@/components/ui/button";
 import { getWorkspaceForUser } from "@/server/accounts";
+import { signInWithGoogleAction } from "./actions";
 
 export const metadata: Metadata = { title: "Sign in · Squared Away" };
 
@@ -35,16 +36,11 @@ export default async function SignInPage(props: PageProps<"/signin">) {
         {error ? (
           <Notice strong>Sign-in didn&apos;t go through. Give it another try.</Notice>
         ) : null}
-        <form
-          action={async () => {
-            "use server";
-            await signIn("google", { redirectTo: "/queue" });
-          }}
-        >
-          <Button type="submit" size="lg" className="w-full sm:w-auto">
-            Sign in with Google
-          </Button>
-        </form>
+        <TermsForm
+          action={signInWithGoogleAction}
+          submitLabel="Sign in with Google"
+          pendingLabel="Opening Google…"
+        />
         <p className="text-sm text-muted-foreground">
           Not invited yet?{" "}
           <Link href="/#waitlist" className="font-semibold underline underline-offset-4">

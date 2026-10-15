@@ -5,6 +5,7 @@ import { drizzle } from "drizzle-orm/postgres-js";
 import { encode } from "next-auth/jwt";
 import postgres from "postgres";
 import { isLocalDatabaseUrl } from "../../src/config/e2e";
+import { TERMS_VERSION } from "../../src/config/legal";
 import * as schema from "../../src/db/schema";
 import { encryptSecret } from "../../src/lib/crypto";
 
@@ -111,8 +112,24 @@ export async function latestDraft(workspaceId: string) {
   return row;
 }
 
-/** Sign in without Google by minting the same session cookie Auth.js would. */
-export async function signInAs(context: BrowserContext, owner: { userId: string; email: string }) {
+/**
+ * Sign in without Google by minting the same session cookie Auth.js would. The person has agreed
+ * to the current terms, as a real sign-in with the "I agree" box records; pass
+ * `{ agreedToTerms: false }` for an account from before the box (or before a terms change).
+ */
+export async function signInAs(
+  context: BrowserContext,
+  owner: { userId: string; email: string },
+  { agreedToTerms = true }: { agreedToTerms?: boolean } = {},
+) {
+  await testDb
+    .update(schema.users)
+    .set(
+      agreedToTerms
+        ? { termsAcceptedAt: new Date(), termsVersion: TERMS_VERSION }
+        : { termsAcceptedAt: null, termsVersion: null },
+    )
+    .where(eq(schema.users.id, owner.userId));
   const cookieName = "authjs.session-token";
   const value = await encode({
     secret: process.env.AUTH_SECRET!,

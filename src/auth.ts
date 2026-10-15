@@ -2,6 +2,7 @@ import NextAuth, { type DefaultSession } from "next-auth";
 import "next-auth/jwt";
 import Google from "next-auth/providers/google";
 import { ensureUserAndWorkspace, isAllowedToSignIn } from "@/server/accounts";
+import { takeSignInAgreement } from "@/server/terms";
 
 declare module "next-auth" {
   interface Session {
@@ -37,6 +38,9 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           name: typeof profile.name === "string" ? profile.name : null,
         });
         token.uid = user.id;
+        // The sign-in button's "I agree" box (Davi, 2026-10-15): record it on the account.
+        // Without it, the first screen asks again (requireOwner → /welcome/terms).
+        await takeSignInAgreement(user.id);
       }
       return token;
     },

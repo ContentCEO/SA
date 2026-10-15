@@ -11,6 +11,7 @@ import {
   mailboxes,
   rules,
   threads,
+  users,
   workspaces,
   type Workspace,
 } from "@/db/schema";
@@ -37,6 +38,7 @@ import {
 } from "@/server/test-payment-rules";
 import { applyAdminMove } from "@/server/workspace-lifecycle";
 import { createTestDb } from "../support/db";
+import { TERMS_VERSION } from "@/config/legal";
 
 /**
  * "Reset test payments" (Davi, 2026-10-14). Accounts that "paid" with a Stripe test card are put
@@ -49,10 +51,11 @@ const LIVE_KEY = "sk_" + "live_" + "fake";
 const TEST_KEY = "sk_" + "test_" + "fake";
 const ADMIN = "davi@shop.com";
 
-// The signed-in user for the action tests (requireAdmin reads only the session's email).
-const session = vi.hoisted(() => ({ email: null as string | null }));
+// The signed-in user for the action tests: requireAdmin reads the session's email, then whether
+// that user agreed to the current terms (beforeEach makes Davi's user row, agreed).
+const session = vi.hoisted(() => ({ email: null as string | null, id: "" }));
 vi.mock("@/auth", () => ({
-  auth: async () => (session.email ? { user: { id: "u", email: session.email } } : null),
+  auth: async () => (session.email ? { user: { id: session.id, email: session.email } } : null),
 }));
 class Redirected extends Error {
   constructor(readonly url: string) {
@@ -172,6 +175,11 @@ beforeEach(async () => {
   calls.length = 0;
   duringRetrieve = null;
   session.email = ADMIN;
+  const [admin] = await database
+    .insert(users)
+    .values({ email: ADMIN, termsAcceptedAt: NOW, termsVersion: TERMS_VERSION })
+    .returning();
+  session.id = admin!.id;
   setStripeForTests(fakeStripe());
 });
 afterEach(() => {
