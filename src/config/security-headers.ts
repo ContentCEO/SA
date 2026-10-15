@@ -5,7 +5,8 @@
  * - Scripts and styles: our own, plus inline (Next's page data and the style
  *   attributes on a few components need it; nonces would force every page to
  *   render on request). `unsafe-eval` only in local development.
- * - Fonts are self-hosted by next/font, so no Google Fonts host is needed.
+ * - Fonts are self-hosted (next/font/local, files in src/app/_fonts) and served from
+ *   /_next/static/media on our own origin, so no Google Fonts host is needed.
  * - form-action allows the places a form legitimately ends up after a
  *   redirect: Google sign-in / Gmail connect and Stripe Checkout / Portal.
  * - Nobody may frame the site (clickjacking).

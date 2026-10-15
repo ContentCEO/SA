@@ -199,6 +199,16 @@ default, CI too) and refuses a non-local `DATABASE_URL` or an `APP_URL` that isn
 - "Toasts" are currently `?done=` / `?error=` query params rendered as `<Notice>` (role=status/alert).
 - Playwright's mobile project uses Chromium at 375×812 (not WebKit) to keep CI fast and single-browser.
 - Favicon and wordmark are text placeholders until Davi's icon pack arrives (`public/brand/`).
+- **Fonts are self-hosted via `next/font/local` (2026-10-15)**, because CI builds failed when
+  Google Fonts was unreachable (Next's Google loader downloads at build time). `src/app/_fonts/`
+  holds Google's own latin files (Inter Tight variable, Instrument Serif Italic; byte-identical to
+  what the loader served) with their OFL 1.1 texts and a README. Inter Tight keeps Google's three
+  single-weight faces (400/600/900 on the one variable file), so 500 still renders 400 and 700/800
+  render 900 — exactly as before; a "100 900" range would be a visible design change. Family names
+  are the JS variable names (`interTight`, `instrumentSerif`; Turbopack ignores a `font-family`
+  declaration), the CSS variables are unchanged. Fallback metrics come from `adjustFontFallback`
+  (Arial / Times New Roman), slightly different from Google's precomputed ones. Latin only: other
+  scripts use the fallback. `tests/unit/fonts.test.ts` forbids the Google loader anywhere in `src`.
 - `/api/health` returns `{ ok, service, commit }` — used by Playwright's webServer check and for
   deploy verification.
 - **Drafts + Queue (M5):** `src/server/drafts.ts`, prompt `draft.v1` (Sonnet, effort medium, one

@@ -44,6 +44,54 @@ test("the CSP breaks nothing: public pages and a signed-in screen load with no c
   expect(errors).toEqual([]);
 });
 
+test("fonts are our own: Inter Tight and Instrument Serif load from this site, never Google", async ({
+  page,
+  baseURL,
+}) => {
+  const google: string[] = [];
+  const fontFiles: string[] = [];
+  page.on("request", (r) => {
+    if (/^https?:\/\/fonts\.(googleapis|gstatic)\.com\//.test(r.url())) google.push(r.url());
+  });
+  page.on("response", (r) => {
+    if (/\.(woff2?|ttf|otf)(\?|$)/.test(r.url())) fontFiles.push(`${r.status()} ${r.url()}`);
+  });
+  await page.goto("/");
+  await page.waitForLoadState("networkidle");
+
+  // next/font/local names each family after its variable in layout.tsx (interTight,
+  // instrumentSerif); what matters is that the stack the theme uses starts with a loaded face.
+  const unquote = (s: string) => s.trim().replace(/^["']|["']$/g, "");
+  const fonts = await page.evaluate(async () => {
+    await document.fonts.ready;
+    const first = (el: Element | null) =>
+      el ? getComputedStyle(el).fontFamily.split(",")[0]! : "(missing)";
+    return {
+      sans: first(document.querySelector(".sa-headline-heavy")),
+      body: first(document.body),
+      serif: first(document.querySelector(".sa-headline-serif")),
+      faces: [...document.fonts].map((f) => ({ family: f.family, status: f.status })),
+    };
+  });
+  const sans = unquote(fonts.sans);
+  const serif = unquote(fonts.serif);
+  expect(sans).toMatch(/^inter\s*tight$/i);
+  expect(unquote(fonts.body)).toBe(sans);
+  expect(serif).toMatch(/^instrument\s*serif$/i);
+  // Only our two families: the "… Fallback" faces point at local Arial / Times New Roman, which
+  // a Linux runner may not have.
+  const ours = fonts.faces.filter((f) => [sans, serif].includes(unquote(f.family)));
+  const loaded = ours.filter((f) => f.status === "loaded").map((f) => unquote(f.family));
+  expect(loaded).toContain(sans);
+  expect(loaded).toContain(serif);
+  expect(ours.filter((f) => f.status === "error")).toEqual([]);
+
+  expect(google).toEqual([]);
+  expect(fontFiles.length).toBeGreaterThan(0);
+  const origin = new URL(baseURL!).origin;
+  for (const file of fontFiles) expect(file).toMatch(`200 ${origin}/_next/static/media/`);
+});
+
 test("privacy and terms: drafts are labelled, and every page links to them", async ({ page }) => {
   await page.goto("/privacy");
   await expect(page.getByRole("heading", { level: 1, name: "Privacy Policy" })).toBeVisible();
