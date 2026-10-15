@@ -1147,11 +1147,12 @@ default, CI too) and refuses a non-local `DATABASE_URL` or an `APP_URL` that isn
     accepts only mail.google.com / gmail.modify / gmail.compose; `users.messages.send` also takes
     gmail.compose; doesn't avoid CASA; small change, no reconnect since `mailboxes.scopes` is
     never read after connect; not tried live: checked on production with the demo Gmail right
-    after it ships — a practice copy, then a test-card payment and a real reply — and reverted at
-    once if either fails). **A preview can't run either check** (2026-10-15 review): after the
-    split no background job reaches a preview's database (Inngest only reaches production;
-    previews sit behind Vercel login) and `STRIPE_SECRET_KEY` is Production-only, so a preview
-    never syncs, drafts, takes a payment or delivers a queued send. CASA facts now in LAUNCH.md 0g and
+    after it ships — the demo Gmail's old grant cleared first, then a practice copy, then a
+    test-card payment and a real reply — and reverted at once if either fails). **A preview
+    can't run either check** (2026-10-15 review): after the split no background job reaches a
+    preview's database (Inngest only reaches production; previews sit behind Vercel login) and
+    `STRIPE_SECRET_KEY` is Production-only, so a preview never syncs, drafts, takes a payment or
+    delivers a queued send. CASA facts now in LAUNCH.md 0g and
     google-verification.md: AL1/AL2 chosen by Google, TAC Security $675/$855 (AL1) and $5,400
     (AL2), budget about $700–$1,000/yr (AL1) or $4,500–$5,400+ (AL2), don't pay until Google's
     email names the level, two quotes, 2–6 weeks lab, 1–3 months whole review, renews every 12
@@ -1272,7 +1273,9 @@ default, CI too) and refuses a non-local `DATABASE_URL` or an `APP_URL` that isn
   unticked → revoke, no row, no trial clock; a reconnect leaves the saved row untouched).
   Copy uses Google's consent wording: "View your email messages and settings" (readonly),
   "Manage drafts and send emails" (compose); the `/connect` explainer adds that a reply still goes
-  out only on **Send reply**. The privacy policy says older connections may still show "Send
+  out only on **Send reply**, or by autopilot if the owner switches it on for a kind of email (the
+  same promise as the privacy policy's compose row; the older "Send a reply only when you tap Send
+  reply" bullet now says so too). The privacy policy says older connections may still show "Send
   email on your behalf" at Google until they disconnect. **The e2e Gmail fake enforces scopes**
   (`GMAIL_METHOD_SCOPES` in `tests/e2e/fakes/server.ts`, copied from the discovery doc): the
   token carries what the consent page allowed (`registerScenario(..., { untick, earlier })`),
@@ -1280,7 +1283,15 @@ default, CI too) and refuses a non-local `DATABASE_URL` or an `APP_URL` that isn
   `insufficientScope`), a code needs a consent first, and a revoke ends the grant. full-flow
   asserts the consent asked for exactly the two, the token carried exactly those and nothing was
   refused, so the reply (`drafts.send`) and the practice copy (`messages.send`) are proven with
-  the two scopes. Not yet tried live: checked on production right after it ships.
+  the two scopes. Not yet tried live: checked on production right after it ships. **That live
+  check clears the demo Gmail's old grant first** (2026-10-15 review): a grant given while we
+  still asked for `gmail.send` keeps it, a reconnect brings it back, and `messages.send` accepts
+  it, so the practice copy would pass without testing `gmail.compose`. Before the check: Disconnect
+  Gmail on every account holding the demo Gmail (revokes at Google; removing it only at
+  myaccount.google.com while an account is connected puts that account in `reconnect_needed`),
+  confirm at myaccount.google.com/permissions that Squared Away has no Gmail access, reconnect,
+  and confirm that mailbox's `mailboxes.scopes` has no `gmail.send`. The demo video's "Before
+  recording" note repeats the clear-out (filming comes after the check).
 
 ## Milestones
 
@@ -1347,9 +1358,12 @@ default, CI too) and refuses a non-local `DATABASE_URL` or an `APP_URL` that isn
   test card; needs an engineer's dry run on production first, while Stripe is in test mode — a
   preview can't sync, draft, pay or send); (b) decided 2026-10-15: `gmail.send` dropped (built,
   ships with the second merge). **His console step:** Google Auth Platform → Data Access → remove
-  `gmail.send` before submitting (LAUNCH.md 0e). Engineers: right after it goes live, a practice
-  copy and a real reply (test card) on production with the demo Gmail, before filming; put it back
-  at once if either fails. CASA: nothing to pay until Google's email names the level.
+  `gmail.send` before submitting (LAUNCH.md 0e). Engineers: right after it goes live, first clear
+  the demo Gmail's old grant (Settings → Disconnect Gmail on every account holding it; then
+  myaccount.google.com/permissions shows no Gmail access for Squared Away; reconnect; its
+  `mailboxes.scopes` has no `gmail.send`), then a practice copy and a real reply (test card) on
+  production with the demo Gmail, before filming; put it back at once if either fails. CASA:
+  nothing to pay until Google's email names the level.
 - **Homepage About section wording (changed 2026-10-15, ships with the merge):** now "someone in
   the trades." / "It began as the tool for A&C Construction's own inbox." (no "builder", no
   pronouns). Davi may want other words (LAUNCH.md step 13). Separate from his photo and license

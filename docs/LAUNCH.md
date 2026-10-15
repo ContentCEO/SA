@@ -195,6 +195,8 @@ The video's sign-in shows the "I agree" box, which goes live with the second mer
 - Record it after the engineers' live check of the two permissions (decided on 2026-10-15,
   [step 13](#13-decisions-waiting-on-you)): the video shows Google's list of permissions, and they
   tell you once a practice copy and a real reply have gone out on production with just those two.
+  Their check starts by removing the demo Gmail's earlier access to Squared Away, so an old third
+  permission can't do the sending for it (step 13 says how).
 - Only if you ever film with option A instead (your own workspace with the demo Gmail swapped in,
   for example a new recording after Stripe has gone live), make it the house account first, or it
   can't send on camera: `/admin` → your own card (always shown first) → **Use as my
@@ -872,14 +874,24 @@ fixed.
   settings" (`gmail.readonly`) and "Manage drafts and send emails" (`gmail.compose`). Google's own
   reference says `gmail.compose` can send a draft and a new email, which covers every reply and the
   trial's practice copies, while `gmail.send` couldn't even send a draft. Nothing changes for
-  owners: every reply still waits for their **Send reply** tap (that was always the app's own
-  rule, not `gmail.send`'s, as you asked on 2026-10-15). Owners who already connected keep working
-  and nobody reconnects; Google may keep listing the old permission on their account until they
-  disconnect. It doesn't avoid the CASA test. Yours: remove `gmail.send` under Google Auth
+  owners: every reply still waits for their **Send reply** tap, unless they switched on autopilot
+  for that kind of email (that was always the app's own rule, not `gmail.send`'s, as you asked on
+  2026-10-15). Owners who already connected keep working and nobody reconnects; Google may keep
+  listing the old permission on their account until they disconnect. It doesn't avoid the CASA test. Yours: remove `gmail.send` under Google Auth
   Platform → Data Access before you submit ([0e](#0-start-now-google-verification-takes-weeks)).
   A preview can't send, so the engineers check it on production with the demo Gmail right after
   it goes live (a practice copy during its trial, then a real reply after a test-card payment,
-  while Stripe is still in test mode) and put `gmail.send` back at once if either fails.
+  while Stripe is still in test mode) and put `gmail.send` back at once if either fails. **Before
+  that check they clear the demo Gmail's old access.** A connection made while the app still
+  asked for `gmail.send` keeps it (Google even adds it back on a reconnect), and it could send the
+  practice copy on its own, so the check would prove nothing. On every Squared Away account where
+  the demo Gmail is connected (the dry-run account, for one): Settings → **Disconnect Gmail** →
+  **Yes, disconnect Gmail**, which also removes the access at Google. Then
+  myaccount.google.com/permissions, signed in as the demo Gmail, must show no Gmail access for
+  Squared Away (if it still does, remove it there). Then they connect it again and confirm Google
+  kept only the two: that mailbox's saved permissions (`mailboxes.scopes`) have no `gmail.send`,
+  and Google's page doesn't list "Send email on your behalf". Only then the practice copy and the
+  real reply.
 
 ### Decided on 2026-10-14
 

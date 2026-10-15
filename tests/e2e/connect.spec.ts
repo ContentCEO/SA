@@ -36,7 +36,11 @@ test("explains what it will and won't do, then sends you to Google with the mini
   await expect(page.getByText("Google will ask you to allow two things")).toBeVisible();
   await expect(page.getByText("View your email messages and settings")).toBeVisible();
   await expect(page.getByText("Manage drafts and send emails")).toBeVisible();
-  await expect(page.getByText(/it still goes out only when you tap Send reply/)).toBeVisible();
+  await expect(
+    page.getByText(
+      /it still goes out only when you tap Send reply \(or by autopilot, if you switch it on for a kind of email\)/,
+    ),
+  ).toBeVisible();
   await noHorizontalScroll(page);
 
   // Stop at Google's door and inspect what we asked for.

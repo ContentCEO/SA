@@ -304,8 +304,15 @@ describe("owner-facing copy about the trial", () => {
     expect(page).toContain("<strong>View your email messages and settings</strong>");
     expect(page).toContain("<strong>Manage drafts and send emails</strong>");
     expect(page).toContain("Leave both ticked.");
-    expect(page).toContain("it still goes out only when you tap <strong>Send reply</strong>.");
-    expect(page).toContain("Send a reply only when you tap <strong>Send reply</strong>.");
+    // The Send reply promise, with the owner's own autopilot switch (as the privacy policy's
+    // compose row and the verification doc say): never an absolute "only when you tap".
+    expect(page).toContain(
+      "it still goes out only when you tap <strong>Send reply</strong> (or by autopilot, if you switch it on for a kind of email).",
+    );
+    expect(page).toContain(
+      "Send a reply only when you tap <strong>Send reply</strong>, or by autopilot if you switch it on for a kind of email.",
+    );
+    expect(page).not.toMatch(/only when you tap <strong>Send reply<\/strong>\./);
     expect(page).not.toMatch(/three things|all three|read, draft, and send/);
   });
 });

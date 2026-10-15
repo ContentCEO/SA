@@ -166,6 +166,50 @@ describe("the demo video script matches the end-to-end journey", () => {
     expect(before).not.toMatch(/Is `gmail\.send` needed\?|Recommended: drop it/);
   });
 
+  it("the live check clears the demo Gmail's old grant first, so gmail.send can't pass it", () => {
+    // messages.send accepts gmail.send, so an old grant would carry the practice copy alone.
+    const before = flat(
+      section("Before submitting (for Davi only; never pasted into Google's form)"),
+    );
+    const clear = before.indexOf(
+      "**The live check starts by clearing the demo Gmail's old access.**",
+    );
+    expect(clear, "the clear-out step").toBeGreaterThan(0);
+    const steps = before.slice(clear);
+    const disconnect = steps.indexOf("Settings → **Disconnect Gmail** → **Yes, disconnect Gmail**");
+    const permissions = steps.indexOf("myaccount.google.com/permissions");
+    const confirm = steps.indexOf("have no `gmail.send`");
+    const send = steps.indexOf("Only then send the practice copy and the real reply.");
+    expect(disconnect, "Disconnect first").toBeGreaterThan(0);
+    expect(permissions, "then Google's page").toBeGreaterThan(disconnect);
+    expect(confirm, "then the new grant has only the two").toBeGreaterThan(permissions);
+    expect(send, "only then the sends").toBeGreaterThan(confirm);
+
+    // Filming comes after the check, and the clear-out before it goes through Squared Away's own
+    // Disconnect (removing access only at Google would put a connected account in reconnect).
+    const start = scriptSteps.indexOf(
+      "**Before recording: check the demo Gmail's Google access.**",
+    );
+    expect(start, "the before-recording note").toBeGreaterThanOrEqual(0);
+    const note = flat(scriptSteps.slice(start, scriptSteps.indexOf("**Before recording Part 1")));
+    expect(note).toContain("The engineers' live check of the two permissions comes first");
+    expect(note).toContain("never film before it");
+    expect(note).toContain("Settings → **Disconnect Gmail** → **Yes, disconnect Gmail**");
+    expect(note).toContain("Don't remove it only at Google while an account still has");
+
+    // The labels and the alert are the app's real ones.
+    const button = readFileSync("src/components/app/disconnect-button.tsx", "utf8");
+    expect(button).toContain("Disconnect Gmail");
+    expect(button).toContain('"Yes, disconnect Gmail"');
+    expect(readFileSync("src/components/app/reconnect-banner.tsx", "utf8")).toContain(
+      "Reconnect Gmail",
+    );
+    expect(readFileSync("src/server/alerts.ts", "utf8")).toContain(
+      '"Squared Away lost access to your Gmail"',
+    );
+    expect(note).toContain('"Squared Away lost access to your Gmail"');
+  });
+
   it("names the closing question wherever it lists the notes the AI writes (#26 is on)", () => {
     const handling = flat(section("Data handling"));
     expect(handling).toContain("deposit or review note or closing question");

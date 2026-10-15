@@ -43,7 +43,8 @@ export default async function ConnectPage(props: PageProps<"/connect">) {
             Write reply drafts and put them in your Gmail Drafts folder, where you can see them too.
           </li>
           <li>
-            Send a reply only when you tap <strong>Send reply</strong>.
+            Send a reply only when you tap <strong>Send reply</strong>, or by autopilot if you
+            switch it on for a kind of email.
           </li>
         </ul>
       </section>
@@ -71,7 +72,8 @@ export default async function ConnectPage(props: PageProps<"/connect">) {
           Google will ask you to allow two things, in its own words:{" "}
           <strong>View your email messages and settings</strong>, and{" "}
           <strong>Manage drafts and send emails</strong>. Leave both ticked. The second one is how a
-          reply goes out, and it still goes out only when you tap <strong>Send reply</strong>.
+          reply goes out, and it still goes out only when you tap <strong>Send reply</strong> (or by
+          autopilot, if you switch it on for a kind of email).
         </p>
         <p className="text-muted-foreground">
           While we&apos;re in early access, Google may also say the app isn&apos;t verified yet —

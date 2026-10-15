@@ -181,11 +181,17 @@ in plain words. Upload it as an unlisted video and paste the link into the verif
   after Part 1 is recorded: Part 2 needs a fresh email to draft, because Dana's was answered in
   Part 1.
 
-**Before recording: check the demo Gmail's Google access.** If the demo Gmail was ever connected
-to Squared Away while the app still asked for `gmail.send`, remove that access first
-(myaccount.google.com/permissions, signed in as the demo account → Squared Away → remove its
-access). Google keeps earlier permissions when an app is connected again, so the old third one
-("Send email on your behalf") could otherwise still be listed next to the two.
+**Before recording: check the demo Gmail's Google access.** The engineers' live check of the two
+permissions comes first and already clears any access the demo Gmail gave while the app still
+asked for `gmail.send` (see "Before submitting"); never film before it. Step 2 starts with no Gmail
+connected, so on every Squared Away account where the demo Gmail is connected, Settings →
+**Disconnect Gmail** → **Yes, disconnect Gmail** (this also removes the access at Google). Then
+open myaccount.google.com/permissions, signed in as the demo account: Squared Away should have no
+Gmail access left, and in particular no "Send email on your behalf" (Google keeps earlier
+permissions when an app is connected again, so an old third one would be listed next to the two).
+If it still has some, remove it there. Don't remove it only at Google while an account still has
+the demo Gmail connected: that account would then show a "Reconnect Gmail" banner on every screen
+and email the demo Gmail "Squared Away lost access to your Gmail", both on camera.
 
 **Before recording Part 1 on the house account** (option A: Davi's own workspace, the only one
 that can send without a Stripe payment; whether to record this way is Davi's decision, see
@@ -375,6 +381,18 @@ production Stripe is still in test mode.
   trial, then a real reply after a test-card payment while Stripe is still in test mode; if either
   fails, `gmail.send` goes back at once. Record the video after that check: it shows the
   permission list.
+- **The live check starts by clearing the demo Gmail's old access.** If the demo Gmail was ever
+  connected while the app still asked for `gmail.send` (the dry run, if it ran before this change
+  went live), that grant still carries it, Google adds it back on a reconnect, and
+  `messages.send` accepts it: the practice copy would go out through `gmail.send` and the check
+  would prove nothing about `gmail.compose`. So, before the practice copy: on every Squared Away
+  account where the demo Gmail is connected, Settings → **Disconnect Gmail** → **Yes, disconnect
+  Gmail** (this also removes the access at Google). Then myaccount.google.com/permissions, signed
+  in as the demo Gmail, must show no Gmail access for Squared Away; if it still does, remove it
+  there (safe now, since no account still uses it). Connect the demo Gmail again and confirm
+  Google kept only the two: that mailbox's saved permissions on production (`mailboxes.scopes`,
+  the permission list only) have no `gmail.send`, and Google's page doesn't list "Send email on
+  your behalf". Only then send the practice copy and the real reply.
 - Verify the production domain in Google Search Console, add it under Google Auth Platform →
   Branding → Authorized domains, and point the homepage, privacy policy and terms links there.
 - Switch Audience → Publishing status to **In production** before real owners connect: in Testing,

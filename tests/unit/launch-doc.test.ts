@@ -375,6 +375,10 @@ describe("LAUNCH.md structure", () => {
     const d = flat(sections0().slice(sections0().indexOf("**0d."), sections0().indexOf("**0e.")));
     expect(d).toContain("shows each of the two Gmail permissions in use");
     expect(d).not.toContain("Still to decide first");
+    // The live check it waits on starts by clearing the demo Gmail's earlier access.
+    expect(d).toContain(
+      "Their check starts by removing the demo Gmail's earlier access to Squared Away",
+    );
   });
 
   it("publishing tells everyone who connected in Testing to reconnect once (old keys still expire)", () => {
@@ -763,6 +767,12 @@ describe("LAUNCH.md structure", () => {
       "Owners who already connected keep working and nobody reconnects",
       "the engineers check it on production with the demo Gmail",
       "put `gmail.send` back at once if either fails",
+      // An old grant still carrying gmail.send would send the practice copy on its own, so the
+      // check clears it first, through Squared Away's own Disconnect (it revokes at Google).
+      "**Before that check they clear the demo Gmail's old access.**",
+      "Settings → **Disconnect Gmail** → **Yes, disconnect Gmail**",
+      "that mailbox's saved permissions (`mailboxes.scopes`) have no `gmail.send`",
+      "Only then the practice copy and the real reply.",
     ]) {
       expect(decided, phrase).toContain(phrase);
     }
