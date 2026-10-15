@@ -127,7 +127,10 @@ describe("the demo video script matches the end-to-end journey", () => {
     const b = r.slice(at);
     // A preview can't sync, draft, take a payment or send after the database split (jobs and
     // Stripe only reach production), so the dry run happens on production (2026-10-15 review).
-    expect(b).toContain("needs Davi's yes and an engineer's dry run on production first");
+    // Davi chose it on 2026-10-15; the dry run on production still comes first.
+    expect(b).toContain(
+      "Davi's choice, 2026-10-15; it still needs an engineer's dry run on production first",
+    );
     expect(b).not.toContain("dry run on a preview");
     expect(b).toContain("Stripe's test card");
     expect(b).toContain("only while production Stripe is still in test mode");

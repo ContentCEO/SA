@@ -3,7 +3,7 @@ import { dirname, join, normalize, relative } from "node:path";
 import { describe, expect, it } from "vitest";
 import { models } from "@/config/models";
 import { GMAIL_SCOPES } from "@/mailbox/gmail/scopes";
-import { SALES_TAX_ON_NOTE } from "@/server/billing-rules";
+import { SALES_TAX_ON_NOTE, TERMS_BOX_OFF_LINE } from "@/server/billing-rules";
 import { sendingOffLabel } from "@/server/lifecycle";
 import { ROOT, sourceFiles, SRC } from "../support/source-ast";
 
@@ -648,10 +648,15 @@ describe("LAUNCH.md structure", () => {
     expect(flat(sections[13]!.body)).toContain("referrer only");
   });
 
-  /** Step 13's three parts: what's decided, what's open, and what Davi still has to hand over. */
+  /**
+   * Step 13's three parts: what's decided (every "### Decided on" list, newest first), what's
+   * open, and what Davi still has to hand over.
+   */
   function step13Parts() {
     const body = sections[13]!.body;
-    const decided = body.indexOf("### Decided on 2026-10-14");
+    const decided = body.indexOf("### Decided on ");
+    expect(body.indexOf("### Decided on 2026-10-15"), "the 2026-10-15 list first").toBe(decided);
+    expect(body.indexOf("### Decided on 2026-10-14")).toBeGreaterThan(decided);
     const open = body.indexOf("### Still open");
     const needed = body.indexOf("### Still needed from you");
     expect(decided, "a Decided part").toBeGreaterThan(0);
@@ -675,13 +680,11 @@ describe("LAUNCH.md structure", () => {
       "Growth",
       "[To confirm]",
       "option A for each",
-      "I agree to the Terms",
       "lawyer",
       "demo video",
       "gmail.send",
       "CASA",
       "Deleted owners",
-      "Option B (new)",
       "Gmail draft check",
       "The homepage's About section",
       "someone in the trades.",
@@ -692,12 +695,10 @@ describe("LAUNCH.md structure", () => {
     // A preview can't read mail, draft, take a payment or send, so the Google checks run on
     // production, never "on a preview".
     expect(open).not.toMatch(/on a preview first|tries it on a preview|try it on a preview/);
-    expect(open).toContain("An engineer tries it once on production first");
     expect(open).toContain("the engineers check it on production with the demo Gmail");
-    // Option B's account can't be reset before the live key (the button needs it).
-    expect(open).toContain(
-      "delete it before step 7, or **Reset test payments** clears it in step 7c",
-    );
+    // Davi asked what gmail.send does (2026-10-15): answered, and still his call.
+    expect(open).toContain("You asked (2026-10-15) whether `gmail.send`");
+    expect(open).toContain("Still your call; nothing changes until you say so.");
     expect(open).not.toContain("reset or deleted before Stripe goes live");
     // The About wording ships with the merge, so step 1 points at the question.
     expect(flat(sections.find((s) => s.n === 1)!.body)).toContain("The homepage's About section");
@@ -732,6 +733,62 @@ describe("LAUNCH.md structure", () => {
     const features = readFileSync(join(ROOT, "src/config/features.ts"), "utf8");
     expect(features).toContain("Turned on by Davi 2026-10-14");
     expect(features).not.toMatch(/closing[^\n]*ASK DAVI/i);
+  });
+
+  it("Davi's 2026-10-15 decisions (the 'I agree' boxes, demo option B) are recorded as decided", () => {
+    const { decided, open } = step13Parts();
+    for (const phrase of [
+      '"I agree to the Terms": yes, built',
+      "Kauders v. Uber",
+      "Good v. Uber",
+      "**Agree and continue**",
+      "[Add your terms link in Stripe now](#add-your-terms-link-in-stripe-now)",
+      "**Demo video: option B**",
+      "An engineer tries it once on production first",
+      // Option B's account can't be reset before the live key (the button needs it).
+      "delete it before step 7, or **Reset test payments** clears it in step",
+    ]) {
+      expect(decided, phrase).toContain(phrase);
+    }
+    for (const settled of [
+      "needs your yes",
+      "Option B (new)",
+      "Which account records the send part",
+    ])
+      expect(open, settled).not.toContain(settled);
+    // The screens say what the doc says.
+    expect(readFileSync(join(ROOT, "src/app/welcome/terms/page.tsx"), "utf8")).toContain(
+      'submitLabel="Agree and continue"',
+    );
+    expect(readFileSync(join(ROOT, "src/server/terms-rules.ts"), "utf8")).toContain(
+      'heavy: "the fine print."',
+    );
+  });
+
+  it("the Stripe terms link is a step now and in live mode, checked by the /admin line", () => {
+    const now = flat(
+      launch.slice(
+        launch.indexOf("## Add your terms link in Stripe now"),
+        launch.indexOf("## 0. Start now"),
+      ),
+    );
+    const line = TERMS_BOX_OFF_LINE;
+    for (const text of [
+      "Stripe → Settings → Business → **Public details**",
+      "`https://<production address>/terms`",
+      "`https://<production address>/privacy`",
+      "Worked when:",
+    ])
+      expect(now, text).toContain(text);
+    expect(now).toContain(flat(line));
+    const d = flat(
+      sections[7]!.body.slice(
+        sections[7]!.body.indexOf("**7d."),
+        sections[7]!.body.indexOf("**7e."),
+      ),
+    );
+    expect(d).toContain("Settings → Business → **Public details**");
+    expect(d).toContain(flat(line));
   });
 
   it("the referral amount options are listed, with the ones that need more code marked", () => {

@@ -1128,10 +1128,11 @@ default, CI too) and refuses a non-local `DATABASE_URL` or an `APP_URL` that isn
     claims allowed, no arbitration). New open question: assent. Stripe Checkout
     `consent_collection.terms_of_service = "required"` (terms URL in Stripe's public details) and
     an "I agree" checkbox at sign-in for trial users (Kauders v. Uber 2021, Good v. Uber 2024):
-    code changes that need Davi's yes. Lawyer review about $750–$2,500 (Boston Bar referral: 30
+    code changes that need Davi's yes (yes on 2026-10-15, built: "I agree" boxes below). Lawyer review about $750–$2,500 (Boston Bar referral: 30
     minutes for $25 at most); questions on an LLC, insurance and "no contract". `docs/terms.md`
     wording is unchanged.
-  - **Google review: still open, two questions.** (a) Demo account: option A (house account with
+  - **Google review: still open, two questions** ((a) decided 2026-10-15: option B, below).
+    (a) Demo account: option A (house account with
     the demo Gmail swapped in, as google-verification.md describes) or **option B** (new: a
     separate demo account invited from `/admin`, paid with Stripe's test card while production
     Stripe is in test mode so `setup_paid_via = 'stripe'` lets it send; nothing of Davi's touched;
@@ -1166,6 +1167,73 @@ default, CI too) and refuses a non-local `DATABASE_URL` or an `APP_URL` that isn
   - **Homepage:** "Big words", replaying every time (scroll into Growth and every tap on a
     `#growth` link from the app side). Built on `claude/growth-page`, merged into this branch; the
     details are under "Squared Away Growth" above.
+- **"I agree" boxes (Davi, 2026-10-15: "add those in"; branch `claude/squared-away-mvp-ddxl7s`,
+  on top of PR #10):** Massachusetts' SJC enforces online terms only with clear notice and clear
+  assent (Kauders v. Uber 2021); a checkbox plus a button with the terms linked was enough in Good
+  v. Uber (2024).
+  - `TERMS_VERSION` (`src/config/legal.ts`) = the terms' "Last updated" date as YYYY-MM-DD
+    (`2026-10-15`); a unit test keeps it equal to both docs' dates. **Bump it with the docs**:
+    everyone is asked again on their next screen. Migration 0027 (additive): `users.terms_accepted_at`
+    / `users.terms_version` (latest acceptance only; no history). Goes with the user row on Delete
+    my account (cascade). Rules in `src/server/terms-rules.ts` (pure), DB in `src/server/terms.ts`.
+  - **Sign-in:** `/signin` renders `TermsForm` (`src/components/app/terms-form.tsx`, client,
+    `useActionState`): an unticked box (no `required`: the server is the gate) + Sign in with
+    Google → `signInWithGoogleAction` (`src/app/signin/actions.ts`, public). Without
+    `agree=yes` → plain error, focus moves to the box. With it → cookie `sa_terms_agreed` =
+    TERMS_VERSION (httpOnly, SameSite=Lax, Secure in production, path `/api/auth`, 10 min) →
+    `signIn("google")`. Auth.js's jwt callback (sign-in only) calls `takeSignInAgreement`: records
+    the acceptance when the cookie names the current version, deletes it either way, never fails
+    sign-in.
+  - **Every signed-in screen:** `requireOwner()` / `requireAdmin()` (after the non-admin 404)
+    redirect anyone without the current version to `/welcome/terms?next=<path>` ("one thing
+    first, the fine print." first time; "we've updated our terms." after a bump; Agree and
+    continue; Sign out; "Don't agree?" points to the phone to cancel or delete). The page is
+    `src/app/welcome/terms` (outside the (app) layout, whose nav would loop) and uses
+    `requireSignedIn()` (signed in + workspace, no terms; only that page and its action may use it,
+    static test). `agreeToTermsAction` re-checks the box server-side and redirects to
+    `safeNextPath(next)` (one leading `/`, then no `/` or backslash; no backslash, whitespace or
+    control characters anywhere; same-origin by URL parse; never `/welcome/terms` or `/api`;
+    ≤1000 chars; else `/queue`; both reads are reviewed exceptions in the C4 test). **Where they were going** comes from
+    `src/proxy.ts` (Next 16's middleware): on the signed-in paths only (a test checks every
+    `(app)` folder is in its matcher) it overwrites the request header `x-sa-request-path` with
+    the path + query (minus `_rsc`); `requireOwner` reads it through `safeNextPath`. It checks
+    and blocks nothing.
+  - **API routes** that read the session (`/api/badge`, `/api/push/summary`,
+    `/api/drafts/[id]/send`, `/api/gmail/callback`) answer **403** `TERMS_REQUIRED_API_MESSAGE`
+    (never a redirect) right after the 401 check, before any limit, send or Google code exchange
+    (C3 test). The badge leaves the icon as it is on 403; the service worker shows its generic
+    line. Background jobs keep running for accounts that haven't agreed (the gate is on the
+    person, not the mailbox), so an owner who won't agree can't cancel in-app: the screen says
+    to call.
+  - **Stripe Checkout:** `createCheckout` adds `consent_collection.terms_of_service = "required"`
+    and `custom_text.terms_of_service_acceptance` ("I agree to the [Terms of Service](APP_URL/terms)
+    and the [Privacy Policy](APP_URL/privacy)."). Stripe refuses that until a Terms of Service URL
+    is saved in Dashboard → Settings → Business → Public details; its docs say so but don't print
+    the error, so `isTermsUrlMissingError` (`stripe-error-rules.ts`) = a
+    `StripeInvalidRequestError` whose `param` starts `consent_collection`, or whose message names
+    the terms of service and a URL / public details (**not checked live**: no Stripe key in the
+    sandbox). Then: `console.warn("stripe_terms_url_missing", { workspaceId })`, the same session
+    again without the two keys, and `app_settings` `stripe_terms_box_off` (time) → /admin Payments
+    shows `TERMS_BOX_OFF_LINE`; a later checkout with the box deletes it. Writing the note never
+    fails a checkout. Any other Stripe error (or a refusal of the retry) goes up as before; no
+    third try; no Stripe call on page load.
+  - Docs: LAUNCH.md "Add your terms link in Stripe now" (test mode) and 7d (live mode), both
+    with the admin line as the check; step 13 "Decided on 2026-10-15"; privacy policy: "When you
+    agree to our terms" (time + version), the short-lived sign-in cookie, and retention (until
+    Delete my account). `docs/terms.md` text unchanged; both docs stay dated October 15, 2026.
+  - e2e: `signInAs(context, owner)` marks the user as agreed (current version) unless
+    `{ agreedToTerms: false }`; `tests/e2e/terms.spec.ts` covers the sign-in box (error + focus,
+    stays on /signin; with it, Google's routed consent and the cookie), the hold on
+    /welcome/terms (screens redirect, `/api/badge` 403, agree → back to the screen), the
+    "updated" wording, Sign out and a foreign `next`.
+- **Google demo video: option B (Davi, 2026-10-15: "just do b"):** a separate demo account
+  invited from `/admin`, paid with Stripe's test card while production Stripe is in test mode; an
+  engineer's dry run on production first; delete it before step 7 or Reset test payments clears it
+  in 7c. LAUNCH.md 0d / step 13 and google-verification.md updated (the demo script's sign-in step
+  now ticks the box). Dropping `gmail.send` stays **open**: Davi asked whether it is what keeps
+  replies from going out by accident; answered in LAUNCH.md step 13 (no: the approval is the app's
+  own Send reply rule; `gmail.compose` already sends approved replies; `gmail.send` only carries
+  trial practice copies today). Not decided.
 
 ## Milestones
 
@@ -1189,8 +1257,8 @@ default, CI too) and refuses a non-local `DATABASE_URL` or an `APP_URL` that isn
 ## Waiting on Davi
 
 - **The launch checklist is `docs/LAUNCH.md`** (in order, where to click, how to know it worked,
-  and every open decision in its step 13, split into "Decided on 2026-10-14", "Still open" and
-  "Still needed from you"). The items below are the same list in engineering words.
+  and every open decision in its step 13, split into "Decided on 2026-10-15", "Decided on
+  2026-10-14", "Still open" and "Still needed from you"). The items below are the same list in engineering words.
 - **Neon plan (urgent, this week):** check Neon → Billing and production's Usage box; on Free the
   5-minute poll likely uses up the 100 CU-hours mid-period and pauses production. Launch is about
   $19–20 a month (LAUNCH.md "Check your Neon plan now"). His money decision.
@@ -1219,14 +1287,19 @@ default, CI too) and refuses a non-local `DATABASE_URL` or an `APP_URL` that isn
   `runDraftMessagesCleanup` (`markRecordedSends`) relabels every matched row DRAFT → SENT, so the
   count always reads 0 DRAFT.
 - **Terms (open; Davi reads later):** the three `[To confirm]` items (recommended option A for
-  each, in LAUNCH.md step 13); the new assent question (Stripe Checkout terms checkbox +
-  "I agree" at sign-in for trial users, code changes that need his yes); a lawyer's review of both
-  legal drafts (questions: LLC, insurance, "no contract" wording).
-- **Google review (open):** (a) demo account, option A (house account, demo Gmail swapped in) or
-  option B (separate demo account on Stripe's test card; needs an engineer's dry run on
-  production first, while Stripe is in test mode — a preview can't sync, draft, pay or send);
-  (b) drop `gmail.send` (recommended yes; small code change; checked live on production right
-  after it ships). Both before filming. CASA: nothing to pay until Google's email names the level.
+  each, in LAUNCH.md step 13); a lawyer's review of both legal drafts (questions: LLC, insurance,
+  "no contract" wording). The assent question is decided and built (2026-10-15, "I agree" boxes
+  above).
+- **Stripe terms link (his, now):** Stripe → Settings → Business → Public details → Terms of
+  service URL `https://<production address>/terms` and Privacy policy URL `.../privacy` (test
+  mode now, checked again in live mode at LAUNCH.md 7d). Until then checkout runs without the box
+  and /admin → Payments says "Terms box at checkout: off. …".
+- **Google review (open):** (a) decided 2026-10-15: option B (separate demo account on Stripe's
+  test card; needs an engineer's dry run on production first, while Stripe is in test mode — a
+  preview can't sync, draft, pay or send); (b) drop `gmail.send`: still open (recommended yes;
+  small code change; checked live on production right after it ships). Davi asked what it does
+  (2026-10-15); the plain answer is in LAUNCH.md step 13. Decide (b) before filming. CASA:
+  nothing to pay until Google's email names the level.
 - **Homepage About section wording (changed 2026-10-15, ships with the merge):** now "someone in
   the trades." / "It began as the tool for A&C Construction's own inbox." (no "builder", no
   pronouns). Davi may want other words (LAUNCH.md step 13). Separate from his photo and license
@@ -1257,7 +1330,9 @@ default, CI too) and refuses a non-local `DATABASE_URL` or an `APP_URL` that isn
   owners on the same business domain never count; public webmail like gmail.com is exempt). Before turning it on, add the referral-fingerprint line to the privacy policy (the
   "Privacy policy line for #47" item below; docs/SETUP.md §6d), and don't rotate `AUTH_SECRET` once
   referrals have been paid (the "paid once" fingerprint is salted with it). Then set the switch
-  (docs/SETUP.md §6d). Referrals that go active while it's off are never paid later.
+  (docs/SETUP.md §6d). Referrals that go active while it's off are never paid later. **Still
+  open (2026-10-15):** Davi asked for offer ideas that let an owner try another plan for a month
+  (to get them interested); no offer is picked or built yet.
 - **PDF quotes (#28/#30):** a quote sent only as an attachment ("Quote attached", no `$` in the
   email) never counts as a price given, so "Let's do it" isn't auto-marked Won, isn't in the close
   rate until he taps Won, and gets no deposit draft. Conservative on purpose (a site visit isn't a

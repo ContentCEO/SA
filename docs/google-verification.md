@@ -219,9 +219,10 @@ that can send without a Stripe payment; whether to record this way is Davi's dec
 **Part 1 — a business that can send** (the demo Gmail connected to Davi's house account; with
 option B, the separate demo account after its test-card payment):
 
-1. **Sign in.** Open the production site, tap Sign in and sign in as Davi (the `ADMIN_EMAIL`
-   account; the house account is his), or with option B as the demo Gmail's own Google account.
-   Point out that sign-in asks only for name and email.
+1. **Sign in.** Open the production site, tap Sign in, tick "I agree to the Terms of Service and
+   the Privacy Policy" and sign in as Davi (the `ADMIN_EMAIL` account; the house account is his),
+   or with option B as the demo Gmail's own Google account. Point out that sign-in asks only for
+   name and email.
 2. **Settings → Connect Gmail.** Show that no Gmail is connected yet and tap Connect Gmail.
 3. **The explainer.** Scroll the "before you connect" screen, including "What it won't do", then
    tap Connect Gmail.
@@ -308,7 +309,7 @@ written. Their account is on the three-day trial, so sending to customers is blo
 practice copies to themselves, and Davi can give them more days from `/admin` (Give 3 more days).
 
 **For Davi (not pasted into Google's form).** How to show the send part is **Davi's decision** (it
-is listed for him in the launch checklist, step 13; still open on 2026-10-14). Google's page asks
+is listed for him in the launch checklist, step 13; he chose option B on 2026-10-15). Google's page asks
 the video to show what each permission is used for; it doesn't say a send must be filmed, but the
 app sends replies with `gmail.compose`, so filming one is the safer choice. A trial account can't
 send. Two kinds of account can send without real money today: the house account (his own
@@ -324,7 +325,7 @@ production Stripe is still in test mode.
   counts, price memory, quote and invoice marks); reconnecting afterwards reads only the last 30
   days again; and his writing style is re-learned from the demo mailbox, then from his own mail
   again. This costs least if it is recorded before his own mailbox's history matters.
-- **Option B** (new, 2026-10-14; needs Davi's yes and an engineer's dry run on production first):
+- **Option B** (Davi's choice, 2026-10-15; it still needs an engineer's dry run on production first):
   a separate demo-only account. Invite the demo Gmail in `/admin` → Invite an owner (while the
   app is still in Testing, also add it as a Google test user; after publishing it uses one of the
   100 places). It signs in as its own account and connects the demo Gmail, so nothing of Davi's is
