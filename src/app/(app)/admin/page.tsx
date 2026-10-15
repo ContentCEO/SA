@@ -27,8 +27,14 @@ import {
   setPlanAction,
 } from "./actions";
 import { PendingButton } from "@/components/app/pending-button";
-import { salesTaxStatus, stripeConfigured, stripeConnectedAt, stripeMode } from "@/server/billing";
-import { SALES_TAX_LINES, SALES_TAX_ON_NOTE } from "@/server/billing-rules";
+import {
+  salesTaxStatus,
+  stripeConfigured,
+  stripeConnectedAt,
+  stripeMode,
+  termsBoxOffSince,
+} from "@/server/billing";
+import { SALES_TAX_LINES, SALES_TAX_ON_NOTE, TERMS_BOX_OFF_LINE } from "@/server/billing-rules";
 import { stripeReasonText } from "@/server/stripe-error-rules";
 import { lastTestPaymentsResult } from "@/server/test-payments";
 import {
@@ -430,7 +436,7 @@ export default async function AdminPage(props: PageProps<"/admin">) {
   // Test payments can only be told apart with the live key. The counts come from the last check
   // (database only): a plain page load asks Stripe nothing new.
   const live = stripeConfigured() && stripeMode() === "live";
-  const [rows, total, invited, waiting, stripeAt, system, salesTax, testPayments] =
+  const [rows, total, invited, waiting, stripeAt, system, salesTax, testPayments, termsBoxOff] =
     await Promise.all([
       adminOverview(now),
       countWorkspaces(),
@@ -440,6 +446,8 @@ export default async function AdminPage(props: PageProps<"/admin">) {
       systemHealth(now),
       salesTaxStatus(),
       live ? lastTestPaymentsResult() : null,
+      // Database only: set by the last checkout that had to go without the terms box.
+      termsBoxOffSince(),
     ]);
   // Payment messages show inside the Payments section (the page scrolls there), not at the top.
   const isStripe = (k: unknown) => typeof k === "string" && k.startsWith("stripe");
@@ -533,6 +541,11 @@ export default async function AdminPage(props: PageProps<"/admin">) {
               </p>
               {salesTax ? <p>{SALES_TAX_LINES[salesTax]}</p> : null}
               {salesTax === "on" ? <p>{SALES_TAX_ON_NOTE}</p> : null}
+              {termsBoxOff ? (
+                <p className="font-semibold">
+                  {TERMS_BOX_OFF_LINE} (Last checkout without it: {et.format(termsBoxOff)}.)
+                </p>
+              ) : null}
               <p>
                 Sets up the four prices from the price list, the customer billing page, and the
                 payment notifications that switch accounts on and off. Takes about 10 seconds. Safe

@@ -61,6 +61,14 @@ export const SALES_TAX_ON_NOTE =
 export const SALES_TAX_NOTE = "Plus sales tax where it applies.";
 
 /**
+ * The /admin Payments line when a checkout had to go without Stripe's "I agree" box (Davi,
+ * 2026-10-15): Stripe needs the terms link saved in its dashboard first. Shown until a later
+ * checkout has the box again.
+ */
+export const TERMS_BOX_OFF_LINE =
+  "Terms box at checkout: off. Add your terms link in Stripe → Settings → Business → Public details.";
+
+/**
  * Which Stripe account mode a secret key talks to: live for `sk_live_` / `rk_live_` (standard or
  * restricted), test for anything else that's set, null when unset. The one place that decides it.
  */
