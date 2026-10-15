@@ -91,7 +91,9 @@ The browser tests drive the real app (`pnpm start`, the production build) agains
 Google sign-in consent, Gmail and the Anthropic API (`tests/e2e/fakes`), so the whole journey —
 Connect Gmail, reading mail, sorting, a Gmail draft, Send reply — runs with nothing leaving the
 machine. Sign-in itself is skipped by minting the Auth.js session cookie with `AUTH_SECRET`
-(`tests/e2e/support.ts`).
+(`tests/e2e/support.ts`). The fake Gmail answers a call only if the token it issued carries a
+scope Google accepts for that method (copied from Google's API reference into
+`tests/e2e/fakes/server.ts`), so the journey proves the two scopes the app asks for are enough.
 
 `playwright.config.ts` sets these four variables itself, only for the app server it starts. Don't
 put them in `.env.local`, and **never** set them on Vercel:
@@ -468,7 +470,13 @@ Registered today: production `https://sa-dac3.vercel.app` and the working-branch
 `http://localhost:3000/api/auth/callback/google` and `http://localhost:3000/api/gmail/callback`
 (the browser tests don't need them: they never talk to Google).
 
-The Gmail API must be enabled. While the app's publishing status (Google Auth Platform →
+The Gmail API must be enabled. Connect Gmail asks for exactly two Gmail scopes,
+`https://www.googleapis.com/auth/gmail.readonly` and `https://www.googleapis.com/auth/gmail.compose`
+(`src/mailbox/gmail/scopes.ts`; `gmail.send` was dropped on 2026-10-15, since `gmail.compose`
+already covers both `drafts.send` and `messages.send`). Google Auth Platform → Data Access should
+list those two and nothing else from Gmail (`docs/LAUNCH.md` step 0e). Owners who connected while
+the app still asked for `gmail.send` keep it in their grant; that's harmless, and a grant missing
+either of the two is refused and revoked. While the app's publishing status (Google Auth Platform →
 Audience) is **Testing**, each owner must be added there as a test user (at most 100), and Google's
 refresh tokens for Gmail scopes expire after 7 days, so every owner has to reconnect weekly. Switch
 it to **In production** before real owners connect; until Google's verification passes, owners see

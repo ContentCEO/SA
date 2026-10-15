@@ -106,7 +106,9 @@ default, CI too) and refuses a non-local `DATABASE_URL` or an `APP_URL` that isn
 - **Sign-in and Gmail are two separate OAuth consents.** Auth.js asks only `openid email profile`;
   Gmail scopes are requested by our own flow after the explainer screen. Same Google client, two
   redirect URIs. Gives us full control of the refresh token and the "missing scope" handling.
-- If Google's granular consent returns fewer than all three Gmail scopes, we revoke and save nothing.
+- If Google's granular consent returns fewer than both Gmail scopes (`gmail.readonly` +
+  `gmail.compose`), we revoke and save nothing. A grant with more than we asked for (an older
+  connection's `gmail.send`, which `include_granted_scopes=true` brings back) is accepted.
 - Connect uses `prompt=consent` + `access_type=offline` so a refresh token always comes back.
 - OAuth `state`: random 32 bytes in an httpOnly, SameSite=Lax cookie scoped to `/api/gmail`,
   10-minute TTL, compared in constant time.
@@ -1131,7 +1133,8 @@ default, CI too) and refuses a non-local `DATABASE_URL` or an `APP_URL` that isn
     code changes that need Davi's yes (yes on 2026-10-15, built: "I agree" boxes below). Lawyer review about $750–$2,500 (Boston Bar referral: 30
     minutes for $25 at most); questions on an LLC, insurance and "no contract". `docs/terms.md`
     wording is unchanged.
-  - **Google review: still open, two questions** ((a) decided 2026-10-15: option B, below).
+  - **Google review: both questions decided 2026-10-15** ((a) option B; (b) `gmail.send`
+    dropped and built; both below).
     (a) Demo account: option A (house account with
     the demo Gmail swapped in, as google-verification.md describes) or **option B** (new: a
     separate demo account invited from `/admin`, paid with Stripe's test card while production
@@ -1139,7 +1142,8 @@ default, CI too) and refuses a non-local `DATABASE_URL` or an `APP_URL` that isn
     delete it before step 7 or let Reset test payments clear it in 7c — the button only exists
     with the live key — after which it can't send, so a re-recording of a send needs option A or
     a real card; needs an engineer's dry run on **production** first with the demo Gmail while
-    Stripe is in test mode). (b) Drop `gmail.send`: recommended yes (`users.drafts.send`
+    Stripe is in test mode). (b) Drop `gmail.send` (decided yes 2026-10-15, built; see "Gmail
+    scopes: two" below): recommended yes (`users.drafts.send`
     accepts only mail.google.com / gmail.modify / gmail.compose; `users.messages.send` also takes
     gmail.compose; doesn't avoid CASA; small change, no reconnect since `mailboxes.scopes` is
     never read after connect; not tried live: checked on production with the demo Gmail right
@@ -1251,10 +1255,32 @@ default, CI too) and refuses a non-local `DATABASE_URL` or an `APP_URL` that isn
   invited from `/admin`, paid with Stripe's test card while production Stripe is in test mode; an
   engineer's dry run on production first; delete it before step 7 or Reset test payments clears it
   in 7c. LAUNCH.md 0d / step 13 and google-verification.md updated (the demo script's sign-in step
-  now ticks the box). Dropping `gmail.send` stays **open**: Davi asked whether it is what keeps
+  now ticks the box). Dropping `gmail.send` was still open then (decided yes later that day, see
+  "Gmail scopes: two" below): Davi asked whether it is what keeps
   replies from going out by accident; answered in LAUNCH.md step 13 (no: the approval is the app's
   own Send reply rule; `gmail.compose` already sends approved replies; `gmail.send` only carries
-  trial practice copies today). Not decided.
+  trial practice copies today).
+- **Gmail scopes: two (Davi, 2026-10-15: "remove the gmail.send permission"):** Connect asks
+  for exactly `gmail.readonly` + `gmail.compose` (`src/mailbox/gmail/scopes.ts`). Google's API
+  reference (discovery doc revision 20261012, read 2026-10-15): `users.drafts.send` and
+  `users.messages.send` both accept `gmail.compose`; `gmail.send` alone can't send a draft;
+  `gmail.readonly` and `gmail.compose` are restricted (CASA still required). Owners who connected
+  before keep their grant (it carries `gmail.send`, and `include_granted_scopes=true` brings it
+  back on a reconnect): nothing reads `mailboxes.scopes` after connect, so they keep working and
+  nobody reconnects. `missingScopes` only refuses a missing scope, never an extra one (unit tests
+  in `gmail-connector.test.ts`; the callback in `gmail-connect-callback.test.ts`: either one
+  unticked → revoke, no row, no trial clock; a reconnect leaves the saved row untouched).
+  Copy uses Google's consent wording: "View your email messages and settings" (readonly),
+  "Manage drafts and send emails" (compose); the `/connect` explainer adds that a reply still goes
+  out only on **Send reply**. The privacy policy says older connections may still show "Send
+  email on your behalf" at Google until they disconnect. **The e2e Gmail fake enforces scopes**
+  (`GMAIL_METHOD_SCOPES` in `tests/e2e/fakes/server.ts`, copied from the discovery doc): the
+  token carries what the consent page allowed (`registerScenario(..., { untick, earlier })`),
+  each call needs one accepted scope or gets Google's 403 `insufficientPermissions` (recorded as
+  `insufficientScope`), a code needs a consent first, and a revoke ends the grant. full-flow
+  asserts the consent asked for exactly the two, the token carried exactly those and nothing was
+  refused, so the reply (`drafts.send`) and the practice copy (`messages.send`) are proven with
+  the two scopes. Not yet tried live: checked on production right after it ships.
 
 ## Milestones
 
@@ -1317,12 +1343,13 @@ default, CI too) and refuses a non-local `DATABASE_URL` or an `APP_URL` that isn
   then; checked again in live mode at LAUNCH.md 7d). The checkout box and the /admin line
   ("Terms box at checkout: off. …") only exist once the second merge
   (`claude/squared-away-mvp-ddxl7s`) is deployed.
-- **Google review (open):** (a) decided 2026-10-15: option B (separate demo account on Stripe's
+- **Google review:** (a) decided 2026-10-15: option B (separate demo account on Stripe's
   test card; needs an engineer's dry run on production first, while Stripe is in test mode — a
-  preview can't sync, draft, pay or send); (b) drop `gmail.send`: still open (recommended yes;
-  small code change; checked live on production right after it ships). Davi asked what it does
-  (2026-10-15); the plain answer is in LAUNCH.md step 13. Decide (b) before filming. CASA:
-  nothing to pay until Google's email names the level.
+  preview can't sync, draft, pay or send); (b) decided 2026-10-15: `gmail.send` dropped (built,
+  ships with the second merge). **His console step:** Google Auth Platform → Data Access → remove
+  `gmail.send` before submitting (LAUNCH.md 0e). Engineers: right after it goes live, a practice
+  copy and a real reply (test card) on production with the demo Gmail, before filming; put it back
+  at once if either fails. CASA: nothing to pay until Google's email names the level.
 - **Homepage About section wording (changed 2026-10-15, ships with the merge):** now "someone in
   the trades." / "It began as the tool for A&C Construction's own inbox." (no "builder", no
   pronouns). Davi may want other words (LAUNCH.md step 13). Separate from his photo and license

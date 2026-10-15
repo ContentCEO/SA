@@ -9,6 +9,10 @@
  * the jobs run through /api/test-hooks/run (the same functions Inngest calls), and every gate
  * runs as in production. Each step title maps to a step of the Google verification demo-video
  * script (docs/google-verification.md; tests/unit/verification-doc.test.ts keeps the two in step).
+ *
+ * The fake Gmail answers each call only if the token carries a scope Google accepts for it, so
+ * these journeys prove the two scopes the app asks for (gmail.readonly and gmail.compose, since
+ * 2026-10-15) are enough to read, draft, send the reply and send the practice copy.
  */
 import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
 import { and, count, desc, eq } from "drizzle-orm";
@@ -22,7 +26,7 @@ import {
 } from "../../src/server/lifecycle";
 import { calls, registerScenario, routeGoogleConsent, runHook } from "./fakes/client";
 import { FAKE_CLASSIFICATION, fakeCustomer } from "./fakes/outputs";
-import type { FakeCall } from "./fakes/server";
+import { CONNECT_SCOPES, GMAIL_SCOPES, type FakeCall } from "./fakes/server";
 import {
   latestDraft,
   mailboxFor,
@@ -66,10 +70,14 @@ async function connectGmail(page: Page, owner: Owner, scenario: Scenario) {
     await page.getByRole("button", { name: "Connect Gmail" }).click();
   });
 
-  await test.step("Google's consent screen lists the three Gmail permissions; the owner taps Allow", async () => {
+  await test.step("Google's consent screen lists the two Gmail permissions; the owner taps Allow", async () => {
     const asked = page.getByRole("list", { name: "Requested access" });
-    for (const scope of ["gmail.readonly", "gmail.compose", "gmail.send"])
-      await expect(asked).toContainText(`https://www.googleapis.com/auth/${scope}`);
+    const gmail = asked.getByRole("listitem").filter({ hasText: "/auth/gmail." });
+    await expect(gmail).toHaveText([
+      "https://www.googleapis.com/auth/gmail.readonly",
+      "https://www.googleapis.com/auth/gmail.compose",
+    ]);
+    await expect(asked).not.toContainText("gmail.send");
     await page.getByRole("link", { name: "Allow" }).click();
   });
 
@@ -150,6 +158,18 @@ function expectCoverage(all: FakeCall[], scenario: Scenario, blocked: string[]) 
   const grants = only(all, "token").map((c) => c.grantType);
   expect(grants).toContain("authorization_code");
   expect(grants).toContain("refresh_token");
+  // The consent request asked for exactly the two Gmail scopes (no gmail.send), the token
+  // carried exactly those, and the fake Gmail refused nothing for want of a scope.
+  const sorted = (xs: string[] | undefined) => [...(xs ?? [])].sort();
+  const consent = only(all, "consent");
+  expect(consent.length).toBeGreaterThan(0);
+  for (const c of consent) expect(sorted(c.scopes)).toEqual(sorted(CONNECT_SCOPES));
+  expect(GMAIL_SCOPES).toEqual([
+    "https://www.googleapis.com/auth/gmail.readonly",
+    "https://www.googleapis.com/auth/gmail.compose",
+  ]);
+  for (const t of only(all, "token")) expect(sorted(t.scopes)).toEqual(sorted(CONNECT_SCOPES));
+  expect(all.filter((c) => c.insufficientScope)).toEqual([]);
   for (const route of [
     "consent",
     "userinfo",

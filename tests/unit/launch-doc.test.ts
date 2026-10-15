@@ -358,12 +358,23 @@ describe("LAUNCH.md structure", () => {
     expect(heads[invite]!.when).toContain("Google's email names the address");
   });
 
-  it("the submission adds the three Gmail scopes on Data Access if they aren't listed", () => {
+  it("the submission adds the two Gmail scopes on Data Access if they aren't listed, and removes gmail.send", () => {
     const google = flat(sections[0]!.body);
     expect(google).toContain("**Add or remove scopes**");
     expect(google).toContain('"Manually add scopes"');
+    expect(Object.values(GMAIL_SCOPES)).toHaveLength(2);
     for (const scope of Object.values(GMAIL_SCOPES))
       expect(google, scope).toContain(`\`${scope}\``);
+    // Dropped on 2026-10-15: it isn't pasted, it's removed from Data Access before submitting.
+    const e = flat(sections0().slice(sections0().indexOf("**0e."), sections0().indexOf("**0f.")));
+    expect(e).not.toContain("`https://www.googleapis.com/auth/gmail.send`");
+    expect(e).toContain("**Remove `gmail.send` first**");
+    expect(e).toContain("and no `gmail.send`");
+    expect(e).toContain("nobody has to reconnect");
+    // The video step shows the two, and no longer waits on a decision.
+    const d = flat(sections0().slice(sections0().indexOf("**0d."), sections0().indexOf("**0e.")));
+    expect(d).toContain("shows each of the two Gmail permissions in use");
+    expect(d).not.toContain("Still to decide first");
   });
 
   it("publishing tells everyone who connected in Testing to reconnect once (old keys still expire)", () => {
@@ -681,8 +692,6 @@ describe("LAUNCH.md structure", () => {
       "[To confirm]",
       "option A for each",
       "lawyer",
-      "demo video",
-      "gmail.send",
       "CASA",
       "Deleted owners",
       "Gmail draft check",
@@ -695,10 +704,6 @@ describe("LAUNCH.md structure", () => {
     // A preview can't read mail, draft, take a payment or send, so the Google checks run on
     // production, never "on a preview".
     expect(open).not.toMatch(/on a preview first|tries it on a preview|try it on a preview/);
-    expect(open).toContain("the engineers check it on production with the demo Gmail");
-    // Davi asked what gmail.send does (2026-10-15): answered, and still his call.
-    expect(open).toContain("You asked (2026-10-15) whether `gmail.send`");
-    expect(open).toContain("Still your call; nothing changes until you say so.");
     expect(open).not.toContain("reset or deleted before Stripe goes live");
     // The About wording ships with the merge, so step 1 points at the question.
     expect(flat(sections.find((s) => s.n === 1)!.body)).toContain("The homepage's About section");
@@ -750,6 +755,14 @@ describe("LAUNCH.md structure", () => {
       "An engineer tries it once on production first",
       // Option B's account can't be reset before the live key (the button needs it).
       "delete it before step 7, or **Reset test payments** clears it in step",
+      // gmail.send dropped (the 2026-10-15 decision), with the console step and the live check.
+      "**Drop `gmail.send`: yes, built**",
+      '"View your email messages and settings" (`gmail.readonly`)',
+      '"Manage drafts and send emails" (`gmail.compose`)',
+      "Google Auth Platform → Data Access before you submit",
+      "Owners who already connected keep working and nobody reconnects",
+      "the engineers check it on production with the demo Gmail",
+      "put `gmail.send` back at once if either fails",
     ]) {
       expect(decided, phrase).toContain(phrase);
     }
@@ -757,8 +770,14 @@ describe("LAUNCH.md structure", () => {
       "needs your yes",
       "Option B (new)",
       "Which account records the send part",
+      "gmail.send",
+      "Still your call; nothing changes until you say so.",
     ])
       expect(open, settled).not.toContain(settled);
+    // A preview can't send, so the live check is on production, never "on a preview".
+    expect(decided).not.toMatch(/on a preview first|tries it on a preview|try it on a preview/);
+    // True of the code: two scopes, no gmail.send.
+    expect(Object.values(GMAIL_SCOPES).join(" ")).not.toContain("gmail.send");
     // The screens say what the doc says.
     expect(readFileSync(join(ROOT, "src/app/welcome/terms/page.tsx"), "utf8")).toContain(
       'submitLabel="Agree and continue"',

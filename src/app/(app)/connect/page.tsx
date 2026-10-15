@@ -10,7 +10,7 @@ const errors: Record<string, string> = {
   busy: "That's a lot in a short time, so we've paused it for a bit. Try again in a few minutes.",
   denied: "No problem — Gmail wasn't connected. You can connect it whenever you're ready.",
   scopes:
-    "Google let you untick some permissions, and Squared Away needs all three to work: read, draft, and send. Nothing was saved. Try again and leave them all ticked.",
+    "Google let you untick a permission, and Squared Away needs both to work: “View your email messages and settings” and “Manage drafts and send emails.” Nothing was saved. Try again and leave both ticked.",
   expired: "That took a little long and timed out. Tap Connect Gmail to try again.",
   failed: "Something went wrong on the way back from Google. Nothing was saved. Try again.",
 };
@@ -68,7 +68,12 @@ export default async function ConnectPage(props: PageProps<"/connect">) {
 
       <section className="flex flex-col gap-3">
         <p className="text-muted-foreground">
-          Google will ask you to allow three things: read, draft, and send. Leave all three ticked.
+          Google will ask you to allow two things, in its own words:{" "}
+          <strong>View your email messages and settings</strong>, and{" "}
+          <strong>Manage drafts and send emails</strong>. Leave both ticked. The second one is how a
+          reply goes out, and it still goes out only when you tap <strong>Send reply</strong>.
+        </p>
+        <p className="text-muted-foreground">
           While we&apos;re in early access, Google may also say the app isn&apos;t verified yet —
           that&apos;s expected. Tap <strong>Advanced</strong>, then{" "}
           <strong>Go to Squared Away</strong>.

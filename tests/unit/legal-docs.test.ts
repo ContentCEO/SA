@@ -128,7 +128,15 @@ describe("privacy policy", () => {
       Object.values(GMAIL_SCOPES).map((u) => `\`${u.replace(/^.*\/auth\//, "")}\``),
     );
     expect([...inDoc].sort()).toEqual([...asked].sort());
-    expect(asked.size).toBe(3);
+    // gmail.readonly and gmail.compose; gmail.send was dropped on 2026-10-15.
+    expect(asked.size).toBe(2);
+    expect(policy).toContain("We ask Google for two Gmail permissions");
+    expect(policy).toContain(
+      "If you untick either of these on Google's screen, we remove what was granted and save nothing.",
+    );
+    // Owners who connected before still see the old permission listed at Google.
+    expect(policy).toContain('"Send email on your behalf"');
+    expect(policy).toContain("disconnecting Gmail in Settings removes all of our access");
     // Sign-in is identity only.
     expect(policy).toContain("(`openid`, `email`, `profile`)");
   });
@@ -274,7 +282,7 @@ describe("homepage FAQ", () => {
 });
 
 describe("owner-facing copy about the trial", () => {
-  // Practice copies to the owner's own address go out through gmail.send during the trial, so
+  // Practice copies to the owner's own address go out (through gmail.compose) during the trial, so
   // no screen may say sending is off altogether (the policy's scope table says otherwise).
   const screens = ["src/app/page.tsx", "src/app/(app)/connect/page.tsx"];
 
@@ -288,5 +296,16 @@ describe("owner-facing copy about the trial", () => {
     expect(flat(readFileSync("src/app/(app)/connect/page.tsx", "utf8"))).toContain(
       "nothing can go to a customer: you can only send yourself practice copies.",
     );
+  });
+
+  it("the explainer names Google's two permissions as Google does, and keeps the Send reply promise", () => {
+    const page = flat(readFileSync("src/app/(app)/connect/page.tsx", "utf8"));
+    expect(page).toContain("Google will ask you to allow two things");
+    expect(page).toContain("<strong>View your email messages and settings</strong>");
+    expect(page).toContain("<strong>Manage drafts and send emails</strong>");
+    expect(page).toContain("Leave both ticked.");
+    expect(page).toContain("it still goes out only when you tap <strong>Send reply</strong>.");
+    expect(page).toContain("Send a reply only when you tap <strong>Send reply</strong>.");
+    expect(page).not.toMatch(/three things|all three|read, draft, and send/);
   });
 });

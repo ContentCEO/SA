@@ -184,15 +184,17 @@ The video's sign-in shows the "I agree" box, which goes live with the second mer
 
 - Where: follow "Demo video script" in [google-verification.md](google-verification.md) word for
   word. It uses the real Google consent screen, shows the OAuth client id in the address bar, and
-  shows each of `gmail.readonly`, `gmail.compose` and `gmail.send` in use. Record on a dedicated
-  demo Gmail with invented emails, never your real customers' mail.
+  shows each of the two Gmail permissions in use: `gmail.readonly` ("View your email messages and
+  settings") and `gmail.compose` ("Manage drafts and send emails"). Record on a dedicated demo
+  Gmail with invented emails, never your real customers' mail.
 - Which account records the send part: **option B**, which you chose on 2026-10-15. It's a
   separate demo account, invited from `/admin` and paid with Stripe's test card, so nothing of
   yours is touched. It can send only while Stripe is still in test mode, so record it before
   [step 7](#7-stripe-live-mode); an engineer tries it once on production first. The steps are
   under "Reviewer test account" in google-verification.md.
-- Still to decide first ([step 13](#13-decisions-waiting-on-you)): whether to drop `gmail.send`
-  (the video shows the list of permissions).
+- Record it after the engineers' live check of the two permissions (decided on 2026-10-15,
+  [step 13](#13-decisions-waiting-on-you)): the video shows Google's list of permissions, and they
+  tell you once a practice copy and a real reply have gone out on production with just those two.
 - Only if you ever film with option A instead (your own workspace with the demo Gmail swapped in,
   for example a new recording after Stripe has gone live), make it the house account first, or it
   can't send on camera: `/admin` → your own card (always shown first) → **Use as my
@@ -204,17 +206,20 @@ The video's sign-in shows the "I agree" box, which goes live with the second mer
 
 **0e. Submit for verification.** (After 0b and 0d.)
 
-- Where: Google Auth Platform → **Data Access** → check the three Gmail scopes are listed, then
-  **Verification Center** → Submit for verification.
-- If any of the three is missing (an app in Testing works without them being listed): Data
-  Access → **Add or remove scopes** → under "Manually add scopes" paste these three, one per line
-  → **Add to table** → **Update** → **Save**:
+- Where: Google Auth Platform → **Data Access** → check the two Gmail scopes are listed and
+  `gmail.send` isn't, then **Verification Center** → Submit for verification.
+- **Remove `gmail.send` first** (you decided on 2026-10-15 to stop asking for it): the app no
+  longer requests it, but Data Access may still list it from before (under "Your sensitive
+  scopes"). Remove that row (the bin icon on it, or untick it under **Add or remove scopes** →
+  **Update**) → **Save**. Owners who already connected keep working; nobody has to reconnect.
+- If either of the two is missing (an app in Testing works without them being listed): Data
+  Access → **Add or remove scopes** → under "Manually add scopes" paste these two, one per line →
+  **Add to table** → **Update** → **Save**:
   - `https://www.googleapis.com/auth/gmail.readonly`
   - `https://www.googleapis.com/auth/gmail.compose`
-  - `https://www.googleapis.com/auth/gmail.send`
 
-  Worked when: Data Access lists all three (Google files `gmail.readonly` and `gmail.compose`
-  under restricted scopes and `gmail.send` under sensitive scopes).
+  Worked when: Data Access lists `gmail.readonly` and `gmail.compose` (Google files both under
+  restricted scopes) and no `gmail.send`.
 
 - Paste: the sections "Two separate consent steps", "Scopes", "Google API Services: Limited Use"
   and "Data handling" from [google-verification.md](google-verification.md) (only those; the
@@ -231,7 +236,8 @@ The video's sign-in shows the "I agree" box, which goes live with the second mer
 **0g. The security assessment (CASA).**
 
 - Restricted Gmail scopes also need a yearly security test by an outside lab (CASA). It's needed
-  with or without `gmail.send`: `gmail.readonly` and `gmail.compose` are both restricted.
+  because `gmail.readonly` and `gmail.compose` are both restricted (dropping `gmail.send` didn't
+  change that).
 - Level: Google picks it, **AL1** (the lower one) or **AL2**, from user count, permissions and
   other signals, and its email says which. Companies that help with these reviews say a small app
   like this one usually gets AL1, but Google decides.
@@ -859,8 +865,21 @@ fixed.
   until Stripe goes live: delete it before step 7, or **Reset test payments** clears it in step
   7c. After that, filming a send again needs option A (your own workspace as the house account) or
   a payment with a real card. Details under "Reviewer test account" in
-  [google-verification.md](google-verification.md). Recording it waits on the `gmail.send`
-  question below.
+  [google-verification.md](google-verification.md). It's recorded after the live check in the
+  next item.
+- **Drop `gmail.send`: yes, built** (live with the second merge, after step 1's). Connect Gmail now
+  asks Google for two permissions, which Google's screen calls "View your email messages and
+  settings" (`gmail.readonly`) and "Manage drafts and send emails" (`gmail.compose`). Google's own
+  reference says `gmail.compose` can send a draft and a new email, which covers every reply and the
+  trial's practice copies, while `gmail.send` couldn't even send a draft. Nothing changes for
+  owners: every reply still waits for their **Send reply** tap (that was always the app's own
+  rule, not `gmail.send`'s, as you asked on 2026-10-15). Owners who already connected keep working
+  and nobody reconnects; Google may keep listing the old permission on their account until they
+  disconnect. It doesn't avoid the CASA test. Yours: remove `gmail.send` under Google Auth
+  Platform → Data Access before you submit ([0e](#0-start-now-google-verification-takes-weeks)).
+  A preview can't send, so the engineers check it on production with the demo Gmail right after
+  it goes live (a practice copy during its trial, then a real reply after a test-card payment,
+  while Stripe is still in test mode) and put `gmail.send` back at once if either fails.
 
 ### Decided on 2026-10-14
 
@@ -916,29 +935,8 @@ Nothing below is switched on or changed until you say so.
   terms name you personally; a Massachusetts LLC costs about $500 to start and $500 a year);
   whether any insurance is worth having; and whether the homepage's "Month to month, no contract."
   should say "no long-term contract".
-- **Google review, one question left** (decide it before recording the demo video in
-  [0d](#0-start-now-google-verification-takes-weeks); which account records it is decided, above):
-  should we drop `gmail.send`? Recommended: yes. Google's own reference says `gmail.compose` can
-  send a draft and a new email, which covers both kinds of sending the app does, while
-  `gmail.send` can't even send a draft. Dropping it doesn't avoid the CASA test, and it's a small
-  code change. Nobody should have to reconnect. A preview can't send, so the engineers check it on
-  production with the demo Gmail right after the change goes live (a practice copy during its
-  trial, then a real reply after a test-card payment, while Stripe is still in test mode) and put
-  `gmail.send` back at once if either fails. The original brief listed it, so it's your call.
-
-  You asked (2026-10-15) whether `gmail.send` is what makes sure nothing goes out until an owner
-  okays it, so a reply they want to change is never sent by accident. It isn't. That promise is
-  the app's own rule: every reply waits in the Queue until the owner taps **Send reply**, and they
-  can edit or discard it first (autopilot only ever sends a kind of email the owner switched on
-  themselves). `gmail.send` is just Google's permission to send email from that Gmail at all. The
-  app already sends approved replies with `gmail.compose` (the drafts permission, which can also
-  send); today `gmail.send` is used only for the trial's practice copies to the owner's own
-  address, which `gmail.compose` can send too. So dropping it changes nothing an owner sees:
-  replies still wait for their tap. Google's permission screen just lists one permission fewer.
-  Still your call; nothing changes until you say so.
-
-  The CASA test itself needs no decision yet: don't pay until Google's email names the level
-  ([0g](#0-start-now-google-verification-takes-weeks)).
+- **The Google security test (CASA):** no decision yet. Don't pay until Google's email names the
+  level ([0g](#0-start-now-google-verification-takes-weeks)).
 
 - **#47 referral credit amount:** built and tested, off (`FEATURE_REFERRALS`). Decided 2026-10-13:
   the credit goes to the referrer only, and the same-domain block stays. Still open: how much.

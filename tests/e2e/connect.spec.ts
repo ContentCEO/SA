@@ -1,5 +1,13 @@
 import { expect, test, type Page } from "@playwright/test";
-import { mailboxCount, seedOwner, signInAs } from "./support";
+import { eq } from "drizzle-orm";
+import * as schema from "../../src/db/schema";
+import { calls, registerScenario, routeGoogleConsent } from "./fakes/client";
+import { mailboxCount, mailboxFor, newOwnerEmail, seedOwner, signInAs, testDb } from "./support";
+
+const READONLY = "https://www.googleapis.com/auth/gmail.readonly";
+const COMPOSE = "https://www.googleapis.com/auth/gmail.compose";
+/** Dropped on 2026-10-15: never asked for, but an older connection's grant may still carry it. */
+const SEND = "https://www.googleapis.com/auth/gmail.send";
 
 async function noHorizontalScroll(page: Page) {
   const overflow = await page.evaluate(
@@ -24,6 +32,11 @@ test("explains what it will and won't do, then sends you to Google with the mini
   await expect(
     page.getByText(/nothing can go to a customer: you can only send yourself practice copies/),
   ).toBeVisible();
+  // The two permissions in Google's own words, and the Send reply promise.
+  await expect(page.getByText("Google will ask you to allow two things")).toBeVisible();
+  await expect(page.getByText("View your email messages and settings")).toBeVisible();
+  await expect(page.getByText("Manage drafts and send emails")).toBeVisible();
+  await expect(page.getByText(/it still goes out only when you tap Send reply/)).toBeVisible();
   await noHorizontalScroll(page);
 
   // Stop at Google's door and inspect what we asked for.
@@ -37,16 +50,70 @@ test("explains what it will and won't do, then sends you to Google with the mini
 
   expect(googleUrl).toBeDefined();
   const scopes = googleUrl!.searchParams.get("scope")!.split(" ");
-  expect(scopes).toEqual(
-    expect.arrayContaining([
-      "https://www.googleapis.com/auth/gmail.readonly",
-      "https://www.googleapis.com/auth/gmail.compose",
-      "https://www.googleapis.com/auth/gmail.send",
-    ]),
-  );
-  expect(scopes).toHaveLength(6);
+  expect([...scopes].sort()).toEqual(["email", "openid", "profile", COMPOSE, READONLY].sort());
+  expect(scopes).not.toContain(SEND);
   expect(googleUrl!.searchParams.get("access_type")).toBe("offline");
   expect(googleUrl!.searchParams.get("state")).toBeTruthy();
+});
+
+test("unticking a Gmail permission on Google's screen saves nothing and hands the access back", async ({
+  page,
+  context,
+  request,
+}) => {
+  const email = newOwnerEmail();
+  const scenario = await registerScenario(request, email, { untick: [COMPOSE] });
+  const owner = await seedOwner({ email });
+  await signInAs(context, owner);
+  const { blocked } = await routeGoogleConsent(page, context);
+
+  await page.goto("/connect");
+  await page.getByRole("button", { name: "Connect Gmail" }).click();
+  await page.getByRole("link", { name: "Allow" }).click();
+
+  await expect(page).toHaveURL(/\/connect\?error=scopes$/);
+  await expect(page.getByText(/Squared Away needs both to work/)).toBeVisible();
+  await noHorizontalScroll(page);
+  expect(await mailboxCount(owner.workspaceId)).toBe(0);
+  const [w] = await testDb
+    .select({ status: schema.workspaces.status })
+    .from(schema.workspaces)
+    .where(eq(schema.workspaces.id, owner.workspaceId));
+  expect(w?.status).toBe("invited");
+  const all = await calls(request, scenario.id);
+  const routes = all.map((c) => c.route);
+  expect(routes).toEqual(["consent", "token", "revoke"]);
+  expect(all[1]!.scopes).not.toContain(COMPOSE);
+  expect(blocked).toEqual([]);
+});
+
+test("an owner whose older grant still carries gmail.send connects as usual", async ({
+  page,
+  context,
+  request,
+}) => {
+  const email = newOwnerEmail();
+  const scenario = await registerScenario(request, email, { earlier: [SEND] });
+  const owner = await seedOwner({ email });
+  await signInAs(context, owner);
+  const { blocked } = await routeGoogleConsent(page, context);
+
+  await page.goto("/connect");
+  await page.getByRole("button", { name: "Connect Gmail" }).click();
+  await page.getByRole("link", { name: "Allow" }).click();
+
+  await expect(page).toHaveURL(/\/welcome\/profile$/);
+  const mailbox = await mailboxFor(owner.workspaceId);
+  expect(mailbox?.status).toBe("active");
+  expect(mailbox?.scopes.split(" ")).toEqual(expect.arrayContaining([READONLY, COMPOSE, SEND]));
+  const all = await calls(request, scenario.id);
+  // We asked for the two only; Google added the old one back to the grant.
+  const consent = all.find((c) => c.route === "consent");
+  expect(consent?.scopes).toEqual(expect.arrayContaining([READONLY, COMPOSE]));
+  expect(consent?.scopes).not.toContain(SEND);
+  expect(all.find((c) => c.route === "token")?.scopes).toContain(SEND);
+  expect(all.map((c) => c.route)).not.toContain("revoke");
+  expect(blocked).toEqual([]);
 });
 
 test("a callback with a forged state is rejected", async ({ page, context }) => {

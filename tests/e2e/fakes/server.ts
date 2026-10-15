@@ -6,9 +6,10 @@
  *
  * Each test registers its own scenario (one fake mailbox). Everything the app asks for is
  * recorded so the spec can assert what happened — but only the method, path, scenario and the
- * few parsed fields the asserts need (grant type, model and prompt kind, and for a send the
- * From / To / Cc / Bcc / Subject / In-Reply-To / References headers and the thread id). Never a
- * client secret, an authorization code, a token, an Authorization header or a body.
+ * few parsed fields the asserts need (grant type, scopes asked for or granted, model and prompt
+ * kind, and for a send the From / To / Cc / Bcc / Subject / In-Reply-To / References headers
+ * and the thread id). Never a client secret, an authorization code, a token, an Authorization
+ * header or a body.
  *
  * The app must use the neutral e2e credentials playwright.config.ts gives it (A3): a token
  * request with any other client id / secret, a consent link with another client id, or a model
@@ -21,18 +22,55 @@
  * one returns a new SENT message (the draft and its message go away) that history reports and
  * messages.get answers.
  *
+ * Scopes are enforced the way Google does (Davi dropped `gmail.send` on 2026-10-15): the token
+ * carries exactly what the owner allowed on the consent page (minus any permission the scenario
+ * unticks, plus any an earlier connection granted, which Google adds back because the app asks
+ * with `include_granted_scopes=true`), and each Gmail call needs one of the scopes Google's API
+ * reference lists for that method (GMAIL_METHOD_SCOPES), or it gets Google's 403 "insufficient
+ * authentication scopes", recorded as `insufficientScope: true`. So a journey that sends proves
+ * the two scopes the app asks for are enough. A revoke ends the grant: later refreshes get
+ * `invalid_grant`.
+ *
  * Imports nothing from src/: it runs on its own under tsx.
  */
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { buildInbox, fakeOutput, outputKindFor, refFor, type FakeMail } from "./outputs";
 
-const GMAIL_SCOPES = [
-  "https://www.googleapis.com/auth/gmail.readonly",
-  "https://www.googleapis.com/auth/gmail.compose",
-  "https://www.googleapis.com/auth/gmail.send",
-];
-const CONNECT_SCOPES = ["openid", "email", "profile", ...GMAIL_SCOPES];
+const AUTH = "https://www.googleapis.com/auth/";
+/** What the app must ask for: nothing more, nothing less (src/mailbox/gmail/scopes.ts). */
+export const GMAIL_SCOPES = [`${AUTH}gmail.readonly`, `${AUTH}gmail.compose`];
+export const CONNECT_SCOPES = ["openid", "email", "profile", ...GMAIL_SCOPES];
+
+/**
+ * Which scopes Google accepts for each Gmail call the app makes; any one of them will do.
+ * Copied from Google's Gmail API reference (its discovery document,
+ * https://gmail.googleapis.com/$discovery/rest?version=v1, revision 20261012, read 2026-10-15).
+ * `gmail.send` on its own covers messages.send only: never drafts.send, and no read.
+ */
+export const GMAIL_METHOD_SCOPES: Readonly<Record<string, readonly string[]>> = (() => {
+  const s = (...names: string[]) => ["https://mail.google.com/", ...names.map((n) => AUTH + n)];
+  const addonsRead = [
+    "gmail.addons.current.message.action",
+    "gmail.addons.current.message.metadata",
+    "gmail.addons.current.message.readonly",
+  ];
+  const addonsCompose = "gmail.addons.current.action.compose";
+  return {
+    "gmail.profile": s("gmail.compose", "gmail.metadata", "gmail.modify", "gmail.readonly"),
+    "gmail.messages.list": s("gmail.metadata", "gmail.modify", "gmail.readonly"),
+    "gmail.messages.get": s(...addonsRead, "gmail.metadata", "gmail.modify", "gmail.readonly"),
+    "gmail.history": s("gmail.metadata", "gmail.modify", "gmail.readonly"),
+    "gmail.threads.get": s(...addonsRead, "gmail.metadata", "gmail.modify", "gmail.readonly"),
+    "gmail.drafts.create": s(addonsCompose, "gmail.compose", "gmail.modify"),
+    "gmail.drafts.get": s("gmail.compose", "gmail.modify", "gmail.readonly"),
+    "gmail.drafts.update": s(addonsCompose, "gmail.compose", "gmail.modify"),
+    "gmail.drafts.delete": s(addonsCompose, "gmail.compose", "gmail.modify"),
+    "gmail.drafts.send": s(addonsCompose, "gmail.compose", "gmail.modify"),
+    "gmail.messages.send": s(addonsCompose, "gmail.compose", "gmail.modify", "gmail.send"),
+    "gmail.watch": s("gmail.metadata", "gmail.modify", "gmail.readonly"),
+  };
+})();
 const GMAIL_PREFIX = "/google/gmail/v1/users/me";
 const MAX_BODY_BYTES = 5 * 1024 * 1024;
 /** The only credentials the fakes accept: playwright.config.ts gives the app exactly these. */
@@ -67,6 +105,21 @@ export type FakeCall = {
   mail?: SentMail;
   /** Set (never the value) when the app used credentials other than the e2e ones. */
   wrongClient?: true;
+  /**
+   * Scopes are no secret: for the consent page, what the app asked for; for a token answer,
+   * what the token carries.
+   */
+  scopes?: string[];
+  /** A Gmail call the token's scopes don't cover, refused with Google's 403. */
+  insufficientScope?: true;
+};
+
+/** How the scenario's owner answers Google's consent page. */
+export type FakeGrant = {
+  /** Gmail permissions the owner unticks (Google's granular consent). */
+  untick?: string[];
+  /** Scopes an earlier connection already granted, which Google adds back to the new token. */
+  earlier?: string[];
 };
 
 type Draft = { id: string; messageId: string; threadId: string };
@@ -75,6 +128,11 @@ type Scenario = {
   id: string;
   ref: string;
   ownerEmail: string;
+  grant: FakeGrant;
+  /** What the owner allowed on the consent page; the authorization code carries it. */
+  consented: string[] | null;
+  /** What the issued tokens carry: null before the code exchange and after a revoke. */
+  granted: string[] | null;
   messages: Map<string, FakeMail>;
   drafts: Map<string, Draft>;
   history: { id: number; added: FakeMail[] }[];
@@ -209,9 +267,11 @@ export function createFakes() {
   const byToken = (value: string | null | undefined, prefix: "at-" | "rt-" | "e2e-") =>
     value?.startsWith(prefix) ? scenarios.get(value.slice(prefix.length)) : undefined;
 
+  /** The scenario whose live access token this is (none once its grant is revoked). */
   const bearer = (req: IncomingMessage) => {
     const auth = req.headers.authorization ?? "";
-    return byToken(auth.startsWith("Bearer ") ? auth.slice(7) : null, "at-");
+    const s = byToken(auth.startsWith("Bearer ") ? auth.slice(7) : null, "at-");
+    return s?.granted ? s : undefined;
   };
 
   function addMessage(s: Scenario, m: FakeMail) {
@@ -226,6 +286,10 @@ export function createFakes() {
     if (!/^[0-9a-f-]{36}$/i.test(id) || !ownerEmail.includes("@"))
       throw new HttpError(400, { error: "need id (uuid) and ownerEmail" });
     if (scenarios.has(id)) throw new HttpError(409, { error: "scenario exists" });
+    const list = (v: unknown) =>
+      Array.isArray(v) && v.every((x) => typeof x === "string") ? (v as string[]) : [];
+    const given = (input.grant ?? {}) as Record<string, unknown>;
+    const grant: FakeGrant = { untick: list(given.untick), earlier: list(given.earlier) };
     const r = refFor(id);
     if ([...scenarios.values()].some((s) => s.ref === r))
       throw new HttpError(409, { error: "ref collision" });
@@ -233,6 +297,9 @@ export function createFakes() {
       id,
       ref: r,
       ownerEmail,
+      grant,
+      consented: null,
+      granted: null,
       messages: new Map(buildInbox(r, ownerEmail).map((m) => [m.id, m])),
       drafts: new Map(),
       history: [],
@@ -260,7 +327,9 @@ export function createFakes() {
     if (q.get("prompt") !== "consent") problems.push("prompt must be consent");
     const scopes = (q.get("scope") ?? "").split(" ").filter(Boolean);
     if (scopes.length !== CONNECT_SCOPES.length || !CONNECT_SCOPES.every((x) => scopes.includes(x)))
-      problems.push("scope must be exactly openid email profile + the three Gmail scopes");
+      problems.push(
+        "scope must be exactly openid email profile + gmail.readonly + gmail.compose (no gmail.send)",
+      );
     const redirect = q.get("redirect_uri") ?? "";
     if (!redirect.endsWith("/api/gmail/callback")) problems.push("redirect_uri is wrong");
     if (!q.get("state")) problems.push("state is missing");
@@ -268,6 +337,7 @@ export function createFakes() {
       method: "GET",
       path: url.pathname,
       route: "consent",
+      scopes,
       ...(wrongClient ? { wrongClient: true as const } : {}),
     });
     if (problems.length || !s) {
@@ -275,12 +345,18 @@ export function createFakes() {
       res.end(`Fake consent refused: ${problems.join("; ")}`);
       return;
     }
+    // What Allow grants: what was asked, minus what the owner unticks, plus (with
+    // include_granted_scopes=true, as Google does it) whatever an earlier connection granted.
+    const kept = scopes.filter((x) => !(s.grant.untick ?? []).includes(x));
+    const earlier = q.get("include_granted_scopes") === "true" ? (s.grant.earlier ?? []) : [];
+    const consented = [...new Set([...kept, ...earlier])];
+    s.consented = consented;
     const back = (params: Record<string, string>) => {
       const u = new URL(redirect);
       for (const [k, v] of Object.entries(params)) u.searchParams.set(k, v);
       return u.toString().replace(/&/g, "&amp;").replace(/"/g, "&quot;");
     };
-    const allow = back({ code: `e2e-${s.id}`, state: q.get("state")!, scope: scopes.join(" ") });
+    const allow = back({ code: `e2e-${s.id}`, state: q.get("state")!, scope: consented.join(" ") });
     const deny = back({ error: "access_denied", state: q.get("state")! });
     const esc = (t: string) => t.replace(/&/g, "&amp;").replace(/</g, "&lt;");
     res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
@@ -310,23 +386,45 @@ export function createFakes() {
       }
       if (grantType === "authorization_code") {
         const s = byToken(form.get("code"), "e2e-");
-        record(s, { method: "POST", path, route: "token", grantType });
-        if (!s) throw new HttpError(400, { error: "invalid_grant" });
+        // Only the consent page's Allow issues a code.
+        if (!s?.consented) {
+          record(s, { method: "POST", path, route: "token", grantType });
+          throw new HttpError(400, { error: "invalid_grant" });
+        }
+        const granted = s.consented;
+        s.granted = granted;
+        record(s, { method: "POST", path, route: "token", grantType, scopes: granted });
         sendJson(res, 200, {
           access_token: `at-${s.id}`,
           refresh_token: `rt-${s.id}`,
           expires_in: 3599,
           token_type: "Bearer",
-          scope: CONNECT_SCOPES.join(" "),
+          scope: granted.join(" "),
         });
         return true;
       }
       if (grantType === "refresh_token") {
         const s = byToken(form.get("refresh_token"), "rt-");
-        record(s, { method: "POST", path, route: "token", grantType });
         // What real Google says to CI's dummy client about a token it never issued.
-        if (!s) throw new HttpError(401, { error: "invalid_client" });
-        sendJson(res, 200, { access_token: `at-${s.id}`, expires_in: 3599, token_type: "Bearer" });
+        if (!s) {
+          record(s, { method: "POST", path, route: "token", grantType });
+          throw new HttpError(401, { error: "invalid_client" });
+        }
+        // Not issued for this scenario yet, or revoked since.
+        if (!s.granted) {
+          record(s, { method: "POST", path, route: "token", grantType });
+          throw new HttpError(400, {
+            error: "invalid_grant",
+            error_description: "Token has been expired or revoked.",
+          });
+        }
+        record(s, { method: "POST", path, route: "token", grantType, scopes: s.granted });
+        sendJson(res, 200, {
+          access_token: `at-${s.id}`,
+          expires_in: 3599,
+          token_type: "Bearer",
+          scope: s.granted.join(" "),
+        });
         return true;
       }
       record(undefined, { method: "POST", path, route: "token", grantType });
@@ -343,7 +441,11 @@ export function createFakes() {
       const token = new URLSearchParams(await readBody(req)).get("token");
       const s = byToken(token, "rt-") ?? byToken(token, "at-");
       record(s, { method: "POST", path, route: "revoke" });
-      if (!s) throw new HttpError(400, { error: "invalid_token" });
+      if (!s?.granted) throw new HttpError(400, { error: "invalid_token" });
+      // Revoking ends the whole grant, earlier scopes included: a reconnect starts afresh.
+      s.granted = null;
+      s.consented = null;
+      s.grant = { ...s.grant, earlier: [] };
       sendJson(res, 200, {});
       return true;
     }
@@ -366,6 +468,25 @@ export function createFakes() {
     }
     const at = (call: Omit<FakeCall, "scenario" | "method" | "path" | "route"> = {}) =>
       record(s, { method, path: url.pathname, route: routeName, ...call });
+    const accepted = GMAIL_METHOD_SCOPES[routeName];
+    if (accepted && !accepted.some((x) => s.granted?.includes(x))) {
+      at({ insufficientScope: true });
+      // Google's answer when the token holds none of the scopes the method accepts.
+      throw new HttpError(403, {
+        error: {
+          code: 403,
+          message: "Request had insufficient authentication scopes.",
+          errors: [
+            {
+              message: "Insufficient Permission",
+              domain: "global",
+              reason: "insufficientPermissions",
+            },
+          ],
+          status: "PERMISSION_DENIED",
+        },
+      });
+    }
     const now = Date.now();
     const q = url.searchParams;
 
