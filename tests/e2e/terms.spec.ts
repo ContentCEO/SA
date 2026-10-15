@@ -7,7 +7,7 @@ import {
   TERMS_REQUIRED_API_MESSAGE,
   TERMS_VERSION,
 } from "../../src/config/legal";
-import { seedOwner, signInAs, testDb } from "./support";
+import { mailboxCount, seedOwner, signInAs, testDb } from "./support";
 
 /**
  * The "I agree" boxes (Davi, 2026-10-15): sign-in needs the box (the server refuses without it),
@@ -177,6 +177,41 @@ test("someone who doesn't agree can sign out from the terms screen", async ({ pa
   await expect(page).toHaveURL(/\/$/);
   await page.goto("/queue");
   await expect(page).toHaveURL(/\/signin$/);
+});
+
+test("someone who doesn't agree can still disconnect Gmail and delete their account", async ({
+  page,
+  context,
+}) => {
+  const owner = await seedOwner({ mailbox: true, backfilled: true });
+  await signInAs(context, owner, { agreedToTerms: false });
+  await page.goto("/queue");
+  await expect(page).toHaveURL(/\/welcome\/terms/);
+  const leave = page.getByRole("region", { name: "Don't agree?" });
+  await expect(leave).toContainText("delete your account right here");
+  await atLeast44High(leave.getByRole("button", { name: "Disconnect Gmail" }));
+  await atLeast44High(leave.getByRole("button", { name: "Delete my account" }));
+
+  // Disconnect: the same one confirmation as Settings, then back here (still not agreed).
+  await leave.getByRole("button", { name: "Disconnect Gmail" }).click();
+  await atLeast44High(leave.getByRole("button", { name: "Yes, disconnect Gmail" }));
+  await noHorizontalScroll(page);
+  await leave.getByRole("button", { name: "Yes, disconnect Gmail" }).click();
+  await expect(page.getByRole("status").filter({ hasText: "Gmail disconnected." })).toBeVisible();
+  await expect(page).toHaveURL(/\/welcome\/terms\?done=disconnected$/);
+  expect(await mailboxCount(owner.workspaceId)).toBe(0);
+  await expect(leave.getByRole("button", { name: "Disconnect Gmail" })).toHaveCount(0);
+
+  // Delete my account: one confirmation, then everything is gone.
+  await leave.getByRole("button", { name: "Delete my account" }).click();
+  const confirm = page.getByRole("form", { name: "Delete my account" });
+  await expect(confirm).toContainText("This can't be undone");
+  await noHorizontalScroll(page);
+  await confirm.getByRole("button", { name: "Yes, delete everything" }).click();
+  await expect(page).toHaveURL(/\/goodbye$/);
+  expect(
+    await testDb.select().from(schema.users).where(eq(schema.users.id, owner.userId)),
+  ).toHaveLength(0);
 });
 
 test("a link back to another site is never followed", async ({ page, context }) => {

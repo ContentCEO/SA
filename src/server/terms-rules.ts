@@ -6,12 +6,21 @@ import { AGREE_VALUE, DEFAULT_NEXT_PATH, TERMS_VERSION } from "@/config/legal";
 /** What the two "I agree" forms get back from their actions: nothing, or the plain error. */
 export type AgreeState = { error?: string };
 
-/** Whether this person has agreed to the terms as they are now. */
+/** A terms version: the documents' "Last updated" date, YYYY-MM-DD, so later sorts later. */
+const VERSION_SHAPE = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * Whether this person has agreed to the terms as they are now, or to a newer version. Newer
+ * counts: previews share the production database, and a rollback runs older code, so someone
+ * who agreed to terms dated after this deployment's has agreed to more, not less. Asking them
+ * again here would show "we've updated our terms" when nothing changed for this deployment.
+ */
 export function hasCurrentTerms(
   user: { termsVersion: string | null } | null | undefined,
   version: string = TERMS_VERSION,
 ): boolean {
-  return !!user && user.termsVersion === version;
+  const agreedTo = user?.termsVersion;
+  return !!agreedTo && VERSION_SHAPE.test(agreedTo) && agreedTo >= version;
 }
 
 /** Whether the form's box was ticked: exactly our value, nothing else (a missing box sends none). */

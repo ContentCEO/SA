@@ -3,6 +3,7 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { eq } from "drizzle-orm";
 import { NextRequest } from "next/server";
+import type Stripe from "stripe";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   AGREE_REQUIRED_MESSAGE,
@@ -14,8 +15,10 @@ import {
   TERMS_VERSION,
 } from "@/config/legal";
 import type { Database } from "@/db";
-import { rateLimits, users, workspaces } from "@/db/schema";
+import { mailboxes, rateLimits, users, workspaces } from "@/db/schema";
 import { ensureUserAndWorkspace } from "@/server/accounts";
+import { setStripeForTests } from "@/server/billing";
+import { saveConnectedMailbox } from "@/server/mailboxes";
 import {
   agreed,
   cookieAgreesToCurrent,
@@ -41,6 +44,8 @@ const req = vi.hoisted(() => ({
   deleted: [] as unknown[],
   path: null as string | null,
   signIn: [] as unknown[][],
+  signOut: [] as unknown[][],
+  revoked: [] as string[],
 }));
 
 vi.mock("@/auth", () => ({
@@ -48,7 +53,25 @@ vi.mock("@/auth", () => ({
   signIn: async (...args: unknown[]) => {
     req.signIn.push(args);
   },
-  signOut: async () => {},
+  signOut: async (...args: unknown[]) => {
+    req.signOut.push(args);
+  },
+}));
+
+// Disconnect and Delete my account remove our access at Google: recorded here, no network.
+vi.mock("@/mailbox/gmail/connector", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/mailbox/gmail/connector")>()),
+  createGmailConnector: () => ({
+    provider: "gmail",
+    requiredScopes: [],
+    authorizationUrl: () => "",
+    exchangeCode: async () => {
+      throw new Error("not used here");
+    },
+    revoke: async (token: string) => {
+      req.revoked.push(token);
+    },
+  }),
 }));
 
 vi.mock("next/headers", async (importOriginal) => ({
@@ -119,11 +142,19 @@ describe("TERMS_VERSION", () => {
 });
 
 describe("rules", () => {
-  it("only the current version counts as agreed", () => {
+  it("the current version (or a newer one) counts as agreed; an older one or none doesn't", () => {
     expect(hasCurrentTerms({ termsVersion: TERMS_VERSION })).toBe(true);
     expect(hasCurrentTerms({ termsVersion: "2026-01-01" })).toBe(false);
     expect(hasCurrentTerms({ termsVersion: null })).toBe(false);
     expect(hasCurrentTerms(null)).toBe(false);
+    // Agreed on a preview with newer terms (previews share the database), or before a
+    // rollback: that's agreeing to more, so this deployment doesn't ask again.
+    expect(hasCurrentTerms({ termsVersion: "2026-11-01" }, "2026-10-15")).toBe(true);
+    expect(hasCurrentTerms({ termsVersion: "2027-01-01" })).toBe(true);
+    expect(hasCurrentTerms({ termsVersion: "2026-10-14" }, "2026-10-15")).toBe(false);
+    // Only a real version counts: anything else sorts unpredictably.
+    for (const odd of ["", "zzz", "2026-10-15x", "9999", "2026/10/15"])
+      expect(hasCurrentTerms({ termsVersion: odd }), odd).toBe(false);
     expect(cookieAgreesToCurrent(TERMS_VERSION)).toBe(true);
     expect(cookieAgreesToCurrent("2026-01-01")).toBe(false);
     expect(cookieAgreesToCurrent(undefined)).toBe(false);
@@ -233,8 +264,11 @@ beforeEach(async () => {
   req.deleted.length = 0;
   req.path = null;
   req.signIn.length = 0;
+  req.signOut.length = 0;
+  req.revoked.length = 0;
 });
 afterEach(() => {
+  setStripeForTests(undefined);
   vi.unstubAllEnvs();
   vi.restoreAllMocks();
 });
@@ -398,6 +432,169 @@ describe("/welcome/terms", () => {
     // requireSignedIn is used only by this screen.
     const users = readFileSync("src/server/session.ts", "utf8");
     expect(users).toContain("export async function requireSignedIn()");
+  });
+});
+
+describe("a newer version on record (a preview or a rollback shares this database)", () => {
+  it("counts as agreed here, and agreeing again never lowers it", async () => {
+    const { requireOwner } = await import("@/server/session");
+    const { recordTermsAcceptance } = await import("@/server/terms");
+    const at = new Date("2026-11-02T10:00:00Z");
+    await database
+      .update(users)
+      .set({ termsAcceptedAt: at, termsVersion: "2099-01-01" })
+      .where(eq(users.id, owner.id));
+    req.path = "/queue";
+    expect(await whereTo(requireOwner)).toBeNull();
+    // e.g. the sign-in cookie of an older deployment: the newer record stays as it was.
+    await recordTermsAcceptance(owner.id);
+    expect(await termsRow()).toEqual({ at, version: "2099-01-01" });
+  });
+
+  it("an older one (or none) is brought up to this version", async () => {
+    const { recordTermsAcceptance } = await import("@/server/terms");
+    await recordTermsAcceptance(owner.id);
+    expect((await termsRow()).version).toBe(TERMS_VERSION);
+    await accept("2020-01-01");
+    await recordTermsAcceptance(owner.id);
+    expect((await termsRow()).version).toBe(TERMS_VERSION);
+  });
+});
+
+describe("/welcome/terms: the ways out, without agreeing", () => {
+  /**
+   * The terms and privacy policy they already agreed to promise they can cancel, disconnect
+   * Gmail or delete their account at any time; refusing new terms mustn't take that away.
+   */
+  const box = async (email = "owner@gmail.com", wsId = workspaceId) =>
+    saveConnectedMailbox(
+      { id: wsId, plan: null },
+      { email, refreshToken: `rt-${email}`, grantedScopes: ["a", "b", "c"] },
+    );
+
+  it("GUARDRAIL: Settings' and Plan & billing's versions still send them to the terms screen", async () => {
+    const settings = await import("@/app/(app)/settings/actions");
+    const billing = await import("@/app/(app)/billing/actions");
+    const m = await box();
+    req.path = "/settings";
+    const toTerms = `/welcome/terms?next=${encodeURIComponent("/settings")}`;
+    expect(await whereTo(() => settings.deleteAccountAction())).toBe(toTerms);
+    expect(await whereTo(() => settings.disconnectMailboxAction(form({ mailboxId: m.id })))).toBe(
+      toTerms,
+    );
+    expect(await whereTo(() => billing.openPortalAction())).toBe(toTerms);
+    expect(await database.select().from(users)).toHaveLength(1);
+    expect(await database.select().from(mailboxes)).toHaveLength(1);
+  });
+
+  it("Delete my account works from the terms screen: everything goes, then /goodbye", async () => {
+    const { deleteAccountFromTermsAction } = await import("@/app/welcome/terms/actions");
+    await box();
+    await deleteAccountFromTermsAction();
+    expect(await database.select().from(users)).toEqual([]);
+    expect(await database.select().from(workspaces)).toEqual([]);
+    expect(await database.select().from(mailboxes)).toEqual([]);
+    expect(req.revoked).toEqual(["rt-owner@gmail.com"]);
+    expect(req.signOut).toEqual([[{ redirectTo: "/goodbye" }]]);
+  });
+
+  it("Delete my account: a plan Stripe won't cancel stops it, and nothing is deleted", async () => {
+    const { deleteAccountFromTermsAction } = await import("@/app/welcome/terms/actions");
+    await database
+      .update(workspaces)
+      .set({ stripeCustomerId: "cus_1", stripeSubscriptionId: "sub_1" })
+      .where(eq(workspaces.id, workspaceId));
+    setStripeForTests({
+      subscriptions: {
+        cancel: async () => {
+          throw Object.assign(new Error("down"), { code: "api_error" });
+        },
+      },
+    } as unknown as Stripe);
+    expect(await whereTo(deleteAccountFromTermsAction)).toBe("/welcome/terms?error=delete_billing");
+    expect(await database.select().from(users)).toHaveLength(1);
+    expect(req.signOut).toEqual([]);
+  });
+
+  it("Disconnect Gmail works from the terms screen, for their own mailbox only", async () => {
+    const { disconnectMailboxFromTermsAction } = await import("@/app/welcome/terms/actions");
+    const mine = await box();
+    const other = await ensureUserAndWorkspace({ email: "other@shop.com", name: "Other" });
+    const theirs = await box("other@gmail.com", other.workspace.id);
+
+    expect(
+      await whereTo(() => disconnectMailboxFromTermsAction(form({ mailboxId: theirs.id }))),
+    ).toBe("/welcome/terms?error=unknown");
+    expect(
+      await whereTo(() => disconnectMailboxFromTermsAction(form({ mailboxId: "not-a-uuid" }))),
+    ).toBe("/welcome/terms?error=unknown");
+    expect(req.revoked).toEqual([]);
+
+    expect(
+      await whereTo(() => disconnectMailboxFromTermsAction(form({ mailboxId: mine.id }))),
+    ).toBe("/welcome/terms?done=disconnected");
+    expect(req.revoked).toEqual(["rt-owner@gmail.com"]);
+    const left = await database.select({ id: mailboxes.id }).from(mailboxes);
+    expect(left).toEqual([{ id: theirs.id }]);
+    // Leaving isn't agreeing.
+    expect(await termsRow()).toEqual({ at: null, version: null });
+  });
+
+  it("Manage billing opens Stripe's page from the terms screen, and comes back there", async () => {
+    const { openPortalFromTermsAction } = await import("@/app/welcome/terms/actions");
+    vi.stubEnv("APP_URL", "https://app.example");
+    const portals: unknown[] = [];
+    setStripeForTests({
+      billingPortal: {
+        sessions: {
+          create: async (params: unknown) => {
+            portals.push(params);
+            return { url: "https://billing.stripe.com/p/session_test" };
+          },
+        },
+      },
+    } as unknown as Stripe);
+    // No Stripe customer (a plan set by hand): nothing to open.
+    expect(await whereTo(openPortalFromTermsAction)).toBe("/welcome/terms?error=unknown");
+    expect(portals).toEqual([]);
+
+    await database
+      .update(workspaces)
+      .set({ stripeCustomerId: "cus_1", stripeSubscriptionId: "sub_1" })
+      .where(eq(workspaces.id, workspaceId));
+    expect(await whereTo(openPortalFromTermsAction)).toBe(
+      "https://billing.stripe.com/p/session_test",
+    );
+    expect(portals).toEqual([
+      { customer: "cus_1", return_url: "https://app.example/welcome/terms" },
+    ]);
+    expect(await termsRow()).toEqual({ at: null, version: null });
+  });
+
+  it("signed out: back to sign-in, nothing touched", async () => {
+    const actions = await import("@/app/welcome/terms/actions");
+    const m = await box();
+    req.session = null;
+    expect(await whereTo(actions.deleteAccountFromTermsAction)).toBe("/signin");
+    expect(
+      await whereTo(() => actions.disconnectMailboxFromTermsAction(form({ mailboxId: m.id }))),
+    ).toBe("/signin");
+    expect(await whereTo(actions.openPortalFromTermsAction)).toBe("/signin");
+    expect(await database.select().from(users)).toHaveLength(1);
+    expect(await database.select().from(mailboxes)).toHaveLength(1);
+    expect(req.revoked).toEqual([]);
+  });
+
+  it('the screen shows them under "Don\'t agree?" with their confirmations', () => {
+    const page = readFileSync("src/app/welcome/terms/page.tsx", "utf8");
+    expect(page).toContain("action={deleteAccountFromTermsAction}");
+    expect(page).toContain("action={disconnectMailboxFromTermsAction}");
+    expect(page).toContain("<form action={openPortalFromTermsAction}>");
+    expect(page).not.toMatch(/call or text us at[^.]*to cancel/i);
+    const del = readFileSync("src/components/app/delete-account-button.tsx", "utf8");
+    expect(del).toContain("Yes, delete everything");
+    const disc = readFileSync("src/components/app/disconnect-button.tsx", "utf8");
+    expect(disc).toContain("Yes, disconnect Gmail");
   });
 });
 

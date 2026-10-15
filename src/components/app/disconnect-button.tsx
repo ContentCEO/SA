@@ -3,7 +3,6 @@
 import { useState } from "react";
 import { useFormStatus } from "react-dom";
 import { Button } from "@/components/ui/button";
-import { disconnectMailboxAction } from "./actions";
 
 function ConfirmButton() {
   const { pending } = useFormStatus();
@@ -14,8 +13,19 @@ function ConfirmButton() {
   );
 }
 
-/** One confirmation, then immediate. */
-export function DisconnectButton({ mailboxId, email }: { mailboxId: string; email: string }) {
+/**
+ * One confirmation, then immediate. Used in Settings and on the terms screen; each passes its
+ * own server action.
+ */
+export function DisconnectButton({
+  mailboxId,
+  email,
+  action,
+}: {
+  mailboxId: string;
+  email: string;
+  action: (formData: FormData) => Promise<void>;
+}) {
   const [confirming, setConfirming] = useState(false);
 
   if (!confirming) {
@@ -27,10 +37,7 @@ export function DisconnectButton({ mailboxId, email }: { mailboxId: string; emai
   }
 
   return (
-    <form
-      action={disconnectMailboxAction}
-      className="sa-inverted flex flex-col gap-3 rounded-xl p-4"
-    >
+    <form action={action} className="sa-inverted flex flex-col gap-3 rounded-xl p-4">
       <p className="text-base">
         Disconnect <strong>{email}</strong>? Squared Away will stop reading and drafting right away,
         and we&apos;ll remove our access at Google.

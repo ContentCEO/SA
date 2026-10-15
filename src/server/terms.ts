@@ -1,5 +1,5 @@
 import "server-only";
-import { eq } from "drizzle-orm";
+import { and, eq, isNull, or, sql } from "drizzle-orm";
 import { cookies } from "next/headers";
 import { TERMS_COOKIE, TERMS_COOKIE_PATH, TERMS_VERSION } from "@/config/legal";
 import { db } from "@/db";
@@ -20,12 +20,21 @@ export async function termsAccepted(userId: string): Promise<boolean> {
   return hasCurrentTerms(await termsOf(userId));
 }
 
-/** Records that this person ticked the box just now, for the current version. */
+/**
+ * Records that this person ticked the box just now, for the current version. Never lowers a
+ * newer version already on record (agreed on a preview or before a rollback, which share this
+ * database): that record stays as it is. Versions are YYYY-MM-DD, compared byte by byte.
+ */
 export async function recordTermsAcceptance(userId: string, now: Date = new Date()) {
   await db()
     .update(users)
     .set({ termsAcceptedAt: now, termsVersion: TERMS_VERSION })
-    .where(eq(users.id, userId));
+    .where(
+      and(
+        eq(users.id, userId),
+        or(isNull(users.termsVersion), sql`${users.termsVersion} collate "C" <= ${TERMS_VERSION}`),
+      ),
+    );
 }
 
 /**

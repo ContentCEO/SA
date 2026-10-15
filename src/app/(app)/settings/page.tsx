@@ -18,7 +18,7 @@ import {
   getBusinessProfile,
   getVoiceProfile,
 } from "@/server/profile";
-import { DeleteAccountButton } from "./delete-account-button";
+import { DeleteAccountButton } from "@/components/app/delete-account-button";
 import { mailboxHealth } from "@/server/mailbox-health";
 import { activeNotes, MAX_ACTIVE_NOTES, NOTE_MAX_CHARS, ownerToday } from "@/server/seasonal-notes";
 import {
@@ -34,7 +34,8 @@ import {
 } from "./sms-actions";
 import { smsConfigured } from "@/lib/sms";
 import { formatUsPhone } from "@/server/sms-alerts";
-import { DisconnectButton } from "./disconnect-button";
+import { DisconnectButton } from "@/components/app/disconnect-button";
+import { deleteAccountAction, disconnectMailboxAction } from "./actions";
 import {
   decideVoiceIdeaAction,
   relearnVoiceAction,
@@ -209,7 +210,11 @@ export default async function SettingsPage(props: PageProps<"/settings">) {
                       Reconnect Gmail
                     </Link>
                   ) : null}
-                  <DisconnectButton mailboxId={m.id} email={m.email} />
+                  <DisconnectButton
+                    mailboxId={m.id}
+                    email={m.email}
+                    action={disconnectMailboxAction}
+                  />
                 </li>
               );
             })}
@@ -717,7 +722,10 @@ export default async function SettingsPage(props: PageProps<"/settings">) {
             Sign out
           </Button>
         </form>
-        <DeleteAccountButton hasPlan={Boolean(workspace.stripeSubscriptionId)} />
+        <DeleteAccountButton
+          hasPlan={Boolean(workspace.stripeSubscriptionId)}
+          action={deleteAccountAction}
+        />
       </section>
     </>
   );

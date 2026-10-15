@@ -96,12 +96,22 @@ describe("C1: every server action checks who's asking before anything else", () 
       "box, then starts Auth.js sign-in (invite-only, name and email only)",
   };
   /**
-   * Signed in, but the current terms not needed yet: only the terms screen's own "Agree and
-   * continue" (Davi, 2026-10-15). Any other action guarded this way would skip the terms.
+   * Signed in, but the current terms not needed yet: only the terms screen's own actions (Davi,
+   * 2026-10-15). Any other action guarded this way would skip the terms.
    */
   const SIGNED_IN_ONLY: Record<string, string> = {
     "src/app/welcome/terms/actions.ts#agreeToTermsAction":
       "records the 'I agree' box; it is how someone who hasn't agreed yet agrees",
+    "src/app/welcome/terms/actions.ts#deleteAccountFromTermsAction":
+      "Delete my account for someone who won't agree to new terms (the terms and privacy " +
+      "policy they agreed to promise it any time); the same deleteAccount as Settings', behind " +
+      "the same confirmation; only removes things",
+    "src/app/welcome/terms/actions.ts#disconnectMailboxFromTermsAction":
+      "Disconnect Gmail for someone who won't agree to new terms; the same disconnectMailbox " +
+      "as Settings' (scoped to their own workspace), behind the same confirmation",
+    "src/app/welcome/terms/actions.ts#openPortalFromTermsAction":
+      "Stripe's billing page, so someone who won't agree to new terms can cancel (the terms " +
+      "promise it any time); the same createPortal and billing limit as Plan & billing",
   };
   /**
    * Inline "use server" blocks, by file and the exact calls they await. Any change to one of
@@ -883,6 +893,11 @@ describe("C4: no open redirects", () => {
       "Stripe Billing Portal: the URL createPortal() got from Stripe, never from the form",
     ],
     [
+      "src/app/welcome/terms/actions.ts: redirect(url)",
+      "Stripe Billing Portal from the terms screen (to cancel without agreeing): the URL " +
+        "createPortal() got from Stripe, never from the form",
+    ],
+    [
       "src/app/(app)/connect/actions.ts: redirect(createGmailConnector().authorizationUrl({ state, redirectUri: appUrl(gmailRedirectPath), loginHint: session?.user?.email ?? undefined, }))",
       "Google's consent screen, built by our connector with our own callback URL",
     ],
@@ -909,6 +924,9 @@ describe("C4: no open redirects", () => {
     expect(billing).toContain("url = await createCheckout(workspace, plan);");
     expect(billing).toContain("url = await createPortal(workspace);");
     expect(billing.match(/\burl = /g)).toHaveLength(2);
+    const terms = readFileSync("src/app/welcome/terms/actions.ts", "utf8");
+    expect(terms).toContain('url = await createPortal(workspace, "/welcome/terms");');
+    expect(terms.match(/\burl = /g)).toHaveLength(1);
   });
 
   it("the scan sees the redirects that are there (it isn't silently empty)", () => {
@@ -1059,7 +1077,8 @@ describe("C4: no open redirects", () => {
     );
     const page = readFileSync("src/app/welcome/terms/page.tsx", "utf8");
     expect(page).toContain(
-      "const { next } = await props.searchParams;\n  const back = safeNextPath(next);",
+      "const { next, done: doneKey, error: errorKey } = await props.searchParams;\n" +
+        "  const back = safeNextPath(next);",
     );
     expect(readFileSync("src/app/welcome/terms/actions.ts", "utf8")).toContain(
       'redirect(safeNextPath(formData.get("next")));',

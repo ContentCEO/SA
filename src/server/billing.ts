@@ -386,12 +386,19 @@ export async function termsBoxOffSince(): Promise<Date | null> {
   return row?.updatedAt ?? null;
 }
 
-/** Stripe's own page for changing card, plan, invoices or canceling. */
-export async function createPortal(workspace: Workspace): Promise<string> {
+/**
+ * Stripe's own page for changing card, plan, invoices or canceling. It comes back to Plan &
+ * billing, or to the terms screen when it was opened from there (someone who won't agree to new
+ * terms can still cancel).
+ */
+export async function createPortal(
+  workspace: Workspace,
+  returnTo: "/billing" | "/welcome/terms" = "/billing",
+): Promise<string> {
   if (!workspace.stripeCustomerId) throw new CheckoutNotAllowedError();
   const portal = await stripe().billingPortal.sessions.create({
     customer: workspace.stripeCustomerId,
-    return_url: appUrl("/billing"),
+    return_url: appUrl(returnTo),
   });
   return portal.url;
 }
