@@ -106,6 +106,17 @@ describe("the 15-minute workspace-lifecycle job", () => {
   });
 });
 
+describe("plan #47: the autopilot invariant runs every 15 minutes", () => {
+  it("has its own step in the workspace-lifecycle job", () => {
+    const src = readFileSync("src/jobs/functions.ts", "utf8");
+    const head = "export const workspaceLifecycle = inngest.createFunction(";
+    const start = src.indexOf(head);
+    expect(start).toBeGreaterThan(-1);
+    const body = src.slice(start, src.indexOf("inngest.createFunction(", start + head.length));
+    expect(body).toContain('step.run("enforce-plan-autopilot", () => enforcePlanAutopilot())');
+  });
+});
+
 describe("no job is left unregistered", () => {
   it("registers every createFunction in the jobs file", async () => {
     const { readFileSync } = await import("node:fs");

@@ -402,7 +402,8 @@ describe("LAUNCH.md structure", () => {
     // True of the code: /connect exists, and the same address replaces the key (no limit hit).
     expect(existsSync(join(ROOT, "src/app/(app)/connect/page.tsx"))).toBe(true);
     const mailboxes = readFileSync(join(ROOT, "src/server/mailboxes.ts"), "utf8");
-    expect(mailboxes).toContain("if (!isReconnect && existing.length >= limit)");
+    // (Plan #47: only an inbox paused for being over the plan waits for room.)
+    expect(mailboxes).toContain("if (!isReconnect && counted >= limit)");
   });
 
   it("the preview step is Davi's choice (an empty sa-preview project) with its own secrets", () => {

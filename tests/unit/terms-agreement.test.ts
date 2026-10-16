@@ -468,7 +468,7 @@ describe("/welcome/terms: the ways out, without agreeing", () => {
    */
   const box = async (email = "owner@gmail.com", wsId = workspaceId) =>
     saveConnectedMailbox(
-      { id: wsId, plan: null },
+      { id: wsId, plan: null, freePlan: null, freePlanUntil: null },
       { email, refreshToken: `rt-${email}`, grantedScopes: ["a", "b", "c"] },
     );
 

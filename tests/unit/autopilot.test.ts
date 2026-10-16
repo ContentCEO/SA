@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { eq } from "drizzle-orm";
 import { beforeEach, describe, expect, it } from "vitest";
 import { setModelTransportForTests } from "@/ai/client";
@@ -31,7 +32,11 @@ import {
 } from "@/server/autopilot";
 import { createDraftForThread, saveDraftEdit, threadsToAutoDraft } from "@/server/drafts";
 import { saveConnectedMailbox } from "@/server/mailboxes";
-import { setWorkspacePlan } from "@/server/workspace-lifecycle";
+import {
+  autopilotPlanEffects,
+  enforcePlanAutopilot,
+  setWorkspacePlan,
+} from "@/server/workspace-lifecycle";
 import { createTestDb } from "../support/db";
 import { fakeTransport } from "../support/fake-model";
 import { FakeWriter } from "../support/fake-writer";
@@ -54,6 +59,8 @@ describe("account lock (layer 1)", () => {
     setupPaidVia: Workspace["setupPaidVia"] = "stripe",
   ) => ({
     plan,
+    freePlan: null,
+    freePlanUntil: null,
     status,
     evaluationEndsAt: null,
     setupPaidVia,
@@ -599,5 +606,153 @@ describe("in the database", () => {
       expect(await overdueAutopilotDrafts(later(GRACE_MINUTES + 1))).toEqual([]);
       expect(await overdueAutopilotDrafts(later(GRACE_MINUTES + 6))).toEqual([draftId]);
     });
+  });
+});
+
+// --- Plan #47 offer A: autopilot follows the plan that counts (§3.6) -----------------------
+
+describe("autopilot follows the plan that counts (free referral months, any plan drop)", () => {
+  const DAY = 86_400_000;
+  let database: Database;
+  let workspaceId: string;
+  let mailboxId: string;
+
+  const lock = (over: Partial<Workspace>) =>
+    accountLockReason(
+      {
+        status: "active",
+        evaluationEndsAt: null,
+        setupPaidVia: "stripe",
+        plan: "solo",
+        freePlan: null,
+        freePlanUntil: null,
+        ...over,
+      },
+      NOW,
+    );
+
+  it("layer 1 reads the free plan while it runs, and only while it runs", () => {
+    expect(lock({})).toMatch(/Crew and Company/);
+    expect(lock({ freePlan: "crew", freePlanUntil: new Date(NOW.getTime() + DAY) })).toBeNull();
+    expect(lock({ freePlan: "crew", freePlanUntil: NOW })).toMatch(/Crew and Company/);
+    expect(lock({ freePlan: "crew", freePlanUntil: null })).toMatch(/Crew and Company/);
+    // A free month never unlocks what the account's status or payment locks.
+    expect(
+      lock({
+        status: "setup_paid",
+        freePlan: "crew",
+        freePlanUntil: new Date(NOW.getTime() + DAY),
+      }),
+    ).toMatch(/setup call/);
+  });
+
+  async function setWs(values: Partial<typeof workspaces.$inferInsert>) {
+    await database.update(workspaces).set(values).where(eq(workspaces.id, workspaceId));
+  }
+  /** One category on autopilot and one reply counting down. */
+  async function autopilotOn() {
+    await database
+      .insert(rules)
+      .values({ workspaceId, category: "scheduling", mode: "autopilot", updatedAt: NOW });
+    const [t] = await database
+      .insert(threads)
+      .values({ mailboxId, gmailThreadId: `t-${Math.random()}` })
+      .returning();
+    await database.insert(drafts).values({
+      threadId: t!.id,
+      mailboxId,
+      gmailDraftId: `g-${t!.id}`,
+      toAddress: "dana@customer.com",
+      subject: "Re",
+      body: "b",
+      originalBody: "b",
+      reason: "r",
+      promptVersion: "draft.v1",
+      autoSendAt: later(10),
+    });
+  }
+  const state = async () => ({
+    modes: (await database.select().from(rules)).map((r) => r.mode),
+    countdowns: (await database.select().from(drafts)).filter((d) => d.autoSendAt).length,
+    logged: (
+      await database
+        .select()
+        .from(activityLog)
+        .where(eq(activityLog.action, "autopilot_turned_off_plan"))
+    ).map((l) => l.detail),
+  });
+
+  beforeEach(async () => {
+    process.env.TOKEN_ENCRYPTION_KEY = randomBytes(32).toString("base64");
+    database = await createTestDb();
+    const { workspace } = await ensureUserAndWorkspace({ email: "owner@shop.com" });
+    workspaceId = workspace.id;
+    mailboxId = (
+      await saveConnectedMailbox(workspace, {
+        email: "owner@shop.com",
+        refreshToken: "rt",
+        grantedScopes: [],
+      })
+    ).id;
+    await setWs({ status: "active", plan: "crew", setupPaidVia: "stripe" });
+  });
+
+  it("a plan without autopilot switches every category back and stops countdowns, once", async () => {
+    await autopilotOn();
+    expect(await autopilotPlanEffects(workspaceId, NOW)).toBe(0); // Crew keeps it
+    // A move down on Stripe's page writes the plan; the effects run after it.
+    await setWs({ plan: "solo" });
+    expect(await autopilotPlanEffects(workspaceId, NOW)).toBe(1);
+    expect(await state()).toEqual({ modes: ["draft"], countdowns: 0, logged: [{ count: 1 }] });
+    expect(await autopilotPlanEffects(workspaceId, NOW)).toBe(0);
+    expect((await state()).logged).toHaveLength(1);
+  });
+
+  it("a running free Crew month keeps autopilot on; it goes off once the month is over", async () => {
+    await setWs({ plan: "solo", freePlan: "crew", freePlanUntil: new Date(NOW.getTime() + DAY) });
+    await autopilotOn();
+    expect(await autopilotPlanEffects(workspaceId, NOW)).toBe(0);
+    expect((await state()).modes).toEqual(["autopilot"]);
+    expect(await autopilotPlanEffects(workspaceId, new Date(NOW.getTime() + DAY))).toBe(1);
+    expect(await state()).toEqual({ modes: ["draft"], countdowns: 0, logged: [{ count: 1 }] });
+  });
+
+  it("the 15-minute invariant resets rules left on under a plan without autopilot", async () => {
+    await autopilotOn();
+    // Left behind by an older Stripe-page downgrade that never ran the effects.
+    await setWs({ plan: "solo" });
+    const { workspace: other } = await ensureUserAndWorkspace({ email: "crew@other.com" });
+    await database
+      .update(workspaces)
+      .set({ status: "active", plan: "company", setupPaidVia: "stripe" })
+      .where(eq(workspaces.id, other.id));
+    await database
+      .insert(rules)
+      .values({ workspaceId: other.id, category: "scheduling", mode: "autopilot" });
+
+    expect(await enforcePlanAutopilot(NOW)).toBe(1);
+    const modes = await database.select().from(rules);
+    expect(modes.map((r) => [r.workspaceId === workspaceId, r.mode]).sort()).toEqual([
+      [false, "autopilot"],
+      [true, "draft"],
+    ]);
+    expect(await enforcePlanAutopilot(NOW)).toBe(0);
+  });
+
+  it("the admin's plan change runs the same effects, and logs what it switched off", async () => {
+    await autopilotOn();
+    await setWorkspacePlan(workspaceId, "solo", NOW);
+    expect(await state()).toEqual({ modes: ["draft"], countdowns: 0, logged: [{ count: 1 }] });
+    const changed = await database
+      .select()
+      .from(activityLog)
+      .where(eq(activityLog.action, "plan_changed"));
+    expect(changed.map((l) => l.detail)).toEqual([{ by: "admin", from: "crew", to: "solo" }]);
+  });
+
+  it("the queue shows a countdown only while autopilot is open to the account", () => {
+    const page = readFileSync("src/app/(app)/queue/page.tsx", "utf8");
+    expect(page).toContain("const autopilotOpen = accountLockReason(workspace) === null;");
+    expect(page).toContain("autoSendAt={i.autoSendAt && autopilotOpen ?");
   });
 });

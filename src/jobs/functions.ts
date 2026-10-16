@@ -32,7 +32,11 @@ import { sendPushAlerts } from "@/server/push-alerts";
 import { sendLeadAtRiskPushes } from "@/server/leads-at-risk";
 import { purgeExpiredNotes } from "@/server/seasonal-notes";
 import { learnVoice, workspacesDueForVoiceRefresh, workspacesNeedingVoice } from "@/server/voice";
-import { expireEvaluations, startPendingEvaluations } from "@/server/workspace-lifecycle";
+import {
+  enforcePlanAutopilot,
+  expireEvaluations,
+  startPendingEvaluations,
+} from "@/server/workspace-lifecycle";
 import { runDraftMessagesCleanup } from "@/server/draft-message-cleanup";
 import { runM7Backfill } from "@/server/m7-backfill";
 import { applyPendingReferralCredits } from "@/server/referrals";
@@ -379,6 +383,8 @@ export const workspaceLifecycle = inngest.createFunction(
   async ({ step }) => {
     const started = await step.run("start", () => startPendingEvaluations());
     const expired = await step.run("expire", () => expireEvaluations());
+    // Plan #47: no category stays on autopilot under a plan without it (any path, any delay).
+    await step.run("enforce-plan-autopilot", () => enforcePlanAutopilot());
     // Autopilot drafts whose send event was lost: send (or stand down) now.
     const overdue = await step.run("autopilot-overdue", () => overdueAutopilotDrafts());
     if (overdue.length) {

@@ -1,7 +1,7 @@
 import "server-only";
-import { and, eq, exists, lte, sql } from "drizzle-orm";
+import { and, asc, eq, exists, inArray, isNotNull, isNull, lte, sql } from "drizzle-orm";
 import { db, type Database } from "@/db";
-import { pricing } from "@/config/pricing";
+import { mailboxLimitFor, planHasAutopilot } from "@/config/pricing";
 import {
   activityLog,
   drafts,
@@ -13,6 +13,7 @@ import {
 } from "@/db/schema";
 import { isAdminEmail } from "./admin";
 import { canMakeMove, EVALUATION_MS, resumeTarget, type AdminMove } from "./lifecycle";
+import { effectivePlan } from "./referral-rules";
 import { creditReferralSafely } from "./referrals";
 
 /**
@@ -184,10 +185,209 @@ export async function clearAutopilotCountdowns(
       )`);
 }
 
+/** What plan effects run against: the database, or the transaction they are part of. */
+type Executor = Pick<Database, "select" | "update" | "insert" | "execute">;
+
+async function planFields(workspaceId: string, executor: Executor) {
+  const [w] = await executor
+    .select({
+      plan: workspaces.plan,
+      freePlan: workspaces.freePlan,
+      freePlanUntil: workspaces.freePlanUntil,
+    })
+    .from(workspaces)
+    .where(eq(workspaces.id, workspaceId));
+  return w;
+}
+
+/** Stop the autopilot countdowns on these inboxes: those replies wait for the owner's tap. */
+export async function clearMailboxCountdowns(
+  mailboxIds: string[],
+  executor: Pick<Database, "update">,
+) {
+  if (!mailboxIds.length) return;
+  await executor
+    .update(drafts)
+    .set({ autoSendAt: null })
+    .where(
+      and(
+        isNotNull(drafts.autoSendAt),
+        eq(drafts.status, "pending"),
+        inArray(drafts.mailboxId, mailboxIds),
+      ),
+    );
+}
+
+/**
+ * Plan #47 offer A, §3.6: when the plan that counts (`effectivePlan`) has no autopilot, every
+ * category goes back to drafts and every countdown stops. Idempotent. One function for every
+ * path a plan can drop by — the admin's plan change, Stripe's webhook, the end of a free month
+ * and the 15-minute invariant — so the same code runs on each. Logs only when it switched
+ * something off. Returns how many categories it switched off.
+ */
+export async function autopilotPlanEffects(
+  workspaceId: string,
+  now: Date = new Date(),
+  executor: Executor = db(),
+): Promise<number> {
+  const w = await planFields(workspaceId, executor);
+  if (!w || planHasAutopilot(effectivePlan(w, now))) return 0;
+  const off = await executor
+    .update(rules)
+    .set({ mode: "draft", updatedAt: now })
+    .where(and(eq(rules.workspaceId, workspaceId), eq(rules.mode, "autopilot")))
+    .returning({ category: rules.category });
+  await clearAutopilotCountdowns(workspaceId, executor);
+  if (off.length > 0) {
+    await executor.insert(activityLog).values({
+      workspaceId,
+      actor: "squared_away",
+      action: "autopilot_turned_off_plan",
+      detail: { count: off.length },
+      createdAt: now,
+    });
+  }
+  return off.length;
+}
+
+/**
+ * The invariant behind autopilotPlanEffects, every 15 minutes: any workspace with a category
+ * on autopilot whose plan that counts has none is switched back (and logged). Also cleans rules
+ * left on by Stripe-page downgrades before this existed. Returns the workspaces it fixed.
+ */
+export async function enforcePlanAutopilot(now: Date = new Date()): Promise<number> {
+  const candidates = await db()
+    .selectDistinct({
+      id: workspaces.id,
+      plan: workspaces.plan,
+      freePlan: workspaces.freePlan,
+      freePlanUntil: workspaces.freePlanUntil,
+    })
+    .from(rules)
+    .innerJoin(workspaces, eq(workspaces.id, rules.workspaceId))
+    .where(eq(rules.mode, "autopilot"));
+  let fixed = 0;
+  for (const w of candidates) {
+    if (planHasAutopilot(effectivePlan(w, now))) continue;
+    try {
+      if ((await autopilotPlanEffects(w.id, now)) > 0) fixed++;
+    } catch (err) {
+      console.error("enforce_plan_autopilot_failed", {
+        workspaceId: w.id,
+        error: err instanceof Error ? err.name : "unknown",
+      });
+    }
+  }
+  return fixed;
+}
+
+/** Inboxes that count against the plan: every one not paused for being over it, oldest first. */
+async function countedInboxes(workspaceId: string, executor: Executor) {
+  return executor
+    .select({ id: mailboxes.id })
+    .from(mailboxes)
+    .where(and(eq(mailboxes.workspaceId, workspaceId), isNull(mailboxes.pausedReason)))
+    .orderBy(asc(mailboxes.createdAt), asc(mailboxes.id));
+}
+
+/**
+ * Plan #47 offer A, §3.6 (and Davi's Q2, 2026-10-16: a move down a plan on Stripe's page too):
+ * more inboxes than the plan that counts includes → the newest-created extras pause
+ * (`paused`, reason `over_plan`). Ranked by `created_at`, which a reconnect never resets, so
+ * the first inbox stays on. Inboxes needing a reconnect count. Nothing is deleted; their
+ * countdowns stop, and a send in its undo window stops through the normal send path. Returns
+ * how many it paused.
+ */
+export async function inboxLimitEffects(
+  workspaceId: string,
+  now: Date = new Date(),
+  executor: Executor = db(),
+): Promise<number> {
+  const w = await planFields(workspaceId, executor);
+  if (!w) return 0;
+  const limit = mailboxLimitFor(effectivePlan(w, now));
+  const extra = (await countedInboxes(workspaceId, executor)).slice(limit).map((m) => m.id);
+  if (!extra.length) return 0;
+  const paused = await executor
+    .update(mailboxes)
+    .set({ status: "paused", pausedReason: "over_plan" })
+    .where(
+      and(
+        eq(mailboxes.workspaceId, workspaceId),
+        inArray(mailboxes.id, extra),
+        isNull(mailboxes.pausedReason),
+      ),
+    )
+    .returning({ id: mailboxes.id });
+  await clearMailboxCountdowns(
+    paused.map((m) => m.id),
+    executor,
+  );
+  if (paused.length) {
+    await executor.insert(activityLog).values({
+      workspaceId,
+      actor: "squared_away",
+      action: "inboxes_paused_plan",
+      detail: { count: paused.length },
+      createdAt: now,
+    });
+  }
+  return paused.length;
+}
+
+/**
+ * Wherever the limit can rise or a slot frees up (a plan change, a free month starting, Keep,
+ * a disconnect): switch over-plan inboxes back on, oldest-created first, up to the limit. Only
+ * ever resumes, so it changes nothing for anyone without paused inboxes. Returns how many.
+ */
+export async function resumeOverPlanInboxes(
+  workspaceId: string,
+  now: Date = new Date(),
+  executor: Executor = db(),
+): Promise<number> {
+  const w = await planFields(workspaceId, executor);
+  if (!w) return 0;
+  const room =
+    mailboxLimitFor(effectivePlan(w, now)) - (await countedInboxes(workspaceId, executor)).length;
+  if (room <= 0) return 0;
+  const waiting = await executor
+    .select({ id: mailboxes.id })
+    .from(mailboxes)
+    .where(and(eq(mailboxes.workspaceId, workspaceId), eq(mailboxes.pausedReason, "over_plan")))
+    .orderBy(asc(mailboxes.createdAt), asc(mailboxes.id))
+    .limit(room);
+  if (!waiting.length) return 0;
+  const resumed = await executor
+    .update(mailboxes)
+    .set({ status: "active", pausedReason: null })
+    .where(
+      and(
+        inArray(
+          mailboxes.id,
+          waiting.map((m) => m.id),
+        ),
+        eq(mailboxes.pausedReason, "over_plan"),
+      ),
+    )
+    .returning({ id: mailboxes.id });
+  if (resumed.length) {
+    await executor.insert(activityLog).values({
+      workspaceId,
+      actor: "squared_away",
+      action: "inboxes_resumed_plan",
+      detail: { count: resumed.length },
+      createdAt: now,
+    });
+  }
+  return resumed.length;
+}
+
 /**
  * Davi sets the plan by hand until Stripe does (Milestone 10). The plan
  * decides mailbox limits and whether autopilot can be unlocked. Dropping to a
- * plan without autopilot switches it off and stops anything counting down.
+ * plan without autopilot switches it off and stops anything counting down
+ * (autopilotPlanEffects, the same code every plan path runs); a plan with room
+ * switches paused over-plan inboxes back on.
  */
 export async function setWorkspacePlan(
   workspaceId: string,
@@ -197,13 +397,8 @@ export async function setWorkspacePlan(
   const [w] = await db().select().from(workspaces).where(eq(workspaces.id, workspaceId));
   if (!w) throw new Error("Workspace not found.");
   await db().update(workspaces).set({ plan }).where(eq(workspaces.id, workspaceId));
-  if (!plan || !pricing.plans[plan].autopilot) {
-    await db()
-      .update(rules)
-      .set({ mode: "draft", updatedAt: now })
-      .where(eq(rules.workspaceId, workspaceId));
-    await clearAutopilotCountdowns(workspaceId);
-  }
+  await autopilotPlanEffects(workspaceId, now);
+  await resumeOverPlanInboxes(workspaceId, now);
   await db()
     .insert(activityLog)
     .values({

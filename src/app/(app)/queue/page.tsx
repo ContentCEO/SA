@@ -9,6 +9,7 @@ import { confidenceLabel } from "@/config/drafting";
 import { gmailThreadLink } from "@/lib/gmail-link";
 import { relativeTime } from "@/lib/relative-time";
 import { listQueue, sentDraftSummary, type QueueItem } from "@/server/drafts";
+import { accountLockReason } from "@/server/autopilot";
 import {
   canPracticeSend,
   canSend,
@@ -98,6 +99,9 @@ const gmailLink = (i: QueueItem) => gmailThreadLink(i);
 
 export default async function QueuePage(props: PageProps<"/queue">) {
   const { workspace } = await requireOwner();
+  // An autopilot countdown only shows while autopilot is open to this account (the plan that
+  // counts may have dropped since it started; runAutopilotSend stands down on its own).
+  const autopilotOpen = accountLockReason(workspace) === null;
   const params = await props.searchParams;
   const [queue, boxes, checklist] = await Promise.all([
     listQueue(workspace.id),
@@ -293,7 +297,7 @@ export default async function QueuePage(props: PageProps<"/queue">) {
               needsOwnerReason={i.needsOwnerReason}
               canSend={sending}
               readOnly={readOnly}
-              autoSendAt={i.autoSendAt ? clock.format(i.autoSendAt) : null}
+              autoSendAt={i.autoSendAt && autopilotOpen ? clock.format(i.autoSendAt) : null}
               sendingOffLabel={sendingOffLabel(workspace)}
               sendingOffDetail={sendingBlockedReason(workspace)}
               practiceLeft={practiceLeft}

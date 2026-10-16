@@ -1,7 +1,7 @@
 import "server-only";
 import { hasUnfilledGap } from "@/ai/gaps";
 import { and, count, desc, eq, gte, inArray, isNotNull, isNull, lte, sql } from "drizzle-orm";
-import { pricing } from "@/config/pricing";
+import { planHasAutopilot } from "@/config/pricing";
 import { db } from "@/db";
 import {
   activityLog,
@@ -23,6 +23,7 @@ import {
 } from "./drafts";
 import { canSend, effectiveStatus, setupReallyPaid } from "./lifecycle";
 import { knownCustomer } from "./known-customer";
+import { effectivePlan } from "./referral-rules";
 import { markReconnectNeeded } from "./sync";
 import { unsentDraftMessage } from "./thread-sql";
 
@@ -32,8 +33,9 @@ export { knownCustomer };
  * Autopilot: the owner's explicit exception to "nothing leaves without your
  * okay". Every rule here is enforced in code and has a test. Three layers:
  *
- * 1. Account: Crew or Company plan, setup finished (status `active`), and the setup really
- *    paid (`setupReallyPaid`) — the same payment the send gate needs.
+ * 1. Account: Crew or Company plan (the plan that counts: `effectivePlan`, so a free referral
+ *    month of Crew counts until it ends, with no job needed), setup finished (status `active`),
+ *    and the setup really paid (`setupReallyPaid`) — the same payment the send gate needs.
  * 2. Category: the owner turned it on, and it has earned it — at least
  *    EARN_THRESHOLD drafts in that category approved without edits.
  * 3. Each email: never complaints, money, flagged threads, people the owner
@@ -55,12 +57,15 @@ export function isAutopilotCategory(c: unknown): c is Category {
   return typeof c === "string" && (AUTOPILOT_CATEGORIES as readonly string[]).includes(c);
 }
 
+/** What layer 1 reads about the account. */
+export type AutopilotWorkspace = Pick<
+  Workspace,
+  "status" | "evaluationEndsAt" | "plan" | "freePlan" | "freePlanUntil" | "setupPaidVia"
+>;
+
 /** Layer 1. Returns why not, in plain words, or null when unlocked. */
-export function accountLockReason(
-  w: Pick<Workspace, "status" | "evaluationEndsAt" | "plan" | "setupPaidVia">,
-  now: Date = new Date(),
-): string | null {
-  if (!w.plan || !pricing.plans[w.plan].autopilot) {
+export function accountLockReason(w: AutopilotWorkspace, now: Date = new Date()): string | null {
+  if (!planHasAutopilot(effectivePlan(w, now))) {
     return "Autopilot comes with the Crew and Company plans.";
   }
   if (effectiveStatus(w, now) !== "active") {
@@ -153,7 +158,7 @@ export type AutopilotState = {
 };
 
 export async function autopilotState(
-  workspace: Pick<Workspace, "id" | "status" | "evaluationEndsAt" | "plan" | "setupPaidVia">,
+  workspace: AutopilotWorkspace & Pick<Workspace, "id">,
   now: Date = new Date(),
 ): Promise<AutopilotState> {
   const lockedReason = accountLockReason(workspace, now);
@@ -181,7 +186,7 @@ export class AutopilotNotAllowedError extends Error {
 
 /** The owner's switch. Turning on is checked against layers 1 and 2; turning off always works. */
 export async function setAutopilot(
-  workspace: Pick<Workspace, "id" | "status" | "evaluationEndsAt" | "plan" | "setupPaidVia">,
+  workspace: AutopilotWorkspace & Pick<Workspace, "id">,
   category: string,
   on: boolean,
   now: Date = new Date(),

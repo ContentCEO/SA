@@ -189,11 +189,14 @@ async function seedMailbox(
   email: string,
   tag: string,
 ): Promise<Box> {
-  const mb = await saveConnectedMailbox(workspace, {
-    email,
-    refreshToken: `rt-${tag}`,
-    grantedScopes: ["x"],
-  });
+  const mb = await saveConnectedMailbox(
+    { ...workspace, freePlan: null, freePlanUntil: null },
+    {
+      email,
+      refreshToken: `rt-${tag}`,
+      grantedScopes: ["x"],
+    },
+  );
   const [t] = await database
     .insert(threads)
     .values({
