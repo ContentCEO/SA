@@ -78,7 +78,7 @@ const features = [
   },
   {
     title: "Chases quiet quotes",
-    body: "If a customer goes quiet on a quote or invoice, it drafts a friendly nudge. Two nudge drafts at most per conversation — each waits for your okay.",
+    body: "If a customer goes quiet on a quote or invoice, it drafts a friendly nudge. Two nudges at most per conversation — each one a draft that waits for your okay.",
   },
   {
     title: "Morning summary",

@@ -10,7 +10,8 @@ export function QueuePreview() {
     <figure className="relative mx-auto w-full max-w-sm">
       <figcaption className="sr-only">
         A phone showing the Squared Away queue on day 1 of the three-day trial: a quote request from
-        Dana with a drafted reply, and a note that sending is off during the three days.
+        Dana with a drafted reply, and a note that Squared Away won&apos;t send anything to a
+        customer during the three days.
       </figcaption>
       <div
         aria-hidden
@@ -46,7 +47,7 @@ export function QueuePreview() {
             <span className="text-slate">Thanks, Mike</span>
           </div>
           <div className="sa-inverted mt-1 flex flex-col justify-center rounded-lg px-3 py-2">
-            <span className="font-black">Sending is off during your three days</span>
+            <span className="font-black">Nothing goes to a customer during your three days</span>
             <span className="text-xs text-ash">
               Read the drafts and see if they sound like you.
             </span>

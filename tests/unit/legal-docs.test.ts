@@ -335,10 +335,19 @@ describe("owner-facing copy about the trial", () => {
         "two at most, ever",
         "automatic nudge",
         "takes two minutes",
+        // The cap counts nudges sent; a discarded one doesn't count, so never promise drafts.
+        "nudge drafts at most",
+        "sending is off",
       ]) {
         expect(text, `${f}: ${bad}`).not.toContain(bad);
       }
     }
+  });
+
+  it("the homepage states the nudge cap the code keeps (nudges sent, each a draft)", () => {
+    expect(flat(readFileSync("src/app/page.tsx", "utf8"))).toContain(
+      "Two nudges at most per conversation — each one a draft that waits for your okay.",
+    );
   });
 
   it("the explainer names Google's two permissions as Google does, and keeps the Send reply promise", () => {

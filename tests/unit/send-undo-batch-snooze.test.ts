@@ -538,6 +538,34 @@ describe("plan M5 sending: undo (#7), batch (#5), snooze (#6)", () => {
       expect((await row(b.draft.id)).sendAfter).toBeNull();
     });
 
+    it("never sends to an address the owner didn't see: a re-pointed To is refused, online or offline", async () => {
+      const { draft } = await seed();
+      // Shown "To: dana@x.com"; the Reply-To backfill then re-pointed it.
+      await database
+        .update(drafts)
+        .set({ toAddress: "dana.ruiz@home.com" })
+        .where(eq(drafts.id, draft.id));
+      writer.calls.length = 0;
+      expect(await queueSend(workspaceId, draft.id, { ...deps(), seenTo: "dana@x.com" })).toEqual({
+        status: "to_changed",
+      });
+      expect(
+        await queueSend(workspaceId, draft.id, {
+          ...deps(),
+          offline: okay(READY_BODY),
+          seenTo: "Dana@X.com",
+        }),
+      ).toEqual({ status: "to_changed" });
+      expect(writer.calls).toEqual([]);
+      expect((await row(draft.id)).sendAfter).toBeNull();
+      // Looking again (the card now shows the new To) sends normally; case doesn't matter.
+      const ok = await queueSend(workspaceId, draft.id, {
+        ...deps(),
+        seenTo: " Dana.Ruiz@home.com ",
+      });
+      expect(ok.status).toBe("queued");
+    });
+
     it("an okay older than 12 hours, or for a draft that's gone, sends nothing", async () => {
       const { draft } = await seed();
       writer.calls.length = 0;

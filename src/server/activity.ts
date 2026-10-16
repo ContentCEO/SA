@@ -59,9 +59,12 @@ export function describeActivity(
       return `You discarded the draft${to}`;
     // Review B1: website-form leads now go to the customer's own address.
     case "draft_repointed":
-      return "A draft now goes to the customer's own address, not their website form's.";
+      return "A draft now goes to the reply address the customer's email named, not the address it came from.";
     case "reply_went_to_form": {
       const on = typeof detail.sentOn === "string" ? shortDate(detail.sentOn) : null;
+      // `robot` false: a person whose email named their other address; they likely have it.
+      if (detail.robot === false)
+        return `A reply you sent${on ? ` on ${on}` : ""}${to} went to the address their email came from, not the reply address it named. Check they got it.`;
       return `A reply you sent${on ? ` on ${on}` : ""}${to} went to the website form's address, so the customer may not have it. Send it again from Gmail.`;
     }
     case "draft_revised":

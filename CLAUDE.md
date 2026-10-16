@@ -1051,6 +1051,29 @@ default, CI too) and refuses a non-local `DATABASE_URL` or an `APP_URL` that isn
   (the rule: the three stay equal); `docs/terms.md` text unchanged. Everyone who agreed to
   2026-10-15 is asked once more (only testers; the gate isn't live yet). `legal-docs.test.ts`
   holds each new sentence to the code. LAUNCH.md step 13 has "Outside review (2026-10-15)".
+- **Outside-review follow-ups (2026-10-16, after verifying P1–P4):**
+  - Reply-To backfill matches only the **one email a draft answers** (`answeredIdSql`: the
+    inbound row it's threaded to, else the newest real non-side inbound before the draft was
+    made); an older email's Reply-To never moves a draft or flags a past send. Re-point writes
+    the **row first** (conditional), then Gmail; a Gmail failure puts the row back (and
+    un-queues a tap made meanwhile).
+  - `reply_went_to_form` detail carries `robot` (`looksLikeFormSender`: no-reply, known form
+    hosts, wordpress@/forms@…). `robot: false` (a person naming their other address) reads
+    "…went to the address their email came from… Check they got it." — never "send it again".
+    REPOINTED_FLAG / `draft_repointed` / the Autopilot settings line are worded neutrally
+    ("the reply address the customer's email named").
+  - **Send checks the To the owner saw:** the card (and offline okays, `Intent.seenTo`) post
+    `seenTo`; `queueSend` refuses `to_changed` (`?error=to_changed`, 409 on the API) when the
+    draft now goes elsewhere, and its queue write requires the To it loaded.
+  - `threadsToAutoDraft` leaves out threads whose newest inbound has a **checked** no-reply
+    reply address (unchecked NULL stays in), so skipped robots can't starve real leads.
+  - Inbox: only noise that doesn't need the owner folds into "N junk emails"
+    (`isFoldableJunk`); needs-owner noise keeps its "Waiting on you"/"Replied" word.
+  - AutoSaveForm: a radio saves at once only after a pointer tap (`isPointerChange`, 1.5s);
+    an arrow-key change shows the Save button instead (WCAG 3.2.2).
+  - Homepage: "Two nudges at most per conversation — each one a draft that waits for your
+    okay." (the cap counts nudges sent); the queue still's card and caption say nothing goes
+    to a customer during the three days. In-app `sendingOffLabel` unchanged (pinned).
 - **M11 security audit (S4, 2026-10-13):** static tests guard the surface —
   `tests/unit/security-surface.test.ts` (C1 every server action awaits `requireOwner` /
   `requireAdmin` first, reviewed public/inline allow-lists; C2 admin pages + no `loading.tsx` over

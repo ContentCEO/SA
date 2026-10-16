@@ -13,6 +13,7 @@ import {
   listQueue,
   reviseDraft,
   sendDraft,
+  threadsToAutoDraft,
 } from "@/server/drafts";
 import { saveConnectedMailbox } from "@/server/mailboxes";
 import { NO_REPLY_FLAG, type ReplyToHeader } from "@/server/reply-address-rules";
@@ -248,6 +249,39 @@ describe("no-reply addresses", () => {
     await reviseDraft(workspaceId, d.id, { tweak: "shorter" }, deps());
     const [after] = await database.select().from(drafts).where(eq(drafts.id, d.id));
     expect(after!.flags[0]).toBe(NO_REPLY_FLAG);
+  });
+});
+
+describe("no-reply threads never crowd out real leads (outside review follow-up)", () => {
+  it("10+ newer no-reply supplier threads: the older real lead is still picked; unchecked ones stay in", async () => {
+    const real = await lead({
+      from: "dana@example.net",
+      fromName: "Dana",
+      replyToHeader: {},
+    });
+    await database
+      .update(threads)
+      .set({ lastMessageAt: ago(50) })
+      .where(eq(threads.id, real.thread.id));
+    const robots: string[] = [];
+    for (let i = 0; i < 11; i++) {
+      const { thread } = await lead({
+        from: `noreply@supplier${i}.com`,
+        fromName: "Supplier",
+        replyToHeader: {},
+        category: "supplier_vendor",
+      });
+      robots.push(thread.id);
+    }
+    // A form sent from no-reply@ whose Reply-To hasn't been read yet may carry the customer.
+    const unchecked = await lead({
+      from: "no-reply@forms.example",
+      replyToHeader: null,
+    });
+    const picked = await threadsToAutoDraft(mailboxId);
+    expect(picked).toContain(real.thread.id);
+    expect(picked).toContain(unchecked.thread.id);
+    for (const r of robots) expect(picked).not.toContain(r);
   });
 });
 

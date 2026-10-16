@@ -315,23 +315,89 @@ describe("waiting drafts addressed to the robot", () => {
       { draftId: d.id },
     ]);
     expect(describeActivity("draft_repointed", { draftId: d.id }, null)).toBe(
-      "A draft now goes to the customer's own address, not their website form's.",
+      "A draft now goes to the reply address the customer's email named, not the address it came from.",
     );
   });
 
-  it("a crew reply after the form email: still matched to the form email", async () => {
+  it("a crew reply after the draft was made: still matched to the form email it answers", async () => {
     const lead = await inbound({ sentAt: new Date(NOW.getTime() - 2 * 3600_000) });
     await inbound({
       fromAddress: "crew@ruizplumbing.com",
       fromName: "Crew",
       replyToHeader: {},
-      sentAt: new Date(NOW.getTime() - 3600_000),
+      sentAt: new Date(NOW.getTime() - 30 * 60_000),
     });
     const d = await pendingDraft();
     const g = gmail({ [lead.gmailMessageId]: "dana@example.com" });
     await runReplyToBackfill(NOW, { readerFor: () => g.reader, writerFor: () => writer });
     const [after] = await database.select().from(drafts).where(eq(drafts.id, d.id));
     expect(after!.toAddress).toBe("dana@example.com");
+  });
+
+  it("Gmail refuses the rewrite: the row goes back, so the card shows what Gmail would send", async () => {
+    const lead = await inbound();
+    const d = await pendingDraft();
+    writer.updateDraft = async () => {
+      throw new Error("boom");
+    };
+    const g = gmail({ [lead.gmailMessageId]: "dana@example.com" });
+    await runReplyToBackfill(NOW, { readerFor: () => g.reader, writerFor: () => writer });
+    const [after] = await database.select().from(drafts).where(eq(drafts.id, d.id));
+    expect(after!.toAddress).toBe(ROBOT);
+    expect(after!.flags).toEqual(["Check the date."]);
+    const logs = await database.select().from(activityLog);
+    expect(logs.map((l) => l.action)).not.toContain("draft_repointed");
+  });
+
+  it("an older email's Reply-To never moves a draft that answers a newer email without one", async () => {
+    // An office: its first email named Jane to reply to; its newest, from Bob, names nobody.
+    // New code answers the newest at the office's address — correct, and left alone.
+    const older = await inbound({
+      fromAddress: "office@pm-co.com",
+      fromName: "PM Co",
+      sentAt: new Date(NOW.getTime() - 3 * DAY),
+    });
+    const newest = await inbound({
+      fromAddress: "office@pm-co.com",
+      fromName: "PM Co",
+      replyToHeader: {},
+      sentAt: new Date(NOW.getTime() - 2 * 3600_000),
+    });
+    const d = await pendingDraft({ toAddress: "office@pm-co.com", replyToMessageId: newest.id });
+    const sent = (
+      await database
+        .insert(drafts)
+        .values({
+          threadId,
+          mailboxId,
+          toAddress: "office@pm-co.com",
+          subject: "Re",
+          body: "b",
+          status: "sent",
+          reason: "r",
+          promptVersion: "draft.v5",
+          replyToMessageId: newest.id,
+          createdAt: new Date(NOW.getTime() - 3600_000),
+          decidedAt: new Date(NOW.getTime() - 3600_000),
+        })
+        .returning()
+    )[0]!;
+    // A nudge threaded to the owner's email answers the newest real inbound before it.
+    const g = gmail({ [older.gmailMessageId]: "jane@pm-co.com" });
+    await runReplyToBackfill(NOW, { readerFor: () => g.reader, writerFor: () => writer });
+    expect(await stored(older.id)).toEqual({ address: "jane@pm-co.com" });
+    const [after] = await database.select().from(drafts).where(eq(drafts.id, d.id));
+    expect(after!.toAddress).toBe("office@pm-co.com");
+    expect(after!.flags).not.toContain(REPOINTED_FLAG);
+    const logs = await database.select().from(activityLog);
+    expect(logs.map((l) => l.action)).not.toContain("draft_repointed");
+    expect(
+      logs.filter(
+        (l) =>
+          l.action === "reply_went_to_form" &&
+          (l.detail as { draftId?: string } | null)?.draftId === sent.id,
+      ),
+    ).toEqual([]);
   });
 
   it("left alone: in its undo window, claimed, changed in Gmail (text or message id), gone", async () => {
@@ -367,7 +433,8 @@ describe("waiting drafts addressed to the robot", () => {
 
 describe("replies already sent to the robot", () => {
   it("one Activity line each (content-free), never twice", async () => {
-    const lead = await inbound();
+    // The form email came before the reply (which isn't threaded to it: matched by time).
+    const lead = await inbound({ sentAt: new Date(NOW.getTime() - 4 * DAY) });
     const [d] = await database
       .insert(drafts)
       .values({
@@ -391,12 +458,45 @@ describe("replies already sent to the robot", () => {
       (l) => l.action === "reply_went_to_form",
     );
     expect(rows).toHaveLength(1);
-    expect(rows[0]!.detail).toEqual({ draftId: d!.id, sentOn: "2026-10-12" });
+    expect(rows[0]!.detail).toEqual({ draftId: d!.id, sentOn: "2026-10-12", robot: true });
     expect(JSON.stringify(rows[0]!.detail)).not.toMatch(/@/);
     expect(
       describeActivity("reply_went_to_form", rows[0]!.detail, { name: "Dana", category: null }),
     ).toBe(
       "A reply you sent on Oct 12 to Dana went to the website form's address, so the customer may not have it. Send it again from Gmail.",
     );
+  });
+});
+
+describe("a person whose email named their other address", () => {
+  it("a past reply to their From gets a gentle check-they-got-it line, never 'send it again'", async () => {
+    const lead = await inbound({ fromAddress: "dana@gmail.com", fromName: "Dana" });
+    await database.insert(drafts).values({
+      threadId,
+      mailboxId,
+      toAddress: "dana@gmail.com",
+      subject: "Re",
+      body: "b",
+      status: "sent",
+      reason: "r",
+      promptVersion: "draft.v5",
+      replyToMessageId: lead.id,
+      createdAt: new Date(NOW.getTime() - 3 * DAY),
+      decidedAt: new Date("2026-10-12T16:00:00Z"),
+    });
+    const g = gmail({ [lead.gmailMessageId]: "dana@work-co.com" });
+    await runReplyToBackfill(NOW, { readerFor: () => g.reader, writerFor: () => writer });
+    const [row] = (await database.select().from(activityLog)).filter(
+      (l) => l.action === "reply_went_to_form",
+    );
+    expect(row!.detail).toMatchObject({ robot: false });
+    const text = describeActivity("reply_went_to_form", row!.detail, {
+      name: "Dana",
+      category: null,
+    });
+    expect(text).toBe(
+      "A reply you sent on Oct 12 to Dana went to the address their email came from, not the reply address it named. Check they got it.",
+    );
+    expect(text).not.toMatch(/website form|Send it again/);
   });
 });

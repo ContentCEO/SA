@@ -14,7 +14,7 @@ import { threadOffers } from "@/server/offers";
 import { priceMemoryFor, type PriceMemoryItem } from "@/server/price-memory";
 import { getBusinessProfile } from "@/server/profile";
 import { requireOwner } from "@/server/session";
-import { searchText } from "@/server/inbox-rules";
+import { isFoldableJunk, searchText } from "@/server/inbox-rules";
 import { draftReplyAction } from "../queue/actions";
 import { InboxSearch } from "./inbox-search";
 import { markNeedsOwnerAction } from "./actions";
@@ -239,7 +239,7 @@ export default async function InboxPage(props: PageProps<"/inbox">) {
               summary: r.summary,
               categoryLabel: isCategory(r.category) ? categoryLabels[r.category] : null,
             }),
-            junk: foldJunk && r.category === "noise",
+            junk: foldJunk && isFoldableJunk(r),
             node: renderRow(r),
           }))}
         />

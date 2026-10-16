@@ -67,6 +67,7 @@ export async function listInboxThreads(
       lastIn: asDate(lastIn),
       lastOut: asDate(lastOut),
       category: r.category,
+      needsOwner: r.needsOwner,
     }),
   }));
 }

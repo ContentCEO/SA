@@ -81,7 +81,9 @@ import {
   asDate,
   messageReplyAddress,
   messageReplyName,
+  noReplySql,
   notDraftMessage,
+  replyAddressSql,
   sideEmailSql,
   waitingSinceSql,
 } from "./thread-sql";
@@ -1058,7 +1060,13 @@ export type QueueSendOutcome =
   | { status: "queued"; sendAfter: Date }
   | { status: "changed_since_seen" }
   | { status: "intent_expired" }
+  /** Who it goes to changed since the card was shown (a Reply-To re-point): look again. */
+  | { status: "to_changed" }
   | Exclude<SendOutcome, { status: "sent" }>;
+
+/** Two addresses are the same mailbox (case and spaces aside). */
+const sameAddress = (a: string | null | undefined, b: string | null | undefined) =>
+  (a ?? "").trim().toLowerCase() === (b ?? "").trim().toLowerCase();
 
 /** Plan #10: an okay given with no signal counts for this long, no longer. */
 export const OFFLINE_INTENT_MAX_AGE_MS = 12 * 60 * 60 * 1000;
@@ -1084,6 +1092,12 @@ export async function queueSend(
      * ago, nothing is sent and they're told.
      */
     offline?: { seenHash: string; okayedAt: Date };
+    /**
+     * The address the card showed when Send reply was tapped (H7 "To:"). If the draft now goes
+     * somewhere else, nothing is queued and the owner is asked to look again: the same rule
+     * as a draft changed in Gmail — never send what they haven't seen.
+     */
+    seenTo?: string;
   } = {},
 ): Promise<QueueSendOutcome> {
   const now = opts.now?.() ?? new Date();
@@ -1100,6 +1114,8 @@ export async function queueSend(
     if (opts.offline.seenHash !== bodyHash(draft.body ?? ""))
       return { status: "changed_since_seen" };
   }
+  if (opts.seenTo !== undefined && !sameAddress(opts.seenTo, draft.toAddress))
+    return { status: "to_changed" };
   if (mailbox.status !== "active") return { status: "reconnect_needed" };
   if (hasUnfilledGap(opts.editedBody ?? draft.body ?? "")) return { status: "gaps_unfilled" };
 
@@ -1156,11 +1172,24 @@ export async function queueSend(
   const queued = await db()
     .update(drafts)
     .set({ body, sendAfter, sendClaimedAt: null, autoSendAt: null })
-    .where(stillWaiting)
+    // Still going where it went when this tap was checked (a re-point may have moved it).
+    .where(and(stillWaiting, eq(drafts.toAddress, draft.toAddress)))
     .returning({ id: drafts.id });
   // Two taps at once: only the first starts a window. Anything else that got there first
   // (the nudge closed on another device) means nothing is going out, and the owner is told so.
-  if (!queued.length) return await whyNotQueued(draft.id);
+  if (!queued.length) {
+    const [current] = await db()
+      .select({ to: drafts.toAddress, status: drafts.status, sendAfter: drafts.sendAfter })
+      .from(drafts)
+      .where(eq(drafts.id, draft.id));
+    if (
+      current?.status === "pending" &&
+      current.sendAfter == null &&
+      !sameAddress(current.to, draft.toAddress)
+    )
+      return { status: "to_changed" };
+    return await whyNotQueued(draft.id);
+  }
   await db()
     .insert(activityLog)
     .values({
@@ -2209,6 +2238,11 @@ export async function threadsToAutoDraft(mailboxId: string, limit = 10): Promise
   // the owner's own "Draft a reply" still works.
   const lastOut = sql`(select max(m.sent_at) from messages m where m.thread_id = ${threads.id} and m.direction = 'out')`;
   const lastDraft = sql`(select max(d.created_at) from drafts d where d.thread_id = ${threads.id})`;
+  // A customer whose reply address is a no-reply one is skipped (`no_reply_address`) without a
+  // draft, so it would stay a candidate until new mail came and could fill every slot ahead of
+  // an older real lead. Leave those out here. An unchecked Reply-To (NULL) stays in: a form
+  // sent from no-reply@ often carries the customer's own address there.
+  const newestInNoReply = sql`exists (select 1 from (select nr_m.reply_to_header, nr_m.from_address from messages nr_m where nr_m.thread_id = ${threads.id} and nr_m.direction = 'in' order by nr_m.sent_at desc limit 1) nr where nr.reply_to_header is not null and ${noReplySql(replyAddressSql("nr"))})`;
   const rows = await db()
     .select({ id: threads.id })
     .from(threads)
@@ -2221,6 +2255,7 @@ export async function threadsToAutoDraft(mailboxId: string, limit = 10): Promise
         sql`${threads.classifiedAt} is not null and ${threads.classifiedAt} >= ${lastIn}`,
         sql`(${lastOut} is null or ${lastOut} < ${lastIn})`,
         sql`(${lastDraft} is null or ${lastDraft} < ${lastIn})`,
+        sql`not ${newestInNoReply}`,
       ),
     )
     .orderBy(desc(threads.lastMessageAt))

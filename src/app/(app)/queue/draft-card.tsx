@@ -141,6 +141,7 @@ export function DraftCard(p: DraftCardProps) {
         body: body !== shown ? body : undefined,
         at: Date.now(),
         to: p.customer.split(/[\s,@]+/)[0] || "them",
+        seenTo: p.toAddress,
       }),
     );
   };
@@ -268,6 +269,7 @@ export function DraftCard(p: DraftCardProps) {
       {editing ? (
         <form className="flex flex-col gap-3">
           <input type="hidden" name="draftId" value={p.draftId} />
+          {p.toAddress ? <input type="hidden" name="seenTo" value={p.toAddress} /> : null}
           <ToLine address={p.toAddress} fromReplyTo={p.toFromReplyTo} />
           <label className="flex flex-col gap-1.5">
             <span className="font-semibold">Your reply</span>
@@ -415,6 +417,7 @@ export function DraftCard(p: DraftCardProps) {
               ) : p.canSend ? (
                 <form action={sendDraftAction} onSubmit={okayOffline}>
                   <input type="hidden" name="draftId" value={p.draftId} />
+                  {p.toAddress ? <input type="hidden" name="seenTo" value={p.toAddress} /> : null}
                   {body !== p.body ? <input type="hidden" name="body" value={body} /> : null}
                   <Pending label="Send reply" busy="Sending…" size="lg" className="w-full" />
                 </form>

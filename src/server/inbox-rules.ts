@@ -5,17 +5,27 @@
 export type ReplyState = "Replied" | "Waiting on you";
 
 /**
+ * Junk that can be folded out of sight: sorted as noise AND not needing the owner. Noise can
+ * still need them (a VIP, an amount over their threshold, a low-confidence sort, an email that
+ * tries to instruct the assistant, or their own "This one needs me"), and those stay in the list.
+ */
+export function isFoldableJunk(r: { category: string | null; needsOwner: boolean }): boolean {
+  return r.category === "noise" && !r.needsOwner;
+}
+
+/**
  * "Replied" when the owner wrote after the customer's latest email, "Waiting on you" when the
- * customer wrote last. Junk and threads with no customer email get no word. Both times come
- * from the same "who wrote last" reads as everywhere else (no unsent Gmail drafts, no side
- * conversations).
+ * customer wrote last. Junk (noise that doesn't need the owner) and threads with no customer
+ * email get no word. Both times come from the same "who wrote last" reads as everywhere else
+ * (no unsent Gmail drafts, no side conversations).
  */
 export function replyState(r: {
   lastIn: Date | null;
   lastOut: Date | null;
   category: string | null;
+  needsOwner: boolean;
 }): ReplyState | null {
-  if (r.category === "noise" || !r.lastIn) return null;
+  if (isFoldableJunk(r) || !r.lastIn) return null;
   return r.lastOut && r.lastOut >= r.lastIn ? "Replied" : "Waiting on you";
 }
 

@@ -107,4 +107,40 @@ export const NO_REPLY_FLAG =
 
 /** First flag on a waiting draft moved from a form's robot address to the customer's own. */
 export const REPOINTED_FLAG =
-  "Now goes to the address the customer gave in their email, not the form's. Check the greeting.";
+  "Now goes to the reply address the customer's email named, not the address it came from. Check the greeting.";
+
+/**
+ * Hosts that send website-form and booking-request emails from a robot address, with the
+ * customer in Reply-To. A short list on purpose: anything else is worded as a person.
+ */
+const FORM_SENDER_DOMAINS = [
+  "squarespace.info",
+  "squarespace.com",
+  "wix.com",
+  "wixforms.com",
+  "jotform.com",
+  "formspree.io",
+  "typeform.com",
+  "webflow.io",
+  "getjobber.com",
+  "housecallpro.com",
+];
+/** A form robot's local part: wordpress@site.com, form-submission@…, webform@…, forms@…. */
+const FORM_SENDER_LOCAL =
+  /^(wordpress|webmaster|forms?|form[-_.]?submissions?|web-?forms?|submissions?|website)([+._-]|$)/;
+
+/**
+ * Does this From look like a website form's robot (so a reply to it reaches nobody), rather
+ * than a person who named their other address in Reply-To? Used only for how firmly the
+ * one-off backfill words its "a past reply went to the From" note; drafting always answers
+ * the stored Reply-To either way, as Gmail's own Reply does.
+ */
+export function looksLikeFormSender(from: string | null | undefined): boolean {
+  const s = (from ?? "").trim().toLowerCase();
+  const at = s.lastIndexOf("@");
+  if (at <= 0) return false;
+  if (isNoReplyAddress(s)) return true;
+  const domain = s.slice(at + 1);
+  if (FORM_SENDER_DOMAINS.some((d) => domain === d || domain.endsWith(`.${d}`))) return true;
+  return FORM_SENDER_LOCAL.test(s.slice(0, at));
+}
