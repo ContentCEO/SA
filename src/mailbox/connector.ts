@@ -44,6 +44,14 @@ export type MailMessage = {
     messageId?: string;
     references?: string;
     inReplyTo?: string;
+    /** The Reply-To header as given (website forms put the customer here). */
+    replyTo?: string;
+    /**
+     * True only when the request could have returned Reply-To (a full read, or a metadata
+     * read that asked for it). "Read, none there" and "never asked" are different facts:
+     * only the first may be stored as "no Reply-To".
+     */
+    replyToRead?: boolean;
   };
   /** Only present when fetched with bodies. */
   bodyText?: string;
@@ -68,7 +76,14 @@ export interface MailboxReader {
     messages: MessageRef[];
     nextPageToken?: string;
   }>;
-  getMessage(id: string, opts: { withBody: boolean }): Promise<MailMessage | null>;
+  /**
+   * `headers` (metadata reads only): ask for just these headers instead of the default list
+   * (the Reply-To backfill asks for ["Reply-To"] only).
+   */
+  getMessage(
+    id: string,
+    opts: { withBody: boolean; headers?: readonly string[] },
+  ): Promise<MailMessage | null>;
   /** Throws HistoryExpiredError when the cursor is too old to resume from. */
   listHistory(opts: { startHistoryId: string; pageToken?: string }): Promise<HistoryPage>;
   watch(topicName: string): Promise<{ historyId: string; expiration: number }>;

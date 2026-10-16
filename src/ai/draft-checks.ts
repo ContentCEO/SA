@@ -4,6 +4,7 @@
  * never rewrite the draft — they flag it for the owner and lower confidence.
  */
 import { withoutGaps } from "./gaps";
+import { allNumbers, moneyMentions } from "./money-words";
 
 const FILLER = [
   "i hope this email finds you well",
@@ -24,15 +25,45 @@ const DAYS =
 const TIMES = /\b\d{1,2}(:\d{2})?\s?(am|pm)\b|\b(noon|midnight)\b/gi;
 const DATES =
   /\b\d{1,2}\/\d{1,2}\b|\b(jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.? \d{1,2}(st|nd|rd|th)?\b/gi;
+/**
+ * Loose timing (review A2): "today", "ASAP", "in an hour", "on the 3rd", "end of the week",
+ * "first thing", "between 8 and 10". Each is a commitment when nobody in the thread said it.
+ */
+const LOOSE_WHEN =
+  /\b(today|later today|asap|a\.s\.a\.p|same[- ]day|first thing|end of (the )?(day|week|month)|by (the )?end of (the )?(day|week|month))\b|\bin (an?|one|two|three|a few|a couple( of)?|\d{1,2}) (hours?|hrs?|minutes?|mins?|days?|weeks?)\b|\b(on |by )?the \d{1,2}(st|nd|rd|th)\b(?! (floor|time|step|stair|row))|\bbetween \d{1,2}(:\d{2})?\s?(am|pm)? and \d{1,2}(:\d{2})?\s?(am|pm)?\b/gi;
 
-/** Every dollar figure: "$1,450", "$95.00", "450 dollars", "450 bucks". */
+/** Every amount named as money, however it's written (review A1; see money-words.ts). */
 function money(text: string): number[] {
-  const out = [
-    ...text.matchAll(/\$\s?(\d[\d,]*(?:\.\d{1,2})?)/g),
-    ...text.matchAll(/\b(\d[\d,]*(?:\.\d{1,2})?)\s*(?:dollars|bucks)\b/gi),
-  ];
-  return out.map((m) => Number(m[1]!.replace(/,/g, "")));
+  return moneyMentions(text).map((m) => m.amount);
 }
+const strongMoney = (text: string) =>
+  moneyMentions(text)
+    .filter((m) => m.strong)
+    .map((m) => m.amount);
+/** "10%", "12.5 %". */
+const PCT = /\b\d+(?:\.\d+)?\s?%/g;
+
+/**
+ * Soft promises and admissions (review A3): things an owner has to stand behind that aren't
+ * a guarantee in so many words. An admission of fault by email is hard to take back.
+ */
+const SOFT_PROMISES: [string, RegExp][] = [
+  ["take care of everything", /\btake care of (it all|everything|all of it|the whole thing)\b/i],
+  ["make it right", /\bmake (it|this|things|that) right\b/i],
+  ["that's on us", /\b(that's|that is|it's|it is|this is|this one's) on (us|me)\b/i],
+  ["our mistake", /\b(our|my) (mistake|fault|bad|error|screw[- ]?up)\b/i],
+  ["won't happen again", /\b(won't|will not|never) happen again\b/i],
+  [
+    "no charge",
+    /\b(no charge|free of charge|at no (extra |additional )?(cost|charge)|won't charge|will not charge|on the house)\b/i,
+  ],
+  [
+    "it will pass inspection",
+    /\b(will|it'll|should|is going to|gonna) pass (the |your )?inspection\b/i,
+  ],
+  ["definitely", /\bdefinitely\b/i],
+  ["licensed and insured", /\b(fully )?licensed and insured\b/i],
+];
 
 /** Words that make a commitment the owner has to stand behind. */
 const COMMITMENT =
@@ -66,11 +97,33 @@ export type CheckContext = {
   ownerWrote?: string;
   /** Review requests only: the one link allowed, and nothing offered in return. */
   review?: { url: string | null };
+  /**
+   * What the owner said themselves (review A4): their price list and profile, what they
+   * wrote this customer, a clean earlier draft. When given, an amount the draft repeats
+   * that only the CUSTOMER named ("we can match the $3,200") is flagged. Left out, every
+   * amount in `sourceText` is allowed, as before.
+   */
+  ownerSourceText?: string;
+  /**
+   * The owner's own instruction for this draft ("tell her Thursday works, 450"): every number
+   * in it is an amount the owner gave (review A5), even without a "$".
+   */
+  ownerInstruction?: string | null;
 };
 
 /** What kind of problem each flag is, so the caller can decide to regenerate. */
 export type CheckHit =
-  "money" | "when" | "commitment" | "never_promise" | "never_say" | "filler" | "terms";
+  | "money"
+  | "when"
+  | "commitment"
+  | "never_promise"
+  | "never_say"
+  | "filler"
+  | "terms"
+  /** Repeats an amount only the customer named (review A4): flagged, never rewritten. */
+  | "customer_amount"
+  /** A soft promise or an admission (review A3). */
+  | "soft_promise";
 export type CheckResult = { flags: string[]; confidenceCap: number; hits: CheckHit[] };
 
 /**
@@ -80,7 +133,7 @@ export type CheckResult = { flags: string[]; confidenceCap: number; hits: CheckH
 export const REGENERATE_ON: CheckHit[] = ["money", "when", "never_promise", "never_say", "terms"];
 
 /** "50%", "12.5 %". */
-const PERCENT = /\b\d+(?:\.\d+)?\s?%/g;
+const PERCENT = PCT;
 const pct = (s: string) => s.replace(/\s+/g, "");
 
 /**
@@ -136,9 +189,24 @@ export function checkDraft(draftBody: string, ctx: CheckContext): CheckResult {
   const lowerBody = body.toLowerCase();
   const source = ctx.sourceText.toLowerCase();
 
-  // Prices that appear nowhere in the conversation or the profile were made up.
-  const known = new Set(money(ctx.sourceText));
-  const invented = [...new Set(money(body))].filter((a) => !known.has(a));
+  // Prices that appear nowhere in the conversation or the profile were made up. A bare number
+  // ("is 1500") is only money when nothing else explains it, so it may also match any number
+  // the sources wrote ("100 amp" → "your 100"). The owner's own instruction counts in full.
+  const ownerText = ctx.ownerSourceText ?? ctx.sourceText;
+  const instructionNumbers = new Set(allNumbers(ctx.ownerInstruction));
+  const known = new Set([...money(ctx.sourceText), ...money(ownerText), ...instructionNumbers]);
+  const anyNumberInSource = new Set([
+    ...allNumbers(ctx.sourceText),
+    ...allNumbers(ownerText),
+    ...instructionNumbers,
+  ]);
+  const ownerKnown = new Set([...money(ownerText), ...instructionNumbers]);
+  const ownerAnyNumber = new Set([...allNumbers(ownerText), ...instructionNumbers]);
+  const strong = new Set(strongMoney(body));
+  const bodyAmounts = [...new Set(money(body))];
+  const invented = bodyAmounts.filter((a) =>
+    strong.has(a) ? !known.has(a) : !known.has(a) && !anyNumberInSource.has(a),
+  );
   if (invented.length) {
     flags.push(
       `Mentions ${invented.map((a) => `$${a.toLocaleString("en-US")}`).join(", ")} — that price isn't in the email or your profile. Check it.`,
@@ -146,10 +214,46 @@ export function checkDraft(draftBody: string, ctx: CheckContext): CheckResult {
     cap = Math.min(cap, 0.3);
     hits.push("money");
   }
+  // An amount only the customer named isn't the owner's price (review A4): "we can match the
+  // $3,200" repeats a competitor's quote. Flagged for a look, never rewritten.
+  if (ctx.ownerSourceText !== undefined && !ctx.checkTerms) {
+    const theirs = bodyAmounts.filter(
+      (a) =>
+        !invented.includes(a) && !ownerKnown.has(a) && !(!strong.has(a) && ownerAnyNumber.has(a)),
+    );
+    if (theirs.length) {
+      flags.push(
+        `Repeats ${theirs.map((a) => `$${a.toLocaleString("en-US")}`).join(", ")}, an amount the customer gave, not you. Make sure that's your number.`,
+      );
+      cap = Math.min(cap, 0.5);
+      hits.push("customer_amount");
+    }
+  }
+  // A percentage off or extra the owner never wrote ("I'll knock 10% off") changes the price.
+  // Deposit and review notes have their own, stricter terms check below.
+  if (!ctx.checkTerms) {
+    const ownerPct = new Set([...ownerText.matchAll(PCT)].map((m) => m[0].replace(/\s+/g, "")));
+    const newPct = [
+      ...new Set([...body.matchAll(PCT)].map((m) => m[0].replace(/\s+/g, ""))),
+    ].filter((p) => !ownerPct.has(p));
+    if (newPct.length) {
+      flags.push(`Mentions “${newPct.join("”, “")}” — that isn't in anything you wrote. Check it.`);
+      cap = Math.min(cap, 0.3);
+      if (!hits.includes("money")) hits.push("money");
+    }
+  }
 
   // Days, dates and times the customer didn't bring up are commitments.
-  const whenInBody = [...body.matchAll(DAYS), ...body.matchAll(TIMES), ...body.matchAll(DATES)].map(
-    (m) => m[0].toLowerCase(),
+  const whenInBody = [
+    ...body.matchAll(DAYS),
+    ...body.matchAll(TIMES),
+    ...body.matchAll(DATES),
+    ...body.matchAll(LOOSE_WHEN),
+  ].map((m) =>
+    m[0]
+      .toLowerCase()
+      .trim()
+      .replace(/^(on|by) /, ""),
   );
   const newWhen = [...new Set(whenInBody)].filter((w) => !source.includes(w));
   if (newWhen.length) {
@@ -166,6 +270,17 @@ export function checkDraft(draftBody: string, ctx: CheckContext): CheckResult {
     flags.push(`Says “${commitments.join("”, “")}” — make sure you stand behind that.`);
     cap = Math.min(cap, 0.4);
     hits.push("commitment");
+  }
+
+  // Soft promises and admissions the owner never wrote themselves (review A3). The customer
+  // asking "will it pass inspection?" doesn't make it the owner's promise.
+  const soft = SOFT_PROMISES.filter(
+    ([, re]) => re.test(body) && !re.test(ctx.ownerSourceText ?? ctx.sourceText),
+  ).map(([label]) => label);
+  if (soft.length) {
+    flags.push(`Says “${soft.join("”, “")}” — make sure you stand behind that.`);
+    cap = Math.min(cap, 0.5);
+    hits.push("soft_promise");
   }
 
   // Never-promise list: flag when the key words of an item all show up in the draft.

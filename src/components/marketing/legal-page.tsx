@@ -6,6 +6,8 @@ import { SiteFooter } from "@/components/app/site-footer";
 import { Wordmark } from "@/components/brand/wordmark";
 import { siteConfig } from "@/config/site";
 import { Markdown } from "@/lib/markdown";
+import { SiteAnalytics } from "./site-analytics";
+import { SourceCapture } from "./source-fields";
 
 /**
  * /privacy and /terms are rendered from docs/privacy-policy.md and
@@ -44,7 +46,9 @@ export function LegalPage({ source }: { source: string }) {
       <main>
         <Markdown source={source} />
       </main>
-      <SiteFooter />
+      <SiteFooter growthLink />
+      <SourceCapture />
+      <SiteAnalytics />
     </div>
   );
 }

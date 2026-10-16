@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { describeSource } from "@/server/source-rules";
 import type { Metadata } from "next";
 import { Notice } from "@/components/app/notice";
 import { Headline } from "@/components/brand/headline";
@@ -23,6 +24,7 @@ import {
   connectStripeAction,
   inviteAction,
   inviteFromWaitlistAction,
+  testUserAddedAction,
   resetTestPaymentsAction,
   setPlanAction,
 } from "./actions";
@@ -103,9 +105,16 @@ const done: Record<string, string> = {
     "Stripe connected in TEST mode: prices, billing portal and payment notifications are set up. Use card 4242 4242 4242 4242 to try it.",
   stripe_live: "Stripe connected in LIVE mode. Real cards will be charged.",
   stripe_test_check: "Test payments checked.",
-  invited: "Invited. They can sign in now (add them as a Google test user too).",
+  invited:
+    "Invited. They can sign in now. The invite email didn't go out (email isn't set up, or it failed), so tell them yourself. Add them as a Google test user too.",
+  invited_emailed:
+    "Invited, and emailed them the sign-in link. Add them as a Google test user too (see the list under Invite an owner).",
+  test_user: "Marked as a Google test user.",
   already_invited: "That address was already invited.",
 };
+/** Where Google Cloud lists an app's test users (Google Auth Platform → Audience). */
+const GOOGLE_AUDIENCE_URL = "https://console.cloud.google.com/auth/audience";
+
 const errors: Record<string, string> = {
   stripe: "Couldn't connect Stripe.",
   stripe_test_mode: TEST_PAYMENTS_TEST_MODE,
@@ -189,6 +198,7 @@ function WaitlistEntry({
           .join(" · ")}
       </span>
       {facts.appNote ? <p className="text-muted-foreground">“{facts.appNote}”</p> : null}
+      {describeSource(w) ? <span className="text-sm">Came from: {describeSource(w)}</span> : null}
       {referrals && facts.app && w.referralCode ? (
         <span className="text-sm font-semibold">Came from a referral link</span>
       ) : null}
@@ -620,18 +630,43 @@ export default async function AdminPage(props: PageProps<"/admin">) {
             Add to invite list
           </Button>
           <p className="text-sm text-muted-foreground">
-            This lets them sign in. It doesn&apos;t email them — tell them yourself. Until Google
-            approves the app, also add them as a test user in Google Cloud.
+            This lets them sign in and emails them the sign-in link, with what to have ready. Until
+            Google approves the app, also add them as a test user in Google Cloud.
           </p>
         </form>
         {invited.length ? (
           <ul className="flex flex-col divide-y rounded-lg border">
             {invited.map((i) => (
-              <li key={i.email} className="flex items-baseline justify-between gap-3 px-4 py-2">
-                <span className="truncate">{i.email}</span>
-                <span className="shrink-0 text-sm text-muted-foreground">
-                  {i.acceptedAt ? "Signed in" : "Not yet"}
+              <li key={i.email} className="flex flex-col gap-2 px-4 py-2">
+                <span className="flex items-baseline justify-between gap-3">
+                  <span className="truncate">{i.email}</span>
+                  <span className="shrink-0 text-sm text-muted-foreground">
+                    {i.acceptedAt ? "Signed in" : "Not yet"}
+                  </span>
                 </span>
+                {/* Round 2 (FW A4): until Google approves the app, only test users get in. */}
+                {i.testUserAddedAt ? (
+                  <span className="text-sm text-muted-foreground">Google test user: added</span>
+                ) : (
+                  <form action={testUserAddedAction} className="flex flex-col gap-1">
+                    <input type="hidden" name="email" value={i.email} />
+                    <span className="text-sm">
+                      Add them as a Google test user in{" "}
+                      <a
+                        href={GOOGLE_AUDIENCE_URL}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="font-semibold underline underline-offset-4"
+                      >
+                        Google Cloud → Audience
+                      </a>
+                      , or Google won&apos;t let them in.
+                    </span>
+                    <Button type="submit" variant="outline" className="w-full">
+                      I added them
+                    </Button>
+                  </form>
+                )}
               </li>
             ))}
           </ul>

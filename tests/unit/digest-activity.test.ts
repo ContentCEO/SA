@@ -716,7 +716,7 @@ describe("digest: needs-you header, queue agreement and Monday's last week (plan
     const allowed = new Set([
       appUrl("/queue"),
       appUrl("/quotes"),
-      appUrl("/settings#digest"),
+      appUrl("/settings/morning-email"),
       ...[complaint, invoice, quote].map((t) => `${appUrl("/queue")}#t-${t.id}`),
     ]);
     const hrefs = [...email!.html.matchAll(/href="([^"]*)"/g)].map((m) => m[1]!);

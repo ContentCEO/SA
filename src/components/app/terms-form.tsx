@@ -38,7 +38,9 @@ export function TermsForm({
     <form action={formAction} className="flex flex-col gap-4">
       {next !== undefined ? <input type="hidden" name="next" value={next} /> : null}
       <div className="flex flex-col gap-2">
-        {/* The whole row is the label: a 44px tap target that ticks the box (the links still open). */}
+        {/* The whole row is the label: a 44px tap target that ticks the box. The links sit on
+            their own line below (round 2, FW): a gloved tap on the words ticks the box instead
+            of opening a page the installed app has no back button for. */}
         <label className="flex min-h-tap items-center gap-3 text-base">
           <input
             ref={box}
@@ -49,18 +51,16 @@ export function TermsForm({
             aria-invalid={state.error ? true : undefined}
             aria-describedby={state.error ? errorId : undefined}
           />
-          <span>
-            I agree to the{" "}
-            <Link href="/terms" className={link}>
-              Terms of Service
-            </Link>{" "}
-            and the{" "}
-            <Link href="/privacy" className={link}>
-              Privacy Policy
-            </Link>
-            .
-          </span>
+          <span>I agree to the Terms of Service and the Privacy Policy.</span>
         </label>
+        <p className="flex flex-wrap gap-x-6 text-sm">
+          <Link href="/terms" className={`${link} inline-flex min-h-tap items-center`}>
+            Read the Terms of Service
+          </Link>
+          <Link href="/privacy" className={`${link} inline-flex min-h-tap items-center`}>
+            Read the Privacy Policy
+          </Link>
+        </p>
         {state.error ? (
           <p id={errorId} role="alert" className="sa-inverted rounded-lg px-4 py-3 font-semibold">
             {state.error}

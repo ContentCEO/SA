@@ -114,6 +114,10 @@ test("an account that hasn't agreed is held on /welcome/terms until it does", as
   // No way round it: another screen, and the queue again.
   await page.goto("/settings");
   await expect(page).toHaveURL(/\/welcome\/terms\?next=%2Fsettings$/);
+  await page.goto("/more");
+  await expect(page).toHaveURL(/\/welcome\/terms\?next=%2Fmore$/);
+  await page.goto("/settings/follow-ups");
+  await expect(page).toHaveURL(/\/welcome\/terms\?next=%2Fsettings%2Ffollow-ups$/);
   await page.goto("/queue");
   await expect(page).toHaveURL(/\/welcome\/terms\?next=%2Fqueue$/);
 

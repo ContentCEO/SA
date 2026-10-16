@@ -27,7 +27,7 @@ import {
   lastOutSql,
   noReplySql,
   quoteRequestSql,
-  waitingSenderSql,
+  waitingReplySql,
   waitingSinceSql,
 } from "./thread-sql";
 
@@ -81,7 +81,9 @@ export function leadsAtRiskQuery(workspaceId: string, now: Date) {
   // The same "the owner wrote" as Quotes' stages and the digest (`lastOutSql`): a lead
   // forwarded to the crew (Gmail keeps the forward in the conversation) is still waiting.
   const waitingSince = waitingSinceSql();
-  const waitingSender = waitingSenderSql();
+  // Where a reply would go (a website form's Reply-To, else the sender): a form lead from a
+  // no-reply robot is still a person waiting (B1).
+  const waitingSender = waitingReplySql();
   const answeredInApp = sql`exists (select 1 from drafts d where d.thread_id = ${threads.id} and (
     (d.status in ('sent', 'edited_and_sent') and d.decided_at >= ${waitingSince})
     or (d.status = 'pending' and (d.send_after is not null or d.send_claimed_at is not null))

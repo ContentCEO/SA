@@ -4,6 +4,7 @@ import { db } from "@/db";
 import { activityLog, businessProfiles, mailboxes, threads, workspaces } from "@/db/schema";
 import { expirePendingNudge, flagPendingNudge, unflagPendingNudge, type DraftDeps } from "./drafts";
 import { effectiveStatus, jobsAllowed, ReadOnlyError } from "./lifecycle";
+import { customerAddressSql, customerNameSql } from "./thread-sql";
 import {
   dueLabel,
   invoiceOf,
@@ -90,10 +91,11 @@ async function moneyThreads(workspaceId: string, now: Date, opts: { openOnly?: b
       paidSource: threads.invoicePaidSource,
       followupCount: threads.followupCount,
       lastMessageAt: threads.lastMessageAt,
-      customerName: sql<
-        string | null
-      >`(select m.from_name from messages m where m.thread_id = ${threads.id} and m.direction = 'in' order by m.sent_at desc limit 1)`,
-      customerAddress: sql<
+      // As a reply addresses them (a form's Reply-To, else From); the sender is for the
+      // receipt check (a receipt's Reply-To is the merchant).
+      customerName: customerNameSql(),
+      customerAddress: customerAddressSql(),
+      senderAddress: sql<
         string | null
       >`(select lower(m.from_address) from messages m where m.thread_id = ${threads.id} and m.direction = 'in' order by m.sent_at desc limit 1)`,
     })
@@ -109,6 +111,9 @@ async function moneyThreads(workspaceId: string, now: Date, opts: { openOnly?: b
           isNotNull(threads.invoicePaidSource),
         ),
         sql`${threads.category} is distinct from 'supplier_vendor'`,
+        // A bill the owner has to pay (a supplier's statement sorted as an invoice) is never
+        // money owed TO them (round 2, TW A2).
+        sql`(${threads.extracted}->>'bill_direction') is distinct from 'owed_by_business'`,
         canShow,
       ),
     )
@@ -116,8 +121,12 @@ async function moneyThreads(workspaceId: string, now: Date, opts: { openOnly?: b
     // A defensive cap only: after the filter above, a 1–15 person shop has far fewer.
     .limit(2000);
   return rows
-    .filter((r) => !isReceiptSender(r.customerAddress))
-    .map((r) => ({ ...r, invoice: invoiceOf(r.extracted) }));
+    .filter((r) => !isReceiptSender(r.senderAddress) && !isReceiptSender(r.customerAddress))
+    .map((r) => {
+      const { senderAddress, ...row } = r;
+      void senderAddress;
+      return { ...row, invoice: invoiceOf(row.extracted) };
+    });
 }
 
 function toRow(

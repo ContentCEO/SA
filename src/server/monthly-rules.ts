@@ -28,11 +28,16 @@ const MAX_SERVICE_CHARS = 500;
  * trailing "s"/"es" is fine), first kind in the list wins, else OTHER_JOB_KIND. Never
  * returns any of the input text.
  */
-export function jobKindOf(trade: Trade | null, service: string | null): string {
+export function jobKindOf(
+  trade: Trade | null,
+  service: string | null,
+  /** The shop's extra trades (round 2, TW A4): their kinds are tried after the main trade's. */
+  extraTrades: readonly Trade[] = [],
+): string {
   if (!service) return OTHER_JOB_KIND;
   const text = ` ${normalizeWords(service.slice(0, MAX_SERVICE_CHARS))} `;
   if (!text.trim()) return OTHER_JOB_KIND;
-  const kinds = JOB_KINDS[trade && isTrade(trade) ? trade : "other"];
+  const kinds = jobKindsFor(trade, extraTrades);
   for (const kind of kinds) {
     for (const kw of kind.keywords) {
       const word = normalizeWords(kw);
@@ -42,24 +47,40 @@ export function jobKindOf(trade: Trade | null, service: string | null): string {
   return OTHER_JOB_KIND;
 }
 
+/** Every kind a shop's job can be filed under: its main trade's first, then its extra trades'. */
+export function jobKindsFor(trade: Trade | null, extraTrades: readonly Trade[] = []) {
+  const main = trade && isTrade(trade) ? trade : "other";
+  const extra = extraTrades.filter((t) => isTrade(t) && t !== main && t !== "other");
+  return [main, ...new Set(extra)].flatMap((t) => JOB_KINDS[t]);
+}
+
 /**
  * Where a lead came from, as a fixed label. Takes a sender address or just its domain
  * (the monthly query passes only the domain, so no address reaches the app's code there).
  * A domain matches itself and its subdomains, except `exact` entries; else DIRECT_EMAIL.
  */
 export function leadSourceOf(fromAddressOrDomain: string | null): string {
-  if (!fromAddressOrDomain) return DIRECT_EMAIL;
-  const raw = fromAddressOrDomain.trim().toLowerCase();
+  return leadPlatformOf(fromAddressOrDomain) ?? DIRECT_EMAIL;
+}
+
+/**
+ * The lead platform (Thumbtack, Angi…) an address or domain belongs to, or null. Same domain
+ * rule as `leadSourceOf`. Also used at sync: a platform's relay Reply-To
+ * (reply+8x2k@messages.thumbtack.com) is never taken as the customer's own address.
+ */
+export function leadPlatformOf(addressOrDomain: string | null | undefined): string | null {
+  if (!addressOrDomain) return null;
+  const raw = addressOrDomain.trim().toLowerCase();
   const host = (raw.includes("@") ? raw.slice(raw.lastIndexOf("@") + 1) : raw)
     .replace(/[>\s]+$/, "")
     .replace(/\.$/, "");
-  if (!/^[a-z0-9.-]+$/.test(host)) return DIRECT_EMAIL;
+  if (!/^[a-z0-9.-]+$/.test(host)) return null;
   for (const source of LEAD_SOURCES) {
     for (const d of source.domains) {
       if (host === d || (!source.exact && host.endsWith(`.${d}`))) return source.label;
     }
   }
-  return DIRECT_EMAIL;
+  return null;
 }
 
 /** The n most common labels with their counts: most first, then alphabetical. */

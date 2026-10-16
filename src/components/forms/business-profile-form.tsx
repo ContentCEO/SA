@@ -1,7 +1,8 @@
 "use client";
 
 import { useActionState } from "react";
-import { TRADE_OPTIONS } from "@/config/trades";
+import { TimeZoneInput } from "./time-zone-input";
+import { MAX_EXTRA_TRADES, TRADE_OPTIONS } from "@/config/trades";
 import { saveBusinessProfileAction, type FormState } from "@/app/(app)/settings/profile-actions";
 import { Button } from "@/components/ui/button";
 import { useFocusFirstError } from "./use-focus-first-error";
@@ -10,6 +11,8 @@ import { SelectField, TextArea, TextField } from "./field";
 export type ProfileDefaults = {
   businessName: string | null;
   trade: string | null;
+  /** Up to two more trades (round 2, TW A4). */
+  extraTrades: string[];
   services: string | null;
   serviceArea: string | null;
   hours: string | null;
@@ -25,15 +28,39 @@ export type ProfileDefaults = {
 };
 
 const trades = TRADE_OPTIONS;
+const extraChoices = TRADE_OPTIONS.filter((t) => t.value !== "other");
+
+/** Everything the server doesn't require (round 2, FW: folded away during setup). */
+const OPTIONAL_FIELDS = [
+  "extraTrades",
+  "serviceArea",
+  "hours",
+  "leadTime",
+  "pricingNotes",
+  "paymentTerms",
+  "policies",
+  "signature",
+  "reviewUrl",
+  "doNotPromise",
+  "vipSenders",
+  "amountThresholdDollars",
+] as const;
 
 export function BusinessProfileForm({
   defaults,
   returnTo,
   submitLabel,
+  setup = false,
 }: {
   defaults: ProfileDefaults;
-  returnTo: "/settings?done=profile" | "/welcome/learning";
+  returnTo: "/settings/business?done=profile" | "/welcome/learning";
   submitLabel: string;
+  /**
+   * Round 2 (FW): first-time setup. The three required questions come first; the rest is folded
+   * under "More details, optional" (opened if one of them needs fixing), and the browser's time
+   * zone is saved with it, so 7am and quiet hours are the owner's own from day one.
+   */
+  setup?: boolean;
 }) {
   const [state, action, pending] = useActionState<FormState, FormData>(
     saveBusinessProfileAction,
@@ -44,36 +71,45 @@ export function BusinessProfileForm({
   const v = (k: keyof ProfileDefaults, fallback: string | number | null) =>
     state.values?.[k] ?? fallback;
   const joined = (list: string[]) => list.join("\n");
+  const optionalNeedsFixing = OPTIONAL_FIELDS.some((k) => e[k]?.length);
 
-  return (
-    <form ref={formRef} action={action} className="flex flex-col gap-6" noValidate>
-      <input type="hidden" name="returnTo" value={returnTo} />
-      {state.errors ? (
-        <p role="alert" className="sa-inverted rounded-lg px-4 py-3 font-semibold">
-          A couple of things need fixing below.
-        </p>
-      ) : null}
-
-      <TextField
-        name="businessName"
-        label="What's the business called?"
-        defaultValue={v("businessName", defaults.businessName) as string}
-        error={e.businessName}
-      />
-      <SelectField
-        name="trade"
-        label="What's your trade?"
-        options={trades}
-        defaultValue={v("trade", defaults.trade) as string}
-        error={e.trade}
-      />
-      <TextArea
-        name="services"
-        label="What work do you take on?"
-        hint="The jobs you want more of, and the ones you don't do. “Service calls, panel upgrades, EV chargers. No new construction.”"
-        defaultValue={v("services", defaults.services) as string}
-        error={e.services}
-      />
+  const optionalFields = (
+    <>
+      <fieldset
+        className="flex flex-col gap-1.5"
+        aria-describedby={e.extraTrades ? "extraTrades-error" : "extraTrades-hint"}
+      >
+        <legend className="font-semibold">Do you do other trades too? (optional)</legend>
+        <span id="extraTrades-hint" className="text-sm">
+          Tick up to {MAX_EXTRA_TRADES}, like plumbing and heating. Drafts then know those words and
+          questions too.
+        </span>
+        <input type="hidden" name="extraTradesShown" value="1" />
+        <div className="grid grid-cols-1 gap-x-4 sm:grid-cols-2">
+          {extraChoices.map((t) => {
+            const before = state.values
+              ? (state.values.extraTrades ?? "").split(",").includes(t.value)
+              : defaults.extraTrades.includes(t.value);
+            return (
+              <label key={t.value} className="flex min-h-tap items-center gap-3">
+                <input
+                  type="checkbox"
+                  name="extraTrades"
+                  value={t.value}
+                  defaultChecked={before}
+                  className="size-5 shrink-0 accent-current"
+                />
+                <span>{t.label}</span>
+              </label>
+            );
+          })}
+        </div>
+        {e.extraTrades?.length ? (
+          <span id="extraTrades-error" className="font-semibold">
+            {e.extraTrades[0]}
+          </span>
+        ) : null}
+      </fieldset>
       <TextArea
         name="serviceArea"
         label="Where do you work?"
@@ -160,6 +196,53 @@ export function BusinessProfileForm({
         defaultValue={v("amountThresholdDollars", defaults.amountThresholdDollars) as string}
         error={e.amountThresholdDollars}
       />
+    </>
+  );
+
+  return (
+    <form ref={formRef} action={action} className="flex flex-col gap-6" noValidate>
+      <input type="hidden" name="returnTo" value={returnTo} />
+      {setup ? <TimeZoneInput fallback="America/New_York" /> : null}
+      {state.errors ? (
+        <p role="alert" className="sa-inverted rounded-lg px-4 py-3 font-semibold">
+          A couple of things need fixing below.
+        </p>
+      ) : null}
+
+      <TextField
+        name="businessName"
+        label="What's the business called? (required)"
+        defaultValue={v("businessName", defaults.businessName) as string}
+        error={e.businessName}
+      />
+      <SelectField
+        name="trade"
+        label="What's your trade? (required)"
+        options={trades}
+        defaultValue={v("trade", defaults.trade) as string}
+        error={e.trade}
+      />
+      <TextArea
+        name="services"
+        label="What work do you take on? (required)"
+        hint="The jobs you want more of, and the ones you don't do. “Service calls, panel upgrades, EV chargers. No new construction.”"
+        defaultValue={v("services", defaults.services) as string}
+        error={e.services}
+      />
+      {setup ? (
+        <details open={optionalNeedsFixing || undefined} className="flex flex-col gap-6">
+          <summary className="flex min-h-tap cursor-pointer items-center rounded-lg border-2 border-charcoal px-4 font-black">
+            More details, optional
+          </summary>
+          <p className="py-3 text-muted-foreground">
+            Your price list, hours, how you get paid and more. Each one makes the drafts better. Add
+            them now or later in Settings.
+          </p>
+          <div className="flex flex-col gap-6">{optionalFields}</div>
+        </details>
+      ) : (
+        optionalFields
+      )}
 
       <Button type="submit" size="lg" disabled={pending} className="w-full">
         {pending ? "Saving…" : submitLabel}

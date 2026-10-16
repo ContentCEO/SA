@@ -6,6 +6,7 @@ import { landscaping } from "./landscaping";
 import { other } from "./other";
 import { painting } from "./painting";
 import { plumbing } from "./plumbing";
+import { remodeling } from "./remodeling";
 import { roofing } from "./roofing";
 import type { TradePrompt } from "./types";
 
@@ -18,6 +19,7 @@ export const tradePrompts: Record<Trade, TradePrompt> = {
   roofing,
   painting,
   landscaping,
+  remodeling,
   other,
 };
 

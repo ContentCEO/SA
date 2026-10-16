@@ -311,7 +311,7 @@ export async function sendDigests(
         {
           queueUrl,
           quotesUrl: appUrl("/quotes"),
-          settingsUrl: appUrl("/settings#digest"),
+          settingsUrl: appUrl("/settings/morning-email"),
           threadUrl: (id) => queueThreadUrl(queueUrl, id),
         },
         { now, timeZone, lastWeek: await lastWeekLines(r.workspace.id, now, timeZone) },

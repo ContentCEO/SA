@@ -7,6 +7,9 @@ import { listMailboxes } from "@/server/mailboxes";
 import { describeVoice, getVoiceProfile } from "@/server/profile";
 import { requireOwner } from "@/server/session";
 import { syncSummary } from "@/server/sync";
+import { CLASSIFY_LOOKBACK_DAYS } from "@/server/classification";
+import { firstLookCounts } from "@/server/first-week";
+import { firstLookLines } from "@/server/first-week-rules";
 
 function Step({ done, children }: { done: boolean; children: React.ReactNode }) {
   return (
@@ -34,13 +37,20 @@ export default async function WelcomeLearningPage() {
   const voiceDone =
     voice?.status === "ready" || voice?.status === "not_enough_mail" || voice?.status === "failed";
   const allDone = Boolean(box?.backfillCompletedAt) && voiceDone;
+  // Round 2 (FW D1): their own inbox, sorted, once reading is done. Counts only.
+  const look =
+    allDone && box?.backfillCompletedAt
+      ? await firstLookCounts(workspace.id, box.backfillCompletedAt)
+      : null;
+  // Round 2 (FW D4): only promise the email when email is set up.
+  const emailsOn = Boolean(process.env.RESEND_API_KEY && process.env.EMAIL_FROM);
 
   return (
     <>
       {!allDone ? <AutoRefresh /> : null}
       <p className="text-sm font-semibold">Step 3 of 3</p>
       <Headline
-        serif={allDone ? "all set," : "one minute,"}
+        serif={allDone ? "all set," : "a few minutes,"}
         heavy={allDone ? "here's how you write." : "reading your email."}
       />
 
@@ -60,6 +70,19 @@ export default async function WelcomeLearningPage() {
                 : "Reading your sent mail to learn how you write…"}
         </Step>
       </ul>
+
+      {look ? (
+        <section aria-labelledby="last-30" className="flex flex-col gap-2">
+          <h2 id="last-30" className="text-xl font-black">
+            Your last 30 days
+          </h2>
+          {firstLookLines(look.counts, CLASSIFY_LOOKBACK_DAYS).map((l) => (
+            <p key={l} className="text-lg">
+              {l}
+            </p>
+          ))}
+        </section>
+      ) : null}
 
       {voice?.status === "ready" ? (
         <section className="sa-inverted flex flex-col gap-3 rounded-xl p-5">
@@ -81,10 +104,12 @@ export default async function WelcomeLearningPage() {
       <p className="text-muted-foreground">
         {allDone
           ? "Nothing gets sent without you. Drafts show up in your queue for you to check."
-          : "You can leave this screen — it keeps going in the background."}
+          : `A busy inbox takes longer: Google has us read it in batches, with pauses. You can leave this screen — it keeps going in the background${
+              emailsOn ? ", and we'll email you when your first drafts are ready" : ""
+            }.`}
       </p>
-      <Link href="/inbox" className={cn(buttonVariants({ size: "lg" }), "w-full")}>
-        {allDone ? "Go to my inbox" : "Go to my inbox now"}
+      <Link href="/queue" className={cn(buttonVariants({ size: "lg" }), "w-full")}>
+        {allDone ? "Go to my queue" : "Go to my queue now"}
       </Link>
     </>
   );

@@ -948,10 +948,11 @@ describe("GUARDRAIL: one review request per customer address per 12 months", () 
     model(reviewBody);
     expect((await askReview(t)).status).toBe("created");
     expect(lockReviewAddress).toHaveBeenCalledTimes(1);
+    // The reply address, normalized (lowercased) like every stored address.
     expect(lockReviewAddress).toHaveBeenCalledWith(
       expect.anything(),
       workspaceId,
-      "Dana@Customer.com",
+      "dana@customer.com",
     );
     expect(seen).toEqual([{ held: 1, rowsBefore: 0 }]);
   });

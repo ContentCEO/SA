@@ -10,6 +10,7 @@ import {
   renewWatches,
 } from "@/server/sync";
 import { classifyPending } from "@/server/classification";
+import { unsortedSweepMailboxes } from "@/server/assistant-status";
 import { purgeCostAlertMarkers, sendCostAlerts } from "@/server/admin-costs";
 import { captureEditSignals, proposeVoiceUpdates } from "@/server/edit-learning";
 import {
@@ -34,12 +35,20 @@ import { purgeExpiredNotes } from "@/server/seasonal-notes";
 import { learnVoice, workspacesDueForVoiceRefresh, workspacesNeedingVoice } from "@/server/voice";
 import { expireEvaluations, startPendingEvaluations } from "@/server/workspace-lifecycle";
 import { runDraftMessagesCleanup } from "@/server/draft-message-cleanup";
+import {
+  finishReplyToBackfill,
+  replyToBackfillMailboxes,
+  runReplyToBackfillMailbox,
+  type MailboxBackfillResult,
+} from "@/server/reply-to-backfill";
 import { runM7Backfill } from "@/server/m7-backfill";
+import { draftFoundMoneyThread, sendFirstDraftsReady } from "@/server/first-week";
 import { applyPendingReferralCredits } from "@/server/referrals";
 import { considerAutopilot, overdueAutopilotDrafts, runAutopilotSend } from "@/server/autopilot";
 import {
   autopilotSendRequested,
   draftSendQueued,
+  foundMoneyDraftsRequested,
   inngest,
   mailboxClassifyRequested,
   mailboxConnected,
@@ -213,6 +222,15 @@ export const draftMailbox = inngest.createFunction(
       }
       if (r.status === "reconnect_needed" || (r.status === "skipped" && r.reason === "capped"))
         break;
+    }
+    // Round 2 (FW D4): the first drafts after the first read → tell the owner, once ever.
+    if (created) {
+      const workspaceId = await step.run("workspace", () => getMailboxWorkspace(mailboxId));
+      if (workspaceId) {
+        await step.run("first-drafts-ready", () =>
+          sendFirstDraftsReady(new Date(), { workspaceId }),
+        );
+      }
     }
     return { created };
   },
@@ -397,6 +415,15 @@ export const workspaceLifecycle = inngest.createFunction(
         queued.map((draftId) => draftSendQueued.create({ draftId, at: new Date().toISOString() })),
       );
     }
+    // Review D4: mail that waited over 10 minutes unsorted (an AI outage, a lost event) is
+    // sorted again now, not whenever that inbox next gets mail.
+    const unsorted = await step.run("unsorted-sweep", () => unsortedSweepMailboxes());
+    if (unsorted.length) {
+      await step.sendEvent(
+        "unsorted-sweep",
+        unsorted.map((mailboxId) => mailboxClassifyRequested.create({ mailboxId })),
+      );
+    }
     // Also restart any voice learning that never ran or died part-way.
     const voice = await step.run("voice", () => workspacesNeedingVoice());
     if (voice.length) {
@@ -418,7 +445,73 @@ export const workspaceLifecycle = inngest.createFunction(
     await step.run("lead-at-risk-pushes", () => sendLeadAtRiskPushes());
     // Plan #47 (off unless FEATURE_REFERRALS and an amount): add referral credits still waiting.
     await step.run("referral-credits", () => applyPendingReferralCredits());
-    return { started, expired, voiceRestarted: voice.length, accessAlerts: alerts.sent };
+    // Round 2 (FW D4): backstop for "your first drafts are ready" (once ever per account).
+    await step.run("first-drafts-ready", () => sendFirstDraftsReady());
+    return {
+      started,
+      expired,
+      voiceRestarted: voice.length,
+      accessAlerts: alerts.sent,
+      unsortedSwept: unsorted.length,
+    };
+  },
+);
+
+/**
+ * Every 15 minutes until done (review B1): read the Reply-To of stored form leads and move
+ * waiting drafts off the form's robot address. Its own job, one step per mailbox, so a slow
+ * Gmail mailbox never delays the lifecycle job; a no-op once finished.
+ */
+export const replyToBackfill = inngest.createFunction(
+  {
+    id: "reply-to-backfill",
+    triggers: [cron("*/15 * * * *")],
+    concurrency: { limit: 1 },
+    retries: 3,
+  },
+  async ({ step }) => {
+    const ids = await step.run("mailboxes", () => replyToBackfillMailboxes());
+    if (!ids) return { ran: false };
+    const results: MailboxBackfillResult[] = [];
+    for (const id of ids) {
+      results.push(
+        await step.run(`reply-to-backfill:${id}`, () =>
+          politely(() => runReplyToBackfillMailbox(id)),
+        ),
+      );
+    }
+    const done = await step.run("finish", () => finishReplyToBackfill(results));
+    return { ran: true, done };
+  },
+);
+
+/**
+ * Round 2 (FW D2): the owner's "Draft them" on found money. One thread per step; every result
+ * is a draft in the queue, nothing is sent. Stops at the AI cap or lost Google access.
+ */
+export const foundMoneyDrafts = inngest.createFunction(
+  {
+    id: "found-money-drafts",
+    triggers: [foundMoneyDraftsRequested],
+    concurrency: { key: "event.data.workspaceId", limit: 1 },
+    retries: 3,
+  },
+  async ({ event, step }) => {
+    const { workspaceId, replies, nudges } = event.data;
+    const jobs = [
+      ...replies.map((id) => ({ id, kind: "reply" as const })),
+      ...nudges.map((id) => ({ id, kind: "nudge" as const })),
+    ];
+    let created = 0;
+    for (const j of jobs) {
+      const r = await step.run(`draft-${j.kind}-${j.id}`, () =>
+        politely(() => draftFoundMoneyThread(workspaceId, j.id, j.kind)),
+      );
+      if (r.status === "created") created++;
+      if (r.status === "reconnect_needed" || (r.status === "skipped" && r.reason === "capped"))
+        break;
+    }
+    return { created };
   },
 );
 
@@ -463,4 +556,6 @@ export const functions = [
   autopilotSend,
   sendAfterUndo,
   voiceIdeas,
+  replyToBackfill,
+  foundMoneyDrafts,
 ];

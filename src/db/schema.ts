@@ -16,7 +16,8 @@ import {
   uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
-import { TRADES } from "../config/trades";
+import { TRADES, type Trade } from "../config/trades";
+import type { ReplyToHeader } from "../server/reply-address-rules";
 
 export const tradeEnum = pgEnum("trade", TRADES);
 
@@ -63,6 +64,11 @@ export const invites = pgTable("invites", {
   invitedAt: timestamp("invited_at", { withTimezone: true }).notNull().defaultNow(),
   acceptedAt: timestamp("accepted_at", { withTimezone: true }),
   /**
+   * Round 2 (FW A4): Davi ticked "Added as a Google test user" for this address. Only matters
+   * while the Google app is in Testing (an owner who isn't a test user can't connect Gmail).
+   */
+  testUserAddedAt: timestamp("test_user_added_at", { withTimezone: true }),
+  /**
    * Plan #47 (behind FEATURE_REFERRALS): the workspace whose referral link this owner came
    * from. Used up (set back to null) at the first sign-in, when it moves onto their workspace.
    */
@@ -83,6 +89,13 @@ export const waitlist = pgTable("waitlist", {
   invitedAt: timestamp("invited_at", { withTimezone: true }),
   /** Plan #47: the referral code from the link they came from (format-checked; flag on only). */
   referralCode: text("referral_code"),
+  /** Where the sign-up came from (first touch): utm_* tags and the referring site's host only. */
+  utmSource: text("utm_source"),
+  utmMedium: text("utm_medium"),
+  utmCampaign: text("utm_campaign"),
+  referrerHost: text("referrer_host"),
+  /** When the "You're on the list" email went to them (one per address, ever). */
+  confirmationSentAt: timestamp("confirmation_sent_at", { withTimezone: true }),
 });
 
 export const workspaces = pgTable(
@@ -94,6 +107,11 @@ export const workspaces = pgTable(
       .references(() => users.id, { onDelete: "cascade" }),
     businessName: text("business_name"),
     trade: tradeEnum("trade"),
+    /**
+     * Round 2 (TW A4): up to two more trades the shop does besides `trade` ("plumbing and
+     * heating"). Values from TRADES, checked in code (`cleanExtraTrades`); never the main one.
+     */
+    extraTrades: text("extra_trades").array().$type<Trade[]>().notNull().default([]),
     status: workspaceStatusEnum("status").notNull().default("invited"),
     evaluationStartedAt: timestamp("evaluation_started_at", { withTimezone: true }),
     evaluationEndsAt: timestamp("evaluation_ends_at", { withTimezone: true }),
@@ -218,6 +236,12 @@ export const threads = pgTable(
      */
     complainedAt: timestamp("complained_at", { withTimezone: true }),
     /**
+     * Round 2 (FW E11): the owner tapped "I called them": answered by phone at this time. Until
+     * the customer writes again it counts as the owner's answer: no auto draft, no nudge, off
+     * "Needs you", and the scorecard counts it. A later customer email starts things over.
+     */
+    handledOfflineAt: timestamp("handled_offline_at", { withTimezone: true }),
+    /**
      * Plan M8 (A11): set when this thread is first sorted as a quote request, to the time of the
      * customer's FIRST email on the thread (what response time and the monthly counts measure
      * from). Sticky like complained_at: a customer's later "Tuesday works" re-sorts the thread
@@ -256,6 +280,13 @@ export const messages = pgTable(
     references: text("references"),
     fromAddress: text("from_address"),
     fromName: text("from_name"),
+    /**
+     * The usable Reply-To of an inbound email (a website form's customer), chosen at sync by
+     * `pickReplyTo`. NULL = never read (stored before this column, or a fetch that couldn't
+     * return it); {} = read, nothing usable, the reply goes to From; {address, name?} = the
+     * reply goes there. Metadata like from_address: kept past the body purge.
+     */
+    replyToHeader: jsonb("reply_to_header").$type<ReplyToHeader>(),
     toAddresses: jsonb("to_addresses").$type<string[]>().notNull().default([]),
     ccAddresses: jsonb("cc_addresses").$type<string[]>().notNull().default([]),
     subject: text("subject"),
@@ -306,7 +337,7 @@ export const draftKindEnum = pgEnum("draft_kind", ["reply", "followup"]);
  * Owner-asked special replies (plan #26 #28 #29). They are kind `reply` with a purpose, so
  * follow-up counts never change. Null = an ordinary reply or follow-up.
  */
-export const DRAFT_PURPOSES = ["deposit", "review_request", "closing_question"] as const;
+export const DRAFT_PURPOSES = ["deposit", "review_request", "closing_question", "safety"] as const;
 export type DraftPurpose = (typeof DRAFT_PURPOSES)[number];
 
 /**
@@ -399,6 +430,8 @@ export const businessProfiles = pgTable("business_profile", {
   neverSay: jsonb("never_say").$type<string[]>().notNull().default([]),
   /** The owner hid the getting-started checklist (only offered once every step is done). */
   onboardingDismissedAt: timestamp("onboarding_dismissed_at", { withTimezone: true }),
+  /** Round 2 (FW D1/D2): the owner hid the "your last 30 days" card on the queue. */
+  firstLookHiddenAt: timestamp("first_look_hidden_at", { withTimezone: true }),
   /** Emails mentioning more than this go to the owner. */
   amountThresholdDollars: integer("amount_threshold_dollars").notNull().default(2500),
   /** Nudge quiet quotes and invoices after this many days without a reply. */

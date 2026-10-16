@@ -1,5 +1,5 @@
 import { Buffer } from "node:buffer";
-import type { MailboxWriter, RemoteDraft } from "@/mailbox/connector";
+import type { MailboxWriter, MailMessage, RemoteDraft } from "@/mailbox/connector";
 
 type Stored = { threadId: string; raw: string; messageId: string };
 
@@ -17,6 +17,31 @@ export class FakeWriter implements MailboxWriter {
   }
   static headersOf(raw: string): string {
     return Buffer.from(raw, "base64url").toString("utf8").split("\r\n\r\n")[0]!;
+  }
+
+  /**
+   * The Gmail client is reader and writer in one, so drafting reads a stored email's
+   * Reply-To through it when sync never did. Default: read, none there. Kept out of `calls`.
+   */
+  replyTo = new Map<string, string>();
+  replyToReads: string[] = [];
+  replyToError: Error | null = null;
+  async getMessage(
+    id: string,
+    _opts: { withBody: boolean; headers?: readonly string[] },
+  ): Promise<MailMessage | null> {
+    void _opts;
+    this.replyToReads.push(id);
+    if (this.replyToError) throw this.replyToError;
+    const m: MailMessage = {
+      providerMessageId: id,
+      providerThreadId: "",
+      labelIds: [],
+      snippet: "",
+      internalDate: 0,
+      headers: { replyTo: this.replyTo.get(id), replyToRead: true },
+    };
+    return m;
   }
 
   /** Simulate the owner editing the draft in Gmail. */

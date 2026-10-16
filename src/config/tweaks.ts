@@ -1,4 +1,4 @@
-import type { Tweak } from "@/ai/prompts/revise.v1";
+import type { Tweak } from "@/ai/prompts/revise.v2";
 
 /** Plan #3 chip labels. `Record<Tweak, …>` makes a tweak without a label a compile error. */
 export const TWEAK_LABELS: Record<Tweak, string> = {

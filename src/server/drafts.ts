@@ -3,13 +3,14 @@ import { createHash } from "node:crypto";
 import { and, asc, desc, eq, gt, inArray, isNotNull, isNull, lt, lte, or, sql } from "drizzle-orm";
 import { callStructured } from "@/ai/client";
 import { checkDraft, hasLink, REGENERATE_ON, type CheckResult } from "@/ai/draft-checks";
+import { injectionCheck, looksLikePaymentChange } from "@/ai/guards";
 import {
   REVISE_INSTRUCTIONS,
   REVISE_PROMPT_VERSION,
   reviseTask,
   TWEAKS,
   type Tweak,
-} from "@/ai/prompts/revise.v1";
+} from "@/ai/prompts/revise.v2";
 import { MAX_REVISIONS_PER_DRAFT, UNDO_WINDOW_SECONDS } from "@/config/drafting";
 import { hasUnfilledGap } from "@/ai/gaps";
 import {
@@ -18,14 +19,15 @@ import {
   DRAFT_PROMPT_VERSION,
   draftSchema,
   workspaceBlock,
+  type ModelDraft,
   type WorkspaceContext,
-} from "@/ai/prompts/draft.v5";
+} from "@/ai/prompts/draft.v6";
 import { prepareBody } from "@/ai/classify";
 import {
   FOLLOWUP_INSTRUCTIONS,
   FOLLOWUP_PROMPT_VERSION,
   followupTask,
-} from "@/ai/prompts/followup.v3";
+} from "@/ai/prompts/followup.v4";
 import {
   closingQuestionTask,
   depositTask,
@@ -57,7 +59,12 @@ import {
   type Mailbox,
 } from "@/db/schema";
 import { decryptSecret } from "@/lib/crypto";
-import { MailboxAuthError, type MailboxReader, type MailboxWriter } from "@/mailbox/connector";
+import {
+  MailboxAuthError,
+  MailboxRateLimitError,
+  type MailboxReader,
+  type MailboxWriter,
+} from "@/mailbox/connector";
 import { createGmailReader } from "@/mailbox/gmail/api";
 import { buildReplyMime, replySubject, sameText, toGmailRaw } from "@/mailbox/mime";
 import {
@@ -72,10 +79,30 @@ import { isInvoiceThread, paymentSaid } from "./money-rules";
 import { quoteStopsNudges } from "./quote-rules";
 import { BACK_ON_TOP_MS, isEmergency } from "./snooze-rules";
 import { headerPickIds, toNeedsYouItem } from "./digest-rules";
-import { asDate, notDraftMessage, sideEmailSql, waitingSinceSql } from "./thread-sql";
+import { answeredByPhone } from "./first-week-rules";
+import {
+  asDate,
+  messageReplyAddress,
+  messageReplyName,
+  noReplySql,
+  notDraftMessage,
+  replyAddressSql,
+  sideEmailSql,
+  waitingSinceSql,
+  answeredByPhoneSql,
+} from "./thread-sql";
 import { closingQuestionAllowed, recentReviewAddresses, reviewAllowed } from "./offers";
 import { lockReviewAddress } from "./review-lock";
 import { markReconnectNeeded, recordSentMessage } from "./sync";
+import { readReplyTo, workspaceMailboxEmails } from "./reply-address";
+import {
+  customerReplyAddress,
+  customerReplyName,
+  NO_REPLY_FLAG,
+  REPOINTED_FLAG,
+  type ReplyToHeader,
+} from "./reply-address-rules";
+import { isNoReplyAddress } from "./sender-rules";
 
 /** Categories we draft for without being asked. Complaints and noise never are. */
 export const AUTO_DRAFT_CATEGORIES = [
@@ -92,7 +119,12 @@ export const MAX_FOLLOWUPS = 2;
 const CONVERSATION_MESSAGES = 6;
 const PER_MESSAGE_CHARS = 3_000;
 
-export type DraftDeps = { writerFor?: (m: Mailbox) => MailboxWriter; now?: () => Date };
+export type DraftDeps = {
+  writerFor?: (m: Mailbox) => MailboxWriter;
+  /** Reads a stored email's Reply-To when sync never did (defaults to the writer's client). */
+  readerFor?: (m: Mailbox) => Pick<MailboxReader, "getMessage">;
+  now?: () => Date;
+};
 
 export const defaultWriter = (m: Mailbox) =>
   createGmailReader({ refreshToken: decryptSecret(m.encryptedRefreshToken) });
@@ -118,6 +150,10 @@ export type CreateOutcome =
         | "followup_cap"
         | "untrusted"
         | "municipal"
+        // Round 2: asks to pay a new account (A11) — only the owner's tap drafts one.
+        | "payment_change"
+        // Round 2 (FW E11): the owner said they called after the newest email.
+        | "answered_by_phone"
         // Purpose drafts (plan #26 #28 #29). S6 adds the per-purpose eligibility reasons.
         | "purpose_not_allowed"
         | "feature_off"
@@ -125,7 +161,13 @@ export type CreateOutcome =
         | "no_review_link"
         | "review_recent"
         | "complaint"
-        | "not_eligible";
+        | "not_eligible"
+        // Reply-To (review B1): the reply would go to a no-reply address (jobs and offers
+        // only — the owner's own "Draft a reply" gets a flagged draft instead), or Gmail
+        // couldn't tell us where it goes (never guessed: no draft).
+        | "no_reply_address"
+        | "gmail_busy"
+        | "reply_to_unread";
     }
   | { status: "reconnect_needed" };
 
@@ -141,6 +183,44 @@ async function loadThread(threadId: string) {
 
 /** Purposes only the owner's tap may ask for. Deposit is never asked for: it's derived (#28). */
 export const OWNER_PURPOSES = ["review_request", "closing_question"] as const;
+
+/** Round 2 (TW B4): the fixed safety note's "prompt version" — code, never a model. */
+export const SAFETY_NOTE_VERSION = "safety-note.v1";
+/** First flag on the safety note: it keeps it out of batch and autopilot too. */
+export const SAFETY_NOTE_FLAG =
+  "They say they smell gas. Call them now; this note only tells them what to do meanwhile.";
+
+/**
+ * The fixed safety note for a gas smell (TW B4). Plain, no prices, no times, nothing invented:
+ * what anyone should do while they wait. The owner reads it and taps Send reply, or not.
+ */
+export function safetyNote(ctx: Pick<WorkspaceContext, "signature" | "businessName">): ModelDraft {
+  const sign = ctx.signature?.trim() || ctx.businessName?.trim() || "";
+  return {
+    body: [
+      "Hi,",
+      "",
+      "If you smell gas right now, please don't wait on email. Get everyone out of the house, don't switch lights or anything electric on or off, and don't light anything. Once you're outside, call your gas company's emergency line or 911.",
+      "",
+      "I'll call you as soon as I can.",
+      ...(sign ? ["", sign] : []),
+    ].join("\n"),
+    reason: "They smell gas. A safety note is ready; call them too.",
+    flags: [],
+    confidence: 0.5,
+    used_facts: sign && ctx.signature?.trim() ? ["signature"] : [],
+  };
+}
+
+/** Whether a draft with this purpose was ever written on the thread (any status). */
+async function purposeOnThread(threadId: string, purpose: DraftPurpose): Promise<boolean> {
+  const [row] = await db()
+    .select({ id: drafts.id })
+    .from(drafts)
+    .where(and(eq(drafts.threadId, threadId), eq(drafts.purpose, purpose)))
+    .limit(1);
+  return !!row;
+}
 export type OwnerPurpose = (typeof OWNER_PURPOSES)[number];
 
 /** Nudges actually sent in this thread (from the app or from Gmail). Discarded ones don't count. */
@@ -228,18 +308,39 @@ export async function followupSettings(workspaceId: string) {
   return { enabled: p?.enabled ?? true, days: p?.days ?? 3 };
 }
 
-/** The customer in a thread: whoever most recently wrote in. */
+/**
+ * The customer in a thread: whoever most recently wrote in, as the reply would address them
+ * (a website form's Reply-To, else the sender).
+ */
 async function customerOf(threadId: string) {
   const [m] = await db()
-    .select({ name: messages.fromName, address: messages.fromAddress })
+    .select({
+      fromName: messages.fromName,
+      fromAddress: messages.fromAddress,
+      replyToHeader: messages.replyToHeader,
+    })
     .from(messages)
     .where(and(eq(messages.threadId, threadId), eq(messages.direction, "in")))
     .orderBy(desc(messages.sentAt))
     .limit(1);
-  return m ?? null;
+  return m ? { name: customerReplyName(m), address: customerReplyAddress(m) } : null;
 }
 
-type DraftContext = WorkspaceContext & { reviewUrl: string | null };
+/** A reader for a stored email's Reply-To: the one given, else the Gmail client itself. */
+function replyReader(
+  mailbox: Mailbox,
+  opts: Pick<DraftDeps, "readerFor" | "writerFor">,
+): Pick<MailboxReader, "getMessage"> | null {
+  if (opts.readerFor) return opts.readerFor(mailbox);
+  const w = (opts.writerFor ?? defaultWriter)(mailbox) as Partial<MailboxReader>;
+  return typeof w.getMessage === "function" ? (w as Pick<MailboxReader, "getMessage">) : null;
+}
+
+type DraftContext = WorkspaceContext & {
+  reviewUrl: string | null;
+  /** The owner's time zone, for "Today is…" and each email's time (review A8). */
+  timeZone: string | null;
+};
 
 /**
  * The terms check for deposit and review notes (A4). Percentages, amounts, ways to pay and
@@ -324,7 +425,7 @@ function scoreDraft(
  */
 export async function workspaceContext(
   workspaceId: string,
-  ws: { businessName: string | null; trade: string | null },
+  ws: { businessName: string | null; trade: string | null; extraTrades?: string[] | null },
   now: Date = new Date(),
 ): Promise<DraftContext> {
   const [profile] = await db()
@@ -338,6 +439,7 @@ export async function workspaceContext(
   const ctx: WorkspaceContext = {
     businessName: ws.businessName,
     trade: ws.trade,
+    extraTrades: ws.extraTrades ?? [],
     services: profile?.services ?? null,
     serviceArea: profile?.serviceArea ?? null,
     hours: profile?.hours ?? null,
@@ -366,7 +468,7 @@ export async function workspaceContext(
           }
         : null,
   };
-  return { ...ctx, reviewUrl: profile?.reviewUrl ?? null };
+  return { ...ctx, reviewUrl: profile?.reviewUrl ?? null, timeZone: profile?.timeZone ?? null };
 }
 
 /**
@@ -400,6 +502,18 @@ export async function createDraftForThread(
   const { thread, mailbox, workspace } = row;
   if (!jobsAllowed(workspace, now)) return { status: "skipped", reason: "read_only" };
   if (mailbox.status !== "active") return { status: "skipped", reason: "mailbox_inactive" };
+  // "I called them" after the customer's newest email (round 2, FW E11): a job writes nothing
+  // (no reply, no nudge) until they write again. The owner's own tap still drafts.
+  if (opts.trigger !== "owner" && thread.handledOfflineAt) {
+    const [newestIn] = await db()
+      .select({ at: messages.sentAt })
+      .from(messages)
+      .where(and(eq(messages.threadId, threadId), eq(messages.direction, "in")))
+      .orderBy(desc(messages.sentAt))
+      .limit(1);
+    if (answeredByPhone(thread.handledOfflineAt, newestIn?.at ?? null))
+      return { status: "skipped", reason: "answered_by_phone" };
+  }
   // Review requests and closing questions come from the owner's tap, never a job.
   if (
     opts.purpose !== undefined &&
@@ -423,13 +537,28 @@ export async function createDraftForThread(
     if (why) return { status: "skipped", reason: why };
   }
 
-  const marks = (thread.extracted ?? {}) as { municipal?: boolean; injection?: boolean };
-  // Only the owner's tap drafts for these (feature plan #17, #42) — never a job.
+  const marks = (thread.extracted ?? {}) as {
+    municipal?: boolean;
+    injection?: boolean;
+    payment_change?: boolean;
+    gas_smell?: boolean;
+    bill_direction?: string;
+  };
+  // Only the owner's tap drafts for these (feature plan #17, #42; round 2 A11) — never a job.
   if (opts.trigger !== "owner") {
     if (marks.injection) return { status: "skipped", reason: "untrusted" };
     if (marks.municipal) return { status: "skipped", reason: "municipal" };
+    if (marks.payment_change) return { status: "skipped", reason: "payment_change" };
   }
-  if (opts.trigger === "auto") {
+  // Round 2 (TW B4): someone smells gas. A job writes one fixed safety note (no model), once
+  // per thread, and it waits for the owner's tap like everything else. After that the thread
+  // is the owner's, as any needs-you email is.
+  const safety =
+    opts.trigger === "auto" &&
+    marks.gas_smell === true &&
+    opts.purpose === undefined &&
+    !(await purposeOnThread(threadId, "safety"));
+  if (opts.trigger === "auto" && !safety) {
     if (thread.category === "noise") return { status: "skipped", reason: "noise" };
     if (thread.needsOwner) return { status: "skipped", reason: "needs_owner" };
     if (
@@ -449,6 +578,8 @@ export async function createDraftForThread(
       quoteStopsNudges(thread) ||
       // Nor a paid invoice (the owner's mark or our guess) or one that isn't owed (#27).
       thread.invoicePaidAt != null ||
+      // Nor a bill the owner has to pay: a supplier's statement is never chased (TW A2).
+      marks.bill_direction === "owed_by_business" ||
       !FOLLOWUP_CATEGORIES.includes(thread.category as (typeof FOLLOWUP_CATEGORIES)[number]) ||
       // Nor a thread where a deposit, review request or closing question went out (A3) —
       // a deposit only while it's a quote — or whose customer just said they paid.
@@ -464,14 +595,15 @@ export async function createDraftForThread(
   // Only once per thread: after a deposit note was drafted (whatever became of it), or when
   // the email itself says it paid ("Sent the deposit, when can you start?"), it is answered
   // as an ordinary reply.
-  const purpose: DraftPurpose | null =
-    opts.purpose ??
-    (!followup &&
-    isQuoteAcceptance(thread) &&
-    paymentSaid(thread.extracted) === null &&
-    !(await depositAlreadyOn(threadId))
-      ? "deposit"
-      : null);
+  const purpose: DraftPurpose | null = safety
+    ? "safety"
+    : (opts.purpose ??
+      (!followup &&
+      isQuoteAcceptance(thread) &&
+      paymentSaid(thread.extracted) === null &&
+      !(await depositAlreadyOn(threadId))
+        ? "deposit"
+        : null));
 
   const [pending] = await db()
     .select({ id: drafts.id })
@@ -518,6 +650,41 @@ export async function createDraftForThread(
         )[0]
       : last;
   if (!customer) return { status: "skipped", reason: "no_text" };
+  // Where the reply goes (review B1): a website form's Reply-To, read at sync. A row stored
+  // before sync read it is read now, before the model is asked anything — never guessed: if
+  // Gmail can't say, there is no draft (a reply to the form robot reads "Reply sent." and
+  // reaches nobody).
+  if (customer.replyToHeader === null) {
+    let read: ReplyToHeader;
+    try {
+      const reader = replyReader(mailbox, opts);
+      if (!reader) throw new Error("No Gmail reader.");
+      read = await readReplyTo(reader, customer, await workspaceMailboxEmails(workspace.id));
+    } catch (err) {
+      if (err instanceof MailboxAuthError) {
+        await markReconnectNeeded(mailbox);
+        return { status: "reconnect_needed" };
+      }
+      // A job pauses and tries again (politely()); the owner's tap gets a plain notice.
+      if (opts.trigger !== "owner") throw err;
+      console.error("reply_to_read_failed", {
+        threadId,
+        error: err instanceof Error ? err.name : "unknown",
+      });
+      return {
+        status: "skipped",
+        reason: err instanceof MailboxRateLimitError ? "gmail_busy" : "reply_to_unread",
+      };
+    }
+    customer.replyToHeader = read;
+    for (const m of recent) if (m.id === customer.id) m.replyToHeader = read;
+  }
+  const to = customerReplyAddress(customer);
+  if (!to) return { status: "skipped", reason: "no_text" };
+  // A robot never gets a reply (round 2 A9): a no-reply address, a form robot with no usable
+  // Reply-To, a portal's dispatch address. Not even on the owner's tap — nobody reads it, and
+  // "Reply sent." would be untrue. They answer those on the platform or by phone.
+  if (isNoReplyAddress(to)) return { status: "skipped", reason: "no_reply_address" };
   const withText = recent
     .map((m) => ({
       m,
@@ -525,6 +692,15 @@ export async function createDraftForThread(
     }))
     .filter((x) => x.text.length > 0);
   if (!withText.some((x) => x.m.id === last.id)) return { status: "skipped", reason: "no_text" };
+  // Every customer email the drafter will read is checked in code (round 2 B3), not only the
+  // newest one the sorter saw: an older "ignore the above…" still in view means no job draft.
+  if (opts.trigger !== "owner") {
+    const inbound = withText.filter((x) => x.m.direction === "in").map((x) => x.text);
+    if (inbound.some((t) => injectionCheck(t).flagged))
+      return { status: "skipped", reason: "untrusted" };
+    if (inbound.some((t) => looksLikePaymentChange(t)))
+      return { status: "skipped", reason: "payment_change" };
+  }
 
   const ctx = await workspaceContext(workspace.id, workspace, now);
   // Nothing to ask with: never call the model for a review request without the link.
@@ -533,6 +709,8 @@ export async function createDraftForThread(
   const daysQuiet = Math.max(1, Math.round((now.getTime() - last.sentAt.getTime()) / 86_400_000));
   const wsBlock = workspaceBlock(ctx);
   const convo = conversationBlock({
+    now,
+    timeZone: ctx.timeZone,
     subject: thread.subject,
     category: thread.category,
     summary: thread.summary,
@@ -548,7 +726,10 @@ export async function createDraftForThread(
             ? closingQuestionTask({ daysQuiet })
             : undefined,
     messages: withText.map(({ m, text }) => ({
-      from: m.direction === "out" ? mailbox.email : (m.fromName ?? m.fromAddress ?? "customer"),
+      from:
+        m.direction === "out"
+          ? mailbox.email
+          : (customerReplyName(m) ?? customerReplyAddress(m) ?? "customer"),
       direction: m.direction,
       sentAt: m.sentAt,
       body: text,
@@ -556,18 +737,29 @@ export async function createDraftForThread(
   });
 
   // What the draft may draw facts from, and what it must never say.
+  const ownerFacts = [
+    ctx.pricingNotes,
+    ctx.hours,
+    ctx.leadTime,
+    ctx.policies,
+    ctx.paymentTerms,
+    ctx.services,
+    ctx.signature,
+    ...ctx.seasonalNotes.map((n) => n.text),
+  ];
   const checkContext = {
-    sourceText: [
-      withText.map((x) => x.text).join("\n"),
-      ctx.pricingNotes,
-      ctx.hours,
-      ctx.leadTime,
-      ctx.policies,
-      ctx.paymentTerms,
-      ...ctx.seasonalNotes.map((n) => n.text),
+    sourceText: [withText.map((x) => x.text).join("\n"), ...ownerFacts, opts.ownerNote]
+      .filter(Boolean)
+      .join("\n"),
+    // Amounts only the customer named aren't the owner's price (round 2 A4).
+    ownerSourceText: [
+      ...withText.filter((x) => x.m.direction === "out").map((x) => x.text),
+      ...ownerFacts,
+      opts.ownerNote,
     ]
       .filter(Boolean)
       .join("\n"),
+    ownerInstruction: opts.ownerNote ?? null,
     doNotPromise: ctx.doNotPromise,
     phrasesAvoided: ctx.voice?.phrasesAvoided ?? [],
     neverSay: ctx.neverSay,
@@ -576,52 +768,58 @@ export async function createDraftForThread(
       wrote: withText.filter((x) => x.m.direction === "out").map((x) => x.text),
     }),
   };
-  const promptVersion = followup
-    ? FOLLOWUP_PROMPT_VERSION
-    : purpose
-      ? `${DRAFT_PROMPT_VERSION}+${PURPOSE_PROMPT_VERSION}`
-      : DRAFT_PROMPT_VERSION;
+  const promptVersion = safety
+    ? SAFETY_NOTE_VERSION
+    : followup
+      ? FOLLOWUP_PROMPT_VERSION
+      : purpose
+        ? `${DRAFT_PROMPT_VERSION}+${PURPOSE_PROMPT_VERSION}`
+        : DRAFT_PROMPT_VERSION;
 
-  let result;
-  try {
-    const request = {
-      workspaceId: workspace.id,
-      role: "draft" as const,
-      promptVersion,
-      maxTokens: 2048,
-      effort: "medium" as const,
-      system: [
-        { text: followup ? FOLLOWUP_INSTRUCTIONS : DRAFT_INSTRUCTIONS, cache: false },
-        { text: wsBlock, cache: true },
-      ],
-      user: convo,
-      schema: draftSchema,
-      now,
-    };
-    result = (await callStructured(request)) ?? (await callStructured(request));
-    if (result?.body.trim()) {
-      // Something the owner explicitly banned slipped in: one fresh attempt, then flag (plan #23).
-      const first = checkDraft(result.body.trim(), checkContext);
-      if (first.hits.some((h) => REGENERATE_ON.includes(h))) {
-        const retry = await callStructured({
-          ...request,
-          user: `${convo}\n\nYour last attempt broke the owner's rules: ${first.flags.join(" ")} Write it again without that.`,
-        });
-        if (retry?.body.trim()) result = retry;
+  let result: ModelDraft | null = null;
+  if (safety) result = safetyNote(ctx);
+  else
+    try {
+      const request = {
+        workspaceId: workspace.id,
+        role: "draft" as const,
+        promptVersion,
+        maxTokens: 2048,
+        effort: "medium" as const,
+        system: [
+          { text: followup ? FOLLOWUP_INSTRUCTIONS : DRAFT_INSTRUCTIONS, cache: false },
+          { text: wsBlock, cache: true },
+        ],
+        user: convo,
+        schema: draftSchema,
+        now,
+      };
+      result = (await callStructured(request)) ?? (await callStructured(request));
+      if (result?.body.trim()) {
+        // Something the owner explicitly banned slipped in: one fresh attempt, then flag (plan #23).
+        const first = checkDraft(result.body.trim(), checkContext);
+        if (first.hits.some((h) => REGENERATE_ON.includes(h))) {
+          const retry = await callStructured({
+            ...request,
+            user: `${convo}\n\nYour last attempt broke the owner's rules: ${first.flags.join(" ")} Write it again without that.`,
+          });
+          if (retry?.body.trim()) result = retry;
+        }
       }
+    } catch (err) {
+      if (err instanceof AiCapReachedError) return { status: "skipped", reason: "capped" };
+      throw err;
     }
-  } catch (err) {
-    if (err instanceof AiCapReachedError) return { status: "skipped", reason: "capped" };
-    throw err;
-  }
   if (!result || !result.body.trim()) return { status: "skipped", reason: "model_failed" };
 
   // What the owner must sort before a purpose note can go (A6).
   const { body, flags: purposeFlags } = purposeGuards(purpose, result.body.trim(), ctx);
-  const { flags, confidence } = scoreDraft(result, checkDraft(body, checkContext), purposeFlags);
+  const { flags, confidence } = scoreDraft(
+    result,
+    checkDraft(body, checkContext),
+    safety ? [SAFETY_NOTE_FLAG, ...purposeFlags] : purposeFlags,
+  );
 
-  const to = customer.fromAddress;
-  if (!to) return { status: "skipped", reason: "no_text" };
   const subject = replySubject(last.subject ?? thread.subject);
   const writer = (opts.writerFor ?? defaultWriter)(mailbox);
 
@@ -767,7 +965,7 @@ async function loadOwnedDraft(workspaceId: string, draftId: string) {
   return row;
 }
 
-function mimeFor(
+export function mimeFor(
   d: Draft,
   mailbox: Mailbox,
   body: string,
@@ -785,7 +983,7 @@ function mimeFor(
   );
 }
 
-async function replyToHeaders(d: Draft) {
+export async function replyToHeaders(d: Pick<Draft, "replyToMessageId">) {
   if (!d.replyToMessageId) return undefined;
   const [m] = await db()
     .select({ rfc822MessageId: messages.rfc822MessageId, references: messages.references })
@@ -800,6 +998,7 @@ export type SendOutcome =
   | { status: "changed_in_gmail" }
   | { status: "deleted_in_gmail" }
   | { status: "gaps_unfilled" }
+  | { status: "no_reply_address" }
   | { status: "already_sending" }
   | { status: "not_found" }
   | { status: "reconnect_needed" };
@@ -834,6 +1033,8 @@ export async function sendDraft(
   if (mailbox.status !== "active") return { status: "reconnect_needed" };
   // A reply with a {{gap}} still in it never leaves (plan #2) — checked before any Gmail call.
   if (hasUnfilledGap(opts.editedBody ?? draft.body ?? "")) return { status: "gaps_unfilled" };
+  // Nor one to a robot (round 2 A9), whoever wrote it: nobody would read it.
+  if (isNoReplyAddress(draft.toAddress)) return { status: "no_reply_address" };
 
   const writer = (opts.writerFor ?? defaultWriter)(mailbox);
   try {
@@ -968,7 +1169,13 @@ export type QueueSendOutcome =
   | { status: "queued"; sendAfter: Date }
   | { status: "changed_since_seen" }
   | { status: "intent_expired" }
+  /** Who it goes to changed since the card was shown (a Reply-To re-point): look again. */
+  | { status: "to_changed" }
   | Exclude<SendOutcome, { status: "sent" }>;
+
+/** Two addresses are the same mailbox (case and spaces aside). */
+const sameAddress = (a: string | null | undefined, b: string | null | undefined) =>
+  (a ?? "").trim().toLowerCase() === (b ?? "").trim().toLowerCase();
 
 /** Plan #10: an okay given with no signal counts for this long, no longer. */
 export const OFFLINE_INTENT_MAX_AGE_MS = 12 * 60 * 60 * 1000;
@@ -994,6 +1201,12 @@ export async function queueSend(
      * ago, nothing is sent and they're told.
      */
     offline?: { seenHash: string; okayedAt: Date };
+    /**
+     * The address the card showed when Send reply was tapped (H7 "To:"). If the draft now goes
+     * somewhere else, nothing is queued and the owner is asked to look again: the same rule
+     * as a draft changed in Gmail — never send what they haven't seen.
+     */
+    seenTo?: string;
   } = {},
 ): Promise<QueueSendOutcome> {
   const now = opts.now?.() ?? new Date();
@@ -1010,8 +1223,11 @@ export async function queueSend(
     if (opts.offline.seenHash !== bodyHash(draft.body ?? ""))
       return { status: "changed_since_seen" };
   }
+  if (opts.seenTo !== undefined && !sameAddress(opts.seenTo, draft.toAddress))
+    return { status: "to_changed" };
   if (mailbox.status !== "active") return { status: "reconnect_needed" };
   if (hasUnfilledGap(opts.editedBody ?? draft.body ?? "")) return { status: "gaps_unfilled" };
+  if (isNoReplyAddress(draft.toAddress)) return { status: "no_reply_address" };
 
   const writer = (opts.writerFor ?? defaultWriter)(mailbox);
   let body = draft.body ?? "";
@@ -1066,11 +1282,24 @@ export async function queueSend(
   const queued = await db()
     .update(drafts)
     .set({ body, sendAfter, sendClaimedAt: null, autoSendAt: null })
-    .where(stillWaiting)
+    // Still going where it went when this tap was checked (a re-point may have moved it).
+    .where(and(stillWaiting, eq(drafts.toAddress, draft.toAddress)))
     .returning({ id: drafts.id });
   // Two taps at once: only the first starts a window. Anything else that got there first
   // (the nudge closed on another device) means nothing is going out, and the owner is told so.
-  if (!queued.length) return await whyNotQueued(draft.id);
+  if (!queued.length) {
+    const [current] = await db()
+      .select({ to: drafts.toAddress, status: drafts.status, sendAfter: drafts.sendAfter })
+      .from(drafts)
+      .where(eq(drafts.id, draft.id));
+    if (
+      current?.status === "pending" &&
+      current.sendAfter == null &&
+      !sameAddress(current.to, draft.toAddress)
+    )
+      return { status: "to_changed" };
+    return await whyNotQueued(draft.id);
+  }
   await db()
     .insert(activityLog)
     .values({
@@ -1206,7 +1435,10 @@ export async function overdueQueuedSends(now: Date = new Date()): Promise<string
 
 export type BatchRow = {
   draftId: string;
+  /** Who it's for: the customer's name, else their address. */
   to: string;
+  /** The address the reply goes to (H7). */
+  toAddress: string;
   category: string;
   firstLine: string;
 };
@@ -1237,6 +1469,8 @@ export async function batchCandidates(
       injection?: boolean;
       municipal?: boolean;
       accepts_quote?: boolean;
+      payment_change?: boolean;
+      gas_smell?: boolean;
     };
     const ok = batchEligible(
       {
@@ -1246,7 +1480,11 @@ export async function batchCandidates(
         confidencePct: draft.confidence,
         body: draft.body ?? "",
         amountsInEmail: extracted.dollar_amounts ?? [],
-        untrusted: extracted.injection === true || extracted.municipal === true,
+        untrusted:
+          extracted.injection === true ||
+          extracted.municipal === true ||
+          extracted.payment_change === true ||
+          extracted.gas_smell === true,
         autopilotCounting: draft.autoSendAt !== null,
         acceptsQuote: extracted.accepts_quote === true,
         purpose: draft.purpose ?? null,
@@ -1258,6 +1496,7 @@ export async function batchCandidates(
     out.push({
       draftId: draft.id,
       to: who?.name || who?.address || draft.toAddress,
+      toAddress: draft.toAddress,
       category: thread.category!,
       firstLine: firstLine(draft.body ?? ""),
     });
@@ -1392,23 +1631,32 @@ export async function reviseDraft(
     }))
     .filter((x) => x.text.length > 0);
   const ctx = await workspaceContext(workspace.id, workspace, now);
+  const ownerFacts = [
+    ctx.pricingNotes,
+    ctx.hours,
+    ctx.leadTime,
+    ctx.policies,
+    ctx.paymentTerms,
+    ctx.services,
+    ctx.signature,
+    ...ctx.seasonalNotes.map((n) => n.text),
+    // What the owner said counts as a fact they gave us (plan #4).
+    spoken,
+    // Facts already in a clean draft stay allowed. A flagged draft's text
+    // doesn't count, so a tweak can never launder a flag away.
+    (draft.flags ?? []).length === 0 ? draft.body : null,
+  ];
   const checkContext = {
-    sourceText: [
-      withText.map((x) => x.text).join("\n"),
-      ctx.pricingNotes,
-      ctx.hours,
-      ctx.leadTime,
-      ctx.policies,
-      ctx.paymentTerms,
-      ...ctx.seasonalNotes.map((n) => n.text),
-      // What the owner said counts as a fact they gave us (plan #4).
-      spoken,
-      // Facts already in a clean draft stay allowed. A flagged draft's text
-      // doesn't count, so a tweak can never launder a flag away.
-      (draft.flags ?? []).length === 0 ? draft.body : null,
+    sourceText: [withText.map((x) => x.text).join("\n"), ...ownerFacts].filter(Boolean).join("\n"),
+    // Round 2 A4: an amount only the customer named isn't the owner's price.
+    ownerSourceText: [
+      ...withText.filter((x) => x.m.direction === "out").map((x) => x.text),
+      ...ownerFacts,
     ]
       .filter(Boolean)
       .join("\n"),
+    // Round 2 A5: "tell her Thursday works, 450" — every number the owner said is theirs.
+    ownerInstruction: spoken,
     doNotPromise: ctx.doNotPromise,
     phrasesAvoided: ctx.voice?.phrasesAvoided ?? [],
     neverSay: ctx.neverSay,
@@ -1423,13 +1671,18 @@ export async function reviseDraft(
     }),
   };
   const convo = conversationBlock({
+    now,
+    timeZone: ctx.timeZone,
     subject: thread.subject,
     category: thread.category,
     summary: thread.summary,
     extracted: thread.extracted,
     task: reviseTask(draft.body ?? "", ask, spoken !== null),
     messages: withText.map(({ m, text }) => ({
-      from: m.direction === "out" ? mailbox.email : (m.fromName ?? m.fromAddress ?? "customer"),
+      from:
+        m.direction === "out"
+          ? mailbox.email
+          : (customerReplyName(m) ?? customerReplyAddress(m) ?? "customer"),
       direction: m.direction,
       sentAt: m.sentAt,
       body: text,
@@ -1471,7 +1724,15 @@ export async function reviseDraft(
   // The same purpose guards as a new draft: a tweak can't drop the deposit gap or the review
   // link, nor lift their flags and confidence cap.
   const { body, flags: purposeFlags } = purposeGuards(draft.purpose, result.body.trim(), ctx);
-  const { flags, confidence } = scoreDraft(result, checkDraft(body, checkContext), purposeFlags);
+  // Where it goes doesn't change with a tweak: a no-reply or moved address stays flagged.
+  const addressFlags = [
+    ...(isNoReplyAddress(draft.toAddress) ? [NO_REPLY_FLAG] : []),
+    ...((draft.flags ?? []).includes(REPOINTED_FLAG) ? [REPOINTED_FLAG] : []),
+  ];
+  const { flags, confidence } = scoreDraft(result, checkDraft(body, checkContext), [
+    ...addressFlags,
+    ...purposeFlags,
+  ]);
 
   const writer = (opts.writerFor ?? defaultWriter)(mailbox);
   try {
@@ -1612,11 +1873,36 @@ export async function expirePendingNudge(
   note: string,
   opts: DraftDeps = {},
 ): Promise<boolean> {
+  return expireWaiting(waitingNudge(threadId), note, opts);
+}
+
+/**
+ * Round 2 (FW E11): the owner answered by phone, so whatever draft waits on the thread (a reply
+ * or a nudge) goes, here and in Gmail — the same claim-first rules as `expirePendingNudge`. A
+ * reply already tapped Send (in its undo window) is left alone.
+ */
+export async function expirePendingDraft(
+  threadId: string,
+  note: string,
+  opts: DraftDeps = {},
+): Promise<boolean> {
+  return expireWaiting(
+    and(eq(drafts.threadId, threadId), eq(drafts.status, "pending"), isNull(drafts.sendAfter))!,
+    note,
+    opts,
+  );
+}
+
+async function expireWaiting(
+  where: ReturnType<typeof and>,
+  note: string,
+  opts: DraftDeps,
+): Promise<boolean> {
   const now = opts.now?.() ?? new Date();
   const [claimed] = await db()
     .update(drafts)
     .set({ status: "expired", closedNote: note, decidedAt: now })
-    .where(waitingNudge(threadId))
+    .where(where)
     .returning({
       id: drafts.id,
       threadId: drafts.threadId,
@@ -1792,6 +2078,10 @@ export type QueueItem = {
   threadId: string;
   customerName: string | null;
   customerAddress: string | null;
+  /** The address this draft goes to (H7: shown on every card). Null on needs-you items. */
+  toAddress: string | null;
+  /** The customer's email gave a Reply-To (a website form): the reply goes there, not to From. */
+  replyRedirected: boolean;
   category: string | null;
   summary: string | null;
   needsOwnerReason: string | null;
@@ -1810,6 +2100,8 @@ export type QueueItem = {
   gmailThreadId: string;
   mailboxEmail: string;
   lastMessageAt: Date | null;
+  /** When the customer's newest email was written (round 2, FW E9: shown on every card). */
+  customerWroteAt: Date | null;
 };
 
 /** Plan #6: back from a snooze within the last day — pinned on top. */
@@ -1883,6 +2175,8 @@ export async function queueMembership(
           inArray(threads.mailboxId, boxIds),
           eq(threads.needsOwner, true),
           eq(threads.inInbox, true),
+          // "I called them" (round 2, FW E11): answered, until the customer writes again.
+          sql`not ${answeredByPhoneSql()}`,
         ),
       )
       .orderBy(desc(threads.lastMessageAt))
@@ -1997,22 +2291,35 @@ export async function listQueue(
   const threadById = new Map(needRows.map((t) => [t.id, t]));
   const draftById = new Map(draftRows.map((r) => [r.draft.id, r]));
 
+  // The customer as a reply addresses them: a website form's Reply-To, else the sender.
+  type Who = {
+    name: string | null;
+    address: string | null;
+    redirected: boolean;
+    sentAt: Date | null;
+  };
   const senders = async (threadIds: string[]) => {
-    if (!threadIds.length)
-      return new Map<string, { name: string | null; address: string | null }>();
+    if (!threadIds.length) return new Map<string, Who>();
     const rows = await db()
       .select({
         threadId: messages.threadId,
-        name: messages.fromName,
-        address: messages.fromAddress,
+        name: messageReplyName(),
+        address: messageReplyAddress(),
+        redirected: sql<boolean>`(${messages.replyToHeader}->>'address' is not null)`,
         sentAt: messages.sentAt,
       })
       .from(messages)
       .where(and(inArray(messages.threadId, threadIds), eq(messages.direction, "in")))
       .orderBy(desc(messages.sentAt));
-    const out = new Map<string, { name: string | null; address: string | null }>();
+    const out = new Map<string, Who>();
     for (const r of rows)
-      if (!out.has(r.threadId)) out.set(r.threadId, { name: r.name, address: r.address });
+      if (!out.has(r.threadId))
+        out.set(r.threadId, {
+          name: r.name,
+          address: r.address,
+          redirected: !!r.redirected,
+          sentAt: r.sentAt,
+        });
     return out;
   };
   const who = await senders([...needIds, ...members.drafts.map((m) => m.threadId)]);
@@ -2030,6 +2337,8 @@ export async function listQueue(
           threadId: t.id,
           customerName: who.get(t.id)?.name ?? null,
           customerAddress: who.get(t.id)?.address ?? null,
+          toAddress: null,
+          replyRedirected: who.get(t.id)?.redirected ?? false,
           category: t.category,
           summary: t.summary,
           needsOwnerReason: t.needsOwnerReason,
@@ -2044,6 +2353,7 @@ export async function listQueue(
           gmailThreadId: t.gmailThreadId,
           mailboxEmail: emailOf.get(t.mailboxId) ?? "",
           lastMessageAt: t.lastMessageAt,
+          customerWroteAt: who.get(t.id)?.sentAt ?? null,
         } satisfies QueueItem,
       ];
     }),
@@ -2060,6 +2370,8 @@ export async function listQueue(
           threadId: thread.id,
           customerName: who.get(thread.id)?.name ?? null,
           customerAddress: who.get(thread.id)?.address ?? draft.toAddress,
+          toAddress: draft.toAddress,
+          replyRedirected: who.get(thread.id)?.redirected ?? false,
           category: thread.category,
           summary: thread.summary,
           needsOwnerReason: thread.needsOwner ? thread.needsOwnerReason : null,
@@ -2074,6 +2386,7 @@ export async function listQueue(
           gmailThreadId: thread.gmailThreadId,
           mailboxEmail: emailOf.get(draft.mailboxId) ?? "",
           lastMessageAt: thread.lastMessageAt,
+          customerWroteAt: who.get(thread.id)?.sentAt ?? null,
         } satisfies QueueItem,
       ];
     }),
@@ -2093,6 +2406,11 @@ export async function threadsToAutoDraft(mailboxId: string, limit = 10): Promise
   // the owner's own "Draft a reply" still works.
   const lastOut = sql`(select max(m.sent_at) from messages m where m.thread_id = ${threads.id} and m.direction = 'out')`;
   const lastDraft = sql`(select max(d.created_at) from drafts d where d.thread_id = ${threads.id})`;
+  // A customer whose reply address is a no-reply one is skipped (`no_reply_address`) without a
+  // draft, so it would stay a candidate until new mail came and could fill every slot ahead of
+  // an older real lead. Leave those out here. An unchecked Reply-To (NULL) stays in: a form
+  // sent from no-reply@ often carries the customer's own address there.
+  const newestInNoReply = sql`exists (select 1 from (select nr_m.reply_to_header, nr_m.from_address from messages nr_m where nr_m.thread_id = ${threads.id} and nr_m.direction = 'in' order by nr_m.sent_at desc limit 1) nr where nr.reply_to_header is not null and ${noReplySql(replyAddressSql("nr"))})`;
   const rows = await db()
     .select({ id: threads.id })
     .from(threads)
@@ -2100,11 +2418,21 @@ export async function threadsToAutoDraft(mailboxId: string, limit = 10): Promise
       and(
         eq(threads.mailboxId, mailboxId),
         eq(threads.inInbox, true),
-        eq(threads.needsOwner, false),
-        inArray(threads.category, [...AUTO_DRAFT_CATEGORIES]),
+        // A gas smell (round 2, TW B4) gets its one fixed safety note whatever its sort;
+        // createDraftForThread writes it once per thread, then the thread waits for the owner.
+        or(
+          and(eq(threads.needsOwner, false), inArray(threads.category, [...AUTO_DRAFT_CATEGORIES])),
+          and(
+            sql`${threads.extracted}->>'gas_smell' = 'true'`,
+            sql`not exists (select 1 from drafts d where d.thread_id = ${threads.id} and d.purpose = 'safety')`,
+          ),
+        ),
         sql`${threads.classifiedAt} is not null and ${threads.classifiedAt} >= ${lastIn}`,
         sql`(${lastOut} is null or ${lastOut} < ${lastIn})`,
         sql`(${lastDraft} is null or ${lastDraft} < ${lastIn})`,
+        // "I called them" after the newest email (round 2, FW E11): nothing to draft.
+        sql`(${threads.handledOfflineAt} is null or ${threads.handledOfflineAt} < ${lastIn})`,
+        sql`not ${newestInNoReply}`,
       ),
     )
     .orderBy(desc(threads.lastMessageAt))

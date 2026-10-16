@@ -1,13 +1,16 @@
 import "server-only";
-import { and, count, desc, eq, gte, inArray, isNotNull, lt } from "drizzle-orm";
+import { and, count, desc, eq, gte, inArray, isNotNull, lt, sql } from "drizzle-orm";
 import { categoryLabels, categoryTag, isCategory } from "@/config/categories";
 import { db } from "@/db";
 import { activityLog, drafts, mailboxes, messages, threads } from "@/db/schema";
 import { MINUTES_PER_SENT_REPLY } from "@/config/drafting";
+import { dollarsToCents, tally, type MonthMoney } from "./activity-rules";
 import { atRiskActivityLine } from "./leads-at-risk-rules";
+import { invoiceOf } from "./money-rules";
 import { closeRate, isQuoteOutcome, type QuoteOutcome } from "./quote-rules";
 import { workspaceTimeZone } from "./snooze";
 import { localMonthStart, usableTimeZone } from "./snooze-rules";
+import { messageReplyName } from "./thread-sql";
 
 // The time-saved assumption lives in config (pure files read it too); re-exported for old callers.
 export { MINUTES_PER_SENT_REPLY } from "@/config/drafting";
@@ -40,6 +43,7 @@ export function describeActivity(
       if (detail.purpose === "deposit")
         return `Drafted deposit details${name ? ` for ${name}` : ""}${who ? ` · ${categoryTag.quote_request}` : ""}`;
       if (detail.purpose === "review_request") return `Drafted a review request${to}`;
+      if (detail.purpose === "safety") return `Wrote a gas safety note${to}`;
       return `Drafted a reply${to}${about}`;
     case "closing_question":
       return `Drafted a question${to} asking if they went another way`;
@@ -54,6 +58,16 @@ export function describeActivity(
       return `You sent the draft${to} from Gmail`;
     case "draft_discarded":
       return `You discarded the draft${to}`;
+    // Review B1: website-form leads now go to the customer's own address.
+    case "draft_repointed":
+      return "A draft now goes to the reply address the customer's email named, not the address it came from.";
+    case "reply_went_to_form": {
+      const on = typeof detail.sentOn === "string" ? shortDate(detail.sentOn) : null;
+      // `robot` false: a person whose email named their other address; they likely have it.
+      if (detail.robot === false)
+        return `A reply you sent${on ? ` on ${on}` : ""}${to} went to the address their email came from, not the reply address it named. Check they got it.`;
+      return `A reply you sent${on ? ` on ${on}` : ""}${to} went to the website form's address, so the customer may not have it. Send it again from Gmail.`;
+    }
     case "draft_revised":
       return detail.via === "voice"
         ? `You changed the draft${to} by voice`
@@ -200,6 +214,14 @@ export function describeActivity(
   }
 }
 
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+/** "2026-10-12" → "Oct 12" (a local date stored with the entry). */
+function shortDate(ymd: string): string | null {
+  const m = /^\d{4}-(\d{2})-(\d{2})$/.exec(ymd);
+  const month = m ? MONTHS[Number(m[1]) - 1] : undefined;
+  return m && month ? `${month} ${Number(m[2])}` : null;
+}
+
 export type ActivityEntry = {
   id: string;
   at: Date;
@@ -208,7 +230,7 @@ export type ActivityEntry = {
   /** Plan #41: a sent reply links to its record. */
   recordId: string | null;
 };
-const SENT_ACTIONS = new Set(["reply_sent", "reply_sent_from_gmail"]);
+const SENT_ACTIONS = new Set(["reply_sent", "reply_sent_from_gmail", "reply_went_to_form"]);
 
 export async function listActivity(workspaceId: string, limit = 100): Promise<ActivityEntry[]> {
   const rows = await db()
@@ -226,7 +248,8 @@ export async function listActivity(workspaceId: string, limit = 100): Promise<Ac
       .from(threads)
       .where(inArray(threads.id, threadIds));
     const names = await db()
-      .select({ threadId: messages.threadId, name: messages.fromName })
+      // As a reply addresses them: a website form's own name for the customer, never the robot's.
+      .select({ threadId: messages.threadId, name: messageReplyName() })
       .from(messages)
       .where(and(inArray(messages.threadId, threadIds), eq(messages.direction, "in")))
       .orderBy(desc(messages.sentAt));
@@ -362,4 +385,52 @@ export async function closeRateBetween(
   const n = (o: QuoteOutcome) => Number(rows.find((r) => r.outcome === o)?.n ?? 0);
   const c = { won: n("won"), lost: n("lost"), noAnswer: n("no_answer") };
   return { ...c, ratePct: closeRate(c) };
+}
+
+/**
+ * Outside review K1: this month's money, from what the app already keeps — never from
+ * price memory (only the owner's screens may read that). Quotes won = outcome "won" set this
+ * month (by the owner, or our guess they left alone) with the amount from their own quote
+ * when we have it. Paid after a follow-up = an invoice marked paid this month (by the owner,
+ * or our guess) on a thread where a follow-up nudge was sent before it was marked paid.
+ */
+export async function monthMoney(
+  workspaceId: string,
+  now: Date = new Date(),
+  timeZone?: string,
+): Promise<MonthMoney> {
+  const start = localMonthStart(now, await monthZone(workspaceId, timeZone));
+  const won = await db()
+    .select({ cents: threads.quoteAmountCents })
+    .from(threads)
+    .innerJoin(mailboxes, eq(mailboxes.id, threads.mailboxId))
+    .where(
+      and(
+        eq(mailboxes.workspaceId, workspaceId),
+        eq(threads.quoteOutcome, "won"),
+        gte(threads.quoteOutcomeAt, start),
+      ),
+    );
+  const paid = await db()
+    .select({ extracted: threads.extracted })
+    .from(threads)
+    .innerJoin(mailboxes, eq(mailboxes.id, threads.mailboxId))
+    .where(
+      and(
+        eq(mailboxes.workspaceId, workspaceId),
+        gte(threads.invoicePaidAt, start),
+        inArray(threads.invoicePaidSource, ["owner", "auto"]),
+        sql`exists (
+          select 1 from ${drafts}
+          where ${drafts.threadId} = ${threads.id}
+            and ${drafts.kind} = 'followup'
+            and ${drafts.status} in ('sent', 'edited_and_sent')
+            and ${drafts.decidedAt} < ${threads.invoicePaidAt}
+        )`,
+      ),
+    );
+  return {
+    won: tally(won.map((r) => r.cents)),
+    paidAfterNudge: tally(paid.map((r) => dollarsToCents(invoiceOf(r.extracted)?.amount))),
+  };
 }

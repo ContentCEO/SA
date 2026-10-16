@@ -176,7 +176,9 @@ describe("the demo video script matches the end-to-end journey", () => {
     );
     expect(clear, "the clear-out step").toBeGreaterThan(0);
     const steps = before.slice(clear);
-    const disconnect = steps.indexOf("Settings → **Disconnect Gmail** → **Yes, disconnect Gmail**");
+    const disconnect = steps.indexOf(
+      "Settings → Your Gmail → **Disconnect Gmail** → **Yes, disconnect Gmail**",
+    );
     const permissions = steps.indexOf("myaccount.google.com/permissions");
     const confirm = steps.indexOf("have no `gmail.send`");
     const send = steps.indexOf("Only then send the practice copy and the real reply.");
@@ -194,7 +196,9 @@ describe("the demo video script matches the end-to-end journey", () => {
     const note = flat(scriptSteps.slice(start, scriptSteps.indexOf("**Before recording Part 1")));
     expect(note).toContain("The engineers' live check of the two permissions comes first");
     expect(note).toContain("never film before it");
-    expect(note).toContain("Settings → **Disconnect Gmail** → **Yes, disconnect Gmail**");
+    expect(note).toContain(
+      "Settings → Your Gmail → **Disconnect Gmail** → **Yes, disconnect Gmail**",
+    );
     expect(note).toContain("Don't remove it only at Google while an account still has");
 
     // The labels and the alert are the app's real ones.

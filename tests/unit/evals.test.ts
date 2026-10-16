@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { setModelTransportForTests, type Transport } from "@/ai/client";
-import { CATEGORIES, type ModelClassification } from "@/ai/prompts/classify.v3";
+import { CATEGORIES, type ModelClassification } from "@/ai/prompts/classify.v4";
 import { TRADES } from "@/config/trades";
 import { EVAL_CASES, type EvalCase } from "../evals/cases";
 import { REVISE_CASES, TONE_CASES } from "../evals/edits";
@@ -46,6 +46,10 @@ describe("evaluation set (#46)", () => {
       invoiceStatus: null,
       acceptsQuote: false,
       jobDone: false,
+      paymentChange: false,
+      gasSmell: false,
+      onMoneyOwed: false,
+      disputed: false,
       ...over,
     });
     const byId = (id: string) => EVAL_CASES.find((c) => c.id === id)!;
@@ -65,6 +69,29 @@ describe("evaluation set (#46)", () => {
       [result(yes, { acceptsQuote: false }), result(no, { acceptsQuote: true })],
     );
     expect(wrong.acceptsQuoteAccuracy).toBe(0);
+  });
+
+  it("covers the round 2 cases (attack guard, fraud, gas, claims, towns, bills, trades)", () => {
+    const n = (f: (c: EvalCase) => boolean) => EVAL_CASES.filter(f).length;
+    expect(n((c) => c.expect.paymentChange === true)).toBeGreaterThanOrEqual(2);
+    expect(n((c) => c.expect.gasSmell === true)).toBeGreaterThanOrEqual(2);
+    expect(n((c) => c.expect.billOwedByBusiness === true)).toBeGreaterThanOrEqual(2);
+    expect(n((c) => c.expect.routinePaperwork === true)).toBeGreaterThanOrEqual(4);
+    expect(n((c) => c.expect.injection === false)).toBeGreaterThanOrEqual(4);
+    for (const id of [
+      "r2-home-warranty-dispatch",
+      "r2-pm-work-order",
+      "r2-adjuster-approved",
+      "r2-dig-safe",
+      "r2-mass-save",
+      "r2-manufacturer-registration",
+      "r2-gc-portal-task",
+      "r2-hoa-approval",
+    ])
+      expect(
+        EVAL_CASES.some((c) => c.id === id),
+        id,
+      ).toBe(true);
   });
 
   it("covers the draft-editing prompts too", () => {
@@ -110,9 +137,13 @@ describe("evaluation set (#46)", () => {
           from_building_department: c.expect.municipal === true,
           accepts_quote: c.expect.acceptsQuote === true,
           job_done: c.expect.jobDone === true,
+          payment_change_request: c.expect.paymentChange === true,
+          smells_gas: c.expect.gasSmell === true,
+          routine_paperwork: c.expect.routinePaperwork === true,
         },
         extracted: {
           ...base.extracted,
+          invoice_direction: c.expect.billOwedByBusiness ? "owed_by_business" : "unknown",
           dollar_amounts: [],
           permit: c.expect.permitResult
             ? {
@@ -187,6 +218,10 @@ describe("evaluation set (#46)", () => {
       invoiceStatusAccuracy: 1,
       acceptsQuoteAccuracy: 1,
       jobDoneAccuracy: 1,
+      paymentChangeRecall: 1,
+      gasSmellRecall: 1,
+      billDirectionAccuracy: 1,
+      routinePaperworkAccuracy: 1,
       draftPassRate: 1,
       revisePassRate: 1,
       toneAccuracy: 1,

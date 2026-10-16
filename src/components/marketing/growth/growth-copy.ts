@@ -33,7 +33,7 @@ export const growthCopy = {
   bar: {
     label: "Squared Away Growth",
     nav: "Growth",
-    link: "Book a free call",
+    link: `Ask ${davi} to call me`,
   },
   opener: {
     region: "Squared Away Growth",
@@ -42,8 +42,10 @@ export const growthCopy = {
     heavy: "done for you.",
     body: "Google ads, Facebook and Instagram ads, social media posts, your Google Business Profile, reviews and your website. We do the work, one-on-one, so you can stay on the job.",
     homeOnly: `For now, ${operator} does every job personally — the same person who builds the app.`,
-    button: "Book a free call",
+    button: `Ask ${davi} to call me`,
     call: `Call ${phone}`,
+    /** Homepage only: the way to Growth's own page. */
+    pageLink: "See everything Growth does",
   },
   services: {
     region: "What we take on",
@@ -57,7 +59,7 @@ export const growthCopy = {
     heavy: "one call to start.",
     steps: [
       {
-        title: "Book a free call",
+        title: `Ask ${davi} to call you`,
         body: "Tell us about your business and the work you want more of. It costs nothing, and there's no obligation.",
       },
       {
@@ -110,7 +112,7 @@ export const growthCopy = {
       },
       {
         q: "What does it cost?",
-        a: "It depends on what you need. We talk it through on the free call and give you a clear price before any work starts.",
+        a: `It depends on what you need. ${davi} talks it through with you on the free call and gives you a clear price before any work starts.`,
       },
       {
         q: "Is the call really free?",
@@ -133,9 +135,9 @@ export const growthCopy = {
     ],
   },
   call: {
-    region: "Book a free call",
+    region: `Ask ${davi} to call me`,
     serif: "want more work,",
-    heavy: "book a free call.",
+    heavy: `ask ${davi.toLowerCase()} to call you.`,
     body: `Leave your number and what you want help with. ${davi} calls you back personally.`,
     talkNow: "Rather talk now?",
     callLink: `Call ${phone}`,
@@ -154,8 +156,8 @@ export const growthCopy = {
     note: "Anything else? (optional)",
     noteHint: "The towns you work in, the jobs you want more of — anything that helps.",
     honeypot: "Website",
-    submit: "Book a free call",
-    pending: "Booking…",
+    submit: `Ask ${davi} to call me`,
+    pending: "Sending…",
     privacy:
       "We only use this to contact you about Squared Away Growth. No newsletters, and we never sell it.",
   },
@@ -171,14 +173,15 @@ export const growthCopy = {
     serviceUnknown: "Pick from the list.",
     noteLong: "Keep it under 500 characters.",
     rateLimited: `Too many tries from here. Try again in an hour, or call or text ${phone}.`,
+    saveFailed: `We couldn't save that just now. Try again in a minute, or call or text ${phone}.`,
   },
   success: {
     serif: "thanks,",
     heavy: "we'll call you.",
     // The phone they gave goes between these two, kept on one line so it's easy to check.
     withPhoneBefore: `${davi} will call you at `,
-    withPhoneAfter: " to find a time for your free call.",
-    noPhone: `${davi} will call you soon to find a time for your free call.`,
+    withPhoneAfter: ".",
+    noPhone: `${davi} will call you soon.`,
     soonerBefore: "Want to talk sooner? Call or text ",
     soonerAfter: ".",
     done: "Nothing else to do for now.",
@@ -191,14 +194,12 @@ export const growthCopy = {
   page: {
     homeLabel: "Squared Away home",
     appLink: "The app",
-    callLink: "Book a free call",
+    callLink: `Ask ${davi} to call me`,
   },
   meta: {
     title: "Squared Away Growth — ads, reviews and your website, done for you.",
-    description:
-      "Google ads, Facebook and Instagram ads, social media posts, Google Business Profile, reviews and websites for anyone in the trades. Done for you, one-on-one. Book a free call.",
-    twitterDescription:
-      "Ads, posts, reviews, your Google listing and your website, done for you, one-on-one. For anyone in the trades. Book a free call.",
+    description: `Google ads, Facebook and Instagram ads, social media posts, Google Business Profile, reviews and websites for anyone in the trades. Done for you, one-on-one. Ask ${davi} to call you.`,
+    twitterDescription: `Ads, posts, reviews, your Google listing and your website, done for you, one-on-one. For anyone in the trades. Ask ${davi} to call you.`,
   },
   admin: {
     heading: (n: number) => `Waitlist and Growth calls (${n})`,

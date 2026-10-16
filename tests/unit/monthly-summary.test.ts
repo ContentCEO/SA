@@ -126,7 +126,7 @@ const STATS: MonthlyStats = {
 };
 const URLS = {
   activityUrl: "https://app.example/activity",
-  settingsUrl: "https://app.example/settings#digest",
+  settingsUrl: "https://app.example/settings/morning-email",
 };
 
 describe("buildMonthlySummary (pure)", () => {
@@ -928,7 +928,7 @@ describe("GUARDRAILS: the monthly email is labels and counts only", () => {
     await request(oct(5), "SECRET@thumbtack.com", { jobKind: "Panel upgrades" });
     await sendMonthlySummaries(NOW, { send: sender });
     const e = sent[0]!;
-    const allowed = new Set([appUrl("/activity"), appUrl("/settings#digest")]);
+    const allowed = new Set([appUrl("/activity"), appUrl("/settings/morning-email")]);
     const hrefs = [...e.html.matchAll(/href="([^"]*)"/g)].map((m) => m[1]!);
     const textUrls = e.text.match(/https?:\/\/\S+/g) ?? [];
     expect(hrefs.length).toBeGreaterThan(0);

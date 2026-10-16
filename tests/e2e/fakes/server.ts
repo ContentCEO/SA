@@ -35,7 +35,14 @@
  */
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
-import { buildInbox, fakeOutput, outputKindFor, refFor, type FakeMail } from "./outputs";
+import {
+  buildInbox,
+  fakeOutput,
+  outputKindFor,
+  refFor,
+  type FakeLead,
+  type FakeMail,
+} from "./outputs";
 
 const AUTH = "https://www.googleapis.com/auth/";
 /** What the app must ask for: nothing more, nothing less (src/mailbox/gmail/scopes.ts). */
@@ -103,6 +110,8 @@ export type FakeCall = {
   model?: string;
   /** drafts.send and messages.send only. */
   mail?: SentMail;
+  /** messages.get with format=metadata: the header names asked for (names only). */
+  metadataHeaders?: string[];
   /** Set (never the value) when the app used credentials other than the e2e ones. */
   wrongClient?: true;
   /**
@@ -231,8 +240,17 @@ function sentMail(headers: { name: string; value: string }[], threadId: string |
   };
 }
 
-/** Gmail's users.messages resource. Metadata reads get headers only; full reads get the body. */
-function resource(m: FakeMail, full: boolean) {
+/**
+ * Gmail's users.messages resource. Metadata reads get headers only — every header when no
+ * `metadataHeaders` were named (as real Gmail does), else only the named ones (so a read that
+ * forgot to ask for Reply-To doesn't get it); full reads get the body.
+ */
+export function resource(m: FakeMail, full: boolean, metadataHeaders: string[] = []) {
+  const named = metadataHeaders.map((h) => h.toLowerCase());
+  const headers =
+    full || named.length === 0
+      ? m.headers
+      : m.headers.filter((h) => named.includes(h.name.toLowerCase()));
   const data = Buffer.from(m.body, "utf8").toString("base64url");
   return {
     id: m.id,
@@ -243,7 +261,7 @@ function resource(m: FakeMail, full: boolean) {
     sizeEstimate: m.body.length,
     payload: {
       mimeType: "text/plain",
-      headers: m.headers,
+      headers,
       body: full ? { data, size: m.body.length } : { size: m.body.length },
     },
   };
@@ -290,6 +308,7 @@ export function createFakes() {
       Array.isArray(v) && v.every((x) => typeof x === "string") ? (v as string[]) : [];
     const given = (input.grant ?? {}) as Record<string, unknown>;
     const grant: FakeGrant = { untick: list(given.untick), earlier: list(given.earlier) };
+    const lead: FakeLead = input.lead === "form" ? "form" : "direct";
     const r = refFor(id);
     if ([...scenarios.values()].some((s) => s.ref === r))
       throw new HttpError(409, { error: "ref collision" });
@@ -300,7 +319,7 @@ export function createFakes() {
       grant,
       consented: null,
       granted: null,
-      messages: new Map(buildInbox(r, ownerEmail).map((m) => [m.id, m])),
+      messages: new Map(buildInbox(r, ownerEmail, Date.now(), { lead }).map((m) => [m.id, m])),
       drafts: new Map(),
       history: [],
       historyId: 1000,
@@ -518,10 +537,12 @@ export function createFakes() {
       });
     }
     if (routeName === "gmail.messages.get") {
-      at();
+      const full = (q.get("format") ?? "full") === "full";
+      const metadataHeaders = full ? [] : q.getAll("metadataHeaders");
+      at(full ? {} : { metadataHeaders });
       const m = s.messages.get(seg[1]!);
       if (!m) throw gmailError(404, "Requested entity was not found.", "notFound");
-      return sendJson(res, 200, resource(m, (q.get("format") ?? "full") === "full"));
+      return sendJson(res, 200, resource(m, full, metadataHeaders));
     }
     if (routeName === "gmail.history") {
       at();

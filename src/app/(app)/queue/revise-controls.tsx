@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useFormStatus } from "react-dom";
-import type { Tweak } from "@/ai/prompts/revise.v1";
+import type { Tweak } from "@/ai/prompts/revise.v2";
 import { Button } from "@/components/ui/button";
 import { TWEAK_LABELS } from "@/config/tweaks";
 import { reviseDraftAction } from "./actions";

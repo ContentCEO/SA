@@ -50,7 +50,7 @@ export function mailboxHealth(
   } else if (!m.lastSyncedAt || now.getTime() - m.lastSyncedAt.getTime() > STALE_SYNC_MS) {
     checked = {
       label: "Last checked",
-      text: `${m.lastSyncedAt ? relativeTime(m.lastSyncedAt, now) : "A while ago"}. That's longer than usual — we're looking into it. Nothing for you to do.`,
+      text: `${m.lastSyncedAt ? relativeTime(m.lastSyncedAt, now) : "A while ago"}. That's longer than usual. We keep trying on our own, and your email is safe in Gmail. Nothing for you to do.`,
       problem: true,
     };
   } else if (m.lastSyncErrorCode === "rate_limited") {

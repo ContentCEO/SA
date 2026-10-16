@@ -1,19 +1,20 @@
 "use client";
 
-import { Activity, ClipboardCheck, Inbox, Receipt, Settings, Sun, Users } from "lucide-react";
+import { Banknote, ClipboardCheck, Inbox, Menu, Receipt, Sun } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Wordmark } from "@/components/brand/wordmark";
 import { cn } from "@/lib/utils";
 import { toggleSunlightAction } from "@/app/(app)/settings/device-actions";
+import { currentTab } from "@/config/nav";
 
+/** Five tabs (outside review, 2026-10-15): Money owed is a tab; the rest live under More. */
 const NAV = [
   { href: "/queue", label: "Queue", Icon: ClipboardCheck },
   { href: "/inbox", label: "Inbox", Icon: Inbox },
   { href: "/quotes", label: "Quotes", Icon: Receipt },
-  { href: "/customers", label: "Customers", Icon: Users },
-  { href: "/activity", label: "Activity", Icon: Activity },
-  { href: "/settings", label: "Settings", Icon: Settings },
+  { href: "/money", label: "Money", Icon: Banknote },
+  { href: "/more", label: "More", Icon: Menu },
 ] as const;
 
 /**
@@ -22,7 +23,8 @@ const NAV = [
  */
 export function AppHeader({ sunlight = false }: { sunlight?: boolean }) {
   const path = usePathname();
-  const current = (href: string) => path === href || path.startsWith(`${href}/`);
+  const tab = currentTab(path);
+  const current = (href: string) => tab === href;
 
   return (
     <>
@@ -67,7 +69,7 @@ export function AppHeader({ sunlight = false }: { sunlight?: boolean }) {
         aria-label="Main"
         className="fixed inset-x-0 bottom-0 z-20 border-t border-stone bg-paper/95 pb-[env(safe-area-inset-bottom)] backdrop-blur sm:hidden"
       >
-        <ul className="mx-auto grid max-w-xl grid-cols-6">
+        <ul className="mx-auto grid max-w-xl grid-cols-5">
           {NAV.map(({ href, label, Icon }) => {
             const on = current(href);
             return (
@@ -76,7 +78,7 @@ export function AppHeader({ sunlight = false }: { sunlight?: boolean }) {
                   href={href}
                   aria-current={on ? "page" : undefined}
                   className={cn(
-                    "flex min-h-14 flex-col items-center justify-center gap-0.5 text-[11px] font-semibold",
+                    "flex min-h-14 flex-col items-center justify-center gap-0.5 text-sm font-semibold",
                     on && "font-black",
                   )}
                 >

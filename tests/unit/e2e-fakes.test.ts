@@ -5,8 +5,8 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest
 import { applyOwnerRules } from "@/ai/classify";
 import { checkDraft, REGENERATE_ON } from "@/ai/draft-checks";
 import { injectionCheck, looksMunicipal } from "@/ai/guards";
-import { classificationSchema } from "@/ai/prompts/classify.v3";
-import { draftSchema } from "@/ai/prompts/draft.v5";
+import { classificationSchema } from "@/ai/prompts/classify.v4";
+import { draftSchema } from "@/ai/prompts/draft.v6";
 import { editToneSchema } from "@/ai/prompts/edit-tone.v1";
 import { voiceSchema } from "@/ai/prompts/voice.v2";
 import { anthropicClientOptions } from "@/config/e2e";
@@ -23,13 +23,16 @@ import {
   FAKE_EDIT_TONE,
   FAKE_VOICE,
   fakeCustomer,
+  FORM_ROBOT,
   outputKindFor,
   refFor,
 } from "../e2e/fakes/outputs";
+import { pickReplyTo } from "@/server/reply-address-rules";
 import {
   CONNECT_SCOPES as FAKE_CONNECT_SCOPES,
   GMAIL_METHOD_SCOPES,
   GMAIL_SCOPES as FAKE_GMAIL_SCOPES,
+  resource,
   startFakes,
   type FakeCall,
   type FakeGrant,
@@ -85,6 +88,45 @@ describe("the fake model outputs", () => {
     });
     expect(rules.needsOwner).toBe(false);
     expect(looksMunicipal(c.email, c.name)).toBe(false);
+  });
+
+  it("a website form lead: the robot in From, Dana in Reply-To, the ref in the text; it still auto-drafts", () => {
+    const ref = refFor("0f6c2a1e-1111-4222-8333-944455556666");
+    const c = fakeCustomer(ref, "form");
+    const [lead] = buildInbox(ref, "owner@example.com", Date.now(), { lead: "form" });
+    const h = (n: string) => lead!.headers.find((x) => x.name === n)?.value;
+    expect(h("From")).toBe(`${FORM_ROBOT.name} <${FORM_ROBOT.email}>`);
+    expect(h("Reply-To")).toBe(`Dana Ruiz <${c.email}>`);
+    expect(lead!.body).toContain(`Ref ${ref}`);
+    expect(
+      pickReplyTo(h("Reply-To"), { from: FORM_ROBOT.email, self: ["owner@example.com"] }),
+    ).toEqual({ address: c.email, name: "Dana Ruiz" });
+    // The direct lead has no Reply-To at all.
+    const [direct] = buildInbox(ref, "owner@example.com");
+    expect(direct!.headers.some((x) => x.name === "Reply-To")).toBe(false);
+    const rules = applyOwnerRules(classificationSchema.parse(FAKE_CLASSIFICATION), {
+      firstTimeSender: true,
+      senderIsVip: false,
+      amountThresholdDollars: 2500,
+      injection: injectionCheck(c.body).flagged,
+    });
+    expect(rules.needsOwner).toBe(false);
+    const checked = checkDraft(FAKE_DRAFT.body, {
+      sourceText: `${c.subject}\n${c.body}\nRuiz Street Plumbing. Water heaters, leaks, drains and repipes.`,
+      doNotPromise: [],
+      phrasesAvoided: [...FAKE_VOICE.phrases_avoided],
+      neverSay: [],
+    });
+    expect(checked.flags).toEqual([]);
+  });
+
+  it("metadata reads: every header when none are named (as Gmail does), only the named ones otherwise", () => {
+    const [lead] = buildInbox("abc123def456", "owner@example.com", Date.now(), { lead: "form" });
+    const names = (r: ReturnType<typeof resource>) => r.payload.headers.map((x) => x.name);
+    expect(names(resource(lead!, false))).toEqual(lead!.headers.map((x) => x.name));
+    expect(names(resource(lead!, false, ["Reply-To"]))).toEqual(["Reply-To"]);
+    expect(names(resource(lead!, false, ["From", "To"]))).not.toContain("Reply-To");
+    expect(names(resource(lead!, true, ["From"]))).toContain("Reply-To");
   });
 
   it("the inbox: one customer email in the inbox and five older sent emails (enough for voice)", () => {

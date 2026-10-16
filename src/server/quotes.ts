@@ -5,7 +5,15 @@ import { db } from "@/db";
 import { activityLog, mailboxes, messages, priceHistory, threads, workspaces } from "@/db/schema";
 import { expirePendingNudge, flagPendingNudge, followupSettings, type DraftDeps } from "./drafts";
 import { effectiveStatus, JOBS_ALLOWED, jobsAllowed, ReadOnlyError } from "./lifecycle";
-import { asDate, lastInSql, lastOutSql, notDraftMessage, quoteThreadSql } from "./thread-sql";
+import {
+  asDate,
+  customerAddressSql,
+  customerNameSql,
+  lastInSql,
+  lastOutSql,
+  notDraftMessage,
+  quoteThreadSql,
+} from "./thread-sql";
 import {
   amountFromOwnerText,
   canAutoSet,
@@ -144,12 +152,9 @@ export async function listQuotes(workspaceId: string, now: Date = new Date()) {
       lastIn: lastInSql(),
       lastOut: lastOutSql(),
       firstAt: sql<Date | null>`(select min(m.sent_at) from messages m where m.thread_id = ${threads.id})`,
-      customerName: sql<
-        string | null
-      >`(select m.from_name from messages m where m.thread_id = ${threads.id} and m.direction = 'in' order by m.sent_at desc limit 1)`,
-      customerAddress: sql<
-        string | null
-      >`(select lower(m.from_address) from messages m where m.thread_id = ${threads.id} and m.direction = 'in' order by m.sent_at desc limit 1)`,
+      // As a reply addresses them: a website form's Reply-To, else the sender.
+      customerName: customerNameSql(),
+      customerAddress: customerAddressSql(),
     })
     .from(threads)
     .innerJoin(mailboxes, eq(mailboxes.id, threads.mailboxId))

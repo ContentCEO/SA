@@ -2,20 +2,14 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { SiteFooter } from "@/components/app/site-footer";
 import { Wordmark } from "@/components/brand/wordmark";
+import { SiteAnalytics } from "@/components/marketing/site-analytics";
 import { GrowthChapter } from "@/components/marketing/growth/growth-chapter";
 import { growthCopy } from "@/components/marketing/growth/growth-copy";
 
 const { meta, page } = growthCopy;
 
-// A page-level openGraph/twitter replaces the inherited one, and the root opengraph-image only
-// attaches to its own segment, so /growth names the site's share card itself.
-const shareImage = {
-  url: "/opengraph-image",
-  width: 1200,
-  height: 630,
-  alt: "Squared Away — your inbox, handled.",
-};
-
+// The share card is this folder's own opengraph-image / twitter-image (Growth's words), which
+// file-based metadata attaches to this page.
 export const metadata: Metadata = {
   title: meta.title,
   description: meta.description,
@@ -25,13 +19,11 @@ export const metadata: Metadata = {
     siteName: "Squared Away",
     title: meta.title,
     description: meta.description,
-    images: [shareImage],
   },
   twitter: {
     card: "summary_large_image",
     title: meta.title,
     description: meta.twitterDescription,
-    images: [shareImage.url],
   },
 };
 
@@ -66,6 +58,7 @@ export default function GrowthPage() {
       <div className="mx-auto w-full max-w-5xl px-4 pb-6">
         <SiteFooter />
       </div>
+      <SiteAnalytics />
     </div>
   );
 }

@@ -1,8 +1,10 @@
 import "server-only";
-import { and, desc, eq, isNull, sql, type SQL } from "drizzle-orm";
-import type { Category } from "@/ai/prompts/classify.v3";
+import { and, desc, eq, isNull, type SQL } from "drizzle-orm";
+import type { Category } from "@/ai/prompts/classify.v4";
 import { db } from "@/db";
 import { mailboxes, threads } from "@/db/schema";
+import { replyState, type ReplyState } from "./inbox-rules";
+import { asDate, customerAddressSql, customerNameSql, lastInSql, lastOutSql } from "./thread-sql";
 
 export type InboxFilter =
   | { kind: "all" }
@@ -22,6 +24,8 @@ export type InboxRow = {
   senderName: string | null;
   senderAddress: string | null;
   extracted: Record<string, unknown> | null;
+  /** "Replied" / "Waiting on you"; null for junk or no customer email. */
+  replyState: ReplyState | null;
 };
 
 /** Recent inbox threads for the owner's own mailboxes. Never crosses workspaces. */
@@ -35,7 +39,7 @@ export async function listInboxThreads(
   if (filter.kind === "unsorted") where.push(isNull(threads.category));
   if (filter.kind === "category") where.push(eq(threads.category, filter.category));
 
-  return db()
+  const rows = await db()
     .select({
       id: threads.id,
       subject: threads.subject,
@@ -46,17 +50,24 @@ export async function listInboxThreads(
       needsOwnerReason: threads.needsOwnerReason,
       lastMessageAt: threads.lastMessageAt,
       extracted: threads.extracted,
-      // Latest inbound sender on the thread.
-      senderName: sql<
-        string | null
-      >`(select m.from_name from messages m where m.thread_id = ${threads.id} and m.direction = 'in' order by m.sent_at desc limit 1)`,
-      senderAddress: sql<
-        string | null
-      >`(select m.from_address from messages m where m.thread_id = ${threads.id} and m.direction = 'in' order by m.sent_at desc limit 1)`,
+      // Latest inbound email's customer, as a reply addresses them (a form's Reply-To, else From).
+      senderName: customerNameSql(),
+      senderAddress: customerAddressSql(),
+      lastIn: lastInSql(),
+      lastOut: lastOutSql(),
     })
     .from(threads)
     .innerJoin(mailboxes, eq(mailboxes.id, threads.mailboxId))
     .where(and(...where))
     .orderBy(desc(threads.needsOwner), desc(threads.lastMessageAt))
     .limit(limit);
+  return rows.map(({ lastIn, lastOut, ...r }) => ({
+    ...r,
+    replyState: replyState({
+      lastIn: asDate(lastIn),
+      lastOut: asDate(lastOut),
+      category: r.category,
+      needsOwner: r.needsOwner,
+    }),
+  }));
 }

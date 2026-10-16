@@ -29,15 +29,24 @@ export async function savePushSubscription(workspaceId: string, endpoint: string
 
 /**
  * What the phone shows when a push arrives: counts only, never names or words. Quote
- * requests waiting past the at-risk mark (plan #34) come first.
+ * requests waiting past the at-risk mark (plan #34) come first. Replies are "ready to send"
+ * only when this account can send; during the trial (or unpaid) they're "ready to check"
+ * (round 2, FW).
  */
-export function pushSummaryText(c: { replies: number; needsYou: number; atRisk?: number }): string {
+export function pushSummaryText(c: {
+  replies: number;
+  needsYou: number;
+  atRisk?: number;
+  canSend?: boolean;
+}): string {
   const parts = [
     c.atRisk ? atRiskPushPart(c.atRisk) : null,
     c.needsYou
       ? `${c.needsYou} email${c.needsYou === 1 ? "" : "s"} need${c.needsYou === 1 ? "s" : ""} you`
       : null,
-    c.replies ? `${c.replies} repl${c.replies === 1 ? "y" : "ies"} ready to send` : null,
+    c.replies
+      ? `${c.replies} repl${c.replies === 1 ? "y" : "ies"} ready to ${c.canSend ? "send" : "check"}`
+      : null,
   ].filter(Boolean);
   return parts.length ? parts.join(" · ") : "Your queue is up to date.";
 }

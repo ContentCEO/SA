@@ -1,5 +1,5 @@
 import { hasUnfilledGap } from "@/ai/gaps";
-import type { Category } from "@/ai/prompts/classify.v3";
+import type { Category } from "@/ai/prompts/classify.v4";
 import { confidenceLabel } from "@/config/drafting";
 
 /** Plan #5: the categories "Review all ready" may ever include. Never complaints or junk. */

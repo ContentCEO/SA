@@ -62,6 +62,7 @@ export default async function ReviewReadyPage(props: PageProps<"/queue/review">)
           {rows.map((r) => (
             <li key={r.draftId} className="rounded-xl border bg-card p-3">
               <p className="font-black">To {r.to}</p>
+              {r.to !== r.toAddress ? <p className="text-sm break-all">To: {r.toAddress}</p> : null}
               <p className="text-muted-foreground">{r.firstLine}</p>
             </li>
           ))}

@@ -27,9 +27,17 @@ export function findGaps(body: string): Gap[] {
   });
 }
 
+/**
+ * Placeholders written some other way (review A7): "[price]", "[Customer Name]", "[insert
+ * date]", "$___", "$X,XXX", "XX:XX". A model (or a template pasted in Gmail) sometimes writes
+ * these instead of {{price}}; they block sending just the same, until the owner edits them.
+ */
+const OTHER_PLACEHOLDER =
+  /\[\s*(?:price|amount|cost|total|rate|fee|deposit|date|day|time|name|first name|customer(?: name)?|their name|your name|address|job address|phone(?: number)?|number|email|insert[^\]\n]{0,30}|enter[^\]\n]{0,30}|add [^\]\n]{0,30}|fill in[^\]\n]{0,30}|x+|tbd|\?+|\.\.\.|…)\s*\]|\$\s?_{2,}|\$\s?x[x,.]*\b|(?:^|\s)_{3,}(?=\s|$)|\bxx:xx\b/i;
+
 /** Anything that still looks like a placeholder, well-formed or not. The send gate refuses these. */
 export function hasUnfilledGap(body: string): boolean {
-  return /\{\{|\}\}/.test(body);
+  return /\{\{|\}\}/.test(body) || OTHER_PLACEHOLDER.test(body);
 }
 
 /** Replace the n-th gap with what the owner typed. */

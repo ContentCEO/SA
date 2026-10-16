@@ -1,5 +1,5 @@
 import { randomBytes, randomUUID } from "node:crypto";
-import { sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { beforeEach, describe, expect, it } from "vitest";
 import type { Database } from "@/db";
 import { drafts, messages, threads } from "@/db/schema";
@@ -309,6 +309,12 @@ describe("weeklyScorecard: a forward to the crew answers nobody", () => {
     // Reply-To, which isn't stored), never back to the relay.
     const t = await thread();
     await msg(t, "in", day(0, 9), "wordpress@SECRET-site.com");
+    // Sync stores the form's Reply-To (review B1). A wordpress@ robot with no usable Reply-To
+    // is no one to answer (round 2 A9), so it would count as neither.
+    await database
+      .update(messages)
+      .set({ replyToHeader: { address: CUSTOMER.toLowerCase() } })
+      .where(eq(messages.fromAddress, "wordpress@SECRET-site.com"));
     await msg(t, "out", day(0, 9, 45), "owner@shop.com", mailboxId, CUSTOMER);
     const s = await week();
     expect(s.quotesOut).toBe(1);

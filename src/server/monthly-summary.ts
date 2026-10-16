@@ -1,8 +1,8 @@
 import "server-only";
 import { and, eq, gte, inArray, lt, or, sql, type SQL } from "drizzle-orm";
-import { JOB_KINDS, OTHER_JOB_KIND } from "@/config/job-kinds";
+import { OTHER_JOB_KIND } from "@/config/job-kinds";
 import { LEAD_SOURCES } from "@/config/lead-sources";
-import { isTrade, type Trade } from "@/config/trades";
+import type { Trade } from "@/config/trades";
 import { db } from "@/db";
 import {
   activityLog,
@@ -20,6 +20,7 @@ import { jobsAllowed } from "./lifecycle";
 import {
   buildMonthlySummary,
   jobKindOf,
+  jobKindsFor,
   leadSourceOf,
   monthlyDue,
   previousMonth,
@@ -27,7 +28,14 @@ import {
   type MonthlyStats,
 } from "./monthly-rules";
 import { localMonthName, usableTimeZone } from "./snooze-rules";
-import { noReplySql, quoteRequestSql, requestAtSql, requestSenderSql } from "./thread-sql";
+import {
+  messageReplyAddress,
+  noReplySql,
+  quoteRequestSql,
+  replyAddressSql,
+  requestAtSql,
+  requestSenderSql,
+} from "./thread-sql";
 
 /**
  * Plan #35: the first-of-month summary. Counts and OUR fixed labels only.
@@ -64,11 +72,8 @@ function leadPlatformSql(address: SQL) {
 }
 
 /** The labels a stored job kind may be for this trade (anything else is worked out again). */
-function kindLabels(trade: Trade | null): string[] {
-  return [
-    ...JOB_KINDS[trade && isTrade(trade) ? trade : "other"].map((k) => k.label),
-    OTHER_JOB_KIND,
-  ];
+function kindLabels(trade: Trade | null, extraTrades: readonly Trade[] = []): string[] {
+  return [...new Set([...jobKindsFor(trade, extraTrades).map((k) => k.label), OTHER_JOB_KIND])];
 }
 
 /**
@@ -80,6 +85,7 @@ export function monthlyStatsQueries(
   trade: Trade | null,
   start: Date,
   end: Date,
+  extraTrades: readonly Trade[] = [],
 ) {
   // A quote request belongs to the month it was asked for (re-sorted threads still count,
   // A11; a new job asked for on an old conversation counts when it was asked for).
@@ -95,7 +101,7 @@ export function monthlyStatsQueries(
       // The customer's words only when there's no usable stored label (older threads).
       service: sql<
         string | null
-      >`case when ${threads.jobKind} is null or not (${inArray(threads.jobKind, kindLabels(trade))}) then left(${threads.extracted} ->> 'service_requested', 500) end`,
+      >`case when ${threads.jobKind} is null or not (${inArray(threads.jobKind, kindLabels(trade, extraTrades))}) then left(${threads.extracted} ->> 'service_requested', 500) end`,
       domain: firstDomain,
     })
     .from(threads)
@@ -118,8 +124,11 @@ export function monthlyStatsQueries(
   const firstIn = sql`(select min(m.sent_at) from messages m where m.thread_id = ${outerThreadId()} and m.direction = 'in')`;
   const inMonth = (t: SQL) => sql`(${t} >= ${at(start)} and ${t} < ${at(end)})`;
   // One count, computed in the database: no address is returned.
+  // By the address a reply goes to (B1): every lead through one website form shares its
+  // robot From, and must not read as one customer writing again.
+  const who = messageReplyAddress();
   const repeat = db()
-    .select({ n: sql<number>`count(distinct lower(trim(${messages.fromAddress})))` })
+    .select({ n: sql<number>`count(distinct ${who})` })
     .from(messages)
     .innerJoin(threads, eq(threads.id, messages.threadId))
     .innerJoin(mailboxes, eq(mailboxes.id, threads.mailboxId))
@@ -131,10 +140,10 @@ export function monthlyStatsQueries(
         lt(messages.sentAt, end),
         or(quoteRequestSql(), eq(threads.category, "customer_question")),
         sql`(${inMonth(firstIn)} or ${inMonth(sql`${threads.quoteRequestedAt}`)})`,
-        sql`position('@' in coalesce(${messages.fromAddress}, '')) > 1`,
-        sql`not ${noReplySql(sql`${messages.fromAddress}`)}`,
-        sql`not ${leadPlatformSql(sql`${messages.fromAddress}`)}`,
-        sql`exists (select 1 from messages e join mailboxes eb on eb.id = e.mailbox_id where eb.workspace_id = ${workspaceId} and e.direction = 'in' and e.thread_id <> ${messages.threadId} and lower(trim(e.from_address)) = lower(trim(${messages.fromAddress})) and e.sent_at < ${at(start)})`,
+        sql`position('@' in coalesce(${who}, '')) > 1`,
+        sql`not ${noReplySql(who)}`,
+        sql`not ${leadPlatformSql(who)}`,
+        sql`exists (select 1 from messages e join mailboxes eb on eb.id = e.mailbox_id where eb.workspace_id = ${workspaceId} and e.direction = 'in' and e.thread_id <> ${messages.threadId} and ${replyAddressSql("e")} = ${who} and e.sent_at < ${at(start)})`,
       ),
     );
 
@@ -147,18 +156,21 @@ export async function monthlyStats(
   trade: Trade | null,
   start: Date,
   end: Date,
+  extraTrades: readonly Trade[] = [],
 ): Promise<MonthlyStats> {
-  const q = monthlyStatsQueries(workspaceId, trade, start, end);
+  const q = monthlyStatsQueries(workspaceId, trade, start, end, extraTrades);
   const [requests, repeat, rate] = await Promise.all([
     q.requests,
     q.repeat,
     closeRateBetween(workspaceId, start, end),
   ]);
-  const allowed = new Set(kindLabels(trade));
+  const allowed = new Set(kindLabels(trade, extraTrades));
   const kinds: string[] = [];
   const sources: string[] = [];
   for (const r of requests) {
-    kinds.push(r.jobKind && allowed.has(r.jobKind) ? r.jobKind : jobKindOf(trade, r.service));
+    kinds.push(
+      r.jobKind && allowed.has(r.jobKind) ? r.jobKind : jobKindOf(trade, r.service, extraTrades),
+    );
     sources.push(leadSourceOf(r.domain));
   }
   return {
@@ -221,10 +233,16 @@ export async function sendMonthlySummaries(
 
     try {
       const month = previousMonth(now, timeZone);
-      const stats = await monthlyStats(r.workspace.id, r.workspace.trade, month.start, month.end);
+      const stats = await monthlyStats(
+        r.workspace.id,
+        r.workspace.trade,
+        month.start,
+        month.end,
+        r.workspace.extraTrades ?? [],
+      );
       const email = buildMonthlySummary(stats, localMonthName(month.start, timeZone), {
         activityUrl: appUrl("/activity"),
-        settingsUrl: appUrl("/settings#digest"),
+        settingsUrl: appUrl("/settings/morning-email"),
       });
       if (email.worthSending) {
         const outcome = await send({

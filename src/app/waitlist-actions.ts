@@ -1,15 +1,23 @@
 "use server";
 
 import { headers } from "next/headers";
+import { unstable_rethrow } from "next/navigation";
+import { after } from "next/server";
 import { z } from "zod";
+import { siteConfig } from "@/config/site";
+import { ownHosts } from "@/server/own-hosts";
 import { hitLimit, ipKey } from "@/server/rate-limit";
+import { sourceFromForm } from "@/server/source-rules";
 import { joinWaitlist, waitlistInput } from "@/server/waitlist";
+import { sendWaitlistEmails } from "@/server/waitlist-emails";
 
 export type WaitlistState = {
   status: "idle" | "joined" | "error";
   errors?: Record<string, string[]>;
   values?: Record<string, string>;
 };
+
+const SAVE_FAILED = `We couldn't save that just now. Try again in a minute, or call or text ${siteConfig.phone}.`;
 
 /**
  * Public form, so: validated server-side, idempotent per email, and a hidden
@@ -24,7 +32,8 @@ export async function joinWaitlistAction(
     [...formData.entries()].map(([k, v]) => [k, typeof v === "string" ? v : ""]),
   ) as Record<string, string>;
   if (raw.website) return { status: "joined" };
-  if (!(await hitLimit("waitlist", ipKey(await headers()))).allowed) {
+  const h = await headers();
+  if (!(await hitLimit("waitlist", ipKey(h))).allowed) {
     return {
       status: "error",
       errors: { email: ["Too many tries from here. Try again in an hour, or give us a call."] },
@@ -48,13 +57,22 @@ export async function joinWaitlistAction(
       values: raw,
     };
   }
+  const source = sourceFromForm((k) => formData.get(k), ownHosts(h));
+  let result: Awaited<ReturnType<typeof joinWaitlist>>;
   try {
-    await joinWaitlist(parsed.data);
+    result = await joinWaitlist(parsed.data, source);
   } catch (err) {
-    // A failed query's message carries every bound value, and Next logs whatever an action
-    // throws. Log the error's name only and throw a content-free one.
+    unstable_rethrow(err);
+    // A failed query's message carries every bound value: log the error's name only, and keep
+    // what they typed on screen with a plain message instead of an error page.
     console.error("waitlist_join_failed", { error: err instanceof Error ? err.name : "unknown" });
-    throw new Error("waitlist_join_failed");
+    return { status: "error", errors: { form: [SAVE_FAILED] }, values: raw };
+  }
+  if (result === "joined") {
+    // After the response: the visitor never waits on Resend, and a failed email never fails
+    // the sign-up (sendWaitlistEmails never throws).
+    const email = parsed.data.email;
+    after(() => sendWaitlistEmails(email));
   }
   return { status: "joined" };
 }

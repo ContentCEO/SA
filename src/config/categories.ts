@@ -1,4 +1,4 @@
-import type { Category } from "@/ai/prompts/classify.v3";
+import type { Category } from "@/ai/prompts/classify.v4";
 
 /** What the owner sees. Plain words, in the order the filter chips appear. */
 export const categoryLabels: Record<Category, string> = {
@@ -39,5 +39,6 @@ export function draftTag(d: {
   if (d.purpose === "deposit") return `Deposit details · ${categoryTag.quote_request}`;
   if (d.purpose === "review_request") return "Review request";
   if (d.purpose === "closing_question") return "Closing question";
+  if (d.purpose === "safety") return "Gas smell · safety note";
   return d.kind === "followup" ? `Follow-up · ${category}` : category;
 }

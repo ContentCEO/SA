@@ -91,7 +91,7 @@ describe("/api/push/summary counts like the queue (plan #36, M8 A1)", () => {
     session.userId = user.id;
     await database
       .update(workspaces)
-      .set({ status: "active" })
+      .set({ status: "active", setupPaidVia: "stripe" })
       .where(eq(workspaces.id, workspace.id));
     mailboxId = (
       await saveConnectedMailbox(workspace, {
@@ -158,7 +158,7 @@ describe("/api/push/summary with leads at risk", () => {
     session.userId = user.id;
     await database
       .update(workspaces)
-      .set({ status: "active" })
+      .set({ status: "active", setupPaidVia: "stripe" })
       .where(eq(workspaces.id, workspace.id));
     mailboxId = (
       await saveConnectedMailbox(workspace, {

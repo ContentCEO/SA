@@ -290,6 +290,19 @@ export async function inviteOwner(input: {
   return row ? "invited" : "already_invited";
 }
 
+/**
+ * Round 2 (FW A4): Davi ticked "Added as a Google test user" for this invite. While the Google
+ * app is in Testing, an owner who isn't a test user can't connect Gmail.
+ */
+export async function markTestUserAdded(email: string, now: Date = new Date()) {
+  const rows = await db()
+    .update(invites)
+    .set({ testUserAddedAt: now })
+    .where(eq(invites.email, normalizeEmail(email)))
+    .returning({ email: invites.email });
+  return rows.length > 0;
+}
+
 export async function listInvites() {
   return db()
     .select({
@@ -297,6 +310,7 @@ export async function listInvites() {
       trade: invites.trade,
       invitedAt: invites.invitedAt,
       acceptedAt: invites.acceptedAt,
+      testUserAddedAt: invites.testUserAddedAt,
     })
     .from(invites)
     .orderBy(desc(invites.invitedAt))

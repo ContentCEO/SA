@@ -24,6 +24,10 @@ vi.mock("next/headers", () => ({
 }));
 const sendEmail = vi.fn<(e: OutgoingEmail) => Promise<"sent" | "not_configured">>();
 vi.mock("@/lib/email", () => ({ sendEmail: (e: OutgoingEmail) => sendEmail(e) }));
+vi.mock("next/server", async (orig) => ({
+  ...(await orig<typeof import("next/server")>()),
+  after: () => {},
+}));
 
 let database: Database;
 const ADMIN = "davi-admin@example.com";
@@ -65,7 +69,7 @@ const goodForm = {
   services: ["reviews", "google_ads"],
 };
 
-describe("Book a free call: what we accept", () => {
+describe("Ask Davi to call me: what we accept", () => {
   it("an empty submit explains every required field in plain words, and saves nothing", async () => {
     const r = await requestGrowthCallAction({ status: "idle" }, form({}));
     expect(r.status).toBe("error");
@@ -128,7 +132,7 @@ describe("Book a free call: what we accept", () => {
   });
 });
 
-describe("Book a free call: where it's kept", () => {
+describe("Ask Davi to call me: where it's kept", () => {
   it("a new email gets a Growth-only waitlist row that can't sign in", async () => {
     expect(await requestGrowthCall(parse())).toBe("requested");
     const [row] = await database.select().from(waitlist);
@@ -227,7 +231,7 @@ describe("Book a free call: where it's kept", () => {
   });
 });
 
-describe("Book a free call: the form action", () => {
+describe("Ask Davi to call me: the form action", () => {
   it("a bot that fills the hidden field is told it worked; nothing is stored, sent or counted", async () => {
     const r = await requestGrowthCallAction(
       { status: "idle" },
@@ -307,7 +311,7 @@ describe("Book a free call: the form action", () => {
     expect(warn).toHaveBeenCalledWith("growth_notify_failed", { error: "TimeoutError" });
   });
 
-  it("a failed save logs no name, number, email or note, and the error carries none either", async () => {
+  it("a failed save logs no name, number, email or note, and keeps what they typed with a plain message", async () => {
     // What Drizzle throws when a query fails: every bound value is in the message.
     const leaky = new DrizzleQueryError(
       'insert into "waitlist" ("email", "name", "phone") values ($1, $2, $3)',
@@ -318,20 +322,17 @@ describe("Book a free call: the form action", () => {
     const spies = (["error", "warn", "info", "log"] as const).map((m) =>
       vi.spyOn(console, m).mockImplementation(() => {}),
     );
-    const thrown = await requestGrowthCallAction(
+    const r = await requestGrowthCallAction(
       { status: "idle" },
       form({ ...goodForm, note: "Lowell kitchen" }),
-    ).then(
-      () => null,
-      (e: unknown) => e,
     );
-    expect(thrown).toBeInstanceOf(Error);
-    const out = JSON.stringify([
-      (thrown as Error).message,
-      (thrown as Error).stack,
-      (thrown as Error).cause ?? null,
-      spies.map((s) => s.mock.calls),
+    expect(r.status).toBe("error");
+    expect(r.errors?.form).toEqual([
+      "We couldn't save that just now. Try again in a minute, or call or text 978-201-9763.",
     ]);
+    expect(r.values).toMatchObject({ name: "Mike Torres", note: "Lowell kitchen" });
+    expect(r.services).toEqual(["reviews", "google_ads"]);
+    const out = JSON.stringify(spies.map((s) => s.mock.calls));
     for (const leak of ["Mike", "617-555-0142", "6175550142", "mike@shop.com", "Lowell"]) {
       expect(out).not.toContain(leak);
     }

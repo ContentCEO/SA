@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { applyOwnerRules, classifyEmail, prepareBody } from "@/ai/classify";
 import { setModelTransportForTests } from "@/ai/client";
 import { estimateCostCentiCents } from "@/ai/cost";
-import { emailBlock } from "@/ai/prompts/classify.v3";
+import { emailBlock } from "@/ai/prompts/classify.v4";
 import { AiCapReachedError, reserveAiCall } from "@/ai/usage";
 import type { Database } from "@/db";
 import { usage } from "@/db/schema";
@@ -246,7 +246,7 @@ describe("classifyEmail", () => {
     setModelTransportForTests(fakeTransport([classification()]).transport);
     await classifyEmail(workspaceId, business, email, { senderIsVip: false });
     const logged = JSON.stringify(spies.flatMap((s) => s.mock.calls));
-    expect(logged).toContain("classify.v3");
+    expect(logged).toContain("classify.v4");
     expect(logged).not.toContain("SECRET-BODY-TEXT");
     expect(logged).not.toContain("dana@x.com");
     spies.forEach((s) => s.mockRestore());
@@ -301,9 +301,9 @@ describe("daily AI cap", () => {
 });
 
 describe("classifier prompt version", () => {
-  it("classify.ts uses classify.v3, not an older prompt", () => {
+  it("classify.ts uses classify.v4, not an older prompt", () => {
     const src = readFileSync("src/ai/classify.ts", "utf8");
-    expect(src).toMatch(/from\s+["'](\.\/prompts|@\/ai\/prompts)\/classify\.v3["']/);
-    expect(src).not.toMatch(/classify\.v[12]["']/);
+    expect(src).toMatch(/from\s+["'](\.\/prompts|@\/ai\/prompts)\/classify\.v4["']/);
+    expect(src).not.toMatch(/classify\.v[123]["']/);
   });
 });

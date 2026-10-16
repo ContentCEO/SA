@@ -22,7 +22,7 @@ export function accessLostEmail(mailboxEmail: string, reminder: boolean) {
       `Google stopped letting Squared Away read ${mailboxEmail}, so new emails aren't being sorted or drafted.`,
       "Reconnecting takes about a minute. Nothing was lost — we pick up where we left off.",
     ],
-    button: { label: "Reconnect Gmail", url: appUrl("/settings") },
+    button: { label: "Reconnect Gmail", url: appUrl("/settings/gmail") },
     footer: reminder
       ? "This is the last reminder we'll send about this."
       : "Google sometimes ends access on its own, for example after a password change.",

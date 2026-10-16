@@ -5,7 +5,7 @@ import type { z } from "zod";
 import { anthropicClientOptions } from "@/config/e2e";
 import { models, type ModelRole } from "@/config/models";
 import { estimateCostCentiCents, type TokenUsage } from "./cost";
-import { recordAiUsage, reserveAiCall } from "./usage";
+import { recordAiUsage, refundAiCall, reserveAiCall } from "./usage";
 
 /** One structured model call. `system` blocks are cached; `user` is the per-request part. */
 export type StructuredRequest = {
@@ -101,6 +101,25 @@ export async function callStructured<S extends z.ZodType>(opts: {
       latencyMs: Date.now() - started,
       error: err instanceof Anthropic.APIError ? `${err.status}` : (err as Error).name,
     });
+    // The provider failed (outage, overload, rate limit, timeout, no connection): the call
+    // doesn't count against the day (review D5). A request the provider refused as wrong
+    // (400, 401…) still counts, so a bug can't loop for free.
+    const providerFault =
+      !(err instanceof Anthropic.APIError) ||
+      err.status === undefined ||
+      err.status === 408 ||
+      err.status === 429 ||
+      err.status >= 500;
+    if (providerFault) {
+      try {
+        await refundAiCall(opts.workspaceId, now);
+      } catch (refundErr) {
+        console.error("ai_call_refund_failed", {
+          workspaceId: opts.workspaceId,
+          error: refundErr instanceof Error ? refundErr.name : "unknown",
+        });
+      }
+    }
     throw err;
   }
 

@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { setModelTransportForTests } from "@/ai/client";
 import type { ModelDraft } from "@/ai/prompts/draft.v5";
@@ -267,7 +267,7 @@ describe("deposit (#28)", () => {
     expect(d).toMatchObject({
       purpose: "deposit",
       kind: "reply",
-      promptVersion: "draft.v5+purpose.v1",
+      promptVersion: "draft.v6+purpose.v1",
       status: "pending",
       toAddress: "dana@customer.com",
       flags: [],
@@ -309,7 +309,7 @@ describe("deposit (#28)", () => {
       const t = await acceptedQuote({ extracted });
       const { draftId, calls } = await created(t, reply({ body: "Hi Dana,\n\nSure.\n\nDavi" }));
       expect((await draftRow(draftId)).purpose).toBeNull();
-      expect((await draftRow(draftId)).promptVersion).toBe("draft.v5");
+      expect((await draftRow(draftId)).promptVersion).toBe("draft.v6");
       expect(calls[0]!.user).not.toContain("## Task:");
     }
   });
@@ -480,7 +480,7 @@ describe("deposit (#28)", () => {
       expect(r.status).toBe("created");
       const d = await draftRow((r as { draftId: string }).draftId);
       expect(d.purpose).toBeNull();
-      expect(d.promptVersion).toBe("draft.v5");
+      expect(d.promptVersion).toBe("draft.v6");
       expect(calls[0]!.user).not.toContain("## Task: deposit");
       // Clear it for the next trigger.
       await database.update(drafts).set({ status: "discarded" }).where(eq(drafts.id, d.id));
@@ -1143,5 +1143,91 @@ describe("a waiting closing question goes when the owner writes some other way (
     expect(after.status).toBe("expired");
     expect(after.closedNote).toBe("You wrote to them since, so this note was out of date.");
     expect(writer.calls).toContain("deleteDraft");
+  });
+});
+
+describe("website form leads: every kind of draft goes to the Reply-To (review B1)", () => {
+  /** The same conversation, but every customer email came through a Wix form. */
+  async function viaForm(threadId: string) {
+    await database
+      .update(messages)
+      .set({
+        fromAddress: "no-reply@crm.wix.com",
+        fromName: "Wix Forms",
+        replyToHeader: { address: "dana@customer.com", name: "Dana Ruiz" },
+      })
+      .where(and(eq(messages.threadId, threadId), eq(messages.direction, "in")));
+  }
+  const mimeTo = (draftId: string | null) =>
+    FakeWriter.headersOf(writer.drafts.get(draftId ?? "")!.raw)
+      .split("\r\n")
+      .find((l) => l.startsWith("To: "));
+
+  it("deposit details", async () => {
+    await profile({ paymentTerms: "Card or check" });
+    const t = await acceptedQuote();
+    await viaForm(t);
+    setModelTransportForTests(fakeTransport([reply()]).transport);
+    const r = await createDraftForThread(t, { trigger: "auto", ...deps() });
+    const d = await draftRow((r as { draftId: string }).draftId);
+    expect(d.purpose).toBe("deposit");
+    expect(d.toAddress).toBe("dana@customer.com");
+    expect(mimeTo(d.gmailDraftId)).toBe("To: dana@customer.com");
+  });
+
+  it("review request (the owner wrote to the form's customer before)", async () => {
+    await profile({ reviewUrl: REVIEW_URL });
+    const t = await acceptedQuote({ extracted: { job_done: true } });
+    await viaForm(t);
+    setModelTransportForTests(
+      fakeTransport([reply({ body: `Hi Dana, a review? ${REVIEW_URL} Davi` })]).transport,
+    );
+    const r = await createDraftForThread(t, {
+      trigger: "owner",
+      workspaceId,
+      purpose: "review_request",
+      ...deps(),
+    });
+    expect(r.status).toBe("created");
+    const d = await draftRow((r as { draftId: string }).draftId);
+    expect(d.toAddress).toBe("dana@customer.com");
+    expect(mimeTo(d.gmailDraftId)).toBe("To: dana@customer.com");
+  });
+
+  it("follow-up nudge and closing question", async () => {
+    process.env.FEATURE_CLOSING_QUESTION = "on";
+    await setStatus("active");
+    const nudged = await acceptedQuote({ extracted: {}, lastDirection: "out" });
+    await viaForm(nudged);
+    setModelTransportForTests(
+      fakeTransport([reply({ body: "Hi Dana,\n\nJust checking in on the quote.\n\nDavi" })])
+        .transport,
+    );
+    const n = await createDraftForThread(nudged, { trigger: "followup", ...deps(at(4)) });
+    expect(n.status).toBe("created");
+    const nd = await draftRow((n as { draftId: string }).draftId);
+    expect(nd).toMatchObject({ kind: "followup", toAddress: "dana@customer.com" });
+    expect(mimeTo(nd.gmailDraftId)).toBe("To: dana@customer.com");
+
+    const t = await acceptedQuote({ extracted: {}, lastDirection: "out" });
+    await viaForm(t);
+    await nudgesSent(t);
+    setModelTransportForTests(
+      fakeTransport([reply({ body: "Hi Dana,\n\nDid you go another way?\n\nDavi" })]).transport,
+    );
+    const r = await createDraftForThread(t, {
+      trigger: "owner",
+      workspaceId,
+      purpose: "closing_question",
+      ...deps(QUIET),
+    });
+    expect(r.status).toBe("created");
+    const d = await draftRow((r as { draftId: string }).draftId);
+    expect(d.toAddress).toBe("dana@customer.com");
+    // The sent screen names the customer, never "Wix Forms".
+    expect(await sendDraft(workspaceId, d.id, deps(QUIET))).toMatchObject({
+      status: "sent",
+      toName: "Dana Ruiz",
+    });
   });
 });

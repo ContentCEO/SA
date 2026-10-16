@@ -55,7 +55,9 @@
   /* No red. "Destructive" is expressed by inversion + explicit wording. */
   --destructive: var(--sa-charcoal);
   --border: var(--sa-stone);
-  --input: var(--sa-stone);
+  /* Slate, not stone: form fields need an edge of 3:1 or better on paper and off-white
+     (WCAG 1.4.11). Stone was about 1.3:1. */
+  --input: var(--sa-slate);
   --ring: var(--sa-charcoal);
   --radius: 0.5rem;
 }
@@ -190,7 +192,7 @@ html:has([data-growth-page]) {
   --sa-slate: var(--sa-k-slate);
   --sa-paper: var(--sa-k-charcoal);
   --border: var(--sa-k-stone);
-  --input: var(--sa-k-stone);
+  --input: var(--sa-k-slate);
 }
 :root[data-sa-theme="app"] [data-sa-half="growth"] .sa-light {
   --sa-charcoal: var(--sa-k-charcoal);

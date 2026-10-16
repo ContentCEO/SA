@@ -36,7 +36,7 @@ export function CustomerList({ items }: { items: CustomerListItem[] }) {
           ref={input}
           onInput={(e) => setQ(e.currentTarget.value)}
           placeholder="Name or email"
-          className="min-h-tap rounded-lg border bg-card px-3 text-base font-normal"
+          className="min-h-tap rounded-lg border border-input bg-paper px-3 text-base font-normal"
         />
       </label>
       <ul className="flex flex-col divide-y divide-stone rounded-xl border bg-card">

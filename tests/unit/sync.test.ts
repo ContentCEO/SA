@@ -368,3 +368,56 @@ describe("storing an app send alongside a sync", () => {
     ]);
   });
 });
+
+describe("Reply-To (website forms, review B1)", () => {
+  const form = (id: string, threadId: string, replyTo?: string, daysAgo = 1) =>
+    fake.add({
+      id,
+      threadId,
+      daysAgo,
+      labelIds: ["INBOX"],
+      headers: {
+        from: "Wix Forms <no-reply@crm.wix.com>",
+        to: "owner@shop.com",
+        subject: "New form submission",
+        messageId: `<${id}@wix.example>`,
+        ...(replyTo ? { replyTo } : {}),
+      },
+    });
+
+  it("backfill and incremental sync store the customer's Reply-To, {} without one, {} for owner mail", async () => {
+    form("f1", "t1", "Dana Ruiz <dana@example.com>", 2);
+    fake.add({ id: "p1", threadId: "t2", daysAgo: 2 }); // a person writing directly
+    fake.add({
+      id: "o1",
+      threadId: "t2",
+      labelIds: ["SENT"],
+      headers: { from: "owner@shop.com", to: "customer-t2@example.com", replyTo: "x@y.com" },
+    });
+    await runBackfill(mailboxId, deps());
+    form("f2", "t3", "sam@example.org", 0);
+    await incrementalSync(mailboxId, deps());
+
+    const rows = await database.select().from(messages);
+    const by = Object.fromEntries(rows.map((r) => [r.gmailMessageId, r.replyToHeader]));
+    expect(by.f1).toEqual({ address: "dana@example.com", name: "Dana Ruiz" });
+    expect(by.f2).toEqual({ address: "sam@example.org" });
+    expect(by.p1).toEqual({});
+    expect(by.o1).toEqual({});
+    const [t1] = await database.select().from(threads).where(eq(threads.gmailThreadId, "t1"));
+    expect(t1!.participants).toContain("dana@example.com");
+  });
+
+  it("a read that couldn't return Reply-To leaves the column NULL (never read), not {}", async () => {
+    form("f1", "t1", "dana@example.com");
+    // A reader whose metadata reads ask for a subset without Reply-To, and no body reads.
+    const base = fake.reader();
+    const subset = {
+      ...base,
+      getMessage: (id: string) => base.getMessage(id, { withBody: false, headers: ["From", "To"] }),
+    };
+    await runBackfill(mailboxId, { readerFor: () => subset, now: () => NOW });
+    const [row] = await database.select().from(messages);
+    expect(row!.replyToHeader).toBeNull();
+  });
+});

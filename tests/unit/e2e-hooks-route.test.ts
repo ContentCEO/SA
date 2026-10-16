@@ -86,6 +86,8 @@ async function seedInbound() {
     direction: "in",
     fromAddress: "dana@example.com",
     fromName: "Dana",
+    // As sync stores it now: Reply-To read, none there (so drafting needs no Gmail read).
+    replyToHeader: {},
     subject: "Panel upgrade",
     bodyText: "Could you quote a 200 amp panel upgrade?",
     labelIds: ["INBOX"],

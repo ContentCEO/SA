@@ -178,7 +178,14 @@ test("customers: list, search on the phone, and one customer's emails", async ({
   });
   await signInAs(context, owner);
 
-  await page.goto("/customers");
+  // Five tabs: Customers is under More.
+  await page.goto("/queue");
+  await page.getByRole("navigation", { name: "Main" }).getByRole("link", { name: "More" }).click();
+  await page
+    .getByRole("navigation", { name: "More" })
+    .getByRole("link", { name: /^Customers/ })
+    .click();
+  await expect(page).toHaveURL(/\/customers$/);
   await expect(page.getByRole("link", { name: /Priya Shah/ })).toBeVisible();
   await page.getByLabel("Find a customer").fill("baker");
   await expect(page.getByRole("link", { name: /Priya Shah/ })).toHaveCount(0);
