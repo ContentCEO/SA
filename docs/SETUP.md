@@ -326,7 +326,9 @@ In order, all before the switch:
 1. The live Stripe key, **Connect Stripe** and **Reset test payments** (LAUNCH steps 7–7c). Reset
    also deletes free months earned in test mode, so a test-card referral never becomes a real free
    month (the real payment settles it again, once).
-2. /admin → Payments shows no "schedules downgrades" line.
+2. /admin → Payments shows "Stripe's billing page changes plans straight away, so free months
+   can be booked." (Not the "schedules downgrades" line, and not "Couldn't check…": refresh until
+   Stripe answers.)
 3. Add these lines (held here so the terms version doesn't change before then), update
    `tests/unit/legal-docs.test.ts` (it pins that the privacy policy says nothing about referrals
    while they're off) and bump the terms version in the app with the terms' "Last updated" date:
@@ -356,8 +358,11 @@ In order, all before the switch:
    while booked charges at most the normal proration and the free month is one above the new
    plan; canceling or a past-due card (test card `4000000000000341`) while booked returns it to
    waiting; repeat on a **classic**-mode subscription made in the Dashboard; and remove the address
-   so the renewal can't finalize: provisional, then the coupon is removed at the end. Record the
-   results in `docs/LAUNCH.md`.
+   so the renewal can't finalize: provisional; from a day before the end the coupon comes off the
+   subscription, and **the stuck draft must keep its −100% line** (if it loses it, /admin flags
+   "lost its discount"); the next renewal is the normal price. Also check that a renewal drafted
+   just before the coupon landed leaves the coupon on for the renewal after. Record the results
+   in `docs/LAUNCH.md`.
 5. Vercel → sa → Environment Variables → add `FEATURE_REFERRALS` with value `1` (Production only,
    unless Davi says otherwise) → Redeploy.
 

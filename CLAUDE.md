@@ -687,7 +687,24 @@ default, CI too) and refuses a non-local `DATABASE_URL` or an `APP_URL` that isn
     stat + Payments lines (downgrade schedules, login page), `/admin/costs` "free month" tag.
     Page loads never call Stripe for this (except /admin Payments' short portal read).
   - **Reset test payments** deletes `stripe_mode = 'test'` rows (a running one stops with its
-    effects) and the test portal cache; **account deletion** clears the rows' Stripe ids.
+    effects) and the test portal cache — only rows whose referred account no longer stands as
+    paid through Stripe (one the reset couldn't check keeps its row, so the sweep never settles
+    it again on the live key); **account deletion** clears the rows' Stripe ids.
+  - **Review fixes (2026-10-16):** migration **0029** `referral_credits.after_end_checked_at`: the
+    Stripe follow-up after `done` (strip a lingering coupon, sweep or flag free-day charges, flag
+    `second_month_given` when the next renewal used our coupon too) is retried by every sweep
+    (flag on or off) until it fully goes through. A running month whose invoice is still a draft
+    has our coupon taken off from 24h before the end (`STRIP_BEFORE_END_MS`; flag
+    `free_invoice_lost_discount` if the draft loses its discount — unchecked live). A renewal
+    that skipped our coupon while it stayed on keeps the row **scheduled** for the renewal after
+    (so account-off detach and use detection still apply); a booked coupon on an old, still-live
+    subscription comes off before the row waits again. `applyCheckoutCompleted` runs the plan
+    effects with its plan write (Q2 pause no longer depends on webhook order). A paused inbox
+    that lost Google access resumes as `reconnect_needed` (`resumedInboxStatus`). Activity's
+    `send_stopped` / `inbox_paused` line never says "back in your queue". /admin Payments shows
+    a positive "changes plans straight away" line or "Couldn't check…" (never silence). Plan &
+    billing says what moving down pauses (`downgradePausesLine`). Flags: neutral
+    `plan_changed_in_free_month`, separate `free_day_charges_removed`.
   - Answers (Davi 2026-10-16): Q4 free Company includes priority support; Q5 waiting months never
     expire; Q6 refunds don't claw back; Q7 no reminder email. Terms/privacy lines wait in
     docs/SETUP.md §6d. The local Stripe Test Clock check (§6d step 4) has **not** been run.
@@ -1416,7 +1433,8 @@ default, CI too) and refuses a non-local `DATABASE_URL` or an `APP_URL` that isn
   production domain.
 - **Plan #47 (referral free month, offer A):** decided and built behind `FEATURE_REFERRALS`
   (off). Nothing left to choose; turning it on follows docs/SETUP.md §6d in order: live key,
-  Connect Stripe, Reset test payments; no "schedules downgrades" line on /admin Payments; the
+  Connect Stripe, Reset test payments; /admin Payments says the billing page "changes plans
+  straight away" (not "schedules downgrades", not "Couldn't check"); the
   terms line, the privacy lines (fingerprint + "which plan, the dates, and whether you chose to
   keep it") with the legal-docs test and a terms-version bump; an engineer's **local** Stripe Test
   Clock check (not run yet: no Stripe key in the sandbox); then the switch. Don't rotate
