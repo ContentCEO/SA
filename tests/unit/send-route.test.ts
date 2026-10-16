@@ -3,7 +3,7 @@ import { eq } from "drizzle-orm";
 import { NextRequest } from "next/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Database } from "@/db";
-import { drafts, messages, threads, workspaces } from "@/db/schema";
+import { drafts, mailboxes, messages, threads, workspaces } from "@/db/schema";
 import { ensureUserAndWorkspace } from "@/server/accounts";
 import { recordTermsAcceptance } from "@/server/terms";
 import { saveConnectedMailbox } from "@/server/mailboxes";
@@ -164,5 +164,18 @@ describe("C5: the send API refuses anything but a same-origin request, without t
     expect(queued).toHaveLength(1);
     // Nothing has gone to the customer yet: the undo window comes first.
     expect(gmail.writer!.sent).toEqual([]);
+  });
+
+  it("plan #47: a paused inbox → 409 inbox_paused, with no Gmail call and nothing queued", async () => {
+    await status({ status: "active", setupPaidVia: "stripe" });
+    await database
+      .update(mailboxes)
+      .set({ status: "paused", pausedReason: "over_plan" })
+      .where(eq(mailboxes.workspaceId, workspaceId));
+    const res = await send({ origin: `https://${HOST}` });
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({ status: "inbox_paused" });
+    expect(gmail.writer!.calls).toEqual([]);
+    expect(queued).toEqual([]);
   });
 });

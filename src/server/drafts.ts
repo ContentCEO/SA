@@ -1,6 +1,20 @@
 import "server-only";
 import { createHash } from "node:crypto";
-import { and, asc, desc, eq, gt, inArray, isNotNull, isNull, lt, lte, or, sql } from "drizzle-orm";
+import {
+  and,
+  asc,
+  desc,
+  eq,
+  gt,
+  inArray,
+  isNotNull,
+  isNull,
+  lt,
+  lte,
+  ne,
+  or,
+  sql,
+} from "drizzle-orm";
 import { callStructured } from "@/ai/client";
 import { checkDraft, hasLink, REGENERATE_ON, type CheckResult } from "@/ai/draft-checks";
 import {
@@ -802,7 +816,9 @@ export type SendOutcome =
   | { status: "gaps_unfilled" }
   | { status: "already_sending" }
   | { status: "not_found" }
-  | { status: "reconnect_needed" };
+  | { status: "reconnect_needed" }
+  /** Plan #47: the inbox is paused for being over the plan. The reply stays in its Gmail drafts. */
+  | { status: "inbox_paused" };
 
 /**
  * Send a pending draft — the only way anything leaves the owner's inbox.
@@ -831,6 +847,8 @@ export async function sendDraft(
     return opts.queued ? { status: "not_found" } : { status: "already_sending" };
   }
   if (!canSend(workspace, now)) throw new SendingBlockedError(effectiveStatus(workspace, now));
+  // A paused inbox sends nothing (plan #47): no Gmail call; a send in its undo window stops here.
+  if (mailbox.status === "paused") return { status: "inbox_paused" };
   if (mailbox.status !== "active") return { status: "reconnect_needed" };
   // A reply with a {{gap}} still in it never leaves (plan #2) — checked before any Gmail call.
   if (hasUnfilledGap(opts.editedBody ?? draft.body ?? "")) return { status: "gaps_unfilled" };
@@ -1010,6 +1028,7 @@ export async function queueSend(
     if (opts.offline.seenHash !== bodyHash(draft.body ?? ""))
       return { status: "changed_since_seen" };
   }
+  if (mailbox.status === "paused") return { status: "inbox_paused" };
   if (mailbox.status !== "active") return { status: "reconnect_needed" };
   if (hasUnfilledGap(opts.editedBody ?? draft.body ?? "")) return { status: "gaps_unfilled" };
 
@@ -1843,11 +1862,13 @@ export async function queueMembership(
   workspaceId: string,
   now: Date = new Date(),
 ): Promise<QueueMembership> {
+  // Paused inboxes (over the plan, plan #47) are off the queue and every count: their drafts
+  // wait in Gmail, and the queue says so in one line (pausedInboxDraftCount).
   const boxIds = (
     await db()
       .select({ id: mailboxes.id })
       .from(mailboxes)
-      .where(eq(mailboxes.workspaceId, workspaceId))
+      .where(and(eq(mailboxes.workspaceId, workspaceId), ne(mailboxes.status, "paused")))
   ).map((b) => b.id);
   if (boxIds.length === 0) return { needsYou: [], drafts: [] };
 
@@ -1912,6 +1933,22 @@ export async function queueMembership(
         .map((r) => ({ ...member(r), draftId: r.draftId, kind: r.kind })),
     ),
   };
+}
+
+/** Plan #47: replies waiting in paused inboxes (off the queue), for the queue's one line. */
+export async function pausedInboxDraftCount(workspaceId: string): Promise<number> {
+  const [row] = await db()
+    .select({ n: sql<number>`count(*)::int` })
+    .from(drafts)
+    .innerJoin(mailboxes, eq(mailboxes.id, drafts.mailboxId))
+    .where(
+      and(
+        eq(mailboxes.workspaceId, workspaceId),
+        eq(mailboxes.status, "paused"),
+        eq(drafts.status, "pending"),
+      ),
+    );
+  return row?.n ?? 0;
 }
 
 export type QueueTotals = { needsYou: number; replies: number; nudges: number; drafts: number };

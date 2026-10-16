@@ -5,6 +5,7 @@ import { Headline } from "@/components/brand/headline";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { relativeTime } from "@/lib/relative-time";
 import { listMailboxes, mailboxLimit, type MailboxSummary } from "@/server/mailboxes";
+import type { PlanId } from "@/config/pricing";
 import { BACKFILL_DAYS, syncSummary } from "@/server/sync";
 import { isAdminEmail } from "@/server/admin";
 import { autopilotState, EARN_THRESHOLD, GRACE_MINUTES } from "@/server/autopilot";
@@ -35,7 +36,8 @@ import {
 import { smsConfigured } from "@/lib/sms";
 import { formatUsPhone } from "@/server/sms-alerts";
 import { DisconnectButton } from "@/components/app/disconnect-button";
-import { deleteAccountAction, disconnectMailboxAction } from "./actions";
+import { deleteAccountAction, disconnectMailboxAction, swapInboxAction } from "./actions";
+import { effectivePlan, pausedInboxCopy, reconnectRefusedLine } from "@/server/referral-rules";
 import {
   decideVoiceIdeaAction,
   relearnVoiceAction,
@@ -73,6 +75,7 @@ const done: Record<string, string> = {
   offline: "Saved for this phone.",
   idea_yes: "Done. New drafts will be written that way.",
   idea_no: "Okay — nothing changed.",
+  swapped: "Switched. That inbox is on now, and the other one is paused. Nothing was deleted.",
 };
 
 const errors: Record<string, string> = {
@@ -90,6 +93,8 @@ const errors: Record<string, string> = {
     "We couldn't cancel your plan, so nothing was deleted. Try again, or call us and we'll do it.",
   autopilot: "Autopilot can't be turned on for that yet.",
   limit: "Your plan is at its mailbox limit. Disconnect one first, or ask about a bigger plan.",
+  swap: "Those inboxes couldn't be switched. Refresh and try again.",
+  busy: "That's a lot in a short time, so we've paused it for a bit. Try again in a few minutes.",
   unknown: "That didn't work. Refresh and try again.",
 };
 
@@ -125,8 +130,17 @@ export default async function SettingsPage(props: PageProps<"/settings">) {
   const device = await devicePrefs();
   const ideas = await openSuggestions(workspace.id);
   const doneMsg = typeof params.done === "string" ? done[params.done] : undefined;
-  const errorMsg = typeof params.error === "string" ? errors[params.error] : undefined;
-  const canAddMore = mailboxes.length < mailboxLimit(workspace);
+  // Plan #47: the plan that counts (a free month's while it runs) decides the inbox limit;
+  // inboxes paused for being over it don't count.
+  const planNow = effectivePlan(workspace, now);
+  const errorMsg =
+    params.error === "paused_limit"
+      ? reconnectRefusedLine(planNow)
+      : typeof params.error === "string"
+        ? errors[params.error]
+        : undefined;
+  const counted = mailboxes.filter((m) => m.pausedReason == null);
+  const canAddMore = counted.length < mailboxLimit(workspace, now);
   const [profile, voice, autopilot, notes, today] = await Promise.all([
     getBusinessProfile(workspace.id),
     getVoiceProfile(workspace.id),
@@ -194,9 +208,14 @@ export default async function SettingsPage(props: PageProps<"/settings">) {
                       {statusWords[m.status]}
                     </span>
                     <span className={cn("mt-1", needsYou ? "" : "text-muted-foreground")}>
-                      {syncLine(m, counts.get(m.id) ?? 0)}
+                      {m.pausedReason === "over_plan"
+                        ? pausedInboxCopy(planNow).line
+                        : syncLine(m, counts.get(m.id) ?? 0)}
                     </span>
                   </div>
+                  {m.pausedReason === "over_plan" ? (
+                    <SwapInbox paused={m} counted={counted} plan={planNow} />
+                  ) : null}
                   <dl aria-label={`Health of ${m.email}`} className="flex flex-col gap-1.5">
                     {health.lines.map((l) => (
                       <div key={l.label} className="flex flex-col">
@@ -728,5 +747,67 @@ export default async function SettingsPage(props: PageProps<"/settings">) {
         />
       </section>
     </>
+  );
+}
+
+/**
+ * Plan #47: an inbox paused for being over the plan. The owner can switch it on instead of one
+ * that's on (newest preselected); the plan's limit holds. Or move up a plan.
+ */
+function SwapInbox({
+  paused,
+  counted,
+  plan,
+}: {
+  paused: MailboxSummary;
+  counted: MailboxSummary[];
+  plan: PlanId | null;
+}) {
+  const copy = pausedInboxCopy(plan);
+  const newest = counted[counted.length - 1];
+  return (
+    <div className="flex flex-col gap-2">
+      {newest ? (
+        <details className="group flex flex-col gap-2">
+          <summary
+            className={cn(
+              buttonVariants({ variant: "outline", size: "lg" }),
+              "w-full cursor-pointer list-none",
+            )}
+          >
+            {copy.button}
+          </summary>
+          <form action={swapInboxAction} className="mt-2 flex flex-col gap-3">
+            <input type="hidden" name="resumeId" value={paused.id} />
+            <fieldset className="flex flex-col gap-2">
+              <legend className="mb-1 font-semibold">Which inbox should pause instead?</legend>
+              {counted.map((c) => (
+                <label key={c.id} className="flex min-h-tap items-center gap-3 break-all">
+                  <input
+                    type="radio"
+                    name="pauseId"
+                    value={c.id}
+                    defaultChecked={c.id === newest.id}
+                    className="size-5 shrink-0"
+                  />
+                  {c.email}
+                </label>
+              ))}
+            </fieldset>
+            <Button type="submit" size="lg" className="w-full">
+              Switch inboxes
+            </Button>
+          </form>
+        </details>
+      ) : null}
+      {copy.more ? (
+        <p className="text-muted-foreground">
+          Or{" "}
+          <Link href="/billing" className="font-semibold underline underline-offset-4">
+            {copy.more.replace(/^or /, "")}
+          </Link>
+        </p>
+      ) : null}
+    </div>
   );
 }

@@ -62,6 +62,8 @@ export async function sendDraftAction(formData: FormData) {
       redirect("/queue?error=deleted");
     case "reconnect_needed":
       redirect("/queue?error=reconnect");
+    case "inbox_paused":
+      redirect("/queue?error=paused");
     case "not_found":
       redirect("/queue?error=gone");
     default:

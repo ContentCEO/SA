@@ -54,22 +54,26 @@ export class MailboxLimitError extends Error {
 }
 
 export async function listMailboxes(workspaceId: string): Promise<MailboxSummary[]> {
-  return db()
-    .select({
-      id: mailboxes.id,
-      email: mailboxes.email,
-      provider: mailboxes.provider,
-      status: mailboxes.status,
-      connectedAt: mailboxes.connectedAt,
-      backfillCompletedAt: mailboxes.backfillCompletedAt,
-      lastSyncedAt: mailboxes.lastSyncedAt,
-      watchExpiresAt: mailboxes.watchExpiresAt,
-      lastSyncErrorCode: mailboxes.lastSyncErrorCode,
-      pausedReason: mailboxes.pausedReason,
-    })
-    .from(mailboxes)
-    .where(eq(mailboxes.workspaceId, workspaceId))
-    .orderBy(asc(mailboxes.connectedAt));
+  return (
+    db()
+      .select({
+        id: mailboxes.id,
+        email: mailboxes.email,
+        provider: mailboxes.provider,
+        status: mailboxes.status,
+        connectedAt: mailboxes.connectedAt,
+        backfillCompletedAt: mailboxes.backfillCompletedAt,
+        lastSyncedAt: mailboxes.lastSyncedAt,
+        watchExpiresAt: mailboxes.watchExpiresAt,
+        lastSyncErrorCode: mailboxes.lastSyncErrorCode,
+        pausedReason: mailboxes.pausedReason,
+      })
+      .from(mailboxes)
+      .where(eq(mailboxes.workspaceId, workspaceId))
+      // Oldest-created first, the order the plan's inbox limit ranks by (a reconnect never moves
+      // an inbox down the list).
+      .orderBy(asc(mailboxes.createdAt), asc(mailboxes.id))
+  );
 }
 
 /**

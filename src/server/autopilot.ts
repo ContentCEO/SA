@@ -374,6 +374,8 @@ export async function runAutopilotSend(
   const reasons = [
     ...(await blockers(row, now)),
     ...(newer.length ? ["There's newer mail in this conversation."] : []),
+    // Plan #47: an inbox paused for being over the plan sends nothing, autopilot included.
+    ...(row.mailbox.status === "paused" ? ["This inbox is paused."] : []),
   ];
   // Layer 1 already needs what the send gate needs. If they ever differ, stand down here rather
   // than let sendDraft refuse: a refusal throws, and the backstop would retry it forever.

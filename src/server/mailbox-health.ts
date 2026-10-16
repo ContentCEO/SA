@@ -41,6 +41,9 @@ export function mailboxHealth(
         : "Never.",
       problem: true,
     };
+  } else if (m.status === "paused") {
+    // Paused on purpose (plan #47): nothing is checked, and that's not a problem of ours.
+    checked = { label: "Last checked", text: "Not while it's paused.", problem: false };
   } else if (!m.backfillCompletedAt) {
     checked = {
       label: "Last checked",

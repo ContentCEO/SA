@@ -19,6 +19,7 @@ const WHY: Record<string, string> = {
   gaps_unfilled: "it still has gaps to fill in",
   intent_expired: "you okayed it more than 12 hours ago",
   reconnect_needed: "Gmail needs reconnecting",
+  inbox_paused: "that inbox is paused (your plan's inboxes are all in use)",
   blocked: "sending isn't switched on for your account",
   // The terms changed while this phone was offline (the API's 403 says which).
   terms_required: "you need to agree to our updated terms first",

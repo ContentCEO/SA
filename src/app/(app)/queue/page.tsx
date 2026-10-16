@@ -8,7 +8,13 @@ import { findGaps } from "@/ai/gaps";
 import { confidenceLabel } from "@/config/drafting";
 import { gmailThreadLink } from "@/lib/gmail-link";
 import { relativeTime } from "@/lib/relative-time";
-import { listQueue, sentDraftSummary, type QueueItem } from "@/server/drafts";
+import {
+  listQueue,
+  pausedInboxDraftCount,
+  sentDraftSummary,
+  type QueueItem,
+} from "@/server/drafts";
+import { effectivePlan, inboxPausedSendLine, pausedDraftsLine } from "@/server/referral-rules";
 import { accountLockReason } from "@/server/autopilot";
 import {
   canPracticeSend,
@@ -103,11 +109,14 @@ export default async function QueuePage(props: PageProps<"/queue">) {
   // counts may have dropped since it started; runAutopilotSend stands down on its own).
   const autopilotOpen = accountLockReason(workspace) === null;
   const params = await props.searchParams;
-  const [queue, boxes, checklist] = await Promise.all([
+  const [queue, boxes, checklist, pausedDrafts] = await Promise.all([
     listQueue(workspace.id),
     listMailboxes(workspace.id),
     checklistFor(workspace.id),
+    pausedInboxDraftCount(workspace.id),
   ]);
+  // Plan #47: inboxes paused for being over the plan, in the words of the plan that counts.
+  const planNow = effectivePlan(workspace);
   // One id after a tap, several after "Send N replies" (plan #5).
   const sentIds = (Array.isArray(params.sent) ? params.sent : params.sent ? [params.sent] : [])
     .filter((s) => /^[0-9a-f-]{36}$/i.test(s))
@@ -123,7 +132,12 @@ export default async function QueuePage(props: PageProps<"/queue">) {
     .sort((a, b) => b.getTime() - a.getTime())[0];
   const refused = Number(params.refused) || 0;
   const doneMsg = typeof params.done === "string" ? done[params.done] : undefined;
-  const errorMsg = typeof params.error === "string" ? errors[params.error] : undefined;
+  const errorMsg =
+    params.error === "paused"
+      ? inboxPausedSendLine(planNow)
+      : typeof params.error === "string"
+        ? errors[params.error]
+        : undefined;
   const sending = canSend(workspace);
   const timeZone = (await getBusinessProfile(workspace.id))?.timeZone ?? "America/New_York";
   const clock = new Intl.DateTimeFormat("en-US", { hour: "numeric", minute: "2-digit", timeZone });
@@ -192,6 +206,21 @@ export default async function QueuePage(props: PageProps<"/queue">) {
 
       {doneMsg ? <Notice>{doneMsg}</Notice> : null}
       {errorMsg ? <Notice strong>{errorMsg}</Notice> : null}
+
+      {pausedDrafts > 0 ? (
+        <section
+          aria-label="Replies in a paused inbox"
+          className="flex flex-col gap-2 rounded-xl border bg-card p-4"
+        >
+          <p>{pausedDraftsLine(pausedDrafts, planNow)}</p>
+          <Link
+            href="/settings#mailbox"
+            className="inline-flex min-h-tap items-center font-semibold underline underline-offset-4"
+          >
+            Your Gmail
+          </Link>
+        </section>
+      ) : null}
 
       <OfflineQueue enabled={device.offline} />
       {/* A fresh key per server render: a later navigation or action remounts it, so a
