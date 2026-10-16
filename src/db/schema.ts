@@ -280,7 +280,7 @@ export const threads = pgTable(
      */
     categoryManual: text("category_manual"),
     /**
-     * Ideas C5: why the owner says a quote was lost (price / timing / someone_else), one tap,
+     * Ideas C5: why the owner says a quote was lost (price / timing / someone_else / other), one tap,
      * optional. Read only while quote_outcome = 'lost' (older code can leave a stale value).
      */
     quoteLostReason: text("quote_lost_reason").$type<LostReason>(),

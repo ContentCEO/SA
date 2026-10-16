@@ -27,7 +27,7 @@ import { phoneHref } from "@/lib/phone-href";
 const telHref = phoneHref("tel", siteConfig.phone);
 
 const description =
-  "AI email help for contractors, built for carpenters and the trades they work with: Squared Away sorts your business email, drafts replies in your voice, and drafts quote follow-ups — and nothing goes out without your okay.";
+  "AI email help for contractors, built for carpenters, plumbers, and electricians: Squared Away sorts your business email, drafts replies in your voice, and drafts quote follow-ups — and nothing goes out without your okay.";
 
 export const metadata: Metadata = {
   // The words people search for; the share card keeps the brand line.
@@ -39,13 +39,13 @@ export const metadata: Metadata = {
     siteName: "Squared Away",
     title: "Squared Away — your inbox, handled.",
     description:
-      "Built for carpenters and the trades they work with. Sorts your business email, drafts replies in your voice, and waits for your okay before anything goes out.",
+      "Built for carpenters, plumbers, and electricians. Sorts your business email, drafts replies in your voice, and waits for your okay before anything goes out.",
   },
   twitter: {
     card: "summary_large_image",
     title: "Squared Away — your inbox, handled.",
     description:
-      "Built for carpenters and the trades they work with. Nothing goes out without your okay.",
+      "Built for carpenters, plumbers, and electricians. Nothing goes out without your okay.",
   },
 };
 
@@ -192,7 +192,7 @@ export default async function HomePage(props: PageProps<"/">) {
             <div className="grid items-center gap-12 lg:grid-cols-[1.1fr_1fr]">
               <div className="flex flex-col gap-6">
                 <p className="font-semibold text-slate">
-                  Built for carpenters, and the trades they work with
+                  Built for carpenters, plumbers, and electricians
                 </p>
                 <Headline serif="your inbox," heavy="handled." size="xl" />
                 <p className="max-w-lg text-xl leading-relaxed">
