@@ -2,7 +2,10 @@ import Link from "next/link";
 import { auth } from "@/auth";
 import { siteConfig } from "@/config/site";
 import { getWorkspaceForUser } from "@/server/accounts";
+import type { Workspace } from "@/db/schema";
 import { effectiveStatus, evaluationClock, setupReallyPaid, timeLeft } from "@/server/lifecycle";
+import { freeMonthBanner, freeMonthRunning } from "@/server/referral-rules";
+import { freeMonthView, viewChanges } from "@/server/referrals";
 
 function Contact() {
   const support = process.env.SUPPORT_EMAIL;
@@ -23,6 +26,39 @@ function Contact() {
       ) : null}
       .
     </>
+  );
+}
+
+/**
+ * Plan #47: the running free month, bordered like the trial clock (not inverted: it isn't a
+ * problem). Only reads the database when a free month is set on the workspace.
+ */
+async function FreeMonthCard({ workspace, now }: { workspace: Workspace; now: Date }) {
+  if (!freeMonthRunning(workspace, now)) return null;
+  const view = await freeMonthView(workspace.id);
+  const banner = freeMonthBanner({
+    workspace,
+    reward: view.running,
+    changes: viewChanges(view, workspace.plan),
+    timeZone: view.timeZone,
+    now,
+  });
+  if (!banner) return null;
+  return (
+    <section
+      aria-label="Your free month"
+      className="flex flex-col gap-1 rounded-xl border-2 border-charcoal p-4"
+    >
+      <p className="font-semibold">{banner.line}</p>
+      {banner.link ? (
+        <Link
+          href={banner.link.href}
+          className="inline-flex min-h-tap items-center font-semibold underline underline-offset-4"
+        >
+          {banner.link.label}
+        </Link>
+      ) : null}
+    </section>
   );
 }
 
@@ -101,13 +137,22 @@ export async function StatusBanner() {
         "Choose a plan",
       );
     case "setup_paid":
-      return inverted(
-        "Setup's paid. Sending is on.",
-        <>
-          Every reply still waits for your okay. We&apos;ll call to go through your pricing,
-          scheduling and never-promise list. <Contact />
-        </>,
+      // A running free month is a second bordered card under this one (setup_paid isn't a
+      // problem state, so it doesn't hide the free month).
+      return (
+        <div className="flex flex-col gap-3">
+          {inverted(
+            "Setup's paid. Sending is on.",
+            <>
+              Every reply still waits for your okay. We&apos;ll call to go through your pricing,
+              scheduling and never-promise list. <Contact />
+            </>,
+          )}
+          <FreeMonthCard workspace={workspace} now={now} />
+        </div>
       );
+    case "active":
+      return <FreeMonthCard workspace={workspace} now={now} />;
     case "past_due":
       return inverted(
         "There's a problem with your payment.",

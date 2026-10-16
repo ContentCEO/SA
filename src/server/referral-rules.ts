@@ -740,6 +740,7 @@ export function goBackCopy(x: {
       `You'll pay ${formatDollars(x.paidPriceCents)} a month again, as before.`,
       ...endChangeLines(x.changes),
     ],
+    yes: `Yes, go back to ${name}`,
     no: "Not now",
     notice: `Done. Back to ${name} after ${date}.`,
   };

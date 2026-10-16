@@ -37,7 +37,15 @@ import { smsConfigured } from "@/lib/sms";
 import { formatUsPhone } from "@/server/sms-alerts";
 import { DisconnectButton } from "@/components/app/disconnect-button";
 import { deleteAccountAction, disconnectMailboxAction, swapInboxAction } from "./actions";
-import { effectivePlan, pausedInboxCopy, reconnectRefusedLine } from "@/server/referral-rules";
+import {
+  addInboxFreeMonthNote,
+  autopilotFreeMonthLine,
+  effectivePlan,
+  freeMonthRunning,
+  pausedInboxCopy,
+  reconnectRefusedLine,
+} from "@/server/referral-rules";
+import { mailboxLimitFor, planHasAutopilot } from "@/config/pricing";
 import {
   decideVoiceIdeaAction,
   relearnVoiceAction,
@@ -148,6 +156,22 @@ export default async function SettingsPage(props: PageProps<"/settings">) {
     activeNotes(workspace.id, now),
     ownerToday(workspace.id, now),
   ]);
+  // Plan #47: notes while a free month runs (from the workspace row; no extra query).
+  const freeMonth =
+    freeMonthRunning(workspace, now) && workspace.freePlan && workspace.freePlanUntil
+      ? { free: workspace.freePlan, until: workspace.freePlanUntil, tz: profile?.timeZone }
+      : null;
+  const addInboxNote =
+    freeMonth &&
+    canAddMore &&
+    workspace.plan !== freeMonth.free &&
+    counted.length >= mailboxLimitFor(workspace.plan)
+      ? addInboxFreeMonthNote(freeMonth.free, freeMonth.until, freeMonth.tz)
+      : null;
+  const autopilotNote =
+    freeMonth && planHasAutopilot(freeMonth.free) && !planHasAutopilot(workspace.plan)
+      ? autopilotFreeMonthLine(freeMonth.free, freeMonth.until, freeMonth.tz)
+      : null;
   const profileFacts = [
     ["Business", workspace.businessName],
     ["Work", profile?.services],
@@ -241,12 +265,15 @@ export default async function SettingsPage(props: PageProps<"/settings">) {
         )}
 
         {mailboxes.length > 0 && canAddMore ? (
-          <Link
-            href="/connect"
-            className="inline-flex min-h-tap items-center font-semibold underline underline-offset-4"
-          >
-            Connect another Gmail
-          </Link>
+          <div className="flex flex-col gap-1">
+            <Link
+              href="/connect"
+              className="inline-flex min-h-tap items-center font-semibold underline underline-offset-4"
+            >
+              Connect another Gmail
+            </Link>
+            {addInboxNote ? <p className="text-muted-foreground">{addInboxNote}</p> : null}
+          </div>
         ) : null}
       </section>
 
@@ -668,6 +695,9 @@ export default async function SettingsPage(props: PageProps<"/settings">) {
           for you, follow-ups, or replies to people you haven&apos;t written to before — and each
           one waits {GRACE_MINUTES} minutes in your queue so you can hold it.
         </p>
+        {autopilotNote && !autopilot.lockedReason ? (
+          <p className="font-semibold">{autopilotNote}</p>
+        ) : null}
         {autopilot.lockedReason ? (
           <p className="sa-inverted rounded-lg px-4 py-3 font-semibold">{autopilot.lockedReason}</p>
         ) : (

@@ -26,7 +26,13 @@ import {
   referralCouponId,
   setReferralConfigForTests,
 } from "@/server/referral-rules";
-import { goBackToPaidPlan, keepFreePlan, runReferralRewards } from "@/server/referrals";
+import {
+  freeMonthView,
+  goBackToPaidPlan,
+  keepFreePlan,
+  runReferralRewards,
+  viewChanges,
+} from "@/server/referrals";
 import { createTestDb } from "../support/db";
 import { FakeStripe, fromSeconds, stripeErrors, type Call } from "../support/fake-stripe";
 
@@ -956,6 +962,42 @@ describe("the webhook never fails on a side feature", () => {
       workspaceId: w.id,
       error: "Error",
     });
+  });
+});
+
+describe("what the owner's screens read (freeMonthView): database only", () => {
+  it("a waiting month: no running row, no Stripe call", async () => {
+    fake.calls.length = 0;
+    const view = await freeMonthView(w.id);
+    expect(view.running).toBeNull();
+    expect(view.waiting).toMatchObject({ id: rewardId, status: "pending" });
+    expect(view.anotherFreeMonth).toBe(false);
+    expect(view.timeZone).toBe("America/New_York");
+    expect(fake.calls).toHaveLength(0);
+  });
+
+  it("a running month with another earned: live counts for the end lines", async () => {
+    await startFreeMonth();
+    const second = await earn("test", later(DAY));
+    await database
+      .insert(rules)
+      .values({ workspaceId: w.id, category: "scheduling", mode: "autopilot" });
+    fake.calls.length = 0;
+    const view = await freeMonthView(w.id);
+    expect(view.running?.id).toBe(rewardId);
+    expect(view.waiting).toMatchObject({ id: second, status: "pending" });
+    expect(view.anotherFreeMonth).toBe(true);
+    expect(view.autopilotCategoriesOn).toBe(1);
+    expect(viewChanges(view, "solo")).toMatchObject({ to: "solo", autopilotTurnsOff: true });
+    expect(viewChanges(view, "crew").autopilotTurnsOff).toBe(false);
+    expect(fake.calls).toHaveLength(0);
+  });
+
+  it("another workspace's rewards never show", async () => {
+    const { workspace: other } = await ensureUserAndWorkspace({ email: "lee@gmail.com" });
+    const view = await freeMonthView(other.id);
+    expect(view.running).toBeNull();
+    expect(view.waiting).toBeNull();
   });
 });
 

@@ -5,7 +5,9 @@ import { mailboxLimitFor, planAbove, pricing, type PlanId } from "@/config/prici
 import { db } from "@/db";
 import {
   activityLog,
+  mailboxes,
   referralCredits,
+  rules,
   users,
   workspaces,
   type ReferralAdminFlag,
@@ -36,12 +38,15 @@ import {
   planLineFullyFree,
   portalSchedulesDowngrades,
   REFERRAL_COUPON_NAME,
+  endChanges,
+  type EndChanges,
   referralCouponId,
   referralLink,
   referralRefusal,
   referralReward,
   referredEmailHash,
 } from "./referral-rules";
+import { workspaceTimeZone } from "./snooze";
 import {
   autopilotPlanEffects,
   inboxLimitEffects,
@@ -1190,4 +1195,76 @@ export function goBackToPaidPlan(
   now: Date = new Date(),
 ) {
   return changePlan("go_back", workspaceId, input, now);
+}
+
+// --- What the owner's screens show (§4) -------------------------------------------------------
+
+export type FreeMonthView = {
+  /** The free month running now, or null. */
+  running: ReferralCredit | null;
+  /** The earned month that hasn't started yet: the booked one, else the oldest waiting one. */
+  waiting: Pick<ReferralCredit, "id" | "status" | "startsAt"> | null;
+  /** `waiting` is pending while another free month is booked or running. */
+  anotherFreeMonth: boolean;
+  /** Live counts behind "what changes at the end" (only read while a month runs). */
+  countedInboxes: number;
+  autopilotCategoriesOn: number;
+  timeZone: string;
+};
+
+/**
+ * Everything Plan & billing, the banner and Settings need about free months, from the database
+ * only (never a Stripe call on a page load). Rows are this workspace's own; no other workspace's
+ * data and nothing about the referred owner.
+ */
+export async function freeMonthView(workspaceId: string): Promise<FreeMonthView> {
+  const rows = await db()
+    .select()
+    .from(referralCredits)
+    .where(
+      and(
+        eq(referralCredits.beneficiaryWorkspaceId, workspaceId),
+        inArray(referralCredits.status, ["pending", "scheduled", "running"]),
+      ),
+    )
+    .orderBy(asc(referralCredits.createdAt), asc(referralCredits.id));
+  const running = rows.find((r) => r.status === "running") ?? null;
+  const scheduled = rows.find((r) => r.status === "scheduled") ?? null;
+  const pending = rows.find((r) => r.status === "pending") ?? null;
+  const waiting = scheduled ?? pending;
+  let countedInboxes = 0;
+  let autopilotCategoriesOn = 0;
+  if (running) {
+    const [inboxRows, ruleRows] = await Promise.all([
+      db()
+        .select({ id: mailboxes.id })
+        .from(mailboxes)
+        .where(and(eq(mailboxes.workspaceId, workspaceId), isNull(mailboxes.pausedReason))),
+      db()
+        .select({ category: rules.category })
+        .from(rules)
+        .where(and(eq(rules.workspaceId, workspaceId), eq(rules.mode, "autopilot"))),
+    ]);
+    countedInboxes = inboxRows.length;
+    autopilotCategoriesOn = ruleRows.length;
+  }
+  return {
+    running,
+    waiting: waiting
+      ? { id: waiting.id, status: waiting.status, startsAt: waiting.startsAt }
+      : null,
+    anotherFreeMonth: !scheduled && !!pending && !!running,
+    countedInboxes,
+    autopilotCategoriesOn,
+    timeZone: await workspaceTimeZone(workspaceId),
+  };
+}
+
+/** What will change at the end if the account is then on `to` (live counts). */
+export function viewChanges(view: FreeMonthView, to: PlanId | null): EndChanges {
+  return endChanges({
+    to,
+    countedInboxes: view.countedInboxes,
+    autopilotCategoriesOn: view.autopilotCategoriesOn,
+  });
 }

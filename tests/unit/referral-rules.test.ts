@@ -646,6 +646,7 @@ describe("copy", () => {
       "You'll pay $99 a month again, as before.",
       "Autopilot turns off then.",
     ]);
+    expect(back.yes).toBe("Yes, go back to Solo");
     expect(back.notice).toBe("Done. Back to Solo after Nov 15.");
   });
 
