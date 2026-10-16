@@ -59,8 +59,8 @@ export default async function ConnectPage(props: PageProps<"/connect">) {
         </h2>
         <ul className="flex list-disc flex-col gap-2 pl-5 text-lg">
           <li>
-            Send anything without your okay. For your first {days} days, nothing can go to a
-            customer: you can only send yourself practice copies.
+            Send anything without your okay. For your first {days} days, Squared Away won&apos;t
+            send anything to a customer: you can only send yourself practice copies.
           </li>
           <li>Delete, archive, or move your email.</li>
           <li>

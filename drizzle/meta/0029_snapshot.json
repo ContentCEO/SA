@@ -1,5 +1,5 @@
 {
-  "id": "4c5d2e82-2f73-4068-8ebf-c1f0a0965206",
+  "id": "808acc84-8bfb-4ead-a8bb-15e098a02c2f",
   "prevId": "0fc70c46-589f-4dc7-bb45-17d3442ff1a8",
   "version": "7",
   "dialect": "postgresql",
@@ -2507,6 +2507,36 @@
           "type": "text",
           "primaryKey": false,
           "notNull": false
+        },
+        "utm_source": {
+          "name": "utm_source",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "utm_medium": {
+          "name": "utm_medium",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "utm_campaign": {
+          "name": "utm_campaign",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "referrer_host": {
+          "name": "referrer_host",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "confirmation_sent_at": {
+          "name": "confirmation_sent_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
         }
       },
       "indexes": {},
@@ -2546,13 +2576,6 @@
           "typeSchema": "public",
           "primaryKey": false,
           "notNull": false
-        },
-        "extra_trades": {
-          "name": "extra_trades",
-          "type": "text[]",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'{}'"
         },
         "status": {
           "name": "status",
@@ -2778,7 +2801,6 @@
         "roofing",
         "painting",
         "landscaping",
-        "remodeling",
         "other"
       ]
     },

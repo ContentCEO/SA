@@ -50,10 +50,13 @@ src/app/api/gmail/  Gmail OAuth callback (connect is a server action in (app)/co
 src/mailbox/        connector interface + gmail/ implementation (scopes, OAuth, state)
 src/server/         domain logic: accounts, mailboxes, session (requireOwner/requireAdmin), sync,
                     classification, inbox, profile, voice, drafts, lifecycle (pure rules),
-                    workspace-lifecycle (DB transitions), admin (overview, invites)
+                    workspace-lifecycle (DB transitions), admin (overview, invites),
+                    reply-address-rules + reply-to-backfill (form leads), waitlist-emails,
+                    source-rules (where sign-ups came from); *-rules.ts are pure
 src/components/forms/  Field components + business profile / voice forms
 src/lib/crypto.ts   AES-256-GCM for refresh tokens
-src/config/         site.ts (business facts), models.ts, pricing.ts, retention.ts
+src/config/         site.ts (business facts), models.ts, pricing.ts, retention.ts, nav.ts (tabs),
+                    legal.ts (TERMS_VERSION)
 src/db/             schema.ts, lazy db() client (postgres.js)
 drizzle/            generated migrations — commit them
 scripts/invite.ts   pnpm invite owner@shop.com [trade] ["note"] (or /admin → Invite an owner)
@@ -185,6 +188,7 @@ default, CI too) and refuses a non-local `DATABASE_URL` or an `APP_URL` that isn
   (1,024 minimum), not here.
 - `threads.needs_owner_manual`: the owner's "This one needs me" always wins over classification.
 - Nav: Inbox · Settings in the header; Sign out lives at the bottom of Settings. Signed-in home = /inbox.
+  (Superseded: five tabs and Settings → Account, see "The app on a phone".)
 - **Profiles (M4):** `business_profile` (one row per workspace; business name + trade live on
   `workspaces`) and `voice_profile`. Form validation in `src/server/profile.ts` (plain-language Zod
   messages; list fields are one-per-line, trimmed, de-duped; VIPs must be emails, lowercased).
@@ -371,8 +375,9 @@ default, CI too) and refuses a non-local `DATABASE_URL` or an `APP_URL` that isn
   - Instant loading placeholders (`loading.tsx` → `ScreenSkeleton`) on queue, inbox, quotes,
     activity, settings only. **Never** on /admin or /customers/[key]: streaming turns `notFound()`
     into a 200, and those must 404 (e2e caught it).
-  - Nav: bottom tab bar on phones (Queue · Inbox · Quotes · Customers · Activity · Settings), the
-    same links in the header from `sm` up; `(app)` layout pads the bottom on phones.
+  - Nav: bottom tab bar on phones, the same links in the header from `sm` up; `(app)` layout pads
+    the bottom on phones. (Since 2026-10-16 five tabs: Queue · Inbox · Quotes · Money · More —
+    see "The app on a phone".)
 - **Text alerts (2026-10-09, plan #50; Davi: texting included in plans):** `src/server/sms-alerts.ts`,
   `src/lib/sms.ts` (Twilio over fetch, off without env). Owner's own US mobile, confirmed by a
   6-digit code (sha256 stored, 10-min expiry, 5 codes / 10 guesses per hour). Content-free counts +
@@ -953,7 +958,7 @@ default, CI too) and refuses a non-local `DATABASE_URL` or an `APP_URL` that isn
 - **Round 2 trust + trades (2026-10-16, branch `round2-fixes`; reviews "Trust Check" R2-A and
   "Trade Walkthrough" R2-B):** prompts `classify.v4`, `draft.v6`, `followup.v4`, `revise.v2`;
   eval set 109 cases (new metrics paymentChangeRecall / gasSmellRecall strict, billDirection,
-  routinePaperwork). Migration 0029 (additive): trade enum `remodeling` (ADD VALUE),
+  routinePaperwork). Migration 0030 (additive): trade enum `remodeling` (ADD VALUE),
   `workspaces.extra_trades` text[] (≤2, `cleanExtraTrades`).
   - **Attack guard** (`src/ai/guards.ts`): base64 only in space-free runs mixing case + digits,
     links stripped first; emoji joiners and flag tag sequences aren't "hidden"; Unicode tag
@@ -1004,7 +1009,7 @@ default, CI too) and refuses a non-local `DATABASE_URL` or an `APP_URL` that isn
     read-only / inactive). `AssistantBanner` (every signed-in screen, counts only): limit used
     up (and when it restarts, owner's clock), "N new emails aren't sorted yet", 80% warning.
 - **Round 2 first week (2026-10-16, branch `round2-fixes`; review "First Week" R2-C, Growth G3,
-  Trust Check privacy lines):** migration 0030 (additive): `threads.handled_offline_at`,
+  Trust Check privacy lines):** migration 0031 (additive): `threads.handled_offline_at`,
   `invites.test_user_added_at`, `business_profile.first_look_hidden_at`. Pure rules and wording in
   `src/server/first-week-rules.ts`; DB side in `first-week.ts` and `invite-email.ts`.
   - **"I called them" (E11):** on draft and needs-you cards (`queue/called-them.tsx`, confirm
@@ -1051,6 +1056,126 @@ default, CI too) and refuses a non-local `DATABASE_URL` or an `APP_URL` that isn
     true, the new emails and the payment notice named. Both documents and `TERMS_VERSION` moved
     to 2026-10-16 (the same date review-fixes uses), so everyone agrees again once. /privacy
     tables are focusable regions; `src/app/favicon.ico` exists.
+- **The app on a phone (2026-10-16, outside review P3; I4, K1):**
+  - Theme: `--input` is slate (≥3:1 on paper / off-white; `tests/unit/input-contrast.test.ts`
+    checks every look); native checkboxes / radios take `accent-color: var(--primary)` in
+    globals.css (never the browser's blue).
+  - Draft card: the five tweak chips and "Tell it what to change" sit behind one **Change it**
+    button (`aria-expanded`); the row is Discard · Change it · Edit (Edit on the thumb side,
+    mirrored for left hands). The editor no longer holds the rewrite box. e2e checks Send reply
+    is fully on screen, above the tab bar, for a typical draft at 375×812.
+  - **Settings is a list** (`/settings`, `MenuList` rows ≥56px with a one-line state) of
+    screens: `/settings/gmail`, `business` (profile facts + seasonal notes), `writing` (voice,
+    ideas, never-say, Re-learn **behind a confirm**), `follow-ups`, `autopilot`,
+    `morning-email`, `notifications` (only with VAPID keys), `texts` (only when
+    `smsConfigured()`; both screens redirect to the list otherwise — no "Coming soon"),
+    `phone` (Get the app, hand, offline queue), `account` (Plan & billing link, Sign out —
+    the inline action moved here whole — and Delete my account), plus `/billing` and `/admin`
+    (admin only). Each screen's notices live in `settings/messages.ts` (`SCREEN_MESSAGES`);
+    every action redirects to its own screen (`tests/unit/settings-screens.test.ts` checks
+    every `?done=` / `?error=` code has a notice and a page). Old `/settings?done=…` bookmarks
+    still show on the list (`LIST_MESSAGES`). Old anchors (`/settings#digest` …, 12 ids) are
+    sent on by `LegacySettingsAnchors` (`legacySettingsScreen`, a switch of fixed paths).
+    Emails now link `/settings/morning-email`; the access-lost email links `/settings/gmail`.
+  - Switches save themselves: `AutoSaveForm` (`src/components/forms/auto-save-form.tsx`) is a
+    plain server-action form; once hydrated, a checkbox / radio change calls `requestSubmit()`.
+    Forms with only switches (`hideButton`: the hand radios, the offline checkbox) hide their
+    Save button after hydration (`form[data-autosave] .sa-autosave-button`); forms with a
+    `<select>` (follow-up days, digest hour) keep a visible Save (WCAG 3.2.2). Without JS every
+    form still saves with its button (e2e with `javaScriptEnabled: false`). Auto-saves land on
+    `?done=saved` → "Saved." ("Saved for this phone." on the phone screen).
+  - **Five tabs:** Queue, Inbox, Quotes, Money, More (`src/config/nav.ts`: `currentTab`,
+    `MORE_PATHS` — More is current on /more, /customers, /activity, /settings, /billing,
+    /admin, /record); labels 14px; the sm+ header shows the same five. `/more` lists Customers,
+    Activity, Settings (+ Admin for the admin); it's in the proxy matcher and robots.
+  - **Activity leads with money** (`monthMoney`, rules in `activity-rules.ts`): "Won and paid
+    in {Month}" — quotes with outcome won this month (owner or guess) summed from
+    `quote_amount_cents`, and invoices marked paid this month (`owner` / `auto`, never
+    `not_owed`) after a **sent** follow-up decided before the paid mark, summed from
+    `extracted.invoice.amount`; items without an amount are counted and said. Never reads
+    price history. Time saved stays underneath. The feed is grouped by the owner's day
+    (`groupByDay`: Today / Yesterday / "Monday, Oct 13").
+  - **Inbox:** each row says "Replied" / "Waiting on you" (`replyState` from `lastInSql` /
+    `lastOutSql`; junk gets none); on All, junk folds into one "N junk emails" `<details>`;
+    a client search (`inbox-search.tsx`) filters by name, address, subject, summary and
+    category — typed text never reaches a URL or the server.
+  - Onboarding ends on "Go to my queue" (`/queue`).
+- **Public site from the outside review (2026-10-16, P2):**
+  - **Waitlist emails** (`src/server/waitlist-emails.ts`), sent from `after()` in
+    `joinWaitlistAction` only when the result is "joined" (a new row, or a Growth-only row
+    turned into an app sign-up): a content-free "New waitlist sign-up" to `ADMIN_EMAIL` through
+    the shared `notifyAdmin` (one per address per day), and "You're on the Squared Away list" to
+    the person, **once ever** (`waitlist.confirmation_sent_at`, set only on Resend "sent" /
+    "already_sent"). Idempotency keys are HMAC-salted, no address. The confirmation carries
+    nothing the visitor typed (anyone can type someone else's address), takes Davi's first name
+    from `siteConfig.operator`, has no booking link, and replies go to `SUPPORT_EMAIL` only when
+    set. A failure is logged by error name and never fails the sign-up. A repeat sign-up
+    ("already") sends nothing, so people who joined before the Resend domain was verified never
+    get a confirmation.
+  - **Where sign-ups came from:** migration 0029 (additive) adds to `waitlist`: `utm_source`,
+    `utm_medium`, `utm_campaign`, `referrer_host`, `confirmation_sent_at`. The browser keeps the
+    first touch per tab in sessionStorage (`src/lib/landing-source.ts`); `<SourceFields/>` puts
+    hidden fields in the waitlist and Growth forms, `<SourceCapture/>` runs on legal pages. The
+    server cleans or drops every field, never errors (`source-rules.ts`; our own hosts dropped,
+    `own-hosts.ts`); first touch wins across both forms; /admin shows "Came from: …".
+  - **Measurement:** `@vercel/analytics` mounted only on `/`, `/growth`, `/privacy`, `/terms`
+    (`SiteAnalytics`, production only via `VERCEL_ENV`; never in the root layout or `(app)`, a
+    static test checks). `beforeSend` (`src/lib/analytics-rules.ts`) keeps page views of those
+    paths with utm tags only — no `?ref=`, hash or custom events. First-party `/_vercel/insights`,
+    so no CSP change; no cookies. Counting starts when Davi enables Analytics in Vercel. Counting
+    signed-in screens would need a policy change and his okay.
+  - GrowthSwitch layout gate: a line crossed with no real scroll in the last 150 ms (or during
+    the 1.2 s hold after a thank-you's `sa:hold-switch`) waits for the visitor's next scroll
+    (`crossingCause` / `deferredMode` in `switch-rules.ts`), so a thank-you that grows the page
+    never plays the show or leaves the screen. Both thank-yous scroll into view and take focus.
+  - Wording: "Business email" + "Gmail or Google Workspace today. On Outlook? Join anyway — it's
+    on the list."; the trial is "Squared Away won't send anything to a customer during the
+    trial" (never "nothing sends"); follow-ups "Two nudge drafts at most per conversation — each
+    waits for your okay."; "Takes two minutes" gone (`legal-docs.test.ts` bans the old phrases
+    and "automatic nudge"). The "photo coming soon" box is gone: one column until the `photo`
+    constant in `about-davi.tsx` is set.
+  - `Headline` (and every hand-written serif-over-heavy pair) has a real space between its two
+    lines ("your inbox, handled."). Footer phone is a 44px `tel:` link; footer "Squared Away
+    Growth" link on public pages only, plus "See everything Growth does →" on the homepage.
+    `/growth` has its own share card (`src/app/_og/share-card.tsx`).
+  - `src/app/not-found.tsx` ("nothing here, page not found." + Go to the homepage; /admin still
+    a plain 404) and `src/app/error.tsx` (Next 16 `retry`, no message or digest). A failed form
+    save returns a plain error keeping what was typed (`unstable_rethrow` first).
+  - Search: homepage title "Squared Away — AI email help for contractors"; JSON-LD Organization +
+    SoftwareApplication from `pricing.ts` (no rating, no free offer). Homepage caching **not**
+    done: it needs the signed-in redirect in `proxy.ts` and `?ref=` read in the browser
+    (referral code; after the referral branch merges).
+- **Legal docs moved to 2026-10-16 (outside review P4):** the privacy policy now names the form
+  Reply-To address in what we store from Gmail and in the kept metadata, the sign-up source
+  (utm tags + referring site's name, not the page), the waitlist confirmation and Davi's
+  content-free notice (Resend list), and Vercel Web Analytics (cookie-free, public pages only;
+  Vercel also listed for it). Both docs' "Last updated" and `TERMS_VERSION` moved to 2026-10-16
+  (the rule: the three stay equal); `docs/terms.md` text unchanged. Everyone who agreed to
+  2026-10-15 is asked once more (only testers; the gate isn't live yet). `legal-docs.test.ts`
+  holds each new sentence to the code. LAUNCH.md step 13 has "Outside review (2026-10-15)".
+- **Outside-review follow-ups (2026-10-16, after verifying P1–P4):**
+  - Reply-To backfill matches only the **one email a draft answers** (`answeredIdSql`: the
+    inbound row it's threaded to, else the newest real non-side inbound before the draft was
+    made); an older email's Reply-To never moves a draft or flags a past send. Re-point writes
+    the **row first** (conditional), then Gmail; a Gmail failure puts the row back (and
+    un-queues a tap made meanwhile).
+  - `reply_went_to_form` detail carries `robot` (`looksLikeFormSender`: no-reply, known form
+    hosts, wordpress@/forms@…). `robot: false` (a person naming their other address) reads
+    "…went to the address their email came from… Check they got it." — never "send it again".
+    REPOINTED_FLAG / `draft_repointed` / the Autopilot settings line are worded neutrally
+    ("the reply address the customer's email named").
+  - **Send checks the To the owner saw:** the card (and offline okays, `Intent.seenTo`) post
+    `seenTo`; `queueSend` refuses `to_changed` (`?error=to_changed`, 409 on the API) when the
+    draft now goes elsewhere, and its queue write requires the To it loaded.
+  - `threadsToAutoDraft` leaves out threads whose newest inbound has a **checked** no-reply
+    reply address (unchecked NULL stays in), so skipped robots can't starve real leads.
+  - Inbox: only noise that doesn't need the owner folds into "N junk emails"
+    (`isFoldableJunk`); needs-owner noise keeps its "Waiting on you"/"Replied" word.
+  - AutoSaveForm: a radio saves at once only after a pointer tap (`isPointerChange`, 1.5s);
+    an arrow-key change shows the Save button instead (WCAG 3.2.2).
+  - Homepage: "Two nudges at most per conversation — each one a draft that waits for your
+    okay." (the cap counts nudges sent); the queue still's card and caption say nothing goes
+    to a customer during the three days. In-app `sendingOffLabel` unchanged (pinned).
 - **M11 security audit (S4, 2026-10-13):** static tests guard the surface —
   `tests/unit/security-surface.test.ts` (C1 every server action awaits `requireOwner` /
   `requireAdmin` first, reviewed public/inline allow-lists; C2 admin pages + no `loading.tsx` over
@@ -1518,7 +1643,21 @@ default, CI too) and refuses a non-local `DATABASE_URL` or an `APP_URL` that isn
   so.
 - `ANTHROPIC_API_KEY` repo secret for the "Prompt evals" action (baseline still empty).
 - Resend: verify the production domain in Resend and switch `EMAIL_FROM` off `onboarding@resend.dev`
-  (until then the digest only reaches the Resend account's own address).
+  (until then the digest, the monthly summary and the waitlist confirmation only reach the Resend
+  account's own address). This is also what makes the pricing cards' "morning summary" true for
+  owners (the cards weren't changed). LAUNCH.md step 6.
+- **Outside review (2026-10-15), his part** (LAUNCH.md step 13 "Outside review"): everything in
+  its "Your calls" (trial side door — app/homepage now say "won't send anything to a customer
+  during the trial", `docs/terms.md` and the policy's trial sentence still say "sending to
+  customers is switched off"; setup fee; trial length; [To confirm] items; hero line; homepage
+  A/B test; referral amount / founding / association offers; instant "got it" reply; more Gmail
+  permissions; money in the morning email; Outlook; app stores); the domain; `SUPPORT_EMAIL` and
+  a business phone; his photo; legal answers so the "Draft" banners can go; Web Analytics
+  (Vercel → sa → Analytics → Enable; code ready); the sitemap in Search Console; a booking
+  calendar link (needs an account); the confirmation email's wording; whether Thumbtack / Angi
+  relay addresses should ever be answered by email; whether to say on the site that form leads
+  are answered at the customer's own address; a Growth link inside the app; and his picks from
+  the 100 ideas. Testers re-agree to the terms once (2026-10-16 version).
 - Optional: Gmail instant notifications (docs/SETUP.md §6a) and Sentry error alerts (§6b).
 - Rotate the Neon password and Google client secret that were pasted in chat; delete the old
   Google secret.

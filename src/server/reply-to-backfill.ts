@@ -16,10 +16,16 @@ import { sameText } from "@/mailbox/mime";
 import { defaultWriter, mimeFor, replyToHeaders } from "./drafts";
 import { jobsAllowed } from "./lifecycle";
 import { storeReplyTo, workspaceMailboxEmails } from "./reply-address";
-import { pickReplyTo, REPOINTED_FLAG, type ReplyToHeader } from "./reply-address-rules";
+import {
+  looksLikeFormSender,
+  pickReplyTo,
+  REPOINTED_FLAG,
+  type ReplyToHeader,
+} from "./reply-address-rules";
 import { localParts } from "./snooze-rules";
 import { workspaceTimeZone } from "./snooze";
 import { BACKFILL_DAYS, defaultReaderFor, markReconnectNeeded } from "./sync";
+import { sideEmailSql, unsentDraftSql } from "./thread-sql";
 
 /**
  * One-shot data fix for website-form leads (review "Must fix", B1), its own 15-minute job so a
@@ -32,15 +38,17 @@ import { BACKFILL_DAYS, defaultReaderFor, markReconnectNeeded } from "./sync";
  *    Gmail read each — format=metadata, the Reply-To header only — two at a time, at most 100
  *    per mailbox per run and 20 seconds per mailbox. Gone (404) or a bad id (400) → {} (From
  *    is all there is), so one bad id can't stall a mailbox.
- * 2. Pending drafts addressed to a form's robot address (an inbound email on the thread whose
- *    From is the draft's To and which now has a stored Reply-To) are RE-POINTED, not expired:
+ * 2. Pending drafts addressed to a form's robot address (the one inbound email the draft
+ *    answers — `answeredIdSql` — came from the draft's To and now has a stored Reply-To) are
+ *    RE-POINTED, not expired:
  *    expiring would drop the lead from the Queue (nothing re-drafts a thread with a newer
  *    draft), the same quiet loss this fixes. Gmail first — the draft there is rewritten to
  *    the customer's address with the same text — then the row, with a first flag telling the
  *    owner to check the greeting. A draft the owner touched in Gmail (text or message id
  *    changed), one gone from Gmail, or one in its undo window / being sent is left alone.
- * 3. A reply sent in the last 30 days to such a robot address gets one Activity line telling
- *    the owner the customer may not have it.
+ * 3. A reply sent in the last 30 days the same way gets one Activity line: "the customer may
+ *    not have it" when the address looks like a form's robot (`looksLikeFormSender`), else a
+ *    gentler "check they got it" (a person whose email named their other address).
  *
  * Skipped with no Gmail call and no marker (checked again next run): a mailbox that isn't
  * active, a read-only account, or a mailbox whose own sync is still busy (no cursor yet, first
@@ -214,12 +222,29 @@ export async function runReplyToBackfillMailbox(
 }
 
 /**
- * The newest inbound email on the draft's thread that came from the draft's To and has a
- * stored Reply-To: the form email the draft wrongly answers at its robot address.
+ * The one inbound email a draft answers: the row it is threaded to when that is an inbound
+ * email (a reply), else the newest real inbound email on the thread from before the draft was
+ * made (a nudge or a purpose note is threaded to the owner's own email) — never an unsent
+ * Gmail draft or a side conversation (the crew's reply).
+ */
+const answeredIdSql = sql`coalesce(
+  (select ar_m.id from messages ar_m where ar_m.id = ${drafts.replyToMessageId} and ar_m.direction = 'in'),
+  (select ar_n.id from messages ar_n where ar_n.thread_id = ${drafts.threadId} and ar_n.direction = 'in' and not ${unsentDraftSql("ar_n")} and not ${sideEmailSql("ar_n")} and ar_n.sent_at <= ${drafts.createdAt} order by ar_n.sent_at desc limit 1)
+)`;
+
+/**
+ * That one email's stored Reply-To, only when the draft went to its From: the draft answers
+ * it at the address it came from, though the email named another one to reply to. An older
+ * email on the thread with a Reply-To never counts (an office whose newest email, from Bob,
+ * has none is answered at the office, as new drafts are).
  */
 const formReplyToSql = sql<
   string | null
->`(select m.reply_to_header->>'address' from messages m where m.thread_id = ${drafts.threadId} and m.direction = 'in' and lower(trim(m.from_address)) = lower(trim(${drafts.toAddress})) and m.reply_to_header->>'address' is not null order by m.sent_at desc limit 1)`;
+>`(select fr_m.reply_to_header->>'address' from messages fr_m where fr_m.id = ${answeredIdSql} and lower(trim(fr_m.from_address)) = lower(trim(${drafts.toAddress})) and fr_m.reply_to_header->>'address' is not null)`;
+/** The same email's From, to tell a form robot from a person with a second address. */
+const answeredFromSql = sql<
+  string | null
+>`(select fa_m.from_address from messages fa_m where fa_m.id = ${answeredIdSql})`;
 
 /** Step 2: pending drafts addressed to a form's robot address → the customer's own address. */
 async function repointDrafts(mailbox: Mailbox, now: Date, deps: ReplyToBackfillDeps) {
@@ -241,27 +266,18 @@ async function repointDrafts(mailbox: Mailbox, now: Date, deps: ReplyToBackfillD
   let repointed = 0;
   for (const { draft, thread, newTo } of rows) {
     if (!newTo || !draft.gmailDraftId) continue;
-    // Gmail first: if the owner taps Send between the two writes, what goes is the Gmail
-    // draft, already addressed to the customer.
     const remote = await writer.getDraft(draft.gmailDraftId);
     // Gone: reconcile discards it. Changed (text, or a new message id — Gmail gives an edited
     // draft a new one, e.g. the owner fixed the To themselves): reconcile takes it first.
     if (!remote || !sameText(remote.bodyText, draft.body)) continue;
     if (draft.gmailMessageId && remote.messageId !== draft.gmailMessageId) continue;
-    const updated = await writer.updateDraft(draft.gmailDraftId, {
-      threadId: thread.gmailThreadId,
-      raw: mimeFor(
-        { ...draft, toAddress: newTo },
-        mailbox,
-        remote.bodyText,
-        await replyToHeaders(draft),
-      ),
-    });
+    // The row first, so a Send reply tapped against the old To can't go out to the new one:
+    // queueSend's own write needs the To it loaded (and the card posts the To it showed), so
+    // a tap racing this is refused with "who it goes to changed" and the owner looks again.
     const [done] = await db()
       .update(drafts)
       .set({
         toAddress: newTo,
-        gmailMessageId: updated.messageId,
         autoSendAt: null,
         flags: [REPOINTED_FLAG, ...(draft.flags ?? []).filter((f) => f !== REPOINTED_FLAG)].slice(
           0,
@@ -278,6 +294,38 @@ async function repointDrafts(mailbox: Mailbox, now: Date, deps: ReplyToBackfillD
         ),
       )
       .returning({ id: drafts.id });
+    if (!done) continue;
+    let updated: { messageId: string };
+    try {
+      updated = await writer.updateDraft(draft.gmailDraftId, {
+        threadId: thread.gmailThreadId,
+        raw: mimeFor(
+          { ...draft, toAddress: newTo },
+          mailbox,
+          remote.bodyText,
+          await replyToHeaders(draft),
+        ),
+      });
+    } catch (err) {
+      // Gmail still has the old To: put the row back so the card shows what Gmail would send
+      // (and un-queue a tap made against the new To meanwhile; the countdown stays off).
+      await db()
+        .update(drafts)
+        .set({ toAddress: draft.toAddress, flags: draft.flags, sendAfter: null })
+        .where(
+          and(
+            eq(drafts.id, draft.id),
+            eq(drafts.toAddress, newTo),
+            eq(drafts.status, "pending"),
+            isNull(drafts.sendClaimedAt),
+          ),
+        );
+      throw err;
+    }
+    await db()
+      .update(drafts)
+      .set({ gmailMessageId: updated.messageId })
+      .where(eq(drafts.id, draft.id));
     if (!done) continue;
     repointed++;
     await db()
@@ -302,6 +350,7 @@ async function notePastSends(mailbox: Mailbox, workspaceId: string, now: Date) {
       threadId: drafts.threadId,
       decidedAt: drafts.decidedAt,
       createdAt: drafts.createdAt,
+      from: answeredFromSql,
     })
     .from(drafts)
     .where(
@@ -323,10 +372,12 @@ async function notePastSends(mailbox: Mailbox, workspaceId: string, now: Date) {
         actor: "squared_away" as const,
         action: "reply_went_to_form",
         threadId: r.threadId,
-        // Content-free: the draft and the local date it went.
+        // Content-free: the draft, the local date it went, and whether the address it went
+        // to looks like a form's robot (else a person's other address: worded more gently).
         detail: {
           draftId: r.id,
           sentOn: localParts(r.decidedAt ?? r.createdAt, zone).date,
+          robot: looksLikeFormSender(r.from),
         },
       })),
     );

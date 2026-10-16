@@ -10,6 +10,7 @@ import {
   pickReplyTo,
   replyRedirected,
   type ReplyToHeader,
+  looksLikeFormSender,
 } from "@/server/reply-address-rules";
 import { replyAddressSql, replyNameSql } from "@/server/thread-sql";
 import { createTestDb } from "../support/db";
@@ -201,4 +202,21 @@ describe("the SQL twin matches the TS rule", () => {
       expect(row.n).toBe(customerReplyName(m));
     }
   }, 30_000);
+});
+
+describe("looksLikeFormSender (how firmly a past send is worded)", () => {
+  it("form robots", () => {
+    for (const a of [
+      "form-submission@squarespace.info",
+      "no-reply@crm.wix.com",
+      "wordpress@ruizplumbing.com",
+      "forms@getjobber.com",
+      "noreply@housecallpro.com",
+    ])
+      expect(looksLikeFormSender(a), a).toBe(true);
+  });
+  it("people", () => {
+    for (const a of ["dana@gmail.com", "office@pm-co.com", "formanj@gmail.com", "", null])
+      expect(looksLikeFormSender(a), String(a)).toBe(false);
+  });
 });

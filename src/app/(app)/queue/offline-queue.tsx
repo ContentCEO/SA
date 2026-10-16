@@ -13,6 +13,7 @@ import {
 
 const WHY: Record<string, string> = {
   changed_since_seen: "it changed since you okayed it",
+  to_changed: "who it goes to changed since you okayed it",
   changed_in_gmail: "it was changed in Gmail",
   deleted_in_gmail: "it was deleted or sent from Gmail",
   not_found: "it's no longer waiting",
@@ -61,7 +62,12 @@ export function OfflineQueue({ enabled }: { enabled: boolean }) {
           const res = await fetch(`/api/drafts/${i.draftId}/send`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ body: i.body, seen: i.seen, okayedAt: i.at }),
+            body: JSON.stringify({
+              body: i.body,
+              seen: i.seen,
+              okayedAt: i.at,
+              seenTo: i.seenTo,
+            }),
           });
           const r = (await res.json().catch(() => ({}))) as { status?: string };
           if (res.status === 202) queued.push(i.draftId);

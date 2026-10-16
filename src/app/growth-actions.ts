@@ -1,10 +1,13 @@
 "use server";
 
 import { headers } from "next/headers";
+import { unstable_rethrow } from "next/navigation";
 import { z } from "zod";
 import { growthCopy } from "@/components/marketing/growth/growth-copy";
 import { growthInput, notifyGrowthRequest, requestGrowthCall } from "@/server/growth";
 import { hitLimit, ipKey } from "@/server/rate-limit";
+import { sourceFromForm } from "@/server/source-rules";
+import { ownHosts } from "@/server/own-hosts";
 
 export type GrowthState = {
   status: "idle" | "requested" | "error";
@@ -33,7 +36,8 @@ export async function requestGrowthCallAction(
   if (raw.website) return { status: "requested" };
 
   const values = Object.fromEntries(Object.entries(raw).filter(([k]) => k !== "website"));
-  if (!(await hitLimit("waitlist", ipKey(await headers()))).allowed) {
+  const h = await headers();
+  if (!(await hitLimit("waitlist", ipKey(h))).allowed) {
     return {
       status: "error",
       errors: { phone: [growthCopy.errors.rateLimited] },
@@ -59,15 +63,22 @@ export async function requestGrowthCallAction(
     };
   }
 
+  const source = sourceFromForm((k) => formData.get(k), ownHosts(h));
   try {
-    await requestGrowthCall(parsed.data);
+    await requestGrowthCall(parsed.data, new Date(), source);
   } catch (err) {
-    // A failed query's message carries every bound value (name, phone, email, note), and Next
-    // logs whatever an action throws. Log the error's name only and throw a content-free one.
+    unstable_rethrow(err);
+    // A failed query's message carries every bound value (name, phone, email, note): log the
+    // error's name only, and keep what they typed on screen with a plain message.
     console.error("growth_request_failed", {
       error: err instanceof Error ? err.name : "unknown",
     });
-    throw new Error("growth_request_failed");
+    return {
+      status: "error",
+      errors: { form: [growthCopy.errors.saveFailed] },
+      values,
+      services,
+    };
   }
   try {
     await notifyGrowthRequest(parsed.data.email);

@@ -10,7 +10,7 @@ import {
 } from "@/server/sms-alerts";
 import { requireOwner } from "@/server/session";
 
-const back = (q: string) => `/settings?${q}#texts`;
+const back = (q: string) => `/settings/texts?${q}`;
 
 async function attempt(fn: () => Promise<unknown>, ok: string) {
   try {

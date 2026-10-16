@@ -151,7 +151,7 @@ In practice:
   (`src/server/mailboxes.ts`). Kept until the owner taps Delete my account: the writing style and
   any style suggestions waiting for them, the business details, the activity history and the AI
   usage counts (these belong to the account, not to one mailbox).
-- **Delete my account** (Settings, one confirmation): cancels the subscription, revokes the Google
+- **Delete my account** (Settings → Account, one confirmation): cancels the subscription, revokes the Google
   token for each mailbox, and deletes the account and everything in it, including the invite
   (`src/server/account-deletion.ts`). Drafts already in the owner's Gmail stay there.
 - **Admin view:** shows only operational health (status, counts, cost). No email content or
@@ -184,7 +184,7 @@ in plain words. Upload it as an unlisted video and paste the link into the verif
 **Before recording: check the demo Gmail's Google access.** The engineers' live check of the two
 permissions comes first and already clears any access the demo Gmail gave while the app still
 asked for `gmail.send` (see "Before submitting"); never film before it. Step 2 starts with no Gmail
-connected, so on every Squared Away account where the demo Gmail is connected, Settings →
+connected, so on every Squared Away account where the demo Gmail is connected, Settings → Your Gmail →
 **Disconnect Gmail** → **Yes, disconnect Gmail** (this also removes the access at Google). Then
 open myaccount.google.com/permissions, signed in as the demo account: Squared Away should have no
 Gmail access left, and in particular no "Send email on your behalf" (Google keeps earlier
@@ -213,19 +213,19 @@ that can send without a Stripe payment; whether to record this way is Davi's dec
   (a send or an autopilot countdown still running when you disconnect is dropped). Then open Gmail →
   Drafts and delete by hand any Squared Away draft still there. When you reconnect your own Gmail,
   replies are drafted fresh.
-- **Then disconnect your own Gmail** (Settings → Disconnect Gmail). Without a plan (or on Solo)
+- **Then disconnect your own Gmail** (Settings → Your Gmail → Disconnect Gmail). Without a plan (or on Solo)
   the account holds one Gmail address, and with yours still connected the Queue, Inbox and Activity would show
   your real customers on camera. Disconnecting **deletes what was stored from your mailbox**:
   messages, conversations, drafts and their edit counts, price memory, and quote and invoice marks.
   Reconnecting later reads only the last 30 days again; anything older is not brought back.
 - Your writing style is re-learned from the demo mailbox's sent mail once it connects (if you edited
-  your style by hand, the automatic learn skips it: tap "Re-learn from my sent mail" in Settings,
-  which replaces your edits). It is re-learned from your own mail when you reconnect.
+  your style by hand, the automatic learn skips it: tap "Re-learn from my sent mail" in Settings →
+  Your voice and confirm, which replaces your edits). It is re-learned from your own mail when you reconnect.
 - Before you press record, open the Queue, Inbox, Quotes, Money and Activity and check that nothing
   real is on screen. Activity keeps your history lines (without customer names once your mailbox
   is gone); start filming Activity at the new line for Dana, or don't scroll past it.
 - Your business details are already saved, so step 6 looks different (it says how below). The
-  Business profile box in Settings lists your "Always send me" addresses, which are real customers:
+  Business profile box in Settings → Your business lists your "Always send me" addresses, which are real customers:
   keep that line out of shot.
 - Afterwards, disconnect the demo Gmail (step 14) and reconnect your own Gmail.
 
@@ -236,7 +236,7 @@ option B, the separate demo account after its test-card payment):
    the Privacy Policy" and sign in as Davi (the `ADMIN_EMAIL` account; the house account is his),
    or with option B as the demo Gmail's own Google account. Point out that sign-in asks only for
    name and email.
-2. **Settings → Connect Gmail.** Show that no Gmail is connected yet and tap Connect Gmail.
+2. **Settings → Your Gmail → Connect Gmail.** Show that no Gmail is connected yet and tap Connect Gmail.
 3. **The explainer.** Scroll the "before you connect" screen, including "What it won't do", then
    tap Connect Gmail.
 4. **Google's real consent screen.** Google suggests the signed-in address; choose the **demo
@@ -249,11 +249,11 @@ option B, the separate demo account after its test-card payment):
    permissions, in Google's words "View your email messages and settings" (`gmail.readonly`) and
    "Manage drafts and send emails" (`gmail.compose`), and click into the address bar so the
    `client_id=` in the URL is readable. Tap Allow (Continue).
-5. **Connected.** Back in Squared Away, Settings shows the demo Gmail address as connected. Say that
+5. **Connected.** Back in Squared Away, Settings → Your Gmail shows the demo Gmail address as connected. Say that
    Google's key is stored encrypted and never shown.
 6. **Business details.** On a brand-new account Squared Away asks next for the business name and
    the work it takes on (Save and continue). On the house account those are already saved, so open
-   Settings → Business profile instead and show what the drafts are based on.
+   Settings → Your business instead and show what the drafts are based on.
 7. **Reading and learning (`gmail.readonly`).** The learning screen (on the house account, open
    `/welcome/learning` from the address bar) reads the last 30 days of email and learns the writing
    style from sent mail, then says it's all set.
@@ -268,7 +268,8 @@ option B, the separate demo account after its test-card payment):
     conversation: one reply, to Dana only, in the same conversation, and the draft is gone.
 13. **Nothing more to do.** Back in the app, the conversation shows the owner wrote last and no new
     draft appears for it.
-14. **Removing access.** Settings → Disconnect Gmail (or Delete my account on a demo-only account),
+14. **Removing access.** Settings → Your Gmail → Disconnect Gmail (or Settings → Account → Delete my
+    account on a demo-only account),
     then open myaccount.google.com/permissions (signed in to Google as the demo account) and show
     Squared Away no longer has access.
 
@@ -289,7 +290,7 @@ the AI (it signs in with a test cookie instead of step 1). Each of its steps mat
 
 | Step in the end-to-end test                                                     | Script step |
 | ------------------------------------------------------------------------------- | ----------- |
-| The owner opens Settings and taps Connect Gmail                                 | 2           |
+| The owner opens Settings → Your Gmail and taps Connect Gmail                    | 2           |
 | Squared Away explains what it will and won't do before asking Google            | 3           |
 | Google's consent screen lists the two Gmail permissions; the owner taps Allow   | 4           |
 | Back in Squared Away, Gmail is connected and its key is stored encrypted        | 5           |
@@ -386,7 +387,7 @@ production Stripe is still in test mode.
   went live), that grant still carries it, Google adds it back on a reconnect, and
   `messages.send` accepts it: the practice copy would go out through `gmail.send` and the check
   would prove nothing about `gmail.compose`. So, before the practice copy: on every Squared Away
-  account where the demo Gmail is connected, Settings → **Disconnect Gmail** → **Yes, disconnect
+  account where the demo Gmail is connected, Settings → Your Gmail → **Disconnect Gmail** → **Yes, disconnect
   Gmail** (this also removes the access at Google). Then myaccount.google.com/permissions, signed
   in as the demo Gmail, must show no Gmail access for Squared Away; if it still does, remove it
   there (safe now, since no account still uses it). Connect the demo Gmail again and confirm

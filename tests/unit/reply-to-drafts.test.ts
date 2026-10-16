@@ -7,7 +7,13 @@ import type { Database } from "@/db";
 import { drafts, messages, threads, workspaces } from "@/db/schema";
 import { MailboxRateLimitError } from "@/mailbox/connector";
 import { ensureUserAndWorkspace } from "@/server/accounts";
-import { batchCandidates, createDraftForThread, listQueue, sendDraft } from "@/server/drafts";
+import {
+  batchCandidates,
+  createDraftForThread,
+  listQueue,
+  sendDraft,
+  threadsToAutoDraft,
+} from "@/server/drafts";
 import { saveConnectedMailbox } from "@/server/mailboxes";
 import type { ReplyToHeader } from "@/server/reply-address-rules";
 import { createTestDb } from "../support/db";
@@ -238,6 +244,39 @@ describe("no-reply addresses", () => {
     ).toEqual({ status: "skipped", reason: "no_reply_address" });
     expect(calls).toHaveLength(0);
     expect(writer.calls).not.toContain("createDraft");
+  });
+});
+
+describe("no-reply threads never crowd out real leads (outside review follow-up)", () => {
+  it("10+ newer no-reply supplier threads: the older real lead is still picked; unchecked ones stay in", async () => {
+    const real = await lead({
+      from: "dana@example.net",
+      fromName: "Dana",
+      replyToHeader: {},
+    });
+    await database
+      .update(threads)
+      .set({ lastMessageAt: ago(50) })
+      .where(eq(threads.id, real.thread.id));
+    const robots: string[] = [];
+    for (let i = 0; i < 11; i++) {
+      const { thread } = await lead({
+        from: `noreply@supplier${i}.com`,
+        fromName: "Supplier",
+        replyToHeader: {},
+        category: "supplier_vendor",
+      });
+      robots.push(thread.id);
+    }
+    // A form sent from no-reply@ whose Reply-To hasn't been read yet may carry the customer.
+    const unchecked = await lead({
+      from: "no-reply@forms.example",
+      replyToHeader: null,
+    });
+    const picked = await threadsToAutoDraft(mailboxId);
+    expect(picked).toContain(real.thread.id);
+    expect(picked).toContain(unchecked.thread.id);
+    for (const r of robots) expect(picked).not.toContain(r);
   });
 });
 

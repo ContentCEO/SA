@@ -44,16 +44,26 @@ test("queue: needs-you first, then drafts; sending is off until setup, and it sa
   await card.getByRole("button", { name: "Edit" }).click();
   await expect(card.getByLabel("Your reply")).toHaveValue(/What's the address/);
   await expect(card.getByRole("button", { name: "Save changes" })).toBeVisible();
+  // The rewrites live behind Change it now, not in the editor.
+  await expect(card.getByLabel("Tell it what to change")).toHaveCount(0);
+  await card.getByRole("button", { name: "Cancel" }).click();
+  // Outside review: the five tweaks and "Tell it what to change" sit behind one button.
+  const tweaks = card.getByRole("form", { name: "Quick changes" });
+  await expect(tweaks).toHaveCount(0);
+  const changeIt = card.getByRole("button", { name: "Change it" });
+  await expect(changeIt).toHaveAttribute("aria-expanded", "false");
+  await changeIt.click();
+  await expect(changeIt).toHaveAttribute("aria-expanded", "true");
+  // Plan #3: one-tap tweaks.
+  for (const name of ["Shorter", "Warmer", "More formal", "Ask for photos", "Add my availability"])
+    await expect(tweaks.getByRole("button", { name })).toBeVisible();
   // Plan #4: a change can be said or typed; the button appears once there's something to use.
   await expect(card.getByLabel("Tell it what to change")).toBeVisible();
   await expect(card.getByRole("button", { name: "Change the draft" })).toHaveCount(0);
   await card.getByLabel("Tell it what to change").fill("make it Tuesday");
   await expect(card.getByRole("button", { name: "Change the draft" })).toBeVisible();
-  await card.getByRole("button", { name: "Cancel" }).click();
-  // Plan #3: one-tap tweaks on the card.
-  const tweaks = card.getByRole("form", { name: "Quick changes" });
-  for (const name of ["Shorter", "Warmer", "More formal", "Ask for photos", "Add my availability"])
-    await expect(tweaks.getByRole("button", { name })).toBeVisible();
+  await changeIt.click();
+  await expect(tweaks).toHaveCount(0);
 
   await card.getByRole("button", { name: "Discard" }).click();
   await expect(card.getByRole("button", { name: "Discard draft" })).toBeVisible();
@@ -161,11 +171,9 @@ test("a link from the morning summary lands on its card (plan #31)", async ({ pa
     window.dispatchEvent(new HashChangeEvent("hashchange", { oldURL, newURL: location.href }));
   }, quote.t.id);
   await settled(page);
-  // A draft card on a phone is taller than the screen less the tab bar: centring it put the
-  // name above the screen and the bottom under the tab bar. Its top edge must be on screen, at
-  // or below 0, and above the tab bar — after a hash change and after a real load (what a
-  // notification opens).
-  if (phone) expect((await draftCard.boundingBox())!.height).toBeGreaterThan(viewport.height - 128);
+  // Centring a tall draft card once put the name above the screen and the bottom under the tab
+  // bar. Its top edge must be on screen, at or below 0, and above the tab bar — after a hash
+  // change and after a real load (what a notification opens).
   const expectTopOnScreen = async () => {
     const y = await top(draftCard);
     expect(y).toBeGreaterThanOrEqual(0);
@@ -505,4 +513,30 @@ test("price memory: past prices for similar jobs, and a tap fills only the price
     () => document.documentElement.scrollWidth > document.documentElement.clientWidth,
   );
   expect(overflow).toBe(false);
+});
+
+test("a typical draft's Send reply is on the first screen of its card (outside review)", async ({
+  page,
+  context,
+}) => {
+  const owner = await seedOwner({ mailbox: true, backfilled: true });
+  const { quote } = await seedQueue(owner.mailboxId!);
+  await setWorkspace(owner.workspaceId, { status: "active", setupPaidVia: "stripe" });
+  await signInAs(context, owner);
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.goto(`/queue?t=${quote.t.id}#t-${quote.t.id}`);
+  const card = page.getByRole("article", { name: "Draft reply to Priya" });
+  await expect(card).toBeVisible();
+  await settled(page);
+  const send = card.getByRole("button", { name: "Send reply" });
+  await expect(send).toBeInViewport({ ratio: 1 });
+  const tabBar = page.locator('nav[aria-label="Main"].fixed');
+  if (await tabBar.isVisible()) {
+    const box = (await send.boundingBox())!;
+    expect(box.y + box.height).toBeLessThanOrEqual((await tabBar.boundingBox())!.y);
+  }
+  // The tweaks are one tap away, and nothing is sent by opening them.
+  await card.getByRole("button", { name: "Change it" }).click();
+  await expect(card.getByRole("form", { name: "Quick changes" })).toBeVisible();
+  await expect(card.getByLabel("Tell it what to change")).toBeVisible();
 });

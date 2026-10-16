@@ -89,6 +89,13 @@ export const waitlist = pgTable("waitlist", {
   invitedAt: timestamp("invited_at", { withTimezone: true }),
   /** Plan #47: the referral code from the link they came from (format-checked; flag on only). */
   referralCode: text("referral_code"),
+  /** Where the sign-up came from (first touch): utm_* tags and the referring site's host only. */
+  utmSource: text("utm_source"),
+  utmMedium: text("utm_medium"),
+  utmCampaign: text("utm_campaign"),
+  referrerHost: text("referrer_host"),
+  /** When the "You're on the list" email went to them (one per address, ever). */
+  confirmationSentAt: timestamp("confirmation_sent_at", { withTimezone: true }),
 });
 
 export const workspaces = pgTable(

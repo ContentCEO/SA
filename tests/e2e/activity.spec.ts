@@ -31,11 +31,26 @@ test("activity: plain log, honest estimate, reachable from the menu", async ({ p
   await signInAs(context, owner);
 
   await page.goto("/queue");
+  // Five tabs: Activity lives under More.
+  const tabs = page.getByRole("navigation", { name: "Main" }).filter({ visible: true });
+  await tabs.getByRole("link", { name: "More" }).click();
+  await expect(page).toHaveURL(/\/more$/);
+  await expect(tabs.getByRole("link", { name: "More" })).toHaveAttribute("aria-current", "page");
   await page
-    .getByRole("navigation", { name: "Main" })
-    .getByRole("link", { name: "Activity" })
+    .getByRole("navigation", { name: "More" })
+    .getByRole("link", { name: /^Activity/ })
     .click();
   await expect(page).toHaveURL(/\/activity$/);
+  await expect(tabs.getByRole("link", { name: "More" })).toHaveAttribute("aria-current", "page");
+  // Outside review K1: money leads; nothing won or paid yet says so plainly.
+  const money = page.getByRole("region", {
+    name: `Won and paid in ${localMonthName(new Date(), "America/New_York")}`,
+  });
+  await expect(money).toContainText("Nothing won or paid yet this month.");
+  // The feed is grouped by day.
+  await expect(page.getByRole("region", { name: "Today" })).toContainText(
+    "You sent a reply to Priya",
+  );
   await expect(page.getByText("You sent a reply to Priya")).toBeVisible();
   await expect(page.getByText("Drafted a reply to Priya · Quote request")).toBeVisible();
   // The month card (no profile → Eastern) and the week card each say it once.
@@ -100,6 +115,7 @@ test("activity at 375px: monthly close rate counts owner and auto outcomes, Mone
         quoteOutcome: d.outcome,
         quoteOutcomeSource: d.source,
         quoteOutcomeAt: now,
+        quoteAmountCents: d.outcome === "won" ? 420_000 : null,
       })
       .returning();
     await testDb.insert(schema.messages).values({
@@ -115,6 +131,11 @@ test("activity at 375px: monthly close rate counts owner and auto outcomes, Mone
   await signInAs(context, owner);
 
   await page.goto("/activity");
+  // Outside review K1: the money card leads, from the owner's own quote amount.
+  const money = page.getByRole("region", { name: /^Won and paid in / });
+  await expect(money).toContainText("Quotes won");
+  await expect(money).toContainText("1 · $4,200");
+  await expect(money).toContainText("Invoices paid after a follow-up");
   // The week card renders at phone width, with the estimate labelled as one.
   const week = page.getByRole("region", { name: "This week so far" });
   await expect(week.getByRole("heading", { name: "This week so far" })).toBeVisible();
@@ -151,7 +172,9 @@ test("settings: morning summary time and time zone are saved", async ({ page, co
   await signInAs(context, owner);
 
   await page.goto("/settings");
-  const section = page.getByRole("region", { name: "Morning summary" });
+  await page.getByRole("link", { name: /^Morning email/ }).click();
+  await expect(page).toHaveURL(/\/settings\/morning-email$/);
+  const section = page.getByRole("main");
   await expect(section).toContainText("No customer names or email text go in it.");
   // Plan #35: the monthly summary rides on the same switch, and Settings says so.
   await expect(section).toContainText(
@@ -161,8 +184,9 @@ test("settings: morning summary time and time zone are saved", async ({ page, co
   await expect(morning).toBeChecked();
   await expect(morning).toHaveAccessibleDescription("(and a short one on the 1st of each month)");
   await section.getByLabel("Send it at").selectOption("6");
-  await section.getByRole("button", { name: "Save morning summary" }).click();
-  await expect(page.getByText("Morning summary saved.")).toBeVisible();
+  // A select doesn't save on its own (keyboard users choose first); its Save button does.
+  await section.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(page.getByRole("status").filter({ hasText: "Saved." })).toBeVisible();
 
   const [p] = await testDb
     .select()

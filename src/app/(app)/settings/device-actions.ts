@@ -24,7 +24,7 @@ export async function saveHandAction(formData: FormData) {
   await requireOwner();
   const left = formData.get("hand") === "left";
   (await cookies()).set(HAND_COOKIE, left ? "left" : "right", options);
-  redirect("/settings?done=hand#this-phone");
+  redirect("/settings/phone?done=saved");
 }
 
 /**
@@ -36,7 +36,7 @@ export async function saveOfflineAction(formData: FormData) {
   const jar = await cookies();
   if (formData.get("offline") === "on") jar.set(OFFLINE_COOKIE, "on", options);
   else jar.delete(OFFLINE_COOKIE);
-  redirect("/settings?done=offline#this-phone");
+  redirect("/settings/phone?done=saved");
 }
 
 /** Plan #36: this phone's push endpoint (refused unless it's a real push service). */

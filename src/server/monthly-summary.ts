@@ -242,7 +242,7 @@ export async function sendMonthlySummaries(
       );
       const email = buildMonthlySummary(stats, localMonthName(month.start, timeZone), {
         activityUrl: appUrl("/activity"),
-        settingsUrl: appUrl("/settings#digest"),
+        settingsUrl: appUrl("/settings/morning-email"),
       });
       if (email.worthSending) {
         const outcome = await send({

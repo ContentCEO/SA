@@ -19,6 +19,7 @@ import {
   scrubMarker,
   withGrowthBlock,
 } from "./growth-note";
+import { firstTouch, NO_SOURCE, type SignupSource } from "./source-rules";
 
 const msg = growthCopy.errors;
 
@@ -80,7 +81,11 @@ export type GrowthInput = z.output<typeof growthInput>;
  * gets the request as its (single) Growth block, with blanks filled in. It NEVER changes the
  * name, team size, created or invited dates, and never invites anyone.
  */
-export async function requestGrowthCall(input: GrowthInput, now: Date = new Date()) {
+export async function requestGrowthCall(
+  input: GrowthInput,
+  now: Date = new Date(),
+  source: SignupSource = NO_SOURCE,
+) {
   const email = normalizeEmail(input.email);
   const request = {
     at: localStamp(now),
@@ -98,6 +103,7 @@ export async function requestGrowthCall(input: GrowthInput, now: Date = new Date
         trade: input.trade,
         teamSize: GROWTH_ONLY_TEAM_SIZE,
         note: formatGrowthBlock(request),
+        ...source,
       })
       .onConflictDoNothing()
       .returning({ email: waitlist.email });
@@ -124,6 +130,7 @@ export async function requestGrowthCall(input: GrowthInput, now: Date = new Date
           tradeGiven:
             existing.trade && existing.trade !== input.trade ? tradeLabel[input.trade] : null,
         }),
+        ...firstTouch(existing, source),
       })
       .where(eq(waitlist.email, email));
     return "added_to_existing" as const;
@@ -137,15 +144,73 @@ export async function requestGrowthCall(input: GrowthInput, now: Date = new Date
 
 /** Salted like ipKey, so the key can't be matched against a list of addresses. */
 export function growthNotifyKey(email: string, now: Date) {
-  const h = createHmac("sha256", process.env.AUTH_SECRET ?? "")
+  return `growth-${addressKey(email)}-${localStamp(now).slice(0, 10)}`;
+}
+
+/** 16 hex characters of HMAC(AUTH_SECRET, address): an email key that holds no address. */
+export function addressKey(email: string) {
+  return createHmac("sha256", process.env.AUTH_SECRET ?? "")
     .update(normalizeEmail(email))
     .digest("hex")
     .slice(0, 16);
-  return `growth-${h}-${localStamp(now).slice(0, 10)}`;
 }
 
 /** The form waits for the notice; a Resend that hangs must not leave the visitor on "Sending…". */
 export const GROWTH_NOTIFY_TIMEOUT_MS = 5000;
+
+/**
+ * Email the admin (ADMIN_EMAIL) a content-free notice, raced against a timeout so a Resend that hangs
+ * never holds anything up. Shared by Growth requests and waitlist sign-ups.
+ */
+export async function notifyAdmin(
+  notice: {
+    subject: string;
+    serif: string;
+    heavy: string;
+    lines: readonly string[];
+    button: string;
+    footer: string;
+    key: string;
+  },
+  deps: { send?: EmailSender; timeoutMs?: number } = {},
+) {
+  const admin = process.env.ADMIN_EMAIL;
+  if (!admin) return "skipped" as const;
+  const { text, html } = brandEmail({
+    serif: notice.serif,
+    heavy: notice.heavy,
+    lines: [...notice.lines],
+    button: { label: notice.button, url: appUrl("/admin#waitlist") },
+    footer: notice.footer,
+  });
+  return withTimeout(
+    (deps.send ?? sendEmail)({
+      to: admin,
+      subject: notice.subject,
+      text,
+      html,
+      idempotencyKey: notice.key,
+    }),
+    deps.timeoutMs ?? GROWTH_NOTIFY_TIMEOUT_MS,
+  );
+}
+
+/** Rejects with a TimeoutError after `ms` (the timer is always cleared). */
+export async function withTimeout<T>(work: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      const err = new Error("Email timed out.");
+      err.name = "TimeoutError";
+      reject(err);
+    }, ms);
+  });
+  try {
+    return await Promise.race([work, timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 /**
  * Tell Davi a request came in. Content-free: no name, number or email address anywhere in it;
@@ -155,34 +220,8 @@ export async function notifyGrowthRequest(
   email: string,
   deps: { send?: EmailSender; now?: Date; timeoutMs?: number } = {},
 ) {
-  const admin = process.env.ADMIN_EMAIL;
-  if (!admin) return "skipped" as const;
-  const c = growthCopy.notify;
-  const { text, html } = brandEmail({
-    serif: c.serif,
-    heavy: c.heavy,
-    lines: [...c.lines],
-    button: { label: c.button, url: appUrl("/admin#waitlist") },
-    footer: c.footer,
-  });
-  const sending = (deps.send ?? sendEmail)({
-    to: admin,
-    subject: c.subject,
-    text,
-    html,
-    idempotencyKey: growthNotifyKey(email, deps.now ?? new Date()),
-  });
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => {
-      const err = new Error("Growth notice timed out.");
-      err.name = "TimeoutError";
-      reject(err);
-    }, deps.timeoutMs ?? GROWTH_NOTIFY_TIMEOUT_MS);
-  });
-  try {
-    return await Promise.race([sending, timeout]);
-  } finally {
-    clearTimeout(timer);
-  }
+  return notifyAdmin(
+    { ...growthCopy.notify, key: growthNotifyKey(email, deps.now ?? new Date()) },
+    deps,
+  );
 }

@@ -32,7 +32,7 @@ export default function GoodbyePage() {
           . Thanks for trying Squared Away.
         </p>
       </main>
-      <SiteFooter />
+      <SiteFooter growthLink />
     </div>
   );
 }

@@ -118,7 +118,7 @@ describe("C1: every server action checks who's asking before anything else", () 
    * them (a new call, a new block) fails until it is reviewed here.
    */
   const INLINE_ACTIONS: Record<string, string> = {
-    "src/app/(app)/settings/page.tsx#cookies,signOut":
+    "src/app/(app)/settings/account/page.tsx#cookies,signOut":
       "Sign out: deletes this phone's offline cookie and signs out; must work even for a " +
       "deleted account, so it can't require one",
     "src/app/welcome/terms/page.tsx#cookies,signOut":
@@ -902,7 +902,7 @@ describe("C4: no open redirects", () => {
       "Google's consent screen, built by our connector with our own callback URL",
     ],
     [
-      'src/app/(app)/settings/profile-actions.ts: redirect(returnTo.catch("/settings?done=profile").parse(raw.returnTo))',
+      'src/app/(app)/settings/profile-actions.ts: redirect(returnTo.catch("/settings/business?done=profile").parse(raw.returnTo))',
       "a z.enum of two fixed paths (pinned by the returnTo test below)",
     ],
     [
@@ -1000,6 +1000,8 @@ describe("C4: no open redirects", () => {
       'export function go() { window.location.replace(new URLSearchParams(location.search).get("url")!); }',
       'export function go() { document.location.host = new URLSearchParams(location.search).get("h")!; }',
       'export function go() { window.open(new URLSearchParams(location.search).get("url")!); }',
+      // Old Settings anchors: a lookup into a table isn't a visible own path.
+      'import { useRouter } from "next/navigation";\nconst T: Record<string, string> = { digest: "/settings/morning-email" };\nexport function C() { const router = useRouter(); return () => router.replace(T[location.hash.slice(1)]!); }',
     ];
     for (const code of bad)
       expect(unsafeRedirects(boundFixture(code)).length, code).toBeGreaterThan(0);
@@ -1022,6 +1024,8 @@ describe("C4: no open redirects", () => {
       // Client: the offline queue's own-path push, and look-alikes that don't navigate.
       'import { useRouter } from "next/navigation";\nexport function C(qs: string) { const router = useRouter(); return () => router.push(`/queue?${qs}`); }',
       'export function f(s: string, list: string[]) { list.push(s); return s.replace("a", "b"); }',
+      // Old Settings anchors (legacy-anchors.tsx): a helper that only returns fixed own paths.
+      'import { useRouter } from "next/navigation";\nexport function screen(h: string) { switch (h) { case "#digest": return "/settings/morning-email"; default: return "/settings"; } }\nexport function C() { const router = useRouter(); const to = screen(location.hash); return () => router.replace(to); }',
       'export function f(s: string) { let location = "x"; location = s; return location.replace("a", "b"); }',
     ];
     for (const code of ok) expect(unsafeRedirects(boundFixture(code)), code).toEqual([]);
@@ -1123,10 +1127,10 @@ describe("C4: no open redirects", () => {
   it("the business profile's returnTo is a fixed list, not a URL", () => {
     const src = readFileSync("src/app/(app)/settings/profile-actions.ts", "utf8");
     expect(src).toContain(
-      'const returnTo = z.enum(["/settings?done=profile", "/welcome/learning"]);',
+      'const returnTo = z.enum(["/settings/business?done=profile", "/welcome/learning"]);',
     );
     expect(src).toContain(
-      'redirect(returnTo.catch("/settings?done=profile").parse(raw.returnTo));',
+      'redirect(returnTo.catch("/settings/business?done=profile").parse(raw.returnTo));',
     );
   });
 

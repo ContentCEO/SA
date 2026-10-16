@@ -770,7 +770,7 @@ describe("LAUNCH.md structure", () => {
       // An old grant still carrying gmail.send would send the practice copy on its own, so the
       // check clears it first, through Squared Away's own Disconnect (it revokes at Google).
       "**Before that check they clear the demo Gmail's old access.**",
-      "Settings → **Disconnect Gmail** → **Yes, disconnect Gmail**",
+      "Settings → Your Gmail → **Disconnect Gmail** → **Yes, disconnect Gmail**",
       "that mailbox's saved permissions (`mailboxes.scopes`) have no `gmail.send`",
       "Only then the practice copy and the real reply.",
     ]) {

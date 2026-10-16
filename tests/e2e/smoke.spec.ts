@@ -14,7 +14,7 @@ test("sign-in page shows the headline and a named button", async ({ page }) => {
 });
 
 test("signed-out visitors can't reach the app", async ({ page }) => {
-  for (const path of ["/settings", "/connect"]) {
+  for (const path of ["/settings", "/settings/phone", "/more", "/connect"]) {
     await page.goto(path);
     await expect(page).toHaveURL(/\/signin$/);
   }

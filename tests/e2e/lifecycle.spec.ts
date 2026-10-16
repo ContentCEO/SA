@@ -63,7 +63,9 @@ test("/admin is invisible to owners", async ({ page, context }) => {
   const res = await page.goto("/admin");
   expect(res?.status()).toBe(404);
   await page.goto("/settings");
-  await expect(page.getByRole("link", { name: "Admin" })).toHaveCount(0);
+  await expect(page.getByRole("link", { name: /^Admin/ })).toHaveCount(0);
+  await page.goto("/more");
+  await expect(page.getByRole("link", { name: /^Admin/ })).toHaveCount(0);
 });
 
 test("admin: sees health with no email content, and can turn sending on", async ({
@@ -81,8 +83,8 @@ test("admin: sees health with no email content, and can turn sending on", async 
   const admin = await seedAdmin();
   await signInAs(context, admin);
 
-  await page.goto("/settings");
-  await page.getByRole("link", { name: "Admin" }).click();
+  await page.goto("/more");
+  await page.getByRole("link", { name: /^Admin/ }).click();
   await expect(page).toHaveURL(/\/admin$/);
 
   const card = page.getByRole("article", { name: owner.email });

@@ -36,7 +36,7 @@ export default function NotInvitedPage() {
           Try a different account
         </Link>
       </main>
-      <SiteFooter />
+      <SiteFooter growthLink />
     </div>
   );
 }

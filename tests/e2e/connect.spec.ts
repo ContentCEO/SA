@@ -24,13 +24,17 @@ test("explains what it will and won't do, then sends you to Google with the mini
   await signInAs(context, owner);
 
   await page.goto("/settings");
+  await page.getByRole("link", { name: /^Your Gmail/ }).click();
+  await expect(page).toHaveURL(/\/settings\/gmail$/);
   await expect(page.getByText("No Gmail connected yet.")).toBeVisible();
   await page.getByRole("link", { name: "Connect Gmail" }).click();
 
   await expect(page).toHaveURL(/\/connect$/);
   await expect(page.getByRole("heading", { name: "What it won't do" })).toBeVisible();
   await expect(
-    page.getByText(/nothing can go to a customer: you can only send yourself practice copies/),
+    page.getByText(
+      /Squared Away won't send anything to a customer: you can only send yourself practice copies/,
+    ),
   ).toBeVisible();
   // The two permissions in Google's own words, and the Send reply promise.
   await expect(page.getByText("Google will ask you to allow two things")).toBeVisible();
@@ -133,7 +137,7 @@ test("disconnect asks once, then removes the mailbox", async ({ page, context })
   const owner = await seedOwner({ mailbox: true });
   await signInAs(context, owner);
 
-  await page.goto("/settings");
+  await page.goto("/settings/gmail");
   await expect(page.getByText(owner.email)).toBeVisible();
   await noHorizontalScroll(page);
 

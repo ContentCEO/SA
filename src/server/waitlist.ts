@@ -16,6 +16,7 @@ import {
   withBlockTradeGiven,
 } from "./growth-note";
 import { isReferralCode, referralsVisible } from "./referral-rules";
+import { firstTouch, NO_SOURCE, type SignupSource } from "./source-rules";
 import { workspaceByReferralCode } from "./referrals";
 
 export const TEAM_SIZES = ["Just me", "2–5", "6–15", "16+"] as const;
@@ -37,8 +38,8 @@ export const waitlistInput = z.object({
     .trim()
     .toLowerCase()
     .min(1, "Tell us your email address.")
-    .max(254, "That doesn't look like an email address. Use the Gmail you run the business from.")
-    .email("That doesn't look like an email address. Use the Gmail you run the business from."),
+    .max(254, "That doesn't look like an email address.")
+    .email("That doesn't look like an email address."),
   phone: optional(40),
   trade: z.enum(tradeEnum.enumValues, { message: "Pick your trade." }),
   teamSize: z.enum(TEAM_SIZES, { message: "Pick how many people work with you." }),
@@ -56,7 +57,10 @@ export const waitlistInput = z.object({
  * into a real sign-up (their team size and trade from the app form, blanks filled in, the app
  * note before the Growth block).
  */
-export async function joinWaitlist(input: z.output<typeof waitlistInput>) {
+export async function joinWaitlist(
+  input: z.output<typeof waitlistInput>,
+  source: SignupSource = NO_SOURCE,
+) {
   const email = normalizeEmail(input.email);
   const note = input.note ? scrubMarker(input.note) : null;
   // Plan #47: kept only while referrals are switched on (flag and amount).
@@ -64,7 +68,7 @@ export async function joinWaitlist(input: z.output<typeof waitlistInput>) {
   return db().transaction(async (tx) => {
     const [row] = await tx
       .insert(waitlist)
-      .values({ ...input, email, note, referralCode })
+      .values({ ...input, email, note, referralCode, ...source })
       .onConflictDoNothing()
       .returning({ email: waitlist.email });
     if (row) return "joined" as const;
@@ -95,6 +99,7 @@ export async function joinWaitlist(input: z.output<typeof waitlistInput>) {
         // A Growth request never carries a referral; the app sign-up that upgrades it may.
         referralCode: existing.referralCode ?? referralCode,
         note: [note, blocks].filter(Boolean).join("\n\n") || null,
+        ...firstTouch(existing, source),
       })
       .where(eq(waitlist.email, email));
     return "joined" as const;

@@ -20,15 +20,18 @@ import { GrowthChapterBar } from "@/components/marketing/growth/growth-chapter-b
 import { growthCopy } from "@/components/marketing/growth/growth-copy";
 import { GrowthBridge } from "@/components/marketing/growth/growth-bridge";
 import { GrowthSwitch } from "@/components/marketing/growth/growth-switch";
+import { SiteAnalytics } from "@/components/marketing/site-analytics";
+import { StructuredData } from "@/components/marketing/structured-data";
 import { phoneHref } from "@/lib/phone-href";
 
 const telHref = phoneHref("tel", siteConfig.phone);
 
 const description =
-  "Built for carpenters, and the trades they work with: Squared Away sorts your business email, drafts replies in your voice, and chases quiet quotes — and nothing goes out without your okay.";
+  "AI email help for contractors, built for carpenters and the trades they work with: Squared Away sorts your business email, drafts replies in your voice, and drafts quote follow-ups — and nothing goes out without your okay.";
 
 export const metadata: Metadata = {
-  title: "Squared Away — your inbox, handled.",
+  // The words people search for; the share card keeps the brand line.
+  title: "Squared Away — AI email help for contractors",
   description,
   alternates: { canonical: "/" },
   openGraph: {
@@ -50,7 +53,7 @@ const steps = [
   {
     n: "1",
     title: "Connect your Gmail",
-    body: "We show you exactly what Squared Away can and can't do before Google asks for permission. Takes two minutes.",
+    body: "We show you exactly what Squared Away can and can't do before Google asks for permission.",
   },
   {
     n: "2",
@@ -75,7 +78,7 @@ const features = [
   },
   {
     title: "Chases quiet quotes",
-    body: "If a customer goes quiet on a quote or invoice, it drafts a friendly nudge. Two at most, ever — never pushy.",
+    body: "If a customer goes quiet on a quote or invoice, it drafts a friendly nudge. Two nudges at most per conversation — each one a draft that waits for your okay.",
   },
   {
     title: "Morning summary",
@@ -106,7 +109,7 @@ const faqs = [
   },
   {
     q: "Does it work with Outlook?",
-    a: "Gmail only for now, including Google Workspace. Outlook is on the list.",
+    a: "Gmail only for now, including Google Workspace. Outlook is on the list — join the waitlist anyway.",
   },
   {
     q: "What does the trial look like?",
@@ -244,13 +247,13 @@ export default async function HomePage(props: PageProps<"/">) {
           <section aria-label="Our promise" className="sa-inverted px-4 py-16 sm:py-24">
             <div className="mx-auto flex w-full max-w-5xl flex-col gap-6">
               <p className="flex flex-col">
-                <span className="sa-headline-serif text-4xl sm:text-5xl">the one rule,</span>
+                <span className="sa-headline-serif text-4xl sm:text-5xl">the one rule,</span>{" "}
                 <span className="sa-headline-heavy text-5xl sm:text-7xl">your okay first.</span>
               </p>
               <p className="max-w-2xl text-xl leading-relaxed text-ash">
                 Squared Away drafts; you decide. Replies sit in your queue until you tap Send reply
-                — and during your three-day trial, sending to customers is switched off, in the
-                code, not just hidden behind a button.
+                — and during your three-day trial, Squared Away won&apos;t send anything to a
+                customer: that&apos;s switched off in the code, not just hidden behind a button.
               </p>
             </div>
           </section>
@@ -311,9 +314,9 @@ export default async function HomePage(props: PageProps<"/">) {
             </ul>
             <p className="text-slate">{SALES_TAX_NOTE}</p>
             <p className="text-lg font-semibold">
-              On every plan, each reply waits for your okay, and follow-ups are two at most, ever.
-              Where autopilot is included, it stays off until you earn it, and every autopilot reply
-              waits 10 minutes so you can stop it.
+              On every plan, each reply waits for your okay, and follow-ups are two nudges at most,
+              each one a draft you approve. Where autopilot is included, it stays off until you earn
+              it, and every autopilot reply waits 10 minutes so you can stop it.
             </p>
             <p className="text-slate">
               Prices in US dollars. Month to month — stop any time. Every plan starts with the
@@ -387,11 +390,13 @@ export default async function HomePage(props: PageProps<"/">) {
 
       <div className="sa-inverted">
         <div className="mx-auto w-full max-w-5xl px-4 pb-6">
-          <SiteFooter />
+          <SiteFooter growthLink />
         </div>
       </div>
 
       <GrowthSwitch />
+      <StructuredData />
+      <SiteAnalytics />
     </div>
   );
 }

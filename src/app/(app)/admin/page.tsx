@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { describeSource } from "@/server/source-rules";
 import type { Metadata } from "next";
 import { Notice } from "@/components/app/notice";
 import { Headline } from "@/components/brand/headline";
@@ -197,6 +198,7 @@ function WaitlistEntry({
           .join(" · ")}
       </span>
       {facts.appNote ? <p className="text-muted-foreground">“{facts.appNote}”</p> : null}
+      {describeSource(w) ? <span className="text-sm">Came from: {describeSource(w)}</span> : null}
       {referrals && facts.app && w.referralCode ? (
         <span className="text-sm font-semibold">Came from a referral link</span>
       ) : null}

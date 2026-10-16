@@ -26,7 +26,7 @@ test("sunlight mode: one tap, remembered on this device, nothing spills off scre
 
   await page.goto("/settings");
   await expect(page.locator('[data-contrast="high"]')).toHaveCount(1);
-  for (const path of ["/queue", "/settings"]) {
+  for (const path of ["/queue", "/settings", "/settings/phone", "/more"]) {
     await page.goto(path);
     const overflow = await page.evaluate(
       () => document.documentElement.scrollWidth > document.documentElement.clientWidth,

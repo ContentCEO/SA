@@ -266,7 +266,7 @@ describe("privacy policy", () => {
     expect(
       bullet(
         raw("privacy-policy.md"),
-        "Who, when, subject, summaries, the one-line reasons and categories",
+        "Who, when (including a form's Reply-To address), subject, summaries, the one-line reasons and categories",
       ),
     ).toContain("kept so your inbox");
     // Voice examples: names depend on the AI; our code scrubs the rest.
@@ -284,6 +284,27 @@ describe("privacy policy", () => {
     );
     expect(policy).toContain("when you marked a conversation as answered by phone");
     expect(policy).not.toMatch(/book a free/i);
+  });
+
+  it("names what the outside-review fixes store or measure (Reply-To, sign-up source, emails, analytics)", () => {
+    // A form's Reply-To is stored with the other message metadata.
+    expect(policy).toContain('the "Reply-To" a website form sets');
+    expect(readFileSync("src/db/schema.ts", "utf8")).toContain('jsonb("reply_to_header")');
+    // Where a sign-up came from, as the source fields hold it.
+    expect(policy).toContain("(`utm_source`, `utm_medium`, `utm_campaign`)");
+    expect(policy).toContain("the name of the website that sent you, not the page");
+    expect(readFileSync("src/server/source-rules.ts", "utf8")).toContain(
+      'SOURCE_FIELDS = ["utm_source", "utm_medium", "utm_campaign", "referrer_host"]',
+    );
+    // The confirmation and the content-free notice.
+    expect(policy).toContain("We email you once to confirm you're on the list");
+    expect(policy).toContain("the email confirming you joined the waitlist");
+    // Web Analytics on the public pages only, without cookies.
+    expect(policy).toContain("with Vercel Web Analytics. It sets no cookies");
+    expect(policy).toContain("It never runs on the signed-in app.");
+    expect(readFileSync("src/lib/analytics-rules.ts", "utf8")).toContain(
+      'COUNTED_PATHS = ["/", "/growth", "/privacy", "/terms"]',
+    );
   });
 
   it("says nothing about referrals while they are switched off", () => {
@@ -333,7 +354,38 @@ describe("owner-facing copy about the trial", () => {
 
   it("the pre-consent Gmail explainer says only customers are off-limits during the trial", () => {
     expect(flat(readFileSync("src/app/(app)/connect/page.tsx", "utf8"))).toContain(
-      "nothing can go to a customer: you can only send yourself practice copies.",
+      "Squared Away won&apos;t send anything to a customer: you can only send yourself practice copies.",
+    );
+  });
+
+  it("no public or trial screen says nothing sends at all, or calls nudges automatic", () => {
+    // Practice copies go out during the trial; and every nudge is a draft the owner okays.
+    const files = [
+      "src/app/page.tsx",
+      "src/app/(app)/connect/page.tsx",
+      "src/components/app/status-banner.tsx",
+      "src/components/marketing/queue-preview.tsx",
+    ];
+    for (const f of files) {
+      const text = flat(readFileSync(f, "utf8")).toLowerCase();
+      for (const bad of [
+        "nothing sends",
+        "nothing can go to a customer",
+        "two at most, ever",
+        "automatic nudge",
+        "takes two minutes",
+        // The cap counts nudges sent; a discarded one doesn't count, so never promise drafts.
+        "nudge drafts at most",
+        "sending is off",
+      ]) {
+        expect(text, `${f}: ${bad}`).not.toContain(bad);
+      }
+    }
+  });
+
+  it("the homepage states the nudge cap the code keeps (nudges sent, each a draft)", () => {
+    expect(flat(readFileSync("src/app/page.tsx", "utf8"))).toContain(
+      "Two nudges at most per conversation — each one a draft that waits for your okay.",
     );
   });
 

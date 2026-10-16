@@ -16,12 +16,15 @@ test("never-say list and seasonal notes in Settings", async ({ page, context }) 
   const owner = await seedOwner({ mailbox: true, backfilled: true });
   await signInAs(context, owner);
   await page.goto("/settings");
+  await page.getByRole("link", { name: /^Your voice/ }).click();
+  await expect(page).toHaveURL(/\/settings\/writing$/);
 
   await page.getByLabel("Your never-say list").fill("No worries\nno worries\nPer my last email");
   await page.getByRole("button", { name: "Save never-say list" }).click();
   await expect(page.getByRole("status").filter({ hasText: "Never-say list saved." })).toBeVisible();
   await expect(page.getByLabel("Your never-say list")).toHaveValue("No worries\nPer my last email");
 
+  await page.goto("/settings/business");
   const notes = page.getByRole("region", { name: "Seasonal notes" });
   await notes.getByLabel("Note").fill("Booked through November");
   await notes.getByLabel("Last day it applies").fill("2099-01-01");
@@ -54,6 +57,6 @@ test("draft editor: Never say this adds the selected words", async ({ page, cont
   });
   await card.getByRole("button", { name: "Never say this" }).click();
   await expect(card.getByRole("status")).toContainText("Future drafts won't say it.");
-  await page.goto("/settings");
+  await page.goto("/settings/writing");
   await expect(page.getByLabel("Your never-say list")).toHaveValue("address");
 });

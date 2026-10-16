@@ -4,7 +4,16 @@
  * saw, any gaps they filled, and when they tapped. The server re-checks all of
  * it; this file only remembers. Browser-only.
  */
-export type Intent = { draftId: string; seen: string; body?: string; at: number; to: string };
+export type Intent = {
+  draftId: string;
+  seen: string;
+  body?: string;
+  at: number;
+  /** The customer's first name, for the "wasn't sent" note. */
+  to: string;
+  /** The address the card showed; the server refuses the okay if the draft now goes elsewhere. */
+  seenTo?: string;
+};
 
 const KEY = "sa-offline-intents";
 export const INTENT_MAX_AGE_MS = 12 * 60 * 60 * 1000;

@@ -53,7 +53,7 @@ export function BusinessProfileForm({
   setup = false,
 }: {
   defaults: ProfileDefaults;
-  returnTo: "/settings?done=profile" | "/welcome/learning";
+  returnTo: "/settings/business?done=profile" | "/welcome/learning";
   submitLabel: string;
   /**
    * Round 2 (FW): first-time setup. The three required questions come first; the rest is folded

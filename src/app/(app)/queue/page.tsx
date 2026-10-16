@@ -62,6 +62,8 @@ const errors: Record<string, string> = {
   changed:
     "That draft was changed in Gmail. Here's the latest version — read it, then tap Send reply again.",
   deleted: "That draft was deleted or sent from Gmail, so it's gone from here too.",
+  to_changed:
+    "Who that reply goes to changed since you opened it, so nothing was sent. Check the To line, then tap Send reply again.",
   reconnect: "Google access was lost. Reconnect Gmail in Settings and try again.",
   empty: "The reply was empty, so nothing was sent.",
   exists: "There's already a draft for that one — it's below.",
@@ -181,7 +183,7 @@ export default async function QueuePage(props: PageProps<"/queue">) {
                 : sendingIds.length
                   ? "reply on its way,"
                   : "reply sent,"}
-            </span>
+            </span>{" "}
             <span className="sa-headline-heavy text-4xl">squared away.</span>
           </p>
           {sent ? <p className="text-ash">{nextLine(sent, timeZone)}</p> : null}

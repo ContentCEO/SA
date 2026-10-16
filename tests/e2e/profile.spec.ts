@@ -35,6 +35,8 @@ test("onboarding: business profile, then the learning screen", async ({ page, co
   await expect(page.getByText("Reading the last 30 days of email…")).toBeVisible();
 
   await page.goto("/settings");
+  await expect(page.getByRole("link", { name: /^Your business/ })).toContainText("Elm Electric");
+  await page.getByRole("link", { name: /^Your business/ }).click();
   await expect(page.getByText("Elm Electric")).toBeVisible();
   await expect(page.getByText("Same-day service · A price over email")).toBeVisible();
   await expect(page.getByText("boss@biggc.com")).toBeVisible();
@@ -60,7 +62,7 @@ test("settings shows the learned voice in plain words, and it can be corrected",
   });
   await signInAs(context, owner);
 
-  await page.goto("/settings");
+  await page.goto("/settings/writing");
   await expect(
     page.getByText("You usually open with “Hey” and sign off “Thanks, Davi”.", { exact: false }),
   ).toBeVisible();
@@ -76,6 +78,15 @@ test("settings shows the learned voice in plain words, and it can be corrected",
   await expect(
     page.getByText("You edited this, so the weekly refresh leaves it alone."),
   ).toBeVisible();
+
+  // Re-learning replaces those edits, so it asks once first.
+  const relearn = page.getByRole("button", { name: "Yes, re-learn and replace my edits" });
+  await expect(relearn).toBeHidden();
+  await page.getByText("Re-learn from my sent mail").click();
+  await expect(page.getByText("including any changes you made yourself")).toBeVisible();
+  await relearn.click();
+  await expect(page).toHaveURL(/\/settings\/writing\?done=relearn$/);
+  await expect(page.getByRole("status")).toContainText("Re-reading your sent mail.");
 });
 
 test("settings: a bad review link is refused in plain words, with focus on the field", async ({
@@ -100,5 +111,6 @@ test("settings: a bad review link is refused in plain words, with focus on the f
 
   await page.getByLabel("Your review link").fill("");
   await page.getByRole("button", { name: "Save business profile" }).click();
-  await expect(page).toHaveURL(/\/settings\?done=profile/);
+  await expect(page).toHaveURL(/\/settings\/business\?done=profile/);
+  await expect(page.getByRole("status")).toContainText("Business profile saved.");
 });

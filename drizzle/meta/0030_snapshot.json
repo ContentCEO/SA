@@ -1,6 +1,6 @@
 {
-  "id": "dd7fb53e-4c08-48ac-9fbe-1a613f4b2368",
-  "prevId": "4c5d2e82-2f73-4068-8ebf-c1f0a0965206",
+  "id": "4c5d2e82-2f73-4068-8ebf-c1f0a0965206",
+  "prevId": "808acc84-8bfb-4ead-a8bb-15e098a02c2f",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -218,12 +218,6 @@
         },
         "onboarding_dismissed_at": {
           "name": "onboarding_dismissed_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "first_look_hidden_at": {
-          "name": "first_look_hidden_at",
           "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": false
@@ -807,12 +801,6 @@
         },
         "accepted_at": {
           "name": "accepted_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "test_user_added_at": {
-          "name": "test_user_added_at",
           "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": false
@@ -1967,12 +1955,6 @@
           "primaryKey": false,
           "notNull": false
         },
-        "handled_offline_at": {
-          "name": "handled_offline_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
         "quote_requested_at": {
           "name": "quote_requested_at",
           "type": "timestamp with time zone",
@@ -2523,6 +2505,36 @@
         "referral_code": {
           "name": "referral_code",
           "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "utm_source": {
+          "name": "utm_source",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "utm_medium": {
+          "name": "utm_medium",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "utm_campaign": {
+          "name": "utm_campaign",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "referrer_host": {
+          "name": "referrer_host",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "confirmation_sent_at": {
+          "name": "confirmation_sent_at",
+          "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": false
         }
