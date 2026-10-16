@@ -65,7 +65,7 @@ export async function notesForAddresses(
 export async function notesForThreads(
   workspaceId: string,
   threadIds: readonly string[],
-): Promise<Map<string, { note: string | null; key: string }>> {
+): Promise<Map<string, { note: string | null; key: string; address: string | null }>> {
   if (!threadIds.length) return new Map();
   const rows = await db()
     .select({
@@ -88,10 +88,14 @@ export async function notesForThreads(
     workspaceId,
     rows.map((r) => r.address),
   );
-  const out = new Map<string, { note: string | null; key: string }>();
+  const out = new Map<string, { note: string | null; key: string; address: string | null }>();
   for (const r of rows)
     if (!out.has(r.threadId))
-      out.set(r.threadId, { key: r.key, note: r.address ? (notes.get(r.address) ?? null) : null });
+      out.set(r.threadId, {
+        key: r.key,
+        address: r.address,
+        note: r.address ? (notes.get(r.address) ?? null) : null,
+      });
   return out;
 }
 

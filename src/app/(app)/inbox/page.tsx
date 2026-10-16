@@ -208,12 +208,18 @@ export default async function InboxPage(props: PageProps<"/inbox">) {
             {!readOnly ? (
               <ResortSheet threadId={row.id} current={row.category} back="inbox" />
             ) : null}
-            {!readOnly && customerOf.get(row.id) && row.senderAddress ? (
+            {/* The sheet names the same email the server keys the rule on (the customer's
+                newest email that isn't a side conversation). */}
+            {!readOnly && customerOf.get(row.id)?.address ? (
               <SenderRuleSheet
                 messageId={customerOf.get(row.id)!.key}
-                who={row.senderName || row.senderAddress}
-                address={row.senderAddress}
-                company={companyChoice(row.senderAddress, own)}
+                who={
+                  customerOf.get(row.id)!.address === row.senderAddress && row.senderName
+                    ? row.senderName
+                    : customerOf.get(row.id)!.address!
+                }
+                address={customerOf.get(row.id)!.address!}
+                company={companyChoice(customerOf.get(row.id)!.address!, own)}
                 back="inbox"
               />
             ) : null}
