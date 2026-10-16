@@ -29,7 +29,8 @@ import {
 import { jobKindOf } from "./monthly-rules";
 import { keepQuoteAccepted, quoteAccepted } from "./quote-rules";
 import { ownerGavePrice } from "./quotes";
-import { notDraftMessage, notDraftSql, sideEmailSql } from "./thread-sql";
+import { messageReplyAddress, notDraftMessage, notDraftSql, sideEmailSql } from "./thread-sql";
+import { customerReplyAddress, replyRedirected } from "./reply-address-rules";
 
 /** Classify inbound mail from this far back on the first pass; everything new after that. */
 export const CLASSIFY_LOOKBACK_DAYS = 14;
@@ -70,6 +71,7 @@ async function pendingFor(mailboxId: string, since: Date) {
       threadId: messages.threadId,
       fromAddress: messages.fromAddress,
       fromName: messages.fromName,
+      replyToHeader: messages.replyToHeader,
       subject: messages.subject,
       bodyText: messages.bodyText,
       snippet: messages.snippet,
@@ -175,6 +177,27 @@ export async function classifyPending(
             lt(messages.sentAt, m.sentAt),
           ),
         );
+      // A website form writes from one robot address for every lead: the person is the
+      // Reply-To. A new person through a known form is still a first-time sender (B1).
+      const replyTo = replyRedirected(m) ? customerReplyAddress(m) : null;
+      const [priorReply] = replyTo
+        ? await db()
+            .select({ n: count() })
+            .from(messages)
+            .where(
+              and(
+                eq(messages.mailboxId, mailboxId),
+                eq(messages.direction, "in"),
+                sql`${messageReplyAddress()} = ${replyTo}`,
+                lt(messages.sentAt, m.sentAt),
+              ),
+            )
+        : [{ n: 1 }];
+      const firstTimeSender = (prior?.n ?? 0) === 0 || (priorReply?.n ?? 0) === 0;
+      // VIP by either address: both only add caution.
+      const senderIsVip = [m.fromAddress, replyTo].some(
+        (a) => !!a && business.vipSenders.includes(a.toLowerCase()),
+      );
       try {
         result = await classifyEmail(
           box.workspace.id,
@@ -184,11 +207,11 @@ export async function classifyPending(
             fromAddress: m.fromAddress,
             subject: m.subject,
             receivedAt: m.sentAt,
-            firstTimeSender: (prior?.n ?? 0) === 0,
+            firstTimeSender,
             threadSummary: thread?.summary ?? null,
             body: m.bodyText ?? m.snippet ?? "",
           },
-          { senderIsVip: business.vipSenders.includes((m.fromAddress ?? "").toLowerCase()), now },
+          { senderIsVip, now },
         );
       } catch (err) {
         if (err instanceof AiCapReachedError) {

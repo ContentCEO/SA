@@ -122,12 +122,47 @@ export function refFor(scenarioId: string): string {
   return scenarioId.replace(/-/g, "").slice(0, 12).toLowerCase();
 }
 
+/**
+ * How the lead arrives: Dana writes herself ("direct"), or a website contact form emails the
+ * owner from its robot address with Dana in Reply-To ("form", Squarespace's layout).
+ */
+export type FakeLead = "direct" | "form";
+
+/** A Squarespace form's robot sender: a reply must never go here. */
+export const FORM_ROBOT = { name: "Squarespace", email: "form-submission@squarespace.info" };
+
 /** The customer's side of a scenario: what the spec asserts the reply is threaded to. */
-export function fakeCustomer(ref: string) {
+export function fakeCustomer(ref: string, lead: FakeLead = "direct") {
+  if (lead === "form") {
+    // Not on example.com: the e2e owners are, and a Reply-To on the owner's own business
+    // domain is never taken as a customer's (a form set to reply to the shop itself).
+    const email = `dana-${ref}@example.net`;
+    return {
+      name: "Dana Ruiz",
+      firstName: "Dana",
+      email,
+      from: `${FORM_ROBOT.name} <${FORM_ROBOT.email}>`,
+      replyTo: `Dana Ruiz <${email}>`,
+      subject: `Form Submission - Request a quote, ref ${ref}`,
+      messageIdHeader: `<cust-${ref}@mail.example.com>`,
+      gmailMessageId: `msg-${ref}-cust`,
+      gmailThreadId: `thr-${ref}-cust`,
+      body: [
+        "Name: Dana Ruiz",
+        `Email: ${email}`,
+        "Phone: (555) 010-0199",
+        `Message: Could you give me a quote to replace the water heater in our basement? It's a 40 gallon gas tank, about 12 years old, and it's started to leak a little at the bottom. (Ref ${ref})`,
+        "",
+        "Sent via form submission from Ruiz Plumbing.",
+      ].join("\n"),
+    };
+  }
   return {
     name: "Dana Ruiz",
     firstName: "Dana",
     email: `dana-${ref}@example.com`,
+    from: `Dana Ruiz <dana-${ref}@example.com>`,
+    replyTo: null as string | null,
     subject: `Water heater quote, ref ${ref}`,
     messageIdHeader: `<cust-${ref}@mail.example.com>`,
     gmailMessageId: `msg-${ref}-cust`,
@@ -151,15 +186,21 @@ const DAY = 24 * HOUR;
  * threads, enough for voice learning (MIN_SENT_EMAILS = 5). Each sent body is long enough to
  * count (≥20 characters after quoted text is stripped).
  */
-export function buildInbox(ref: string, ownerEmail: string, now = Date.now()): FakeMail[] {
-  const c = fakeCustomer(ref);
+export function buildInbox(
+  ref: string,
+  ownerEmail: string,
+  now = Date.now(),
+  opts: { lead?: FakeLead } = {},
+): FakeMail[] {
+  const c = fakeCustomer(ref, opts.lead);
   const customer: FakeMail = {
     id: c.gmailMessageId,
     threadId: c.gmailThreadId,
     labelIds: ["INBOX", "UNREAD", "CATEGORY_PERSONAL"],
     internalDate: now - HOUR,
     headers: [
-      { name: "From", value: `${c.name} <${c.email}>` },
+      { name: "From", value: c.from },
+      ...(c.replyTo ? [{ name: "Reply-To", value: c.replyTo }] : []),
       { name: "To", value: ownerEmail },
       { name: "Subject", value: c.subject },
       { name: "Message-ID", value: c.messageIdHeader },

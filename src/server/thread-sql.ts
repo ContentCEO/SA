@@ -30,6 +30,38 @@ export const unsentDraftSql = (alias: string) =>
     `(${alias}.label_ids @> '["DRAFT"]'::jsonb and not (${alias}.label_ids @> '["SENT"]'::jsonb))`,
   );
 
+/**
+ * SQL twin of `customerReplyAddress` (reply-address-rules.ts), for a messages alias: the
+ * stored usable Reply-To (a website form's customer), else the sender. Lowercased, trimmed.
+ * The choice was made at sync (`pickReplyTo`), so this is a plain coalesce.
+ */
+export const replyAddressSql = (alias: string) =>
+  sql.raw(`lower(trim(coalesce(${alias}.reply_to_header->>'address', ${alias}.from_address)))`);
+/** SQL twin of `customerReplyName`: the Reply-To's own name when it redirects, else From's. */
+export const replyNameSql = (alias: string) =>
+  sql.raw(
+    `(case when ${alias}.reply_to_header->>'address' is not null then ${alias}.reply_to_header->>'name' else ${alias}.from_name end)`,
+  );
+/** The same two on the messages table, in a query-builder select / where. */
+export const messageReplyAddress = () =>
+  sql<
+    string | null
+  >`lower(trim(coalesce(${messages.replyToHeader}->>'address', ${messages.fromAddress})))`;
+export const messageReplyName = () =>
+  sql<
+    string | null
+  >`(case when ${messages.replyToHeader}->>'address' is not null then ${messages.replyToHeader}->>'name' else ${messages.fromName} end)`;
+
+/** The outer thread's newest inbound email's reply address / name: the screens' "customer". */
+export const customerAddressSql = () =>
+  sql<
+    string | null
+  >`(select ${replyAddressSql("cx_m")} from messages cx_m where cx_m.thread_id = ${outerThreadId()} and cx_m.direction = 'in' order by cx_m.sent_at desc limit 1)`;
+export const customerNameSql = () =>
+  sql<
+    string | null
+  >`(select ${replyNameSql("cx_m")} from messages cx_m where cx_m.thread_id = ${outerThreadId()} and cx_m.direction = 'in' order by cx_m.sent_at desc limit 1)`;
+
 /** Not an unsent Gmail draft, for a messages alias. */
 export const notDraftSql = (alias: string) => sql`not ${unsentDraftSql(alias)}`;
 
@@ -62,10 +94,11 @@ const recipientsOf = (alias: string, as: string) =>
 const norm = (expr: string) => sql.raw(`lower(trim(coalesce(${expr}, '')))`);
 
 /**
- * `addr` (already normalized) is on email `alias` (an inbound one): its sender, or To / Cc.
+ * `addr` (already normalized) is on email `alias` (an inbound one): its sender, its stored
+ * Reply-To (a website form's customer), or To / Cc.
  */
 const involvedSql = (alias: string, addr: SQL) =>
-  sql`(${norm(`${alias}.from_address`)} = ${addr} or exists (select 1 from ${recipientsOf(alias, "sx_x")} where ${norm("sx_x.a")} = ${addr}))`;
+  sql`(${norm(`${alias}.from_address`)} = ${addr} or ${norm(`${alias}.reply_to_header->>'address'`)} = ${addr} or exists (select 1 from ${recipientsOf(alias, "sx_x")} where ${norm("sx_x.a")} = ${addr}))`;
 
 /** The domain of a normalized address expression (after the last "@"). */
 const domainOf = (addr: SQL) => sql`regexp_replace(${addr}, '^.*@', '')`;
@@ -104,7 +137,7 @@ const sideShapeSql = (o: string) => {
  * in Cc) — who had never been on the thread's inbound mail (sender, To or Cc) before that
  * email. The crew's reply, however it's worded. Not recursive: the sender is checked against
  * ALL earlier inbound. A customer the owner first reached at a contact form's Reply-To is
- * never one: that "Re:" goes outside the owner's domain and isn't a forward.
+ * never one: the stored Reply-To puts them on the customer's side (`involvedSql`).
  */
 const sideInSql = (i: string) => {
   const a = sql.raw(i);
@@ -133,10 +166,12 @@ const sideOutSql = (o: string) => {
  * crew or a supplier (Gmail keeps a forward in the same conversation), or their reply. It
  * answers nobody and leaves nobody waiting. Decided by who the owner wrote to, never by a
  * single "customer" address: whoever was on the thread's inbound mail (sender, To or Cc) is
- * the customer's side. See `sideOutSql` / `sideInSql`. Known gap, on purpose: a plain "Re:"
- * the owner sends only to an outside address answers the lead — a contact-form lead's
- * customer is reached at the form's Reply-To, which sync doesn't store, so "went to the
- * customer" can't be required. Self-contained (it reads the alias's own thread), so it
+ * the customer's side, a stored Reply-To included (so an owner "Fwd:" to a form lead's own
+ * address answers them). See `sideOutSql` / `sideInSql`. Not a strict "went to the customer"
+ * rule, on purpose: rows stored before Reply-To was read (or outside the backfill window) have
+ * none stored, and a lead forwarded by a property manager or a friend has the customer on no
+ * header at all. So a plain "Re:" the owner sends only to an outside address still answers
+ * the lead. Self-contained (it reads the alias's own thread), so it
  * works on any messages alias, with or without the threads table in the query.
  */
 export const sideEmailSql = (alias: string) => sql`(${sideInSql(alias)} or ${sideOutSql(alias)})`;
@@ -169,6 +204,10 @@ export const waitingSinceSql = () =>
 /** The sender of that first waiting email (for WHERE clauses only: A2). */
 export const waitingSenderSql = () =>
   sql`(select w.from_address from messages w where w.thread_id = ${outerThreadId()} and w.direction = 'in' and not ${sideEmailSql("w")} and w.sent_at > coalesce(${lastOutSql()}, '-infinity'::timestamptz) order by w.sent_at asc, w.id asc limit 1)`;
+
+/** Where a reply to that first waiting email goes (`replyAddressSql`; WHERE clauses only). */
+export const waitingReplySql = () =>
+  sql`(select ${replyAddressSql("w")} from messages w where w.thread_id = ${outerThreadId()} and w.direction = 'in' and not ${sideEmailSql("w")} and w.sent_at > coalesce(${lastOutSql()}, '-infinity'::timestamptz) order by w.sent_at asc, w.id asc limit 1)`;
 
 /**
  * SQL twin of `isQuoteThread`: sorted as a quote request, or has ever had an outcome
@@ -204,6 +243,10 @@ export const requestAtSql = () =>
  */
 export const requestSenderSql = () =>
   sql`(select m.from_address from messages m where m.thread_id = ${outerThreadId()} and m.direction = 'in' and m.sent_at >= coalesce(${threads.quoteRequestedAt}, '-infinity'::timestamptz) order by m.sent_at asc, m.id asc limit 1)`;
+
+/** Where a reply to the requester goes (`replyAddressSql`; WHERE clauses only). */
+export const requestReplySql = () =>
+  sql`(select ${replyAddressSql("m")} from messages m where m.thread_id = ${outerThreadId()} and m.direction = 'in' and m.sent_at >= coalesce(${threads.quoteRequestedAt}, '-infinity'::timestamptz) order by m.sent_at asc, m.id asc limit 1)`;
 
 /**
  * SQL twin of `isNoReplyAddress` for an address expression: the local part before the last

@@ -3,6 +3,7 @@ import { and, desc, eq, inArray, max, ne, or, isNull, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { mailboxes, messages, threads } from "@/db/schema";
 import { isDecidedStage } from "./quote-rules";
+import { messageReplyAddress, messageReplyName } from "./thread-sql";
 import { listQuotes, type QuoteRow } from "./quotes";
 
 export type CustomerRow = {
@@ -22,15 +23,17 @@ const notNoise = or(isNull(threads.category), ne(threads.category, "noise"));
 
 /**
  * Everyone who has written to the owner's business inbox (noise left out),
- * built from mail we've already synced — nothing for the owner to type.
+ * built from mail we've already synced — nothing for the owner to type. A customer is the
+ * address a reply goes to: a website form's Reply-To, so two people who used the same form
+ * are two customers, not one "form-submission@…".
  */
 export async function listCustomers(workspaceId: string, now: Date = new Date()) {
-  const addr = sql<string>`lower(${messages.fromAddress})`;
+  const addr = messageReplyAddress();
   const rows = await db()
     .select({
-      address: addr,
+      address: sql<string>`${addr}`,
       key: sql<string>`(array_agg(${messages.id}::text order by ${messages.sentAt} desc))[1]`,
-      name: sql<string | null>`max(${messages.fromName})`,
+      name: sql<string | null>`max(${messageReplyName()})`,
       conversations: sql<number>`count(distinct ${messages.threadId})::int`,
       lastContactAt: max(threads.lastMessageAt),
       supplierThreads: sql<number>`count(distinct ${messages.threadId}) filter (where ${threads.category} = 'supplier_vendor')`,
@@ -88,7 +91,7 @@ export type CustomerThread = {
 export async function customerByKey(workspaceId: string, key: string) {
   if (!/^[0-9a-f-]{36}$/i.test(key)) return null;
   const [m] = await db()
-    .select({ address: messages.fromAddress })
+    .select({ address: messageReplyAddress() })
     .from(messages)
     .innerJoin(mailboxes, eq(mailboxes.id, messages.mailboxId))
     .where(
@@ -112,7 +115,7 @@ export async function customerDetail(workspaceId: string, address: string) {
       and(
         eq(mailboxes.workspaceId, workspaceId),
         eq(messages.direction, "in"),
-        sql`lower(${messages.fromAddress}) = ${email}`,
+        sql`${messageReplyAddress()} = ${email}`,
       ),
     );
   if (!ids.length) return null;
@@ -139,14 +142,15 @@ export async function customerDetail(workspaceId: string, address: string) {
     )
     .orderBy(desc(threads.lastMessageAt));
   const [named] = await db()
-    .select({ name: messages.fromName })
+    .select({ name: messageReplyName() })
     .from(messages)
     .innerJoin(mailboxes, eq(mailboxes.id, messages.mailboxId))
     .where(
       and(
         eq(mailboxes.workspaceId, workspaceId),
-        sql`lower(${messages.fromAddress}) = ${email}`,
-        sql`${messages.fromName} is not null`,
+        eq(messages.direction, "in"),
+        sql`${messageReplyAddress()} = ${email}`,
+        sql`${messageReplyName()} is not null`,
       ),
     )
     .orderBy(desc(messages.sentAt))

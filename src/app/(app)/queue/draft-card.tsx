@@ -31,6 +31,10 @@ export type DraftCardProps = {
   /** Plan #6: the "Remind me" times allowed for this one right now. */
   remindOptions?: SnoozeOption[];
   customer: string;
+  /** H7: the address this reply goes to, shown on the card and above the editor. */
+  toAddress: string;
+  /** The customer's email named this address to reply to (a website form's Reply-To). */
+  toFromReplyTo?: boolean;
   tag: string;
   /** One line on what the customer wants, from sorting — so the card reads without opening Gmail. */
   summary?: string | null;
@@ -74,6 +78,21 @@ function Pending({
     <Button type="submit" disabled={pending} {...props}>
       {pending ? busy : label}
     </Button>
+  );
+}
+
+/**
+ * H7: who the reply goes to, as visible text (never an aria-label: Sentry's ui.* scrub isn't
+ * relied on), so the owner can catch a wrong address before tapping Send reply.
+ */
+function ToLine({ address, fromReplyTo }: { address: string; fromReplyTo?: boolean }) {
+  return (
+    <p className="text-sm break-all">
+      <span className="font-semibold">To:</span> {address}
+      {fromReplyTo ? (
+        <span className="block text-muted-foreground">the reply address in their email</span>
+      ) : null}
+    </p>
   );
 }
 
@@ -205,6 +224,7 @@ export function DraftCard(p: DraftCardProps) {
           <span className="text-lg font-black">{p.customer}</span>
           <ConfidenceTag label={p.label} />
         </div>
+        <ToLine address={p.toAddress} fromReplyTo={p.toFromReplyTo} />
         <span className="text-sm font-semibold">{p.tag}</span>
         {p.summary ? <p className="font-semibold">{p.summary}</p> : null}
         <p className={p.summary ? "text-muted-foreground" : undefined}>{p.reason}</p>
@@ -244,6 +264,7 @@ export function DraftCard(p: DraftCardProps) {
       {editing ? (
         <form className="flex flex-col gap-3">
           <input type="hidden" name="draftId" value={p.draftId} />
+          <ToLine address={p.toAddress} fromReplyTo={p.toFromReplyTo} />
           <label className="flex flex-col gap-1.5">
             <span className="font-semibold">Your reply</span>
             <textarea

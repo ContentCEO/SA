@@ -10,7 +10,7 @@ import {
   notDraftSql,
   quoteRequestSql,
   requestAtSql,
-  requestSenderSql,
+  requestReplySql,
   sideEmailSql,
 } from "./thread-sql";
 
@@ -66,7 +66,8 @@ export function scorecardQueries(workspaceId: string, start: Date, end: Date, no
   // customer email on older threads), who asked, and the owner's first answer after it. A
   // request sent on an older conversation dates from the request, not the old chat.
   const requestedAt = requestAtSql();
-  const requester = requestSenderSql();
+  // Where a reply would go (a form's Reply-To, else the sender): B1.
+  const requester = requestReplySql();
   const answer = firstAnswerSql(requestedAt, now);
 
   // Quotes out: each quote request once, in the week its quote went out — the owner's first

@@ -257,6 +257,8 @@ async function applyMailbox(
           labelIds: s.message.labelIds,
           direction: "out",
           sentAt: new Date(s.message.internalDate),
+          // Owner mail: nobody to reply to (same rule as sync).
+          replyToHeader: {},
         })
         .where(and(eq(messages.id, s.id), unsentDraftMessage()))
         .returning({ id: messages.id });

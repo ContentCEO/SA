@@ -17,6 +17,7 @@ import {
   uuid,
 } from "drizzle-orm/pg-core";
 import { TRADES } from "../config/trades";
+import type { ReplyToHeader } from "../server/reply-address-rules";
 
 export const tradeEnum = pgEnum("trade", TRADES);
 
@@ -256,6 +257,13 @@ export const messages = pgTable(
     references: text("references"),
     fromAddress: text("from_address"),
     fromName: text("from_name"),
+    /**
+     * The usable Reply-To of an inbound email (a website form's customer), chosen at sync by
+     * `pickReplyTo`. NULL = never read (stored before this column, or a fetch that couldn't
+     * return it); {} = read, nothing usable, the reply goes to From; {address, name?} = the
+     * reply goes there. Metadata like from_address: kept past the body purge.
+     */
+    replyToHeader: jsonb("reply_to_header").$type<ReplyToHeader>(),
     toAddresses: jsonb("to_addresses").$type<string[]>().notNull().default([]),
     ccAddresses: jsonb("cc_addresses").$type<string[]>().notNull().default([]),
     subject: text("subject"),

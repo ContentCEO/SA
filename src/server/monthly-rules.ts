@@ -48,18 +48,27 @@ export function jobKindOf(trade: Trade | null, service: string | null): string {
  * A domain matches itself and its subdomains, except `exact` entries; else DIRECT_EMAIL.
  */
 export function leadSourceOf(fromAddressOrDomain: string | null): string {
-  if (!fromAddressOrDomain) return DIRECT_EMAIL;
-  const raw = fromAddressOrDomain.trim().toLowerCase();
+  return leadPlatformOf(fromAddressOrDomain) ?? DIRECT_EMAIL;
+}
+
+/**
+ * The lead platform (Thumbtack, Angi…) an address or domain belongs to, or null. Same domain
+ * rule as `leadSourceOf`. Also used at sync: a platform's relay Reply-To
+ * (reply+8x2k@messages.thumbtack.com) is never taken as the customer's own address.
+ */
+export function leadPlatformOf(addressOrDomain: string | null | undefined): string | null {
+  if (!addressOrDomain) return null;
+  const raw = addressOrDomain.trim().toLowerCase();
   const host = (raw.includes("@") ? raw.slice(raw.lastIndexOf("@") + 1) : raw)
     .replace(/[>\s]+$/, "")
     .replace(/\.$/, "");
-  if (!/^[a-z0-9.-]+$/.test(host)) return DIRECT_EMAIL;
+  if (!/^[a-z0-9.-]+$/.test(host)) return null;
   for (const source of LEAD_SOURCES) {
     for (const d of source.domains) {
       if (host === d || (!source.exact && host.endsWith(`.${d}`))) return source.label;
     }
   }
-  return DIRECT_EMAIL;
+  return null;
 }
 
 /** The n most common labels with their counts: most first, then alphabetical. */

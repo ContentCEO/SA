@@ -27,7 +27,14 @@ import {
   type MonthlyStats,
 } from "./monthly-rules";
 import { localMonthName, usableTimeZone } from "./snooze-rules";
-import { noReplySql, quoteRequestSql, requestAtSql, requestSenderSql } from "./thread-sql";
+import {
+  messageReplyAddress,
+  noReplySql,
+  quoteRequestSql,
+  replyAddressSql,
+  requestAtSql,
+  requestSenderSql,
+} from "./thread-sql";
 
 /**
  * Plan #35: the first-of-month summary. Counts and OUR fixed labels only.
@@ -118,8 +125,11 @@ export function monthlyStatsQueries(
   const firstIn = sql`(select min(m.sent_at) from messages m where m.thread_id = ${outerThreadId()} and m.direction = 'in')`;
   const inMonth = (t: SQL) => sql`(${t} >= ${at(start)} and ${t} < ${at(end)})`;
   // One count, computed in the database: no address is returned.
+  // By the address a reply goes to (B1): every lead through one website form shares its
+  // robot From, and must not read as one customer writing again.
+  const who = messageReplyAddress();
   const repeat = db()
-    .select({ n: sql<number>`count(distinct lower(trim(${messages.fromAddress})))` })
+    .select({ n: sql<number>`count(distinct ${who})` })
     .from(messages)
     .innerJoin(threads, eq(threads.id, messages.threadId))
     .innerJoin(mailboxes, eq(mailboxes.id, threads.mailboxId))
@@ -131,10 +141,10 @@ export function monthlyStatsQueries(
         lt(messages.sentAt, end),
         or(quoteRequestSql(), eq(threads.category, "customer_question")),
         sql`(${inMonth(firstIn)} or ${inMonth(sql`${threads.quoteRequestedAt}`)})`,
-        sql`position('@' in coalesce(${messages.fromAddress}, '')) > 1`,
-        sql`not ${noReplySql(sql`${messages.fromAddress}`)}`,
-        sql`not ${leadPlatformSql(sql`${messages.fromAddress}`)}`,
-        sql`exists (select 1 from messages e join mailboxes eb on eb.id = e.mailbox_id where eb.workspace_id = ${workspaceId} and e.direction = 'in' and e.thread_id <> ${messages.threadId} and lower(trim(e.from_address)) = lower(trim(${messages.fromAddress})) and e.sent_at < ${at(start)})`,
+        sql`position('@' in coalesce(${who}, '')) > 1`,
+        sql`not ${noReplySql(who)}`,
+        sql`not ${leadPlatformSql(who)}`,
+        sql`exists (select 1 from messages e join mailboxes eb on eb.id = e.mailbox_id where eb.workspace_id = ${workspaceId} and e.direction = 'in' and e.thread_id <> ${messages.threadId} and ${replyAddressSql("e")} = ${who} and e.sent_at < ${at(start)})`,
       ),
     );
 

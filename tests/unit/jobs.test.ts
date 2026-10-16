@@ -79,6 +79,7 @@ describe("job wiring", () => {
         "refresh-voices",
         "poll-mailboxes",
         "renew-gmail-watches",
+        "reply-to-backfill",
         "purge-expired-bodies",
         "send-after-undo",
         "voice-ideas",

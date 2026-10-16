@@ -15,7 +15,7 @@ import {
   type ReviewOfferReason,
 } from "./offer-rules";
 import { isQuoteThread } from "./quote-rules";
-import { notDraftSql } from "./thread-sql";
+import { customerAddressSql, messageReplyAddress, notDraftSql } from "./thread-sql";
 
 /**
  * Which owner-tap offers a thread gets (plan #29 "Ask for a review", #26 "Want to ask if
@@ -47,9 +47,11 @@ async function threadFacts(workspaceId: string, threadIds: string[]) {
       invoicePaidSource: threads.invoicePaidSource,
       quoteOutcome: threads.quoteOutcome,
       quoteOutcomeSource: threads.quoteOutcomeSource,
-      customerAddress: sql<
+      // Where a reply goes (a website form's Reply-To, else the sender) and who sent it.
+      customerAddress: customerAddressSql(),
+      senderAddress: sql<
         string | null
-      >`(select lower(m.from_address) from messages m where m.thread_id = ${threads.id} and m.direction = 'in' order by m.sent_at desc limit 1)`,
+      >`(select lower(trim(m.from_address)) from messages m where m.thread_id = ${threads.id} and m.direction = 'in' order by m.sent_at desc limit 1)`,
       lastInboundAt: sql<
         string | Date | null
       >`(select max(m.sent_at) from messages m where m.thread_id = ${threads.id} and m.direction = 'in')`,
@@ -103,7 +105,11 @@ function threadComplained(f: {
 async function complainedAddresses(workspaceId: string, now: Date): Promise<Set<string>> {
   const since = new Date(now.getTime() - COMPLAINT_MEMORY_DAYS * DAY_MS);
   const rows = await db()
-    .selectDistinct({ address: sql<string>`lower(${messages.fromAddress})` })
+    // Both the sender and the reply address: blocking more is the safe direction.
+    .selectDistinct({
+      address: sql<string>`lower(${messages.fromAddress})`,
+      reply: messageReplyAddress(),
+    })
     .from(messages)
     .innerJoin(threads, eq(threads.id, messages.threadId))
     .innerJoin(mailboxes, eq(mailboxes.id, threads.mailboxId))
@@ -123,7 +129,7 @@ async function complainedAddresses(workspaceId: string, now: Date): Promise<Set<
         ),
       ),
     );
-  return new Set(rows.map((r) => r.address));
+  return new Set(rows.flatMap((r) => [r.address, r.reply].filter((a): a is string => !!a)));
 }
 
 /**
@@ -196,6 +202,7 @@ function cheapReviewReason(
       f.invoicePaidAt != null &&
       (f.invoicePaidSource === "owner" || f.invoicePaidSource === "auto"),
     customerAddress: address,
+    senderAddress: f.senderAddress,
     ownerWroteToThem,
     reviewUrl: ctx.reviewUrl,
     recentReviewToAddress: address != null && ctx.recent.has(address),

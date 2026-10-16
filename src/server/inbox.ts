@@ -1,8 +1,9 @@
 import "server-only";
-import { and, desc, eq, isNull, sql, type SQL } from "drizzle-orm";
+import { and, desc, eq, isNull, type SQL } from "drizzle-orm";
 import type { Category } from "@/ai/prompts/classify.v3";
 import { db } from "@/db";
 import { mailboxes, threads } from "@/db/schema";
+import { customerAddressSql, customerNameSql } from "./thread-sql";
 
 export type InboxFilter =
   | { kind: "all" }
@@ -46,13 +47,9 @@ export async function listInboxThreads(
       needsOwnerReason: threads.needsOwnerReason,
       lastMessageAt: threads.lastMessageAt,
       extracted: threads.extracted,
-      // Latest inbound sender on the thread.
-      senderName: sql<
-        string | null
-      >`(select m.from_name from messages m where m.thread_id = ${threads.id} and m.direction = 'in' order by m.sent_at desc limit 1)`,
-      senderAddress: sql<
-        string | null
-      >`(select m.from_address from messages m where m.thread_id = ${threads.id} and m.direction = 'in' order by m.sent_at desc limit 1)`,
+      // Latest inbound email's customer, as a reply addresses them (a form's Reply-To, else From).
+      senderName: customerNameSql(),
+      senderAddress: customerAddressSql(),
     })
     .from(threads)
     .innerJoin(mailboxes, eq(mailboxes.id, threads.mailboxId))

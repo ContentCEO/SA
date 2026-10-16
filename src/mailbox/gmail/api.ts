@@ -25,6 +25,18 @@ export type GmailReaderOptions = {
 };
 
 /** Gmail error reasons that mean "slow down", not "you did something wrong". */
+/** Headers a metadata read asks for by default. Reply-To: website forms put the customer there. */
+export const DEFAULT_METADATA_HEADERS = [
+  "From",
+  "To",
+  "Cc",
+  "Subject",
+  "Message-ID",
+  "References",
+  "In-Reply-To",
+  "Reply-To",
+] as const;
+
 const RATE_LIMIT_REASONS = new Set(["rateLimitExceeded", "userRateLimitExceeded", "backendError"]);
 
 /** Exponential backoff with full jitter: random(0, base * 2^attempt), capped. */
@@ -166,23 +178,15 @@ export function createGmailReader(opts: GmailReaderOptions): MailboxReader & Mai
       return { messages: r?.messages ?? [], nextPageToken: r?.nextPageToken };
     },
 
-    async getMessage(id, { withBody }): Promise<MailMessage | null> {
+    async getMessage(id, { withBody, headers }): Promise<MailMessage | null> {
       const qs = new URLSearchParams({ format: withBody ? "full" : "metadata" });
-      if (!withBody) {
-        for (const h of [
-          "From",
-          "To",
-          "Cc",
-          "Subject",
-          "Message-ID",
-          "References",
-          "In-Reply-To",
-        ]) {
-          qs.append("metadataHeaders", h);
-        }
-      }
+      const asked = withBody ? [] : (headers ?? DEFAULT_METADATA_HEADERS);
+      for (const h of asked) qs.append("metadataHeaders", h);
       const r = await call<GmailMessageResource>(`/messages/${encodeURIComponent(id)}?${qs}`);
-      return r ? toMailMessage(r, withBody) : null;
+      // From the request we made, not from the response: a metadata read that didn't ask for
+      // Reply-To says nothing about whether the email has one.
+      const replyToRead = withBody || asked.some((h) => h.toLowerCase() === "reply-to");
+      return r ? toMailMessage(r, withBody, { replyToRead }) : null;
     },
 
     async listHistory({ startHistoryId, pageToken }): Promise<HistoryPage> {

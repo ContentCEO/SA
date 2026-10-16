@@ -18,6 +18,8 @@ export class FakeMailbox {
   oldestHistory = 0;
   revoked = false;
   bodyFetches: string[] = [];
+  /** Metadata reads that asked for only some headers (the Reply-To backfill / lazy read). */
+  headerRequests: { id: string; headers: readonly string[] }[] = [];
   calls = 0;
 
   add(m: Partial<MailMessage> & { id: string; threadId: string; daysAgo?: number; now?: Date }) {
@@ -79,18 +81,25 @@ export class FakeMailbox {
           nextPageToken: next < all.length ? String(next) : undefined,
         };
       },
-      getMessage: async (id, { withBody }) => {
+      getMessage: async (id, { withBody, headers }) => {
         guard();
+        if (!withBody && headers) this.headerRequests.push({ id, headers });
         const m = this.messages.find((x) => x.providerMessageId === id);
         if (!m) return null;
         if (withBody) this.bodyFetches.push(id);
+        // Like the real client: the default metadata list includes Reply-To; a subset only
+        // returns what it named.
+        const asked = !withBody && headers ? headers.map((h) => h.toLowerCase()) : null;
+        const replyToRead = !asked || asked.includes("reply-to");
         const copy: MailMessage = {
           providerMessageId: m.providerMessageId,
           providerThreadId: m.providerThreadId,
           labelIds: m.labelIds,
           snippet: m.snippet,
           internalDate: m.internalDate,
-          headers: m.headers,
+          headers: asked
+            ? { replyTo: replyToRead ? m.headers.replyTo : undefined, replyToRead }
+            : { ...m.headers, replyToRead },
         };
         return withBody ? { ...copy, bodyText: m.bodyText } : copy;
       },

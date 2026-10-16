@@ -895,12 +895,14 @@ default, CI too) and refuses a non-local `DATABASE_URL` or an `APP_URL` that isn
   (crew@shop.com; never on public webmail, `PUBLIC_WEBMAIL_DOMAINS` in `sender-rules.ts`).
   An inbound email is side when its sender got the lead from the owner (a recipient of such an
   owner email, or of any owner email when on the owner's business domain: "Dana, meet Mike")
-  and had never been on the thread's inbound mail before. Not a strict "To/Cc holds the
-  customer" rule because a contact-form lead's customer is answered at the form's Reply-To,
-  which sync doesn't store (an additive `messages.reply_to_addresses` would allow the strict
-  rule). **Known gaps:** a plain "Re:" sent only to an outside address answers the lead (the
-  contact-form case); on a lead that arrived as a forward (a friend, an office or a property
-  manager), the owner's forward to an outside crew counts as an answer.
+  and had never been on the thread's inbound mail before. Since 2026-10-16 (review B1) the
+  customer's side also includes each inbound email's stored Reply-To (`involvedSql`), so an
+  owner "Fwd:" to a form lead's own address answers them and their later reply isn't a crew
+  reply. Still not a strict "To/Cc holds the customer" rule: rows outside the Reply-To backfill
+  (older than 30 days / not inbox) have none stored, and a lead forwarded by a friend or
+  property manager has the customer on no header. **Known gaps:** a plain "Re:" sent only to
+  an outside address answers the lead; on a lead that arrived as a forward (a friend, an office
+  or a property manager), the owner's forward to an outside crew counts as an answer.
   **Known limitation (A11):** `quote_requested_at` is sticky, so a returning customer asking for
   a new job on their old, already decided quote thread keeps the first request's time: the
   scorecard, the monthly count and the repeat-customer check miss the new request (no history of
@@ -909,6 +911,44 @@ default, CI too) and refuses a non-local `DATABASE_URL` or an `APP_URL` that isn
   **A10 in every unit test:** `createTestDb` calls `refuseDateParams`
   (`tests/support/no-date-params.ts`), so PGlite refuses a JS `Date` bound into raw SQL as
   postgres.js does.
+- **Website-form leads reach the customer (2026-10-16, outside review "Must fix", B1 + H7):**
+  forms (Squarespace, Wix, WordPress, Jobber / Housecall Pro) email from a robot with the
+  customer in Reply-To; drafts used to go to From ("Reply sent." to a robot). Migration 0028
+  (additive): `messages.reply_to_header` jsonb — NULL = never read, `{}` = read / nothing usable
+  (reply to From), `{address, name?}` = reply there. Chosen once at sync by `pickReplyTo`
+  (`src/server/reply-address-rules.ts`, pure): well-formed, not any workspace mailbox nor its
+  business domain (webmail exempt), not no-reply, **not a lead platform relay** (Thumbtack / Angi
+  relays stay platform leads, `leadPlatformOf`), not From itself; first usable wins. Metadata
+  reads ask for Reply-To; `MailMessage.headers.replyToRead` is true only when the request could
+  return it, so a subset read stores NULL, never `{}`. ONE helper: `customerReplyAddress` /
+  `customerReplyName` (TS) and `replyAddressSql` / `replyNameSql` / `messageReplyAddress` /
+  `customerAddressSql` / `waitingReplySql` / `requestReplySql` (SQL twins, `thread-sql.ts`).
+  **Reply address** = drafts (every kind), screen names (Queue, Inbox, Quotes, Money,
+  Customers, Activity), customer grouping, known-customer / review eligibility, no-reply
+  exclusions (leads at risk, scorecard, repeat customers), complaint memory (both addresses),
+  first-time sender (new From OR new reply address) and VIP (either). **From** stays for
+  identity: receipts (`isReceiptSender`, also on the reply address in Money), building
+  departments, the monthly lead-source label, the classifier's "Sender:" line (no prompt change).
+  Never in an alert, URL, push, SMS, digest, admin or log. Drafting a thread whose customer row
+  is NULL reads Reply-To first (one metadata call, before any model call); 404 → `{}`; any other
+  failure never falls back to From (jobs rethrow → `politely()`; the owner's tap gets
+  `?error=gmail_busy` / `reply_to_unread`). A no-reply `to`: jobs and offers skip
+  (`no_reply_address`); the owner's own "Draft a reply" gets it with `NO_REPLY_FLAG` first
+  (kept through tweaks). **Autopilot** checks `knownCustomer(draft.toAddress)` and refuses any
+  draft whose To isn't the customer's From ("goes to a different address…") or whose customer
+  row was never checked — a Reply-To never unlocks autopilot. H7: "To: address" on every draft
+  card and the edit screen ("the reply address in their email" when redirected), on
+  /queue/review rows and /record. One-shot job `reply-to-backfill` (own Inngest function, every
+  15 min, concurrency 1, one step per mailbox; `app_settings` `backfill:reply-to-v1[:<mailbox>]`):
+  inbound inbox mail of the last 30 days with NULL, newest first, Reply-To only, 2 at a time,
+  100 / 20 s per mailbox per run; skips inactive / read-only / still-syncing mailboxes (no
+  marker); 400/404 → `{}`. Pending drafts addressed to a robot whose form email now has a
+  Reply-To are **re-pointed, not expired** (expiring would drop the lead from the Queue): Gmail
+  draft rewritten first (same text; skipped if the owner changed it in Gmail — text or message
+  id), then the row with `REPOINTED_FLAG` first and the countdown cleared; Activity
+  `draft_repointed`. Replies sent in the last 30 days to a robot get one Activity line
+  `reply_went_to_form` (links to its record). e2e: `tests/e2e/form-lead.spec.ts` (fake Gmail
+  serves Reply-To; metadata reads return only the named headers).
 - **M11 security audit (S4, 2026-10-13):** static tests guard the surface —
   `tests/unit/security-surface.test.ts` (C1 every server action awaits `requireOwner` /
   `requireAdmin` first, reviewed public/inline allow-lists; C2 admin pages + no `loading.tsx` over

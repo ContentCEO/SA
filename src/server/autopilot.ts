@@ -97,6 +97,14 @@ export type GuardrailInput = {
    * (draft-message-cleanup): if Gmail sent it under the same id, the owner already answered.
    */
   maybeAnswered?: boolean;
+  /**
+   * Review B1: the reply goes to a different address than the customer's email came from (a
+   * website form's Reply-To). Anyone can send from their own domain with a Reply-To naming
+   * someone else, so autopilot never sends there, even to an address the owner knows.
+   */
+  redirected?: boolean;
+  /** Review B1: the customer's newest email was never checked for a Reply-To. */
+  replyToUnchecked?: boolean;
 };
 
 /** Layer 3. Every reason this email must wait for the owner; empty = may go. */
@@ -118,6 +126,9 @@ export function guardrailReasons(g: GuardrailInput): string[] {
   if (g.acceptsQuote) out.push("Quote acceptances always wait for you.");
   if (g.purpose != null) out.push("Deposit, review and closing notes always wait for you.");
   if (g.maybeAnswered) out.push("You might already have answered this in Gmail.");
+  if (g.redirected)
+    out.push("This reply goes to a different address than the sender's, so it waits for you.");
+  if (g.replyToUnchecked) out.push("We couldn't check where this reply goes, so it waits for you.");
   return out;
 }
 
@@ -258,7 +269,11 @@ async function blockers(row: NonNullable<Awaited<ReturnType<typeof loadForAutopi
   const mode = (await modes(workspace.id)).get(thread.category ?? "");
   if (mode !== "autopilot") return ["Autopilot is off for this kind of email."];
   const [customer] = await db()
-    .select({ address: messages.fromAddress, sentAt: messages.sentAt })
+    .select({
+      address: messages.fromAddress,
+      replyToHeader: messages.replyToHeader,
+      sentAt: messages.sentAt,
+    })
     .from(messages)
     .where(and(eq(messages.threadId, thread.id), eq(messages.direction, "in")))
     .orderBy(desc(messages.sentAt))
@@ -297,7 +312,12 @@ async function blockers(row: NonNullable<Awaited<ReturnType<typeof loadForAutopi
     purpose: draft.purpose ?? null,
     maybeAnswered,
     draftBody: draft.body ?? "",
-    knownCustomer: await knownCustomer(mailbox.id, customer?.address ?? null, draft.createdAt),
+    // Checked on where the reply actually goes, and that must be the sender itself (B1).
+    knownCustomer: await knownCustomer(mailbox.id, draft.toAddress, draft.createdAt),
+    redirected:
+      !customer ||
+      draft.toAddress.trim().toLowerCase() !== (customer.address ?? "").trim().toLowerCase(),
+    replyToUnchecked: !customer || customer.replyToHeader === null,
   });
 }
 

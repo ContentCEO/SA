@@ -34,6 +34,12 @@ import { purgeExpiredNotes } from "@/server/seasonal-notes";
 import { learnVoice, workspacesDueForVoiceRefresh, workspacesNeedingVoice } from "@/server/voice";
 import { expireEvaluations, startPendingEvaluations } from "@/server/workspace-lifecycle";
 import { runDraftMessagesCleanup } from "@/server/draft-message-cleanup";
+import {
+  finishReplyToBackfill,
+  replyToBackfillMailboxes,
+  runReplyToBackfillMailbox,
+  type MailboxBackfillResult,
+} from "@/server/reply-to-backfill";
 import { runM7Backfill } from "@/server/m7-backfill";
 import { applyPendingReferralCredits } from "@/server/referrals";
 import { considerAutopilot, overdueAutopilotDrafts, runAutopilotSend } from "@/server/autopilot";
@@ -422,6 +428,34 @@ export const workspaceLifecycle = inngest.createFunction(
   },
 );
 
+/**
+ * Every 15 minutes until done (review B1): read the Reply-To of stored form leads and move
+ * waiting drafts off the form's robot address. Its own job, one step per mailbox, so a slow
+ * Gmail mailbox never delays the lifecycle job; a no-op once finished.
+ */
+export const replyToBackfill = inngest.createFunction(
+  {
+    id: "reply-to-backfill",
+    triggers: [cron("*/15 * * * *")],
+    concurrency: { limit: 1 },
+    retries: 3,
+  },
+  async ({ step }) => {
+    const ids = await step.run("mailboxes", () => replyToBackfillMailboxes());
+    if (!ids) return { ran: false };
+    const results: MailboxBackfillResult[] = [];
+    for (const id of ids) {
+      results.push(
+        await step.run(`reply-to-backfill:${id}`, () =>
+          politely(() => runReplyToBackfillMailbox(id)),
+        ),
+      );
+    }
+    const done = await step.run("finish", () => finishReplyToBackfill(results));
+    return { ran: true, done };
+  },
+);
+
 /** Daily: renew Gmail push watches before they silently expire. */
 export const renewGmailWatches = inngest.createFunction(
   { id: "renew-gmail-watches", triggers: [cron("17 6 * * *")] },
@@ -463,4 +497,5 @@ export const functions = [
   autopilotSend,
   sendAfterUndo,
   voiceIdeas,
+  replyToBackfill,
 ];

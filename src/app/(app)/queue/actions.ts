@@ -196,6 +196,8 @@ export async function draftReplyAction(formData: FormData) {
     no_text: "notext",
     capped: "capped",
     read_only: "readonly",
+    gmail_busy: "gmail_busy",
+    reply_to_unread: "reply_to_unread",
   };
   redirect(`/queue?error=${reasons[r.reason] ?? "draftfailed"}`);
 }

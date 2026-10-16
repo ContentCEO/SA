@@ -65,6 +65,10 @@ const errors: Record<string, string> = {
   gone: "That draft isn't waiting any more, so nothing was sent.",
   snooze: "That can't be put off that long — it looks urgent. Pick an earlier time.",
   draftfailed: "Couldn't write a draft for that one. Try again in a minute.",
+  gmail_busy: "Gmail asked us to slow down. Try again in a minute.",
+  reply_to_unread: "We couldn't check who this goes to. Try again in a minute.",
+  no_reply_address:
+    "That one would go to a no-reply address — answer them on the platform or by phone.",
   readonly:
     "Your account is read-only right now, so nothing was changed. The note at the top says why.",
   // Deposit / review / closing notes (plan #26 #28 #29).
@@ -274,6 +278,8 @@ export default async function QueuePage(props: PageProps<"/queue">) {
               key={`${i.draftId}:${i.body}`}
               draftId={i.draftId!}
               customer={who(i)}
+              toAddress={i.toAddress ?? ""}
+              toFromReplyTo={i.replyRedirected && i.toAddress === i.customerAddress}
               tag={`${i.backFromSnooze ? "Back from snooze · " : ""}${tag(i)}`}
               threadId={i.threadId}
               leftHanded={device.leftHanded}

@@ -57,7 +57,12 @@ import {
   type Mailbox,
 } from "@/db/schema";
 import { decryptSecret } from "@/lib/crypto";
-import { MailboxAuthError, type MailboxReader, type MailboxWriter } from "@/mailbox/connector";
+import {
+  MailboxAuthError,
+  MailboxRateLimitError,
+  type MailboxReader,
+  type MailboxWriter,
+} from "@/mailbox/connector";
 import { createGmailReader } from "@/mailbox/gmail/api";
 import { buildReplyMime, replySubject, sameText, toGmailRaw } from "@/mailbox/mime";
 import {
@@ -72,10 +77,26 @@ import { isInvoiceThread, paymentSaid } from "./money-rules";
 import { quoteStopsNudges } from "./quote-rules";
 import { BACK_ON_TOP_MS, isEmergency } from "./snooze-rules";
 import { headerPickIds, toNeedsYouItem } from "./digest-rules";
-import { asDate, notDraftMessage, sideEmailSql, waitingSinceSql } from "./thread-sql";
+import {
+  asDate,
+  messageReplyAddress,
+  messageReplyName,
+  notDraftMessage,
+  sideEmailSql,
+  waitingSinceSql,
+} from "./thread-sql";
 import { closingQuestionAllowed, recentReviewAddresses, reviewAllowed } from "./offers";
 import { lockReviewAddress } from "./review-lock";
 import { markReconnectNeeded, recordSentMessage } from "./sync";
+import { readReplyTo, workspaceMailboxEmails } from "./reply-address";
+import {
+  customerReplyAddress,
+  customerReplyName,
+  NO_REPLY_FLAG,
+  REPOINTED_FLAG,
+  type ReplyToHeader,
+} from "./reply-address-rules";
+import { isNoReplyAddress } from "./sender-rules";
 
 /** Categories we draft for without being asked. Complaints and noise never are. */
 export const AUTO_DRAFT_CATEGORIES = [
@@ -92,7 +113,12 @@ export const MAX_FOLLOWUPS = 2;
 const CONVERSATION_MESSAGES = 6;
 const PER_MESSAGE_CHARS = 3_000;
 
-export type DraftDeps = { writerFor?: (m: Mailbox) => MailboxWriter; now?: () => Date };
+export type DraftDeps = {
+  writerFor?: (m: Mailbox) => MailboxWriter;
+  /** Reads a stored email's Reply-To when sync never did (defaults to the writer's client). */
+  readerFor?: (m: Mailbox) => Pick<MailboxReader, "getMessage">;
+  now?: () => Date;
+};
 
 export const defaultWriter = (m: Mailbox) =>
   createGmailReader({ refreshToken: decryptSecret(m.encryptedRefreshToken) });
@@ -125,7 +151,13 @@ export type CreateOutcome =
         | "no_review_link"
         | "review_recent"
         | "complaint"
-        | "not_eligible";
+        | "not_eligible"
+        // Reply-To (review B1): the reply would go to a no-reply address (jobs and offers
+        // only — the owner's own "Draft a reply" gets a flagged draft instead), or Gmail
+        // couldn't tell us where it goes (never guessed: no draft).
+        | "no_reply_address"
+        | "gmail_busy"
+        | "reply_to_unread";
     }
   | { status: "reconnect_needed" };
 
@@ -228,15 +260,32 @@ export async function followupSettings(workspaceId: string) {
   return { enabled: p?.enabled ?? true, days: p?.days ?? 3 };
 }
 
-/** The customer in a thread: whoever most recently wrote in. */
+/**
+ * The customer in a thread: whoever most recently wrote in, as the reply would address them
+ * (a website form's Reply-To, else the sender).
+ */
 async function customerOf(threadId: string) {
   const [m] = await db()
-    .select({ name: messages.fromName, address: messages.fromAddress })
+    .select({
+      fromName: messages.fromName,
+      fromAddress: messages.fromAddress,
+      replyToHeader: messages.replyToHeader,
+    })
     .from(messages)
     .where(and(eq(messages.threadId, threadId), eq(messages.direction, "in")))
     .orderBy(desc(messages.sentAt))
     .limit(1);
-  return m ?? null;
+  return m ? { name: customerReplyName(m), address: customerReplyAddress(m) } : null;
+}
+
+/** A reader for a stored email's Reply-To: the one given, else the Gmail client itself. */
+function replyReader(
+  mailbox: Mailbox,
+  opts: Pick<DraftDeps, "readerFor" | "writerFor">,
+): Pick<MailboxReader, "getMessage"> | null {
+  if (opts.readerFor) return opts.readerFor(mailbox);
+  const w = (opts.writerFor ?? defaultWriter)(mailbox) as Partial<MailboxReader>;
+  return typeof w.getMessage === "function" ? (w as Pick<MailboxReader, "getMessage">) : null;
 }
 
 type DraftContext = WorkspaceContext & { reviewUrl: string | null };
@@ -518,6 +567,42 @@ export async function createDraftForThread(
         )[0]
       : last;
   if (!customer) return { status: "skipped", reason: "no_text" };
+  // Where the reply goes (review B1): a website form's Reply-To, read at sync. A row stored
+  // before sync read it is read now, before the model is asked anything — never guessed: if
+  // Gmail can't say, there is no draft (a reply to the form robot reads "Reply sent." and
+  // reaches nobody).
+  if (customer.replyToHeader === null) {
+    let read: ReplyToHeader;
+    try {
+      const reader = replyReader(mailbox, opts);
+      if (!reader) throw new Error("No Gmail reader.");
+      read = await readReplyTo(reader, customer, await workspaceMailboxEmails(workspace.id));
+    } catch (err) {
+      if (err instanceof MailboxAuthError) {
+        await markReconnectNeeded(mailbox);
+        return { status: "reconnect_needed" };
+      }
+      // A job pauses and tries again (politely()); the owner's tap gets a plain notice.
+      if (opts.trigger !== "owner") throw err;
+      console.error("reply_to_read_failed", {
+        threadId,
+        error: err instanceof Error ? err.name : "unknown",
+      });
+      return {
+        status: "skipped",
+        reason: err instanceof MailboxRateLimitError ? "gmail_busy" : "reply_to_unread",
+      };
+    }
+    customer.replyToHeader = read;
+    for (const m of recent) if (m.id === customer.id) m.replyToHeader = read;
+  }
+  const to = customerReplyAddress(customer);
+  if (!to) return { status: "skipped", reason: "no_text" };
+  // A no-reply address never gets a reply quietly: jobs and offers skip it; the owner's own
+  // "Draft a reply" gets one, flagged first (a flag also keeps it from batch and autopilot).
+  const toNoReply = isNoReplyAddress(to);
+  if (toNoReply && (opts.trigger !== "owner" || opts.purpose !== undefined))
+    return { status: "skipped", reason: "no_reply_address" };
   const withText = recent
     .map((m) => ({
       m,
@@ -548,7 +633,10 @@ export async function createDraftForThread(
             ? closingQuestionTask({ daysQuiet })
             : undefined,
     messages: withText.map(({ m, text }) => ({
-      from: m.direction === "out" ? mailbox.email : (m.fromName ?? m.fromAddress ?? "customer"),
+      from:
+        m.direction === "out"
+          ? mailbox.email
+          : (customerReplyName(m) ?? customerReplyAddress(m) ?? "customer"),
       direction: m.direction,
       sentAt: m.sentAt,
       body: text,
@@ -618,10 +706,12 @@ export async function createDraftForThread(
 
   // What the owner must sort before a purpose note can go (A6).
   const { body, flags: purposeFlags } = purposeGuards(purpose, result.body.trim(), ctx);
-  const { flags, confidence } = scoreDraft(result, checkDraft(body, checkContext), purposeFlags);
+  const { flags, confidence } = scoreDraft(
+    result,
+    checkDraft(body, checkContext),
+    toNoReply ? [NO_REPLY_FLAG, ...purposeFlags] : purposeFlags,
+  );
 
-  const to = customer.fromAddress;
-  if (!to) return { status: "skipped", reason: "no_text" };
   const subject = replySubject(last.subject ?? thread.subject);
   const writer = (opts.writerFor ?? defaultWriter)(mailbox);
 
@@ -767,7 +857,7 @@ async function loadOwnedDraft(workspaceId: string, draftId: string) {
   return row;
 }
 
-function mimeFor(
+export function mimeFor(
   d: Draft,
   mailbox: Mailbox,
   body: string,
@@ -785,7 +875,7 @@ function mimeFor(
   );
 }
 
-async function replyToHeaders(d: Draft) {
+export async function replyToHeaders(d: Pick<Draft, "replyToMessageId">) {
   if (!d.replyToMessageId) return undefined;
   const [m] = await db()
     .select({ rfc822MessageId: messages.rfc822MessageId, references: messages.references })
@@ -1206,7 +1296,10 @@ export async function overdueQueuedSends(now: Date = new Date()): Promise<string
 
 export type BatchRow = {
   draftId: string;
+  /** Who it's for: the customer's name, else their address. */
   to: string;
+  /** The address the reply goes to (H7). */
+  toAddress: string;
   category: string;
   firstLine: string;
 };
@@ -1258,6 +1351,7 @@ export async function batchCandidates(
     out.push({
       draftId: draft.id,
       to: who?.name || who?.address || draft.toAddress,
+      toAddress: draft.toAddress,
       category: thread.category!,
       firstLine: firstLine(draft.body ?? ""),
     });
@@ -1429,7 +1523,10 @@ export async function reviseDraft(
     extracted: thread.extracted,
     task: reviseTask(draft.body ?? "", ask, spoken !== null),
     messages: withText.map(({ m, text }) => ({
-      from: m.direction === "out" ? mailbox.email : (m.fromName ?? m.fromAddress ?? "customer"),
+      from:
+        m.direction === "out"
+          ? mailbox.email
+          : (customerReplyName(m) ?? customerReplyAddress(m) ?? "customer"),
       direction: m.direction,
       sentAt: m.sentAt,
       body: text,
@@ -1471,7 +1568,15 @@ export async function reviseDraft(
   // The same purpose guards as a new draft: a tweak can't drop the deposit gap or the review
   // link, nor lift their flags and confidence cap.
   const { body, flags: purposeFlags } = purposeGuards(draft.purpose, result.body.trim(), ctx);
-  const { flags, confidence } = scoreDraft(result, checkDraft(body, checkContext), purposeFlags);
+  // Where it goes doesn't change with a tweak: a no-reply or moved address stays flagged.
+  const addressFlags = [
+    ...(isNoReplyAddress(draft.toAddress) ? [NO_REPLY_FLAG] : []),
+    ...((draft.flags ?? []).includes(REPOINTED_FLAG) ? [REPOINTED_FLAG] : []),
+  ];
+  const { flags, confidence } = scoreDraft(result, checkDraft(body, checkContext), [
+    ...addressFlags,
+    ...purposeFlags,
+  ]);
 
   const writer = (opts.writerFor ?? defaultWriter)(mailbox);
   try {
@@ -1792,6 +1897,10 @@ export type QueueItem = {
   threadId: string;
   customerName: string | null;
   customerAddress: string | null;
+  /** The address this draft goes to (H7: shown on every card). Null on needs-you items. */
+  toAddress: string | null;
+  /** The customer's email gave a Reply-To (a website form): the reply goes there, not to From. */
+  replyRedirected: boolean;
   category: string | null;
   summary: string | null;
   needsOwnerReason: string | null;
@@ -1997,22 +2106,25 @@ export async function listQueue(
   const threadById = new Map(needRows.map((t) => [t.id, t]));
   const draftById = new Map(draftRows.map((r) => [r.draft.id, r]));
 
+  // The customer as a reply addresses them: a website form's Reply-To, else the sender.
+  type Who = { name: string | null; address: string | null; redirected: boolean };
   const senders = async (threadIds: string[]) => {
-    if (!threadIds.length)
-      return new Map<string, { name: string | null; address: string | null }>();
+    if (!threadIds.length) return new Map<string, Who>();
     const rows = await db()
       .select({
         threadId: messages.threadId,
-        name: messages.fromName,
-        address: messages.fromAddress,
+        name: messageReplyName(),
+        address: messageReplyAddress(),
+        redirected: sql<boolean>`(${messages.replyToHeader}->>'address' is not null)`,
         sentAt: messages.sentAt,
       })
       .from(messages)
       .where(and(inArray(messages.threadId, threadIds), eq(messages.direction, "in")))
       .orderBy(desc(messages.sentAt));
-    const out = new Map<string, { name: string | null; address: string | null }>();
+    const out = new Map<string, Who>();
     for (const r of rows)
-      if (!out.has(r.threadId)) out.set(r.threadId, { name: r.name, address: r.address });
+      if (!out.has(r.threadId))
+        out.set(r.threadId, { name: r.name, address: r.address, redirected: !!r.redirected });
     return out;
   };
   const who = await senders([...needIds, ...members.drafts.map((m) => m.threadId)]);
@@ -2030,6 +2142,8 @@ export async function listQueue(
           threadId: t.id,
           customerName: who.get(t.id)?.name ?? null,
           customerAddress: who.get(t.id)?.address ?? null,
+          toAddress: null,
+          replyRedirected: who.get(t.id)?.redirected ?? false,
           category: t.category,
           summary: t.summary,
           needsOwnerReason: t.needsOwnerReason,
@@ -2060,6 +2174,8 @@ export async function listQueue(
           threadId: thread.id,
           customerName: who.get(thread.id)?.name ?? null,
           customerAddress: who.get(thread.id)?.address ?? draft.toAddress,
+          toAddress: draft.toAddress,
+          replyRedirected: who.get(thread.id)?.redirected ?? false,
           category: thread.category,
           summary: thread.summary,
           needsOwnerReason: thread.needsOwner ? thread.needsOwnerReason : null,

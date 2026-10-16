@@ -8,6 +8,7 @@ import { atRiskActivityLine } from "./leads-at-risk-rules";
 import { closeRate, isQuoteOutcome, type QuoteOutcome } from "./quote-rules";
 import { workspaceTimeZone } from "./snooze";
 import { localMonthStart, usableTimeZone } from "./snooze-rules";
+import { messageReplyName } from "./thread-sql";
 
 // The time-saved assumption lives in config (pure files read it too); re-exported for old callers.
 export { MINUTES_PER_SENT_REPLY } from "@/config/drafting";
@@ -54,6 +55,13 @@ export function describeActivity(
       return `You sent the draft${to} from Gmail`;
     case "draft_discarded":
       return `You discarded the draft${to}`;
+    // Review B1: website-form leads now go to the customer's own address.
+    case "draft_repointed":
+      return "A draft now goes to the customer's own address, not their website form's.";
+    case "reply_went_to_form": {
+      const on = typeof detail.sentOn === "string" ? shortDate(detail.sentOn) : null;
+      return `A reply you sent${on ? ` on ${on}` : ""}${to} went to the website form's address, so the customer may not have it. Send it again from Gmail.`;
+    }
     case "draft_revised":
       return detail.via === "voice"
         ? `You changed the draft${to} by voice`
@@ -200,6 +208,14 @@ export function describeActivity(
   }
 }
 
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+/** "2026-10-12" → "Oct 12" (a local date stored with the entry). */
+function shortDate(ymd: string): string | null {
+  const m = /^\d{4}-(\d{2})-(\d{2})$/.exec(ymd);
+  const month = m ? MONTHS[Number(m[1]) - 1] : undefined;
+  return m && month ? `${month} ${Number(m[2])}` : null;
+}
+
 export type ActivityEntry = {
   id: string;
   at: Date;
@@ -208,7 +224,7 @@ export type ActivityEntry = {
   /** Plan #41: a sent reply links to its record. */
   recordId: string | null;
 };
-const SENT_ACTIONS = new Set(["reply_sent", "reply_sent_from_gmail"]);
+const SENT_ACTIONS = new Set(["reply_sent", "reply_sent_from_gmail", "reply_went_to_form"]);
 
 export async function listActivity(workspaceId: string, limit = 100): Promise<ActivityEntry[]> {
   const rows = await db()
@@ -226,7 +242,8 @@ export async function listActivity(workspaceId: string, limit = 100): Promise<Ac
       .from(threads)
       .where(inArray(threads.id, threadIds));
     const names = await db()
-      .select({ threadId: messages.threadId, name: messages.fromName })
+      // As a reply addresses them: a website form's own name for the customer, never the robot's.
+      .select({ threadId: messages.threadId, name: messageReplyName() })
       .from(messages)
       .where(and(inArray(messages.threadId, threadIds), eq(messages.direction, "in")))
       .orderBy(desc(messages.sentAt));

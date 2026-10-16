@@ -43,6 +43,7 @@ export default async function SendRecordPage(props: PageProps<"/record/[draftId]
       `${when(r.approvedAt)}${r.device ? ` · on a ${r.device}` : ""}`,
     ],
     ["Sent", when(r.sentAt)],
+    ["To", r.toAddress],
     ["Changed by you", r.edited ? "Yes — you edited it before it went" : "No — sent as drafted"],
     ["Quick changes", r.changes.length ? r.changes.join(", ") : "None"],
     [
