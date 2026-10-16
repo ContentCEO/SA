@@ -274,6 +274,11 @@ export const threads = pgTable(
     /** Plan #34: when we last pushed "a lead is waiting" for this thread's current wait. */
     atRiskAlertedAt: timestamp("at_risk_alerted_at", { withTimezone: true }),
     /**
+     * Replies package (B5 part 2): when the owner's phone was told about this thread's
+     * emergency ("An emergency email just came in."). Once per thread, ever; never cleared.
+     */
+    emergencyAlertedAt: timestamp("emergency_alerted_at", { withTimezone: true }),
+    /**
      * Ideas H4: the kind the owner moved this conversation to ("Wrong kind?"). It wins over the
      * sorter on every later email (written into `category` in SQL), like needs_owner_manual.
      * One of the classifier's categories, checked in code. Null = the sorter's kind stands.
@@ -424,6 +429,13 @@ export const drafts = pgTable(
     sendClaimedAt: timestamp("send_claimed_at", { withTimezone: true }),
     /** Plan #26 #28 #29: deposit / review request / closing question. Null = ordinary. */
     purpose: text("purpose").$type<DraftPurpose>(),
+    /**
+     * Replies package (draft.v7): a first reply to someone the owner never wrote to, and the
+     * shape the drafter chose from what they said — details / vague / urgent / price_only, or
+     * not_first when it didn't write one. A key, never text. Null = not a first contact (and
+     * every draft written before draft.v7).
+     */
+    opening: text("opening"),
   },
   (t) => [
     index("drafts_mailbox_status_idx").on(t.mailboxId, t.status),
@@ -486,6 +498,12 @@ export const businessProfiles = pgTable("business_profile", {
   smsAlertsEnabled: boolean("sms_alerts_enabled").notNull().default(false),
   /** Newest classification already covered by a text, and when the last text went out. */
   smsAlertCursor: timestamp("sms_alert_cursor", { withTimezone: true }),
+  /**
+   * Replies package (B5 part 2): "Emergencies, even at night". On by default: an emergency
+   * reaches the owner's phone (notifications and texts they switched on) at once, quiet hours
+   * or not, within its own caps. Off = emergencies wait like any other email.
+   */
+  emergencyAlertsEnabled: boolean("emergency_alerts_enabled").notNull().default(true),
   /** Plan #36 phone notifications: same throttle and cursor as texts, kept apart. */
   pushLastSentAt: timestamp("push_last_sent_at", { withTimezone: true }),
   pushAlertCursor: timestamp("push_alert_cursor", { withTimezone: true }),
