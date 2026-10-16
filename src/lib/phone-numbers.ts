@@ -24,7 +24,14 @@ const BARE = /(?<![\d+-])\+?1?(\d{3})(\d{3})(\d{4})(?![\d-])/g;
  * 10 digits counts only on a line with a label (phone, cell, mobile, tel, call, text, c:, m:);
  * with `labelledOnly`, every number needs a field label ("Phone: …"; mail written by a machine).
  */
-export function findUsPhones(text: string, opts: { labelledOnly?: boolean } = {}): E164[] {
+export function findUsPhones(
+  text: string,
+  /**
+   * `anyBare`: bare digit runs count without a label too — only for finding the OWNER's own
+   * numbers to skip (skipping more is the safe side).
+   */
+  opts: { labelledOnly?: boolean; anyBare?: boolean } = {},
+): E164[] {
   const out: E164[] = [];
   const add = (a: string, b: string, c: string) => {
     const e = `+1${a}${b}${c}` as E164;
@@ -36,7 +43,7 @@ export function findUsPhones(text: string, opts: { labelledOnly?: boolean } = {}
     const found: { at: number; n: [string, string, string] }[] = [];
     for (const m of line.matchAll(FORMATTED))
       found.push({ at: m.index ?? 0, n: [m[1] ?? m[2]!, m[3]!, m[4]!] });
-    if (labelled)
+    if (labelled || opts.anyBare)
       for (const m of line.matchAll(BARE))
         found.push({ at: m.index ?? 0, n: [m[1]!, m[2]!, m[3]!] });
     found.sort((x, y) => x.at - y.at);

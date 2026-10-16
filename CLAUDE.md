@@ -1594,7 +1594,8 @@ default, CI too) and refuses a non-local `DATABASE_URL` or an `APP_URL` that isn
     It already answers leads at risk, Not answered yet, Quotes and follow-ups via `lastOutSql`.
   - **Queue** (`queueMembership`, shared by digest / badge / push / screen): `lane` (B5, sorted
     first; injection never) and G5 check-ins (`checkIn`: fixed 2–30 days ago, not closed since, no
-    customer email since, no draft pending) join needs-you, content-free. The screen renders
+    customer email and no owner email / app reply since, no draft pending; never an emergency)
+    join needs-you, content-free. The screen renders
     `NeedsYouCard` (`queue/needs-you-card.tsx`) with `leadCardsFor` (`src/server/lead-cards.ts`:
     a fixed number of queries per render): Call / Text (`ContactButtons`, plain `tel:` /
     `sms:?&body=`; numbers from `src/lib/phone-numbers.ts` + `contact-rules.ts`, code only:

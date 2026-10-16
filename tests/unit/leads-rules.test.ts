@@ -436,3 +436,11 @@ describe("lead actions put only fixed words in URLs", () => {
     expect(first).toContain('const done = formData.get("as") === "done" ? "done" : "called";');
   });
 });
+
+describe("the owner's own numbers", () => {
+  it("bare runs (an alert phone stored as +1…) count when looking for the owner's numbers", () => {
+    expect(findUsPhones("+19785550234")).toEqual([]);
+    expect(findUsPhones("+19785550234", { anyBare: true })).toEqual(["+19785550234"]);
+    expect(findUsPhones("Mike 9785550234", { anyBare: true })).toEqual(["+19785550234"]);
+  });
+});

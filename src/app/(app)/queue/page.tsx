@@ -195,8 +195,9 @@ export default async function QueuePage(props: PageProps<"/queue">) {
     ],
     { now, timeZone, businessName: workspace.businessName },
   );
-  const lane = queue.needsYou.filter((i) => leadCards.get(i.threadId)?.lane);
-  const needsYou = queue.needsYou.filter((i) => !leadCards.get(i.threadId)?.lane);
+  // The lane comes from the queue's own membership, like the counts (B5).
+  const lane = queue.needsYou.filter((i) => i.lane);
+  const needsYou = queue.needsYou.filter((i) => !i.lane);
   const needsYouProps = (i: QueueItem) => ({
     i,
     lead: leadCards.get(i.threadId),

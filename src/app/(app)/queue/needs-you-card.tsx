@@ -50,7 +50,7 @@ export function NeedsYouCard({
       : who;
   const label = i.checkIn
     ? `Check in · ${tag}`
-    : lead?.lane
+    : i.lane
       ? `Emergency · ${tag}`
       : phoneLine
         ? `${channel?.kind === "phone" ? "Voicemail" : "Text message"} · ${tag}`
@@ -69,13 +69,13 @@ export function NeedsYouCard({
         firstName={lead.firstName}
         textBody={lead.textBody}
         inverted
-        callFirst={!!lead.lane || phoneLine || complaint}
+        callFirst={i.lane || phoneLine || complaint}
         callLabel={
           phoneLine
             ? "Call back"
             : complaint
               ? `Call ${lead.firstName ?? "them"} first`
-              : lead.lane
+              : i.lane
                 ? `Call ${lead.firstName ?? "them"} now`
                 : undefined
         }
@@ -170,7 +170,7 @@ export function NeedsYouCard({
             label="Done — I called back"
             confirm="Yes, done"
           />
-        ) : site || lead?.lane ? (
+        ) : site || i.lane ? (
           <CalledThem
             threadId={i.threadId}
             hasDraft={false}

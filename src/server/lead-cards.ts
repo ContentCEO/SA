@@ -7,7 +7,6 @@ import { findUsPhones, formatUsPhone, type E164 } from "@/lib/phone-numbers";
 import { channelKind, channelName, openSiteUrl, type ChannelKind } from "./channel-rules";
 import { playbookApplies } from "./complaint-rules";
 import { customerPhone, firstNameOf, textPrefill } from "./contact-rules";
-import { inEmergencyLane } from "./emergency-rules";
 import { parseLeadSite, type LeadSiteFacts } from "./lead-site-rules";
 import { bestEarlier, repeatLine, type EarlierJob } from "./repeat-customer-rules";
 import { isNoReplyAddress } from "./sender-rules";
@@ -16,7 +15,7 @@ import { notDraftSql, replyAddressSql, sideEmailSql } from "./thread-sql";
 
 /**
  * Leads package: what a queue card adds on top of the email — Call / Text buttons (B4), the
- * emergency lane (B5), the lead-site or voicemail card (B2 / B3), the repeat-customer line
+ * lead-site or voicemail card (B2 / B3), the repeat-customer line
  * (B14) and the outside-your-area line (B9). Read at render, in a fixed number of queries
  * whatever the number of cards; nothing is stored or logged, and the number only ever reaches
  * the page inside a tel: / sms: link.
@@ -31,7 +30,6 @@ export type LeadCard = {
   firstName: string | null;
   channel: { kind: ChannelKind; name: string; openUrl: string | null } | null;
   site: LeadSiteFacts | null;
-  lane: boolean;
   /** "Nashua, NH" when a quote request's town isn't on the owner's list. */
   outsideTown: string | null;
   /** Adding the town would clear the only reason this card needs the owner. */
@@ -131,7 +129,7 @@ export async function leadCardsFor(
       .orderBy(desc(messages.sentAt))
       .limit(10);
     for (const text of [profile?.signature, profile?.alertPhone, ...tails.map((t) => t.tail)])
-      for (const n of findUsPhones(text ?? "")) ownerNumbers.add(n);
+      for (const n of findUsPhones(text ?? "", { anyBare: true })) ownerNumbers.add(n);
   }
 
   // Earlier jobs for the same customer (B14), one query for every card that can show a line.
@@ -223,7 +221,6 @@ export async function leadCardsFor(
         ? { kind, name: channelName(c.leadChannel) ?? "", openUrl: openSiteUrl(c.leadChannel) }
         : null,
       site,
-      lane: c.needsYou && inEmergencyLane(c),
       outsideTown,
       townClears: hits.length === 1 && hits[0] === "outside_area",
       repeat: best ? repeatLine(best, opts.now, opts.timeZone) : null,

@@ -88,6 +88,7 @@ import {
   messageReplyName,
   noReplySql,
   notDraftMessage,
+  notDraftSql,
   replyAddressSql,
   sideEmailSql,
   waitingSinceSql,
@@ -2282,6 +2283,9 @@ export async function queueMembership(
           gt(threads.complaintFixedAt, new Date(now.getTime() - CHECKIN_MAX_DAYS * 86_400_000)),
           sql`(${threads.complaintCheckinDoneAt} is null or ${threads.complaintCheckinDoneAt} < ${threads.complaintFixedAt})`,
           sql`not exists (select 1 from messages ci where ci.thread_id = ${threads.id} and ci.direction = 'in' and ci.sent_at > ${threads.complaintFixedAt})`,
+          // The owner already checked in by email (from Gmail, or a reply sent from here).
+          sql`not exists (select 1 from messages co where co.thread_id = ${threads.id} and co.direction = 'out' and ${notDraftSql("co")} and not ${sideEmailSql("co")} and co.sent_at > ${threads.complaintFixedAt})`,
+          sql`not exists (select 1 from drafts cd where cd.thread_id = ${threads.id} and cd.status in ('sent', 'edited_and_sent') and cd.decided_at > ${threads.complaintFixedAt})`,
         ),
       )
       .orderBy(desc(threads.complaintFixedAt))
@@ -2321,7 +2325,8 @@ export async function queueMembership(
         })),
       ...checkIns
         .filter((t) => !snoozed(t))
-        .map((t) => ({ ...member(t), checkIn: true, waitingSince: null })),
+        // A check-in is never an emergency (no "tonight only" snooze, not first in the email).
+        .map((t) => ({ ...member(t), emergency: false, checkIn: true, waitingSince: null })),
     ]),
     drafts: backFirst(
       pending

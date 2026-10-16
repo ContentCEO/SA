@@ -247,6 +247,16 @@ describe("Done and complaint check-ins (G5)", () => {
     expect(await markComplaintFixed(workspaceId, legal.id, NOW)).toBe("not_complaint");
   });
 
+  it("a check-in is never an emergency, and an owner email after the fix closes it", async () => {
+    const t = await thread({ needsOwner: true, category: "complaint", priority: "high" });
+    await inbound(t.id, { sentAt: daysAgo(5) });
+    await markComplaintFixed(workspaceId, t.id, daysAgo(4));
+    const [m] = (await queueMembership(workspaceId, NOW)).needsYou;
+    expect(m).toMatchObject({ threadId: t.id, checkIn: true, emergency: false, lane: false });
+    await outbound(t.id, { sentAt: daysAgo(1), bodyText: "All good now?" });
+    expect((await queueMembership(workspaceId, NOW)).needsYou).toHaveLength(0);
+  });
+
   it("a customer email after the fix brings the complaint back instead of the check-in", async () => {
     const t = await thread({ needsOwner: true, category: "complaint" });
     await inbound(t.id, { sentAt: daysAgo(5) });
