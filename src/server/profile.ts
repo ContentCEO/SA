@@ -11,6 +11,7 @@ import {
   type BusinessProfile,
   type VoiceProfile,
 } from "@/db/schema";
+import { normalizeTown } from "./service-area-rules";
 
 /** Textareas: trim, cap, empty → null. */
 const longText = (max = 2000) =>
@@ -85,6 +86,21 @@ export const businessProfileInput = z.object({
     .optional(),
   services: z.string().trim().min(1, "Tell us what work you do.").max(2000),
   serviceArea: longText(),
+  /**
+   * Leads package (B9): "Towns you work in", one per line, de-duplicated by town name. Left out
+   * entirely (a form without the field) = leave the list as it is.
+   */
+  serviceTowns: lines(100, 60)
+    .transform((list) => {
+      const seen = new Set<string>();
+      return list.filter((t) => {
+        const key = JSON.stringify(normalizeTown(t));
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+    })
+    .optional(),
   hours: longText(500),
   leadTime: longText(500),
   pricingNotes: longText(),

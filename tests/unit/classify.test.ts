@@ -84,12 +84,14 @@ describe("needs_owner rules are enforced in code", () => {
       needsOwner: false,
       needsOwnerReason: null,
       priority: "normal",
+      hits: [],
     });
     expect(applyOwnerRules(classification({ category: "noise", priority: "normal" }), ctx)).toEqual(
       {
         needsOwner: false,
         needsOwnerReason: null,
         priority: "low",
+        hits: [],
       },
     );
   });

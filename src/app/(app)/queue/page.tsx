@@ -2,12 +2,10 @@ import { randomUUID } from "node:crypto";
 import Link from "next/link";
 import { Notice } from "@/components/app/notice";
 import { Headline } from "@/components/brand/headline";
-import { Button } from "@/components/ui/button";
 import { draftTag } from "@/config/categories";
 import { findGaps } from "@/ai/gaps";
 import { confidenceLabel } from "@/config/drafting";
 import { gmailThreadLink } from "@/lib/gmail-link";
-import { relativeTime } from "@/lib/relative-time";
 import { listQueue, sentDraftSummary, type QueueItem } from "@/server/drafts";
 import {
   canPracticeSend,
@@ -22,14 +20,13 @@ import { listMailboxes } from "@/server/mailboxes";
 import { getBusinessProfile } from "@/server/profile";
 import { priceMemoryFor } from "@/server/price-memory";
 import { requireOwner } from "@/server/session";
-import { dismissChecklistAction, draftReplyAction } from "./actions";
+import { dismissChecklistAction } from "./actions";
 import { OnboardingChecklist } from "@/components/app/onboarding-checklist";
 import { checklistFor } from "@/server/onboarding";
 import { DraftCard } from "./draft-card";
 import { UndoSend } from "./undo-send";
 import { OfflineQueue } from "./offline-queue";
 import { devicePrefs } from "@/lib/device-prefs";
-import { RemindMe } from "./remind-me";
 import { ScrollToThread } from "./scroll-to-thread";
 import { SNOOZE_LABELS, snoozeOptions, usableTimeZone } from "@/server/snooze-rules";
 import { batchCandidates } from "@/server/drafts";
@@ -37,7 +34,10 @@ import { BATCH_CATEGORIES } from "@/server/batch-rules";
 import { buttonVariants } from "@/components/ui/button";
 import { firstLookFor } from "@/server/first-week";
 import { wroteLine } from "@/server/first-week-rules";
-import { CalledThem } from "./called-them";
+import { NeedsYouCard } from "./needs-you-card";
+import { leadCardsFor } from "@/server/lead-cards";
+import { notAnsweredRows } from "@/server/never-answered";
+import { NotAnsweredCard } from "./not-answered-card";
 import { FirstLookCard } from "./first-look";
 
 const done: Record<string, string> = {
@@ -52,6 +52,10 @@ const done: Record<string, string> = {
   held: "Held. It won't send until you tap Send reply.",
   called:
     "Marked as answered by phone. No draft and no nudge for that one unless they write again.",
+  done: "Marked done. It'll come back if they write again.",
+  fixed: "Marked fixed. I'll remind you to check in with them in 2 days.",
+  checkin_closed: "Good. That one's closed.",
+  town_added: "Town added to your list. Draft a reply when you're ready.",
   found_money:
     "Writing those drafts now. They show up below in a minute or two, and each one waits for you.",
 };
@@ -80,6 +84,10 @@ const errors: Record<string, string> = {
   reply_to_unread: "We couldn't check who this goes to. Try again in a minute.",
   no_reply_address:
     "That one would go to a no-reply address — answer them on the platform or by phone.",
+  textaddr:
+    "That address turns email into a text message, and Squared Away never texts customers. Use Text from my phone instead.",
+  leadsite: "That one came through a lead website — answer them on the website.",
+  phonemsg: "That's a voicemail or text message — call or text them back from your phone.",
   readonly:
     "Your account is read-only right now, so nothing was changed. The note at the top says why.",
   // Deposit / review / closing notes (plan #26 #28 #29).
@@ -90,6 +98,7 @@ const errors: Record<string, string> = {
   no_review_link: "Add your review link in Settings → Business profile first.",
   review_recent: "You asked them for a review in the last 12 months.",
   complaint: "Not for a complaint — reply to that one yourself.",
+  has_draft: "Send or discard the reply first.",
   unknown: "That didn't work. Refresh and try again.",
 };
 
@@ -169,6 +178,43 @@ export default async function QueuePage(props: PageProps<"/queue">) {
     { timeZone, now },
   );
 
+  // Leads package: Call / Text, the emergency lane, lead-site and voicemail cards, the
+  // repeat-customer and outside-your-area lines — read in a fixed number of queries.
+  // B6: customers who have waited over a day with no card here (one row each, oldest first).
+  const notAnswered = await notAnsweredRows(
+    workspace.id,
+    now,
+    new Set([...queue.needsYou, ...queue.drafts].map((i) => i.threadId)),
+  );
+  const leadCards = await leadCardsFor(
+    workspace.id,
+    [
+      ...queue.needsYou.map((i) => ({ ...i, needsYou: true })),
+      ...queue.drafts.map((i) => ({ ...i, needsYou: false })),
+      ...notAnswered.map((r) => ({ ...r, leadChannel: null, needsYou: true })),
+    ],
+    { now, timeZone, businessName: workspace.businessName },
+  );
+  const lane = queue.needsYou.filter((i) => leadCards.get(i.threadId)?.lane);
+  const needsYou = queue.needsYou.filter((i) => !leadCards.get(i.threadId)?.lane);
+  const needsYouProps = (i: QueueItem) => ({
+    i,
+    lead: leadCards.get(i.threadId),
+    who: who(i),
+    tag: tag(i),
+    readOnly,
+    remindOptions: remindOptions(i),
+    gmailHref: gmailLink(i),
+    timeZone,
+  });
+  const draftLeadLines = (i: QueueItem) => {
+    const lc = leadCards.get(i.threadId);
+    return [
+      lc?.repeat,
+      lc?.outsideTown ? `${lc.outsideTown} isn't one of your towns.` : null,
+    ].filter((l): l is string => !!l);
+  };
+
   return (
     <>
       {sentAll.length ? (
@@ -235,54 +281,46 @@ export default async function QueuePage(props: PageProps<"/queue">) {
 
       <OnboardingChecklist list={checklist} dismissAction={dismissChecklistAction} />
 
-      {boxes.length === 0 ? null : empty ? (
+      {boxes.length === 0 ? null : empty && notAnswered.length === 0 ? (
         <p className="text-2xl font-black">Nothing waiting on you.</p>
       ) : null}
 
-      {queue.needsYou.length ? (
+      {lane.length ? (
+        <section aria-labelledby="emergency" className="flex flex-col gap-3">
+          <h2 id="emergency" className="text-xl font-black">
+            Emergency
+          </h2>
+          {lane.map((i) => (
+            <NeedsYouCard key={i.threadId} {...needsYouProps(i)} />
+          ))}
+        </section>
+      ) : null}
+
+      {needsYou.length ? (
         <section aria-labelledby="needs-you" className="flex flex-col gap-3">
           <h2 id="needs-you" className="text-xl font-black">
             Needs you
           </h2>
-          {queue.needsYou.map((i) => (
-            <article
-              key={i.threadId}
-              id={`t-${i.threadId}`}
-              className="sa-inverted flex scroll-mt-4 scroll-mb-28 flex-col gap-2 rounded-xl p-4 sm:scroll-mb-4"
-            >
-              <div className="flex items-baseline justify-between gap-3">
-                <span className="truncate text-lg font-black">{who(i)}</span>
-                <span className="shrink-0 text-sm text-ash">
-                  {i.lastMessageAt ? relativeTime(i.lastMessageAt) : ""}
-                </span>
-              </div>
-              <span className="text-sm font-semibold">
-                {i.backFromSnooze ? "Back from snooze · " : ""}
-                {tag(i)}
-              </span>
-              {i.needsOwnerReason ? <p className="font-semibold">{i.needsOwnerReason}</p> : null}
-              {i.summary ? <p className="text-ash">{i.summary}</p> : null}
-              <div className="grid grid-cols-1 gap-2 pt-1">
-                {readOnly ? null : (
-                  <form action={draftReplyAction}>
-                    <input type="hidden" name="threadId" value={i.threadId} />
-                    <Button type="submit" className="w-full">
-                      Draft a reply
-                    </Button>
-                  </form>
-                )}
-                <RemindMe threadId={i.threadId} options={remindOptions(i)} inverted />
-                {readOnly ? null : <CalledThem threadId={i.threadId} hasDraft={false} inverted />}
-                <a
-                  href={gmailLink(i)}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="inline-flex min-h-tap items-center justify-center font-semibold underline underline-offset-4"
-                >
-                  Open in Gmail
-                </a>
-              </div>
-            </article>
+          {needsYou.map((i) => (
+            <NeedsYouCard key={i.threadId} {...needsYouProps(i)} />
+          ))}
+        </section>
+      ) : null}
+
+      {notAnswered.length ? (
+        <section aria-labelledby="not-answered" className="flex flex-col gap-3">
+          <h2 id="not-answered" className="text-xl font-black">
+            Not answered yet
+          </h2>
+          <p>They wrote over a day ago and haven&apos;t heard back.</p>
+          {notAnswered.map((r) => (
+            <NotAnsweredCard
+              key={r.threadId}
+              row={r}
+              lead={leadCards.get(r.threadId)}
+              now={now}
+              readOnly={readOnly}
+            />
           ))}
         </section>
       ) : null}
@@ -313,6 +351,7 @@ export default async function QueuePage(props: PageProps<"/queue">) {
               toFromReplyTo={i.replyRedirected && i.toAddress === i.customerAddress}
               tag={`${i.backFromSnooze ? "Back from snooze · " : ""}${tag(i)}`}
               wrote={wroteLine(i.customerWroteAt, now)}
+              leadLines={draftLeadLines(i)}
               threadId={i.threadId}
               leftHanded={device.leftHanded}
               offlineEnabled={device.offline}

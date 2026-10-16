@@ -31,6 +31,7 @@ import { keepQuoteAccepted, quoteAccepted } from "./quote-rules";
 import { ownerGavePrice } from "./quotes";
 import { messageReplyAddress, notDraftMessage, notDraftSql, sideEmailSql } from "./thread-sql";
 import { customerReplyAddress, replyRedirected } from "./reply-address-rules";
+import { channelName, channelOf } from "./channel-rules";
 
 /** Classify inbound mail from this far back on the first pass; everything new after that. */
 export const CLASSIFY_LOOKBACK_DAYS = 14;
@@ -145,6 +146,7 @@ export async function classifyPending(
     extraTrades: box.workspace.extraTrades ?? [],
     amountThresholdDollars: profile?.amountThresholdDollars ?? DEFAULT_AMOUNT_THRESHOLD_DOLLARS,
     vipSenders: (profile?.vipSenders ?? []).map((v) => v.toLowerCase()),
+    serviceTowns: profile?.serviceTowns ?? [],
   };
 
   const batch = [...newestPerThread.values()].slice(0, limit);
@@ -173,8 +175,15 @@ export async function classifyPending(
       injection?: unknown;
       payment_change?: unknown;
     };
+    // Where it came from, decided in code from the sender (leads package): a voicemail or
+    // text-message email, a lead website, or null for a person writing directly.
+    const channel = channelOf(m.fromAddress);
     if (
       m.labelIds.some((l) => NOISE_LABELS.includes(l)) &&
+      // Voicemail and text-message emails are few and never marketing: always read. Lead
+      // websites keep the shortcut (their marketing would eat the daily AI limit).
+      channel?.kind !== "phone" &&
+      channel?.kind !== "phone_text" &&
       // A building department landing in Promotions still gets read.
       !looksMunicipal(m.fromAddress, m.fromName) &&
       // A thread already marked keeps its mark (B3): it is never quietly turned into junk.
@@ -252,6 +261,8 @@ export async function classifyPending(
               injection: prevMarks.injection === true,
               paymentChange: prevMarks.payment_change === true,
             },
+            channel: channel ? { kind: channel.kind, name: channelName(channel.key) ?? "" } : null,
+            serviceTowns: business.serviceTowns,
           },
         );
       } catch (err) {
@@ -443,6 +454,8 @@ export async function classifyPending(
         summary: result.summary,
         extracted: stored,
         classifiedAt: now,
+        // Leads package: kept once set — a later email on the thread doesn't clear it.
+        ...(channel ? { leadChannel: channel.key } : {}),
         // Sticky (A1): a later "looks great" never makes a complaint look like a happy
         // customer, so the mark is never cleared. It holds the LATEST complaint (the
         // 12-month rule counts from the most recent one), and a thread that was sorted as a

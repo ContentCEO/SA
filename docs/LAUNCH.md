@@ -856,7 +856,10 @@ with the merge after the "I agree" one):
   draft shows "To: …". Leads already stored are checked again in the background; a waiting draft
   to a robot address is re-pointed (and flagged), and a reply already sent to one shows in
   Activity with "Send it again from Gmail." Autopilot never sends to a form's reply address.
-  Thumbtack and Angi relay addresses are still answered on the platform, as before.
+  Thumbtack and Angi relay addresses are still answered on the platform, as before — and
+  (leads package, after its privacy lines are approved) lead-website emails get their own card
+  with an **Open Thumbtack**-style button and no draft, voicemail emails get **Call back**, and
+  nothing is ever drafted or sent to an email-to-text address.
 - **Waitlist:** you get a "New waitlist sign-up" email (no name or address in it), and the person
   gets "You're on the Squared Away list" once (after step 6). Sign-ups and Growth requests record
   where they came from (link tags and the referring site), shown as "Came from" in `/admin`.

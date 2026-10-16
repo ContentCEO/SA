@@ -242,6 +242,21 @@ export const threads = pgTable(
      */
     handledOfflineAt: timestamp("handled_offline_at", { withTimezone: true }),
     /**
+     * Leads package (B2 / B3): where the lead came from, decided in code from the sender
+     * (`channelOf`, src/server/channel-rules.ts): a phone service key ("google_voice"),
+     * "phone_text" (an email-to-text gateway) or a lead-site key ("thumbtack"). Null = a direct
+     * email. Set at classification; a later email on the thread doesn't clear it. Such threads
+     * are never drafted by email (answered on the site or from the owner's own phone).
+     */
+    leadChannel: text("lead_channel"),
+    /**
+     * Leads package (G5): the owner tapped "Mark fixed" on a complaint. Two days later, if the
+     * customer hasn't written, a "Check in" card asks whether they're happy (once per fix).
+     */
+    complaintFixedAt: timestamp("complaint_fixed_at", { withTimezone: true }),
+    /** G5: the owner closed that check-in ("All good"). A new Mark fixed re-arms it. */
+    complaintCheckinDoneAt: timestamp("complaint_checkin_done_at", { withTimezone: true }),
+    /**
      * Plan M8 (A11): set when this thread is first sorted as a quote request, to the time of the
      * customer's FIRST email on the thread (what response time and the monthly counts measure
      * from). Sticky like complained_at: a customer's later "Tuesday works" re-sorts the thread
@@ -432,6 +447,11 @@ export const businessProfiles = pgTable("business_profile", {
   onboardingDismissedAt: timestamp("onboarding_dismissed_at", { withTimezone: true }),
   /** Round 2 (FW D1/D2): the owner hid the "your last 30 days" card on the queue. */
   firstLookHiddenAt: timestamp("first_look_hidden_at", { withTimezone: true }),
+  /**
+   * Leads package (B9): the towns the owner works in, exact, one per entry. Empty = no check.
+   * Quote requests whose job town (parsed in code from the address) isn't on it get a line.
+   */
+  serviceTowns: jsonb("service_towns").$type<string[]>().notNull().default([]),
   /** Emails mentioning more than this go to the owner. */
   amountThresholdDollars: integer("amount_threshold_dollars").notNull().default(2500),
   /** Nudge quiet quotes and invoices after this many days without a reply. */

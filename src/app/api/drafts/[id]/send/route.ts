@@ -75,6 +75,17 @@ export async function POST(request: NextRequest, ctx: RouteContext<"/api/drafts/
         { status: 422 },
       );
     }
+    if (outcome.status === "text_address") {
+      // Leads package: Squared Away never texts customers.
+      return NextResponse.json(
+        {
+          status: "text_address",
+          error:
+            "That address turns email into a text message, and Squared Away never texts customers. Use Text from my phone instead.",
+        },
+        { status: 403 },
+      );
+    }
     if (outcome.status === "queued") {
       await enqueue(draftSendQueued.create({ draftId: id, at: outcome.sendAfter.toISOString() }));
       return NextResponse.json(outcome, { status: 202 });

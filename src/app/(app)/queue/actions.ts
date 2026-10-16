@@ -66,6 +66,8 @@ export async function sendDraftAction(formData: FormData) {
       redirect("/queue?error=gaps");
     case "no_reply_address":
       redirect("/queue?error=no_reply_address");
+    case "text_address":
+      redirect("/queue?error=textaddr");
     case "deleted_in_gmail":
       redirect("/queue?error=deleted");
     case "reconnect_needed":
@@ -207,6 +209,9 @@ export async function draftReplyAction(formData: FormData) {
     gmail_busy: "gmail_busy",
     reply_to_unread: "reply_to_unread",
     no_reply_address: "no_reply_address",
+    text_address: "textaddr",
+    lead_site: "leadsite",
+    phone_message: "phonemsg",
   };
   redirect(`/queue?error=${reasons[r.reason] ?? "draftfailed"}`);
 }

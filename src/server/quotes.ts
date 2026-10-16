@@ -366,6 +366,8 @@ export async function guessNoAnswers(
   const inScope = and(
     workspaceId ? eq(mailboxes.workspaceId, workspaceId) : undefined,
     workspaceJobsAllowedSql(now),
+    // Leads package: answered on a lead website or by phone — no email silence to read.
+    sql`${threads.leadChannel} is null`,
   );
 
   // The customer wrote back after our guess → open again.

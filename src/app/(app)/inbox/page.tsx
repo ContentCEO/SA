@@ -16,6 +16,7 @@ import { getBusinessProfile } from "@/server/profile";
 import { requireOwner } from "@/server/session";
 import { isFoldableJunk, searchText } from "@/server/inbox-rules";
 import { draftReplyAction } from "../queue/actions";
+import { channelKind, channelName, openSiteUrl } from "@/server/channel-rules";
 import { InboxSearch } from "./inbox-search";
 import { markNeedsOwnerAction } from "./actions";
 
@@ -171,7 +172,25 @@ export default async function InboxPage(props: PageProps<"/inbox">) {
             />
             <Details row={row} />
             <PastPricesLine prices={pastPrices.get(row.id)} />
-            {row.category !== "noise" && !readOnly ? (
+            {row.leadChannel ? (
+              // Leads package: nobody reads an email reply to a lead website or a phone message.
+              openSiteUrl(row.leadChannel) ? (
+                <a
+                  href={openSiteUrl(row.leadChannel)!}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex min-h-tap items-center justify-center rounded-lg border-2 border-current px-4 font-black"
+                >
+                  Open {channelName(row.leadChannel)}
+                </a>
+              ) : (
+                <p className="text-sm font-semibold">
+                  {channelKind(row.leadChannel) === "site"
+                    ? "Answer them on the website."
+                    : "Call or text them back from your own phone."}
+                </p>
+              )
+            ) : row.category !== "noise" && !readOnly ? (
               <form action={draftReplyAction}>
                 <input type="hidden" name="threadId" value={row.id} />
                 <Button type="submit" className="w-full">

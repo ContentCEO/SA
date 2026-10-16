@@ -19,6 +19,7 @@ const WHY: Record<string, string> = {
   not_found: "it's no longer waiting",
   gaps_unfilled: "it still has gaps to fill in",
   no_reply_address: "it would go to a no-reply address",
+  text_address: "it would turn into a text message — text them from your own phone",
   intent_expired: "you okayed it more than 12 hours ago",
   reconnect_needed: "Gmail needs reconnecting",
   blocked: "sending isn't switched on for your account",

@@ -24,6 +24,7 @@ import {
 } from "./drafts";
 import { canSend, effectiveStatus, setupReallyPaid } from "./lifecycle";
 import { knownCustomer } from "./known-customer";
+import { isEmailToTextAddress, looksLikePhoneAddress } from "./channel-rules";
 import { complainedAddresses } from "./offers";
 import { markReconnectNeeded } from "./sync";
 import { unsentDraftMessage } from "./thread-sql";
@@ -116,6 +117,10 @@ export type GuardrailInput = {
   paymentChange?: boolean;
   /** Round 2 TW B4: someone smells gas. */
   gasSmell?: boolean;
+  /** Leads package: a lead-site / voicemail / text-message thread. */
+  leadChannel?: boolean;
+  /** Leads package: the reply goes to an email-to-text gateway or a phone-number address. */
+  textAddress?: boolean;
 };
 
 /** Layer 3. Every reason this email must wait for the owner; empty = may go. */
@@ -145,6 +150,8 @@ export function guardrailReasons(g: GuardrailInput): string[] {
     out.push("This customer complained in the last 12 months, so it waits for you.");
   if (g.paymentChange) out.push("Asks to pay a new account, so it waits for you.");
   if (g.gasSmell) out.push("Someone smells gas. Call them.");
+  if (g.leadChannel) out.push("Lead-site and voicemail emails always wait for you.");
+  if (g.textAddress) out.push("That address may turn into a text message, so it waits for you.");
   return out;
 }
 
@@ -352,6 +359,8 @@ async function blockers(row: NonNullable<Awaited<ReturnType<typeof loadForAutopi
     complainedRecently,
     paymentChange: extracted.payment_change === true,
     gasSmell: extracted.gas_smell === true,
+    leadChannel: thread.leadChannel != null,
+    textAddress: isEmailToTextAddress(draft.toAddress) || looksLikePhoneAddress(draft.toAddress),
   });
 }
 
