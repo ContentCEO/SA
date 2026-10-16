@@ -43,9 +43,9 @@ import {
   setReferralConfigForTests,
 } from "@/server/referral-rules";
 import {
-  applyPendingReferralCredits,
   creditReferralOnActive,
   creditReferralSafely,
+  runReferralRewards,
   ensureReferralCode,
   referralLinkFor,
   workspaceByReferralCode,
@@ -502,7 +502,7 @@ describe("GATE: switched off, or no reward configured", () => {
     await payAndFinishSetup(again.id);
     expect((await load(again.id)).status).toBe("active");
     expect(await creditReferralOnActive(again.id, NOW)).toBe("skipped");
-    await applyPendingReferralCredits(NOW);
+    await runReferralRewards(NOW);
     await applySubscription(subscription(again.id, "active"), NOW);
 
     expect(stripeCalls()).toBe(0);
@@ -528,7 +528,7 @@ describe("GATE: switched off, or no reward configured", () => {
       amountCents: 0,
       reward: "free_month_up",
     });
-    expect(await applyPendingReferralCredits(NOW)).toEqual({ settled: 0 });
+    expect(await runReferralRewards(NOW)).toMatchObject({ settled: 0 });
     expect(stripeCalls()).toBe(0);
     expect((await shape()).sort()).toEqual([
       ["referrer", "pending", "free_month_up", null, 0],
@@ -549,7 +549,7 @@ describe("GATE: switched off, or no reward configured", () => {
       stripeCustomerId: "cus_new",
     });
     expect(await creditReferralOnActive(workspace.id, NOW)).toBe("skipped");
-    expect(await applyPendingReferralCredits(NOW)).toEqual({ settled: 0 });
+    expect(await runReferralRewards(NOW)).toMatchObject({ settled: 0 });
     expect(await shape()).toEqual([["referrer", "skipped", "free_month_up", "off", 0]]);
     expect(stripeCalls()).toBe(0);
   });
@@ -653,7 +653,7 @@ describe("referral free month (switched on)", () => {
     });
     expect((await handleStripeWebhook(body, "good")).status).toBe(200);
     expect((await handleStripeWebhook(body, "good")).body).toBe("Already handled.");
-    await applyPendingReferralCredits(new Date(NOW.getTime() + 86_400_000));
+    await runReferralRewards(new Date(NOW.getTime() + 86_400_000));
 
     expect(await rows()).toHaveLength(1);
     expect(await earnedLogs()).toHaveLength(1);
@@ -668,7 +668,7 @@ describe("referral free month (switched on)", () => {
     expect((await rows()).map((r) => [r.status, r.skipReason])).toEqual([["skipped", "off"]]);
 
     turnOn();
-    await applyPendingReferralCredits(NOW);
+    await runReferralRewards(NOW);
     await applySubscription(subscription(workspace.id, "active"), NOW);
     expect((await rows()).map((r) => [r.status, r.skipReason])).toEqual([["skipped", "off"]]);
     expect(await earnedLogs()).toHaveLength(0);
@@ -700,7 +700,7 @@ describe("referral free month (switched on)", () => {
         },
       }) as Database,
     );
-    expect(await applyPendingReferralCredits(NOW)).toEqual({ settled: 0 });
+    expect(await runReferralRewards(NOW)).toMatchObject({ settled: 0 });
     setDbForTests(database);
     // Only the sweep's own lookup (unsettled accounts and its NOT EXISTS subquery): no owner
     // lookups, no settlement attempt.
@@ -714,7 +714,7 @@ describe("referral free month (switched on)", () => {
     await set(ref.id, { referredByWorkspaceId: ref.id });
     expect(await creditReferralOnActive(ref.id, NOW)).toBe("skipped");
     expect((await rows()).map((r) => [r.status, r.skipReason])).toEqual([["skipped", "self"]]);
-    expect(await applyPendingReferralCredits(NOW)).toEqual({ settled: 0 });
+    expect(await runReferralRewards(NOW)).toMatchObject({ settled: 0 });
     expect(await rows()).toHaveLength(1);
     expect(await earnedLogs()).toHaveLength(0);
   });
@@ -756,7 +756,7 @@ describe("referral free month (switched on)", () => {
         stripeCustomerId: "cus_new",
       });
       expect(await applyAdminMove(workspace.id, "mark_setup_call_done", NOW)).toBe("active");
-      expect(await applyPendingReferralCredits(NOW)).toEqual({ settled: 0 });
+      expect(await runReferralRewards(NOW)).toMatchObject({ settled: 0 });
       expect(await creditReferralOnActive(workspace.id, NOW)).toBe("skipped");
       expect(await rows()).toHaveLength(0);
       expect(stripeCalls()).toBe(0);
@@ -849,7 +849,7 @@ describe("referral free month (switched on)", () => {
     expectSettleFailedLogs(errors, [workspace.id]);
 
     // The sweep settles it later.
-    expect(await applyPendingReferralCredits(NOW)).toEqual({ settled: 1 });
+    expect(await runReferralRewards(NOW)).toMatchObject({ settled: 1 });
     expect((await rows()).map((r) => r.status)).toEqual(["pending"]);
   });
 
@@ -909,7 +909,7 @@ describe("referral free month (switched on)", () => {
     }
 
     setDbForTests(settlementThrows(1));
-    expect(await applyPendingReferralCredits(NOW)).toEqual({ settled: 1 });
+    expect(await runReferralRewards(NOW)).toMatchObject({ settled: 1 });
     setDbForTests(database);
     const settledFor = new Set((await rows()).map((r) => r.referredWorkspaceId));
     expect(settledFor.size).toBe(1);
@@ -917,7 +917,7 @@ describe("referral free month (switched on)", () => {
     expectSettleFailedLogs(errors, [missed]);
 
     // Next run picks up the one that failed. Two referrals: two waiting free months.
-    expect(await applyPendingReferralCredits(NOW)).toEqual({ settled: 1 });
+    expect(await runReferralRewards(NOW)).toMatchObject({ settled: 1 });
     expect(new Set((await rows()).map((r) => r.referredWorkspaceId))).toEqual(new Set(ids));
     expect((await rows()).map((r) => r.status)).toEqual(["pending", "pending"]);
   });
@@ -959,8 +959,8 @@ describe("referral free month (switched on)", () => {
       setupCallCompletedAt: NOW,
       stripeCustomerId: "cus_new",
     });
-    expect(await applyPendingReferralCredits(NOW)).toEqual({ settled: 1 });
-    expect(await applyPendingReferralCredits(NOW)).toEqual({ settled: 0 });
+    expect(await runReferralRewards(NOW)).toMatchObject({ settled: 1 });
+    expect(await runReferralRewards(NOW)).toMatchObject({ settled: 0 });
     expect(await rows()).toHaveLength(1);
     expect(stripeCalls()).toBe(0);
   });
@@ -989,7 +989,7 @@ describe("referral free month (switched on)", () => {
     // ...and even if something did, the email key says it was already given.
     await set(again.id, { referredByWorkspaceId: ref.id });
     await payAndFinishSetup(again.id);
-    await applyPendingReferralCredits(NOW);
+    await runReferralRewards(NOW);
     expect(await rows()).toHaveLength(1);
     expect(await earnedLogs()).toHaveLength(1);
     // The used-up link is dropped, so the 15-minute sweep doesn't revisit it forever.

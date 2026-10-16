@@ -39,7 +39,7 @@ import {
 } from "@/server/workspace-lifecycle";
 import { runDraftMessagesCleanup } from "@/server/draft-message-cleanup";
 import { runM7Backfill } from "@/server/m7-backfill";
-import { applyPendingReferralCredits } from "@/server/referrals";
+import { runReferralRewards } from "@/server/referrals";
 import { considerAutopilot, overdueAutopilotDrafts, runAutopilotSend } from "@/server/autopilot";
 import {
   autopilotSendRequested,
@@ -422,8 +422,9 @@ export const workspaceLifecycle = inngest.createFunction(
     await step.run("draft-messages-cleanup", () => runDraftMessagesCleanup());
     // Plan #34: a quote request waiting over 4 business hours → one phone notification.
     await step.run("lead-at-risk-pushes", () => sendLeadAtRiskPushes());
-    // Plan #47 (off unless FEATURE_REFERRALS): settle referrals whose move to active was missed.
-    await step.run("referral-credits", () => applyPendingReferralCredits());
+    // Plan #47 (off unless FEATURE_REFERRALS): settle referrals whose move to active was missed,
+    // book earned free months, and end running ones (those end even with referrals off).
+    await step.run("referral-rewards", () => runReferralRewards());
     return { started, expired, voiceRestarted: voice.length, accessAlerts: alerts.sent };
   },
 );
