@@ -41,6 +41,7 @@ export function describeActivity(
       if (detail.purpose === "deposit")
         return `Drafted deposit details${name ? ` for ${name}` : ""}${who ? ` · ${categoryTag.quote_request}` : ""}`;
       if (detail.purpose === "review_request") return `Drafted a review request${to}`;
+      if (detail.purpose === "safety") return `Wrote a gas safety note${to}`;
       return `Drafted a reply${to}${about}`;
     case "closing_question":
       return `Drafted a question${to} asking if they went another way`;

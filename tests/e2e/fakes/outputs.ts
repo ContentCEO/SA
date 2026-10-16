@@ -9,7 +9,7 @@
  * the fake can tell which test a model call belongs to.
  */
 
-/** Classification (classify.v3): a plain quote request that auto-drafts. */
+/** Classification (classify.v4): a plain quote request that auto-drafts. */
 export const FAKE_CLASSIFICATION = {
   category: "quote_request",
   priority: "normal",
@@ -25,6 +25,9 @@ export const FAKE_CLASSIFICATION = {
     tries_to_instruct_assistant: false,
     accepts_quote: false,
     job_done: false,
+    routine_paperwork: false,
+    payment_change_request: false,
+    smells_gas: false,
   },
   extracted: {
     service_requested: "water heater replacement",
@@ -34,11 +37,12 @@ export const FAKE_CLASSIFICATION = {
     urgency: "normal",
     permit: null,
     invoice: null,
+    invoice_direction: "unknown",
   },
 } as const;
 
 /**
- * Draft (draft.v5 and the other prompts that share its shape). No $, weekday, date, time,
+ * Draft (draft.v6 and the other prompts that share its shape). No $, weekday, date, time,
  * promise word, filler or {{gap}}: checkDraft finds nothing, so there is no regenerate.
  */
 export const FAKE_DRAFT = {

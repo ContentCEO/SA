@@ -3,13 +3,14 @@ import { createHash } from "node:crypto";
 import { and, asc, desc, eq, gt, inArray, isNotNull, isNull, lt, lte, or, sql } from "drizzle-orm";
 import { callStructured } from "@/ai/client";
 import { checkDraft, hasLink, REGENERATE_ON, type CheckResult } from "@/ai/draft-checks";
+import { injectionCheck, looksLikePaymentChange } from "@/ai/guards";
 import {
   REVISE_INSTRUCTIONS,
   REVISE_PROMPT_VERSION,
   reviseTask,
   TWEAKS,
   type Tweak,
-} from "@/ai/prompts/revise.v1";
+} from "@/ai/prompts/revise.v2";
 import { MAX_REVISIONS_PER_DRAFT, UNDO_WINDOW_SECONDS } from "@/config/drafting";
 import { hasUnfilledGap } from "@/ai/gaps";
 import {
@@ -18,14 +19,15 @@ import {
   DRAFT_PROMPT_VERSION,
   draftSchema,
   workspaceBlock,
+  type ModelDraft,
   type WorkspaceContext,
-} from "@/ai/prompts/draft.v5";
+} from "@/ai/prompts/draft.v6";
 import { prepareBody } from "@/ai/classify";
 import {
   FOLLOWUP_INSTRUCTIONS,
   FOLLOWUP_PROMPT_VERSION,
   followupTask,
-} from "@/ai/prompts/followup.v3";
+} from "@/ai/prompts/followup.v4";
 import {
   closingQuestionTask,
   depositTask,
@@ -144,6 +146,8 @@ export type CreateOutcome =
         | "followup_cap"
         | "untrusted"
         | "municipal"
+        // Round 2: asks to pay a new account (A11) — only the owner's tap drafts one.
+        | "payment_change"
         // Purpose drafts (plan #26 #28 #29). S6 adds the per-purpose eligibility reasons.
         | "purpose_not_allowed"
         | "feature_off"
@@ -173,6 +177,44 @@ async function loadThread(threadId: string) {
 
 /** Purposes only the owner's tap may ask for. Deposit is never asked for: it's derived (#28). */
 export const OWNER_PURPOSES = ["review_request", "closing_question"] as const;
+
+/** Round 2 (TW B4): the fixed safety note's "prompt version" — code, never a model. */
+export const SAFETY_NOTE_VERSION = "safety-note.v1";
+/** First flag on the safety note: it keeps it out of batch and autopilot too. */
+export const SAFETY_NOTE_FLAG =
+  "They say they smell gas. Call them now; this note only tells them what to do meanwhile.";
+
+/**
+ * The fixed safety note for a gas smell (TW B4). Plain, no prices, no times, nothing invented:
+ * what anyone should do while they wait. The owner reads it and taps Send reply, or not.
+ */
+export function safetyNote(ctx: Pick<WorkspaceContext, "signature" | "businessName">): ModelDraft {
+  const sign = ctx.signature?.trim() || ctx.businessName?.trim() || "";
+  return {
+    body: [
+      "Hi,",
+      "",
+      "If you smell gas right now, please don't wait on email. Get everyone out of the house, don't switch lights or anything electric on or off, and don't light anything. Once you're outside, call your gas company's emergency line or 911.",
+      "",
+      "I'll call you as soon as I can.",
+      ...(sign ? ["", sign] : []),
+    ].join("\n"),
+    reason: "They smell gas. A safety note is ready; call them too.",
+    flags: [],
+    confidence: 0.5,
+    used_facts: sign && ctx.signature?.trim() ? ["signature"] : [],
+  };
+}
+
+/** Whether a draft with this purpose was ever written on the thread (any status). */
+async function purposeOnThread(threadId: string, purpose: DraftPurpose): Promise<boolean> {
+  const [row] = await db()
+    .select({ id: drafts.id })
+    .from(drafts)
+    .where(and(eq(drafts.threadId, threadId), eq(drafts.purpose, purpose)))
+    .limit(1);
+  return !!row;
+}
 export type OwnerPurpose = (typeof OWNER_PURPOSES)[number];
 
 /** Nudges actually sent in this thread (from the app or from Gmail). Discarded ones don't count. */
@@ -288,7 +330,11 @@ function replyReader(
   return typeof w.getMessage === "function" ? (w as Pick<MailboxReader, "getMessage">) : null;
 }
 
-type DraftContext = WorkspaceContext & { reviewUrl: string | null };
+type DraftContext = WorkspaceContext & {
+  reviewUrl: string | null;
+  /** The owner's time zone, for "Today is…" and each email's time (review A8). */
+  timeZone: string | null;
+};
 
 /**
  * The terms check for deposit and review notes (A4). Percentages, amounts, ways to pay and
@@ -373,7 +419,7 @@ function scoreDraft(
  */
 export async function workspaceContext(
   workspaceId: string,
-  ws: { businessName: string | null; trade: string | null },
+  ws: { businessName: string | null; trade: string | null; extraTrades?: string[] | null },
   now: Date = new Date(),
 ): Promise<DraftContext> {
   const [profile] = await db()
@@ -387,6 +433,7 @@ export async function workspaceContext(
   const ctx: WorkspaceContext = {
     businessName: ws.businessName,
     trade: ws.trade,
+    extraTrades: ws.extraTrades ?? [],
     services: profile?.services ?? null,
     serviceArea: profile?.serviceArea ?? null,
     hours: profile?.hours ?? null,
@@ -415,7 +462,7 @@ export async function workspaceContext(
           }
         : null,
   };
-  return { ...ctx, reviewUrl: profile?.reviewUrl ?? null };
+  return { ...ctx, reviewUrl: profile?.reviewUrl ?? null, timeZone: profile?.timeZone ?? null };
 }
 
 /**
@@ -472,13 +519,28 @@ export async function createDraftForThread(
     if (why) return { status: "skipped", reason: why };
   }
 
-  const marks = (thread.extracted ?? {}) as { municipal?: boolean; injection?: boolean };
-  // Only the owner's tap drafts for these (feature plan #17, #42) — never a job.
+  const marks = (thread.extracted ?? {}) as {
+    municipal?: boolean;
+    injection?: boolean;
+    payment_change?: boolean;
+    gas_smell?: boolean;
+    bill_direction?: string;
+  };
+  // Only the owner's tap drafts for these (feature plan #17, #42; round 2 A11) — never a job.
   if (opts.trigger !== "owner") {
     if (marks.injection) return { status: "skipped", reason: "untrusted" };
     if (marks.municipal) return { status: "skipped", reason: "municipal" };
+    if (marks.payment_change) return { status: "skipped", reason: "payment_change" };
   }
-  if (opts.trigger === "auto") {
+  // Round 2 (TW B4): someone smells gas. A job writes one fixed safety note (no model), once
+  // per thread, and it waits for the owner's tap like everything else. After that the thread
+  // is the owner's, as any needs-you email is.
+  const safety =
+    opts.trigger === "auto" &&
+    marks.gas_smell === true &&
+    opts.purpose === undefined &&
+    !(await purposeOnThread(threadId, "safety"));
+  if (opts.trigger === "auto" && !safety) {
     if (thread.category === "noise") return { status: "skipped", reason: "noise" };
     if (thread.needsOwner) return { status: "skipped", reason: "needs_owner" };
     if (
@@ -498,6 +560,8 @@ export async function createDraftForThread(
       quoteStopsNudges(thread) ||
       // Nor a paid invoice (the owner's mark or our guess) or one that isn't owed (#27).
       thread.invoicePaidAt != null ||
+      // Nor a bill the owner has to pay: a supplier's statement is never chased (TW A2).
+      marks.bill_direction === "owed_by_business" ||
       !FOLLOWUP_CATEGORIES.includes(thread.category as (typeof FOLLOWUP_CATEGORIES)[number]) ||
       // Nor a thread where a deposit, review request or closing question went out (A3) —
       // a deposit only while it's a quote — or whose customer just said they paid.
@@ -513,14 +577,15 @@ export async function createDraftForThread(
   // Only once per thread: after a deposit note was drafted (whatever became of it), or when
   // the email itself says it paid ("Sent the deposit, when can you start?"), it is answered
   // as an ordinary reply.
-  const purpose: DraftPurpose | null =
-    opts.purpose ??
-    (!followup &&
-    isQuoteAcceptance(thread) &&
-    paymentSaid(thread.extracted) === null &&
-    !(await depositAlreadyOn(threadId))
-      ? "deposit"
-      : null);
+  const purpose: DraftPurpose | null = safety
+    ? "safety"
+    : (opts.purpose ??
+      (!followup &&
+      isQuoteAcceptance(thread) &&
+      paymentSaid(thread.extracted) === null &&
+      !(await depositAlreadyOn(threadId))
+        ? "deposit"
+        : null));
 
   const [pending] = await db()
     .select({ id: drafts.id })
@@ -598,11 +663,10 @@ export async function createDraftForThread(
   }
   const to = customerReplyAddress(customer);
   if (!to) return { status: "skipped", reason: "no_text" };
-  // A no-reply address never gets a reply quietly: jobs and offers skip it; the owner's own
-  // "Draft a reply" gets one, flagged first (a flag also keeps it from batch and autopilot).
-  const toNoReply = isNoReplyAddress(to);
-  if (toNoReply && (opts.trigger !== "owner" || opts.purpose !== undefined))
-    return { status: "skipped", reason: "no_reply_address" };
+  // A robot never gets a reply (round 2 A9): a no-reply address, a form robot with no usable
+  // Reply-To, a portal's dispatch address. Not even on the owner's tap — nobody reads it, and
+  // "Reply sent." would be untrue. They answer those on the platform or by phone.
+  if (isNoReplyAddress(to)) return { status: "skipped", reason: "no_reply_address" };
   const withText = recent
     .map((m) => ({
       m,
@@ -610,6 +674,15 @@ export async function createDraftForThread(
     }))
     .filter((x) => x.text.length > 0);
   if (!withText.some((x) => x.m.id === last.id)) return { status: "skipped", reason: "no_text" };
+  // Every customer email the drafter will read is checked in code (round 2 B3), not only the
+  // newest one the sorter saw: an older "ignore the above…" still in view means no job draft.
+  if (opts.trigger !== "owner") {
+    const inbound = withText.filter((x) => x.m.direction === "in").map((x) => x.text);
+    if (inbound.some((t) => injectionCheck(t).flagged))
+      return { status: "skipped", reason: "untrusted" };
+    if (inbound.some((t) => looksLikePaymentChange(t)))
+      return { status: "skipped", reason: "payment_change" };
+  }
 
   const ctx = await workspaceContext(workspace.id, workspace, now);
   // Nothing to ask with: never call the model for a review request without the link.
@@ -618,6 +691,8 @@ export async function createDraftForThread(
   const daysQuiet = Math.max(1, Math.round((now.getTime() - last.sentAt.getTime()) / 86_400_000));
   const wsBlock = workspaceBlock(ctx);
   const convo = conversationBlock({
+    now,
+    timeZone: ctx.timeZone,
     subject: thread.subject,
     category: thread.category,
     summary: thread.summary,
@@ -644,18 +719,29 @@ export async function createDraftForThread(
   });
 
   // What the draft may draw facts from, and what it must never say.
+  const ownerFacts = [
+    ctx.pricingNotes,
+    ctx.hours,
+    ctx.leadTime,
+    ctx.policies,
+    ctx.paymentTerms,
+    ctx.services,
+    ctx.signature,
+    ...ctx.seasonalNotes.map((n) => n.text),
+  ];
   const checkContext = {
-    sourceText: [
-      withText.map((x) => x.text).join("\n"),
-      ctx.pricingNotes,
-      ctx.hours,
-      ctx.leadTime,
-      ctx.policies,
-      ctx.paymentTerms,
-      ...ctx.seasonalNotes.map((n) => n.text),
+    sourceText: [withText.map((x) => x.text).join("\n"), ...ownerFacts, opts.ownerNote]
+      .filter(Boolean)
+      .join("\n"),
+    // Amounts only the customer named aren't the owner's price (round 2 A4).
+    ownerSourceText: [
+      ...withText.filter((x) => x.m.direction === "out").map((x) => x.text),
+      ...ownerFacts,
+      opts.ownerNote,
     ]
       .filter(Boolean)
       .join("\n"),
+    ownerInstruction: opts.ownerNote ?? null,
     doNotPromise: ctx.doNotPromise,
     phrasesAvoided: ctx.voice?.phrasesAvoided ?? [],
     neverSay: ctx.neverSay,
@@ -664,44 +750,48 @@ export async function createDraftForThread(
       wrote: withText.filter((x) => x.m.direction === "out").map((x) => x.text),
     }),
   };
-  const promptVersion = followup
-    ? FOLLOWUP_PROMPT_VERSION
-    : purpose
-      ? `${DRAFT_PROMPT_VERSION}+${PURPOSE_PROMPT_VERSION}`
-      : DRAFT_PROMPT_VERSION;
+  const promptVersion = safety
+    ? SAFETY_NOTE_VERSION
+    : followup
+      ? FOLLOWUP_PROMPT_VERSION
+      : purpose
+        ? `${DRAFT_PROMPT_VERSION}+${PURPOSE_PROMPT_VERSION}`
+        : DRAFT_PROMPT_VERSION;
 
-  let result;
-  try {
-    const request = {
-      workspaceId: workspace.id,
-      role: "draft" as const,
-      promptVersion,
-      maxTokens: 2048,
-      effort: "medium" as const,
-      system: [
-        { text: followup ? FOLLOWUP_INSTRUCTIONS : DRAFT_INSTRUCTIONS, cache: false },
-        { text: wsBlock, cache: true },
-      ],
-      user: convo,
-      schema: draftSchema,
-      now,
-    };
-    result = (await callStructured(request)) ?? (await callStructured(request));
-    if (result?.body.trim()) {
-      // Something the owner explicitly banned slipped in: one fresh attempt, then flag (plan #23).
-      const first = checkDraft(result.body.trim(), checkContext);
-      if (first.hits.some((h) => REGENERATE_ON.includes(h))) {
-        const retry = await callStructured({
-          ...request,
-          user: `${convo}\n\nYour last attempt broke the owner's rules: ${first.flags.join(" ")} Write it again without that.`,
-        });
-        if (retry?.body.trim()) result = retry;
+  let result: ModelDraft | null = null;
+  if (safety) result = safetyNote(ctx);
+  else
+    try {
+      const request = {
+        workspaceId: workspace.id,
+        role: "draft" as const,
+        promptVersion,
+        maxTokens: 2048,
+        effort: "medium" as const,
+        system: [
+          { text: followup ? FOLLOWUP_INSTRUCTIONS : DRAFT_INSTRUCTIONS, cache: false },
+          { text: wsBlock, cache: true },
+        ],
+        user: convo,
+        schema: draftSchema,
+        now,
+      };
+      result = (await callStructured(request)) ?? (await callStructured(request));
+      if (result?.body.trim()) {
+        // Something the owner explicitly banned slipped in: one fresh attempt, then flag (plan #23).
+        const first = checkDraft(result.body.trim(), checkContext);
+        if (first.hits.some((h) => REGENERATE_ON.includes(h))) {
+          const retry = await callStructured({
+            ...request,
+            user: `${convo}\n\nYour last attempt broke the owner's rules: ${first.flags.join(" ")} Write it again without that.`,
+          });
+          if (retry?.body.trim()) result = retry;
+        }
       }
+    } catch (err) {
+      if (err instanceof AiCapReachedError) return { status: "skipped", reason: "capped" };
+      throw err;
     }
-  } catch (err) {
-    if (err instanceof AiCapReachedError) return { status: "skipped", reason: "capped" };
-    throw err;
-  }
   if (!result || !result.body.trim()) return { status: "skipped", reason: "model_failed" };
 
   // What the owner must sort before a purpose note can go (A6).
@@ -709,7 +799,7 @@ export async function createDraftForThread(
   const { flags, confidence } = scoreDraft(
     result,
     checkDraft(body, checkContext),
-    toNoReply ? [NO_REPLY_FLAG, ...purposeFlags] : purposeFlags,
+    safety ? [SAFETY_NOTE_FLAG, ...purposeFlags] : purposeFlags,
   );
 
   const subject = replySubject(last.subject ?? thread.subject);
@@ -890,6 +980,7 @@ export type SendOutcome =
   | { status: "changed_in_gmail" }
   | { status: "deleted_in_gmail" }
   | { status: "gaps_unfilled" }
+  | { status: "no_reply_address" }
   | { status: "already_sending" }
   | { status: "not_found" }
   | { status: "reconnect_needed" };
@@ -924,6 +1015,8 @@ export async function sendDraft(
   if (mailbox.status !== "active") return { status: "reconnect_needed" };
   // A reply with a {{gap}} still in it never leaves (plan #2) — checked before any Gmail call.
   if (hasUnfilledGap(opts.editedBody ?? draft.body ?? "")) return { status: "gaps_unfilled" };
+  // Nor one to a robot (round 2 A9), whoever wrote it: nobody would read it.
+  if (isNoReplyAddress(draft.toAddress)) return { status: "no_reply_address" };
 
   const writer = (opts.writerFor ?? defaultWriter)(mailbox);
   try {
@@ -1102,6 +1195,7 @@ export async function queueSend(
   }
   if (mailbox.status !== "active") return { status: "reconnect_needed" };
   if (hasUnfilledGap(opts.editedBody ?? draft.body ?? "")) return { status: "gaps_unfilled" };
+  if (isNoReplyAddress(draft.toAddress)) return { status: "no_reply_address" };
 
   const writer = (opts.writerFor ?? defaultWriter)(mailbox);
   let body = draft.body ?? "";
@@ -1330,6 +1424,8 @@ export async function batchCandidates(
       injection?: boolean;
       municipal?: boolean;
       accepts_quote?: boolean;
+      payment_change?: boolean;
+      gas_smell?: boolean;
     };
     const ok = batchEligible(
       {
@@ -1339,7 +1435,11 @@ export async function batchCandidates(
         confidencePct: draft.confidence,
         body: draft.body ?? "",
         amountsInEmail: extracted.dollar_amounts ?? [],
-        untrusted: extracted.injection === true || extracted.municipal === true,
+        untrusted:
+          extracted.injection === true ||
+          extracted.municipal === true ||
+          extracted.payment_change === true ||
+          extracted.gas_smell === true,
         autopilotCounting: draft.autoSendAt !== null,
         acceptsQuote: extracted.accepts_quote === true,
         purpose: draft.purpose ?? null,
@@ -1486,23 +1586,32 @@ export async function reviseDraft(
     }))
     .filter((x) => x.text.length > 0);
   const ctx = await workspaceContext(workspace.id, workspace, now);
+  const ownerFacts = [
+    ctx.pricingNotes,
+    ctx.hours,
+    ctx.leadTime,
+    ctx.policies,
+    ctx.paymentTerms,
+    ctx.services,
+    ctx.signature,
+    ...ctx.seasonalNotes.map((n) => n.text),
+    // What the owner said counts as a fact they gave us (plan #4).
+    spoken,
+    // Facts already in a clean draft stay allowed. A flagged draft's text
+    // doesn't count, so a tweak can never launder a flag away.
+    (draft.flags ?? []).length === 0 ? draft.body : null,
+  ];
   const checkContext = {
-    sourceText: [
-      withText.map((x) => x.text).join("\n"),
-      ctx.pricingNotes,
-      ctx.hours,
-      ctx.leadTime,
-      ctx.policies,
-      ctx.paymentTerms,
-      ...ctx.seasonalNotes.map((n) => n.text),
-      // What the owner said counts as a fact they gave us (plan #4).
-      spoken,
-      // Facts already in a clean draft stay allowed. A flagged draft's text
-      // doesn't count, so a tweak can never launder a flag away.
-      (draft.flags ?? []).length === 0 ? draft.body : null,
+    sourceText: [withText.map((x) => x.text).join("\n"), ...ownerFacts].filter(Boolean).join("\n"),
+    // Round 2 A4: an amount only the customer named isn't the owner's price.
+    ownerSourceText: [
+      ...withText.filter((x) => x.m.direction === "out").map((x) => x.text),
+      ...ownerFacts,
     ]
       .filter(Boolean)
       .join("\n"),
+    // Round 2 A5: "tell her Thursday works, 450" — every number the owner said is theirs.
+    ownerInstruction: spoken,
     doNotPromise: ctx.doNotPromise,
     phrasesAvoided: ctx.voice?.phrasesAvoided ?? [],
     neverSay: ctx.neverSay,
@@ -1517,6 +1626,8 @@ export async function reviseDraft(
     }),
   };
   const convo = conversationBlock({
+    now,
+    timeZone: ctx.timeZone,
     subject: thread.subject,
     category: thread.category,
     summary: thread.summary,
@@ -2216,8 +2327,15 @@ export async function threadsToAutoDraft(mailboxId: string, limit = 10): Promise
       and(
         eq(threads.mailboxId, mailboxId),
         eq(threads.inInbox, true),
-        eq(threads.needsOwner, false),
-        inArray(threads.category, [...AUTO_DRAFT_CATEGORIES]),
+        // A gas smell (round 2, TW B4) gets its one fixed safety note whatever its sort;
+        // createDraftForThread writes it once per thread, then the thread waits for the owner.
+        or(
+          and(eq(threads.needsOwner, false), inArray(threads.category, [...AUTO_DRAFT_CATEGORIES])),
+          and(
+            sql`${threads.extracted}->>'gas_smell' = 'true'`,
+            sql`not exists (select 1 from drafts d where d.thread_id = ${threads.id} and d.purpose = 'safety')`,
+          ),
+        ),
         sql`${threads.classifiedAt} is not null and ${threads.classifiedAt} >= ${lastIn}`,
         sql`(${lastOut} is null or ${lastOut} < ${lastIn})`,
         sql`(${lastDraft} is null or ${lastDraft} < ${lastIn})`,

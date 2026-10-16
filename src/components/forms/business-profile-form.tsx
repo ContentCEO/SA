@@ -1,7 +1,7 @@
 "use client";
 
 import { useActionState } from "react";
-import { TRADE_OPTIONS } from "@/config/trades";
+import { MAX_EXTRA_TRADES, TRADE_OPTIONS } from "@/config/trades";
 import { saveBusinessProfileAction, type FormState } from "@/app/(app)/settings/profile-actions";
 import { Button } from "@/components/ui/button";
 import { useFocusFirstError } from "./use-focus-first-error";
@@ -10,6 +10,8 @@ import { SelectField, TextArea, TextField } from "./field";
 export type ProfileDefaults = {
   businessName: string | null;
   trade: string | null;
+  /** Up to two more trades (round 2, TW A4). */
+  extraTrades: string[];
   services: string | null;
   serviceArea: string | null;
   hours: string | null;
@@ -25,6 +27,7 @@ export type ProfileDefaults = {
 };
 
 const trades = TRADE_OPTIONS;
+const extraChoices = TRADE_OPTIONS.filter((t) => t.value !== "other");
 
 export function BusinessProfileForm({
   defaults,
@@ -67,6 +70,41 @@ export function BusinessProfileForm({
         defaultValue={v("trade", defaults.trade) as string}
         error={e.trade}
       />
+      <fieldset
+        className="flex flex-col gap-1.5"
+        aria-describedby={e.extraTrades ? "extraTrades-error" : "extraTrades-hint"}
+      >
+        <legend className="font-semibold">Do you do other trades too? (optional)</legend>
+        <span id="extraTrades-hint" className="text-sm">
+          Tick up to {MAX_EXTRA_TRADES}, like plumbing and heating. Drafts then know those words and
+          questions too.
+        </span>
+        <input type="hidden" name="extraTradesShown" value="1" />
+        <div className="grid grid-cols-1 gap-x-4 sm:grid-cols-2">
+          {extraChoices.map((t) => {
+            const before = state.values
+              ? (state.values.extraTrades ?? "").split(",").includes(t.value)
+              : defaults.extraTrades.includes(t.value);
+            return (
+              <label key={t.value} className="flex min-h-tap items-center gap-3">
+                <input
+                  type="checkbox"
+                  name="extraTrades"
+                  value={t.value}
+                  defaultChecked={before}
+                  className="size-5 shrink-0 accent-current"
+                />
+                <span>{t.label}</span>
+              </label>
+            );
+          })}
+        </div>
+        {e.extraTrades?.length ? (
+          <span id="extraTrades-error" className="font-semibold">
+            {e.extraTrades[0]}
+          </span>
+        ) : null}
+      </fieldset>
       <TextArea
         name="services"
         label="What work do you take on?"

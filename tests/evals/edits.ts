@@ -5,7 +5,7 @@
  */
 import { callStructured } from "@/ai/client";
 import { checkDraft } from "@/ai/draft-checks";
-import { draftSchema, workspaceBlock, type WorkspaceContext } from "@/ai/prompts/draft.v5";
+import { draftSchema, workspaceBlock, type WorkspaceContext } from "@/ai/prompts/draft.v6";
 import {
   EDIT_TONE_INSTRUCTIONS,
   EDIT_TONE_PROMPT_VERSION,
@@ -19,7 +19,7 @@ import {
   reviseTask,
   TWEAKS,
   type Tweak,
-} from "@/ai/prompts/revise.v1";
+} from "@/ai/prompts/revise.v2";
 
 export type ReviseCase = {
   id: string;

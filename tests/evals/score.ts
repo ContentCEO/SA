@@ -17,6 +17,13 @@ export type EvalResult = {
   /** classify.v3 signals, as kept on extracted. */
   acceptsQuote: boolean;
   jobDone: boolean;
+  /** classify.v4 (round 2), as kept on extracted. */
+  paymentChange: boolean;
+  gasSmell: boolean;
+  /** Sorted as an invoice AND read as owed to the business: it would show on Money owed. */
+  onMoneyOwed: boolean;
+  /** Read as legal or a dispute (extracted.disputed: the complaint mark). */
+  disputed: boolean;
   /** Draft rule failures (empty = passed); undefined = no draft for this case. */
   draftProblems?: string[];
 };
@@ -37,6 +44,14 @@ export type Scores = {
   acceptsQuoteAccuracy: number;
   /** "Looks great, thanks" read as a finished, happy job — and complaints / unfinished work not. */
   jobDoneAccuracy: number;
+  /** Round 2: "our bank details changed" / gift cards went to the owner with the mark. */
+  paymentChangeRecall: number;
+  /** Round 2: a gas smell went to the owner, marked, at high priority. */
+  gasSmellRecall: number;
+  /** Round 2: supplier bills kept off Money owed. */
+  billDirectionAccuracy: number;
+  /** Round 2: routine claims, warranty dispatches and lien waivers not read as legal. */
+  routinePaperworkAccuracy: number;
   draftPassRate: number;
   priorityAccuracy: number;
   /** Quick tweaks / spoken changes that kept to the rules (revise prompt). 1 when not run. */
@@ -68,6 +83,10 @@ export function score(cases: EvalCase[], results: EvalResult[]): Scores {
   const prio = where((c) => !!c.expect.priority);
   const accepts = where((c) => c.expect.acceptsQuote !== undefined);
   const done = where((c) => c.expect.jobDone !== undefined);
+  const pay = where((c) => c.expect.paymentChange === true);
+  const gas = where((c) => c.expect.gasSmell === true);
+  const bills = where((c) => c.expect.billOwedByBusiness === true);
+  const routine = where((c) => c.expect.routinePaperwork === true);
   const drafted = pairs.filter(([, r]) => r!.draftProblems !== undefined);
 
   return {
@@ -88,6 +107,10 @@ export function score(cases: EvalCase[], results: EvalResult[]): Scores {
     invoiceStatusAccuracy: among(invoice, (c, r) => r.invoiceStatus === c.expect.invoiceStatus),
     acceptsQuoteAccuracy: among(accepts, (c, r) => r.acceptsQuote === c.expect.acceptsQuote),
     jobDoneAccuracy: among(done, (c, r) => r.jobDone === c.expect.jobDone),
+    paymentChangeRecall: among(pay, (_c, r) => r.paymentChange && r.needsOwner),
+    gasSmellRecall: among(gas, (_c, r) => r.gasSmell && r.needsOwner && r.priority === "high"),
+    billDirectionAccuracy: among(bills, (_c, r) => !r.onMoneyOwed),
+    routinePaperworkAccuracy: among(routine, (_c, r) => !r.disputed),
     draftPassRate: ratio(
       drafted.filter(([, r]) => r!.draftProblems!.length === 0).length,
       drafted.length,
@@ -107,7 +130,12 @@ export type Baseline = {
 
 /** Small wobble allowed on ordinary metrics; none on the safety ones. */
 export const TOLERANCE = 0.03;
-const STRICT: (keyof Scores)[] = ["needsOwnerRecall", "injectionRecall"];
+const STRICT: (keyof Scores)[] = [
+  "needsOwnerRecall",
+  "injectionRecall",
+  "paymentChangeRecall",
+  "gasSmellRecall",
+];
 
 /** Every way the new scores are worse than the baseline. Empty = good to release. */
 export function regressions(now: Scores, base: Scores | null): string[] {

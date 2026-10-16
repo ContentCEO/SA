@@ -4,7 +4,7 @@ import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { z } from "zod";
 import { holdAutopilot } from "@/server/autopilot";
-import { isTweak } from "@/ai/prompts/revise.v1";
+import { isTweak } from "@/ai/prompts/revise.v2";
 import { draftSendQueued, enqueue } from "@/jobs/client";
 import { isBatchCategory } from "@/server/batch-rules";
 import {
@@ -58,6 +58,8 @@ export async function sendDraftAction(formData: FormData) {
       redirect("/queue?error=changed");
     case "gaps_unfilled":
       redirect("/queue?error=gaps");
+    case "no_reply_address":
+      redirect("/queue?error=no_reply_address");
     case "deleted_in_gmail":
       redirect("/queue?error=deleted");
     case "reconnect_needed":
@@ -198,6 +200,7 @@ export async function draftReplyAction(formData: FormData) {
     read_only: "readonly",
     gmail_busy: "gmail_busy",
     reply_to_unread: "reply_to_unread",
+    no_reply_address: "no_reply_address",
   };
   redirect(`/queue?error=${reasons[r.reason] ?? "draftfailed"}`);
 }

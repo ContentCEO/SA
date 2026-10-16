@@ -10,11 +10,16 @@
  * works in JavaScript and in Postgres (`~`), which keeps the SQL twin below honest.
  */
 export const NO_REPLY_LOCAL_PATTERN =
-  "^(no-?reply|do-?not-?reply|donotreply|notifications?|mailer-daemon)([+.-]|$)";
+  "(^|[._+-])(no-?reply|do-?not-?reply|donotreply|notifications?|mailer-daemon|postmaster|bounces?|form-?submissions?|wordpress|automated|auto-?reply)([._+-]|$)";
 
 const NO_REPLY_LOCAL = new RegExp(NO_REPLY_LOCAL_PATTERN);
 
-/** noreply@thumbtack.com, do-not-reply@…, notifications@…, mailer-daemon@… (any case). */
+/**
+ * noreply@thumbtack.com, do-not-reply@…, notifications@…, mailer-daemon@…, and the robots
+ * round 2 found treated as people (review A9): voice-noreply@google.com,
+ * form-submission@squarespace.info, wordpress@site.com, bounces+…@, postmaster@. A no-reply
+ * word anywhere in the local part counts, as a whole word ("noreplyguy@" is a person).
+ */
 export function isNoReplyAddress(address: string | null | undefined): boolean {
   const s = (address ?? "").trim().toLowerCase();
   const at = s.lastIndexOf("@");

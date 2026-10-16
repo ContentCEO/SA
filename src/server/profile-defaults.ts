@@ -9,6 +9,7 @@ export async function profileDefaults(workspace: Workspace): Promise<ProfileDefa
   return {
     businessName: workspace.businessName,
     trade: workspace.trade,
+    extraTrades: workspace.extraTrades ?? [],
     services: p?.services ?? null,
     serviceArea: p?.serviceArea ?? null,
     hours: p?.hours ?? null,

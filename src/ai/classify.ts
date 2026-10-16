@@ -10,8 +10,17 @@ import {
   type Category,
   type EmailInput,
   type ModelClassification,
-} from "./prompts/classify.v3";
-import { INJECTION_REASON, injectionCheck, looksMunicipal } from "./guards";
+} from "./prompts/classify.v4";
+import {
+  GAS_SMELL_REASON,
+  INJECTION_REASON,
+  injectionCheck,
+  looksLikePaymentChange,
+  looksMunicipal,
+  mentionsGasSmell,
+  mentionsRealLegal,
+  PAYMENT_CHANGE_REASON,
+} from "./guards";
 
 /**
  * What we keep about an email. The model's facts, plus flags:
@@ -50,6 +59,18 @@ export type Extracted = ModelClassification["extracted"] & {
    * keeps the invoice on Money owed. Only ever present as `true`.
    */
   invoice_thread?: boolean;
+  /**
+   * Round 2 A11: the email asks to pay a new or different account (bank details changed,
+   * gift cards). Never drafted by a job, never autopilot. Only ever present as `true`.
+   */
+  payment_change?: boolean;
+  /** Round 2 TW B4: someone smells gas. Only ever present as `true`. */
+  gas_smell?: boolean;
+  /**
+   * Round 2 TW A1: routine insurance / warranty / lien-waiver paperwork the model saw. A
+   * signal only; it never sets the complaint mark. Only ever present as `true`.
+   */
+  routine_paperwork?: boolean;
 };
 
 /** The needs-owner reasons a dispute or legal threat gets (when the model gave none). */
@@ -109,12 +130,24 @@ export function applyOwnerRules(
     senderIsVip: boolean;
     amountThresholdDollars: number;
     injection?: boolean;
+    /** Someone smells gas (round 2, TW B4): top priority, whatever the model said. */
+    gasSmell?: boolean;
+    /** Asks to pay a new account (round 2, A11). */
+    paymentChange?: boolean;
   },
 ): Pick<Classification, "needsOwner" | "needsOwnerReason" | "priority"> {
   // Never let the model's own words explain away an email that tried to instruct it.
   if (ctx.injection) {
-    return { needsOwner: true, needsOwnerReason: INJECTION_REASON, priority: "normal" };
+    return {
+      needsOwner: true,
+      needsOwnerReason: INJECTION_REASON,
+      priority: ctx.gasSmell ? "high" : "normal",
+    };
   }
+  if (ctx.gasSmell)
+    return { needsOwner: true, needsOwnerReason: GAS_SMELL_REASON, priority: "high" };
+  if (ctx.paymentChange)
+    return { needsOwner: true, needsOwnerReason: PAYMENT_CHANGE_REASON, priority: "high" };
   const overThreshold = m.extracted.dollar_amounts.some((a) => a > ctx.amountThresholdDollars);
   const confidence = Math.max(0, Math.min(1, m.confidence));
   const reasons: [boolean, string][] = [
@@ -159,6 +192,7 @@ const UNREADABLE: Omit<Classification, "summary"> = {
     urgency: "normal",
     permit: null,
     invoice: null,
+    invoice_direction: "unknown",
   },
   unreadable: true,
 };
@@ -171,11 +205,29 @@ export async function classifyEmail(
   workspaceId: string,
   business: BusinessContext,
   email: EmailInput,
-  opts: { senderIsVip: boolean; now?: Date },
+  opts: {
+    senderIsVip: boolean;
+    now?: Date;
+    /** Older unsorted emails on the thread: checked in code, never sent to the model (B3). */
+    alsoCheck?: string[];
+    /** Marks the thread already carries, kept whatever this email says (B3). */
+    sticky?: { injection?: boolean; paymentChange?: boolean };
+  },
 ): Promise<Classification> {
   const body = prepareBody(email.body);
-  // Checked in code first: the model is the thing being attacked.
-  const preCheck = injectionCheck(`${email.subject ?? ""}\n${body}`);
+  // A burst (review B4): earlier unsorted emails minutes before this one are read with it.
+  const earlier = (email.earlier ?? [])
+    .map((e) => ({ receivedAt: e.receivedAt, body: prepareBody(e.body) }))
+    .filter((e) => e.body.length > 0);
+  const allText = [email.subject ?? "", ...earlier.map((e) => e.body), body].join("\n");
+  const checked = [allText, ...(opts.alsoCheck ?? []).map(prepareBody)].join("\n");
+  // Checked in code first: the model is the thing being attacked. Every email in the burst,
+  // and every older unsorted one the drafter may read.
+  const injectedText = injectionCheck(checked).flagged;
+  const preCheck = { flagged: injectedText || opts.sticky?.injection === true };
+  const gasInText = mentionsGasSmell(checked);
+  const paymentChangeInText =
+    looksLikePaymentChange(checked) || opts.sticky?.paymentChange === true;
   const municipalSender = looksMunicipal(email.fromAddress, email.fromName);
   const request = {
     workspaceId,
@@ -186,7 +238,7 @@ export async function classifyEmail(
       { text: CLASSIFY_INSTRUCTIONS, cache: false },
       { text: businessBlock(business), cache: true },
     ],
-    user: emailBlock({ ...email, body }),
+    user: emailBlock({ ...email, body, earlier }),
     schema: classificationSchema,
     now: opts.now,
   };
@@ -196,11 +248,21 @@ export async function classifyEmail(
   if (!result) {
     return {
       ...UNREADABLE,
-      ...(preCheck.flagged ? { needsOwnerReason: INJECTION_REASON } : {}),
+      ...(preCheck.flagged
+        ? { needsOwnerReason: INJECTION_REASON }
+        : gasInText
+          ? { needsOwnerReason: GAS_SMELL_REASON }
+          : paymentChangeInText
+            ? { needsOwnerReason: PAYMENT_CHANGE_REASON }
+            : {}),
+      ...(gasInText || paymentChangeInText ? { priority: "high" as const } : {}),
       extracted: {
         ...UNREADABLE.extracted,
+        ...(gasInText ? { urgency: "emergency" as const } : {}),
         ...(preCheck.flagged ? { injection: true } : {}),
         ...(municipalSender ? { municipal: true } : {}),
+        ...(gasInText ? { gas_smell: true } : {}),
+        ...(paymentChangeInText ? { payment_change: true } : {}),
       },
       summary: email.subject ? `Email: ${email.subject}` : "Email with no subject.",
     };
@@ -208,11 +270,25 @@ export async function classifyEmail(
 
   const injection = preCheck.flagged || result.signals.tries_to_instruct_assistant;
   const municipal = municipalSender || result.signals.from_building_department;
-  const rules = applyOwnerRules(result, {
+  const gasSmell = gasInText || result.signals.smells_gas;
+  const paymentChange = paymentChangeInText || result.signals.payment_change_request;
+  // Round 2 TW A1: "the adjuster approved the claim" is paperwork, not a lawsuit. The legal mark
+  // only drops when the model itself calls it routine AND no word of a real dispute or threat
+  // is in the email; a refund or dispute signal still stands on its own.
+  const legal =
+    result.signals.mentions_legal &&
+    !(result.signals.routine_paperwork && !mentionsRealLegal(allText));
+  const model: ModelClassification = {
+    ...result,
+    signals: { ...result.signals, mentions_legal: legal },
+  };
+  const rules = applyOwnerRules(model, {
     firstTimeSender: email.firstTimeSender,
     senderIsVip: opts.senderIsVip,
     amountThresholdDollars: business.amountThresholdDollars,
     injection,
+    gasSmell,
+    paymentChange,
   });
   // Building departments are never noise.
   const category: Category =
@@ -229,14 +305,16 @@ export async function classifyEmail(
     confidence: Math.max(0, Math.min(1, result.confidence)),
     extracted: {
       ...result.extracted,
+      ...(gasSmell ? { urgency: "emergency" as const } : {}),
       ...(injection ? { injection: true } : {}),
       ...(municipal ? { municipal: true } : {}),
+      ...(gasSmell ? { gas_smell: true } : {}),
+      ...(paymentChange ? { payment_change: true } : {}),
       // Signals only — they never change needs_owner (applyOwnerRules ignores them).
       ...(result.signals.accepts_quote ? { accepts_quote: true } : {}),
       ...(result.signals.job_done ? { job_done: true } : {}),
-      ...(result.signals.mentions_refund_or_dispute || result.signals.mentions_legal
-        ? { disputed: true }
-        : {}),
+      ...(result.signals.routine_paperwork ? { routine_paperwork: true } : {}),
+      ...(result.signals.mentions_refund_or_dispute || legal ? { disputed: true } : {}),
     },
     unreadable: false,
   };

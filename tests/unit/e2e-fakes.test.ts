@@ -5,8 +5,8 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest
 import { applyOwnerRules } from "@/ai/classify";
 import { checkDraft, REGENERATE_ON } from "@/ai/draft-checks";
 import { injectionCheck, looksMunicipal } from "@/ai/guards";
-import { classificationSchema } from "@/ai/prompts/classify.v3";
-import { draftSchema } from "@/ai/prompts/draft.v5";
+import { classificationSchema } from "@/ai/prompts/classify.v4";
+import { draftSchema } from "@/ai/prompts/draft.v6";
 import { editToneSchema } from "@/ai/prompts/edit-tone.v1";
 import { voiceSchema } from "@/ai/prompts/voice.v2";
 import { anthropicClientOptions } from "@/config/e2e";

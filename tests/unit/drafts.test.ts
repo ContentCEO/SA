@@ -174,7 +174,7 @@ describe("writing drafts", () => {
       status: "pending",
       gmailDraftId: "d1",
       confidence: 90,
-      promptVersion: "draft.v5",
+      promptVersion: "draft.v6",
     });
     const [u] = await database.select().from(usage);
     expect(u!.draftsCreated).toBe(1);

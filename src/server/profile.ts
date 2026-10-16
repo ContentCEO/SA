@@ -1,7 +1,7 @@
 import "server-only";
 import { eq } from "drizzle-orm";
 import { z } from "zod";
-import { TRADES } from "@/config/trades";
+import { cleanExtraTrades, MAX_EXTRA_TRADES, TRADES } from "@/config/trades";
 import { db } from "@/db";
 import {
   activityLog,
@@ -65,6 +65,24 @@ const reviewUrl = z
 export const businessProfileInput = z.object({
   businessName: z.string().trim().min(1, "What's the business called?").max(120),
   trade: z.enum(TRADES, { message: "Pick your trade." }),
+  /**
+   * Round 2 (TW A4): up to two more trades, as the form's ticked boxes joined by commas.
+   * Left out entirely = leave them as they are.
+   */
+  extraTrades: z
+    .preprocess(
+      (v) =>
+        typeof v === "string"
+          ? v
+              .split(",")
+              .map((x) => x.trim())
+              .filter(Boolean)
+          : v,
+      z
+        .array(z.enum(TRADES, { message: "Pick from the list." }))
+        .max(MAX_EXTRA_TRADES, "Pick up to two more trades."),
+    )
+    .optional(),
   services: z.string().trim().min(1, "Tell us what work you do.").max(2000),
   serviceArea: longText(),
   hours: longText(500),
@@ -101,8 +119,15 @@ export async function saveBusinessProfile(
   data: z.output<typeof businessProfileInput>,
   now: Date = new Date(),
 ) {
-  const { businessName, trade, ...profile } = data;
-  await db().update(workspaces).set({ businessName, trade }).where(eq(workspaces.id, workspaceId));
+  const { businessName, trade, extraTrades, ...profile } = data;
+  await db()
+    .update(workspaces)
+    .set({
+      businessName,
+      trade,
+      ...(extraTrades ? { extraTrades: cleanExtraTrades(extraTrades, trade) } : {}),
+    })
+    .where(eq(workspaces.id, workspaceId));
   await db()
     .insert(businessProfiles)
     .values({ workspaceId, ...profile, completedAt: now, updatedAt: now })

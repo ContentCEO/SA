@@ -7,15 +7,9 @@ import type { Database } from "@/db";
 import { drafts, messages, threads, workspaces } from "@/db/schema";
 import { MailboxRateLimitError } from "@/mailbox/connector";
 import { ensureUserAndWorkspace } from "@/server/accounts";
-import {
-  batchCandidates,
-  createDraftForThread,
-  listQueue,
-  reviseDraft,
-  sendDraft,
-} from "@/server/drafts";
+import { batchCandidates, createDraftForThread, listQueue, sendDraft } from "@/server/drafts";
 import { saveConnectedMailbox } from "@/server/mailboxes";
-import { NO_REPLY_FLAG, type ReplyToHeader } from "@/server/reply-address-rules";
+import type { ReplyToHeader } from "@/server/reply-address-rules";
 import { createTestDb } from "../support/db";
 import { fakeTransport } from "../support/fake-model";
 import { FakeWriter } from "../support/fake-writer";
@@ -231,23 +225,19 @@ describe("no-reply addresses", () => {
     expect(calls).toHaveLength(0);
   });
 
-  it("the owner's own tap drafts it, flagged first, never ready to send unseen", async () => {
+  it("round 2 (A9): the owner's own tap doesn't draft to a robot either — nobody reads it", async () => {
     const { thread } = await lead({
       from: "noreply@angi.com",
       fromName: "Angi",
       replyToHeader: {},
     });
-    setModelTransportForTests(fakeTransport([modelDraft(), modelDraft()]).transport);
-    const d = await draftOf(
+    const { transport, calls } = fakeTransport([modelDraft()]);
+    setModelTransportForTests(transport);
+    expect(
       await createDraftForThread(thread.id, { trigger: "owner", workspaceId, ...deps() }),
-    );
-    expect(d.flags[0]).toBe(NO_REPLY_FLAG);
-    expect(d.confidence).toBeLessThanOrEqual(30);
-    expect(d.toAddress).toBe("noreply@angi.com");
-    // A tweak keeps the flag.
-    await reviseDraft(workspaceId, d.id, { tweak: "shorter" }, deps());
-    const [after] = await database.select().from(drafts).where(eq(drafts.id, d.id));
-    expect(after!.flags[0]).toBe(NO_REPLY_FLAG);
+    ).toEqual({ status: "skipped", reason: "no_reply_address" });
+    expect(calls).toHaveLength(0);
+    expect(writer.calls).not.toContain("createDraft");
   });
 });
 

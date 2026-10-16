@@ -3,7 +3,7 @@ import { Headline } from "@/components/brand/headline";
 import { OfferButtons } from "@/components/app/offer-buttons";
 import { PermitCard } from "@/components/app/permit-card";
 import { Button } from "@/components/ui/button";
-import { CATEGORIES } from "@/ai/prompts/classify.v3";
+import { CATEGORIES } from "@/ai/prompts/classify.v4";
 import { categoryLabels, categoryTag, isCategory } from "@/config/categories";
 import { relativeTime } from "@/lib/relative-time";
 import { cn } from "@/lib/utils";

@@ -111,6 +111,9 @@ async function moneyThreads(workspaceId: string, now: Date, opts: { openOnly?: b
           isNotNull(threads.invoicePaidSource),
         ),
         sql`${threads.category} is distinct from 'supplier_vendor'`,
+        // A bill the owner has to pay (a supplier's statement sorted as an invoice) is never
+        // money owed TO them (round 2, TW A2).
+        sql`(${threads.extracted}->>'bill_direction') is distinct from 'owed_by_business'`,
         canShow,
       ),
     )

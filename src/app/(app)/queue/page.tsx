@@ -47,7 +47,7 @@ const done: Record<string, string> = {
   held: "Held. It won't send until you tap Send reply.",
 };
 const errors: Record<string, string> = {
-  gaps: "Fill in every highlighted gap before sending — nothing was sent.",
+  gaps: "Fill in every gap before sending (anything like {{price}} or [price]) — nothing was sent.",
   busy: "That's a lot in a short time, so we've paused it for a bit. Try again in a few minutes.",
   blocked: "Sending isn't switched on for your account, so nothing was sent.",
   changed:

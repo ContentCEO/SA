@@ -28,11 +28,16 @@ const MAX_SERVICE_CHARS = 500;
  * trailing "s"/"es" is fine), first kind in the list wins, else OTHER_JOB_KIND. Never
  * returns any of the input text.
  */
-export function jobKindOf(trade: Trade | null, service: string | null): string {
+export function jobKindOf(
+  trade: Trade | null,
+  service: string | null,
+  /** The shop's extra trades (round 2, TW A4): their kinds are tried after the main trade's. */
+  extraTrades: readonly Trade[] = [],
+): string {
   if (!service) return OTHER_JOB_KIND;
   const text = ` ${normalizeWords(service.slice(0, MAX_SERVICE_CHARS))} `;
   if (!text.trim()) return OTHER_JOB_KIND;
-  const kinds = JOB_KINDS[trade && isTrade(trade) ? trade : "other"];
+  const kinds = jobKindsFor(trade, extraTrades);
   for (const kind of kinds) {
     for (const kw of kind.keywords) {
       const word = normalizeWords(kw);
@@ -40,6 +45,13 @@ export function jobKindOf(trade: Trade | null, service: string | null): string {
     }
   }
   return OTHER_JOB_KIND;
+}
+
+/** Every kind a shop's job can be filed under: its main trade's first, then its extra trades'. */
+export function jobKindsFor(trade: Trade | null, extraTrades: readonly Trade[] = []) {
+  const main = trade && isTrade(trade) ? trade : "other";
+  const extra = extraTrades.filter((t) => isTrade(t) && t !== main && t !== "other");
+  return [main, ...new Set(extra)].flatMap((t) => JOB_KINDS[t]);
 }
 
 /**

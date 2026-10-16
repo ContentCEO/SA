@@ -16,7 +16,7 @@ import {
   uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
-import { TRADES } from "../config/trades";
+import { TRADES, type Trade } from "../config/trades";
 import type { ReplyToHeader } from "../server/reply-address-rules";
 
 export const tradeEnum = pgEnum("trade", TRADES);
@@ -95,6 +95,11 @@ export const workspaces = pgTable(
       .references(() => users.id, { onDelete: "cascade" }),
     businessName: text("business_name"),
     trade: tradeEnum("trade"),
+    /**
+     * Round 2 (TW A4): up to two more trades the shop does besides `trade` ("plumbing and
+     * heating"). Values from TRADES, checked in code (`cleanExtraTrades`); never the main one.
+     */
+    extraTrades: text("extra_trades").array().$type<Trade[]>().notNull().default([]),
     status: workspaceStatusEnum("status").notNull().default("invited"),
     evaluationStartedAt: timestamp("evaluation_started_at", { withTimezone: true }),
     evaluationEndsAt: timestamp("evaluation_ends_at", { withTimezone: true }),
@@ -314,7 +319,7 @@ export const draftKindEnum = pgEnum("draft_kind", ["reply", "followup"]);
  * Owner-asked special replies (plan #26 #28 #29). They are kind `reply` with a purpose, so
  * follow-up counts never change. Null = an ordinary reply or follow-up.
  */
-export const DRAFT_PURPOSES = ["deposit", "review_request", "closing_question"] as const;
+export const DRAFT_PURPOSES = ["deposit", "review_request", "closing_question", "safety"] as const;
 export type DraftPurpose = (typeof DRAFT_PURPOSES)[number];
 
 /**

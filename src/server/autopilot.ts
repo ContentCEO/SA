@@ -1,5 +1,6 @@
 import "server-only";
 import { hasUnfilledGap } from "@/ai/gaps";
+import { mentionsMoney } from "@/ai/money-words";
 import { and, count, desc, eq, gte, inArray, isNotNull, isNull, lte, sql } from "drizzle-orm";
 import { pricing } from "@/config/pricing";
 import { db } from "@/db";
@@ -23,6 +24,7 @@ import {
 } from "./drafts";
 import { canSend, effectiveStatus, setupReallyPaid } from "./lifecycle";
 import { knownCustomer } from "./known-customer";
+import { complainedAddresses } from "./offers";
 import { markReconnectNeeded } from "./sync";
 import { unsentDraftMessage } from "./thread-sql";
 
@@ -105,6 +107,15 @@ export type GuardrailInput = {
   redirected?: boolean;
   /** Review B1: the customer's newest email was never checked for a Reply-To. */
   replyToUnchecked?: boolean;
+  /**
+   * Round 2 A10: this customer complained or disputed something in the last 12 months (on
+   * any thread). Their next "ok, when can you come?" waits for the owner.
+   */
+  complainedRecently?: boolean;
+  /** Round 2 A11: the email asks to pay a new or different account. */
+  paymentChange?: boolean;
+  /** Round 2 TW B4: someone smells gas. */
+  gasSmell?: boolean;
 };
 
 /** Layer 3. Every reason this email must wait for the owner; empty = may go. */
@@ -118,7 +129,8 @@ export function guardrailReasons(g: GuardrailInput): string[] {
   if (g.flags.length) out.push("Has things to check before sending.");
   if (g.category === "invoice_payment" && g.amountsInEmail.length)
     out.push("Payments with an amount always wait for you.");
-  if (/\$\s?\d/.test(g.draftBody)) out.push("Mentions money, so it waits for you.");
+  // Any way of naming a price: "$450", "450 dollars", "1.2k", "twelve hundred" (review A1).
+  if (mentionsMoney(g.draftBody)) out.push("Mentions money, so it waits for you.");
   if (hasUnfilledGap(g.draftBody)) out.push("Has gaps for you to fill in.");
   if (!g.knownCustomer) out.push("You haven't written to this person before.");
   if (g.untrusted) out.push("This email tried to give instructions to the assistant.");
@@ -129,6 +141,10 @@ export function guardrailReasons(g: GuardrailInput): string[] {
   if (g.redirected)
     out.push("This reply goes to a different address than the sender's, so it waits for you.");
   if (g.replyToUnchecked) out.push("We couldn't check where this reply goes, so it waits for you.");
+  if (g.complainedRecently)
+    out.push("This customer complained in the last 12 months, so it waits for you.");
+  if (g.paymentChange) out.push("Asks to pay a new account, so it waits for you.");
+  if (g.gasSmell) out.push("Someone smells gas. Call them.");
   return out;
 }
 
@@ -261,6 +277,18 @@ async function sentByAutopilotToday(workspaceId: string, now: Date) {
   return row?.n ?? 0;
 }
 
+/**
+ * Round 2 A10: a complaint or dispute from this address on ANY thread in the last 12 months —
+ * the same memory review requests use (sender or reply address, sticky complaint mark).
+ */
+export async function customerComplainedRecently(
+  workspaceId: string,
+  address: string,
+  now: Date = new Date(),
+): Promise<boolean> {
+  return (await complainedAddresses(workspaceId, now)).has(address.trim().toLowerCase());
+}
+
 /** Every reason this draft can't go on its own right now (all three layers + the daily cap). */
 async function blockers(row: NonNullable<Awaited<ReturnType<typeof loadForAutopilot>>>, now: Date) {
   const { draft, thread, mailbox, workspace } = row;
@@ -298,7 +326,10 @@ async function blockers(row: NonNullable<Awaited<ReturnType<typeof loadForAutopi
     injection?: boolean;
     municipal?: boolean;
     accepts_quote?: boolean;
+    payment_change?: boolean;
+    gas_smell?: boolean;
   };
+  const complainedRecently = await customerComplainedRecently(workspace.id, draft.toAddress, now);
   return guardrailReasons({
     category: thread.category,
     needsOwner: thread.needsOwner || thread.needsOwnerManual,
@@ -318,6 +349,9 @@ async function blockers(row: NonNullable<Awaited<ReturnType<typeof loadForAutopi
       !customer ||
       draft.toAddress.trim().toLowerCase() !== (customer.address ?? "").trim().toLowerCase(),
     replyToUnchecked: !customer || customer.replyToHeader === null,
+    complainedRecently,
+    paymentChange: extracted.payment_change === true,
+    gasSmell: extracted.gas_smell === true,
   });
 }
 

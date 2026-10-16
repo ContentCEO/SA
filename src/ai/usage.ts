@@ -31,7 +31,11 @@ export async function reserveAiCall(workspaceId: string, now: Date = new Date())
     })
     .returning({ aiCalls: usage.aiCalls });
   const calls = row!.aiCalls;
-  if (calls > cap) throw new AiCapReachedError(cap);
+  if (calls > cap) {
+    // Nothing was called: give the slot back, so the count shows the cap, not past it.
+    await refundAiCall(workspaceId, now);
+    throw new AiCapReachedError(cap);
+  }
 
   if (calls >= Math.ceil(cap * 0.8)) {
     const flagged = await db()
@@ -50,6 +54,30 @@ export async function reserveAiCall(workspaceId: string, now: Date = new Date())
       console.warn("ai_cap_80_percent", { workspaceId, calls, cap, period });
     }
   }
+}
+
+/**
+ * Give back a reserved call that never reached the model, or that the provider failed
+ * (an outage, an overload, a timeout): an outage plus retries must not end an owner's
+ * sorting and drafting for the day (review D5). Never below zero.
+ */
+export async function refundAiCall(workspaceId: string, now: Date = new Date()): Promise<void> {
+  await db()
+    .update(usage)
+    .set({ aiCalls: sql`greatest(${usage.aiCalls} - 1, 0)` })
+    .where(and(eq(usage.workspaceId, workspaceId), eq(usage.period, utcDay(now))));
+}
+
+/** Today's AI calls against the cap, for the owner's honest "limit reached" note (C6). */
+export async function aiCallsToday(
+  workspaceId: string,
+  now: Date = new Date(),
+): Promise<{ calls: number; cap: number }> {
+  const [row] = await db()
+    .select({ calls: usage.aiCalls })
+    .from(usage)
+    .where(and(eq(usage.workspaceId, workspaceId), eq(usage.period, utcDay(now))));
+  return { calls: row?.calls ?? 0, cap: dailyAiCallCap() };
 }
 
 export async function recordAiUsage(

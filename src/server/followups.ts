@@ -64,6 +64,8 @@ export async function threadsToFollowUp(
         sql`(${threads.quoteOutcome} is null or (${threads.quoteOutcome} = 'won' and ${threads.category} = 'invoice_payment'))`,
         isNull(threads.invoicePaidAt),
         inArray(threads.category, [...FOLLOWUP_CATEGORIES]),
+        // Never chase a bill the owner owes (round 2, TW A2).
+        sql`(${threads.extracted}->>'bill_direction') is distinct from 'owed_by_business'`,
         sql`${lastIn} is not null`,
         sql`${lastOut} > ${lastIn}`,
         sql`${lastOut} <= ${quietSince}::timestamptz`,

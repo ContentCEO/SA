@@ -388,7 +388,8 @@ default, CI too) and refuses a non-local `DATABASE_URL` or an `APP_URL` that isn
   → three plain lines (Google access / Last checked / New mail). `mailboxes.last_sync_error_code`
   (`access_lost` | `rate_limited` | `sync_failed`, never message text) set in `guarded()`, cleared on
   the next ok sync and on reconnect. Reconnect button only for lost access (the only thing the owner
-  can fix); stale sync (>30 min) says "we're looking into it". Settings heading is "Your Gmail".
+  can fix); stale sync (>30 min) says "We keep trying on our own, and your email is safe in Gmail"
+  (round 2: "we're looking into it" wasn't true). Settings heading is "Your Gmail".
 - **#48 More trades (2026-10-09):** one list in `src/config/trades.ts` (enum, forms, invite, admin).
   Per-trade `src/ai/prompts/trades/<trade>.ts` (vocabulary + quote questions; `Record<Trade, …>` makes
   a missing file a compile error, and a test checks the files). `draft.v3` puts the owner's trade
@@ -932,9 +933,9 @@ default, CI too) and refuses a non-local `DATABASE_URL` or an `APP_URL` that isn
   Never in an alert, URL, push, SMS, digest, admin or log. Drafting a thread whose customer row
   is NULL reads Reply-To first (one metadata call, before any model call); 404 → `{}`; any other
   failure never falls back to From (jobs rethrow → `politely()`; the owner's tap gets
-  `?error=gmail_busy` / `reply_to_unread`). A no-reply `to`: jobs and offers skip
-  (`no_reply_address`); the owner's own "Draft a reply" gets it with `NO_REPLY_FLAG` first
-  (kept through tweaks). **Autopilot** checks `knownCustomer(draft.toAddress)` and refuses any
+  `?error=gmail_busy` / `reply_to_unread`). A no-reply `to`: skipped for every trigger
+  (`no_reply_address`; round 2 made the owner's tap skip too) and `sendDraft` / `queueSend`
+  refuse it; `NO_REPLY_FLAG` stays only for older drafts (kept through tweaks). **Autopilot** checks `knownCustomer(draft.toAddress)` and refuses any
   draft whose To isn't the customer's From ("goes to a different address…") or whose customer
   row was never checked — a Reply-To never unlocks autopilot. H7: "To: address" on every draft
   card and the edit screen ("the reply address in their email" when redirected), on
@@ -949,6 +950,59 @@ default, CI too) and refuses a non-local `DATABASE_URL` or an `APP_URL` that isn
   `draft_repointed`. Replies sent in the last 30 days to a robot get one Activity line
   `reply_went_to_form` (links to its record). e2e: `tests/e2e/form-lead.spec.ts` (fake Gmail
   serves Reply-To; metadata reads return only the named headers).
+- **Round 2 trust + trades (2026-10-16, branch `round2-fixes`; reviews "Trust Check" R2-A and
+  "Trade Walkthrough" R2-B):** prompts `classify.v4`, `draft.v6`, `followup.v4`, `revise.v2`;
+  eval set 109 cases (new metrics paymentChangeRecall / gasSmellRecall strict, billDirection,
+  routinePaperwork). Migration 0029 (additive): trade enum `remodeling` (ADD VALUE),
+  `workspaces.extra_trades` text[] (≤2, `cleanExtraTrades`).
+  - **Attack guard** (`src/ai/guards.ts`): base64 only in space-free runs mixing case + digits,
+    links stripped first; emoji joiners and flag tag sequences aren't "hidden"; Unicode tag
+    characters are. New phrasings: "ignore the above", "dear AI assistant", "note for the
+    automated system", "when drafting your response", "if an AI is reading", Spanish /
+    Portuguese. Marks stick: `injection` / `payment_change` carry across re-sorts
+    (`sticky`), every older unsorted email of the thread is checked in code (`alsoCheck`), and
+    `createDraftForThread` re-checks every inbound email it would show the model (jobs only).
+  - **Bursts (B4):** unsorted emails from the same sender ≤30 min before the newest (max 4) go to
+    the model with it (`emailBlock.earlier`); older ones are marked classified only once their
+    thread's newest is sorted, in the same write.
+  - **Draft checks** (flags only, never rewrites): money in any form via `src/ai/money-words.ts`
+    (1.2k, twelve hundred, a grand, ranges, /hr, bare "is 1500" = weak: also allowed if the number
+    appears anywhere in the sources); loose timing (today, ASAP, in an hour, the 3rd, end of week,
+    first thing, between 8 and 10); soft promises/admissions (`soft_promise`, cap 0.5, no
+    regenerate); a % the owner never wrote (money); `customer_amount` (cap 0.5, no regenerate)
+    when a draft repeats an amount only the customer named — needs `ownerSourceText` (owner
+    emails + profile). The owner's spoken tweak (`ownerInstruction`): every number in it is
+    theirs. `hasUnfilledGap` also blocks `[price]`, `[Customer Name]`, `$___`, `$X,XXX`.
+    Autopilot's money test = `mentionsMoney`.
+  - **Robots (A9):** no-reply pattern widened (token anywhere: voice-noreply, form-submission,
+    wordpress, postmaster, bounces, automated, auto-reply); never drafted (any trigger), never
+    sent, never a row on Customers.
+  - **Payment change (A11):** code rule + model signal → needs you, priority high,
+    `PAYMENT_CHANGE_REASON` ("Call them at a number you already have…"); no job draft, no
+    batch, no autopilot. **Gas (TW B4):** rule + signal → high, needs you, `GAS_SMELL_REASON`;
+    the draft job writes ONE fixed `safetyNote` (purpose `safety`, no model,
+    `SAFETY_NOTE_FLAG` first) per thread; the owner taps Send like anything else.
+  - **Autopilot (A10, stricter):** refuses any customer (sender or reply address) who
+    complained or disputed in the last 12 months (`customerComplainedRecently`, same memory as
+    review requests), and payment-change / gas threads.
+  - **Claims (TW A1):** `signals.routine_paperwork`; the legal mark drops only when the model says
+    paperwork AND `mentionsRealLegal` finds no lawyer / court / sue / lien-on-the-house / dispute
+    word. No complaint mark then. **Money direction (TW A2):** `extracted.invoice_direction`;
+    `extracted.bill_direction` (this email's, else the stored one) = `owed_by_business` keeps a
+    thread off Money owed and out of follow-ups. **Towns (TW A5):** `looksMunicipal` adds
+    `<town>.<st>.us`, inspectors of wires / plumbing & gas, fire prevention, boards of health,
+    conservation / historic commissions, zoning / planning, "City of X via OpenGov", portal
+    domains.
+  - **Drafter's clock (A8):** `conversationBlock({ now, timeZone })` starts "Today is …" and
+    stamps each email in the owner's zone. **Trades (TW A4, D1):** Remodeling trade + prompt +
+    job kinds; extra trades merge words/questions (draft.v6), go to the sorter's business block
+    and `jobKindsFor`. Keyword fixes: no bare "stain"/"heater"; roof replacement before gutters;
+    "Snow and plowing" apart from "Cleanups" (old stored labels are recomputed).
+  - **Outages (D4, D5, C6, C7):** a failed provider call (5xx, 429, 408, no connection) refunds
+    its cap slot; a cap refusal never leaves the count above the cap. The 15-minute lifecycle job
+    re-sorts mailboxes with mail unsorted 10+ minutes (`unsortedSweepMailboxes`, skips capped /
+    read-only / inactive). `AssistantBanner` (every signed-in screen, counts only): limit used
+    up (and when it restarts, owner's clock), "N new emails aren't sorted yet", 80% warning.
 - **M11 security audit (S4, 2026-10-13):** static tests guard the surface —
   `tests/unit/security-surface.test.ts` (C1 every server action awaits `requireOwner` /
   `requireAdmin` first, reviewed public/inline allow-lists; C2 admin pages + no `loading.tsx` over

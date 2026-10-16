@@ -10,6 +10,7 @@ import {
   renewWatches,
 } from "@/server/sync";
 import { classifyPending } from "@/server/classification";
+import { unsortedSweepMailboxes } from "@/server/assistant-status";
 import { purgeCostAlertMarkers, sendCostAlerts } from "@/server/admin-costs";
 import { captureEditSignals, proposeVoiceUpdates } from "@/server/edit-learning";
 import {
@@ -403,6 +404,15 @@ export const workspaceLifecycle = inngest.createFunction(
         queued.map((draftId) => draftSendQueued.create({ draftId, at: new Date().toISOString() })),
       );
     }
+    // Review D4: mail that waited over 10 minutes unsorted (an AI outage, a lost event) is
+    // sorted again now, not whenever that inbox next gets mail.
+    const unsorted = await step.run("unsorted-sweep", () => unsortedSweepMailboxes());
+    if (unsorted.length) {
+      await step.sendEvent(
+        "unsorted-sweep",
+        unsorted.map((mailboxId) => mailboxClassifyRequested.create({ mailboxId })),
+      );
+    }
     // Also restart any voice learning that never ran or died part-way.
     const voice = await step.run("voice", () => workspacesNeedingVoice());
     if (voice.length) {
@@ -424,7 +434,13 @@ export const workspaceLifecycle = inngest.createFunction(
     await step.run("lead-at-risk-pushes", () => sendLeadAtRiskPushes());
     // Plan #47 (off unless FEATURE_REFERRALS and an amount): add referral credits still waiting.
     await step.run("referral-credits", () => applyPendingReferralCredits());
-    return { started, expired, voiceRestarted: voice.length, accessAlerts: alerts.sent };
+    return {
+      started,
+      expired,
+      voiceRestarted: voice.length,
+      accessAlerts: alerts.sent,
+      unsortedSwept: unsorted.length,
+    };
   },
 );
 

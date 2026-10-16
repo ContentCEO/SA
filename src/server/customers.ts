@@ -3,7 +3,7 @@ import { and, desc, eq, inArray, max, ne, or, isNull, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { mailboxes, messages, threads } from "@/db/schema";
 import { isDecidedStage } from "./quote-rules";
-import { messageReplyAddress, messageReplyName } from "./thread-sql";
+import { messageReplyAddress, messageReplyName, noReplySql } from "./thread-sql";
 import { listQuotes, type QuoteRow } from "./quotes";
 
 export type CustomerRow = {
@@ -47,6 +47,9 @@ export async function listCustomers(workspaceId: string, now: Date = new Date())
         eq(messages.direction, "in"),
         eq(threads.inInbox, true),
         sql`${messages.fromAddress} is not null`,
+        // A robot (a lead portal's no-reply, a form with no Reply-To) is never a customer,
+        // or one portal shows up as one huge customer (round 2 A9).
+        sql`not ${noReplySql(addr)}`,
         notNoise,
       ),
     )

@@ -102,7 +102,7 @@ function threadComplained(f: {
  * (A1; complained_at is the latest complaint), or one still sorted as a complaint. A customer
  * who complained on one job isn't asked for a review on another.
  */
-async function complainedAddresses(workspaceId: string, now: Date): Promise<Set<string>> {
+export async function complainedAddresses(workspaceId: string, now: Date): Promise<Set<string>> {
   const since = new Date(now.getTime() - COMPLAINT_MEMORY_DAYS * DAY_MS);
   const rows = await db()
     // Both the sender and the reply address: blocking more is the safe direction.

@@ -1,8 +1,8 @@
 import "server-only";
 import { and, eq, gte, inArray, lt, or, sql, type SQL } from "drizzle-orm";
-import { JOB_KINDS, OTHER_JOB_KIND } from "@/config/job-kinds";
+import { OTHER_JOB_KIND } from "@/config/job-kinds";
 import { LEAD_SOURCES } from "@/config/lead-sources";
-import { isTrade, type Trade } from "@/config/trades";
+import type { Trade } from "@/config/trades";
 import { db } from "@/db";
 import {
   activityLog,
@@ -20,6 +20,7 @@ import { jobsAllowed } from "./lifecycle";
 import {
   buildMonthlySummary,
   jobKindOf,
+  jobKindsFor,
   leadSourceOf,
   monthlyDue,
   previousMonth,
@@ -71,11 +72,8 @@ function leadPlatformSql(address: SQL) {
 }
 
 /** The labels a stored job kind may be for this trade (anything else is worked out again). */
-function kindLabels(trade: Trade | null): string[] {
-  return [
-    ...JOB_KINDS[trade && isTrade(trade) ? trade : "other"].map((k) => k.label),
-    OTHER_JOB_KIND,
-  ];
+function kindLabels(trade: Trade | null, extraTrades: readonly Trade[] = []): string[] {
+  return [...new Set([...jobKindsFor(trade, extraTrades).map((k) => k.label), OTHER_JOB_KIND])];
 }
 
 /**
@@ -87,6 +85,7 @@ export function monthlyStatsQueries(
   trade: Trade | null,
   start: Date,
   end: Date,
+  extraTrades: readonly Trade[] = [],
 ) {
   // A quote request belongs to the month it was asked for (re-sorted threads still count,
   // A11; a new job asked for on an old conversation counts when it was asked for).
@@ -102,7 +101,7 @@ export function monthlyStatsQueries(
       // The customer's words only when there's no usable stored label (older threads).
       service: sql<
         string | null
-      >`case when ${threads.jobKind} is null or not (${inArray(threads.jobKind, kindLabels(trade))}) then left(${threads.extracted} ->> 'service_requested', 500) end`,
+      >`case when ${threads.jobKind} is null or not (${inArray(threads.jobKind, kindLabels(trade, extraTrades))}) then left(${threads.extracted} ->> 'service_requested', 500) end`,
       domain: firstDomain,
     })
     .from(threads)
@@ -157,18 +156,21 @@ export async function monthlyStats(
   trade: Trade | null,
   start: Date,
   end: Date,
+  extraTrades: readonly Trade[] = [],
 ): Promise<MonthlyStats> {
-  const q = monthlyStatsQueries(workspaceId, trade, start, end);
+  const q = monthlyStatsQueries(workspaceId, trade, start, end, extraTrades);
   const [requests, repeat, rate] = await Promise.all([
     q.requests,
     q.repeat,
     closeRateBetween(workspaceId, start, end),
   ]);
-  const allowed = new Set(kindLabels(trade));
+  const allowed = new Set(kindLabels(trade, extraTrades));
   const kinds: string[] = [];
   const sources: string[] = [];
   for (const r of requests) {
-    kinds.push(r.jobKind && allowed.has(r.jobKind) ? r.jobKind : jobKindOf(trade, r.service));
+    kinds.push(
+      r.jobKind && allowed.has(r.jobKind) ? r.jobKind : jobKindOf(trade, r.service, extraTrades),
+    );
     sources.push(leadSourceOf(r.domain));
   }
   return {
@@ -231,7 +233,13 @@ export async function sendMonthlySummaries(
 
     try {
       const month = previousMonth(now, timeZone);
-      const stats = await monthlyStats(r.workspace.id, r.workspace.trade, month.start, month.end);
+      const stats = await monthlyStats(
+        r.workspace.id,
+        r.workspace.trade,
+        month.start,
+        month.end,
+        r.workspace.extraTrades ?? [],
+      );
       const email = buildMonthlySummary(stats, localMonthName(month.start, timeZone), {
         activityUrl: appUrl("/activity"),
         settingsUrl: appUrl("/settings#digest"),

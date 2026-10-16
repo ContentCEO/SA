@@ -32,6 +32,12 @@ export async function saveBusinessProfileAction(
 ): Promise<FormState> {
   const { workspace } = await requireOwner();
   const raw = values(formData);
+  // Ticked boxes share one name (round 2, TW A4); the form says it sent them.
+  if (formData.has("extraTradesShown"))
+    raw.extraTrades = formData
+      .getAll("extraTrades")
+      .map((v) => String(v))
+      .join(",");
   const parsed = businessProfileInput.safeParse(raw);
   if (!parsed.success)
     return {
