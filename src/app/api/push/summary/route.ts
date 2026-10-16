@@ -8,6 +8,8 @@ import { leadsAtRisk } from "@/server/leads-at-risk";
 import { notificationUrl } from "@/server/leads-at-risk-rules";
 import { pushSummaryText } from "@/server/push-alerts";
 import { hitLimit } from "@/server/rate-limit";
+import { termsRequiredResponse } from "@/server/session";
+import { termsAccepted } from "@/server/terms";
 import { workspaceTimeZone } from "@/server/snooze";
 import { usableTimeZone } from "@/server/snooze-rules";
 
@@ -24,6 +26,8 @@ export async function GET() {
   const session = await auth();
   const workspace = session?.user?.id ? await getWorkspaceForUser(session.user.id) : null;
   if (!workspace) return NextResponse.json({ error: "Sign in first." }, { status: 401 });
+  // Not agreed to the current terms (Davi, 2026-10-15): 403, never a redirect.
+  if (!(await termsAccepted(session!.user.id))) return termsRequiredResponse();
   // M11 C8: a script polling this can't hammer the database (phones ask far less often).
   const limit = await hitLimit("poll", workspace.id);
   if (!limit.allowed) {

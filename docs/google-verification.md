@@ -19,26 +19,27 @@ are **never** pasted into Google's form.
 1. **Sign in** asks only for `openid email profile` — who you are. (`src/auth.ts`)
 2. **Connect Gmail** happens later, after a screen that explains what Squared Away will and won't do
    (`src/app/(app)/connect/page.tsx`). Only then do we ask for Gmail access: `openid email profile`
-   plus the three Gmail scopes below, with `access_type=offline`, `prompt=consent` and
+   plus the two Gmail scopes below, with `access_type=offline`, `prompt=consent` and
    `include_granted_scopes=true` (`src/mailbox/gmail/connector.ts`, `src/mailbox/gmail/scopes.ts`).
 
-If the owner unticks any Gmail permission on Google's consent screen, we revoke what was granted and
-save nothing, and we explain why all three are needed.
+If the owner unticks either Gmail permission on Google's consent screen, we revoke what was granted
+and save nothing, and we explain why both are needed.
 
 ## Scopes
 
-| Scope                        | What we use it for                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       | What we do not do with it                                                 |
-| ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
-| `openid`, `email`, `profile` | Identify the signed-in owner and which Gmail address was connected.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | Nothing else.                                                             |
-| `gmail.readonly`             | Read incoming business email so we can sort it (quote request, customer question, scheduling, invoice/payment, complaint, supplier, noise) and draft a reply: the mailbox profile, the message list, single messages, the change history and Gmail's `watch` notifications. Read up to 200 **sent** emails from the last year to learn how the owner writes. Before autopilot sends, look up which draft ids sit on that one conversation (we ask Google for message ids and labels only, so no headers, preview or text come back), so an owner's half-written reply in Gmail stops it. | We never delete, archive, move or label mail. We have no permission to.   |
-| `gmail.compose`              | Create reply drafts **in the owner's own Gmail Drafts folder**, threaded to the right conversation, so the owner can read and edit them in Gmail too; read back, update or delete a draft we created; and send a draft the owner approved (Send reply) or one autopilot sends (`drafts.send`, which Google authorizes under this scope).                                                                                                                                                                                                                                                 | We don't touch drafts we didn't create.                                   |
-| `gmail.send`                 | Send a new message (`messages.send`). We use it for one thing: during the three-day trial, the owner can send a **practice copy** of a draft to their own address, marked "[Practice]", never threaded and never to anyone else (checked on the finished email before Google sees it).                                                                                                                                                                                                                                                                                                   | Nothing is ever sent to a customer through it, and nothing without a tap. |
+| Scope                        | What we use it for                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         | What we do not do with it                                                                                                                                                                    |
+| ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `openid`, `email`, `profile` | Identify the signed-in owner and which Gmail address was connected.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | Nothing else.                                                                                                                                                                                |
+| `gmail.readonly`             | Read incoming business email so we can sort it (quote request, customer question, scheduling, invoice/payment, complaint, supplier, noise) and draft a reply: the mailbox profile, the message list, single messages, the change history and Gmail's `watch` notifications. Read up to 200 **sent** emails from the last year to learn how the owner writes. Before autopilot sends, look up which draft ids sit on that one conversation (we ask Google for message ids and labels only, so no headers, preview or text come back), so an owner's half-written reply in Gmail stops it.                   | We never delete, archive, move or label mail. We have no permission to.                                                                                                                      |
+| `gmail.compose`              | Create reply drafts **in the owner's own Gmail Drafts folder**, threaded to the right conversation, so the owner can read and edit them in Gmail too; read back, update or delete a draft we created; send a draft the owner approved (Send reply) or one autopilot sends (`drafts.send`); and, only during the three-day trial, send the owner a **practice copy** of a draft as a new message to their own address (`messages.send`), marked "[Practice]", never threaded and never to anyone else (checked on the finished email before Google sees it). Google authorizes both sends under this scope. | We don't touch drafts we didn't create. Nothing is sent without the owner's tap, except by autopilot the owner switched on for that kind of email; a practice copy never reaches a customer. |
 
 For reading, `gmail.readonly` is the narrowest scope (no change rights at all); for creating,
-updating and sending our own drafts, `gmail.compose` is. `gmail.send` is send-only (it can't read
-or change any mail), and we request it only for practice copies to the owner's own address during
-the trial. We deliberately do **not** request `gmail.modify` or full `https://mail.google.com/` access. A test
-(`tests/unit/gmail-connector.test.ts`) fails if either is added.
+updating and sending our own drafts, and the trial's practice copies, `gmail.compose` is: Google's
+API reference authorizes both `drafts.send` and `messages.send` under it. We don't request
+`gmail.send`: it covers only `messages.send`, not `drafts.send`, which every customer reply uses,
+so it would add nothing `gmail.compose` doesn't already allow. We deliberately do **not** request
+`gmail.modify` or full `https://mail.google.com/` access either. A test
+(`tests/unit/gmail-connector.test.ts`) fails if any of the three is added.
 
 ## Google API Services: Limited Use
 
@@ -180,6 +181,18 @@ in plain words. Upload it as an unlisted video and paste the link into the verif
   after Part 1 is recorded: Part 2 needs a fresh email to draft, because Dana's was answered in
   Part 1.
 
+**Before recording: check the demo Gmail's Google access.** The engineers' live check of the two
+permissions comes first and already clears any access the demo Gmail gave while the app still
+asked for `gmail.send` (see "Before submitting"); never film before it. Step 2 starts with no Gmail
+connected, so on every Squared Away account where the demo Gmail is connected, Settings →
+**Disconnect Gmail** → **Yes, disconnect Gmail** (this also removes the access at Google). Then
+open myaccount.google.com/permissions, signed in as the demo account: Squared Away should have no
+Gmail access left, and in particular no "Send email on your behalf" (Google keeps earlier
+permissions when an app is connected again, so an old third one would be listed next to the two).
+If it still has some, remove it there. Don't remove it only at Google while an account still has
+the demo Gmail connected: that account would then show a "Reconnect Gmail" banner on every screen
+and email the demo Gmail "Squared Away lost access to your Gmail", both on camera.
+
 **Before recording Part 1 on the house account** (option A: Davi's own workspace, the only one
 that can send without a Stripe payment; whether to record this way is Davi's decision, see
 "Reviewer test account", which also has option B, a separate demo account):
@@ -219,9 +232,10 @@ that can send without a Stripe payment; whether to record this way is Davi's dec
 **Part 1 — a business that can send** (the demo Gmail connected to Davi's house account; with
 option B, the separate demo account after its test-card payment):
 
-1. **Sign in.** Open the production site, tap Sign in and sign in as Davi (the `ADMIN_EMAIL`
-   account; the house account is his), or with option B as the demo Gmail's own Google account.
-   Point out that sign-in asks only for name and email.
+1. **Sign in.** Open the production site, tap Sign in, tick "I agree to the Terms of Service and
+   the Privacy Policy" and sign in as Davi (the `ADMIN_EMAIL` account; the house account is his),
+   or with option B as the demo Gmail's own Google account. Point out that sign-in asks only for
+   name and email.
 2. **Settings → Connect Gmail.** Show that no Gmail is connected yet and tap Connect Gmail.
 3. **The explainer.** Scroll the "before you connect" screen, including "What it won't do", then
    tap Connect Gmail.
@@ -231,8 +245,9 @@ option B, the separate demo account after its test-card payment):
    verified this app" screen: that is expected in the verification video. With the app In
    production (launch checklist step 0c), tap **Advanced**, then the "Go to … (unsafe)" link.
    (Only while the app is still in Testing does a test user see a **Continue** button there
-   instead.) Then, on the permissions screen, pause here. Show the app name, the three Gmail permissions
-   (`gmail.readonly`, `gmail.compose`, `gmail.send`), and click into the address bar so the
+   instead.) Then, on the permissions screen, pause here. Show the app name and the two Gmail
+   permissions, in Google's words "View your email messages and settings" (`gmail.readonly`) and
+   "Manage drafts and send emails" (`gmail.compose`), and click into the address bar so the
    `client_id=` in the URL is readable. Tap Allow (Continue).
 5. **Connected.** Back in Squared Away, Settings shows the demo Gmail address as connected. Say that
    Google's key is stored encrypted and never shown.
@@ -263,7 +278,7 @@ option B, the separate demo account after its test-card payment):
     Gmail the same way (steps 2–7). The banner shows day 1 of 3.
 16. **Sending to customers is off.** On the Queue the draft card says sending is off during the trial
     and has no Send reply button. Say that our server refuses a send too, not just the screen.
-17. **Practice copy (`gmail.send`, `messages.send`).** Tap "Send it to yourself instead". Switch to
+17. **Practice copy (`gmail.compose`, `messages.send`).** Tap "Send it to yourself instead". Switch to
     Gmail → Inbox: a new email marked "[Practice]" arrived from the owner to the owner. Dana got
     nothing.
 
@@ -276,7 +291,7 @@ the AI (it signs in with a test cookie instead of step 1). Each of its steps mat
 | ------------------------------------------------------------------------------- | ----------- |
 | The owner opens Settings and taps Connect Gmail                                 | 2           |
 | Squared Away explains what it will and won't do before asking Google            | 3           |
-| Google's consent screen lists the three Gmail permissions; the owner taps Allow | 4           |
+| Google's consent screen lists the two Gmail permissions; the owner taps Allow   | 4           |
 | Back in Squared Away, Gmail is connected and its key is stored encrypted        | 5           |
 | The owner says what the business does                                           | 6           |
 | Squared Away reads the last 30 days of email and learns how the owner writes    | 7           |
@@ -308,7 +323,7 @@ written. Their account is on the three-day trial, so sending to customers is blo
 practice copies to themselves, and Davi can give them more days from `/admin` (Give 3 more days).
 
 **For Davi (not pasted into Google's form).** How to show the send part is **Davi's decision** (it
-is listed for him in the launch checklist, step 13; still open on 2026-10-14). Google's page asks
+is listed for him in the launch checklist, step 13; he chose option B on 2026-10-15). Google's page asks
 the video to show what each permission is used for; it doesn't say a send must be filmed, but the
 app sends replies with `gmail.compose`, so filming one is the safer choice. A trial account can't
 send. Two kinds of account can send without real money today: the house account (his own
@@ -324,7 +339,7 @@ production Stripe is still in test mode.
   counts, price memory, quote and invoice marks); reconnecting afterwards reads only the last 30
   days again; and his writing style is re-learned from the demo mailbox, then from his own mail
   again. This costs least if it is recorded before his own mailbox's history matters.
-- **Option B** (new, 2026-10-14; needs Davi's yes and an engineer's dry run on production first):
+- **Option B** (Davi's choice, 2026-10-15; it still needs an engineer's dry run on production first):
   a separate demo-only account. Invite the demo Gmail in `/admin` → Invite an owner (while the
   app is still in Testing, also add it as a Google test user; after publishing it uses one of the
   100 places). It signs in as its own account and connects the demo Gmail, so nothing of Davi's is
@@ -350,22 +365,34 @@ production Stripe is still in test mode.
 
 ## Before submitting (for Davi only; never pasted into Google's form)
 
-- **Is `gmail.send` needed?** Recommended: drop it (still Davi's call on 2026-10-14; the
-  original brief listed it). Google's API reference lists `gmail.compose` as enough for both
-  `drafts.send` (every customer reply) and `messages.send` (practice copies), while `drafts.send`
-  doesn't accept `gmail.send` at all, so reviewers may ask why we also ask for it (Google's form
-  asks why fewer permissions wouldn't do). Dropping it doesn't remove CASA: `gmail.readonly` and
-  `gmail.compose` are restricted, `gmail.send` only sensitive. It is a small change to the
-  requested scopes (code, the connect explainer, the privacy policy, this document, the launch
-  checklist and their tests, plus removing it under Google Auth Platform → Data Access). Owners
-  already connected should keep working with no reconnect: the granted scopes are stored at connect and
-  never checked again, and both send calls work with `gmail.compose` (not yet tried live). A
-  preview can't try it (it never sends), so the engineers check it on production with the demo
-  Gmail right after the change goes live: a practice copy during its trial, then a real reply
-  after a test-card payment while Stripe is still in test mode; if either fails, `gmail.send` goes
-  back at once. Decide before filming: the video shows the permission list. Until then this
-  document describes exactly what is requested today. It is listed for him in the launch checklist's
-  decisions ("drop `gmail.send`?").
+- **`gmail.send` is no longer requested** (Davi decided on 2026-10-15; the original brief listed
+  it). Google's API reference lists `gmail.compose` as enough for both `drafts.send` (every
+  customer reply) and `messages.send` (practice copies), while `drafts.send` doesn't accept
+  `gmail.send` at all, so asking for it only invited the question why fewer permissions wouldn't
+  do. Dropping it didn't remove CASA: `gmail.readonly` and `gmail.compose` are restricted. Remove
+  it under Google Auth Platform → Data Access too before submitting (launch checklist step 0e), so
+  the scopes Google reviews are the ones the app asks for. Owners who connected while we
+  still asked for it keep working with no reconnect: their grant still carries it (Google adds it
+  back on a reconnect, too), which is harmless, and nothing in the app checks for it. Both sends
+  are proven with only the two scopes against our stand-in Gmail, which refuses any call the
+  token's scopes don't cover, following Google's published list (`tests/e2e/fakes/server.ts`);
+  not yet tried live. A preview can't try it (it never sends), so the engineers check it on
+  production with the demo Gmail right after the change goes live: a practice copy during its
+  trial, then a real reply after a test-card payment while Stripe is still in test mode; if either
+  fails, `gmail.send` goes back at once. Record the video after that check: it shows the
+  permission list.
+- **The live check starts by clearing the demo Gmail's old access.** If the demo Gmail was ever
+  connected while the app still asked for `gmail.send` (the dry run, if it ran before this change
+  went live), that grant still carries it, Google adds it back on a reconnect, and
+  `messages.send` accepts it: the practice copy would go out through `gmail.send` and the check
+  would prove nothing about `gmail.compose`. So, before the practice copy: on every Squared Away
+  account where the demo Gmail is connected, Settings → **Disconnect Gmail** → **Yes, disconnect
+  Gmail** (this also removes the access at Google). Then myaccount.google.com/permissions, signed
+  in as the demo Gmail, must show no Gmail access for Squared Away; if it still does, remove it
+  there (safe now, since no account still uses it). Connect the demo Gmail again and confirm
+  Google kept only the two: that mailbox's saved permissions on production (`mailboxes.scopes`,
+  the permission list only) have no `gmail.send`, and Google's page doesn't list "Send email on
+  your behalf". Only then send the practice copy and the real reply.
 - Verify the production domain in Google Search Console, add it under Google Auth Platform →
   Branding → Authorized domains, and point the homepage, privacy policy and terms links there.
 - Switch Audience → Publishing status to **In production** before real owners connect: in Testing,

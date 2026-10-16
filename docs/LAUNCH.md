@@ -12,6 +12,7 @@ Contents:
 
 - [Check your Neon plan now (this week)](#check-your-neon-plan-now-this-week)
 - [Start your sales tax registration now (it takes days)](#start-your-sales-tax-registration-now-it-takes-days)
+- [Add your terms link in Stripe (right after step 1)](#add-your-terms-link-in-stripe-right-after-step-1)
 - [0. Start now: Google verification (takes weeks)](#0-start-now-google-verification-takes-weeks)
 - [1. Merge the launch branch](#1-merge-the-launch-branch)
 - [2. Give previews their own database](#2-give-previews-their-own-database)
@@ -72,6 +73,44 @@ whatever your sales total.
 - Paste: nothing.
 - Worked when: you have a Massachusetts sales tax account and its registration certificate (Form
   ST-1). The Stripe part comes later, in step 7e.
+
+## Add your terms link in Stripe (right after step 1)
+
+Decided on 2026-10-15: owners tick an "I agree to the Terms of Service and the Privacy Policy" box
+when they sign in, and the app asks Stripe to show a required "I agree" box on its checkout page
+too. Stripe only shows that box once your terms address is saved in Stripe. Until then, checkout
+still works, just without the box (owners have already agreed at sign-in), and `/admin` tells you
+so.
+
+**This comes in two merges, so it is done in two parts.**
+
+- **Step 1's merge** (`claude/launch-integration`) puts the `/terms` and `/privacy` pages live.
+  Today both addresses show "page not found" on production, so don't save them in Stripe before
+  step 1: Stripe's own pages (checkout and the billing page) would link to that.
+- **A second merge**, of `claude/squared-away-mvp-ddxl7s` (built on top of step 1's branch),
+  brings the boxes themselves: the sign-in box, the terms screen, Stripe's checkout box and the
+  `/admin` line below. The engineers open its pull request after step 1's merge; merging it is
+  another production deploy.
+
+Do it in test mode right after step 1, and check it again in live mode in
+[step 7d](#7-stripe-live-mode).
+
+- When: right after [step 1](#1-merge-the-launch-branch).
+- Where: Stripe → Settings → Business → **Public details**.
+- Paste: Terms of service URL `https://<production address>/terms` and Privacy policy URL
+  `https://<production address>/privacy`. Until your own domain is set up
+  ([step 5](#5-support-email-and-the-production-domain)) the production address is
+  `sa-dac3.vercel.app`; change both links when the domain changes.
+- Worked when:
+  1. After step 1: Stripe saves both, and each one opens your terms or your privacy policy.
+  2. After the second merge: after the next checkout (an owner choosing a plan, or your own test
+     purchase), Stripe's checkout page shows the "I agree" tick box above the pay button, and
+     `/admin` → Payments does **not** show "Terms box at checkout: off. Add your terms link in
+     Stripe → Settings → Business → Public details." If that line shows, Stripe didn't have the
+     link at that checkout: save it, and the line goes away after the next checkout that has the
+     box. (The line only changes when someone goes to checkout; opening `/admin` never asks
+     Stripe.) Before the second merge there is no checkout box and no `/admin` line at all,
+     whatever Stripe has saved: that isn't a sign of a wrong setting.
 
 ## 0. Start now: Google verification (takes weeks)
 
@@ -140,17 +179,27 @@ that doesn't open and a reviewer would see old screens. Each rejection costs wee
 
 **0d. Record the demo video.** (After steps 1 and 5, on the merged production app.)
 
+The video's sign-in shows the "I agree" box, which goes live with the second merge (see
+[step 1](#1-merge-the-launch-branch)), so record after that one too.
+
 - Where: follow "Demo video script" in [google-verification.md](google-verification.md) word for
   word. It uses the real Google consent screen, shows the OAuth client id in the address bar, and
-  shows each of `gmail.readonly`, `gmail.compose` and `gmail.send` in use. Record on a dedicated
-  demo Gmail with invented emails, never your real customers' mail.
-- Decide two things first ([step 13](#13-decisions-waiting-on-you)): whether to drop `gmail.send`
-  (the video shows the list of permissions), and which account records the send part. Option A is
-  your own workspace with the demo Gmail swapped in; option B is a separate demo account paid with
-  Stripe's test card, only while Stripe is still in test mode. Both are under "Reviewer test
-  account" in google-verification.md.
-- If you pick option A (your own workspace), make it the house account first, or it can't send on
-  camera: `/admin` → your own card (always shown first) → **Use as my
+  shows each of the two Gmail permissions in use: `gmail.readonly` ("View your email messages and
+  settings") and `gmail.compose` ("Manage drafts and send emails"). Record on a dedicated demo
+  Gmail with invented emails, never your real customers' mail.
+- Which account records the send part: **option B**, which you chose on 2026-10-15. It's a
+  separate demo account, invited from `/admin` and paid with Stripe's test card, so nothing of
+  yours is touched. It can send only while Stripe is still in test mode, so record it before
+  [step 7](#7-stripe-live-mode); an engineer tries it once on production first. The steps are
+  under "Reviewer test account" in google-verification.md.
+- Record it after the engineers' live check of the two permissions (decided on 2026-10-15,
+  [step 13](#13-decisions-waiting-on-you)): the video shows Google's list of permissions, and they
+  tell you once a practice copy and a real reply have gone out on production with just those two.
+  Their check starts by removing the demo Gmail's earlier access to Squared Away, so an old third
+  permission can't do the sending for it (step 13 says how).
+- Only if you ever film with option A instead (your own workspace with the demo Gmail swapped in,
+  for example a new recording after Stripe has gone live), make it the house account first, or it
+  can't send on camera: `/admin` → your own card (always shown first) → **Use as my
   own test account** → **Yes, this is my account**. It only ever shows on your own card. Worked
   when: the notice says "Your account can send now (marked as your own test account)." and your
   card's **Setup paid** line reads "Your own test account". If it already reads that, the button
@@ -159,17 +208,20 @@ that doesn't open and a reviewer would see old screens. Each rejection costs wee
 
 **0e. Submit for verification.** (After 0b and 0d.)
 
-- Where: Google Auth Platform → **Data Access** → check the three Gmail scopes are listed, then
-  **Verification Center** → Submit for verification.
-- If any of the three is missing (an app in Testing works without them being listed): Data
-  Access → **Add or remove scopes** → under "Manually add scopes" paste these three, one per line
-  → **Add to table** → **Update** → **Save**:
+- Where: Google Auth Platform → **Data Access** → check the two Gmail scopes are listed and
+  `gmail.send` isn't, then **Verification Center** → Submit for verification.
+- **Remove `gmail.send` first** (you decided on 2026-10-15 to stop asking for it): the app no
+  longer requests it, but Data Access may still list it from before (under "Your sensitive
+  scopes"). Remove that row (the bin icon on it, or untick it under **Add or remove scopes** →
+  **Update**) → **Save**. Owners who already connected keep working; nobody has to reconnect.
+- If either of the two is missing (an app in Testing works without them being listed): Data
+  Access → **Add or remove scopes** → under "Manually add scopes" paste these two, one per line →
+  **Add to table** → **Update** → **Save**:
   - `https://www.googleapis.com/auth/gmail.readonly`
   - `https://www.googleapis.com/auth/gmail.compose`
-  - `https://www.googleapis.com/auth/gmail.send`
 
-  Worked when: Data Access lists all three (Google files `gmail.readonly` and `gmail.compose`
-  under restricted scopes and `gmail.send` under sensitive scopes).
+  Worked when: Data Access lists `gmail.readonly` and `gmail.compose` (Google files both under
+  restricted scopes) and no `gmail.send`.
 
 - Paste: the sections "Two separate consent steps", "Scopes", "Google API Services: Limited Use"
   and "Data handling" from [google-verification.md](google-verification.md) (only those; the
@@ -186,7 +238,8 @@ that doesn't open and a reviewer would see old screens. Each rejection costs wee
 **0g. The security assessment (CASA).**
 
 - Restricted Gmail scopes also need a yearly security test by an outside lab (CASA). It's needed
-  with or without `gmail.send`: `gmail.readonly` and `gmail.compose` are both restricted.
+  because `gmail.readonly` and `gmail.compose` are both restricted (dropping `gmail.send` didn't
+  change that).
 - Level: Google picks it, **AL1** (the lower one) or **AL2**, from user count, permissions and
   other signals, and its email says which. Companies that help with these reviews say a small app
   like this one usually gets AL1, but Google decides.
@@ -206,9 +259,9 @@ that doesn't open and a reviewer would see old screens. Each rejection costs wee
 
 ## 1. Merge the launch branch
 
-Everything waiting is in **one** pull request: `claude/launch-integration` into `main`. It already
-holds the public site (PR #9), Squared Away Growth (with the "Big words" homepage switch you
-picked), Milestones 5–8 and the Milestone 11 launch work. **Merging it is a production deploy.**
+Almost everything waiting is in **one** pull request: `claude/launch-integration` into `main`. It
+already holds the public site (PR #9), Squared Away Growth (with the "Big words" homepage switch
+you picked), Milestones 5–8 and the Milestone 11 launch work. **Merging it is a production deploy.**
 
 You said okay to the merge on 2026-10-14. The engineers open the pull request once every check is
 green and tell you; you press **Merge pull request**. The closing question (#26, step 13) is
@@ -222,6 +275,13 @@ could later be offered "Ask for a review" (only on your tap, and only as a draft
 The merge also puts the homepage's About section live. Its wording changed on 2026-10-15 (see
 "The homepage's About section" in [step 13](#13-decisions-waiting-on-you)); tell the engineers
 before you tap Merge if you want different words.
+
+**Not in this merge: the "I agree" boxes** (decided on 2026-10-15, [step 13](#13-decisions-waiting-on-you)).
+They are on a second branch, `claude/squared-away-mvp-ddxl7s`, built on top of this one. The
+engineers open its pull request once this merge is live, and you merge it the same way (another
+production deploy, checked the same way as below). This merge does put the `/terms` and `/privacy`
+pages live, so right after it, save them in Stripe:
+[Add your terms link in Stripe](#add-your-terms-link-in-stripe-right-after-step-1).
 
 - Before you tap Merge (one minute, optional but only possible now): the **Gmail draft check**.
   It tells the engineers whether Gmail keeps a draft's id when it's sent. The app is safe either
@@ -603,12 +663,20 @@ test payment back afterwards.
 - Then, optional tidy-up: the accounts you reset no longer point at their test subscriptions, so
   cancel those in Stripe's test mode → Customers too.
 
-**7d. Cancellation setting.**
+**7d. Cancellation setting and terms link.**
 
 - Where: Stripe (live) → Settings → Billing → **Customer portal** → Cancellations.
 - Set: cancel **at the end of the billing period**. The terms promise that; Connect Stripe only
   sets it when live mode had no portal settings yet.
 - Worked when: the portal page shows that option saved.
+- Then, with **Test mode** off: Stripe → Settings → Business → **Public details** → Terms of
+  service URL `https://<production address>/terms` and Privacy policy URL
+  `https://<production address>/privacy` (as in
+  [Add your terms link in Stripe](#add-your-terms-link-in-stripe-right-after-step-1); add them if live mode
+  doesn't show them already, and use your own domain once it's set up).
+- Worked when: both are saved; then at 7f's real purchase Stripe's page shows the "I agree" tick
+  box, and afterwards `/admin` → Payments does **not** show "Terms box at checkout: off. Add your
+  terms link in Stripe → Settings → Business → Public details."
 
 **7e. Sales tax (Stripe Tax).** You decided on 2026-10-14 to turn it on. Stripe works out the tax
 and adds it at checkout. Registering with the state and filing the returns are yours: Stripe can't
@@ -769,6 +837,62 @@ fixed.
 
 ## 13. Decisions waiting on you
 
+### Decided on 2026-10-15
+
+- **"I agree to the Terms": yes, built** (live with the second merge, after step 1's; see
+  [Add your terms link in Stripe](#add-your-terms-link-in-stripe-right-after-step-1)).
+  Massachusetts' top court said
+  online terms only bind people who were properly shown them and agreed to them (Kauders v. Uber,
+  2021), and that a tick box plus a button is enough (Good v. Uber, 2024). So:
+  - **Sign-in:** an unticked "I agree to the Terms of Service and the Privacy Policy" box (both
+    linked) above **Sign in with Google**. Without it the button only says to tick the box; the
+    server checks, not just the phone. This covers trial owners, who never see Stripe.
+  - **Everyone already signed in** (you included) sees "one thing first, the fine print." with the
+    same box and **Agree and continue** the first time they open the app after that second
+    merge, then goes on to the screen they were opening. Whenever the terms' "Last updated" date
+    changes, the engineers change the version in the app with it and everyone is asked again
+    ("we've updated our terms."). Someone who doesn't agree can still leave from that same
+    screen, as the terms and privacy policy they agreed to promise: **Manage billing** (Stripe's
+    page, to cancel the plan), **Disconnect Gmail**, **Delete my account** (each with the same
+    one confirmation as in Settings) or **Sign out**. Until they agree or leave, the app keeps
+    checking their mail in the background (the screen only stops them using the app).
+  - **Stripe's checkout page:** a required "I agree" box too. It needs your terms link in Stripe
+    ([Add your terms link in Stripe](#add-your-terms-link-in-stripe-right-after-step-1)); until then
+    checkout works without it and `/admin` → Payments says so.
+  - The privacy policy now says we keep when each person agreed and to which version.
+- **Demo video: option B**, a separate demo account, invited from `/admin` and paid with Stripe's
+  test card while Stripe is still in test mode, so it can send; nothing of yours is touched. An
+  engineer tries it once on production first, with the demo Gmail, while Stripe is still in test
+  mode (a preview can't: it never reads mail, drafts, takes a payment or sends). It can send only
+  until Stripe goes live: delete it before step 7, or **Reset test payments** clears it in step
+  7c. After that, filming a send again needs option A (your own workspace as the house account) or
+  a payment with a real card. Details under "Reviewer test account" in
+  [google-verification.md](google-verification.md). It's recorded after the live check in the
+  next item.
+- **Drop `gmail.send`: yes, built** (live with the second merge, after step 1's). Connect Gmail now
+  asks Google for two permissions, which Google's screen calls "View your email messages and
+  settings" (`gmail.readonly`) and "Manage drafts and send emails" (`gmail.compose`). Google's own
+  reference says `gmail.compose` can send a draft and a new email, which covers every reply and the
+  trial's practice copies, while `gmail.send` couldn't even send a draft. Nothing changes for
+  owners: every reply still waits for their **Send reply** tap, unless they switched on autopilot
+  for that kind of email (that was always the app's own rule, not `gmail.send`'s, as you asked on
+  2026-10-15). Owners who already connected keep working and nobody reconnects; Google may keep
+  listing the old permission on their account until they disconnect. It doesn't avoid the CASA test. Yours: remove `gmail.send` under Google Auth
+  Platform → Data Access before you submit ([0e](#0-start-now-google-verification-takes-weeks)).
+  A preview can't send, so the engineers check it on production with the demo Gmail right after
+  it goes live (a practice copy during its trial, then a real reply after a test-card payment,
+  while Stripe is still in test mode) and put `gmail.send` back at once if either fails. **Before
+  that check they clear the demo Gmail's old access.** A connection made while the app still
+  asked for `gmail.send` keeps it (Google even adds it back on a reconnect), and it could send the
+  practice copy on its own, so the check would prove nothing. On every Squared Away account where
+  the demo Gmail is connected (the dry-run account, for one): Settings → **Disconnect Gmail** →
+  **Yes, disconnect Gmail**, which also removes the access at Google. Then
+  myaccount.google.com/permissions, signed in as the demo Gmail, must show no Gmail access for
+  Squared Away (if it still does, remove it there). Then they connect it again and confirm Google
+  kept only the two: that mailbox's saved permissions (`mailboxes.scopes`) have no `gmail.send`,
+  and Google's page doesn't list "Send email on your behalf". Only then the practice copy and the
+  real reply.
+
 ### Decided on 2026-10-14
 
 Recorded here so nobody asks again.
@@ -816,14 +940,6 @@ Nothing below is switched on or changed until you say so.
     that, the state courts in Middlesex County or the federal court for Massachusetts. Either side
     may use small claims court. No arbitration (with the usual group, AAA, a claim under
     $75,000 costs $1,450 to file plus $1,150 if it reaches a hearing, before the arbitrator's pay).
-- **"I agree to the Terms" (new, needs your yes):** today the terms are only a link at the bottom
-  of the page, and nobody ticks a box. Massachusetts' top court said online terms only bind people
-  who were properly shown them and agreed to them (Kauders v. Uber, 2021), and that a tick box
-  plus a button is enough (Good v. Uber, 2024). Two small code changes: a required "I agree to
-  the Terms of Service" box on Stripe's checkout page (Stripe's
-  `consent_collection.terms_of_service` = required; you add the terms address in Stripe →
-  Settings → Business → Public details), and an "I agree" checkbox at sign-in for trial users,
-  who never see Stripe.
 - **A lawyer's review** of the terms and privacy policy before launch: roughly $750–$2,500 (an
   estimate from published averages). A cheap first step: the Boston Bar Association's lawyer
   referral service gives a first 30-minute talk for $25 at most. Questions to bring: the three
@@ -831,29 +947,8 @@ Nothing below is switched on or changed until you say so.
   terms name you personally; a Massachusetts LLC costs about $500 to start and $500 a year);
   whether any insurance is worth having; and whether the homepage's "Month to month, no contract."
   should say "no long-term contract".
-- **Google review, two questions** (decide both before recording the demo video in
-  [0d](#0-start-now-google-verification-takes-weeks)):
-  1. Which account records the send part. Option A: your own workspace as the house account, with
-     the demo Gmail swapped in for your own (your Queue is cleared first, what the app stored from
-     your mailbox is deleted, and reconnecting reads back only the last 30 days). Option B (new):
-     a separate demo account invited from `/admin` and paid with Stripe's test card while Stripe
-     is still in test mode, so it can send; nothing of yours is touched. An engineer tries it once
-     on production first, with the demo Gmail, while Stripe is still in test mode (a preview can't:
-     it never reads mail, drafts, takes a payment or sends). It can send only until Stripe goes
-     live: delete it before step 7, or **Reset test payments** clears it in step 7c. After that,
-     filming a send again needs option A or a payment with a real card. Both are under "Reviewer
-     test account" in [google-verification.md](google-verification.md).
-  2. Should we drop `gmail.send`? Recommended: yes. Google's own reference says `gmail.compose`
-     can send a draft and a new email, which covers both kinds of sending the app does, while
-     `gmail.send` can't even send a draft. Dropping it doesn't avoid the CASA test, and it's a
-     small code change. Nobody should have to reconnect. A preview can't send, so the engineers
-     check it on production with the demo Gmail right after the change goes live (a practice copy
-     during its trial, then a real reply after a test-card payment, while Stripe is still in test
-     mode) and put `gmail.send` back at once if either fails. The original brief listed it, so
-     it's your call.
-
-  The CASA test itself needs no decision yet: don't pay until Google's email names the level
-  ([0g](#0-start-now-google-verification-takes-weeks)).
+- **The Google security test (CASA):** no decision yet. Don't pay until Google's email names the
+  level ([0g](#0-start-now-google-verification-takes-weeks)).
 
 - **#47 referral credit amount:** built and tested, off (`FEATURE_REFERRALS`). Decided 2026-10-13:
   the credit goes to the referrer only, and the same-domain block stays. Still open: how much.

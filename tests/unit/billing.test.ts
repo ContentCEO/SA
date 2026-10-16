@@ -17,6 +17,7 @@ import {
   handleStripeWebhook,
   salesTaxStatus,
   setStripeForTests,
+  termsBoxOffSince,
 } from "@/server/billing";
 import {
   billingStatusLine,
@@ -30,8 +31,10 @@ import {
   setupLookupKey,
   statusAfterCheckout,
   statusAfterSubscription,
+  TERMS_BOX_OFF_LINE,
 } from "@/server/billing-rules";
 import { canSend, jobsAllowed } from "@/server/lifecycle";
+import { isTermsUrlMissingError } from "@/server/stripe-error-rules";
 import { createTestDb } from "../support/db";
 
 const NOW = new Date("2026-10-10T14:00:00Z");
@@ -134,11 +137,20 @@ const SECRET = "whsec_test";
 type Call = { method: string; args: unknown[] };
 type FoundPrice = { id: string; lookup_key: string; tax_behavior: string | null };
 
-/** What the fake Stripe account holds. `tax`: Stripe Tax's status, or an error it throws. */
-const account: { tax: string | Error; prices: FoundPrice[]; portals: number } = {
+/**
+ * What the fake Stripe account holds. `tax`: Stripe Tax's status, or an error it throws.
+ * `checkoutRefuses`: an error a checkout with the given params throws (null = it goes through).
+ */
+const account: {
+  tax: string | Error;
+  prices: FoundPrice[];
+  portals: number;
+  checkoutRefuses: (p: Stripe.Checkout.SessionCreateParams) => Error | null;
+} = {
   tax: "pending",
   prices: [],
   portals: 0,
+  checkoutRefuses: () => null,
 };
 
 function fakeStripe(calls: Call[]) {
@@ -182,10 +194,11 @@ function fakeStripe(calls: Call[]) {
     customers: { create: rec("customers.create", () => ({ id: "cus_1" })) },
     checkout: {
       sessions: {
-        create: rec("checkout.sessions.create", () => ({
-          id: `cs_${++n}`,
-          url: "https://checkout.example/cs",
-        })),
+        create: rec("checkout.sessions.create", (p) => {
+          const refused = account.checkoutRefuses(p as Stripe.Checkout.SessionCreateParams);
+          if (refused) throw refused;
+          return { id: `cs_${++n}`, url: "https://checkout.example/cs" };
+        }),
       },
     },
     webhooks: {
@@ -210,6 +223,7 @@ beforeEach(async () => {
   account.tax = "pending";
   account.prices = [];
   account.portals = 0;
+  account.checkoutRefuses = () => null;
   setStripeForTests(fakeStripe(calls));
   ({ workspace } = await ensureUserAndWorkspace({ email: "owner@shop.com", name: "Owner" }));
   await database
@@ -292,6 +306,128 @@ describe("checkout", () => {
   });
 });
 
+describe("the 'I agree' box at checkout (Davi, 2026-10-15)", () => {
+  const creates = () =>
+    calls
+      .filter((c) => c.method === "checkout.sessions.create")
+      .map((c) => c.args[0] as Stripe.Checkout.SessionCreateParams);
+  /** What Stripe answers while no terms link is saved in its dashboard (an invalid request). */
+  const noTermsUrl = () =>
+    new Stripe.errors.StripeInvalidRequestError({
+      message:
+        "You cannot collect consent to your terms of service unless a URL is set in the Stripe Dashboard. Update your public business details at https://dashboard.stripe.com/settings/public to set your terms of service URL.",
+      param: "consent_collection[terms_of_service]",
+    });
+  const boxOffRow = async () =>
+    (
+      await database.select().from(appSettings).where(eq(appSettings.key, "stripe_terms_box_off"))
+    )[0];
+
+  it("asks for the box, next to our own words linking our terms and privacy policy", async () => {
+    await createCheckout(await reload(), "crew");
+    const [params] = creates();
+    expect(params!.consent_collection).toEqual({ terms_of_service: "required" });
+    expect(params!.custom_text).toEqual({
+      terms_of_service_acceptance: {
+        message:
+          "I agree to the [Terms of Service](https://app.example/terms) and the [Privacy Policy](https://app.example/privacy).",
+      },
+    });
+    expect(await boxOffRow()).toBeUndefined();
+  });
+
+  it("no terms link in Stripe: the same checkout again without the box, a content-free warning, and the /admin note", async () => {
+    account.checkoutRefuses = (p) => (p.consent_collection ? noTermsUrl() : null);
+    const warned = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const url = await createCheckout(await reload(), "crew");
+    expect(url).toBe("https://checkout.example/cs");
+    const [first, second] = creates();
+    expect(creates()).toHaveLength(2);
+    expect(second!.consent_collection).toBeUndefined();
+    expect(second!.custom_text).toBeUndefined();
+    // Otherwise the very same checkout (plan, setup fee, customer, links).
+    const rest: Partial<Stripe.Checkout.SessionCreateParams> = { ...first! };
+    delete rest.consent_collection;
+    delete rest.custom_text;
+    expect(second).toEqual(rest);
+    expect(warned).toHaveBeenCalledWith("stripe_terms_url_missing", { workspaceId: workspace.id });
+    expect(JSON.stringify(warned.mock.calls)).not.toMatch(/dashboard|owner@shop\.com|cus_/);
+    expect(await boxOffRow()).toBeDefined();
+    expect(await termsBoxOffSince()).toBeInstanceOf(Date);
+
+    // Once the link is saved, the next checkout has the box again and the note goes.
+    account.checkoutRefuses = () => null;
+    calls.length = 0;
+    await createCheckout(await reload(), "solo");
+    expect(creates()).toHaveLength(1);
+    expect(creates()[0]!.consent_collection).toEqual({ terms_of_service: "required" });
+    expect(await termsBoxOffSince()).toBeNull();
+  });
+
+  it("matched by the parameter, or by the words if Stripe names none", () => {
+    expect(isTermsUrlMissingError(noTermsUrl())).toBe(true);
+    expect(
+      isTermsUrlMissingError(
+        new Stripe.errors.StripeInvalidRequestError({
+          message: "Set a terms of service URL in your public details first.",
+        }),
+      ),
+    ).toBe(true);
+    for (const other of [
+      new Stripe.errors.StripeInvalidRequestError({
+        message: "No such price: 'price_1'",
+        param: "line_items[0][price]",
+      }),
+      new Stripe.errors.StripeAPIError({ message: "terms of service URL" }),
+      new Error("terms of service URL"),
+      null,
+      "consent_collection",
+    ])
+      expect(isTermsUrlMissingError(other), String(other)).toBe(false);
+  });
+
+  it("any other Stripe error goes up exactly as before: one attempt, no retry, no note", async () => {
+    for (const err of [
+      new Stripe.errors.StripeInvalidRequestError({
+        message: "No such customer: 'cus_SECRET'",
+        param: "customer",
+      }),
+      new Stripe.errors.StripeConnectionError({ message: "socket hang up" }),
+      new Stripe.errors.StripeCardError({ message: "card declined" }),
+    ]) {
+      calls.length = 0;
+      account.checkoutRefuses = () => err;
+      const warned = vi.spyOn(console, "warn").mockImplementation(() => {});
+      await expect(createCheckout(await reload(), "crew")).rejects.toBe(err);
+      expect(creates()).toHaveLength(1);
+      expect(warned).not.toHaveBeenCalled();
+      expect(await boxOffRow()).toBeUndefined();
+    }
+  });
+
+  it("a refusal of the retry too goes up (never a third try)", async () => {
+    const second = new Stripe.errors.StripeConnectionError({ message: "socket hang up" });
+    let n = 0;
+    account.checkoutRefuses = () => (++n === 1 ? noTermsUrl() : second);
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    await expect(createCheckout(await reload(), "crew")).rejects.toBe(second);
+    expect(creates()).toHaveLength(2);
+  });
+
+  it("the /admin Payments card shows the line from the database only", () => {
+    expect(TERMS_BOX_OFF_LINE).toBe(
+      "Terms box at checkout: off. Add your terms link in Stripe → Settings → Business → Public details.",
+    );
+    const admin = readFileSync("src/app/(app)/admin/page.tsx", "utf8");
+    expect(admin).toContain("termsBoxOffSince(),");
+    expect(admin).toContain("{TERMS_BOX_OFF_LINE}");
+    // termsBoxOffSince reads app_settings and never asks Stripe.
+    const billing = readFileSync("src/server/billing.ts", "utf8");
+    const fn = billing.slice(billing.indexOf("export async function termsBoxOffSince"));
+    expect(fn.slice(0, fn.indexOf("\n}\n"))).not.toMatch(/stripe\(\)|\bs\./);
+  });
+});
+
 describe("sales tax (Stripe Tax, Davi 2026-10-14)", () => {
   const sessionParams = () =>
     calls.find((c) => c.method === "checkout.sessions.create")!
@@ -327,6 +463,9 @@ describe("sales tax (Stripe Tax, Davi 2026-10-14)", () => {
           "mode",
           "subscription_data",
           "success_url",
+          // The "I agree" box (2026-10-15), not tax.
+          "consent_collection",
+          "custom_text",
         ].sort(),
       );
     }

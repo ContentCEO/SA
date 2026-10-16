@@ -47,16 +47,22 @@ this form.
 **When you sign in with Google:** your name and email address. Sign-in asks Google only for "who you are" (`openid`, `email`, `profile`). It does not give us
 access to your email.
 
+**When you agree to our terms:** the date and time you ticked "I agree to the Terms of Service and
+the Privacy Policy" (when you sign in, or when we ask again after the terms change) and which
+version of the terms you agreed to, so we can show that you agreed.
+
 **When you connect Gmail:** this is a separate step, after a screen that explains what Squared Away
-will and won't do. We ask Google for three Gmail permissions:
+will and won't do. We ask Google for two Gmail permissions (named as Google's screen names them):
 
-| Permission                                       | Why we need it                                                                                                                                                                                                                                                                              | What we never do with it                                                                                |
-| ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
-| Read your email (`gmail.readonly`)               | To sort incoming business email and write a reply, and to read up to 200 of your sent emails from the last year so drafts sound like you (see "How you write" below).                                                                                                                       | We never delete, archive, move or label your mail.                                                      |
-| Manage drafts and send replies (`gmail.compose`) | To put reply drafts in your own Gmail Drafts folder, in the right conversation; to update or remove drafts we created when you change them in the app; and to send a reply you approved (**Send reply**) or, only if you switch it on for a kind of email, one autopilot sends (see below). | We don't touch drafts we didn't create, and we never send anything you haven't approved or switched on. |
-| Send email (`gmail.send`)                        | Only during the trial: to send a practice copy of a draft to your own address when you ask.                                                                                                                                                                                                 | Nothing goes to a customer through it.                                                                  |
+| Permission                                               | Why we need it                                                                                                                                                                                                                                                                                                                                                                           | What we never do with it                                                                                                                          |
+| -------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| View your email messages and settings (`gmail.readonly`) | To sort incoming business email and write a reply, and to read up to 200 of your sent emails from the last year so drafts sound like you (see "How you write" below).                                                                                                                                                                                                                    | We never delete, archive, move or label your mail.                                                                                                |
+| Manage drafts and send emails (`gmail.compose`)          | To put reply drafts in your own Gmail Drafts folder, in the right conversation; to update or remove drafts we created when you change them in the app; to send a reply you approved (**Send reply**) or, only if you switch it on for a kind of email, one autopilot sends (see below); and, only during the trial, to send a practice copy of a draft to your own address when you ask. | We don't touch drafts we didn't create, and we never send anything you haven't approved or switched on. A practice copy never goes to a customer. |
 
-If you untick any of these on Google's screen, we remove what was granted and save nothing.
+If you untick either of these on Google's screen, we remove what was granted and save nothing. If
+you connected Gmail back when we also asked for a third permission, "Send email on your behalf",
+Google may still list it for Squared Away. We no longer need it, and disconnecting Gmail in
+Settings removes all of our access, that one included.
 
 **What we store from Gmail:**
 
@@ -104,8 +110,9 @@ before sending, counts of what you changed (how many words, whether you changed 
 sign-off) and the change in tone, which we use to suggest updates to your writing style. These
 records hold IDs, counts and yes/no marks, not email text.
 
-**Cookies:** we use only the cookies needed to keep you signed in and to protect the Gmail
-connection step from forgery, plus small cookies that remember this phone's display choices
+**Cookies:** we use only the cookies needed to keep you signed in, to protect the Gmail connection
+step from forgery, and to remember for a few minutes that you ticked "I agree" while Google signs
+you in, plus small cookies that remember this phone's display choices
 (left-handed layout, high contrast, offline approvals). We don't use advertising or tracking
 cookies, and we don't run analytics that follow you. If you switch on offline approvals, your
 phone keeps a copy of your queue (in the browser's storage) and the approvals you make without
@@ -226,6 +233,7 @@ In plain words:
   30-day email-text purge, until you disconnect that Gmail address or delete your account.
 - **Your writing style, style suggestions, business details, settings, activity history and AI
   usage counts** are kept until you delete your account.
+- **When you agreed to the terms, and which version,** is kept until you delete your account.
 - **Your mobile number for text alerts** is kept until you remove it in Settings or delete your
   account.
 - **Phone notification addresses** are deleted when you turn notifications off, when that phone

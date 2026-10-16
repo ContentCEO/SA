@@ -3,7 +3,7 @@ import { dirname, join, normalize, relative } from "node:path";
 import { describe, expect, it } from "vitest";
 import { models } from "@/config/models";
 import { GMAIL_SCOPES } from "@/mailbox/gmail/scopes";
-import { SALES_TAX_ON_NOTE } from "@/server/billing-rules";
+import { SALES_TAX_ON_NOTE, TERMS_BOX_OFF_LINE } from "@/server/billing-rules";
 import { sendingOffLabel } from "@/server/lifecycle";
 import { ROOT, sourceFiles, SRC } from "../support/source-ast";
 
@@ -358,12 +358,27 @@ describe("LAUNCH.md structure", () => {
     expect(heads[invite]!.when).toContain("Google's email names the address");
   });
 
-  it("the submission adds the three Gmail scopes on Data Access if they aren't listed", () => {
+  it("the submission adds the two Gmail scopes on Data Access if they aren't listed, and removes gmail.send", () => {
     const google = flat(sections[0]!.body);
     expect(google).toContain("**Add or remove scopes**");
     expect(google).toContain('"Manually add scopes"');
+    expect(Object.values(GMAIL_SCOPES)).toHaveLength(2);
     for (const scope of Object.values(GMAIL_SCOPES))
       expect(google, scope).toContain(`\`${scope}\``);
+    // Dropped on 2026-10-15: it isn't pasted, it's removed from Data Access before submitting.
+    const e = flat(sections0().slice(sections0().indexOf("**0e."), sections0().indexOf("**0f.")));
+    expect(e).not.toContain("`https://www.googleapis.com/auth/gmail.send`");
+    expect(e).toContain("**Remove `gmail.send` first**");
+    expect(e).toContain("and no `gmail.send`");
+    expect(e).toContain("nobody has to reconnect");
+    // The video step shows the two, and no longer waits on a decision.
+    const d = flat(sections0().slice(sections0().indexOf("**0d."), sections0().indexOf("**0e.")));
+    expect(d).toContain("shows each of the two Gmail permissions in use");
+    expect(d).not.toContain("Still to decide first");
+    // The live check it waits on starts by clearing the demo Gmail's earlier access.
+    expect(d).toContain(
+      "Their check starts by removing the demo Gmail's earlier access to Squared Away",
+    );
   });
 
   it("publishing tells everyone who connected in Testing to reconnect once (old keys still expire)", () => {
@@ -648,10 +663,15 @@ describe("LAUNCH.md structure", () => {
     expect(flat(sections[13]!.body)).toContain("referrer only");
   });
 
-  /** Step 13's three parts: what's decided, what's open, and what Davi still has to hand over. */
+  /**
+   * Step 13's three parts: what's decided (every "### Decided on" list, newest first), what's
+   * open, and what Davi still has to hand over.
+   */
   function step13Parts() {
     const body = sections[13]!.body;
-    const decided = body.indexOf("### Decided on 2026-10-14");
+    const decided = body.indexOf("### Decided on ");
+    expect(body.indexOf("### Decided on 2026-10-15"), "the 2026-10-15 list first").toBe(decided);
+    expect(body.indexOf("### Decided on 2026-10-14")).toBeGreaterThan(decided);
     const open = body.indexOf("### Still open");
     const needed = body.indexOf("### Still needed from you");
     expect(decided, "a Decided part").toBeGreaterThan(0);
@@ -675,13 +695,9 @@ describe("LAUNCH.md structure", () => {
       "Growth",
       "[To confirm]",
       "option A for each",
-      "I agree to the Terms",
       "lawyer",
-      "demo video",
-      "gmail.send",
       "CASA",
       "Deleted owners",
-      "Option B (new)",
       "Gmail draft check",
       "The homepage's About section",
       "someone in the trades.",
@@ -692,12 +708,6 @@ describe("LAUNCH.md structure", () => {
     // A preview can't read mail, draft, take a payment or send, so the Google checks run on
     // production, never "on a preview".
     expect(open).not.toMatch(/on a preview first|tries it on a preview|try it on a preview/);
-    expect(open).toContain("An engineer tries it once on production first");
-    expect(open).toContain("the engineers check it on production with the demo Gmail");
-    // Option B's account can't be reset before the live key (the button needs it).
-    expect(open).toContain(
-      "delete it before step 7, or **Reset test payments** clears it in step 7c",
-    );
     expect(open).not.toContain("reset or deleted before Stripe goes live");
     // The About wording ships with the merge, so step 1 points at the question.
     expect(flat(sections.find((s) => s.n === 1)!.body)).toContain("The homepage's About section");
@@ -732,6 +742,100 @@ describe("LAUNCH.md structure", () => {
     const features = readFileSync(join(ROOT, "src/config/features.ts"), "utf8");
     expect(features).toContain("Turned on by Davi 2026-10-14");
     expect(features).not.toMatch(/closing[^\n]*ASK DAVI/i);
+  });
+
+  it("Davi's 2026-10-15 decisions (the 'I agree' boxes, demo option B) are recorded as decided", () => {
+    const { decided, open } = step13Parts();
+    for (const phrase of [
+      '"I agree to the Terms": yes, built',
+      "Kauders v. Uber",
+      "Good v. Uber",
+      "**Agree and continue**",
+      "[Add your terms link in Stripe](#add-your-terms-link-in-stripe-right-after-step-1)",
+      // Someone who won't agree can still leave from the terms screen, as the terms promise.
+      "**Manage billing**",
+      "**Delete my account**",
+      "**Demo video: option B**",
+      "An engineer tries it once on production first",
+      // Option B's account can't be reset before the live key (the button needs it).
+      "delete it before step 7, or **Reset test payments** clears it in step",
+      // gmail.send dropped (the 2026-10-15 decision), with the console step and the live check.
+      "**Drop `gmail.send`: yes, built**",
+      '"View your email messages and settings" (`gmail.readonly`)',
+      '"Manage drafts and send emails" (`gmail.compose`)',
+      "Google Auth Platform → Data Access before you submit",
+      "Owners who already connected keep working and nobody reconnects",
+      "the engineers check it on production with the demo Gmail",
+      "put `gmail.send` back at once if either fails",
+      // An old grant still carrying gmail.send would send the practice copy on its own, so the
+      // check clears it first, through Squared Away's own Disconnect (it revokes at Google).
+      "**Before that check they clear the demo Gmail's old access.**",
+      "Settings → **Disconnect Gmail** → **Yes, disconnect Gmail**",
+      "that mailbox's saved permissions (`mailboxes.scopes`) have no `gmail.send`",
+      "Only then the practice copy and the real reply.",
+    ]) {
+      expect(decided, phrase).toContain(phrase);
+    }
+    for (const settled of [
+      "needs your yes",
+      "Option B (new)",
+      "Which account records the send part",
+      "gmail.send",
+      "Still your call; nothing changes until you say so.",
+    ])
+      expect(open, settled).not.toContain(settled);
+    // A preview can't send, so the live check is on production, never "on a preview".
+    expect(decided).not.toMatch(/on a preview first|tries it on a preview|try it on a preview/);
+    // True of the code: two scopes, no gmail.send.
+    expect(Object.values(GMAIL_SCOPES).join(" ")).not.toContain("gmail.send");
+    // The screens say what the doc says.
+    expect(readFileSync(join(ROOT, "src/app/welcome/terms/page.tsx"), "utf8")).toContain(
+      'submitLabel="Agree and continue"',
+    );
+    expect(readFileSync(join(ROOT, "src/server/terms-rules.ts"), "utf8")).toContain(
+      'heavy: "the fine print."',
+    );
+  });
+
+  it("the Stripe terms link is a step right after step 1 and in live mode, checked by the /admin line", () => {
+    const now = flat(
+      launch.slice(
+        launch.indexOf("## Add your terms link in Stripe (right after step 1)"),
+        launch.indexOf("## 0. Start now"),
+      ),
+    );
+    // The pages ship with step 1's merge; the boxes and the /admin line with a second one.
+    for (const text of [
+      "When: right after [step 1](#1-merge-the-launch-branch).",
+      "1. After step 1:",
+      "2. After the second merge:",
+      "`claude/squared-away-mvp-ddxl7s`",
+      "don't save them in Stripe before step 1",
+    ])
+      expect(now, text).toContain(text);
+    expect(now).not.toMatch(/\bDo it now\b/);
+    const step1 = flat(sections.find((x) => x.n === 1)!.body);
+    expect(step1).toContain('**Not in this merge: the "I agree" boxes**');
+    expect(step1).toContain("`claude/squared-away-mvp-ddxl7s`");
+    expect(step1).not.toContain("Everything waiting is in **one** pull request");
+    expect(launch).not.toContain("live with the next merge");
+    const line = TERMS_BOX_OFF_LINE;
+    for (const text of [
+      "Stripe → Settings → Business → **Public details**",
+      "`https://<production address>/terms`",
+      "`https://<production address>/privacy`",
+      "Worked when:",
+    ])
+      expect(now, text).toContain(text);
+    expect(now).toContain(flat(line));
+    const d = flat(
+      sections[7]!.body.slice(
+        sections[7]!.body.indexOf("**7d."),
+        sections[7]!.body.indexOf("**7e."),
+      ),
+    );
+    expect(d).toContain("Settings → Business → **Public details**");
+    expect(d).toContain(flat(line));
   });
 
   it("the referral amount options are listed, with the ones that need more code marked", () => {

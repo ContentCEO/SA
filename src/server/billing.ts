@@ -28,7 +28,7 @@ import {
 } from "./billing-rules";
 import { setupReallyPaid } from "./lifecycle";
 import { creditReferralSafely } from "./referrals";
-import { stripeErrorReason } from "./stripe-error-rules";
+import { isTermsUrlMissingError, stripeErrorReason } from "./stripe-error-rules";
 
 let client: Stripe | undefined;
 let override: Stripe | undefined;
@@ -299,7 +299,7 @@ export async function createCheckout(workspace: Workspace, plan: PlanId): Promis
         billing_address_collection: "required",
       }
     : {};
-  const session = await s.checkout.sessions.create({
+  const params: Stripe.Checkout.SessionCreateParams = {
     mode: "subscription",
     customer,
     client_reference_id: workspace.id,
@@ -313,17 +313,92 @@ export async function createCheckout(workspace: Workspace, plan: PlanId): Promis
     ...tax,
     success_url: appUrl("/billing?done=paid"),
     cancel_url: appUrl("/billing?error=canceled"),
-  });
+  };
+  let session: Stripe.Checkout.Session;
+  let withBox = true;
+  try {
+    session = await s.checkout.sessions.create({ ...params, ...termsAgreementParams() });
+  } catch (err) {
+    // Stripe refuses the box until a terms link is saved in its dashboard. Owners already
+    // agreed at sign-in, so the payment goes ahead without it and /admin says what to fix.
+    // Any other error goes up exactly as before.
+    if (!isTermsUrlMissingError(err)) throw err;
+    console.warn("stripe_terms_url_missing", { workspaceId: workspace.id });
+    withBox = false;
+    session = await s.checkout.sessions.create(params);
+  }
+  // The /admin note is a reminder only: writing it never stops a payment.
+  await noteTermsBox(withBox);
   if (!session.url) throw new Error("Stripe didn't return a checkout link.");
   return session.url;
 }
 
-/** Stripe's own page for changing card, plan, invoices or canceling. */
-export async function createPortal(workspace: Workspace): Promise<string> {
+/**
+ * The "I agree" box on Stripe's checkout page (Davi, 2026-10-15): the owner must tick it before
+ * paying, next to our own words with links to our terms and privacy policy. Stripe also needs the
+ * Terms of Service URL saved in its dashboard (Settings → Business → Public details).
+ */
+function termsAgreementParams(): Pick<
+  Stripe.Checkout.SessionCreateParams,
+  "consent_collection" | "custom_text"
+> {
+  return {
+    consent_collection: { terms_of_service: "required" },
+    custom_text: {
+      terms_of_service_acceptance: {
+        message: `I agree to the [Terms of Service](${appUrl("/terms")}) and the [Privacy Policy](${appUrl("/privacy")}).`,
+      },
+    },
+  };
+}
+
+/** app_settings key: when a checkout last had to go without the terms box (its time, ISO). */
+const TERMS_BOX_OFF_KEY = "stripe_terms_box_off";
+
+/** Box on: forget any earlier "off". Box off: remember when. Never throws. */
+async function noteTermsBox(withBox: boolean, now: Date = new Date()) {
+  try {
+    if (withBox) {
+      await db().delete(appSettings).where(eq(appSettings.key, TERMS_BOX_OFF_KEY));
+      return;
+    }
+    const value = now.toISOString();
+    await db()
+      .insert(appSettings)
+      .values({ key: TERMS_BOX_OFF_KEY, value, updatedAt: now })
+      .onConflictDoUpdate({ target: appSettings.key, set: { value, updatedAt: now } });
+  } catch (err) {
+    console.error("stripe_terms_box_note_failed", {
+      error: err instanceof Error ? err.name : "unknown",
+    });
+  }
+}
+
+/**
+ * For the /admin Payments card: when the last checkout had to go without the terms box, or null
+ * (never, or a later checkout had it). Database only: loading the page asks Stripe nothing.
+ */
+export async function termsBoxOffSince(): Promise<Date | null> {
+  const [row] = await db()
+    .select({ updatedAt: appSettings.updatedAt })
+    .from(appSettings)
+    .where(eq(appSettings.key, TERMS_BOX_OFF_KEY));
+  return row?.updatedAt ?? null;
+}
+
+/**
+ * Stripe's own page for changing card, plan, invoices or canceling. It comes back to Plan &
+ * billing, or to the terms screen when it was opened from there (someone who won't agree to new
+ * terms can still cancel).
+ */
+export async function createPortal(
+  workspace: Workspace,
+  returnTo: "/billing" | "/welcome/terms" = "/billing",
+): Promise<string> {
   if (!workspace.stripeCustomerId) throw new CheckoutNotAllowedError();
   const portal = await stripe().billingPortal.sessions.create({
     customer: workspace.stripeCustomerId,
-    return_url: appUrl("/billing"),
+    return_url: appUrl(returnTo),
   });
   return portal.url;
 }

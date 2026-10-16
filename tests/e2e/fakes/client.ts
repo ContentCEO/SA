@@ -5,7 +5,7 @@
  */
 import { randomUUID } from "node:crypto";
 import type { APIRequestContext, BrowserContext, Page } from "@playwright/test";
-import type { FakeCall } from "./server";
+import type { FakeCall, FakeGrant } from "./server";
 
 /** Where the fakes listen. playwright.config.ts sets E2E_FAKES_URL for every worker. */
 export function fakesUrl(): string {
@@ -15,13 +15,20 @@ export function fakesUrl(): string {
   return url;
 }
 
-/** One isolated fake mailbox for one test (its own customer, sent mail and Gmail drafts). */
+/**
+ * One isolated fake mailbox for one test (its own customer, sent mail and Gmail drafts).
+ * `grant` says how its owner answers Google's consent page: by default they leave every
+ * permission ticked and have no earlier grant.
+ */
 export async function registerScenario(
   request: APIRequestContext,
   ownerEmail: string,
+  grant: FakeGrant = {},
 ): Promise<{ id: string; ref: string }> {
   const id = randomUUID();
-  const res = await request.post(`${fakesUrl()}/__scenarios`, { data: { id, ownerEmail } });
+  const res = await request.post(`${fakesUrl()}/__scenarios`, {
+    data: { id, ownerEmail, grant },
+  });
   if (res.status() !== 201) throw new Error(`Fake scenario not registered (${res.status()}).`);
   return (await res.json()) as { id: string; ref: string };
 }

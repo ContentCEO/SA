@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Database } from "@/db";
 import { drafts, mailboxes, messages, threads, workspaces } from "@/db/schema";
 import { ensureUserAndWorkspace } from "@/server/accounts";
+import { recordTermsAcceptance } from "@/server/terms";
 import { saveConnectedMailbox } from "@/server/mailboxes";
 import { createTestDb } from "../support/db";
 
@@ -85,6 +86,8 @@ describe("/api/push/summary counts like the queue (plan #36, M8 A1)", () => {
     process.env.TOKEN_ENCRYPTION_KEY = randomBytes(32).toString("base64");
     database = await createTestDb();
     const { user, workspace } = await ensureUserAndWorkspace({ email: "owner@shop.com" });
+    // Agreed to the current terms (an owner who hasn't gets a 403: terms-agreement.test.ts).
+    await recordTermsAcceptance(user.id);
     session.userId = user.id;
     await database
       .update(workspaces)
@@ -150,6 +153,8 @@ describe("/api/push/summary with leads at risk", () => {
     process.env.TOKEN_ENCRYPTION_KEY = randomBytes(32).toString("base64");
     database = await createTestDb();
     const { user, workspace } = await ensureUserAndWorkspace({ email: "owner@shop.com" });
+    // Agreed to the current terms (an owner who hasn't gets a 403: terms-agreement.test.ts).
+    await recordTermsAcceptance(user.id);
     session.userId = user.id;
     await database
       .update(workspaces)

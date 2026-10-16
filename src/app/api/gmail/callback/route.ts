@@ -9,6 +9,8 @@ import { getWorkspaceForUser } from "@/server/accounts";
 import { enqueue, mailboxConnected } from "@/jobs/client";
 import { MailboxLimitError, saveConnectedMailbox } from "@/server/mailboxes";
 import { getBusinessProfile } from "@/server/profile";
+import { termsRequiredResponse } from "@/server/session";
+import { termsAccepted } from "@/server/terms";
 
 export const dynamic = "force-dynamic";
 
@@ -19,6 +21,8 @@ function to(path: string) {
 export async function GET(request: NextRequest) {
   const session = await auth();
   if (!session?.user?.id) return to("/");
+  // Not agreed to the current terms (Davi, 2026-10-15): 403, and nothing from Google is saved.
+  if (!(await termsAccepted(session.user.id))) return termsRequiredResponse();
 
   const params = request.nextUrl.searchParams;
   const cookieStore = await cookies();

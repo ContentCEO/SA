@@ -3,7 +3,6 @@
 import { useState } from "react";
 import { useFormStatus } from "react-dom";
 import { Button } from "@/components/ui/button";
-import { deleteAccountAction } from "./actions";
 
 function ConfirmButton() {
   const { pending } = useFormStatus();
@@ -14,8 +13,18 @@ function ConfirmButton() {
   );
 }
 
-/** One confirmation that says exactly what happens, then immediate. */
-export function DeleteAccountButton({ hasPlan }: { hasPlan: boolean }) {
+/**
+ * One confirmation that says exactly what happens, then immediate. Used in Settings and on the
+ * terms screen (someone who won't agree to new terms can still leave): each passes its own
+ * server action.
+ */
+export function DeleteAccountButton({
+  hasPlan,
+  action,
+}: {
+  hasPlan: boolean;
+  action: (formData: FormData) => Promise<void>;
+}) {
   const [confirming, setConfirming] = useState(false);
 
   if (!confirming) {
@@ -28,7 +37,7 @@ export function DeleteAccountButton({ hasPlan }: { hasPlan: boolean }) {
 
   return (
     <form
-      action={deleteAccountAction}
+      action={action}
       aria-label="Delete my account"
       className="sa-inverted flex flex-col gap-3 rounded-xl p-4"
     >

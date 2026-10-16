@@ -11,7 +11,10 @@ import { editToneSchema } from "@/ai/prompts/edit-tone.v1";
 import { voiceSchema } from "@/ai/prompts/voice.v2";
 import { anthropicClientOptions } from "@/config/e2e";
 import { models } from "@/config/models";
+import { MailboxAuthError, MissingScopesError } from "@/mailbox/connector";
 import { createGmailReader } from "@/mailbox/gmail/api";
+import { createGmailConnector } from "@/mailbox/gmail/connector";
+import { ALL_CONNECT_SCOPES, GMAIL_SCOPES } from "@/mailbox/gmail/scopes";
 import { buildReplyMime, replySubject, sameText, toGmailRaw } from "@/mailbox/mime";
 import {
   buildInbox,
@@ -23,7 +26,14 @@ import {
   outputKindFor,
   refFor,
 } from "../e2e/fakes/outputs";
-import { startFakes, type FakeCall } from "../e2e/fakes/server";
+import {
+  CONNECT_SCOPES as FAKE_CONNECT_SCOPES,
+  GMAIL_METHOD_SCOPES,
+  GMAIL_SCOPES as FAKE_GMAIL_SCOPES,
+  startFakes,
+  type FakeCall,
+  type FakeGrant,
+} from "../e2e/fakes/server";
 
 /**
  * Milestone 11 S2: the e2e fakes answer the way the app needs, so the end-to-end spec
@@ -97,21 +107,56 @@ describe("the fake server", () => {
   const scenarioId = "7b0e5c9d-2f1a-4c3b-8d6e-0a1b2c3d4e5f";
   const ownerEmail = "owner-fake@example.com";
 
-  beforeAll(async () => {
-    ({ server, url } = await startFakes(0));
+  const register = async (id: string, email: string, grant: FakeGrant = {}) => {
     const res = await fetch(`${url}/__scenarios`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ id: scenarioId, ownerEmail }),
+      body: JSON.stringify({ id, ownerEmail: email, grant }),
     });
     expect(res.status).toBe(201);
+  };
+
+  beforeAll(async () => {
+    ({ server, url } = await startFakes(0));
+    await register(scenarioId, ownerEmail);
   });
   afterAll(() => new Promise<void>((r) => server.close(() => r())));
   afterEach(() => vi.unstubAllEnvs());
 
-  const recorded = async (): Promise<FakeCall[]> =>
-    ((await (await fetch(`${url}/__calls?scenario=${scenarioId}`)).json()) as { calls: FakeCall[] })
-      .calls;
+  const recorded = async (id = scenarioId): Promise<FakeCall[]> =>
+    ((await (await fetch(`${url}/__calls?scenario=${id}`)).json()) as { calls: FakeCall[] }).calls;
+
+  const redirectUri = "http://localhost:3300/api/gmail/callback";
+
+  /** The app's real consent request, answered by the fake's consent page (Allow is implied). */
+  async function consent(email: string) {
+    const asked = new URL(
+      createGmailConnector().authorizationUrl({ state: "s1", redirectUri, loginHint: email }),
+    );
+    const res = await fetch(`${url}/o/oauth2/v2/auth${asked.search}`);
+    expect(res.status).toBe(200);
+  }
+
+  /** Consent, then the code exchanged by hand: the token as issued, before any check of ours. */
+  async function tokenScopes(id: string, email: string): Promise<string[]> {
+    await consent(email);
+    const res = await fetch(`${url}/google/token`, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        grant_type: "authorization_code",
+        code: `e2e-${id}`,
+        client_id: "e2e-client-id",
+        client_secret: "e2e-client-secret",
+      }),
+    });
+    expect(res.status).toBe(200);
+    return ((await res.json()) as { scope: string }).scope.split(" ");
+  }
+
+  /** A raw message to the owner's own address (what a practice copy is). */
+  const ownRaw = (email: string) =>
+    toGmailRaw(buildReplyMime({ from: email, to: email, subject: "[Practice] Hi", body: "Hi" }));
 
   /** The app's own e2e env, pointing at this fake. */
   function e2eEnv() {
@@ -171,12 +216,16 @@ describe("the fake server", () => {
         "profile",
         "https://www.googleapis.com/auth/gmail.readonly",
         "https://www.googleapis.com/auth/gmail.compose",
-        "https://www.googleapis.com/auth/gmail.send",
       ].join(" "),
-      redirect_uri: "http://localhost:3300/api/gmail/callback",
+      redirect_uri: redirectUri,
       state: "s1",
     });
     expect((await fetch(`${url}/o/oauth2/v2/auth?${base}`)).status).toBe(400);
+    // The old request, with gmail.send (dropped 2026-10-15), is refused too.
+    const oldThree = new URLSearchParams(base);
+    oldThree.set("login_hint", ownerEmail);
+    oldThree.set("scope", `${base.get("scope")} https://www.googleapis.com/auth/gmail.send`);
+    expect((await fetch(`${url}/o/oauth2/v2/auth?${oldThree}`)).status).toBe(400);
     const stranger = new URLSearchParams(base);
     stranger.set("login_hint", "someone-else@example.com");
     expect((await fetch(`${url}/o/oauth2/v2/auth?${stranger}`)).status).toBe(400);
@@ -195,9 +244,55 @@ describe("the fake server", () => {
     expect(page).toContain("state=s1");
   });
 
+  it("asks for exactly the app's scopes, and those two cover every Gmail call the app makes", () => {
+    expect(FAKE_GMAIL_SCOPES).toEqual(Object.values(GMAIL_SCOPES));
+    expect(FAKE_CONNECT_SCOPES).toEqual(ALL_CONNECT_SCOPES);
+    expect(Object.keys(GMAIL_METHOD_SCOPES).sort()).toEqual(
+      [
+        "gmail.profile",
+        "gmail.messages.list",
+        "gmail.messages.get",
+        "gmail.history",
+        "gmail.threads.get",
+        "gmail.drafts.create",
+        "gmail.drafts.get",
+        "gmail.drafts.update",
+        "gmail.drafts.delete",
+        "gmail.drafts.send",
+        "gmail.messages.send",
+        "gmail.watch",
+      ].sort(),
+    );
+    for (const [route, accepted] of Object.entries(GMAIL_METHOD_SCOPES))
+      expect(
+        accepted.some((x) => FAKE_GMAIL_SCOPES.includes(x)),
+        route,
+      ).toBe(true);
+    // Google's reference: gmail.send alone covers messages.send and nothing else.
+    const send = "https://www.googleapis.com/auth/gmail.send";
+    expect(
+      Object.entries(GMAIL_METHOD_SCOPES)
+        .filter(([, accepted]) => accepted.includes(send))
+        .map(([route]) => route),
+    ).toEqual(["gmail.messages.send"]);
+    // Both sends work with gmail.compose; every read with gmail.readonly.
+    const compose = GMAIL_SCOPES.compose;
+    expect(GMAIL_METHOD_SCOPES["gmail.drafts.send"]).toContain(compose);
+    expect(GMAIL_METHOD_SCOPES["gmail.messages.send"]).toContain(compose);
+    for (const read of ["messages.list", "messages.get", "history", "threads.get", "watch"])
+      expect(GMAIL_METHOD_SCOPES[`gmail.${read}`], read).toContain(GMAIL_SCOPES.readonly);
+  });
+
   it("Gmail behaves like Gmail for the paths the app depends on (drafts are DRAFT mail; a send is new SENT mail)", async () => {
     e2eEnv();
-    const gmail = createGmailReader({ refreshToken: `rt-${scenarioId}`, maxRetries: 0 });
+    // Connected the way the app does it: its consent request, its code exchange and checks.
+    await consent(ownerEmail);
+    const connected = await createGmailConnector().exchangeCode({
+      code: `e2e-${scenarioId}`,
+      redirectUri,
+    });
+    expect([...connected.grantedScopes].sort()).toEqual([...ALL_CONNECT_SCOPES].sort());
+    const gmail = createGmailReader({ refreshToken: connected.refreshToken, maxRetries: 0 });
     const ref = refFor(scenarioId);
     const customer = fakeCustomer(ref);
 
@@ -264,6 +359,97 @@ describe("the fake server", () => {
       threadId: customer.gmailThreadId,
     });
     expect(all.filter((c) => c.route === "unknown")).toEqual([]);
+    // Every call was allowed by the two scopes the token carries.
+    expect(all.filter((c) => c.insufficientScope)).toEqual([]);
+    const practice = await gmail.sendMessage(ownRaw(ownerEmail));
+    expect(practice.messageId).toBeTruthy();
+  });
+
+  it("enforces scopes on the token it issued, as Google does", async () => {
+    e2eEnv();
+    const refused = async (id: string) =>
+      (await recorded(id)).filter((c) => c.insufficientScope).map((c) => c.route);
+
+    // An old partial grant: read and gmail.send, no gmail.compose. No draft can be made or
+    // sent; only a new message can go out (all that gmail.send ever allowed).
+    const sendOnly = "2c4e6a8b-1d3f-4a5b-9c7d-0e1f2a3b4c5d";
+    await register(sendOnly, "send-only@example.com", {
+      untick: [GMAIL_SCOPES.compose],
+      earlier: ["https://www.googleapis.com/auth/gmail.send"],
+    });
+    const granted = await tokenScopes(sendOnly, "send-only@example.com");
+    expect(granted).toContain("https://www.googleapis.com/auth/gmail.send");
+    expect(granted).not.toContain(GMAIL_SCOPES.compose);
+    const a = createGmailReader({ refreshToken: `rt-${sendOnly}`, maxRetries: 0 });
+    expect((await a.listMessages({ query: "newer_than:30d" })).messages.length).toBeGreaterThan(0);
+    const customer = fakeCustomer(refFor(sendOnly));
+    await expect(
+      a.createDraft({ threadId: customer.gmailThreadId, raw: ownRaw("send-only@example.com") }),
+    ).rejects.toBeInstanceOf(MailboxAuthError);
+    await expect(a.sendDraft("d-any")).rejects.toBeInstanceOf(MailboxAuthError);
+    expect((await a.sendMessage(ownRaw("send-only@example.com"))).messageId).toBeTruthy();
+    expect(await refused(sendOnly)).toEqual(["gmail.drafts.create", "gmail.drafts.send"]);
+
+    // gmail.compose without gmail.readonly: drafts and sends, but no reading the inbox.
+    const noRead = "3d5f7b9c-2e4a-4b6c-8d0e-1f2a3b4c5d6e";
+    await register(noRead, "no-read@example.com", { untick: [GMAIL_SCOPES.readonly] });
+    expect(await tokenScopes(noRead, "no-read@example.com")).not.toContain(GMAIL_SCOPES.readonly);
+    const b = createGmailReader({ refreshToken: `rt-${noRead}`, maxRetries: 0 });
+    await expect(b.listMessages({ query: "newer_than:30d" })).rejects.toBeInstanceOf(
+      MailboxAuthError,
+    );
+    const other = fakeCustomer(refFor(noRead));
+    const draft = await b.createDraft({
+      threadId: other.gmailThreadId,
+      raw: ownRaw("no-read@example.com"),
+    });
+    expect((await b.sendDraft(draft.draftId)).threadId).toBe(other.gmailThreadId);
+    expect(await refused(noRead)).toEqual(["gmail.messages.list"]);
+  });
+
+  it("the app's connect refuses a grant missing either scope, revokes it, and keeps an extra gmail.send", async () => {
+    e2eEnv();
+    for (const [i, missing] of [GMAIL_SCOPES.compose, GMAIL_SCOPES.readonly].entries()) {
+      // The fake tells scenarios apart by the id's first 12 hex digits.
+      const id = `4e6a8c0${i}-3f5b-4c7d-9e1f-2a3b4c5d6e70`;
+      const email = `unticked-${i}@example.com`;
+      await register(id, email, { untick: [missing] });
+      await consent(email);
+      const err = await createGmailConnector()
+        .exchangeCode({ code: `e2e-${id}`, redirectUri })
+        .catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(MissingScopesError);
+      expect((err as MissingScopesError).missing).toEqual([missing]);
+      const calls = (await recorded(id)).map((c) => c.route);
+      expect(calls).toContain("revoke");
+      expect(calls).not.toContain("userinfo");
+      // The grant is gone: the refresh token no longer works.
+      await expect(
+        createGmailReader({ refreshToken: `rt-${id}`, maxRetries: 0 }).getProfile(),
+      ).rejects.toBeInstanceOf(MailboxAuthError);
+    }
+
+    // Connected before 2026-10-15: Google adds the old gmail.send back. Accepted, works as usual.
+    const older = "5f7b9d1e-4a6c-4d8e-8f2a-3b4c5d6e7f80";
+    await register(older, "older@example.com", {
+      earlier: ["https://www.googleapis.com/auth/gmail.send"],
+    });
+    await consent("older@example.com");
+    const connected = await createGmailConnector().exchangeCode({
+      code: `e2e-${older}`,
+      redirectUri,
+    });
+    expect(connected.grantedScopes).toEqual([
+      ...ALL_CONNECT_SCOPES,
+      "https://www.googleapis.com/auth/gmail.send",
+    ]);
+    const c = createGmailReader({ refreshToken: connected.refreshToken, maxRetries: 0 });
+    const customer = fakeCustomer(refFor(older));
+    const draft = await c.createDraft({
+      threadId: customer.gmailThreadId,
+      raw: ownRaw("older@example.com"),
+    });
+    expect((await c.sendDraft(draft.draftId)).threadId).toBe(customer.gmailThreadId);
   });
 
   it("a refresh token it never issued gets what real Google tells a dummy client", async () => {
@@ -318,6 +504,8 @@ describe("the fake server", () => {
   });
 
   it("records no secrets: no client secret, code or token", async () => {
+    e2eEnv();
+    await consent(ownerEmail);
     const res = await fetch(`${url}/google/token`, {
       method: "POST",
       headers: { "content-type": "application/x-www-form-urlencoded" },

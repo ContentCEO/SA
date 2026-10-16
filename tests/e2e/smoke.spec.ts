@@ -6,6 +6,10 @@ test("sign-in page shows the headline and a named button", async ({ page }) => {
   await expect(h1).toContainText("your inbox,");
   await expect(h1).toContainText("handled.");
   await expect(page.getByRole("button", { name: "Sign in with Google" })).toBeVisible();
+  // The "I agree" box (2026-10-15), unticked to start.
+  await expect(
+    page.getByRole("checkbox", { name: "I agree to the Terms of Service and the Privacy Policy." }),
+  ).not.toBeChecked();
   await expect(page.getByText("© 2026 Squared Away — Davi Chaves, Massachusetts")).toBeVisible();
 });
 

@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Database } from "@/db";
 import { drafts, messages, rateLimits, threads, workspaces } from "@/db/schema";
 import { ensureUserAndWorkspace } from "@/server/accounts";
+import { recordTermsAcceptance } from "@/server/terms";
 import { queueCounts } from "@/server/drafts";
 import { saveConnectedMailbox } from "@/server/mailboxes";
 import { LIMITS } from "@/server/rate-limit";
@@ -105,6 +106,8 @@ describe("/api/badge — the home-screen number (plan #38, M8 A32)", () => {
     process.env.TOKEN_ENCRYPTION_KEY = randomBytes(32).toString("base64");
     database = await createTestDb();
     const { user, workspace } = await ensureUserAndWorkspace({ email: "owner@shop.com" });
+    // Agreed to the current terms (an owner who hasn't gets a 403: terms-agreement.test.ts).
+    await recordTermsAcceptance(user.id);
     session.userId = user.id;
     workspaceId = workspace.id;
     await setStatus({ status: "active" });
@@ -213,6 +216,7 @@ describe("/api/badge — the home-screen number (plan #38, M8 A32)", () => {
       }
       // Another owner isn't affected.
       const other = await ensureUserAndWorkspace({ email: "other@shop.com" });
+      await recordTermsAcceptance(other.user.id);
       session.userId = other.user.id;
       expect((await call(badgeGET)).status).toBe(200);
     } finally {

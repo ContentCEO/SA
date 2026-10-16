@@ -46,6 +46,13 @@ export const users = pgTable("users", {
   email: text("email").notNull().unique(),
   name: text("name"),
   createdAt: createdAt(),
+  /**
+   * When this person last ticked "I agree to the Terms of Service and the Privacy Policy", and
+   * which version (TERMS_VERSION in src/config/legal.ts: the terms' "Last updated" date). Every
+   * signed-in screen asks again when the version moves on. Goes with the row (Delete my account).
+   */
+  termsAcceptedAt: timestamp("terms_accepted_at", { withTimezone: true }),
+  termsVersion: text("terms_version"),
 });
 
 /** Sign-in is invite-only. Davi adds rows here (script now, /admin in Milestone 6). */

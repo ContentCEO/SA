@@ -100,10 +100,22 @@ describe("the demo video script matches the end-to-end journey", () => {
     expect(s).toContain("Google's real consent screen");
     expect(s).toContain("`client_id=`");
     expect(s).toContain("address bar");
-    for (const scope of ["gmail.readonly", "gmail.compose", "gmail.send"]) {
+    const asked = Object.values(GMAIL_SCOPES).map((u) => u.replace(/^.*\/auth\//, ""));
+    expect(asked).toEqual(["gmail.readonly", "gmail.compose"]);
+    for (const scope of asked) {
       // Shown on the consent screen and again in a step where it is used.
       expect(s.split(`\`${scope}\``).length - 1, scope).toBeGreaterThanOrEqual(2);
     }
+    // The consent step names the two permissions in Google's own words, and no third.
+    const step4 = flat(
+      scriptSteps.slice(scriptSteps.indexOf("4. **"), scriptSteps.indexOf("5. **")),
+    );
+    expect(step4).toContain("the two Gmail permissions");
+    expect(step4).toContain('"View your email messages and settings" (`gmail.readonly`)');
+    expect(step4).toContain('"Manage drafts and send emails" (`gmail.compose`)');
+    expect(step4).not.toContain("gmail.send");
+    // Practice copies go out under gmail.compose now.
+    expect(s).toContain("**Practice copy (`gmail.compose`, `messages.send`).**");
     // Invented mail only: no real customer is filmed.
     expect(s).toContain("dedicated demo Gmail account filled with invented emails");
   });
@@ -127,7 +139,10 @@ describe("the demo video script matches the end-to-end journey", () => {
     const b = r.slice(at);
     // A preview can't sync, draft, take a payment or send after the database split (jobs and
     // Stripe only reach production), so the dry run happens on production (2026-10-15 review).
-    expect(b).toContain("needs Davi's yes and an engineer's dry run on production first");
+    // Davi chose it on 2026-10-15; the dry run on production still comes first.
+    expect(b).toContain(
+      "Davi's choice, 2026-10-15; it still needs an engineer's dry run on production first",
+    );
     expect(b).not.toContain("dry run on a preview");
     expect(b).toContain("Stripe's test card");
     expect(b).toContain("only while production Stripe is still in test mode");
@@ -145,6 +160,54 @@ describe("the demo video script matches the end-to-end journey", () => {
     );
     expect(before).not.toContain("tried on a preview");
     expect(before).toContain("the engineers check it on production with the demo Gmail");
+    // Decided (Davi, 2026-10-15), and the console step that goes with it.
+    expect(before).toContain("**`gmail.send` is no longer requested** (Davi decided on 2026-10-15");
+    expect(before).toContain("Google Auth Platform → Data Access too before submitting");
+    expect(before).not.toMatch(/Is `gmail\.send` needed\?|Recommended: drop it/);
+  });
+
+  it("the live check clears the demo Gmail's old grant first, so gmail.send can't pass it", () => {
+    // messages.send accepts gmail.send, so an old grant would carry the practice copy alone.
+    const before = flat(
+      section("Before submitting (for Davi only; never pasted into Google's form)"),
+    );
+    const clear = before.indexOf(
+      "**The live check starts by clearing the demo Gmail's old access.**",
+    );
+    expect(clear, "the clear-out step").toBeGreaterThan(0);
+    const steps = before.slice(clear);
+    const disconnect = steps.indexOf("Settings → **Disconnect Gmail** → **Yes, disconnect Gmail**");
+    const permissions = steps.indexOf("myaccount.google.com/permissions");
+    const confirm = steps.indexOf("have no `gmail.send`");
+    const send = steps.indexOf("Only then send the practice copy and the real reply.");
+    expect(disconnect, "Disconnect first").toBeGreaterThan(0);
+    expect(permissions, "then Google's page").toBeGreaterThan(disconnect);
+    expect(confirm, "then the new grant has only the two").toBeGreaterThan(permissions);
+    expect(send, "only then the sends").toBeGreaterThan(confirm);
+
+    // Filming comes after the check, and the clear-out before it goes through Squared Away's own
+    // Disconnect (removing access only at Google would put a connected account in reconnect).
+    const start = scriptSteps.indexOf(
+      "**Before recording: check the demo Gmail's Google access.**",
+    );
+    expect(start, "the before-recording note").toBeGreaterThanOrEqual(0);
+    const note = flat(scriptSteps.slice(start, scriptSteps.indexOf("**Before recording Part 1")));
+    expect(note).toContain("The engineers' live check of the two permissions comes first");
+    expect(note).toContain("never film before it");
+    expect(note).toContain("Settings → **Disconnect Gmail** → **Yes, disconnect Gmail**");
+    expect(note).toContain("Don't remove it only at Google while an account still has");
+
+    // The labels and the alert are the app's real ones.
+    const button = readFileSync("src/components/app/disconnect-button.tsx", "utf8");
+    expect(button).toContain("Disconnect Gmail");
+    expect(button).toContain('"Yes, disconnect Gmail"');
+    expect(readFileSync("src/components/app/reconnect-banner.tsx", "utf8")).toContain(
+      "Reconnect Gmail",
+    );
+    expect(readFileSync("src/server/alerts.ts", "utf8")).toContain(
+      '"Squared Away lost access to your Gmail"',
+    );
+    expect(note).toContain('"Squared Away lost access to your Gmail"');
   });
 
   it("names the closing question wherever it lists the notes the AI writes (#26 is on)", () => {
@@ -259,9 +322,26 @@ describe("the verification answer is true of the code", () => {
 
   it("names the scopes we don't ask for, and the test that keeps them out exists", () => {
     expect(text).toContain("do **not** request `gmail.modify` or full `https://mail.google.com/`");
+    expect(text).toContain("We don't request `gmail.send`");
     const guard = readFileSync("tests/unit/gmail-connector.test.ts", "utf8");
     expect(guard).toContain("gmail.modify");
     expect(guard).toContain("https://mail.google.com/");
+    expect(guard).toContain("https://www.googleapis.com/auth/gmail.send");
+  });
+
+  it("says both Gmail permissions are needed, and an unticked one saves nothing", () => {
+    const consent = flat(section("Two separate consent steps"));
+    expect(consent).toContain("plus the two Gmail scopes below");
+    expect(consent).toContain(
+      "If the owner unticks either Gmail permission on Google's consent screen, we revoke what was granted and save nothing, and we explain why both are needed.",
+    );
+    expect(consent).not.toMatch(/three/);
+    // The explainer and its error say the same, in Google's words.
+    const connect = flat(readFileSync("src/app/(app)/connect/page.tsx", "utf8"));
+    expect(connect).toContain("Squared Away needs both to work");
+    expect(connect).toContain("View your email messages and settings");
+    expect(connect).toContain("Manage drafts and send emails");
+    expect(connect).not.toMatch(/three things|all three/);
   });
 
   it("every file it cites exists", () => {
@@ -397,20 +477,32 @@ describe("the verification answer is true of the code", () => {
       ["verification", doc],
       ["privacy policy", policy],
     ] as const) {
-      const send = row(md, "gmail.send");
-      expect(send, `${name}: gmail.send is for practice copies`).toMatch(/practice copy/);
-      expect(send, `${name}: gmail.send never reaches a customer`).toContain(
-        "to a customer through it",
-      );
-      for (const not of [/Send reply/, /autopilot/i, /approve/i, /drafts\.send/]) {
-        expect(send, `${name}: gmail.send row`).not.toMatch(not);
-      }
+      // gmail.send is no longer asked for (Davi, 2026-10-15): no row for it in either table.
+      const sendRows = md
+        .split("\n")
+        .filter((l) => l.startsWith("|") && l.includes("`gmail.send`"));
+      expect(sendRows, `${name}: no gmail.send row`).toEqual([]);
       const compose = row(md, "gmail.compose");
       expect(compose, `${name}: gmail.compose sends approved replies`).toMatch(
         /send a (draft|reply) (the owner|you) approved \(\**Send reply\**\)/,
       );
       expect(compose, `${name}: gmail.compose sends autopilot replies`).toMatch(/autopilot/);
+      expect(compose, `${name}: gmail.compose sends the trial's practice copies`).toMatch(
+        /only during the (three-day )?trial\b/,
+      );
+      expect(compose, `${name}: a practice copy of a draft`).toMatch(
+        /\**practice copy\** of a draft/,
+      );
+      expect(compose, `${name}: a practice copy goes to the owner's own address`).toMatch(
+        /(their|your) own address/,
+      );
+      expect(compose, `${name}: and never to a customer`).toMatch(
+        /practice copy never (reaches|goes to) a customer/,
+      );
     }
+    // Google's names for the two, as its consent screen shows them.
+    expect(row(policy, "gmail.readonly")).toContain("View your email messages and settings");
+    expect(row(policy, "gmail.compose")).toContain("Manage drafts and send emails");
     // And the code: customer replies go through drafts.send; only practice.ts sends a message.
     const sendMessageCallers = readdirSync("src", { recursive: true, encoding: "utf8" })
       .filter((f) => /\.tsx?$/.test(f))
@@ -421,10 +513,11 @@ describe("the verification answer is true of the code", () => {
   // docs/LAUNCH.md is written in plan step S7; once it exists it must list both decisions this
   // document hands to Davi.
   it.skipIf(!existsSync("docs/LAUNCH.md"))(
-    "the launch checklist lists the decisions this document leaves to Davi",
+    "the launch checklist records the gmail.send decision and the reviewer",
     () => {
       const launch = flat(readFileSync("docs/LAUNCH.md", "utf8"));
-      expect(launch).toContain("drop `gmail.send`?");
+      expect(launch).toContain("**Drop `gmail.send`: yes, built**");
+      expect(launch).not.toContain("drop `gmail.send`?");
       expect(launch).toMatch(/reviewer/i);
     },
   );

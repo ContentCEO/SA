@@ -39,6 +39,26 @@ export function stripeErrorReason(err: unknown): StripeReason {
   return typeof type === "string" && Object.hasOwn(BY_TYPE, type) ? BY_TYPE[type]! : "unknown";
 }
 
+/**
+ * Stripe's refusal of the checkout "I agree" box (`consent_collection.terms_of_service`) because
+ * no Terms of Service URL is saved in its dashboard (Settings → Business → Public details). Its
+ * docs say the URL must be set first but don't print the error; it is an invalid-request error,
+ * so this matches one that names the consent parameter, or that talks about the terms of service
+ * and a URL. Read only to decide; the text itself is never logged or shown. Not checked live (no
+ * Stripe key in the sandbox): the first checkout without the URL shows which part matched.
+ */
+export function isTermsUrlMissingError(err: unknown): boolean {
+  if (!err || typeof err !== "object") return false;
+  const { type, param, message } = err as { type?: unknown; param?: unknown; message?: unknown };
+  if (type !== "StripeInvalidRequestError") return false;
+  if (typeof param === "string" && param.startsWith("consent_collection")) return true;
+  return (
+    typeof message === "string" &&
+    /terms of service/i.test(message) &&
+    /\b(url|public details|settings\/public)\b/i.test(message)
+  );
+}
+
 /** The sentence for a `?reason=` value; anything not on the list shows nothing. */
 export function stripeReasonText(reason: unknown): string | null {
   return typeof reason === "string" && Object.hasOwn(STRIPE_REASONS, reason)

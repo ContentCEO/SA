@@ -26,8 +26,12 @@ import {
  * action, admin page or route handler that skips its guard fails here before it ships.
  */
 
-const GUARDS = new Set(["requireOwner", "requireAdmin"]);
-type GuardName = "requireOwner" | "requireAdmin";
+/**
+ * requireSignedIn (signed in, terms not needed) is the guard of the terms screen's own action
+ * only (SIGNED_IN_ONLY below): everywhere else it would skip the "I agree" check.
+ */
+const GUARDS = new Set(["requireOwner", "requireAdmin", "requireSignedIn"]);
+type GuardName = "requireOwner" | "requireAdmin" | "requireSignedIn";
 const ALL = sourceFiles();
 const APP = join(SRC, "app");
 const ADMIN = join(APP, "(app)", "admin");
@@ -87,16 +91,39 @@ describe("C1: every server action checks who's asking before anything else", () 
       "public waitlist form (honeypot + hashed-IP limit); joining never allows sign-in",
     "src/app/growth-actions.ts#requestGrowthCallAction":
       "public Book a free call form (honeypot + the same hashed-IP limit)",
+    "src/app/signin/actions.ts#signInWithGoogleAction":
+      "the Sign in with Google button: nobody is signed in yet; refuses without the 'I agree' " +
+      "box, then starts Auth.js sign-in (invite-only, name and email only)",
+  };
+  /**
+   * Signed in, but the current terms not needed yet: only the terms screen's own actions (Davi,
+   * 2026-10-15). Any other action guarded this way would skip the terms.
+   */
+  const SIGNED_IN_ONLY: Record<string, string> = {
+    "src/app/welcome/terms/actions.ts#agreeToTermsAction":
+      "records the 'I agree' box; it is how someone who hasn't agreed yet agrees",
+    "src/app/welcome/terms/actions.ts#deleteAccountFromTermsAction":
+      "Delete my account for someone who won't agree to new terms (the terms and privacy " +
+      "policy they agreed to promise it any time); the same deleteAccount as Settings', behind " +
+      "the same confirmation; only removes things",
+    "src/app/welcome/terms/actions.ts#disconnectMailboxFromTermsAction":
+      "Disconnect Gmail for someone who won't agree to new terms; the same disconnectMailbox " +
+      "as Settings' (scoped to their own workspace), behind the same confirmation",
+    "src/app/welcome/terms/actions.ts#openPortalFromTermsAction":
+      "Stripe's billing page, so someone who won't agree to new terms can cancel (the terms " +
+      "promise it any time); the same createPortal and billing limit as Plan & billing",
   };
   /**
    * Inline "use server" blocks, by file and the exact calls they await. Any change to one of
    * them (a new call, a new block) fails until it is reviewed here.
    */
   const INLINE_ACTIONS: Record<string, string> = {
-    "src/app/signin/page.tsx#signIn": "the Sign in with Google button: starts Auth.js sign-in",
     "src/app/(app)/settings/page.tsx#cookies,signOut":
       "Sign out: deletes this phone's offline cookie and signs out; must work even for a " +
       "deleted account, so it can't require one",
+    "src/app/welcome/terms/page.tsx#cookies,signOut":
+      "Sign out on the terms screen: the same as Settings' (someone who doesn't agree can " +
+      "always leave), so it can't require the terms",
   };
 
   const { actionFiles, exportedActions } = scanActions(ALL);
@@ -120,9 +147,30 @@ describe("C1: every server action checks who's asking before anything else", () 
 
   it("admin actions use requireAdmin (an owner's guard there would let any owner in); nothing else does", () => {
     const wrong = exportedActions
-      .filter((a) => a.guarded && a.guard !== (a.admin ? "requireAdmin" : "requireOwner"))
+      .filter(
+        (a) =>
+          a.guarded &&
+          a.guard !==
+            (a.admin
+              ? "requireAdmin"
+              : a.id in SIGNED_IN_ONLY
+                ? "requireSignedIn"
+                : "requireOwner"),
+      )
       .map((a) => `${a.id} → ${a.guard}`);
     expect(wrong).toEqual([]);
+    // The terms screen's action really is there, guarded by requireSignedIn.
+    for (const id of Object.keys(SIGNED_IN_ONLY))
+      expect(exportedActions.find((a) => a.id === id)?.guard, id).toBe("requireSignedIn");
+    // …and no page or action anywhere else uses it.
+    const users = ALL.filter((f) => /\brequireSignedIn\(/.test(readFileSync(f, "utf8"))).map(rel);
+    expect(users.sort()).toEqual(
+      [
+        "src/server/session.ts",
+        "src/app/welcome/terms/actions.ts",
+        "src/app/welcome/terms/page.tsx",
+      ].sort(),
+    );
     // Self-check: the admin action file is really scanned, and every action in it is Davi's.
     const admin = exportedActions.filter((a) => a.id.startsWith("src/app/(app)/admin/actions.ts#"));
     expect(admin.length).toBeGreaterThanOrEqual(5);
@@ -257,6 +305,16 @@ describe("C3: every route handler is in the table with the guard it uses", () =>
           const hs = handlers(file);
           expect(hs.length).toBeGreaterThan(0);
           for (const h of hs) expect(calleeName(awaitsIn(h.fn)[0]!), h.name).toBe("auth");
+          // The "I agree" boxes (Davi, 2026-10-15): not agreed to the current terms → 403,
+          // before any work (the poll / send limits, Google's code exchange).
+          const terms = src.search(
+            /if \(!\(await termsAccepted\(session!?\.user\.id\)\)\) return termsRequiredResponse\(\);/,
+          );
+          expect(terms, "the terms check").toBeGreaterThan(-1);
+          for (const work of ["hitLimit(", "exchangeCode("]) {
+            const at = src.indexOf(work);
+            if (at > -1) expect(terms, work).toBeLessThan(at);
+          }
           if (guard === "session") {
             expect(src).toContain("getWorkspaceForUser(session.user.id)");
             expect(src).toMatch(/status: 401/);
@@ -835,12 +893,26 @@ describe("C4: no open redirects", () => {
       "Stripe Billing Portal: the URL createPortal() got from Stripe, never from the form",
     ],
     [
+      "src/app/welcome/terms/actions.ts: redirect(url)",
+      "Stripe Billing Portal from the terms screen (to cancel without agreeing): the URL " +
+        "createPortal() got from Stripe, never from the form",
+    ],
+    [
       "src/app/(app)/connect/actions.ts: redirect(createGmailConnector().authorizationUrl({ state, redirectUri: appUrl(gmailRedirectPath), loginHint: session?.user?.email ?? undefined, }))",
       "Google's consent screen, built by our connector with our own callback URL",
     ],
     [
       'src/app/(app)/settings/profile-actions.ts: redirect(returnTo.catch("/settings?done=profile").parse(raw.returnTo))',
       "a z.enum of two fixed paths (pinned by the returnTo test below)",
+    ],
+    [
+      'src/app/welcome/terms/actions.ts: redirect(safeNextPath(formData.get("next")))',
+      "back to the screen they were heading for after 'I agree': safeNextPath allows only a " +
+        "path on this site (pinned by the safeNextPath test below and terms-agreement.test.ts)",
+    ],
+    [
+      "src/app/welcome/terms/page.tsx: redirect(back)",
+      "the same, for someone who had already agreed: const back = safeNextPath(next)",
     ],
   ];
 
@@ -852,6 +924,9 @@ describe("C4: no open redirects", () => {
     expect(billing).toContain("url = await createCheckout(workspace, plan);");
     expect(billing).toContain("url = await createPortal(workspace);");
     expect(billing.match(/\burl = /g)).toHaveLength(2);
+    const terms = readFileSync("src/app/welcome/terms/actions.ts", "utf8");
+    expect(terms).toContain('url = await createPortal(workspace, "/welcome/terms");');
+    expect(terms.match(/\burl = /g)).toHaveLength(1);
   });
 
   it("the scan sees the redirects that are there (it isn't silently empty)", () => {
@@ -984,7 +1059,7 @@ describe("C4: no open redirects", () => {
     return out;
   }
 
-  it("no file reads a redirect-target query parameter", () => {
+  it("no file reads a redirect-target query parameter, but the reviewed terms screen", () => {
     const hits = ALL.flatMap((f) => {
       const text = readFileSync(f, "utf8");
       return [
@@ -992,7 +1067,38 @@ describe("C4: no open redirects", () => {
         ...destructuredReads(parse(f)).map((d) => `${rel(f)} { ${d} }`),
       ];
     });
-    expect(hits).toEqual([]);
+    // The terms screen (Davi, 2026-10-15) sends people back where they were going, and both of
+    // its reads go straight through safeNextPath (the REVIEWED_REDIRECTS rows above).
+    expect(hits.sort()).toEqual(
+      [
+        `src/app/welcome/terms/actions.ts ${READS[0]}`,
+        "src/app/welcome/terms/page.tsx { next }",
+      ].sort(),
+    );
+    const page = readFileSync("src/app/welcome/terms/page.tsx", "utf8");
+    expect(page).toContain(
+      "const { next, done: doneKey, error: errorKey } = await props.searchParams;\n" +
+        "  const back = safeNextPath(next);",
+    );
+    expect(readFileSync("src/app/welcome/terms/actions.ts", "utf8")).toContain(
+      'redirect(safeNextPath(formData.get("next")));',
+    );
+  });
+
+  it("safeNextPath only ever returns a path on this site", async () => {
+    const { safeNextPath } = await import("@/server/terms-rules");
+    for (const raw of [
+      "//evil.example",
+      "/\\evil.example",
+      "https://evil.example",
+      "javascript:alert(1)",
+      "/queue\r\nLocation: //evil.example",
+      " /queue",
+      "\t//evil.example",
+    ])
+      expect(safeNextPath(raw), raw).toBe("/queue");
+    expect(safeNextPath("/quotes?x=1")).toBe("/quotes?x=1");
+    expect(safeNextPath("/quotes?x=1")).toMatch(SAFE_PREFIX);
   });
 
   it("the destructuring check catches the shapes it's meant to (self-test)", () => {
