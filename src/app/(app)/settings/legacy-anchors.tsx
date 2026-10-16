@@ -1,6 +1,5 @@
 "use client";
 
-import { useRouter } from "next/navigation";
 import { useEffect } from "react";
 
 /** Every section id the one-page Settings had; old links and bookmarks may carry any of them. */
@@ -50,13 +49,21 @@ export function legacySettingsScreen(hash: string) {
 
 /**
  * Settings used to be one long page with sections (`/settings#digest` from the morning email).
- * A link to an old section opens the screen that holds it now. Only our own fixed paths.
+ * A link to an old section opens the screen that holds it now, also when only the hash changes
+ * on an open list. Only our own fixed paths.
  */
 export function LegacySettingsAnchors() {
-  const router = useRouter();
   useEffect(() => {
-    const to = legacySettingsScreen(window.location.hash);
-    if (to !== "/settings") router.replace(to);
-  }, [router]);
+    // A full load, not the client router: a hidden screen (texts, notifications) redirects back
+    // here, and a client-side redirect to the page it came from kept the old hash.
+    const follow = () => {
+      const to = legacySettingsScreen(window.location.hash);
+      if (to !== "/settings") window.location.replace(to);
+    };
+    follow();
+    // An old link opened while the list is already showing changes only the hash: no remount.
+    window.addEventListener("hashchange", follow);
+    return () => window.removeEventListener("hashchange", follow);
+  }, []);
   return null;
 }

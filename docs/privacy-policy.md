@@ -3,7 +3,7 @@
 
 # Privacy Policy
 
-_Last updated: October 15, 2026_
+_Last updated: October 16, 2026_
 
 Squared Away is run by {{OPERATOR}}, {{LOCATION}}. It helps small trade businesses answer their
 email: it sorts incoming business email, writes reply drafts in the owner's own voice, and holds
@@ -33,13 +33,18 @@ collect information from anyone under 16.
 ## What we collect
 
 **When you join the waitlist:** your name, email address, trade, team size, and anything you choose
-to add (phone number, a note). To stop spam, we briefly keep a scrambled (hashed) version of your
+to add (phone number, a note), and where you came from: the campaign tags in the link you
+followed (`utm_source`, `utm_medium`, `utm_campaign`) and the name of the website that sent you,
+not the page (we keep the first one we saw, so we know which links bring people to the waitlist).
+We email you once to confirm you're on the list, and send ourselves a notice that someone joined
+(it says only that a sign-up came in, with no name, number or email address). To stop spam, we briefly keep a scrambled (hashed) version of your
 IP address to limit how many times a form can be sent; it can't be turned back into your IP
 address and is deleted within three days.
 
 **When you book a free Growth call:** your name, phone number, email address, trade, the services
 you want help with (for example Google ads or reviews), when you asked, and anything you add in the
-note. We use it only to contact you about Squared Away Growth. If you're already on the app
+note, and where you came from, kept the same way as for the waitlist. We use it only to contact
+you about Squared Away Growth. If you're already on the app
 waitlist, we add your request to that entry and keep everything you gave us before. Booking a call
 doesn't sign you up for the app or let you sign in. The same scrambled IP address limit applies to
 this form.
@@ -66,7 +71,9 @@ Settings removes all of our access, that one included.
 
 **What we store from Gmail:**
 
-- Who each message is from and to, the subject, and the date. When you connect, we read the last
+- Who each message is from and to (and the address replies should go to — the "Reply-To" a
+  website form sets, so a reply reaches the customer and not the form), the subject, and the
+  date. When you connect, we read the last
   30 days of mail; after that, new mail is added as it arrives.
 - For conversations in your inbox: the text of the messages, so we can sort them and write replies.
   We don't download the text of mail outside your inbox (for example archived newsletters).
@@ -114,7 +121,12 @@ records hold IDs, counts and yes/no marks, not email text.
 step from forgery, and to remember for a few minutes that you ticked "I agree" while Google signs
 you in, plus small cookies that remember this phone's display choices
 (left-handed layout, high contrast, offline approvals). We don't use advertising or tracking
-cookies, and we don't run analytics that follow you. If you switch on offline approvals, your
+cookies, and we don't run analytics that follow you. We count visits to our public pages (the
+home page, the Growth page, this policy and the terms) with Vercel Web Analytics. It sets no
+cookies and doesn't follow you from site to site or from one day to the next; it sees the page,
+the campaign tags in the link, the site you came from, your rough location (country, region and
+city, worked out from your IP address, which it doesn't keep), and your device type, operating
+system and browser. It never runs on the signed-in app. If you switch on offline approvals, your
 phone keeps a copy of your queue (in the browser's storage) and the approvals you make without
 signal until they reach us; signing out deletes them.
 
@@ -176,7 +188,8 @@ We use these service providers. Each gets only what it needs:
   Your price memory is never sent. Under Anthropic's commercial terms, this data is not used to
   train their models. Anthropic may keep it for a limited time under its own policies, for example
   to prevent misuse.
-- **Vercel** — hosts the website and app.
+- **Vercel** — hosts the website and app, and counts visits to our public pages (Web Analytics,
+  as described under Cookies).
 - **Neon** — hosts our database (in the United States).
 - **Inngest** — runs our background jobs. It sees IDs and counts, not email text.
 - **Stripe** — takes payments. It receives your email address and your business name (or your
@@ -185,8 +198,9 @@ We use these service providers. Each gets only what it needs:
   doesn't store it. Stripe saves that address, and the name you enter there, on its customer record
   of you.
 - **Resend** — delivers our emails to you (the morning summary, the monthly summary and the
-  Gmail-access alert and reminder), which never contain a customer's name or words, and two kinds
-  of notice to us: when someone books a Growth call (it says only that a request came in, with no
+  Gmail-access alert and reminder), which never contain a customer's name or words; the email
+  confirming you joined the waitlist; and three kinds of notice to us: when someone joins the
+  waitlist or books a Growth call (each says only that a sign-up or request came in, with no
   name, number or email address), and when an account's AI cost runs high for its plan (the
   business name, or the owner's email address if no business name is set, and the account's AI
   cost, plan price and usage counts).
@@ -224,7 +238,7 @@ In plain words:
   is deleted after 30 days by a daily job. The street address, dates and inspector's corrections
   pulled from a conversation are deleted once its newest email is more than 30 days old. Mail
   older than 30 days is never stored with its text in the first place.
-- **Who, when, subject, summaries and categories**, the kind of job, amounts mentioned, invoice
+- **Who, when (including a form's Reply-To address), subject, summaries and categories**, the kind of job, amounts mentioned, invoice
   details (number, amount, due date, paid or not) and permit details (permit number, who issued
   it, inspection time and result) are kept so your inbox, quotes, money owed and activity history
   keep working, until you disconnect that Gmail address or delete your account.

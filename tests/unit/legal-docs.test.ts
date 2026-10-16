@@ -253,6 +253,27 @@ describe("privacy policy", () => {
     expect(policy).toContain("the account's AI cost, plan price and usage counts");
   });
 
+  it("names what the outside-review fixes store or measure (Reply-To, sign-up source, emails, analytics)", () => {
+    // A form's Reply-To is stored with the other message metadata.
+    expect(policy).toContain('the "Reply-To" a website form sets');
+    expect(readFileSync("src/db/schema.ts", "utf8")).toContain('jsonb("reply_to_header")');
+    // Where a sign-up came from, as the source fields hold it.
+    expect(policy).toContain("(`utm_source`, `utm_medium`, `utm_campaign`)");
+    expect(policy).toContain("the name of the website that sent you, not the page");
+    expect(readFileSync("src/server/source-rules.ts", "utf8")).toContain(
+      'SOURCE_FIELDS = ["utm_source", "utm_medium", "utm_campaign", "referrer_host"]',
+    );
+    // The confirmation and the content-free notice.
+    expect(policy).toContain("We email you once to confirm you're on the list");
+    expect(policy).toContain("the email confirming you joined the waitlist");
+    // Web Analytics on the public pages only, without cookies.
+    expect(policy).toContain("with Vercel Web Analytics. It sets no cookies");
+    expect(policy).toContain("It never runs on the signed-in app.");
+    expect(readFileSync("src/lib/analytics-rules.ts", "utf8")).toContain(
+      'COUNTED_PATHS = ["/", "/growth", "/privacy", "/terms"]',
+    );
+  });
+
   it("says nothing about referrals while they are switched off", () => {
     expect(policy).not.toMatch(/referr/i);
   });

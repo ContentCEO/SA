@@ -3,7 +3,7 @@
 
 # Terms of Service
 
-_Last updated: October 15, 2026_
+_Last updated: October 16, 2026_
 
 These terms are an agreement between you and {{OPERATOR}}, {{LOCATION}}, who runs Squared Away
 ("we", "us"). By creating an account or using Squared Away, you agree to them. If you use Squared
