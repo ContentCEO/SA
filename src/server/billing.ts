@@ -1,7 +1,7 @@
 import "server-only";
 import { eq } from "drizzle-orm";
 import Stripe from "stripe";
-import { pricing, type PlanId } from "@/config/pricing";
+import { mailboxLimitFor, pricing, type PlanId } from "@/config/pricing";
 import { db } from "@/db";
 import {
   activityLog,
@@ -14,6 +14,7 @@ import {
 import { appUrl } from "@/lib/app-url";
 import { decryptSecret, encryptSecret } from "@/lib/crypto";
 import {
+  cancelAtOf,
   checkoutTerms,
   eventFromOtherMode,
   isPlanId,
@@ -27,8 +28,13 @@ import {
   stripeKeyMode,
 } from "./billing-rules";
 import { setupReallyPaid } from "./lifecycle";
-import { creditReferralSafely } from "./referrals";
+import { creditReferralSafely, reconcileReferralSafely } from "./referrals";
 import { isTermsUrlMissingError, stripeErrorReason } from "./stripe-error-rules";
+import {
+  autopilotPlanEffects,
+  inboxLimitEffects,
+  resumeOverPlanInboxes,
+} from "./workspace-lifecycle";
 
 let client: Stripe | undefined;
 let override: Stripe | undefined;
@@ -455,26 +461,76 @@ export async function applyCheckoutCompleted(session: Stripe.Checkout.Session, n
   return "applied";
 }
 
-export async function applySubscription(sub: Stripe.Subscription, now = new Date()) {
-  let w = await workspaceById(sub.metadata?.workspaceId);
+/**
+ * The subscription as Stripe has it now, with its discounts (plan #47, design §1.9). Stripe
+ * doesn't promise event order, so an event's own snapshot may be older than one already
+ * applied: decisions use this fresh read. A subscription Stripe no longer has falls back to
+ * the event's copy; any other error goes up, so the webhook fails and Stripe retries it.
+ */
+export async function liveSubscription(
+  eventSub: Stripe.Subscription,
+): Promise<Stripe.Subscription> {
+  try {
+    return await stripe().subscriptions.retrieve(eventSub.id, { expand: ["discounts"] });
+  } catch (err) {
+    if ((err as { code?: string }).code === "resource_missing") return eventSub;
+    throw err;
+  }
+}
+
+/**
+ * Status, plan and "set to end" from a fresh subscription read, with the plan's effects in the
+ * same transaction: under a plan without autopilot every category goes back to drafts
+ * (whichever page the plan changed on); a move down to a plan with fewer inboxes pauses the
+ * newest-created extras (Davi, 2026-10-16, Q2: as at the end of a free month — nothing
+ * deleted, the owner can swap); room on the plan switches paused ones back on. The plan that
+ * counts (`effectivePlan`) decides, so a running free month keeps its inboxes. Returns the new
+ * status.
+ */
+export async function applyLiveSubscription(
+  w: Workspace,
+  sub: Stripe.Subscription,
+  now: Date = new Date(),
+) {
+  const to = statusAfterSubscription(w, sub.status, now);
+  const plan = planFromLookupKey(sub.items.data[0]?.price?.lookup_key) ?? w.plan;
+  const ended = sub.status === "canceled" || sub.status === "incomplete_expired";
+  const movedDown = mailboxLimitFor(plan) < mailboxLimitFor(w.plan);
+  await db().transaction(async (tx) => {
+    await tx
+      .update(workspaces)
+      .set({
+        status: to,
+        plan,
+        stripeSubscriptionId: ended ? null : sub.id,
+        stripeCancelAt: cancelAtOf(sub),
+      })
+      .where(eq(workspaces.id, w.id));
+    await autopilotPlanEffects(w.id, now, tx);
+    if (movedDown) await inboxLimitEffects(w.id, now, tx);
+    await resumeOverPlanInboxes(w.id, now, tx);
+  });
+  if (to !== w.status || plan !== w.plan) {
+    await log(w.id, "subscription_changed", { stripeStatus: sub.status, from: w.status, to, plan });
+  }
+  return to;
+}
+
+export async function applySubscription(eventSub: Stripe.Subscription, now = new Date()) {
+  let w = await workspaceById(eventSub.metadata?.workspaceId);
   if (!w) {
     const [bySub] = await db()
       .select()
       .from(workspaces)
-      .where(eq(workspaces.stripeSubscriptionId, sub.id));
+      .where(eq(workspaces.stripeSubscriptionId, eventSub.id));
     w = bySub;
   }
   if (!w) return "unknown_workspace";
-  const to = statusAfterSubscription(w, sub.status, now);
-  const plan = planFromLookupKey(sub.items.data[0]?.price?.lookup_key) ?? w.plan;
-  const ended = sub.status === "canceled" || sub.status === "incomplete_expired";
-  await db()
-    .update(workspaces)
-    .set({ status: to, plan, stripeSubscriptionId: ended ? null : sub.id })
-    .where(eq(workspaces.id, w.id));
-  if (to !== w.status || plan !== w.plan) {
-    await log(w.id, "subscription_changed", { stripeStatus: sub.status, from: w.status, to, plan });
-  }
+  const sub = await liveSubscription(eventSub);
+  const to = await applyLiveSubscription(w, sub, now);
+  // Plan #47's free months follow the same fresh read. Never fails the webhook: the status and
+  // plan above have landed, and the 15-minute sweep catches the reward up.
+  await reconcileReferralSafely(w.id, sub, now);
   if (to === "active") await creditReferralSafely(w.id, now);
   return "applied";
 }

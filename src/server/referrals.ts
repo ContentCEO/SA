@@ -1,5 +1,6 @@
 import "server-only";
 import { and, eq, exists, isNotNull, isNull, not, sql } from "drizzle-orm";
+import type Stripe from "stripe";
 import { db } from "@/db";
 import {
   activityLog,
@@ -201,6 +202,40 @@ export async function applyPendingReferralCredits(now: Date = new Date()) {
     }
   }
   return result;
+}
+
+/**
+ * Bring this workspace's free months in line with its live subscription (plan #47, design
+ * §1.4–1.7, §3.7). Filled in by the reward engine.
+ */
+export async function reconcileReferralRewards(
+  workspaceId: string,
+  sub: Stripe.Subscription | null,
+  now: Date = new Date(),
+): Promise<void> {
+  void workspaceId;
+  void sub;
+  void now;
+}
+
+/**
+ * For the Stripe webhook: reconcile the free months from the fresh subscription read, but never
+ * fail the webhook (a Stripe 5xx in an invoice read must not undo the status and plan it just
+ * applied). Logs ids and the error's name only; the 15-minute sweep catches up.
+ */
+export async function reconcileReferralSafely(
+  workspaceId: string,
+  sub: Stripe.Subscription | null,
+  now: Date = new Date(),
+) {
+  try {
+    await reconcileReferralRewards(workspaceId, sub, now);
+  } catch (err) {
+    console.error("referral_reconcile_failed", {
+      workspaceId,
+      error: err instanceof Error ? err.name : "unknown",
+    });
+  }
 }
 
 /**

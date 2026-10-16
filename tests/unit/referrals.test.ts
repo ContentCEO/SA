@@ -64,7 +64,15 @@ const SECRET = "whsec_test";
 let fake: FakeStripe;
 
 /** Stripe calls other than the account-deletion cancel (which isn't about referrals). */
-const stripeCalls = () => fake.calls.filter((c) => c.method !== "subscriptions.cancel").length;
+/**
+ * Stripe calls made for referrals. Not counted: the account deletion's cancel, and the webhook's
+ * own fresh read of the subscription it was told about (§1.9: every subscription event, with
+ * referrals on or off).
+ */
+const stripeCalls = () =>
+  fake.calls.filter(
+    (c) => c.method !== "subscriptions.cancel" && c.method !== "subscriptions.retrieve",
+  ).length;
 
 // --- Database helpers -----------------------------------------------------------------------
 
@@ -795,7 +803,12 @@ describe("referral free month (switched on)", () => {
     let left = failures;
     return new Proxy(database, {
       get(target, prop, receiver) {
-        if (prop === "transaction" && left > 0) {
+        // Only the settlement's own transaction (the webhook's status write has its own).
+        if (
+          prop === "transaction" &&
+          left > 0 &&
+          new Error().stack?.includes("creditReferralOnActive")
+        ) {
           return () => {
             left--;
             // A message carrying ids and an address: none of it may reach the log.

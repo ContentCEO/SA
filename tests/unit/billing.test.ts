@@ -5,7 +5,18 @@ import Stripe from "stripe";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { pricing } from "@/config/pricing";
 import type { Database } from "@/db";
-import { activityLog, appSettings, stripeEvents, workspaces, type Workspace } from "@/db/schema";
+import {
+  activityLog,
+  appSettings,
+  drafts,
+  mailboxes,
+  rules,
+  stripeEvents,
+  threads,
+  workspaces,
+  type Workspace,
+} from "@/db/schema";
+import { saveConnectedMailbox } from "@/server/mailboxes";
 import { encryptSecret } from "@/lib/crypto";
 import { ensureUserAndWorkspace } from "@/server/accounts";
 import {
@@ -36,7 +47,7 @@ import {
 import { canSend, jobsAllowed } from "@/server/lifecycle";
 import { isTermsUrlMissingError } from "@/server/stripe-error-rules";
 import { createTestDb } from "../support/db";
-import { FakeStripe, type Call } from "../support/fake-stripe";
+import { FakeStripe, stripeErrors, type Call } from "../support/fake-stripe";
 
 const NOW = new Date("2026-10-10T14:00:00Z");
 type S = Workspace["status"];
@@ -708,5 +719,213 @@ describe("webhook endpoint", () => {
     process.env.STRIPE_WEBHOOK_SECRET = "whsec_other";
     const r = await handleStripeWebhook(event("evt_3", "x.y", {}), "good");
     expect(r.status).toBe(400);
+  });
+});
+
+describe("plan #47 §1.9: the webhook reads the live subscription", () => {
+  const event = (id: string, type: string, object: unknown) =>
+    JSON.stringify({ id, type, data: { object } });
+  const priceOf = (plan: "solo" | "crew" | "company") => `price_${plan}`;
+
+  beforeEach(async () => {
+    for (const plan of ["solo", "crew", "company"] as const)
+      fake.addPrice({
+        id: priceOf(plan),
+        lookup_key: planLookupKey(plan),
+        unit_amount: pricing.plans[plan].amountCents,
+      });
+    await database
+      .update(workspaces)
+      .set({
+        status: "active",
+        setupPaidVia: "stripe",
+        setupPaidAt: NOW,
+        plan: "crew",
+        stripeCustomerId: "cus_1",
+        stripeSubscriptionId: "sub_1",
+      })
+      .where(eq(workspaces.id, workspace.id));
+    fake.addSubscription({
+      id: "sub_1",
+      customer: "cus_1",
+      price: priceOf("crew"),
+      workspaceId: workspace.id,
+    });
+  });
+
+  /** What an event carries: a snapshot that may be older than Stripe's live state. */
+  const snapshot = (plan: "solo" | "crew" | "company", status = "active") =>
+    ({
+      id: "sub_1",
+      status,
+      metadata: { workspaceId: workspace.id },
+      items: { data: [{ price: { lookup_key: planLookupKey(plan) } }] },
+    }) as unknown as Stripe.Subscription;
+
+  /** Three inboxes, created in this order (the plan's limit ranks by when each was added). */
+  async function threeInboxes() {
+    const ids: string[] = [];
+    for (const [i, email] of ["owner@shop.com", "office@shop.com", "crew@shop.com"].entries()) {
+      const box = await saveConnectedMailbox(
+        { id: workspace.id, plan: "company", freePlan: null, freePlanUntil: null },
+        { email, refreshToken: "rt", grantedScopes: [] },
+      );
+      await database
+        .update(mailboxes)
+        .set({ createdAt: new Date(NOW.getTime() - (3 - i) * 86_400_000) })
+        .where(eq(mailboxes.id, box.id));
+      ids.push(box.id);
+    }
+    return ids;
+  }
+  const boxes = async () =>
+    Object.fromEntries(
+      (await database.select().from(mailboxes)).map((m) => [m.email, [m.status, m.pausedReason]]),
+    );
+  const actions = async () =>
+    (await database.select().from(activityLog)).map((l) => [l.action, l.detail]);
+
+  it("a late, stale event can't put the plan back: status and plan come from the fresh read", async () => {
+    // Stripe already moved the subscription to Company; the older Crew-era event arrives last.
+    fake.sub("sub_1").items.data[0]!.price = fake.price(priceOf("company"));
+    expect(
+      (
+        await handleStripeWebhook(
+          event("evt_old", "customer.subscription.updated", snapshot("solo")),
+          "good",
+        )
+      ).status,
+    ).toBe(200);
+    expect((await reload()).plan).toBe("company");
+    const read = calls.find((c) => c.method === "subscriptions.retrieve");
+    expect(read?.args).toEqual(["sub_1", { expand: ["discounts"] }]);
+  });
+
+  it("a subscription Stripe no longer has falls back to the event's own copy", async () => {
+    fake.subscriptions.delete("sub_1");
+    await applySubscription(snapshot("crew", "canceled"), NOW);
+    const after = await reload();
+    expect(after.status).toBe("canceled");
+    expect(after.stripeSubscriptionId).toBeNull();
+  });
+
+  it("Stripe can't be read (5xx): the webhook fails and is forgotten, so Stripe retries it", async () => {
+    fake.failNext("subscriptions.retrieve", stripeErrors.api());
+    const body = event("evt_5xx", "customer.subscription.updated", snapshot("solo", "past_due"));
+    await expect(handleStripeWebhook(body, "good")).rejects.toThrow();
+    expect(await database.select().from(stripeEvents)).toHaveLength(0);
+    expect((await reload()).status).toBe("active");
+    // Stripe's retry goes through.
+    fake.sub("sub_1").status = "past_due";
+    expect((await handleStripeWebhook(body, "good")).status).toBe(200);
+    expect((await reload()).status).toBe("past_due");
+  });
+
+  it("records when the plan is set to end, and clears it when renewal is back on or it ended", async () => {
+    const sub = fake.sub("sub_1");
+    sub.cancel_at_period_end = true;
+    await applySubscription(snapshot("crew"), NOW);
+    expect((await reload()).stripeCancelAt?.getTime()).toBe(
+      sub.items.data[0]!.current_period_end * 1000,
+    );
+    sub.cancel_at_period_end = false;
+    sub.cancel_at = Math.floor(NOW.getTime() / 1000) + 3 * 86_400;
+    await applySubscription(snapshot("crew"), NOW);
+    expect((await reload()).stripeCancelAt?.getTime()).toBe(sub.cancel_at * 1000);
+    sub.cancel_at = null;
+    await applySubscription(snapshot("crew"), NOW);
+    expect((await reload()).stripeCancelAt).toBeNull();
+    sub.cancel_at = Math.floor(NOW.getTime() / 1000);
+    sub.status = "canceled";
+    await applySubscription(snapshot("crew", "canceled"), NOW);
+    expect((await reload()).stripeCancelAt).toBeNull();
+  });
+
+  it("Q2: a move down on Stripe's page turns autopilot off and pauses the newest extra inboxes", async () => {
+    const [first, second, third] = await threeInboxes();
+    await database.insert(rules).values([
+      { workspaceId: workspace.id, category: "scheduling", mode: "autopilot" },
+      { workspaceId: workspace.id, category: "quote_request", mode: "draft" },
+    ]);
+    // A countdown running on the first inbox (autopilot) must stop too.
+    const [t] = await database
+      .insert(threads)
+      .values({ mailboxId: first!, gmailThreadId: "g1", inInbox: true, category: "scheduling" })
+      .returning();
+    const [d] = await database
+      .insert(drafts)
+      .values({
+        threadId: t!.id,
+        mailboxId: first!,
+        toAddress: "dana@x.com",
+        subject: "Re: Tuesday",
+        body: "Tuesday works.",
+        originalBody: "Tuesday works.",
+        reason: "Confirms the time.",
+        autoSendAt: new Date(NOW.getTime() + 600_000),
+      })
+      .returning();
+
+    fake.portalChange("sub_1", priceOf("solo"));
+    await handleStripeWebhook(
+      event("evt_down", "customer.subscription.updated", snapshot("solo")),
+      "good",
+    );
+
+    expect((await reload()).plan).toBe("solo");
+    expect((await database.select().from(rules)).map((r) => [r.category, r.mode]).sort()).toEqual([
+      ["quote_request", "draft"],
+      ["scheduling", "draft"],
+    ]);
+    const [after] = await database.select().from(drafts).where(eq(drafts.id, d!.id));
+    expect(after!.autoSendAt).toBeNull();
+    // Solo includes 1 inbox: the first-created stays on, nothing is deleted.
+    expect(await boxes()).toEqual({
+      "owner@shop.com": ["active", null],
+      "office@shop.com": ["paused", "over_plan"],
+      "crew@shop.com": ["paused", "over_plan"],
+    });
+    expect(second && third).toBeTruthy();
+    const log = await actions();
+    expect(log).toContainEqual(["autopilot_turned_off_plan", { count: 1 }]);
+    expect(log).toContainEqual(["inboxes_paused_plan", { count: 2 }]);
+
+    // Moving back up (Crew includes 3) switches them on again.
+    fake.portalChange("sub_1", priceOf("crew"));
+    await applySubscription(snapshot("crew"), NOW);
+    expect(Object.values(await boxes())).toEqual([
+      ["active", null],
+      ["active", null],
+      ["active", null],
+    ]);
+    expect(await actions()).toContainEqual(["inboxes_resumed_plan", { count: 2 }]);
+  });
+
+  it("an event that isn't a move down pauses nothing (even for an account already over its limit)", async () => {
+    await database.update(workspaces).set({ plan: "solo" }).where(eq(workspaces.id, workspace.id));
+    fake.sub("sub_1").items.data[0]!.price = fake.price(priceOf("solo"));
+    await threeInboxes();
+    await applySubscription(snapshot("solo"), NOW); // e.g. a card update
+    expect(Object.values(await boxes())).toEqual([
+      ["active", null],
+      ["active", null],
+      ["active", null],
+    ]);
+  });
+
+  it("a move down during a running free month keeps the free plan's inboxes and autopilot", async () => {
+    await database
+      .update(workspaces)
+      .set({ freePlan: "company", freePlanUntil: new Date(NOW.getTime() + 10 * 86_400_000) })
+      .where(eq(workspaces.id, workspace.id));
+    await threeInboxes();
+    await database
+      .insert(rules)
+      .values({ workspaceId: workspace.id, category: "scheduling", mode: "autopilot" });
+    fake.portalChange("sub_1", priceOf("solo"));
+    await applySubscription(snapshot("solo"), NOW);
+    expect((await reload()).plan).toBe("solo");
+    expect(Object.values(await boxes()).every(([s]) => s === "active")).toBe(true);
+    expect((await database.select().from(rules))[0]!.mode).toBe("autopilot");
   });
 });

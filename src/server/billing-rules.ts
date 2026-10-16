@@ -1,3 +1,4 @@
+import type Stripe from "stripe";
 import { pricing, type PlanId } from "@/config/pricing";
 import type { Workspace } from "@/db/schema";
 import { effectiveStatus, SENDING_ALLOWED, setupReallyPaid } from "./lifecycle";
@@ -156,4 +157,21 @@ export function statusAfterSubscription(
     default:
       return status;
   }
+}
+
+/**
+ * When the plan is set to end (plan #47 status lines): Stripe's `cancel_at`, or with "cancel at
+ * period end" the item's period end. Null when it renews, and once it has ended (the plan is
+ * over, not "set to end").
+ */
+export function cancelAtOf(
+  sub: Pick<Stripe.Subscription, "status" | "cancel_at" | "cancel_at_period_end"> & {
+    items?: { data?: Array<Pick<Stripe.SubscriptionItem, "current_period_end">> } | null;
+  },
+): Date | null {
+  if (sub.status === "canceled" || sub.status === "incomplete_expired") return null;
+  if (sub.cancel_at != null) return new Date(sub.cancel_at * 1000);
+  const end = sub.items?.data?.[0]?.current_period_end;
+  if (sub.cancel_at_period_end && typeof end === "number") return new Date(end * 1000);
+  return null;
 }
