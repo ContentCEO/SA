@@ -8,6 +8,7 @@ import type { ConnectResult, MailboxConnector } from "@/mailbox/connector";
 import { effectivePlan } from "./referral-rules";
 import {
   clearMailboxCountdowns,
+  resumedInboxStatus,
   resumeOverPlanInboxes,
   startEvaluation,
 } from "./workspace-lifecycle";
@@ -234,7 +235,7 @@ export async function swapPausedInbox(
     if (!paused) throw new InboxSwapError("not_on");
     const [resumed] = await tx
       .update(mailboxes)
-      .set({ status: "active", pausedReason: null })
+      .set({ status: resumedInboxStatus, pausedReason: null })
       .where(
         and(
           eq(mailboxes.id, resumeId),

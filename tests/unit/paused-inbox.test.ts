@@ -1,3 +1,4 @@
+import { describeActivity } from "@/server/activity";
 import { randomBytes } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { beforeEach, describe, expect, it } from "vitest";
@@ -150,6 +151,15 @@ describe("plan #47: a paused inbox", () => {
       .from(activityLog)
       .where(eq(activityLog.action, "send_stopped"));
     expect(logs.map((l) => l.detail)).toEqual([{ draftId: draft!.id, why: "inbox_paused" }]);
+    // Activity never promises a queue card the queue doesn't show.
+    const line = describeActivity("send_stopped", logs[0]!.detail as Record<string, unknown>, {
+      name: "Dana Ruiz",
+      category: "scheduling",
+    });
+    expect(line).toBe(
+      "Didn't send the reply to Dana — that inbox is paused (your plan's inboxes are all in use). It's still in that inbox's Gmail drafts",
+    );
+    expect(line).not.toMatch(/queue/);
   });
 
   it("the queue, its counts (badge, digest, push) and needs-you leave paused inboxes out", async () => {

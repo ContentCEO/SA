@@ -337,6 +337,15 @@ export async function inboxLimitEffects(
 }
 
 /**
+ * What a paused-for-the-plan inbox goes back to: one that lost Google access while it was on
+ * (sync set `access_lost_at`, which only a reconnect clears) is still `reconnect_needed`, so the
+ * banner and the access-lost alerts don't treat it as healthy — or tell the owner twice.
+ */
+export const resumedInboxStatus = sql<
+  "active" | "reconnect_needed"
+>`(case when ${mailboxes.accessLostAt} is not null then 'reconnect_needed' else 'active' end)::mailbox_status`;
+
+/**
  * Wherever the limit can rise or a slot frees up (a plan change, a free month starting, Keep,
  * a disconnect): switch over-plan inboxes back on, oldest-created first, up to the limit. Only
  * ever resumes, so it changes nothing for anyone without paused inboxes. Returns how many.
@@ -360,7 +369,7 @@ export async function resumeOverPlanInboxes(
   if (!waiting.length) return 0;
   const resumed = await executor
     .update(mailboxes)
-    .set({ status: "active", pausedReason: null })
+    .set({ status: resumedInboxStatus, pausedReason: null })
     .where(
       and(
         inArray(

@@ -68,6 +68,9 @@ export function describeActivity(
     case "send_undone":
       return `You stopped the reply${to} before it went`;
     case "send_stopped":
+      // A paused inbox's drafts are off the queue, so this one never says "back in your queue".
+      if (detail.why === "inbox_paused")
+        return `Didn't send the reply${to} — that inbox is paused (your plan's inboxes are all in use). It's still in that inbox's Gmail drafts`;
       return `Didn't send the reply${to} — ${
         detail.why === "changed_in_gmail"
           ? "it was changed in Gmail"

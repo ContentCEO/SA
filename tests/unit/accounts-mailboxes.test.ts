@@ -309,6 +309,41 @@ describe("inbox limits follow the plan that counts", () => {
     expect(await resumeOverPlanInboxes(workspaceId, NOW)).toBe(0);
   });
 
+  it("an inbox that lost Google access comes back as needing a reconnect, never as healthy", async () => {
+    const [, b, c] = await threeInboxes();
+    const lostAt = new Date(NOW.getTime() - 86_400_000);
+    await database
+      .update(mailboxes)
+      .set({ status: "reconnect_needed", accessLostAt: lostAt, accessAlertsSent: 1 })
+      .where(eq(mailboxes.id, b!));
+    await setPlan({ plan: "solo" });
+    await inboxLimitEffects(workspaceId, NOW);
+    expect((await byEmail())["b@x.com"]).toEqual(["paused", "over_plan"]);
+    // Moving up: b is back as reconnect_needed (its alert state kept), c as active.
+    await setPlan({ plan: "crew" });
+    expect(await resumeOverPlanInboxes(workspaceId, NOW)).toBe(2);
+    expect(await byEmail()).toEqual({
+      "a@x.com": ["active", null],
+      "b@x.com": ["reconnect_needed", null],
+      "c@x.com": ["active", null],
+    });
+    const [row] = await database.select().from(mailboxes).where(eq(mailboxes.id, b!));
+    expect(row).toMatchObject({ accessLostAt: lostAt, accessAlertsSent: 1 });
+    // The owner's swap too.
+    await setPlan({ plan: "solo" });
+    await database
+      .update(mailboxes)
+      .set({ status: "paused", pausedReason: "over_plan" })
+      .where(eq(mailboxes.id, b!));
+    await database
+      .update(mailboxes)
+      .set({ status: "paused", pausedReason: "over_plan" })
+      .where(eq(mailboxes.id, c!));
+    const a = (await database.select().from(mailboxes).where(eq(mailboxes.email, "a@x.com")))[0]!;
+    await swapPausedInbox(workspaceId, b!, a.id, NOW);
+    expect((await byEmail())["b@x.com"]).toEqual(["reconnect_needed", null]);
+  });
+
   it("the owner can swap which inbox is on; the limit holds and only their own inboxes move", async () => {
     const [a, b] = await threeInboxes();
     await setPlan({ plan: "solo" });
