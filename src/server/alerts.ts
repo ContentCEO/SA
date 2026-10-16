@@ -72,6 +72,8 @@ export async function sendAccessLostAlerts(
       idempotencyKey: `access-lost-${r.mailbox.id}-${(r.mailbox.accessLostAt ?? now).getTime()}-${n}`,
     });
     if (outcome === "not_configured") return { sent, notConfigured: true };
+    // "already_sent": an earlier try with this key got through (sendEmail holds our own record
+    // of its 2xx) but this count didn't save. The owner has the email, so it counts as sent.
     // The reminder clock runs from the first alert.
     await db()
       .update(mailboxes)

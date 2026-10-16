@@ -15,6 +15,8 @@ export const LIMITS = {
   send: { max: 60, windowSec: 10 * 60 },
   /** The owner's "Draft a reply" (a model call), per workspace. */
   draft: { max: 30, windowSec: 60 * 60 },
+  /** Quick tweaks and voice edits on drafts (a model call each), per workspace. */
+  revise: { max: 40, windowSec: 60 * 60 },
   /** Re-learn voice (reads up to 200 sent emails + a model call), per workspace. */
   relearn: { max: 3, windowSec: 24 * 60 * 60 },
   /** Starting Stripe checkout or the billing portal, per workspace. */
@@ -25,7 +27,18 @@ export const LIMITS = {
   smsCode: { max: 5, windowSec: 60 * 60 },
   /** Guessing the code, per workspace. */
   smsVerify: { max: 10, windowSec: 60 * 60 },
+  /**
+   * The count-only endpoints phones poll (/api/badge, /api/push/summary), per workspace (M11
+   * C8). A signed-in screen asks at most once a minute (BADGE_REFRESH_MS) plus once after a
+   * queue action, and the service worker once per push (≤10 a day): a few phones and tabs come
+   * to tens per 10 minutes, so 300 only stops a script.
+   */
+  poll: { max: 300, windowSec: 10 * 60 },
+  /** Owner taps that write to Gmail (save an edit, discard a draft), per workspace (M11 C8). */
+  gmailWrite: { max: 120, windowSec: 10 * 60 },
 } as const;
+/** purgeRateLimits deletes windows older than 2 days, so no window may be longer than a day. */
+export const MAX_WINDOW_SEC = 24 * 60 * 60;
 export type LimitName = keyof typeof LIMITS;
 
 export type LimitResult = { allowed: boolean; retryAfterSec: number };

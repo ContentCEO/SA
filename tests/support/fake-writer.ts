@@ -58,6 +58,18 @@ export class FakeWriter implements MailboxWriter {
     this.calls.push("deleteDraft");
     this.drafts.delete(draftId);
   }
+  /** Every draft in the thread: ours, and any the owner started in Gmail (`createDraft`). */
+  async threadDraftMessageIds(threadId: string) {
+    this.calls.push("threadDraftMessageIds");
+    return [...this.drafts.values()].filter((d) => d.threadId === threadId).map((d) => d.messageId);
+  }
+  /** Practice sends (#40): brand-new messages, recorded with their raw MIME. */
+  messages: string[] = [];
+  async sendMessage(raw: string) {
+    this.calls.push("sendMessage");
+    this.messages.push(raw);
+    return { messageId: `msg-${this.messages.length}` };
+  }
   async sendDraft(draftId: string) {
     this.calls.push("sendDraft");
     const d = this.drafts.get(draftId);

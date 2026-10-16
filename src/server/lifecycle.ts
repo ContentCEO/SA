@@ -47,6 +47,39 @@ export function canSend(w: Payable, now: Date = new Date()): boolean {
 }
 
 /**
+ * Plan #40: during the 3-day evaluation, the owner may send a practice copy
+ * of a draft to THEMSELVES — only while evaluating, only to their own
+ * connected address, at most PRACTICE_SEND_LIMIT times. Customers never.
+ */
+export const PRACTICE_SEND_LIMIT = 10;
+
+export function canPracticeSend(w: Clocked, now: Date = new Date()): boolean {
+  return effectiveStatus(w, now) === "evaluating";
+}
+
+/**
+ * Every address a raw MIME message would go to (To, Cc, Bcc, incl. folded
+ * lines), lowercased. A practice send is allowed only when this is exactly the
+ * owner's own address.
+ */
+export function mimeRecipients(mime: string): string[] {
+  const head = mime.split(/\r?\n\r?\n/)[0] ?? "";
+  const unfolded = head.replace(/\r?\n[ \t]+/g, " ");
+  const out: string[] = [];
+  for (const line of unfolded.split(/\r?\n/)) {
+    const m = line.match(/^(to|cc|bcc)\s*:(.*)$/i);
+    if (!m) continue;
+    for (const a of m[2]!.matchAll(/[^\s<>,;:"]+@[^\s<>,;:"]+/g)) out.push(a[0].toLowerCase());
+  }
+  return out;
+}
+
+export function onlyToOwner(mime: string, ownerAddress: string): boolean {
+  const to = mimeRecipients(mime);
+  return to.length > 0 && to.every((a) => a === ownerAddress.trim().toLowerCase());
+}
+
+/**
  * Statuses where we keep working the inbox: syncing, sorting, drafting,
  * learning the voice. Everything else is read-only — the owner can look at
  * what's there, but nothing new is read, drafted, or changed in Gmail, and no
@@ -62,6 +95,9 @@ export function jobsAllowed(w: Clocked, now: Date = new Date()): boolean {
 export function isReadOnly(w: Clocked, now: Date = new Date()): boolean {
   return !jobsAllowed(w, now);
 }
+
+/** What the send API answers (403) when the send gate refuses: the trial, unpaid, read-only. */
+export const SENDING_BLOCKED_MESSAGE = "Sending is not allowed for this account right now.";
 
 export class SendingBlockedError extends Error {
   constructor(public readonly status: Status) {

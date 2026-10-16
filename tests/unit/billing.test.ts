@@ -1,7 +1,8 @@
 import { randomBytes } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { eq } from "drizzle-orm";
-import type Stripe from "stripe";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import Stripe from "stripe";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { pricing } from "@/config/pricing";
 import type { Database } from "@/db";
 import { activityLog, appSettings, stripeEvents, workspaces, type Workspace } from "@/db/schema";
@@ -11,14 +12,21 @@ import {
   applyCheckoutCompleted,
   applySubscription,
   CheckoutNotAllowedError,
+  connectStripe,
   createCheckout,
   handleStripeWebhook,
+  salesTaxStatus,
   setStripeForTests,
 } from "@/server/billing";
 import {
+  billingStatusLine,
   checkoutTerms,
   planFromLookupKey,
   planLookupKey,
+  SALES_TAX_LINES,
+  SALES_TAX_NOTE,
+  SALES_TAX_ON_NOTE,
+  SETUP_NOT_PAID_LINE,
   setupLookupKey,
   statusAfterCheckout,
   statusAfterSubscription,
@@ -63,6 +71,28 @@ describe("billing rules", () => {
     expect(checkoutTerms(w("paused"), NOW).allowed).toBe(false);
   });
 
+  it("/billing never tells an account that hasn't really paid that setup's paid or it renews", () => {
+    // Hand-marked before 2026-10-10, or reset after a test card: status kept, no real payment.
+    for (const s of ["setup_paid", "active"] as S[]) {
+      expect(billingStatusLine(w(s, { setupPaidAt: NOW }), NOW)).toBe(SETUP_NOT_PAID_LINE);
+      expect(SETUP_NOT_PAID_LINE).toBe("Sending turns on once your setup payment goes through.");
+    }
+    expect(billingStatusLine(w("setup_paid", { setupPaidVia: "stripe" }), NOW)).toMatch(
+      /^Setup's paid and sending is on/,
+    );
+    expect(billingStatusLine(w("active", { setupPaidVia: "house" }), NOW)).toBe(
+      "All set. Your plan renews monthly.",
+    );
+    expect(billingStatusLine(w("past_due"), NOW)).toMatch(/payment didn't go through/);
+    expect(billingStatusLine(w("evaluating"), NOW)).toBeNull();
+    // The page uses the rule, and only mentions Stripe's page next to Manage billing.
+    const page = readFileSync("src/app/(app)/billing/page.tsx", "utf8");
+    expect(page).toContain("const statusLine = billingStatusLine(workspace);");
+    const portal = page.slice(page.indexOf("{workspace.stripeCustomerId ? ("));
+    expect(portal.indexOf("Stripe&apos;s secure")).toBeGreaterThan(-1);
+    expect(portal.indexOf("Stripe&apos;s secure")).toBeLessThan(portal.indexOf(") : null}"));
+  });
+
   it("paying turns sending on, and keeps a finished setup active", () => {
     for (const s of ["invited", "evaluating", "evaluation_expired", "canceled"] as S[]) {
       expect(statusAfterCheckout(w(s), NOW)).toBe("setup_paid");
@@ -102,6 +132,14 @@ describe("billing rules", () => {
 
 const SECRET = "whsec_test";
 type Call = { method: string; args: unknown[] };
+type FoundPrice = { id: string; lookup_key: string; tax_behavior: string | null };
+
+/** What the fake Stripe account holds. `tax`: Stripe Tax's status, or an error it throws. */
+const account: { tax: string | Error; prices: FoundPrice[]; portals: number } = {
+  tax: "pending",
+  prices: [],
+  portals: 0,
+};
 
 function fakeStripe(calls: Call[]) {
   const rec =
@@ -112,11 +150,34 @@ function fakeStripe(calls: Call[]) {
     };
   let n = 0;
   return {
+    tax: {
+      settings: {
+        retrieve: rec("tax.settings.retrieve", () => {
+          if (account.tax instanceof Error) throw account.tax;
+          return { object: "tax.settings", status: account.tax };
+        }),
+      },
+    },
     prices: {
-      list: rec("prices.list", () => ({ data: [] })),
+      list: rec("prices.list", () => ({ data: account.prices })),
       create: rec("prices.create", (p) => ({
         id: `price_${(p as { lookup_key: string }).lookup_key}`,
       })),
+      update: rec("prices.update", (id) => ({ id })),
+      retrieve: rec("prices.retrieve", (id) => ({ id, product: `prod_${id as string}` })),
+    },
+    billingPortal: {
+      configurations: {
+        list: rec("billingPortal.configurations.list", () => ({
+          data: Array.from({ length: account.portals }, (_, i) => ({ id: `bpc_${i}` })),
+        })),
+        create: rec("billingPortal.configurations.create", () => ({ id: "bpc_new" })),
+      },
+    },
+    webhookEndpoints: {
+      list: rec("webhookEndpoints.list", () => ({ data: [] })),
+      del: rec("webhookEndpoints.del", () => ({})),
+      create: rec("webhookEndpoints.create", () => ({ id: "we_1", secret: "whsec_new" })),
     },
     customers: { create: rec("customers.create", () => ({ id: "cus_1" })) },
     checkout: {
@@ -146,6 +207,9 @@ beforeEach(async () => {
   delete process.env.STRIPE_WEBHOOK_SECRET;
   database = await createTestDb();
   calls = [];
+  account.tax = "pending";
+  account.prices = [];
+  account.portals = 0;
   setStripeForTests(fakeStripe(calls));
   ({ workspace } = await ensureUserAndWorkspace({ email: "owner@shop.com", name: "Owner" }));
   await database
@@ -156,7 +220,10 @@ beforeEach(async () => {
     .insert(appSettings)
     .values({ key: "stripe_webhook_secret", value: encryptSecret(SECRET) });
 });
-afterEach(() => setStripeForTests(undefined));
+afterEach(() => {
+  setStripeForTests(undefined);
+  vi.restoreAllMocks();
+});
 
 async function reload() {
   const [row] = await database.select().from(workspaces).where(eq(workspaces.id, workspace.id));
@@ -225,7 +292,218 @@ describe("checkout", () => {
   });
 });
 
+describe("sales tax (Stripe Tax, Davi 2026-10-14)", () => {
+  const sessionParams = () =>
+    calls.find((c) => c.method === "checkout.sessions.create")!
+      .args[0] as Stripe.Checkout.SessionCreateParams;
+
+  it("with Stripe Tax active, checkout adds tax and collects the address it's based on", async () => {
+    account.tax = "active";
+    await createCheckout(await reload(), "crew");
+    const params = sessionParams();
+    expect(params.automatic_tax).toEqual({ enabled: true });
+    // We always pass an existing customer (made without an address): Checkout saves what it asks.
+    expect(params.customer).toBe("cus_1");
+    expect(params.customer_update).toEqual({ address: "auto", name: "auto" });
+    expect(params.billing_address_collection).toBe("required");
+    // Everything else is as without tax.
+    expect(params.line_items).toHaveLength(2);
+    expect(params.allow_promotion_codes).toBe(true);
+  });
+
+  it("without Stripe Tax, the checkout is exactly as before", async () => {
+    for (const status of ["pending", "inactive_somehow"]) {
+      calls.length = 0;
+      account.tax = status;
+      await createCheckout(await reload(), "crew");
+      expect(Object.keys(sessionParams()).sort()).toEqual(
+        [
+          "allow_promotion_codes",
+          "cancel_url",
+          "client_reference_id",
+          "customer",
+          "line_items",
+          "metadata",
+          "mode",
+          "subscription_data",
+          "success_url",
+        ].sort(),
+      );
+    }
+  });
+
+  it("if Stripe can't say whether tax is on, no checkout is made and the error goes up", async () => {
+    // A real stripe-node error: its name is just "Error"; the class is in `type`.
+    const err = new Stripe.errors.StripeConnectionError({
+      message: "Stripe said cus_SECRET owner@shop.com",
+    });
+    account.tax = err;
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+    await expect(createCheckout(await reload(), "crew")).rejects.toBe(err);
+    expect(calls.some((c) => c.method === "checkout.sessions.create")).toBe(false);
+    // Asked first: nothing was created in Stripe either.
+    expect(calls.map((c) => c.method)).toEqual(["tax.settings.retrieve"]);
+    expect((await reload()).stripeCustomerId).toBeNull();
+    // Content-free log: the error's name and a fixed reason code, never its message.
+    expect(logged).toHaveBeenCalledWith("stripe_tax_check_failed", {
+      workspaceId: workspace.id,
+      error: "Error",
+      reason: "connection",
+    });
+    expect(JSON.stringify(logged.mock.calls)).not.toMatch(/SECRET|owner@shop\.com/);
+  });
+
+  it("a key that can't read the tax settings is logged as a key problem, not a blip", async () => {
+    account.tax = new Stripe.errors.StripePermissionError({
+      message: "The provided key 'rk_live_SECRET' does not have the required permissions",
+    });
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+    await expect(createCheckout(await reload(), "crew")).rejects.toBeInstanceOf(
+      Stripe.errors.StripePermissionError,
+    );
+    expect(calls.map((c) => c.method)).toEqual(["tax.settings.retrieve"]);
+    expect(logged).toHaveBeenCalledWith("stripe_tax_check_failed", {
+      workspaceId: workspace.id,
+      error: "Error",
+      reason: "permission",
+    });
+    expect(JSON.stringify(logged.mock.calls)).not.toContain("SECRET");
+  });
+
+  it("new prices are tax-exclusive (tax on top)", async () => {
+    await createCheckout(await reload(), "crew");
+    const created = calls.filter((c) => c.method === "prices.create");
+    expect(created).toHaveLength(4);
+    for (const c of created) {
+      expect((c.args[0] as Stripe.PriceCreateParams).tax_behavior).toBe("exclusive");
+    }
+  });
+
+  it("checkout never changes an existing price's tax behavior", async () => {
+    account.tax = "active";
+    account.prices = [
+      { id: "price_setup", lookup_key: setupLookupKey(), tax_behavior: "unspecified" },
+      ...(["solo", "crew", "company"] as const).map((p) => ({
+        id: `price_${p}`,
+        lookup_key: planLookupKey(p),
+        tax_behavior: "unspecified",
+      })),
+    ];
+    await createCheckout(await reload(), "crew");
+    expect(calls.some((c) => c.method === "prices.update")).toBe(false);
+    expect(calls.some((c) => c.method === "prices.create")).toBe(false);
+  });
+
+  it("Connect Stripe sets unspecified prices to exclusive and leaves the rest alone", async () => {
+    account.prices = [
+      { id: "price_setup", lookup_key: setupLookupKey(), tax_behavior: "unspecified" },
+      { id: "price_solo", lookup_key: planLookupKey("solo"), tax_behavior: "inclusive" },
+      { id: "price_crew", lookup_key: planLookupKey("crew"), tax_behavior: "exclusive" },
+      { id: "price_company", lookup_key: planLookupKey("company"), tax_behavior: null },
+    ];
+    await connectStripe();
+    const updates = calls.filter((c) => c.method === "prices.update");
+    expect(updates.map((c) => c.args)).toEqual([
+      ["price_setup", { tax_behavior: "exclusive" }],
+      ["price_company", { tax_behavior: "exclusive" }],
+    ]);
+    expect(calls.some((c) => c.method === "prices.create")).toBe(false);
+  });
+
+  it("Connect Stripe makes missing prices exclusive", async () => {
+    account.prices = [
+      { id: "price_setup", lookup_key: setupLookupKey(), tax_behavior: "exclusive" },
+    ];
+    await connectStripe();
+    expect(calls.some((c) => c.method === "prices.update")).toBe(false);
+    const created = calls.filter((c) => c.method === "prices.create");
+    expect(created).toHaveLength(3);
+    for (const c of created) {
+      expect((c.args[0] as Stripe.PriceCreateParams).tax_behavior).toBe("exclusive");
+    }
+  });
+
+  it("a new customer portal lets owners fix their billing address; an existing one is left alone", async () => {
+    await connectStripe();
+    const create = calls.find((c) => c.method === "billingPortal.configurations.create")!;
+    const features = (create.args[0] as Stripe.BillingPortal.ConfigurationCreateParams).features;
+    expect(features.customer_update).toEqual({ enabled: true, allowed_updates: ["address"] });
+    expect(features.subscription_cancel).toEqual({ enabled: true, mode: "at_period_end" });
+
+    calls.length = 0;
+    account.portals = 1;
+    await connectStripe();
+    expect(calls.some((c) => c.method === "billingPortal.configurations.create")).toBe(false);
+  });
+
+  it("the /admin line: on, off, couldn't check (content-free, never throws)", async () => {
+    account.tax = "active";
+    expect(await salesTaxStatus()).toBe("on");
+    account.tax = "pending";
+    expect(await salesTaxStatus()).toBe("off");
+
+    account.tax = new Stripe.errors.StripeAuthenticationError({
+      message: "Invalid API Key provided: sk_test_SECRET",
+    });
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+    expect(await salesTaxStatus()).toBe("unknown");
+    // The reason code says it's the key (stripe-node errors are all named "Error").
+    expect(logged).toHaveBeenCalledWith("stripe_tax_status_failed", {
+      error: "Error",
+      reason: "auth",
+    });
+    expect(JSON.stringify(logged.mock.calls)).not.toContain("SECRET");
+    // A short wait at most: the admin page never hangs on Stripe.
+    const opts = calls.filter((c) => c.method === "tax.settings.retrieve").at(-1)!.args[1];
+    expect(opts).toMatchObject({ timeout: 5_000 });
+
+    expect(SALES_TAX_LINES).toEqual({
+      on: "Sales tax: on (Stripe Tax is set up).",
+      off: "Sales tax: off. Set up Stripe Tax in Stripe to charge it.",
+      unknown: "Sales tax: couldn't check.",
+    });
+    // "Active" at Stripe only needs the business address; tax is charged where registered.
+    expect(SALES_TAX_ON_NOTE).toBe(
+      "Stripe only charges it in the states listed in Stripe under Tax → Registrations.",
+    );
+  });
+
+  it("the /admin line isn't shown, and Stripe isn't asked, when Stripe isn't set up", async () => {
+    setStripeForTests(undefined);
+    vi.stubEnv("STRIPE_SECRET_KEY", "");
+    try {
+      expect(await salesTaxStatus()).toBeNull();
+    } finally {
+      vi.unstubAllEnvs();
+    }
+    expect(calls).toHaveLength(0);
+  });
+
+  it("owners see the tax note next to the prices (homepage and /billing); admin shows the line", () => {
+    expect(SALES_TAX_NOTE).toBe("Plus sales tax where it applies.");
+    for (const f of ["src/app/page.tsx", "src/app/(app)/billing/page.tsx"]) {
+      expect(readFileSync(f, "utf8"), f).toContain("{SALES_TAX_NOTE}");
+    }
+    const admin = readFileSync("src/app/(app)/admin/page.tsx", "utf8");
+    expect(admin).toContain("{salesTax ? <p>{SALES_TAX_LINES[salesTax]}</p> : null}");
+  });
+});
+
 describe("webhook-driven status", () => {
+  it("a real setup payment records its own date, not a hand-marked or test-card one", async () => {
+    const OLD = new Date("2026-10-01T09:00:00Z");
+    // Hand-marked before 2026-10-10, or reset after a test card: a date, but nothing paid.
+    await database
+      .update(workspaces)
+      .set({ status: "setup_paid", setupPaidAt: OLD, setupPaidVia: null })
+      .where(eq(workspaces.id, workspace.id));
+    await applyCheckoutCompleted(paidSession(), NOW);
+    expect((await reload()).setupPaidAt?.toISOString()).toBe(NOW.toISOString());
+    // A second webhook for an already real payment keeps the first date.
+    await applyCheckoutCompleted(paidSession({ id: "cs_2" }), new Date(NOW.getTime() + 60_000));
+    expect((await reload()).setupPaidAt?.toISOString()).toBe(NOW.toISOString());
+  });
+
   it("a paid checkout turns sending on and records the plan and setup fee", async () => {
     expect(await applyCheckoutCompleted(paidSession(), NOW)).toBe("applied");
     const after = await reload();
@@ -311,6 +589,56 @@ describe("webhook endpoint", () => {
     });
     await expect(handleStripeWebhook(body, "good")).rejects.toThrow();
     expect(await database.select().from(stripeEvents)).toHaveLength(0);
+  });
+
+  it("GUARDRAIL: with the live key, test-mode events change nothing (and the other way round)", async () => {
+    // After the switch to live, the stored secret is the test endpoint's until Connect Stripe
+    // runs again (LAUNCH.md 7b): a late test checkout or a test renewal must not put a test
+    // payment back on an account "Reset test payments" cleared.
+    const modeEvent = (id: string, type: string, object: unknown, livemode: boolean) =>
+      JSON.stringify({ id, type, livemode, data: { object } });
+    const before = await reload();
+    const info = vi.spyOn(console, "info").mockImplementation(() => {});
+    vi.stubEnv("STRIPE_SECRET_KEY", "sk_" + "live_" + "fake");
+    try {
+      for (const [id, type, object] of [
+        ["evt_t1", "checkout.session.completed", paidSession()],
+        ["evt_t2", "customer.subscription.updated", subscription("past_due")],
+      ] as const) {
+        expect(await handleStripeWebhook(modeEvent(id, type, object, false), "good")).toEqual({
+          status: 200,
+          body: "Ignored: other Stripe mode.",
+        });
+      }
+      const after = await reload();
+      expect(after).toMatchObject({
+        status: before.status,
+        setupPaidVia: null,
+        stripeCustomerId: before.stripeCustomerId,
+        stripeSubscriptionId: null,
+      });
+      expect(canSend(after)).toBe(false);
+      expect(await database.select().from(stripeEvents)).toHaveLength(0);
+      expect(info).toHaveBeenCalledWith("stripe_event_other_mode", { livemode: false });
+
+      // A live event is handled as always.
+      const live = modeEvent("evt_l1", "checkout.session.completed", paidSession(), true);
+      expect((await handleStripeWebhook(live, "good")).status).toBe(200);
+      expect((await reload()).setupPaidVia).toBe("stripe");
+
+      // A test key ignores live events.
+      vi.stubEnv("STRIPE_SECRET_KEY", "sk_" + "test_" + "fake");
+      const liveSub = modeEvent(
+        "evt_l2",
+        "customer.subscription.updated",
+        subscription("past_due"),
+        true,
+      );
+      expect((await handleStripeWebhook(liveSub, "good")).body).toBe("Ignored: other Stripe mode.");
+      expect((await reload()).status).toBe("setup_paid");
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it("STRIPE_WEBHOOK_SECRET overrides the stored secret", async () => {

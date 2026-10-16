@@ -59,8 +59,10 @@ drizzle/            generated migrations — commit them
 scripts/invite.ts   pnpm invite owner@shop.com [trade] ["note"] (or /admin → Invite an owner)
 src/styles/theme.css   THE theme file — every color/token
 tests/unit/         Vitest; DB tests use in-memory PGlite (tests/support/db.ts)
-tests/e2e/          Playwright (mobile 375px + desktop); real Postgres; forged Auth.js cookie
-docs/               BRIEF.md, SETUP.md, google-verification.md, legal drafts
+tests/e2e/          Playwright (mobile 375px + desktop); real Postgres; forged Auth.js cookie;
+                    fakes/ = fake Google consent + Gmail + Anthropic (127.0.0.1, PORT+1)
+docs/               BRIEF.md, SETUP.md, LAUNCH.md (Davi's launch checklist),
+                    google-verification.md, legal drafts
 ```
 
 ## Commands
@@ -68,6 +70,10 @@ docs/               BRIEF.md, SETUP.md, google-verification.md, legal drafts
 `pnpm dev` · `pnpm lint` · `pnpm format` · `pnpm typecheck` (runs `next typegen` first) ·
 `pnpm test` · `pnpm build && pnpm test:e2e` · `pnpm db:generate` / `pnpm db:migrate`.
 In a sandbox with preinstalled Chromium: `PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-browsers/chromium pnpm test:e2e`.
+e2e needs no real keys: Playwright starts the fakes itself on `PORT+1` (app 3100 / fakes 3101 by
+default, CI too) and refuses a non-local `DATABASE_URL` or an `APP_URL` that isn't
+`http://localhost:<PORT>`. Stop any `pnpm dev`/`pnpm start` on those ports first. In the
+`/home/user/SA-launch` worktree use `PORT=3300` (fakes 3301, database `squared_away_launch`).
 
 ## Conventions
 
@@ -114,7 +120,8 @@ In a sandbox with preinstalled Chromium: `PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-brows
   `revokedAtProvider: false`). Deleting is what the owner asked for.
 - `activity_log` created early (M1) to record connect/reconnect/disconnect; detail is content-free.
 - Neon: project `autumn-term-70302192`, branch `production`, pooled URL in Vercel `DATABASE_URL`
-  (prod+preview share it). Migration 0000 applied 2026-09-28.
+  (prod+preview share it until the `sa-preview` split; see "Davi's decisions, 2026-10-14").
+  Migration 0000 applied 2026-09-28.
 - Cloud sandboxes can't reach Postgres port 5432; use `pnpm db:migrate:http` (Neon HTTPS driver,
   same migrations table as drizzle-kit). `@neondatabase/serverless` is a devDependency for this only.
 - **Branches:** `main` = production (sa-dac3.vercel.app; Vercel Production branch = `main`). Work
@@ -146,7 +153,13 @@ In a sandbox with preinstalled Chromium: `PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-brows
 - `MailboxAuthError` anywhere → `status = reconnect_needed` + one `mailbox_access_lost` log; every
   job skips non-active mailboxes before touching Google. Banner on every signed-in screen.
 - Retention purge nulls `body_text` AND `snippet` (Gmail snippets are body text) past
-  `RETENTION_BODY_DAYS`; runs daily. Bodies capped at 20k chars.
+  `RETENTION_BODY_DAYS`; runs daily. Bodies capped at 20k chars. **M11 (S3):** it also empties
+  `drafts.flags` (they quote draft text) with the draft body / original text, clears `send_after`,
+  `send_claimed_at` and `auto_send_at` on the pending drafts it expires, and strips `address`,
+  `dates` and `permit.corrections` from `threads.extracted` once the thread's newest email is past
+  the window (content-free facts stay: invoice number/amount/due date/status, permit number /
+  issuing body / inspection time / result, service, dollar figures, our true/false marks).
+  `tests/unit/data-lifecycle.test.ts` is the gate.
 - Jobs (Inngest v4, `triggers` in options): backfill (singleton per mailbox), sync (concurrency 1 +
   20s debounce per mailbox), poll every 5 min (also starts missed backfills), watch renewal daily
   (only if `GMAIL_PUBSUB_TOPIC`), purge daily. `enqueue()` swallows send failures; the poll recovers.
@@ -186,6 +199,16 @@ In a sandbox with preinstalled Chromium: `PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-brows
 - "Toasts" are currently `?done=` / `?error=` query params rendered as `<Notice>` (role=status/alert).
 - Playwright's mobile project uses Chromium at 375×812 (not WebKit) to keep CI fast and single-browser.
 - Favicon and wordmark are text placeholders until Davi's icon pack arrives (`public/brand/`).
+- **Fonts are self-hosted via `next/font/local` (2026-10-15)**, because CI builds failed when
+  Google Fonts was unreachable (Next's Google loader downloads at build time). `src/app/_fonts/`
+  holds Google's own latin files (Inter Tight variable, Instrument Serif Italic; byte-identical to
+  what the loader served) with their OFL 1.1 texts and a README. Inter Tight keeps Google's three
+  single-weight faces (400/600/900 on the one variable file), so 500 still renders 400 and 700/800
+  render 900 — exactly as before; a "100 900" range would be a visible design change. Family names
+  are the JS variable names (`interTight`, `instrumentSerif`; Turbopack ignores a `font-family`
+  declaration), the CSS variables are unchanged. Fallback metrics come from `adjustFontFallback`
+  (Arial / Times New Roman), slightly different from Google's precomputed ones. Latin only: other
+  scripts use the fallback. `tests/unit/fonts.test.ts` forbids the Google loader anywhere in `src`.
 - `/api/health` returns `{ ok, service, commit }` — used by Playwright's webServer check and for
   deploy verification.
 - **Drafts + Queue (M5):** `src/server/drafts.ts`, prompt `draft.v1` (Sonnet, effort medium, one
@@ -252,12 +275,23 @@ In a sandbox with preinstalled Chromium: `PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-brows
   to the AI provider). Quiet days are skipped. Resend via plain fetch with
   `Idempotency-Key: digest-<workspace>-<local date>`; without `RESEND_API_KEY`/`EMAIL_FROM` nothing is
   sent and the day isn't marked done. Read-only accounts get none.
+- **Resend 409s (2026-10-13, M8 review):** a retry whose body changed (summaries say how long
+  things waited) gets 409 `invalid_idempotent_request`. `sendEmail` reports `already_sent` (the
+  digest, monthly summary, cost alert and Gmail-access alert then mark it done) **only** when we
+  hold our own `app_settings` `email-sent:<idempotency key>` row, written right after a 2xx
+  (outside any marker transaction; purged daily after 2 days). Resend's docs don't say whether a
+  key is kept when the first request was refused (e.g. 403 while `EMAIL_FROM` is
+  onboarding@resend.dev); **not checked live** (no Resend key in the sandbox). To check: send to a
+  forbidden address with a test key, retry the same key with a different body, and see 409 vs 403.
+  Either way the code never marks an email sent without our 2xx. Any other 409 stays an error.
 - Voice learning reads sent mail 3 at a time (8 tripped Gmail's limit live and the learn died at
   "learning"). Retries 6; `workspace-lifecycle` (15 min) restarts voice for read mailboxes with no
   profile or stuck in "learning" > 30 min (`workspacesNeedingVoice`).
 - **Autopilot (M9)** — `src/server/autopilot.ts`, approved by Davi 2026-10-03. Three layers, all
   in code with tests: (1) account: plan with `autopilot` (Crew/Company) **and** status `active`
-  (setup call done); (2) category: owner switched it on (`rules` table, mode draft|autopilot) and it
+  (setup call done) **and** setup really paid (`setupReallyPaid`, 2026-10-14: an unpaid active
+  account's countdown could never send; `runAutopilotSend` also stands down when `!canSend`
+  instead of letting `sendDraft` throw); (2) category: owner switched it on (`rules` table, mode draft|autopilot) and it
   has **earned** it — ≥10 replies in that category sent exactly as drafted from the app;
   (3) each email: eligible category (never complaint/noise), not needs_owner (incl. manual), reply
   not follow-up, confidence ≥ 85, no flags, no money in the draft, no amount on invoice emails, and
@@ -272,13 +306,16 @@ In a sandbox with preinstalled Chromium: `PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-brows
   autopilot switches every category back to draft and clears countdowns.
 - **Billing (M10, 2026-10-05):** Stripe SDK, `src/server/billing.ts` + pure rules in
   `src/server/billing-rules.ts`. Checkout (subscription mode) = plan price + the one-time setup fee
-  only if `setup_paid_at` is empty; one live subscription per workspace; Stripe's Billing Portal for
+  only if the setup wasn't really paid (`setupReallyPaid`; a date alone doesn't count); one live subscription per workspace; Stripe's Billing Portal for
   card/plan/cancel. Prices are found-or-created by lookup key `sa_<plan>_<cents>_month` /
   `sa_setup_<cents>` (amount in the key → config change = new price). **Only the signed webhook**
   (`/api/stripe/webhook`) changes status: paid checkout → setup_paid (active if the setup call was
   already done); past_due/unpaid → past_due; recovered → back; canceled → canceled (subscription id
   cleared, re-checkout allowed without the setup fee). Paused and trial accounts are never moved by
   Stripe. Events are idempotent via `stripe_events` (row deleted on handler error so Stripe retries).
+  Events whose `livemode` doesn't match the key's mode are answered 200 and ignored
+  (`eventFromOtherMode`, 2026-10-14), so test renewals can't undo "Reset test payments" before
+  Connect Stripe swaps the stored secret.
   `/admin` → Payments → **Connect Stripe** sets up prices, the portal config and the webhook, storing
   its signing secret encrypted in `app_settings` (`STRIPE_WEBHOOK_SECRET` env overrides).
   `STRIPE_SECRET_KEY` (test) is on sa Production. Owner screen: `/billing` (Settings → Plan &
@@ -288,12 +325,24 @@ In a sandbox with preinstalled Chromium: `PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-brows
   **nothing** is deleted; an already-gone subscription is fine) → revoke Google for each mailbox (best
   effort) → delete the `users` row (everything cascades) → sign out → `/goodbye`. Gmail drafts stay
   in the owner's Gmail. Logs counts only. `/signin` only bounces to /queue if the account still
-  exists (a deleted account's JWT would otherwise loop).
+  exists (a deleted account's JWT would otherwise loop). **M11 (S3):** the database part is one
+  transaction that also deletes the owner's `invites` row (coming back needs a new invite) and the
+  `app_settings` markers `cost_alert:<ws>:%` and `email-sent:%-<ws|mailbox>-%`. Kept on purpose
+  (Davi, amendment 2): waitlist rows (may hold a Growth call request; /admin's waitlist card reads
+  the invite list, not only `waitlist.invited_at`, so a deleted owner's card offers "Invite … again"
+  instead of a stale "Invited" — `waitlistInviteState`, matched with the sign-in gate's own
+  `inviteForEmails`); also referral_credits (salted
+  hash, ids SET NULL), stripe_events, rate_limits (purged in 2 days), the draft-cleanup per-mailbox
+  marker (bare uuid). `tests/unit/data-lifecycle.test.ts` is the gate: a new table or a new
+  non-cascade foreign key fails it until its lifecycle is decided (KEPT / SET_NULL lists there).
 - **Rate limits (2026-10-06):** `src/server/rate-limit.ts`, fixed windows in the `rate_limits` table
   (one atomic upsert; holds across serverless instances). Per workspace: send 60/10 min (action +
   API → 429 with Retry-After), Draft a reply 30/h, re-learn voice 3/day, billing 10/h, Gmail connect
   10/h. Waitlist 10/h per **hashed** IP (salted with AUTH_SECRET; raw IPs never stored). Webhooks
   are signature/token-checked instead. Purged daily with bodies. e2e global setup clears the table.
+  **M11 (S4):** `poll` 300/10 min on `/api/badge` and `/api/push/summary` (429 + Retry-After,
+  no-store; phones ask ≤1/min) and `gmailWrite` 120/10 min on save-edit and discard
+  (`?error=busy`). No window may exceed a day (`MAX_WINDOW_SEC`; the purge drops 2-day-old rows).
 - **Error alerts (2026-10-06):** `@sentry/nextjs`, off unless `NEXT_PUBLIC_SENTRY_DSN` is set.
   `src/instrumentation.ts` (server init + `onRequestError`), `src/instrumentation-client.ts` (SDK
   loaded lazily only with a DSN), Inngest middleware `ReportFinalFailures` (final attempt only, then
@@ -387,6 +436,242 @@ In a sandbox with preinstalled Chromium: `PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-brows
   endpoint) and fixed two things they found: a garbled Pub/Sub payload made `/api/gmail/push` throw
   (→ endless Pub/Sub retries; now acknowledged with 204), and `renewWatches` renewed watches for
   read-only accounts (now skipped via `jobsAllowed`).
+- **Plan M5 (2026-10-10, branch `claude/milestone-5-drafts`; brief M5 was already built, no R-items):**
+  - #43/#2/#1/#8: `checkDraft` also flags guarantee/warranty/promise words ("commitment") and
+    "N dollars"; one regenerate on money/when/never_promise/never_say hits. Typed gaps
+    `{{price}}` `{{date}}` `{{time}}` `{{custom:label}}` (`src/ai/gaps.ts`) shown as fill-in chips;
+    the server refuses to send with any `{{`/`}}` left (also autopilot). `draft.v5` returns
+    `used_facts` (keys) for "Why this?". Labels Ready / Check the details / Check everything
+    (`src/config/drafting.ts`); flags or gaps never read Ready.
+  - #3/#4: `reviseDraft` + prompt `revise.v1` (tweak chips, and "Tell it what to change" typed or
+    hold-to-talk via the browser's Web Speech API, hidden where unsupported, with the
+    Google/Apple note). Same checks as a new draft; a **flagged** draft's text never counts as
+    source (a tweak can't launder a flag); spoken words do. Max 5 per draft, 40/h per workspace.
+    Clears any autopilot countdown. Log `draft_revised` {via} only.
+  - #7 undo send: drafts stay `pending` with `send_after` (no new enum value — adding one and
+    using it in the same migration run is unsafe) and are hidden from the queue. `queueSend` runs
+    every check at the tap (403 unchanged), job `send-after-undo` → `deliverQueuedSend` claims
+    atomically (`send_claimed_at`, 2-min lease) and re-runs the whole gate via
+    `sendDraft(..., {queued: true})`; anything that stops it un-queues and logs `send_stopped`.
+    Reconcile skips claimed drafts and a Gmail change un-queues. Backstop in the 15-min job. The
+    API route now answers 202 `{status: "queued"}`. Autopilot still sends directly (its 10-min
+    hold is its window).
+  - #5 `/queue/review` + `batchSend`: rules in `batch-rules.ts` re-checked on fresh rows; each
+    reply goes through `queueSend`. Categories picked per visit (`?cat=`), not stored.
+  - #6 `threads.snoozed_until`; rules in `snooze-rules.ts` (owner's time zone, DST-safe);
+    emergencies (priority high + needs_owner) only until midnight; back on top for 24h.
+  - #9 two-way swipe (thumb side opens for sending, other side discards after a 5s Undo),
+    `navigator.vibrate`. #9/#37/#10 are **per-device cookies** (`src/lib/device-prefs.ts`:
+    `sa_hand`, `sa_contrast`, `sa_offline`) so each phone renders right on first paint.
+  - #41 `/record/[draftId]` from draft row + activity log (`send_approved` carries device,
+    undo window, offline). No loading.tsx there (must 404).
+  - #21 `edit_signals` (counts/yes-no in code, tone via Haiku prompt `edit-tone.v1`), captured
+    daily before the purge; weekly `voice-ideas` proposes ≤3 `voice_suggestions`; only a yes
+    changes the voice profile (source → edited). Evals gained revise + tone cases.
+  - #36 web push without a library or payload: VAPID JWT in Node crypto, empty push, the service
+    worker fetches `/api/push/summary` (counts) with the owner's cookie. Endpoints allow-listed to
+    real push services. Same throttle/quiet hours as texts (shared `freshLeads`). Off until
+    `VAPID_PUBLIC_KEY`/`VAPID_PRIVATE_KEY` are set.
+  - #10 offline okays (opt-in): SW keeps `/queue` + `/_next/static` only while cache
+    `sa-queue-v1` exists; okays stored in localStorage with a sha-256 of the text seen;
+    server refuses `changed_since_seen` / `intent_expired` (>12h). Signed-out screens and
+    sign-out delete the copy.
+  - #37 sunlight: tokens under `:root:has([data-contrast="high"])` in theme.css; header toggle.
+- **Plan M6 (2026-10-11, branch `claude/milestone-6-8`):** #40 practice sends — `practiceSend`
+  (`src/server/practice.ts`) only while `effectiveStatus === evaluating`, a NEW unthreaded message
+  via `MailboxWriter.sendMessage` to the owner's own address, subject "[Practice] …", and
+  `onlyToOwner()` re-checks To/Cc/Bcc on the exact MIME before Gmail; max 10 (`practice_sent` log).
+  Real sends stay 403. #45 `/admin/costs` (`admin-costs.ts`, rules in `admin-cost-rules.ts`):
+  revenue = plan price for setup_paid/active/past_due; alert email to `ADMIN_EMAIL` when AI cost
+  > 40% of plan, once per account per month (marker in `app_settings`), daily in the purge job.
+- **Plan M7 (2026-10-12, branch `claude/milestone-6-8`; #27 #28 #29 #30 #15 done, #26 behind a flag):**
+  One additive migration (0023: `drafts.purpose`, `threads.quote_outcome_source` /
+  `invoice_paid_at` / `invoice_paid_source` / `complained_at`, `business_profile.review_url`,
+  `price_history`) plus hand-written backfills (legacy outcomes → source `owner`; 0024 marks
+  threads still sorted `complaint`). Any `Date` in raw `sql` is `.toISOString()::timestamptz`.
+  - **classify.v3** adds `signals.accepts_quote` / `signals.job_done`, stored as
+    `extracted.accepts_quote` / `extracted.job_done`. `extracted.quote_accepted` is decided in code
+    at classification: acceptance AND (the thread was a quote before this email, or is one now) AND
+    the owner has written on it AND the owner gave a price before it (`quote_amount_cents` known, or
+    a `$` figure in an owner email) — an acceptance is often re-sorted as scheduling; "Sounds good,
+    book us in" after "I can come look Tuesday" is a site visit. A quote sent only as an attached
+    PDF ("Quote attached") has no `$` we can see, so its "Let's do it" is not auto-won and gets no
+    deposit draft; the owner can still tap Won (attachments aren't recorded at sync; see Waiting on
+    Davi). Kept across later re-sorts until decided. `afterClassified` (auto marks) runs after
+    `classifiedAt` is set, in a try/catch that logs metadata only; injection emails get no auto
+    marks at all.
+  - **Purpose drafts:** `drafts.kind` stays `reply`; `drafts.purpose` ∈ deposit / review_request /
+    closing_question (`purpose.v1`). Purposes **never** autopilot, never batch, never earn autopilot,
+    never bump `followup_count`. Autopilot and batch also refuse any draft whose email
+    `accepts_quote` ("Quote acceptances always wait for you."). Deposit = the next draft on a thread
+    with `quote_accepted`, once per thread; no payment terms → `{{custom:deposit instructions}}`
+    gap + `NO_PAYMENT_TERMS_FLAG` first in the flags (survives the 6-flag cap), confidence ≤ 0.3.
+    `checkDraft({ checkTerms })` (deposit + review only): a %, way to pay or discount/free/gift
+    word not in the source → `terms` hit, one regenerate, then flag (cap 0.3); review requests
+    also flag any URL other than the review link.
+  - **#30 outcomes:** `quote_outcome_source` owner | auto — **the owner always wins**
+    (`canAutoSet`; the auto UPDATE's WHERE re-checks it, uses `.returning()`, and only then logs).
+    Auto-won on `quote_accepted`; auto no answer (`guessNoAnswers`, on Quotes load and a step in
+    `followup-scan`) after 2 sent nudges + 7 quiet days, or 21 quiet days with fewer. A quote
+    thread = category quote_request OR an outcome ever set. Lost / no answer stop all nudges; won
+    stops quote nudges (a won job's invoice is still chased until paid). Auto guesses don't delete
+    a waiting nudge — they add a "check before sending" flag; an owner decision expires it (and
+    deletes its Gmail draft). Read-only accounts can't mark quotes (`?error=readonly`). Activity:
+    "You won N of M quotes decided this month (P%)." (by `quote_outcome_at`, in the owner's month:
+    `business_profile.time_zone`, Eastern by default, via `localMonthStart`; the Activity month
+    label and month counts use the same zone).
+  - **#27 `/money`:** invoice threads (`extracted.invoice`, or `invoice_thread` kept across
+    re-sorts; facts carried when a later email has none or the same number), oldest due first.
+    Excludes supplier_vendor and threads whose newest sender is a receipt domain
+    (`RECEIPT_SENDER_DOMAINS` stripe.com / quickbooks.com / intuit.com). Owner Mark paid / Undo,
+    "Not owed to me" (`invoice_paid_source = not_owed`, out of both lists) / Put back via
+    `?show=hidden`. Auto-paid: a customer's same-thread "paid" (never from a receipt sender), or a
+    receipt that names the invoice number (normalized; **no amount-only match**). A paid or
+    not-owed invoice is never chased; owner Mark paid expires the waiting nudge and deletes its
+    Gmail draft (`expirePendingNudge`), an auto-paid mark only flags it ("We think this was paid").
+    A later email naming a different invoice number reopens the row: the paid mark (ours or the
+    owner's) is cleared and logged as `invoice_reopened`. "Not owed to me" is never cleared, and
+    injection emails never reopen.
+    A3: a sent purpose note, any quote outcome or a paid invoice stops nudges, and the sent screen
+    then promises none. `expirePendingNudge` claims the nudge in one conditional UPDATE (pending,
+    Send not tapped) before touching Gmail or Activity: a Send tapped first wins, and a double
+    "Mark paid" closes it once.
+  - **#29 review request:** `business_profile.review_url` (https only). "Ask for a review" on Inbox
+    rows and paid Money rows, owner tap only, when `job_done` or the invoice is paid. Never a
+    complaint: `threads.complained_at` is sticky, and any complaint from that address in the last
+    12 months blocks it. Never no-reply/receipt senders, supplier_vendor, injection/municipal mail,
+    or an address the owner never wrote to (`knownCustomer`). One per address per 12 months,
+    serialized by `pg_advisory_xact_lock` (`src/server/review-lock.ts`).
+  - **#26 closing question:** built behind `FEATURE_CLOSING_QUESTION` (`src/config/features.ts`;
+    on only for "1"/"true"/"on"; the code default stays off). **On since 2026-10-14** (Davi): `1`
+    in Vercel on Production and Preview, live from the next deploy (the launch merge). Offer on Quotes after 2 sent
+    nudges + 7 quiet days; owner tap only (never a job), once per thread ever (partial unique index
+    `drafts_one_closing_question_per_thread`; a lost race returns `already_asked`/`already_pending`
+    and deletes the extra Gmail draft); separate from `followup_count`.
+  - **#15 price memory:** `price_history` (amount, kind of job, date; one row per thread) written by
+    `captureQuoteAmounts` from the owner's own sent quotes (plus a one-off backfill of existing
+    captured amounts); owner-typed Won amounts never go in. Similarity in code (job-word overlap,
+    `SIMILAR_AT` 0.5, top 3). Shown only on quote requests ("Last 3 similar"): on Queue (tap a
+    figure to fill `{{price}}`) and as plain text on Inbox. **Never sent to the AI** and never in digest/admin/push/SMS:
+    a static boundary test lists the only files that may touch it, plus per-prompt tests. Kept
+    past the body purge; goes with the mailbox / account.
+  - Sentry: `ui.*` breadcrumbs lose message and data (`scrubEvent`). A failed query's bound
+    values never leave: `scrubEvent` cuts every exception value (causes too), `message` and
+    `logentry` at `\nparams:` and keeps only the first line of anything starting `Failed query:`. M7's new controls (Money
+    cards, past-price buttons) use aria-labelledby or visible text, never an aria-label with an
+    amount or name. Older labels (draft card, quote card, seasonal-note remove, admin waitlist)
+    still carry a name or owner text and are kept out of Sentry only by the `ui.*` scrub.
+- **Plan M8 (2026-10-12, branch `claude/milestone-6-8`; #31 #32 #33 #34 #35 #38 done):**
+  Migration 0025 (additive, no backfill): `threads.quote_requested_at` (set once when a thread is
+  first sorted quote_request, never cleared, like `complained_at`; the time is the customer's
+  first email since the owner last wrote — "wrote" as in `lastOutSql`, see "Side conversations"
+  below — so a new job asked for on an old conversation dates from the request; threads sorted
+  as quotes by older code fall back to the thread's first inbound), `threads.job_kind` (one of our
+  fixed labels, set at classification; only replaced while null or "Other jobs"; injection emails
+  leave no mark), `threads.at_risk_alerted_at`, `business_profile.monthly_summary_last_sent_for`
+  ('YYYY-MM'). Queries count a quote request as `quote_requested_at IS NOT NULL OR` the current
+  quote rule (`quoteRequestSql`), so a request re-sorted as scheduling still counts.
+  - **Queue numbers have one source:** `queueMembership` / `queueCounts` (`src/server/drafts.ts`)
+    share listQueue's filter but select only ids, category, priority, kind and times, with no
+    50-row cap. The digest, `/api/push/summary` and `/api/badge` use them, never `listQueue`. This
+    also fixed the digest counting snoozed threads and sends still in their undo window.
+  - **#31 Needs you:** up to 3, emergencies first then oldest waiting; waiting since = the
+    customer's first email after the owner last wrote (owner wrote last → noun only, sorted last).
+    Fixed category nouns (`digest-rules.ts`), never the needs-owner reason. Links are only
+    `/queue`, `/settings#digest`, `/quotes` and `/queue#t-<uuid>` (allow-list test, no `@` or `?`).
+    Queue cards carry `id="t-<uuid>"`. The (app) header isn't sticky, so cards use `scroll-mt-4`
+    plus `scroll-mb-28` on phones (the bottom tab bar), and `ScrollToThread` scrolls a streamed card
+    into view (the browser's own hash scroll fires before the card exists).
+  - **#32/#33 week:** Monday 00:00 → Monday 00:00 in the owner's zone (`weekBounds`, DST-safe;
+    pure date code lives in `snooze-rules.ts`: `localParts`, `localMonthStart/Name`, re-exported).
+    `src/server/scorecard.ts`: replies and follow-ups by `decided_at`; quotes out = each quote
+    request once, in the week of the owner's first answer; response time = the request time
+    (`requestAtSql`: `quote_requested_at`, else the thread's first inbound) → owner's first answer
+    (synced email that isn't a side email, sent draft, or a send in its undo window), calendar time,
+    filed under the week the request came in, plus how many are still unanswered. No-reply senders
+    (`src/server/sender-rules.ts`, SQL twin in `thread-sql.ts`) count as neither. Time saved =
+    `MINUTES_PER_SENT_REPLY` (now in `src/config/drafting.ts`) × (replies + follow-ups sent).
+    `monthSummary` now counts sent items by `decided_at` too, so a week can't beat its month.
+    Activity: "This week so far" card with last week alongside; Monday's morning summary gets a
+    "Last week" section (skipped if all zero).
+  - **#34 leads at risk** (`leads-at-risk.ts`, rules in `leads-at-risk-rules.ts`): business hours
+    are one default in `src/config/business-hours.ts` (Mon–Sat 7am–6pm, owner's zone; the free-text
+    `business_profile.hours` is for drafting only and is **not** parsed), `LEAD_AT_RISK_HOURS` 4
+    (`businessMinutesBetween`), `LEAD_AT_RISK_MAX_AGE_HOURS` 72 calendar hours (so the 30-day
+    backfill can't flood alerts), `LEAD_AT_RISK_PUSHES_PER_DAY` 3. Answered = an owner email after
+    waiting-since, a sent draft decided since then, or a send queued / claimed. Only mailboxes that
+    are active and synced in the last 30 min count (a stale mailbox can't see the owner's replies).
+    Snoozed, decided, out-of-inbox and no-reply leads are skipped. A push step in the 15-minute
+    lifecycle job (after `m7-backfill`): inside business hours and outside quiet hours, claims the
+    shared push slot (10-minute gap with new-lead pushes), marks each lead once per **waiting
+    episode** (`at_risk_alerted_at < waiting since` re-arms it), counts the day's cap from
+    `lead_at_risk_push_sent` activity rows; if no phone got it, the marks and the slot are handed
+    back and nothing goes in Activity. The tap opens `/queue?t=<uuid>#t-<uuid>` (a real
+    navigation; `sw.js` `safeUrl` allows only that or `/queue`), or `/quotes` when the lead has no
+    queue card. The morning summary always has the counts-only "N quote requests have waited more
+    than 4 hours." line, push or not (harmless catch-up), plus a Needs-you line linking to Quotes
+    for at-risk leads with no card.
+  - **#35 monthly summary** (`monthly-summary.ts`, rules in `monthly-rules.ts`): a second step of
+    the hourly `morning-digest` job; follows `digest_enabled`; due on local day 1–3 **at/after**
+    `digest_hour` for the previous month in the owner's zone; Resend idempotency key
+    `monthly-<workspace>-<YYYY-MM>`; marker set only after a send (no Resend env → nothing sent or
+    marked); quiet months and read-only accounts get none. Contents: quote requests, top 3 job
+    kinds (`src/config/job-kinds.ts`, per trade, whole-word keyword match on the model's
+    `service_requested`, "Other jobs" fallback — only the label is stored or sent), top 3 lead
+    sources (`src/config/lead-sources.ts`; domains split in SQL so no address reaches JS; Google
+    only as the exact hosts `localservices.google.com` / `business.google.com`; facebookmail.com
+    left out as too broad; else "Direct email"; the domain is the requester's,
+    `requestSenderSql`), quote requests by `requestAtSql`, repeat customers (an address with a
+    **new** request in the month — a conversation that began in the month or a quote asked for in
+    it — and an earlier inbound on a **different** thread before the month, one SQL count; one job
+    split over two September threads that carries on in October is not a repeat) and win rate
+    (`closeRateBetween`).
+  - **#38 badge:** `src/lib/app-badge.ts` + `AppBadge` in the (app) layout fetch the count-only
+    `/api/badge` (`{ count }`, 401 signed out) at most once a minute, after a queue action and on
+    becoming visible; `sw.js` sets it after a push. Count = replies ready + needs-you, capped at 99,
+    0 for read-only accounts. Cleared at 0, on a 401 and on signed-out screens; a network error
+    leaves it alone. True lock-screen widgets aren't possible for a web app (no API for them).
+  - Logs: `console.error('<event>', { ids, error: err.name })` — never `err.message` (Stripe
+    errors echo customer ids). `*-rules.ts` files never import `server-only` or `@/db` (test).
+- **#47 referral credit (2026-10-12, built behind `FEATURE_REFERRALS`, off; no amount):**
+  `src/server/referrals.ts`, rules in `referral-rules.ts`. Migration 0026 (additive):
+  `workspaces.referral_code` (unique, 12 chars base64url, random) / `referred_by_workspace_id`,
+  `waitlist.referral_code`, `invites.referred_by_workspace_id`, and `referral_credits` (unique
+  `(referred_email_sha256, side)`; `referred_workspace_id` / `beneficiary_workspace_id` ON DELETE
+  SET NULL; status pending / applied / failed / skipped; attempts, last error code).
+  `REFERRAL_CREDIT_CENTS = null` and `REFERRAL_CREDIT_TO = "referrer"` (Davi, 2026-10-13: only the
+  owner who shared the link gets it) in `src/config/pricing.ts`;
+  `referralsVisible()` = flag on **and** a positive amount — otherwise no link, no code stored,
+  nothing carried, no credit, no Stripe call. Path: `/?ref=<code>` → waitlist (hidden field) →
+  `inviteFromWaitlist` → first sign-in copies it to the workspace and clears it on the invite (used
+  once; a first sign-in while it's off still uses up the invite's referral, unlinked). Settled
+  **once ever**, the first time the referred account is `active` with
+  `setup_paid_via = 'stripe'` (not house, not legacy null): one insert of the sides in the config
+  at that moment, or a single `skipped` row (flag off, no amount, self, same business domain —
+  public webmail like gmail.com exempt). Later config changes add nothing. The email fingerprint
+  (sha256 of the normalized email, salted with `AUTH_SECRET`) survives account deletion, so
+  delete + re-sign-up can't be paid twice. Each credit = a negative Stripe balance transaction with
+  `Idempotency-Key: referral-<referred workspace>-<side>`, and first a check of the customer's
+  balance transactions for `metadata.referralCreditId` (Stripe idempotency keys expire after 24h).
+  Hooks: any admin move that lands on `active` (setup call done, resume) and the webhook
+  (`billing.ts`) call `creditReferralSafely` (never fails the move; settles only once); the
+  15-minute sweep (after `m7-backfill`) applies pending rows once the beneficiary has a Stripe
+  customer and settles missed actives; permanent Stripe errors (resource_missing / invalid
+  request) → `failed`, shown on the /admin card. `stripeClient()` is exported from `billing.ts` (one
+  client). Activity `referral_credit_applied` carries the side only. Test seam:
+  `setReferralConfigForTests`.
+- **Public site pass (2026-10-11, branch `claude/homepage-fixes`, PR — Davi reviews before merge):**
+  `/privacy` and `/terms` render `docs/privacy-policy.md` / `docs/terms.md` (drafts, "Draft — not
+  yet reviewed", `[To confirm]` items) through `src/lib/markdown.tsx` (tiny renderer, React elements
+  only) with contact details substituted from `site.ts` + `SUPPORT_EMAIL`; footer links on every page.
+  Marketing rules: present tense only for what's live on production; never say the app "can't send"
+  in general; no shop counts, testimonials, invented numbers or logos; no "GC" (MA = CSL), no license
+  number until Davi confirms. Live check 2026-10-11: sorting runs on prod (classify.v2 calls in
+  logs); morning summary is not live for owners (Resend test sender) → copy says "When you're set
+  up". Security headers in `src/config/security-headers.ts` (CSP with `unsafe-inline` scripts —
+  nonces would make every page dynamic; form-action allows Google + Stripe for OAuth/Checkout
+  redirects; microphone=(self) kept for M5 voice-to-edit). OG image from committed OFL TTFs in
+  `src/app/_og/`; `metadataBase` from `appUrl()`. Waitlist trade + team size are now required.
 - **Sending requires a real payment (Davi, 2026-10-10):** `canSend` = status in `SENDING_ALLOWED`
   **and** `workspaces.setup_paid_via` ∈ {`stripe`, `house`}. `stripe` is set only by the signed
   webhook's paid checkout that included the setup fee; `house` only by the admin move
@@ -415,6 +700,472 @@ In a sandbox with preinstalled Chromium: `PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-brows
   `::timestamptz` (PGlite tolerates it, so unit tests won't catch it; e2e did).
 - Lesson: scripted `str.replace` edits must `assert old in s` — silent no-ops after Prettier caused
   M3/M4 regressions. `tests/unit/jobs.test.ts` fails if a `createFunction` isn't registered.
+- **Squared Away Growth (2026-10-12, branch `claude/growth-page`, stacked on PR #9):** a separate
+  one-on-one marketing service (ads, posts, Google Business Profile, reviews, websites) for anyone
+  in the trades. `/growth` (public, static, charcoal edge to edge; no switch, no `data-sa-half`, no
+  theme attribute) and the second half of `/`: `<div data-sa-half="app">` (hero … waitlist, then
+  `GrowthBridge`, `growth-bridge.tsx`, the paper hinge, no id) and
+  `<div class="sa-inverted" data-growth-chapter data-sa-half="growth">` (sticky chapter bar, then
+  the opener, which carries `#growth` via `openerId` + `scroll-mt-18`, … Book a free call). All copy in
+  `src/components/marketing/growth/growth-copy.ts` (names/phone/company from `siteConfig`; guard
+  test bans prices, unlaunched features, he/him/his and "builder"). No Growth prices on the site.
+  Services in `src/config/growth.ts`.
+  - "Book a free call" (`requestGrowthCallAction`) → the existing `waitlist` table, **no migration**.
+    Conventions: `team_size = 'growth-only'` marks a row that exists only for Growth; the note is
+    the app note, then ONE `[Growth call]` block (newest request replaces the previous one;
+    identical resubmit is a no-op). Read them only through `describeWaitlistEntry`
+    (`src/server/growth-note.ts`). Typed `[Growth call]` is scrubbed (both forms). A Growth request
+    never changes name/team size/created/invited, **never invites** (`inviteFromWaitlist` →
+    `growth_only`; mixed rows invite with the app note only); an app join upgrades a growth-only row.
+    `waitlist.phone` is the newest Growth number on a growth-only row, and only the app form's own
+    number on an app row (a Growth number lives in its block, so a replaced request leaves no old
+    number behind, as the privacy policy says). Email capped at 254 characters (both forms).
+  - Shares the `waitlist` hashed-IP limit bucket (10/h across both forms). Content-free notice to
+    `ADMIN_EMAIL` ("New Growth call request", Resend idempotency key = HMAC(AUTH_SECRET, email) +
+    local date), awaited but capped at 5 s (`GROWTH_NOTIFY_TIMEOUT_MS`) so a hung Resend can't hold
+    the form. Logs only `growth_call_requested {existing, services}`. Both form actions catch a
+    failed save, log `growth_request_failed` / `waitlist_join_failed {error: name}` and throw a
+    content-free error (Next logs whatever an action throws, and a Drizzle error's message carries
+    every bound value). Sentry scrub ported
+    verbatim from M7 (`src/lib/sentry.ts`) so a failed insert's params never leave;
+    `tests/unit/sentry.test.ts` is M7's file (its price_history case included since the launch
+    merge), and the Growth case lives in `tests/unit/growth-sentry.test.ts`.
+  - **Scroll switch (2026-10-13, Davi: "it's not a tap, they're just scrolling down… it switches,
+    boom, to the one-on-one"):** replaces the old CSS scroll-timeline wipe (`GrowthWipe`, `.sa-flip`,
+    and the e2e that asserted `animation-timeline` are gone; don't bring them back). `GrowthSwitch`
+    (`growth-switch.tsx`, mounted once on `/`, last child) sets `<html data-sa-theme="app|growth">`
+    in an effect only (absent without JS, removed on unmount) and `data-sa-switching="in|in-quiet|out"`
+    while a transition plays. Two IntersectionObservers on the Growth wrapper (`rootMarginFor`:
+    −15% / 0% bottom), no scroll listeners; `nextMode` (`switch-rules.ts`, pure): growth at top ≤
+    0.85·vh (the chapter bar just came up: the opener is never readable on paper first), app at ≥
+    1.0·vh (back off the bottom edge), else unchanged (hysteresis band, no strobing). Each reading
+    is decided against the height **its observer measured** (`rootHeight`, from the entry's
+    `rootBounds.bottom` and its line), never `innerHeight` (phone toolbars / pinch zoom make them
+    differ, which could strand a reading in the band). Instant (no show) until both observers reported + load + 2 rAFs +
+    `SETTLE_MS` 500, and afterwards only for real navigation: a `#` link click, `hashchange`,
+    `popstate`, keyboard focus moving into Growth (capture `focusin` inside the wrapper while on the
+    app side, last input a key, not a pointer: Tab from the waitlist must not hide the focused link
+    under the cover) (readings for `NAV_MS` 1000 after it are instant and band-free via `jumpMode`, line
+    at 0.925·vh; a short passive scroll listener covers a landing that crosses no line), bfcache
+    `pageshow` (also `jumpMode`), a hidden tab or reduced motion (live matchMedia). No distance-
+    based jump rule (a fast flick across both lines must still play the show).
+  - **The show is "Big words", and it replays (Davi, 2026-10-14: picked look 4 of the five
+    `?look=` previews, and "after one time the animation … doesn't do it ever again … I wanted
+    to see the animation more").** The preview chooser (`?look=`, `data-sa-look`, the light
+    switch / curtains / tide / blinds looks) and the old flood-and-pill cover are gone; don't
+    bring them back. `big-words.tsx` draws it, `big-words-rules.ts` is its clock (mirrored in
+    theme.css, comment and declarations unit-checked in `tests/unit/growth-big-words.test.ts`),
+    `switch-rules.ts` decides: `switchPath(next, instant, queued)` and `tapPlaysShow(...)` (pure,
+    unit-tested). **Every** crossing from the app into Growth plays the full show ("in"), however
+    many times it has played (no once-per-page memory anywhere; a unit test greps for one); the
+    way back up is always the quiet "out". **Every** pointer tap on a `#growth` link (hero,
+    header) while on the app side, settled and not mid-transition plays it too: default and
+    Next's Link are stopped, the show plays, and under full cover `pushState(null, "", "#growth")`
+    adds the entry the link would have (pushed **before** the page moves, so Back returns to where
+    the tap was), or nothing when the address already ends in `#growth` (the link and Next would
+    only replace it, so repeated taps don't stack copies). Keyboard activation keeps the native
+    jump. A `#growth` click that isn't the show while the address already ends in `#growth` (in
+    Growth, keyboard, mid-wipe) is scrolled to the opener by GrowthSwitch itself, because Next's
+    Link doesn't move the page for the address it's already on (e2e caught it).
+    Full show ("in"): five charcoal bands slam in from alternate sides (240 ms each, the middle
+    band first, the outer two from 80 ms, full cover at 320) with "The app" in huge serif in the
+    middle band; the theme swaps at `BW_THEME_AT_MS` 380 under full cover **and the page moves to
+    the opener** (`#growth`, `scrollIntoView` instant; again at `BW_REALIGN_AT_MS` 1220 in case a
+    fling's momentum carried on), so every full show lands on the one-on-one opener with its
+    `.sa-land` headline on screen, however fast or slow the scroll (review 2026-10-13: a flick went
+    3000px past the opener under the cover, and a slow scroll lifted the cover onto the bridge with
+    the opener below the fold); not when navigation (Back etc.) happened during the show. The
+    words tick over to "One-on-one" in huge heavy sans (240 ms from 440), which inverts at 680
+    (1 ms flip), holds 620 ms, then the bands fly back out the way they came, outer ones first,
+    from 1300 (all gone by 1540); `.sa-land` delays 960 / 1020 ms after the swap; cleanup at
+    `BW_DONE_MS` 1740 re-applies the theme then drops the attribute. Each band reaches 1px into
+    the next (no paper hairline); transforms and 1 ms opacity flips only, no clip-path.
+    While it covers the screen, taps are swallowed (capture-phase click / pointerup / mousedown
+    on the document, added in `play()`, removed in `finish()` and cleanup), so nothing hidden under
+    it (tel: link, form) can be hit, and the page is held still (non-passive wheel / touchmove
+    `preventDefault`, and PageUp/Down, Space, arrows, Home/End unless typed in a field). One show
+    at a time: decisions during a show or wipe queue as `pending` and play quietly at cleanup
+    (`queued` → "in-quiet" / "out"), or instantly when they came from navigation
+    (`pendingInstant`); every timer and hold ends in `finish()` before the next can start. Every
+    path ("in", "in-quiet", "out") forces a style flush of the stage before setting
+    `data-sa-switching` (`getBoundingClientRect` in `play()`, with the attribute absent, so the
+    stage computes display none and drops the old animations). A queued path starts in the same
+    task the last one ended, and all of them run `sa-bw-out-*`, so without the flush the browser
+    keeps the finished animations and the bands stay off-screen: a bare colour cut (review
+    2026-10-14; e2e checks a band is on screen during a queued "in-quiet" and a queued "out").
+    Quiet paths ("out", and "in-quiet" for a queued way down): bands of the old colour fly apart
+    sideways, no words, never fades (`BW_QUIET_MS` 260, cleanup `BW_QUIET_DONE_MS` 300). The stage
+    is 100vh. There is **no interactive switch**: the stage is aria-hidden, inert, pointer-events
+    none, display none unless switching (and in print / reduced motion).
+  - theme.css: the seven colours are written once as `--sa-k-*` constants and the palette points at
+    them. `:root[data-sa-theme="growth"]` swaps the palette in place (paper↔charcoal, offwhite↔graphite,
+    stone→graphite, slate↔ash, `--input` ash), so the whole site (header, body, cards, AboutDavi,
+    the waitlist form) flips with no per-component code; `.sa-inverted` / `.sa-light` get the
+    canonical seven plus popover/secondary/accent/destructive back (growth-scoped restore). In app
+    mode `[data-sa-half="growth"]` is mapped the other way (paper with charcoal text) so nothing
+    dark shows before the switch; its `.sa-light` gets the canonical seven. Every rule is scoped by
+    `data-sa-theme`, so nothing changes off `/`.
+    `tests/unit/growth-switch.test.ts` guards this and bans literal colours in page.tsx, marketing
+    components and the footer (QueuePreview's shadow is allow-listed).
+  - **Merged into claude/launch-integration (2026-10-14):** sunlight mode (#37,
+    `:root:has([data-contrast="high"])`) used to write literal hexes onto `--sa-*`; they are now
+    constants on `:root` too (`--sa-k-hc-charcoal` #111111, `--sa-k-hc-offwhite` #fffef9,
+    `--sa-k-hc-black` #000000), the sunlight block points at them, and the "each colour written
+    once" test lists them. The two never meet at runtime (`data-contrast` is only on the signed-in
+    app's wrapper and `/` redirects signed-in owners to /queue; `data-sa-theme` exists only on
+    `/`). The old `.sa-flip` / `view-timeline` block is gone from the launch branch too.
+  - AboutDavi stays in the app part. Its old "a working builder." / "He built…" wording broke the
+    site's no-"builder" / no-pronouns-for-Davi rule, so on 2026-10-15 (before the production merge)
+    it became "who's behind this, someone in the trades." / "It began as the tool for A&C
+    Construction's own inbox." (`tests/unit/about-davi.test.ts` guards it like the Growth copy).
+    LAUNCH.md step 13 tells Davi and asks if he wants other words.
+  - The homepage chapter bar is opaque charcoal and stays pinned to the end of the page (the footer
+    is shorter than the screen), so the site header (charcoal by then, after the switch) never
+    comes back. Intended.
+  - /admin → "Waitlist and Growth calls": chips, the request, Call link, growth-only explanation.
+  - Homepage trial FAQ / "Our promise" wording left as on PR #9 (awaiting Davi's review there).
+    M11 S5 later changed the trial and deletion wording (see "M11 legal drafts").
+- **Launch merge (2026-10-13, branch `claude/launch-integration`):** M5–M8 + #47 and PR #9 + Growth
+  in one tree. Referrals and Growth share the waitlist: the code is stored only while
+  `referralsVisible()` (flag on AND an amount); a Growth request never stores one; an app join that
+  upgrades a growth-only row stores its code (if visible and none was kept) and takes the app
+  form's trade (required there, and it is what the invite uses); a different Growth trade stays in
+  the block as "Trade given" (`withBlockTradeGiven`). robots.txt also disallows `/money` and
+  `/record`. `inviteFromWaitlist`
+  refuses growth-only rows (`growth_only`) before looking at any referral, then carries
+  `referredByWorkspaceId` only while visible. /admin's "Came from a referral link" sits on the
+  Growth-aware `WaitlistEntry` card (app sign-ups only, visible only). The homepage keeps
+  `ForgetOffline` and Growth's opaque header (no backdrop blur). theme.css holds sunlight mode
+  (#37) and the Growth switch / `.sa-light` / `/growth` background side by side (the flip was
+  replaced by the scroll switch, merged 2026-10-14; see "Merged into claude/launch-integration").
+- **Gmail drafts are not mail (2026-10-13, M8 review):** a Gmail draft is a message with the
+  DRAFT label and no SENT. Sync used to store every draft (ours included) as owner mail ('out'),
+  so an unsent draft read as "the owner answered". Sync now skips DRAFT-without-SENT
+  (`isUnsentDraft`; no row, no thread, no `last_message_at` move). Google's drafts guide says a
+  sent draft becomes a new message; not checked live, so the code is also right if Gmail kept
+  the id: `listHistory` asks for `messageAdded` **and** `labelAdded` (ids that gain SENT);
+  `ingest` re-fetches a stored row that is still an unsent draft and updates it in place
+  (`setWhere`), never other stored rows; `sendDraft` stores its own sent message
+  (`recordSentMessage`, best effort, **after** the `reply_sent` row, only when the writer can
+  read). Thread `participants` are merged in SQL on upsert (an app send can run alongside a
+  sync). "The owner wrote" reads ignore unsent drafts with one predicate (`notDraftSql` /
+  `notDraftMessage` in `thread-sql.ts`, same rule as `isUnsentDraft`: DRAFT+SENT is mail):
+  lastOutSql (so leads at risk, digest waits, no-answer guesses, price memory), follow-ups,
+  scorecard, reconcile, knownCustomer, createDraftForThread / revise conversation,
+  classification's ownerWroteBefore, ownerQuotedCents, Quotes' stage, the closing-question
+  timing. **A stored draft never answers a lead** (alert even before the cleanup). The
+  exceptions are on purpose and only matter for rows old sync stored: whatever could send on
+  its own treats an unchecked row as a possible answer — `threadsToAutoDraft` still counts it
+  as the owner's last write, autopilot layer 3 refuses a thread with one after the customer's
+  email ("You might already have answered this in Gmail."), and `runAutopilotSend`'s
+  newer-mail check counts it; sms-alerts' newest-direction check doesn't filter them either.
+  **Autopilot asks Gmail before sending** (`MailboxWriter.threadDraftMessageIds`,
+  threads.get format=minimal, ids only): any unsent draft on the thread other than ours →
+  stood down "You're writing a reply in Gmail." (the owner's autosaved reply is no longer
+  synced). Only asked when `canSend` and the mailbox is active (no Google call when blocked).
+  One-shot `runDraftMessagesCleanup` (`src/server/draft-message-cleanup.ts`, 15-min job after
+  `m7-backfill`): rows an app send recorded (`sent_gmail_message_id`) become SENT without Gmail;
+  every other stored draft is looked up in Gmail (100 per mailbox per run) — sent → updated, gone
+  or still a draft → deleted; pending drafts threaded to a deleted row are re-pointed to the
+  newest real message; a quote amount / price-memory row taken from a deleted draft's text is
+  cleared (unless the figure is in real sent mail, the owner typed it, or any real owner email
+  on the thread has lost its text to the purge) so `captureQuoteAmounts` redoes it;
+  `last_message_at` recomputed. **Done per mailbox** (`app_settings`
+  `cleanup:draft-messages-v1:<mailboxId>`): a mailbox we can't read (lost access, read-only
+  account) keeps its rows and no marker, and is checked again every run (one query) until it
+  can be read; the run-wide key `cleanup:draft-messages-v1` is written only when every mailbox is
+  done (nothing failed, skipped or left over). Not repaired: `extracted.quote_accepted` /
+  auto-Won outcomes decided while a draft counted (the owner can change them). Ingest sets
+  `last_message_at` = greatest(new messages, stored messages' max) so a stale read can't put a
+  deleted draft's time back.
+- **Side conversations (2026-10-13, M8 review):** Gmail keeps the owner's forward of a lead to
+  the crew (and the crew's reply) in the customer's conversation, so "the owner wrote" counted a
+  forward as an answer. `sideEmailSql` (`thread-sql.ts`) now leaves out side emails everywhere
+  "who wrote last" is asked: `lastInSql` / `lastOutSql` / `waitingSinceSql` (leads at risk,
+  Quotes' stages, digest waits, no-answer guesses, follow-ups), the scorecard's first answer,
+  the `quote_requested_at` timing, and `createDraftForThread` for nudges / closing questions
+  (`last`, the addressee, the threading and the model's conversation). Decided by **who the
+  owner wrote to**, never by one "customer" address: the customer's side = anyone on the
+  thread's inbound mail (sender, To or Cc). An owner email is side when it goes to someone,
+  none of its recipients is on the customer's side (crew replies don't count as that), and it
+  is a forward the owner started (subject `Fwd:` / `Re: Fwd:` on a thread whose lead didn't
+  itself arrive as a forward) **or** every recipient is on the mailbox's own business domain
+  (crew@shop.com; never on public webmail, `PUBLIC_WEBMAIL_DOMAINS` in `sender-rules.ts`).
+  An inbound email is side when its sender got the lead from the owner (a recipient of such an
+  owner email, or of any owner email when on the owner's business domain: "Dana, meet Mike")
+  and had never been on the thread's inbound mail before. Not a strict "To/Cc holds the
+  customer" rule because a contact-form lead's customer is answered at the form's Reply-To,
+  which sync doesn't store (an additive `messages.reply_to_addresses` would allow the strict
+  rule). **Known gaps:** a plain "Re:" sent only to an outside address answers the lead (the
+  contact-form case); on a lead that arrived as a forward (a friend, an office or a property
+  manager), the owner's forward to an outside crew counts as an answer.
+  **Known limitation (A11):** `quote_requested_at` is sticky, so a returning customer asking for
+  a new job on their old, already decided quote thread keeps the first request's time: the
+  scorecard, the monthly count and the repeat-customer check miss the new request (no history of
+  requests is kept). Re-stamping it when the outcome is decided would also need the outcome and
+  Quotes' stage to move with it — not built.
+  **A10 in every unit test:** `createTestDb` calls `refuseDateParams`
+  (`tests/support/no-date-params.ts`), so PGlite refuses a JS `Date` bound into raw SQL as
+  postgres.js does.
+- **M11 security audit (S4, 2026-10-13):** static tests guard the surface —
+  `tests/unit/security-surface.test.ts` (C1 every server action awaits `requireOwner` /
+  `requireAdmin` first, reviewed public/inline allow-lists; C2 admin pages + no `loading.tsx` over
+  must-404 screens; C3 every route handler in a table with its guard, a new route fails, and no
+  `src/pages`, root `app/` or root `pages/` may exist (the table covers src/app only); C4 every
+  navigation sink — server: `redirect` / `permanentRedirect` (also renamed), any `.redirect(…)`,
+  Auth.js `redirectTo`, a Location header in any case (object key, string / computed key,
+  shorthand, `[name, value]` pair, `new Headers(…)`, `.set` / `.append`; outside a `headers:`
+  value or `new Headers(…)` a plain string literal is let through, e.g. site.ts's place name);
+  client: `push` / `replace` on a `useRouter()` router (or one named `router`),
+  `location.assign` / `.replace`, `window.open`, and assigning `location` / `window.location` /
+  `document.location` or their `href` / `host` / `hostname` / `protocol` — takes a visible own
+  path (`"/x…"`, a template or concat starting `/x`, our imported `appUrl` of one, a `const` /
+  helper / non-exported top-level helper parameter whose every call passes one and that is never
+  written to), else it must be in the reviewed list (Stripe URLs, Google consent, the profile
+  `returnTo` enum); names are resolved with TypeScript's binder (`bindFiles` in
+  `tests/support/source-ast.ts`), so a for-of / catch / hoisted `var` / inner helper of the same
+  name can't borrow an outer const's verdict; plus the old redirect-target param-name check). Not
+  covered: link `href`s and a computed key held in a variable. The scans read
+  .js/.jsx/.mjs/.cjs as well as TS (`allowJs`; Next serves JS routes), and src/app must hold no JS
+  file (M11 review findings 3–4). Also
+  `tests/unit/no-content-logs.test.ts` (C11). Fixes: the send API answers 403 for an
+  unparseable Origin (was a 500); `sendPush` re-checks the push-endpoint allow-list
+  (`src/lib/push-endpoint.ts`) and never fetches anything else (returns `gone`); HSTS
+  `max-age=31536000` (no includeSubDomains/preload); Connect Stripe failures travel as fixed
+  codes (`src/server/stripe-error-rules.ts`) and /admin shows our sentence, never Stripe's text.
+  **C9 accepted as the UI behaves today:** read-only accounts may still snooze and tap "This one
+  needs me" (both only reorder the owner's own list; no Gmail or model call; tested).
+  Verified, no change: push endpoint re-homing on upsert, the Gmail push `?token=`, the health
+  commit SHA, CSP `'unsafe-inline'`, JWT-trusted admin email, `x-forwarded-for` on Vercel.
+- **M11 legal drafts (S5, 2026-10-13):** `docs/privacy-policy.md` and `docs/terms.md` checked
+  against the code; `tests/unit/legal-docs.test.ts` is the gate (numbers read from config/code,
+  the scope table from `GMAIL_SCOPES`, the three terms `[To confirm]` items unchanged, no
+  referral text while #47 is off). Limited Use uses Google's template sentence word for word and
+  the merger clause says "only after asking for your explicit permission first". The deletion
+  sentence ("Delete my account in Settings deletes your account and everything in it from Squared
+  Away, after one confirmation. Stripe keeps its own payment records.") is shared word for word by
+  the policy and the homepage FAQ (tested). Trial wording everywhere: nothing can go to a
+  customer, practice copies to yourself only — never "sending is switched off completely" (the
+  connect explainer and homepage are tested). `outputFileTracingIncludes` ships docs/*.md with
+  /privacy and /terms. **Open for Davi (S7 carries these):** the three terms `[To confirm]` items
+  (refunds, liability cap, governing law and venue); "plus any taxes" (settled 2026-10-14: Stripe
+  Tax, below); a lawyer's review of both drafts; the #47 referral-fingerprint line before
+  `FEATURE_REFERRALS` goes on; how to honour a waitlist / Growth removal request (the policy says
+  "ask us and we'll delete it", and there is no admin tool — done by hand in the database).
+- **Milestone 11 summary (2026-10-13, branch `claude/launch-integration`, not deployed):**
+  - **e2e seams (S1/S2):** `src/config/e2e.ts` is the only reader of `SA_E2E*`. `e2eMode()` is on
+    only when `SA_E2E === "1"`, `VERCEL`/`VERCEL_ENV` are unset, both `SA_E2E_GOOGLE_BASE_URL` and
+    `SA_E2E_ANTHROPIC_BASE_URL` are set with an http(s) hostname of exactly localhost / 127.0.0.1
+    / [::1], and `DATABASE_URL` is loopback or a unix socket (`isLocalDatabaseUrl`, read the way
+    postgres.js reads it: a comma, a second `@` or a `#` in the raw host part is refused, since
+    postgres.js cuts at the first `@`; `PGHOST` checked when it names no host). Otherwise
+    `googleEndpoints()` / Anthropic options are the real ones and `e2eHookSecret()` is null.
+    `/api/test-hooks/run` (POST; backfill, sync, voice, classify, draft, deliver through the
+    same functions the jobs call) is 404 unless e2e mode and a ≥32-char secret (constant-time);
+    errors return `err.name` only. No request-host check: under `next start`, request.url is
+    the server's own listen hostname, so it could never refuse. Instead playwright.config.ts
+    starts the app with `--hostname localhost` (an e2e spec proves the network addresses are
+    refused). Smoke runs (`PLAYWRIGHT_BASE_URL`) open no database: the global setup returns
+    first and only `tests/e2e/smoke-specs.ts` run (smoke + `security-public.spec.ts`: headers and
+    the hook's 404, Playwright-only imports); `tests/e2e/support.ts` throws at import on a
+    non-local `DATABASE_URL` (`tests/unit/e2e-harness.test.ts`). Fakes in
+    `tests/e2e/fakes` (loopback only, record no secrets, Gmail-faithful drafts/history).
+    `tests/e2e/full-flow.spec.ts` is the whole owner journey (paid: connect → backfill → voice →
+    classify → draft → sync → Send reply → exactly one threaded `drafts/send` → Delete my account
+    → one revoke, no rows; trial: 403 + practice copy to self only), and its steps map to the
+    demo-video script in `docs/google-verification.md` (tested).
+  - **Purge and deletion (S3):** see the M11 notes under the retention purge and Delete my account
+    above (draft flags, extracted free text, cleared send timers; invite + cost/email markers in
+    one transaction; waitlist kept). `tests/unit/data-lifecycle.test.ts` is the gate.
+  - **Security (S4):** see "M11 security audit" above (HSTS, `poll` / `gmailWrite` limits,
+    `sendPush` allow-list re-check, Origin parsing → 403, read-only gates as the UI behaves,
+    Stripe error codes, static surface tests incl. C15: every Sentry path goes through
+    `scrubEvent`; no "send a test error" button on purpose).
+  - **Docs (S5–S7):** legal drafts (above); `docs/google-verification.md` + `docs/SETUP.md`
+    (every env var the code reads, `tests/unit/env-docs.test.ts`; verification facts and the
+    demo-script mapping, `tests/unit/verification-doc.test.ts`); **`docs/LAUNCH.md`**, Davi's
+    plain-words launch checklist (Google verification first, merge, preview database, secret
+    rotation, env per environment, domain, Resend, Stripe live, Sentry, VAPID, Twilio/Pub/Sub,
+    Inngest check, smoke test, every open decision). `tests/unit/launch-doc.test.ts`: no
+    secret-looking value in any doc (also CLAUDE.md, AGENTS.md, .env.example), links and anchors
+    resolve, every setting SETUP.md marks required is in its table, and the screens, setting keys
+    and job names it tells Davi to look for exist in the code. Keep LAUNCH.md in step with the
+    code: a renamed screen line or job fails that test.
+- **Stripe Tax (Davi, 2026-10-14: "turn on Stripe Tax"):** detect, don't configure. Davi
+  activates Stripe Tax in Stripe's dashboard (origin address, registrations, default tax code);
+  `stripeTaxActive()` (`src/server/billing.ts`) = `tax.settings.retrieve()` status `active`. No
+  env var. `createCheckout` asks **first** (nothing is created in Stripe if it can't answer); a
+  failure logs `stripe_tax_check_failed` {workspaceId, err.name, reason} and rethrows into the
+  existing path (the action rethrows anything but `CheckoutNotAllowedError`) — never an untaxed checkout
+  once tax might be on. Active → `automatic_tax: {enabled: true}`, `customer_update: {address:
+"auto", name: "auto"}` (our customers are made without an address; note Checkout then saves
+  the name typed there over the business name) and `billing_address_collection: "required"`;
+  inactive → the session is exactly as before (tested by key set). Prices: new ones are
+  `tax_behavior: "exclusive"` (tax on top, matching the terms' "plus any taxes");
+  `ensurePrices({ fixTaxBehavior: true })` — **only from connectStripe** — sets found prices with
+  no / `unspecified` tax behavior to exclusive (the one change Stripe allows) and never touches
+  inclusive/exclusive ones. So Davi taps Connect Stripe again **before** Stripe's tax settings
+  (LAUNCH.md 7e; it works whether or not tax is on, so no checkout runs with tax on and an
+  unspecified price). A newly created portal configuration also allows `customer_update`
+  `["address"]`; an existing one is left alone (docs tell Davi to tick Billing address).
+  `/admin` Payments: `salesTaxStatus()` (5 s timeout, no retries, never throws; null without
+  Stripe) → `SALES_TAX_LINES` in `billing-rules.ts` ("Sales tax: on (Stripe Tax is set up)." /
+  "off. Set up Stripe Tax in Stripe to charge it." / "couldn't check."), plus `SALES_TAX_ON_NOTE`
+  under "on": Stripe's status turns `active` once the head-office address is saved — it only
+  means Stripe can calculate tax, and it charges tax only where a registration exists. So 7e's
+  "worked when" is "on" **and** Stripe → Tax → Registrations listing each state. Owner copy:
+  `SALES_TAX_NOTE` "Plus sales tax where it applies." under the plan cards on the homepage and
+  /billing (static: true whether or not tax is on). Privacy policy: Stripe's checkout may ask
+  for the billing address; we don't store it (tested; no address column); Stripe saves it and
+  the typed name on its customer record, which account deletion leaves at Stripe (the "Delete my
+  account" bullet says so; tested against `customer_update` in billing.ts). Subscriptions made
+  before Stripe Tax was active keep running untaxed until changed in Stripe.
+  **Stripe error logs:** stripe-node 23's `StripeError` never sets `name` (always "Error"); the
+  class is in `type`. Log `reason: stripeErrorReason(err)` (`stripe-error-rules.ts`, fixed codes)
+  next to `err.name`, and build test errors with `new Stripe.errors.<Class>(...)`, never a
+  hand-set `err.name`.
+- **Reset test payments (Davi, 2026-10-14):** /admin → Payments, **live key only**
+  (`stripeKeyMode` in `billing-rules.ts`: `sk_live_` / `rk_live_`; `stripeMode()` in billing.ts,
+  also what Connect Stripe's LIVE/TEST notice reads). Test key → the card says "Reset test
+  payments shows up after you switch Stripe to live mode." and both actions refuse
+  (`StripeNotLiveError`) before any Stripe call. `src/server/test-payments.ts`, rules in
+  `test-payment-rules.ts`. Candidates = any Stripe id or `setup_paid_via = 'stripe'`;
+  `customers.retrieve` / `subscriptions.retrieve` with the live key: `resource_missing` = test
+  id, an answer (a `{deleted: true}` customer too) = live, anything else = "couldn't check" (the
+  account is left whole). Reset = the 2026-10-10 precedent: clear the test ids; `setup_paid_via`
+  'stripe' → null unless a live customer or subscription is left (a 'stripe' setup with no ids
+  counts as test); `setup_paid_at` is **kept**, like the precedent's hand-marked accounts
+  (review fix: clearing it made Resume send a paused reset account to evaluation_expired);
+  house keeps house; setup_paid / active stay (can't
+  send, setup fee at checkout); past_due → `restored()` (a test subscription can't be paid);
+  other statuses and the plan unchanged. One transaction per account with a conditional UPDATE on
+  the ids, `setup_paid_via`, status and setup-call nullness (a live checkout meanwhile is never
+  overwritten; counted as couldn't check), `clearAutopilotCountdowns` (extracted from
+  `setWorkspacePlan`), activity `test_payment_reset` (booleans; Activity shows "Your test payment
+  was cleared — the setup fee is still due" only when the setup payment went; no "choose a
+  plan", since a paused account can't). No Stripe
+  call on a plain page load: **Check test payments** asks Stripe and keeps counts only in
+  `app_settings` `stripe_test_payments` (`{found, unchecked, reset, at}`); the card shows "Test
+  payments: N accounts still carry a test-mode payment." and, when N or M > 0, **Reset test
+  payments** behind the details/confirm pattern ("Yes, reset test payments") → "Test payments
+  reset for N accounts." (+ "Couldn't check M accounts. Tap again."). Afterwards: admin card
+  (Setup paid: Not yet, it reads `setup_paid_via`), checkout (fee included; a real payment now
+  records its own `setup_paid_at` unless one was already really paid), `resumeTarget` (unchanged:
+  a paused reset account resumes to setup_paid / active, still unable to send), house move (keeps
+  any date), `/billing` (`billingStatusLine`: "Sending turns on once your setup payment goes
+  through." instead of "Setup's paid…" / "renews monthly"; the Stripe-page sentence only with a
+  customer id), autopilot (locked: "Autopilot opens up once your setup payment goes through.";
+  the owner's switches are kept). Referral settlement needs `setup_paid_via = 'stripe'`, so a
+  reset account settles only after it really pays. `/admin/costs` still counts setup_paid/active
+  as revenue (status-based). LAUNCH.md step 7 order (2026-10-15 review): 7a key swap, 7b Connect
+  Stripe again **right away** (only `connectStripe` creates a webhook endpoint, so a live checkout
+  paid before it never reaches the app and nothing can mark it paid; 7a–7c in one sitting), 7c
+  Check / Reset test payments (order-independent: `eventFromOtherMode` drops test events before
+  Connect, and they fail the live endpoint's signature after it). The past_due → `restored()`
+  move leaves read-only without a payment (jobs and AI resume, still can't send):
+  `PAST_DUE_RESET_NOTE` says so on the /admin confirm and in LAUNCH.md 7c, and step 13 asks Davi
+  whether that's okay (keeping past_due read-only would be a small code change).
+- **Davi's decisions, 2026-10-14** (all in `docs/LAUNCH.md`: the "Decided" and "Still open"
+  parts of step 13; research with sources was gathered that day, facts marked unconfirmed are
+  worded as such in the docs):
+  - **Merge: okay.** The engineers open the pull request `claude/launch-integration` → `main`
+    once CI and the preview are green; Davi presses Merge (the production deploy). Nobody else
+    merges.
+  - **Preview database: option B**, a separate, empty Neon project `sa-preview` in the same Neon
+    organization and region as production, Postgres service only. Option A (Neon branch copies of
+    production) is gone from LAUNCH.md step 2; the "how to split a setting" explanation, the
+    shared-entry warnings, the branch-address sign-in notes and the optional preview Google
+    client stay. Division of work: Davi creates the project, opens Connect with "Connection
+    pooling" on, copies the pooled string (host contains `-pooler`) and tells the engineers; the
+    engineers untick Preview on the existing `DATABASE_URL` entry through the Vercel API (a
+    target-only edit; production's value is never sent or touched); Davi adds `DATABASE_URL` as a
+    new **Secret** with only Preview ticked and pastes the string; the engineers add Preview-only
+    `AUTH_SECRET` and `TOKEN_ENCRYPTION_KEY` (fresh random values, same split) and redeploy the
+    preview, whose `vercel-build` migrates the empty project (build log "Migrations applied.").
+    Worked when: the preview's `/admin` shows "Accounts (1)" after Davi signs in at the branch
+    address, and production's `/admin` is unchanged. Why not a second database in the production
+    project: same host and compute (and, on Free, the same 100 CU-hours), and every role made in
+    Neon's console joins `neon_superuser` (can read and write production). Background jobs need no
+    change: every id a job event carries is a random UUID, so a stray preview event can't match a
+    production row (previews are behind Vercel login anyway). **Not checked live:** Neon's console
+    strings end `&channel_binding=require`, postgres.js 3.4.9 forwards unknown URL parameters as
+    startup parameters and Neon's pooler accepts only a few; production's string (saved
+    2026-09-28) works, so it's probably fine. If the first preview build fails with
+    `Migration failed` mentioning `channel_binding` / an unsupported startup parameter, drop that
+    parameter from the Preview value. `ANTHROPIC_API_KEY` and `AUTH_GOOGLE_SECRET` are still
+    shared prod+preview Secrets (metadata checked 2026-10-14). Cost: $0 on Neon Free (own 100
+    CU-hours, 1 GB); cents a month on Launch (estimate).
+  - **Neon plan (new, urgent, Davi's money decision):** `poll-mailboxes` (every 5 min),
+    `workspace-lifecycle` (15 min) and `morning-digest` (hourly) query the database, and Neon only
+    suspends a compute after 5 idle minutes, so production rarely sleeps: about 180 CU-hours a
+    30-day month at 0.25 CU (more if it autoscales) against Free's 100 per project, so on Free it
+    would likely be suspended around day 16–17 of each billing period. Launch = $0.106/CU-hour,
+    about $19–20 a month for that compute (estimate from Neon's prices). Production's plan isn't
+    visible to the engineers. LAUNCH.md "Check your Neon plan now (this week)", before step 0.
+  - **Test-mode Stripe accounts: reset them** with the built `/admin` → Payments → Reset test
+    payments after the live key swap and Connect Stripe (LAUNCH.md 7c; see "Reset test
+    payments" above).
+  - **Sales tax: Stripe Tax on** (built; see "Stripe Tax" above). LAUNCH.md 7e is now the whole
+    job: register with Massachusetts first on MassTaxConnect (Davi is in Concord; Stripe can't
+    register an in-state seller; SSN for a sole owner with no employees, else EIN; free and about
+    3–10 business days per third-party guides, not confirmed on mass.gov), then Stripe → Settings
+    → Tax: head office = the Concord address, preset code `txcd_10103001` (SaaS - business use),
+    Include tax in prices = Exclusive; the setup product `txcd_20120002` (SaaS Implementation and
+    Setup Services - Mandatory) unless the accountant says otherwise; Tax → **Locations** → Add
+    registration → Massachusetts → I've already registered. Stripe's docs call that page
+    Locations (its URL ends `/tax/registrations`); `SALES_TAX_ON_NOTE` still says "Tax →
+    Registrations" (not changed here; the docs bridge it). Without the Massachusetts
+    registration Stripe charges $0 tax and warns about nothing (its threshold alerts never cover
+    the home state). The portal section is "Billing information" (not "Customer information").
+    Tax Basic = 0.5% of each taxed payment, no monthly fee, no filing: Davi files on
+    MassTaxConnect from Stripe's report (state sets the frequency; each return due within 30 days
+    after its period). Accountant questions are listed once, in 7e.
+  - **Terms: still open** (Davi reads later). Recommended option A for each of the three
+    `[To confirm]` items (refunds: cancel any time, no partial months, setup fee refundable only
+    before the setup call, Delete my account ends the plan with no refund for the rest of the
+    month; liability: mutual cap at the greater of $100 or 12 months' fees, carve-outs; law:
+    Massachusetts, 30-day contact-first step, Middlesex County state courts or D. Mass., small
+    claims allowed, no arbitration). New open question: assent. Stripe Checkout
+    `consent_collection.terms_of_service = "required"` (terms URL in Stripe's public details) and
+    an "I agree" checkbox at sign-in for trial users (Kauders v. Uber 2021, Good v. Uber 2024):
+    code changes that need Davi's yes. Lawyer review about $750–$2,500 (Boston Bar referral: 30
+    minutes for $25 at most); questions on an LLC, insurance and "no contract". `docs/terms.md`
+    wording is unchanged.
+  - **Google review: still open, two questions.** (a) Demo account: option A (house account with
+    the demo Gmail swapped in, as google-verification.md describes) or **option B** (new: a
+    separate demo account invited from `/admin`, paid with Stripe's test card while production
+    Stripe is in test mode so `setup_paid_via = 'stripe'` lets it send; nothing of Davi's touched;
+    delete it before step 7 or let Reset test payments clear it in 7c — the button only exists
+    with the live key — after which it can't send, so a re-recording of a send needs option A or
+    a real card; needs an engineer's dry run on **production** first with the demo Gmail while
+    Stripe is in test mode). (b) Drop `gmail.send`: recommended yes (`users.drafts.send`
+    accepts only mail.google.com / gmail.modify / gmail.compose; `users.messages.send` also takes
+    gmail.compose; doesn't avoid CASA; small change, no reconnect since `mailboxes.scopes` is
+    never read after connect; not tried live: checked on production with the demo Gmail right
+    after it ships — a practice copy, then a test-card payment and a real reply — and reverted at
+    once if either fails). **A preview can't run either check** (2026-10-15 review): after the
+    split no background job reaches a preview's database (Inngest only reaches production;
+    previews sit behind Vercel login) and `STRIPE_SECRET_KEY` is Production-only, so a preview
+    never syncs, drafts, takes a payment or delivers a queued send. CASA facts now in LAUNCH.md 0g and
+    google-verification.md: AL1/AL2 chosen by Google, TAC Security $675/$855 (AL1) and $5,400
+    (AL2), budget about $700–$1,000/yr (AL1) or $4,500–$5,400+ (AL2), don't pay until Google's
+    email names the level, two quotes, 2–6 weeks lab, 1–3 months whole review, renews every 12
+    months. The unverified app's 100-new-user cap is for the project's lifetime (can't be reset):
+    keep sign-up invite-only.
+  - **#47 referral amount: still open.** Options A $50, B $99 (one free Solo month), C $199,
+    D $250, E one free month of the referrer's own plan, F = E but a Solo owner's free month is
+    on Crew (to try autopilot). Recommended F (or B for the simplest). A–D only need
+    `REFERRAL_CREDIT_CENTS`; E and F need code beyond today's build (a plan-dependent credit).
+  - **#26 closing question: on** (see Plan M7 above). The env var stays the switch; no code
+    default change. The privacy policy ("How we use it"; dated October 15, 2026 with the terms)
+    and google-verification.md (where email content goes, the notes bullet, the autopilot list)
+    name it since the 2026-10-15 review.
+  - **Growth:** Davi confirmed all seven services and the ground rules. Still open: a written
+    agreement (Growth terms), a Settings link to `/growth`, an admin Remove button (waitlist /
+    Growth removals are by hand today), and whether a Growth request may carry a referral.
+  - **Homepage:** "Big words", replaying every time (scroll into Growth and every tap on a
+    `#growth` link from the app side). Built on `claude/growth-page`, merged into this branch; the
+    details are under "Squared Away Growth" above.
 
 ## Milestones
 
@@ -431,20 +1182,147 @@ In a sandbox with preinstalled Chromium: `PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-brows
       waits on a Resend API key (and a verified domain for owners other than Davi)
 - [x] **9. Autopilot** — three-layer guardrails, earned per category, 10-minute grace window
 - [x] **10. Billing** — Stripe Checkout + portal + webhook; Connect Stripe in /admin
-- [ ] 11. Hardening and launch
+- [ ] 11. Hardening and launch — built and tested on `claude/launch-integration`. Davi okayed the
+      merge on 2026-10-14: the engineers open the pull request once it's green and Davi presses
+      Merge (the production deploy). Then the steps in `docs/LAUNCH.md`.
 
 ## Waiting on Davi
 
+- **The launch checklist is `docs/LAUNCH.md`** (in order, where to click, how to know it worked,
+  and every open decision in its step 13, split into "Decided on 2026-10-14", "Still open" and
+  "Still needed from you"). The items below are the same list in engineering words.
+- **Neon plan (urgent, this week):** check Neon → Billing and production's Usage box; on Free the
+  5-minute poll likely uses up the 100 CU-hours mid-period and pauses production. Launch is about
+  $19–20 a month (LAUNCH.md "Check your Neon plan now"). His money decision.
+- **Preview database (decided: option B):** Davi creates the Neon project `sa-preview`, copies
+  its pooled string and tells the engineers; they untick Preview on the shared `DATABASE_URL`
+  (Vercel API, target only); Davi adds `DATABASE_URL` as a Preview-only Secret with that string;
+  the engineers add Preview-only `AUTH_SECRET` / `TOKEN_ENCRYPTION_KEY` and redeploy the preview
+  (LAUNCH.md step 2). After the split a preview shows screens, sign-in and Connect Gmail only
+  (no jobs, no Stripe). Only test Gmail addresses on previews: the Google client (and project)
+  is shared with production, so a preview's Disconnect / Delete my account revoke most likely
+  ends production's grant for that address. Vercel's docs don't say saving a Secret with an
+  empty value box keeps it, so "How to split a setting" says Cancel and ask the engineers (API)
+  if Save asks for a value. Every Neon step names `autumn-term-70302192` (not `sa-preview`; both
+  have a `production` branch), with a header check before Reset password.
+- **Massachusetts sales tax registration** on MassTaxConnect before any Stripe tax setup; then
+  Stripe's tax settings and the Massachusetts registration in Stripe (LAUNCH.md 7e). Questions
+  for his accountant are listed there. It takes about 3–10 business days, so LAUNCH.md has it
+  start before step 0 ("Start your sales tax registration now"); step 7 says not to ask anyone
+  to pay until 7e passes, and 7e lets him do the Stripe tax settings (items 2–4, 6) before the
+  certificate arrives so later subscriptions carry automatic tax.
+- **Gmail draft send behaviour (M8 review):** not yet checked live whether Gmail keeps a draft's
+  id when it's sent. Counts-only check on the shared DB: join `drafts.sent_gmail_message_id` to
+  `messages.gmail_message_id` and count the matches whose `label_ids` hold `SENT` vs `DRAFT`.
+  Many DRAFT matches = same-id sends. The code is safe either way; this only says which path is
+  live. **Run it before the launch merge** (`docs/LAUNCH.md` step 1): after it, the one-time
+  `runDraftMessagesCleanup` (`markRecordedSends`) relabels every matched row DRAFT → SENT, so the
+  count always reads 0 DRAFT.
+- **Terms (open; Davi reads later):** the three `[To confirm]` items (recommended option A for
+  each, in LAUNCH.md step 13); the new assent question (Stripe Checkout terms checkbox +
+  "I agree" at sign-in for trial users, code changes that need his yes); a lawyer's review of both
+  legal drafts (questions: LLC, insurance, "no contract" wording).
+- **Google review (open):** (a) demo account, option A (house account, demo Gmail swapped in) or
+  option B (separate demo account on Stripe's test card; needs an engineer's dry run on
+  production first, while Stripe is in test mode — a preview can't sync, draft, pay or send);
+  (b) drop `gmail.send` (recommended yes; small code change; checked live on production right
+  after it ships). Both before filming. CASA: nothing to pay until Google's email names the level.
+- **Homepage About section wording (changed 2026-10-15, ships with the merge):** now "someone in
+  the trades." / "It began as the tool for A&C Construction's own inbox." (no "builder", no
+  pronouns). Davi may want other words (LAUNCH.md step 13). Separate from his photo and license
+  line.
+- **Reset test payments and past_due (open):** as built, a past_due test account goes back to
+  setup_paid / active (jobs and AI resume, can't send); alternative: keep it read-only until it
+  pays (small code change). LAUNCH.md step 13.
+- **Phone notifications (#36):** `VAPID_PUBLIC_KEY` + `VAPID_PRIVATE_KEY` (free) in Vercel
+  Production, then redeploy. Off until then. The engineers can generate and add them if Davi says
+  so.
+- `ANTHROPIC_API_KEY` repo secret for the "Prompt evals" action (baseline still empty).
 - Resend: verify the production domain in Resend and switch `EMAIL_FROM` off `onboarding@resend.dev`
   (until then the digest only reaches the Resend account's own address).
 - Optional: Gmail instant notifications (docs/SETUP.md §6a) and Sentry error alerts (§6b).
 - Rotate the Neon password and Google client secret that were pasted in chat; delete the old
   Google secret.
-- Add each invited owner as a Google Cloud test user (Google Auth Platform → Audience).
-- Icon pack (`sa.` monogram, stacked wordmark); `docs/terms.md`, `docs/privacy-policy.md` drafts;
-  `SUPPORT_EMAIL`; production domain.
+- Only while Google Auth Platform is in Testing: add each invited owner as a test user (Audience).
+  Ends at docs/LAUNCH.md step 0c (In production).
+- Icon pack (`sa.` monogram, stacked wordmark); his photo and the exact license wording for the
+  homepage's About section (PR #9; no license number until he confirms); `SUPPORT_EMAIL`;
+  production domain.
+- **Plan #47 (referral credit):** built and tested behind `FEATURE_REFERRALS` (off), and it does
+  nothing until he answers: (1) the amount (`REFERRAL_CREDIT_CENTS` in `src/config/pricing.ts` is
+  `null`): options A $50, B $99 (one free Solo month), C $199, D $250, E one free month of the
+  referrer's own plan, F = E but a Solo owner's month is on Crew; recommended F (or B for the
+  simplest); E and F need code beyond today's build; (2) decided 2026-10-13: the referrer
+  only (`REFERRAL_CREDIT_TO = "referrer"`); (3) decided 2026-10-13: keep the same-domain block (two
+  owners on the same business domain never count; public webmail like gmail.com is exempt). Before turning it on, add the referral-fingerprint line to the privacy policy (the
+  "Privacy policy line for #47" item below; docs/SETUP.md §6d), and don't rotate `AUTH_SECRET` once
+  referrals have been paid (the "paid once" fingerprint is salted with it). Then set the switch
+  (docs/SETUP.md §6d). Referrals that go active while it's off are never paid later.
+- **PDF quotes (#28/#30):** a quote sent only as an attachment ("Quote attached", no `$` in the
+  email) never counts as a price given, so "Let's do it" isn't auto-marked Won, isn't in the close
+  rate until he taps Won, and gets no deposit draft. Conservative on purpose (a site visit isn't a
+  quote). Alternative if he wants it: record "has an attachment" on owner emails at sync (additive
+  column) and count an owner email with an attachment as a price given.
+- **Privacy policy lines for M5/M7 (added to the draft at the launch merge, Davi to review):**
+  `docs/privacy-policy.md` now covers the price memory (never sent to the AI), invoice paid /
+  "not owed to me" marks, the complaint marker, review requests and the review link, seasonal
+  notes, web push (#36: the endpoint is stored; Google/Apple/Mozilla/Microsoft push services
+  deliver an empty ping; deleted on turn-off, a gone phone or account deletion), the per-phone
+  display cookies and the offline-approvals queue copy (#9/#37/#10), and that these M7 records
+  stay past the 30-day purge until the mailbox or account goes.
+- **Privacy policy line for #47 referrals** (before `FEATURE_REFERRALS` goes on): "If you were
+  referred, we keep a scrambled one-way fingerprint of your email and the credit record after you
+  delete your account, so a referral is only paid once." (Otherwise the policy's Delete my account
+  section and the homepage FAQ's "deletes your account and everything in it" aren't literally
+  true.) Also his call: a referrer who deletes their account before the
+  new owner is active voids the referral (the referrer's credit); repeat waitlist joins and plain invites
+  carry no referral (docs/SETUP.md §6d).
+- **Growth:** confirmed 2026-10-14: all seven services are offered today and the ground rules
+  stand (no fake reviews, price before any work, Growth never touches the inbox). Still open: a
+  written agreement (no Growth terms of service yet), a Settings link to /growth for signed-in
+  owners, an admin Remove button (removing a waitlist entry or Growth request is done by hand in
+  the database for now; the policy says call, text or email us), and whether a Growth request may
+  ever carry a referral. No tracking pixels on /growth without a privacy-policy change and his
+  okay. Only the newest Growth request per email is kept and a growth-only row's phone becomes the
+  newest number, so anyone who knows a lead's email can replace their number: check an
+  unfamiliar number before calling.
 
 ## Launch blockers to remember
 
-- Previews share the production database. Before real customers: give previews their own Neon
-  branch (Neon's Vercel integration does this) so a preview can't touch customer data.
+- **Neon plan:** if production is on Neon Free, the 5-minute poll likely exhausts its 100
+  CU-hours mid-period and Neon suspends the compute (the whole app stops until the next period).
+  Davi checks Billing / Usage this week and decides on Launch (about $19–20 a month).
+- Previews share the production database. Before real customers: give previews their own
+  database so a preview can't touch customer data — `docs/LAUNCH.md` step 2, decided 2026-10-14:
+  an empty Neon project `sa-preview` (Davi creates it and pastes the Preview `DATABASE_URL`; the
+  engineers untick Preview on the shared entry via the Vercel API and add Preview-only
+  `AUTH_SECRET` / `TOKEN_ENCRYPTION_KEY`). `DATABASE_URL`, `AUTH_SECRET`, `TOKEN_ENCRYPTION_KEY`
+  and `AUTH_GOOGLE_*` are each ONE Vercel entry for Production + Preview: split them (untick
+  Preview, Add New for Preview); deleting or editing the shared entry's value changes production.
+- Google OAuth is still in **Testing** (7-day Gmail tokens, ≤100 hand-added users): switch to In
+  production and submit verification + CASA — `docs/LAUNCH.md` step 0. Until approval the app
+  has a lifetime cap of 100 new users (can't be reset): keep sign-up invite-only.
+- Stripe live mode: test-mode customer ids / `setup_paid_via = 'stripe'` from test checkouts stay
+  in the shared DB until Davi taps /admin → Payments → Reset test payments after the key swap and
+  Connect Stripe (`docs/LAUNCH.md` step 7c; decided 2026-10-14). Key swap → Connect Stripe must
+  be back to back (no live webhook in between).
+- Sales tax: Stripe Tax charges **$0** until Davi is registered with Massachusetts and has added
+  the registration in Stripe → Tax → Locations (`docs/LAUNCH.md` 7e). Stripe never warns about the
+  home state.
+- Terms assent: the terms are only a footer link today (no "I agree" at sign-in or Checkout). Open
+  for Davi (LAUNCH.md step 13), with a lawyer's review before launch.
+- **M7 merge timing (complaint memory, A1):** the first preview build of the M7 branch runs
+  migration 0024 (marks threads still sorted `complaint` with `complained_at`). Until M7 merges,
+  production's older code keeps re-sorting threads without setting the mark, so a complaint that
+  turns into "fixed now, thanks" in that window leaves no trace and could later be offered "Ask
+  for a review" (owner tap only, and it's a draft). The same goes for complaints re-sorted before
+  M7. That data can't be recovered (no category history is kept): merge M7 soon after its first
+  preview build. What _can_ be recovered is redone from new code once production runs it:
+  `runM7Backfill` (`src/server/m7-backfill.ts`), a one-shot step in the 15-minute
+  `workspace-lifecycle` job gated by the `app_settings` key `backfill:m7-v1`, marks threads still
+  sorted `complaint` / showing a dispute or legal reason / `extracted.disputed`, and sets
+  `quote_outcome_source = 'owner'` wherever the owner's newest `quote_marked` tap is newer than our
+  newest `quote_outcome_guessed` (an old-code Won/Lost over our guess, or an old-code Reopen).
+  0023/0024 stay as they are — they already ran on the shared DB; never edit an applied migration.
+  The window is open now: merge as soon as Davi has reviewed, then check `backfill:m7-v1` in
+  `app_settings` (`docs/LAUNCH.md` step 1).

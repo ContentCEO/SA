@@ -16,6 +16,8 @@ test("home page: promise, pricing from config, and a way in", async ({ page }) =
   for (const text of ["$499 once", "Solo", "$99", "Crew", "$199", "Company", "$299"]) {
     await expect(pricing).toContainText(text);
   }
+  // Stripe Tax (Davi, 2026-10-14): prices are tax-exclusive, and the page says so.
+  await expect(pricing.getByText("Plus sales tax where it applies.")).toBeVisible();
   await page
     .getByRole("navigation", { name: "Site" })
     .getByRole("link", { name: "Sign in" })
@@ -29,39 +31,86 @@ test("home page: promise, pricing from config, and a way in", async ({ page }) =
   expect(overflow).toBe(false);
 });
 
-test("waitlist: plain errors, then a confirmation, saved once", async ({ page }) => {
-  const email = unique();
-  await page.goto("/#waitlist");
-  const form = page.getByRole("region", { name: "Join the waitlist" });
+test.describe("waitlist form", () => {
+  // Its own address, so the shared form limit (10 an hour) isn't spent by other tests.
+  test.use({ extraHTTPHeaders: { "x-forwarded-for": "198.51.100.11" } });
 
-  await form.getByRole("button", { name: "Join the waitlist" }).click();
-  await expect(form.getByText("Tell us your name.")).toBeVisible();
-  await expect(form.getByLabel("Your name")).toBeFocused();
+  test("waitlist: plain errors, then a confirmation, saved once", async ({ page }) => {
+    const email = unique();
+    await page.goto("/#waitlist");
+    const form = page.getByRole("region", { name: "Join the waitlist" });
 
-  await form.getByLabel("Your name").fill("Mike Torres");
-  await form.getByLabel(/Business Gmail/).fill(email);
-  await form.getByLabel("Trade").selectOption("electrical");
-  await form.getByLabel("People in the business").selectOption("2–5");
-  await form.getByRole("button", { name: "Join the waitlist" }).click();
-  await expect(form.getByText("you're on the list,")).toBeVisible();
+    await form.getByRole("button", { name: "Join the waitlist" }).click();
+    await expect(form.getByText("Tell us your name.")).toBeVisible();
+    await expect(form.getByLabel("Your name")).toBeFocused();
 
-  const rows = await testDb.select().from(schema.waitlist).where(eq(schema.waitlist.email, email));
-  expect(rows).toHaveLength(1);
-  expect(rows[0]).toMatchObject({ name: "Mike Torres", trade: "electrical", teamSize: "2–5" });
+    // Required fields are marked for browsers and screen readers; the server is the real check.
+    for (const label of ["Your name", /Business Gmail/, "Trade", "People in the business"])
+      await expect(form.getByLabel(label)).toHaveAttribute("required", "");
+    await expect(form.getByLabel(/Business Gmail/)).toHaveAttribute("autocomplete", "email");
+    await expect(form.getByLabel(/^Phone/)).toHaveAttribute("inputmode", "tel");
+
+    await form.getByLabel("Your name").fill("Mike Torres");
+    await form.getByLabel(/Business Gmail/).fill("mike@");
+    await form.getByLabel("Trade").selectOption("carpentry");
+    await form.getByLabel("People in the business").selectOption("2–5");
+    await form.getByRole("button", { name: "Join the waitlist" }).click();
+    await expect(form.getByText(/doesn't look like an email address/)).toBeVisible();
+    await expect(form.getByLabel(/Business Gmail/)).toBeFocused();
+
+    await form.getByLabel("Your name").fill("Mike Torres");
+    await form.getByLabel(/Business Gmail/).fill(email);
+    await form.getByLabel("Trade").selectOption("electrical");
+    await form.getByLabel("People in the business").selectOption("2–5");
+    await form.getByRole("button", { name: "Join the waitlist" }).click();
+    await expect(form.getByText("You're on the list. Davi will be in touch.")).toBeVisible();
+
+    const rows = await testDb
+      .select()
+      .from(schema.waitlist)
+      .where(eq(schema.waitlist.email, email));
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ name: "Mike Torres", trade: "electrical", teamSize: "2–5" });
+  });
+
+  test("waitlist: bots that fill the hidden field are ignored", async ({ page }) => {
+    const email = unique();
+    await page.goto("/#waitlist");
+    const form = page.getByRole("region", { name: "Join the waitlist" });
+    await form.getByLabel("Your name").fill("Bot");
+    await form.getByLabel(/Business Gmail/).fill(email);
+    // Two forms on the page now (the app waitlist and Growth): use this form's hidden field.
+    await form.locator('input[name="website"]').fill("http://spam.example", { force: true });
+    await form.getByRole("button", { name: "Join the waitlist" }).click();
+    await expect(form.getByText("You're on the list. Davi will be in touch.")).toBeVisible();
+    expect(
+      await testDb.select().from(schema.waitlist).where(eq(schema.waitlist.email, email)),
+    ).toHaveLength(0);
+  });
 });
 
-test("waitlist: bots that fill the hidden field are ignored", async ({ page }) => {
-  const email = unique();
-  await page.goto("/#waitlist");
-  const form = page.getByRole("region", { name: "Join the waitlist" });
-  await form.getByLabel("Your name").fill("Bot");
-  await form.getByLabel(/Business Gmail/).fill(email);
-  await page.locator('input[name="website"]').fill("http://spam.example", { force: true });
-  await form.getByRole("button", { name: "Join the waitlist" }).click();
-  await expect(form.getByText("you're on the list,")).toBeVisible();
-  expect(
-    await testDb.select().from(schema.waitlist).where(eq(schema.waitlist.email, email)),
-  ).toHaveLength(0);
+test.describe("waitlist referral link", () => {
+  // Its own address, so the shared form limit (10 an hour) isn't spent by other tests.
+  test.use({ extraHTTPHeaders: { "x-forwarded-for": "198.51.100.12" } });
+
+  test("waitlist: a referral link does nothing while referrals are off (#47)", async ({ page }) => {
+    // The e2e server runs without FEATURE_REFERRALS and REFERRAL_CREDIT_CENTS is null.
+    const email = unique();
+    await page.goto("/?ref=AbCdEf123_-x#waitlist");
+    const form = page.getByRole("region", { name: "Join the waitlist" });
+    await expect(page.locator('input[name="ref"]')).toHaveCount(0);
+    await form.getByLabel("Your name").fill("Ana Ruiz");
+    await form.getByLabel(/Business Gmail/).fill(email);
+    await form.getByLabel("Trade").selectOption("carpentry");
+    await form.getByLabel("People in the business").selectOption("Just me");
+    await form.getByRole("button", { name: "Join the waitlist" }).click();
+    await expect(form.getByText("You're on the list. Davi will be in touch.")).toBeVisible();
+    const [row] = await testDb
+      .select()
+      .from(schema.waitlist)
+      .where(eq(schema.waitlist.email, email));
+    expect(row?.referralCode).toBeNull();
+  });
 });
 
 test("admin invites someone straight from the waitlist", async ({ page, context }) => {

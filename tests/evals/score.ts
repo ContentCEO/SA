@@ -14,6 +14,9 @@ export type EvalResult = {
   municipal: boolean;
   permitResult: string | null;
   invoiceStatus: string | null;
+  /** classify.v3 signals, as kept on extracted. */
+  acceptsQuote: boolean;
+  jobDone: boolean;
   /** Draft rule failures (empty = passed); undefined = no draft for this case. */
   draftProblems?: string[];
 };
@@ -30,8 +33,18 @@ export type Scores = {
   municipalRecall: number;
   permitAccuracy: number;
   invoiceStatusAccuracy: number;
+  /** "Let's do it" read as accepting the quote — and haggling / "still deciding" not. */
+  acceptsQuoteAccuracy: number;
+  /** "Looks great, thanks" read as a finished, happy job — and complaints / unfinished work not. */
+  jobDoneAccuracy: number;
   draftPassRate: number;
   priorityAccuracy: number;
+  /** Quick tweaks / spoken changes that kept to the rules (revise prompt). 1 when not run. */
+  revisePassRate: number;
+  /** Tone of an owner's edit named correctly (edit-tone prompt). 1 when not run. */
+  toneAccuracy: number;
+  /** Deposit / review / closing drafts that kept to the rules (purpose.v1). 1 when not run. */
+  purposePassRate: number;
 };
 
 const ratio = (hit: number, of: number) => (of === 0 ? 1 : Math.round((hit / of) * 1000) / 1000);
@@ -53,6 +66,8 @@ export function score(cases: EvalCase[], results: EvalResult[]): Scores {
   const permit = where((c) => !!c.expect.permitResult);
   const invoice = where((c) => !!c.expect.invoiceStatus);
   const prio = where((c) => !!c.expect.priority);
+  const accepts = where((c) => c.expect.acceptsQuote !== undefined);
+  const done = where((c) => c.expect.jobDone !== undefined);
   const drafted = pairs.filter(([, r]) => r!.draftProblems !== undefined);
 
   return {
@@ -71,11 +86,16 @@ export function score(cases: EvalCase[], results: EvalResult[]): Scores {
     municipalRecall: among(muni, (_c, r) => r.municipal && r.category !== "noise"),
     permitAccuracy: among(permit, (c, r) => r.permitResult === c.expect.permitResult),
     invoiceStatusAccuracy: among(invoice, (c, r) => r.invoiceStatus === c.expect.invoiceStatus),
+    acceptsQuoteAccuracy: among(accepts, (c, r) => r.acceptsQuote === c.expect.acceptsQuote),
+    jobDoneAccuracy: among(done, (c, r) => r.jobDone === c.expect.jobDone),
     draftPassRate: ratio(
       drafted.filter(([, r]) => r!.draftProblems!.length === 0).length,
       drafted.length,
     ),
     priorityAccuracy: among(prio, (c, r) => r.priority === c.expect.priority),
+    revisePassRate: 1,
+    toneAccuracy: 1,
+    purposePassRate: 1,
   };
 }
 

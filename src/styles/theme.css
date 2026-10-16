@@ -7,14 +7,28 @@
  */
 
 :root {
+  /* Brand constants: each colour written once. Only the palette below points at them, plus the
+     homepage switch rules, which must name a colour that never swaps. */
+  --sa-k-charcoal: #1b1b1b;
+  --sa-k-offwhite: #efeeea;
+  --sa-k-paper: #f7f6f3;
+  --sa-k-stone: #d9d7d0;
+  --sa-k-ash: #9a9994;
+  --sa-k-slate: #5e5d59;
+  --sa-k-graphite: #262625;
+  /* Sunlight mode's harder ink and paper (plan #37). Only the sunlight block below uses them. */
+  --sa-k-hc-charcoal: #111111;
+  --sa-k-hc-offwhite: #fffef9;
+  --sa-k-hc-black: #000000;
+
   /* Brand palette */
-  --sa-charcoal: #1b1b1b;
-  --sa-offwhite: #efeeea;
-  --sa-paper: #f7f6f3;
-  --sa-stone: #d9d7d0; /* borders on light */
-  --sa-ash: #9a9994; /* muted text on charcoal */
-  --sa-slate: #5e5d59; /* muted text on light */
-  --sa-graphite: #262625; /* raised panels on charcoal */
+  --sa-charcoal: var(--sa-k-charcoal);
+  --sa-offwhite: var(--sa-k-offwhite);
+  --sa-paper: var(--sa-k-paper);
+  --sa-stone: var(--sa-k-stone); /* borders on light */
+  --sa-ash: var(--sa-k-ash); /* muted text on charcoal */
+  --sa-slate: var(--sa-k-slate); /* muted text on light */
+  --sa-graphite: var(--sa-k-graphite); /* raised panels on charcoal */
 
   /* Type */
   --sa-heavy-word-spacing: 0.14em;
@@ -62,6 +76,427 @@
   --ring: var(--sa-offwhite);
   background-color: var(--background);
   color: var(--foreground);
+}
+
+/*
+ * Sunlight mode (plan #37): a per-device switch in the header. Bigger type,
+ * heavier weights, no grey — pure charcoal on pure off-white — and thicker
+ * borders. Set by data-contrast="high" on the signed-in app's wrapper; :has()
+ * lifts it to the whole page so the background and tab bar follow.
+ */
+:root:has([data-contrast="high"]) {
+  --sa-charcoal: var(--sa-k-hc-charcoal);
+  --sa-offwhite: var(--sa-k-hc-offwhite);
+  --sa-paper: var(--sa-k-hc-offwhite);
+  --sa-stone: var(--sa-k-hc-charcoal); /* borders: charcoal, not stone */
+  --sa-slate: var(--sa-k-hc-charcoal); /* muted text on light: none */
+  --sa-ash: var(--sa-k-hc-offwhite); /* muted text on charcoal: none */
+  --sa-graphite: var(--sa-k-hc-black);
+  --font-weight-normal: 500;
+  --font-weight-medium: 600;
+  --font-weight-semibold: 700;
+  --font-weight-bold: 800;
+  font-size: 112.5%;
+  font-weight: 500;
+}
+:root:has([data-contrast="high"]) .border {
+  border-width: 2px;
+}
+:root:has([data-contrast="high"]) .border-t {
+  border-top-width: 2px;
+}
+:root:has([data-contrast="high"]) .border-b {
+  border-bottom-width: 2px;
+}
+:root:has([data-contrast="high"]) .border-2 {
+  border-width: 3px;
+}
+
+/* Light card on a dark surface (the Growth form). Restores the :root tokens.
+   Off-white card behind paper inputs, same as the waitlist card. Unlayered, so it beats utilities. */
+.sa-light {
+  --background: var(--sa-offwhite);
+  --foreground: var(--sa-charcoal);
+  --card: var(--sa-offwhite);
+  --card-foreground: var(--sa-charcoal);
+  --primary: var(--sa-charcoal);
+  --primary-foreground: var(--sa-offwhite);
+  --muted: var(--sa-offwhite);
+  --muted-foreground: var(--sa-slate);
+  --border: var(--sa-stone);
+  /* Slate, not stone: a stone edge on off-white (~1.2:1) disappears in sunlight (WCAG 1.4.11). */
+  --input: var(--sa-slate);
+  --ring: var(--sa-charcoal);
+  background-color: var(--sa-offwhite);
+  color: var(--sa-charcoal);
+}
+
+/* /growth is charcoal edge to edge: no paper flash on overscroll. */
+html:has([data-growth-page]) {
+  background-color: var(--sa-charcoal);
+}
+
+/*
+ * Homepage switch: the app (paper) → Squared Away Growth (charcoal), played by GrowthSwitch
+ * (src/components/marketing/growth/growth-switch.tsx), which alone sets <html data-sa-theme>
+ * ("app" | "growth") and, while a transition plays, data-sa-switching ("in" | "in-quiet" | "out").
+ * Both exist only on `/`, so every rule below does nothing anywhere else. Without JS neither is
+ * set: the Growth wrapper keeps its own .sa-inverted charcoal and the stage never shows.
+ *
+ * Growth mode swaps the palette in place on :root. The semantic tokens are declared on the same
+ * element, so they resolve against the swapped palette, and Tailwind palette utilities read
+ * var(--sa-*) where they're used: the header, body, cards and forms all flip with no per-component
+ * code. Charcoal islands (.sa-inverted) and light cards (.sa-light) get the canonical palette back.
+ */
+:root[data-sa-theme="growth"] {
+  --sa-paper: var(--sa-k-charcoal);
+  --sa-charcoal: var(--sa-k-offwhite);
+  --sa-offwhite: var(--sa-k-graphite);
+  --sa-graphite: var(--sa-k-paper);
+  --sa-stone: var(--sa-k-graphite);
+  --sa-slate: var(--sa-k-ash);
+  --sa-ash: var(--sa-k-slate);
+  /* Waitlist inputs sit on a graphite card: ash keeps the edge at 3:1 or better (WCAG 1.4.11). */
+  --input: var(--sa-k-ash);
+  background-color: var(--sa-k-charcoal);
+}
+:root[data-sa-theme="growth"] .sa-inverted,
+:root[data-sa-theme="growth"] .sa-light {
+  --sa-charcoal: var(--sa-k-charcoal);
+  --sa-offwhite: var(--sa-k-offwhite);
+  --sa-paper: var(--sa-k-paper);
+  --sa-stone: var(--sa-k-stone);
+  --sa-ash: var(--sa-k-ash);
+  --sa-slate: var(--sa-k-slate);
+  --sa-graphite: var(--sa-k-graphite);
+  /* The tokens neither class declares, at their :root values. */
+  --popover: var(--sa-k-paper);
+  --popover-foreground: var(--sa-k-charcoal);
+  --secondary: var(--sa-k-offwhite);
+  --secondary-foreground: var(--sa-k-charcoal);
+  --accent: var(--sa-k-offwhite);
+  --accent-foreground: var(--sa-k-charcoal);
+  --destructive: var(--sa-k-charcoal);
+}
+
+/* App mode: the part of Growth peeking up from below reads as paper until the switch.
+   Same element as .sa-inverted, higher specificity, so its charcoal tokens resolve to paper. */
+:root[data-sa-theme="app"] [data-sa-half="growth"] {
+  --sa-charcoal: var(--sa-k-paper);
+  --sa-offwhite: var(--sa-k-charcoal);
+  --sa-graphite: var(--sa-k-offwhite);
+  --sa-ash: var(--sa-k-slate);
+  --sa-stone: var(--sa-k-stone);
+  --sa-slate: var(--sa-k-slate);
+  --sa-paper: var(--sa-k-charcoal);
+  --border: var(--sa-k-stone);
+  --input: var(--sa-k-stone);
+}
+:root[data-sa-theme="app"] [data-sa-half="growth"] .sa-light {
+  --sa-charcoal: var(--sa-k-charcoal);
+  --sa-offwhite: var(--sa-k-offwhite);
+  --sa-paper: var(--sa-k-paper);
+  --sa-stone: var(--sa-k-stone);
+  --sa-ash: var(--sa-k-ash);
+  --sa-slate: var(--sa-k-slate);
+  --sa-graphite: var(--sa-k-graphite);
+}
+
+/*
+ * The stage: a fixed, decorative overlay shown only while data-sa-switching is set, playing
+ * "Big words" (src/components/marketing/growth/big-words.tsx). Timings mirror
+ * src/components/marketing/growth/big-words-rules.ts (change both together; a unit test reads the
+ * declarations below):
+ *   "in", the full show, on every crossing from the app into Growth: five charcoal bands slam in
+ *   from alternate sides, the middle one first with "The app" in huge serif; the words tick over
+ *   to "One-on-one" in huge heavy sans, which inverts; the bands fly back out the way they came,
+ *   outer ones first, onto the opener. Bands 240ms each, the middle from 0, its neighbours from
+ *   40ms, the outer two from 80ms (full cover at 320) · BW_THEME_AT_MS = 380 (the theme swaps and
+ *   the page moves to the opener under full cover) · words tick over 240ms from 440ms · chip flips
+ *   at 680ms · BW_REALIGN_AT_MS = 1220 · bands out 160ms each (forwards only), the outer two from
+ *   1300ms, their neighbours from 1340ms, the middle one (with the words) from 1380ms, all gone by
+ *   1540 · sa-land 300ms, delays 960ms / 1020ms after the swap · BW_DONE_MS = 1740 (cleanup).
+ *   "out" / "in-quiet": bands of the old colour fly apart sideways, no words, 260ms
+ *   (BW_QUIET_DONE_MS = 300, cleanup).
+ * The stage is 100vh (the large viewport on phones, so a collapsing toolbar can't open a gap).
+ * Each band reaches 1px into the next, so no paper hairline shows between them; the bands only
+ * ever move sideways, so that overlap holds the whole show. Transforms only, 1ms opacity flips for
+ * the chips (no fades, no third tone). Each word has its own size (serif "The app" min(24vw,
+ * 16vh), heavy "One-on-one" min(14.5vw, 14vh)), so both are big on a phone. min() has a fallback
+ * declared first; longhands, not `inset`, for older iOS.
+ */
+.sa-switch-stage {
+  display: none;
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 100vh;
+  z-index: 50;
+  pointer-events: none;
+  overflow: hidden;
+}
+:root[data-sa-switching] .sa-switch-stage {
+  display: block;
+}
+.sa-bw-stage {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 100%;
+}
+.sa-bw-band {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: calc(20% + 1px);
+  overflow: hidden;
+  background-color: var(--sa-k-charcoal);
+}
+.sa-bw-band[data-band="0"] {
+  top: 0;
+}
+.sa-bw-band[data-band="1"] {
+  top: 20%;
+}
+.sa-bw-band[data-band="2"] {
+  top: 40%;
+}
+.sa-bw-band[data-band="3"] {
+  top: 60%;
+}
+.sa-bw-band[data-band="4"] {
+  top: 80%;
+}
+.sa-bw-band[data-side="left"] {
+  transform: translateX(-100%);
+}
+.sa-bw-band[data-side="right"] {
+  transform: translateX(100%);
+}
+:root[data-sa-switching] .sa-bw-band {
+  will-change: transform;
+}
+/* In: the middle band first. Out (forwards only, so it can't hold the bands off before 1300ms):
+   the outer bands first, the words last, each back to the side it came from. */
+:root[data-sa-switching="in"] .sa-bw-band[data-band="2"] {
+  animation:
+    sa-bw-in-left 240ms cubic-bezier(0.6, 0, 0.2, 1) both,
+    sa-bw-out-left 160ms cubic-bezier(0.5, 0, 0.75, 0) 1380ms forwards;
+}
+:root[data-sa-switching="in"] .sa-bw-band[data-band="1"] {
+  animation:
+    sa-bw-in-right 240ms cubic-bezier(0.6, 0, 0.2, 1) 40ms both,
+    sa-bw-out-right 160ms cubic-bezier(0.5, 0, 0.75, 0) 1340ms forwards;
+}
+:root[data-sa-switching="in"] .sa-bw-band[data-band="3"] {
+  animation:
+    sa-bw-in-right 240ms cubic-bezier(0.6, 0, 0.2, 1) 40ms both,
+    sa-bw-out-right 160ms cubic-bezier(0.5, 0, 0.75, 0) 1340ms forwards;
+}
+:root[data-sa-switching="in"] .sa-bw-band[data-band="0"] {
+  animation:
+    sa-bw-in-left 240ms cubic-bezier(0.6, 0, 0.2, 1) 80ms both,
+    sa-bw-out-left 160ms cubic-bezier(0.5, 0, 0.75, 0) 1300ms forwards;
+}
+:root[data-sa-switching="in"] .sa-bw-band[data-band="4"] {
+  animation:
+    sa-bw-in-left 240ms cubic-bezier(0.6, 0, 0.2, 1) 80ms both,
+    sa-bw-out-left 160ms cubic-bezier(0.5, 0, 0.75, 0) 1300ms forwards;
+}
+/* The quiet paths fly apart, never fade: no third tone, and they move with the scroll. */
+:root[data-sa-switching="out"] .sa-bw-band[data-side="left"],
+:root[data-sa-switching="in-quiet"] .sa-bw-band[data-side="left"] {
+  animation: sa-bw-out-left 260ms cubic-bezier(0.65, 0, 0.35, 1) both;
+}
+:root[data-sa-switching="out"] .sa-bw-band[data-side="right"],
+:root[data-sa-switching="in-quiet"] .sa-bw-band[data-side="right"] {
+  animation: sa-bw-out-right 260ms cubic-bezier(0.65, 0, 0.35, 1) both;
+}
+:root[data-sa-switching="in-quiet"] .sa-bw-band {
+  background-color: var(--sa-k-paper);
+}
+/* The words belong to the full show only; the quiet paths are bare bands. */
+.sa-bw-words {
+  display: none;
+}
+:root[data-sa-switching="in"] .sa-bw-words {
+  display: block;
+}
+.sa-bw-words {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 100%;
+}
+/* Each word fills the middle band, so moving it by its own height takes it right out. */
+.sa-bw-word {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--sa-k-offwhite);
+  line-height: 1;
+  white-space: nowrap;
+}
+/* Sized word by word, so each one fills the band's width on a phone (16px gutter kept, down to
+   320px; "One-on-one" is about 5.6em) and is capped by the band's height (20% of the screen) on
+   a wide one. */
+.sa-bw-word[data-word="from"] {
+  font-size: 24vw;
+  font-size: min(24vw, 16vh);
+}
+.sa-bw-word[data-word="to"] {
+  font-size: 14.5vw;
+  font-size: min(14.5vw, 14vh);
+  transform: translateY(100%);
+}
+:root[data-sa-switching="in"] .sa-bw-word {
+  will-change: transform;
+}
+:root[data-sa-switching="in"] .sa-bw-word[data-word="from"] {
+  animation: sa-bw-tick-out 240ms cubic-bezier(0.6, 0, 0.4, 1) 440ms forwards;
+}
+:root[data-sa-switching="in"] .sa-bw-word[data-word="to"] {
+  animation: sa-bw-tick-in 240ms linear 440ms forwards;
+}
+.sa-bw-label {
+  position: relative;
+  display: inline-block;
+  padding: 0.08em 0.22em;
+  line-height: 1;
+}
+/* The active word is inverted (an off-white chip on the charcoal band). */
+.sa-bw-chip {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9999px;
+  background-color: var(--sa-k-offwhite);
+  color: var(--sa-k-charcoal);
+}
+.sa-bw-word[data-word="to"] .sa-bw-chip {
+  opacity: 0;
+}
+:root[data-sa-switching="in"] .sa-bw-word[data-word="from"] .sa-bw-chip {
+  animation: sa-bw-chip-off 1ms linear 680ms forwards;
+}
+:root[data-sa-switching="in"] .sa-bw-word[data-word="to"] .sa-bw-chip {
+  animation: sa-bw-chip-on 1ms linear 680ms forwards;
+}
+/* The opener headline lands as the bands fly out (1300 + 40 − 380 = 960). Matches only from the
+   swap at 380ms (under full cover), so it can never blink out on screen; ends at opacity 1 and
+   stops at cleanup. */
+:root[data-sa-theme="growth"][data-sa-switching="in"] .sa-land > span {
+  animation: sa-land 300ms cubic-bezier(0.2, 0.9, 0.2, 1) 960ms both;
+}
+:root[data-sa-theme="growth"][data-sa-switching="in"] .sa-land > span + span {
+  animation-delay: 1020ms;
+}
+@keyframes sa-bw-in-left {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+@keyframes sa-bw-in-right {
+  from {
+    transform: translateX(100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+@keyframes sa-bw-out-left {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-100%);
+  }
+}
+@keyframes sa-bw-out-right {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(100%);
+  }
+}
+@keyframes sa-bw-tick-out {
+  from {
+    transform: translateY(0);
+  }
+  to {
+    transform: translateY(-100%);
+  }
+}
+/* Up into the band, a little past the middle, then settles. */
+@keyframes sa-bw-tick-in {
+  0% {
+    transform: translateY(100%);
+    animation-timing-function: cubic-bezier(0.3, 0, 0.6, 1);
+  }
+  75% {
+    transform: translateY(-6%);
+    animation-timing-function: cubic-bezier(0.4, 0, 0.6, 1);
+  }
+  100% {
+    transform: translateY(0);
+  }
+}
+@keyframes sa-bw-chip-off {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+@keyframes sa-bw-chip-on {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes sa-land {
+  from {
+    opacity: 0;
+    transform: translateY(0.35em);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+/* The global reduced-motion rule zeroes durations but not delays, so this is needed too. */
+@media (prefers-reduced-motion: reduce) {
+  .sa-switch-stage {
+    display: none !important;
+  }
+  .sa-land > span {
+    animation: none !important;
+  }
+}
+@media print {
+  .sa-switch-stage {
+    display: none !important;
+  }
 }
 
 @theme inline {

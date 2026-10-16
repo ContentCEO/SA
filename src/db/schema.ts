@@ -4,6 +4,7 @@
  */
 import { sql } from "drizzle-orm";
 import {
+  type AnyPgColumn,
   boolean,
   index,
   integer,
@@ -54,6 +55,13 @@ export const invites = pgTable("invites", {
   note: text("note"),
   invitedAt: timestamp("invited_at", { withTimezone: true }).notNull().defaultNow(),
   acceptedAt: timestamp("accepted_at", { withTimezone: true }),
+  /**
+   * Plan #47 (behind FEATURE_REFERRALS): the workspace whose referral link this owner came
+   * from. Used up (set back to null) at the first sign-in, when it moves onto their workspace.
+   */
+  referredByWorkspaceId: uuid("referred_by_workspace_id").references(() => workspaces.id, {
+    onDelete: "set null",
+  }),
 });
 
 /** People who asked for access on the public site. Davi invites from /admin. */
@@ -66,6 +74,8 @@ export const waitlist = pgTable("waitlist", {
   note: text("note"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   invitedAt: timestamp("invited_at", { withTimezone: true }),
+  /** Plan #47: the referral code from the link they came from (format-checked; flag on only). */
+  referralCode: text("referral_code"),
 });
 
 export const workspaces = pgTable(
@@ -92,9 +102,19 @@ export const workspaces = pgTable(
     stripeCustomerId: text("stripe_customer_id"),
     stripeSubscriptionId: text("stripe_subscription_id"),
     createdAt: createdAt(),
+    /** Plan #47: this workspace's own referral code (random, made the first time it's shown). */
+    referralCode: text("referral_code"),
+    /** Plan #47: who referred this workspace. Set once, at the first sign-in; never overwritten. */
+    referredByWorkspaceId: uuid("referred_by_workspace_id").references(
+      (): AnyPgColumn => workspaces.id,
+      { onDelete: "set null" },
+    ),
   },
-  // One owner per workspace for the MVP.
-  (t) => [uniqueIndex("workspaces_owner_uq").on(t.ownerUserId)],
+  (t) => [
+    // One owner per workspace for the MVP.
+    uniqueIndex("workspaces_owner_uq").on(t.ownerUserId),
+    uniqueIndex("workspaces_referral_code_uq").on(t.referralCode),
+  ],
 );
 
 export const mailboxes = pgTable(
@@ -133,6 +153,12 @@ export const mailboxes = pgTable(
 
 export const directionEnum = pgEnum("direction", ["in", "out"]);
 
+export const QUOTE_OUTCOME_SOURCES = ["owner", "auto"] as const;
+export type QuoteOutcomeSource = (typeof QUOTE_OUTCOME_SOURCES)[number];
+/** `not_owed`: the owner hid the row ("Not owed to me"); it counts as neither owed nor paid. */
+export const INVOICE_PAID_SOURCES = ["owner", "auto", "not_owed"] as const;
+export type InvoicePaidSource = (typeof INVOICE_PAID_SOURCES)[number];
+
 export const threads = pgTable(
   "threads",
   {
@@ -154,6 +180,8 @@ export const threads = pgTable(
     needsOwnerReason: text("needs_owner_reason"),
     /** The owner said "This one needs me". Classification never clears it. */
     needsOwnerManual: boolean("needs_owner_manual").notNull().default(false),
+    /** Plan #6: hidden from the queue until then; comes back on top. */
+    snoozedUntil: timestamp("snoozed_until", { withTimezone: true }),
     /** One-sentence summary from classification. Kept after bodies are purged. */
     summary: text("summary"),
     /** Structured facts pulled from the latest inbound message (service, address, dates, amounts). */
@@ -169,6 +197,34 @@ export const threads = pgTable(
      * captured before bodies are purged) or typed by the owner. Kept after the purge.
      */
     quoteAmountCents: integer("quote_amount_cents"),
+    /**
+     * Who set quote_outcome: the owner ("owner") or our guess ("auto"). The owner always wins.
+     * Rows set before this column existed (outcome set, source null) are the owner's.
+     */
+    quoteOutcomeSource: text("quote_outcome_source").$type<QuoteOutcomeSource>(),
+    /** Plan #27: when this invoice was marked paid (or hidden as "Not owed to me"). Null = owed. */
+    invoicePaidAt: timestamp("invoice_paid_at", { withTimezone: true }),
+    invoicePaidSource: text("invoice_paid_source").$type<InvoicePaidSource>(),
+    /**
+     * First time this thread was classified as a complaint. Sticky: never cleared, so a later
+     * "looks great" can't make an unhappy customer look like a review prospect.
+     */
+    complainedAt: timestamp("complained_at", { withTimezone: true }),
+    /**
+     * Plan M8 (A11): set when this thread is first sorted as a quote request, to the time of the
+     * customer's FIRST email on the thread (what response time and the monthly counts measure
+     * from). Sticky like complained_at: a customer's later "Tuesday works" re-sorts the thread
+     * as scheduling, but it still counts as a quote request in the scorecard and summaries.
+     * Never set from an email that tries to instruct the assistant.
+     */
+    quoteRequestedAt: timestamp("quote_requested_at", { withTimezone: true }),
+    /**
+     * Plan M8 (A11): the kind of job as one of OUR fixed labels (src/config/job-kinds.ts), never
+     * the customer's words. Set at classification; null on threads sorted before it existed.
+     */
+    jobKind: text("job_kind"),
+    /** Plan #34: when we last pushed "a lead is waiting" for this thread's current wait. */
+    atRiskAlertedAt: timestamp("at_risk_alerted_at", { withTimezone: true }),
     createdAt: createdAt(),
   },
   (t) => [
@@ -239,6 +295,12 @@ export const draftStatusEnum = pgEnum("draft_status", [
   "expired",
 ]);
 export const draftKindEnum = pgEnum("draft_kind", ["reply", "followup"]);
+/**
+ * Owner-asked special replies (plan #26 #28 #29). They are kind `reply` with a purpose, so
+ * follow-up counts never change. Null = an ordinary reply or follow-up.
+ */
+export const DRAFT_PURPOSES = ["deposit", "review_request", "closing_question"] as const;
+export type DraftPurpose = (typeof DRAFT_PURPOSES)[number];
 
 /**
  * A reply we wrote. It lives as a real Gmail draft (`gmail_draft_id`) so the
@@ -273,6 +335,10 @@ export const drafts = pgTable(
     /** Things the owner should double-check before sending. */
     flags: jsonb("flags").$type<string[]>().notNull().default([]),
     confidence: integer("confidence_pct").notNull().default(0),
+    /** Which profile facts / voice traits the drafter says it used (keys only — plan #1). */
+    usedFacts: jsonb("used_facts").$type<string[]>().notNull().default([]),
+    /** Quick tweaks / voice edits so far (plan #3: at most 5 per draft). */
+    revisions: integer("revisions").notNull().default(0),
     promptVersion: text("prompt_version"),
     /** Why it left the queue without being sent from here (deleted in Gmail, superseded…). */
     closedNote: text("closed_note"),
@@ -281,6 +347,16 @@ export const drafts = pgTable(
     decidedAt: timestamp("decided_at", { withTimezone: true }),
     /** Autopilot: when this draft will send unless the owner holds it. Null = waits for a tap. */
     autoSendAt: timestamp("auto_send_at", { withTimezone: true }),
+    /**
+     * Plan #7 undo send: the owner tapped Send reply; it goes at this time unless
+     * they tap Undo. The draft stays `pending` meanwhile (so it still holds the
+     * thread's one live slot) but is out of the queue. Null = not sending.
+     */
+    sendAfter: timestamp("send_after", { withTimezone: true }),
+    /** Set by the one job allowed to send it; a stale claim (crash) can be retaken. */
+    sendClaimedAt: timestamp("send_claimed_at", { withTimezone: true }),
+    /** Plan #26 #28 #29: deposit / review request / closing question. Null = ordinary. */
+    purpose: text("purpose").$type<DraftPurpose>(),
   },
   (t) => [
     index("drafts_mailbox_status_idx").on(t.mailboxId, t.status),
@@ -288,6 +364,10 @@ export const drafts = pgTable(
     uniqueIndex("drafts_one_pending_per_thread")
       .on(t.threadId)
       .where(sql`status = 'pending'`),
+    // Plan #26: "did you go another way?" is asked once per thread, ever (any status).
+    uniqueIndex("drafts_one_closing_question_per_thread")
+      .on(t.threadId)
+      .where(sql`purpose = 'closing_question'`),
   ],
 );
 
@@ -304,6 +384,8 @@ export const businessProfiles = pgTable("business_profile", {
   paymentTerms: text("payment_terms"),
   policies: text("policies"),
   signature: text("signature"),
+  /** Plan #29: where happy customers leave a review (https only). Added to a draft only on a tap. */
+  reviewUrl: text("review_url"),
   doNotPromise: jsonb("do_not_promise").$type<string[]>().notNull().default([]),
   vipSenders: jsonb("vip_senders").$type<string[]>().notNull().default([]),
   /** The owner's "Never say this" list (plan #23). Kept apart from the learned voice so a re-learn can't drop it. */
@@ -330,7 +412,12 @@ export const businessProfiles = pgTable("business_profile", {
   smsAlertsEnabled: boolean("sms_alerts_enabled").notNull().default(false),
   /** Newest classification already covered by a text, and when the last text went out. */
   smsAlertCursor: timestamp("sms_alert_cursor", { withTimezone: true }),
+  /** Plan #36 phone notifications: same throttle and cursor as texts, kept apart. */
+  pushLastSentAt: timestamp("push_last_sent_at", { withTimezone: true }),
+  pushAlertCursor: timestamp("push_alert_cursor", { withTimezone: true }),
   smsLastSentAt: timestamp("sms_last_sent_at", { withTimezone: true }),
+  /** Plan #35: the owner's local month ('YYYY-MM') last summarized (sent, or skipped as empty). */
+  monthlySummaryLastSentFor: text("monthly_summary_last_sent_for"),
   completedAt: timestamp("completed_at", { withTimezone: true }),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
@@ -413,6 +500,70 @@ export const seasonalNotes = pgTable(
   (t) => [index("seasonal_notes_workspace_idx").on(t.workspaceId, t.endsOn)],
 );
 
+/**
+ * Plan #21: what one edited send changed — counts and yes/no only, never the
+ * words. One row per draft. Kept after the draft text is purged.
+ */
+export const editSignals = pgTable(
+  "edit_signals",
+  {
+    draftId: uuid("draft_id")
+      .primaryKey()
+      .references(() => drafts.id, { onDelete: "cascade" }),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    wordsBefore: integer("words_before").notNull(),
+    wordsAfter: integer("words_after").notNull(),
+    openingChanged: boolean("opening_changed").notNull(),
+    signoffChanged: boolean("signoff_changed").notNull(),
+    firstSentenceCut: boolean("first_sentence_cut").notNull(),
+    sentencesRemoved: integer("sentences_removed").notNull(),
+    sentencesAdded: integer("sentences_added").notNull(),
+    /** none | warmer | cooler | more_formal | more_casual; null if the model call failed. */
+    toneShift: text("tone_shift"),
+    createdAt: createdAt(),
+  },
+  (t) => [index("edit_signals_workspace_idx").on(t.workspaceId, t.createdAt)],
+);
+
+/** Plan #21: an idea from the owner's edits. Nothing changes until they say yes. */
+export const voiceSuggestions = pgTable(
+  "voice_suggestions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    kind: text("kind").notNull(),
+    /** The plain-language question, built from counts only. */
+    text: text("text").notNull(),
+    targetWords: integer("target_words"),
+    /** open | accepted | ignored */
+    status: text("status").notNull().default("open"),
+    createdAt: createdAt(),
+    decidedAt: timestamp("decided_at", { withTimezone: true }),
+  },
+  (t) => [index("voice_suggestions_workspace_idx").on(t.workspaceId, t.status)],
+);
+
+/**
+ * Plan #36: phones that asked for notifications. Only the push service's
+ * endpoint — we send empty pushes, so no encryption keys are kept.
+ */
+export const pushSubscriptions = pgTable(
+  "push_subscriptions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    endpoint: text("endpoint").notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [uniqueIndex("push_subscriptions_endpoint_uq").on(t.endpoint)],
+);
+
 /** App-wide settings Davi's admin tools write (e.g. the Stripe webhook secret, encrypted). */
 export const appSettings = pgTable("app_settings", {
   key: text("key").primaryKey(),
@@ -437,6 +588,82 @@ export const stripeEvents = pgTable("stripe_events", {
   receivedAt: timestamp("received_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+/**
+ * Plan #15 price memory: what the owner quoted for a kind of job, one row per quote thread.
+ * Owner-only. Never sent to the AI and never shown outside the queue/inbox quote items
+ * (enforced by a static test). Goes with the thread (disconnect) or the workspace (delete).
+ */
+export const priceHistory = pgTable(
+  "price_history",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    threadId: uuid("thread_id")
+      .notNull()
+      .references(() => threads.id, { onDelete: "cascade" }),
+    /** The kind of job (classification's service_requested), not the customer's words. */
+    service: text("service").notNull(),
+    amountCents: integer("amount_cents").notNull(),
+    quotedAt: timestamp("quoted_at", { withTimezone: true }).notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex("price_history_thread_uq").on(t.threadId),
+    index("price_history_ws_quoted_idx").on(t.workspaceId, t.quotedAt),
+  ],
+);
+
+export type PriceHistory = typeof priceHistory.$inferSelect;
+
+/** Plan #47: who a referral credit is for — the owner who shared the link, or the new owner. */
+export const REFERRAL_SIDES = ["referrer", "referred"] as const;
+export type ReferralSide = (typeof REFERRAL_SIDES)[number];
+/**
+ * pending = waiting to be added in Stripe (e.g. no Stripe customer yet); applied = added;
+ * failed = Stripe refused it for good (shown in /admin, never retried); skipped = the referral
+ * was settled with nothing to pay (the feature was off or had no amount when it went active).
+ */
+export const REFERRAL_CREDIT_STATUSES = ["pending", "applied", "failed", "skipped"] as const;
+export type ReferralCreditStatus = (typeof REFERRAL_CREDIT_STATUSES)[number];
+
+/**
+ * Plan #47 referral credits. Each referral is settled once, the first time the referred
+ * workspace becomes active: one row per side paid (or one `skipped` row). Rows outlive account
+ * deletion (workspace ids go null) and are keyed by a salted hash of the referred owner's
+ * email, so deleting an account and signing up again can't earn a second credit.
+ * No names, emails or customer data.
+ */
+export const referralCredits = pgTable(
+  "referral_credits",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    referredWorkspaceId: uuid("referred_workspace_id").references(() => workspaces.id, {
+      onDelete: "set null",
+    }),
+    /** sha256 of the referred owner's normalized email, salted with AUTH_SECRET. */
+    referredEmailSha256: text("referred_email_sha256").notNull(),
+    beneficiaryWorkspaceId: uuid("beneficiary_workspace_id").references(() => workspaces.id, {
+      onDelete: "set null",
+    }),
+    side: text("side").$type<ReferralSide>().notNull(),
+    amountCents: integer("amount_cents").notNull(),
+    status: text("status").$type<ReferralCreditStatus>().notNull().default("pending"),
+    stripeBalanceTransactionId: text("stripe_balance_transaction_id"),
+    /** Tries at Stripe that failed, and the last Stripe error code (a fixed code, never text). */
+    attempts: integer("attempts").notNull().default(0),
+    lastErrorCode: text("last_error_code"),
+    createdAt: createdAt(),
+    appliedAt: timestamp("applied_at", { withTimezone: true }),
+  },
+  (t) => [
+    // Once per referral, ever.
+    uniqueIndex("referral_credits_email_side_uq").on(t.referredEmailSha256, t.side),
+    index("referral_credits_status_idx").on(t.status),
+  ],
+);
+export type ReferralCredit = typeof referralCredits.$inferSelect;
 export type User = typeof users.$inferSelect;
 export type BusinessProfile = typeof businessProfiles.$inferSelect;
 export type VoiceProfile = typeof voiceProfiles.$inferSelect;

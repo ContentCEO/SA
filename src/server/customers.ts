@@ -2,6 +2,7 @@ import "server-only";
 import { and, desc, eq, inArray, max, ne, or, isNull, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { mailboxes, messages, threads } from "@/db/schema";
+import { isDecidedStage } from "./quote-rules";
 import { listQuotes, type QuoteRow } from "./quotes";
 
 export type CustomerRow = {
@@ -65,7 +66,7 @@ export async function listCustomers(workspaceId: string, now: Date = new Date())
       name: r.name,
       conversations: Number(r.conversations),
       lastContactAt: asDate(r.lastContactAt),
-      openQuotes: qs.filter((q) => q.stage !== "won" && q.stage !== "lost").length,
+      openQuotes: qs.filter((q) => !isDecidedStage(q.stage)).length,
       wonCents: qs.filter((q) => q.stage === "won").reduce((t, q) => t + (q.amountCents ?? 0), 0),
       isSupplier:
         Number(r.supplierThreads) > 0 && Number(r.supplierThreads) === Number(r.conversations),

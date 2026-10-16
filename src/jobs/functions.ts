@@ -10,20 +10,36 @@ import {
   renewWatches,
 } from "@/server/sync";
 import { classifyPending } from "@/server/classification";
-import { createDraftForThread, reconcileDrafts, threadsToAutoDraft } from "@/server/drafts";
+import { purgeCostAlertMarkers, sendCostAlerts } from "@/server/admin-costs";
+import { captureEditSignals, proposeVoiceUpdates } from "@/server/edit-learning";
+import {
+  createDraftForThread,
+  deliverQueuedSend,
+  overdueQueuedSends,
+  reconcileDrafts,
+  threadsToAutoDraft,
+} from "@/server/drafts";
 import { sendDigests } from "@/server/digest";
+import { sendMonthlySummaries } from "@/server/monthly-summary";
 import { threadsToFollowUp } from "@/server/followups";
 import { getMailboxWorkspace } from "@/server/mailboxes";
 import { purgeRateLimits } from "@/server/rate-limit";
+import { purgeEmailSentRecords } from "@/lib/email";
 import { sendAccessLostAlerts } from "@/server/alerts";
-import { captureQuoteAmounts } from "@/server/quotes";
+import { captureQuoteAmounts, guessNoAnswers } from "@/server/quotes";
 import { sendLeadAlerts } from "@/server/sms-alerts";
+import { sendPushAlerts } from "@/server/push-alerts";
+import { sendLeadAtRiskPushes } from "@/server/leads-at-risk";
 import { purgeExpiredNotes } from "@/server/seasonal-notes";
 import { learnVoice, workspacesDueForVoiceRefresh, workspacesNeedingVoice } from "@/server/voice";
 import { expireEvaluations, startPendingEvaluations } from "@/server/workspace-lifecycle";
+import { runDraftMessagesCleanup } from "@/server/draft-message-cleanup";
+import { runM7Backfill } from "@/server/m7-backfill";
+import { applyPendingReferralCredits } from "@/server/referrals";
 import { considerAutopilot, overdueAutopilotDrafts, runAutopilotSend } from "@/server/autopilot";
 import {
   autopilotSendRequested,
+  draftSendQueued,
   inngest,
   mailboxClassifyRequested,
   mailboxConnected,
@@ -32,10 +48,13 @@ import {
   voiceLearnRequested,
 } from "./client";
 
-/** Text the owner about new leads in this mailbox's workspace (no-op unless they opted in). */
+/** Text / notify the owner about new leads in this mailbox's workspace (no-op unless opted in). */
 async function alertsForMailbox(mailboxId: string) {
   const workspaceId = await getMailboxWorkspace(mailboxId);
-  return workspaceId ? sendLeadAlerts(new Date(), { workspaceId }) : { sent: 0 };
+  if (!workspaceId) return { sent: 0 };
+  const push = await sendPushAlerts(new Date(), { workspaceId });
+  const sms = await sendLeadAlerts(new Date(), { workspaceId });
+  return { sent: sms.sent, pushed: push.sent };
 }
 
 /**
@@ -206,6 +225,9 @@ export const draftMailbox = inngest.createFunction(
 export const followupScan = inngest.createFunction(
   { id: "followup-scan", triggers: [cron("TZ=America/New_York 11 9 * * *")], retries: 3 },
   async ({ step }) => {
+    // Quotes that went quiet after the nudges get our "no answer" guess first (plan #30);
+    // a decided quote is never nudged again.
+    await step.run("guess-no-answer", () => guessNoAnswers());
     const boxes = await step.run("mailboxes", () => listSyncableMailboxes());
     let created = 0;
     for (const box of boxes) {
@@ -224,11 +246,41 @@ export const followupScan = inngest.createFunction(
   },
 );
 
-/** Hourly: each owner's morning summary goes out once a day at their hour. */
+/**
+ * Hourly: each owner's morning summary goes out once a day at their hour, and on their 1st
+ * the summary of the month just ended (plan #35).
+ */
 export const morningDigest = inngest.createFunction(
   { id: "morning-digest", triggers: [cron("3 * * * *")], retries: 3 },
-  async ({ step }) => step.run("send", () => sendDigests()),
+  async ({ step }) => {
+    const digests = await step.run("send", () => sendDigests());
+    // Plan #35: on the owner's 1st, the month just ended (same switch and hour). Both senders
+    // catch each owner's failure, so one owner's refused email can't stop this step.
+    const monthly = await step.run("monthly", () => sendMonthlySummaries());
+    // ...but a failure must still reach the error alerts: fail the run AFTER both steps.
+    // Retries replay the finished steps (nothing is re-sent); the last attempt goes through
+    // ReportFinalFailures. The next hourly run tries the failed owners again.
+    reportSummaryFailures(digests, monthly);
+    return { digests, monthly };
+  },
 );
+
+/** Thrown when some owners' summaries failed. Counts only — no ids, addresses or messages. */
+export class SummaryFailuresError extends Error {
+  override readonly name = "SummaryFailuresError";
+}
+
+/** Fails the morning-digest run when any owner's morning or monthly summary failed. */
+export function reportSummaryFailures(
+  digests: { failed: number },
+  monthly: { failed: number },
+): void {
+  if (digests.failed > 0 || monthly.failed > 0) {
+    throw new SummaryFailuresError(
+      `Summaries failed: ${digests.failed} morning, ${monthly.failed} monthly.`,
+    );
+  }
+}
 
 /**
  * Autopilot's grace window: wait until the send time (the owner can hold or
@@ -245,6 +297,18 @@ export const autopilotSend = inngest.createFunction(
   async ({ event, step }) => {
     await step.sleepUntil("grace-window", new Date(event.data.at));
     return step.run("send", () => politely(() => runAutopilotSend(event.data.draftId)));
+  },
+);
+
+/**
+ * Plan #7: wait out the undo window, then send — deliverQueuedSend claims the
+ * draft (so a duplicate event can't send twice) and re-runs the whole gate.
+ */
+export const sendAfterUndo = inngest.createFunction(
+  { id: "send-after-undo", triggers: [draftSendQueued], retries: 4 },
+  async ({ event, step }) => {
+    await step.sleepUntil("undo-window", new Date(event.data.at));
+    return step.run("send", () => politely(() => deliverQueuedSend(event.data.draftId)));
   },
 );
 
@@ -274,6 +338,15 @@ export const refreshVoices = inngest.createFunction(
       );
     }
     return { refreshed: due.length };
+  },
+);
+
+/** Weekly (plan #21): ideas from the owner's edits. Nothing changes until they say yes. */
+export const voiceIdeas = inngest.createFunction(
+  { id: "voice-ideas", triggers: [cron("37 8 * * 1")] },
+  async ({ step }) => {
+    await step.run("capture", () => captureEditSignals());
+    return { created: await step.run("propose", () => proposeVoiceUpdates()) };
   },
 );
 
@@ -316,6 +389,14 @@ export const workspaceLifecycle = inngest.createFunction(
         ),
       );
     }
+    // Sends whose undo window ended but whose event was lost (plan #7).
+    const queued = await step.run("sends-overdue", () => overdueQueuedSends());
+    if (queued.length) {
+      await step.sendEvent(
+        "sends-overdue",
+        queued.map((draftId) => draftSendQueued.create({ draftId, at: new Date().toISOString() })),
+      );
+    }
     // Also restart any voice learning that never ran or died part-way.
     const voice = await step.run("voice", () => workspacesNeedingVoice());
     if (voice.length) {
@@ -328,6 +409,15 @@ export const workspaceLifecycle = inngest.createFunction(
     const alerts = await step.run("access-lost-alerts", () => sendAccessLostAlerts());
     // Backstop for text alerts held overnight or throttled.
     await step.run("text-alerts", () => sendLeadAlerts());
+    await step.run("push-alerts", () => sendPushAlerts());
+    // One-shot M7 data fix, from new code once it's live (no-op after the first run).
+    await step.run("m7-backfill", () => runM7Backfill());
+    // One-shot: drop Gmail drafts the old sync stored as owner mail (no-op after the first run).
+    await step.run("draft-messages-cleanup", () => runDraftMessagesCleanup());
+    // Plan #34: a quote request waiting over 4 business hours → one phone notification.
+    await step.run("lead-at-risk-pushes", () => sendLeadAtRiskPushes());
+    // Plan #47 (off unless FEATURE_REFERRALS and an amount): add referral credits still waiting.
+    await step.run("referral-credits", () => applyPendingReferralCredits());
     return { started, expired, voiceRestarted: voice.length, accessAlerts: alerts.sent };
   },
 );
@@ -344,9 +434,15 @@ export const purgeBodies = inngest.createFunction(
   async ({ step }) => {
     // Keep each quote's amount before the owner's reply text is purged.
     await step.run("capture-quote-amounts", () => captureQuoteAmounts());
+    // And what each edit did (counts only), for "ideas from your edits" (plan #21).
+    await step.run("capture-edit-signals", () => captureEditSignals());
     const purged = await step.run("purge", () => purgeExpiredBodies());
     await step.run("purge-rate-limits", () => purgeRateLimits());
     await step.run("purge-expired-notes", () => purgeExpiredNotes());
+    // Plan #45: tell Davi when an account's AI cost passes 40% of its plan.
+    await step.run("cost-alerts", () => sendCostAlerts());
+    await step.run("purge-cost-markers", () => purgeCostAlertMarkers());
+    await step.run("purge-email-sent-records", () => purgeEmailSentRecords());
     return { purged };
   },
 );
@@ -365,4 +461,6 @@ export const functions = [
   followupScan,
   morningDigest,
   autopilotSend,
+  sendAfterUndo,
+  voiceIdeas,
 ];

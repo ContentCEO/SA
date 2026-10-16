@@ -1,6 +1,6 @@
 import "server-only";
 import { and, desc, eq, isNull, sql, type SQL } from "drizzle-orm";
-import type { Category } from "@/ai/prompts/classify.v2";
+import type { Category } from "@/ai/prompts/classify.v3";
 import { db } from "@/db";
 import { mailboxes, threads } from "@/db/schema";
 

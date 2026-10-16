@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { beforeEach, describe, expect, it } from "vitest";
 import { setModelTransportForTests } from "@/ai/client";
-import type { ModelDraft } from "@/ai/prompts/draft.v4";
+import type { ModelDraft } from "@/ai/prompts/draft.v5";
 import type { Database } from "@/db";
 import {
   activityLog,
@@ -20,6 +20,7 @@ import {
   considerAutopilot,
   DAILY_AUTOPILOT_CAP,
   EARN_THRESHOLD,
+  earnedCounts,
   GRACE_MINUTES,
   guardrailReasons,
   holdAutopilot,
@@ -28,7 +29,7 @@ import {
   setAutopilot,
   type GuardrailInput,
 } from "@/server/autopilot";
-import { createDraftForThread, saveDraftEdit } from "@/server/drafts";
+import { createDraftForThread, saveDraftEdit, threadsToAutoDraft } from "@/server/drafts";
 import { saveConnectedMailbox } from "@/server/mailboxes";
 import { setWorkspacePlan } from "@/server/workspace-lifecycle";
 import { createTestDb } from "../support/db";
@@ -42,14 +43,20 @@ const cleanDraft = (over: Partial<ModelDraft> = {}): ModelDraft => ({
   reason: "Scheduling. Confirmed the visit.",
   flags: [],
   confidence: 0.95,
+  used_facts: [],
   ...over,
 });
 
 describe("account lock (layer 1)", () => {
-  const w = (plan: Workspace["plan"], status: Workspace["status"]) => ({
+  const w = (
+    plan: Workspace["plan"],
+    status: Workspace["status"],
+    setupPaidVia: Workspace["setupPaidVia"] = "stripe",
+  ) => ({
     plan,
     status,
     evaluationEndsAt: null,
+    setupPaidVia,
   });
   it("needs Crew or Company AND a finished setup", () => {
     expect(accountLockReason(w(null, "active"))).toMatch(/Crew and Company/);
@@ -59,6 +66,14 @@ describe("account lock (layer 1)", () => {
     expect(accountLockReason(w("crew", "paused"))).toMatch(/setup call/);
     expect(accountLockReason(w("crew", "active"))).toBeNull();
     expect(accountLockReason(w("company", "active"))).toBeNull();
+    expect(accountLockReason(w("crew", "active", "house"))).toBeNull();
+  });
+
+  it("GUARDRAIL: needs a real setup payment too (hand-marked or reset after a test card)", () => {
+    expect(accountLockReason(w("crew", "active", null))).toBe(
+      "Autopilot opens up once your setup payment goes through.",
+    );
+    expect(accountLockReason(w("company", "active", null))).toMatch(/setup payment/);
   });
 });
 
@@ -72,6 +87,7 @@ describe("per-email guardrails (layer 3)", () => {
     amountsInEmail: [],
     draftBody: "Thursday works.",
     knownCustomer: true,
+    purpose: null,
   };
   it("a clean reply to a known customer may go", () => {
     expect(guardrailReasons(ok)).toEqual([]);
@@ -87,8 +103,20 @@ describe("per-email guardrails (layer 3)", () => {
     ["invoices with an amount", { category: "invoice_payment", amountsInEmail: [450] }],
     ["any draft that mentions money", { draftBody: "That's $95 for the call-out." }],
     ["people the owner has never written to", { knownCustomer: false }],
+    ["quote acceptances", { acceptsQuote: true }],
+    ["deposit details (#28)", { purpose: "deposit" }],
+    ["review requests (#29)", { purpose: "review_request" }],
+    ["closing questions (#26)", { purpose: "closing_question" }],
+    ["a stored Gmail draft after the email, not yet checked", { maybeAnswered: true }],
   ])("never: %s", (_label, change) => {
     expect(guardrailReasons({ ...ok, ...change }).length).toBeGreaterThan(0);
+  });
+  it("purpose notes always wait for the owner, with a plain reason", () => {
+    for (const purpose of ["deposit", "review_request", "closing_question"]) {
+      expect(guardrailReasons({ ...ok, purpose })).toContain(
+        "Deposit, review and closing notes always wait for you.",
+      );
+    }
   });
   it("an invoice question with no amount is allowed", () => {
     expect(guardrailReasons({ ...ok, category: "invoice_payment" })).toEqual([]);
@@ -213,6 +241,21 @@ describe("in the database", () => {
       expect(r).toMatchObject({ category: "scheduling", mode: "autopilot" });
     });
 
+    it("GUARDRAIL: deposit, review and closing notes sent as drafted never count toward earning it", async () => {
+      await earn("scheduling", EARN_THRESHOLD);
+      // Mark three of them as purpose notes (#26 #28 #29): autopilot can never send those,
+      // so approving them proves nothing about ordinary replies.
+      const rows = await database.select({ id: drafts.id }).from(drafts);
+      const purposes = ["deposit", "review_request", "closing_question"] as const;
+      for (const [i, purpose] of purposes.entries()) {
+        await database.update(drafts).set({ purpose }).where(eq(drafts.id, rows[i]!.id));
+      }
+      expect((await earnedCounts(workspaceId)).get("scheduling")).toBe(EARN_THRESHOLD - 3);
+      await expect(setAutopilot(await ws(), "scheduling", true, NOW)).rejects.toThrow(
+        /Needs 3 more/,
+      );
+    });
+
     it("is refused on the wrong plan or before setup is done, and never for complaints", async () => {
       await earn("scheduling", EARN_THRESHOLD);
       await earn("complaint", EARN_THRESHOLD);
@@ -308,6 +351,93 @@ describe("in the database", () => {
       expect(writer.sent).toHaveLength(0);
     });
 
+    it("GUARDRAIL: the owner writing their own reply in Gmail stands it down", async () => {
+      const t = await conversation();
+      const draftId = await drafted(t);
+      await considerAutopilot(draftId, NOW);
+      // During the window the owner starts a reply in Gmail: an autosaved draft on the thread.
+      const [thread] = await database.select().from(threads).where(eq(threads.id, t));
+      await writer.createDraft({ threadId: thread!.gmailThreadId, raw: "" });
+      const r = await runAutopilotSend(draftId, deps(later(GRACE_MINUTES)));
+      expect(r).toEqual({ status: "stood_down", reasons: ["You're writing a reply in Gmail."] });
+      expect(writer.sent).toHaveLength(0);
+      const [d] = await database.select().from(drafts).where(eq(drafts.id, draftId));
+      expect(d).toMatchObject({ status: "pending", autoSendAt: null });
+      // A draft on another thread, or ours alone, doesn't hold it.
+      const other = await conversation();
+      const second = await drafted(other);
+      await considerAutopilot(second, NOW);
+      await writer.createDraft({ threadId: "some-other-thread", raw: "" });
+      expect(await runAutopilotSend(second, deps(later(GRACE_MINUTES)))).toEqual({
+        status: "sent",
+      });
+    });
+
+    it("asks Gmail about other drafts only when sending is allowed (no Google call when blocked)", async () => {
+      const draftId = await drafted(await conversation());
+      await considerAutopilot(draftId, NOW);
+      // Marked active by hand before real payment: sending is blocked, so it stands down (it
+      // used to reach sendDraft and throw, and the backstop retried it forever).
+      await database.update(workspaces).set({ setupPaidVia: null });
+      writer.calls = [];
+      expect(await runAutopilotSend(draftId, deps(later(GRACE_MINUTES)))).toEqual({
+        status: "stood_down",
+        reasons: ["Autopilot opens up once your setup payment goes through."],
+      });
+      expect(writer.calls).toEqual([]);
+      const [d] = await database.select().from(drafts).where(eq(drafts.id, draftId));
+      expect(d!.autoSendAt).toBeNull();
+      expect(d!.status).toBe("pending");
+      expect(await overdueAutopilotDrafts(later(60))).not.toContain(draftId);
+    });
+
+    it("GUARDRAIL: an active account without a real setup payment never starts a countdown", async () => {
+      // What "Reset test payments" leaves: active, Crew, autopilot still switched on.
+      await database.update(workspaces).set({ setupPaidVia: null });
+      const draftId = await drafted(await conversation());
+      expect(await considerAutopilot(draftId, NOW)).toBeNull();
+      const [d] = await database.select().from(drafts).where(eq(drafts.id, draftId));
+      expect(d!.autoSendAt).toBeNull();
+      // Its settings stay as they were, and come back once a real payment lands.
+      expect((await database.select().from(rules))[0]!.mode).toBe("autopilot");
+      await database.update(workspaces).set({ setupPaidVia: "stripe" });
+      expect(await considerAutopilot(draftId, NOW)).toEqual(later(GRACE_MINUTES));
+    });
+
+    it("GUARDRAIL: waits while a stored draft after the customer's email isn't checked with Gmail", async () => {
+      // Old sync stored Gmail drafts as owner mail. If Gmail sent this one under the same id,
+      // the owner already answered: no auto-draft, no countdown, until the cleanup checks it.
+      const storedDraft = async (threadId: string, labelIds: string[]) => {
+        await database.insert(messages).values({
+          threadId,
+          mailboxId,
+          gmailMessageId: `${threadId}-stored-${labelIds.join("-")}`,
+          direction: "out",
+          fromAddress: "owner@shop.com",
+          toAddresses: ["dana@customer.com"],
+          labelIds,
+          sentAt: new Date(NOW.getTime() - 30 * 60_000),
+        });
+      };
+      const t = await conversation();
+      await storedDraft(t, ["DRAFT"]);
+      expect(await threadsToAutoDraft(mailboxId)).not.toContain(t);
+      // A draft written anyway (as the owner's "Draft a reply" would) never counts down.
+      const draftId = await drafted(t);
+      expect(await considerAutopilot(draftId, NOW)).toBeNull();
+
+      // The same thread without that row: drafted, and the countdown starts.
+      const clean = await conversation();
+      expect(await threadsToAutoDraft(mailboxId)).toContain(clean);
+      expect(await considerAutopilot(await drafted(clean), NOW)).toEqual(later(GRACE_MINUTES));
+
+      // Gmail said it was sent under the same id (relabelled SENT): the owner answered, so
+      // still no auto-draft.
+      const answered = await conversation();
+      await storedDraft(answered, ["DRAFT", "SENT"]);
+      expect(await threadsToAutoDraft(mailboxId)).not.toContain(answered);
+    });
+
     it("switching autopilot off, a plan change, or a paused account all stop a countdown", async () => {
       const a = await drafted(await conversation());
       await considerAutopilot(a, NOW);
@@ -351,6 +481,103 @@ describe("in the database", () => {
       if (r.status !== "created") throw new Error("expected a draft");
       expect(await considerAutopilot(r.draftId, NOW)).toBeNull();
       expect(await overdueAutopilotDrafts(later(60))).toEqual([]);
+    });
+
+    it("GUARDRAIL: an unsent Gmail draft to someone isn't 'written to them before'", async () => {
+      // Old sync stored Gmail drafts as owner mail; a draft never sent can't make them known.
+      const writtenBefore = async (from: string, labelIds: string[]) => {
+        const t = await conversation({ known: false, from });
+        await database.insert(messages).values({
+          threadId: t,
+          mailboxId,
+          gmailMessageId: `${t}-earlier-${labelIds.join("-")}`,
+          direction: "out",
+          fromAddress: "owner@shop.com",
+          toAddresses: [from],
+          labelIds,
+          bodyText: "Earlier note.",
+          sentAt: new Date(NOW.getTime() - 2 * 86_400_000),
+        });
+        return drafted(t);
+      };
+      const onlyDraft = await writtenBefore("fresh@person.com", ["DRAFT"]);
+      expect(await considerAutopilot(onlyDraft, NOW)).toBeNull();
+      // The same with a real sent email: they're known, and the countdown starts.
+      const sent = await writtenBefore("known@person.com", ["SENT"]);
+      expect(await considerAutopilot(sent, NOW)).toEqual(later(GRACE_MINUTES));
+    });
+
+    it("never starts for a quote acceptance, even one re-sorted as scheduling (A5)", async () => {
+      // The owner reopened the quote (no outcome, set by the owner), then the
+      // customer's "Let's do it, can you start Monday?" was sorted as scheduling,
+      // which is on autopilot. The acceptance signal alone keeps it with the owner.
+      const accepted = await conversation();
+      await database
+        .update(threads)
+        .set({
+          quoteOutcome: null,
+          quoteOutcomeSource: "owner",
+          extracted: { accepts_quote: true, quote_accepted: true, dollar_amounts: [] },
+        })
+        .where(eq(threads.id, accepted));
+      // The deposit details already went out on this thread, so the new draft is an
+      // ordinary reply (no purpose): only the acceptance guard can keep it with the owner.
+      await database.insert(drafts).values({
+        threadId: accepted,
+        mailboxId,
+        gmailDraftId: `deposit-${accepted}`,
+        sentGmailMessageId: `deposit-sent-${accepted}`,
+        toAddress: "dana@customer.com",
+        subject: "Re: Visit",
+        body: "Deposit details.",
+        originalBody: "Deposit details.",
+        status: "sent",
+        purpose: "deposit",
+        reason: "Deposit details.",
+        promptVersion: "purpose.v1",
+        createdAt: new Date(NOW.getTime() - 2 * 3600_000),
+        decidedAt: new Date(NOW.getTime() - 2 * 3600_000),
+      });
+      const draftId = await drafted(accepted);
+      const row = async () =>
+        (await database.select().from(drafts).where(eq(drafts.id, draftId)))[0]!;
+      expect((await row()).purpose).toBeNull();
+      expect(await considerAutopilot(draftId, NOW)).toBeNull();
+      expect((await row()).autoSendAt).toBeNull();
+      // Even a countdown that somehow got set stands down at send time, for that reason.
+      await database
+        .update(drafts)
+        .set({ autoSendAt: later(GRACE_MINUTES) })
+        .where(eq(drafts.id, draftId));
+      const r = await runAutopilotSend(draftId, deps(later(GRACE_MINUTES)));
+      expect(r).toMatchObject({ status: "stood_down" });
+      expect(r.status === "stood_down" && r.reasons).toContain(
+        "Quote acceptances always wait for you.",
+      );
+      expect(writer.sent).toHaveLength(0);
+      // The same conversation without the signal would have gone.
+      const control = await drafted(await conversation());
+      expect(await considerAutopilot(control, NOW)).toEqual(later(GRACE_MINUTES));
+    });
+
+    it("GUARDRAIL: never starts a countdown for, or sends, a deposit / review / closing note", async () => {
+      for (const purpose of ["deposit", "review_request", "closing_question"] as const) {
+        const draftId = await drafted(await conversation());
+        await database.update(drafts).set({ purpose }).where(eq(drafts.id, draftId));
+        expect(await considerAutopilot(draftId, NOW)).toBeNull();
+        // Even a countdown that somehow got set stands down at send time.
+        await database
+          .update(drafts)
+          .set({ autoSendAt: later(GRACE_MINUTES) })
+          .where(eq(drafts.id, draftId));
+        const r = await runAutopilotSend(draftId, deps(later(GRACE_MINUTES)));
+        expect(r).toMatchObject({ status: "stood_down" });
+        expect(r.status === "stood_down" && r.reasons).toContain(
+          "Deposit, review and closing notes always wait for you.",
+        );
+      }
+      expect(writer.sent).toHaveLength(0);
+      expect(writer.calls).not.toContain("sendDraft");
     });
 
     it(`stops after ${DAILY_AUTOPILOT_CAP} a day`, async () => {

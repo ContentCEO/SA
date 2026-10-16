@@ -2,20 +2,31 @@ import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import { auth } from "@/auth";
 import { getWorkspaceForUser } from "@/server/accounts";
-import { sendDraft } from "@/server/drafts";
-import { SendingBlockedError } from "@/server/lifecycle";
+import { draftSendQueued, enqueue } from "@/jobs/client";
+import { queueSend } from "@/server/drafts";
+import { SENDING_BLOCKED_MESSAGE, SendingBlockedError } from "@/server/lifecycle";
 import { hitLimit } from "@/server/rate-limit";
 
 export const dynamic = "force-dynamic";
 
+function sameOrigin(origin: string | null, host: string | null): boolean {
+  if (!origin || !host) return false;
+  try {
+    return new URL(origin).host === host;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * JSON endpoint for sending a draft. The UI uses a server action, but the gate
  * is the same function, so hitting this directly during evaluation gets a 403.
+ * Like a tap, it starts the undo window (plan #7): 202 with the send time.
  */
 export async function POST(request: NextRequest, ctx: RouteContext<"/api/drafts/[id]/send">) {
-  // CSRF: only same-origin requests may send.
-  const origin = request.headers.get("origin");
-  if (!origin || new URL(origin).host !== request.headers.get("host")) {
+  // CSRF: only same-origin requests may send. A missing, "null" (sandboxed frame, file://) or
+  // garbled Origin is refused the same way — never a 500 (M11 C5).
+  if (!sameOrigin(request.headers.get("origin"), request.headers.get("host"))) {
     return NextResponse.json({ error: "Cross-site request refused." }, { status: 403 });
   }
   const session = await auth();
@@ -34,20 +45,35 @@ export async function POST(request: NextRequest, ctx: RouteContext<"/api/drafts/
   const { id } = await ctx.params;
   if (!z.string().uuid().safeParse(id).success)
     return NextResponse.json({ error: "Not found." }, { status: 404 });
-  const payload = (await request.json().catch(() => ({}))) as { body?: unknown };
+  const payload = (await request.json().catch(() => ({}))) as {
+    body?: unknown;
+    seen?: unknown;
+    okayedAt?: unknown;
+  };
   const editedBody =
     typeof payload.body === "string" && payload.body.trim() ? payload.body : undefined;
+  // Plan #10: an okay the phone stored with no signal, posted on reconnect.
+  const offline =
+    typeof payload.seen === "string" && typeof payload.okayedAt === "number"
+      ? { seenHash: payload.seen, okayedAt: new Date(payload.okayedAt) }
+      : undefined;
 
   try {
-    const outcome = await sendDraft(workspace.id, id, { editedBody });
-    const code = outcome.status === "sent" ? 200 : outcome.status === "not_found" ? 404 : 409;
-    return NextResponse.json(outcome, { status: code });
+    const outcome = await queueSend(workspace.id, id, { editedBody, offline });
+    if (outcome.status === "gaps_unfilled") {
+      return NextResponse.json(
+        { error: "Fill in every highlighted gap before sending." },
+        { status: 422 },
+      );
+    }
+    if (outcome.status === "queued") {
+      await enqueue(draftSendQueued.create({ draftId: id, at: outcome.sendAfter.toISOString() }));
+      return NextResponse.json(outcome, { status: 202 });
+    }
+    return NextResponse.json(outcome, { status: outcome.status === "not_found" ? 404 : 409 });
   } catch (err) {
     if (err instanceof SendingBlockedError) {
-      return NextResponse.json(
-        { error: "Sending is not allowed for this account right now." },
-        { status: 403 },
-      );
+      return NextResponse.json({ error: SENDING_BLOCKED_MESSAGE }, { status: 403 });
     }
     throw err;
   }

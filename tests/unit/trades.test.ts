@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { workspaceBlock, type WorkspaceContext } from "@/ai/prompts/draft.v4";
+import { workspaceBlock, type WorkspaceContext } from "@/ai/prompts/draft.v5";
 import { tradePromptFor, tradePrompts } from "@/ai/prompts/trades";
 import { TRADES, tradeLabel } from "@/config/trades";
 import { tradeEnum } from "@/db/schema";

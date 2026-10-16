@@ -1,5 +1,6 @@
 import "server-only";
-import { and, count, desc, eq, gte, inArray, isNotNull, lt, lte, sql } from "drizzle-orm";
+import { hasUnfilledGap } from "@/ai/gaps";
+import { and, count, desc, eq, gte, inArray, isNotNull, isNull, lte, sql } from "drizzle-orm";
 import { pricing } from "@/config/pricing";
 import { db } from "@/db";
 import {
@@ -12,18 +13,32 @@ import {
   workspaces,
   type Workspace,
 } from "@/db/schema";
-import { AUTO_DRAFT_CATEGORIES, sendDraft, type DraftDeps, type SendOutcome } from "./drafts";
-import { effectiveStatus } from "./lifecycle";
+import { MailboxAuthError } from "@/mailbox/connector";
+import {
+  AUTO_DRAFT_CATEGORIES,
+  defaultWriter,
+  sendDraft,
+  type DraftDeps,
+  type SendOutcome,
+} from "./drafts";
+import { canSend, effectiveStatus, setupReallyPaid } from "./lifecycle";
+import { knownCustomer } from "./known-customer";
+import { markReconnectNeeded } from "./sync";
+import { unsentDraftMessage } from "./thread-sql";
+
+export { knownCustomer };
 
 /**
  * Autopilot: the owner's explicit exception to "nothing leaves without your
  * okay". Every rule here is enforced in code and has a test. Three layers:
  *
- * 1. Account: Crew or Company plan, and setup finished (status `active`).
+ * 1. Account: Crew or Company plan, setup finished (status `active`), and the setup really
+ *    paid (`setupReallyPaid`) — the same payment the send gate needs.
  * 2. Category: the owner turned it on, and it has earned it — at least
  *    EARN_THRESHOLD drafts in that category approved without edits.
  * 3. Each email: never complaints, money, flagged threads, people the owner
- *    has never written to, follow-ups, or anything the checks were unsure of.
+ *    has never written to, follow-ups, deposit / review / closing notes, or
+ *    anything the checks were unsure of.
  *
  * Then a grace window: the reply sits in the queue for GRACE_MINUTES saying
  * when it will go, with "Hold it". Everything is checked again just before
@@ -42,7 +57,7 @@ export function isAutopilotCategory(c: unknown): c is Category {
 
 /** Layer 1. Returns why not, in plain words, or null when unlocked. */
 export function accountLockReason(
-  w: Pick<Workspace, "status" | "evaluationEndsAt" | "plan">,
+  w: Pick<Workspace, "status" | "evaluationEndsAt" | "plan" | "setupPaidVia">,
   now: Date = new Date(),
 ): string | null {
   if (!w.plan || !pricing.plans[w.plan].autopilot) {
@@ -50,6 +65,11 @@ export function accountLockReason(
   }
   if (effectiveStatus(w, now) !== "active") {
     return "Autopilot opens up once your setup call is done.";
+  }
+  // An active account that hasn't really paid (marked by hand before 2026-10-10, or reset after
+  // a test-card payment) can't send, so no countdown may start: it could never go.
+  if (!setupReallyPaid(w)) {
+    return "Autopilot opens up once your setup payment goes through.";
   }
   return null;
 }
@@ -68,6 +88,15 @@ export type GuardrailInput = {
   /** The email tried to instruct the assistant, or came from a building department. */
   untrusted?: boolean;
   municipal?: boolean;
+  /** The customer's email accepts a quote (classify.v3 signal) — the owner answers those. */
+  acceptsQuote?: boolean;
+  /** Deposit details, review request or closing question (plan #26 #28 #29). */
+  purpose: string | null;
+  /**
+   * A Gmail draft older sync stored after the customer's email, not yet checked with Gmail
+   * (draft-message-cleanup): if Gmail sent it under the same id, the owner already answered.
+   */
+  maybeAnswered?: boolean;
 };
 
 /** Layer 3. Every reason this email must wait for the owner; empty = may go. */
@@ -82,26 +111,14 @@ export function guardrailReasons(g: GuardrailInput): string[] {
   if (g.category === "invoice_payment" && g.amountsInEmail.length)
     out.push("Payments with an amount always wait for you.");
   if (/\$\s?\d/.test(g.draftBody)) out.push("Mentions money, so it waits for you.");
+  if (hasUnfilledGap(g.draftBody)) out.push("Has gaps for you to fill in.");
   if (!g.knownCustomer) out.push("You haven't written to this person before.");
   if (g.untrusted) out.push("This email tried to give instructions to the assistant.");
   if (g.municipal) out.push("Building departments always wait for you.");
+  if (g.acceptsQuote) out.push("Quote acceptances always wait for you.");
+  if (g.purpose != null) out.push("Deposit, review and closing notes always wait for you.");
+  if (g.maybeAnswered) out.push("You might already have answered this in Gmail.");
   return out;
-}
-
-async function knownCustomer(mailboxId: string, address: string | null, before: Date) {
-  if (!address) return false;
-  const [row] = await db()
-    .select({ n: count() })
-    .from(messages)
-    .where(
-      and(
-        eq(messages.mailboxId, mailboxId),
-        eq(messages.direction, "out"),
-        lt(messages.sentAt, before),
-        sql`${messages.toAddresses} @> ${JSON.stringify([address.toLowerCase()])}::jsonb`,
-      ),
-    );
-  return (row?.n ?? 0) > 0;
 }
 
 /** Layer 2's evidence: replies in each category the owner sent exactly as drafted. */
@@ -115,6 +132,8 @@ export async function earnedCounts(workspaceId: string): Promise<Map<string, num
       and(
         eq(mailboxes.workspaceId, workspaceId),
         eq(drafts.kind, "reply"),
+        // Deposit / review / closing notes never earn autopilot: it can never send them.
+        isNull(drafts.purpose),
         eq(drafts.status, "sent"),
         sql`${drafts.sentGmailMessageId} is not null`,
       ),
@@ -134,7 +153,7 @@ export type AutopilotState = {
 };
 
 export async function autopilotState(
-  workspace: Pick<Workspace, "id" | "status" | "evaluationEndsAt" | "plan">,
+  workspace: Pick<Workspace, "id" | "status" | "evaluationEndsAt" | "plan" | "setupPaidVia">,
   now: Date = new Date(),
 ): Promise<AutopilotState> {
   const lockedReason = accountLockReason(workspace, now);
@@ -162,7 +181,7 @@ export class AutopilotNotAllowedError extends Error {
 
 /** The owner's switch. Turning on is checked against layers 1 and 2; turning off always works. */
 export async function setAutopilot(
-  workspace: Pick<Workspace, "id" | "status" | "evaluationEndsAt" | "plan">,
+  workspace: Pick<Workspace, "id" | "status" | "evaluationEndsAt" | "plan" | "setupPaidVia">,
   category: string,
   on: boolean,
   now: Date = new Date(),
@@ -239,15 +258,31 @@ async function blockers(row: NonNullable<Awaited<ReturnType<typeof loadForAutopi
   const mode = (await modes(workspace.id)).get(thread.category ?? "");
   if (mode !== "autopilot") return ["Autopilot is off for this kind of email."];
   const [customer] = await db()
-    .select({ address: messages.fromAddress })
+    .select({ address: messages.fromAddress, sentAt: messages.sentAt })
     .from(messages)
     .where(and(eq(messages.threadId, thread.id), eq(messages.direction, "in")))
     .orderBy(desc(messages.sentAt))
     .limit(1);
+  const maybeAnswered = customer
+    ? (
+        await db()
+          .select({ id: messages.id })
+          .from(messages)
+          .where(
+            and(
+              eq(messages.threadId, thread.id),
+              unsentDraftMessage(),
+              gte(messages.sentAt, customer.sentAt),
+            ),
+          )
+          .limit(1)
+      ).length > 0
+    : false;
   const extracted = (thread.extracted ?? {}) as {
     dollar_amounts?: number[];
     injection?: boolean;
     municipal?: boolean;
+    accepts_quote?: boolean;
   };
   return guardrailReasons({
     category: thread.category,
@@ -258,6 +293,9 @@ async function blockers(row: NonNullable<Awaited<ReturnType<typeof loadForAutopi
     amountsInEmail: extracted.dollar_amounts ?? [],
     untrusted: extracted.injection === true,
     municipal: extracted.municipal === true,
+    acceptsQuote: extracted.accepts_quote === true,
+    purpose: draft.purpose ?? null,
+    maybeAnswered,
     draftBody: draft.body ?? "",
     knownCustomer: await knownCustomer(mailbox.id, customer?.address ?? null, draft.createdAt),
   });
@@ -304,8 +342,9 @@ export type AutopilotSendResult =
 
 /**
  * When the grace window ends: check everything again — the owner may have
- * held it, edited it, switched autopilot off, the customer may have written
- * again, or the account may have changed — and only then send.
+ * held it, edited it, switched autopilot off, started their own reply in
+ * Gmail, the customer may have written again, or the account may have
+ * changed — and only then send.
  */
 export async function runAutopilotSend(
   draftId: string,
@@ -331,6 +370,31 @@ export async function runAutopilotSend(
     ...(await blockers(row, now)),
     ...(newer.length ? ["There's newer mail in this conversation."] : []),
   ];
+  // Layer 1 already needs what the send gate needs. If they ever differ, stand down here rather
+  // than let sendDraft refuse: a refusal throws, and the backstop would retry it forever.
+  if (!reasons.length && !canSend(row.workspace, now)) {
+    reasons.push("Sending isn't switched on for this account.");
+  }
+  // The owner may be writing their own reply in Gmail right now: sync doesn't store drafts,
+  // so only Gmail can say. Asked only when sending is otherwise allowed — a blocked account
+  // or a lost mailbox gets no Google call (sendDraft refuses those before any).
+  if (!reasons.length && canSend(row.workspace, now) && row.mailbox.status === "active") {
+    const writer = (opts.writerFor ?? defaultWriter)(row.mailbox);
+    try {
+      const own = row.draft.gmailDraftId ? await writer.getDraft(row.draft.gmailDraftId) : null;
+      const ours = new Set([own?.messageId, row.draft.gmailMessageId].filter(Boolean));
+      const others = (await writer.threadDraftMessageIds(row.thread.gmailThreadId)).filter(
+        (id) => !ours.has(id),
+      );
+      if (others.length) reasons.push("You're writing a reply in Gmail.");
+    } catch (err) {
+      if (err instanceof MailboxAuthError) {
+        await markReconnectNeeded(row.mailbox);
+        return { status: "failed", outcome: "reconnect_needed" };
+      }
+      throw err;
+    }
+  }
   if (reasons.length) {
     await db().update(drafts).set({ autoSendAt: null }).where(eq(drafts.id, draftId));
     await db()

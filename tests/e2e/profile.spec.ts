@@ -75,3 +75,28 @@ test("settings shows the learned voice in plain words, and it can be corrected",
     page.getByText("You edited this, so the weekly refresh leaves it alone."),
   ).toBeVisible();
 });
+
+test("settings: a bad review link is refused in plain words, with focus on the field", async ({
+  page,
+  context,
+}) => {
+  const owner = await seedOwner({ mailbox: true, backfilled: true });
+  await signInAs(context, owner);
+
+  await page.goto("/settings/profile");
+  // Everything else valid, so the review link is the only (and first) field marked invalid.
+  await page.getByLabel("What's the business called?").fill("Elm Electric");
+  await page.getByLabel("What's your trade?").selectOption("electrical");
+  await page.getByLabel("What work do you take on?").fill("Service calls, panel upgrades.");
+  await page.getByLabel("Send me anything that mentions more than").fill("2500");
+  await page.getByLabel("Your review link").fill("http://g.page/r/abc");
+  await page.getByRole("button", { name: "Save business profile" }).click();
+
+  await expect(page.getByLabel("Your review link")).toBeFocused();
+  await expect(page.getByLabel("Your review link")).toHaveAttribute("aria-invalid", "true");
+  await expect(page.getByText("That doesn't look like a web link")).toBeVisible();
+
+  await page.getByLabel("Your review link").fill("");
+  await page.getByRole("button", { name: "Save business profile" }).click();
+  await expect(page).toHaveURL(/\/settings\?done=profile/);
+});

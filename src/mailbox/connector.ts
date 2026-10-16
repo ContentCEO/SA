@@ -130,5 +130,16 @@ export interface MailboxWriter {
   ): Promise<{ messageId: string }>;
   /** Must not throw if it's already gone. */
   deleteDraft(draftId: string): Promise<void>;
+  /**
+   * Message ids of every unsent draft in a thread (ours and the owner's own), [] when the
+   * thread is gone. Autopilot asks this just before sending: the owner may be writing their own
+   * reply in Gmail. Only ids — never stored, never logged.
+   */
+  threadDraftMessageIds(threadId: string): Promise<string[]>;
   sendDraft(draftId: string): Promise<{ messageId: string; threadId: string }>;
+  /**
+   * Send a brand-new message (not a draft, not in any thread). Used only for
+   * practice sends to the owner's own address during evaluation (plan #40).
+   */
+  sendMessage(raw: string): Promise<{ messageId: string }>;
 }

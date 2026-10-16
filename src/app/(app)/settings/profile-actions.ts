@@ -14,6 +14,7 @@ import {
   voiceEditInput,
 } from "@/server/profile";
 import { AutopilotNotAllowedError, setAutopilot } from "@/server/autopilot";
+import { decideSuggestion } from "@/server/edit-learning";
 import { hitLimit } from "@/server/rate-limit";
 import { requireOwner } from "@/server/session";
 
@@ -96,4 +97,20 @@ export async function setAutopilotAction(formData: FormData) {
     throw err;
   }
   redirect(`/settings?done=${on ? "autopilot_on" : "autopilot_off"}#autopilot`);
+}
+
+/** Plan #21: the owner's yes or no to an idea from their edits. */
+export async function decideVoiceIdeaAction(formData: FormData) {
+  const { workspace } = await requireOwner();
+  const id = z.string().uuid().safeParse(formData.get("ideaId"));
+  if (!id.success) redirect("/settings?error=unknown");
+  const r = await decideSuggestion(workspace.id, id.data, formData.get("answer") === "yes");
+  if (r === "type_it") redirect("/settings/voice");
+  redirect(
+    r === "accepted"
+      ? "/settings?done=idea_yes#voice"
+      : r === "ignored"
+        ? "/settings?done=idea_no#voice"
+        : "/settings?error=unknown",
+  );
 }

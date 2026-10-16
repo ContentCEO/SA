@@ -7,23 +7,31 @@ import { sum } from "drizzle-orm";
 import { classifyEmail } from "@/ai/classify";
 import { callStructured } from "@/ai/client";
 import { checkDraft } from "@/ai/draft-checks";
-import { CLASSIFY_PROMPT_VERSION } from "@/ai/prompts/classify.v2";
+import { CLASSIFY_PROMPT_VERSION } from "@/ai/prompts/classify.v3";
+import { EDIT_TONE_PROMPT_VERSION } from "@/ai/prompts/edit-tone.v1";
+import { PURPOSE_PROMPT_VERSION } from "@/ai/prompts/purpose.v1";
+import { REVISE_PROMPT_VERSION } from "@/ai/prompts/revise.v1";
 import {
   conversationBlock,
   DRAFT_INSTRUCTIONS,
   DRAFT_PROMPT_VERSION,
   draftSchema,
   workspaceBlock,
-} from "@/ai/prompts/draft.v4";
+} from "@/ai/prompts/draft.v5";
 import { usage } from "@/db/schema";
 import { ensureUserAndWorkspace } from "@/server/accounts";
 import { createTestDb } from "../support/db";
 import type { EvalCase } from "./cases";
+import { runEditEvals } from "./edits";
+import { DEFAULT_PAYMENT_TERMS, runPurposeEvals } from "./purposes";
 import { score, type EvalResult } from "./score";
 
 export const PROMPT_VERSIONS = {
   classify: CLASSIFY_PROMPT_VERSION,
   draft: DRAFT_PROMPT_VERSION,
+  revise: REVISE_PROMPT_VERSION,
+  editTone: EDIT_TONE_PROMPT_VERSION,
+  purpose: PURPOSE_PROMPT_VERSION,
 };
 
 /** A neutral, invented business so drafts have something to work from — and no prices. */
@@ -34,7 +42,7 @@ const PROFILE = {
   hours: "Mon–Fri 7am–4pm",
   leadTime: "About two weeks out",
   pricingNotes: null,
-  paymentTerms: "Due on completion; check or card",
+  paymentTerms: DEFAULT_PAYMENT_TERMS,
   policies: null,
   signature: "Thanks,\nAlex",
   doNotPromise: ["same-day service"],
@@ -59,7 +67,7 @@ export async function runEvals(
       subject: c.subject,
       receivedAt: new Date("2026-10-01T14:00:00Z"),
       firstTimeSender: c.firstTimeSender ?? false,
-      threadSummary: null,
+      threadSummary: c.threadSummary ?? null,
       body: c.body,
     };
     const r = await classifyEmail(
@@ -82,6 +90,8 @@ export async function runEvals(
       municipal: r.extracted.municipal === true,
       permitResult: r.extracted.permit?.result ?? null,
       invoiceStatus: r.extracted.invoice?.status ?? null,
+      acceptsQuote: r.extracted.accepts_quote === true,
+      jobDone: r.extracted.job_done === true,
     };
 
     if (opts.drafts !== false && c.draft) {
@@ -119,7 +129,10 @@ export async function runEvals(
         if (c.draft.noInventedDates)
           problems.push(...check.flags.filter((f) => f.includes("commit")));
         problems.push(
-          ...check.flags.filter((f) => f.includes("never-promise") || f.includes("never-say")),
+          ...check.flags.filter(
+            (f) =>
+              f.includes("never-promise") || f.includes("never-say") || f.includes("stand behind"),
+          ),
         );
         for (const bad of c.draft.mustNotContain ?? []) {
           if (draft.body.toLowerCase().includes(bad.toLowerCase())) problems.push(`says "${bad}"`);
@@ -129,6 +142,19 @@ export async function runEvals(
     }
     results.push(result);
     opts.onProgress?.(++done, cases.length);
+  }
+
+  const scores = score(cases, results);
+  let reviseProblems: Record<string, string[]> = {};
+  let purposeProblems: Record<string, string[]> = {};
+  if (opts.drafts !== false) {
+    const edits = await runEditEvals(workspace.id);
+    scores.revisePassRate = edits.revisePassRate;
+    scores.toneAccuracy = edits.toneAccuracy;
+    reviseProblems = edits.reviseProblems;
+    const purposes = await runPurposeEvals(workspace.id);
+    scores.purposePassRate = purposes.purposePassRate;
+    purposeProblems = purposes.purposeProblems;
   }
 
   const [cost] = await database
@@ -142,7 +168,9 @@ export async function runEvals(
     .from(usage);
   return {
     results,
-    scores: score(cases, results),
+    scores,
+    reviseProblems,
+    purposeProblems,
     costDollars: (cost?.centiCents ?? 0) / 10_000,
     tokens: { input: tokens?.in ?? 0, output: tokens?.out ?? 0 },
   };

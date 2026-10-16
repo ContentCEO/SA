@@ -1,12 +1,22 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { Notice } from "@/components/app/notice";
+import { OfferButtons } from "@/components/app/offer-buttons";
 import { Headline } from "@/components/brand/headline";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { gmailThreadLink } from "@/lib/gmail-link";
 import { relativeTime } from "@/lib/relative-time";
 import { cn } from "@/lib/utils";
-import { formatCents, stageLabel, type QuoteStage } from "@/server/quote-rules";
+import { isReadOnly } from "@/server/lifecycle";
+import { threadOffers, type ThreadOffers } from "@/server/offers";
+import {
+  formatCents,
+  isDecidedStage,
+  QUOTE_OUTCOMES,
+  stageLabel,
+  type QuoteOutcome,
+  type QuoteStage,
+} from "@/server/quote-rules";
 import { listQuotes, type QuoteRow } from "@/server/quotes";
 import { requireOwner } from "@/server/session";
 import { markQuoteAction } from "./actions";
@@ -19,6 +29,7 @@ const FILTERS = [
   ["quiet", "Gone quiet"],
   ["won", "Won"],
   ["lost", "Lost"],
+  ["no_answer", "No answer"],
 ] as const;
 type Filter = (typeof FILTERS)[number][0];
 const OPEN: QuoteStage[] = ["waiting_on_you", "talking", "quiet"];
@@ -26,16 +37,35 @@ const OPEN: QuoteStage[] = ["waiting_on_you", "talking", "quiet"];
 const done: Record<string, string> = {
   won: "Marked won. Nice one.",
   lost: "Marked lost.",
+  no_answer: "Marked no answer.",
   reopen: "Reopened.",
 };
 const errors: Record<string, string> = {
   amount: "That amount didn't look right. Type just the number, like 1450.",
+  readonly:
+    "Your account is read-only right now, so nothing was changed. The note at the top says why.",
   unknown: "That didn't work. Refresh and try again.",
 };
 
-function QuoteCard({ q, filter }: { q: QuoteRow; filter: Filter }) {
+const markLabel: Record<QuoteOutcome, string> = {
+  won: "Mark won",
+  lost: "Mark lost",
+  no_answer: "Mark no answer",
+};
+
+function QuoteCard({
+  q,
+  filter,
+  readOnly,
+  offers,
+}: {
+  q: QuoteRow;
+  filter: Filter;
+  readOnly: boolean;
+  offers: ThreadOffers | undefined;
+}) {
   const name = q.customerName ?? q.customerAddress ?? "Someone";
-  const decided = q.stage === "won" || q.stage === "lost";
+  const decided = isDecidedStage(q.stage);
   return (
     <article
       aria-label={`Quote for ${name}`}
@@ -51,26 +81,43 @@ function QuoteCard({ q, filter }: { q: QuoteRow; filter: Filter }) {
         </span>
       </div>
       <div className="flex items-baseline justify-between gap-3">
-        <span className="text-sm font-semibold">{stageLabel[q.stage]}</span>
+        <span className="text-sm font-semibold">
+          {stageLabel[q.stage]}
+          {q.outcomeGuessed ? <span className="font-normal"> (our guess)</span> : null}
+        </span>
         {q.amountCents ? (
           <span className="text-lg font-black">{formatCents(q.amountCents)}</span>
         ) : null}
       </div>
       {q.summary ? <p className="opacity-80">{q.summary}</p> : null}
+      {readOnly ? null : (
+        // Plan #26: only on a quote that went quiet after both nudges (the server decides).
+        <OfferButtons
+          threadId={q.threadId}
+          offers={offers ? { review: false, closingQuestion: offers.closingQuestion } : undefined}
+        />
+      )}
 
-      {decided ? (
-        <form action={markQuoteAction}>
+      {readOnly ? null : decided ? (
+        // One tap to change it — our guess or the owner's own mark.
+        <form action={markQuoteAction} className="flex flex-col gap-2">
           <input type="hidden" name="threadId" value={q.threadId} />
-          <input type="hidden" name="outcome" value="reopen" />
           <input type="hidden" name="stage" value={filter} />
-          <Button type="submit" variant="ghost" className="w-full">
+          <div className="grid grid-cols-2 gap-2">
+            {QUOTE_OUTCOMES.filter((o) => o !== q.stage).map((o) => (
+              <Button key={o} type="submit" name="outcome" value={o} variant="outline">
+                {markLabel[o]}
+              </Button>
+            ))}
+          </div>
+          <Button type="submit" name="outcome" value="reopen" variant="ghost" className="w-full">
             Reopen
           </Button>
         </form>
       ) : (
         <details className="group">
           <summary className="inline-flex min-h-tap w-full cursor-pointer list-none items-center justify-center rounded-lg border font-semibold">
-            Mark won or lost
+            Mark how it ended
           </summary>
           <form action={markQuoteAction} className="mt-3 flex flex-col gap-2">
             <input type="hidden" name="threadId" value={q.threadId} />
@@ -90,6 +137,15 @@ function QuoteCard({ q, filter }: { q: QuoteRow; filter: Filter }) {
               </Button>
               <Button type="submit" name="outcome" value="lost" variant="outline">
                 Mark lost
+              </Button>
+              <Button
+                type="submit"
+                name="outcome"
+                value="no_answer"
+                variant="outline"
+                className="col-span-2"
+              >
+                No answer
               </Button>
             </div>
           </form>
@@ -114,8 +170,13 @@ export default async function QuotesPage(props: PageProps<"/quotes">) {
     ? (params.stage as Filter)
     : "open";
   const { quotes, totals, quietDays } = await listQuotes(workspace.id);
+  const readOnly = isReadOnly(workspace);
   const shown = quotes.filter((q) =>
     filter === "open" ? OPEN.includes(q.stage) : q.stage === filter,
+  );
+  const offers = await threadOffers(
+    workspace.id,
+    shown.map((q) => q.threadId),
   );
   const count = (f: Filter) =>
     quotes.filter((q) => (f === "open" ? OPEN.includes(q.stage) : q.stage === f)).length;
@@ -125,6 +186,12 @@ export default async function QuotesPage(props: PageProps<"/quotes">) {
   return (
     <>
       <Headline serif="your quotes," heavy="won and waiting." />
+      <Link
+        href="/money"
+        className={cn(buttonVariants({ variant: "outline" }), "min-h-tap self-start")}
+      >
+        Money owed →
+      </Link>
       {doneMsg ? <Notice>{doneMsg}</Notice> : null}
       {errorMsg ? <Notice strong>{errorMsg}</Notice> : null}
 
@@ -149,8 +216,8 @@ export default async function QuotesPage(props: PageProps<"/quotes">) {
         </dl>
         <p className="text-muted-foreground">
           {totals.winRatePct !== null
-            ? `You won ${totals.winRatePct}% of the quotes you marked. `
-            : "Tap Mark won or lost on a quote to track your win rate. "}
+            ? `You won ${totals.winRatePct}% of the quotes that ended (won, lost or no answer). `
+            : "Tap Mark how it ended on a quote to track your win rate. "}
           Amounts come from the price in your reply, or what you type.
         </p>
       </section>
@@ -174,7 +241,13 @@ export default async function QuotesPage(props: PageProps<"/quotes">) {
       {shown.length ? (
         <div className="flex flex-col gap-3">
           {shown.map((q) => (
-            <QuoteCard key={q.threadId} q={q} filter={filter} />
+            <QuoteCard
+              key={q.threadId}
+              q={q}
+              filter={filter}
+              readOnly={readOnly}
+              offers={offers.get(q.threadId)}
+            />
           ))}
         </div>
       ) : (
@@ -186,7 +259,9 @@ export default async function QuotesPage(props: PageProps<"/quotes">) {
       )}
       <p className="text-sm text-muted-foreground">
         &ldquo;Gone quiet&rdquo; means you replied {quietDays}+ days ago and haven&apos;t heard
-        back.
+        back. &ldquo;No answer&rdquo; can be our guess: a week after two follow-ups, or three quiet
+        weeks. &ldquo;Won&rdquo; can be our guess too, when the customer says go ahead. Change
+        either with one tap.
       </p>
     </>
   );

@@ -1,12 +1,11 @@
 import "server-only";
 import { z } from "zod";
 import { MissingScopesError, type ConnectResult, type MailboxConnector } from "../connector";
+import { googleEndpoints } from "@/config/e2e";
 import { ALL_CONNECT_SCOPES, REQUIRED_GMAIL_SCOPES, missingScopes } from "./scopes";
 
+/** The browser's consent page. Never overridable (local e2e fakes route it in the browser). */
 const AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth";
-const TOKEN_URL = "https://oauth2.googleapis.com/token";
-const USERINFO_URL = "https://openidconnect.googleapis.com/v1/userinfo";
-const REVOKE_URL = "https://oauth2.googleapis.com/revoke";
 
 const tokenResponse = z.object({
   access_token: z.string(),
@@ -29,7 +28,7 @@ function clientCredentials() {
 
 export function createGmailConnector(fetchImpl: Fetch = fetch): MailboxConnector {
   async function revoke(tokenValue: string) {
-    const res = await fetchImpl(REVOKE_URL, {
+    const res = await fetchImpl(googleEndpoints().revoke, {
       method: "POST",
       headers: { "content-type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({ token: tokenValue }),
@@ -63,7 +62,7 @@ export function createGmailConnector(fetchImpl: Fetch = fetch): MailboxConnector
 
     async exchangeCode({ code, redirectUri }): Promise<ConnectResult> {
       const { clientId, clientSecret } = clientCredentials();
-      const res = await fetchImpl(TOKEN_URL, {
+      const res = await fetchImpl(googleEndpoints().token, {
         method: "POST",
         headers: { "content-type": "application/x-www-form-urlencoded" },
         body: new URLSearchParams({
@@ -86,7 +85,7 @@ export function createGmailConnector(fetchImpl: Fetch = fetch): MailboxConnector
       }
       if (!token.refresh_token) throw new Error("Google did not return a refresh token.");
 
-      const infoRes = await fetchImpl(USERINFO_URL, {
+      const infoRes = await fetchImpl(googleEndpoints().userinfo, {
         headers: { authorization: `Bearer ${token.access_token}` },
       });
       if (!infoRes.ok) throw new Error(`Google userinfo failed (${infoRes.status}).`);

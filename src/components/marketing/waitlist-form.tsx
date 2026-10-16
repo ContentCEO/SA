@@ -6,6 +6,7 @@ import { joinWaitlistAction, type WaitlistState } from "@/app/waitlist-actions";
 import { SelectField, TextArea, TextField } from "@/components/forms/field";
 import { useFocusFirstError } from "@/components/forms/use-focus-first-error";
 import { Button } from "@/components/ui/button";
+import { siteConfig } from "@/config/site";
 import { TRADE_OPTIONS } from "@/config/trades";
 
 const trades = TRADE_OPTIONS.map((t) =>
@@ -22,7 +23,8 @@ function Submit() {
   );
 }
 
-export function WaitlistForm() {
+/** `referralCode`: from a referral link (?ref=), only passed while referrals are switched on. */
+export function WaitlistForm({ referralCode }: { referralCode?: string } = {}) {
   const [state, action] = useActionState<WaitlistState, FormData>(joinWaitlistAction, {
     status: "idle",
   });
@@ -32,8 +34,11 @@ export function WaitlistForm() {
     return (
       <div role="status" className="sa-inverted flex flex-col gap-3 rounded-2xl p-6">
         <p className="flex flex-col">
-          <span className="sa-headline-serif text-3xl">you&apos;re on the list,</span>
+          <span className="sa-headline-serif text-3xl">thanks,</span>
           <span className="sa-headline-heavy text-4xl">squared away.</span>
+        </p>
+        <p className="text-xl font-black">
+          You&apos;re on the list. {siteConfig.operator.split(" ")[0]} will be in touch.
         </p>
         <p className="text-ash">
           We set each shop up by hand, so we&apos;ll call or email you to arrange a time. Nothing
@@ -47,11 +52,20 @@ export function WaitlistForm() {
   const e = state.errors ?? {};
   return (
     <form ref={ref} action={action} className="flex flex-col gap-4" noValidate>
-      <TextField name="name" label="Your name" defaultValue={v.name} error={e.name} />
+      <TextField
+        name="name"
+        label="Your name"
+        autoComplete="name"
+        required
+        defaultValue={v.name}
+        error={e.name}
+      />
       <TextField
         name="email"
         type="email"
         inputMode="email"
+        autoComplete="email"
+        required
         label="Business Gmail"
         hint="The Gmail address your customers write to."
         defaultValue={v.email}
@@ -62,6 +76,7 @@ export function WaitlistForm() {
           name="trade"
           label="Trade"
           options={trades}
+          required
           defaultValue={v.trade}
           error={e.trade}
         />
@@ -69,6 +84,7 @@ export function WaitlistForm() {
           name="teamSize"
           label="People in the business"
           options={sizes}
+          required
           defaultValue={v.teamSize}
           error={e.teamSize}
         />
@@ -76,6 +92,8 @@ export function WaitlistForm() {
       <TextField
         name="phone"
         type="tel"
+        inputMode="tel"
+        autoComplete="tel"
         label="Phone (optional)"
         hint="If you'd rather we call."
         defaultValue={v.phone}
@@ -88,6 +106,9 @@ export function WaitlistForm() {
         error={e.note}
         rows={3}
       />
+      {referralCode ? (
+        <input type="hidden" name="ref" defaultValue={v.ref ?? referralCode} />
+      ) : null}
       {/* Left empty by people; bots fill it in. */}
       <div aria-hidden className="absolute -left-[9999px] h-0 w-0 overflow-hidden">
         <label>

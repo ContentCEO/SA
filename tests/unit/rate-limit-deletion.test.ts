@@ -6,18 +6,20 @@ import type { Database } from "@/db";
 import {
   activityLog,
   businessProfiles,
+  invites,
   mailboxes,
+  priceHistory,
   rateLimits,
   threads,
   users,
   workspaces,
 } from "@/db/schema";
 import type { MailboxConnector } from "@/mailbox/connector";
-import { ensureUserAndWorkspace } from "@/server/accounts";
+import { ensureUserAndWorkspace, isAllowedToSignIn } from "@/server/accounts";
 import { deleteAccount, SubscriptionCancelError } from "@/server/account-deletion";
 import { setStripeForTests } from "@/server/billing";
 import { saveConnectedMailbox } from "@/server/mailboxes";
-import { hitLimit, ipKey, LIMITS, purgeRateLimits } from "@/server/rate-limit";
+import { hitLimit, ipKey, LIMITS, MAX_WINDOW_SEC, purgeRateLimits } from "@/server/rate-limit";
 import { createTestDb } from "../support/db";
 
 let database: Database;
@@ -44,6 +46,28 @@ describe("rate limits", () => {
 
     const next = new Date(T.getTime() + windowSec * 1000);
     expect((await hitLimit("send", "w1", next)).allowed).toBe(true);
+  });
+
+  it("M11 C8: polling the counts and Gmail-writing taps have their own limits", async () => {
+    for (const name of ["poll", "gmailWrite"] as const) {
+      const { max } = LIMITS[name];
+      for (let i = 0; i < max; i++) expect((await hitLimit(name, "w1", T)).allowed).toBe(true);
+      const over = await hitLimit(name, "w1", T);
+      expect(over.allowed, name).toBe(false);
+      expect(over.retryAfterSec).toBeGreaterThan(0);
+      // Per workspace: another owner isn't slowed down.
+      expect((await hitLimit(name, "w2", T)).allowed).toBe(true);
+    }
+    // Generous: a phone asking once a minute plus after every tap stays far inside it.
+    expect(LIMITS.poll.max).toBeGreaterThanOrEqual(3 * (LIMITS.poll.windowSec / 60));
+  });
+
+  it("every window fits inside the daily purge (windows older than 2 days are deleted)", () => {
+    for (const [name, l] of Object.entries(LIMITS)) {
+      expect(l.windowSec, name).toBeLessThanOrEqual(MAX_WINDOW_SEC);
+      expect(l.windowSec, name).toBeLessThanOrEqual(86_400);
+      expect(l.max, name).toBeGreaterThan(0);
+    }
   });
 
   it("re-learning voice is limited to three a day", async () => {
@@ -88,10 +112,19 @@ describe("delete my account", () => {
       grantedScopes: [],
     });
     const [mb] = await database.select().from(mailboxes);
-    await database
+    const [t] = await database
       .insert(threads)
-      .values({ mailboxId: mb!.id, gmailThreadId: "t1", subject: "Panel upgrade" } as never);
+      .values({ mailboxId: mb!.id, gmailThreadId: "t1", subject: "Panel upgrade" } as never)
+      .returning();
     await database.insert(businessProfiles).values({ workspaceId: workspace.id } as never);
+    // Plan #15: price memory goes with the account (A20).
+    await database.insert(priceHistory).values({
+      workspaceId: workspace.id,
+      threadId: t!.id,
+      service: "Panel upgrade",
+      amountCents: 180000,
+      quotedAt: new Date(),
+    });
     return { user, workspace };
   }
 
@@ -110,7 +143,15 @@ describe("delete my account", () => {
     expect(r).toEqual({ mailboxes: 1, revoked: 1, subscriptionCanceled: true });
     expect(revoked).toEqual(["refresh-1"]);
     expect(canceled).toEqual(["sub_1"]);
-    for (const table of [users, workspaces, mailboxes, threads, businessProfiles, activityLog]) {
+    for (const table of [
+      users,
+      workspaces,
+      mailboxes,
+      threads,
+      businessProfiles,
+      activityLog,
+      priceHistory,
+    ]) {
       expect(await database.select().from(table)).toHaveLength(0);
     }
   });
@@ -144,6 +185,27 @@ describe("delete my account", () => {
     expect(revoked).toEqual([]);
     expect(await database.select().from(users)).toHaveLength(1);
     expect(await database.select().from(mailboxes)).toHaveLength(1);
+  });
+
+  it("a deleted owner can no longer sign in without a new invite", async () => {
+    await database.insert(invites).values({ email: "owner@shop.com", trade: "electrical" });
+    const { user } = await seed();
+    expect(await isAllowedToSignIn("owner@shop.com")).toBe(true);
+    await deleteAccount(user.id, connector);
+    expect(await database.select().from(invites)).toHaveLength(0);
+    expect(await isAllowedToSignIn("Owner@Shop.com")).toBe(false);
+
+    // Davi's admin address is always allowed, invite or not.
+    const prev = process.env.ADMIN_EMAIL;
+    process.env.ADMIN_EMAIL = "davi@shop.com";
+    try {
+      const { user: admin } = await ensureUserAndWorkspace({ email: "davi@shop.com" });
+      await deleteAccount(admin.id, connector);
+      expect(await isAllowedToSignIn("davi@shop.com")).toBe(true);
+    } finally {
+      if (prev === undefined) delete process.env.ADMIN_EMAIL;
+      else process.env.ADMIN_EMAIL = prev;
+    }
   });
 
   it("a subscription Stripe already ended doesn't block deletion", async () => {

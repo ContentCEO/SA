@@ -1,3 +1,4 @@
+import Link from "next/link";
 import type { Metadata } from "next";
 import { Notice } from "@/components/app/notice";
 import { Headline } from "@/components/brand/headline";
@@ -18,14 +19,29 @@ import { isAdminEmail } from "@/server/admin";
 import { ADMIN_MOVES, canMakeMove, type AdminMove } from "@/server/lifecycle";
 import {
   adminMoveAction,
+  checkTestPaymentsAction,
   connectStripeAction,
   inviteAction,
   inviteFromWaitlistAction,
+  resetTestPaymentsAction,
   setPlanAction,
 } from "./actions";
 import { PendingButton } from "@/components/app/pending-button";
-import { stripeConfigured, stripeConnectedAt } from "@/server/billing";
+import { salesTaxStatus, stripeConfigured, stripeConnectedAt, stripeMode } from "@/server/billing";
+import { SALES_TAX_LINES, SALES_TAX_ON_NOTE } from "@/server/billing-rules";
+import { stripeReasonText } from "@/server/stripe-error-rules";
+import { lastTestPaymentsResult } from "@/server/test-payments";
+import {
+  PAST_DUE_RESET_NOTE,
+  TEST_PAYMENTS_TEST_MODE,
+  testPaymentsLine,
+  testPaymentsResetNotice,
+} from "@/server/test-payment-rules";
 import { listWaitlist } from "@/server/waitlist";
+import { referralsVisible } from "@/server/referral-rules";
+import { describeWaitlistEntry, formatStamp } from "@/server/growth-note";
+import { growthCopy } from "@/components/marketing/growth/growth-copy";
+import { phoneHref } from "@/lib/phone-href";
 import { pricing } from "@/config/pricing";
 
 export const metadata: Metadata = { title: "Admin", robots: { index: false } };
@@ -80,13 +96,17 @@ const done: Record<string, string> = {
   stripe_test:
     "Stripe connected in TEST mode: prices, billing portal and payment notifications are set up. Use card 4242 4242 4242 4242 to try it.",
   stripe_live: "Stripe connected in LIVE mode. Real cards will be charged.",
+  stripe_test_check: "Test payments checked.",
   invited: "Invited. They can sign in now (add them as a Google test user too).",
   already_invited: "That address was already invited.",
 };
 const errors: Record<string, string> = {
-  stripe: "Couldn't connect Stripe. Check the STRIPE_SECRET_KEY in Vercel, then try again.",
+  stripe: "Couldn't connect Stripe.",
+  stripe_test_mode: TEST_PAYMENTS_TEST_MODE,
+  stripe_test_payments: "Couldn't check test payments. Try again in a minute.",
   move: "That change isn't allowed from the account's current status. Refresh and look again.",
   invite: "That doesn't look like an email address.",
+  growth_only: growthCopy.admin.growthOnlyError,
   unknown: "That didn't work. Refresh and try again.",
 };
 
@@ -99,6 +119,157 @@ const et = new Intl.DateTimeFormat("en-US", {
   timeZoneName: "short",
 });
 const dollars = (cents: number) => `$${(cents / 100).toFixed(2)}`;
+
+const ga = growthCopy.admin;
+const CALLABLE = /^\d{3}-\d{3}-\d{4}$/;
+
+/**
+ * One waitlist row: an app sign-up, a Squared Away Growth call request, or both. The Growth
+ * conventions are read only through describeWaitlistEntry. A Growth-only row is never invited.
+ */
+function WaitlistEntry({
+  w,
+  now,
+  referrals,
+}: {
+  w: Awaited<ReturnType<typeof listWaitlist>>[number];
+  now: Date;
+  /** Plan #47: referralsVisible(), so a stored code shows only while referrals are on. */
+  referrals: boolean;
+}) {
+  const facts = describeWaitlistEntry(w);
+  const request = facts.growth[0];
+  const callLink = (phone: string | null) =>
+    phone && CALLABLE.test(phone) ? (
+      <a
+        href={phoneHref("tel", phone)}
+        className="inline-flex min-h-tap items-center self-start font-semibold underline underline-offset-4"
+      >
+        {ga.call(phone)}
+      </a>
+    ) : null;
+  return (
+    <li
+      aria-label={`Waitlist: ${w.email}`}
+      className="flex flex-col gap-2 rounded-xl border bg-card p-4"
+    >
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <span className="text-lg font-black">{w.name}</span>
+        <span className="text-sm text-muted-foreground">{relativeTime(w.createdAt, now)}</span>
+      </div>
+      <div className="flex flex-wrap gap-2">
+        {request ? (
+          <span className="sa-inverted rounded px-2 py-0.5 text-sm font-black">
+            {ga.growthChip}
+          </span>
+        ) : null}
+        {facts.app ? (
+          <span className="rounded border-2 border-charcoal px-2 py-0.5 text-sm font-black">
+            {ga.appChip}
+          </span>
+        ) : null}
+      </div>
+      <span className="break-all">{w.email}</span>
+      <span className="text-sm">
+        {(facts.app
+          ? [
+              w.trade ? tradeLabel[w.trade] : null,
+              w.teamSize ? `${w.teamSize} people` : null,
+              w.phone,
+            ]
+          : [w.trade ? tradeLabel[w.trade] : null]
+        )
+          .filter(Boolean)
+          .join(" · ")}
+      </span>
+      {facts.appNote ? <p className="text-muted-foreground">“{facts.appNote}”</p> : null}
+      {referrals && facts.app && w.referralCode ? (
+        <span className="text-sm font-semibold">Came from a referral link</span>
+      ) : null}
+      {request ? (
+        <div className="flex flex-col gap-1 border-t border-stone pt-2">
+          <span className="font-semibold">{ga.wants(request.services)}</span>
+          <span className="text-sm">{ga.asked(formatStamp(request.at))}</span>
+          {callLink(request.phone)}
+          {request.nameGiven ? <span>{ga.nameGiven(request.nameGiven)}</span> : null}
+          {request.tradeGiven ? <span>{ga.tradeGiven(request.tradeGiven)}</span> : null}
+          {request.note ? <p className="text-muted-foreground">“{request.note}”</p> : null}
+        </div>
+      ) : null}
+      {!facts.app ? (
+        <span className="font-semibold">{ga.growthOnly}</span>
+      ) : w.inviteState === "invited" ? (
+        <span className="font-semibold">
+          Invited {relativeTime(w.inviteAt ?? w.invitedAt ?? w.createdAt, now)}
+        </span>
+      ) : w.inviteState === "has_account" ? (
+        <span className="font-semibold">Has an account</span>
+      ) : (
+        <form action={inviteFromWaitlistAction} className="flex flex-col gap-2">
+          {w.inviteState === "invite_gone" ? (
+            // Delete my account removes the invite but keeps this entry.
+            <span className="text-sm">
+              Invited before, but that invite is gone (Delete my account removes it), so they
+              can&apos;t sign in.
+            </span>
+          ) : null}
+          <input type="hidden" name="email" value={w.email} />
+          <Button type="submit" className="w-full">
+            {w.inviteState === "invite_gone"
+              ? `Invite ${w.name.split(" ")[0]} again`
+              : `Invite ${w.name.split(" ")[0]}`}
+          </Button>
+        </form>
+      )}
+    </li>
+  );
+}
+
+/**
+ * "Reset test payments" (Davi, 2026-10-14), live mode only. The line shows the last check's
+ * counts (kept in the database), so loading the page asks Stripe nothing new; "Check test
+ * payments" asks again. The reset sits behind one confirmation and re-checks every account itself.
+ */
+function TestPayments({ result }: { result: Awaited<ReturnType<typeof lastTestPaymentsResult>> }) {
+  return (
+    <div className="flex flex-col gap-2 border-t border-stone pt-3">
+      <p className="font-semibold">
+        {result ? testPaymentsLine(result) : "Test payments: not checked yet."}
+      </p>
+      {result ? (
+        <p className="text-sm text-muted-foreground">Checked {et.format(new Date(result.at))}.</p>
+      ) : null}
+      <p>
+        Accounts that &ldquo;paid&rdquo; with a Stripe test card before you switched to live mode.
+        Checking asks Stripe and changes nothing.
+      </p>
+      <form action={checkTestPaymentsAction}>
+        <PendingButton pending="Checking with Stripe…" variant="outline" className="w-full">
+          Check test payments
+        </PendingButton>
+      </form>
+      {result && (result.found > 0 || result.unchecked > 0) ? (
+        <details className="rounded-lg border">
+          <summary className="flex min-h-tap cursor-pointer items-center px-4 font-semibold">
+            Reset test payments
+          </summary>
+          <form action={resetTestPaymentsAction} className="flex flex-col gap-2 px-4 pb-4">
+            <p>
+              Clears the test-mode Stripe details from those accounts. A setup paid with a test card
+              goes back to unpaid: nothing is deleted, sending stays off until they pay for real,
+              and their next checkout includes the setup fee. Your own test account keeps sending.
+              Safe to tap again.
+            </p>
+            <p>{PAST_DUE_RESET_NOTE}</p>
+            <PendingButton pending="Resetting…" className="w-full">
+              Yes, reset test payments
+            </PendingButton>
+          </form>
+        </details>
+      ) : null}
+    </div>
+  );
+}
 
 function Stat({ label, value }: { label: string; value: React.ReactNode }) {
   return (
@@ -190,6 +361,20 @@ function WorkspaceCard({ w, now }: { w: AdminRow; now: Date }) {
         />
         <Stat label="AI calls today" value={w.ai.callsToday} />
         <Stat label="AI cost this month" value={`${dollars(w.ai.costCentsThisMonth)} (est.)`} />
+        {w.referredByName ? <Stat label="Referred by" value={w.referredByName} /> : null}
+        {w.referralCredits.waiting || w.referralCredits.failed ? (
+          <Stat
+            label="Referral credit"
+            value={[
+              w.referralCredits.waiting ? `${w.referralCredits.waiting} waiting` : null,
+              w.referralCredits.failed
+                ? `${w.referralCredits.failed} refused by Stripe${w.referralCredits.lastErrorCode ? ` (${w.referralCredits.lastErrorCode})` : ""}`
+                : null,
+            ]
+              .filter(Boolean)
+              .join(", ")}
+          />
+        ) : null}
       </dl>
       <form action={setPlanAction} className="flex gap-2">
         <input type="hidden" name="workspaceId" value={w.workspaceId} />
@@ -241,27 +426,48 @@ export default async function AdminPage(props: PageProps<"/admin">) {
   await requireAdmin();
   const params = await props.searchParams;
   const now = new Date();
-  const [rows, total, invited, waiting, stripeAt, system] = await Promise.all([
-    adminOverview(now),
-    countWorkspaces(),
-    listInvites(),
-    listWaitlist(),
-    stripeConnectedAt(),
-    systemHealth(now),
-  ]);
+  const referrals = referralsVisible();
+  // Test payments can only be told apart with the live key. The counts come from the last check
+  // (database only): a plain page load asks Stripe nothing new.
+  const live = stripeConfigured() && stripeMode() === "live";
+  const [rows, total, invited, waiting, stripeAt, system, salesTax, testPayments] =
+    await Promise.all([
+      adminOverview(now),
+      countWorkspaces(),
+      listInvites(),
+      listWaitlist(),
+      stripeConnectedAt(),
+      systemHealth(now),
+      salesTaxStatus(),
+      live ? lastTestPaymentsResult() : null,
+    ]);
   // Payment messages show inside the Payments section (the page scrolls there), not at the top.
   const isStripe = (k: unknown) => typeof k === "string" && k.startsWith("stripe");
   const doneMsg =
     typeof params.done === "string" && !isStripe(params.done) ? done[params.done] : undefined;
   const errorMsg =
     typeof params.error === "string" && !isStripe(params.error) ? errors[params.error] : undefined;
-  const stripeDone = isStripe(params.done) ? done[params.done as string] : undefined;
+  const stripeDone =
+    params.done === "stripe_test_reset"
+      ? testPayments && testPayments.reset !== null
+        ? testPaymentsResetNotice({ reset: testPayments.reset, unchecked: testPayments.unchecked })
+        : undefined
+      : isStripe(params.done)
+        ? done[params.done as string]
+        : undefined;
   const stripeError = isStripe(params.error) ? errors[params.error as string] : undefined;
-  const stripeReason = typeof params.reason === "string" ? params.reason.slice(0, 200) : null;
+  // Only a fixed code travels in the URL (M11 C10); anything else shows nothing.
+  const stripeReason = stripeReasonText(params.reason);
 
   return (
     <>
       <Headline serif="behind the counter," heavy="admin." />
+      <Link
+        href="/admin/costs"
+        className="inline-flex min-h-tap items-center font-semibold underline underline-offset-4"
+      >
+        AI costs and margins this month
+      </Link>
       <p className="text-muted-foreground">
         Health and money only. No email content or customer names are shown here.
       </p>
@@ -316,23 +522,29 @@ export default async function AdminPage(props: PageProps<"/admin">) {
         {stripeError ? (
           <Notice strong>
             {stripeError}
-            {stripeReason ? ` Stripe said: “${stripeReason}”` : null}
+            {stripeReason ? ` ${stripeReason}` : null}
           </Notice>
         ) : null}
         {stripeConfigured() ? (
-          <form action={connectStripeAction} className="flex flex-col gap-2">
-            <p className="font-semibold">
-              {stripeAt ? `Connected · last set up ${et.format(stripeAt)}` : "Not connected yet."}
-            </p>
-            <p>
-              Sets up the four prices from the price list, the customer billing page, and the
-              payment notifications that switch accounts on and off. Takes about 10 seconds. Safe to
-              tap again.
-            </p>
-            <PendingButton pending="Connecting to Stripe…" className="w-full">
-              {stripeAt ? "Connect Stripe again" : "Connect Stripe"}
-            </PendingButton>
-          </form>
+          <>
+            <form action={connectStripeAction} className="flex flex-col gap-2">
+              <p className="font-semibold">
+                {stripeAt ? `Connected · last set up ${et.format(stripeAt)}` : "Not connected yet."}
+              </p>
+              {salesTax ? <p>{SALES_TAX_LINES[salesTax]}</p> : null}
+              {salesTax === "on" ? <p>{SALES_TAX_ON_NOTE}</p> : null}
+              <p>
+                Sets up the four prices from the price list, the customer billing page, and the
+                payment notifications that switch accounts on and off. Takes about 10 seconds. Safe
+                to tap again. It also makes the prices add tax on top, so tap it once before setting
+                up Stripe Tax.
+              </p>
+              <PendingButton pending="Connecting to Stripe…" className="w-full">
+                {stripeAt ? "Connect Stripe again" : "Connect Stripe"}
+              </PendingButton>
+            </form>
+            {live ? <TestPayments result={testPayments} /> : <p>{TEST_PAYMENTS_TEST_MODE}</p>}
+          </>
         ) : (
           <p>Add STRIPE_SECRET_KEY to the sa project in Vercel first.</p>
         )}
@@ -340,42 +552,14 @@ export default async function AdminPage(props: PageProps<"/admin">) {
 
       <section id="waitlist" aria-labelledby="waitlist-heading" className="flex flex-col gap-3">
         <h2 id="waitlist-heading" className="text-xl font-black">
-          Waitlist ({waiting.length})
+          {ga.heading(waiting.length)}
         </h2>
         {waiting.length === 0 ? (
-          <p>Nobody yet. The form is on the public home page.</p>
+          <p>{ga.empty}</p>
         ) : (
           <ul className="flex flex-col gap-3">
             {waiting.map((w) => (
-              <li
-                key={w.email}
-                aria-label={`Waitlist: ${w.email}`}
-                className="flex flex-col gap-2 rounded-xl border bg-card p-4"
-              >
-                <div className="flex flex-wrap items-baseline justify-between gap-2">
-                  <span className="text-lg font-black">{w.name}</span>
-                  <span className="text-sm text-muted-foreground">
-                    {relativeTime(w.createdAt, now)}
-                  </span>
-                </div>
-                <span className="break-all">{w.email}</span>
-                <span className="text-sm">
-                  {[w.trade, w.teamSize ? `${w.teamSize} people` : null, w.phone]
-                    .filter(Boolean)
-                    .join(" · ")}
-                </span>
-                {w.note ? <p className="text-muted-foreground">“{w.note}”</p> : null}
-                {w.invitedAt ? (
-                  <span className="font-semibold">Invited {relativeTime(w.invitedAt, now)}</span>
-                ) : (
-                  <form action={inviteFromWaitlistAction}>
-                    <input type="hidden" name="email" value={w.email} />
-                    <Button type="submit" className="w-full">
-                      Invite {w.name.split(" ")[0]}
-                    </Button>
-                  </form>
-                )}
-              </li>
+              <WaitlistEntry key={w.email} w={w} now={now} referrals={referrals} />
             ))}
           </ul>
         )}

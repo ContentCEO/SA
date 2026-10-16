@@ -1,6 +1,13 @@
+import { readFileSync } from "node:fs";
 import { RetryAfterError } from "inngest";
 import { describe, expect, it } from "vitest";
-import { afterSync, functions, politely } from "@/jobs/functions";
+import {
+  afterSync,
+  functions,
+  politely,
+  reportSummaryFailures,
+  SummaryFailuresError,
+} from "@/jobs/functions";
 import { MailboxAuthError, MailboxRateLimitError } from "@/mailbox/connector";
 
 describe("job wiring", () => {
@@ -31,6 +38,30 @@ describe("job wiring", () => {
     await expect(politely(async () => 7)).resolves.toBe(7);
   });
 
+  it("a failed morning or monthly summary still fails the run (so it reaches error alerts), counts only", () => {
+    expect(() => reportSummaryFailures({ failed: 0 }, { failed: 0 })).not.toThrow();
+    for (const [d, m] of [
+      [1, 0],
+      [0, 2],
+    ] as const) {
+      let err: unknown;
+      try {
+        reportSummaryFailures({ failed: d }, { failed: m });
+      } catch (e) {
+        err = e;
+      }
+      expect(err).toBeInstanceOf(SummaryFailuresError);
+      expect((err as Error).name).toBe("SummaryFailuresError");
+      expect((err as Error).message).toBe(`Summaries failed: ${d} morning, ${m} monthly.`);
+    }
+    // It runs after both steps, so a morning failure can't stop the monthly step.
+    const src = readFileSync("src/jobs/functions.ts", "utf8");
+    const body = src.slice(src.indexOf('id: "morning-digest"'));
+    const report = body.indexOf("reportSummaryFailures(digests, monthly)");
+    expect(report).toBeGreaterThan(body.indexOf('step.run("monthly"'));
+    expect(body.indexOf('step.run("monthly"')).toBeGreaterThan(body.indexOf('step.run("send"'));
+  });
+
   it("registers every job with Inngest", () => {
     const ids = functions.map((f) => f.id());
     // Every job defined in the file must be registered, or it silently never runs.
@@ -49,8 +80,29 @@ describe("job wiring", () => {
         "poll-mailboxes",
         "renew-gmail-watches",
         "purge-expired-bodies",
+        "send-after-undo",
+        "voice-ideas",
       ].sort(),
     );
+  });
+});
+
+describe("the 15-minute workspace-lifecycle job", () => {
+  it("runs the lead-at-risk pushes (plan #34), after the new-lead pushes and the M7 backfill (A29)", () => {
+    const src = readFileSync("src/jobs/functions.ts", "utf8");
+    const head = "export const workspaceLifecycle = inngest.createFunction(";
+    const start = src.indexOf(head);
+    expect(start).toBeGreaterThan(-1);
+    const next = src.indexOf("inngest.createFunction(", start + head.length);
+    const body = src.slice(start, next === -1 ? undefined : next);
+    const atRisk = body.indexOf('step.run("lead-at-risk-pushes", () => sendLeadAtRiskPushes())');
+    expect(atRisk).toBeGreaterThan(-1);
+    const backfill = body.indexOf('step.run("m7-backfill"');
+    const pushes = body.indexOf('step.run("push-alerts"');
+    expect(backfill).toBeGreaterThan(-1);
+    expect(pushes).toBeGreaterThan(-1);
+    expect(atRisk).toBeGreaterThan(backfill);
+    expect(atRisk).toBeGreaterThan(pushes);
   });
 });
 

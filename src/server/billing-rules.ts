@@ -1,6 +1,6 @@
 import { pricing, type PlanId } from "@/config/pricing";
 import type { Workspace } from "@/db/schema";
-import { effectiveStatus, setupReallyPaid } from "./lifecycle";
+import { effectiveStatus, SENDING_ALLOWED, setupReallyPaid } from "./lifecycle";
 
 /**
  * How payments move a workspace through the commercial flow. Pure functions;
@@ -37,9 +37,79 @@ export function planFromLookupKey(key: string | null | undefined): PlanId | null
   return m && isPlanId(m[1]) ? m[1] : null;
 }
 
+/**
+ * Sales tax (Davi, 2026-10-14: "turn on Stripe Tax"). Davi sets Stripe Tax up in Stripe's
+ * dashboard; the app only notices whether it's active. "unknown" = Stripe couldn't be asked.
+ */
+export type SalesTaxStatus = "on" | "off" | "unknown";
+
+/** The /admin Payments line for each state. Content-free. */
+export const SALES_TAX_LINES: Record<SalesTaxStatus, string> = {
+  on: "Sales tax: on (Stripe Tax is set up).",
+  off: "Sales tax: off. Set up Stripe Tax in Stripe to charge it.",
+  unknown: "Sales tax: couldn't check.",
+};
+
+/**
+ * Shown under "on": Stripe calls tax "active" once the business address is saved, which only
+ * means it can work tax out. It charges tax only in the states registered in Stripe.
+ */
+export const SALES_TAX_ON_NOTE =
+  "Stripe only charges it in the states listed in Stripe under Tax → Registrations.";
+
+/** The owner-facing note next to plan prices (homepage and /billing). */
+export const SALES_TAX_NOTE = "Plus sales tax where it applies.";
+
+/**
+ * Which Stripe account mode a secret key talks to: live for `sk_live_` / `rk_live_` (standard or
+ * restricted), test for anything else that's set, null when unset. The one place that decides it.
+ */
+export function stripeKeyMode(key: string | null | undefined): "live" | "test" | null {
+  if (!key) return null;
+  return /^(sk|rk)_live_/.test(key) ? "live" : "test";
+}
+
+/**
+ * A signed webhook event from the other Stripe mode than the key's: a live key ignores test-mode
+ * events, and a test key live ones. No key counts as test mode, and so does an event without
+ * `livemode` (Stripe always sends it).
+ */
+export function eventFromOtherMode(
+  livemode: boolean | null | undefined,
+  keyMode: "live" | "test" | null,
+): boolean {
+  return (livemode === true) !== (keyMode === "live");
+}
+
 /** Where they go once paid: as far as they'd got, at least setup_paid. */
-function restored(w: W): Status {
+export function restored(w: Pick<W, "setupCallCompletedAt">): Status {
   return w.setupCallCompletedAt ? "active" : "setup_paid";
+}
+
+/** The /billing line under the current plan, by status. */
+const BILLING_STATUS_LINES: Partial<Record<Status, string>> = {
+  setup_paid: "Setup's paid and sending is on. We'll call to finish setting you up.",
+  active: "All set. Your plan renews monthly.",
+  past_due: "Your last payment didn't go through. Update your card to switch things back on.",
+  canceled: "Your plan has ended. Pick a plan below to start again — nothing was deleted.",
+};
+
+/** Shown instead when the status would allow sending but the setup was never really paid. */
+export const SETUP_NOT_PAID_LINE = "Sending turns on once your setup payment goes through.";
+
+/**
+ * What /billing says about the account. An account at setup_paid / active whose setup wasn't
+ * really paid (marked by hand before 2026-10-10, or reset after a test card) gets the same words
+ * as the banner and the queue, never "Setup's paid" or "renews monthly": it can't send, and has
+ * no subscription to renew.
+ */
+export function billingStatusLine(
+  w: Pick<W, "status" | "evaluationEndsAt" | "setupPaidVia">,
+  now: Date = new Date(),
+): string | null {
+  const status = effectiveStatus(w, now);
+  if (SENDING_ALLOWED.includes(status) && !setupReallyPaid(w)) return SETUP_NOT_PAID_LINE;
+  return BILLING_STATUS_LINES[status] ?? null;
 }
 
 /** Who may start a checkout, and whether the one-time setup fee is included. */

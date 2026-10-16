@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { HistoryExpiredError, MailboxAuthError, MailboxRateLimitError } from "@/mailbox/connector";
 import { backoffDelay, createGmailReader, parseRetryAfter } from "@/mailbox/gmail/api";
 import { extractBodyText, htmlToText, parseAddressList } from "@/mailbox/gmail/parse";
@@ -66,6 +66,50 @@ describe("token refresh and revocation", () => {
         json({ error: { errors: [{ reason: "insufficientPermissions" }] } }, 403),
       );
     await expect(reader(f).r.getProfile()).rejects.toBeInstanceOf(MailboxAuthError);
+  });
+});
+
+describe("where it calls (Milestone 11 e2e seam)", () => {
+  afterEach(() => vi.unstubAllEnvs());
+  const LOCAL_E2E = {
+    SA_E2E: "1",
+    SA_E2E_GOOGLE_BASE_URL: "http://127.0.0.1:3301",
+    SA_E2E_ANTHROPIC_BASE_URL: "http://127.0.0.1:3301",
+    DATABASE_URL: "postgres://u@localhost/db",
+  };
+
+  it("GUARDRAIL: a fake base URL without SA_E2E=1 (or on Vercel) still calls the real Google", async () => {
+    for (const env of [
+      { SA_E2E_GOOGLE_BASE_URL: "http://127.0.0.1:3301" },
+      { ...LOCAL_E2E, VERCEL_ENV: "production" },
+    ]) {
+      vi.unstubAllEnvs();
+      for (const [k, v] of Object.entries(env)) vi.stubEnv(k, v);
+      const f = vi
+        .fn()
+        .mockResolvedValueOnce(token())
+        .mockResolvedValueOnce(json({ emailAddress: "o@x.com", historyId: "5" }));
+      await reader(f).r.getProfile();
+      expect(f.mock.calls.map((c) => String(c[0]))).toEqual([
+        "https://oauth2.googleapis.com/token",
+        "https://gmail.googleapis.com/gmail/v1/users/me/profile",
+      ]);
+    }
+  });
+
+  it("in a local e2e run it calls the loopback fake instead", async () => {
+    for (const [k, v] of Object.entries(LOCAL_E2E)) vi.stubEnv(k, v);
+    vi.stubEnv("VERCEL", undefined);
+    vi.stubEnv("VERCEL_ENV", undefined);
+    const f = vi
+      .fn()
+      .mockResolvedValueOnce(token())
+      .mockResolvedValueOnce(json({ emailAddress: "o@x.com", historyId: "5" }));
+    await reader(f).r.getProfile();
+    expect(f.mock.calls.map((c) => String(c[0]))).toEqual([
+      "http://127.0.0.1:3301/token",
+      "http://127.0.0.1:3301/gmail/v1/users/me/profile",
+    ]);
   });
 });
 
@@ -180,6 +224,60 @@ describe("history", () => {
       historyId: "9",
       nextPageToken: undefined,
     });
+  });
+
+  it("asks for new messages and SENT labels added (a sent draft may keep its id)", async () => {
+    const f = vi
+      .fn()
+      .mockResolvedValueOnce(token())
+      .mockResolvedValueOnce(
+        json({
+          historyId: "9",
+          history: [
+            {
+              labelsAdded: [
+                { message: { id: "d", threadId: "t", labelIds: ["SENT"] }, labelIds: ["SENT"] },
+              ],
+            },
+            { labelsAdded: [{ message: { id: "s", threadId: "t" }, labelIds: ["STARRED"] }] },
+            { messagesAdded: [{ message: { id: "a", threadId: "t" } }] },
+          ],
+        }),
+      );
+    const page = await reader(f).r.listHistory({ startHistoryId: "1" });
+    expect(page.added).toEqual([
+      { id: "d", threadId: "t" },
+      { id: "a", threadId: "t" },
+    ]);
+    const url = new URL(String(f.mock.calls[1]![0]));
+    expect(url.searchParams.getAll("historyTypes").sort()).toEqual(["labelAdded", "messageAdded"]);
+  });
+
+  it("lists a thread's unsent drafts by id only (format=minimal); [] when the thread is gone", async () => {
+    const f = vi
+      .fn()
+      .mockResolvedValueOnce(token())
+      .mockResolvedValueOnce(
+        json({
+          id: "t",
+          messages: [
+            { id: "in", labelIds: ["INBOX"] },
+            { id: "ours", labelIds: ["DRAFT"] },
+            { id: "sent", labelIds: ["DRAFT", "SENT"] },
+            { id: "owner", labelIds: ["DRAFT", "CATEGORY_PERSONAL"] },
+            { id: "bare" },
+          ],
+        }),
+      )
+      .mockResolvedValueOnce(json({ error: { code: 404 } }, 404));
+    const { r } = reader(f);
+    expect(await r.threadDraftMessageIds("t")).toEqual(["ours", "owner"]);
+    const url = new URL(String(f.mock.calls[1]![0]));
+    expect(url.pathname).toMatch(/\/threads\/t$/);
+    expect(url.searchParams.get("format")).toBe("minimal");
+    // Not even the snippet (minimal still returns it): ids and labels only.
+    expect(url.searchParams.get("fields")).toBe("messages(id,labelIds)");
+    expect(await r.threadDraftMessageIds("gone")).toEqual([]);
   });
 
   it("asks for metadata only unless a body is needed", async () => {

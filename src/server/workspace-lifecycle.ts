@@ -1,6 +1,6 @@
 import "server-only";
 import { and, eq, exists, lte, sql } from "drizzle-orm";
-import { db } from "@/db";
+import { db, type Database } from "@/db";
 import { pricing } from "@/config/pricing";
 import {
   activityLog,
@@ -13,6 +13,7 @@ import {
 } from "@/db/schema";
 import { isAdminEmail } from "./admin";
 import { canMakeMove, EVALUATION_MS, resumeTarget, type AdminMove } from "./lifecycle";
+import { creditReferralSafely } from "./referrals";
 
 /**
  * Start the three-day clock. Called when Gmail is first connected — that's
@@ -162,7 +163,25 @@ export async function applyAdminMove(
       action: "workspace_status_changed",
       detail: { by: "admin", move, from: w.status, to: row.status },
     });
+  // Plan #47: settle a referral the first time the account is active. Never fails the move.
+  if (row.status === "active") await creditReferralSafely(workspaceId, now);
   return row.status;
+}
+
+/**
+ * Stop every autopilot countdown in a workspace: those replies wait for the owner's tap instead.
+ * Used when the plan or the account's payment changes. Takes a transaction when there is one.
+ */
+export async function clearAutopilotCountdowns(
+  workspaceId: string,
+  executor: Pick<Database, "execute"> = db(),
+) {
+  await executor.execute(sql`
+    update ${drafts} set auto_send_at = null
+    where ${drafts.autoSendAt} is not null and ${drafts.status} = 'pending'
+      and ${drafts.mailboxId} in (
+        select ${mailboxes.id} from ${mailboxes} where ${mailboxes.workspaceId} = ${workspaceId}
+      )`);
 }
 
 /**
@@ -183,12 +202,7 @@ export async function setWorkspacePlan(
       .update(rules)
       .set({ mode: "draft", updatedAt: now })
       .where(eq(rules.workspaceId, workspaceId));
-    await db().execute(sql`
-      update ${drafts} set auto_send_at = null
-      where ${drafts.autoSendAt} is not null and ${drafts.status} = 'pending'
-        and ${drafts.mailboxId} in (
-          select ${mailboxes.id} from ${mailboxes} where ${mailboxes.workspaceId} = ${workspaceId}
-        )`);
+    await clearAutopilotCountdowns(workspaceId);
   }
   await db()
     .insert(activityLog)

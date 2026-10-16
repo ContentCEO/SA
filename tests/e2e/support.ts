@@ -1,14 +1,30 @@
 import { randomUUID } from "node:crypto";
 import type { BrowserContext } from "@playwright/test";
-import { eq } from "drizzle-orm";
+import { desc, eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/postgres-js";
 import { encode } from "next-auth/jwt";
 import postgres from "postgres";
+import { isLocalDatabaseUrl } from "../../src/config/e2e";
 import * as schema from "../../src/db/schema";
 import { encryptSecret } from "../../src/lib/crypto";
 
+// Every spec that imports this seeds and deletes rows. Refuse, before any client exists, a
+// database that isn't on this machine — in a smoke run (PLAYWRIGHT_BASE_URL) too, so a
+// database-touching spec can never reach the shared production database.
+if (!isLocalDatabaseUrl(process.env.DATABASE_URL, process.env)) {
+  throw new Error(
+    "tests/e2e/support.ts only talks to a Postgres on this machine (localhost, 127.0.0.1, ::1 " +
+      "or a unix socket). Point DATABASE_URL in .env.local at a disposable local database.",
+  );
+}
+
 const client = postgres(process.env.DATABASE_URL!, { max: 2 });
 export const testDb = drizzle(client, { schema });
+
+/** A fresh, unique owner address for seedOwner. */
+export function newOwnerEmail() {
+  return `owner-${randomUUID().slice(0, 8)}@example.com`;
+}
 
 /** A fresh invited owner with a workspace, optionally with a connected mailbox. */
 export async function seedOwner(
@@ -17,9 +33,11 @@ export async function seedOwner(
     status?: "active" | "reconnect_needed";
     backfilled?: boolean;
     messageCount?: number;
+    /** A fixed address (e.g. one a fake scenario was registered for first). */
+    email?: string;
   } = {},
 ) {
-  const email = `owner-${randomUUID().slice(0, 8)}@example.com`;
+  const email = opts.email ?? newOwnerEmail();
   await testDb.insert(schema.invites).values({ email, trade: "plumbing" });
   const [user] = await testDb
     .insert(schema.users)
@@ -69,6 +87,28 @@ export async function mailboxCount(workspaceId: string) {
     .from(schema.mailboxes)
     .where(eq(schema.mailboxes.workspaceId, workspaceId));
   return rows.length;
+}
+
+/** The workspace's (only) mailbox, as the app saved it — read-only. */
+export async function mailboxFor(workspaceId: string) {
+  const [m] = await testDb
+    .select()
+    .from(schema.mailboxes)
+    .where(eq(schema.mailboxes.workspaceId, workspaceId));
+  return m;
+}
+
+/** The workspace's newest draft and its thread, as the app wrote them — read-only. */
+export async function latestDraft(workspaceId: string) {
+  const [row] = await testDb
+    .select({ draft: schema.drafts, thread: schema.threads })
+    .from(schema.drafts)
+    .innerJoin(schema.threads, eq(schema.threads.id, schema.drafts.threadId))
+    .innerJoin(schema.mailboxes, eq(schema.mailboxes.id, schema.drafts.mailboxId))
+    .where(eq(schema.mailboxes.workspaceId, workspaceId))
+    .orderBy(desc(schema.drafts.createdAt))
+    .limit(1);
+  return row;
 }
 
 /** Sign in without Google by minting the same session cookie Auth.js would. */

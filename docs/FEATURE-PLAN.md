@@ -86,129 +86,129 @@ _Re-checked 2026-10-10: brief scope complete with tests; nothing else filed here
 
 ## Milestone 5 — Drafts + Queue
 
-- [ ] **#43 Check drafts in code before they're shown.** After the drafter returns, a deterministic
+- [x] **#43 Check drafts in code before they're shown.** _(Done 2026-10-10.)_ After the drafter returns, a deterministic
       check finds any dollar amount, date, time, weekday, "guarantee/warranty/promise" word, or
       do-not-promise / never-say phrase that is not present in the source thread or business
       profile. Any hit → draft flagged with the exact text to check, confidence capped. Hits that
       invent a price or date → regenerate once, then flag. This is the core trust feature: test it
       hard (unit tests per rule + eval fixtures).
-- [ ] **#2 Gaps to fill in.** When the drafter doesn't know a fact, it emits a typed placeholder
+- [x] **#2 Gaps to fill in.** _(Done 2026-10-10.)_ When the drafter doesn't know a fact, it emits a typed placeholder
       (`{{price}}`, `{{date}}`, `{{time}}`, `{{custom:label}}`) instead of vague wording. Queue shows
       each gap as a highlighted inline chip; tapping opens a big input. Send reply is disabled until
       every gap is filled — enforced server-side too (a body containing `{{` is rejected with a
       plain message). Tests: server rejects unfilled gaps.
-- [ ] **#1 "Why this draft" panel.** Tap "Why this?" under a draft: the one-line reason, which
+- [x] **#1 "Why this draft" panel.** _(Done 2026-10-10.)_ Tap "Why this?" under a draft: the one-line reason, which
       business-profile facts it used, which voice traits it used, and which flags fired. The drafter
       returns `used_facts: string[]` (keys, not free text). No hidden reasoning shown, just facts.
-- [ ] **#8 Confidence in words.** Map confidence + flags to three labels, shown by weight not
+- [x] **#8 Confidence in words.** _(Done 2026-10-10.)_ Map confidence + flags to three labels, shown by weight not
       colour: Ready / Check the details / Check everything. Flags always force at least "Check the
       details". Thresholds in `src/config/drafting.ts`.
-- [ ] **#3 Quick-tweak chips.** "Shorter", "Warmer", "More formal", "Ask for photos", "Add my
+- [x] **#3 Quick-tweak chips.** _(Done 2026-10-10.)_ "Shorter", "Warmer", "More formal", "Ask for photos", "Add my
       availability" (uses seasonal notes/hours only). Each regenerates with the same guardrails and
       #43 check, updates the Gmail draft, and logs `draft_revised` (content-free). Rate-limited per
       draft (5). Tests: a tweak can't remove a flag the check would raise.
-- [ ] **#4 Voice-to-edit.** _(Davi 2026-10-09: go ahead. Browsers send speech to Google/Apple for transcription, so "audio never leaves the device" can't be promised — show a plain note by the button instead.)_ Hold-to-talk button in the editor. Use the browser's Web Speech API (no
+- [x] **#4 Voice-to-edit.** _(Done 2026-10-10.)_ _(Davi 2026-10-09: go ahead. Browsers send speech to Google/Apple for transcription, so "audio never leaves the device" can't be promised — show a plain note by the button instead.)_ Hold-to-talk button in the editor. Use the browser's Web Speech API (no
       new paid provider); hide the button where unsupported. The transcript is an instruction ("tell
       her Thursday works, 450") → drafter revises → owner sees the result before sending. Facts the
       owner dictated count as source facts for #43. Audio never leaves the device.
-- [ ] **#5 Batch approve.** "Review all ready" mode for drafts labelled Ready in categories the owner
+- [x] **#5 Batch approve.** _(Done 2026-10-10.)_ "Review all ready" mode for drafts labelled Ready in categories the owner
       picks (never complaints, never invoices with amounts, never `needs_owner`, never flagged).
       Shows a full list with recipient + first line of each; one "Send N replies" button after a
       confirmation. Every send still goes through the one send gate and is logged individually.
       Tests: ineligible drafts can't be batch-sent even if the client sends their IDs.
-- [ ] **#7 Undo send.** Approve → status `sending` with `send_after = now + 20s` (config
+- [x] **#7 Undo send.** _(Done 2026-10-10.)_ Approve → status `sending` with `send_after = now + 20s` (config
       `UNDO_WINDOW_SECONDS`, 10–30). The "squared away." moment shows with an Undo button and
       countdown. An idempotent Inngest job sends at `send_after` and re-runs the send gate at that
       moment (status can change in 20s). Undo before then → back to pending. Tests: undo works; gate
       re-checked at send time; double-send impossible.
-- [ ] **#6 Snooze.** "Remind me" → Tonight (6pm local) / Tomorrow morning / After this job (3h).
+- [x] **#6 Snooze.** _(Done 2026-10-10.)_ "Remind me" → Tonight (6pm local) / Tomorrow morning / After this job (3h).
       Snoozed items leave the queue and come back on top. Emergencies (priority high +
       `needs_owner`) can't be snoozed past tonight.
-- [ ] **#9 Swipe + haptics + left-handed.** Swipe right = open to send (never sends straight from a
+- [x] **#9 Swipe + haptics + left-handed.** _(Done 2026-10-10.)_ Swipe right = open to send (never sends straight from a
       swipe), swipe left = discard with undo toast. `navigator.vibrate` where available. Setting "I
       hold my phone in my left hand" mirrors swipe directions and moves primary buttons.
       Reduced-motion respected. Playwright mobile tests for both hands.
-- [ ] **#41 Proof-of-okay receipt.** Every sent item has "See record": who approved it, when, from
+- [x] **#41 Proof-of-okay receipt.** _(Done 2026-10-10.)_ Every sent item has "See record": who approved it, when, from
       which device type, edited or not, tweaks used, undo window, Gmail message ID. Read from
       `activity_log`. This is the answer to "did the AI send that on its own?".
-- [ ] **#21 Learn from edits.** When a draft is sent edited, store a content-free diff summary
+- [x] **#21 Learn from edits.** _(Done 2026-10-10.)_ When a draft is sent edited, store a content-free diff summary
       (length change, opening/sign-off changed, sentences removed, tone shift — computed by Haiku,
       stored as structured fields, not text). Weekly job proposes voice-profile updates in plain
       words ("You always cut the first sentence. Start shorter?") that the owner accepts or ignores
       in Settings. Nothing changes the voice profile without the owner's yes.
-- [ ] **#36 Install as an app (PWA).** Web manifest (already started), service worker, install
+- [x] **#36 Install as an app (PWA).** _(Done 2026-10-10.)_ Web manifest (already started), service worker, install
       prompt with plain instructions for iPhone ("Share → Add to Home Screen"). Web Push with VAPID
       keys (`VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` in env). Push payloads never contain customer
       names or email text: "1 new quote request needs you."
-- [ ] **#10 Offline approvals.** _(Davi 2026-10-09: opt-in setting only; off by default, since it stores email text on the phone.)_ With no signal, the queue (cached by the service worker) still
+- [x] **#10 Offline approvals.** _(Done 2026-10-10.)_ _(Davi 2026-10-09: opt-in setting only; off by default, since it stores email text on the phone.)_ With no signal, the queue (cached by the service worker) still
       opens. Tapping Send reply offline stores an intent locally and shows "Will send when you're
       back online." On reconnect the intent is posted; the server treats it like a fresh approval
       (full gate, draft must still be pending and unchanged in Gmail — otherwise tell the owner and
       don't send). Intents older than 12h are dropped with a notice. Tests: stale/changed draft is
       never sent from an old intent.
-- [ ] **#37 Sunlight mode.** Header toggle: bigger type, heavier weights, pure charcoal on pure
+- [x] **#37 Sunlight mode.** _(Done 2026-10-10.)_ Header toggle: bigger type, heavier weights, pure charcoal on pure
       off-white, thicker borders. Tokens in `src/styles/theme.css` under `[data-contrast="high"]`.
       Remembered per device.
 
 ## Milestone 6 — Workspace lifecycle
 
-- [ ] **#40 Practice sends during evaluation.** Exact rule: during `evaluating`, Send reply on any
+- [x] **#40 Practice sends during evaluation.** _(Done 2026-10-11.)_ Exact rule: during `evaluating`, Send reply on any
       draft opens "Send it to yourself instead?" — it sends a copy only to the owner's own connected
       mailbox address, subject prefixed "[Practice]", never to the customer and never in the
       customer's thread. Server-side: in `evaluating`, a send is allowed only if the full recipient
       list (to/cc/bcc) equals exactly the owner's own address; anything else stays 403. Max 10
       practice sends per workspace. Guardrail tests: customer recipient → 403; cc to a customer →
       403; 11th practice send → 403.
-- [ ] **#45 Admin cost dashboard.** `/admin/costs`: per workspace, this month's AI cost (from
+- [x] **#45 Admin cost dashboard.** _(Done 2026-10-11.)_ `/admin/costs`: per workspace, this month's AI cost (from
       `usage`), plan revenue, margin, calls vs daily cap. Sort by worst margin. Alert Davi (email via
       Resend) when a workspace's AI cost passes 40% of its plan price. No email content or customer
       names, ever.
 
 ## Milestone 7 — Follow-ups
 
-- [ ] **#26 Ask why a quote went quiet.** ASK DAVI before merging — it touches the two-nudge rule.
+- [x] **#26 Ask why a quote went quiet.** _(Built 2026-10-12 behind `FEATURE_CLOSING_QUESTION`. Davi said turn it on, 2026-10-14: set to `1` in Vercel on Production and Preview, live from the next deploy; see `docs/SETUP.md` §6d.)_
       Default design that keeps the rule: this is not a nudge and is never automatic. After a thread
       has used both nudges and gone 7 more days quiet, the thread shows an offer: "Want to ask if
       they went another way?" Only an owner tap creates the draft; it goes through the normal queue.
       Once per thread, ever. Logged as `closing_question`, separate from `followup_count`. Tests:
       never created by a job; never twice.
-- [ ] **#27 Invoice ageing view.** "Money owed" screen from `extracted.invoice`: customer, amount,
+- [x] **#27 Invoice ageing view.** _(Done 2026-10-12.)_ _(How: `/money` (linked from Quotes and Activity): oldest due first, Mark paid / Undo, "Not owed to me" / Put back; a customer's "paid" email or a Stripe/QuickBooks receipt that names the invoice number marks it paid; paid invoices are never chased; a later email naming a different invoice number reopens a paid row, but never one marked "Not owed to me".)_ "Money owed" screen from `extracted.invoice`: customer, amount,
       days past due, nudges used. Sorted by oldest. Paid signals ("sent payment", Stripe/QuickBooks
       receipts) mark it paid with an undo. No accounting integration.
-- [ ] **#28 Deposit reminder.** When a reply accepts a quote ("let's do it", "go ahead"), draft the
+- [x] **#28 Deposit reminder.** _(Done 2026-10-12.)_ _(How: classify.v3 `accepts_quote` on a quote the owner really gave → the next draft is deposit details (`purpose.v1`, `drafts.purpose = deposit`) from payment terms, or a `{{custom:deposit instructions}}` gap + flag when there are none; a terms check flags any %, way to pay or discount not in the terms.)_ When a reply accepts a quote ("let's do it", "go ahead"), draft the
       owner's deposit instructions from `business_profile.payment_terms`. If payment terms are empty,
       flag instead of inventing. Normal approval.
-- [ ] **#29 Review request.** When a thread signals the job is finished ("looks great", final
+- [x] **#29 Review request.** _(Done 2026-10-12.)_ _(How: "Ask for a review" on Inbox rows and paid Money rows, owner tap only, when the customer said the job is done or the invoice is paid; never a complaint thread or a customer who complained in the last 12 months (sticky `complained_at`), never strangers/no-reply/receipt senders, one per address per 12 months (advisory lock).)_ When a thread signals the job is finished ("looks great", final
       invoice paid), offer a short review-request draft with the owner's review link
       (`business_profile.review_url`, new field). One per customer per 12 months. Never to complaint
       threads. Normal approval.
-- [ ] **#30 Win/loss.** Each quote thread gets `outcome`: won / lost / no answer (auto-guessed, owner
+- [x] **#30 Win/loss.** _(Done 2026-10-12.)_ _(How: `quote_outcome` + `quote_outcome_source` (owner always wins); auto-won on an accepted quote, auto no answer after 2 nudges + 7 quiet days or 21 quiet days; one tap on Quotes; Activity shows "You won N of M quotes decided this month (P%)."; a decided quote stops nudges.)_ Each quote thread gets `outcome`: won / lost / no answer (auto-guessed, owner
       can change with one tap). Monthly close rate on Activity.
-- [ ] **#15 Price memory (owner-only).** From the owner's own sent quotes, extract service + price +
+- [x] **#15 Price memory (owner-only).** _(Done 2026-10-12.)_ _(How: `price_history` (amount, kind of job, date) from captured quote amounts (and a one-off backfill); "Last 3 similar" on quote requests, shown on Queue (tap a figure to fill `{{price}}`) and as text on Inbox; a static boundary test plus per-prompt tests prove it never reaches a prompt, digest, admin, push or SMS.)_ From the owner's own sent quotes, extract service + price +
       date into `price_history`. In the queue, a quote request shows "Last 3 similar: $1,800 (Mar),
       $2,100 (Jun)…" to the owner only. Never inserted into a draft automatically; the owner can tap
       a figure to fill a `{{price}}` gap (#2). Tests: drafter prompt never receives price history.
 
 ## Milestone 8 — Digest + Activity
 
-- [ ] **#31 "Needs you" header** at the top of the digest: max 3 items, each a deep link into the
+- [x] **#31 "Needs you" header** _(Done 2026-10-12.)_ _(How: the morning summary opens with up to 3 needs-you emails, emergencies first then oldest waiting, each a fixed noun and how long it has waited ("A complaint — waiting since yesterday") linking to `/queue#t-<thread id>`; "+ N more in your queue", or "No emails need a decision from you today."; numbers come from the content-free `queueCounts`, the same membership as the queue (snoozed and undo-window items left out, no 50-row cap).)_ at the top of the digest: max 3 items, each a deep link into the
       queue. If nothing needs them, say so in one line.
-- [ ] **#32 Weekly scorecard.** Monday digest section + Activity card: replies sent, average
+- [x] **#32 Weekly scorecard.** _(Done 2026-10-12.)_ _(How: weeks run Monday 00:00 → Monday 00:00 in the owner's time zone (DST-safe); Activity has a "This week so far" card with last week alongside, and the morning summary on the owner's local Monday has a "Last week" section (skipped when it's all zero); replies and follow-ups sent count by when the owner okayed them, "quotes out" = each quote request once, in the week of the owner's first answer; time saved = 3 minutes × replies and follow-ups sent, labelled an estimate.)_ Monday digest section + Activity card: replies sent, average
       response time, quotes out, follow-ups sent, estimated time saved with the assumption shown and
       labelled "estimate".
-- [ ] **#33 Response-time stat.** Average time from inbound quote request to owner reply, this week
+- [x] **#33 Response-time stat.** _(Done 2026-10-12.)_ _(How: from the customer's first email on a quote request to the owner's first answer (synced email, sent draft or a send in its undo window), in calendar time, counted in the week the request came in, with the number still unanswered said too; no-reply senders left out; a quote request later re-sorted still counts (sticky `quote_requested_at`).)_ Average time from inbound quote request to owner reply, this week
       vs last. Plain sentence, no charts with colour.
-- [ ] **#34 Leads at risk.** A quote request with no reply after 4 hours (config, inside business
+- [x] **#34 Leads at risk.** _(Done 2026-10-12.)_ _(How: a quote request the customer has waited on for 4+ business hours (Mon–Sat 7am–6pm in the owner's zone, `src/config/business-hours.ts`; at most 72 calendar hours old), not answered, snoozed, decided or from a no-reply sender, on a mailbox that synced in the last 30 min; the 15-minute job sends a content-free push inside business hours and outside quiet hours, ≤ 3 per local day, once per waiting episode, sharing the 10-minute push slot; the tap opens that card; the morning summary always has a counts-only "N quote requests have waited more than 4 hours." line.)_ A quote request with no reply after 4 hours (config, inside business
       hours only) → push notification (#36) or, without push, a line in the next digest. Max 3
       pushes a day.
-- [ ] **#35 Monthly summary.** First-of-month email: busiest services, where leads came from, repeat
+- [x] **#35 Monthly summary.** _(Done 2026-10-12.)_ _(How: follows the morning-summary switch; due on the owner's local 1st at/after their digest hour (catch-up on the 2nd/3rd, never before the hour), for last month in their zone; Resend `Idempotency-Key: monthly-<workspace>-<YYYY-MM>`; quote requests, top 3 job kinds and lead sources as OUR fixed labels (`src/config/job-kinds.ts`, `src/config/lead-sources.ts`), repeat customers and win rate — counts only; quiet months and read-only accounts get none.)_ First-of-month email: busiest services, where leads came from, repeat
       customers count, win rate. Counts and categories only.
-- [ ] **#38 Badge count.** Home-screen badge with the number of items waiting (Badging API, where
+- [x] **#38 Badge count.** _(Done 2026-10-12.)_ _(How: Badging API from the page (`AppBadge`, at most once a minute, after a queue action and on coming back into view, via the count-only `/api/badge`) and from the service worker after a push; replies ready + needs-you, capped at 99; 0 for read-only accounts; cleared at 0, on sign-out and on a 401, left alone on a network failure.)_ Home-screen badge with the number of items waiting (Badging API, where
       supported). True lock-screen widgets aren't possible for a web app; note that in Decisions.
 
 ## Milestone 10 — Billing
 
-- [ ] **#47 Referral credit.** ASK DAVI: the credit amount and who gets it. Do not pick a number.
+- [ ] **#47 Referral credit.** _(Built 2026-10-12 behind `FEATURE_REFERRALS` (off). Decided 2026-10-13: the referrer only, and the same-domain block stays (public webmail like gmail.com is exempt). Still waiting on Davi: the amount (options A–F in `docs/LAUNCH.md` step 13; the free-month options E and F need more code). `REFERRAL_CREDIT_CENTS` is `null`, so nothing happens even with the switch on; see `docs/SETUP.md` §6d.)_ ASK DAVI: the credit amount and who gets it. Do not pick a number.
       Each workspace gets a referral link; when the referred workspace becomes `active`, both get a
       credit applied as a Stripe customer balance credit. Amount lives in `src/config/pricing.ts`.
       Self-referral and same-domain referrals blocked. Tests: credit only on `active`, once.

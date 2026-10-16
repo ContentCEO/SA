@@ -9,10 +9,8 @@ import {
   type MailboxWriter,
   type MailMessage,
 } from "../connector";
+import { googleEndpoints } from "@/config/e2e";
 import { extractBodyText, toMailMessage, type GmailMessageResource } from "./parse";
-
-const API = "https://gmail.googleapis.com/gmail/v1/users/me";
-const TOKEN_URL = "https://oauth2.googleapis.com/token";
 
 type Fetch = typeof fetch;
 type Sleep = (ms: number) => Promise<void>;
@@ -61,7 +59,7 @@ export function createGmailReader(opts: GmailReaderOptions): MailboxReader & Mai
     const clientSecret = process.env.AUTH_GOOGLE_SECRET;
     if (!clientId || !clientSecret) throw new Error("Google OAuth client is not configured.");
     for (let attempt = 0; ; attempt++) {
-      const res = await fetchImpl(TOKEN_URL, {
+      const res = await fetchImpl(googleEndpoints().token, {
         method: "POST",
         headers: { "content-type": "application/x-www-form-urlencoded" },
         body: new URLSearchParams({
@@ -96,7 +94,7 @@ export function createGmailReader(opts: GmailReaderOptions): MailboxReader & Mai
     let refreshedAfter401 = false;
     for (let attempt = 0; ; attempt++) {
       const token = accessToken ?? (await refresh());
-      const res = await fetchImpl(`${API}${path}`, {
+      const res = await fetchImpl(`${googleEndpoints().gmailApi}${path}`, {
         method: init?.method ?? "GET",
         headers: {
           authorization: `Bearer ${token}`,
@@ -188,15 +186,28 @@ export function createGmailReader(opts: GmailReaderOptions): MailboxReader & Mai
     },
 
     async listHistory({ startHistoryId, pageToken }): Promise<HistoryPage> {
-      const qs = new URLSearchParams({ startHistoryId, historyTypes: "messageAdded" });
+      // New messages, and messages that gained SENT: a sent draft may keep its id (DRAFT
+      // swapped for SENT), which history reports as a label change, not a new message.
+      const qs = new URLSearchParams({ startHistoryId });
+      qs.append("historyTypes", "messageAdded");
+      qs.append("historyTypes", "labelAdded");
       if (pageToken) qs.set("pageToken", pageToken);
+      type Ref = { id: string; threadId: string };
       const r = await call<{
-        history?: { messagesAdded?: { message: { id: string; threadId: string } }[] }[];
+        history?: {
+          messagesAdded?: { message: Ref }[];
+          labelsAdded?: { message: Ref; labelIds?: string[] }[];
+        }[];
         nextPageToken?: string;
         historyId: string;
       }>(`/history?${qs}`);
       if (!r) throw new HistoryExpiredError();
-      const added = (r.history ?? []).flatMap((h) => (h.messagesAdded ?? []).map((m) => m.message));
+      const added = (r.history ?? []).flatMap((h) => [
+        ...(h.messagesAdded ?? []).map((m) => m.message),
+        ...(h.labelsAdded ?? [])
+          .filter((l) => (l.labelIds ?? []).includes("SENT"))
+          .map((l) => ({ id: l.message.id, threadId: l.message.threadId })),
+      ]);
       return { added, nextPageToken: r.nextPageToken, historyId: r.historyId };
     },
 
@@ -238,6 +249,17 @@ export function createGmailReader(opts: GmailReaderOptions): MailboxReader & Mai
       await call(`/drafts/${encodeURIComponent(draftId)}`, { method: "DELETE" });
     },
 
+    async threadDraftMessageIds(threadId) {
+      // format=minimal still carries each message's snippet (body text), so the `fields` mask
+      // asks Google for message ids and labels only: no headers, snippet or text reach us.
+      const r = await call<{ messages?: { id: string; labelIds?: string[] }[] }>(
+        `/threads/${encodeURIComponent(threadId)}?format=minimal&fields=${encodeURIComponent("messages(id,labelIds)")}`,
+      );
+      return (r?.messages ?? [])
+        .filter((m) => (m.labelIds ?? []).includes("DRAFT") && !(m.labelIds ?? []).includes("SENT"))
+        .map((m) => m.id);
+    },
+
     async sendDraft(draftId) {
       const r = await call<{ id: string; threadId: string }>("/drafts/send", {
         method: "POST",
@@ -245,6 +267,15 @@ export function createGmailReader(opts: GmailReaderOptions): MailboxReader & Mai
       });
       if (!r) throw new Error("Gmail draft no longer exists.");
       return { messageId: r.id, threadId: r.threadId };
+    },
+
+    async sendMessage(raw) {
+      const r = await call<{ id: string }>("/messages/send", {
+        method: "POST",
+        body: { raw },
+      });
+      if (!r) throw new Error("Gmail send failed.");
+      return { messageId: r.id };
     },
 
     async watch(topicName) {

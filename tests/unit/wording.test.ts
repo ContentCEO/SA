@@ -3,7 +3,7 @@ import { eq } from "drizzle-orm";
 import { beforeEach, describe, expect, it } from "vitest";
 import { setModelTransportForTests } from "@/ai/client";
 import { checkDraft } from "@/ai/draft-checks";
-import type { ModelDraft } from "@/ai/prompts/draft.v4";
+import type { ModelDraft } from "@/ai/prompts/draft.v5";
 import type { Database } from "@/db";
 import { businessProfiles, drafts, messages, seasonalNotes, threads } from "@/db/schema";
 import { ensureUserAndWorkspace } from "@/server/accounts";
@@ -34,6 +34,7 @@ const draft = (body: string): ModelDraft => ({
   reason: "Reply.",
   flags: [],
   confidence: 0.95,
+  used_facts: [],
 });
 
 let database: Database;

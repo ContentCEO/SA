@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { CopyLink } from "@/components/app/copy-link";
 import { Notice } from "@/components/app/notice";
 import { RefreshUntil } from "@/components/app/refresh-until";
 import { Headline } from "@/components/brand/headline";
@@ -7,8 +8,9 @@ import { formatDollars, pricing, type PlanId } from "@/config/pricing";
 import { siteConfig } from "@/config/site";
 import { cn } from "@/lib/utils";
 import { stripeConfigured } from "@/server/billing";
-import { checkoutTerms, PLAN_IDS } from "@/server/billing-rules";
-import { effectiveStatus } from "@/server/lifecycle";
+import { billingStatusLine, checkoutTerms, PLAN_IDS, SALES_TAX_NOTE } from "@/server/billing-rules";
+import { referralCredit } from "@/server/referral-rules";
+import { referralLinkFor } from "@/server/referrals";
 import { requireOwner } from "@/server/session";
 import { openPortalAction, startCheckoutAction } from "./actions";
 
@@ -21,22 +23,18 @@ const errors: Record<string, string> = {
   unknown: "That didn't work. Refresh and try again.",
 };
 
-const statusLine: Partial<Record<string, string>> = {
-  setup_paid: "Setup's paid and sending is on. We'll call to finish setting you up.",
-  active: "All set. Your plan renews monthly.",
-  past_due: "Your last payment didn't go through. Update your card to switch things back on.",
-  canceled: "Your plan has ended. Pick a plan below to start again — nothing was deleted.",
-};
-
 export default async function BillingPage(props: PageProps<"/billing">) {
   const { workspace } = await requireOwner();
   const params = await props.searchParams;
-  const status = effectiveStatus(workspace);
+  const statusLine = billingStatusLine(workspace);
   const terms = checkoutTerms(workspace);
   const paidJustNow = params.done === "paid";
   const waitingForStripe = paidJustNow && terms.allowed;
   const errorMsg = typeof params.error === "string" ? errors[params.error] : undefined;
   const current = workspace.plan ? pricing.plans[workspace.plan as PlanId] : null;
+  // Plan #47: only while referrals are switched on (flag and an amount) — hidden entirely otherwise.
+  const referral = referralCredit();
+  const shareLink = referral ? await referralLinkFor(workspace.id) : null;
 
   return (
     <>
@@ -61,17 +59,21 @@ export default async function BillingPage(props: PageProps<"/billing">) {
           <h2 id="current" className="text-xl font-black">
             {current.name} · {formatDollars(current.amountCents)} / month
           </h2>
-          {statusLine[status] ? <p>{statusLine[status]}</p> : null}
+          {statusLine ? <p>{statusLine}</p> : null}
+          {/* Stripe's page needs a Stripe customer: none for a plan set by hand or reset. */}
           {workspace.stripeCustomerId ? (
-            <form action={openPortalAction}>
-              <Button type="submit" variant="outline" className="w-full">
-                Manage billing
-              </Button>
-            </form>
+            <>
+              <form action={openPortalAction}>
+                <Button type="submit" variant="outline" className="w-full">
+                  Manage billing
+                </Button>
+              </form>
+              <p className="text-sm text-muted-foreground">
+                Change plan, update your card, see invoices or cancel — on Stripe&apos;s secure
+                page.
+              </p>
+            </>
           ) : null}
-          <p className="text-sm text-muted-foreground">
-            Change plan, update your card, see invoices or cancel — on Stripe&apos;s secure page.
-          </p>
         </section>
       ) : null}
 
@@ -135,11 +137,32 @@ export default async function BillingPage(props: PageProps<"/billing">) {
                 );
               })}
             </ul>
+            <p className="text-sm text-muted-foreground">{SALES_TAX_NOTE}</p>
             <p className="text-sm text-muted-foreground">
               Paid securely through Stripe. Month to month — cancel any time from Manage billing.
             </p>
           </section>
         )
+      ) : null}
+
+      {referral && shareLink ? (
+        <section aria-labelledby="refer" className="flex flex-col gap-3 rounded-xl border p-4">
+          <h2 id="refer" className="text-xl font-black">
+            Share Squared Away
+          </h2>
+          <p>
+            Know another contractor who&apos;d like this? Send them your link. Once they&apos;ve
+            paid and finished their setup call,{" "}
+            {referral.sides.length === 2
+              ? `you each get ${formatDollars(referral.cents)} off your bill`
+              : referral.sides[0] === "referrer"
+                ? `you get ${formatDollars(referral.cents)} off your bill`
+                : `they get ${formatDollars(referral.cents)} off their bill`}
+            . Once per new business. They need to join the waitlist from your link, or it won&apos;t
+            count.
+          </p>
+          <CopyLink url={shareLink} label="Your link" />
+        </section>
       ) : null}
     </>
   );

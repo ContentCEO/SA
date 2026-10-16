@@ -83,7 +83,7 @@ test("quotes: stages, amounts, and one-tap Won", async ({ page, context }) => {
   await expect(sam).toContainText("Gone quiet");
   await expect(sam).toContainText("$1,200");
 
-  await sam.getByText("Mark won or lost").click();
+  await sam.getByText("Mark how it ended").click();
   await sam.getByLabel("Job amount (optional)").fill("1350");
   await sam.getByRole("button", { name: "Mark won" }).click();
   await expect(page.getByRole("status").filter({ hasText: "Marked won" })).toBeVisible();
@@ -92,6 +92,71 @@ test("quotes: stages, amounts, and one-tap Won", async ({ page, context }) => {
   await page.getByRole("link", { name: /^Won \(1\)/ }).click();
   await expect(page.getByRole("article", { name: "Quote for Sam Lee" })).toContainText("$1,350");
   await expect(page.getByRole("region", { name: "Last 30 days" })).toContainText("$1,350");
+});
+
+test("quotes: no answer is our guess, one tap changes it, and Activity shows the close rate", async ({
+  page,
+  context,
+}) => {
+  const owner = await seedOwner({ mailbox: true, backfilled: true });
+  // Quoted 25 days ago, never heard back → we guess "no answer" when Quotes loads.
+  await quote(owner.mailboxId!, {
+    name: "Kim Park",
+    from: "kim@customer.com",
+    inAgo: 26,
+    outAgo: 25,
+    reply: "Hi Kim, the deck repair is $3,100.",
+    summary: "Kim wants a deck repair.",
+  });
+  await quote(owner.mailboxId!, {
+    name: "Lee Chan",
+    from: "lee@customer.com",
+    inAgo: 3,
+    outAgo: 2,
+    summary: "Lee wants a faucet swapped.",
+  });
+  await signInAs(context, owner);
+
+  await page.goto("/quotes");
+  await page.getByRole("link", { name: /^No answer \(1\)/ }).click();
+  await expect(page).toHaveURL(/stage=no_answer/);
+  const kim = page.getByRole("article", { name: "Quote for Kim Park" });
+  await expect(kim).toContainText("No answer (our guess)");
+
+  // Our guess was wrong: one tap.
+  await kim.getByRole("button", { name: "Mark won", exact: true }).click();
+  await expect(page.getByRole("status").filter({ hasText: "Marked won" })).toBeVisible();
+  await expect(page.getByRole("article", { name: "Quote for Kim Park" })).toHaveCount(0);
+  await page.getByRole("link", { name: /^Won \(1\)/ }).click();
+  const kimWon = page.getByRole("article", { name: "Quote for Kim Park" });
+  await expect(kimWon).toContainText("Won");
+  await expect(kimWon).not.toContainText("our guess");
+  await expect(kimWon.getByRole("button", { name: "Mark no answer" })).toBeVisible();
+  await expect(kimWon.getByRole("button", { name: "Reopen" })).toBeVisible();
+
+  // The third outcome on an open quote.
+  await page.getByRole("link", { name: /^Open \(1\)/ }).click();
+  const lee = page.getByRole("article", { name: "Quote for Lee Chan" });
+  await lee.getByText("Mark how it ended").click();
+  await lee.getByRole("button", { name: "No answer", exact: true }).click();
+  await expect(page.getByRole("status").filter({ hasText: "Marked no answer." })).toBeVisible();
+
+  const overflow = await page.evaluate(
+    () => document.documentElement.scrollWidth > document.documentElement.clientWidth,
+  );
+  expect(overflow).toBe(false);
+
+  await page.goto("/activity");
+  const close = page.getByRole("region", { name: "Quotes decided this month" });
+  await expect(close).toContainText("You won 1 of 2 quotes decided this month (50%).");
+  await expect(close.getByRole("link", { name: "Go to Quotes" })).toBeVisible();
+  await expect(
+    page.getByText(
+      "Marked a quote from Kim as no answer after three quiet weeks. Change it on Quotes",
+    ),
+  ).toBeVisible();
+  await expect(page.getByText("You marked a quote from Kim as won")).toBeVisible();
+  await expect(page.getByText("You marked a quote from Lee as no answer")).toBeVisible();
 });
 
 test("customers: list, search on the phone, and one customer's emails", async ({

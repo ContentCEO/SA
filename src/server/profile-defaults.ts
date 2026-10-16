@@ -17,6 +17,7 @@ export async function profileDefaults(workspace: Workspace): Promise<ProfileDefa
     paymentTerms: p?.paymentTerms ?? null,
     policies: p?.policies ?? null,
     signature: p?.signature ?? null,
+    reviewUrl: p?.reviewUrl ?? null,
     doNotPromise: p?.doNotPromise ?? [],
     vipSenders: p?.vipSenders ?? [],
     amountThresholdDollars: p?.amountThresholdDollars ?? DEFAULT_AMOUNT_THRESHOLD_DOLLARS,

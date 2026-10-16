@@ -36,6 +36,7 @@ import { smsConfigured } from "@/lib/sms";
 import { formatUsPhone } from "@/server/sms-alerts";
 import { DisconnectButton } from "./disconnect-button";
 import {
+  decideVoiceIdeaAction,
   relearnVoiceAction,
   saveDigestSettingsAction,
   setAutopilotAction,
@@ -43,6 +44,12 @@ import {
 } from "./profile-actions";
 import { TimeZoneInput } from "@/components/forms/time-zone-input";
 import { GetTheApp } from "@/components/app/get-the-app";
+import { devicePrefs, OFFLINE_COOKIE } from "@/lib/device-prefs";
+import { cookies } from "next/headers";
+import { vapidPublicKey } from "@/lib/web-push";
+import { PushToggle } from "@/components/app/push-toggle";
+import { saveHandAction, saveOfflineAction } from "./device-actions";
+import { openSuggestions } from "@/server/edit-learning";
 
 const done: Record<string, string> = {
   connected: "Gmail connected.",
@@ -61,6 +68,10 @@ const done: Record<string, string> = {
   autopilot_on: "Autopilot is on for that kind of email. You'll get 10 minutes to hold each one.",
   autopilot_off: "Autopilot is off for that kind of email. Those replies wait for your tap again.",
   relearn: "Re-reading your sent mail. This takes a minute or two.",
+  hand: "Saved for this phone.",
+  offline: "Saved for this phone.",
+  idea_yes: "Done. New drafts will be written that way.",
+  idea_no: "Okay — nothing changed.",
 };
 
 const errors: Record<string, string> = {
@@ -110,6 +121,8 @@ export default async function SettingsPage(props: PageProps<"/settings">) {
     ),
   );
   const params = await props.searchParams;
+  const device = await devicePrefs();
+  const ideas = await openSuggestions(workspace.id);
   const doneMsg = typeof params.done === "string" ? done[params.done] : undefined;
   const errorMsg = typeof params.error === "string" ? errors[params.error] : undefined;
   const canAddMore = mailboxes.length < mailboxLimit(workspace);
@@ -126,6 +139,7 @@ export default async function SettingsPage(props: PageProps<"/settings">) {
     ["Area", profile?.serviceArea],
     ["Never promise", profile?.doNotPromise.length ? profile.doNotPromise.join(" · ") : null],
     ["Always send me", profile?.vipSenders.length ? profile.vipSenders.join(", ") : null],
+    ["Review link", profile?.reviewUrl],
     [
       "Flag amounts over",
       profile ? `$${profile.amountThresholdDollars.toLocaleString("en-US")}` : null,
@@ -272,6 +286,34 @@ export default async function SettingsPage(props: PageProps<"/settings">) {
             </p>
           ) : null}
         </div>
+        {ideas.length ? (
+          <div className="flex flex-col gap-2" aria-label="Ideas from your edits" role="group">
+            <p className="font-semibold">Ideas from your edits</p>
+            {ideas.map((idea) => (
+              <form
+                key={idea.id}
+                action={decideVoiceIdeaAction}
+                className="flex flex-col gap-2 rounded-xl border-2 border-charcoal p-3"
+              >
+                <input type="hidden" name="ideaId" value={idea.id} />
+                <p>{idea.text}</p>
+                <div className="grid grid-cols-2 gap-2">
+                  <Button type="submit" name="answer" value="yes">
+                    {idea.kind === "signoff" || idea.kind === "greeting"
+                      ? "Yes, I'll type it"
+                      : "Yes, do that"}
+                  </Button>
+                  <Button type="submit" name="answer" value="no" variant="outline">
+                    No thanks
+                  </Button>
+                </div>
+              </form>
+            ))}
+            <p className="text-sm text-muted-foreground">
+              From how you&apos;ve edited drafts this month. Nothing changes unless you say yes.
+            </p>
+          </div>
+        ) : null}
         <Link
           href="/settings/voice"
           className={cn(buttonVariants({ variant: "outline" }), "w-full")}
@@ -334,6 +376,65 @@ export default async function SettingsPage(props: PageProps<"/settings">) {
           the same login.
         </p>
         <GetTheApp />
+        {vapidPublicKey() ? <PushToggle publicKey={vapidPublicKey()!} /> : null}
+      </section>
+
+      <section id="this-phone" aria-labelledby="this-phone-heading" className="flex flex-col gap-3">
+        <h2 id="this-phone-heading" className="text-xl font-black">
+          On this phone
+        </h2>
+        <form action={saveHandAction} className="flex flex-col gap-3">
+          <fieldset className="flex flex-col gap-2">
+            <legend className="font-semibold">Which hand do you hold it in?</legend>
+            {(
+              [
+                ["right", "Right hand"],
+                ["left", "Left hand — mirror the swipes and buttons"],
+              ] as const
+            ).map(([value, label]) => (
+              <label key={value} className="flex min-h-tap items-center gap-3">
+                <input
+                  type="radio"
+                  name="hand"
+                  value={value}
+                  defaultChecked={(value === "left") === device.leftHanded}
+                  className="size-5"
+                />
+                {label}
+              </label>
+            ))}
+          </fieldset>
+          <p className="text-sm text-muted-foreground">
+            Right hand: swipe a draft right to open it for sending, left to discard. Left hand: the
+            other way round. A swipe never sends, and a discard gives you a few seconds to undo.
+          </p>
+          <Button type="submit" variant="outline" className="w-full">
+            Save for this phone
+          </Button>
+        </form>
+        <form action={saveOfflineAction} className="flex flex-col gap-2 border-t pt-3">
+          <label className="flex min-h-tap items-start gap-3">
+            <input
+              type="checkbox"
+              name="offline"
+              value="on"
+              defaultChecked={device.offline}
+              className="mt-1 size-5"
+            />
+            <span>
+              <span className="font-semibold">Keep my queue on this phone for no-signal spots</span>
+              <span className="block text-sm text-muted-foreground">
+                Off unless you switch it on. It keeps a copy of your waiting drafts — including what
+                customers wrote — on this phone. A Send reply tapped with no signal goes once
+                you&apos;re back online, only if the draft hasn&apos;t changed, and only within 12
+                hours. Signing out deletes the copy.
+              </span>
+            </span>
+          </label>
+          <Button type="submit" variant="outline" className="w-full">
+            Save
+          </Button>
+        </form>
       </section>
 
       <section id="never-say" aria-labelledby="never-say-heading" className="flex flex-col gap-3">
@@ -430,10 +531,14 @@ export default async function SettingsPage(props: PageProps<"/settings">) {
               type="checkbox"
               name="enabled"
               defaultChecked={profile?.digestEnabled ?? true}
+              aria-describedby="digest-monthly-note"
               className="size-6 accent-charcoal"
             />
             <span className="font-semibold">Email me a summary each morning</span>
           </label>
+          <p id="digest-monthly-note" className="-mt-2 pl-9 text-muted-foreground">
+            (and a short one on the 1st of each month)
+          </p>
           <label className="flex flex-col gap-1.5">
             <span className="font-semibold">Send it at</span>
             <select
@@ -451,7 +556,8 @@ export default async function SettingsPage(props: PageProps<"/settings">) {
           <TimeZoneInput fallback={profile?.timeZone ?? "America/New_York"} />
           <p className="text-muted-foreground">
             Just counts — how many replies are waiting and what needs you. No customer names or
-            email text go in it. Skipped on mornings with nothing to say.
+            email text go in it. Skipped on mornings with nothing to say. On the 1st of each month
+            you also get a short summary of the month (counts only).
           </p>
           <Button type="submit" variant="outline" className="w-full">
             Save morning summary
@@ -602,6 +708,8 @@ export default async function SettingsPage(props: PageProps<"/settings">) {
         <form
           action={async () => {
             "use server";
+            // A phone that kept the queue (plan #10) stops keeping it.
+            (await cookies()).delete(OFFLINE_COOKIE);
             await signOut({ redirectTo: "/" });
           }}
         >

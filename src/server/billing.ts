@@ -15,14 +15,20 @@ import { appUrl } from "@/lib/app-url";
 import { decryptSecret, encryptSecret } from "@/lib/crypto";
 import {
   checkoutTerms,
+  eventFromOtherMode,
   isPlanId,
   PLAN_IDS,
   planFromLookupKey,
   planLookupKey,
+  type SalesTaxStatus,
   setupLookupKey,
   statusAfterCheckout,
   statusAfterSubscription,
+  stripeKeyMode,
 } from "./billing-rules";
+import { setupReallyPaid } from "./lifecycle";
+import { creditReferralSafely } from "./referrals";
+import { stripeErrorReason } from "./stripe-error-rules";
 
 let client: Stripe | undefined;
 let override: Stripe | undefined;
@@ -36,12 +42,25 @@ export function stripeConfigured() {
   return Boolean(override || process.env.STRIPE_SECRET_KEY);
 }
 
+/**
+ * Live or test mode, from the secret key (`sk_live_` / `rk_live_` = live); null without a key.
+ * Read from the key even when a test fake is swapped in, so tests set the key to pick a mode.
+ */
+export function stripeMode(): "live" | "test" | null {
+  return stripeKeyMode(process.env.STRIPE_SECRET_KEY);
+}
+
 function stripe(): Stripe {
   if (override) return override;
   const key = process.env.STRIPE_SECRET_KEY;
   if (!key) throw new Error("STRIPE_SECRET_KEY is not set.");
   client ??= new Stripe(key);
   return client;
+}
+
+/** The one Stripe client (or the test fake), for other server modules (plan #47 credits). */
+export function stripeClient(): Stripe {
+  return stripe();
 }
 
 export const WEBHOOK_PATH = "/api/stripe/webhook";
@@ -54,11 +73,47 @@ const WEBHOOK_EVENTS: Stripe.WebhookEndpointCreateParams.EnabledEvent[] = [
 ];
 
 /**
+ * Whether Stripe Tax is switched on (Davi, 2026-10-14). Davi sets it up in Stripe's dashboard
+ * (origin address, registrations, default tax code); the app only notices. Throws when Stripe
+ * can't be asked — callers decide what that means.
+ */
+export async function stripeTaxActive(options?: Stripe.RequestOptions): Promise<boolean> {
+  const settings = await stripe().tax.settings.retrieve({}, options);
+  return settings.status === "active";
+}
+
+/** For the /admin Payments card: null without Stripe; never throws, never waits long. */
+export async function salesTaxStatus(): Promise<SalesTaxStatus | null> {
+  if (!stripeConfigured()) return null;
+  try {
+    return (await stripeTaxActive({ timeout: 5_000, maxNetworkRetries: 0 })) ? "on" : "off";
+  } catch (err) {
+    // stripe-node's errors all have the name "Error"; the class is in `type`, so the fixed
+    // reason code is what tells a key problem (auth, permission) from a blip (connection).
+    const reason = stripeErrorReason(err);
+    console.error("stripe_tax_status_failed", {
+      error: err instanceof Error ? err.name : "unknown",
+      reason,
+    });
+    return "unknown";
+  }
+}
+
+/** Prices are tax-exclusive: sales tax, where it applies, goes on top ("plus any taxes"). */
+const TAX_BEHAVIOR = "exclusive" as const;
+
+/**
  * Find or create our four prices by lookup key (the key includes the amount,
  * so changing src/config/pricing.ts creates a new price rather than editing
- * one customers are on).
+ * one customers are on). New prices are tax-exclusive. With `fixTaxBehavior`
+ * (Connect Stripe only), a found price that never had a tax behavior is set to
+ * exclusive — the one change Stripe allows; a price already inclusive or
+ * exclusive is never touched.
  */
-export async function ensurePrices(): Promise<{ setup: string; plans: Record<PlanId, string> }> {
+export async function ensurePrices({ fixTaxBehavior = false } = {}): Promise<{
+  setup: string;
+  plans: Record<PlanId, string>;
+}> {
   const s = stripe();
   const wanted = [
     {
@@ -80,6 +135,12 @@ export async function ensurePrices(): Promise<{ setup: string; plans: Record<Pla
     limit: 10,
   });
   const byKey = new Map(found.data.map((p) => [p.lookup_key, p.id]));
+  if (fixTaxBehavior) {
+    for (const p of found.data) {
+      if (p.tax_behavior && p.tax_behavior !== "unspecified") continue;
+      await s.prices.update(p.id, { tax_behavior: TAX_BEHAVIOR });
+    }
+  }
   for (const w of wanted) {
     if (byKey.has(w.key)) continue;
     const price = await s.prices.create({
@@ -87,6 +148,7 @@ export async function ensurePrices(): Promise<{ setup: string; plans: Record<Pla
       unit_amount: w.amount,
       lookup_key: w.key,
       transfer_lookup_key: true,
+      tax_behavior: TAX_BEHAVIOR,
       product_data: { name: w.name },
       ...(w.recurring ? { recurring: { interval: "month" as const } } : {}),
     });
@@ -112,7 +174,7 @@ export async function connectStripe(): Promise<{
   mode: string;
 }> {
   const s = stripe();
-  const prices = await ensurePrices();
+  const prices = await ensurePrices({ fixTaxBehavior: true });
 
   const portals = await s.billingPortal.configurations.list({ is_default: true, limit: 1 });
   if (!portals.data.length) {
@@ -125,6 +187,8 @@ export async function connectStripe(): Promise<{
     await s.billingPortal.configurations.create({
       business_profile: { headline: "Squared Away — manage your plan and payment." },
       features: {
+        // The billing address Stripe Tax works from: the owner can correct it here.
+        customer_update: { enabled: true, allowed_updates: ["address"] },
         invoice_history: { enabled: true },
         payment_method_update: { enabled: true },
         subscription_cancel: { enabled: true, mode: "at_period_end" },
@@ -156,7 +220,7 @@ export async function connectStripe(): Promise<{
   return {
     prices: 1 + PLAN_IDS.length,
     webhookUrl: url,
-    mode: process.env.STRIPE_SECRET_KEY?.startsWith("sk_live") ? "live" : "test",
+    mode: stripeMode() === "live" ? "live" : "test",
   };
 }
 
@@ -190,6 +254,20 @@ export async function createCheckout(workspace: Workspace, plan: PlanId): Promis
   const terms = checkoutTerms(workspace);
   if (!terms.allowed) throw new CheckoutNotAllowedError();
   const s = stripe();
+  // Asked first, so nothing is created in Stripe when it can't answer. A failure fails the
+  // checkout (never an untaxed one once tax might be on).
+  let taxOn: boolean;
+  try {
+    taxOn = await stripeTaxActive();
+  } catch (err) {
+    const reason = stripeErrorReason(err);
+    console.error("stripe_tax_check_failed", {
+      workspaceId: workspace.id,
+      error: err instanceof Error ? err.name : "unknown",
+      reason,
+    });
+    throw err;
+  }
   const prices = await ensurePrices();
   const [owner] = await db().select().from(users).where(eq(users.id, workspace.ownerUserId));
 
@@ -212,6 +290,15 @@ export async function createCheckout(workspace: Workspace, plan: PlanId): Promis
     plan,
     includesSetup: terms.includeSetupFee ? "1" : "0",
   };
+  // Stripe Tax works from the customer's address. Ours are created without one, so Checkout
+  // collects it and saves it (and the name with it) onto the customer.
+  const tax: Partial<Stripe.Checkout.SessionCreateParams> = taxOn
+    ? {
+        automatic_tax: { enabled: true },
+        customer_update: { address: "auto", name: "auto" },
+        billing_address_collection: "required",
+      }
+    : {};
   const session = await s.checkout.sessions.create({
     mode: "subscription",
     customer,
@@ -223,6 +310,7 @@ export async function createCheckout(workspace: Workspace, plan: PlanId): Promis
     metadata,
     subscription_data: { metadata: { workspaceId: workspace.id } },
     allow_promotion_codes: true,
+    ...tax,
     success_url: appUrl("/billing?done=paid"),
     cancel_url: appUrl("/billing?error=canceled"),
   });
@@ -276,13 +364,19 @@ export async function applyCheckoutCompleted(session: Stripe.Checkout.Session, n
         typeof session.customer === "string" ? session.customer : w.stripeCustomerId,
       stripeSubscriptionId:
         typeof session.subscription === "string" ? session.subscription : w.stripeSubscriptionId,
-      // The only place a real setup payment is recorded — and what turns sending on.
+      // The only place a real setup payment is recorded — and what turns sending on. The date is
+      // this payment's unless one was already really paid (a hand-marked or test-card date isn't).
       ...(includesSetup
-        ? { setupPaidAt: w.setupPaidAt ?? now, setupPaidVia: "stripe" as const }
+        ? {
+            setupPaidAt: setupReallyPaid(w) ? (w.setupPaidAt ?? now) : now,
+            setupPaidVia: "stripe" as const,
+          }
         : {}),
     })
     .where(eq(workspaces.id, w.id));
   await log(w.id, "payment_received", { plan, includesSetup, from: w.status, to });
+  // Plan #47: a referral is settled the first time the account is active. Never fails the webhook.
+  if (to === "active") await creditReferralSafely(w.id, now);
   return "applied";
 }
 
@@ -306,6 +400,7 @@ export async function applySubscription(sub: Stripe.Subscription, now = new Date
   if (to !== w.status || plan !== w.plan) {
     await log(w.id, "subscription_changed", { stripeStatus: sub.status, from: w.status, to, plan });
   }
+  if (to === "active") await creditReferralSafely(w.id, now);
   return "applied";
 }
 
@@ -321,6 +416,14 @@ export async function handleStripeWebhook(rawBody: string, signature: string | n
     event = await stripe().webhooks.constructEventAsync(rawBody, signature, secret);
   } catch {
     return { status: 400 as const, body: "Bad signature." };
+  }
+  // Only events from the mode the key talks to. Until Connect Stripe runs again after the switch
+  // to live (LAUNCH.md 7b), the stored secret is still the test endpoint's: its renewals and late
+  // test checkouts would otherwise put test ids (and a "paid" setup) back on accounts "Reset test
+  // payments" cleared. Answered 200, so Stripe stops sending it.
+  if (eventFromOtherMode(event.livemode, stripeMode())) {
+    console.info("stripe_event_other_mode", { livemode: event.livemode === true });
+    return { status: 200 as const, body: "Ignored: other Stripe mode." };
   }
   const [fresh] = await db()
     .insert(stripeEvents)

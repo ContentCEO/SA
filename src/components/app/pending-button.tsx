@@ -8,14 +8,22 @@ export function PendingButton({
   children,
   pending: pendingLabel,
   className,
+  variant,
 }: {
   children: React.ReactNode;
   pending: string;
   className?: string;
+  variant?: React.ComponentProps<typeof Button>["variant"];
 }) {
   const { pending } = useFormStatus();
   return (
-    <Button type="submit" disabled={pending} aria-busy={pending} className={className}>
+    <Button
+      type="submit"
+      disabled={pending}
+      aria-busy={pending}
+      className={className}
+      variant={variant}
+    >
       {pending ? pendingLabel : children}
     </Button>
   );

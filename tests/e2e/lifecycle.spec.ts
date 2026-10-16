@@ -137,3 +137,36 @@ test("admin: invite an owner", async ({ page, context }) => {
   const [row] = await testDb.select().from(schema.invites).where(eq(schema.invites.email, email));
   expect(row?.trade).toBe("electrical");
 });
+
+test("during the three days, the only send on offer is a practice copy to yourself", async ({
+  page,
+  context,
+}) => {
+  const owner = await seedOwner({ mailbox: true, backfilled: true });
+  await setWorkspace(owner.workspaceId, {
+    status: "evaluating",
+    evaluationStartedAt: new Date(),
+    evaluationEndsAt: new Date(Date.now() + 2 * 86_400_000),
+  });
+  await seedQueue(owner.mailboxId!);
+  await signInAs(context, owner);
+  await page.goto("/queue");
+  const card = page.getByRole("article", { name: "Draft reply to Priya" });
+  await expect(card.getByRole("button", { name: "Send reply" })).toHaveCount(0);
+  await expect(card.getByRole("button", { name: "Send it to yourself instead" })).toBeVisible();
+  await expect(card).toContainText("Your customer gets nothing. 10 left.");
+});
+
+test("AI costs: admin only", async ({ page, context }) => {
+  const owner = await seedOwner({ mailbox: true });
+  await signInAs(context, owner);
+  expect((await page.goto("/admin/costs"))?.status()).toBe(404);
+
+  const admin = await seedAdmin();
+  await context.clearCookies();
+  await signInAs(context, admin);
+  await page.goto("/admin");
+  await page.getByRole("link", { name: "AI costs and margins this month" }).click();
+  await expect(page.getByRole("heading", { name: /AI costs/ })).toBeVisible();
+  await expect(page.getByRole("list", { name: "Accounts by margin" })).toBeVisible();
+});

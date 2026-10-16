@@ -38,6 +38,30 @@ const lines = (maxItems: number, maxLen = 200) =>
         .max(maxItems, `Up to ${maxItems} lines.`),
     );
 
+export const REVIEW_URL_MESSAGE =
+  "That doesn't look like a web link. Copy it from your Google or Yelp page — it starts with https://";
+
+/**
+ * Plan #29 review link: '' → null (cleared); otherwise an https link to a real host name.
+ * A missing key stays undefined so a save that doesn't carry the field never wipes it.
+ */
+const httpsLink = z.url({ protocol: /^https$/, hostname: z.regexes.domain });
+// The URL parser silently drops tabs/newlines and allows spaces, but we store the text as typed and
+// later put it in a customer email — so anything that isn't part of a link ("…/review Thanks!",
+// a pasted second line, quotes or angle brackets) is refused here.
+const NOT_IN_A_LINK = /[\s\u0000-\u001f\u007f"<>`]/;
+const reviewUrl = z
+  .string()
+  .trim()
+  .max(500, "Keep this under 500 characters.")
+  .transform((v) => (v === "" ? null : v))
+  // One refine (not z.url's own checks) so a bad link shows the message once, not per failed rule.
+  .refine(
+    (v) => v === null || (!NOT_IN_A_LINK.test(v) && httpsLink.safeParse(v).success),
+    REVIEW_URL_MESSAGE,
+  )
+  .optional();
+
 export const businessProfileInput = z.object({
   businessName: z.string().trim().min(1, "What's the business called?").max(120),
   trade: z.enum(TRADES, { message: "Pick your trade." }),
@@ -49,6 +73,7 @@ export const businessProfileInput = z.object({
   paymentTerms: longText(1000),
   policies: longText(),
   signature: longText(500),
+  reviewUrl,
   doNotPromise: lines(30),
   vipSenders: lines(50, 254).pipe(
     z.array(z.string().toLowerCase().email("Each VIP line should be one email address.")),
