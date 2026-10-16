@@ -664,8 +664,12 @@ export function stripePageShowsLine(billed: PlanId): string {
 }
 
 /** §4.4 Next to Manage billing while a free month runs (Q3: plan changes wait). */
-export function planChangesWaitLine(until: Date, timeZone?: string | null): string {
-  return `Plan changes wait until your free month ends on ${shortDate(until, timeZone)}. Use Keep above, or update your card or cancel on Stripe's page.`;
+export function planChangesWaitLine(
+  until: Date,
+  timeZone?: string | null,
+  keepOnOffer = true,
+): string {
+  return `Plan changes wait until your free month ends on ${shortDate(until, timeZone)}. ${keepOnOffer ? "Use Keep above, or update" : "You can update"} your card or cancel on Stripe's page.`;
 }
 
 /** §4.4 "Your free month": what happens at the end, from live counts. */
@@ -993,3 +997,11 @@ export function adminPlanLabel(
 /** /admin Payments (§1.8): free months wait while Stripe's page schedules downgrades. */
 export const PORTAL_SCHEDULES_DOWNGRADES_LINE =
   "Stripe's billing page schedules downgrades at period end, so free months wait. Turn that off in Stripe → Customer portal.";
+
+/**
+ * /admin Payments (§1.8.2), information only: customers can reach the default billing page
+ * (plan changes included) from Stripe's hosted login page, even during a free month. The
+ * backstop removes any charge for the free days.
+ */
+export const PORTAL_LOGIN_PAGE_LINE =
+  "Stripe's billing login page is on. During a free month, plan changes made there are caught by the free-days check.";

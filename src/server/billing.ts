@@ -28,7 +28,7 @@ import {
   stripeKeyMode,
 } from "./billing-rules";
 import { setupReallyPaid } from "./lifecycle";
-import { portalSchedulesDowngrades } from "./referral-rules";
+import { freeMonthRunning, portalSchedulesDowngrades } from "./referral-rules";
 import { creditReferralSafely, reconcileReferralSafely } from "./referrals";
 import { isTermsUrlMissingError, stripeErrorReason } from "./stripe-error-rules";
 import {
@@ -422,6 +422,122 @@ export async function termsBoxOffSince(): Promise<Date | null> {
   return row?.updatedAt ?? null;
 }
 
+/** Plan #47 (Q3, Davi 2026-10-16): the billing-page settings without plan changes, per mode. */
+export const NO_PLAN_CHANGE_PORTAL_KEY = (mode: "live" | "test") =>
+  `stripe_portal_no_plan_change:${mode}`;
+
+/**
+ * The default billing-page settings with plan changes switched off and nothing else changed
+ * (Davi's Dashboard edits carry over): card, address, invoices and cancel stay as he set them.
+ */
+export function noPlanChangePortalParams(
+  d: Stripe.BillingPortal.Configuration,
+): Stripe.BillingPortal.ConfigurationCreateParams {
+  const f = d.features ?? ({} as Partial<Stripe.BillingPortal.Configuration.Features>);
+  const bp = d.business_profile;
+  const cancel = f.subscription_cancel;
+  return {
+    ...(bp
+      ? {
+          business_profile: {
+            headline: bp.headline ?? "",
+            ...(bp.privacy_policy_url ? { privacy_policy_url: bp.privacy_policy_url } : {}),
+            ...(bp.terms_of_service_url ? { terms_of_service_url: bp.terms_of_service_url } : {}),
+          },
+        }
+      : {}),
+    ...(d.default_return_url ? { default_return_url: d.default_return_url } : {}),
+    features: {
+      customer_update: f.customer_update
+        ? {
+            enabled: f.customer_update.enabled,
+            allowed_updates: f.customer_update.allowed_updates.length
+              ? f.customer_update.allowed_updates
+              : "",
+          }
+        : { enabled: false },
+      invoice_history: { enabled: f.invoice_history?.enabled ?? true },
+      payment_method_update: { enabled: f.payment_method_update?.enabled ?? true },
+      subscription_cancel: cancel
+        ? {
+            enabled: cancel.enabled,
+            mode: cancel.mode,
+            proration_behavior: cancel.proration_behavior,
+            ...(cancel.cancellation_reason
+              ? {
+                  cancellation_reason: {
+                    enabled: cancel.cancellation_reason.enabled,
+                    options: cancel.cancellation_reason.options.length
+                      ? cancel.cancellation_reason.options
+                      : "",
+                  },
+                }
+              : {}),
+          }
+        : { enabled: true, mode: "at_period_end" },
+      subscription_update: { enabled: false },
+    },
+    // The hosted login page belongs to the default settings only.
+    login_page: { enabled: false },
+    metadata: { purpose: "referral_free_month_no_plan_change" },
+  };
+}
+
+type CachedPortal = { id: string; defaultUpdated: number };
+
+function parseCachedPortal(value: string | undefined): CachedPortal | null {
+  try {
+    const v = JSON.parse(value ?? "null") as Partial<CachedPortal> | null;
+    return v && typeof v.id === "string" && typeof v.defaultUpdated === "number"
+      ? { id: v.id, defaultUpdated: v.defaultUpdated }
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Plan #47 (§1.8.2): the billing-page settings used while a free month runs, so plan changes
+ * happen only through Keep / Go back in the app. Built from the retrieved default settings,
+ * cached per Stripe mode in app_settings, rebuilt when the default changed (its `updated`) or
+ * was switched off, made again if Stripe no longer has it. Null without a default to copy.
+ */
+export async function ensureNoPlanChangePortal(): Promise<string | null> {
+  const mode = stripeMode();
+  if (!mode) return null;
+  const s = stripe();
+  const def = (await s.billingPortal.configurations.list({ is_default: true, limit: 1 })).data[0];
+  if (!def) return null;
+  const key = NO_PLAN_CHANGE_PORTAL_KEY(mode);
+  const [row] = await db().select().from(appSettings).where(eq(appSettings.key, key));
+  const cached = parseCachedPortal(row?.value);
+  const params = noPlanChangePortalParams(def);
+  let id: string | null = null;
+  if (cached) {
+    try {
+      const c = await s.billingPortal.configurations.retrieve(cached.id);
+      const current =
+        c.active &&
+        cached.defaultUpdated >= def.updated &&
+        c.features?.subscription_update?.enabled === false;
+      id = current
+        ? c.id
+        : (await s.billingPortal.configurations.update(cached.id, { ...params, active: true })).id;
+    } catch (err) {
+      if ((err as { code?: string }).code !== "resource_missing") throw err;
+    }
+  }
+  id ??= (await s.billingPortal.configurations.create(params)).id;
+  if (!cached || cached.id !== id || cached.defaultUpdated !== def.updated) {
+    const value = JSON.stringify({ id, defaultUpdated: def.updated } satisfies CachedPortal);
+    await db()
+      .insert(appSettings)
+      .values({ key, value })
+      .onConflictDoUpdate({ target: appSettings.key, set: { value, updatedAt: new Date() } });
+  }
+  return id;
+}
+
 /**
  * Stripe's own page for changing card, plan, invoices or canceling. It comes back to Plan &
  * billing, or to the terms screen when it was opened from there (someone who won't agree to new
@@ -432,9 +548,26 @@ export async function createPortal(
   returnTo: "/billing" | "/welcome/terms" = "/billing",
 ): Promise<string> {
   if (!workspace.stripeCustomerId) throw new CheckoutNotAllowedError();
+  // Plan #47 (Q3): while a free month runs, Stripe's page offers card, invoices and cancel
+  // only. If those settings can't be made, the default page opens (the owner can always
+  // update their card or cancel) and the backstop removes any charge for the free days.
+  let configuration: string | null = null;
+  if (freeMonthRunning(workspace)) {
+    try {
+      configuration = await ensureNoPlanChangePortal();
+    } catch (err) {
+      const reason = stripeErrorReason(err);
+      console.error("stripe_portal_no_plan_change_failed", {
+        workspaceId: workspace.id,
+        error: err instanceof Error ? err.name : "unknown",
+        reason,
+      });
+    }
+  }
   const portal = await stripe().billingPortal.sessions.create({
     customer: workspace.stripeCustomerId,
     return_url: appUrl(returnTo),
+    ...(configuration ? { configuration } : {}),
   });
   return portal.url;
 }

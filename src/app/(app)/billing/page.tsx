@@ -19,6 +19,7 @@ import {
   goBackOffer,
   keepCopy,
   keepOffer,
+  planChangesWaitLine,
   referralsVisible,
   rewardStatusLine,
   shareCardCopy,
@@ -152,10 +153,17 @@ export default async function BillingPage(props: PageProps<"/billing">) {
                   Manage billing
                 </Button>
               </form>
-              <p className="text-sm text-muted-foreground">
-                Change plan, update your card, see invoices or cancel — on Stripe&apos;s secure
-                page.
-              </p>
+              {running ? (
+                // Q3 (Davi, 2026-10-16): during the free month Stripe's page has no plan changes.
+                <p className="text-sm text-muted-foreground">
+                  {planChangesWaitLine(running.until, tz, !!(keep || back))}
+                </p>
+              ) : (
+                <p className="text-sm text-muted-foreground">
+                  Change plan, update your card, see invoices or cancel — on Stripe&apos;s secure
+                  page.
+                </p>
+              )}
               {running && workspace.plan && workspace.plan !== running.free ? (
                 <p className="text-sm text-muted-foreground">
                   {stripePageShowsLine(workspace.plan)}

@@ -553,7 +553,15 @@ describe("resetting", () => {
       { ...base, referredEmailSha256: "t2", status: "pending", stripeMode: "test" },
       { ...base, referredEmailSha256: "l1", status: "pending", stripeMode: "live" },
     ]);
+    await database.insert(appSettings).values([
+      { key: "stripe_portal_no_plan_change:test", value: '{"id":"bpc_t","defaultUpdated":1}' },
+      { key: "stripe_portal_no_plan_change:live", value: '{"id":"bpc_l","defaultUpdated":1}' },
+    ]);
     await resetTestPayments(NOW);
+    // The test key's cached billing-page settings go; the live key's stay.
+    const portals = await database.select({ key: appSettings.key }).from(appSettings);
+    expect(portals.map((p) => p.key)).not.toContain("stripe_portal_no_plan_change:test");
+    expect(portals.map((p) => p.key)).toContain("stripe_portal_no_plan_change:live");
     const left = await database.select().from(referralCredits);
     expect(left.map((r) => r.referredEmailSha256)).toEqual(["l1"]);
     const w = await row(referrer);

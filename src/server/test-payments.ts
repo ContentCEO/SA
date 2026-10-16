@@ -3,7 +3,7 @@ import { and, eq, isNotNull, isNull, or, type Column, type SQL } from "drizzle-o
 import type Stripe from "stripe";
 import { db } from "@/db";
 import { activityLog, appSettings, workspaces } from "@/db/schema";
-import { stripeClient, stripeMode } from "./billing";
+import { NO_PLAN_CHANGE_PORTAL_KEY, stripeClient, stripeMode } from "./billing";
 import {
   mayCarryTestPayment,
   parseTestPaymentsResult,
@@ -204,6 +204,10 @@ export async function resetTestPayments(
   // Plan #47: free months earned in test mode never go live; deleting them lets the real
   // payment settle the referral again, once.
   const rewardsCleared = await clearTestModeRewards(now);
+  // ...and the test key's cached billing-page settings for free months go with them.
+  await db()
+    .delete(appSettings)
+    .where(eq(appSettings.key, NO_PLAN_CHANGE_PORTAL_KEY("test")));
   // Everything found was reset; what's left is only what couldn't be checked.
   await keep({ found: 0, unchecked, reset, at: now.toISOString() }, now);
   console.info("test_payments_reset", { reset, unchecked, rewardsCleared });

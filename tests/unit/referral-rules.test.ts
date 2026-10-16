@@ -585,6 +585,9 @@ describe("copy", () => {
       "Crew is free until Nov 15, our thanks for the referral.",
     );
     expect(stripePageShowsLine("solo")).toBe("Stripe's page shows Solo, the plan you pay for.");
+    expect(planChangesWaitLine(NOV15, TZ, false)).toBe(
+      "Plan changes wait until your free month ends on Nov 15. You can update your card or cancel on Stripe's page.",
+    );
     expect(planChangesWaitLine(NOV15, TZ)).toBe(
       "Plan changes wait until your free month ends on Nov 15. Use Keep above, or update your card or cancel on Stripe's page.",
     );

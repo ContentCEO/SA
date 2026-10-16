@@ -25,7 +25,10 @@ import {
   CheckoutNotAllowedError,
   connectStripe,
   createCheckout,
+  createPortal,
   handleStripeWebhook,
+  NO_PLAN_CHANGE_PORTAL_KEY,
+  noPlanChangePortalParams,
   salesTaxStatus,
   setStripeForTests,
   termsBoxOffSince,
@@ -927,5 +930,149 @@ describe("plan #47 §1.9: the webhook reads the live subscription", () => {
     expect((await reload()).plan).toBe("solo");
     expect(Object.values(await boxes()).every(([s]) => s === "active")).toBe(true);
     expect((await database.select().from(rules))[0]!.mode).toBe("autopilot");
+  });
+});
+
+describe("plan #47 Q3: during a free month, Stripe's page has no plan changes", () => {
+  const TEST_KEY = "sk_" + "test_" + "fake";
+  const freeMonth = async (running: boolean) => {
+    await database
+      .update(workspaces)
+      .set({
+        status: "active",
+        plan: "solo",
+        stripeCustomerId: "cus_1",
+        freePlan: running ? "crew" : null,
+        freePlanUntil: running ? new Date(Date.now() + 5 * 86_400_000) : null,
+      })
+      .where(eq(workspaces.id, workspace.id));
+    return (await reload())!;
+  };
+  const sessions = () => calls.filter((c) => c.method === "billingPortal.sessions.create");
+  const cached = async (mode: "live" | "test" = "test") =>
+    (
+      await database
+        .select()
+        .from(appSettings)
+        .where(eq(appSettings.key, NO_PLAN_CHANGE_PORTAL_KEY(mode)))
+    )[0];
+
+  beforeEach(() => {
+    vi.stubEnv("STRIPE_SECRET_KEY", TEST_KEY);
+    fake.addPortalConfiguration({ id: "bpc_default" });
+  });
+  afterEach(() => vi.unstubAllEnvs());
+
+  it("no free month: the default page, nothing made", async () => {
+    await createPortal(await freeMonth(false));
+    expect(sessions()[0]!.args[0]).not.toHaveProperty("configuration");
+    expect(calls.some((c) => c.method === "billingPortal.configurations.create")).toBe(false);
+  });
+
+  it("running: built from the default with only plan changes off, cached per mode, reused", async () => {
+    const w = await freeMonth(true);
+    await createPortal(w);
+    const created = calls.find((c) => c.method === "billingPortal.configurations.create")!;
+    const params = created.args[0] as Stripe.BillingPortal.ConfigurationCreateParams;
+    expect(params.features.subscription_update).toEqual({ enabled: false });
+    expect(params.features.subscription_cancel).toMatchObject({ enabled: true });
+    expect(params.features.payment_method_update).toEqual({ enabled: true });
+    expect(params.features.invoice_history).toEqual({ enabled: true });
+    expect(params.login_page).toEqual({ enabled: false });
+    expect(sessions()[0]!.args[0]).toMatchObject({ configuration: "bpc_new" });
+    expect(JSON.parse((await cached())!.value)).toMatchObject({ id: "bpc_new" });
+    expect(await cached("live")).toBeUndefined();
+    // Again: retrieved and reused, nothing made or changed.
+    calls.length = 0;
+    await createPortal(w);
+    expect(calls.map((c) => c.method)).not.toContain("billingPortal.configurations.create");
+    expect(calls.map((c) => c.method)).not.toContain("billingPortal.configurations.update");
+    expect(sessions()[0]!.args[0]).toMatchObject({ configuration: "bpc_new" });
+  });
+
+  it("rebuilt when Davi changes the default; made again when Stripe lost it", async () => {
+    const w = await freeMonth(true);
+    await createPortal(w);
+    fake.advance(60_000);
+    const def = (await fake.client.billingPortal.configurations.retrieve("bpc_default")) as {
+      updated: number;
+    };
+    await fake.client.billingPortal.configurations.update("bpc_default", {
+      features: { invoice_history: { enabled: false } },
+    });
+    expect(
+      (await fake.client.billingPortal.configurations.retrieve("bpc_default")).updated,
+    ).toBeGreaterThan(def.updated);
+    calls.length = 0;
+    await createPortal(w);
+    const update = calls.find(
+      (c) => c.method === "billingPortal.configurations.update" && c.args[0] === "bpc_new",
+    )!;
+    expect(update.args[1]).toMatchObject({
+      active: true,
+      features: { invoice_history: { enabled: false }, subscription_update: { enabled: false } },
+    });
+    // Stripe no longer has ours: made again, and the cache follows.
+    await database
+      .update(appSettings)
+      .set({ value: JSON.stringify({ id: "bpc_gone", defaultUpdated: 0 }) })
+      .where(eq(appSettings.key, NO_PLAN_CHANGE_PORTAL_KEY("test")));
+    calls.length = 0;
+    await createPortal(w);
+    expect(calls.map((c) => c.method)).toContain("billingPortal.configurations.create");
+    expect(JSON.parse((await cached())!.value)).toMatchObject({ id: "bpc_new" });
+  });
+
+  it("if the settings can't be made, the default page still opens (card and cancel)", async () => {
+    const w = await freeMonth(true);
+    fake.failNext("billingPortal.configurations.create", stripeErrors.api());
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const url = await createPortal(w);
+    expect(url).toMatch(/^https:\/\/billing\.example\//);
+    expect(sessions()[0]!.args[0]).not.toHaveProperty("configuration");
+  });
+
+  it("the copy from the default never carries plan changes or the login page", () => {
+    const params = noPlanChangePortalParams({
+      id: "bpc_x",
+      updated: 1,
+      default_return_url: "https://app.example/billing",
+      business_profile: { headline: "Hi", privacy_policy_url: null, terms_of_service_url: null },
+      login_page: { enabled: true, url: "https://billing.stripe.com/p/login/x" },
+      features: {
+        customer_update: { enabled: true, allowed_updates: ["address"] },
+        invoice_history: { enabled: true },
+        payment_method_update: { enabled: true, payment_method_configuration: null },
+        subscription_cancel: {
+          enabled: true,
+          mode: "at_period_end",
+          proration_behavior: "none",
+          cancellation_reason: { enabled: false, options: [] },
+        },
+        subscription_update: {
+          enabled: true,
+          default_allowed_updates: ["price"],
+          proration_behavior: "create_prorations",
+        },
+      },
+    } as unknown as Stripe.BillingPortal.Configuration);
+    expect(params).toEqual({
+      business_profile: { headline: "Hi" },
+      default_return_url: "https://app.example/billing",
+      features: {
+        customer_update: { enabled: true, allowed_updates: ["address"] },
+        invoice_history: { enabled: true },
+        payment_method_update: { enabled: true },
+        subscription_cancel: {
+          enabled: true,
+          mode: "at_period_end",
+          proration_behavior: "none",
+          cancellation_reason: { enabled: false, options: "" },
+        },
+        subscription_update: { enabled: false },
+      },
+      login_page: { enabled: false },
+      metadata: { purpose: "referral_free_month_no_plan_change" },
+    });
   });
 });

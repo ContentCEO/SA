@@ -45,7 +45,11 @@ import {
   testPaymentsResetNotice,
 } from "@/server/test-payment-rules";
 import { listWaitlist } from "@/server/waitlist";
-import { PORTAL_SCHEDULES_DOWNGRADES_LINE, referralsVisible } from "@/server/referral-rules";
+import {
+  PORTAL_LOGIN_PAGE_LINE,
+  PORTAL_SCHEDULES_DOWNGRADES_LINE,
+  referralsVisible,
+} from "@/server/referral-rules";
 import { describeWaitlistEntry, formatStamp } from "@/server/growth-note";
 import { growthCopy } from "@/components/marketing/growth/growth-copy";
 import { phoneHref } from "@/lib/phone-href";
@@ -555,6 +559,9 @@ export default async function AdminPage(props: PageProps<"/admin">) {
               {salesTax === "on" ? <p>{SALES_TAX_ON_NOTE}</p> : null}
               {portal !== null && portal !== "unknown" && portal.schedulesDowngrades ? (
                 <p className="font-semibold">{PORTAL_SCHEDULES_DOWNGRADES_LINE}</p>
+              ) : null}
+              {portal !== null && portal !== "unknown" && portal.loginPage ? (
+                <p>{PORTAL_LOGIN_PAGE_LINE}</p>
               ) : null}
               {termsBoxOff ? (
                 <p className="font-semibold">
