@@ -43,8 +43,16 @@ export type ReviewFacts = {
   jobDone: boolean;
   /** The invoice is marked paid (by the owner or our guess) — never "Not owed to me". */
   invoicePaid: boolean;
-  /** Who the request would go to: the newest inbound sender, lowercased. */
+  /**
+   * Who the request would go to: the newest inbound email's reply address (a website form's
+   * Reply-To, else its sender), lowercased.
+   */
   customerAddress: string | null;
+  /**
+   * Who sent that email (From), when it differs: a receipt sender (Stripe, QuickBooks) puts
+   * the merchant in Reply-To, and is still a receipt.
+   */
+  senderAddress?: string | null;
   /** The owner has written to that address before (A2). */
   ownerWroteToThem: boolean;
   reviewUrl: string | null;
@@ -64,6 +72,7 @@ export function reviewOfferReason(f: ReviewFacts): ReviewOfferReason | null {
   if (f.untrusted) return "not_eligible";
   if (f.category === "noise" || f.category === "supplier_vendor") return "not_eligible";
   if (!f.customerAddress || isAutomatedSender(f.customerAddress)) return "not_eligible";
+  if (f.senderAddress && isReceiptSender(f.senderAddress)) return "not_eligible";
   if (!f.ownerWroteToThem) return "not_eligible";
   if (!(f.jobDone || f.invoicePaid)) return "not_eligible";
   if (!f.reviewUrl) return "no_review_link";

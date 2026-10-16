@@ -3,6 +3,9 @@ import { auth } from "@/auth";
 import { siteConfig } from "@/config/site";
 import { getWorkspaceForUser } from "@/server/accounts";
 import type { Workspace } from "@/db/schema";
+import { queueCounts } from "@/server/drafts";
+import { trialCounts } from "@/server/first-week";
+import { isLastDay, trialSoFarLine, waitingLine } from "@/server/first-week-rules";
 import { effectiveStatus, evaluationClock, setupReallyPaid, timeLeft } from "@/server/lifecycle";
 import { freeMonthBanner, freeMonthRunning } from "@/server/referral-rules";
 import { freeMonthView, viewChanges } from "@/server/referrals";
@@ -77,6 +80,29 @@ export async function StatusBanner() {
   if (status === "evaluating") {
     const clock = evaluationClock(workspace, now);
     if (!clock) return null;
+    // Round 2 (FW F2): the last day asks plainly, with what the three days did and a real button.
+    if (isLastDay(clock.msLeft)) {
+      const soFar = trialSoFarLine(await trialCounts(workspace));
+      return (
+        <section
+          aria-label="Your three days"
+          className="sa-inverted flex flex-col gap-2 rounded-xl p-4"
+        >
+          <p className="text-lg font-black">Your three days end in {timeLeft(clock.msLeft)}.</p>
+          {soFar ? <p>{soFar}</p> : null}
+          <p className="text-ash">
+            Choose a plan to keep it going and switch sending on. Every reply still waits for your
+            okay.
+          </p>
+          <Link
+            href="/billing"
+            className="inline-flex min-h-tap items-center justify-center rounded-lg bg-primary px-4 font-semibold text-primary-foreground"
+          >
+            Choose a plan
+          </Link>
+        </section>
+      );
+    }
     return (
       <section
         aria-label="Your three days"
@@ -86,8 +112,8 @@ export async function StatusBanner() {
           Day {clock.day} of {clock.of} · {timeLeft(clock.msLeft)} left
         </p>
         <p>
-          Squared Away is reading and drafting, but nothing sends during your three days. See if the
-          drafts sound like you.
+          Squared Away is reading and drafting, but it won&apos;t send anything to a customer during
+          your three days. See if the drafts sound like you.
         </p>
         <Link
           href="/billing"
@@ -127,15 +153,23 @@ export async function StatusBanner() {
     );
   }
   switch (status) {
-    case "evaluation_expired":
+    case "evaluation_expired": {
+      // Round 2 (FW E7/F6): what's waiting for them, counts only.
+      const waiting = waitingLine(await queueCounts(workspace.id, now));
       return inverted(
         "Your three days are up.",
         <>
+          {waiting ? (
+            <>
+              <span className="font-semibold">{waiting}</span>{" "}
+            </>
+          ) : null}
           Everything here stays as it is, read-only. Nothing new is read or drafted, and nothing is
           sent. To switch sending on, choose a plan — or talk to us first. <Contact />
         </>,
         "Choose a plan",
       );
+    }
     case "setup_paid":
       // A running free month is a second bordered card under this one (setup_paid isn't a
       // problem state, so it doesn't hide the free month).

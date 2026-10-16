@@ -24,7 +24,7 @@ function values(formData: FormData): Record<string, string> {
   return Object.fromEntries([...formData.entries()].map(([k, v]) => [k, String(v)]));
 }
 
-const returnTo = z.enum(["/settings?done=profile", "/welcome/learning"]);
+const returnTo = z.enum(["/settings/business?done=profile", "/welcome/learning"]);
 
 export async function saveBusinessProfileAction(
   _prev: FormState,
@@ -32,6 +32,12 @@ export async function saveBusinessProfileAction(
 ): Promise<FormState> {
   const { workspace } = await requireOwner();
   const raw = values(formData);
+  // Ticked boxes share one name (round 2, TW A4); the form says it sent them.
+  if (formData.has("extraTradesShown"))
+    raw.extraTrades = formData
+      .getAll("extraTrades")
+      .map((v) => String(v))
+      .join(",");
   const parsed = businessProfileInput.safeParse(raw);
   if (!parsed.success)
     return {
@@ -39,7 +45,7 @@ export async function saveBusinessProfileAction(
       values: raw,
     };
   await saveBusinessProfile(workspace.id, parsed.data);
-  redirect(returnTo.catch("/settings?done=profile").parse(raw.returnTo));
+  redirect(returnTo.catch("/settings/business?done=profile").parse(raw.returnTo));
 }
 
 export async function saveVoiceAction(_prev: FormState, formData: FormData): Promise<FormState> {
@@ -52,14 +58,15 @@ export async function saveVoiceAction(_prev: FormState, formData: FormData): Pro
       values: raw,
     };
   await saveVoiceEdits(workspace.id, parsed.data);
-  redirect("/settings?done=voice");
+  redirect("/settings/writing?done=voice");
 }
 
 export async function relearnVoiceAction() {
   const { workspace } = await requireOwner();
-  if (!(await hitLimit("relearn", workspace.id)).allowed) redirect("/settings?error=relearn_busy");
+  if (!(await hitLimit("relearn", workspace.id)).allowed)
+    redirect("/settings/writing?error=relearn_busy");
   await enqueue(voiceLearnRequested.create({ workspaceId: workspace.id, force: true }));
-  redirect("/settings?done=relearn");
+  redirect("/settings/writing?done=relearn");
 }
 
 export async function saveFollowupSettingsAction(formData: FormData) {
@@ -68,9 +75,9 @@ export async function saveFollowupSettingsAction(formData: FormData) {
     enabled: formData.get("enabled") ?? undefined,
     days: formData.get("days"),
   });
-  if (!parsed.success) redirect("/settings?error=unknown");
+  if (!parsed.success) redirect("/settings/follow-ups?error=unknown");
   await saveFollowupSettings(workspace.id, parsed.data);
-  redirect("/settings?done=followups");
+  redirect("/settings/follow-ups?done=saved");
 }
 
 export async function saveDigestSettingsAction(formData: FormData) {
@@ -80,9 +87,9 @@ export async function saveDigestSettingsAction(formData: FormData) {
     hour: formData.get("hour"),
     timeZone: formData.get("timeZone"),
   });
-  if (!parsed.success) redirect("/settings?error=unknown");
+  if (!parsed.success) redirect("/settings/morning-email?error=unknown");
   await saveDigestSettings(workspace.id, parsed.data);
-  redirect("/settings?done=digest");
+  redirect("/settings/morning-email?done=saved");
 }
 
 /** Turning autopilot on is re-checked server-side (plan, setup done, earned); off always works. */
@@ -93,24 +100,24 @@ export async function setAutopilotAction(formData: FormData) {
   try {
     await setAutopilot(workspace, category, on);
   } catch (err) {
-    if (err instanceof AutopilotNotAllowedError) redirect("/settings?error=autopilot#autopilot");
+    if (err instanceof AutopilotNotAllowedError) redirect("/settings/autopilot?error=autopilot");
     throw err;
   }
-  redirect(`/settings?done=${on ? "autopilot_on" : "autopilot_off"}#autopilot`);
+  redirect(on ? "/settings/autopilot?done=autopilot_on" : "/settings/autopilot?done=autopilot_off");
 }
 
 /** Plan #21: the owner's yes or no to an idea from their edits. */
 export async function decideVoiceIdeaAction(formData: FormData) {
   const { workspace } = await requireOwner();
   const id = z.string().uuid().safeParse(formData.get("ideaId"));
-  if (!id.success) redirect("/settings?error=unknown");
+  if (!id.success) redirect("/settings/writing?error=unknown");
   const r = await decideSuggestion(workspace.id, id.data, formData.get("answer") === "yes");
   if (r === "type_it") redirect("/settings/voice");
   redirect(
     r === "accepted"
-      ? "/settings?done=idea_yes#voice"
+      ? "/settings/writing?done=idea_yes"
       : r === "ignored"
-        ? "/settings?done=idea_no#voice"
-        : "/settings?error=unknown",
+        ? "/settings/writing?done=idea_no"
+        : "/settings/writing?error=unknown",
   );
 }

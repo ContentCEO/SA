@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { beforeEach, describe, expect, it } from "vitest";
 import { setModelTransportForTests } from "@/ai/client";
 import type { ModelDraft } from "@/ai/prompts/draft.v5";
@@ -605,6 +605,86 @@ describe("in the database", () => {
       await considerAutopilot(draftId, NOW);
       expect(await overdueAutopilotDrafts(later(GRACE_MINUTES + 1))).toEqual([]);
       expect(await overdueAutopilotDrafts(later(GRACE_MINUTES + 6))).toEqual([draftId]);
+    });
+
+    describe("GUARDRAIL: a Reply-To never unlocks autopilot (review B1)", () => {
+      /** The customer's email, re-stored with a Reply-To (as sync now does). */
+      const replyTo = (threadId: string, address: string | null) =>
+        database
+          .update(messages)
+          .set({ replyToHeader: address === null ? null : { address } })
+          .where(and(eq(messages.threadId, threadId), eq(messages.direction, "in")));
+
+      it("From a known customer + Reply-To a stranger: refused (it used to check the sender)", async () => {
+        const t = await conversation();
+        await replyTo(t, "stranger@elsewhere.com");
+        const draftId = await drafted(t);
+        const [d] = await database.select().from(drafts).where(eq(drafts.id, draftId));
+        expect(d!.toAddress).toBe("stranger@elsewhere.com");
+        expect(await considerAutopilot(draftId, NOW)).toBeNull();
+      });
+
+      it("a Reply-To the owner has written to: still refused, it waits for the owner", async () => {
+        const t = await conversation({ from: "no-reply@crm.wix.com", known: false });
+        await database.insert(messages).values({
+          threadId: t,
+          mailboxId,
+          gmailMessageId: `${t}-wrote-dana`,
+          direction: "out",
+          fromAddress: "owner@shop.com",
+          toAddresses: ["dana@customer.com"],
+          bodyText: "Earlier job.",
+          sentAt: new Date(NOW.getTime() - 20 * 86_400_000),
+        });
+        await replyTo(t, "dana@customer.com");
+        const draftId = await drafted(t);
+        expect(await considerAutopilot(draftId, NOW)).toBeNull();
+      });
+
+      it("a plain known sender is unchanged", async () => {
+        const draftId = await drafted(await conversation());
+        expect(await considerAutopilot(draftId, NOW)).toEqual(later(GRACE_MINUTES));
+      });
+
+      it("a countdown stands down when the email turns out to have a Reply-To, or was never checked", async () => {
+        const t = await conversation();
+        const draftId = await drafted(t);
+        expect(await considerAutopilot(draftId, NOW)).toEqual(later(GRACE_MINUTES));
+        // The stored draft now goes elsewhere than the sender (e.g. re-pointed).
+        await database
+          .update(drafts)
+          .set({ toAddress: "stranger@elsewhere.com" })
+          .where(eq(drafts.id, draftId));
+        expect(await runAutopilotSend(draftId, deps(later(GRACE_MINUTES)))).toMatchObject({
+          status: "stood_down",
+        });
+        expect(writer.sent).toHaveLength(0);
+
+        const t2 = await conversation();
+        const d2 = await drafted(t2);
+        await replyTo(t2, null); // a newer row stored by older code: never checked
+        expect(await considerAutopilot(d2, NOW)).toBeNull();
+        expect(
+          guardrailReasons({
+            category: "scheduling",
+            needsOwner: false,
+            kind: "reply",
+            confidencePct: 95,
+            flags: [],
+            amountsInEmail: [],
+            draftBody: "Hi",
+            knownCustomer: true,
+            purpose: null,
+            replyToUnchecked: true,
+            redirected: true,
+          }),
+        ).toEqual(
+          expect.arrayContaining([
+            "This reply goes to a different address than the sender's, so it waits for you.",
+            "We couldn't check where this reply goes, so it waits for you.",
+          ]),
+        );
+      });
     });
   });
 });

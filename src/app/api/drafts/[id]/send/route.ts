@@ -53,6 +53,7 @@ export async function POST(request: NextRequest, ctx: RouteContext<"/api/drafts/
     body?: unknown;
     seen?: unknown;
     okayedAt?: unknown;
+    seenTo?: unknown;
   };
   const editedBody =
     typeof payload.body === "string" && payload.body.trim() ? payload.body : undefined;
@@ -62,8 +63,12 @@ export async function POST(request: NextRequest, ctx: RouteContext<"/api/drafts/
       ? { seenHash: payload.seen, okayedAt: new Date(payload.okayedAt) }
       : undefined;
 
+  // The "To:" the phone showed when the owner okayed it (H7); a change there is refused.
+  const seenTo =
+    typeof payload.seenTo === "string" && payload.seenTo.length <= 320 ? payload.seenTo : undefined;
+
   try {
-    const outcome = await queueSend(workspace.id, id, { editedBody, offline });
+    const outcome = await queueSend(workspace.id, id, { editedBody, offline, seenTo });
     if (outcome.status === "gaps_unfilled") {
       return NextResponse.json(
         { error: "Fill in every highlighted gap before sending." },

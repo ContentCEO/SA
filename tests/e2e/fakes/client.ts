@@ -5,6 +5,7 @@
  */
 import { randomUUID } from "node:crypto";
 import type { APIRequestContext, BrowserContext, Page } from "@playwright/test";
+import type { FakeLead } from "./outputs";
 import type { FakeCall, FakeGrant } from "./server";
 
 /** Where the fakes listen. playwright.config.ts sets E2E_FAKES_URL for every worker. */
@@ -24,10 +25,11 @@ export async function registerScenario(
   request: APIRequestContext,
   ownerEmail: string,
   grant: FakeGrant = {},
+  opts: { lead?: FakeLead } = {},
 ): Promise<{ id: string; ref: string }> {
   const id = randomUUID();
   const res = await request.post(`${fakesUrl()}/__scenarios`, {
-    data: { id, ownerEmail, grant },
+    data: { id, ownerEmail, grant, lead: opts.lead ?? "direct" },
   });
   if (res.status() !== 201) throw new Error(`Fake scenario not registered (${res.status()}).`);
   return (await res.json()) as { id: string; ref: string };

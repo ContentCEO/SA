@@ -7,10 +7,12 @@ import { activityLog, businessProfiles, drafts, mailboxes } from "@/db/schema";
 export const DRAFTS_TO_CHECK = 3;
 
 export type ChecklistStep = {
-  key: "gmail" | "profile" | "drafts";
+  key: "gmail" | "profile" | "drafts" | "plan";
   label: string;
   done: boolean;
   detail?: string;
+  /** A short line under the label (round 2, FW E6). */
+  hint?: string;
   href: string;
 };
 export type Checklist = { steps: ChecklistStep[]; allDone: boolean; show: boolean };
@@ -21,6 +23,11 @@ export function buildChecklist(f: {
   profileCompleted: boolean;
   draftsChecked: number;
   dismissed: boolean;
+  /**
+   * Round 2 (FW E7): the account is read-only (the three days ran out, or the plan stopped).
+   * Drafts can't be checked then, so that step becomes what to do next.
+   */
+  readOnly?: boolean;
 }): Checklist {
   const steps: ChecklistStep[] = [
     { key: "gmail", label: "Connect Gmail", done: f.mailboxes > 0, href: "/connect" },
@@ -30,13 +37,22 @@ export function buildChecklist(f: {
       done: f.profileCompleted,
       href: "/settings/profile",
     },
-    {
-      key: "drafts",
-      label: `Check your first ${DRAFTS_TO_CHECK} drafts`,
-      done: f.draftsChecked >= DRAFTS_TO_CHECK,
-      detail: `${Math.min(f.draftsChecked, DRAFTS_TO_CHECK)} of ${DRAFTS_TO_CHECK}`,
-      href: "/queue#drafts",
-    },
+    f.readOnly && f.draftsChecked < DRAFTS_TO_CHECK
+      ? {
+          key: "plan",
+          label: "Choose a plan to keep going",
+          done: false,
+          hint: "Your drafts are waiting. Or call us first.",
+          href: "/billing",
+        }
+      : {
+          key: "drafts",
+          label: `Check your first ${DRAFTS_TO_CHECK} drafts`,
+          done: f.draftsChecked >= DRAFTS_TO_CHECK,
+          detail: `${Math.min(f.draftsChecked, DRAFTS_TO_CHECK)} of ${DRAFTS_TO_CHECK}`,
+          hint: "Send, edit or discard each one, or send yourself a practice copy.",
+          href: "/queue#drafts",
+        },
   ];
   const allDone = steps.every((s) => s.done);
   return { steps, allDone, show: !(allDone && f.dismissed) };
@@ -44,9 +60,13 @@ export function buildChecklist(f: {
 
 /**
  * A draft counts as checked once the owner did something with it: sent it,
- * discarded it, or edited it.
+ * discarded it, or edited it — or, during the three days, sent themselves a practice copy of it
+ * (round 2, FW E6: that's the trial's main action). Each draft counts once.
  */
-export async function checklistFor(workspaceId: string): Promise<Checklist> {
+export async function checklistFor(
+  workspaceId: string,
+  opts: { readOnly?: boolean } = {},
+): Promise<Checklist> {
   const [boxes] = await db()
     .select({ n: count() })
     .from(mailboxes)
@@ -58,8 +78,8 @@ export async function checklistFor(workspaceId: string): Promise<Checklist> {
     })
     .from(businessProfiles)
     .where(eq(businessProfiles.workspaceId, workspaceId));
-  const [checked] = await db()
-    .select({ n: count() })
+  const acted = await db()
+    .select({ id: drafts.id })
     .from(drafts)
     .innerJoin(mailboxes, eq(mailboxes.id, drafts.mailboxId))
     .where(
@@ -71,11 +91,20 @@ export async function checklistFor(workspaceId: string): Promise<Checklist> {
         ),
       ),
     );
+  const practiced = await db()
+    .select({ id: sql<string | null>`${activityLog.detail}->>'draftId'` })
+    .from(activityLog)
+    .where(and(eq(activityLog.workspaceId, workspaceId), eq(activityLog.action, "practice_sent")));
+  const checked = new Set([
+    ...acted.map((r) => r.id),
+    ...practiced.flatMap((r) => (r.id ? [r.id] : [])),
+  ]);
   return buildChecklist({
     mailboxes: boxes?.n ?? 0,
     profileCompleted: !!profile?.completedAt,
-    draftsChecked: checked?.n ?? 0,
+    draftsChecked: checked.size,
     dismissed: !!profile?.dismissedAt,
+    readOnly: opts.readOnly,
   });
 }
 

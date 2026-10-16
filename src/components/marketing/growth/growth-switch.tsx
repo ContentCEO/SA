@@ -4,8 +4,11 @@ import { useEffect, useRef } from "react";
 import { BigWordsStage } from "./big-words";
 import { BW_DONE_MS, BW_QUIET_DONE_MS, BW_REALIGN_AT_MS, BW_THEME_AT_MS } from "./big-words-rules";
 import {
+  HOLD_MS,
   LINES,
   NAV_MS,
+  crossingCause,
+  deferredMode,
   SETTLE_MS,
   jumpMode,
   nextMode,
@@ -46,9 +49,10 @@ const EDITABLE = 'input, textarea, select, [contenteditable=""], [contenteditabl
  * stopped), so the switch always lands on the opener, however fast the scroll. Back up until
  * Growth drops off the bottom, and bands of charcoal fly apart onto paper ("out").
  *
- * Rules in switch-rules.ts, the clock in big-words-rules.ts. Two IntersectionObservers, no scroll
- * listeners (except a short one right after navigation, see markNav, and the wheel / touch / key
- * holds during the full show). The full show plays on every crossing from the app into Growth,
+ * Rules in switch-rules.ts, the clock in big-words-rules.ts. Two IntersectionObservers and one
+ * passive scroll listener that only notes when the visitor last scrolled (a line crossed without a
+ * scroll — the page changing shape — waits for their next scroll; see crossingCause), plus a short
+ * one right after navigation (markNav) and the wheel / touch / key holds during the full show. The full show plays on every crossing from the app into Growth,
  * one at a time: a decision made while a show or wipe plays waits for it and then plays quietly
  * ("in-quiet" / "out"). A pointer tap on a `#growth` link while on the app side plays the full
  * show too, every time (and adds the #growth history entry under the cover, as the link would);
@@ -227,6 +231,42 @@ export function GrowthSwitch() {
       go(next, switchPath(next, instant || instantNow(), false));
     };
 
+    // Only a scroll moves the switch: a line crossed by the page changing shape under a still
+    // screen (the waitlist form turning into its thank-you, a FAQ answer folding) waits for the
+    // visitor's next scroll. A passive scroll listener notes when they last scrolled, and while a
+    // thank-you is brought into view ("sa:hold-switch") that scroll isn't theirs.
+    let lastScrollAt = Number.NEGATIVE_INFINITY;
+    let heldUntil = 0;
+    const held = () => performance.now() < heldUntil;
+    let deferredFromY: number | null = null;
+    let deferRaf = 0;
+    const onScroll = () => {
+      if (held()) {
+        if (deferredFromY !== null) deferredFromY = window.scrollY;
+        return;
+      }
+      lastScrollAt = performance.now();
+      if (deferredFromY === null || deferRaf) return;
+      deferRaf = window.requestAnimationFrame(() => {
+        deferRaf = 0;
+        if (deferredFromY === null || held()) return;
+        const next = deferredMode({
+          startScrollY: deferredFromY,
+          scrollY: window.scrollY,
+          top: topNow(),
+          h: vh(),
+        });
+        if (!next) return;
+        deferredFromY = null;
+        decide(next, false);
+      });
+    };
+    const onHold = () => {
+      heldUntil = performance.now() + HOLD_MS;
+    };
+    window.addEventListener("scroll", onScroll, { passive: true });
+    window.addEventListener("sa:hold-switch", onHold);
+
     const onEntries = (which: 0 | 1) => (entries: IntersectionObserverEntry[]) => {
       const entry = entries[entries.length - 1];
       if (!entry) return;
@@ -234,8 +274,26 @@ export function GrowthSwitch() {
       const top = entry.boundingClientRect.top;
       // The height this observer measured against, so the decision agrees with its line.
       const h = rootHeight(entry.rootBounds?.bottom, LINES[which], vh());
-      if (inNav()) decide(jumpMode(top, h), true);
-      else decide(nextMode(playing ? (pending ?? mode) : mode, top, h), false);
+      if (inNav()) {
+        deferredFromY = null;
+        decide(jumpMode(top, h), true);
+        return;
+      }
+      const current = playing ? (pending ?? mode) : mode;
+      const next = nextMode(current, top, h);
+      const cause = crossingCause({
+        msSinceUserScroll: performance.now() - lastScrollAt,
+        inNav: false,
+        held: held(),
+      });
+      // Before the page settles every decision is instant anyway (and must land: a load at
+      // #growth), so only a settled page waits.
+      if (next !== current && settled() && !playing && cause === "layout") {
+        deferredFromY = window.scrollY;
+        return;
+      }
+      deferredFromY = null;
+      decide(next, false);
     };
 
     // Each fires when the wrapper's top edge crosses its line (the wrapper runs to the end of the
@@ -365,6 +423,9 @@ export function GrowthSwitch() {
       window.clearTimeout(settleTimer);
       for (const id of rafs) window.cancelAnimationFrame(id);
       if (navRaf) window.cancelAnimationFrame(navRaf);
+      if (deferRaf) window.cancelAnimationFrame(deferRaf);
+      window.removeEventListener("scroll", onScroll);
+      window.removeEventListener("sa:hold-switch", onHold);
       document.removeEventListener("click", onClick, true);
       document.removeEventListener("keydown", onKeyInput, true);
       document.removeEventListener("pointerdown", onPointerInput, true);

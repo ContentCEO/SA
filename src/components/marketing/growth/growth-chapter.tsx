@@ -83,6 +83,14 @@ export function GrowthChapter({
               {c.opener.call}
             </a>
           </div>
+          {standalone ? null : (
+            <Link
+              href="/growth"
+              className="inline-flex min-h-tap items-center gap-1 self-start font-semibold underline underline-offset-4"
+            >
+              {c.opener.pageLink} <span aria-hidden>→</span>
+            </Link>
+          )}
         </div>
       </section>
 

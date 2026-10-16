@@ -51,6 +51,11 @@ export const voiceLearnRequested = eventType("voice/learn.requested", {
   schema: staticSchema<{ workspaceId: string; force?: boolean }>(),
 });
 
+/** Round 2 (FW D2): the owner tapped "Draft them" on found money. Ids worked out by the server. */
+export const foundMoneyDraftsRequested = eventType("first-week/found-money.requested", {
+  schema: staticSchema<{ workspaceId: string; replies: string[]; nudges: string[] }>(),
+});
+
 /**
  * Fire-and-forget enqueue. If the queue is unreachable we log (content-free)
  * and move on — the 5-minute poll picks up anything missed.

@@ -9,6 +9,7 @@ import type { ConfidenceLabel } from "@/config/drafting";
 import { BodyWithGaps, ConfidenceTag, PastPrices, WhyThis, type PastPrice } from "./draft-parts";
 import { SayAChange, TweakChips } from "./revise-controls";
 import { RemindMe, type SnoozeOption } from "./remind-me";
+import { CalledThem } from "./called-them";
 import {
   addIntent,
   intentsServerSnapshot,
@@ -31,7 +32,13 @@ export type DraftCardProps = {
   /** Plan #6: the "Remind me" times allowed for this one right now. */
   remindOptions?: SnoozeOption[];
   customer: string;
+  /** H7: the address this reply goes to, shown on the card and above the editor. */
+  toAddress: string;
+  /** The customer's email named this address to reply to (a website form's Reply-To). */
+  toFromReplyTo?: boolean;
   tag: string;
+  /** Round 2 (FW E9): when the customer wrote ("Wrote 9 days ago"), on every card. */
+  wrote?: string | null;
   /** One line on what the customer wants, from sorting — so the card reads without opening Gmail. */
   summary?: string | null;
   reason: string;
@@ -77,6 +84,21 @@ function Pending({
   );
 }
 
+/**
+ * H7: who the reply goes to, as visible text (never an aria-label: Sentry's ui.* scrub isn't
+ * relied on), so the owner can catch a wrong address before tapping Send reply.
+ */
+function ToLine({ address, fromReplyTo }: { address: string; fromReplyTo?: boolean }) {
+  return (
+    <p className="text-sm break-all">
+      <span className="font-semibold">To:</span> {address}
+      {fromReplyTo ? (
+        <span className="block text-muted-foreground">the reply address in their email</span>
+      ) : null}
+    </p>
+  );
+}
+
 const SWIPE_REVEAL = 90;
 const DISCARD_UNDO_SECONDS = 5;
 
@@ -98,6 +120,9 @@ const buzz = () => {
 export function DraftCard(p: DraftCardProps) {
   const [editing, setEditing] = useState(false);
   const [expanded, setExpanded] = useState(false);
+  // Outside review (2026-10-15): the quick changes live behind one button, so Send reply
+  // stays on the first screen of a card.
+  const [changing, setChanging] = useState(false);
   const [confirmDiscard, setConfirmDiscard] = useState(false);
   const [dx, setDx] = useState(0);
   const start = useRef<{ x: number; y: number } | null>(null);
@@ -119,9 +144,11 @@ export function DraftCard(p: DraftCardProps) {
         body: body !== shown ? body : undefined,
         at: Date.now(),
         to: p.customer.split(/[\s,@]+/)[0] || "them",
+        seenTo: p.toAddress,
       }),
     );
   };
+  const canChange = !p.readOnly && (p.revisionsLeft ?? 0) > 0;
   // Right thumb: right opens for sending. Left thumb: mirrored.
   const toSend = p.leftHanded ? -1 : 1;
 
@@ -205,7 +232,9 @@ export function DraftCard(p: DraftCardProps) {
           <span className="text-lg font-black">{p.customer}</span>
           <ConfidenceTag label={p.label} />
         </div>
+        <ToLine address={p.toAddress} fromReplyTo={p.toFromReplyTo} />
         <span className="text-sm font-semibold">{p.tag}</span>
+        {p.wrote ? <span className="text-sm">{p.wrote}</span> : null}
         {p.summary ? <p className="font-semibold">{p.summary}</p> : null}
         <p className={p.summary ? "text-muted-foreground" : undefined}>{p.reason}</p>
       </header>
@@ -244,6 +273,8 @@ export function DraftCard(p: DraftCardProps) {
       {editing ? (
         <form className="flex flex-col gap-3">
           <input type="hidden" name="draftId" value={p.draftId} />
+          {p.toAddress ? <input type="hidden" name="seenTo" value={p.toAddress} /> : null}
+          <ToLine address={p.toAddress} fromReplyTo={p.toFromReplyTo} />
           <label className="flex flex-col gap-1.5">
             <span className="font-semibold">Your reply</span>
             <textarea
@@ -295,14 +326,6 @@ export function DraftCard(p: DraftCardProps) {
           </Button>
         </form>
       ) : null}
-      {editing && (p.revisionsLeft ?? 0) > 0 ? (
-        <div className="flex flex-col gap-2 border-t pt-3">
-          <p className="text-sm text-muted-foreground">
-            Or let us rewrite it — this replaces the draft with a new version to read.
-          </p>
-          <SayAChange draftId={p.draftId} />
-        </div>
-      ) : null}
       {editing ? null : (
         <>
           <div className="rounded-lg border bg-paper p-3">
@@ -333,10 +356,6 @@ export function DraftCard(p: DraftCardProps) {
           ) : null}
 
           <WhyThis reason={p.reason} usedFacts={p.usedFacts} flags={p.flags} />
-
-          {!p.readOnly && !confirmDiscard && discardIn === null && (p.revisionsLeft ?? 0) > 0 ? (
-            <TweakChips draftId={p.draftId} />
-          ) : null}
 
           {discardIn !== null ? (
             <form
@@ -402,6 +421,7 @@ export function DraftCard(p: DraftCardProps) {
               ) : p.canSend ? (
                 <form action={sendDraftAction} onSubmit={okayOffline}>
                   <input type="hidden" name="draftId" value={p.draftId} />
+                  {p.toAddress ? <input type="hidden" name="seenTo" value={p.toAddress} /> : null}
                   {body !== p.body ? <input type="hidden" name="body" value={body} /> : null}
                   <Pending label="Send reply" busy="Sending…" size="lg" className="w-full" />
                 </form>
@@ -440,22 +460,56 @@ export function DraftCard(p: DraftCardProps) {
                 </>
               )}
               {p.readOnly ? null : (
-                <div className="grid grid-cols-2 gap-2">
-                  {/* The main button sits under the thumb: right by default, left if mirrored. */}
+                <div className={canChange ? "grid grid-cols-3 gap-2" : "grid grid-cols-2 gap-2"}>
+                  {/* Edit sits under the thumb: right by default, left if mirrored. Discard is
+                      on the far side; Change it, when there, in the middle. */}
                   <Button
                     type="button"
                     variant="outline"
-                    className={p.leftHanded ? undefined : "order-2"}
-                    onClick={() => setEditing(true)}
+                    className={p.leftHanded ? "order-1" : "order-3"}
+                    onClick={() => {
+                      setChanging(false);
+                      setEditing(true);
+                    }}
                   >
                     Edit
                   </Button>
-                  <Button type="button" variant="outline" onClick={() => setConfirmDiscard(true)}>
+                  {canChange ? (
+                    <Button
+                      type="button"
+                      variant={changing ? "default" : "outline"}
+                      aria-expanded={changing}
+                      aria-controls={`change-${p.draftId}`}
+                      className="order-2"
+                      onClick={() => setChanging((v) => !v)}
+                    >
+                      Change it
+                    </Button>
+                  ) : null}
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className={p.leftHanded ? "order-3" : "order-1"}
+                    onClick={() => setConfirmDiscard(true)}
+                  >
                     Discard
                   </Button>
                 </div>
               )}
+              {canChange && changing ? (
+                <div
+                  id={`change-${p.draftId}`}
+                  className="flex flex-col gap-3 rounded-lg border p-3"
+                >
+                  <p className="text-sm text-muted-foreground">
+                    Each change writes a new version for you to read. Nothing is sent.
+                  </p>
+                  <TweakChips draftId={p.draftId} />
+                  <SayAChange draftId={p.draftId} />
+                </div>
+              ) : null}
               <RemindMe threadId={p.threadId} options={p.remindOptions ?? []} />
+              {p.readOnly ? null : <CalledThem threadId={p.threadId} hasDraft />}
             </div>
           )}
         </>

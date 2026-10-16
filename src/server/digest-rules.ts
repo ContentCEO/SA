@@ -5,7 +5,7 @@
  * summary goes through an email provider. Each line links to its card on the queue by the
  * thread's id (a uuid), never anything that identifies the customer.
  */
-import type { Category } from "@/ai/prompts/classify.v3";
+import type { Category } from "@/ai/prompts/classify.v4";
 import { isCategory } from "@/config/categories";
 import { localParts } from "./snooze-rules";
 

@@ -1,13 +1,15 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState, useLayoutEffect, useRef } from "react";
 import { useFormStatus } from "react-dom";
 import { joinWaitlistAction, type WaitlistState } from "@/app/waitlist-actions";
 import { SelectField, TextArea, TextField } from "@/components/forms/field";
+import { FormError } from "@/components/forms/form-error";
 import { useFocusFirstError } from "@/components/forms/use-focus-first-error";
 import { Button } from "@/components/ui/button";
 import { siteConfig } from "@/config/site";
 import { TRADE_OPTIONS } from "@/config/trades";
+import { SourceFields } from "./source-fields";
 
 const trades = TRADE_OPTIONS.map((t) =>
   t.value === "other" ? { ...t, label: "Another trade" } : t,
@@ -23,6 +25,40 @@ function Submit() {
   );
 }
 
+function Joined() {
+  const ref = useRef<HTMLDivElement>(null);
+  // The thank-you is far shorter than the form it replaces: bring it into view (clear of the
+  // sticky header) and move focus there, since the button that had focus is gone. The homepage
+  // switch is told first, so the page shrinking under a still screen never plays the Growth show.
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    window.dispatchEvent(new Event("sa:hold-switch"));
+    el.scrollIntoView({ block: "start" });
+    el.focus({ preventScroll: true });
+  }, []);
+  return (
+    <div
+      ref={ref}
+      role="status"
+      tabIndex={-1}
+      className="sa-inverted flex scroll-mt-20 flex-col gap-3 rounded-2xl p-6 outline-none"
+    >
+      <p className="flex flex-col">
+        <span className="sa-headline-serif text-3xl">thanks,</span>{" "}
+        <span className="sa-headline-heavy text-4xl">squared away.</span>
+      </p>
+      <p className="text-xl font-black">
+        You&apos;re on the list. {siteConfig.operator.split(" ")[0]} will be in touch.
+      </p>
+      <p className="text-ash">
+        We set each shop up by hand, so we&apos;ll call or email you to arrange a time. Nothing else
+        to do for now.
+      </p>
+    </div>
+  );
+}
+
 /** `referralCode`: from a referral link (?ref=), only passed while referrals are switched on. */
 export function WaitlistForm({ referralCode }: { referralCode?: string } = {}) {
   const [state, action] = useActionState<WaitlistState, FormData>(joinWaitlistAction, {
@@ -30,23 +66,7 @@ export function WaitlistForm({ referralCode }: { referralCode?: string } = {}) {
   });
   const ref = useFocusFirstError(state.errors);
 
-  if (state.status === "joined") {
-    return (
-      <div role="status" className="sa-inverted flex flex-col gap-3 rounded-2xl p-6">
-        <p className="flex flex-col">
-          <span className="sa-headline-serif text-3xl">thanks,</span>
-          <span className="sa-headline-heavy text-4xl">squared away.</span>
-        </p>
-        <p className="text-xl font-black">
-          You&apos;re on the list. {siteConfig.operator.split(" ")[0]} will be in touch.
-        </p>
-        <p className="text-ash">
-          We set each shop up by hand, so we&apos;ll call or email you to arrange a time. Nothing
-          else to do for now.
-        </p>
-      </div>
-    );
-  }
+  if (state.status === "joined") return <Joined />;
 
   const v = state.values ?? {};
   const e = state.errors ?? {};
@@ -66,8 +86,8 @@ export function WaitlistForm({ referralCode }: { referralCode?: string } = {}) {
         inputMode="email"
         autoComplete="email"
         required
-        label="Business Gmail"
-        hint="The Gmail address your customers write to."
+        label="Business email"
+        hint="Gmail or Google Workspace today. On Outlook? Join anyway — it's on the list."
         defaultValue={v.email}
         error={e.email}
       />
@@ -116,6 +136,8 @@ export function WaitlistForm({ referralCode }: { referralCode?: string } = {}) {
           <input name="website" tabIndex={-1} autoComplete="off" />
         </label>
       </div>
+      <SourceFields />
+      <FormError errors={e.form} />
       <Submit />
       <p className="text-sm text-muted-foreground">
         We only use this to get in touch about Squared Away. No newsletters.

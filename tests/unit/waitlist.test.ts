@@ -19,6 +19,12 @@ import { createTestDb } from "../support/db";
 vi.mock("next/headers", () => ({
   headers: async () => new Headers({ "x-forwarded-for": "203.0.113.7" }),
 }));
+// The sign-up emails run after the response; here they are collected and never sent.
+const afterTasks: (() => unknown)[] = [];
+vi.mock("next/server", async (orig) => ({
+  ...(await orig<typeof import("next/server")>()),
+  after: (task: () => unknown) => afterTasks.push(task),
+}));
 
 let database: Database;
 beforeEach(async () => {
@@ -173,13 +179,11 @@ describe("waitlist form, submitted", () => {
     const long = `${"a".repeat(64)}@${"b".repeat(63)}.${"c".repeat(63)}.${"d".repeat(58)}.com`;
     expect(long).toHaveLength(255);
     const r = await joinWaitlistAction({ status: "idle" }, form({ ...good, email: long }));
-    expect(r.errors?.email).toEqual([
-      "That doesn't look like an email address. Use the Gmail you run the business from.",
-    ]);
+    expect(r.errors?.email).toEqual(["That doesn't look like an email address."]);
     expect(await database.select().from(waitlist)).toEqual([]);
   });
 
-  it("a failed save logs no name, email, phone or note, and the error carries none either", async () => {
+  it("a failed save logs no name, email, phone or note, and keeps what they typed with a plain message", async () => {
     const leaky = new DrizzleQueryError(
       'insert into "waitlist" ("email", "name", "phone", "note") values ($1, $2, $3, $4)',
       ["mike@shop.com", "Mike Torres", "617-555-0142", "Lowell kitchen"],
@@ -189,20 +193,21 @@ describe("waitlist form, submitted", () => {
     const spies = (["error", "warn", "info", "log"] as const).map((m) =>
       vi.spyOn(console, m).mockImplementation(() => {}),
     );
-    const thrown = await joinWaitlistAction(
+    const r = await joinWaitlistAction(
       { status: "idle" },
       form({ ...good, phone: "617-555-0142", note: "Lowell kitchen" }),
-    ).then(
-      () => null,
-      (e: unknown) => e,
     );
-    expect(thrown).toBeInstanceOf(Error);
-    const out = JSON.stringify([
-      (thrown as Error).message,
-      (thrown as Error).stack,
-      (thrown as Error).cause ?? null,
-      spies.map((s) => s.mock.calls),
+    expect(r.status).toBe("error");
+    expect(r.errors?.form).toEqual([
+      "We couldn't save that just now. Try again in a minute, or call or text 978-201-9763.",
     ]);
+    expect(r.values).toMatchObject({
+      name: "Mike Torres",
+      phone: "617-555-0142",
+      note: "Lowell kitchen",
+    });
+    expect(afterTasks).toEqual([]);
+    const out = JSON.stringify(spies.map((s) => s.mock.calls));
     for (const leak of ["Mike", "617-555-0142", "mike@shop.com", "Lowell"]) {
       expect(out).not.toContain(leak);
     }

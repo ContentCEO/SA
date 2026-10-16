@@ -8,9 +8,13 @@ const unique = () => `lead-${Date.now()}-${Math.random().toString(36).slice(2, 6
 test("home page: promise, pricing from config, and a way in", async ({ page }) => {
   await page.goto("/");
   const h1 = page.getByRole("heading", { level: 1 });
-  await expect(h1).toContainText("your inbox,");
-  await expect(h1).toContainText("handled.");
-  await expect(page.getByText("your okay first.")).toBeVisible();
+  // A real space between the two lines, for screen readers and search engines.
+  await expect(h1).toHaveText("your inbox, handled.");
+  expect(await h1.evaluate((el) => el.textContent)).toBe("your inbox, handled.");
+  await expect(
+    page.getByRole("heading", { level: 2, name: "the one rule, your okay first." }),
+  ).toHaveCount(0); // a <p>, not a heading; its text still reads with a space:
+  await expect(page.getByText("the one rule, your okay first.")).toBeVisible();
 
   const pricing = page.getByRole("region", { name: "Pricing" });
   for (const text of ["$499 once", "Solo", "$99", "Crew", "$199", "Company", "$299"]) {
@@ -45,21 +49,26 @@ test.describe("waitlist form", () => {
     await expect(form.getByLabel("Your name")).toBeFocused();
 
     // Required fields are marked for browsers and screen readers; the server is the real check.
-    for (const label of ["Your name", /Business Gmail/, "Trade", "People in the business"])
+    for (const label of ["Your name", /Business email/, "Trade", "People in the business"])
       await expect(form.getByLabel(label)).toHaveAttribute("required", "");
-    await expect(form.getByLabel(/Business Gmail/)).toHaveAttribute("autocomplete", "email");
+    await expect(form.getByLabel(/Business email/)).toHaveAttribute("autocomplete", "email");
+    await expect(
+      form.getByText(
+        "Gmail or Google Workspace today. On Outlook? Join anyway — it's on the list.",
+      ),
+    ).toBeVisible();
     await expect(form.getByLabel(/^Phone/)).toHaveAttribute("inputmode", "tel");
 
     await form.getByLabel("Your name").fill("Mike Torres");
-    await form.getByLabel(/Business Gmail/).fill("mike@");
+    await form.getByLabel(/Business email/).fill("mike@");
     await form.getByLabel("Trade").selectOption("carpentry");
     await form.getByLabel("People in the business").selectOption("2–5");
     await form.getByRole("button", { name: "Join the waitlist" }).click();
     await expect(form.getByText(/doesn't look like an email address/)).toBeVisible();
-    await expect(form.getByLabel(/Business Gmail/)).toBeFocused();
+    await expect(form.getByLabel(/Business email/)).toBeFocused();
 
     await form.getByLabel("Your name").fill("Mike Torres");
-    await form.getByLabel(/Business Gmail/).fill(email);
+    await form.getByLabel(/Business email/).fill(email);
     await form.getByLabel("Trade").selectOption("electrical");
     await form.getByLabel("People in the business").selectOption("2–5");
     await form.getByRole("button", { name: "Join the waitlist" }).click();
@@ -78,7 +87,7 @@ test.describe("waitlist form", () => {
     await page.goto("/#waitlist");
     const form = page.getByRole("region", { name: "Join the waitlist" });
     await form.getByLabel("Your name").fill("Bot");
-    await form.getByLabel(/Business Gmail/).fill(email);
+    await form.getByLabel(/Business email/).fill(email);
     // Two forms on the page now (the app waitlist and Growth): use this form's hidden field.
     await form.locator('input[name="website"]').fill("http://spam.example", { force: true });
     await form.getByRole("button", { name: "Join the waitlist" }).click();
@@ -87,6 +96,78 @@ test.describe("waitlist form", () => {
       await testDb.select().from(schema.waitlist).where(eq(schema.waitlist.email, email)),
     ).toHaveLength(0);
   });
+});
+
+test.describe("waitlist thank-you", () => {
+  test.use({ extraHTTPHeaders: { "x-forwarded-for": "198.51.100.13" } });
+
+  // 812: a phone. 1100: a tall phone or a small tablet, where the form turning into the short
+  // thank-you pulls the Growth part up past the switch line with no scroll at all.
+  for (const height of [812, 1100]) {
+    test(`the thank-you stays on screen and the Growth switch doesn't play for the page shrinking (375×${height})`, async ({
+      page,
+    }) => {
+      await page.setViewportSize({ width: 375, height });
+      const email = unique();
+      await page.goto("/?utm_source=flyer&utm_medium=print&utm_campaign=fall");
+      // Let the homepage switch settle (instant decisions until then).
+      await page.waitForTimeout(800);
+      const form = page.getByRole("region", { name: "Join the waitlist" });
+      await form.getByLabel("Your name").fill("Mike Torres");
+      await form.getByLabel(/Business email/).fill(email);
+      await form.getByLabel("Trade").selectOption("carpentry");
+      await form.getByLabel("People in the business").selectOption("2–5");
+      const join = form.getByRole("button", { name: "Join the waitlist" });
+      await join.evaluate((b) => b.scrollIntoView({ block: "center" }));
+      await page.waitForTimeout(300);
+      await expect(page.locator("html")).toHaveAttribute("data-sa-theme", "app");
+      // Record every change of the switch's attributes from here on.
+      await page.evaluate(() => {
+        const w = window as unknown as { __attrs: string[] };
+        w.__attrs = [];
+        new MutationObserver((ms) => {
+          for (const m of ms) {
+            w.__attrs.push(
+              `${m.attributeName}=${document.documentElement.getAttribute(m.attributeName!)}`,
+            );
+          }
+        }).observe(document.documentElement, {
+          attributes: true,
+          attributeFilter: ["data-sa-theme", "data-sa-switching"],
+        });
+      });
+      await join.click();
+      const done = form.getByRole("status");
+      await expect(done).toContainText("You're on the list.");
+      await expect(done).toBeFocused();
+      await expect(done).toBeInViewport();
+      await page.waitForTimeout(1500);
+      await expect(done).toBeInViewport();
+      await expect(page.locator("html")).toHaveAttribute("data-sa-theme", "app");
+      const attrs = await page.evaluate(() => (window as unknown as { __attrs: string[] }).__attrs);
+      expect(
+        attrs.filter((a) => a.startsWith("data-sa-switching=") && !a.endsWith("=null")),
+      ).toEqual([]);
+      expect(attrs).not.toContain("data-sa-theme=growth");
+
+      // Where they came from is saved with the entry.
+      const [row] = await testDb
+        .select()
+        .from(schema.waitlist)
+        .where(eq(schema.waitlist.email, email));
+      expect(row).toMatchObject({ utmSource: "flyer", utmMedium: "print", utmCampaign: "fall" });
+
+      // A real scroll down into Growth still plays the switch.
+      await page.mouse.move(180, 400);
+      for (let i = 0; i < 6; i++) {
+        await page.mouse.wheel(0, 300);
+        await page.waitForTimeout(100);
+      }
+      await expect(page.locator("html")).toHaveAttribute("data-sa-theme", "growth", {
+        timeout: 5000,
+      });
+    });
+  }
 });
 
 test.describe("waitlist referral link", () => {
@@ -100,7 +181,7 @@ test.describe("waitlist referral link", () => {
     const form = page.getByRole("region", { name: "Join the waitlist" });
     await expect(page.locator('input[name="ref"]')).toHaveCount(0);
     await form.getByLabel("Your name").fill("Ana Ruiz");
-    await form.getByLabel(/Business Gmail/).fill(email);
+    await form.getByLabel(/Business email/).fill(email);
     await form.getByLabel("Trade").selectOption("carpentry");
     await form.getByLabel("People in the business").selectOption("Just me");
     await form.getByRole("button", { name: "Join the waitlist" }).click();
@@ -115,10 +196,18 @@ test.describe("waitlist referral link", () => {
 
 test("admin invites someone straight from the waitlist", async ({ page, context }) => {
   const email = unique();
-  await testDb.insert(schema.waitlist).values({ email, name: "Rosa Lima", trade: "plumbing" });
+  await testDb.insert(schema.waitlist).values({
+    email,
+    name: "Rosa Lima",
+    trade: "plumbing",
+    utmSource: "facebook",
+    utmCampaign: "fall-flyer",
+    referrerHost: "facebook.com",
+  });
   await signInAs(context, await seedAdmin());
   await page.goto("/admin#waitlist");
   const entry = page.getByRole("listitem", { name: `Waitlist: ${email}` });
+  await expect(entry).toContainText("Came from: facebook · fall-flyer (via facebook.com)");
   await entry.getByRole("button", { name: "Invite Rosa" }).click();
   await expect(page.getByRole("listitem", { name: `Waitlist: ${email}` })).toContainText("Invited");
   const [invite] = await testDb

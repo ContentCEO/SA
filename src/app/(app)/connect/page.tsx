@@ -3,6 +3,7 @@ import { Headline } from "@/components/brand/headline";
 import { Button } from "@/components/ui/button";
 import { bodyRetentionDays } from "@/config/retention";
 import { pricing } from "@/config/pricing";
+import { listMailboxes } from "@/server/mailboxes";
 import { requireOwner } from "@/server/session";
 import { startGmailConnect } from "./actions";
 
@@ -18,13 +19,16 @@ const errors: Record<string, string> = {
 const words = ["zero", "one", "two", "three", "four", "five"];
 
 export default async function ConnectPage(props: PageProps<"/connect">) {
-  await requireOwner();
+  const { workspace } = await requireOwner();
+  // Round 2 (FW): setup's honest step count starts here (2: your shop, 3: reading your email).
+  const firstConnect = (await listMailboxes(workspace.id)).length === 0;
   const { error } = await props.searchParams;
   const message = typeof error === "string" ? errors[error] : undefined;
   const days = words[pricing.evaluationDays] ?? String(pricing.evaluationDays);
 
   return (
     <>
+      {firstConnect ? <p className="text-sm font-semibold">Step 1 of 3</p> : null}
       <Headline serif="before you connect," heavy="here's the deal." />
 
       {message ? <Notice strong>{message}</Notice> : null}
@@ -55,8 +59,8 @@ export default async function ConnectPage(props: PageProps<"/connect">) {
         </h2>
         <ul className="flex list-disc flex-col gap-2 pl-5 text-lg">
           <li>
-            Send anything without your okay. For your first {days} days, nothing can go to a
-            customer: you can only send yourself practice copies.
+            Send anything without your okay. For your first {days} days, Squared Away won&apos;t
+            send anything to a customer: you can only send yourself practice copies.
           </li>
           <li>Delete, archive, or move your email.</li>
           <li>

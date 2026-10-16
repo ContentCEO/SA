@@ -43,6 +43,8 @@ test("settings shows how to get the app", async ({ page, context }) => {
   const owner = await seedOwner({ mailbox: true });
   await signInAs(context, owner);
   await page.goto("/settings");
+  await page.getByRole("link", { name: /^This phone/ }).click();
+  await expect(page).toHaveURL(/\/settings\/phone$/);
   const section = page.getByRole("region", { name: "Get the app" });
   await expect(section).toContainText("Put Squared Away on your home screen");
   await expect(section).toContainText(/Install|Add to Home Screen/);

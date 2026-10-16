@@ -10,7 +10,9 @@ export function useFocusFirstError(errors: Record<string, string[]> | undefined)
   const ref = useRef<HTMLFormElement>(null);
   useEffect(() => {
     if (!errors) return;
-    const first = ref.current?.querySelector<HTMLElement>("[aria-invalid='true']");
+    const first = ref.current?.querySelector<HTMLElement>(
+      "[aria-invalid='true'], [data-form-error]",
+    );
     first?.focus();
     first?.scrollIntoView({ block: "center" });
   }, [errors]);

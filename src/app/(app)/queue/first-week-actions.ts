@@ -1,0 +1,47 @@
+"use server";
+
+import { redirect } from "next/navigation";
+import { z } from "zod";
+import { enqueue, foundMoneyDraftsRequested } from "@/jobs/client";
+import { claimFoundMoneyDrafts, hideFirstLook, markAnsweredByPhone } from "@/server/first-week";
+import { ReadOnlyError } from "@/server/lifecycle";
+import { hitLimit } from "@/server/rate-limit";
+import { requireOwner } from "@/server/session";
+
+/** Round 2 (FW E11): "I called them". No draft, no nudge; it counts as answered. */
+export async function answeredByPhoneAction(formData: FormData) {
+  const { workspace } = await requireOwner();
+  const threadId = z.string().uuid().safeParse(formData.get("threadId"));
+  if (!threadId.success) redirect("/queue?error=unknown");
+  let r;
+  try {
+    r = await markAnsweredByPhone(workspace.id, threadId.data);
+  } catch (err) {
+    if (err instanceof ReadOnlyError) redirect("/queue?error=readonly");
+    throw err;
+  }
+  redirect(r === "marked" ? "/queue?done=called" : "/queue?error=unknown");
+}
+
+/** Round 2 (FW D1): hide the "your last 30 days" card. */
+export async function hideFirstLookAction() {
+  const { workspace } = await requireOwner();
+  await hideFirstLook(workspace.id);
+  redirect("/queue");
+}
+
+/** Round 2 (FW D2): draft replies and nudges for the quotes that slipped. Drafts only. */
+export async function foundMoneyDraftsAction() {
+  const { workspace } = await requireOwner();
+  if (!(await hitLimit("draft", workspace.id)).allowed) redirect("/queue?error=busy");
+  let found;
+  try {
+    found = await claimFoundMoneyDrafts(workspace);
+  } catch (err) {
+    if (err instanceof ReadOnlyError) redirect("/queue?error=readonly");
+    throw err;
+  }
+  if (!found || found.replies.length + found.nudges.length === 0) redirect("/queue");
+  await enqueue(foundMoneyDraftsRequested.create({ workspaceId: workspace.id, ...found }));
+  redirect("/queue?done=found_money");
+}

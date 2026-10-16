@@ -47,14 +47,14 @@ export async function GET(request: NextRequest) {
     await enqueue(mailboxConnected.create({ mailboxId: mailbox.id }));
     // First time through: continue onboarding with the business profile.
     const profile = await getBusinessProfile(workspace.id);
-    return to(profile?.completedAt ? "/settings?done=connected" : "/welcome/profile");
+    return to(profile?.completedAt ? "/settings/gmail?done=connected" : "/welcome/profile");
   } catch (err) {
     if (err instanceof MissingScopesError) return to("/connect?error=scopes");
     if (err instanceof MailboxLimitError)
       return to(
         err.reason === "paused_over_plan"
-          ? "/settings?error=paused_limit"
-          : "/settings?error=limit",
+          ? "/settings/gmail?error=paused_limit"
+          : "/settings/gmail?error=limit",
       );
     // No token or email content in logs — just the kind of failure.
     console.error("gmail_connect_failed", { name: (err as Error).name });

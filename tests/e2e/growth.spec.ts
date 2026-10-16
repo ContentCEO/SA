@@ -309,7 +309,7 @@ test.describe("homepage: the way into Squared Away Growth", () => {
     expect(await noOverflow(page)).toBe(true);
     await expect(page.getByRole("contentinfo")).toHaveCount(1);
     await expect(
-      page.getByRole("main").getByRole("region", { name: "Book a free call" }),
+      page.getByRole("main").getByRole("region", { name: "Ask Davi to call me" }),
     ).toHaveCount(1);
     await expect(page.getByRole("banner")).toHaveCount(1);
 
@@ -430,7 +430,7 @@ test.describe("homepage: the way into Squared Away Growth", () => {
   test("the chapter bar shows over the Growth chapter only", async ({ page }) => {
     await page.goto("/");
     const bar = page.getByRole("navigation", { name: "Growth" });
-    const call = bar.getByRole("link", { name: "Book a free call" });
+    const call = bar.getByRole("link", { name: "Ask Davi to call me" });
     await expect(call).toHaveAttribute("href", "#growth-call");
 
     await page.getByRole("region", { name: "Pricing" }).scrollIntoViewIfNeeded();
@@ -477,7 +477,7 @@ test.describe("homepage: the way into Squared Away Growth", () => {
       "How Growth works",
       "Ground rules",
       "Growth questions",
-      "Book a free call",
+      "Ask Davi to call me",
     ]);
     const app = page.locator('[data-sa-half="app"]');
     for (const name of ["Who's behind this", "Introducing Squared Away Growth"]) {
@@ -598,7 +598,7 @@ test.describe("homepage: the way into Squared Away Growth", () => {
     await expect(
       page.getByRole("region", { name: "Join the waitlist" }).getByLabel("Your name"),
     ).toHaveCSS("border-top-color", "rgb(154, 153, 148)");
-    const call = page.getByRole("region", { name: "Book a free call" });
+    const call = page.getByRole("region", { name: "Ask Davi to call me" });
     await expect(call.locator(".sa-light")).toHaveCSS("background-color", "rgb(239, 238, 234)");
     await expect(call.getByLabel("Your name")).toHaveCSS("border-top-color", "rgb(94, 93, 89)");
   });
@@ -647,7 +647,7 @@ test.describe("homepage: the way into Squared Away Growth", () => {
     await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(y);
     await page
       .getByRole("navigation", { name: "Growth" })
-      .getByRole("link", { name: "Book a free call" })
+      .getByRole("link", { name: "Ask Davi to call me" })
       .click();
     await expect(page).toHaveURL(/#growth-call$/);
   });
@@ -925,7 +925,7 @@ test.describe("homepage: the way into Squared Away Growth", () => {
     await page.keyboard.press("Tab");
     const call = page
       .getByRole("navigation", { name: "Growth" })
-      .getByRole("link", { name: "Book a free call" });
+      .getByRole("link", { name: "Ask Davi to call me" });
     await expect(call).toBeFocused();
     await expect(html(page)).not.toHaveAttribute("data-sa-switching", /.*/);
     await expect(html(page)).toHaveAttribute("data-sa-theme", "growth");
@@ -941,7 +941,7 @@ test.describe("homepage: the way into Squared Away Growth", () => {
     await expect(html(page)).toHaveAttribute("data-sa-switching", "in");
     const shownAt = Date.now();
     const url = page.url();
-    // The chapter bar's "Book a free call" link is right there under the bands.
+    // The chapter bar's "Ask Davi to call me" link is right there under the bands.
     const link = await page.evaluate(() => {
       const r = document
         .querySelector('[data-growth-chapter] a[href="#growth-call"]')!
@@ -961,7 +961,7 @@ test.describe("homepage: the way into Squared Away Growth", () => {
     await expect(html(page)).toHaveAttribute("data-sa-theme", "growth");
     await expectGrowth(page);
     expect(page.url()).toBe(url);
-    await expect(page.getByRole("region", { name: "Book a free call" })).not.toBeInViewport();
+    await expect(page.getByRole("region", { name: "Ask Davi to call me" })).not.toBeInViewport();
     expect(
       await page.evaluate(
         () => document.activeElement === document.body || !document.activeElement,
@@ -971,7 +971,7 @@ test.describe("homepage: the way into Squared Away Growth", () => {
     await expect(page.locator("[data-sa-switch-stage]")).toBeHidden();
     await page
       .getByRole("navigation", { name: "Growth" })
-      .getByRole("link", { name: "Book a free call" })
+      .getByRole("link", { name: "Ask Davi to call me" })
       .click();
     await expect(page).toHaveURL(/#growth-call$/);
   });
@@ -1023,7 +1023,7 @@ test.describe("homepage: the way into Squared Away Growth", () => {
   test("deep links and reloads land in Growth without a show", async ({ page }) => {
     await page.goto("/#growth-call");
     await expectGrowth(page);
-    await expect(page.getByRole("region", { name: "Book a free call" })).toBeInViewport();
+    await expect(page.getByRole("region", { name: "Ask Davi to call me" })).toBeInViewport();
     await page.waitForTimeout(800);
     expect(await saLog(page)).not.toContain("in");
 
@@ -1089,10 +1089,10 @@ test.describe("homepage without JavaScript", () => {
     await expect(
       opener(page).getByRole("heading", { name: "the marketing side, done for you." }),
     ).toBeVisible();
-    const links = growthHalf(page).getByRole("link", { name: "Book a free call" });
+    const links = growthHalf(page).getByRole("link", { name: "Ask Davi to call me" });
     await expect(links).toHaveCount(2);
     for (const l of await links.all()) await expect(l).toBeVisible();
-    const call = page.getByRole("region", { name: "Book a free call" });
+    const call = page.getByRole("region", { name: "Ask Davi to call me" });
     for (const label of ["Your name", /^Phone/, /^Email/, "Trade"]) {
       await expect(call.getByLabel(label)).toBeVisible();
     }
@@ -1102,7 +1102,7 @@ test.describe("homepage without JavaScript", () => {
   });
 });
 
-test.describe("Book a free call", () => {
+test.describe("Ask Davi to call me", () => {
   test.use({ extraHTTPHeaders: { "x-forwarded-for": "198.51.100.21" } });
 
   test("plain errors, focus on what needs fixing, then a thank-you and one stored request", async ({
@@ -1110,8 +1110,8 @@ test.describe("Book a free call", () => {
   }) => {
     const email = unique();
     await page.goto("/#growth-call");
-    const form = page.getByRole("region", { name: "Book a free call" });
-    const submit = form.getByRole("button", { name: "Book a free call" });
+    const form = page.getByRole("region", { name: "Ask Davi to call me" });
+    const submit = form.getByRole("button", { name: "Ask Davi to call me" });
 
     for (const label of ["Your name", /^Phone/, /^Email/, "Trade"]) {
       await expect(form.getByLabel(label)).toHaveAttribute("required", "");
@@ -1155,9 +1155,7 @@ test.describe("Book a free call", () => {
     await submit.click();
     const done = form.getByRole("status");
     await expect(done).toContainText("we'll call you.");
-    await expect(done).toContainText(
-      "Davi will call you at 617-555-0142 to find a time for your free call.",
-    );
+    await expect(done).toContainText("Davi will call you at 617-555-0142.");
     // The thank-you is far shorter than the form: it's brought into view, clear of the sticky
     // bar, and focus moves to it (the button that had focus is gone).
     await expect(done).toBeFocused();
@@ -1184,15 +1182,13 @@ test.describe("Book a free call", () => {
   test("bots that fill the hidden field are ignored", async ({ page }) => {
     const email = unique("growth-bot");
     await page.goto("/#growth-call");
-    const form = page.getByRole("region", { name: "Book a free call" });
+    const form = page.getByRole("region", { name: "Ask Davi to call me" });
     await form.getByLabel("Your name").fill("Bot");
     await form.getByLabel(/^Phone/).fill("617-555-0142");
     await form.getByLabel(/^Email/).fill(email);
     await form.locator('input[name="website"]').fill("http://spam.example", { force: true });
-    await form.getByRole("button", { name: "Book a free call" }).click();
-    await expect(form.getByRole("status")).toContainText(
-      "Davi will call you soon to find a time for your free call.",
-    );
+    await form.getByRole("button", { name: "Ask Davi to call me" }).click();
+    await expect(form.getByRole("status")).toContainText("Davi will call you soon.");
     expect(
       await testDb.select().from(schema.waitlist).where(eq(schema.waitlist.email, email)),
     ).toEqual([]);
@@ -1275,10 +1271,12 @@ test("/growth: its own page, charcoal edge to edge", async ({ page }) => {
   await expect(h1).toContainText("done for you.");
   await expect(page.locator('link[rel="canonical"]')).toHaveAttribute("href", /\/growth$/);
   await expect(
-    page.getByRole("navigation", { name: "Site" }).getByRole("link", { name: "Book a free call" }),
+    page
+      .getByRole("navigation", { name: "Site" })
+      .getByRole("link", { name: "Ask Davi to call me" }),
   ).toHaveAttribute("href", "#growth-call");
 
-  const call = page.getByRole("region", { name: "Book a free call" });
+  const call = page.getByRole("region", { name: "Ask Davi to call me" });
   await expect(call.getByRole("link", { name: "Call 978-201-9763" })).toHaveAttribute(
     "href",
     "tel:+19782019763",

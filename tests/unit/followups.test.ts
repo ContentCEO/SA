@@ -330,7 +330,7 @@ describe("writing and sending a nudge", () => {
       toAddress: "dana@customer.com",
       status: "pending",
     });
-    expect(d!.promptVersion).toBe("followup.v3");
+    expect(d!.promptVersion).toBe("followup.v4");
     const raw = [...writer.drafts.values()][0]!.raw;
     expect(FakeWriter.headersOf(raw)).toMatch(/In-Reply-To: <g\d+-out@shop.com>/);
     expect(FakeWriter.headersOf(raw)).toMatch(/To: dana@customer.com/);

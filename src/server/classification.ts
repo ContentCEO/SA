@@ -29,12 +29,20 @@ import {
 import { jobKindOf } from "./monthly-rules";
 import { keepQuoteAccepted, quoteAccepted } from "./quote-rules";
 import { ownerGavePrice } from "./quotes";
-import { notDraftMessage, notDraftSql, sideEmailSql } from "./thread-sql";
+import { messageReplyAddress, notDraftMessage, notDraftSql, sideEmailSql } from "./thread-sql";
+import { customerReplyAddress, replyRedirected } from "./reply-address-rules";
 
 /** Classify inbound mail from this far back on the first pass; everything new after that. */
 export const CLASSIFY_LOOKBACK_DAYS = 14;
 /** Until the business profile (Milestone 4) sets it, flag emails that mention more than this. */
 export const DEFAULT_AMOUNT_THRESHOLD_DOLLARS = 2_500;
+/**
+ * A burst (review B4): unsorted emails on the same thread written this close before the newest
+ * one are sorted together with it, so "water through the ceiling, call me" followed a minute
+ * later by "here's a photo" is still an emergency. At most BURST_MAX earlier emails.
+ */
+export const BURST_WINDOW_MS = 30 * 60_000;
+export const BURST_MAX = 4;
 /** Gmail tabs that are never a customer. Skipping the model call here saves real money. */
 const NOISE_LABELS = ["CATEGORY_PROMOTIONS", "CATEGORY_SOCIAL"];
 
@@ -59,6 +67,7 @@ const NOISE: Omit<Classification, "summary"> = {
     urgency: "low",
     permit: null,
     invoice: null,
+    invoice_direction: "unknown",
   },
   unreadable: false,
 };
@@ -70,6 +79,7 @@ async function pendingFor(mailboxId: string, since: Date) {
       threadId: messages.threadId,
       fromAddress: messages.fromAddress,
       fromName: messages.fromName,
+      replyToHeader: messages.replyToHeader,
       subject: messages.subject,
       bodyText: messages.bodyText,
       snippet: messages.snippet,
@@ -114,14 +124,16 @@ export async function classifyPending(
   const pending = await pendingFor(mailboxId, since);
 
   const newestPerThread = new Map<string, (typeof pending)[number]>();
-  const superseded: string[] = [];
+  // The older unsorted emails of each thread, newest first. Marked superseded only once their
+  // thread's newest email is sorted (with them in view), so a run that stops early (the AI
+  // cap, an outage) leaves them for the next run instead of losing them (review B3, B4, D4).
+  const olderPerThread = new Map<string, (typeof pending)[number][]>();
   for (const m of pending) {
-    if (newestPerThread.has(m.threadId)) superseded.push(m.id);
+    if (newestPerThread.has(m.threadId))
+      olderPerThread.set(m.threadId, [...(olderPerThread.get(m.threadId) ?? []), m]);
     else newestPerThread.set(m.threadId, m);
   }
-  if (superseded.length) {
-    await db().update(messages).set({ classifiedAt: now }).where(inArray(messages.id, superseded));
-  }
+  let superseded = 0;
 
   const [profile] = await db()
     .select()
@@ -130,6 +142,7 @@ export async function classifyPending(
   const business = {
     businessName: box.workspace.businessName,
     trade: box.workspace.trade,
+    extraTrades: box.workspace.extraTrades ?? [],
     amountThresholdDollars: profile?.amountThresholdDollars ?? DEFAULT_AMOUNT_THRESHOLD_DOLLARS,
     vipSenders: (profile?.vipSenders ?? []).map((v) => v.toLowerCase()),
   };
@@ -140,6 +153,7 @@ export async function classifyPending(
   for (const m of batch) {
     let result: Classification;
     let viaModel = false;
+    const older = olderPerThread.get(m.threadId) ?? [];
     const [thread] = await db()
       .select({
         summary: threads.summary,
@@ -155,10 +169,17 @@ export async function classifyPending(
       })
       .from(threads)
       .where(eq(threads.id, m.threadId));
+    const prevMarks = (thread?.extracted ?? {}) as {
+      injection?: unknown;
+      payment_change?: unknown;
+    };
     if (
       m.labelIds.some((l) => NOISE_LABELS.includes(l)) &&
       // A building department landing in Promotions still gets read.
-      !looksMunicipal(m.fromAddress, m.fromName)
+      !looksMunicipal(m.fromAddress, m.fromName) &&
+      // A thread already marked keeps its mark (B3): it is never quietly turned into junk.
+      prevMarks.injection !== true &&
+      prevMarks.payment_change !== true
     ) {
       result = {
         ...NOISE,
@@ -175,6 +196,27 @@ export async function classifyPending(
             lt(messages.sentAt, m.sentAt),
           ),
         );
+      // A website form writes from one robot address for every lead: the person is the
+      // Reply-To. A new person through a known form is still a first-time sender (B1).
+      const replyTo = replyRedirected(m) ? customerReplyAddress(m) : null;
+      const [priorReply] = replyTo
+        ? await db()
+            .select({ n: count() })
+            .from(messages)
+            .where(
+              and(
+                eq(messages.mailboxId, mailboxId),
+                eq(messages.direction, "in"),
+                sql`${messageReplyAddress()} = ${replyTo}`,
+                lt(messages.sentAt, m.sentAt),
+              ),
+            )
+        : [{ n: 1 }];
+      const firstTimeSender = (prior?.n ?? 0) === 0 || (priorReply?.n ?? 0) === 0;
+      // VIP by either address: both only add caution.
+      const senderIsVip = [m.fromAddress, replyTo].some(
+        (a) => !!a && business.vipSenders.includes(a.toLowerCase()),
+      );
       try {
         result = await classifyEmail(
           box.workspace.id,
@@ -184,11 +226,33 @@ export async function classifyPending(
             fromAddress: m.fromAddress,
             subject: m.subject,
             receivedAt: m.sentAt,
-            firstTimeSender: (prior?.n ?? 0) === 0,
+            firstTimeSender,
             threadSummary: thread?.summary ?? null,
             body: m.bodyText ?? m.snippet ?? "",
+            // The burst the model reads with it (B4), oldest first.
+            earlier: older
+              .filter(
+                (o) =>
+                  m.sentAt.getTime() - o.sentAt.getTime() <= BURST_WINDOW_MS &&
+                  o.fromAddress === m.fromAddress,
+              )
+              .slice(0, BURST_MAX)
+              .reverse()
+              .map((o) => ({ receivedAt: o.sentAt, body: o.bodyText ?? o.snippet ?? "" })),
           },
-          { senderIsVip: business.vipSenders.includes((m.fromAddress ?? "").toLowerCase()), now },
+          {
+            senderIsVip,
+            now,
+            // Every older unsorted email is checked in code too, even outside the burst (B3):
+            // the drafter reads them.
+            alsoCheck: older.map((o) => `${o.subject ?? ""}\n${o.bodyText ?? o.snippet ?? ""}`),
+            // A thread once caught trying to instruct us (or asking to pay a new account)
+            // keeps that mark: "any update?" doesn't clear it (B3).
+            sticky: {
+              injection: prevMarks.injection === true,
+              paymentChange: prevMarks.payment_change === true,
+            },
+          },
         );
       } catch (err) {
         if (err instanceof AiCapReachedError) {
@@ -312,6 +376,15 @@ export async function classifyPending(
       (thread?.extracted as { service_requested?: unknown } | null)?.service_requested,
     );
     const paymentSaid = injection ? null : thisInvoice?.status;
+    // Which way the money goes (round 2, TW A2): a supplier's bill is owed BY the owner and
+    // never shows on Money owed. This email's own answer, else the one stored before; an
+    // email that tries to instruct us never changes it.
+    const dirNow = (result.extracted as { invoice_direction?: unknown }).invoice_direction;
+    const dirBefore = (thread?.extracted as { bill_direction?: unknown } | null)?.bill_direction;
+    const isDir = (v: unknown): v is "owed_to_business" | "owed_by_business" =>
+      v === "owed_to_business" || v === "owed_by_business";
+    const billDirection =
+      !injection && isDir(dirNow) ? dirNow : isDir(dirBefore) ? dirBefore : null;
     const stored = {
       ...result.extracted,
       // The kind of job carries over like the invoice facts: "Go ahead, when can you start?"
@@ -324,6 +397,7 @@ export async function classifyPending(
       ...(wasInvoiceThread || result.category === "invoice_payment"
         ? { invoice_thread: true }
         : {}),
+      ...(billDirection ? { bill_direction: billDirection } : {}),
     };
 
     // Sticky quote-request facts (M8 A11), content-free. A quote request re-sorted as
@@ -351,7 +425,11 @@ export async function classifyPending(
     const requestAt = new Date(m.sentAt).toISOString();
     const jobKind =
       !injection && (wasQuote || isQuoteNow)
-        ? jobKindOf(box.workspace.trade, stored.service_requested ?? null)
+        ? jobKindOf(
+            box.workspace.trade,
+            stored.service_requested ?? null,
+            box.workspace.extraTrades ?? [],
+          )
         : null;
 
     await db()
@@ -406,7 +484,12 @@ export async function classifyPending(
           : {}),
       })
       .where(eq(threads.id, m.threadId));
-    await db().update(messages).set({ classifiedAt: now }).where(eq(messages.id, m.id));
+    // The newest email and the older ones sorted with it, in one write (B3, B4).
+    await db()
+      .update(messages)
+      .set({ classifiedAt: now })
+      .where(inArray(messages.id, [m.id, ...older.map((o) => o.id)]));
+    superseded += older.length;
     classified++;
 
     if (reopen && thread?.invoicePaidAt) {
@@ -463,7 +546,7 @@ export async function classifyPending(
   }
 
   const remaining = Math.max(0, newestPerThread.size - classified);
-  return { classified, superseded: superseded.length, remaining: capped ? 0 : remaining, capped };
+  return { classified, superseded, remaining: capped ? 0 : remaining, capped };
 }
 
 /** Inbox action: the owner says a thread needs them. Scoped to their workspace. */

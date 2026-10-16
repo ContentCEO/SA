@@ -3,7 +3,7 @@ import { Headline } from "@/components/brand/headline";
 import { OfferButtons } from "@/components/app/offer-buttons";
 import { PermitCard } from "@/components/app/permit-card";
 import { Button } from "@/components/ui/button";
-import { CATEGORIES } from "@/ai/prompts/classify.v3";
+import { CATEGORIES } from "@/ai/prompts/classify.v4";
 import { categoryLabels, categoryTag, isCategory } from "@/config/categories";
 import { relativeTime } from "@/lib/relative-time";
 import { cn } from "@/lib/utils";
@@ -14,7 +14,9 @@ import { threadOffers } from "@/server/offers";
 import { priceMemoryFor, type PriceMemoryItem } from "@/server/price-memory";
 import { getBusinessProfile } from "@/server/profile";
 import { requireOwner } from "@/server/session";
+import { isFoldableJunk, searchText } from "@/server/inbox-rules";
 import { draftReplyAction } from "../queue/actions";
+import { InboxSearch } from "./inbox-search";
 import { markNeedsOwnerAction } from "./actions";
 
 function parseFilter(v: string | string[] | undefined): InboxFilter {
@@ -124,6 +126,74 @@ export default async function InboxPage(props: PageProps<"/inbox">) {
     { timeZone },
   );
 
+  // Junk folds into one line on "All" (outside review); the Junk chip lists it as usual.
+  const foldJunk = filter.kind === "all";
+
+  function renderRow(row: InboxRow) {
+    return (
+      <li key={row.id}>
+        <details
+          className={cn("group rounded-xl border", row.needsOwner ? "sa-inverted" : "bg-card")}
+        >
+          <summary className="flex min-h-tap cursor-pointer list-none flex-col gap-1 p-4">
+            <div className="flex items-baseline justify-between gap-3">
+              <span className="truncate text-base font-black">
+                {row.senderName || row.senderAddress || "Unknown sender"}
+              </span>
+              <span
+                className={cn(
+                  "shrink-0 text-sm",
+                  row.needsOwner ? "text-ash" : "text-muted-foreground",
+                )}
+              >
+                {row.lastMessageAt ? relativeTime(row.lastMessageAt) : ""}
+              </span>
+            </div>
+            <span className="text-sm font-semibold">
+              {isCategory(row.category) ? categoryTag[row.category] : "Not sorted yet"}
+              {row.needsOwner ? " · Needs you" : ""}
+              {row.priority === "high" && !row.needsOwner ? " · Urgent" : ""}
+              {row.replyState ? ` · ${row.replyState}` : ""}
+            </span>
+            <span className={cn("line-clamp-2", row.needsOwner ? "" : "text-muted-foreground")}>
+              {row.summary ?? row.subject ?? "(no subject)"}
+            </span>
+          </summary>
+          <div className="flex flex-col gap-3 border-t border-border px-4 pt-3 pb-4">
+            {row.subject ? <p className="text-sm">Subject: {row.subject}</p> : null}
+            {row.needsOwner && row.needsOwnerReason ? (
+              <p className="font-semibold">Why: {row.needsOwnerReason}</p>
+            ) : null}
+            <PermitCard
+              permit={
+                (row.extracted as { permit?: Parameters<typeof PermitCard>[0]["permit"] })?.permit
+              }
+            />
+            <Details row={row} />
+            <PastPricesLine prices={pastPrices.get(row.id)} />
+            {row.category !== "noise" && !readOnly ? (
+              <form action={draftReplyAction}>
+                <input type="hidden" name="threadId" value={row.id} />
+                <Button type="submit" className="w-full">
+                  Draft a reply
+                </Button>
+              </form>
+            ) : null}
+            {!readOnly ? <OfferButtons threadId={row.id} offers={offers.get(row.id)} /> : null}
+            {!row.needsOwner ? (
+              <form action={markNeedsOwnerAction}>
+                <input type="hidden" name="threadId" value={row.id} />
+                <Button type="submit" variant="outline" className="w-full">
+                  This one needs me
+                </Button>
+              </form>
+            ) : null}
+          </div>
+        </details>
+      </li>
+    );
+  }
+
   return (
     <>
       <Headline serif="everything that came in," heavy="sorted." />
@@ -147,7 +217,7 @@ export default async function InboxPage(props: PageProps<"/inbox">) {
       {boxes.length === 0 ? (
         <p className="text-lg">
           Connect Gmail in{" "}
-          <Link href="/settings" className="font-semibold underline underline-offset-4">
+          <Link href="/settings/gmail" className="font-semibold underline underline-offset-4">
             Settings
           </Link>{" "}
           and your email will show up here.
@@ -159,77 +229,20 @@ export default async function InboxPage(props: PageProps<"/inbox">) {
             : "Nothing in this group."}
         </p>
       ) : (
-        <ul className="flex flex-col gap-3">
-          {rows.map((row) => (
-            <li key={row.id}>
-              <details
-                className={cn(
-                  "group rounded-xl border",
-                  row.needsOwner ? "sa-inverted" : "bg-card",
-                )}
-              >
-                <summary className="flex min-h-tap cursor-pointer list-none flex-col gap-1 p-4">
-                  <div className="flex items-baseline justify-between gap-3">
-                    <span className="truncate text-base font-black">
-                      {row.senderName || row.senderAddress || "Unknown sender"}
-                    </span>
-                    <span
-                      className={cn(
-                        "shrink-0 text-sm",
-                        row.needsOwner ? "text-ash" : "text-muted-foreground",
-                      )}
-                    >
-                      {row.lastMessageAt ? relativeTime(row.lastMessageAt) : ""}
-                    </span>
-                  </div>
-                  <span className="text-sm font-semibold">
-                    {isCategory(row.category) ? categoryTag[row.category] : "Not sorted yet"}
-                    {row.needsOwner ? " · Needs you" : ""}
-                    {row.priority === "high" && !row.needsOwner ? " · Urgent" : ""}
-                  </span>
-                  <span
-                    className={cn("line-clamp-2", row.needsOwner ? "" : "text-muted-foreground")}
-                  >
-                    {row.summary ?? row.subject ?? "(no subject)"}
-                  </span>
-                </summary>
-                <div className="flex flex-col gap-3 border-t border-border px-4 pt-3 pb-4">
-                  {row.subject ? <p className="text-sm">Subject: {row.subject}</p> : null}
-                  {row.needsOwner && row.needsOwnerReason ? (
-                    <p className="font-semibold">Why: {row.needsOwnerReason}</p>
-                  ) : null}
-                  <PermitCard
-                    permit={
-                      (row.extracted as { permit?: Parameters<typeof PermitCard>[0]["permit"] })
-                        ?.permit
-                    }
-                  />
-                  <Details row={row} />
-                  <PastPricesLine prices={pastPrices.get(row.id)} />
-                  {row.category !== "noise" && !readOnly ? (
-                    <form action={draftReplyAction}>
-                      <input type="hidden" name="threadId" value={row.id} />
-                      <Button type="submit" className="w-full">
-                        Draft a reply
-                      </Button>
-                    </form>
-                  ) : null}
-                  {!readOnly ? (
-                    <OfferButtons threadId={row.id} offers={offers.get(row.id)} />
-                  ) : null}
-                  {!row.needsOwner ? (
-                    <form action={markNeedsOwnerAction}>
-                      <input type="hidden" name="threadId" value={row.id} />
-                      <Button type="submit" variant="outline" className="w-full">
-                        This one needs me
-                      </Button>
-                    </form>
-                  ) : null}
-                </div>
-              </details>
-            </li>
-          ))}
-        </ul>
+        <InboxSearch
+          rows={rows.map((r) => ({
+            id: r.id,
+            text: searchText({
+              senderName: r.senderName,
+              senderAddress: r.senderAddress,
+              subject: r.subject,
+              summary: r.summary,
+              categoryLabel: isCategory(r.category) ? categoryLabels[r.category] : null,
+            }),
+            junk: foldJunk && isFoldableJunk(r),
+            node: renderRow(r),
+          }))}
+        />
       )}
     </>
   );

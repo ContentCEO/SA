@@ -90,3 +90,21 @@ export function termsScreenCopy(user: { termsVersion: string | null }) {
           "read them and tick the box to keep using Squared Away.",
       };
 }
+
+/**
+ * Round 2 (FW): the way out on the terms screen names only what this person can do there: a
+ * trial owner has no plan to cancel (no Manage billing button), and someone who never connected
+ * Gmail has nothing to disconnect.
+ */
+export function leaveOptionsLine(o: { canManageBilling: boolean; hasGmail: boolean }): string {
+  const choices = [
+    o.canManageBilling ? "cancel your plan" : null,
+    o.hasGmail ? "disconnect Gmail" : null,
+    "delete your account",
+  ].filter((c): c is string => c !== null);
+  const list =
+    choices.length === 1
+      ? choices[0]!
+      : `${choices.slice(0, -1).join(", ")} or ${choices[choices.length - 1]}`;
+  return `You can still leave. ${list[0]!.toUpperCase()}${list.slice(1)} right here, or just sign out.`;
+}

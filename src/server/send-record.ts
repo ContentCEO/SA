@@ -10,7 +10,10 @@ import { buildSendRecord, type SendRecord } from "./send-record-rules";
  * the draft row and the content-free activity log; never from email text.
  * Null unless the draft is this workspace's and was sent.
  */
-export async function sendRecord(workspaceId: string, draftId: string): Promise<SendRecord | null> {
+export async function sendRecord(
+  workspaceId: string,
+  draftId: string,
+): Promise<(SendRecord & { toAddress: string }) | null> {
   const [d] = await db()
     .select({
       status: drafts.status,
@@ -18,6 +21,7 @@ export async function sendRecord(workspaceId: string, draftId: string): Promise<
       createdAt: drafts.createdAt,
       decidedAt: drafts.decidedAt,
       sentGmailMessageId: drafts.sentGmailMessageId,
+      toAddress: drafts.toAddress,
     })
     .from(drafts)
     .where(
@@ -48,5 +52,6 @@ export async function sendRecord(workspaceId: string, draftId: string): Promise<
       ),
     )
     .orderBy(asc(activityLog.createdAt));
-  return buildSendRecord(d, logs, GRACE_MINUTES);
+  // H7: the address it went to is part of the proof (the owner's own screen only).
+  return { ...buildSendRecord(d, logs, GRACE_MINUTES), toAddress: d.toAddress };
 }

@@ -1,12 +1,20 @@
 import Link from "next/link";
 import { siteConfig } from "@/config/site";
+import { phoneHref } from "@/lib/phone-href";
 
-export function SiteFooter() {
+/** `growthLink`: public pages only (not the signed-in app). */
+export function SiteFooter({ growthLink = false }: { growthLink?: boolean } = {}) {
   const support = process.env.SUPPORT_EMAIL;
   return (
     <footer className="flex flex-col gap-1 text-sm text-muted-foreground">
       <span>
-        Questions? Call {siteConfig.phone}
+        Questions? Call{" "}
+        <a
+          href={phoneHref("tel", siteConfig.phone)}
+          className="inline-flex min-h-tap items-center underline underline-offset-4"
+        >
+          {siteConfig.phone}
+        </a>
         {support ? (
           <>
             {" "}
@@ -32,6 +40,14 @@ export function SiteFooter() {
           Terms
         </Link>
       </nav>
+      {growthLink ? (
+        <Link
+          href="/growth"
+          className="inline-flex min-h-tap items-center self-start underline underline-offset-4"
+        >
+          Squared Away Growth
+        </Link>
+      ) : null}
       <span>{siteConfig.copyright}</span>
     </footer>
   );

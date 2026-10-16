@@ -177,7 +177,7 @@ sets it, in `.env.example`).
 | `FEATURE_CLOSING_QUESTION`                                                            | No (off when unset)      | Plan #26. **On** in Vercel since 2026-10-14 (Davi's okay); live from the next deploy.                                                                                                                       | `1` (§6d).                                                                             | Prod + Preview                    |
 | `FEATURE_REFERRALS`                                                                   | No (off)                 | Plan #47 (a free month, one plan up). **Ask Davi first**; the switch is the only control (§6d).                                                                                                             | `1` (§6d).                                                                             | Prod, only with Davi's okay       |
 | `RETENTION_BODY_DAYS`                                                                 | No (default 30)          | Days before email text is purged. The privacy policy and homepage promise 30: don't change it without changing them.                                                                                        | A number.                                                                              | Prod                              |
-| `VERCEL`, `VERCEL_ENV`, `VERCEL_BRANCH_URL`, `VERCEL_GIT_COMMIT_SHA`                  | Set by Vercel            | Deploy detection (turns e2e mode off), preview URLs, preview-only CSP, Sentry environment and release, `/api/health`'s `commit`.                                                                            | Automatic, while "Automatically expose System Environment Variables" is on.            | Vercel sets them                  |
+| `VERCEL`, `VERCEL_ENV`, `VERCEL_BRANCH_URL`, `VERCEL_GIT_COMMIT_SHA`                  | Set by Vercel            | Deploy detection (turns e2e mode off), preview URLs, preview-only CSP, Sentry environment and release, `/api/health`'s `commit`, Web Analytics on production only.                                          | Automatic, while "Automatically expose System Environment Variables" is on.            | Vercel sets them                  |
 | `NODE_ENV`                                                                            | Set by Next              | Development vs production behaviour.                                                                                                                                                                        | Automatic.                                                                             | —                                 |
 | `SA_E2E`, `SA_E2E_GOOGLE_BASE_URL`, `SA_E2E_ANTHROPIC_BASE_URL`, `SA_E2E_HOOK_SECRET` | Set by Playwright        | Local e2e mode (§3).                                                                                                                                                                                        | `playwright.config.ts` sets them.                                                      | **Never** on Vercel               |
 | `PGHOST`, `ANTHROPIC_CUSTOM_HEADERS`                                                  | Not ours                 | Read by postgres.js and the Anthropic SDK. We never set them; e2e mode checks `PGHOST` (when `DATABASE_URL` names no host) and drops any `ANTHROPIC_CUSTOM_HEADERS` so nothing real reaches the fakes (§3). | —                                                                                      | Not set                           |
@@ -390,7 +390,7 @@ Microsoft) only sees a ping, and the phone then fetches the counts from us (`src
 2. Vercel → sa → Environment Variables (Production): `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`
    (sensitive) and, optionally, `VAPID_SUBJECT` (`mailto:` the support address; defaults to
    `APP_URL`). Redeploy.
-3. How to know it worked: Settings shows the phone-notification switch; turn it on from an installed
+3. How to know it worked: Settings → Notifications shows the phone-notification switch; turn it on from an installed
    app (on iPhone, only from the Home Screen app) and the first new quote request buzzes the phone.
 
 Keep the pair once owners use it: after a change, each phone has to switch notifications off and
@@ -428,6 +428,13 @@ The digest is sent through Resend's HTTP API (`src/lib/email.ts`). Without `RESE
 4. Put both in Vercel (Production) and redeploy.
 
 The digest carries counts and categories only — no customer names, subjects or email text.
+
+The same key and sender also carry the waitlist emails (`src/server/waitlist-emails.ts`): a
+content-free "New waitlist sign-up" notice to `ADMIN_EMAIL`, and one "You're on the Squared Away
+list" to the person who joined (replies go to `SUPPORT_EMAIL` when it is set). Until a domain is
+verified the confirmation can't reach anyone but the Resend account's own address. It is only
+marked sent after Resend accepts it, but it is only tried when someone first joins, so people who
+join before the domain is verified never get one. No new settings.
 
 ## 7c. Payments (Stripe)
 

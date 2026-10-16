@@ -12,6 +12,8 @@ import {
   type Workspace,
 } from "@/db/schema";
 import { appUrl } from "@/lib/app-url";
+import { brandEmail } from "@/lib/email-layout";
+import { sendEmail, type EmailSender } from "@/lib/email";
 import { decryptSecret, encryptSecret } from "@/lib/crypto";
 import {
   cancelAtOf,
@@ -27,6 +29,7 @@ import {
   statusAfterSubscription,
   stripeKeyMode,
 } from "./billing-rules";
+import { paymentNoticeCopy } from "./first-week-rules";
 import { setupReallyPaid } from "./lifecycle";
 import { freeMonthRunning, portalSchedulesDowngrades } from "./referral-rules";
 import { creditReferralSafely, reconcileReferralSafely } from "./referrals";
@@ -592,7 +595,59 @@ async function workspaceById(id: string | null | undefined) {
   return w;
 }
 
-export async function applyCheckoutCompleted(session: Stripe.Checkout.Session, now = new Date()) {
+/**
+ * Round 2 (FW K7): tell Davi a payment came in, so the setup call doesn't wait on him noticing.
+ * Content-free (the plan's name and whether setup was in it; who it is stays on /admin). Once
+ * per checkout (`app_settings` marker, Resend idempotency key). Never throws: a failed email
+ * never fails the webhook. Logs the error's name only.
+ */
+export async function notifyPaymentReceived(
+  sessionId: string,
+  o: { plan: PlanId | null; includesSetup: boolean },
+  deps: { send?: EmailSender } = {},
+): Promise<"sent" | "skipped" | "failed"> {
+  const admin = process.env.ADMIN_EMAIL;
+  if (!admin) return "skipped";
+  const key = `payment-notice:${sessionId}`;
+  try {
+    const [seen] = await db().select().from(appSettings).where(eq(appSettings.key, key));
+    if (seen) return "skipped";
+    const c = paymentNoticeCopy({
+      planName: o.plan ? pricing.plans[o.plan].name : null,
+      includesSetup: o.includesSetup,
+      adminUrl: appUrl("/admin"),
+    });
+    const { text, html } = brandEmail({
+      serif: c.serif,
+      heavy: c.heavy,
+      lines: c.lines,
+      button: c.button,
+      footer: c.footer,
+    });
+    const outcome = await (deps.send ?? sendEmail)({
+      to: admin,
+      subject: c.subject,
+      text,
+      html,
+      idempotencyKey: `payment-${sessionId}`,
+    });
+    if (outcome === "not_configured") return "skipped";
+    await db()
+      .insert(appSettings)
+      .values({ key, value: new Date().toISOString() })
+      .onConflictDoNothing();
+    return "sent";
+  } catch (err) {
+    console.error("payment_notice_failed", { error: err instanceof Error ? err.name : "unknown" });
+    return "failed";
+  }
+}
+
+export async function applyCheckoutCompleted(
+  session: Stripe.Checkout.Session,
+  now = new Date(),
+  deps: { send?: EmailSender } = {},
+) {
   if (session.mode !== "subscription" || session.payment_status !== "paid") return "ignored";
   const w = await workspaceById(session.metadata?.workspaceId ?? session.client_reference_id);
   if (!w) return "unknown_workspace";
@@ -628,6 +683,7 @@ export async function applyCheckoutCompleted(session: Stripe.Checkout.Session, n
     await resumeOverPlanInboxes(w.id, now, tx);
   });
   await log(w.id, "payment_received", { plan, includesSetup, from: w.status, to });
+  await notifyPaymentReceived(session.id, { plan, includesSetup }, deps);
   // Plan #47: a referral is settled the first time the account is active. Never fails the webhook.
   if (to === "active") await creditReferralSafely(w.id, now);
   return "applied";

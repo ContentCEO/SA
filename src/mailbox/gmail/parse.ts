@@ -66,7 +66,11 @@ export function extractBodyText(payload: GmailMessagePart | undefined): string |
   return undefined;
 }
 
-export function toMailMessage(resource: GmailMessageResource, withBody: boolean): MailMessage {
+export function toMailMessage(
+  resource: GmailMessageResource,
+  withBody: boolean,
+  opts: { replyToRead?: boolean } = {},
+): MailMessage {
   const p = resource.payload;
   return {
     providerMessageId: resource.id,
@@ -82,6 +86,8 @@ export function toMailMessage(resource: GmailMessageResource, withBody: boolean)
       messageId: header(p, "Message-ID"),
       references: header(p, "References"),
       inReplyTo: header(p, "In-Reply-To"),
+      replyTo: header(p, "Reply-To"),
+      replyToRead: withBody || !!opts.replyToRead,
     },
     bodyText: withBody ? extractBodyText(p) : undefined,
   };

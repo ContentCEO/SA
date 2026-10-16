@@ -174,7 +174,7 @@ describe("writing drafts", () => {
       status: "pending",
       gmailDraftId: "d1",
       confidence: 90,
-      promptVersion: "draft.v5",
+      promptVersion: "draft.v6",
     });
     const [u] = await database.select().from(usage);
     expect(u!.draftsCreated).toBe(1);
@@ -333,7 +333,9 @@ describe("sending — the gate", () => {
     class ReadingWriter extends FakeWriter {
       looked: string[] = [];
       sentLoggedFirst: boolean[] = [];
-      async getMessage(id: string) {
+      async getMessage(id: string, opts: { withBody: boolean; headers?: readonly string[] }) {
+        // Drafting's Reply-To read (review B1) is the plain fake's.
+        if (opts.headers) return super.getMessage(id, opts);
         this.looked.push(id);
         // The record of the send comes first: storing the email may retry for a while.
         this.sentLoggedFirst.push(
@@ -368,7 +370,9 @@ describe("sending — the gate", () => {
 
   it("a failure storing the sent email doesn't fail the send, and logs no content", async () => {
     class BrokenReader extends FakeWriter {
-      async getMessage(): Promise<null> {
+      async getMessage(id: string, opts: { withBody: boolean; headers?: readonly string[] }) {
+        // Drafting's Reply-To read (review B1) works; storing the sent email fails.
+        if (opts.headers) return super.getMessage(id, opts);
         throw new TypeError("SECRET-dana@x.com");
       }
     }

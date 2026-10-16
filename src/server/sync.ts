@@ -23,6 +23,7 @@ import {
 import { createGmailReader } from "@/mailbox/gmail/api";
 import { parseAddressList } from "@/mailbox/gmail/parse";
 import { jobsAllowed } from "./lifecycle";
+import { pickReplyTo, type ReplyToHeader } from "./reply-address-rules";
 import { unsentDraftMessage } from "./thread-sql";
 
 /** How far back the first sync reaches. */
@@ -218,6 +219,22 @@ async function ingest(
   );
 
   const self = mailbox.email.toLowerCase();
+  // Every mailbox of the workspace: a form set to reply to the shop's other Gmail is no
+  // customer address.
+  const workspaceEmails = (
+    await db()
+      .select({ email: mailboxes.email })
+      .from(mailboxes)
+      .where(eq(mailboxes.workspaceId, mailbox.workspaceId))
+  ).map((r) => r.email.toLowerCase());
+  if (!workspaceEmails.includes(self)) workspaceEmails.push(self);
+  const replyToOf = (m: MailMessage): ReplyToHeader | null => {
+    const from = parseAddressList(m.headers.from)[0];
+    if (m.labelIds.includes("SENT") || from?.email === self) return {};
+    // Never "no Reply-To" unless the read could have returned one.
+    if (!m.headers.replyToRead) return null;
+    return pickReplyTo(m.headers.replyTo, { from: from?.email ?? null, self: workspaceEmails });
+  };
   const byThread = new Map<string, MailMessage[]>();
   for (const m of full)
     byThread.set(m.providerThreadId, [...(byThread.get(m.providerThreadId) ?? []), m]);
@@ -234,6 +251,8 @@ async function ingest(
       ]) {
         if (a.email !== self) participants.add(a.email);
       }
+      const replyTo = replyToOf(m)?.address;
+      if (replyTo) participants.add(replyTo);
     }
     // From these messages only. On an existing thread the stored messages' newest time is
     // read inside the upsert (not from `prior`, read earlier): a time a draft row gave the
@@ -276,6 +295,7 @@ async function ingest(
         references: m.headers.references ?? null,
         fromAddress: from?.email ?? null,
         fromName: from?.name ?? null,
+        replyToHeader: replyToOf(m),
         toAddresses: parseAddressList(m.headers.to).map((a) => a.email),
         ccAddresses: parseAddressList(m.headers.cc).map((a) => a.email),
         subject: m.headers.subject ?? null,
@@ -300,6 +320,7 @@ async function ingest(
           sentAt: sql`excluded.sent_at`,
           bodyText: sql`coalesce(excluded.body_text, ${messages.bodyText})`,
           snippet: sql`coalesce(excluded.snippet, ${messages.snippet})`,
+          replyToHeader: sql`coalesce(excluded.reply_to_header, ${messages.replyToHeader})`,
         },
         setWhere: unsentDraftMessage(),
       })

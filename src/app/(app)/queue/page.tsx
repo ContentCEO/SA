@@ -38,9 +38,14 @@ import { OfflineQueue } from "./offline-queue";
 import { devicePrefs } from "@/lib/device-prefs";
 import { RemindMe } from "./remind-me";
 import { ScrollToThread } from "./scroll-to-thread";
-import { SNOOZE_LABELS, snoozeOptions } from "@/server/snooze-rules";
+import { SNOOZE_LABELS, snoozeOptions, usableTimeZone } from "@/server/snooze-rules";
 import { batchCandidates } from "@/server/drafts";
 import { BATCH_CATEGORIES } from "@/server/batch-rules";
+import { buttonVariants } from "@/components/ui/button";
+import { firstLookFor } from "@/server/first-week";
+import { wroteLine } from "@/server/first-week-rules";
+import { CalledThem } from "./called-them";
+import { FirstLookCard } from "./first-look";
 
 const done: Record<string, string> = {
   discarded: "Draft discarded.",
@@ -52,14 +57,20 @@ const done: Record<string, string> = {
   undone: "Stopped. Nothing was sent — it's back below.",
   snoozed: "Snoozed. It'll come back to the top of the queue.",
   held: "Held. It won't send until you tap Send reply.",
+  called:
+    "Marked as answered by phone. No draft and no nudge for that one unless they write again.",
+  found_money:
+    "Writing those drafts now. They show up below in a minute or two, and each one waits for you.",
 };
 const errors: Record<string, string> = {
-  gaps: "Fill in every highlighted gap before sending — nothing was sent.",
+  gaps: "Fill in every gap before sending (anything like {{price}} or [price]) — nothing was sent.",
   busy: "That's a lot in a short time, so we've paused it for a bit. Try again in a few minutes.",
   blocked: "Sending isn't switched on for your account, so nothing was sent.",
   changed:
     "That draft was changed in Gmail. Here's the latest version — read it, then tap Send reply again.",
   deleted: "That draft was deleted or sent from Gmail, so it's gone from here too.",
+  to_changed:
+    "Who that reply goes to changed since you opened it, so nothing was sent. Check the To line, then tap Send reply again.",
   reconnect: "Google access was lost. Reconnect Gmail in Settings and try again.",
   empty: "The reply was empty, so nothing was sent.",
   exists: "There's already a draft for that one — it's below.",
@@ -72,6 +83,10 @@ const errors: Record<string, string> = {
   gone: "That draft isn't waiting any more, so nothing was sent.",
   snooze: "That can't be put off that long — it looks urgent. Pick an earlier time.",
   draftfailed: "Couldn't write a draft for that one. Try again in a minute.",
+  gmail_busy: "Gmail asked us to slow down. Try again in a minute.",
+  reply_to_unread: "We couldn't check who this goes to. Try again in a minute.",
+  no_reply_address:
+    "That one would go to a no-reply address — answer them on the platform or by phone.",
   readonly:
     "Your account is read-only right now, so nothing was changed. The note at the top says why.",
   // Deposit / review / closing notes (plan #26 #28 #29).
@@ -88,12 +103,17 @@ const errors: Record<string, string> = {
 const who = (i: QueueItem) => i.customerName || i.customerAddress || "Unknown sender";
 const tag = (i: QueueItem) => draftTag(i);
 
-const weekday = new Intl.DateTimeFormat("en-US", { weekday: "long", timeZone: "America/New_York" });
-
-/** The one line under "squared away." — what happens next, honestly. */
-function nextLine(sent: NonNullable<Awaited<ReturnType<typeof sentDraftSummary>>>) {
+/**
+ * The one line under "squared away." — what happens next, honestly. The day is the owner's own
+ * (round 2, FW C10: their time zone, not always Eastern).
+ */
+function nextLine(
+  sent: NonNullable<Awaited<ReturnType<typeof sentDraftSummary>>>,
+  timeZone: string,
+) {
   const name = firstName(sent.toName);
   if (sent.nudgeOn) {
+    const weekday = new Intl.DateTimeFormat("en-US", { weekday: "long", timeZone });
     return `I'll nudge ${name ?? "them"} on ${weekday.format(sent.nudgeOn)} if there's no reply.`;
   }
   if (sent.lastNudgeUsed) return "That was the last nudge. I won't chase this one again.";
@@ -112,7 +132,7 @@ export default async function QueuePage(props: PageProps<"/queue">) {
   const [queue, boxes, checklist, pausedDrafts] = await Promise.all([
     listQueue(workspace.id),
     listMailboxes(workspace.id),
-    checklistFor(workspace.id),
+    checklistFor(workspace.id, { readOnly: isReadOnly(workspace) }),
     pausedInboxDraftCount(workspace.id),
   ]);
   // Plan #47: inboxes paused for being over the plan, in the words of the plan that counts.
@@ -139,9 +159,12 @@ export default async function QueuePage(props: PageProps<"/queue">) {
         ? errors[params.error]
         : undefined;
   const sending = canSend(workspace);
-  const timeZone = (await getBusinessProfile(workspace.id))?.timeZone ?? "America/New_York";
+  const timeZone = usableTimeZone(
+    (await getBusinessProfile(workspace.id))?.timeZone ?? "America/New_York",
+  );
   const clock = new Intl.DateTimeFormat("en-US", { hour: "numeric", minute: "2-digit", timeZone });
   const readOnly = isReadOnly(workspace);
+  const firstLook = await firstLookFor(workspace);
   const empty = queue.needsYou.length === 0 && queue.drafts.length === 0;
   const now = new Date();
   // Plan #40: practice sends only exist during the three days.
@@ -178,10 +201,10 @@ export default async function QueuePage(props: PageProps<"/queue">) {
                 : sendingIds.length
                   ? "reply on its way,"
                   : "reply sent,"}
-            </span>
+            </span>{" "}
             <span className="sa-headline-heavy text-4xl">squared away.</span>
           </p>
-          {sent ? <p className="text-ash">{nextLine(sent)}</p> : null}
+          {sent ? <p className="text-ash">{nextLine(sent, timeZone)}</p> : null}
           {sent && !sent.sendingAt ? (
             <Link
               href={`/record/${sent.draftId}`}
@@ -214,7 +237,7 @@ export default async function QueuePage(props: PageProps<"/queue">) {
         >
           <p>{pausedDraftsLine(pausedDrafts, planNow)}</p>
           <Link
-            href="/settings#mailbox"
+            href="/settings/gmail"
             className="inline-flex min-h-tap items-center font-semibold underline underline-offset-4"
           >
             Your Gmail
@@ -227,17 +250,25 @@ export default async function QueuePage(props: PageProps<"/queue">) {
           "not on your queue" notice from an earlier link doesn't linger (finding M8-7). */}
       <ScrollToThread key={randomUUID()} />
 
+      {boxes.length === 0 ? (
+        // Round 2 (FW): a first-timer's one big next step, before the checklist.
+        <section aria-labelledby="start" className="flex flex-col gap-3">
+          <h2 id="start" className="text-xl font-black">
+            Start here
+          </h2>
+          <p className="text-lg">
+            Connect the Gmail you run the business from. We show you what Squared Away can and
+            can&apos;t do before Google asks.
+          </p>
+          <Link href="/connect" className={buttonVariants({ size: "lg", className: "w-full" })}>
+            Connect Gmail
+          </Link>
+        </section>
+      ) : null}
+
       <OnboardingChecklist list={checklist} dismissAction={dismissChecklistAction} />
 
-      {boxes.length === 0 ? (
-        <p className="text-lg">
-          Connect Gmail in{" "}
-          <Link href="/settings" className="font-semibold underline underline-offset-4">
-            Settings
-          </Link>{" "}
-          to get started.
-        </p>
-      ) : empty ? (
+      {boxes.length === 0 ? null : empty ? (
         <p className="text-2xl font-black">Nothing waiting on you.</p>
       ) : null}
 
@@ -274,6 +305,7 @@ export default async function QueuePage(props: PageProps<"/queue">) {
                   </form>
                 )}
                 <RemindMe threadId={i.threadId} options={remindOptions(i)} inverted />
+                {readOnly ? null : <CalledThem threadId={i.threadId} hasDraft={false} inverted />}
                 <a
                   href={gmailLink(i)}
                   target="_blank"
@@ -287,6 +319,9 @@ export default async function QueuePage(props: PageProps<"/queue">) {
           ))}
         </section>
       ) : null}
+
+      {/* After what needs them now: the first week's look back (round 2, FW D1/D2). */}
+      <FirstLookCard look={firstLook} readOnly={readOnly} />
 
       {queue.drafts.length ? (
         <section aria-labelledby="drafts" className="flex flex-col gap-3">
@@ -307,7 +342,10 @@ export default async function QueuePage(props: PageProps<"/queue">) {
               key={`${i.draftId}:${i.body}`}
               draftId={i.draftId!}
               customer={who(i)}
+              toAddress={i.toAddress ?? ""}
+              toFromReplyTo={i.replyRedirected && i.toAddress === i.customerAddress}
               tag={`${i.backFromSnooze ? "Back from snooze · " : ""}${tag(i)}`}
+              wrote={wroteLine(i.customerWroteAt, now)}
               threadId={i.threadId}
               leftHanded={device.leftHanded}
               offlineEnabled={device.offline}

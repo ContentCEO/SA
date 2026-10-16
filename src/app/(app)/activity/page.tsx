@@ -9,8 +9,10 @@ import {
   MINUTES_PER_SENT_REPLY,
   localMonthName,
   monthCloseRate,
+  monthMoney,
   monthSummary,
 } from "@/server/activity";
+import { groupByDay, moneyIsEmpty, tallyText } from "@/server/activity-rules";
 import { weekScorecards } from "@/server/scorecard";
 import {
   responseTimeSentence,
@@ -28,12 +30,14 @@ export default async function ActivityPage() {
   const now = new Date();
   // One month for the whole screen, in the owner's own time zone.
   const timeZone = await workspaceTimeZone(workspace.id);
-  const [entries, month, close, weeks] = await Promise.all([
+  const [entries, month, close, weeks, money] = await Promise.all([
     listActivity(workspace.id),
     monthSummary(workspace.id, now, timeZone),
     monthCloseRate(workspace.id, now, timeZone),
     weekScorecards(workspace.id, now, timeZone),
+    monthMoney(workspace.id, now, timeZone),
   ]);
+  const days = groupByDay(entries, now, timeZone);
   const { thisWeek, lastWeek } = weeks;
   const decided = close.won + close.lost + close.noAnswer;
   const monthName = localMonthName(now, timeZone);
@@ -47,6 +51,35 @@ export default async function ActivityPage() {
       >
         Money owed →
       </Link>
+
+      {/* Outside review K1: what was won and paid leads; time saved stays underneath. */}
+      <section aria-labelledby="money" className="sa-inverted flex flex-col gap-3 rounded-xl p-4">
+        <h2 id="money" className="text-lg font-black">
+          Won and paid in {monthName}
+        </h2>
+        {moneyIsEmpty(money) ? (
+          <p className="text-lg">
+            Nothing won or paid yet this month. Mark quotes Won on Quotes, and invoices paid on
+            Money owed.
+          </p>
+        ) : (
+          <dl className="flex flex-col gap-2">
+            {[
+              ["Quotes won", tallyText(money.won)],
+              ["Invoices paid after a follow-up", tallyText(money.paidAfterNudge)],
+            ].map(([label, value]) => (
+              <div key={label} className="flex flex-col">
+                <dt className="text-sm text-ash">{label}</dt>
+                <dd className="text-2xl font-black">{value}</dd>
+              </div>
+            ))}
+          </dl>
+        )}
+        <p className="text-sm text-ash">
+          From your own quotes and the invoices on Money owed. Won and paid can be our guess — check
+          Quotes and Money owed.
+        </p>
+      </section>
 
       <section
         aria-labelledby="week"
@@ -158,32 +191,49 @@ export default async function ActivityPage() {
         {entries.length === 0 ? (
           <p className="text-lg">Nothing yet. Once your email is read, you&apos;ll see it here.</p>
         ) : (
-          <ol className="flex flex-col divide-y rounded-xl border bg-card">
-            {entries.map((e) => (
-              <li key={e.id} className="flex items-baseline justify-between gap-3 px-4 py-3">
-                <span className={e.byYou ? "font-semibold" : undefined}>
-                  {e.text}
-                  {e.recordId ? (
-                    <>
-                      {" "}
-                      <Link
-                        href={`/record/${e.recordId}`}
-                        className="inline-flex min-h-tap items-center font-semibold whitespace-nowrap underline underline-offset-4"
-                      >
-                        See record
-                      </Link>
-                    </>
-                  ) : null}
-                </span>
-                <time
-                  dateTime={e.at.toISOString()}
-                  className="shrink-0 text-sm text-muted-foreground"
-                >
-                  {relativeTime(e.at, now)}
-                </time>
-              </li>
-            ))}
-          </ol>
+          days.map((day) => (
+            <section
+              key={day.key}
+              aria-labelledby={`day-${day.key}`}
+              className="flex flex-col gap-2"
+            >
+              <h3 id={`day-${day.key}`} className="font-black">
+                {day.label}
+              </h3>
+              <ol className="flex flex-col divide-y rounded-xl border bg-card">
+                {day.entries.map((e) => (
+                  <li key={e.id} className="flex items-baseline justify-between gap-3 px-4 py-3">
+                    <span className={e.byYou ? "font-semibold" : undefined}>
+                      {e.text}
+                      {e.recordId ? (
+                        <>
+                          {" "}
+                          <Link
+                            href={`/record/${e.recordId}`}
+                            className="inline-flex min-h-tap items-center font-semibold whitespace-nowrap underline underline-offset-4"
+                          >
+                            See record
+                          </Link>
+                        </>
+                      ) : null}
+                    </span>
+                    <time
+                      dateTime={e.at.toISOString()}
+                      className="shrink-0 text-sm text-muted-foreground"
+                    >
+                      {day.label === "Today"
+                        ? relativeTime(e.at, now)
+                        : e.at.toLocaleTimeString("en-US", {
+                            timeZone,
+                            hour: "numeric",
+                            minute: "2-digit",
+                          })}
+                    </time>
+                  </li>
+                ))}
+              </ol>
+            </section>
+          ))
         )}
       </section>
     </>

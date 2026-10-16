@@ -1,6 +1,7 @@
 import { Suspense } from "react";
 import { AppBadge } from "@/components/app/app-badge";
 import { AppHeader } from "@/components/app/app-header";
+import { AssistantBanner } from "@/components/app/assistant-banner";
 import { devicePrefs } from "@/lib/device-prefs";
 import { ReconnectBanner } from "@/components/app/reconnect-banner";
 import { SiteFooter } from "@/components/app/site-footer";
@@ -19,6 +20,9 @@ export default async function AppLayout({ children }: { children: React.ReactNod
       </Suspense>
       <ReconnectBanner />
       <StatusBanner />
+      <Suspense fallback={null}>
+        <AssistantBanner />
+      </Suspense>
       <main className="flex flex-1 flex-col gap-8">{children}</main>
       <SiteFooter />
     </div>

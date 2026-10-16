@@ -4,14 +4,14 @@ import { seedOwner, signInAs } from "./support";
 test("while the first read is running, Settings says so plainly", async ({ page, context }) => {
   const owner = await seedOwner({ mailbox: true });
   await signInAs(context, owner);
-  await page.goto("/settings");
+  await page.goto("/settings/gmail");
   await expect(page.getByText(/Reading your last 30 days of email/)).toBeVisible();
 });
 
 test("after the backfill, Settings shows how much was read and when", async ({ page, context }) => {
   const owner = await seedOwner({ mailbox: true, backfilled: true, messageCount: 3 });
   await signInAs(context, owner);
-  await page.goto("/settings");
+  await page.goto("/settings/gmail");
   await expect(page.getByText("3 emails from the last 30 days, checked just now.")).toBeVisible();
   const health = page.getByRole("definition").filter({ hasText: "Checked every 5 minutes." });
   await expect(health).toBeVisible();
@@ -34,7 +34,10 @@ test("lost Google access shows a Reconnect Gmail banner on every screen", async 
     await expect(banner).toContainText(owner.email);
     await expect(banner.getByRole("link", { name: "Reconnect Gmail" })).toBeVisible();
   }
+  // The Settings list flags it, and the Gmail screen says what happened.
   await page.goto("/settings");
+  await expect(page.getByRole("link", { name: /^Your Gmail/ })).toContainText("Needs reconnecting");
+  await page.goto("/settings/gmail");
   await expect(page.getByText("Needs reconnecting")).toBeVisible();
   const gmail = page.getByRole("region", { name: "Your Gmail" });
   await expect(gmail).toContainText(

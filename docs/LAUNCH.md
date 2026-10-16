@@ -530,6 +530,11 @@ Worked when: Vercel's list matches this table; after step 2, each of `DATABASE_U
 preview client) shows **two separate rows**, one Production and one Preview; and no `SA_E2E…`, `INNGEST_DEV` or `STRIPE_WEBHOOK_SECRET`
 row exists in any environment.
 
+**Web Analytics (page visits on the public site).** The code is ready and counts only the home
+page, `/growth`, `/privacy` and `/terms`, on production, without cookies (the privacy policy
+says so). Turn it on: Vercel → sa → **Analytics** → **Enable**. Worked when: the Analytics tab
+shows visits a day later.
+
 ## 5. Support email and the production domain
 
 **Support email.**
@@ -578,7 +583,10 @@ Do the steps in this order: Google first (authorized domain, then redirect addre
 
 ## 6. Morning emails from your own domain (Resend)
 
-Until this is done, morning and monthly summaries only reach the Resend account's own address.
+Until this is done, morning and monthly summaries only reach the Resend account's own address,
+and the "You're on the list" email never reaches people who join the waitlist (your own "New
+waitlist sign-up" notice still arrives; people who joined before this step don't get it later). The pricing cards list "morning summary" for every plan:
+this step is what makes that true for owners other than you.
 
 - Where: resend.com → **Domains** → Add domain → add the DNS records it shows at your registrar.
   Steps in [SETUP.md](SETUP.md) §7b.
@@ -586,7 +594,8 @@ Until this is done, morning and monthly summaries only reach the Resend account'
   the verified domain) → Redeploy. `RESEND_API_KEY` stays as it is; check it's in the `sa`
   project, not `contractorflow`.
 - Worked when: Resend → Domains shows **Verified**, and the next morning summary to an owner other
-  than you shows as **Delivered** in Resend → Emails.
+  than you shows as **Delivered** in Resend → Emails. A test sign-up on the waitlist with a
+  second address of yours gets "You're on the Squared Away list".
 
 ## 7. Stripe live mode
 
@@ -780,7 +789,7 @@ mode and test mode are set up separately. In this order:
 - Paste: Vercel → `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` (sensitive) and optionally
   `VAPID_SUBJECT` (Production) → Redeploy. Keep the pair afterwards: changing it makes every phone
   switch notifications off and on again.
-- Worked when: Settings shows the phone-notification switch; turned on from the installed app (on
+- Worked when: Settings → Notifications shows the phone-notification switch; turned on from the installed app (on
   iPhone, only the Home Screen app), the next new quote request buzzes your phone.
 
 ## 10. Optional: text alerts and instant Gmail notifications
@@ -836,6 +845,57 @@ fixed.
    still ends 7 days after it was given, even when check 3 passes today.
 
 ## 13. Decisions waiting on you
+
+### Outside review (2026-10-15)
+
+The outside review of 2026-10-15 was worked through on 2026-10-16. Built and tested (it goes live
+with the merge after the "I agree" one):
+
+- **Website-form leads** (Squarespace, Wix, WordPress, Jobber, Housecall Pro): replies now go to
+  the customer's own address from the form's "Reply-To", not the form's robot address. Every
+  draft shows "To: …". Leads already stored are checked again in the background; a waiting draft
+  to a robot address is re-pointed (and flagged), and a reply already sent to one shows in
+  Activity with "Send it again from Gmail." Autopilot never sends to a form's reply address.
+  Thumbtack and Angi relay addresses are still answered on the platform, as before.
+- **Waitlist:** you get a "New waitlist sign-up" email (no name or address in it), and the person
+  gets "You're on the Squared Away list" once (after step 6). Sign-ups and Growth requests record
+  where they came from (link tags and the referring site), shown as "Came from" in `/admin`.
+- **Site:** the "photo coming soon" box is gone (the section is one column until your photo
+  arrives); the thank-you stays on screen; "Business email" with an Outlook hint; trial and
+  follow-up wording made exact ("won't send anything to a customer during the trial", "two nudge
+  drafts at most per conversation"); "Takes two minutes" removed; `/growth` has its own share
+  card and is linked from the footer and the homepage; the headline has its space; the footer
+  phone is tappable; a 404 page with a link home and a plain error page; a failed waitlist save
+  keeps what was typed; search title and description. Web Analytics is ready (step 4).
+- **App on a phone:** the five tweak chips sit behind one **Change it** button, so Send reply
+  fits on the screen; Settings is a list of short screens, and switches save themselves; five
+  tabs (Queue, Inbox, Quotes, Money, More); Activity leads with quotes won and invoices paid
+  after a follow-up; Inbox rows say "Replied" or "Waiting on you", junk folds into one line, and
+  there's a search; checkboxes and radios are charcoal and at least 24px in 44px rows; form
+  field borders are darker; **Re-learn from my sent mail** asks first; Text alerts and
+  Notifications are hidden until their keys are set; onboarding ends on the Queue.
+- **Privacy policy:** it now names the form's Reply-To address, where sign-ups came from, the
+  waitlist emails and Web Analytics. Its date moved to October 16, 2026 with the terms' (the
+  terms' text didn't change), so everyone who already agreed is asked once more.
+
+Waiting on you from that review (nothing here is built or changed until you say so):
+
+- Everything in its "Your calls" list: the trial side door (the app now says Squared Away won't
+  send to a customer during the trial; `docs/terms.md` and the privacy policy's trial sentence
+  still say "sending to customers is switched off", to be made to match once you decide), the
+  setup fee, the trial length, the terms' [To confirm] items, the hero line, the homepage test,
+  the referral amount and any founding or association offer, an instant "got it" reply, more
+  Google permissions, money in the morning email, Outlook and an app-store version.
+- The domain ([step 5](#5-support-email-and-the-production-domain)) and `SUPPORT_EMAIL`; a
+  business phone number for support, if you want one.
+- Your photo for the About section, and the legal answers that let the "Draft" banners come off.
+- Verify the Resend domain ([step 6](#6-morning-emails-from-your-own-domain-resend)), so the
+  pricing cards' "morning summary" is true for owners and waitlist confirmations reach people.
+  The pricing cards weren't changed.
+- Turn on Web Analytics ([step 4](#4-settings-in-vercel-per-environment)) and submit the sitemap
+  in Google Search Console.
+- A booking calendar link for the confirmation email, if you want one (it needs an account).
+- Your picks from the review's 100 ideas.
 
 ### Decided on 2026-10-15
 
@@ -904,8 +964,8 @@ fixed.
   that check they clear the demo Gmail's old access.** A connection made while the app still
   asked for `gmail.send` keeps it (Google even adds it back on a reconnect), and it could send the
   practice copy on its own, so the check would prove nothing. On every Squared Away account where
-  the demo Gmail is connected (the dry-run account, for one): Settings → **Disconnect Gmail** →
-  **Yes, disconnect Gmail**, which also removes the access at Google. Then
+  the demo Gmail is connected (the dry-run account, for one): Settings → Your Gmail → **Disconnect Gmail**
+  → **Yes, disconnect Gmail**, which also removes the access at Google. Then
   myaccount.google.com/permissions, signed in as the demo Gmail, must show no Gmail access for
   Squared Away (if it still does, remove it there). Then they connect it again and confirm Google
   kept only the two: that mailbox's saved permissions (`mailboxes.scopes`) have no `gmail.send`,

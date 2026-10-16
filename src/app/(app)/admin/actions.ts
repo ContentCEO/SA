@@ -3,7 +3,8 @@
 import { redirect } from "next/navigation";
 import { z } from "zod";
 import { planEnum, tradeEnum } from "@/db/schema";
-import { inviteOwner } from "@/server/admin";
+import { inviteOwner, markTestUserAdded } from "@/server/admin";
+import { sendInviteEmail } from "@/server/invite-email";
 import { inviteFromWaitlist } from "@/server/waitlist";
 import { connectStripe } from "@/server/billing";
 import { requireAdmin } from "@/server/session";
@@ -48,7 +49,19 @@ export async function inviteAction(formData: FormData) {
   });
   if (!parsed.success) redirect("/admin?error=invite");
   const r = await inviteOwner(parsed.data);
-  redirect(`/admin?done=${r}`);
+  if (r === "already_invited") redirect("/admin?done=already_invited#invite");
+  // Round 2 (FW A1): the "you're in" email. A failed email never fails the invite.
+  const emailed = await sendInviteEmail(parsed.data.email);
+  redirect(`/admin?done=${emailed === "sent" ? "invited_emailed" : "invited"}#invite`);
+}
+
+/** Round 2 (FW A4): "Added as a Google test user" on an invite. */
+export async function testUserAddedAction(formData: FormData) {
+  await requireAdmin();
+  const email = z.string().trim().toLowerCase().email().safeParse(formData.get("email"));
+  if (!email.success) redirect("/admin?error=unknown");
+  await markTestUserAdded(email.data);
+  redirect("/admin?done=test_user#invite");
 }
 
 const plan = z.enum(planEnum.enumValues).nullable();
@@ -68,7 +81,10 @@ export async function inviteFromWaitlistAction(formData: FormData) {
   if (!email.success) redirect("/admin?error=unknown");
   const r = await inviteFromWaitlist(email.data);
   if (r === "growth_only") redirect("/admin?error=growth_only#waitlist");
-  redirect(r === "invited" ? "/admin?done=invited#waitlist" : "/admin?error=unknown");
+  if (r !== "invited") redirect("/admin?error=unknown");
+  // Round 2 (FW A1): once per invite (sendInviteEmail checks), never failing the invite.
+  const emailed = await sendInviteEmail(email.data);
+  redirect(`/admin?done=${emailed === "sent" ? "invited_emailed" : "invited"}#waitlist`);
 }
 
 export async function connectStripeAction() {

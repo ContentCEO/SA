@@ -7,17 +7,17 @@ import { sum } from "drizzle-orm";
 import { classifyEmail } from "@/ai/classify";
 import { callStructured } from "@/ai/client";
 import { checkDraft } from "@/ai/draft-checks";
-import { CLASSIFY_PROMPT_VERSION } from "@/ai/prompts/classify.v3";
+import { CLASSIFY_PROMPT_VERSION } from "@/ai/prompts/classify.v4";
 import { EDIT_TONE_PROMPT_VERSION } from "@/ai/prompts/edit-tone.v1";
 import { PURPOSE_PROMPT_VERSION } from "@/ai/prompts/purpose.v1";
-import { REVISE_PROMPT_VERSION } from "@/ai/prompts/revise.v1";
+import { REVISE_PROMPT_VERSION } from "@/ai/prompts/revise.v2";
 import {
   conversationBlock,
   DRAFT_INSTRUCTIONS,
   DRAFT_PROMPT_VERSION,
   draftSchema,
   workspaceBlock,
-} from "@/ai/prompts/draft.v5";
+} from "@/ai/prompts/draft.v6";
 import { usage } from "@/db/schema";
 import { ensureUserAndWorkspace } from "@/server/accounts";
 import { createTestDb } from "../support/db";
@@ -92,6 +92,11 @@ export async function runEvals(
       invoiceStatus: r.extracted.invoice?.status ?? null,
       acceptsQuote: r.extracted.accepts_quote === true,
       jobDone: r.extracted.job_done === true,
+      paymentChange: r.extracted.payment_change === true,
+      gasSmell: r.extracted.gas_smell === true,
+      onMoneyOwed:
+        r.category === "invoice_payment" && r.extracted.invoice_direction !== "owed_by_business",
+      disputed: r.extracted.disputed === true,
     };
 
     if (opts.drafts !== false && c.draft) {
@@ -107,6 +112,7 @@ export async function runEvals(
           { text: workspaceBlock(ctx), cache: true },
         ],
         user: conversationBlock({
+          now: email.receivedAt,
           subject: c.subject,
           category: r.category,
           summary: r.summary,

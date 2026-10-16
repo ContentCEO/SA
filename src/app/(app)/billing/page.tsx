@@ -13,6 +13,7 @@ import {
   billingStatusLine,
   checkoutTerms,
   downgradePausesLine,
+  firstChargeLine,
   PLAN_IDS,
   SALES_TAX_NOTE,
 } from "@/server/billing-rules";
@@ -33,7 +34,8 @@ import {
   stripePageShowsLine,
 } from "@/server/referral-rules";
 import { EARN_THRESHOLD } from "@/server/autopilot";
-import { effectiveStatus } from "@/server/lifecycle";
+import { effectiveStatus, setupReallyPaid } from "@/server/lifecycle";
+import { phoneHref } from "@/lib/phone-href";
 import { listMailboxes } from "@/server/mailboxes";
 import { freeMonthView, referralLinkFor, viewChanges } from "@/server/referrals";
 import { requireOwner } from "@/server/session";
@@ -132,6 +134,10 @@ export default async function BillingPage(props: PageProps<"/billing">) {
       : typeof params.error === "string"
         ? errors[params.error]
         : undefined;
+  // Round 2 (FW): paid, setup call still to come — say what happens next.
+  const awaitingSetupCall =
+    effectiveStatus(workspace) === "setup_paid" && setupReallyPaid(workspace);
+  const davi = siteConfig.operator.split(" ")[0];
 
   return (
     <>
@@ -147,6 +153,35 @@ export default async function BillingPage(props: PageProps<"/billing">) {
         </section>
       ) : paidJustNow ? (
         <Notice>Payment received. Thank you — you&apos;re all set.</Notice>
+      ) : null}
+
+      {awaitingSetupCall ? (
+        <section
+          aria-labelledby="next-steps"
+          className="sa-inverted flex flex-col gap-3 rounded-xl p-4"
+        >
+          <h2 id="next-steps" className="text-xl font-black">
+            What happens next
+          </h2>
+          <ol className="flex list-decimal flex-col gap-2 pl-5">
+            <li>
+              {davi} calls you to find a time for your setup call. Rather pick it yourself? Call or
+              text{" "}
+              <a
+                href={phoneHref("tel", siteConfig.phone)}
+                className="font-semibold underline underline-offset-4"
+              >
+                {siteConfig.phone}
+              </a>
+              .
+            </li>
+            <li>
+              Have your price list handy. On the call, {davi} loads your prices, hours and the
+              things you never promise, and tunes your drafts with you.
+            </li>
+            <li>Sending is on now. Every reply still waits for you to tap Send reply.</li>
+          </ol>
+        </section>
       ) : null}
 
       {current ? (
@@ -326,6 +361,7 @@ export default async function BillingPage(props: PageProps<"/billing">) {
                       {p.autopilot ? " · Autopilot" : ""}
                       {id === "company" ? " · Priority support" : ""}
                     </p>
+                    <p className="text-sm">{firstChargeLine(id, terms.includeSetupFee)}</p>
                     <form action={startCheckoutAction}>
                       <input type="hidden" name="plan" value={id} />
                       <Button type="submit" className="w-full">

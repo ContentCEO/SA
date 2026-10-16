@@ -290,6 +290,49 @@ describe("history", () => {
     expect(url).toContain("format=metadata");
     expect(url).not.toContain("format=full");
   });
+
+  it("reads Reply-To (website forms): asked for by default, alone when named, and says whether it could", async () => {
+    const msg = {
+      id: "m",
+      threadId: "t",
+      payload: {
+        headers: [
+          { name: "From", value: "Wix Forms <no-reply@crm.wix.com>" },
+          { name: "Reply-To", value: "Dana <dana@example.com>" },
+        ],
+      },
+    };
+    const f = vi
+      .fn()
+      .mockResolvedValueOnce(token())
+      .mockResolvedValueOnce(json(msg))
+      .mockResolvedValueOnce(json(msg))
+      .mockResolvedValueOnce(json(msg))
+      .mockResolvedValueOnce(json(msg));
+    const { r } = reader(f);
+    const asked = (i: number) =>
+      new URL(String(f.mock.calls[i]![0])).searchParams.getAll("metadataHeaders");
+
+    const byDefault = await r.getMessage("m", { withBody: false });
+    expect(asked(1)).toContain("Reply-To");
+    expect(byDefault?.headers).toMatchObject({
+      replyTo: "Dana <dana@example.com>",
+      replyToRead: true,
+    });
+
+    const only = await r.getMessage("m", { withBody: false, headers: ["Reply-To"] });
+    expect(asked(2)).toEqual(["Reply-To"]);
+    expect(only?.headers.replyToRead).toBe(true);
+
+    // A subset without Reply-To says nothing about it, whatever came back.
+    const subset = await r.getMessage("m", { withBody: false, headers: ["From"] });
+    expect(asked(3)).toEqual(["From"]);
+    expect(subset?.headers.replyToRead).toBe(false);
+
+    const full = await r.getMessage("m", { withBody: true });
+    expect(asked(4)).toEqual([]);
+    expect(full?.headers).toMatchObject({ replyTo: "Dana <dana@example.com>", replyToRead: true });
+  });
 });
 
 describe("message parsing", () => {

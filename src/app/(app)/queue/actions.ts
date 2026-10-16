@@ -4,7 +4,7 @@ import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { z } from "zod";
 import { holdAutopilot } from "@/server/autopilot";
-import { isTweak } from "@/ai/prompts/revise.v1";
+import { isTweak } from "@/ai/prompts/revise.v2";
 import { draftSendQueued, enqueue } from "@/jobs/client";
 import { isBatchCategory } from "@/server/batch-rules";
 import {
@@ -35,12 +35,16 @@ export async function sendDraftAction(formData: FormData) {
   const editedBody = typeof edited === "string" ? body.safeParse(edited) : null;
   if (editedBody && !editedBody.success) redirect("/queue?error=empty");
   if (!(await hitLimit("send", workspace.id)).allowed) redirect("/queue?error=busy");
+  // The "To:" the card showed (H7). Missing (an old page) = not checked.
+  const shownTo = formData.get("seenTo");
+  const seenTo = typeof shownTo === "string" && shownTo.length <= 320 ? shownTo : undefined;
 
   let outcome;
   try {
     outcome = await queueSend(workspace.id, draftId.data, {
       editedBody: editedBody?.data,
       device: await device(),
+      seenTo,
     });
   } catch (err) {
     if (err instanceof SendingBlockedError) redirect("/queue?error=blocked");
@@ -56,8 +60,12 @@ export async function sendDraftAction(formData: FormData) {
       redirect(`/queue?sent=${draftId.data}`);
     case "changed_in_gmail":
       redirect("/queue?error=changed");
+    case "to_changed":
+      redirect("/queue?error=to_changed");
     case "gaps_unfilled":
       redirect("/queue?error=gaps");
+    case "no_reply_address":
+      redirect("/queue?error=no_reply_address");
     case "deleted_in_gmail":
       redirect("/queue?error=deleted");
     case "reconnect_needed":
@@ -198,6 +206,9 @@ export async function draftReplyAction(formData: FormData) {
     no_text: "notext",
     capped: "capped",
     read_only: "readonly",
+    gmail_busy: "gmail_busy",
+    reply_to_unread: "reply_to_unread",
+    no_reply_address: "no_reply_address",
   };
   redirect(`/queue?error=${reasons[r.reason] ?? "draftfailed"}`);
 }

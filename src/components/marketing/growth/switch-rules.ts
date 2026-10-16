@@ -96,3 +96,45 @@ export function tapPlaysShow(tap: {
     tap.href === "#growth" && tap.pointer && tap.mode === "app" && !tap.playing && !tap.instant
   );
 }
+
+/**
+ * A reading only plays the show if the visitor scrolled into it. A line crossed with no scroll in
+ * the last `USER_SCROLL_MS` (or while a form's thank-you is being brought into view, `held`) was
+ * crossed by the page changing shape under a still screen: the waitlist form turning into its
+ * short thank-you, a FAQ answer folding up. Such a reading is a "layout" crossing and waits for
+ * the visitor's next scroll (deferredMode). Navigation readings keep their own path.
+ */
+export const USER_SCROLL_MS = 150;
+/** How long a "sa:hold-switch" event (a form's thank-you scrolling into view) holds the switch. */
+export const HOLD_MS = 1200;
+/** After a layout crossing, scrolling down this share of the screen plays the show as usual. */
+export const DEFERRED_SCROLL_DOWN = 0.15;
+
+export function crossingCause(r: {
+  msSinceUserScroll: number;
+  inNav: boolean;
+  held: boolean;
+}): "scroll" | "layout" {
+  if (r.inNav) return "scroll";
+  if (r.held) return "layout";
+  return r.msSinceUserScroll <= USER_SCROLL_MS ? "scroll" : "layout";
+}
+
+/**
+ * After a layout crossing, the side to take on the visitor's next scroll, or null to keep
+ * waiting: Growth once they scroll down at least DEFERRED_SCROLL_DOWN of the screen past where
+ * the page was (they scrolled into it, so the show plays), the app once the Growth part is back
+ * below the bottom edge.
+ */
+export function deferredMode(r: {
+  startScrollY: number;
+  scrollY: number;
+  top: number;
+  h: number;
+}): HalfMode | null {
+  if (r.top >= SWITCH_OUT_AT * r.h) return "app";
+  if (r.top <= SWITCH_IN_AT * r.h && r.scrollY - r.startScrollY >= DEFERRED_SCROLL_DOWN * r.h) {
+    return "growth";
+  }
+  return null;
+}

@@ -263,7 +263,7 @@ test("a paused inbox: Settings says why and offers the switch; the queue says re
     ),
   ).toBeVisible();
 
-  await page.goto("/settings");
+  await page.goto("/settings/gmail");
   await expect(
     page.getByText(
       "Paused. Solo includes 1 inbox. Nothing is read or drafted here, and nothing was deleted.",

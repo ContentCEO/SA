@@ -147,9 +147,11 @@ export const JOB_KINDS: Record<Trade, readonly JobKind[]> = {
         "condenser",
       ],
     },
+    // Before furnaces: "water heater" is not a furnace (round 2).
+    { label: "Water heaters", keywords: ["water heater", "tankless", "hot water"] },
     {
       label: "Furnaces and boilers",
-      keywords: ["furnace", "boiler", "heater", "heating", "radiator"],
+      keywords: ["furnace", "boiler", "space heater", "unit heater", "heating", "radiator"],
     },
     { label: "Ductwork and vents", keywords: ["duct", "ductwork", "vent", "register"] },
     { label: "Thermostats", keywords: ["thermostat", "nest", "ecobee"] },
@@ -163,15 +165,30 @@ export const JOB_KINDS: Record<Trade, readonly JobKind[]> = {
     },
   ],
   roofing: [
+    // First: "new roof and gutters" is a roof job (round 2). Only roof words here, so
+    // "replace the gutters" is still Gutters.
+    {
+      label: "Roof replacements",
+      keywords: [
+        "new roof",
+        "reroof",
+        "re roof",
+        "tear off",
+        "roof replacement",
+        "replace the roof",
+        "replace my roof",
+        "replace our roof",
+        "replace roof",
+        "roof replace",
+        "full roof",
+        "whole roof",
+      ],
+    },
     { label: "Gutters", keywords: ["gutter", "downspout", "gutter guard"] },
     { label: "Skylights and chimneys", keywords: ["skylight", "chimney", "flashing"] },
     {
       label: "Flat roofs",
       keywords: ["flat roof", "epdm", "tpo", "rubber roof", "membrane"],
-    },
-    {
-      label: "Roof replacements",
-      keywords: ["replace", "replacement", "new roof", "reroof", "re roof", "tear off"],
     },
     {
       label: "Roof repairs and leaks",
@@ -181,7 +198,8 @@ export const JOB_KINDS: Record<Trade, readonly JobKind[]> = {
   ],
   painting: [
     { label: "Cabinet painting", keywords: ["cabinet"] },
-    { label: "Decks and fences", keywords: ["stain", "staining", "deck", "fence"] },
+    // Not "stain": a water stain on the ceiling is an interior job (round 2).
+    { label: "Decks and fences", keywords: ["deck", "fence", "deck stain", "fence stain"] },
     { label: "Commercial painting", keywords: ["commercial", "office", "store", "warehouse"] },
     {
       label: "Exterior painting",
@@ -235,9 +253,42 @@ export const JOB_KINDS: Record<Trade, readonly JobKind[]> = {
       label: "Planting and garden beds",
       keywords: ["planting", "plant", "garden", "flower bed", "mulch", "shrub", "bush", "hedge"],
     },
+    // Snow apart from leaf cleanups, and "plow" as customers write it (round 2).
     {
-      label: "Cleanups and snow",
-      keywords: ["cleanup", "clean up", "leaves", "leaf", "snow", "plowing"],
+      label: "Snow and plowing",
+      keywords: [
+        "snow",
+        "plow",
+        "plowing",
+        "plowed",
+        "snow removal",
+        "shoveling",
+        "salting",
+        "ice",
+      ],
+    },
+    {
+      label: "Cleanups",
+      keywords: ["cleanup", "clean up", "leaves", "leaf", "fall cleanup", "spring cleanup"],
+    },
+  ],
+  // Round 2 (TW D1): a general remodeler. The room kinds come first; the generic one last.
+  remodeling: [
+    { label: "Kitchens", keywords: ["kitchen", "cabinets", "countertop", "backsplash"] },
+    {
+      label: "Bathrooms",
+      keywords: ["bathroom", "bath", "shower", "tub", "bathtub", "vanity", "tile"],
+    },
+    { label: "Basements", keywords: ["basement", "finish the basement", "finished basement"] },
+    {
+      label: "Additions",
+      keywords: ["addition", "sunroom", "dormer", "in law", "adu", "second story", "bump out"],
+    },
+    { label: "Siding and windows", keywords: ["siding", "window", "exterior door", "entry door"] },
+    { label: "Decks and porches", keywords: ["deck", "porch", "mudroom"] },
+    {
+      label: "Whole-house renovations",
+      keywords: ["whole house", "gut", "renovation", "renovate", "remodel", "rehab", "flooring"],
     },
   ],
   other: [

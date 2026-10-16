@@ -69,7 +69,7 @@ const KEPT: Record<string, string> = {
   waitlist:
     "public-site entry, may hold a Growth call request (a separate service); kept until the person asks",
   app_settings:
-    "global settings and markers; deleteAccount deletes the workspace's cost-alert and sent-email markers. Left: the per-mailbox done marker `cleanup:draft-messages-v1:<mailbox id>` (a content-free uuid, never read once the mailbox is gone)",
+    "global settings and markers; deleteAccount deletes the workspace's cost-alert and sent-email markers. Left: the per-mailbox done markers `cleanup:draft-messages-v1:<mailbox id>` and `backfill:reply-to-v1:<mailbox id>` (content-free uuids, never read once the mailbox is gone)",
   rate_limits: "counters keyed by workspace or hashed IP; purged daily after 2 days",
   stripe_events: "Stripe event ids and types only, for webhook idempotency",
   referral_credits:

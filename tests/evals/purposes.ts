@@ -12,7 +12,7 @@ import {
   draftSchema,
   workspaceBlock,
   type WorkspaceContext,
-} from "@/ai/prompts/draft.v5";
+} from "@/ai/prompts/draft.v6";
 import {
   closingQuestionTask,
   DEPOSIT_GAP,
@@ -20,7 +20,7 @@ import {
   PURPOSE_PROMPT_VERSION,
   reviewRequestTask,
 } from "@/ai/prompts/purpose.v1";
-import { DRAFT_PROMPT_VERSION } from "@/ai/prompts/draft.v5";
+import { DRAFT_PROMPT_VERSION } from "@/ai/prompts/draft.v6";
 import { ensureDepositGap } from "@/ai/purpose";
 import type { Trade } from "@/config/trades";
 import type { DraftPurpose } from "@/db/schema";
