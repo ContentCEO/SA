@@ -596,7 +596,7 @@ async function startFreeMonth(row: Row, w: W, sub: Sub, inv: Stripe.Invoice, now
     await logActivity(
       w.id,
       "referral_free_month_started",
-      { plan: freePlan, endsAt: endsAt.toISOString() },
+      { plan: freePlan, paidPlan, endsAt: endsAt.toISOString() },
       now,
       "squared_away",
       tx,
@@ -1161,7 +1161,7 @@ async function changePlan(
             priceCents: keep.priceCents,
             firstChargeAt: keep.firstChargeAt.toISOString(),
           }
-        : { plan: back!.plan, priceCents: back!.priceCents },
+        : { plan: back!.plan, priceCents: back!.priceCents, at: back!.at.toISOString() },
       now,
       "owner",
       tx,

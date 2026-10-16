@@ -394,7 +394,7 @@ describe("running: the renewal that used it starts the free month", () => {
     expect((await log()).filter(([a]) => a === "referral_free_month_started")).toEqual([
       [
         "referral_free_month_started",
-        { plan: "crew", endsAt: row.endsAt!.toISOString() },
+        { plan: "crew", paidPlan: "solo", endsAt: row.endsAt!.toISOString() },
         "squared_away",
       ],
     ]);
@@ -590,7 +590,7 @@ describe("the end of a free month", () => {
     expect(actions).toEqual(
       expect.arrayContaining([
         ["autopilot_turned_off_plan", { count: 1 }],
-        ["inboxes_paused_plan", { count: 2 }],
+        ["inboxes_paused_plan", { count: 2, plan: "solo", limit: 1 }],
         ["referral_free_month_ended", { plan: "crew", backTo: "solo" }],
       ]),
     );

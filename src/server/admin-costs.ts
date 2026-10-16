@@ -8,6 +8,7 @@ import { appSettings, usage, users, workspaces } from "@/db/schema";
 import { sendEmail, type EmailSender } from "@/lib/email";
 import { appUrl } from "@/lib/app-url";
 import { COST_ALERT_SHARE, costAlertDue, costLine } from "./admin-cost-rules";
+import { freeMonthRunning } from "./referral-rules";
 
 export type CostRow = {
   workspaceId: string;
@@ -15,6 +16,8 @@ export type CostRow = {
   label: string;
   status: string;
   plan: PlanId | null;
+  /** Plan #47: a free referral month is running (revenue stays the billed price). */
+  freeMonth: boolean;
   costCents: number;
   revenueCents: number;
   marginCents: number;
@@ -46,6 +49,8 @@ export async function costRows(now: Date = new Date()): Promise<CostRow[]> {
       email: users.email,
       status: workspaces.status,
       plan: workspaces.plan,
+      freePlan: workspaces.freePlan,
+      freePlanUntil: workspaces.freePlanUntil,
       calls: per.calls,
       cost: per.cost,
       busiest: per.busiest,
@@ -62,6 +67,7 @@ export async function costRows(now: Date = new Date()): Promise<CostRow[]> {
         label: r.businessName || r.email,
         status: r.status,
         plan: r.plan,
+        freeMonth: freeMonthRunning(r, now),
         ...costLine(input),
         calls: r.calls ?? 0,
         busiestDayCalls: r.busiest ?? 0,

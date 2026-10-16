@@ -61,7 +61,8 @@ export default async function AdminCostsPage() {
               <div className="flex items-baseline justify-between gap-2">
                 <span className="truncate font-black">{r.label}</span>
                 <span className="shrink-0 text-sm font-semibold">
-                  {r.plan ? pricing.plans[r.plan].name : "No plan"} · {r.status.replace("_", " ")}
+                  {r.plan ? pricing.plans[r.plan].name : "No plan"}
+                  {r.freeMonth ? " · free month" : ""} · {r.status.replace("_", " ")}
                 </span>
               </div>
               <p>

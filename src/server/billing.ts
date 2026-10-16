@@ -28,6 +28,7 @@ import {
   stripeKeyMode,
 } from "./billing-rules";
 import { setupReallyPaid } from "./lifecycle";
+import { portalSchedulesDowngrades } from "./referral-rules";
 import { creditReferralSafely, reconcileReferralSafely } from "./referrals";
 import { isTermsUrlMissingError, stripeErrorReason } from "./stripe-error-rules";
 import {
@@ -98,6 +99,35 @@ export async function salesTaxStatus(): Promise<SalesTaxStatus | null> {
     // reason code is what tells a key problem (auth, permission) from a blip (connection).
     const reason = stripeErrorReason(err);
     console.error("stripe_tax_status_failed", {
+      error: err instanceof Error ? err.name : "unknown",
+      reason,
+    });
+    return "unknown";
+  }
+}
+
+/**
+ * Plan #47, for the /admin Payments card: what Stripe's default billing-page settings mean for
+ * free months. Null without Stripe, "unknown" when it can't be read quickly; never throws.
+ */
+export async function portalStatus(): Promise<
+  { schedulesDowngrades: boolean; loginPage: boolean } | "unknown" | null
+> {
+  if (!stripeConfigured()) return null;
+  try {
+    const list = await stripe().billingPortal.configurations.list(
+      { is_default: true, limit: 1 },
+      { timeout: 5_000, maxNetworkRetries: 0 },
+    );
+    const config = list.data[0];
+    if (!config) return { schedulesDowngrades: false, loginPage: false };
+    return {
+      schedulesDowngrades: portalSchedulesDowngrades(config),
+      loginPage: !!config.login_page?.enabled,
+    };
+  } catch (err) {
+    const reason = stripeErrorReason(err);
+    console.error("stripe_portal_status_failed", {
       error: err instanceof Error ? err.name : "unknown",
       reason,
     });

@@ -28,6 +28,7 @@ import {
 } from "./actions";
 import { PendingButton } from "@/components/app/pending-button";
 import {
+  portalStatus,
   salesTaxStatus,
   stripeConfigured,
   stripeConnectedAt,
@@ -44,7 +45,7 @@ import {
   testPaymentsResetNotice,
 } from "@/server/test-payment-rules";
 import { listWaitlist } from "@/server/waitlist";
-import { referralsVisible } from "@/server/referral-rules";
+import { PORTAL_SCHEDULES_DOWNGRADES_LINE, referralsVisible } from "@/server/referral-rules";
 import { describeWaitlistEntry, formatStamp } from "@/server/growth-note";
 import { growthCopy } from "@/components/marketing/growth/growth-copy";
 import { phoneHref } from "@/lib/phone-href";
@@ -317,7 +318,7 @@ function WorkspaceCard({ w, now }: { w: AdminRow; now: Date }) {
       </header>
       <dl className="grid grid-cols-2 gap-x-4 gap-y-2">
         <Stat label="Trade" value={isTrade(w.trade) ? tradeLabel[w.trade] : "—"} />
-        <Stat label="Plan" value={w.plan ?? "None yet"} />
+        <Stat label="Plan" value={w.planLabel} />
         <Stat
           label="Setup paid"
           value={
@@ -368,17 +369,16 @@ function WorkspaceCard({ w, now }: { w: AdminRow; now: Date }) {
         <Stat label="AI calls today" value={w.ai.callsToday} />
         <Stat label="AI cost this month" value={`${dollars(w.ai.costCentsThisMonth)} (est.)`} />
         {w.referredByName ? <Stat label="Referred by" value={w.referredByName} /> : null}
-        {w.referralCredits.waiting || w.referralCredits.failed ? (
+        {w.freeMonths.length ? (
           <Stat
-            label="Referral credit"
-            value={[
-              w.referralCredits.waiting ? `${w.referralCredits.waiting} waiting` : null,
-              w.referralCredits.failed
-                ? `${w.referralCredits.failed} refused by Stripe${w.referralCredits.lastErrorCode ? ` (${w.referralCredits.lastErrorCode})` : ""}`
-                : null,
-            ]
-              .filter(Boolean)
-              .join(", ")}
+            label="Free months"
+            value={
+              <ul className="flex flex-col">
+                {w.freeMonths.map((line) => (
+                  <li key={line}>{line}</li>
+                ))}
+              </ul>
+            }
           />
         ) : null}
       </dl>
@@ -436,19 +436,31 @@ export default async function AdminPage(props: PageProps<"/admin">) {
   // Test payments can only be told apart with the live key. The counts come from the last check
   // (database only): a plain page load asks Stripe nothing new.
   const live = stripeConfigured() && stripeMode() === "live";
-  const [rows, total, invited, waiting, stripeAt, system, salesTax, testPayments, termsBoxOff] =
-    await Promise.all([
-      adminOverview(now),
-      countWorkspaces(),
-      listInvites(),
-      listWaitlist(),
-      stripeConnectedAt(),
-      systemHealth(now),
-      salesTaxStatus(),
-      live ? lastTestPaymentsResult() : null,
-      // Database only: set by the last checkout that had to go without the terms box.
-      termsBoxOffSince(),
-    ]);
+  const [
+    rows,
+    total,
+    invited,
+    waiting,
+    stripeAt,
+    system,
+    salesTax,
+    testPayments,
+    termsBoxOff,
+    portal,
+  ] = await Promise.all([
+    adminOverview(now),
+    countWorkspaces(),
+    listInvites(),
+    listWaitlist(),
+    stripeConnectedAt(),
+    systemHealth(now),
+    salesTaxStatus(),
+    live ? lastTestPaymentsResult() : null,
+    // Database only: set by the last checkout that had to go without the terms box.
+    termsBoxOffSince(),
+    // Plan #47: free months wait while Stripe's page schedules downgrades (short timeout).
+    portalStatus(),
+  ]);
   // Payment messages show inside the Payments section (the page scrolls there), not at the top.
   const isStripe = (k: unknown) => typeof k === "string" && k.startsWith("stripe");
   const doneMsg =
@@ -541,6 +553,9 @@ export default async function AdminPage(props: PageProps<"/admin">) {
               </p>
               {salesTax ? <p>{SALES_TAX_LINES[salesTax]}</p> : null}
               {salesTax === "on" ? <p>{SALES_TAX_ON_NOTE}</p> : null}
+              {portal !== null && portal !== "unknown" && portal.schedulesDowngrades ? (
+                <p className="font-semibold">{PORTAL_SCHEDULES_DOWNGRADES_LINE}</p>
+              ) : null}
               {termsBoxOff ? (
                 <p className="font-semibold">
                   {TERMS_BOX_OFF_LINE} (Last checkout without it: {et.format(termsBoxOff)}.)

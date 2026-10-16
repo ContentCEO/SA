@@ -6,6 +6,7 @@ import { activityLog, drafts, mailboxes, messages, threads } from "@/db/schema";
 import { MINUTES_PER_SENT_REPLY } from "@/config/drafting";
 import { atRiskActivityLine } from "./leads-at-risk-rules";
 import { closeRate, isQuoteOutcome, type QuoteOutcome } from "./quote-rules";
+import { referralActivityLine } from "./referral-rules";
 import { workspaceTimeZone } from "./snooze";
 import { localMonthStart, usableTimeZone } from "./snooze-rules";
 
@@ -29,7 +30,11 @@ export function describeActivity(
   action: string,
   detail: Record<string, unknown>,
   who: Who | null,
+  timeZone?: string | null,
 ): string | null {
+  // Plan #47 free months and the plan effects that come with them (dates in the owner's zone).
+  const referral = referralActivityLine(action, detail, timeZone);
+  if (referral) return referral;
   const name = who?.name?.split(/[\s,]+/)[0] || null;
   const to = name ? ` to ${name}` : "";
   const about = who?.category && isCategory(who.category) ? ` · ${categoryTag[who.category]}` : "";
@@ -237,11 +242,13 @@ export async function listActivity(workspaceId: string, limit = 100): Promise<Ac
     }
   }
 
+  const zone = rows.some((r) => !r.threadId) ? await workspaceTimeZone(workspaceId) : null;
   return rows.flatMap((r) => {
     const text = describeActivity(
       r.action,
       r.detail,
       r.threadId ? (who.get(r.threadId) ?? null) : null,
+      zone,
     );
     if (!text) return [];
     const recordId =

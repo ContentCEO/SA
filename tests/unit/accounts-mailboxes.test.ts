@@ -206,7 +206,7 @@ describe("inbox limits follow the plan that counts", () => {
       "c@x.com": ["paused", "over_plan"],
     });
     const paused = await logs("inboxes_paused_plan");
-    expect(paused.map((l) => l.detail)).toEqual([{ count: 2 }]);
+    expect(paused.map((l) => l.detail)).toEqual([{ count: 2, plan: "solo", limit: 1 }]);
     // Idempotent: nothing more to pause, nothing more logged. Nothing was deleted.
     expect(await inboxLimitEffects(workspaceId, NOW)).toBe(0);
     expect(await logs("inboxes_paused_plan")).toHaveLength(1);

@@ -425,16 +425,8 @@ describe("GATE: switched off, or no reward configured", () => {
     const off = await byId();
     expect([...off.values()].every((r) => r.referredByName === null)).toBe(true);
     // An earned month never disappears from /admin when the switch is off.
-    expect(off.get(ref.id)!.referralCredits).toEqual({
-      waiting: 1,
-      failed: 0,
-      lastErrorCode: null,
-    });
-    expect(off.get(linked.id)!.referralCredits).toEqual({
-      waiting: 0,
-      failed: 0,
-      lastErrorCode: null,
-    });
+    expect(off.get(ref.id)!.freeMonths).toEqual(["1 waiting (no plan yet)"]);
+    expect(off.get(linked.id)!.freeMonths).toEqual([]);
 
     turnOn();
     const on = await byId();
@@ -922,7 +914,7 @@ describe("referral free month (switched on)", () => {
     expect((await rows()).map((r) => r.status)).toEqual(["pending", "pending"]);
   });
 
-  it("/admin shows the most recent Stripe refusal's code, not an alphabetical max", async () => {
+  it("/admin lists each free month Stripe refused or used early, never a legacy row", async () => {
     const ref = await referrer();
     const base = {
       beneficiaryWorkspaceId: ref.id,
@@ -931,21 +923,20 @@ describe("referral free month (switched on)", () => {
       status: "failed" as const,
     };
     await database.insert(referralCredits).values([
-      { ...base, referredEmailSha256: "a".repeat(64), lastErrorCode: "zzz_old", createdAt: NOW },
+      { ...base, referredEmailSha256: "a".repeat(64), lastErrorCode: "used_early", createdAt: NOW },
       {
         ...base,
         referredEmailSha256: "b".repeat(64),
-        lastErrorCode: "resource_missing",
+        lastErrorCode: "coupon_refused",
         createdAt: new Date(NOW.getTime() + 60_000),
       },
       { ...base, referredEmailSha256: "c".repeat(64), status: "applied", lastErrorCode: "zzzz" },
     ]);
     const row = (await adminOverview(NOW)).find((r) => r.workspaceId === ref.id)!;
-    expect(row.referralCredits).toEqual({
-      waiting: 0,
-      failed: 2,
-      lastErrorCode: "resource_missing",
-    });
+    expect(row.freeMonths).toEqual([
+      "used early: check in Stripe",
+      "Stripe refused the coupon: check in Stripe",
+    ]);
   });
 
   it("the sweep settles an active referred account whose move didn't reach the settle", async () => {

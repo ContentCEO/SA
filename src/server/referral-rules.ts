@@ -11,7 +11,7 @@ import {
   REFERRAL_REWARD,
   type PlanId,
 } from "@/config/pricing";
-import type { ReferralCredit, Workspace } from "@/db/schema";
+import type { ReferralAdminFlag, ReferralCredit, Workspace } from "@/db/schema";
 import { appUrl } from "@/lib/app-url";
 import { planFromLookupKey } from "./billing-rules";
 import { effectiveStatus, SENDING_ALLOWED, setupReallyPaid } from "./lifecycle";
@@ -787,3 +787,209 @@ export function pausedDraftsLine(count: number, plan: PlanId | null): string {
 export function inboxPausedSendLine(plan: PlanId | null): string {
   return `This inbox is paused. ${planIncludes(plan)}. The reply is still in that inbox's Gmail drafts.`;
 }
+
+// --- Activity (§4.7): short, no trailing period; details hold plan ids, dates, prices, counts --
+
+const planOf = (v: unknown): string | null =>
+  typeof v === "string" && Object.hasOwn(pricing.plans, v) ? planName(v as PlanId) : null;
+const countOf = (v: unknown): number | null =>
+  typeof v === "number" && Number.isInteger(v) && v > 0 ? v : null;
+const centsOf = (v: unknown): number | null =>
+  typeof v === "number" && Number.isInteger(v) && v >= 0 ? v : null;
+function dateOf(v: unknown, timeZone?: string | null): string | null {
+  if (typeof v !== "string") return null;
+  const d = new Date(v);
+  return Number.isNaN(d.getTime()) ? null : shortDate(d, timeZone);
+}
+
+/** The Activity line for a free-month or plan-effect row, or null when it isn't one of ours. */
+export function referralActivityLine(
+  action: string,
+  detail: Record<string, unknown>,
+  timeZone?: string | null,
+): string | null {
+  switch (action) {
+    case "referral_reward_earned":
+      return "Someone you referred is all set up. You earned a free month";
+    case "referral_free_month_scheduled": {
+      const when = dateOf(detail.startsAt, timeZone);
+      return when
+        ? `Your free month starts ${when}, on the plan above yours`
+        : "Your free month is booked, on the plan above yours";
+    }
+    case "referral_free_month_started": {
+      const plan = planOf(detail.plan);
+      const until = dateOf(detail.endsAt, timeZone);
+      if (!plan) return "Your free month started";
+      if (detail.paidPlan === detail.plan)
+        return until
+          ? `Your free month started. ${plan} is free until ${until}`
+          : `Your free month started. ${plan} is free this month`;
+      return until
+        ? `Your free month of ${plan} started. It runs until ${until}`
+        : `Your free month of ${plan} started`;
+    }
+    case "referral_plan_kept": {
+      const plan = planOf(detail.plan);
+      const cents = centsOf(detail.priceCents);
+      const from = dateOf(detail.firstChargeAt, timeZone);
+      if (!plan) return "You chose to keep your free month's plan";
+      return `You chose to keep ${plan}${cents != null ? `: ${formatDollars(cents)} a month` : ""}${from ? ` from ${from}` : ""}`;
+    }
+    case "referral_keep_undone": {
+      const plan = planOf(detail.plan);
+      const at = dateOf(detail.at, timeZone);
+      if (!plan) return "You chose to go back to your own plan";
+      return `You chose to go back to ${plan}${at ? ` after ${at}` : ""}`;
+    }
+    case "referral_free_month_ended": {
+      const plan = planOf(detail.plan);
+      const back = planOf(detail.backTo);
+      if (!plan) return "Your free month ended";
+      return back && back !== plan
+        ? `Your free month of ${plan} ended. You're back on ${back}`
+        : `Your free month of ${plan} ended`;
+    }
+    case "referral_reward_returned":
+      switch (detail.why) {
+        case "plan_ended":
+          return "Your plan ended before your free month began. It'll wait for you";
+        case "account_off":
+          return "Your free month waits until your account is back on";
+        case "renewed_without":
+          return "Stripe renewed without your free month, so it moves to your next renewal";
+        case "discount_removed":
+          return "Your free month came off your plan in Stripe before it began, so it moves to your next renewal";
+        default:
+          return "Your free month waits for a later renewal";
+      }
+    case "autopilot_turned_off_plan":
+      return "Autopilot is off again. It comes with Crew and Company";
+    case "inboxes_paused_plan": {
+      const n = countOf(detail.count) ?? 1;
+      const plan = planOf(detail.plan);
+      const limit = countOf(detail.limit);
+      const includes =
+        plan && limit
+          ? ` ${plan} includes ${limit}.`
+          : limit
+            ? ` Your plan includes ${limit}.`
+            : "";
+      return `Paused ${inboxes(n)}.${includes} Nothing was deleted`;
+    }
+    case "inboxes_resumed_plan": {
+      const n = countOf(detail.count) ?? 1;
+      return `Switched ${n} paused inbox${n === 1 ? "" : "es"} back on`;
+    }
+    case "inbox_swapped":
+      return "You switched which inbox is on";
+    default:
+      return null;
+  }
+}
+
+// --- /admin (§4.8): counts, dates, plan names and fixed codes only --------------------------
+
+/** What a flag means, for /admin (Davi's to-do, never shown to the owner). */
+export const REFERRAL_FLAG_TEXT: Record<ReferralAdminFlag, string> = {
+  renewed_without_discount: "Stripe renewed without the free month: check",
+  discount_removed: "discount removed in Stripe",
+  plan_changed_in_free_month:
+    "plan changed in Stripe during a free month (charges for free days removed)",
+  charged_for_free_days: "charged for free days: credit by hand",
+  invoice_not_final: "free-month invoice never finalized: check",
+  discount_lingered: "used discount stayed on: removed",
+  unknown_price: "price made by hand",
+  not_fully_free: "plan line wasn't fully free: check",
+};
+
+/** After this many failed tries in total, /admin says Stripe keeps refusing. */
+export const ADMIN_REFUSED_AFTER = 3;
+
+export type AdminRewardRow = Pick<
+  ReferralCredit,
+  | "status"
+  | "stripeMode"
+  | "startsAt"
+  | "endsAt"
+  | "freePlan"
+  | "keptAt"
+  | "attempts"
+  | "lastErrorCode"
+  | "adminFlag"
+  | "flaggedAt"
+>;
+
+/** Why the first waiting free month waits, from the database (no Stripe call). */
+function waitReason(
+  w: Pick<Workspace, "status" | "evaluationEndsAt" | "setupPaidVia" | "stripeSubscriptionId">,
+  row: AdminRewardRow,
+  keyMode: "live" | "test" | null,
+  otherFreeMonth: boolean,
+  now: Date,
+): string {
+  if (row.stripeMode && row.stripeMode !== keyMode) return `earned in ${row.stripeMode} mode`;
+  if (otherFreeMonth) return "after the current free month";
+  if (!w.stripeSubscriptionId) return "no plan yet";
+  if (!SENDING_ALLOWED.includes(effectiveStatus(w, now)) || w.setupPaidVia !== "stripe")
+    return "account off";
+  return "being set up";
+}
+
+/** The "Free months" lines on an /admin account card (empty when there's nothing to say). */
+export function adminFreeMonthLines(
+  w: Pick<Workspace, "status" | "evaluationEndsAt" | "setupPaidVia" | "stripeSubscriptionId">,
+  rows: AdminRewardRow[],
+  keyMode: "live" | "test" | null,
+  now: Date = new Date(),
+): string[] {
+  const zone = DEFAULT_ZONE;
+  const lines: string[] = [];
+  const running = rows.find((r) => r.status === "running");
+  const scheduled = rows.find((r) => r.status === "scheduled");
+  const pending = rows.filter((r) => r.status === "pending");
+  if (running && running.freePlan && running.endsAt)
+    lines.push(
+      `${planName(running.freePlan)} until ${shortDate(running.endsAt, zone)}${running.keptAt ? " · kept" : ""}`,
+    );
+  if (scheduled)
+    lines.push(
+      scheduled.startsAt ? `next from ${shortDate(scheduled.startsAt, zone)}` : "next booked",
+    );
+  if (pending.length) {
+    const reason = waitReason(w, pending[0]!, keyMode, !!(running || scheduled), now);
+    lines.push(`${pending.length} waiting (${reason})`);
+    const refused = pending.find((r) => r.attempts >= ADMIN_REFUSED_AFTER && r.lastErrorCode);
+    if (refused)
+      lines.push(`Stripe refused to add it ${refused.attempts} times (${refused.lastErrorCode})`);
+  }
+  for (const r of rows.filter((x) => x.status === "failed"))
+    lines.push(
+      r.lastErrorCode === "used_early"
+        ? "used early: check in Stripe"
+        : r.lastErrorCode === "coupon_refused"
+          ? "Stripe refused the coupon: check in Stripe"
+          : `failed (${r.lastErrorCode ?? "unknown"})`,
+    );
+  const flagged = rows
+    .filter((r) => r.adminFlag)
+    .sort((a, b) => (b.flaggedAt?.getTime() ?? 0) - (a.flaggedAt?.getTime() ?? 0))[0];
+  if (flagged?.adminFlag) lines.push(REFERRAL_FLAG_TEXT[flagged.adminFlag]);
+  return lines;
+}
+
+/** /admin's plan stat: the billed plan, plus the free one while it runs. */
+export function adminPlanLabel(
+  w: Pick<Workspace, "plan" | "freePlan" | "freePlanUntil">,
+  now: Date = new Date(),
+): string {
+  const billed = w.plan ? planName(w.plan) : "None yet";
+  if (!freeMonthRunning(w, now) || !w.freePlan || !w.freePlanUntil) return billed;
+  if (w.freePlan === w.plan)
+    return `${billed}, free to ${shortDate(w.freePlanUntil, DEFAULT_ZONE)}`;
+  return `${billed}, ${planName(w.freePlan)} free to ${shortDate(w.freePlanUntil, DEFAULT_ZONE)}`;
+}
+
+/** /admin Payments (§1.8): free months wait while Stripe's page schedules downgrades. */
+export const PORTAL_SCHEDULES_DOWNGRADES_LINE =
+  "Stripe's billing page schedules downgrades at period end, so free months wait. Turn that off in Stripe → Customer portal.";

@@ -888,7 +888,7 @@ describe("plan #47 §1.9: the webhook reads the live subscription", () => {
     expect(second && third).toBeTruthy();
     const log = await actions();
     expect(log).toContainEqual(["autopilot_turned_off_plan", { count: 1 }]);
-    expect(log).toContainEqual(["inboxes_paused_plan", { count: 2 }]);
+    expect(log).toContainEqual(["inboxes_paused_plan", { count: 2, plan: "solo", limit: 1 }]);
 
     // Moving back up (Crew includes 3) switches them on again.
     fake.portalChange("sub_1", priceOf("crew"));

@@ -305,7 +305,8 @@ export async function inboxLimitEffects(
 ): Promise<number> {
   const w = await planFields(workspaceId, executor);
   if (!w) return 0;
-  const limit = mailboxLimitFor(effectivePlan(w, now));
+  const plan = effectivePlan(w, now);
+  const limit = mailboxLimitFor(plan);
   const extra = (await countedInboxes(workspaceId, executor)).slice(limit).map((m) => m.id);
   if (!extra.length) return 0;
   const paused = await executor
@@ -328,7 +329,7 @@ export async function inboxLimitEffects(
       workspaceId,
       actor: "squared_away",
       action: "inboxes_paused_plan",
-      detail: { count: paused.length },
+      detail: { count: paused.length, plan, limit },
       createdAt: now,
     });
   }

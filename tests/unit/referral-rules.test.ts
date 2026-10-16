@@ -679,3 +679,187 @@ describe("copy", () => {
     );
   });
 });
+
+// --- Step 9: Activity and /admin ------------------------------------------------------------
+
+import {
+  adminFreeMonthLines,
+  adminPlanLabel,
+  REFERRAL_FLAG_TEXT,
+  referralActivityLine,
+  type AdminRewardRow,
+} from "@/server/referral-rules";
+import { describeActivity } from "@/server/activity";
+import { REFERRAL_ADMIN_FLAGS } from "@/db/schema";
+
+describe("§4.7 Activity lines (plan ids, dates, prices and counts only)", () => {
+  const TZ = "America/New_York";
+  const OCT28 = "2026-10-28T15:00:00.000Z";
+  const NOV15 = "2026-11-15T15:00:00.000Z";
+  const line = (action: string, detail: Record<string, unknown> = {}) =>
+    describeActivity(action, detail, null, TZ);
+
+  it("each action reads as designed", () => {
+    expect(line("referral_reward_earned")).toBe(
+      "Someone you referred is all set up. You earned a free month",
+    );
+    expect(line("referral_free_month_scheduled", { startsAt: OCT28 })).toBe(
+      "Your free month starts Oct 28, on the plan above yours",
+    );
+    expect(
+      line("referral_free_month_started", { plan: "crew", paidPlan: "solo", endsAt: NOV15 }),
+    ).toBe("Your free month of Crew started. It runs until Nov 15");
+    expect(
+      line("referral_free_month_started", { plan: "company", paidPlan: "company", endsAt: NOV15 }),
+    ).toBe("Your free month started. Company is free until Nov 15");
+    expect(
+      line("referral_plan_kept", { plan: "crew", priceCents: 19_900, firstChargeAt: NOV15 }),
+    ).toBe("You chose to keep Crew: $199 a month from Nov 15");
+    expect(line("referral_keep_undone", { plan: "solo", priceCents: 9_900, at: NOV15 })).toBe(
+      "You chose to go back to Solo after Nov 15",
+    );
+    expect(line("referral_free_month_ended", { plan: "crew", backTo: "solo" })).toBe(
+      "Your free month of Crew ended. You're back on Solo",
+    );
+    expect(line("referral_free_month_ended", { plan: "company", backTo: "company" })).toBe(
+      "Your free month of Company ended",
+    );
+    expect(line("referral_reward_returned", { why: "plan_ended" })).toBe(
+      "Your plan ended before your free month began. It'll wait for you",
+    );
+    expect(line("referral_reward_returned", { why: "account_off" })).toBe(
+      "Your free month waits until your account is back on",
+    );
+    expect(line("referral_reward_returned", { why: "renewed_without" })).toBe(
+      "Stripe renewed without your free month, so it moves to your next renewal",
+    );
+    expect(line("referral_reward_returned", { why: "discount_removed" })).toMatch(
+      /moves to your next renewal$/,
+    );
+    expect(line("autopilot_turned_off_plan", { count: 2 })).toBe(
+      "Autopilot is off again. It comes with Crew and Company",
+    );
+    expect(line("inboxes_paused_plan", { count: 2, plan: "solo", limit: 1 })).toBe(
+      "Paused 2 inboxes. Solo includes 1. Nothing was deleted",
+    );
+    expect(line("inboxes_resumed_plan", { count: 2 })).toBe("Switched 2 paused inboxes back on");
+    expect(line("inboxes_resumed_plan", { count: 1 })).toBe("Switched 1 paused inbox back on");
+    expect(line("inbox_swapped")).toBe("You switched which inbox is on");
+    // History from the old cash credit stays describable.
+    expect(line("referral_credit_applied")).toBe("A referral credit was added to your account");
+  });
+
+  it("odd details never break a line or leak text", () => {
+    expect(line("referral_free_month_scheduled", { startsAt: "nonsense" })).toBe(
+      "Your free month is booked, on the plan above yours",
+    );
+    expect(line("referral_plan_kept", { plan: "<b>x</b>" })).toBe(
+      "You chose to keep your free month's plan",
+    );
+    expect(line("inboxes_paused_plan", { count: "lots" })).toBe(
+      "Paused 1 inbox. Nothing was deleted",
+    );
+    expect(referralActivityLine("draft_created", {})).toBeNull();
+  });
+});
+
+describe("§4.8 /admin free months", () => {
+  const NOW8 = new Date("2026-10-16T15:00:00Z");
+  const on = {
+    status: "active" as const,
+    evaluationEndsAt: null,
+    setupPaidVia: "stripe" as const,
+    stripeSubscriptionId: "sub_1",
+  };
+  const row = (over: Partial<AdminRewardRow>): AdminRewardRow => ({
+    status: "pending",
+    stripeMode: "live",
+    startsAt: null,
+    endsAt: null,
+    freePlan: null,
+    keptAt: null,
+    attempts: 0,
+    lastErrorCode: null,
+    adminFlag: null,
+    flaggedAt: null,
+    ...over,
+  });
+
+  it("running, booked and waiting, with why", () => {
+    expect(
+      adminFreeMonthLines(
+        on,
+        [
+          row({
+            status: "running",
+            freePlan: "crew",
+            endsAt: new Date("2026-11-15T15:00:00Z"),
+            keptAt: NOW8,
+          }),
+          row({}),
+        ],
+        "live",
+        NOW8,
+      ),
+    ).toEqual(["Crew until Nov 15 · kept", "1 waiting (after the current free month)"]);
+    expect(
+      adminFreeMonthLines(
+        on,
+        [row({ status: "scheduled", startsAt: new Date("2026-10-28T15:00:00Z") })],
+        "live",
+        NOW8,
+      ),
+    ).toEqual(["next from Oct 28"]);
+    expect(adminFreeMonthLines(on, [row({ stripeMode: "test" })], "live", NOW8)).toEqual([
+      "1 waiting (earned in test mode)",
+    ]);
+    expect(
+      adminFreeMonthLines({ ...on, stripeSubscriptionId: null }, [row({})], "live", NOW8),
+    ).toEqual(["1 waiting (no plan yet)"]);
+    expect(adminFreeMonthLines({ ...on, status: "past_due" }, [row({})], "live", NOW8)).toEqual([
+      "1 waiting (account off)",
+    ]);
+  });
+
+  it("refusals after 3 tries, used early, and the latest flag", () => {
+    expect(
+      adminFreeMonthLines(
+        on,
+        [
+          row({ attempts: 3, lastErrorCode: "resource_missing" }),
+          row({ status: "failed", lastErrorCode: "used_early" }),
+          row({ status: "done", adminFlag: "discount_lingered", flaggedAt: NOW8 }),
+          row({
+            status: "done",
+            adminFlag: "charged_for_free_days",
+            flaggedAt: new Date(NOW8.getTime() + 1000),
+          }),
+        ],
+        "live",
+        NOW8,
+      ),
+    ).toEqual([
+      "1 waiting (being set up)",
+      "Stripe refused to add it 3 times (resource_missing)",
+      "used early: check in Stripe",
+      "charged for free days: credit by hand",
+    ]);
+    for (const f of REFERRAL_ADMIN_FLAGS) expect(REFERRAL_FLAG_TEXT[f]).toMatch(/\w/);
+  });
+
+  it("the plan stat names the free plan while it runs", () => {
+    const until = new Date("2026-11-15T15:00:00Z");
+    expect(adminPlanLabel({ plan: "solo", freePlan: "crew", freePlanUntil: until }, NOW8)).toBe(
+      "Solo, Crew free to Nov 15",
+    );
+    expect(
+      adminPlanLabel({ plan: "company", freePlan: "company", freePlanUntil: until }, NOW8),
+    ).toBe("Company, free to Nov 15");
+    expect(adminPlanLabel({ plan: "solo", freePlan: "crew", freePlanUntil: NOW8 }, NOW8)).toBe(
+      "Solo",
+    );
+    expect(adminPlanLabel({ plan: null, freePlan: null, freePlanUntil: null }, NOW8)).toBe(
+      "None yet",
+    );
+  });
+});

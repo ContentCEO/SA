@@ -17,7 +17,13 @@ import {
 } from "@/db/schema";
 import { normalizeEmail } from "./accounts";
 import { effectiveStatus, jobsAllowed } from "./lifecycle";
-import { referralsVisible } from "./referral-rules";
+import {
+  adminFreeMonthLines,
+  adminPlanLabel,
+  referralsVisible,
+  type AdminRewardRow,
+} from "./referral-rules";
+import { stripeKeyMode } from "./billing-rules";
 
 export function isAdminEmail(email: string | null | undefined): boolean {
   const admin = process.env.ADMIN_EMAIL;
@@ -32,6 +38,8 @@ export type AdminRow = {
   status: (typeof workspaces.$inferSelect)["status"];
   storedStatus: (typeof workspaces.$inferSelect)["status"];
   plan: string | null;
+  /** Plan #47: the billed plan's name, plus the free one while a free month runs. */
+  planLabel: string;
   evaluationEndsAt: Date | null;
   setupPaidAt: Date | null;
   setupPaidVia: "stripe" | "house" | null;
@@ -42,11 +50,12 @@ export type AdminRow = {
   health: { lastSortedAt: Date | null; lastDraftAt: Date | null; lastDigestAt: Date | null };
   /**
    * Plan #47: the referrer's business name (nothing else about them; only while referrals are
-   * on), and this account's referral credits still waiting or refused by Stripe (always, so
-   * money owed never disappears from /admin when the switch goes off).
+   * on), and this account's free months in plain lines: waiting (and why), booked, running,
+   * refused or used early, and the latest flag (always, so an earned month never disappears
+   * from /admin when the switch goes off). Counts, dates, plan names and fixed codes only.
    */
   referredByName: string | null;
-  referralCredits: { waiting: number; failed: number; lastErrorCode: string | null };
+  freeMonths: string[];
   createdAt: Date;
 };
 
@@ -75,6 +84,9 @@ export async function adminOverview(now: Date = new Date()): Promise<AdminRow[]>
     trade: workspaces.trade,
     status: workspaces.status,
     plan: workspaces.plan,
+    freePlan: workspaces.freePlan,
+    freePlanUntil: workspaces.freePlanUntil,
+    stripeSubscriptionId: workspaces.stripeSubscriptionId,
     evaluationEndsAt: workspaces.evaluationEndsAt,
     setupPaidAt: workspaces.setupPaidAt,
     setupPaidVia: workspaces.setupPaidVia,
@@ -154,26 +166,36 @@ export async function adminOverview(now: Date = new Date()): Promise<AdminRow[]>
         .innerJoin(referrer, eq(referrer.id, workspaces.referredByWorkspaceId))
         .where(inArray(workspaces.id, ids))
     : [];
-  // Credits still waiting or refused by Stripe show whatever the switch says now: they're
-  // money owed (or a fix needed in Stripe) even if referrals were switched off since.
-  const credits = await db()
+  // Free months show whatever the switch says now: an earned month is owed (or a fix is
+  // needed in Stripe) even if referrals were switched off since. Done rows only for a flag.
+  const rewardRows = await db()
     .select({
       workspaceId: referralCredits.beneficiaryWorkspaceId,
-      waiting: sql<number>`count(*) filter (where ${referralCredits.status} = 'pending')::int`,
-      failed: sql<number>`count(*) filter (where ${referralCredits.status} = 'failed')::int`,
-      // The most recently created refused credit's code (not an alphabetical max).
-      lastErrorCode: sql<
-        string | null
-      >`(array_agg(${referralCredits.lastErrorCode} order by ${referralCredits.createdAt} desc, ${referralCredits.id} desc) filter (where ${referralCredits.status} = 'failed'))[1]`,
+      status: referralCredits.status,
+      stripeMode: referralCredits.stripeMode,
+      startsAt: referralCredits.startsAt,
+      endsAt: referralCredits.endsAt,
+      freePlan: referralCredits.freePlan,
+      keptAt: referralCredits.keptAt,
+      attempts: referralCredits.attempts,
+      lastErrorCode: referralCredits.lastErrorCode,
+      adminFlag: referralCredits.adminFlag,
+      flaggedAt: referralCredits.flaggedAt,
     })
     .from(referralCredits)
     .where(
       and(
         inArray(referralCredits.beneficiaryWorkspaceId, ids),
-        inArray(referralCredits.status, ["pending", "failed"]),
+        sql`(${referralCredits.status} in ('pending', 'scheduled', 'running', 'failed') or ${referralCredits.adminFlag} is not null)`,
       ),
     )
-    .groupBy(referralCredits.beneficiaryWorkspaceId);
+    .orderBy(referralCredits.createdAt, referralCredits.id);
+  const rewardsBy = new Map<string, AdminRewardRow[]>();
+  for (const r of rewardRows) {
+    if (!r.workspaceId) continue;
+    rewardsBy.set(r.workspaceId, [...(rewardsBy.get(r.workspaceId) ?? []), r]);
+  }
+  const keyMode = stripeKeyMode(process.env.STRIPE_SECRET_KEY);
 
   const digests = await db()
     .select({ workspaceId: activityLog.workspaceId, at: max(activityLog.createdAt) })
@@ -190,7 +212,6 @@ export async function adminOverview(now: Date = new Date()): Promise<AdminRow[]>
   const hd = by(drafted);
   const hg = by(digests);
   const rb = by(referredBy);
-  const rc = new Map(credits.map((c) => [c.workspaceId, c]));
 
   return ws.map((w) => ({
     workspaceId: w.id,
@@ -200,6 +221,7 @@ export async function adminOverview(now: Date = new Date()): Promise<AdminRow[]>
     status: effectiveStatus(w, now),
     storedStatus: w.status,
     plan: w.plan,
+    planLabel: adminPlanLabel(w, now),
     evaluationEndsAt: w.evaluationEndsAt,
     setupPaidAt: w.setupPaidAt,
     setupPaidVia: w.setupPaidVia,
@@ -225,11 +247,7 @@ export async function adminOverview(now: Date = new Date()): Promise<AdminRow[]>
       lastDigestAt: hg.get(w.id)?.at ?? null,
     },
     referredByName: rb.get(w.id) ? (rb.get(w.id)!.name ?? "a business with no name yet") : null,
-    referralCredits: {
-      waiting: rc.get(w.id)?.waiting ?? 0,
-      failed: rc.get(w.id)?.failed ?? 0,
-      lastErrorCode: rc.get(w.id)?.failed ? (rc.get(w.id)?.lastErrorCode ?? null) : null,
-    },
+    freeMonths: adminFreeMonthLines(w, rewardsBy.get(w.id) ?? [], keyMode, now),
   }));
 }
 

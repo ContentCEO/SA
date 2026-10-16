@@ -85,6 +85,17 @@ describe("#45 admin costs", () => {
       expect(rows[1]!.label).toBe("cheap@shop.com");
     });
 
+    it("plan #47: a running free month is tagged; revenue stays the billed plan", async () => {
+      await database
+        .update(workspaces)
+        .set({ freePlan: "crew", freePlanUntil: new Date(NOW.getTime() + 86_400_000) })
+        .where(eq(workspaces.id, dear));
+      const rows = await costRows(NOW);
+      const row = rows.find((r) => r.workspaceId === dear)!;
+      expect(row).toMatchObject({ freeMonth: true, revenueCents: 9_900 });
+      expect(rows.find((r) => r.workspaceId === cheap)!.freeMonth).toBe(false);
+    });
+
     it("emails Davi once per account per month", async () => {
       expect(await sendCostAlerts(NOW, { send })).toEqual({ sent: 1 });
       expect(await sendCostAlerts(NOW, { send })).toEqual({ sent: 0 });
