@@ -599,25 +599,34 @@ export async function applyCheckoutCompleted(session: Stripe.Checkout.Session, n
   const plan = isPlanId(session.metadata?.plan) ? session.metadata.plan : w.plan;
   const includesSetup = session.metadata?.includesSetup === "1";
   const to = statusAfterCheckout(w, now);
-  await db()
-    .update(workspaces)
-    .set({
-      status: to,
-      plan,
-      stripeCustomerId:
-        typeof session.customer === "string" ? session.customer : w.stripeCustomerId,
-      stripeSubscriptionId:
-        typeof session.subscription === "string" ? session.subscription : w.stripeSubscriptionId,
-      // The only place a real setup payment is recorded — and what turns sending on. The date is
-      // this payment's unless one was already really paid (a hand-marked or test-card date isn't).
-      ...(includesSetup
-        ? {
-            setupPaidAt: setupReallyPaid(w) ? (w.setupPaidAt ?? now) : now,
-            setupPaidVia: "stripe" as const,
-          }
-        : {}),
-    })
-    .where(eq(workspaces.id, w.id));
+  // The plan's effects land with the plan, whichever event Stripe delivers first: a canceled
+  // Crew owner who comes back on Solo has the extra inboxes paused here, because once the plan
+  // reads Solo the subscription event no longer sees a move down (Q2).
+  const movedDown = mailboxLimitFor(plan) < mailboxLimitFor(w.plan);
+  await db().transaction(async (tx) => {
+    await tx
+      .update(workspaces)
+      .set({
+        status: to,
+        plan,
+        stripeCustomerId:
+          typeof session.customer === "string" ? session.customer : w.stripeCustomerId,
+        stripeSubscriptionId:
+          typeof session.subscription === "string" ? session.subscription : w.stripeSubscriptionId,
+        // The only place a real setup payment is recorded — and what turns sending on. The date is
+        // this payment's unless one was already really paid (a hand-marked or test-card date isn't).
+        ...(includesSetup
+          ? {
+              setupPaidAt: setupReallyPaid(w) ? (w.setupPaidAt ?? now) : now,
+              setupPaidVia: "stripe" as const,
+            }
+          : {}),
+      })
+      .where(eq(workspaces.id, w.id));
+    await autopilotPlanEffects(w.id, now, tx);
+    if (movedDown) await inboxLimitEffects(w.id, now, tx);
+    await resumeOverPlanInboxes(w.id, now, tx);
+  });
   await log(w.id, "payment_received", { plan, includesSetup, from: w.status, to });
   // Plan #47: a referral is settled the first time the account is active. Never fails the webhook.
   if (to === "active") await creditReferralSafely(w.id, now);

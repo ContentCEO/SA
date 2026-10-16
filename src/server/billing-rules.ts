@@ -1,5 +1,5 @@
 import type Stripe from "stripe";
-import { pricing, type PlanId } from "@/config/pricing";
+import { mailboxLimitFor, PLAN_ORDER, planRank, pricing, type PlanId } from "@/config/pricing";
 import type { Workspace } from "@/db/schema";
 import { effectiveStatus, SENDING_ALLOWED, setupReallyPaid } from "./lifecycle";
 
@@ -174,4 +174,25 @@ export function cancelAtOf(
   const end = sub.items?.data?.[0]?.current_period_end;
   if (sub.cancel_at_period_end && typeof end === "number") return new Date(end * 1000);
   return null;
+}
+
+/**
+ * Plan & billing, under Manage billing (Q2, Davi 2026-10-16): Stripe's page can't explain that
+ * moving down a plan pauses the newest extra inboxes, so the owner reads it here before the tap.
+ * Null when no lower plan would pause any (counts only, never which inbox).
+ */
+export function downgradePausesLine(plan: PlanId | null, countedInboxes: number): string | null {
+  if (!plan) return null;
+  const lower = PLAN_ORDER.filter(
+    (p) => planRank(p) < planRank(plan) && mailboxLimitFor(p) < countedInboxes,
+  ).reverse();
+  if (!lower.length) return null;
+  const inboxes = `${countedInboxes} inboxes`;
+  const parts = lower.map((p, i) => {
+    const pauses = countedInboxes - mailboxLimitFor(p);
+    return i === 0
+      ? `Moving to ${pricing.plans[p].name} pauses ${pauses} of your ${inboxes}`
+      : `to ${pricing.plans[p].name}, ${pauses}`;
+  });
+  return `${parts.join("; ")}. Nothing is deleted, and you choose which stay on in Settings.`;
 }

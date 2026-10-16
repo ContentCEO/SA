@@ -9,7 +9,13 @@ import { formatDollars, planRank, pricing, type PlanId } from "@/config/pricing"
 import { siteConfig } from "@/config/site";
 import { cn } from "@/lib/utils";
 import { stripeConfigured } from "@/server/billing";
-import { billingStatusLine, checkoutTerms, PLAN_IDS, SALES_TAX_NOTE } from "@/server/billing-rules";
+import {
+  billingStatusLine,
+  checkoutTerms,
+  downgradePausesLine,
+  PLAN_IDS,
+  SALES_TAX_NOTE,
+} from "@/server/billing-rules";
 import {
   billedPlanFreeLine,
   freeMonthBanner,
@@ -28,6 +34,7 @@ import {
 } from "@/server/referral-rules";
 import { EARN_THRESHOLD } from "@/server/autopilot";
 import { effectiveStatus } from "@/server/lifecycle";
+import { listMailboxes } from "@/server/mailboxes";
 import { freeMonthView, referralLinkFor, viewChanges } from "@/server/referrals";
 import { requireOwner } from "@/server/session";
 import { goBackAction, keepFreePlanAction, openPortalAction, startCheckoutAction } from "./actions";
@@ -73,6 +80,14 @@ export default async function BillingPage(props: PageProps<"/billing">) {
     workspace.freePlan &&
     workspace.freePlanUntil
       ? { row: view.running, free: workspace.freePlan, until: workspace.freePlanUntil }
+      : null;
+  // Q2: a move down on Stripe's page pauses the newest extra inboxes; say so before the tap.
+  const downgradeLine =
+    !running && workspace.stripeCustomerId
+      ? downgradePausesLine(
+          workspace.plan,
+          (await listMailboxes(workspace.id)).filter((m) => m.pausedReason == null).length,
+        )
       : null;
   const keep = running ? keepOffer(workspace, running.row, now) : null;
   const back = running ? goBackOffer(workspace, running.row, now) : null;
@@ -159,10 +174,13 @@ export default async function BillingPage(props: PageProps<"/billing">) {
                   {planChangesWaitLine(running.until, tz, !!(keep || back))}
                 </p>
               ) : (
-                <p className="text-sm text-muted-foreground">
-                  Change plan, update your card, see invoices or cancel — on Stripe&apos;s secure
-                  page.
-                </p>
+                <>
+                  <p className="text-sm text-muted-foreground">
+                    Change plan, update your card, see invoices or cancel — on Stripe&apos;s secure
+                    page.
+                  </p>
+                  {downgradeLine ? <p className="text-sm font-semibold">{downgradeLine}</p> : null}
+                </>
               )}
               {running && workspace.plan && workspace.plan !== running.free ? (
                 <p className="text-sm text-muted-foreground">

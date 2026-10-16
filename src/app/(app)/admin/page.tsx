@@ -47,7 +47,9 @@ import {
 import { listWaitlist } from "@/server/waitlist";
 import {
   PORTAL_LOGIN_PAGE_LINE,
+  PORTAL_DOWNGRADES_NOW_LINE,
   PORTAL_SCHEDULES_DOWNGRADES_LINE,
+  PORTAL_UNKNOWN_LINE,
   referralsVisible,
 } from "@/server/referral-rules";
 import { describeWaitlistEntry, formatStamp } from "@/server/growth-note";
@@ -557,8 +559,12 @@ export default async function AdminPage(props: PageProps<"/admin">) {
               </p>
               {salesTax ? <p>{SALES_TAX_LINES[salesTax]}</p> : null}
               {salesTax === "on" ? <p>{SALES_TAX_ON_NOTE}</p> : null}
-              {portal !== null && portal !== "unknown" && portal.schedulesDowngrades ? (
+              {portal === "unknown" ? (
+                <p className="font-semibold">{PORTAL_UNKNOWN_LINE}</p>
+              ) : portal !== null && portal.schedulesDowngrades ? (
                 <p className="font-semibold">{PORTAL_SCHEDULES_DOWNGRADES_LINE}</p>
+              ) : portal !== null ? (
+                <p>{PORTAL_DOWNGRADES_NOW_LINE}</p>
               ) : null}
               {portal !== null && portal !== "unknown" && portal.loginPage ? (
                 <p>{PORTAL_LOGIN_PAGE_LINE}</p>

@@ -29,6 +29,7 @@ import {
   handleStripeWebhook,
   NO_PLAN_CHANGE_PORTAL_KEY,
   noPlanChangePortalParams,
+  portalStatus,
   salesTaxStatus,
   setStripeForTests,
   termsBoxOffSince,
@@ -46,6 +47,7 @@ import {
   statusAfterCheckout,
   statusAfterSubscription,
   TERMS_BOX_OFF_LINE,
+  downgradePausesLine,
 } from "@/server/billing-rules";
 import { canSend, jobsAllowed } from "@/server/lifecycle";
 import { isTermsUrlMissingError } from "@/server/stripe-error-rules";
@@ -916,6 +918,54 @@ describe("plan #47 §1.9: the webhook reads the live subscription", () => {
     ]);
   });
 
+  for (const order of ["checkout first", "subscription first"] as const) {
+    it(`Q2: a canceled Crew owner who comes back on Solo has the extras paused (${order})`, async () => {
+      await threeInboxes();
+      await database
+        .insert(rules)
+        .values({ workspaceId: workspace.id, category: "scheduling", mode: "autopilot" });
+      await database
+        .update(workspaces)
+        .set({ status: "canceled", stripeSubscriptionId: null })
+        .where(eq(workspaces.id, workspace.id));
+      fake.subscriptions.delete("sub_1");
+      fake.addSubscription({
+        id: "sub_2",
+        customer: "cus_1",
+        price: priceOf("solo"),
+        workspaceId: workspace.id,
+      });
+      const checkout = () =>
+        applyCheckoutCompleted(
+          paidSession({
+            id: "cs_back",
+            subscription: "sub_2",
+            metadata: { workspaceId: workspace.id, plan: "solo", includesSetup: "0" },
+          }),
+          NOW,
+        );
+      const created = () =>
+        applySubscription({ ...snapshot("solo"), id: "sub_2" } as Stripe.Subscription, NOW);
+      if (order === "checkout first") {
+        await checkout();
+        await created();
+      } else {
+        await created();
+        await checkout();
+      }
+      expect((await reload()).plan).toBe("solo");
+      expect(await boxes()).toEqual({
+        "owner@shop.com": ["active", null],
+        "office@shop.com": ["paused", "over_plan"],
+        "crew@shop.com": ["paused", "over_plan"],
+      });
+      expect((await database.select().from(rules))[0]!.mode).toBe("draft");
+      expect((await actions()).filter(([a]) => a === "inboxes_paused_plan")).toEqual([
+        ["inboxes_paused_plan", { count: 2, plan: "solo", limit: 1 }],
+      ]);
+    });
+  }
+
   it("a move down during a running free month keeps the free plan's inboxes and autopilot", async () => {
     await database
       .update(workspaces)
@@ -1074,5 +1124,48 @@ describe("plan #47 Q3: during a free month, Stripe's page has no plan changes", 
       login_page: { enabled: false },
       metadata: { purpose: "referral_free_month_no_plan_change" },
     });
+  });
+});
+
+describe("plan #47: /admin never shows silence for an unread billing page", () => {
+  it("a failed read is 'unknown' and the card says so; a readable one says it's clear", async () => {
+    fake.addPortalConfiguration({ id: "bpc_default" });
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    fake.failNext("billingPortal.configurations.list", stripeErrors.api());
+    expect(await portalStatus()).toBe("unknown");
+    expect(await portalStatus()).toEqual({ schedulesDowngrades: false, loginPage: false });
+    const admin = readFileSync("src/app/(app)/admin/page.tsx", "utf8");
+    expect(admin).toMatch(
+      /portal === "unknown" \? \(\s*<p className="font-semibold">\{PORTAL_UNKNOWN_LINE\}<\/p>/,
+    );
+    expect(admin).toContain("<p>{PORTAL_DOWNGRADES_NOW_LINE}</p>");
+    expect(readFileSync("docs/SETUP.md", "utf8")).toContain(
+      "Stripe's billing page changes plans straight away, so free months\n   can be booked.",
+    );
+  });
+});
+
+describe("plan #47 Q2: Plan & billing says what moving down pauses, before the tap", () => {
+  it("counts only, for each lower plan that would pause any", () => {
+    expect(downgradePausesLine("crew", 3)).toBe(
+      "Moving to Solo pauses 2 of your 3 inboxes. Nothing is deleted, and you choose which stay on in Settings.",
+    );
+    expect(downgradePausesLine("company", 5)).toBe(
+      "Moving to Crew pauses 2 of your 5 inboxes; to Solo, 4. Nothing is deleted, and you choose which stay on in Settings.",
+    );
+    expect(downgradePausesLine("company", 2)).toBe(
+      "Moving to Solo pauses 1 of your 2 inboxes. Nothing is deleted, and you choose which stay on in Settings.",
+    );
+    expect(downgradePausesLine("crew", 1)).toBeNull();
+    expect(downgradePausesLine("solo", 3)).toBeNull();
+    expect(downgradePausesLine(null, 3)).toBeNull();
+  });
+
+  it("is shown under Manage billing outside a free month", () => {
+    const page = readFileSync("src/app/(app)/billing/page.tsx", "utf8");
+    expect(page).toContain("!running && workspace.stripeCustomerId");
+    expect(page).toContain(
+      '{downgradeLine ? <p className="text-sm font-semibold">{downgradeLine}</p> : null}',
+    );
   });
 });
