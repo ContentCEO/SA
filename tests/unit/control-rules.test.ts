@@ -129,6 +129,9 @@ describe("H3 rule matching", () => {
     expect(companyChoice("a@gmail.com", ["me@shop.com"])).toBeNull();
     expect(companyChoice("crew@shop.com", ["me@shop.com"])).toBeNull();
     expect(companyChoice("pm@hillpm.com", ["me@shop.com"])).toBe("hillpm.com");
+    // Leads + ideas merge: a carrier's email-to-text gateway is many customers, like webmail.
+    expect(companyChoice("5085551234@vtext.com", ["me@shop.com"])).toBeNull();
+    expect(companyChoice("5085551234@txt.voice.google.com", ["me@shop.com"])).toBeNull();
   });
 
   it("a company Always needs me flags the email; injection still wins", () => {
@@ -141,6 +144,19 @@ describe("H3 rule matching", () => {
     expect(
       applyOwnerRules(m, { ...base, senderNeedsMe: true, injection: true }).needsOwnerReason,
     ).not.toBe(SENDER_NEEDS_ME_REASON);
+  });
+
+  it("a company Always needs me is its own rule hit, so Add a town can't clear it", () => {
+    const m = classification({
+      category: "quote_request",
+      extracted: { ...classification().extracted, address: "3 Pine Rd, Nashua, NH" },
+    });
+    const base = { firstTimeSender: false, senderIsVip: false, amountThresholdDollars: 2500 };
+    expect(applyOwnerRules(m, { ...base, senderNeedsMe: true, outsideArea: true }).hits).toEqual([
+      "sender_rule",
+      "outside_area",
+    ]);
+    expect(applyOwnerRules(m, { ...base, outsideArea: true }).hits).toEqual(["outside_area"]);
   });
 });
 

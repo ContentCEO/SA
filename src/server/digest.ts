@@ -26,6 +26,8 @@ import { leadsAtRisk } from "./leads-at-risk";
 import { atRiskDigestLine, atRiskOffQueueLine } from "./leads-at-risk-rules";
 import { jobsAllowed } from "./lifecycle";
 import { weeklyScorecard } from "./scorecard";
+import { notAnsweredYet } from "./never-answered";
+import { notAnsweredLine } from "./never-answered-rules";
 import { workspaceTimeZone } from "./snooze";
 import { scorecardIsEmpty, scorecardLines, weekBounds } from "./scorecard-rules";
 import { localParts, localWeekday, usableTimeZone } from "./snooze-rules";
@@ -65,6 +67,11 @@ export type DigestCounts = {
    * owner, so they count as waiting, and the summary sends them to the quote list.
    */
   leadsAtRiskOffQueue: number;
+  /**
+   * Leads package (B6): customers who have waited over a day with no card on the queue and
+   * aren't already counted as leads at risk. A count, never which.
+   */
+  notAnswered?: number;
 };
 
 /**
@@ -128,6 +135,14 @@ export async function digestCounts(
     sortedYesterday: sorted?.n ?? 0,
     leadsAtRisk: atRisk.length,
     leadsAtRiskOffQueue: atRisk.filter((l) => !onQueue.has(l.threadId)).length,
+    notAnswered: (
+      await notAnsweredYet(
+        workspaceId,
+        now,
+        new Set([...onQueue, ...atRisk.map((l) => l.threadId)]),
+        Infinity,
+      )
+    ).length,
   };
 }
 
@@ -162,7 +177,10 @@ export function buildDigest(
   const offQueue = c.leadsAtRiskOffQueue
     ? { text: atRiskOffQueueLine(c.leadsAtRiskOffQueue), href: links.quotesUrl }
     : null;
-  const needsNothing = header.empty && !offQueue;
+  const notAnswered = c.notAnswered
+    ? { text: notAnsweredLine(c.notAnswered), href: links.queueUrl }
+    : null;
+  const needsNothing = header.empty && !offQueue && !notAnswered;
   const lines = [
     atRiskDigestLine(c.leadsAtRisk),
     c.repliesReady
@@ -177,7 +195,7 @@ export function buildDigest(
   ].filter((l): l is string => !!l);
   const lastWeek = extras.lastWeek ?? [];
   const onQueue = c.needsYou.length + c.repliesReady + c.nudgesReady;
-  const waiting = onQueue + c.leadsAtRiskOffQueue;
+  const waiting = onQueue + c.leadsAtRiskOffQueue + (c.notAnswered ?? 0);
   const subject = waiting
     ? `${plural(waiting, "thing")} waiting on you`
     : "Nothing waiting on you this morning";
@@ -192,6 +210,7 @@ export function buildDigest(
           ...header.lines.map((l) => `• ${l.text}: ${l.href}`),
           ...(header.more ? [moreInQueue(header.more)] : []),
           ...(offQueue ? [`• ${offQueue.text}: ${offQueue.href}`] : []),
+          ...(notAnswered ? [`• ${notAnswered.text}: ${notAnswered.href}`] : []),
         ]),
     ...(lines.length ? ["", ...lines] : []),
     ...(lastWeek.length ? ["", ...lastWeek] : []),
@@ -215,6 +234,7 @@ export function buildDigest(
           ? `<p style="margin:0"><a href="${esc(links.queueUrl)}" style="display:block;padding:12px 0;color:#5e5d59;font-size:16px;line-height:1.35">${esc(moreInQueue(header.more))}</a></p>`
           : "",
         offQueue ? needsLink(offQueue) : "",
+        notAnswered ? needsLink(notAnswered) : "",
       ].join("\n");
   const html = `<!doctype html><html><body style="margin:0;background:#f7f6f3;color:#1b1b1b;font-family:Inter,Helvetica,Arial,sans-serif">
 <div style="max-width:480px;margin:0 auto;padding:24px 16px">

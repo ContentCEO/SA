@@ -102,13 +102,17 @@ Settings removes all of our access, that one included.
   them**).
 - Which kind you moved an email to, when you change it yourself (**Wrong kind? Move it**).
 - If you tell us, why a quote was lost (price, timing or went with someone else).
+- Which lead website or phone service a conversation came through (for example Thumbtack or
+  Google Voice), which of our "needs you" checks it matched (as short labels like "emergency" or
+  "outside your towns", not text from the email), whether you marked it done, and when you marked
+  a complaint fixed or closed its check-in.
 
 **What you tell us:** your business details (business name, trade, services, service area, hours,
 price list, payment terms, policies, things you never promise, words you never use, short
-seasonal notes, your review link), your settings, and, if you turn on text alerts, your own mobile
-number. Also the sender rules you set (an email address or a company's web address, and what to
-do with its email), the people you mark as VIPs, short private notes you write about a customer,
-and, if you turn on away mode, the day you're back.
+seasonal notes, your review link, the towns you work in), your settings, and, if you turn on text
+alerts, your own mobile number. Also the sender rules you set (an email address or a company's web
+address, and what to do with its email), the people you mark as VIPs, short private notes you write
+about a customer, and, if you turn on away mode, the day you're back.
 
 **Phone notifications:** if you turn them on, we store the address your browser's push service
 gives us for that phone (the push service is run by Google, Apple, Mozilla or Microsoft, depending
@@ -150,6 +154,11 @@ that copy.
   speak the change, your browser turns your words into text using its own speech service (run by
   Google or Apple, depending on your phone); we receive only the text.
 - To keep your quotes, money owed and customers in order, and to remember the prices you quoted.
+- To show **Call** and **Text** buttons, we look for a phone number in the customer's email when
+  you open your queue. We don't store the number. Calls and texts go from your own phone:
+  Squared Away never calls or texts your customers.
+- To point out a request from outside the towns you work in, and to tell you when you've worked
+  for a customer before.
 - To send a reply when you approve it, and, during your trial, a practice copy to your own address
   when you tap **Send it to yourself instead**.
 - To send you your morning summary, a monthly summary at the start of each month, an email if
@@ -163,6 +172,9 @@ We don't sell your information or your customers' information. We don't use it f
 
 Every reply waits in your queue until you approve it, by tapping **Send reply** (or **Send N
 replies** after reviewing several together). You then have 20 seconds to undo it before it goes.
+We don't draft replies to lead-website notices or voicemail emails — answer those on the
+website or from your own phone — and we never draft or send to an email-to-text address,
+because that would text your customer.
 During your three-day trial, sending to customers is switched off in the code. You can still send
 yourself a practice copy of a draft: it goes only to your own Gmail address, as a new email marked
 "[Practice]", never to the customer.
@@ -259,8 +271,9 @@ In plain words:
   details (number, amount, due date, paid or not) and permit details (permit number, who issued
   it, inspection time and result) are kept so your inbox, quotes, money owed and activity history
   keep working, until you disconnect that Gmail address or delete your account.
-- **Your price memory, quote won/lost marks, why a quote was lost, invoice paid marks, complaint markers,
-  review-request records and the counts and tone change of edited replies** stay after the
+- **Your price memory, quote won/lost marks, why a quote was lost, invoice paid marks, complaint
+  markers, review-request records, lead-source, done and fixed marks, and the counts and tone
+  change of edited replies** stay after the
   30-day email-text purge, until you disconnect that Gmail address or delete your account.
 - **Your writing style, style suggestions, business details, settings, activity history and AI
   usage counts** are kept until you delete your account.

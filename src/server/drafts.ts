@@ -78,6 +78,8 @@ import { batchEligible, firstLine } from "./batch-rules";
 import { isInvoiceThread, paymentSaid } from "./money-rules";
 import { quoteStopsNudges } from "./quote-rules";
 import { BACK_ON_TOP_MS, isEmergency } from "./snooze-rules";
+import { inEmergencyLane } from "./emergency-rules";
+import { CHECKIN_AFTER_DAYS, CHECKIN_MAX_DAYS } from "./complaint-rules";
 import { headerPickIds, toNeedsYouItem } from "./digest-rules";
 import { answeredByPhone } from "./first-week-rules";
 import {
@@ -86,6 +88,7 @@ import {
   messageReplyName,
   noReplySql,
   notDraftMessage,
+  notDraftSql,
   replyAddressSql,
   sideEmailSql,
   waitingSinceSql,
@@ -105,6 +108,13 @@ import {
 import { isNoReplyAddress } from "./sender-rules";
 import { noDraftRuleFor } from "./sender-rule-store";
 import { isAway } from "./away";
+import {
+  channelKind,
+  channelOf,
+  isEmailToTextAddress,
+  looksLikePhoneAddress,
+} from "./channel-rules";
+import { knownCustomer } from "./known-customer";
 
 /** Categories we draft for without being asked. Complaints and noise never are. */
 export const AUTO_DRAFT_CATEGORIES = [
@@ -175,7 +185,16 @@ export type CreateOutcome =
         // Ideas H4: the owner chose this kind; the sorter wouldn't have drafted it (jobs only).
         | "owner_moved"
         // Ideas E7: nudges pause while the owner is away.
-        | "away";
+        | "away"
+        // Leads package: the reply would go to an email-to-text gateway (it would text the
+        // customer) — every trigger; or to an address that looks like a phone number the owner
+        // never wrote to (jobs only; the owner's tap gets MAYBE_TEXT_FLAG instead).
+        | "text_address"
+        | "maybe_text_address"
+        // A lead website's notice or a voicemail / text-message email: answered on the site
+        // or from the owner's own phone, never by email (every trigger).
+        | "lead_site"
+        | "phone_message";
     }
   | { status: "reconnect_needed" };
 
@@ -194,6 +213,12 @@ export const OWNER_PURPOSES = ["review_request", "closing_question"] as const;
 
 /** Round 2 (TW B4): the fixed safety note's "prompt version" — code, never a model. */
 export const SAFETY_NOTE_VERSION = "safety-note.v1";
+/** Leads package: the owner's tap on a reply whose address looks like a phone number. */
+export const MAYBE_TEXT_FLAG =
+  "This address looks like a phone number — it may turn into a text message. Check before sending.";
+/** What a refused email-to-text draft says when it's closed (leads package). */
+export const TEXT_ADDRESS_NOTE =
+  "That address turns email into a text message, and Squared Away never texts customers. Text them from your own phone instead.";
 /** First flag on the safety note: it keeps it out of batch and autopilot too. */
 export const SAFETY_NOTE_FLAG =
   "They say they smell gas. Call them now; this note only tells them what to do meanwhile.";
@@ -510,6 +535,12 @@ export async function createDraftForThread(
   const { thread, mailbox, workspace } = row;
   if (!jobsAllowed(workspace, now)) return { status: "skipped", reason: "read_only" };
   if (mailbox.status !== "active") return { status: "skipped", reason: "mailbox_inactive" };
+  // A lead website's notice or a voicemail / text-message email (leads package): there is
+  // nobody to email. Answered on the site or from the owner's own phone — every trigger,
+  // before any Gmail read or model call.
+  const leadKind = channelKind(thread.leadChannel);
+  if (leadKind === "site") return { status: "skipped", reason: "lead_site" };
+  if (leadKind) return { status: "skipped", reason: "phone_message" };
   // "I called them" after the customer's newest email (round 2, FW E11): a job writes nothing
   // (no reply, no nudge) until they write again. The owner's own tap still drafts.
   if (opts.trigger !== "owner" && thread.handledOfflineAt) {
@@ -716,6 +747,18 @@ export async function createDraftForThread(
   }
   const to = customerReplyAddress(customer);
   if (!to) return { status: "skipped", reason: "no_text" };
+  // An email-to-text gateway (a form whose Reply-To is 5085551234@vtext.com, a Google Voice
+  // text): a reply would text the customer, and Squared Away never texts customers. Not even
+  // on the owner's tap — the card offers "Text from my phone" instead (leads package).
+  if (isEmailToTextAddress(to)) return { status: "skipped", reason: "text_address" };
+  // A thread sorted before lead channels existed: the address itself says it's a lead site.
+  if (channelOf(to)?.kind === "site") return { status: "skipped", reason: "lead_site" };
+  // A phone-number-shaped address at a gateway we don't know: jobs skip it; the owner's tap
+  // drafts it with a flag first (which also keeps it out of batch and autopilot). An address
+  // the owner has written to before is theirs to use.
+  const maybeText = looksLikePhoneAddress(to) && !(await knownCustomer(mailbox.id, to, now));
+  if (maybeText && opts.trigger !== "owner")
+    return { status: "skipped", reason: "maybe_text_address" };
   // A robot never gets a reply (round 2 A9): a no-reply address, a form robot with no usable
   // Reply-To, a portal's dispatch address. Not even on the owner's tap — nobody reads it, and
   // "Reply sent." would be untrue. They answer those on the platform or by phone.
@@ -849,11 +892,10 @@ export async function createDraftForThread(
 
   // What the owner must sort before a purpose note can go (A6).
   const { body, flags: purposeFlags } = purposeGuards(purpose, result.body.trim(), ctx);
-  const { flags, confidence } = scoreDraft(
-    result,
-    checkDraft(body, checkContext),
-    safety ? [SAFETY_NOTE_FLAG, ...purposeFlags] : purposeFlags,
-  );
+  const { flags, confidence } = scoreDraft(result, checkDraft(body, checkContext), [
+    ...(maybeText ? [MAYBE_TEXT_FLAG] : []),
+    ...(safety ? [SAFETY_NOTE_FLAG, ...purposeFlags] : purposeFlags),
+  ]);
 
   const subject = replySubject(last.subject ?? thread.subject);
   const writer = (opts.writerFor ?? defaultWriter)(mailbox);
@@ -1034,6 +1076,8 @@ export type SendOutcome =
   | { status: "deleted_in_gmail" }
   | { status: "gaps_unfilled" }
   | { status: "no_reply_address" }
+  /** Leads package: the draft goes to an email-to-text gateway. Never sent; closed. */
+  | { status: "text_address" }
   | { status: "already_sending" }
   | { status: "not_found" }
   | { status: "reconnect_needed" };
@@ -1070,6 +1114,13 @@ export async function sendDraft(
   if (hasUnfilledGap(opts.editedBody ?? draft.body ?? "")) return { status: "gaps_unfilled" };
   // Nor one to a robot (round 2 A9), whoever wrote it: nobody would read it.
   if (isNoReplyAddress(draft.toAddress)) return { status: "no_reply_address" };
+  // Nor one that would text the customer (leads package): a draft made before this rule, an
+  // offline okay, batch or autopilot. Closed here with no Gmail call; the Gmail draft stays in
+  // the owner's Gmail.
+  if (isEmailToTextAddress(draft.toAddress)) {
+    await closeDraft(draft, workspaceId, "discarded", TEXT_ADDRESS_NOTE, now);
+    return { status: "text_address" };
+  }
 
   const writer = (opts.writerFor ?? defaultWriter)(mailbox);
   try {
@@ -1266,6 +1317,9 @@ export async function queueSend(
   if (mailbox.status !== "active") return { status: "reconnect_needed" };
   if (hasUnfilledGap(opts.editedBody ?? draft.body ?? "")) return { status: "gaps_unfilled" };
   if (isNoReplyAddress(draft.toAddress)) return { status: "no_reply_address" };
+  // Refused at the tap, before anything is queued (leads package). Nothing is closed here:
+  // the owner sees why and the card stays until reconcile clears it.
+  if (isEmailToTextAddress(draft.toAddress)) return { status: "text_address" };
 
   const writer = (opts.writerFor ?? defaultWriter)(mailbox);
   let body = draft.body ?? "";
@@ -2045,6 +2099,22 @@ export async function reconcileDrafts(mailboxId: string, opts: DraftDeps = {}) {
     for (const d of pending) {
       // The send job holds this one right now; it does its own checks.
       if (d.sendClaimedAt) continue;
+      // Leads package: a draft older code wrote to an email-to-text gateway or to a lead
+      // website's robot can never go; expire it (and its Gmail draft) like an out-of-date one.
+      if (isEmailToTextAddress(d.toAddress) || channelOf(d.toAddress)?.kind === "site") {
+        if (d.gmailDraftId) await writer.deleteDraft(d.gmailDraftId);
+        await closeDraft(
+          d,
+          mailbox.workspaceId,
+          "expired",
+          isEmailToTextAddress(d.toAddress)
+            ? TEXT_ADDRESS_NOTE
+            : "That was a lead website's notice — answer them on the website.",
+          now,
+        );
+        closed++;
+        continue;
+      }
       const newer = await db()
         .select({ direction: messages.direction })
         .from(messages)
@@ -2157,6 +2227,16 @@ export type QueueItem = {
   lastMessageAt: Date | null;
   /** When the customer's newest email was written (round 2, FW E9: shown on every card). */
   customerWroteAt: Date | null;
+  /** Leads package: where the lead came from (`threads.lead_channel`), or null. */
+  leadChannel: string | null;
+  /** Leads package: the thread's stored facts, read by the card (lane, town, rule hits). */
+  extracted: unknown;
+  /** Leads package (B5): an emergency from someone with a job — the lane on top. */
+  lane: boolean;
+  /** Leads package (G5): a fixed complaint's "Check in" card, not the email itself. */
+  checkIn: boolean;
+  /** G5: when the owner marked it fixed. */
+  complaintFixedAt: Date | null;
 };
 
 /** Plan #6: back from a snooze within the last day — pinned on top. */
@@ -2171,6 +2251,10 @@ export type QueueMember = {
   emergency: boolean;
   backFromSnooze: boolean;
   lastMessageAt: Date | null;
+  /** Leads package (B5): in the emergency lane (needs-you only; sorted first). */
+  lane: boolean;
+  /** Leads package (G5): a check-in two days after "Mark fixed". */
+  checkIn: boolean;
 };
 export type QueueMembership = {
   /** `waitingSince`: the customer's first email since the owner last wrote (plan M8 A14). */
@@ -2205,6 +2289,9 @@ export async function queueMembership(
     needsOwner: threads.needsOwner,
     snoozedUntil: threads.snoozedUntil,
     lastMessageAt: threads.lastMessageAt,
+    // Content-free marks only (leads package, B5): never the email's facts.
+    urgency: sql<string | null>`${threads.extracted}->>'urgency'`,
+    injection: sql<string | null>`${threads.extracted}->>'injection'`,
   };
   const pending = await db()
     .select({ draftId: drafts.id, kind: drafts.kind, ...threadCols })
@@ -2236,25 +2323,66 @@ export async function queueMembership(
       )
       .orderBy(desc(threads.lastMessageAt))
   ).filter((t) => !draftedThreads.has(t.threadId));
+  // Leads package (G5): a complaint the owner marked fixed 2–30 days ago, with no word from
+  // the customer since and the check-in not closed: "Check they're happy?". No draft waiting.
+  const checkIns = (
+    await db()
+      .select(threadCols)
+      .from(threads)
+      .where(
+        and(
+          inArray(threads.mailboxId, boxIds),
+          eq(threads.inInbox, true),
+          isNotNull(threads.complaintFixedAt),
+          lte(threads.complaintFixedAt, new Date(now.getTime() - CHECKIN_AFTER_DAYS * 86_400_000)),
+          gt(threads.complaintFixedAt, new Date(now.getTime() - CHECKIN_MAX_DAYS * 86_400_000)),
+          sql`(${threads.complaintCheckinDoneAt} is null or ${threads.complaintCheckinDoneAt} < ${threads.complaintFixedAt})`,
+          sql`not exists (select 1 from messages ci where ci.thread_id = ${threads.id} and ci.direction = 'in' and ci.sent_at > ${threads.complaintFixedAt})`,
+          // The owner already checked in by email (from Gmail, or a reply sent from here).
+          sql`not exists (select 1 from messages co where co.thread_id = ${threads.id} and co.direction = 'out' and ${notDraftSql("co")} and not ${sideEmailSql("co")} and co.sent_at > ${threads.complaintFixedAt})`,
+          sql`not exists (select 1 from drafts cd where cd.thread_id = ${threads.id} and cd.status in ('sent', 'edited_and_sent') and cd.decided_at > ${threads.complaintFixedAt})`,
+        ),
+      )
+      .orderBy(desc(threads.complaintFixedAt))
+  ).filter((t) => !draftedThreads.has(t.threadId) && !needs.some((n) => n.threadId === t.threadId));
 
   const snoozed = (t: { snoozedUntil: Date | null }) => !!t.snoozedUntil && t.snoozedUntil > now;
-  const member = (t: (typeof pending)[number] | (typeof needs)[number]): QueueMember => ({
+  const member = (
+    t: (typeof pending)[number] | (typeof needs)[number] | (typeof checkIns)[number],
+  ): QueueMember => ({
     threadId: t.threadId,
     category: t.category,
     emergency: isEmergency(t),
     backFromSnooze: backFromSnoozeAt(t.snoozedUntil, now),
     lastMessageAt: t.lastMessageAt,
+    lane: false,
+    checkIn: false,
   });
-  // A stable sort: newest first, with anything back from a snooze on top.
+  // A stable sort: newest first, with anything back from a snooze on top — and the emergency
+  // lane above everything (leads package, B5).
   const backFirst = <T extends QueueMember>(rows: T[]) =>
-    [...rows].sort((a, b) => Number(b.backFromSnooze) - Number(a.backFromSnooze));
+    [...rows].sort(
+      (a, b) =>
+        Number(b.lane) - Number(a.lane) || Number(b.backFromSnooze) - Number(a.backFromSnooze),
+    );
 
   return {
-    needsYou: backFirst(
-      needs
+    needsYou: backFirst([
+      ...needs
         .filter((t) => !snoozed(t))
-        .map((t) => ({ ...member(t), waitingSince: asDate(t.waitingSince) })),
-    ),
+        .map((t) => ({
+          ...member(t),
+          lane: inEmergencyLane({
+            category: t.category,
+            extracted: { urgency: t.urgency, injection: t.injection === "true" },
+          }),
+          waitingSince: asDate(t.waitingSince),
+        })),
+      ...checkIns
+        .filter((t) => !snoozed(t))
+        // A check-in is never an emergency (no "tonight only" snooze, not first in the email).
+        .map((t) => ({ ...member(t), emergency: false, checkIn: true, waitingSince: null })),
+    ]),
     drafts: backFirst(
       pending
         .filter((r) => !snoozed(r))
@@ -2409,6 +2537,11 @@ export async function listQueue(
           mailboxEmail: emailOf.get(t.mailboxId) ?? "",
           lastMessageAt: t.lastMessageAt,
           customerWroteAt: who.get(t.id)?.sentAt ?? null,
+          leadChannel: t.leadChannel,
+          extracted: t.extracted,
+          lane: m.lane,
+          checkIn: m.checkIn,
+          complaintFixedAt: t.complaintFixedAt,
         } satisfies QueueItem,
       ];
     }),
@@ -2442,6 +2575,11 @@ export async function listQueue(
           mailboxEmail: emailOf.get(draft.mailboxId) ?? "",
           lastMessageAt: thread.lastMessageAt,
           customerWroteAt: who.get(thread.id)?.sentAt ?? null,
+          leadChannel: thread.leadChannel,
+          extracted: thread.extracted,
+          lane: false,
+          checkIn: false,
+          complaintFixedAt: thread.complaintFixedAt,
         } satisfies QueueItem,
       ];
     }),

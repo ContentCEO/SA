@@ -22,6 +22,20 @@ export const categoryTag: Record<Category, string> = {
   noise: "Junk / notice",
 };
 
+/**
+ * Leads package (B5): the categories a person writes in with a job — what the emergency lane,
+ * lead-site cards and Call / Text buttons are for. Noise, suppliers and invoices aren't leads.
+ */
+export const LEAD_CATEGORIES = [
+  "quote_request",
+  "customer_question",
+  "scheduling",
+  "complaint",
+] as const satisfies readonly Category[];
+
+export const isLeadCategory = (c: string | null | undefined): boolean =>
+  (LEAD_CATEGORIES as readonly string[]).includes(c ?? "");
+
 export function isCategory(v: unknown): v is Category {
   return typeof v === "string" && v in categoryLabels;
 }

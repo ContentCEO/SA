@@ -39,6 +39,8 @@ export type DraftCardProps = {
   tag: string;
   /** Round 2 (FW E9): when the customer wrote ("Wrote 9 days ago"), on every card. */
   wrote?: string | null;
+  /** Leads package (B14 / B9): one-liners from code ("Repeat customer: …"). */
+  leadLines?: string[];
   /** One line on what the customer wants, from sorting — so the card reads without opening Gmail. */
   summary?: string | null;
   reason: string;
@@ -239,6 +241,11 @@ export function DraftCard(p: DraftCardProps) {
         <ToLine address={p.toAddress} fromReplyTo={p.toFromReplyTo} />
         <span className="text-sm font-semibold">{p.tag}</span>
         {p.wrote ? <span className="text-sm">{p.wrote}</span> : null}
+        {(p.leadLines ?? []).map((line) => (
+          <p key={line} className="text-sm font-semibold">
+            {line}
+          </p>
+        ))}
         {p.noteLine}
         {p.summary ? <p className="font-semibold">{p.summary}</p> : null}
         <p className={p.summary ? "text-muted-foreground" : undefined}>{p.reason}</p>

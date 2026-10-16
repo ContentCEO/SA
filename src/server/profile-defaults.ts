@@ -3,6 +3,7 @@ import type { ProfileDefaults } from "@/components/forms/business-profile-form";
 import type { Workspace } from "@/db/schema";
 import { DEFAULT_AMOUNT_THRESHOLD_DOLLARS } from "./classification";
 import { getBusinessProfile } from "./profile";
+import { suggestTowns } from "./service-area-rules";
 
 export async function profileDefaults(workspace: Workspace): Promise<ProfileDefaults> {
   const p = await getBusinessProfile(workspace.id);
@@ -12,6 +13,8 @@ export async function profileDefaults(workspace: Workspace): Promise<ProfileDefa
     extraTrades: workspace.extraTrades ?? [],
     services: p?.services ?? null,
     serviceArea: p?.serviceArea ?? null,
+    // Leads package (B9): a first suggestion from "Where do you work?" while the list is empty.
+    serviceTowns: p?.serviceTowns?.length ? p.serviceTowns : suggestTowns(p?.serviceArea),
     hours: p?.hours ?? null,
     leadTime: p?.leadTime ?? null,
     pricingNotes: p?.pricingNotes ?? null,

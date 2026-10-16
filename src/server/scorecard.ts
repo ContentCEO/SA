@@ -108,6 +108,9 @@ export function scorecardQueries(workspaceId: string, start: Date, end: Date, no
         sql`${requestedAt} >= ${at(start)}`,
         sql`${requestedAt} < ${at(end)}`,
         sql`not ${noReplySql(requester)}`,
+        // Leads package: a lead website's or a phone message's request is answered off email,
+        // so there's no email to time (it still counts as a quote request).
+        sql`${threads.leadChannel} is null`,
       ),
     );
 

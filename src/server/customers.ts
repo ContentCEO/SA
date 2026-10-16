@@ -50,6 +50,8 @@ export async function listCustomers(workspaceId: string, now: Date = new Date())
         // A robot (a lead portal's no-reply, a form with no Reply-To) is never a customer,
         // or one portal shows up as one huge customer (round 2 A9).
         sql`not ${noReplySql(addr)}`,
+        // Leads package: a lead website's or a phone service's sender isn't the customer.
+        isNull(threads.leadChannel),
         notNoise,
       ),
     )

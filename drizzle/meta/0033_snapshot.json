@@ -1,6 +1,6 @@
 {
-  "id": "f2399218-20b0-4e5d-8ba7-5f40e3149fbe",
-  "prevId": "76d8764e-6fc3-4f11-b4df-d7419e78e947",
+  "id": "8e67a82c-4a41-4c9d-b1b7-1d54932e0896",
+  "prevId": "96ead324-3e70-422a-86fa-6dad750ab48e",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -227,6 +227,13 @@
           "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": false
+        },
+        "service_towns": {
+          "name": "service_towns",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'[]'::jsonb"
         },
         "amount_threshold_dollars": {
           "name": "amount_threshold_dollars",
@@ -2207,6 +2214,24 @@
           "primaryKey": false,
           "notNull": false
         },
+        "lead_channel": {
+          "name": "lead_channel",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "complaint_fixed_at": {
+          "name": "complaint_fixed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "complaint_checkin_done_at": {
+          "name": "complaint_checkin_done_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
         "quote_requested_at": {
           "name": "quote_requested_at",
           "type": "timestamp with time zone",
@@ -2227,12 +2252,6 @@
         },
         "category_manual": {
           "name": "category_manual",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "quote_lost_reason": {
-          "name": "quote_lost_reason",
           "type": "text",
           "primaryKey": false,
           "notNull": false

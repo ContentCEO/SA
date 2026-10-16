@@ -406,4 +406,19 @@ describe("owner-facing copy about the trial", () => {
     expect(page).not.toMatch(/only when you tap <strong>Send reply<\/strong>\./);
     expect(page).not.toMatch(/three things|all three|read, draft, and send/);
   });
+
+  it("names what the leads package stores and promises (lead sources, Call / Text, towns)", () => {
+    const policy = flat(raw("privacy-policy.md"));
+    expect(policy).toContain(
+      "Which lead website or phone service a conversation came through (for example Thumbtack or Google Voice)",
+    );
+    expect(policy).toContain("the towns you work in");
+    expect(policy).toContain(
+      "To show **Call** and **Text** buttons, we look for a phone number in the customer's email when you open your queue. We don't store the number. Calls and texts go from your own phone: Squared Away never calls or texts your customers.",
+    );
+    expect(policy).toContain(
+      "we never draft or send to an email-to-text address, because that would text your customer.",
+    );
+    expect(policy).toContain("lead-source, done and fixed marks");
+  });
 });

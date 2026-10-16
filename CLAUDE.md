@@ -1559,8 +1559,76 @@ default, CI too) and refuses a non-local `DATABASE_URL` or an `APP_URL` that isn
   confirm at myaccount.google.com/permissions that Squared Away has no Gmail access, reconnect,
   and confirm that mailbox's `mailboxes.scopes` has no `gmail.send`. The demo video's "Before
   recording" note repeats the clear-out (filming comes after the check).
+- **Leads package (2026-10-16, branch `leads-build`; plan `ideas-plan-leads.md`: B4 B5-lane B3
+  B2 B6 B14 B9 G5):** migration 0032 `leads` (additive: `threads.lead_channel`,
+  `complaint_fixed_at`, `complaint_checkin_done_at`; `business_profile.service_towns`). **No prompt change** (classify.v4 untouched; the eval
+  baseline is still empty): the town is read in code from the address the classifier already
+  extracts, emergencies use its existing `urgency`, lead-site names come from labelled lines.
+  - **Where a lead came from** (`src/server/channel-rules.ts`, pure; `src/config/phone-services.ts`):
+    `channelOf(from)` = `phone` (Google Voice `voice-noreply@google.com`, exact), `phone_text`
+    (email-to-text gateways, carriers' own published domains) or `site` (via `leadPlatformOf`,
+    so platform matching never disagrees with the monthly label / Reply-To rules). Every
+    `LEAD_SOURCES` entry has `site` (Facebook `null`; Google Local Services included, exact
+    hosts only); "Open <site>" is a **fixed** https URL whose host must be on `OPEN_SITE_HOSTS`
+    (`openSiteUrl`; tested) — never a link read from an email. Stored at classification as
+    `threads.lead_channel` (never cleared by a later email). Promotions/Social shortcut bypassed
+    for phone channels only. Customers leaves lead-channel threads out.
+  - **Never drafted, never sent:** `createDraftForThread` refuses `lead_site` / `phone_message`
+    first (every trigger, before the Reply-To read or any model call), then on the final `to`
+    `text_address` (any gateway, every trigger; also a form whose Reply-To is a gateway) and
+    `lead_site` by address (older threads); a phone-number-shaped address the owner never wrote
+    to → jobs skip (`maybe_text_address`), the owner's tap gets `MAYBE_TEXT_FLAG` first.
+    `queueSend` → `text_address` (403 on the API, `?error=textaddr`); `sendDraft` closes such a
+    draft as discarded with **no Gmail call**; `reconcileDrafts` first expires pending drafts to a
+    gateway or a lead-site robot (and their Gmail drafts); autopilot refuses lead channels and
+    phone-like addresses. Precedence: lead-site/phone refusals before the no-reply rule.
+  - **Owner rules** (`applyOwnerRules`): every hit stored as content-free keys in
+    `extracted.owner_rule_hits` (`OWNER_RULE_KEYS`); new hits `emergency` (model urgency
+    `emergency` + `LEAD_CATEGORIES` → needs you, priority high: emergencies are no longer
+    auto-drafted), `phone`, `site`, `outside_area`. When any of those four hit, the stored reason
+    is our fixed text (never the model's prose, which could carry a town or name past the purge).
+    Cards read flags, never reason strings.
+  - **Done** = the existing "I called them" (`handled_offline_at`, round 2 E11), relabelled "Done —
+    I answered" / "Done — I called back" on lead cards (`?done=done`); no `owner_done_at` column.
+    It already answers leads at risk, Not answered yet, Quotes and follow-ups via `lastOutSql`.
+  - **Queue** (`queueMembership`, shared by digest / badge / push / screen): `lane` (B5, sorted
+    first; injection never) and G5 check-ins (`checkIn`: fixed 2–30 days ago, not closed since, no
+    customer email and no owner email / app reply since, no draft pending; never an emergency)
+    join needs-you, content-free. The screen renders
+    `NeedsYouCard` (`queue/needs-you-card.tsx`) with `leadCardsFor` (`src/server/lead-cards.ts`:
+    a fixed number of queries per render): Call / Text (`ContactButtons`, plain `tel:` /
+    `sms:?&body=`; numbers from `src/lib/phone-numbers.ts` + `contact-rules.ts`, code only:
+    toll-free / N11 / 555-01xx refused, the owner's signature / alert phone / sent-mail tails
+    skipped, machine mail needs a field label like "Phone:", a voicemail's subject names the
+    caller; nothing stored or logged), emergency section with Call now first, voicemail cards
+    (Call back, no Draft a reply, "Open in Gmail (to play it)"), lead-site cards (Open <site>,
+    name / service / town parsed from labelled lines only, `lead-site-rules.ts`), complaint
+    cards (Call first, **Mark fixed** → `?done=fixed`, refused with a pending draft
+    `has_draft` or a legal hit), check-ins (All good), repeat-customer line (B14,
+    `repeat-customer-rules.ts`: won > quoted (amount or a real owner email) > asked; lead
+    channels and no-reply skipped; no price) and the towns line (B9).
+  - **Not answered yet (B6)** (`never-answered.ts`): over 24 h and under 14 days, one row per
+    customer (`row_number() over (partition by waitingReplySql())`, address never selected), no
+    queue card, active mailbox synced < 30 min; lead channels, no-reply, injection, municipal,
+    job done and decided quotes left out; the morning email adds a count-only line (excluding
+    queue cards and leads at risk).
+  - **Towns (B9):** "Towns you work in" under "Where do you work?" (pre-filled from it while the
+    list is empty; saved only on Save), de-duped by `normalizeTown`. `townFromAddress` only reads
+    "…, Town, ST [zip]" / "…, Town" (no digits, not a street). "Add <town> to my towns" takes the
+    town from the stored address (never the form) and clears needs-you only when
+    `owner_rule_hits` is exactly `["outside_area"]`.
+  - Scorecard response time and `guessNoAnswers` leave lead-channel threads out. Inbox swaps
+    Draft a reply for Open <site> (or a plain line) on lead-channel threads.
+  - Privacy policy lines added (lead source / rule-hit / done / fixed marks; towns; Call / Text
+    reads the number at render and never stores it; never draft/send to lead sites, voicemails or
+    gateways); the documents were already dated 2026-10-16 = `TERMS_VERSION`, so no date move.
+  - **Not built (deviations):** classify.v5 (customer name / town from the model, strict
+    emergency wording) — waits for the eval baseline; purpose.v2 notes (polite no, calm
+    complaint reply, check-in note) — the owner's ordinary "Draft a reply" covers them for now, so
+    no `declined_at`; held B5 part 2 (emergency alerts) and its columns; RingCentral /
+    Grasshopper / OpenPhone senders (need samples).
 - **Ideas "control" package (2026-10-16, branch `ideas-build`; H3, H4, G7, E7 built; G3 and B7
-  not built in this pass, see Waiting on Davi):** migration 0032 (additive): `owner_sender_rules`,
+  not built in this pass, see Waiting on Davi):** migration 0033 `control` (additive; was 0032 before the leads merge): `owner_sender_rules`,
   `customer_notes`, `threads.category_manual` / `category_manual_at`, `business_profile.away_back_on`,
   `seasonal_notes.away` (+ partial unique index, one away note). No prompt change.
   - **H3 sender rules** (`sender-rule-store.ts`, pure `owner-sender-rule-rules.ts`; the store is
@@ -1604,7 +1672,7 @@ default, CI too) and refuses a non-local `DATABASE_URL` or an `APP_URL` that isn
     and the junk-shortcut exception, retention, and notes left out of the offline copy.
 
 - **Ideas "numbers" package, part (2026-10-16, branch `ideas-build`; C8, H8, C5, K2 built;
-  D4 and D7 not built, see Waiting on Davi):** migration 0033 (additive): `threads.quote_lost_reason`.
+  D4 and D7 not built, see Waiting on Davi):** migration 0034 `numbers` (additive; was 0033 before the leads merge): `threads.quote_lost_reason`.
   No prompt change; nothing new is sent to the AI or to a customer.
   - **C8 quote speed** (`quoteSpeed` / `quoteSpeedSentence`, `scorecard-rules.ts`): of the week's
     quote requests, answered within `QUOTE_SPEED_HOURS` 24 calendar hours (nights and weekends
@@ -1633,6 +1701,23 @@ default, CI too) and refuses a non-local `DATABASE_URL` or an `APP_URL` that isn
     (`leadPlatformOf`) count Won only when the owner marked it and never say "0 won" ("Tap Won on
     Quotes…"). ≥2 sources to show, 6 rows max ("Everywhere else"). Owner-only.
   - Privacy policy: why a quote was lost (store + retention), same 2026-10-16 date.
+- **Leads + ideas merge (2026-10-16, `ideas-build` ← `leads-build`):** leads' `0032_leads` reaches
+  the shared database first (PR #13's previews run it), and drizzle's migrator only applies a
+  migration whose journal `when` is later than the last applied one, so the ideas migrations were
+  renumbered after it: `0033_control` (when 1792192470911) and `0034_numbers` (when
+  1792192476806; leads' 0032 is 1792180535102), regenerated with drizzle-kit (same SQL) so the
+  snapshots chain 0032_leads → 0033 → 0034. `tests/unit/migrations-order.test.ts`
+  fails if any journal `when` doesn't strictly increase in idx order (or tags/files disagree).
+  Combined behaviour: `OWNER_RULE_KEYS` gains `sender_rule` (a company "Always needs me"), so
+  "Add <town>" only clears needs-you when the town was the one reason; the junk-by-rule shortcut
+  never fires for voicemail / text-message emails (they are always read, like the Promotions
+  shortcut); `companyChoice` refuses email-to-text gateways ("Anyone at vtext.com" would be
+  many people); `createDraftForThread` keeps every refusal from both sides (lead_site /
+  phone_message first, then the jobs-only owner_moved / sender_rule / away, then text_address /
+  maybe_text_address on the final address); autopilot refuses owner-moved kinds, lead channels and
+  phone-like addresses. `NeedsYouCard` takes the private note line and the Move it sheet (not on
+  check-ins or read-only accounts); draft cards show the lead lines then the note. Quote speed
+  (C8) reads the same request query as response time, so it leaves lead-channel threads out too.
 
 ## Milestones
 
@@ -1655,6 +1740,18 @@ default, CI too) and refuses a non-local `DATABASE_URL` or an `APP_URL` that isn
 
 ## Waiting on Davi
 
+- **Leads package (2026-10-16):** (1) **Privacy lines — merge blocker:** approve the new lines in
+  `docs/privacy-policy.md` (lead source / done / fixed marks, towns, Call / Text reads the number
+  without storing it, no drafts to lead sites / voicemails / email-to-text). The documents were
+  already dated today, so no extra re-agreement; if this merges after another 2026-10-16 bump has
+  shipped, batch it with the other packages' lines into one date move. (2) **Real samples**
+  (customer details blurred) of each lead site's email (Thumbtack, Angi / HomeAdvisor, Houzz, Yelp,
+  Nextdoor, Porch, Bark, Networx, Google Local Services) — Primary or Promotions? does any take an
+  email reply? does each fixed "Open <site>" link land on the pro's inbox? — and RingCentral /
+  Grasshopper / OpenPhone voicemail emails. The site parsers and the Open links were written
+  against invented samples. (3) **Emergency alerts (B5 part 2)**, including at night — held.
+  (4) The eval baseline (`ANTHROPIC_API_KEY` repo secret) before classify.v5 (names / towns from
+  the model, strict emergency wording) can be written and compared.
 - **The launch checklist is `docs/LAUNCH.md`** (in order, where to click, how to know it worked,
   and every open decision in its step 13, split into "Decided on 2026-10-15", "Decided on
   2026-10-14", "Still open" and "Still needed from you"). The items below are the same list in engineering words.

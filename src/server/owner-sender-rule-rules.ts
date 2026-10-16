@@ -15,6 +15,7 @@ import type { OwnerSenderRuleAction, OwnerSenderRuleScope } from "@/db/schema";
 import { leadPlatformOf } from "./monthly-rules";
 import type { ReplyToHeader } from "./reply-address-rules";
 import { isNoReplyAddress, PUBLIC_WEBMAIL_DOMAINS } from "./sender-rules";
+import { isEmailToTextAddress } from "./channel-rules";
 
 export type SenderRule = {
   pattern: string;
@@ -78,6 +79,9 @@ export function keyFromMessage(m: {
 export function companyChoice(address: string, ownAddresses: readonly string[]): string | null {
   const d = domainOf(address);
   if (!d || PUBLIC_WEBMAIL_DOMAINS.has(d)) return null;
+  // A carrier's email-to-text gateway (vtext.com…) is every texting customer of that carrier,
+  // like webmail: never "Anyone at" one (leads + ideas merge).
+  if (isEmailToTextAddress(address)) return null;
   const own = new Set(ownAddresses.map(domainOf).filter((x): x is string => !!x));
   if ([...own].some((o) => d === o || d.endsWith(`.${o}`) || o.endsWith(`.${d}`))) return null;
   return d;

@@ -20,7 +20,9 @@ export async function answeredByPhoneAction(formData: FormData) {
     if (err instanceof ReadOnlyError) redirect("/queue?error=readonly");
     throw err;
   }
-  redirect(r === "marked" ? "/queue?done=called" : "/queue?error=unknown");
+  // Leads package: the same mark says "Done" on lead-site, voicemail and emergency cards.
+  const done = formData.get("as") === "done" ? "done" : "called";
+  redirect(r === "marked" ? `/queue?done=${done}` : "/queue?error=unknown");
 }
 
 /** Round 2 (FW D1): hide the "your last 30 days" card. */
