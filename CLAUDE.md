@@ -185,6 +185,7 @@ default, CI too) and refuses a non-local `DATABASE_URL` or an `APP_URL` that isn
   (1,024 minimum), not here.
 - `threads.needs_owner_manual`: the owner's "This one needs me" always wins over classification.
 - Nav: Inbox · Settings in the header; Sign out lives at the bottom of Settings. Signed-in home = /inbox.
+  (Superseded: five tabs and Settings → Account, see "The app on a phone".)
 - **Profiles (M4):** `business_profile` (one row per workspace; business name + trade live on
   `workspaces`) and `voice_profile`. Form validation in `src/server/profile.ts` (plain-language Zod
   messages; list fields are one-per-line, trimmed, de-duped; VIPs must be emails, lowercased).
@@ -949,6 +950,50 @@ default, CI too) and refuses a non-local `DATABASE_URL` or an `APP_URL` that isn
   `draft_repointed`. Replies sent in the last 30 days to a robot get one Activity line
   `reply_went_to_form` (links to its record). e2e: `tests/e2e/form-lead.spec.ts` (fake Gmail
   serves Reply-To; metadata reads return only the named headers).
+- **The app on a phone (2026-10-16, outside review P3; I4, K1):**
+  - Theme: `--input` is slate (≥3:1 on paper / off-white; `tests/unit/input-contrast.test.ts`
+    checks every look); native checkboxes / radios take `accent-color: var(--primary)` in
+    globals.css (never the browser's blue).
+  - Draft card: the five tweak chips and "Tell it what to change" sit behind one **Change it**
+    button (`aria-expanded`); the row is Discard · Change it · Edit (Edit on the thumb side,
+    mirrored for left hands). The editor no longer holds the rewrite box. e2e checks Send reply
+    is fully on screen, above the tab bar, for a typical draft at 375×812.
+  - **Settings is a list** (`/settings`, `MenuList` rows ≥56px with a one-line state) of
+    screens: `/settings/gmail`, `business` (profile facts + seasonal notes), `writing` (voice,
+    ideas, never-say, Re-learn **behind a confirm**), `follow-ups`, `autopilot`,
+    `morning-email`, `notifications` (only with VAPID keys), `texts` (only when
+    `smsConfigured()`; both screens redirect to the list otherwise — no "Coming soon"),
+    `phone` (Get the app, hand, offline queue), `account` (Plan & billing link, Sign out —
+    the inline action moved here whole — and Delete my account), plus `/billing` and `/admin`
+    (admin only). Each screen's notices live in `settings/messages.ts` (`SCREEN_MESSAGES`);
+    every action redirects to its own screen (`tests/unit/settings-screens.test.ts` checks
+    every `?done=` / `?error=` code has a notice and a page). Old `/settings?done=…` bookmarks
+    still show on the list (`LIST_MESSAGES`). Old anchors (`/settings#digest` …, 12 ids) are
+    sent on by `LegacySettingsAnchors` (`legacySettingsScreen`, a switch of fixed paths).
+    Emails now link `/settings/morning-email`; the access-lost email links `/settings/gmail`.
+  - Switches save themselves: `AutoSaveForm` (`src/components/forms/auto-save-form.tsx`) is a
+    plain server-action form; once hydrated, a checkbox / radio change calls `requestSubmit()`.
+    Forms with only switches (`hideButton`: the hand radios, the offline checkbox) hide their
+    Save button after hydration (`form[data-autosave] .sa-autosave-button`); forms with a
+    `<select>` (follow-up days, digest hour) keep a visible Save (WCAG 3.2.2). Without JS every
+    form still saves with its button (e2e with `javaScriptEnabled: false`). Auto-saves land on
+    `?done=saved` → "Saved." ("Saved for this phone." on the phone screen).
+  - **Five tabs:** Queue, Inbox, Quotes, Money, More (`src/config/nav.ts`: `currentTab`,
+    `MORE_PATHS` — More is current on /more, /customers, /activity, /settings, /billing,
+    /admin, /record); labels 14px; the sm+ header shows the same five. `/more` lists Customers,
+    Activity, Settings (+ Admin for the admin); it's in the proxy matcher and robots.
+  - **Activity leads with money** (`monthMoney`, rules in `activity-rules.ts`): "Won and paid
+    in {Month}" — quotes with outcome won this month (owner or guess) summed from
+    `quote_amount_cents`, and invoices marked paid this month (`owner` / `auto`, never
+    `not_owed`) after a **sent** follow-up decided before the paid mark, summed from
+    `extracted.invoice.amount`; items without an amount are counted and said. Never reads
+    price history. Time saved stays underneath. The feed is grouped by the owner's day
+    (`groupByDay`: Today / Yesterday / "Monday, Oct 13").
+  - **Inbox:** each row says "Replied" / "Waiting on you" (`replyState` from `lastInSql` /
+    `lastOutSql`; junk gets none); on All, junk folds into one "N junk emails" `<details>`;
+    a client search (`inbox-search.tsx`) filters by name, address, subject, summary and
+    category — typed text never reaches a URL or the server.
+  - Onboarding ends on "Go to my queue" (`/queue`).
 - **M11 security audit (S4, 2026-10-13):** static tests guard the surface —
   `tests/unit/security-surface.test.ts` (C1 every server action awaits `requireOwner` /
   `requireAdmin` first, reviewed public/inline allow-lists; C2 admin pages + no `loading.tsx` over

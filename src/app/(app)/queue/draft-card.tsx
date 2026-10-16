@@ -117,6 +117,9 @@ const buzz = () => {
 export function DraftCard(p: DraftCardProps) {
   const [editing, setEditing] = useState(false);
   const [expanded, setExpanded] = useState(false);
+  // Outside review (2026-10-15): the quick changes live behind one button, so Send reply
+  // stays on the first screen of a card.
+  const [changing, setChanging] = useState(false);
   const [confirmDiscard, setConfirmDiscard] = useState(false);
   const [dx, setDx] = useState(0);
   const start = useRef<{ x: number; y: number } | null>(null);
@@ -141,6 +144,7 @@ export function DraftCard(p: DraftCardProps) {
       }),
     );
   };
+  const canChange = !p.readOnly && (p.revisionsLeft ?? 0) > 0;
   // Right thumb: right opens for sending. Left thumb: mirrored.
   const toSend = p.leftHanded ? -1 : 1;
 
@@ -316,14 +320,6 @@ export function DraftCard(p: DraftCardProps) {
           </Button>
         </form>
       ) : null}
-      {editing && (p.revisionsLeft ?? 0) > 0 ? (
-        <div className="flex flex-col gap-2 border-t pt-3">
-          <p className="text-sm text-muted-foreground">
-            Or let us rewrite it — this replaces the draft with a new version to read.
-          </p>
-          <SayAChange draftId={p.draftId} />
-        </div>
-      ) : null}
       {editing ? null : (
         <>
           <div className="rounded-lg border bg-paper p-3">
@@ -354,10 +350,6 @@ export function DraftCard(p: DraftCardProps) {
           ) : null}
 
           <WhyThis reason={p.reason} usedFacts={p.usedFacts} flags={p.flags} />
-
-          {!p.readOnly && !confirmDiscard && discardIn === null && (p.revisionsLeft ?? 0) > 0 ? (
-            <TweakChips draftId={p.draftId} />
-          ) : null}
 
           {discardIn !== null ? (
             <form
@@ -461,21 +453,54 @@ export function DraftCard(p: DraftCardProps) {
                 </>
               )}
               {p.readOnly ? null : (
-                <div className="grid grid-cols-2 gap-2">
-                  {/* The main button sits under the thumb: right by default, left if mirrored. */}
+                <div className={canChange ? "grid grid-cols-3 gap-2" : "grid grid-cols-2 gap-2"}>
+                  {/* Edit sits under the thumb: right by default, left if mirrored. Discard is
+                      on the far side; Change it, when there, in the middle. */}
                   <Button
                     type="button"
                     variant="outline"
-                    className={p.leftHanded ? undefined : "order-2"}
-                    onClick={() => setEditing(true)}
+                    className={p.leftHanded ? "order-1" : "order-3"}
+                    onClick={() => {
+                      setChanging(false);
+                      setEditing(true);
+                    }}
                   >
                     Edit
                   </Button>
-                  <Button type="button" variant="outline" onClick={() => setConfirmDiscard(true)}>
+                  {canChange ? (
+                    <Button
+                      type="button"
+                      variant={changing ? "default" : "outline"}
+                      aria-expanded={changing}
+                      aria-controls={`change-${p.draftId}`}
+                      className="order-2"
+                      onClick={() => setChanging((v) => !v)}
+                    >
+                      Change it
+                    </Button>
+                  ) : null}
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className={p.leftHanded ? "order-3" : "order-1"}
+                    onClick={() => setConfirmDiscard(true)}
+                  >
                     Discard
                   </Button>
                 </div>
               )}
+              {canChange && changing ? (
+                <div
+                  id={`change-${p.draftId}`}
+                  className="flex flex-col gap-3 rounded-lg border p-3"
+                >
+                  <p className="text-sm text-muted-foreground">
+                    Each change writes a new version for you to read. Nothing is sent.
+                  </p>
+                  <TweakChips draftId={p.draftId} />
+                  <SayAChange draftId={p.draftId} />
+                </div>
+              ) : null}
               <RemindMe threadId={p.threadId} options={p.remindOptions ?? []} />
             </div>
           )}

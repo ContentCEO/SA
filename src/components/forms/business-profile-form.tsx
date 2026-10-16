@@ -32,7 +32,7 @@ export function BusinessProfileForm({
   submitLabel,
 }: {
   defaults: ProfileDefaults;
-  returnTo: "/settings?done=profile" | "/welcome/learning";
+  returnTo: "/settings/business?done=profile" | "/welcome/learning";
   submitLabel: string;
 }) {
   const [state, action, pending] = useActionState<FormState, FormData>(

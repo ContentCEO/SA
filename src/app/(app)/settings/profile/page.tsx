@@ -14,7 +14,7 @@ export default async function EditProfilePage() {
       </p>
       <BusinessProfileForm
         defaults={await profileDefaults(workspace)}
-        returnTo="/settings?done=profile"
+        returnTo="/settings/business?done=profile"
         submitLabel="Save business profile"
       />
     </>

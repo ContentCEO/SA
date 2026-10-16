@@ -3,7 +3,8 @@ import { and, desc, eq, isNull, type SQL } from "drizzle-orm";
 import type { Category } from "@/ai/prompts/classify.v3";
 import { db } from "@/db";
 import { mailboxes, threads } from "@/db/schema";
-import { customerAddressSql, customerNameSql } from "./thread-sql";
+import { replyState, type ReplyState } from "./inbox-rules";
+import { asDate, customerAddressSql, customerNameSql, lastInSql, lastOutSql } from "./thread-sql";
 
 export type InboxFilter =
   | { kind: "all" }
@@ -23,6 +24,8 @@ export type InboxRow = {
   senderName: string | null;
   senderAddress: string | null;
   extracted: Record<string, unknown> | null;
+  /** "Replied" / "Waiting on you"; null for junk or no customer email. */
+  replyState: ReplyState | null;
 };
 
 /** Recent inbox threads for the owner's own mailboxes. Never crosses workspaces. */
@@ -36,7 +39,7 @@ export async function listInboxThreads(
   if (filter.kind === "unsorted") where.push(isNull(threads.category));
   if (filter.kind === "category") where.push(eq(threads.category, filter.category));
 
-  return db()
+  const rows = await db()
     .select({
       id: threads.id,
       subject: threads.subject,
@@ -50,10 +53,20 @@ export async function listInboxThreads(
       // Latest inbound email's customer, as a reply addresses them (a form's Reply-To, else From).
       senderName: customerNameSql(),
       senderAddress: customerAddressSql(),
+      lastIn: lastInSql(),
+      lastOut: lastOutSql(),
     })
     .from(threads)
     .innerJoin(mailboxes, eq(mailboxes.id, threads.mailboxId))
     .where(and(...where))
     .orderBy(desc(threads.needsOwner), desc(threads.lastMessageAt))
     .limit(limit);
+  return rows.map(({ lastIn, lastOut, ...r }) => ({
+    ...r,
+    replyState: replyState({
+      lastIn: asDate(lastIn),
+      lastOut: asDate(lastOut),
+      category: r.category,
+    }),
+  }));
 }

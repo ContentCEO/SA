@@ -83,8 +83,8 @@ export default async function WelcomeLearningPage() {
           ? "Nothing gets sent without you. Drafts show up in your queue for you to check."
           : "You can leave this screen — it keeps going in the background."}
       </p>
-      <Link href="/inbox" className={cn(buttonVariants({ size: "lg" }), "w-full")}>
-        {allDone ? "Go to my inbox" : "Go to my inbox now"}
+      <Link href="/queue" className={cn(buttonVariants({ size: "lg" }), "w-full")}>
+        {allDone ? "Go to my queue" : "Go to my queue now"}
       </Link>
     </>
   );

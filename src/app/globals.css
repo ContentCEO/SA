@@ -38,4 +38,16 @@
   html {
     @apply font-sans;
   }
+  /* Two-tone: native radios and checkboxes take the ink colour (charcoal on light,
+     off-white on charcoal), never the browser's blue. */
+  input[type="checkbox"],
+  input[type="radio"] {
+    accent-color: var(--primary);
+  }
+}
+
+/* A switch that saves itself (AutoSaveForm) needs no Save button once the script runs.
+   Unlayered, so it beats the button's own display utility. */
+form[data-autosave] .sa-autosave-button {
+  display: none;
 }

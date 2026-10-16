@@ -21,7 +21,7 @@ export function QueuePreview() {
             <span className="sa-headline-serif text-sm">squared</span>
             <span className="sa-headline-heavy text-base">away.</span>
           </span>
-          <span className="text-xs font-semibold">Queue · Inbox · Activity</span>
+          <span className="text-xs font-semibold">Queue · Inbox · Quotes · Money</span>
         </div>
 
         <div className="mb-3 flex flex-col rounded-xl border-2 border-charcoal px-3 py-2 text-sm">

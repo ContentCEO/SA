@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { eq } from "drizzle-orm";
 import * as schema from "../../src/db/schema";
 import { seedOwner, signInAs, testDb } from "./support";
 
@@ -141,4 +142,81 @@ test("a failed inspection shows the permit card with what to fix", async ({ page
   await expect(card).toContainText("Permit E-2026-118");
   await expect(card).toContainText("2 things to fix:");
   await expect(card).toContainText("Missing GFCI in garage");
+});
+
+test("inbox: a word per row, junk folded into one line, and a search that stays on the phone", async ({
+  page,
+  context,
+}) => {
+  const owner = await seedOwner({ mailbox: true, backfilled: true });
+  await seedThreads(owner.mailboxId!);
+  const now = Date.now();
+  // Marco's thread: the owner has answered it.
+  const [marco] = await testDb
+    .select()
+    .from(schema.threads)
+    .where(eq(schema.threads.gmailThreadId, `a-${owner.mailboxId}`));
+  await testDb.insert(schema.messages).values({
+    threadId: marco!.id,
+    mailboxId: owner.mailboxId!,
+    gmailMessageId: `m-a-out-${owner.mailboxId}`,
+    direction: "out",
+    fromAddress: owner.email,
+    sentAt: new Date(now + 1000),
+  });
+  for (const g of ["j1", "j2"]) {
+    const [t] = await testDb
+      .insert(schema.threads)
+      .values({
+        mailboxId: owner.mailboxId!,
+        gmailThreadId: `${g}-${owner.mailboxId}`,
+        inInbox: true,
+        category: "noise",
+        summary: `Newsletter ${g}.`,
+        lastMessageAt: new Date(now - 60_000),
+        subject: `Sale ${g}`,
+      })
+      .returning();
+    await testDb.insert(schema.messages).values({
+      threadId: t!.id,
+      mailboxId: owner.mailboxId!,
+      gmailMessageId: `m-${g}-${owner.mailboxId}`,
+      direction: "in",
+      fromName: "Big Box Store",
+      fromAddress: `deals-${g}@store.example`,
+      sentAt: new Date(now - 60_000),
+    });
+  }
+  await signInAs(context, owner);
+  await page.goto("/inbox");
+
+  const row = (name: string) => page.locator("main li").filter({ hasText: name });
+  await expect(row("Marco")).toContainText("Replied");
+  await expect(row("Priya")).toContainText("Waiting on you");
+  // Junk: one line at the end, which opens.
+  const junk = page.getByText("2 junk emails");
+  await expect(junk).toBeVisible();
+  await expect(row("Newsletter j1.")).toBeHidden();
+  await junk.click();
+  await expect(row("Newsletter j1.")).toBeVisible();
+  await expect(row("Newsletter j1.")).not.toContainText("Waiting on you");
+
+  // Search filters on the phone; nothing typed goes into the URL.
+  await page.waitForLoadState("networkidle");
+  const search = page.getByLabel("Search your inbox");
+  await search.fill("water heater");
+  await expect(page.locator("main li")).toHaveCount(1);
+  await expect(row("Priya")).toBeVisible();
+  await search.fill("store.example");
+  await expect(page.locator("main li")).toHaveCount(2);
+  await search.fill("nobody like this");
+  await expect(page.getByText("No emails match that.")).toBeVisible();
+  expect(page.url()).toMatch(/\/inbox$/);
+  await search.fill("");
+  await expect(page.getByText("2 junk emails")).toBeVisible();
+
+  const overflow = await page.evaluate(
+    () => document.documentElement.scrollWidth > document.documentElement.clientWidth,
+  );
+  expect(overflow).toBe(false);
 });

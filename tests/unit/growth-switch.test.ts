@@ -268,7 +268,7 @@ describe("theme.css: the switch", () => {
     for (const name of PALETTE) expect(wrapper.has(`--sa-${name}`)).toBe(true);
     expect(wrapper.get("--sa-charcoal")).toBe("var(--sa-k-paper)");
     expect(wrapper.get("--border")).toBe("var(--sa-k-stone)");
-    expect(wrapper.get("--input")).toBe("var(--sa-k-stone)");
+    expect(wrapper.get("--input")).toBe("var(--sa-k-slate)");
   });
 
   it("the stage never takes a tap, and reduced motion hides it", () => {

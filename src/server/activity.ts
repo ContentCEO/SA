@@ -1,10 +1,12 @@
 import "server-only";
-import { and, count, desc, eq, gte, inArray, isNotNull, lt } from "drizzle-orm";
+import { and, count, desc, eq, gte, inArray, isNotNull, lt, sql } from "drizzle-orm";
 import { categoryLabels, categoryTag, isCategory } from "@/config/categories";
 import { db } from "@/db";
 import { activityLog, drafts, mailboxes, messages, threads } from "@/db/schema";
 import { MINUTES_PER_SENT_REPLY } from "@/config/drafting";
+import { dollarsToCents, tally, type MonthMoney } from "./activity-rules";
 import { atRiskActivityLine } from "./leads-at-risk-rules";
+import { invoiceOf } from "./money-rules";
 import { closeRate, isQuoteOutcome, type QuoteOutcome } from "./quote-rules";
 import { workspaceTimeZone } from "./snooze";
 import { localMonthStart, usableTimeZone } from "./snooze-rules";
@@ -379,4 +381,52 @@ export async function closeRateBetween(
   const n = (o: QuoteOutcome) => Number(rows.find((r) => r.outcome === o)?.n ?? 0);
   const c = { won: n("won"), lost: n("lost"), noAnswer: n("no_answer") };
   return { ...c, ratePct: closeRate(c) };
+}
+
+/**
+ * Outside review K1: this month's money, from what the app already keeps — never from
+ * price memory (only the owner's screens may read that). Quotes won = outcome "won" set this
+ * month (by the owner, or our guess they left alone) with the amount from their own quote
+ * when we have it. Paid after a follow-up = an invoice marked paid this month (by the owner,
+ * or our guess) on a thread where a follow-up nudge was sent before it was marked paid.
+ */
+export async function monthMoney(
+  workspaceId: string,
+  now: Date = new Date(),
+  timeZone?: string,
+): Promise<MonthMoney> {
+  const start = localMonthStart(now, await monthZone(workspaceId, timeZone));
+  const won = await db()
+    .select({ cents: threads.quoteAmountCents })
+    .from(threads)
+    .innerJoin(mailboxes, eq(mailboxes.id, threads.mailboxId))
+    .where(
+      and(
+        eq(mailboxes.workspaceId, workspaceId),
+        eq(threads.quoteOutcome, "won"),
+        gte(threads.quoteOutcomeAt, start),
+      ),
+    );
+  const paid = await db()
+    .select({ extracted: threads.extracted })
+    .from(threads)
+    .innerJoin(mailboxes, eq(mailboxes.id, threads.mailboxId))
+    .where(
+      and(
+        eq(mailboxes.workspaceId, workspaceId),
+        gte(threads.invoicePaidAt, start),
+        inArray(threads.invoicePaidSource, ["owner", "auto"]),
+        sql`exists (
+          select 1 from ${drafts}
+          where ${drafts.threadId} = ${threads.id}
+            and ${drafts.kind} = 'followup'
+            and ${drafts.status} in ('sent', 'edited_and_sent')
+            and ${drafts.decidedAt} < ${threads.invoicePaidAt}
+        )`,
+      ),
+    );
+  return {
+    won: tally(won.map((r) => r.cents)),
+    paidAfterNudge: tally(paid.map((r) => dollarsToCents(invoiceOf(r.extracted)?.amount))),
+  };
 }

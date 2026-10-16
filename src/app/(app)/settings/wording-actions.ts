@@ -17,7 +17,7 @@ export async function saveNeverSayAction(formData: FormData) {
   const { workspace } = await requireOwner();
   const text = String(formData.get("neverSay") ?? "").slice(0, 10_000);
   await saveNeverSay(workspace.id, text);
-  redirect("/settings?done=never_say#never-say");
+  redirect("/settings/writing?done=never_say");
 }
 
 export type NeverSayResult = { ok: boolean; message: string };
@@ -31,7 +31,7 @@ export async function addNeverSayAction(phrase: string): Promise<NeverSayResult>
     if (err instanceof NeverSayError) return { ok: false, message: err.message };
     throw err;
   }
-  revalidatePath("/settings");
+  revalidatePath("/settings/writing");
   return { ok: true, message: "Added. Future drafts won't say it." };
 }
 
@@ -41,22 +41,22 @@ export async function addSeasonalNoteAction(formData: FormData) {
     text: formData.get("text") ?? "",
     endsOn: formData.get("endsOn") ?? "",
   });
-  if (!parsed.success) redirect("/settings?error=note_invalid#seasonal-notes");
+  if (!parsed.success) redirect("/settings/business?error=note_invalid");
   try {
     await addSeasonalNote(workspace.id, parsed.data);
   } catch (err) {
     if (err instanceof SeasonalNoteError) {
-      redirect(`/settings?error=note_${err.code}#seasonal-notes`);
+      redirect(`/settings/business?error=note_${err.code}`);
     }
     throw err;
   }
-  redirect("/settings?done=note_added#seasonal-notes");
+  redirect("/settings/business?done=note_added");
 }
 
 export async function removeSeasonalNoteAction(formData: FormData) {
   const { workspace } = await requireOwner();
   const id = z.string().uuid().safeParse(formData.get("id"));
-  if (!id.success) redirect("/settings?error=unknown");
+  if (!id.success) redirect("/settings/business?error=unknown");
   await removeSeasonalNote(workspace.id, id.data);
-  redirect("/settings?done=note_removed#seasonal-notes");
+  redirect("/settings/business?done=note_removed");
 }

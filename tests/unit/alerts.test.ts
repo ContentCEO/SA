@@ -49,7 +49,7 @@ describe("Gmail access lost alerts", () => {
     expect((await sendAccessLostAlerts(NOW, { send })).sent).toBe(1);
     expect(sent[0]!.to).toBe("owner@shop.com");
     expect(sent[0]!.subject).toMatch(/lost access/);
-    expect(sent[0]!.text).toContain("https://app.example/settings");
+    expect(sent[0]!.text).toContain("https://app.example/settings/gmail");
 
     expect((await sendAccessLostAlerts(after(60_000), { send })).sent).toBe(0);
     expect((await sendAccessLostAlerts(after(ACCESS_REMINDER_AFTER_MS + 1), { send })).sent).toBe(

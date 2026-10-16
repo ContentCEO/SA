@@ -57,8 +57,9 @@ const addresses = (value: string | null | undefined) =>
 
 /** Settings → explainer → Google consent → back in the app, mailbox saved. */
 async function connectGmail(page: Page, owner: Owner, scenario: Scenario) {
-  await test.step("The owner opens Settings and taps Connect Gmail", async () => {
+  await test.step("The owner opens Settings → Your Gmail and taps Connect Gmail", async () => {
     await page.goto("/settings");
+    await page.getByRole("link", { name: /^Your Gmail/ }).click();
     await expect(page.getByText("No Gmail connected yet.")).toBeVisible();
     await page.getByRole("link", { name: "Connect Gmail" }).click();
   });
@@ -360,7 +361,7 @@ test("a paid owner connects Gmail and a customer gets one threaded reply", async
   });
 
   await test.step("Delete my account: Google access is revoked and nothing of theirs is left", async () => {
-    await page.goto("/settings");
+    await page.goto("/settings/account");
     await page.getByRole("button", { name: "Delete my account" }).click();
     await page.getByRole("button", { name: "Yes, delete everything" }).click();
     await expect(page).toHaveURL(/\/goodbye$/);

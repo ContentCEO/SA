@@ -14,7 +14,7 @@ test("autopilot is locked, with the reason, until Crew/Company and setup is done
     setupPaidVia: "stripe",
   });
   await signInAs(context, owner);
-  await page.goto("/settings");
+  await page.goto("/settings/autopilot");
   const section = page.getByRole("region", { name: "Autopilot" });
   await expect(section).toContainText("Autopilot comes with the Crew and Company plans.");
   await expect(section.getByText("Turn on")).toHaveCount(0);
@@ -54,7 +54,7 @@ test("unlocked: each kind of email shows its progress; earned ones can be turned
     });
   }
   await signInAs(context, owner);
-  await page.goto("/settings");
+  await page.goto("/settings/autopilot");
   const section = page.getByRole("region", { name: "Autopilot" });
   await expect(section).toContainText(
     "Unlocks after 10 replies you sent without changing them (0 so far)",

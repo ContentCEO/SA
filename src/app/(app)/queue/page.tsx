@@ -203,7 +203,7 @@ export default async function QueuePage(props: PageProps<"/queue">) {
       {boxes.length === 0 ? (
         <p className="text-lg">
           Connect Gmail in{" "}
-          <Link href="/settings" className="font-semibold underline underline-offset-4">
+          <Link href="/settings/gmail" className="font-semibold underline underline-offset-4">
             Settings
           </Link>{" "}
           to get started.

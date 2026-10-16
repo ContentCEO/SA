@@ -234,7 +234,7 @@ export async function sendMonthlySummaries(
       const stats = await monthlyStats(r.workspace.id, r.workspace.trade, month.start, month.end);
       const email = buildMonthlySummary(stats, localMonthName(month.start, timeZone), {
         activityUrl: appUrl("/activity"),
-        settingsUrl: appUrl("/settings#digest"),
+        settingsUrl: appUrl("/settings/morning-email"),
       });
       if (email.worthSending) {
         const outcome = await send({

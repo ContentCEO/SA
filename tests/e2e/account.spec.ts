@@ -10,6 +10,8 @@ test("delete my account: one clear confirmation, then everything is gone", async
   const owner = await seedOwner();
   await signInAs(context, owner);
   await page.goto("/settings");
+  await page.getByRole("link", { name: /^Account/ }).click();
+  await expect(page).toHaveURL(/\/settings\/account$/);
 
   await page.getByRole("button", { name: "Delete my account" }).click();
   const confirm = page.getByRole("form", { name: "Delete my account" });
@@ -48,7 +50,7 @@ test("after Delete my account, the admin's waitlist card offers Invite again", a
   const ownerContext = await browser.newContext();
   const ownerPage = await ownerContext.newPage();
   await signInAs(ownerContext, owner);
-  await ownerPage.goto("/settings");
+  await ownerPage.goto("/settings/account");
   await ownerPage.getByRole("button", { name: "Delete my account" }).click();
   await ownerPage.getByRole("button", { name: "Yes, delete everything" }).click();
   await expect(ownerPage).toHaveURL(/\/goodbye$/);
@@ -80,12 +82,18 @@ test("a session for a deleted account lands on sign-in, not a redirect loop", as
   await expect(page.getByRole("button", { name: /Sign in with Google/ })).toBeVisible();
 });
 
-test("text alerts say plainly when texting isn't set up", async ({ page, context }) => {
+test("text alerts stay out of Settings until texting is set up", async ({ page, context }) => {
   const owner = await seedOwner();
   await signInAs(context, owner);
+  await page.goto("/settings");
+  const list = page.getByRole("navigation", { name: "Settings" });
+  await expect(list.getByRole("link", { name: /^Your Gmail/ })).toBeVisible();
+  await expect(list.getByRole("link", { name: /Text alerts/ })).toHaveCount(0);
+  await expect(page.getByText("Coming soon")).toHaveCount(0);
+  // The screen itself (or an old link to it) goes back to the list.
+  await page.goto("/settings/texts");
+  await expect(page).toHaveURL(/\/settings$/);
   await page.goto("/settings#texts");
-  const texts = page.getByRole("region", { name: "Text alerts" });
-  await expect(texts).toContainText("never a customer's name");
-  await expect(texts).toContainText("aren't switched on yet");
-  await expect(texts.getByRole("button")).toHaveCount(0);
+  await expect(page).toHaveURL(/\/settings$/);
+  await expect(list.getByRole("link", { name: /^Your Gmail/ })).toBeVisible();
 });

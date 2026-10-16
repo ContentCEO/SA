@@ -881,7 +881,7 @@ describe("GUARDRAIL: never in the morning summary, admin, phone notifications or
     expect(stats.quoteRequests).toBeGreaterThan(0);
     const email = buildMonthlySummary(stats, "October", {
       activityUrl: "https://app.example/activity",
-      settingsUrl: "https://app.example/settings#digest",
+      settingsUrl: "https://app.example/settings/morning-email",
     });
     const sent: OutgoingEmail[] = [];
     await sendMonthlySummaries(new Date("2026-11-01T12:05:00Z"), {

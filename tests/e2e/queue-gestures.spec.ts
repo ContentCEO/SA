@@ -51,17 +51,49 @@ for (const hand of ["right", "left"] as const) {
   });
 }
 
-test("the hand setting is saved for this phone", async ({ page, context }) => {
+test("the hand setting saves itself, for this phone", async ({ page, context }) => {
   const owner = await seedOwner({ mailbox: true, backfilled: true });
   await signInAs(context, owner);
-  await page.goto("/settings");
+  await page.goto("/settings/phone");
+  await page.waitForLoadState("networkidle");
   const section = page.getByRole("region", { name: "On this phone" });
+  // Once the page's script runs, the radios need no Save button.
+  const saves = section.locator(".sa-autosave-button");
+  await expect(saves).toHaveCount(2);
+  for (const save of await saves.all()) await expect(save).toBeHidden();
   await section.getByLabel(/Left hand/).check();
-  await section.getByRole("button", { name: "Save for this phone" }).click();
+  await expect(page).toHaveURL(/\/settings\/phone\?done=saved$/);
   await expect(page.getByText("Saved for this phone.")).toBeVisible();
   await expect(
     page.getByRole("region", { name: "On this phone" }).getByLabel(/Left hand/),
   ).toBeChecked();
+  await page.goto("/settings");
+  await expect(page.getByRole("link", { name: /^This phone/ })).toContainText("Left hand");
+});
+
+test("Settings' switches and radios are charcoal, with 44px rows (outside review)", async ({
+  page,
+  context,
+}) => {
+  const owner = await seedOwner({ mailbox: true, backfilled: true });
+  await signInAs(context, owner);
+  for (const path of ["/settings/phone", "/settings/follow-ups", "/settings/morning-email"]) {
+    await page.goto(path);
+    await expect(page.getByRole("link", { name: "Settings" }).first()).toBeVisible();
+    const boxes = page.locator('main input[type="checkbox"], main input[type="radio"]');
+    await expect(boxes.first()).toBeVisible();
+    expect(await boxes.count(), path).toBeGreaterThan(0);
+    for (const box of await boxes.all()) {
+      const input = (await box.boundingBox())!;
+      expect(input.height, path).toBeGreaterThanOrEqual(24);
+      const label = (await box.locator("xpath=ancestor::label[1]").boundingBox())!;
+      expect(label.height, path).toBeGreaterThanOrEqual(44);
+      // Two-tone: the theme's ink (charcoal), never the browser's blue.
+      expect(await box.evaluate((el) => getComputedStyle(el).accentColor), path).toBe(
+        "rgb(27, 27, 27)",
+      );
+    }
+  }
 });
 
 test("offline okay (opt-in): held until back online, then refused if the draft changed", async ({
@@ -104,13 +136,11 @@ test("offline okay (opt-in): held until back online, then refused if the draft c
 test("keeping the queue on this phone is off until switched on", async ({ page, context }) => {
   const owner = await seedOwner({ mailbox: true, backfilled: true });
   await signInAs(context, owner);
-  await page.goto("/settings");
+  await page.goto("/settings/phone");
+  await page.waitForLoadState("networkidle");
   const box = page.getByLabel(/Keep my queue on this phone/);
   await expect(box).not.toBeChecked();
   await box.check();
-  await page
-    .getByRole("region", { name: "On this phone" })
-    .getByRole("button", { name: "Save", exact: true })
-    .click();
+  await expect(page).toHaveURL(/\/settings\/phone\?done=saved$/);
   await expect(page.getByLabel(/Keep my queue on this phone/)).toBeChecked();
 });

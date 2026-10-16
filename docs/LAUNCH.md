@@ -780,7 +780,7 @@ mode and test mode are set up separately. In this order:
 - Paste: Vercel → `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` (sensitive) and optionally
   `VAPID_SUBJECT` (Production) → Redeploy. Keep the pair afterwards: changing it makes every phone
   switch notifications off and on again.
-- Worked when: Settings shows the phone-notification switch; turned on from the installed app (on
+- Worked when: Settings → Notifications shows the phone-notification switch; turned on from the installed app (on
   iPhone, only the Home Screen app), the next new quote request buzzes your phone.
 
 ## 10. Optional: text alerts and instant Gmail notifications
@@ -885,8 +885,8 @@ fixed.
   that check they clear the demo Gmail's old access.** A connection made while the app still
   asked for `gmail.send` keeps it (Google even adds it back on a reconnect), and it could send the
   practice copy on its own, so the check would prove nothing. On every Squared Away account where
-  the demo Gmail is connected (the dry-run account, for one): Settings → **Disconnect Gmail** →
-  **Yes, disconnect Gmail**, which also removes the access at Google. Then
+  the demo Gmail is connected (the dry-run account, for one): Settings → Your Gmail → **Disconnect Gmail**
+  → **Yes, disconnect Gmail**, which also removes the access at Google. Then
   myaccount.google.com/permissions, signed in as the demo Gmail, must show no Gmail access for
   Squared Away (if it still does, remove it there). Then they connect it again and confirm Google
   kept only the two: that mailbox's saved permissions (`mailboxes.scopes`) have no `gmail.send`,

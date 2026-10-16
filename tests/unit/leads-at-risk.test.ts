@@ -1290,6 +1290,6 @@ describe("#34 in the morning summary and on the phone (counts only)", () => {
 const links = {
   queueUrl: "https://app/queue",
   quotesUrl: "https://app/quotes",
-  settingsUrl: "https://app/settings#digest",
+  settingsUrl: "https://app/settings/morning-email",
   threadUrl: (id: string) => `https://app/queue#t-${id}`,
 };

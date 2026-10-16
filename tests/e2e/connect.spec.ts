@@ -24,6 +24,8 @@ test("explains what it will and won't do, then sends you to Google with the mini
   await signInAs(context, owner);
 
   await page.goto("/settings");
+  await page.getByRole("link", { name: /^Your Gmail/ }).click();
+  await expect(page).toHaveURL(/\/settings\/gmail$/);
   await expect(page.getByText("No Gmail connected yet.")).toBeVisible();
   await page.getByRole("link", { name: "Connect Gmail" }).click();
 
@@ -135,7 +137,7 @@ test("disconnect asks once, then removes the mailbox", async ({ page, context })
   const owner = await seedOwner({ mailbox: true });
   await signInAs(context, owner);
 
-  await page.goto("/settings");
+  await page.goto("/settings/gmail");
   await expect(page.getByText(owner.email)).toBeVisible();
   await noHorizontalScroll(page);
 

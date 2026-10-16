@@ -346,7 +346,7 @@ Microsoft) only sees a ping, and the phone then fetches the counts from us (`src
 2. Vercel → sa → Environment Variables (Production): `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`
    (sensitive) and, optionally, `VAPID_SUBJECT` (`mailto:` the support address; defaults to
    `APP_URL`). Redeploy.
-3. How to know it worked: Settings shows the phone-notification switch; turn it on from an installed
+3. How to know it worked: Settings → Notifications shows the phone-notification switch; turn it on from an installed
    app (on iPhone, only from the Home Screen app) and the first new quote request buzzes the phone.
 
 Keep the pair once owners use it: after a change, each phone has to switch notifications off and
