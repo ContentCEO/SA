@@ -898,8 +898,11 @@ export function referralActivityLine(
 export const REFERRAL_FLAG_TEXT: Record<ReferralAdminFlag, string> = {
   renewed_without_discount: "Stripe renewed without the free month: check",
   discount_removed: "discount removed in Stripe",
-  plan_changed_in_free_month:
-    "plan changed in Stripe during a free month (charges for free days removed)",
+  plan_changed_in_free_month: "plan changed in Stripe during a free month: check",
+  free_day_charges_removed: "charges for days of a free month removed",
+  second_month_given: "the next renewal was free too (the coupon stayed on): bill it by hand",
+  free_invoice_lost_discount:
+    "the free month's invoice is still a draft and lost its discount: check before it's paid",
   charged_for_free_days: "charged for free days: credit by hand",
   invoice_not_final: "free-month invoice never finalized: check",
   discount_lingered: "used discount stayed on: removed",
@@ -997,6 +1000,15 @@ export function adminPlanLabel(
 /** /admin Payments (§1.8): free months wait while Stripe's page schedules downgrades. */
 export const PORTAL_SCHEDULES_DOWNGRADES_LINE =
   "Stripe's billing page schedules downgrades at period end, so free months wait. Turn that off in Stripe → Customer portal.";
+
+/**
+ * /admin Payments: the positive check docs/SETUP.md §6d step 2 asks for before referrals go on.
+ * A failed read says so, so silence never passes for "all clear".
+ */
+export const PORTAL_DOWNGRADES_NOW_LINE =
+  "Stripe's billing page changes plans straight away, so free months can be booked.";
+export const PORTAL_UNKNOWN_LINE =
+  "Couldn't check Stripe's billing page settings just now. Refresh before turning referrals on.";
 
 /**
  * /admin Payments (§1.8.2), information only: customers can reach the default billing page

@@ -31,6 +31,7 @@ import {
   goBackToPaidPlan,
   keepFreePlan,
   runReferralRewards,
+  STRIP_BEFORE_END_MS,
   viewChanges,
 } from "@/server/referrals";
 import { createTestDb } from "../support/db";
@@ -47,6 +48,7 @@ import { FakeStripe, fromSeconds, stripeErrors, type Call } from "../support/fak
 const NOW = new Date("2026-10-16T14:00:00Z");
 const DAY = 86_400_000;
 const later = (ms: number) => new Date(NOW.getTime() + ms);
+const secs = (d: Date) => Math.floor(d.getTime() / 1000);
 const PRICE = { solo: "price_solo", crew: "price_crew", company: "price_company" } as const;
 
 let database: Database;
@@ -469,6 +471,47 @@ describe("a booked month that doesn't happen goes back to waiting", () => {
     expect(second.total).toBe(0);
   });
 
+  it("a renewal that skipped it while our coupon stayed on: still booked, so it comes off if the account stops being on", async () => {
+    await runReferralRewards(NOW);
+    // Stripe drafted the renewal before our coupon landed: it skips it, the coupon stays on.
+    const ours = [...sub().discounts];
+    fake.dropDiscount("sub_ref");
+    expect(fake.renew("sub_ref", { finalize: true }).total).toBe(9_900);
+    sub().discounts = ours;
+    await runReferralRewards(fromSeconds(fake.clock));
+    const row = await reward();
+    expect(row).toMatchObject({ status: "scheduled", adminFlag: "renewed_without_discount" });
+    expect(row.startsAt!.getTime()).toBe(fromSeconds(item().current_period_end).getTime());
+    expect(await log()).toContainEqual([
+      "referral_reward_returned",
+      { why: "renewed_without" },
+      "squared_away",
+    ]);
+    // A second run doesn't count it twice.
+    await runReferralRewards(fromSeconds(fake.clock + 60));
+    expect((await log()).filter(([a]) => a === "referral_reward_returned")).toHaveLength(1);
+    // Past due: our coupon comes off, so the next renewal isn't freed without a record.
+    await set({ status: "past_due" });
+    delete process.env.FEATURE_REFERRALS; // even with referrals switched off
+    await runReferralRewards(fromSeconds(fake.clock + 120));
+    expect(await reward()).toMatchObject({ status: "pending", stripeDiscountId: null });
+    expect(sub().discounts).toHaveLength(0);
+    expect(fake.renew("sub_ref", { finalize: true }).total).toBe(9_900);
+  });
+
+  it("the account moved to another subscription while the old one lives: our coupon comes off it first", async () => {
+    await runReferralRewards(NOW);
+    fake.addSubscription({ id: "sub_new", customer: "cus_ref", price: PRICE.solo });
+    await set({ stripeSubscriptionId: "sub_new" });
+    await runReferralRewards(later(DAY));
+    expect(sub().discounts).toHaveLength(0);
+    expect(await log()).toContainEqual([
+      "referral_reward_returned",
+      { why: "plan_ended" },
+      "squared_away",
+    ]);
+  });
+
   it("removed in Stripe before any renewal: back to waiting, flagged", async () => {
     await runReferralRewards(NOW);
     fake.dropDiscount("sub_ref");
@@ -630,6 +673,80 @@ describe("the end of a free month", () => {
     // No second free month at the next renewal.
     const next = fake.renew("sub_ref", { finalize: true });
     expect(next.lines.data[0]!.discount_amounts?.map((a) => a.amount)).toEqual([990]);
+  });
+
+  it("an invoice still a draft near the end: the coupon comes off before the renewal, so it frees one month only", async () => {
+    await startFreeMonth({ finalize: "fails" });
+    const end = (await reward()).endsAt!;
+    // A day before the end is too early: the draft may still finalize on its own.
+    await runReferralRewards(new Date(end.getTime() - STRIP_BEFORE_END_MS - 60_000));
+    expect(sub().discounts).toHaveLength(1);
+    await runReferralRewards(new Date(end.getTime() - 3_600_000));
+    expect(sub().discounts).toHaveLength(0);
+    expect(await reward()).toMatchObject({ status: "running", adminFlag: "invoice_not_final" });
+    // The free month's draft keeps its discount.
+    const free = [...fake.invoices.values()].find((i) => i.status === "draft")!;
+    expect(free.total).toBe(0);
+    const next = fake.renew("sub_ref", { finalize: true });
+    expect(next.total).toBe(9_900);
+    await runReferralRewards(new Date(end.getTime() + 600_000));
+    expect(await reward()).toMatchObject({ status: "done", adminFlag: "invoice_not_final" });
+    expect((await reward()).afterEndCheckedAt).not.toBeNull();
+  });
+
+  it("a renewal our coupon freed too (no sweep before it) is flagged for Davi to bill", async () => {
+    await startFreeMonth({ finalize: "fails" });
+    const second = fake.renew("sub_ref");
+    expect(second.total).toBe(0);
+    await runReferralRewards(fromSeconds(fake.clock + 600));
+    expect(await reward()).toMatchObject({ status: "done", adminFlag: "second_month_given" });
+    expect(sub().discounts).toHaveLength(0);
+  });
+
+  it("Stripe unreadable at the clock end: the follow-up runs on the next sweep (free-day charge goes)", async () => {
+    await startFreeMonth({ finalize: true });
+    const row = await reward();
+    const end = row.endsAt!;
+    // A charge for free days added after the last sweep.
+    const charge = fake.addInvoiceItem({
+      customer: "cus_ref",
+      amount: 3_300,
+      proration: true,
+      parent: {
+        type: "subscription_details",
+        subscription_details: { subscription: "sub_ref", subscription_item: item().id },
+      },
+      period: { start: secs(end) - 5 * 86_400, end: secs(end) },
+    });
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    fake.failNext("subscriptions.retrieve", stripeErrors.api());
+    await runReferralRewards(end);
+    expect(await reward()).toMatchObject({ status: "done", afterEndCheckedAt: null });
+    expect(fake.invoiceItems.has(charge.id)).toBe(true);
+    // Even with referrals switched off, the next sweep finishes it.
+    delete process.env.FEATURE_REFERRALS;
+    await runReferralRewards(new Date(end.getTime() + 15 * 60_000));
+    expect(fake.invoiceItems.has(charge.id)).toBe(false);
+    expect((await reward()).afterEndCheckedAt).not.toBeNull();
+    expect(fake.renew("sub_ref", { finalize: true }).total).toBe(9_900);
+    // Done means done: no more Stripe calls for it.
+    fake.calls.length = 0;
+    await runReferralRewards(new Date(end.getTime() + 30 * 60_000));
+    expect(fake.calls).toHaveLength(0);
+  });
+
+  it("the strip at the end failing is tried again until the coupon is off", async () => {
+    await startFreeMonth({ finalize: "fails" });
+    const end = (await reward()).endsAt!;
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    fake.failNext("subscriptions.update", stripeErrors.api());
+    await runReferralRewards(end);
+    expect(await reward()).toMatchObject({ status: "done", afterEndCheckedAt: null });
+    expect(sub().discounts).toHaveLength(1);
+    await runReferralRewards(new Date(end.getTime() + 15 * 60_000));
+    expect(sub().discounts).toHaveLength(0);
+    expect((await reward()).afterEndCheckedAt).not.toBeNull();
+    expect(fake.renew("sub_ref", { finalize: true }).total).toBe(9_900);
   });
 
   it("a running month ends even after referrals are switched off", async () => {
@@ -1005,48 +1122,106 @@ describe("GUARDRAIL: nothing ever charges more without the owner's tap", () => {
   it("through every state, no write outside Keep raises a price", async () => {
     const all: Call[] = [];
     const take = () => {
-      all.push(...fake.writes);
+      all.push(...fake.writes.filter((c) => c.method !== "portal.subscription_update"));
       fake.writes.length = 0;
     };
-    await earn("test", later(60_000));
+    const status = async (id: string) => (await reward(id)).status;
+    const second = await earn("test", later(60_000));
     await addPromo();
+
     // Booked, then past due (detached), back on (booked again).
     await runReferralRewards(NOW);
+    expect([await status(rewardId), await status(second)]).toEqual(["scheduled", "pending"]);
     await set({ status: "past_due" });
     await runReferralRewards(later(DAY));
+    expect(await status(rewardId)).toBe("pending");
     await set({ status: "active" });
     await runReferralRewards(later(2 * DAY));
-    take();
-    // A dropped discount and a renewal that skipped it.
-    fake.dropDiscount("sub_ref");
-    fake.renew("sub_ref", { finalize: true });
-    await runReferralRewards(fromSeconds(fake.clock));
-    await runReferralRewards(fromSeconds(fake.clock + 60));
-    take();
-    // The free month, a finalization failure, a plan change on Stripe's page, the end.
-    fake.renew("sub_ref", { finalize: "fails" });
-    await webhook(fromSeconds(fake.clock));
-    fake.advance(5 * DAY);
-    fake.portalChange("sub_ref", PRICE.crew);
-    all.push(...fake.writes.filter((c) => c.method === "portal.subscription_update"));
-    fake.writes.length = 0;
-    await webhook(fromSeconds(fake.clock), "crew");
-    fake.renew("sub_ref", { finalize: true });
-    await webhook(fromSeconds(fake.clock), "crew");
-    // The second referral, after a paid month.
-    fake.renew("sub_ref", { finalize: true });
-    await webhook(fromSeconds(fake.clock), "crew");
-    take();
-    // Cancel and re-checkout.
-    sub().status = "canceled";
-    await webhook(fromSeconds(fake.clock), "crew", "canceled");
+    expect(await status(rewardId)).toBe("scheduled");
     take();
 
-    const ours = all.filter((c) => c.method !== "portal.subscription_update");
-    const methods = new Set(ours.map((c) => c.method));
+    // A dropped discount and a renewal that skipped it: waiting, then booked again.
+    fake.dropDiscount("sub_ref");
+    expect(fake.renew("sub_ref", { finalize: true }).total).toBe(8_910);
+    await runReferralRewards(fromSeconds(fake.clock));
+    expect(await status(rewardId)).toBe("pending");
+    await runReferralRewards(fromSeconds(fake.clock + 60));
+    // One of the two is booked again (the next waiting one may take the slot first).
+    const statuses = [await status(rewardId), await status(second)].sort();
+    expect(statuses).toEqual(["pending", "scheduled"]);
+    const first = (await status(rewardId)) === "scheduled" ? rewardId : second;
+    const next = first === rewardId ? second : rewardId;
+    take();
+
+    // The first free month. After its invoice finalizes, a plan change on Stripe's page makes a
+    // charge for free days; the backstop deletes it.
+    expect(fake.renew("sub_ref", { finalize: true }).total).toBe(0);
+    await webhook(fromSeconds(fake.clock));
+    expect(await status(first)).toBe("running");
+    fake.advance(5 * DAY);
+    const { debit } = fake.portalChange("sub_ref", PRICE.crew);
+    expect(debit.amount).toBeGreaterThan(0);
+    await webhook(fromSeconds(fake.clock), "crew");
+    expect(fake.invoiceItems.has(debit.id)).toBe(false);
+    expect(fake.writes.map((c) => c.method)).toContain("invoiceItems.del");
+    take();
+
+    // Stripe renews on Crew: the first month ends, the second is booked (a paid month between).
+    const paid = fake.renew("sub_ref", { finalize: true });
+    expect(paid.total).toBe(17_910);
+    expect(paid.lines.data).toHaveLength(1); // nothing for the free days
+    await webhook(fromSeconds(fake.clock), "crew");
+    expect([await status(first), await status(next)]).toEqual(["done", "scheduled"]);
+    take();
+
+    // The second free month (Company), with Keep then Go back: the bill after it is never more
+    // than the one before Keep.
+    fake.renew("sub_ref", { finalize: true });
+    await webhook(fromSeconds(fake.clock), "crew");
+    expect(await status(next)).toBe("running");
+    expect((await reward(next)).freePlan).toBe("company");
+    take();
+    const mid = new Date((await reward(next)).startsAt!.getTime() + 5 * DAY);
+    const kept = await keepFreePlan(
+      w.id,
+      { rewardId: next, plan: "company", priceCents: pricing.plans.company.amountCents },
+      mid,
+    );
+    expect(kept.status).toBe("kept");
+    expect((await goBackToPaidPlan(w.id, { rewardId: next }, mid)).status).toBe("went_back");
+    const planChanges = fake.writes.splice(0);
+    expect(planChanges.map((c) => c.method)).toEqual([
+      "subscriptions.update",
+      "subscriptions.update",
+    ]);
+    for (const c of planChanges) expect(c.args[1]).toMatchObject({ proration_behavior: "none" });
+    expect(item().price.id).toBe(PRICE.crew);
+    const after = fake.renew("sub_ref", { finalize: true });
+    expect(after.total).toBeLessThanOrEqual(paid.total);
+    await webhook(fromSeconds(fake.clock), "crew");
+    expect(await status(next)).toBe("done");
+    take();
+
+    // Cancel, then a new checkout: a third reward is booked on the new subscription only.
+    sub().status = "canceled";
+    await webhook(fromSeconds(fake.clock), "crew", "canceled");
+    expect((await load()).stripeSubscriptionId).toBeNull();
+    const third = await earn("test", fromSeconds(fake.clock));
+    fake.addSubscription({ id: "sub_new", customer: "cus_ref", price: PRICE.solo });
+    await set({ status: "active", plan: "solo", stripeSubscriptionId: "sub_new" });
+    await runReferralRewards(fromSeconds(fake.clock + 60));
+    expect(await reward(third)).toMatchObject({
+      status: "scheduled",
+      stripeSubscriptionId: "sub_new",
+    });
+    take();
+
+    const methods = new Set(all.map((c) => c.method));
+    for (const m of ["coupons.create", "subscriptions.update", "invoiceItems.del"])
+      expect(methods).toContain(m);
     for (const m of methods)
       expect(["coupons.create", "subscriptions.update", "invoiceItems.del"]).toContain(m);
-    for (const u of ours.filter((c) => c.method === "subscriptions.update"))
+    for (const u of all.filter((c) => c.method === "subscriptions.update"))
       expect(Object.keys(u.args[1] as object)).toEqual(["discounts"]);
   });
 

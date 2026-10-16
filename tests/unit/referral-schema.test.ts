@@ -87,9 +87,23 @@ describe(`migration ${TAG} (referral free month)`, () => {
       entries: { tag: string; when: number }[];
     };
     const i = journal.entries.findIndex((e) => e.tag === TAG);
-    expect(i).toBe(journal.entries.length - 1);
     expect(journal.entries[i - 1]!.tag).toBe("0027_terms_acceptance");
     expect(journal.entries[i]!.when).toBeGreaterThan(journal.entries[i - 1]!.when);
+    // Then 0029, the follow-up marker, and nothing else yet.
+    expect(journal.entries.slice(i + 1).map((e) => e.tag)).toEqual([AFTER_END_TAG]);
+    expect(journal.entries[i + 1]!.when).toBeGreaterThan(journal.entries[i]!.when);
+  });
+});
+
+/** The Stripe follow-up after a free month ends is retried until it goes through (0029). */
+const AFTER_END_TAG = "0029_referral_after_end_check";
+
+describe(`migration ${AFTER_END_TAG}`, () => {
+  it("adds one nullable column and nothing else", () => {
+    const text = readFileSync(join("drizzle", `${AFTER_END_TAG}.sql`), "utf8").trim();
+    expect(text).toBe(
+      'ALTER TABLE "referral_credits" ADD COLUMN "after_end_checked_at" timestamp with time zone;',
+    );
   });
 });
 

@@ -616,6 +616,13 @@ async function checkScheduled(row: Row, w: W, sub: Sub | null | undefined, now: 
     (sub && subEnded(sub)) ||
     (w.stripeSubscriptionId ?? null) !== row.stripeSubscriptionId
   ) {
+    // An old subscription that is still live keeps nothing of ours: it could free a renewal
+    // there that nothing records.
+    if (sub && !subEnded(sub) && sub.discounts.some((d) => couponOf(d) === row.stripeCouponId)) {
+      await detachThen(row, sub, now, "plan_ended"); // not gone: tried again next run
+      return;
+    }
+    if (sub === undefined && row.stripeSubscriptionId) return; // unknown: ask again next run
     await backToPending(row, "plan_ended", now);
     return;
   }
@@ -647,6 +654,14 @@ async function checkScheduled(row: Row, w: W, sub: Sub | null | undefined, now: 
       return !!line && line.period.start >= start;
     });
   if (skipped) {
+    const stillOn = sub.discounts.some((d) => couponOf(d) === row.stripeCouponId);
+    if (stillOn) {
+      // Our coupon is still on, so the next renewal would use it: it stays booked (for that
+      // renewal), and every booked-month rule keeps watching it — it comes off if the account
+      // stops being on, and a use is recorded. Never left on a waiting row.
+      await rebookForNextRenewal(row, sub, now);
+      return;
+    }
     await backToPending(row, "renewed_without", now, "renewed_without_discount");
     return;
   }
@@ -657,27 +672,61 @@ async function checkScheduled(row: Row, w: W, sub: Sub | null | undefined, now: 
   }
   // One rule: a free month only starts while the account is on. Detach (others kept).
   const on = SENDING_ALLOWED.includes(effectiveStatus(w, now)) && w.setupPaidVia === "stripe";
-  if (!on) {
-    const held = await claim(row, "scheduled", now);
-    if (!held) return;
-    try {
-      if (await removeOurDiscount(held, sub.id, "detach")) {
-        await backToPending(held, "account_off", now);
-      } else {
-        await missed(held, { code: "not_detached" });
-      }
-    } catch (err) {
-      logFailure(held, "detach", err);
-      await missed(held, err);
+  if (!on) await detachThen(row, sub, now, "account_off");
+}
+
+/** Take our booked coupon off (others kept), then back to waiting. False if it didn't go. */
+async function detachThen(row: Row, sub: Sub, now: Date, why: ReturnWhy): Promise<boolean> {
+  const held = await claim(row, "scheduled", now);
+  if (!held) return false;
+  try {
+    if (await removeOurDiscount(held, sub.id, "detach")) {
+      await backToPending(held, why, now);
+      return true;
     }
+    await missed(held, { code: "not_detached" });
+  } catch (err) {
+    logFailure(held, "detach", err);
+    await missed(held, err);
   }
+  return false;
+}
+
+/** A renewal skipped our coupon but it is still on: booked for the renewal after. */
+async function rebookForNextRenewal(row: Row, sub: Sub, now: Date) {
+  const item = item0(sub);
+  if (!item) return;
+  const [moved] = await db()
+    .update(referralCredits)
+    .set({
+      startsAt: fromSecs(item.current_period_end),
+      attempts: row.attempts + 1,
+      adminFlag: "renewed_without_discount",
+      flaggedAt: now,
+    })
+    .where(and(eq(referralCredits.id, row.id), eq(referralCredits.status, "scheduled")))
+    .returning({ id: referralCredits.id });
+  if (moved && row.beneficiaryWorkspaceId)
+    await logActivity(
+      row.beneficiaryWorkspaceId,
+      "referral_reward_returned",
+      { why: "renewed_without" },
+      now,
+    );
 }
 
 // --- Running: confirm, backstop, end --------------------------------------------------------
 
-/** Remove pending charges Stripe added for days of the free month (§1.8 backstop). */
-async function removeChargesForFreeDays(row: Row, sub: Sub, now: Date): Promise<number> {
-  if (!row.startsAt || !row.endsAt) return 0;
+/**
+ * Remove pending charges Stripe added for days of the free month (§1.8 backstop). `failed`
+ * counts charges Stripe wouldn't delete (they are tried again).
+ */
+async function removeChargesForFreeDays(
+  row: Row,
+  sub: Sub,
+  now: Date,
+): Promise<{ removed: number; failed: number }> {
+  if (!row.startsAt || !row.endsAt) return { removed: 0, failed: 0 };
   const items: Stripe.InvoiceItem[] = [];
   for await (const it of stripeClient().invoiceItems.list({
     customer: customerOf(sub),
@@ -686,17 +735,19 @@ async function removeChargesForFreeDays(row: Row, sub: Sub, now: Date): Promise<
   }))
     items.push(it);
   let removed = 0;
+  let failed = 0;
   for (const id of chargesForFreeDays(items, sub.id, row.startsAt, row.endsAt)) {
     try {
       await stripeClient().invoiceItems.del(id);
       removed++;
     } catch (err) {
       if (classifyStripeError("invoice_item_delete", err) === "ok") continue;
+      failed++;
       logFailure(row, "invoice_item_delete", err);
     }
   }
-  if (removed) await flag(row, "plan_changed_in_free_month", now);
-  return removed;
+  if (removed) await flag(row, "free_day_charges_removed", now);
+  return { removed, failed };
 }
 
 /** Keep `workspaces.plan` and the row's Keep record in line with what Stripe bills. */
@@ -770,21 +821,25 @@ async function endFreeMonth(row: Row, w: W, now: Date): Promise<boolean> {
   });
 }
 
-/** After the end, with Stripe: strip our discount if it's still on, flag charged free days. */
-async function afterEnd(row: Row, sub: Sub, now: Date) {
-  if (row.stripeSubscriptionId !== sub.id || subEnded(sub)) return;
-  await stripLingering(
+/**
+ * After the end, with Stripe: strip our discount if it's still on, sweep or flag charges for
+ * free days, and flag a renewal our coupon freed too. True only when all of it went through;
+ * otherwise the done row keeps `after_end_checked_at` null and the sweep runs it again.
+ */
+async function afterEnd(row: Row, sub: Sub, now: Date): Promise<boolean> {
+  if (row.stripeSubscriptionId !== sub.id || subEnded(sub)) return true;
+  const stripped = await stripLingering(
     row,
     sub,
     now,
     row.invoiceFinalAt ? "discount_lingered" : "invoice_not_final",
   );
   const item = item0(sub);
-  if (!row.startsAt || !row.endsAt || !item) return;
+  if (!row.startsAt || !row.endsAt || !item) return stripped;
   if (item.current_period_start < secs(row.endsAt)) {
     // Stripe hasn't renewed yet: one last sweep of charges for free days.
-    await removeChargesForFreeDays(row, sub, now);
-    return;
+    const { failed } = await removeChargesForFreeDays(row, sub, now);
+    return stripped && failed === 0;
   }
   // Stripe renewed: a charge for free days already on the renewal invoice is for Davi to credit.
   const invoices = await stripeClient().invoices.list({ subscription: sub.id, limit: 10 });
@@ -804,23 +859,81 @@ async function afterEnd(row: Row, sub: Sub, now: Date) {
       l.period.end > s,
   );
   if (charged) await flag(row, "charged_for_free_days", now);
+  // Our coupon stayed on (its own invoice never finalized) and freed this renewal as well.
+  if (renewal && row.stripeDiscountId && invoiceUsed(renewal, row.stripeDiscountId))
+    await flag(row, "second_month_given", now);
+  return stripped;
+}
+
+/**
+ * The Stripe follow-up for a done row, until it fully goes through (§1.7). Stripe not answering
+ * leaves it for the next run; a subscription Stripe no longer has (or that ended) needs none.
+ */
+async function followUpEnded(row: Row, sub: Sub | null | undefined, now: Date) {
+  if (row.afterEndCheckedAt || !row.stripeSubscriptionId) return;
+  if (sub === undefined) return;
+  let done = sub === null || sub.id !== row.stripeSubscriptionId;
+  if (!done) {
+    try {
+      done = await afterEnd(row, sub!, now);
+    } catch (err) {
+      logFailure(row, "after_end", err);
+      return;
+    }
+  }
+  if (done)
+    await db()
+      .update(referralCredits)
+      .set({ afterEndCheckedAt: now })
+      .where(and(eq(referralCredits.id, row.id), eq(referralCredits.status, "done")));
 }
 
 /** Our used (or never-used) discount still on the subscription: take it off, others kept. */
-async function stripLingering(row: Row, sub: Sub, now: Date, code: ReferralAdminFlag) {
-  if (!row.stripeCouponId || !sub.discounts.some((d) => couponOf(d) === row.stripeCouponId)) return;
+async function stripLingering(
+  row: Row,
+  sub: Sub,
+  now: Date,
+  code: ReferralAdminFlag,
+): Promise<boolean> {
+  if (!row.stripeCouponId || !sub.discounts.some((d) => couponOf(d) === row.stripeCouponId))
+    return true;
   const held = await claim(row, row.status, now);
-  if (!held) return;
+  if (!held) return false;
   try {
     if (await removeOurDiscount(held, sub.id, "strip")) {
       await release(held, { adminFlag: code, flaggedAt: now, attempts: held.attempts + 1 });
-    } else {
-      await missed(held, { code: "not_stripped" });
+      return true;
     }
+    await missed(held, { code: "not_stripped" });
   } catch (err) {
     logFailure(held, "strip", err);
     await missed(held, err);
   }
+  return false;
+}
+
+/** A done row whose Stripe follow-up hasn't gone through yet (and has a subscription to ask). */
+const needsFollowUp = and(
+  eq(referralCredits.status, "done"),
+  isNull(referralCredits.afterEndCheckedAt),
+  isNotNull(referralCredits.stripeSubscriptionId),
+);
+
+/**
+ * A free month whose invoice is still a draft keeps our once-coupon on the subscription (Stripe
+ * spends it only at finalization), and the next renewal would use it again. From this long
+ * before the end, it comes off; the draft keeps the discount it already took.
+ */
+export const STRIP_BEFORE_END_MS = 24 * 3_600_000;
+
+async function stripBeforeNextRenewal(row: Row, sub: Sub, draft: Stripe.Invoice, now: Date) {
+  if (!row.stripeDiscountId || !invoiceUsed(draft, row.stripeDiscountId)) return;
+  if (!(await stripLingering(row, sub, now, "invoice_not_final"))) return;
+  // The draft should keep the discount it took when it was made. If Stripe dropped it, Davi
+  // must look before it's paid (it would charge for the free month).
+  const after = await stripeClient().invoices.retrieve(draft.id);
+  if (after.status === "draft" && !invoiceUsed(after, row.stripeDiscountId))
+    await flag(row, "free_invoice_lost_discount", now);
 }
 
 async function checkRunning(row: Row, w: W, sub: Sub | null | undefined, now: Date) {
@@ -831,18 +944,14 @@ async function checkRunning(row: Row, w: W, sub: Sub | null | undefined, now: Da
     (now.getTime() >= row.endsAt.getTime() ||
       (!!item && item.current_period_start >= secs(row.endsAt)));
   if (over) {
-    if ((await endFreeMonth(row, w, now)) && mine && stripeConfigured()) {
-      try {
-        await afterEnd({ ...row, status: "done" }, mine, now);
-      } catch (err) {
-        logFailure(row, "after_end", err);
-      }
-    }
+    if ((await endFreeMonth(row, w, now)) && stripeConfigured())
+      await followUpEnded({ ...row, status: "done" }, sub, now);
     return;
   }
   if (!mine) return;
   // Provisional until Stripe finalizes the invoice that used it (the coupon is spent then).
   let finalAt = row.invoiceFinalAt;
+  let draft: Stripe.Invoice | null = null;
   if (!finalAt && row.stripeInvoiceId) {
     const inv = await stripeClient().invoices.retrieve(row.stripeInvoiceId);
     if (inv.status !== "draft") {
@@ -851,9 +960,11 @@ async function checkRunning(row: Row, w: W, sub: Sub | null | undefined, now: Da
         .update(referralCredits)
         .set({ invoiceFinalAt: now })
         .where(eq(referralCredits.id, row.id));
-    }
+    } else draft = inv;
   }
   if (finalAt) await stripLingering(row, mine, now, "discount_lingered");
+  else if (draft && row.endsAt && now.getTime() >= row.endsAt.getTime() - STRIP_BEFORE_END_MS)
+    await stripBeforeNextRenewal(row, mine, draft, now);
   await removeChargesForFreeDays(row, mine, now);
   await syncBilledPlan(row, w, mine, now);
 }
@@ -871,17 +982,19 @@ export async function reconcileReferralRewards(
   now: Date = new Date(),
   ctx: RunContext = runContext(),
 ): Promise<void> {
-  const open = await db()
+  const rows = await db()
     .select()
     .from(referralCredits)
     .where(
       and(
         eq(referralCredits.beneficiaryWorkspaceId, workspaceId),
-        inArray(referralCredits.status, ["pending", "scheduled", "running"]),
+        or(inArray(referralCredits.status, ["pending", "scheduled", "running"]), needsFollowUp),
       ),
     )
     .orderBy(asc(referralCredits.createdAt), asc(referralCredits.id));
-  if (!open.length) return;
+  if (!rows.length) return;
+  const open = rows.filter((r) => r.status !== "done");
+  const ended = rows.filter((r) => r.status === "done");
   const [w] = await db().select().from(workspaces).where(eq(workspaces.id, workspaceId));
   if (!w) return;
 
@@ -894,6 +1007,8 @@ export async function reconcileReferralRewards(
     return subs.get(id)!;
   };
 
+  // A month that ended without its Stripe follow-up going through: try it again first.
+  for (const r of ended) await followUpEnded(r, await subFor(r.stripeSubscriptionId), now);
   const running = open.find((r) => r.status === "running");
   if (running) await checkRunning(running, w, await subFor(running.stripeSubscriptionId), now);
   const scheduled = open.find((r) => r.status === "scheduled");
@@ -969,7 +1084,7 @@ export async function runReferralRewards(now: Date = new Date()) {
     .where(
       and(
         isNotNull(referralCredits.beneficiaryWorkspaceId),
-        inArray(referralCredits.status, statuses),
+        or(inArray(referralCredits.status, statuses), needsFollowUp),
       ),
     );
   const ctx = runContext();

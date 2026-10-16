@@ -687,6 +687,9 @@ export const REFERRAL_ADMIN_FLAGS = [
   "discount_lingered",
   "unknown_price",
   "not_fully_free",
+  "free_day_charges_removed",
+  "second_month_given",
+  "free_invoice_lost_discount",
 ] as const;
 export type ReferralAdminFlag = (typeof REFERRAL_ADMIN_FLAGS)[number];
 
@@ -751,6 +754,11 @@ export const referralCredits = pgTable(
     keptPriceCents: integer("kept_price_cents"),
     /** When `done` ran. */
     endedAt: timestamp("ended_at", { withTimezone: true }),
+    /**
+     * When the Stripe follow-up after `done` (strip our coupon if it stayed on, sweep or flag
+     * charges for free days) fully went through. Null on a done row = the sweep tries again (0029).
+     */
+    afterEndCheckedAt: timestamp("after_end_checked_at", { withTimezone: true }),
     /** The subscription's billing mode (`flexible` / `classic`), for /admin. */
     billingMode: text("billing_mode"),
     /** The latest thing /admin should look at, and when it was raised. */

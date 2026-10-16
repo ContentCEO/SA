@@ -204,6 +204,13 @@
       "when": 1792151512476,
       "tag": "0028_referral_free_month",
       "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1792174028425,
+      "tag": "0029_referral_after_end_check",
+      "breakpoints": true
     }
   ]
 }
