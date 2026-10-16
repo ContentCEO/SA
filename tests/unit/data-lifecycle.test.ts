@@ -348,6 +348,20 @@ describe("delete my account", () => {
       amountCents: 2_500,
       status: "applied",
     });
+    // Plan #47: the owner's own free month, booked on their (now canceled) subscription.
+    await database.insert(referralCredits).values({
+      beneficiaryWorkspaceId: owner.workspaceId,
+      referredEmailSha256: "e".repeat(64),
+      side: "referrer",
+      amountCents: 0,
+      reward: "free_month_up",
+      status: "scheduled",
+      stripeMode: "live",
+      stripeSubscriptionId: "sub_owner",
+      stripeCouponId: "sa_ref_x",
+      stripeDiscountId: "di_x",
+      paidPriceId: "price_x",
+    });
     const seeded = await snapshot();
     // One row in EVERY table: a new table fails here until it is seeded above.
     const notSeeded = Object.keys(seeded).filter(
@@ -384,9 +398,19 @@ describe("delete my account", () => {
     ).toHaveLength(1); // purged within 2 days
     expect(await database.select().from(stripeEvents)).toHaveLength(2);
     const credits = await database.select().from(referralCredits);
-    expect(credits).toHaveLength(1);
-    expect(credits[0]!.referredWorkspaceId).toBeNull();
-    expect(credits[0]!.beneficiaryWorkspaceId).toBe(other.workspaceId);
+    expect(credits).toHaveLength(2);
+    const asReferred = credits.find((c) => c.referredEmailSha256 === "f".repeat(64))!;
+    expect(asReferred.referredWorkspaceId).toBeNull();
+    expect(asReferred.beneficiaryWorkspaceId).toBe(other.workspaceId);
+    // Their own free month keeps only the fingerprint row: no workspace, no Stripe ids.
+    const own = credits.find((c) => c.referredEmailSha256 === "e".repeat(64))!;
+    expect(own).toMatchObject({
+      beneficiaryWorkspaceId: null,
+      stripeSubscriptionId: null,
+      stripeCouponId: null,
+      stripeDiscountId: null,
+      paidPriceId: null,
+    });
   });
 
   it("a deleted owner's waitlist entry offers Invite again, and inviting lets them back in", async () => {

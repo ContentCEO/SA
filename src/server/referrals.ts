@@ -1268,3 +1268,39 @@ export function viewChanges(view: FreeMonthView, to: PlanId | null): EndChanges 
     autopilotCategoriesOn: view.autopilotCategoriesOn,
   });
 }
+
+// --- Reset test payments and account deletion (§3.1, §1.7) ------------------------------------
+
+/**
+ * "Reset test payments" (live key only): free months earned in test mode are deleted, so the
+ * referred owner's real payment settles the referral again, once (the fingerprint is free
+ * again). A running test-mode month stops: its free plan is cleared and the plan effects run in
+ * the same transaction, as at any other end. Returns how many rows went.
+ */
+export async function clearTestModeRewards(now: Date = new Date()): Promise<number> {
+  return db().transaction(async (tx) => {
+    const gone = await tx
+      .delete(referralCredits)
+      .where(eq(referralCredits.stripeMode, "test"))
+      .returning({
+        status: referralCredits.status,
+        beneficiaryWorkspaceId: referralCredits.beneficiaryWorkspaceId,
+      });
+    const stopped = [
+      ...new Set(
+        gone
+          .filter((r) => r.status === "running" && r.beneficiaryWorkspaceId)
+          .map((r) => r.beneficiaryWorkspaceId!),
+      ),
+    ];
+    for (const id of stopped) {
+      await tx
+        .update(workspaces)
+        .set({ freePlan: null, freePlanUntil: null })
+        .where(eq(workspaces.id, id));
+      await autopilotPlanEffects(id, now, tx);
+      await inboxLimitEffects(id, now, tx);
+    }
+    return gone.length;
+  });
+}

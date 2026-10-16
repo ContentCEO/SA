@@ -12,6 +12,7 @@ import {
   type TestPaymentReset,
   type TestPaymentsResult,
 } from "./test-payment-rules";
+import { clearTestModeRewards } from "./referrals";
 import { clearAutopilotCountdowns } from "./workspace-lifecycle";
 
 /**
@@ -200,8 +201,11 @@ export async function resetTestPayments(
       });
     }
   }
+  // Plan #47: free months earned in test mode never go live; deleting them lets the real
+  // payment settle the referral again, once.
+  const rewardsCleared = await clearTestModeRewards(now);
   // Everything found was reset; what's left is only what couldn't be checked.
   await keep({ found: 0, unchecked, reset, at: now.toISOString() }, now);
-  console.info("test_payments_reset", { reset, unchecked });
+  console.info("test_payments_reset", { reset, unchecked, rewardsCleared });
   return { reset, unchecked };
 }

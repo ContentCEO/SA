@@ -9,6 +9,7 @@ import {
   appSettings,
   drafts,
   mailboxes,
+  referralCredits,
   rules,
   threads,
   users,
@@ -464,7 +465,11 @@ describe("resetting", () => {
     expect([await stripeFacts(half), await stripeFacts(flaky)]).toEqual(before);
     expect((await row(fine)).setupPaidVia).toBeNull();
     // Counts only in the log, never Stripe's words.
-    expect(logged).toHaveBeenCalledWith("test_payments_reset", { reset: 1, unchecked: 2 });
+    expect(logged).toHaveBeenCalledWith("test_payments_reset", {
+      reset: 1,
+      unchecked: 2,
+      rewardsCleared: 0,
+    });
     expect(JSON.stringify(logged.mock.calls)).not.toMatch(/owner@|cus_|sub_/);
 
     // Stripe answers on the next tap: the rest is reset, the done one isn't touched twice.
@@ -511,6 +516,51 @@ describe("resetting", () => {
     expect(await resetTestPayments(NOW)).toEqual({ reset: 0, unchecked: 0 });
     expect(calls).toEqual([]); // nothing left to ask about
     expect(await resetRows(id)).toHaveLength(1);
+  });
+
+  it("plan #47: free months earned in test mode go (a running one stops); live ones stay", async () => {
+    const referrer = await account({
+      status: "active",
+      plan: "solo",
+      setupPaidVia: "stripe",
+      setupPaidAt: PAID_AT,
+      stripeCustomerId: "cus_live_ref",
+      stripeSubscriptionId: "sub_live_ref",
+      freePlan: "crew",
+      freePlanUntil: new Date(NOW.getTime() + 86_400_000),
+    });
+    stripeKnows.set("cus_live_ref", "live");
+    stripeKnows.set("sub_live_ref", "live");
+    await database.insert(rules).values({
+      workspaceId: referrer,
+      category: "scheduling",
+      mode: "autopilot",
+    });
+    const base = {
+      beneficiaryWorkspaceId: referrer,
+      side: "referrer" as const,
+      amountCents: 0,
+      reward: "free_month_up" as const,
+    };
+    await database.insert(referralCredits).values([
+      {
+        ...base,
+        referredEmailSha256: "t1",
+        status: "running",
+        stripeMode: "test",
+        freePlan: "crew",
+      },
+      { ...base, referredEmailSha256: "t2", status: "pending", stripeMode: "test" },
+      { ...base, referredEmailSha256: "l1", status: "pending", stripeMode: "live" },
+    ]);
+    await resetTestPayments(NOW);
+    const left = await database.select().from(referralCredits);
+    expect(left.map((r) => r.referredEmailSha256)).toEqual(["l1"]);
+    const w = await row(referrer);
+    expect(w).toMatchObject({ freePlan: null, freePlanUntil: null, plan: "solo" });
+    // The month's end effects ran with it: Solo has no autopilot.
+    const [rule] = await database.select().from(rules).where(eq(rules.workspaceId, referrer));
+    expect(rule!.mode).toBe("draft");
   });
 
   it("stops any autopilot countdown on a reset account", async () => {
