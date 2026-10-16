@@ -11,6 +11,7 @@ import {
   type EmailInput,
   type ModelClassification,
 } from "./prompts/classify.v4";
+import { SENDER_NEEDS_ME_REASON } from "@/server/owner-sender-rule-rules";
 import {
   GAS_SMELL_REASON,
   INJECTION_REASON,
@@ -71,6 +72,13 @@ export type Extracted = ModelClassification["extracted"] & {
    * signal only; it never sets the complaint mark. Only ever present as `true`.
    */
   routine_paperwork?: boolean;
+  /**
+   * Ideas H3: the owner's sender rule that applied to this email: "junk" (sorted as junk by the
+   * rule, no model call) or "no_draft" (sorted as usual, never drafted by a job).
+   */
+  sender_rule?: "junk" | "no_draft";
+  /** Ideas H4: the sorter's own kind for this email, whatever kind the owner chose. */
+  model_category?: Category;
 };
 
 /** The needs-owner reasons a dispute or legal threat gets (when the model gave none). */
@@ -128,6 +136,8 @@ export function applyOwnerRules(
   ctx: {
     firstTimeSender: boolean;
     senderIsVip: boolean;
+    /** Ideas H3: a company-wide "Always needs me" rule matched the sender or reply address. */
+    senderNeedsMe?: boolean;
     amountThresholdDollars: number;
     injection?: boolean;
     /** Someone smells gas (round 2, TW B4): top priority, whatever the model said. */
@@ -155,6 +165,7 @@ export function applyOwnerRules(
     [m.signals.mentions_legal, LEGAL_REASON],
     [m.signals.mentions_refund_or_dispute, DISPUTE_REASON],
     [ctx.senderIsVip, "From someone on your VIP list."],
+    [ctx.senderNeedsMe === true, SENDER_NEEDS_ME_REASON],
     [overThreshold, `Mentions more than $${ctx.amountThresholdDollars.toLocaleString("en-US")}.`],
     [ctx.firstTimeSender && m.signals.large_request, "New customer asking about a big job."],
     [confidence < CONFIDENCE_THRESHOLD, "Not sure what this one is — take a look."],
@@ -207,6 +218,7 @@ export async function classifyEmail(
   email: EmailInput,
   opts: {
     senderIsVip: boolean;
+    senderNeedsMe?: boolean;
     now?: Date;
     /** Older unsorted emails on the thread: checked in code, never sent to the model (B3). */
     alsoCheck?: string[];
@@ -285,6 +297,7 @@ export async function classifyEmail(
   const rules = applyOwnerRules(model, {
     firstTimeSender: email.firstTimeSender,
     senderIsVip: opts.senderIsVip,
+    senderNeedsMe: opts.senderNeedsMe,
     amountThresholdDollars: business.amountThresholdDollars,
     injection,
     gasSmell,

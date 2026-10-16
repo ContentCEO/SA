@@ -115,6 +115,19 @@ export function describeActivity(
       return `You said ${name ? `${name}'s invoice` : "an invoice"} isn't owed to you`;
     case "invoice_reopened":
       return `${name ? `${name}'s conversation` : "A conversation"} mentions a new invoice, so it's back on Money owed`;
+    // Ideas H3/H4/E7: content-free; never the address or the note.
+    case "sender_rule_added":
+      return "You set a sender rule";
+    case "vip_added":
+      return "You added a VIP";
+    case "thread_resorted":
+      return isCategory(detail.to)
+        ? `You moved an email${from} to ${categoryLabels[detail.to]}`
+        : null;
+    case "away_on":
+      return "You turned on away mode";
+    case "away_off":
+      return "You turned off away mode";
     case "marked_needs_owner":
       return `You marked a conversation${name ? ` with ${name}` : ""} as needing you`;
     case "mailbox_connected":

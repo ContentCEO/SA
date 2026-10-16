@@ -30,6 +30,8 @@ export default async function BusinessSettingsPage(props: PageProps<"/settings/b
       profile ? `$${profile.amountThresholdDollars.toLocaleString("en-US")}` : null,
     ],
   ].filter((f): f is [string, string] => Boolean(f[1]));
+  const ownNotes = notes.filter((n) => !n.away);
+  const awayNote = notes.find((n) => n.away);
 
   return (
     <SettingsScreen
@@ -70,9 +72,20 @@ export default async function BusinessSettingsPage(props: PageProps<"/settings/b
           vacation Aug 1–10, back Aug 11”. Up to {MAX_ACTIVE_NOTES} at a time. They disappear on
           their own.
         </p>
-        {notes.length ? (
+        {awayNote ? (
+          <div className="flex flex-col gap-1 rounded-lg border bg-card p-3">
+            <span className="font-semibold">{awayNote.text}</span>
+            <Link
+              href="/settings/away"
+              className="text-sm font-semibold underline underline-offset-4"
+            >
+              Change it in Away mode
+            </Link>
+          </div>
+        ) : null}
+        {ownNotes.length ? (
           <ul className="flex flex-col gap-2">
-            {notes.map((n) => (
+            {ownNotes.map((n) => (
               <li key={n.id} className="flex items-center gap-3 rounded-lg border bg-card p-3">
                 <div className="flex flex-1 flex-col">
                   <span className="font-semibold">{n.text}</span>
@@ -88,7 +101,7 @@ export default async function BusinessSettingsPage(props: PageProps<"/settings/b
             ))}
           </ul>
         ) : null}
-        {notes.length < MAX_ACTIVE_NOTES ? (
+        {ownNotes.length < MAX_ACTIVE_NOTES ? (
           <form action={addSeasonalNoteAction} className="flex flex-col gap-3">
             <label className="flex flex-col gap-1.5">
               <span className="font-semibold">Note</span>

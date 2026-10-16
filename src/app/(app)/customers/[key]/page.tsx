@@ -7,6 +7,22 @@ import { gmailThreadLink } from "@/lib/gmail-link";
 import { relativeTime } from "@/lib/relative-time";
 import { customerByKey } from "@/server/customers";
 import { requireOwner } from "@/server/session";
+import { Notice } from "@/components/app/notice";
+import { Button } from "@/components/ui/button";
+import { isReadOnly } from "@/server/lifecycle";
+import { NOTE_MAX_CHARS, NOTE_REFUSALS, noteFor } from "@/server/customer-notes";
+import { removeNoteAction, saveNoteAction } from "../actions";
+
+const NOTE_DONE: Record<string, string> = {
+  note_saved: "Note saved.",
+  note_removed: "Note removed.",
+};
+const NOTE_ERRORS: Record<string, string> = {
+  ...NOTE_REFUSALS,
+  readonly:
+    "Your account is read-only right now, so nothing was changed. The note at the top says why.",
+  unknown: "That didn't work. Refresh and try again.",
+};
 
 export const metadata: Metadata = { title: "Customer" };
 
@@ -17,6 +33,11 @@ export default async function CustomerPage(props: PageProps<"/customers/[key]">)
   if (!customer) notFound();
   const now = new Date();
   const first = (customer.name ?? customer.address).split(/[\s,]+/)[0]!.toLowerCase();
+  const note = await noteFor(workspace.id, customer.address);
+  const params = await props.searchParams;
+  const doneMsg = typeof params.done === "string" ? NOTE_DONE[params.done] : undefined;
+  const errorMsg = typeof params.error === "string" ? NOTE_ERRORS[params.error] : undefined;
+  const readOnly = isReadOnly(workspace);
 
   return (
     <>
@@ -33,6 +54,60 @@ export default async function CustomerPage(props: PageProps<"/customers/[key]">)
           {customer.address}
         </a>
       </div>
+      <section
+        id="note"
+        aria-labelledby="note-heading"
+        className="flex scroll-mt-4 flex-col gap-3 rounded-xl border bg-card p-4"
+      >
+        <h2 id="note-heading" className="text-xl font-black">
+          Your private note
+        </h2>
+        <p className="text-muted-foreground">
+          Only you see this. It&apos;s never sent to customers or to the AI.
+        </p>
+        {doneMsg ? <Notice>{doneMsg}</Notice> : null}
+        {errorMsg ? <Notice strong>{errorMsg}</Notice> : null}
+        {readOnly ? (
+          note ? (
+            <p className="break-words">{note}</p>
+          ) : null
+        ) : (
+          <form action={saveNoteAction} className="flex flex-col gap-3">
+            <input type="hidden" name="key" value={key} />
+            <label className="flex flex-col gap-1.5">
+              <span className="font-semibold">Note</span>
+              <textarea
+                name="note"
+                rows={3}
+                maxLength={NOTE_MAX_CHARS}
+                defaultValue={note ?? ""}
+                placeholder="Gate code, dog, best time to call…"
+                className="w-full rounded-lg border border-input bg-paper px-3 py-2.5 text-base"
+              />
+              <span className="text-sm text-muted-foreground">
+                Up to {NOTE_MAX_CHARS} characters.
+              </span>
+            </label>
+            <Button type="submit" className="w-full">
+              Save note
+            </Button>
+          </form>
+        )}
+        {note && !readOnly ? (
+          <details>
+            <summary className="inline-flex min-h-tap cursor-pointer items-center font-semibold underline underline-offset-4">
+              Remove note
+            </summary>
+            <form action={removeNoteAction} className="flex flex-col gap-2 pt-2">
+              <input type="hidden" name="key" value={key} />
+              <p>Remove this note?</p>
+              <Button type="submit" variant="outline" className="w-full">
+                Remove note
+              </Button>
+            </form>
+          </details>
+        ) : null}
+      </section>
       <ul className="flex flex-col gap-3">
         {customer.threads.map((t) => (
           <li key={t.threadId} className="flex flex-col gap-1 rounded-xl border bg-card p-4">

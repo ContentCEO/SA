@@ -39,8 +39,17 @@ import { firstLookFor } from "@/server/first-week";
 import { wroteLine } from "@/server/first-week-rules";
 import { CalledThem } from "./called-them";
 import { FirstLookCard } from "./first-look";
+import { CONTROL_DONE, CONTROL_ERRORS } from "@/config/control-messages";
+import { NoteLine } from "@/components/app/note-line";
+import { ResortSheet } from "@/components/app/sender-sheets";
+import { notesForAddresses, notesForThreads } from "@/server/customer-notes";
+import { awayState } from "@/server/away";
+import { awayUntilShort } from "@/server/away-rules";
+import { turnAwayOffAction } from "../settings/away-actions";
 
 const done: Record<string, string> = {
+  ...CONTROL_DONE,
+  away_off: "Welcome back. Away mode is off.",
   discarded: "Draft discarded.",
   saved: "Changes saved. It's updated in Gmail too.",
   drafted: "Reply drafted. It's below, and in your Gmail drafts.",
@@ -56,6 +65,7 @@ const done: Record<string, string> = {
     "Writing those drafts now. They show up below in a minute or two, and each one waits for you.",
 };
 const errors: Record<string, string> = {
+  ...CONTROL_ERRORS,
   gaps: "Fill in every gap before sending (anything like {{price}} or [price]) — nothing was sent.",
   busy: "That's a lot in a short time, so we've paused it for a bit. Try again in a few minutes.",
   blocked: "Sending isn't switched on for your account, so nothing was sent.",
@@ -169,6 +179,30 @@ export default async function QueuePage(props: PageProps<"/queue">) {
     { timeZone, now },
   );
 
+  // Ideas G7: private notes. Drafts are keyed on where the reply goes; needs-you items on the
+  // customer's newest email. Never in queue counts (those come from queueMembership).
+  const allThreadIds = [...queue.needsYou, ...queue.drafts].map((i) => i.threadId);
+  const [threadNotes, draftNotes, away] = await Promise.all([
+    notesForThreads(workspace.id, allThreadIds),
+    notesForAddresses(
+      workspace.id,
+      queue.drafts.map((i) => i.toAddress),
+    ),
+    awayState(workspace.id, now),
+  ]);
+  // A phone that keeps a copy of the queue (offline okays) never holds a note's text.
+  const noteFor = (i: QueueItem) => (
+    <NoteLine
+      note={
+        i.draftId
+          ? draftNotes.get((i.toAddress ?? "").trim().toLowerCase())
+          : threadNotes.get(i.threadId)?.note
+      }
+      editKey={threadNotes.get(i.threadId)?.key}
+      hidden={device.offline}
+    />
+  );
+
   return (
     <>
       {sentAll.length ? (
@@ -209,6 +243,20 @@ export default async function QueuePage(props: PageProps<"/queue">) {
         <Headline serif="waiting on you," heavy="the queue." />
       )}
 
+      {away.on && away.backOn ? (
+        <form
+          action={turnAwayOffAction}
+          className="flex flex-col gap-2 rounded-xl border-2 border-charcoal p-4"
+        >
+          <input type="hidden" name="back" value="queue" />
+          <p className="font-semibold">
+            Away mode is on until {awayUntilShort(away.backOn)}. Follow-ups are paused.
+          </p>
+          <Button type="submit" variant="outline" className="w-full">
+            Turn off away mode
+          </Button>
+        </form>
+      ) : null}
       {doneMsg ? <Notice>{doneMsg}</Notice> : null}
       {errorMsg ? <Notice strong>{errorMsg}</Notice> : null}
 
@@ -260,6 +308,7 @@ export default async function QueuePage(props: PageProps<"/queue">) {
                 {i.backFromSnooze ? "Back from snooze · " : ""}
                 {tag(i)}
               </span>
+              {noteFor(i)}
               {i.needsOwnerReason ? <p className="font-semibold">{i.needsOwnerReason}</p> : null}
               {i.summary ? <p className="text-ash">{i.summary}</p> : null}
               <div className="grid grid-cols-1 gap-2 pt-1">
@@ -273,6 +322,9 @@ export default async function QueuePage(props: PageProps<"/queue">) {
                 )}
                 <RemindMe threadId={i.threadId} options={remindOptions(i)} inverted />
                 {readOnly ? null : <CalledThem threadId={i.threadId} hasDraft={false} inverted />}
+                {readOnly ? null : (
+                  <ResortSheet threadId={i.threadId} current={i.category} back="queue" />
+                )}
                 <a
                   href={gmailLink(i)}
                   target="_blank"
@@ -336,6 +388,10 @@ export default async function QueuePage(props: PageProps<"/queue">) {
               sendingOffDetail={sendingBlockedReason(workspace)}
               practiceLeft={practiceLeft}
               priceMemory={priceMemory.get(i.threadId)}
+              noteLine={noteFor(i)}
+              moreActions={
+                <ResortSheet threadId={i.threadId} current={i.category} hasReply back="queue" />
+              }
             />
           ))}
         </section>

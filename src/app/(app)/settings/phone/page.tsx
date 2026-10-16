@@ -78,7 +78,8 @@ export default async function PhoneSettingsPage(props: PageProps<"/settings/phon
                 Off unless you switch it on. It keeps a copy of your waiting drafts — including what
                 customers wrote — on this phone. A Send reply tapped with no signal goes once
                 you&apos;re back online, only if the draft hasn&apos;t changed, and only within 12
-                hours. Signing out deletes the copy.
+                hours. Signing out deletes the copy. Customer notes don&apos;t show on queue cards
+                on this phone while this is on.
               </span>
             </span>
           </label>

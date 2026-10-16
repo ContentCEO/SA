@@ -4,6 +4,7 @@ import { db } from "@/db";
 import { mailboxes, threads } from "@/db/schema";
 import { FOLLOWUP_CATEGORIES, followupSettings, MAX_FOLLOWUPS } from "./drafts";
 import { lastInSql, lastOutSql, answeredByPhoneSql } from "./thread-sql";
+import { isAway } from "./away";
 
 /** Don't chase anything the owner last wrote about more than this long ago. */
 export const FOLLOWUP_MAX_AGE_DAYS = 21;
@@ -37,6 +38,8 @@ export async function threadsToFollowUp(
   if (!box) return [];
   const settings = await followupSettings(box.workspaceId);
   if (!settings.enabled) return [];
+  // Ideas E7: nudges pause while the owner is away (createDraftForThread checks it again).
+  if (await isAway(box.workspaceId, now)) return [];
 
   const quietSince = new Date(now.getTime() - settings.days * 86_400_000).toISOString();
   const notBefore = new Date(now.getTime() - FOLLOWUP_MAX_AGE_DAYS * 86_400_000).toISOString();
@@ -77,6 +80,8 @@ export async function threadsToFollowUp(
         sql`not ${saidPaid}`,
         // "I called them" (round 2, FW E11): the call answered it, so no nudge.
         sql`not ${answeredByPhoneSql()}`,
+        // Ideas H3: sorted under the owner's "Never draft" rule.
+        sql`(${threads.extracted}->>'sender_rule') is distinct from 'no_draft'`,
       ),
     )
     .orderBy(desc(threads.lastMessageAt))

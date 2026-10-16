@@ -39,15 +39,33 @@ export async function ownerToday(workspaceId: string, now: Date = new Date()) {
   return localParts(now, p?.timeZone ?? "America/New_York").date;
 }
 
-/** Notes whose last day is today or later. Expired ones never reach a prompt. */
+/**
+ * Notes whose last day is today or later. Expired ones never reach a prompt. Away mode's own
+ * note (ideas E7) comes first and isn't one of the 5.
+ */
 export async function activeNotes(workspaceId: string, now: Date = new Date()) {
   const today = await ownerToday(workspaceId, now);
-  return db()
-    .select({ id: seasonalNotes.id, text: seasonalNotes.text, endsOn: seasonalNotes.endsOn })
-    .from(seasonalNotes)
-    .where(and(eq(seasonalNotes.workspaceId, workspaceId), gte(seasonalNotes.endsOn, today)))
-    .orderBy(asc(seasonalNotes.endsOn))
-    .limit(MAX_ACTIVE_NOTES);
+  const cols = {
+    id: seasonalNotes.id,
+    text: seasonalNotes.text,
+    endsOn: seasonalNotes.endsOn,
+    away: seasonalNotes.away,
+  };
+  const live = and(eq(seasonalNotes.workspaceId, workspaceId), gte(seasonalNotes.endsOn, today));
+  const [away, others] = await Promise.all([
+    db()
+      .select(cols)
+      .from(seasonalNotes)
+      .where(and(live, eq(seasonalNotes.away, true)))
+      .limit(1),
+    db()
+      .select(cols)
+      .from(seasonalNotes)
+      .where(and(live, eq(seasonalNotes.away, false)))
+      .orderBy(asc(seasonalNotes.endsOn))
+      .limit(MAX_ACTIVE_NOTES),
+  ]);
+  return [...away, ...others];
 }
 
 function addDays(ymd: string, days: number) {
@@ -69,7 +87,13 @@ export async function addSeasonalNote(
   const [active] = await db()
     .select({ n: count() })
     .from(seasonalNotes)
-    .where(and(eq(seasonalNotes.workspaceId, workspaceId), gte(seasonalNotes.endsOn, today)));
+    .where(
+      and(
+        eq(seasonalNotes.workspaceId, workspaceId),
+        gte(seasonalNotes.endsOn, today),
+        eq(seasonalNotes.away, false),
+      ),
+    );
   if ((active?.n ?? 0) >= MAX_ACTIVE_NOTES) {
     throw new SeasonalNoteError(
       "full",
@@ -85,7 +109,14 @@ export async function addSeasonalNote(
 export async function removeSeasonalNote(workspaceId: string, id: string) {
   const gone = await db()
     .delete(seasonalNotes)
-    .where(and(eq(seasonalNotes.id, id), eq(seasonalNotes.workspaceId, workspaceId)))
+    // Away mode's note is changed in Away mode only.
+    .where(
+      and(
+        eq(seasonalNotes.id, id),
+        eq(seasonalNotes.workspaceId, workspaceId),
+        eq(seasonalNotes.away, false),
+      ),
+    )
     .returning({ id: seasonalNotes.id });
   return gone.length > 0;
 }

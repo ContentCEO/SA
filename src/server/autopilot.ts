@@ -116,6 +116,8 @@ export type GuardrailInput = {
   paymentChange?: boolean;
   /** Round 2 TW B4: someone smells gas. */
   gasSmell?: boolean;
+  /** Ideas H4: the owner chose this kind and the sorter said otherwise. */
+  ownerMoved?: boolean;
 };
 
 /** Layer 3. Every reason this email must wait for the owner; empty = may go. */
@@ -145,6 +147,7 @@ export function guardrailReasons(g: GuardrailInput): string[] {
     out.push("This customer complained in the last 12 months, so it waits for you.");
   if (g.paymentChange) out.push("Asks to pay a new account, so it waits for you.");
   if (g.gasSmell) out.push("Someone smells gas. Call them.");
+  if (g.ownerMoved) out.push("You chose this kind yourself, so it waits for you.");
   return out;
 }
 
@@ -163,6 +166,9 @@ export async function earnedCounts(workspaceId: string): Promise<Map<string, num
         isNull(drafts.purpose),
         eq(drafts.status, "sent"),
         sql`${drafts.sentGmailMessageId} is not null`,
+        // Ideas H4: replies on a conversation the owner moved to a kind the sorter didn't pick
+        // never earn that kind.
+        sql`(${threads.categoryManual} is null or ${threads.categoryManual} = ${threads.extracted}->>'model_category')`,
       ),
     )
     .groupBy(threads.category);
@@ -328,6 +334,7 @@ async function blockers(row: NonNullable<Awaited<ReturnType<typeof loadForAutopi
     accepts_quote?: boolean;
     payment_change?: boolean;
     gas_smell?: boolean;
+    model_category?: string;
   };
   const complainedRecently = await customerComplainedRecently(workspace.id, draft.toAddress, now);
   return guardrailReasons({
@@ -352,6 +359,7 @@ async function blockers(row: NonNullable<Awaited<ReturnType<typeof loadForAutopi
     complainedRecently,
     paymentChange: extracted.payment_change === true,
     gasSmell: extracted.gas_smell === true,
+    ownerMoved: thread.categoryManual != null && thread.categoryManual !== extracted.model_category,
   });
 }
 

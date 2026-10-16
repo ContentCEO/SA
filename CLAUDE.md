@@ -1559,6 +1559,50 @@ default, CI too) and refuses a non-local `DATABASE_URL` or an `APP_URL` that isn
   confirm at myaccount.google.com/permissions that Squared Away has no Gmail access, reconnect,
   and confirm that mailbox's `mailboxes.scopes` has no `gmail.send`. The demo video's "Before
   recording" note repeats the clear-out (filming comes after the check).
+- **Ideas "control" package (2026-10-16, branch `ideas-build`; H3, H4, G7, E7 built; G3 and B7
+  not built in this pass, see Waiting on Davi):** migration 0032 (additive): `owner_sender_rules`,
+  `customer_notes`, `threads.category_manual` / `category_manual_at`, `business_profile.away_back_on`,
+  `seasonal_notes.away` (+ partial unique index, one away note). No prompt change.
+  - **H3 sender rules** (`sender-rule-store.ts`, pure `owner-sender-rule-rules.ts`; the store is
+    not called `*-rules.ts` because the purity test scans that suffix): Always junk / Never draft
+    (address or company domain) and company-wide Always needs me; "Always needs me" for one
+    address writes the VIP list instead (one list for that fact; DB check refuses an address
+    `needs_me`). Keyed only from an email whose Reply-To was read (`keyFromMessage`: NULL header,
+    lead-site relays and no-reply addresses refused). **Direction:** caution (VIP, needs me, never
+    draft) matches From or the reply address; junk only when From matches and there is no redirect
+    or the reply address matches too; a NULL header never junks; any caution beats junk. The
+    junk shortcut (no model call, `extracted.sender_rule = "junk"`) is skipped for a moved
+    thread, municipal senders, injection text, sticky marks and a whole-word guard list (lawyer,
+    refund, leak, damage…). Junk refused for anyone the owner wrote to, a VIP, an open quote or an
+    owed invoice, building departments; company rules never on webmail or the owner's domain; cap
+    200. Never draft is read live in `createDraftForThread` (jobs only, the customer's newest
+    non-side email) and the auto-draft / follow-up scans skip `sender_rule = no_draft`. Inbox
+    rows carry "Rules for this sender" (posts the email id, never the address); Settings → Sender
+    rules lists and removes. Activity `{action, scope}` only.
+  - **H4 Move it** (`resort.ts`): `category_manual` wins in classification's UPDATE
+    (`coalesce(category_manual, model)` in SQL, race-safe); the model's own kind is stored as
+    `extracted.model_category`. To complaint: needs you + sticky `complained_at`. To junk:
+    discards the waiting reply (refused while it's in its undo window). To quote: request time =
+    first customer email after the owner's last real reply. **Decision:** `quote_requested_at` is
+    set once and never cleared, *except* by the owner moving an undecided quote away (also
+    clears `job_kind` and `quote_accepted`, withdraws a waiting deposit note). A job never drafts
+    on a moved thread whose `model_category` isn't auto-draftable (`owner_moved`); autopilot
+    refuses manual ≠ model ("You chose this kind yourself…") and such sends don't earn.
+  - **G7 private notes** (`customer-notes.ts`): ≤200 chars, one per customer reply address, saved
+    from the customer page (key = an email id), shown on Inbox rows and Queue cards (drafts keyed
+    on `to_address`, others on the newest non-side inbound). Never sent to the AI or anywhere else
+    (boundary test in `control.test.ts`). Not encrypted (like bodies; only tokens are). With the
+    offline queue on (`sa_offline`), cards say "Note saved · Open" without the text. Goes with
+    the mailbox it was written under.
+  - **E7 away mode** (`away.ts`, pure `away-rules.ts`, `/settings/away`): day back after today and
+    ≤90 days, read at use (no cron); one `away` seasonal note "Away until … (Oct 9). Back …
+    (Oct 10)." (both date forms so `checkDraft` sees the date as given), outside the 5-note cap,
+    read-only on the business screen. Nudges pause (`threadsToFollowUp` → none, followup trigger
+    → `away`). Autopilot, alerts and the digest don't change; the screen's last line says so
+    when autopilot is on. A default-zone owner's browser zone decides "today" and is saved.
+  - Privacy policy (same 2026-10-16 date as `TERMS_VERSION`, so no new re-agree): what you tell
+    us (rules, VIPs, notes, away day), the moved-kind record, notes/rules never sent to Anthropic
+    and the junk-shortcut exception, retention, and notes left out of the offline copy.
 
 ## Milestones
 

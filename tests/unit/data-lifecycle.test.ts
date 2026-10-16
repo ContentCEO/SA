@@ -9,11 +9,13 @@ import {
   activityLog,
   appSettings,
   businessProfiles,
+  customerNotes,
   drafts,
   editSignals,
   invites,
   mailboxes,
   messages,
+  ownerSenderRules,
   priceHistory,
   pushSubscriptions,
   rateLimits,
@@ -302,6 +304,16 @@ async function seedOwner(email: string, tag: string, extra: { referredBy?: strin
   await database
     .insert(pushSubscriptions)
     .values({ workspaceId: ws, endpoint: `https://fcm.googleapis.com/fcm/send/${tag}` });
+  // Ideas H3 / G7: sender rules go with the workspace; private notes with the mailbox too.
+  await database
+    .insert(ownerSenderRules)
+    .values({ workspaceId: ws, pattern: `deals@${tag}.com`, scope: "address", action: "junk" });
+  await database.insert(customerNotes).values({
+    workspaceId: ws,
+    mailboxId: a.mailboxId,
+    address: `dana@${tag}.com`,
+    body: "Gate 4411",
+  });
   await database.insert(waitlist).values({ email, name: "Owner", phone: "555-0100" });
   await database.insert(appSettings).values([
     { key: `cost_alert:${ws}:2026-10`, value: "1" },
@@ -450,6 +462,7 @@ describe("disconnect a Gmail address", () => {
       seasonalNotes,
       pushSubscriptions,
       rules,
+      ownerSenderRules,
     ];
     const counts = async () =>
       Promise.all(workspaceLevel.map(async (t) => (await database.select().from(t)).length));
@@ -470,6 +483,8 @@ describe("disconnect a Gmail address", () => {
       o.b.threadId,
     ]);
 
+    // Ideas G7: a private note goes with the Gmail address it was written under.
+    expect(await database.select().from(customerNotes)).toEqual([]);
     // Writing style, style suggestions, business details, usage, notes, phones and rules stay.
     expect(await counts()).toEqual(beforeCounts);
     // Activity history stays (plus the disconnect itself), even where its thread is gone.

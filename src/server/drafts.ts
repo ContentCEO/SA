@@ -103,6 +103,8 @@ import {
   type ReplyToHeader,
 } from "./reply-address-rules";
 import { isNoReplyAddress } from "./sender-rules";
+import { noDraftRuleFor } from "./sender-rule-store";
+import { isAway } from "./away";
 
 /** Categories we draft for without being asked. Complaints and noise never are. */
 export const AUTO_DRAFT_CATEGORIES = [
@@ -167,7 +169,13 @@ export type CreateOutcome =
         // couldn't tell us where it goes (never guessed: no draft).
         | "no_reply_address"
         | "gmail_busy"
-        | "reply_to_unread";
+        | "reply_to_unread"
+        // Ideas H3: the owner's "Never draft" rule for this sender (jobs only).
+        | "sender_rule"
+        // Ideas H4: the owner chose this kind; the sorter wouldn't have drafted it (jobs only).
+        | "owner_moved"
+        // Ideas E7: nudges pause while the owner is away.
+        | "away";
     }
   | { status: "reconnect_needed" };
 
@@ -543,12 +551,39 @@ export async function createDraftForThread(
     payment_change?: boolean;
     gas_smell?: boolean;
     bill_direction?: string;
+    model_category?: string;
   };
   // Only the owner's tap drafts for these (feature plan #17, #42; round 2 A11) — never a job.
   if (opts.trigger !== "owner") {
     if (marks.injection) return { status: "skipped", reason: "untrusted" };
     if (marks.municipal) return { status: "skipped", reason: "municipal" };
     if (marks.payment_change) return { status: "skipped", reason: "payment_change" };
+    // Ideas H4: a kind the owner chose feeds a job's draft only when the sorter's own kind
+    // would have been drafted too ("out of Junk" on something it called junk is a tap only).
+    if (
+      thread.categoryManual &&
+      !(AUTO_DRAFT_CATEGORIES as readonly string[]).includes(marks.model_category ?? "")
+    )
+      return { status: "skipped", reason: "owner_moved" };
+    // Ideas H3: "Never draft" for this sender — read live, on the customer's newest email (a
+    // crew member's reply to a forward never decides it).
+    const [newestCustomer] = await db()
+      .select({ fromAddress: messages.fromAddress, replyToHeader: messages.replyToHeader })
+      .from(messages)
+      .where(
+        and(
+          eq(messages.threadId, threadId),
+          eq(messages.direction, "in"),
+          sql`not ${sideEmailSql("messages")}`,
+        ),
+      )
+      .orderBy(desc(messages.sentAt))
+      .limit(1);
+    if (newestCustomer && (await noDraftRuleFor(workspace.id, newestCustomer)))
+      return { status: "skipped", reason: "sender_rule" };
+    // Ideas E7: nudges wait until the owner is back.
+    if (opts.trigger === "followup" && (await isAway(workspace.id, now)))
+      return { status: "skipped", reason: "away" };
   }
   // Round 2 (TW B4): someone smells gas. A job writes one fixed safety note (no model), once
   // per thread, and it waits for the owner's tap like everything else. After that the thread
@@ -1893,6 +1928,23 @@ export async function expirePendingDraft(
   );
 }
 
+/**
+ * Ideas H4: the owner moved an undecided quote to another kind, so a waiting deposit note (the
+ * thread's acceptance no longer counts) goes, here and in Gmail. Same claim-first rules.
+ */
+export async function expireWaitingDeposit(threadId: string, opts: DraftDeps = {}) {
+  return expireWaiting(
+    and(
+      eq(drafts.threadId, threadId),
+      eq(drafts.purpose, "deposit"),
+      eq(drafts.status, "pending"),
+      isNull(drafts.sendAfter),
+    )!,
+    "You moved this away from quote requests, so the deposit note was withdrawn.",
+    opts,
+  );
+}
+
 async function expireWaiting(
   where: ReturnType<typeof and>,
   note: string,
@@ -2433,6 +2485,8 @@ export async function threadsToAutoDraft(mailboxId: string, limit = 10): Promise
         // "I called them" after the newest email (round 2, FW E11): nothing to draft.
         sql`(${threads.handledOfflineAt} is null or ${threads.handledOfflineAt} < ${lastIn})`,
         sql`not ${newestInNoReply}`,
+        // Ideas H3: the newest email was sorted under a "Never draft" rule.
+        sql`(${threads.extracted}->>'sender_rule') is distinct from 'no_draft'`,
       ),
     )
     .orderBy(desc(threads.lastMessageAt))

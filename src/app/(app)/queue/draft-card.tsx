@@ -69,6 +69,10 @@ export type DraftCardProps = {
    * a figure reaches the draft only when they tap it into a {{price}} gap.
    */
   priceMemory?: PastPrice[];
+  /** Ideas G7: the owner's private note line (rendered by the server page). */
+  noteLine?: React.ReactNode;
+  /** Ideas H4: "Wrong kind?" (rendered by the server page). */
+  moreActions?: React.ReactNode;
 };
 
 function Pending({
@@ -235,6 +239,7 @@ export function DraftCard(p: DraftCardProps) {
         <ToLine address={p.toAddress} fromReplyTo={p.toFromReplyTo} />
         <span className="text-sm font-semibold">{p.tag}</span>
         {p.wrote ? <span className="text-sm">{p.wrote}</span> : null}
+        {p.noteLine}
         {p.summary ? <p className="font-semibold">{p.summary}</p> : null}
         <p className={p.summary ? "text-muted-foreground" : undefined}>{p.reason}</p>
       </header>
@@ -356,6 +361,7 @@ export function DraftCard(p: DraftCardProps) {
           ) : null}
 
           <WhyThis reason={p.reason} usedFacts={p.usedFacts} flags={p.flags} />
+          {p.readOnly ? null : p.moreActions}
 
           {discardIn !== null ? (
             <form

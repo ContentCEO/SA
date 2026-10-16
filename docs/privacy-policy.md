@@ -100,11 +100,14 @@ Settings removes all of our access, that one included.
   a complaint (so we never offer to ask that customer for a review), which customers were
   sent a review request, and when you marked a conversation as answered by phone (**I called
   them**).
+- Which kind you moved an email to, when you change it yourself (**Wrong kind? Move it**).
 
 **What you tell us:** your business details (business name, trade, services, service area, hours,
 price list, payment terms, policies, things you never promise, words you never use, short
 seasonal notes, your review link), your settings, and, if you turn on text alerts, your own mobile
-number.
+number. Also the sender rules you set (an email address or a company's web address, and what to
+do with its email), the people you mark as VIPs, short private notes you write about a customer,
+and, if you turn on away mode, the day you're back.
 
 **Phone notifications:** if you turn them on, we store the address your browser's push service
 gives us for that phone (the push service is run by Google, Apple, Mozilla or Microsoft, depending
@@ -132,7 +135,8 @@ the campaign tags in the link, the site you came from, your rough location (coun
 city, worked out from your IP address, which it doesn't keep), and your device type, operating
 system and browser. It never runs on the signed-in app. If you switch on offline approvals, your
 phone keeps a copy of your queue (in the browser's storage) and the approvals you make without
-signal until they reach us; signing out deletes them.
+signal until they reach us; signing out deletes them. Private customer notes are left out of
+that copy.
 
 ## How we use it
 
@@ -189,7 +193,10 @@ We use these service providers. Each gets only what it needs:
   and email address) and subject, your business details and your writing-style description, sent for the task at hand only: sorting a message, learning your
   style from your sent mail, writing a draft, follow-up, deposit or review note, rewording a draft
   when you ask, or comparing a reply before and after you edited it to see how the tone changed.
-  Your price memory is never sent. Under Anthropic's commercial terms, this data is not used to
+  Your price memory is never sent. Neither are your private customer notes or your sender
+  rules. New email from a sender you set to Always junk usually isn't sent to the AI, unless it
+  looks like a complaint, a legal matter or a building department, or you moved that
+  conversation yourself. Under Anthropic's commercial terms, this data is not used to
   train their models. Anthropic may keep it for a limited time under its own policies, for example
   to prevent misuse.
 - **Vercel** — hosts the website and app, on servers in the United States (its US East region),
@@ -256,6 +263,9 @@ In plain words:
   30-day email-text purge, until you disconnect that Gmail address or delete your account.
 - **Your writing style, style suggestions, business details, settings, activity history and AI
   usage counts** are kept until you delete your account.
+- **Private customer notes** stay until you remove them, disconnect the Gmail address they were
+  written under, or delete your account. **Sender rules and VIPs** stay until you remove them or
+  delete your account.
 - **When you agreed to the terms, and which version,** is kept until you delete your account.
 - **Your mobile number for text alerts** is kept until you remove it in Settings or delete your
   account.

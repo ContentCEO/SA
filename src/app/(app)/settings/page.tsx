@@ -13,6 +13,9 @@ import { requireOwner } from "@/server/session";
 import { formatUsPhone } from "@/server/sms-alerts";
 import { LegacySettingsAnchors } from "./legacy-anchors";
 import { LIST_MESSAGES } from "./messages";
+import { awayState } from "@/server/away";
+import { awayUntilShort } from "@/server/away-rules";
+import { listRules } from "@/server/sender-rule-store";
 
 export const metadata: Metadata = { title: "Settings" };
 
@@ -24,12 +27,14 @@ export default async function SettingsPage(props: PageProps<"/settings">) {
   const { workspace, session } = await requireOwner();
   const admin = isAdminEmail(session?.user?.email);
   const params = await props.searchParams;
-  const [mailboxes, profile, voice, autopilot, device] = await Promise.all([
+  const [mailboxes, profile, voice, autopilot, device, away, senderRules] = await Promise.all([
     listMailboxes(workspace.id),
     getBusinessProfile(workspace.id),
     getVoiceProfile(workspace.id),
     autopilotState(workspace),
     devicePrefs(),
+    awayState(workspace.id),
+    listRules(workspace.id),
   ]);
   const doneMsg = typeof params.done === "string" ? LIST_MESSAGES.done[params.done] : undefined;
   const errorMsg = typeof params.error === "string" ? LIST_MESSAGES.error[params.error] : undefined;
@@ -71,6 +76,18 @@ export default async function SettingsPage(props: PageProps<"/settings">) {
         (profile?.followupsEnabled ?? true)
           ? `On · after ${profile?.followupDays ?? 3} quiet days`
           : "Off",
+    },
+    {
+      href: "/settings/away",
+      label: "Away mode",
+      line: away.on && away.backOn ? `On until ${awayUntilShort(away.backOn)}` : "Off",
+    },
+    {
+      href: "/settings/sender-rules",
+      label: "Sender rules",
+      line: senderRules.length
+        ? `${senderRules.length} rule${senderRules.length === 1 ? "" : "s"}`
+        : "None yet",
     },
     {
       href: "/settings/autopilot",

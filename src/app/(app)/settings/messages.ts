@@ -78,6 +78,24 @@ export const SCREEN_MESSAGES = {
       sms_not_verified: "Confirm your number first.",
     },
   },
+  "/settings/away": {
+    done: {
+      away_on: "Away mode is on.",
+      away_off: "Welcome back. Away mode is off.",
+    },
+    error: {
+      away_past: "Pick a day after today.",
+      away_too_far: "Pick a day in the next 90 days.",
+      away_invalid: "Pick the day you're back.",
+      readonly:
+        "Your account is read-only right now, so nothing was changed. The note at the top says why.",
+      unknown: UNKNOWN,
+    },
+  },
+  "/settings/sender-rules": {
+    done: { rule_removed: "Rule removed." },
+    error: { unknown: UNKNOWN },
+  },
   "/settings/phone": {
     done: { saved: "Saved for this phone." },
     error: {},

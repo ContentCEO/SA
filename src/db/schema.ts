@@ -6,6 +6,7 @@ import { sql } from "drizzle-orm";
 import {
   type AnyPgColumn,
   boolean,
+  check,
   index,
   integer,
   jsonb,
@@ -256,6 +257,13 @@ export const threads = pgTable(
     jobKind: text("job_kind"),
     /** Plan #34: when we last pushed "a lead is waiting" for this thread's current wait. */
     atRiskAlertedAt: timestamp("at_risk_alerted_at", { withTimezone: true }),
+    /**
+     * Ideas H4: the kind the owner moved this conversation to ("Wrong kind?"). It wins over the
+     * sorter on every later email (written into `category` in SQL), like needs_owner_manual.
+     * One of the classifier's categories, checked in code. Null = the sorter's kind stands.
+     */
+    categoryManual: text("category_manual"),
+    categoryManualAt: timestamp("category_manual_at", { withTimezone: true }),
     createdAt: createdAt(),
   },
   (t) => [
@@ -458,6 +466,11 @@ export const businessProfiles = pgTable("business_profile", {
   smsLastSentAt: timestamp("sms_last_sent_at", { withTimezone: true }),
   /** Plan #35: the owner's local month ('YYYY-MM') last summarized (sent, or skipped as empty). */
   monthlySummaryLastSentFor: text("monthly_summary_last_sent_for"),
+  /**
+   * Ideas E7 away mode: the owner's first day back, as their local date (YYYY-MM-DD). Away while
+   * that day hasn't come yet (read at use, no job turns it off). Null = not away.
+   */
+  awayBackOn: text("away_back_on"),
   completedAt: timestamp("completed_at", { withTimezone: true }),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
@@ -535,9 +548,76 @@ export const seasonalNotes = pgTable(
     text: text("text").notNull(),
     /** Last day the note applies, in the owner's local calendar (YYYY-MM-DD). */
     endsOn: text("ends_on").notNull(),
+    /** Ideas E7: the one note away mode writes ("Away until …"). Not counted in the 5. */
+    away: boolean("away").notNull().default(false),
     createdAt: createdAt(),
   },
-  (t) => [index("seasonal_notes_workspace_idx").on(t.workspaceId, t.endsOn)],
+  (t) => [
+    index("seasonal_notes_workspace_idx").on(t.workspaceId, t.endsOn),
+    uniqueIndex("seasonal_notes_one_away")
+      .on(t.workspaceId)
+      .where(sql`away`),
+  ],
+);
+
+/** Ideas H3: what a sender rule does. `needs_me` is company-wide only (an address is a VIP). */
+export const OWNER_SENDER_RULE_ACTIONS = ["junk", "no_draft", "needs_me"] as const;
+export type OwnerSenderRuleAction = (typeof OWNER_SENDER_RULE_ACTIONS)[number];
+export const OWNER_SENDER_RULE_SCOPES = ["address", "domain"] as const;
+export type OwnerSenderRuleScope = (typeof OWNER_SENDER_RULE_SCOPES)[number];
+
+/**
+ * Ideas H3: the owner's own rules for a sender — one address or everyone at a company's web
+ * address. Never sent to the AI. Goes with the workspace (Delete my account).
+ */
+export const ownerSenderRules = pgTable(
+  "owner_sender_rules",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    /** 'dana@example.com' or 'hillpm.com', lowercased. */
+    pattern: text("pattern").notNull(),
+    scope: text("scope").$type<OwnerSenderRuleScope>().notNull(),
+    action: text("action").$type<OwnerSenderRuleAction>().notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex("owner_sender_rules_workspace_pattern_uq").on(t.workspaceId, t.pattern),
+    check("owner_sender_rules_action", sql`${t.action} in ('junk', 'no_draft', 'needs_me')`),
+    check("owner_sender_rules_scope", sql`${t.scope} in ('address', 'domain')`),
+    check(
+      "owner_sender_rules_needs_me_domain",
+      sql`${t.action} <> 'needs_me' or ${t.scope} = 'domain'`,
+    ),
+  ],
+);
+
+/**
+ * Ideas G7: the owner's private note about a customer (gate code, dog, best time to call).
+ * Only the owner sees it: never sent to customers or the AI, never in alerts, emails or admin.
+ * Goes with the Gmail address it was written under (disconnect) and the workspace.
+ */
+export const customerNotes = pgTable(
+  "customer_notes",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    mailboxId: uuid("mailbox_id")
+      .notNull()
+      .references(() => mailboxes.id, { onDelete: "cascade" }),
+    /** The customer's reply address, lowercased. */
+    address: text("address").notNull(),
+    body: text("body").notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("customer_notes_workspace_address_uq").on(t.workspaceId, t.address),
+    check("customer_notes_body_len", sql`char_length(${t.body}) between 1 and 200`),
+  ],
 );
 
 /**
