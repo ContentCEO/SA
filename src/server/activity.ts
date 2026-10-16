@@ -7,7 +7,13 @@ import { MINUTES_PER_SENT_REPLY } from "@/config/drafting";
 import { dollarsToCents, tally, type MonthMoney } from "./activity-rules";
 import { atRiskActivityLine } from "./leads-at-risk-rules";
 import { invoiceOf } from "./money-rules";
-import { closeRate, isQuoteOutcome, type QuoteOutcome } from "./quote-rules";
+import {
+  closeRate,
+  isLostReason,
+  isQuoteOutcome,
+  type LostReason,
+  type QuoteOutcome,
+} from "./quote-rules";
 import { workspaceTimeZone } from "./snooze";
 import { localMonthStart, usableTimeZone } from "./snooze-rules";
 import { messageReplyName } from "./thread-sql";
@@ -128,6 +134,9 @@ export function describeActivity(
       return "You turned on away mode";
     case "away_off":
       return "You turned off away mode";
+    // Ideas C5: the reason shows on Quotes and in the month's line, not as its own entry.
+    case "quote_lost_reason":
+      return null;
     case "marked_needs_owner":
       return `You marked a conversation${name ? ` with ${name}` : ""} as needing you`;
     case "mailbox_connected":
@@ -446,4 +455,28 @@ export async function monthMoney(
     won: tally(won.map((r) => r.cents)),
     paidAfterNudge: tally(paid.map((r) => dollarsToCents(invoiceOf(r.extracted)?.amount))),
   };
+}
+
+/**
+ * Ideas C5: why quotes were lost this month (the owner's taps), by `quote_outcome_at` in the
+ * owner's month — the same quotes as the month's Lost count. Counts only.
+ */
+export async function lostReasonsBetween(workspaceId: string, start: Date, end: Date | null) {
+  const rows = await db()
+    .select({ reason: threads.quoteLostReason, n: count() })
+    .from(threads)
+    .innerJoin(mailboxes, eq(mailboxes.id, threads.mailboxId))
+    .where(
+      and(
+        eq(mailboxes.workspaceId, workspaceId),
+        eq(threads.quoteOutcome, "lost"),
+        isNotNull(threads.quoteLostReason),
+        gte(threads.quoteOutcomeAt, start),
+        end ? lt(threads.quoteOutcomeAt, end) : undefined,
+      ),
+    )
+    .groupBy(threads.quoteLostReason);
+  const out: Partial<Record<LostReason, number>> = {};
+  for (const r of rows) if (isLostReason(r.reason)) out[r.reason] = Number(r.n);
+  return out;
 }

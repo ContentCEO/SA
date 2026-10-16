@@ -12,7 +12,7 @@ import {
   type Tweak,
 } from "@/ai/prompts/revise.v2";
 import { MAX_REVISIONS_PER_DRAFT, UNDO_WINDOW_SECONDS } from "@/config/drafting";
-import { hasUnfilledGap } from "@/ai/gaps";
+import { findGaps, hasUnfilledGap } from "@/ai/gaps";
 import {
   conversationBlock,
   DRAFT_INSTRUCTIONS,
@@ -1138,6 +1138,9 @@ export async function sendDraft(
           editedByOwner: edited,
           kind: draft.kind,
           gmailMessageId: sent.messageId,
+          // Ideas H8: whether the draft as written had {{gaps}} to fill (yes/no only): filling
+          // one isn't counted as changing the draft.
+          hadGaps: findGaps(draft.originalBody ?? draft.body ?? "").length > 0,
           ...(opts.queued ? { undoWindowSec: UNDO_WINDOW_SECONDS } : {}),
           ...(opts.by === "autopilot" ? { autopilot: true } : {}),
         },

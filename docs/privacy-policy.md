@@ -101,6 +101,7 @@ Settings removes all of our access, that one included.
   sent a review request, and when you marked a conversation as answered by phone (**I called
   them**).
 - Which kind you moved an email to, when you change it yourself (**Wrong kind? Move it**).
+- If you tell us, why a quote was lost (price, timing or went with someone else).
 
 **What you tell us:** your business details (business name, trade, services, service area, hours,
 price list, payment terms, policies, things you never promise, words you never use, short
@@ -258,7 +259,7 @@ In plain words:
   details (number, amount, due date, paid or not) and permit details (permit number, who issued
   it, inspection time and result) are kept so your inbox, quotes, money owed and activity history
   keep working, until you disconnect that Gmail address or delete your account.
-- **Your price memory, quote won/lost marks, invoice paid marks, complaint markers,
+- **Your price memory, quote won/lost marks, why a quote was lost, invoice paid marks, complaint markers,
   review-request records and the counts and tone change of edited replies** stay after the
   30-day email-text purge, until you disconnect that Gmail address or delete your account.
 - **Your writing style, style suggestions, business details, settings, activity history and AI

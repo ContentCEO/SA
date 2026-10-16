@@ -26,6 +26,8 @@ import {
   quoteDecidedNote,
   quoteStage,
   quoteStopsNudges,
+  shownLostReason,
+  type LostReason,
   type QuoteOutcome,
   type QuoteStage,
 } from "./quote-rules";
@@ -41,6 +43,8 @@ export type QuoteRow = {
   stage: QuoteStage;
   /** The outcome is our guess (won from "go ahead", or no answer) — the owner can change it. */
   outcomeGuessed: boolean;
+  /** Ideas C5: why it was lost, only while it is lost. */
+  lostReason: LostReason | null;
   amountCents: number | null;
   lastMessageAt: Date | null;
   startedAt: Date;
@@ -144,6 +148,7 @@ export async function listQuotes(workspaceId: string, now: Date = new Date()) {
       subject: threads.subject,
       outcome: threads.quoteOutcome,
       outcomeSource: threads.quoteOutcomeSource,
+      lostReason: threads.quoteLostReason,
       amountCents: threads.quoteAmountCents,
       lastMessageAt: threads.lastMessageAt,
       startedAt: threads.createdAt,
@@ -176,6 +181,7 @@ export async function listQuotes(workspaceId: string, now: Date = new Date()) {
       days,
     ),
     outcomeGuessed: r.outcome != null && r.outcomeSource === "auto",
+    lostReason: shownLostReason(r.outcome, r.lostReason),
     amountCents: r.amountCents,
     lastMessageAt: asDate(r.lastMessageAt),
     startedAt: asDate(r.firstAt) ?? r.startedAt,
@@ -242,6 +248,8 @@ export async function setQuoteOutcome(
         quoteOutcome: outcome,
         quoteOutcomeSource: "owner",
         quoteOutcomeAt: outcome ? now : null,
+        // Ideas C5: a new mark starts without a reason (asked again after Mark lost).
+        quoteLostReason: null,
         ...(typed ? { quoteAmountCents: amountCents } : {}),
       })
       .where(eq(threads.id, threadId));
@@ -569,4 +577,45 @@ async function backfillPriceMemory(workspaceId?: string): Promise<number> {
     added += inserted.length;
   }
   return added;
+}
+
+/**
+ * Ideas C5: the owner's one tap on why a lost quote was lost. Only on a quote that is lost
+ * right now; a repeat tap of the same reason changes and logs nothing. Never sent to the AI.
+ */
+export async function setLostReason(
+  workspaceId: string,
+  threadId: string,
+  reason: LostReason,
+  now: Date = new Date(),
+): Promise<"ok" | "not_lost" | "not_found"> {
+  const t = await ownedThread(workspaceId, threadId);
+  if (!t) return "not_found";
+  if (!jobsAllowed(t.workspace, now)) throw new ReadOnlyError(effectiveStatus(t.workspace, now));
+  const [row] = await db()
+    .update(threads)
+    .set({ quoteLostReason: reason })
+    .where(
+      and(
+        eq(threads.id, threadId),
+        eq(threads.quoteOutcome, "lost"),
+        sql`${threads.quoteLostReason} is distinct from ${reason}`,
+      ),
+    )
+    .returning({ id: threads.id });
+  if (!row) {
+    const [cur] = await db()
+      .select({ outcome: threads.quoteOutcome })
+      .from(threads)
+      .where(eq(threads.id, threadId));
+    return cur?.outcome === "lost" ? "ok" : "not_lost";
+  }
+  await db().insert(activityLog).values({
+    workspaceId,
+    actor: "owner",
+    action: "quote_lost_reason",
+    threadId,
+    detail: { reason },
+  });
+  return "ok";
 }

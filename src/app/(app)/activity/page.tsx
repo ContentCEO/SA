@@ -6,6 +6,7 @@ import { relativeTime } from "@/lib/relative-time";
 import { cn } from "@/lib/utils";
 import {
   listActivity,
+  lostReasonsBetween,
   MINUTES_PER_SENT_REPLY,
   localMonthName,
   monthCloseRate,
@@ -15,12 +16,17 @@ import {
 import { groupByDay, moneyIsEmpty, tallyText } from "@/server/activity-rules";
 import { weekScorecards } from "@/server/scorecard";
 import {
+  asWrittenSentence,
+  quoteSpeedSentence,
   responseTimeSentence,
   scorecardIsEmpty,
   scorecardLines,
   timeSavedPhrase,
 } from "@/server/scorecard-rules";
 import { requireOwner } from "@/server/session";
+import { lostReasonsSentence } from "@/server/quote-rules";
+import { localMonthStart } from "@/server/snooze-rules";
+import { accountLockReason } from "@/server/autopilot";
 import { workspaceTimeZone } from "@/server/snooze";
 
 export const metadata: Metadata = { title: "Activity" };
@@ -41,6 +47,15 @@ export default async function ActivityPage() {
   const { thisWeek, lastWeek } = weeks;
   const decided = close.won + close.lost + close.noAnswer;
   const monthName = localMonthName(now, timeZone);
+  // Ideas C5: the owner's own reasons for lost quotes this month (fixed words and counts).
+  const lostLine = lostReasonsSentence(
+    await lostReasonsBetween(workspace.id, localMonthStart(now, timeZone), null),
+  );
+  // Ideas C8 / H8: counts and fixed words only.
+  const speedLine = quoteSpeedSentence(thisWeek.speed, lastWeek.speed, "this week");
+  const writtenLine = asWrittenSentence(thisWeek.asWritten, lastWeek.asWritten, "this week");
+  // The autopilot link only where autopilot can be had (a plan with it, setup done).
+  const autopilotOffered = accountLockReason(workspace, now) === null;
 
   return (
     <>
@@ -102,6 +117,8 @@ export default async function ActivityPage() {
           ))}
         </dl>
         <p className="text-lg">{responseTimeSentence(thisWeek.response, lastWeek.response)}</p>
+        {speedLine ? <p className="text-lg">{speedLine}</p> : null}
+        {writtenLine ? <p className="text-lg">{writtenLine}</p> : null}
         <p>
           {scorecardIsEmpty(lastWeek)
             ? "Nothing sent last week."
@@ -112,6 +129,27 @@ export default async function ActivityPage() {
           Weeks start on Monday. Response time runs from a customer&apos;s first email asking for a
           quote to your first reply.
         </p>
+        {speedLine ? (
+          <p className="text-sm text-muted-foreground">
+            Within 24 hours means 24 hours on the clock, from the customer&apos;s first email asking
+            for a quote to your first reply. Nights and weekends count. A request still inside its
+            first 24 hours isn&apos;t counted until you answer it or the 24 hours are up.
+          </p>
+        ) : null}
+        {writtenLine ? (
+          <p className="text-sm text-muted-foreground">
+            Counts drafts you sent from the app. Filling in a blank like a price doesn&apos;t count
+            against it. Replies autopilot sent, and drafts you sent from Gmail, aren&apos;t counted.
+          </p>
+        ) : null}
+        {writtenLine && autopilotOffered ? (
+          <Link
+            href="/settings/autopilot"
+            className="inline-flex min-h-tap items-center text-sm font-semibold underline underline-offset-4"
+          >
+            See which kinds of email are close to autopilot
+          </Link>
+        ) : null}
       </section>
 
       <section
@@ -166,6 +204,7 @@ export default async function ActivityPage() {
                 </div>
               ))}
             </dl>
+            {lostLine ? <p>{lostLine}</p> : null}
             <p className="text-sm text-muted-foreground">
               &ldquo;No answer&rdquo; and &ldquo;Won&rdquo; can be our guess — change any quote on
               Quotes.

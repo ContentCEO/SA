@@ -18,6 +18,7 @@ import {
   uuid,
 } from "drizzle-orm/pg-core";
 import { TRADES, type Trade } from "../config/trades";
+import type { LostReason } from "../server/quote-rules";
 import type { ReplyToHeader } from "../server/reply-address-rules";
 
 export const tradeEnum = pgEnum("trade", TRADES);
@@ -263,6 +264,11 @@ export const threads = pgTable(
      * One of the classifier's categories, checked in code. Null = the sorter's kind stands.
      */
     categoryManual: text("category_manual"),
+    /**
+     * Ideas C5: why the owner says a quote was lost (price / timing / someone_else), one tap,
+     * optional. Read only while quote_outcome = 'lost' (older code can leave a stale value).
+     */
+    quoteLostReason: text("quote_lost_reason").$type<LostReason>(),
     categoryManualAt: timestamp("category_manual_at", { withTimezone: true }),
     createdAt: createdAt(),
   },

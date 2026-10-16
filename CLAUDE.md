@@ -1574,8 +1574,7 @@ default, CI too) and refuses a non-local `DATABASE_URL` or an `APP_URL` that isn
     junk shortcut (no model call, `extracted.sender_rule = "junk"`) is skipped for a moved
     thread, municipal senders, injection text, sticky marks and a whole-word guard list (lawyer,
     refund, leak, damage…). Junk refused for anyone the owner wrote to, a VIP, an open quote or an
-    owed invoice, building departments; company rules never on webmail or the owner's domain; cap
-    200. Never draft is read live in `createDraftForThread` (jobs only, the customer's newest
+    owed invoice, building departments; company rules never on webmail or the owner's domain; cap 200. Never draft is read live in `createDraftForThread` (jobs only, the customer's newest
     non-side email) and the auto-draft / follow-up scans skip `sender_rule = no_draft`. Inbox
     rows carry "Rules for this sender" (posts the email id, never the address); Settings → Sender
     rules lists and removes. Activity `{action, scope}` only.
@@ -1584,7 +1583,7 @@ default, CI too) and refuses a non-local `DATABASE_URL` or an `APP_URL` that isn
     `extracted.model_category`. To complaint: needs you + sticky `complained_at`. To junk:
     discards the waiting reply (refused while it's in its undo window). To quote: request time =
     first customer email after the owner's last real reply. **Decision:** `quote_requested_at` is
-    set once and never cleared, *except* by the owner moving an undecided quote away (also
+    set once and never cleared, _except_ by the owner moving an undecided quote away (also
     clears `job_kind` and `quote_accepted`, withdraws a waiting deposit note). A job never drafts
     on a moved thread whose `model_category` isn't auto-draftable (`owner_moved`); autopilot
     refuses manual ≠ model ("You chose this kind yourself…") and such sends don't earn.
@@ -1603,6 +1602,37 @@ default, CI too) and refuses a non-local `DATABASE_URL` or an `APP_URL` that isn
   - Privacy policy (same 2026-10-16 date as `TERMS_VERSION`, so no new re-agree): what you tell
     us (rules, VIPs, notes, away day), the moved-kind record, notes/rules never sent to Anthropic
     and the junk-shortcut exception, retention, and notes left out of the offline copy.
+
+- **Ideas "numbers" package, part (2026-10-16, branch `ideas-build`; C8, H8, C5, K2 built;
+  D4 and D7 not built, see Waiting on Davi):** migration 0033 (additive): `threads.quote_lost_reason`.
+  No prompt change; nothing new is sent to the AI or to a customer.
+  - **C8 quote speed** (`quoteSpeed` / `quoteSpeedSentence`, `scorecard-rules.ts`): of the week's
+    quote requests, answered within `QUOTE_SPEED_HOURS` 24 calendar hours (nights and weekends
+    count; the Activity explainer says so) out of those that can be judged: answered ones plus
+    unanswered ones already over 24 hours; owner-settled ones left out. Percent from 5. Same
+    request set and exclusions as response time. **Known edge:** Monday's email counts last week
+    at send time, so a late-Sunday request still in its first day is left out of it (never
+    marked slow early); the Activity card counts it later.
+  - **H8 sent without changes** (`asWrittenSentence`, query in `scorecardQueries.asWritten`):
+    replies + follow-ups sent from the app this week (`sent_gmail_message_id` set, so a
+    reconcile-"sent" draft counts in neither number), never autopilot (`reply_sent.detail.autopilot`),
+    and drafts that had `{{gaps}}` left out of both: `sendDraft` now writes `hadGaps` (yes/no)
+    into `reply_sent`; older rows fall back to `original_body` and drop out once purged. Shown
+    from 5 sent, "up/down from" only when last week also had 5; a link to
+    `/settings/autopilot` where autopilot can be had (no claim that it earns autopilot). Both
+    lines go into `scorecardLines`, so Monday's email has them (counts only; `ScorecardNumbers`
+    fields are optional for older callers).
+  - **C5 why you lost it** (`setLostReason` in quotes.ts, rules in quote-rules.ts): Price /
+    Timing / Went with someone else, one optional tap on a Lost card; any new outcome clears it;
+    read only through `shownLostReason` (old code can leave a stale reason on a reopened quote).
+    Activity: "Lost this month: …" (`lostReasonsBetween`, the owner's month, by
+    `quote_outcome_at`). Activity row `quote_lost_reason {reason}` is hidden from the feed.
+  - **K2 which lead sources pay** (`lead-pay.ts`, `leadPayRows` / `leadPaySentence`): Quotes
+    card "Where your work comes from", last 90 days (`requestAtSql`), only the requester's
+    domain leaves SQL. A no-reply From with a different Reply-To is "Website form". Lead sites
+    (`leadPlatformOf`) count Won only when the owner marked it and never say "0 won" ("Tap Won on
+    Quotes…"). ≥2 sources to show, 6 rows max ("Everywhere else"). Owner-only.
+  - Privacy policy: why a quote was lost (store + retention), same 2026-10-16 date.
 
 ## Milestones
 
@@ -1750,6 +1780,18 @@ default, CI too) and refuses a non-local `DATABASE_URL` or an `APP_URL` that isn
   okay. Only the newest Growth request per email is kept and a growth-only row's phone becomes the
   newest number, so anyone who knows a lead's email can replace their number: check an
   unfamiliar number before calling.
+
+- **Ideas packages (2026-10-16, `ideas-build`) — not built yet, and his questions:**
+  - Not built in this pass (time box): G3 suggested VIPs and B7 "Send at 7am instead" (control
+    plan), D4 part payments (numbers plan; its nudge wording needs `followup.v5`), and the whole
+    site package (A3 trade pages incl. /remodelers, A15 /security, A6 slow-reply calculator).
+  - Wait for the eval baseline (prompt changes): D7's "thank them for the payment" line
+    (`purpose.v4`), D4's balance-only nudges and `classify.v5`'s `amount_paid`.
+  - His calls (defaults built): what a VIP means (today: needs you, no automatic draft); whether
+    away mode should pause autopilot, texts / phone alerts / the morning email (built: no);
+    remembered "not junk" / "always supplier" rules (cut); lost-reason words (Price / Timing /
+    Went with someone else; a fourth "Other"?); a plain thank-you note for owners with no review
+    link (D7); the privacy-policy lines added for these features (same 2026-10-16 version).
 
 ## Launch blockers to remember
 
