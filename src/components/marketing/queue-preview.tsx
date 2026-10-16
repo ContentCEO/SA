@@ -27,7 +27,8 @@ export function QueuePreview() {
         <div className="mb-3 flex flex-col rounded-xl border-2 border-charcoal px-3 py-2 text-sm">
           <span className="font-black">Day 1 of 3 · 2 days left</span>
           <span className="text-xs">
-            Squared Away is reading and drafting, but nothing sends during your three days.
+            Squared Away is reading and drafting, but it won&apos;t send anything to a customer
+            during your three days.
           </span>
         </div>
 

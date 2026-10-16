@@ -105,7 +105,14 @@ describe("Squared Away Growth copy", () => {
       /\b(?:bg|text|border|ring|outline|fill|stroke)-(?:red|green|blue)\b/,
     );
     expect(source).not.toMatch(/-(?:red|green|blue)-\d/);
-    expect(source).not.toMatch(/fbq|gtag|googletagmanager|facebook\.net|analytics|pixel/i);
+    // The one exception: cookie-free Vercel Web Analytics page views, mounted through the shared
+    // SiteAnalytics component (src/components/marketing/site-analytics.tsx), nothing else.
+    const withoutSiteAnalytics = source
+      .replace(/import \{ SiteAnalytics \} from "@\/components\/marketing\/site-analytics";/g, "")
+      .replace(/<SiteAnalytics \/>/g, "");
+    expect(withoutSiteAnalytics).not.toMatch(
+      /fbq|gtag|googletagmanager|facebook\.net|analytics|pixel/i,
+    );
   });
 
   it("labels the decorative switch plainly", () => {

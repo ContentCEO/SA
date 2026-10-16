@@ -53,7 +53,7 @@ export default async function SignInPage(props: PageProps<"/signin">) {
           and we&apos;ll explain it first.
         </p>
       </main>
-      <SiteFooter />
+      <SiteFooter growthLink />
     </div>
   );
 }

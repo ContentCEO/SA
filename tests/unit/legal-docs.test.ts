@@ -267,7 +267,7 @@ describe("homepage FAQ", () => {
 
   it("the trial answer doesn't claim nothing at all can be sent", () => {
     const a = homepageFaq("What does the trial look like?");
-    expect(a).toContain("nothing can go to a customer during the trial");
+    expect(a).toContain("Squared Away won't send anything to a customer during the trial");
   });
 
   it("the Gmail-access answer matches the policy: 30 days, then new mail, and the sent mail read", () => {
@@ -294,8 +294,30 @@ describe("owner-facing copy about the trial", () => {
 
   it("the pre-consent Gmail explainer says only customers are off-limits during the trial", () => {
     expect(flat(readFileSync("src/app/(app)/connect/page.tsx", "utf8"))).toContain(
-      "nothing can go to a customer: you can only send yourself practice copies.",
+      "Squared Away won&apos;t send anything to a customer: you can only send yourself practice copies.",
     );
+  });
+
+  it("no public or trial screen says nothing sends at all, or calls nudges automatic", () => {
+    // Practice copies go out during the trial; and every nudge is a draft the owner okays.
+    const files = [
+      "src/app/page.tsx",
+      "src/app/(app)/connect/page.tsx",
+      "src/components/app/status-banner.tsx",
+      "src/components/marketing/queue-preview.tsx",
+    ];
+    for (const f of files) {
+      const text = flat(readFileSync(f, "utf8")).toLowerCase();
+      for (const bad of [
+        "nothing sends",
+        "nothing can go to a customer",
+        "two at most, ever",
+        "automatic nudge",
+        "takes two minutes",
+      ]) {
+        expect(text, `${f}: ${bad}`).not.toContain(bad);
+      }
+    }
   });
 
   it("the explainer names Google's two permissions as Google does, and keeps the Send reply promise", () => {

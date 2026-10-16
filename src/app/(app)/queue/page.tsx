@@ -164,7 +164,7 @@ export default async function QueuePage(props: PageProps<"/queue">) {
                 : sendingIds.length
                   ? "reply on its way,"
                   : "reply sent,"}
-            </span>
+            </span>{" "}
             <span className="sa-headline-heavy text-4xl">squared away.</span>
           </p>
           {sent ? <p className="text-ash">{nextLine(sent)}</p> : null}

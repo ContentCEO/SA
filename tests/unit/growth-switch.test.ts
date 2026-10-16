@@ -3,6 +3,11 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import * as rules from "@/components/marketing/growth/switch-rules";
 import {
+  crossingCause,
+  deferredMode,
+  DEFERRED_SCROLL_DOWN,
+  HOLD_MS,
+  USER_SCROLL_MS,
   jumpMode,
   nextMode,
   rootHeight,
@@ -297,5 +302,52 @@ describe("no literal colours on the homepage", () => {
       for (const ok of ALLOWED) text = text.split(ok).join("");
       expect(text, f).not.toMatch(/#[0-9a-f]{3,8}\b|rgba?\(/i);
     }
+  });
+});
+
+describe("only a scroll plays the switch", () => {
+  it("a crossing with no recent scroll, or while a thank-you is held in view, is the page changing shape", () => {
+    expect(crossingCause({ msSinceUserScroll: 16, inNav: false, held: false })).toBe("scroll");
+    expect(
+      crossingCause({ msSinceUserScroll: USER_SCROLL_MS + 1, inNav: false, held: false }),
+    ).toBe("layout");
+    expect(crossingCause({ msSinceUserScroll: Infinity, inNav: false, held: false })).toBe(
+      "layout",
+    );
+    expect(crossingCause({ msSinceUserScroll: 0, inNav: false, held: true })).toBe("layout");
+    // Navigation keeps its own (instant) path.
+    expect(crossingCause({ msSinceUserScroll: Infinity, inNav: true, held: true })).toBe("scroll");
+    expect(HOLD_MS).toBeGreaterThanOrEqual(1000);
+  });
+
+  it("after a layout crossing: scrolling down into Growth plays it; Growth back below the screen is the app", () => {
+    const h = 800;
+    const down = DEFERRED_SCROLL_DOWN * h;
+    // Growth's top is on screen (above the in line) but they haven't scrolled far: keep waiting.
+    expect(deferredMode({ startScrollY: 1000, scrollY: 1000 + down - 1, top: 300, h })).toBeNull();
+    expect(deferredMode({ startScrollY: 1000, scrollY: 1000 + down, top: 300, h })).toBe("growth");
+    // Scrolling up doesn't play it.
+    expect(deferredMode({ startScrollY: 1000, scrollY: 900, top: 400, h })).toBeNull();
+    // Back below the bottom edge: the app side.
+    expect(deferredMode({ startScrollY: 1000, scrollY: 500, top: h, h })).toBe("app");
+    // In the band between the lines nothing is decided yet.
+    expect(deferredMode({ startScrollY: 1000, scrollY: 1300, top: 0.9 * h, h })).toBeNull();
+  });
+
+  it("the waitlist and Growth thank-yous hold the switch before they scroll into view", () => {
+    for (const f of [
+      "src/components/marketing/waitlist-form.tsx",
+      "src/components/marketing/growth/growth-call-form.tsx",
+    ]) {
+      const src = readFileSync(f, "utf8");
+      const hold = src.indexOf('dispatchEvent(new Event("sa:hold-switch"))');
+      expect(hold, f).toBeGreaterThan(-1);
+      expect(src.indexOf("scrollIntoView", hold), f).toBeGreaterThan(hold);
+      expect(src, f).toContain("useLayoutEffect");
+    }
+    const sw = readFileSync("src/components/marketing/growth/growth-switch.tsx", "utf8");
+    expect(sw).toContain('addEventListener("sa:hold-switch", onHold)');
+    expect(sw).toContain('removeEventListener("sa:hold-switch", onHold)');
+    expect(sw).toContain('removeEventListener("scroll", onScroll)');
   });
 });

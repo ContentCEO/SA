@@ -50,8 +50,8 @@ export async function StatusBanner() {
           Day {clock.day} of {clock.of} · {timeLeft(clock.msLeft)} left
         </p>
         <p>
-          Squared Away is reading and drafting, but nothing sends during your three days. See if the
-          drafts sound like you.
+          Squared Away is reading and drafting, but it won&apos;t send anything to a customer during
+          your three days. See if the drafts sound like you.
         </p>
         <Link
           href="/billing"

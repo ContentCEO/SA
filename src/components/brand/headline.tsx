@@ -20,7 +20,9 @@ const sizes = {
 export function Headline({ serif, heavy, as: Tag = "h1", size = "lg", className }: HeadlineProps) {
   return (
     <Tag className={cn("flex flex-col", className)}>
-      <span className={cn("sa-headline-serif", sizes[size].serif)}>{serif}</span>
+      {/* The space is for screen readers and search engines ("your inbox, handled."); a
+          whitespace text node isn't a flex item, so the look doesn't change. */}
+      <span className={cn("sa-headline-serif", sizes[size].serif)}>{serif}</span>{" "}
       <span className={cn("sa-headline-heavy", sizes[size].heavy)}>{heavy}</span>
     </Tag>
   );

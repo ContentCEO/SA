@@ -1,11 +1,13 @@
 "use client";
 
 import { Check } from "lucide-react";
-import { useActionState, useEffect, useRef } from "react";
+import { useActionState, useLayoutEffect, useRef } from "react";
 import { useFormStatus } from "react-dom";
 import { requestGrowthCallAction, type GrowthState } from "@/app/growth-actions";
 import { SelectField, TextArea, TextField } from "@/components/forms/field";
+import { FormError } from "@/components/forms/form-error";
 import { useFocusFirstError } from "@/components/forms/use-focus-first-error";
+import { SourceFields } from "@/components/marketing/source-fields";
 import { Button } from "@/components/ui/button";
 import { GROWTH_SERVICES } from "@/config/growth";
 import { siteConfig } from "@/config/site";
@@ -30,9 +32,10 @@ function Success({ phone }: { phone?: string }) {
   const ref = useRef<HTMLDivElement>(null);
   // The thank-you is much shorter than the form it replaces: bring it into view (clear of the
   // sticky bar) and move focus there, since the button that had focus is gone.
-  useEffect(() => {
+  useLayoutEffect(() => {
     const el = ref.current;
     if (!el) return;
+    window.dispatchEvent(new Event("sa:hold-switch"));
     el.scrollIntoView({ block: "start" });
     el.focus({ preventScroll: true });
   }, []);
@@ -44,7 +47,7 @@ function Success({ phone }: { phone?: string }) {
       className="flex scroll-mt-24 flex-col gap-3 outline-none"
     >
       <p className="flex flex-col">
-        <span className="sa-headline-serif text-3xl">{s.serif}</span>
+        <span className="sa-headline-serif text-3xl">{s.serif}</span>{" "}
         <span className="sa-headline-heavy text-4xl">{s.heavy}</span>
       </p>
       <p className="text-xl font-black">
@@ -186,6 +189,8 @@ export function GrowthCallForm() {
           <input name="website" tabIndex={-1} autoComplete="off" />
         </label>
       </div>
+      <SourceFields />
+      <FormError errors={e.form} />
       <Submit />
       <p className="text-sm text-slate">{c.privacy}</p>
     </form>

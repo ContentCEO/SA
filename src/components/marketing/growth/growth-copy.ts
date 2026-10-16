@@ -44,6 +44,8 @@ export const growthCopy = {
     homeOnly: `For now, ${operator} does every job personally — the same person who builds the app.`,
     button: "Book a free call",
     call: `Call ${phone}`,
+    /** Homepage only: the way to Growth's own page. */
+    pageLink: "See everything Growth does",
   },
   services: {
     region: "What we take on",
@@ -171,6 +173,7 @@ export const growthCopy = {
     serviceUnknown: "Pick from the list.",
     noteLong: "Keep it under 500 characters.",
     rateLimited: `Too many tries from here. Try again in an hour, or call or text ${phone}.`,
+    saveFailed: `We couldn't save that just now. Try again in a minute, or call or text ${phone}.`,
   },
   success: {
     serif: "thanks,",

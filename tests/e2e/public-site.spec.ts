@@ -138,8 +138,22 @@ test("homepage: share card tags, the call button and the trial clock in the phon
   );
   await expect(page.locator('meta[name="description"]')).toHaveAttribute(
     "content",
-    /^Built for carpenters/,
+    /^AI email help for contractors/,
   );
+  await expect(page).toHaveTitle("Squared Away — AI email help for contractors");
+  // Search engines' structured data: the real prices, no ratings.
+  const ld = JSON.parse(
+    (await page.locator('script[type="application/ld+json"]').textContent()) ?? "[]",
+  ) as { "@type": string; offers?: { price: string }[] }[];
+  expect(ld.map((x) => x["@type"])).toEqual(["Organization", "SoftwareApplication"]);
+  expect(ld[1]!.offers!.map((o) => o.price).sort()).toEqual([
+    "199.00",
+    "299.00",
+    "499.00",
+    "99.00",
+  ]);
+  // The photo spot is empty until Davi's photo exists: no placeholder box.
+  await expect(page.getByText(/coming soon/i)).toHaveCount(0);
   const call = page
     .getByRole("region", { name: "Join the waitlist" })
     .getByRole("link", { name: /^Call 978-201-9763$/ });
@@ -151,16 +165,20 @@ test("homepage: share card tags, the call button and the trial clock in the phon
   );
 });
 
-test("/growth has the share card too (its own openGraph would otherwise drop it)", async ({
-  page,
-  request,
-}) => {
+test("/growth has its own share card, not the app's", async ({ page, request }) => {
+  await page.goto("/");
+  const homeOg = await page.locator('meta[property="og:image"]').getAttribute("content");
   await page.goto("/growth");
   const og = page.locator('meta[property="og:image"]');
-  await expect(og).toHaveAttribute("content", /\/opengraph-image$/);
+  await expect(og).toHaveAttribute("content", /\/growth\/opengraph-image/);
+  expect(await og.getAttribute("content")).not.toBe(homeOg);
+  await expect(page.locator('meta[property="og:image:alt"]')).toHaveAttribute(
+    "content",
+    /^Squared Away Growth/,
+  );
   await expect(page.locator('meta[name="twitter:image"]')).toHaveAttribute(
     "content",
-    /\/opengraph-image$/,
+    /\/growth\/twitter-image/,
   );
   await expect(page.locator('meta[name="twitter:card"]')).toHaveAttribute(
     "content",
@@ -197,4 +215,33 @@ test("tap targets: every link and button on the homepage and /growth is at least
   await expect(page.locator("html")).toHaveAttribute("data-sa-theme", "growth");
   await expect(page.locator("html")).not.toHaveAttribute("data-sa-switching", /.*/);
   expect(await check()).toEqual([]);
+});
+
+test("footer: the phone number is a 44px call link, and public pages link to Growth", async ({
+  page,
+}) => {
+  for (const path of ["/", "/privacy", "/signin"]) {
+    await page.goto(path);
+    const footer = page.locator("footer");
+    const tel = footer.getByRole("link", { name: "978-201-9763" });
+    await expect(tel).toHaveAttribute("href", "tel:+19782019763");
+    expect((await tel.boundingBox())!.height, path).toBeGreaterThanOrEqual(44);
+    const growth = footer.getByRole("link", { name: "Squared Away Growth" });
+    await expect(growth).toHaveAttribute("href", "/growth");
+    expect((await growth.boundingBox())!.height, path).toBeGreaterThanOrEqual(44);
+  }
+  await page.goto("/");
+  await expect(
+    page.getByRole("region", { name: "Squared Away Growth" }).getByRole("link", {
+      name: /See everything Growth does/,
+    }),
+  ).toHaveAttribute("href", "/growth");
+});
+
+test("an address that doesn't exist: a plain 404 with a way home", async ({ page }) => {
+  const res = await page.goto("/no-such-page");
+  expect(res?.status()).toBe(404);
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText("nothing here, page not found.");
+  await page.getByRole("link", { name: "Go to the homepage" }).click();
+  await expect(page).toHaveURL(/\/$/);
 });

@@ -10,6 +10,8 @@ export type OutgoingEmail = {
   text: string;
   /** Same key within 24h = Resend sends it once, so job retries can't double-send. */
   idempotencyKey: string;
+  /** Where a reply to this email goes (Resend `reply_to`). Only set from SUPPORT_EMAIL. */
+  replyTo?: string;
 };
 
 /**
@@ -107,6 +109,7 @@ export const sendEmail: EmailSender = async (email) => {
       subject: email.subject,
       html: email.html,
       text: email.text,
+      ...(email.replyTo ? { reply_to: email.replyTo } : {}),
     }),
   });
   if (

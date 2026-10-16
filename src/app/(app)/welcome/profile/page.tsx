@@ -10,8 +10,7 @@ export default async function WelcomeProfilePage() {
       <p className="text-sm font-semibold">Step 2 of 3</p>
       <Headline serif="Gmail's connected," heavy="tell us about the shop." />
       <p className="text-lg text-muted-foreground">
-        Two minutes. You can change any of this later in Settings. Only the first three are
-        required.
+        You can change any of this later in Settings. Only the first three are required.
       </p>
       <BusinessProfileForm
         defaults={await profileDefaults(workspace)}
