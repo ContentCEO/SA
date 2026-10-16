@@ -509,7 +509,7 @@ explanations: [SETUP.md](SETUP.md) §4.
 | `GMAIL_PUBSUB_TOPIC`, `GMAIL_PUSH_VERIFICATION_TOKEN`                                 | Optional (step 10; token sensitive)                            | No                                                    |
 | `AI_DAILY_CALL_CAP`, `RETENTION_BODY_DAYS`                                            | Leave unset (the defaults are what the policy promises)        | Leave unset                                           |
 | `FEATURE_CLOSING_QUESTION`                                                            | `1` (set 2026-10-14 at your request; step 13)                  | `1` (set 2026-10-14)                                  |
-| `FEATURE_REFERRALS`                                                                   | Only after you decide (step 13)                                | No                                                    |
+| `FEATURE_REFERRALS`                                                                   | Only after the SETUP.md §6d steps (step 13)                    | No                                                    |
 | `STRIPE_WEBHOOK_SECRET`                                                               | **Never set on Vercel** (Connect Stripe stores its own)        | **Never set on Vercel**                               |
 | `SA_E2E`, `SA_E2E_GOOGLE_BASE_URL`, `SA_E2E_ANTHROPIC_BASE_URL`, `SA_E2E_HOOK_SECRET` | **Never set on Vercel** (test-only, this machine)              | **Never set on Vercel**                               |
 | `INNGEST_DEV`                                                                         | **Never set on Vercel** (local only; see below)                | **Never set on Vercel**                               |
@@ -839,6 +839,25 @@ fixed.
 
 ### Decided on 2026-10-15
 
+- **#47 referral reward: offer A, a free month one plan up** (built and tested behind
+  `FEATURE_REFERRALS`, still off). Once someone you referred has paid (setup and first month) and
+  had their setup call, the referrer only gets their next month free on the plan above theirs:
+  Solo → Crew, Crew → Company, Company → Company. Afterwards they go back to their own plan by
+  itself, unless they tap **Keep Crew** at its normal price; nothing ever charges more without
+  that tap. The same-domain block stays. In Stripe it is a one-time 100%-off coupon on their next
+  renewal (the plan keeps billing as before), and the app gives the plan above for exactly that
+  month. Your answers (2026-10-16):
+  1. One free month at a time (free, paid, free), no yearly cap.
+  2. Moving down a plan on Stripe's page pauses the extra inboxes too, as at the end of a free
+     month: the oldest-created stay on, nothing is deleted, the owner can switch which one.
+  3. During the free month, Stripe's page offers only card, invoices and cancel; plan changes
+     happen in the app. Its terms line waits in [SETUP.md](SETUP.md) §6d until the switch goes on.
+  4. A free month of Company includes priority support (the share card says so).
+  5. A free month that can't start yet waits, with no expiry.
+  6. Refunding the new contractor doesn't take back the referrer's free month (you can remove a
+     waiting one by hand).
+  7. No reminder email; the banner says what changes three days before the end.
+
 - **"I agree to the Terms": yes, built** (live with the second merge, after step 1's; see
   [Add your terms link in Stripe](#add-your-terms-link-in-stripe-right-after-step-1)).
   Massachusetts' top court said
@@ -950,15 +969,14 @@ Nothing below is switched on or changed until you say so.
 - **The Google security test (CASA):** no decision yet. Don't pay until Google's email names the
   level ([0g](#0-start-now-google-verification-takes-weeks)).
 
-- **#47 referral credit amount:** built and tested, off (`FEATURE_REFERRALS`). Decided 2026-10-13:
-  the credit goes to the referrer only, and the same-domain block stays. Still open: how much.
-  Options: A $50; B $99 (one free Solo month); C $199; D $250; E one free month of their own plan;
-  F like E, but a Solo owner's free month is on Crew, so they can try autopilot. Recommended: F (or
-  B for the simplest). A to D only need the amount set; E and F need code beyond what's built
-  today. Before turning it on, the privacy policy needs the referral-fingerprint line (in
-  [SETUP.md](SETUP.md) §6d), and `AUTH_SECRET` must not be changed once referrals have been paid.
-  Also your call: a referrer who deletes their account before the new owner is active voids the
-  referral.
+- **#47 turning referrals on:** the reward is decided (a free month, one plan up; see "Decided on
+  2026-10-15") and built and tested, off (`FEATURE_REFERRALS`). Nothing else to choose; turning it
+  on is yours, in the order in [SETUP.md](SETUP.md) §6d: the live Stripe key, Connect Stripe and
+  Reset test payments; then the terms line, the privacy lines and the referral-fingerprint line
+  (all waiting in §6d, so the terms version doesn't change before then); then an engineer's local
+  Stripe Test Clock check; only then the switch. `AUTH_SECRET` must not be changed once referrals
+  have been paid. Also your call: a referrer who deletes their account before the new owner is
+  active voids the referral.
 - **The homepage's About section.** It used to say "a working builder." and "He built the tool he
   needed", which broke the site's own rules (no "builder", no pronouns for you). Since 2026-10-15
   the heading reads "who's behind this, someone in the trades." and the text ends "It began as

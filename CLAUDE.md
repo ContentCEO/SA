@@ -635,33 +635,64 @@ default, CI too) and refuses a non-local `DATABASE_URL` or an `APP_URL` that isn
     leaves it alone. True lock-screen widgets aren't possible for a web app (no API for them).
   - Logs: `console.error('<event>', { ids, error: err.name })` — never `err.message` (Stripe
     errors echo customer ids). `*-rules.ts` files never import `server-only` or `@/db` (test).
-- **#47 referral credit (2026-10-12, built behind `FEATURE_REFERRALS`, off; no amount):**
-  `src/server/referrals.ts`, rules in `referral-rules.ts`. Migration 0026 (additive):
-  `workspaces.referral_code` (unique, 12 chars base64url, random) / `referred_by_workspace_id`,
-  `waitlist.referral_code`, `invites.referred_by_workspace_id`, and `referral_credits` (unique
-  `(referred_email_sha256, side)`; `referred_workspace_id` / `beneficiary_workspace_id` ON DELETE
-  SET NULL; status pending / applied / failed / skipped; attempts, last error code).
-  `REFERRAL_CREDIT_CENTS = null` and `REFERRAL_CREDIT_TO = "referrer"` (Davi, 2026-10-13: only the
-  owner who shared the link gets it) in `src/config/pricing.ts`;
-  `referralsVisible()` = flag on **and** a positive amount — otherwise no link, no code stored,
-  nothing carried, no credit, no Stripe call. Path: `/?ref=<code>` → waitlist (hidden field) →
-  `inviteFromWaitlist` → first sign-in copies it to the workspace and clears it on the invite (used
-  once; a first sign-in while it's off still uses up the invite's referral, unlinked). Settled
-  **once ever**, the first time the referred account is `active` with
-  `setup_paid_via = 'stripe'` (not house, not legacy null): one insert of the sides in the config
-  at that moment, or a single `skipped` row (flag off, no amount, self, same business domain —
-  public webmail like gmail.com exempt). Later config changes add nothing. The email fingerprint
-  (sha256 of the normalized email, salted with `AUTH_SECRET`) survives account deletion, so
-  delete + re-sign-up can't be paid twice. Each credit = a negative Stripe balance transaction with
-  `Idempotency-Key: referral-<referred workspace>-<side>`, and first a check of the customer's
-  balance transactions for `metadata.referralCreditId` (Stripe idempotency keys expire after 24h).
-  Hooks: any admin move that lands on `active` (setup call done, resume) and the webhook
-  (`billing.ts`) call `creditReferralSafely` (never fails the move; settles only once); the
-  15-minute sweep (after `m7-backfill`) applies pending rows once the beneficiary has a Stripe
-  customer and settles missed actives; permanent Stripe errors (resource_missing / invalid
-  request) → `failed`, shown on the /admin card. `stripeClient()` is exported from `billing.ts` (one
-  client). Activity `referral_credit_applied` carries the side only. Test seam:
-  `setReferralConfigForTests`.
+- **#47 referrals (built 2026-10-12; reward = offer A since 2026-10-15/16, behind
+  `FEATURE_REFERRALS`, off):** `src/server/referrals.ts`, rules in `referral-rules.ts`. Migration
+  0026: `workspaces.referral_code` / `referred_by_workspace_id`, `waitlist.referral_code`,
+  `invites.referred_by_workspace_id`, `referral_credits` (unique `(referred_email_sha256, side)`;
+  workspace FKs ON DELETE SET NULL). Migration **0028** (additive): reward columns on
+  `referral_credits` (`reward`, `stripe_mode`, `skip_reason`, Stripe ids, `attached_at`,
+  `invoice_final_at`, `claimed_at` lease, `plan_change_seq`, `paid_plan/price_id/price_cents`,
+  `free_plan`, `starts_at/ends_at`, `kept_at/kept_price_cents`, `ended_at`, `billing_mode`,
+  `admin_flag/flagged_at`; partial unique indexes: one `scheduled` and one `running` per
+  workspace), `workspaces.free_plan/free_plan_until/stripe_cancel_at`, `mailboxes.paused_reason`.
+  Path: `/?ref=<code>` → waitlist (hidden field) → `inviteFromWaitlist` → first sign-in copies it
+  (used once). Settled **once ever** when the referred account is first `active` with
+  `setup_paid_via = 'stripe'`: one `pending` row (`free_month_up`, tagged with the key's
+  `stripe_mode`) + Activity, or one `skipped` row (off / self / same_domain / house). Salted email
+  fingerprint survives deletion. `REFERRAL_REWARD = "free_month_one_plan_up"` in `pricing.ts`;
+  `referralsVisible()` = flag on and a reward set (the cash credit and its constants are gone).
+  - **Mechanism:** a one-time 100%-off coupon `sa_ref_<row id>` on the referrer's live
+    subscription (discounts-only updates that pass back other discounts, per-attempt idempotency
+    keys, a fresh `subscriptions.retrieve(..., {expand: ["discounts"]})` decides every outcome).
+    Stripe keeps billing their own plan; the renewal invoice that used the coupon starts the month
+    from its **plan line** (paid plan + exact price, `free_plan = planAbove`). `effectivePlan()`
+    (pure, time-bounded) is what features read: inbox limits, autopilot layer 1, Settings, /admin.
+    One at a time with a paid month between (Davi Q1); attaches only while the account is on, not
+    while the portal schedules downgrades, never across Stripe modes. Ends on whichever comes
+    first, our clock or Stripe's renewal; `done` + `autopilotPlanEffects` + `inboxLimitEffects` +
+    Activity in one transaction. The webhook reads the live subscription on every event
+    (`applyLiveSubscription`: status, plan, `stripe_cancel_at`, plan effects; Q2: a move down a
+    plan on Stripe's page pauses extra inboxes, newest-created first) and then reconciles rewards
+    without ever failing. Sweep: `runReferralRewards` (15-min job step `referral-rewards`); a
+    running month always ends even with the flag off. Backstop: positive prorations for free days
+    are deleted (`invoiceItems.del`).
+  - **Keep / Go back** (`keepFreePlan` / `goBackToPaidPlan`, actions in `billing/actions.ts`):
+    the only code that changes a subscription's price (static test
+    `referral-guardrails.test.ts`). Keep: the owner confirms plan + today's config price (inline
+    confirm names price, tax, delta, first charge date); Go back restores exactly
+    `paid_price_id`. Claim → per-tap key `referral-plan-<id>-v<seq>` → fresh-read verify; refused
+    within 1h of the end, after Stripe renewed, while set to end or with a schedule.
+  - **Q3 (yes):** while a month runs, Manage billing uses `ensureNoPlanChangePortal()` (the
+    default portal settings copied with plan changes and the login page off; cached per mode in
+    `app_settings` `stripe_portal_no_plan_change:<mode>`, rebuilt when the default's `updated`
+    moves, recreated on `resource_missing`; any failure falls back to the default page).
+  - **Paused inboxes** (`paused_reason = 'over_plan'`): Send → `inbox_paused` before Gmail; out
+    of `queueMembership` (one queue line instead); Settings shows why + "Switch this one on
+    instead" (`swapPausedInbox`); a reconnect at the limit is refused; room on the plan resumes
+    them oldest-first.
+  - **UI:** Plan & billing (billed plan stays the heading + free line, "Your free month" with
+    Keep / Go back, share card + status line), a bordered banner card on every screen (second card
+    under "Setup's paid"; "what changes" from 3 days before the end), Settings notes, Activity
+    lines (`referralActivityLine`, owner's time zone), /admin "Free months" lines + flags + plan
+    stat + Payments lines (downgrade schedules, login page), `/admin/costs` "free month" tag.
+    Page loads never call Stripe for this (except /admin Payments' short portal read).
+  - **Reset test payments** deletes `stripe_mode = 'test'` rows (a running one stops with its
+    effects) and the test portal cache; **account deletion** clears the rows' Stripe ids.
+  - Answers (Davi 2026-10-16): Q4 free Company includes priority support; Q5 waiting months never
+    expire; Q6 refunds don't claw back; Q7 no reminder email. Terms/privacy lines wait in
+    docs/SETUP.md §6d. The local Stripe Test Clock check (§6d step 4) has **not** been run.
+  - Test seams: `setReferralConfigForTests({ reward })`, `tests/support/fake-stripe.ts` (typed on
+    stripe@23, idempotency like Stripe, renew / portalChange / clock).
 - **Public site pass (2026-10-11, branch `claude/homepage-fixes`, PR — Davi reviews before merge):**
   `/privacy` and `/terms` render `docs/privacy-policy.md` / `docs/terms.md` (drafts, "Draft — not
   yet reviewed", `[To confirm]` items) through `src/lib/markdown.tsx` (tiny renderer, React elements
@@ -1158,10 +1189,8 @@ default, CI too) and refuses a non-local `DATABASE_URL` or an `APP_URL` that isn
     email names the level, two quotes, 2–6 weeks lab, 1–3 months whole review, renews every 12
     months. The unverified app's 100-new-user cap is for the project's lifetime (can't be reset):
     keep sign-up invite-only.
-  - **#47 referral amount: still open.** Options A $50, B $99 (one free Solo month), C $199,
-    D $250, E one free month of the referrer's own plan, F = E but a Solo owner's free month is
-    on Crew (to try autopilot). Recommended F (or B for the simplest). A–D only need
-    `REFERRAL_CREDIT_CENTS`; E and F need code beyond today's build (a plan-dependent credit).
+  - **#47 referral reward: decided** (2026-10-15 offer A; answers 2026-10-16). Built behind
+    the switch; see the #47 entry above.
   - **#26 closing question: on** (see Plan M7 above). The env var stays the switch; no code
     default change. The privacy policy ("How we use it"; dated October 15, 2026 with the terms)
     and google-verification.md (where email content goes, the notes bullet, the autopilot list)
@@ -1385,18 +1414,13 @@ default, CI too) and refuses a non-local `DATABASE_URL` or an `APP_URL` that isn
 - Icon pack (`sa.` monogram, stacked wordmark); his photo and the exact license wording for the
   homepage's About section (PR #9; no license number until he confirms); `SUPPORT_EMAIL`;
   production domain.
-- **Plan #47 (referral credit):** built and tested behind `FEATURE_REFERRALS` (off), and it does
-  nothing until he answers: (1) the amount (`REFERRAL_CREDIT_CENTS` in `src/config/pricing.ts` is
-  `null`): options A $50, B $99 (one free Solo month), C $199, D $250, E one free month of the
-  referrer's own plan, F = E but a Solo owner's month is on Crew; recommended F (or B for the
-  simplest); E and F need code beyond today's build; (2) decided 2026-10-13: the referrer
-  only (`REFERRAL_CREDIT_TO = "referrer"`); (3) decided 2026-10-13: keep the same-domain block (two
-  owners on the same business domain never count; public webmail like gmail.com is exempt). Before turning it on, add the referral-fingerprint line to the privacy policy (the
-  "Privacy policy line for #47" item below; docs/SETUP.md §6d), and don't rotate `AUTH_SECRET` once
-  referrals have been paid (the "paid once" fingerprint is salted with it). Then set the switch
-  (docs/SETUP.md §6d). Referrals that go active while it's off are never paid later. **Still
-  open (2026-10-15):** Davi asked for offer ideas that let an owner try another plan for a month
-  (to get them interested); no offer is picked or built yet.
+- **Plan #47 (referral free month, offer A):** decided and built behind `FEATURE_REFERRALS`
+  (off). Nothing left to choose; turning it on follows docs/SETUP.md §6d in order: live key,
+  Connect Stripe, Reset test payments; no "schedules downgrades" line on /admin Payments; the
+  terms line, the privacy lines (fingerprint + "which plan, the dates, and whether you chose to
+  keep it") with the legal-docs test and a terms-version bump; an engineer's **local** Stripe Test
+  Clock check (not run yet: no Stripe key in the sandbox); then the switch. Don't rotate
+  `AUTH_SECRET` once referrals have been given.
 - **PDF quotes (#28/#30):** a quote sent only as an attachment ("Quote attached", no `$` in the
   email) never counts as a price given, so "Let's do it" isn't auto-marked Won, isn't in the close
   rate until he taps Won, and gets no deposit draft. Conservative on purpose (a site visit isn't a
@@ -1409,13 +1433,9 @@ default, CI too) and refuses a non-local `DATABASE_URL` or an `APP_URL` that isn
   deliver an empty ping; deleted on turn-off, a gone phone or account deletion), the per-phone
   display cookies and the offline-approvals queue copy (#9/#37/#10), and that these M7 records
   stay past the 30-day purge until the mailbox or account goes.
-- **Privacy policy line for #47 referrals** (before `FEATURE_REFERRALS` goes on): "If you were
-  referred, we keep a scrambled one-way fingerprint of your email and the credit record after you
-  delete your account, so a referral is only paid once." (Otherwise the policy's Delete my account
-  section and the homepage FAQ's "deletes your account and everything in it" aren't literally
-  true.) Also his call: a referrer who deletes their account before the
-  new owner is active voids the referral (the referrer's credit); repeat waitlist joins and plain invites
-  carry no referral (docs/SETUP.md §6d).
+- **Terms and privacy lines for #47** (before `FEATURE_REFERRALS` goes on): held word for word
+  in docs/SETUP.md §6d step 3. Also his call: a referrer who deletes their account before the new
+  owner is active voids the referral; repeat waitlist joins and plain invites carry no referral.
 - **Growth:** confirmed 2026-10-14: all seven services are offered today and the ground rules
   stand (no fake reviews, price before any work, Growth never touches the inbox). Still open: a
   written agreement (no Growth terms of service yet), a Settings link to /growth for signed-in

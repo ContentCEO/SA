@@ -208,10 +208,11 @@ _Re-checked 2026-10-10: brief scope complete with tests; nothing else filed here
 
 ## Milestone 10 — Billing
 
-- [ ] **#47 Referral credit.** _(Built 2026-10-12 behind `FEATURE_REFERRALS` (off). Decided 2026-10-13: the referrer only, and the same-domain block stays (public webmail like gmail.com is exempt). Still waiting on Davi: the amount (options A–F in `docs/LAUNCH.md` step 13; the free-month options E and F need more code). `REFERRAL_CREDIT_CENTS` is `null`, so nothing happens even with the switch on; see `docs/SETUP.md` §6d.)_ ASK DAVI: the credit amount and who gets it. Do not pick a number.
-      Each workspace gets a referral link; when the referred workspace becomes `active`, both get a
-      credit applied as a Stripe customer balance credit. Amount lives in `src/config/pricing.ts`.
-      Self-referral and same-domain referrals blocked. Tests: credit only on `active`, once.
+- [x] **#47 Referral reward.** _(Decided 2026-10-15: offer A, the referrer's next month free on the plan above theirs (Solo → Crew, Crew → Company, Company → Company), back to their own plan afterwards unless they tap Keep at the normal price; the referrer only; the same-domain block stays. Davi's answers to the seven questions on 2026-10-16 are in `docs/LAUNCH.md` step 13. Built behind `FEATURE_REFERRALS` (off); turning it on follows `docs/SETUP.md` §6d, including the terms and privacy lines and a local Stripe Test Clock check.)_
+      Each workspace gets a referral link; when the referred workspace becomes `active`, the
+      referrer earns a free month one plan up (a one-time coupon on their next renewal; the app
+      gives the plan above for that month). Self-referral and same-domain referrals blocked.
+      Tests: earned only on `active`, once; nothing charges more without the owner's Keep tap.
 
 ## After launch (Milestone 11+) — were MVP non-goals
 

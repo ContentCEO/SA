@@ -175,7 +175,7 @@ sets it, in `.env.example`).
 | `VAPID_SUBJECT`                                                                       | No (default `APP_URL`)   | Contact the push services can reach.                                                                                                                                                                        | `mailto:` address or https URL.                                                        | Prod                              |
 | `NEXT_PUBLIC_SENTRY_DSN`                                                              | No                       | Error alerts (scrubbed). Read at build time: redeploy after setting.                                                                                                                                        | §6b.                                                                                   | Prod                              |
 | `FEATURE_CLOSING_QUESTION`                                                            | No (off when unset)      | Plan #26. **On** in Vercel since 2026-10-14 (Davi's okay); live from the next deploy.                                                                                                                       | `1` (§6d).                                                                             | Prod + Preview                    |
-| `FEATURE_REFERRALS`                                                                   | No (off)                 | Plan #47. **Ask Davi first**; does nothing while `REFERRAL_CREDIT_CENTS` is null.                                                                                                                           | `1` (§6d).                                                                             | Prod, only with Davi's okay       |
+| `FEATURE_REFERRALS`                                                                   | No (off)                 | Plan #47 (a free month, one plan up). **Ask Davi first**; the switch is the only control (§6d).                                                                                                             | `1` (§6d).                                                                             | Prod, only with Davi's okay       |
 | `RETENTION_BODY_DAYS`                                                                 | No (default 30)          | Days before email text is purged. The privacy policy and homepage promise 30: don't change it without changing them.                                                                                        | A number.                                                                              | Prod                              |
 | `VERCEL`, `VERCEL_ENV`, `VERCEL_BRANCH_URL`, `VERCEL_GIT_COMMIT_SHA`                  | Set by Vercel            | Deploy detection (turns e2e mode off), preview URLs, preview-only CSP, Sentry environment and release, `/api/health`'s `commit`.                                                                            | Automatic, while "Automatically expose System Environment Variables" is on.            | Vercel sets them                  |
 | `NODE_ENV`                                                                            | Set by Next              | Development vs production behaviour.                                                                                                                                                                        | Automatic.                                                                             | —                                 |
@@ -271,38 +271,47 @@ off (`src/config/features.ts`). The code default stays off: the env var is the s
   never on a complaint, and it goes through the normal queue. It is not a nudge and doesn't count
   as one.
 
-- `FEATURE_REFERRALS` (plan #47, default **off**): each account gets a referral link in Plan &
-  billing (`/?ref=<code>`). The code rides on the waitlist form, onto the invite when Davi taps
-  Invite, and onto the new workspace at its first sign-in (used up there). The first time the
-  referred account is **active** (paid through Stripe and the setup call done), the referral is
-  settled once, ever: a Stripe balance credit for the sides in `REFERRAL_CREDIT_TO`. Self and
-  same-business-domain referrals never count (gmail.com, yahoo.com, outlook.com, icloud.com and
-  other public webmail are fine). A side with no Stripe customer waits and is added by the
-  15-minute job; one Stripe refuses for good shows on the /admin card. **It also needs an amount:**
-  `REFERRAL_CREDIT_CENTS` in `src/config/pricing.ts` is `null`, and while it is null nothing
-  happens at all, even with the switch on (no link, no code saved, nothing carried, no credit).
-  Referrals that become active while the switch is off (or the amount is null) are settled as
-  "skipped" and are **never paid later**, even if it's turned on again. The same goes for an
-  owner whose first sign-in happens while it's off: the invite's referral is used up then without
-  linking them, so deleting the account and signing up again once it's on earns nothing.
-  Changing the amount or `REFERRAL_CREDIT_TO` only affects referrals settled after the change. A
-  refused (self or same-domain) referral is settled as "skipped" too. Credits still waiting or
-  refused by Stripe stay on the /admin card even after the switch goes off.
+- `FEATURE_REFERRALS` (plan #47, default **off**; offer A, decided 2026-10-15): each account gets
+  a referral link in Plan & billing (`/?ref=<code>`). The code rides on the waitlist form, onto the
+  invite when Davi taps Invite, and onto the new workspace at its first sign-in (used up there).
+  The first time the referred account is **active** (paid through Stripe and the setup call done),
+  the referral is settled once, ever: **the referrer's next month is free on the plan above
+  theirs** (Solo → Crew, Crew → Company, Company → Company). There is no amount to set
+  (`REFERRAL_REWARD` in `src/config/pricing.ts`); the switch is the only control. Self,
+  same-business-domain and house-account referrals never count (gmail.com, yahoo.com, outlook.com,
+  icloud.com and other public webmail are fine).
+  How it works: a one-time 100%-off coupon (`sa_ref_<id>`, "Referral thanks: this month is free")
+  goes on the referrer's live subscription, so Stripe keeps billing their own plan and the next
+  renewal's plan line is free; the app gives the plan above for exactly that line's period. It
+  starts only while the account is on (setup paid or active, paid through Stripe), one free month
+  at a time with a paid month between (Davi, Q1), and a month that can't start yet waits with no
+  expiry (Q5). Afterwards they go back to their own plan by itself unless they tap **Keep**
+  (normal price, named in full before the tap); **Go back** after a Keep restores exactly the
+  price they paid. Nothing else ever raises a price. At the end, autopilot turns off if the plan
+  has none and extra inboxes pause (oldest-created stay on, nothing deleted, the owner can switch
+  which one); a move down on Stripe's page pauses extra inboxes the same way (Q2). During the free
+  month Stripe's page offers card, invoices and cancel only (Q3), and any charge Stripe adds for
+  free days is removed. The 15-minute job and every Stripe webhook keep it in step, always from a
+  fresh read of the subscription.
+  **Free months wait while Stripe's billing page schedules downgrades for the period end**
+  ("Manage downgrades"): such a schedule can drop the coupon. /admin → Payments says so; turn it
+  off in Stripe → Customer portal.
+  Referrals that become active while the switch is off are settled as "skipped" and are **never
+  given later**, even if it's turned on again. The same goes for an owner whose first sign-in
+  happens while it's off: the invite's referral is used up then without linking them. A free month
+  already booked or running carries on if the switch goes off (Stripe already holds the coupon);
+  waiting ones stay on the /admin card. Refunding the new contractor later doesn't take the
+  referrer's free month back (Q6).
   Known gaps, by design until Davi decides otherwise: if the referrer deletes their account
-  before the new owner is active, the referral is void (neither side is paid — the link is
-  cleared with the account). Only a waitlist sign-up from the link counts: someone already on the
-  waitlist who joins again from a link keeps their first (code-less) entry, and an owner invited
-  with the plain "Invite an owner" form is never linked to anyone.
-  **Privacy policy, before turning it on:** referral records outlive account deletion so a
-  referral is only paid once. Add a line such as "If you were referred, we keep a scrambled
-  one-way fingerprint of your email and the credit record after you delete your account, so a
-  referral is only paid once." — the policy's "Delete my account" section (and the homepage FAQ's
-  "deletes your account and everything in it") is otherwise not literally true once referrals are on.
-  **Don't rotate `AUTH_SECRET` once referrals have been paid** (or know what it costs): the
-  "paid once, ever" check matches that fingerprint, which is salted with `AUTH_SECRET`. After a
-  rotation, earlier referrals no longer match, so an owner who deleted their account and is
-  linked again from a referral link could be paid a second time (the referrer's credit). Rotating it also
-  signs everyone out. If it must be rotated, settle it with Davi first.
+  before the new owner is active, the referral is void (the link is cleared with the account).
+  Only a waitlist sign-up from the link counts: someone already on the waitlist who joins again
+  from a link keeps their first (code-less) entry, and an owner invited with the plain "Invite an
+  owner" form is never linked to anyone.
+  **Don't rotate `AUTH_SECRET` once referrals have been given** (or know what it costs): the
+  "once, ever" check matches a fingerprint salted with `AUTH_SECRET`. After a rotation, earlier
+  referrals no longer match, so an owner who deleted their account and is linked again from a
+  referral link could earn the referrer a second month. Rotating it also signs everyone out. If it
+  must be rotated, settle it with Davi first.
 
 **`FEATURE_CLOSING_QUESTION` is on** (Davi, 2026-10-14). The engineers set it to `1` in Vercel →
 sa → Environment Variables on Production and Preview that day, at his request; it takes effect with
@@ -310,23 +319,53 @@ the next deploy (the launch merge). Turning it off needs his okay too: delete th
 it empty) and redeploy; the offer disappears, and any closing-question drafts already in the queue
 stay there for the owner to send or discard.
 
-**Ask Davi before turning `FEATURE_REFERRALS` on** — he decides the amount. Decided (Davi,
-2026-10-13): only the owner who shared the link gets it (`REFERRAL_CREDIT_TO = "referrer"`), and
-the same-domain block stays. The amount is still open (options in `docs/LAUNCH.md` step 13: a fixed
-$50 / $99 / $199 / $250, or one free month of the referrer's plan, possibly on Crew for a Solo
-owner; a fixed amount only needs `REFERRAL_CREDIT_CENTS`, the free-month options need new code
-because the credit would depend on the plan). In order:
+**Ask Davi before turning `FEATURE_REFERRALS` on.** The reward itself is decided (offer A,
+2026-10-15; his answers to the seven questions on 2026-10-16 are in `docs/LAUNCH.md` step 13).
+In order, all before the switch:
 
-1. Set `REFERRAL_CREDIT_CENTS` in `src/config/pricing.ts` to his amount in cents, with the
-   privacy-policy line above, and deploy that code. While the amount is `null` the switch does nothing at all.
-2. Vercel → sa → Environment Variables → add `FEATURE_REFERRALS` with value `1` (Production only,
+1. The live Stripe key, **Connect Stripe** and **Reset test payments** (LAUNCH steps 7–7c). Reset
+   also deletes free months earned in test mode, so a test-card referral never becomes a real free
+   month (the real payment settles it again, once).
+2. /admin → Payments shows no "schedules downgrades" line.
+3. Add these lines (held here so the terms version doesn't change before then), update
+   `tests/unit/legal-docs.test.ts` (it pins that the privacy policy says nothing about referrals
+   while they're off) and bump the terms version in the app with the terms' "Last updated" date:
+   - **Terms:** "If someone you referred becomes a customer, your next month is free on the plan
+     above yours. Afterwards you go back to your own plan unless you choose to keep it at its
+     normal price. During that free month, plan changes are made in the app; you can still update
+     your card or cancel."
+   - **Privacy policy:** "If you were referred, we keep a scrambled one-way fingerprint of your
+     email and the referral record after you delete your account, so a referral only counts
+     once." and "If you earn a free month: which plan, the dates, and whether you chose to keep
+     it." (Otherwise the policy's "Delete my account" section and the FAQ's "deletes your account
+     and everything in it" aren't literally true once referrals are on.)
+4. **An engineer runs the Stripe Test Clock check, locally only** (never on a preview or
+   production: previews share production's database). A laptop with its own Postgres, a **test**
+   key, `FEATURE_REFERRALS=1` and `stripe listen --forward-to localhost:3000/api/stripe/webhook`.
+   Make a Test Clock and a customer on it with a Massachusetts address; put that customer id on
+   the referrer workspace and choose a plan (if Checkout refuses a clock customer, make the
+   subscription in the Dashboard's clock simulation with automatic tax and
+   `metadata.workspaceId`, and set the workspace's ids and status by SQL). Settle a referral by
+   seeding an active, Stripe-paid referred workspace. Then check, advancing the clock (at most two
+   billing periods per step): the sweep books the coupon; the renewal's plan line is −100% with $0
+   tax on it, the app shows the plan above (provisional, then confirmed once the invoice
+   finalizes); Keep makes no invoice and the next renewal is the kept plan plus tax, ended by
+   Stripe's renewal rather than our clock; without Keep the next renewal is the old plan plus tax,
+   autopilot is off and the extra inbox paused; a plan change on Stripe's page during the month
+   (with the login page, since the app's page has none) leaves no charge for free days; a change
+   while booked charges at most the normal proration and the free month is one above the new
+   plan; canceling or a past-due card (test card `4000000000000341`) while booked returns it to
+   waiting; repeat on a **classic**-mode subscription made in the Dashboard; and remove the address
+   so the renewal can't finalize: provisional, then the coupon is removed at the end. Record the
+   results in `docs/LAUNCH.md`.
+5. Vercel → sa → Environment Variables → add `FEATURE_REFERRALS` with value `1` (Production only,
    unless Davi says otherwise) → Redeploy.
 
 To turn it off again, delete the variable (or set it empty) and redeploy: the Share section and
-links disappear, new codes aren't carried, and no new credits are made (credits waiting for a
-Stripe customer wait, and are added if it's turned back on). Credits already added stay on the
-owners' Stripe balances. Referrals whose account went active while it was off are settled as
-"skipped" and are never paid later.
+links disappear, new codes aren't carried, and nothing new is earned or booked. Free months
+already booked or running carry on (Stripe holds the coupon); waiting ones wait and are booked if
+it's turned back on. Referrals whose account went active while it was off are settled as
+"skipped" and are never given later.
 
 ### 6e. Phone notifications (VAPID, optional)
 

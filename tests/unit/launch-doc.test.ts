@@ -841,12 +841,23 @@ describe("LAUNCH.md structure", () => {
     expect(d).toContain(flat(line));
   });
 
-  it("the referral amount options are listed, with the ones that need more code marked", () => {
-    const { open } = step13Parts();
-    for (const option of ["A $50", "B $99", "C $199", "D $250", "E one free month", "F like E"]) {
-      expect(open, option).toContain(option);
-    }
-    expect(open).toContain("E and F need code beyond what's built today");
+  it("the referral reward is recorded as decided, with Davi's seven answers", () => {
+    const { decided, open } = step13Parts();
+    expect(decided).toContain("#47 referral reward: offer A, a free month one plan up");
+    for (const answer of [
+      "One free month at a time (free, paid, free), no yearly cap.",
+      "Moving down a plan on Stripe's page pauses the extra inboxes too",
+      "Stripe's page offers only card, invoices and cancel",
+      "A free month of Company includes priority support",
+      "waits, with no expiry",
+      "doesn't take back the referrer's free month",
+      "No reminder email",
+    ])
+      expect(decided, answer).toContain(answer);
+    // The old amount options are gone; what's left to do is turning it on, in order.
+    expect(open).not.toMatch(/\bA \$50\b|E one free month/);
+    expect(open).toContain("#47 turning referrals on");
+    expect(open).toContain("Test Clock check");
   });
 
   it("the still-needed list keeps every hand-over item", () => {

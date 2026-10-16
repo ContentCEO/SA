@@ -94,7 +94,7 @@ test.describe("waitlist referral link", () => {
   test.use({ extraHTTPHeaders: { "x-forwarded-for": "198.51.100.12" } });
 
   test("waitlist: a referral link does nothing while referrals are off (#47)", async ({ page }) => {
-    // The e2e server runs without FEATURE_REFERRALS and REFERRAL_CREDIT_CENTS is null.
+    // The e2e server runs without FEATURE_REFERRALS (the switch is the only control).
     const email = unique();
     await page.goto("/?ref=AbCdEf123_-x#waitlist");
     const form = page.getByRole("region", { name: "Join the waitlist" });
