@@ -36,6 +36,7 @@ import {
 import { canSend, jobsAllowed } from "@/server/lifecycle";
 import { isTermsUrlMissingError } from "@/server/stripe-error-rules";
 import { createTestDb } from "../support/db";
+import { FakeStripe, type Call } from "../support/fake-stripe";
 
 const NOW = new Date("2026-10-10T14:00:00Z");
 type S = Workspace["status"];
@@ -134,81 +135,9 @@ describe("billing rules", () => {
 // --- With a database and a fake Stripe -------------------------------------
 
 const SECRET = "whsec_test";
-type Call = { method: string; args: unknown[] };
-type FoundPrice = { id: string; lookup_key: string; tax_behavior: string | null };
 
-/**
- * What the fake Stripe account holds. `tax`: Stripe Tax's status, or an error it throws.
- * `checkoutRefuses`: an error a checkout with the given params throws (null = it goes through).
- */
-const account: {
-  tax: string | Error;
-  prices: FoundPrice[];
-  portals: number;
-  checkoutRefuses: (p: Stripe.Checkout.SessionCreateParams) => Error | null;
-} = {
-  tax: "pending",
-  prices: [],
-  portals: 0,
-  checkoutRefuses: () => null,
-};
-
-function fakeStripe(calls: Call[]) {
-  const rec =
-    (method: string, result: (...a: unknown[]) => unknown) =>
-    async (...args: unknown[]) => {
-      calls.push({ method, args });
-      return result(...args);
-    };
-  let n = 0;
-  return {
-    tax: {
-      settings: {
-        retrieve: rec("tax.settings.retrieve", () => {
-          if (account.tax instanceof Error) throw account.tax;
-          return { object: "tax.settings", status: account.tax };
-        }),
-      },
-    },
-    prices: {
-      list: rec("prices.list", () => ({ data: account.prices })),
-      create: rec("prices.create", (p) => ({
-        id: `price_${(p as { lookup_key: string }).lookup_key}`,
-      })),
-      update: rec("prices.update", (id) => ({ id })),
-      retrieve: rec("prices.retrieve", (id) => ({ id, product: `prod_${id as string}` })),
-    },
-    billingPortal: {
-      configurations: {
-        list: rec("billingPortal.configurations.list", () => ({
-          data: Array.from({ length: account.portals }, (_, i) => ({ id: `bpc_${i}` })),
-        })),
-        create: rec("billingPortal.configurations.create", () => ({ id: "bpc_new" })),
-      },
-    },
-    webhookEndpoints: {
-      list: rec("webhookEndpoints.list", () => ({ data: [] })),
-      del: rec("webhookEndpoints.del", () => ({})),
-      create: rec("webhookEndpoints.create", () => ({ id: "we_1", secret: "whsec_new" })),
-    },
-    customers: { create: rec("customers.create", () => ({ id: "cus_1" })) },
-    checkout: {
-      sessions: {
-        create: rec("checkout.sessions.create", (p) => {
-          const refused = account.checkoutRefuses(p as Stripe.Checkout.SessionCreateParams);
-          if (refused) throw refused;
-          return { id: `cs_${++n}`, url: "https://checkout.example/cs" };
-        }),
-      },
-    },
-    webhooks: {
-      constructEventAsync: async (body: string, sig: string, secret: string) => {
-        if (sig !== "good" || secret !== SECRET) throw new Error("No signatures found");
-        return JSON.parse(body);
-      },
-    },
-  } as unknown as Stripe;
-}
+/** The shared fake Stripe account (tests/support/fake-stripe.ts). */
+let fake: FakeStripe;
 
 let database: Database;
 let calls: Call[];
@@ -219,12 +148,9 @@ beforeEach(async () => {
   process.env.APP_URL = "https://app.example";
   delete process.env.STRIPE_WEBHOOK_SECRET;
   database = await createTestDb();
-  calls = [];
-  account.tax = "pending";
-  account.prices = [];
-  account.portals = 0;
-  account.checkoutRefuses = () => null;
-  setStripeForTests(fakeStripe(calls));
+  fake = new FakeStripe({ now: NOW, webhookSecret: SECRET });
+  calls = fake.calls;
+  setStripeForTests(fake.client);
   ({ workspace } = await ensureUserAndWorkspace({ email: "owner@shop.com", name: "Owner" }));
   await database
     .update(workspaces)
@@ -337,7 +263,7 @@ describe("the 'I agree' box at checkout (Davi, 2026-10-15)", () => {
   });
 
   it("no terms link in Stripe: the same checkout again without the box, a content-free warning, and the /admin note", async () => {
-    account.checkoutRefuses = (p) => (p.consent_collection ? noTermsUrl() : null);
+    fake.checkoutRefuses = (p) => (p.consent_collection ? noTermsUrl() : null);
     const warned = vi.spyOn(console, "warn").mockImplementation(() => {});
     const url = await createCheckout(await reload(), "crew");
     expect(url).toBe("https://checkout.example/cs");
@@ -356,7 +282,7 @@ describe("the 'I agree' box at checkout (Davi, 2026-10-15)", () => {
     expect(await termsBoxOffSince()).toBeInstanceOf(Date);
 
     // Once the link is saved, the next checkout has the box again and the note goes.
-    account.checkoutRefuses = () => null;
+    fake.checkoutRefuses = () => null;
     calls.length = 0;
     await createCheckout(await reload(), "solo");
     expect(creates()).toHaveLength(1);
@@ -396,7 +322,7 @@ describe("the 'I agree' box at checkout (Davi, 2026-10-15)", () => {
       new Stripe.errors.StripeCardError({ message: "card declined" }),
     ]) {
       calls.length = 0;
-      account.checkoutRefuses = () => err;
+      fake.checkoutRefuses = () => err;
       const warned = vi.spyOn(console, "warn").mockImplementation(() => {});
       await expect(createCheckout(await reload(), "crew")).rejects.toBe(err);
       expect(creates()).toHaveLength(1);
@@ -408,7 +334,7 @@ describe("the 'I agree' box at checkout (Davi, 2026-10-15)", () => {
   it("a refusal of the retry too goes up (never a third try)", async () => {
     const second = new Stripe.errors.StripeConnectionError({ message: "socket hang up" });
     let n = 0;
-    account.checkoutRefuses = () => (++n === 1 ? noTermsUrl() : second);
+    fake.checkoutRefuses = () => (++n === 1 ? noTermsUrl() : second);
     vi.spyOn(console, "warn").mockImplementation(() => {});
     await expect(createCheckout(await reload(), "crew")).rejects.toBe(second);
     expect(creates()).toHaveLength(2);
@@ -434,7 +360,7 @@ describe("sales tax (Stripe Tax, Davi 2026-10-14)", () => {
       .args[0] as Stripe.Checkout.SessionCreateParams;
 
   it("with Stripe Tax active, checkout adds tax and collects the address it's based on", async () => {
-    account.tax = "active";
+    fake.tax = "active";
     await createCheckout(await reload(), "crew");
     const params = sessionParams();
     expect(params.automatic_tax).toEqual({ enabled: true });
@@ -450,7 +376,7 @@ describe("sales tax (Stripe Tax, Davi 2026-10-14)", () => {
   it("without Stripe Tax, the checkout is exactly as before", async () => {
     for (const status of ["pending", "inactive_somehow"]) {
       calls.length = 0;
-      account.tax = status;
+      fake.tax = status;
       await createCheckout(await reload(), "crew");
       expect(Object.keys(sessionParams()).sort()).toEqual(
         [
@@ -476,7 +402,7 @@ describe("sales tax (Stripe Tax, Davi 2026-10-14)", () => {
     const err = new Stripe.errors.StripeConnectionError({
       message: "Stripe said cus_SECRET owner@shop.com",
     });
-    account.tax = err;
+    fake.tax = err;
     const logged = vi.spyOn(console, "error").mockImplementation(() => {});
     await expect(createCheckout(await reload(), "crew")).rejects.toBe(err);
     expect(calls.some((c) => c.method === "checkout.sessions.create")).toBe(false);
@@ -493,7 +419,7 @@ describe("sales tax (Stripe Tax, Davi 2026-10-14)", () => {
   });
 
   it("a key that can't read the tax settings is logged as a key problem, not a blip", async () => {
-    account.tax = new Stripe.errors.StripePermissionError({
+    fake.tax = new Stripe.errors.StripePermissionError({
       message: "The provided key 'rk_live_SECRET' does not have the required permissions",
     });
     const logged = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -519,8 +445,8 @@ describe("sales tax (Stripe Tax, Davi 2026-10-14)", () => {
   });
 
   it("checkout never changes an existing price's tax behavior", async () => {
-    account.tax = "active";
-    account.prices = [
+    fake.tax = "active";
+    fake.prices = [
       { id: "price_setup", lookup_key: setupLookupKey(), tax_behavior: "unspecified" },
       ...(["solo", "crew", "company"] as const).map((p) => ({
         id: `price_${p}`,
@@ -534,7 +460,7 @@ describe("sales tax (Stripe Tax, Davi 2026-10-14)", () => {
   });
 
   it("Connect Stripe sets unspecified prices to exclusive and leaves the rest alone", async () => {
-    account.prices = [
+    fake.prices = [
       { id: "price_setup", lookup_key: setupLookupKey(), tax_behavior: "unspecified" },
       { id: "price_solo", lookup_key: planLookupKey("solo"), tax_behavior: "inclusive" },
       { id: "price_crew", lookup_key: planLookupKey("crew"), tax_behavior: "exclusive" },
@@ -550,9 +476,7 @@ describe("sales tax (Stripe Tax, Davi 2026-10-14)", () => {
   });
 
   it("Connect Stripe makes missing prices exclusive", async () => {
-    account.prices = [
-      { id: "price_setup", lookup_key: setupLookupKey(), tax_behavior: "exclusive" },
-    ];
+    fake.prices = [{ id: "price_setup", lookup_key: setupLookupKey(), tax_behavior: "exclusive" }];
     await connectStripe();
     expect(calls.some((c) => c.method === "prices.update")).toBe(false);
     const created = calls.filter((c) => c.method === "prices.create");
@@ -570,18 +494,18 @@ describe("sales tax (Stripe Tax, Davi 2026-10-14)", () => {
     expect(features.subscription_cancel).toEqual({ enabled: true, mode: "at_period_end" });
 
     calls.length = 0;
-    account.portals = 1;
+    fake.portals = 1;
     await connectStripe();
     expect(calls.some((c) => c.method === "billingPortal.configurations.create")).toBe(false);
   });
 
   it("the /admin line: on, off, couldn't check (content-free, never throws)", async () => {
-    account.tax = "active";
+    fake.tax = "active";
     expect(await salesTaxStatus()).toBe("on");
-    account.tax = "pending";
+    fake.tax = "pending";
     expect(await salesTaxStatus()).toBe("off");
 
-    account.tax = new Stripe.errors.StripeAuthenticationError({
+    fake.tax = new Stripe.errors.StripeAuthenticationError({
       message: "Invalid API Key provided: sk_test_SECRET",
     });
     const logged = vi.spyOn(console, "error").mockImplementation(() => {});

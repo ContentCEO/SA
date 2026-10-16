@@ -53,36 +53,18 @@ import {
 import { inviteFromWaitlist, joinWaitlist, waitlistInput } from "@/server/waitlist";
 import { applyAdminMove } from "@/server/workspace-lifecycle";
 import { createTestDb } from "../support/db";
+import { FakeStripe } from "../support/fake-stripe";
 
 const NOW = new Date("2026-10-12T14:00:00Z");
 const ON = { FEATURE_REFERRALS: "1" };
 const SECRET = "whsec_test";
 
-// --- Fake Stripe: records every call. Settling a referral never calls Stripe. ---------------
+// --- Fake Stripe (tests/support/fake-stripe.ts): settling a referral never calls it --------
 
-type Call = { method: string; args: unknown[] };
-
-let calls: Call[];
-
-function fakeStripe() {
-  return {
-    subscriptions: {
-      cancel: async (id: string) => {
-        calls.push({ method: "subscriptions.cancel", args: [id] });
-        return { id };
-      },
-    },
-    webhooks: {
-      constructEventAsync: async (body: string, sig: string, secret: string) => {
-        if (sig !== "good" || secret !== SECRET) throw new Error("No signatures found");
-        return JSON.parse(body);
-      },
-    },
-  } as unknown as Stripe;
-}
+let fake: FakeStripe;
 
 /** Stripe calls other than the account-deletion cancel (which isn't about referrals). */
-const stripeCalls = () => calls.filter((c) => c.method !== "subscriptions.cancel").length;
+const stripeCalls = () => fake.calls.filter((c) => c.method !== "subscriptions.cancel").length;
 
 // --- Database helpers -----------------------------------------------------------------------
 
@@ -96,8 +78,8 @@ beforeEach(async () => {
   delete process.env.STRIPE_WEBHOOK_SECRET;
   delete process.env.STRIPE_SECRET_KEY;
   database = await createTestDb();
-  calls = [];
-  setStripeForTests(fakeStripe());
+  fake = new FakeStripe({ now: NOW, webhookSecret: SECRET });
+  setStripeForTests(fake.client);
   await database
     .insert(appSettings)
     .values({ key: "stripe_webhook_secret", value: encryptSecret(SECRET) });
