@@ -38,6 +38,8 @@ import {
   testPaymentsResetNotice,
 } from "@/server/test-payment-rules";
 import { applyAdminMove } from "@/server/workspace-lifecycle";
+import { runReferralRewards } from "@/server/referrals";
+import { setReferralConfigForTests } from "@/server/referral-rules";
 import { createTestDb } from "../support/db";
 import { TERMS_VERSION } from "@/config/legal";
 
@@ -569,6 +571,74 @@ describe("resetting", () => {
     // The month's end effects ran with it: Solo has no autopilot.
     const [rule] = await database.select().from(rules).where(eq(rules.workspaceId, referrer));
     expect(rule!.mode).toBe("draft");
+  });
+
+  it("plan #47: a test reward stays while its referred account couldn't be reset (never re-settled live)", async () => {
+    const referrer = await account({
+      status: "active",
+      plan: "solo",
+      setupPaidVia: "stripe",
+      stripeCustomerId: "cus_live_ref2",
+      stripeSubscriptionId: "sub_live_ref2",
+    });
+    stripeKnows.set("cus_live_ref2", "live");
+    stripeKnows.set("sub_live_ref2", "live");
+    // Two referred owners on another domain (so no same-domain skip), both paid with a test card.
+    const referred = async (email: string, customer: string) => {
+      const { workspace } = await ensureUserAndWorkspace({ email });
+      await database
+        .update(workspaces)
+        .set({
+          status: "active",
+          plan: "solo",
+          setupPaidVia: "stripe",
+          setupPaidAt: PAID_AT,
+          stripeCustomerId: customer,
+          stripeSubscriptionId: null,
+          referredByWorkspaceId: referrer,
+        })
+        .where(eq(workspaces.id, workspace.id));
+      return workspace.id;
+    };
+    const flaky = await referred("dana@customer-one.com", "cus_flaky_ref");
+    const reset = await referred("mike@customer-two.com", "cus_test_ref");
+    stripeKnows.set("cus_flaky_ref", "error");
+    const base = {
+      beneficiaryWorkspaceId: referrer,
+      side: "referrer" as const,
+      amountCents: 0,
+      reward: "free_month_up" as const,
+      status: "pending" as const,
+      stripeMode: "test" as const,
+    };
+    await database.insert(referralCredits).values([
+      { ...base, referredWorkspaceId: flaky, referredEmailSha256: "flaky" },
+      { ...base, referredWorkspaceId: reset, referredEmailSha256: "reset" },
+    ]);
+
+    expect(await resetTestPayments(NOW)).toEqual({ reset: 1, unchecked: 1 });
+    // Only the reset account's reward went; the unchecked one keeps its fingerprint row.
+    const left = await database.select().from(referralCredits);
+    expect(left.map((r) => [r.referredWorkspaceId, r.stripeMode])).toEqual([[flaky, "test"]]);
+
+    // With referrals on, the sweep finds nothing to settle again on the live key.
+    vi.stubEnv("FEATURE_REFERRALS", "1");
+    setReferralConfigForTests({ reward: "free_month_one_plan_up" });
+    try {
+      await runReferralRewards(new Date(NOW.getTime() + 15 * 60_000));
+    } finally {
+      setReferralConfigForTests(undefined);
+    }
+    const after = await database.select().from(referralCredits);
+    expect(after.filter((r) => r.stripeMode === "live")).toEqual([]);
+    expect(after.filter((r) => r.referredWorkspaceId === flaky)).toHaveLength(1);
+
+    // Once Stripe answers and the account is reset, its test reward goes too.
+    stripeKnows.delete("cus_flaky_ref");
+    expect(await resetTestPayments(NOW)).toEqual({ reset: 1, unchecked: 0 });
+    expect(
+      (await database.select().from(referralCredits)).filter((r) => r.stripeMode === "test"),
+    ).toEqual([]);
   });
 
   it("stops any autopilot countdown on a reset account", async () => {

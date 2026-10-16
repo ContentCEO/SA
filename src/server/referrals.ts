@@ -1276,12 +1276,26 @@ export function viewChanges(view: FreeMonthView, to: PlanId | null): EndChanges 
  * referred owner's real payment settles the referral again, once (the fingerprint is free
  * again). A running test-mode month stops: its free plan is cleared and the plan effects run in
  * the same transaction, as at any other end. Returns how many rows went.
+ *
+ * Only rewards whose referred account no longer stands as paid through Stripe go: one the reset
+ * couldn't check (Stripe didn't answer, or it changed while we looked) is still `active` with
+ * `setup_paid_via = 'stripe'` on test money, and deleting its fingerprint would let the next
+ * sweep settle it again on the live key. Kept rows go on the next reset that resets the account.
  */
 export async function clearTestModeRewards(now: Date = new Date()): Promise<number> {
+  const stillPaid = db()
+    .select({ one: sql`1` })
+    .from(workspaces)
+    .where(
+      and(
+        eq(workspaces.id, referralCredits.referredWorkspaceId),
+        eq(workspaces.setupPaidVia, "stripe"),
+      ),
+    );
   return db().transaction(async (tx) => {
     const gone = await tx
       .delete(referralCredits)
-      .where(eq(referralCredits.stripeMode, "test"))
+      .where(and(eq(referralCredits.stripeMode, "test"), not(exists(stillPaid))))
       .returning({
         status: referralCredits.status,
         beneficiaryWorkspaceId: referralCredits.beneficiaryWorkspaceId,
