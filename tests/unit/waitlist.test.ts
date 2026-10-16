@@ -135,7 +135,7 @@ describe("waitlist", () => {
     await joinWaitlist(parsed);
     // On, with an amount: stored.
     process.env.FEATURE_REFERRALS = "1";
-    setReferralConfigForTests({ cents: 1_000, to: "both" });
+    setReferralConfigForTests({ reward: "free_month_one_plan_up" });
     await joinWaitlist({ ...parsed, email: "bo@yahoo.com" });
     const rows = await database.select().from(waitlist);
     const byEmail = Object.fromEntries(rows.map((r) => [r.email, r.referralCode]));
@@ -351,7 +351,7 @@ describe("waitlist and Squared Away Growth requests in one table", () => {
     };
     const on = () => {
       process.env.FEATURE_REFERRALS = "1";
-      setReferralConfigForTests({ cents: 1_000, to: "both" });
+      setReferralConfigForTests({ reward: "free_month_one_plan_up" });
     };
 
     it("a Growth request stores no code; the app sign-up that upgrades it does, and the invite carries it", async () => {

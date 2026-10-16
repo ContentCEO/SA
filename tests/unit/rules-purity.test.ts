@@ -64,6 +64,8 @@ describe("*-rules files are pure (A24)", () => {
       "business-hours-rules.ts",
       "monthly-rules.ts",
       "digest-rules.ts",
+      "referral-rules.ts",
+      "billing-rules.ts",
     ])
       expect(names).toContain(f);
   });

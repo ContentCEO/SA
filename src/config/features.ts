@@ -10,9 +10,9 @@ export const FEATURE_ENV = {
    */
   closingQuestion: "FEATURE_CLOSING_QUESTION",
   /**
-   * Plan #47: referral links and a Stripe balance credit once per referral. Off until Davi picks
-   * the amount and who gets it — and even when on, nothing happens while REFERRAL_CREDIT_CENTS
-   * (src/config/pricing.ts) is null. ASK DAVI before turning on.
+   * Plan #47: referral links, and the referrer's next month free on the plan above theirs once
+   * the new owner is active (offer A, REFERRAL_REWARD in src/config/pricing.ts). No amount: this
+   * switch is the only control. ASK DAVI before turning on (docs/SETUP.md §6d).
    */
   referrals: "FEATURE_REFERRALS",
 } as const;

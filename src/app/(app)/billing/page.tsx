@@ -9,7 +9,9 @@ import { siteConfig } from "@/config/site";
 import { cn } from "@/lib/utils";
 import { stripeConfigured } from "@/server/billing";
 import { billingStatusLine, checkoutTerms, PLAN_IDS, SALES_TAX_NOTE } from "@/server/billing-rules";
-import { referralCredit } from "@/server/referral-rules";
+import { referralsVisible, shareCardCopy } from "@/server/referral-rules";
+import { EARN_THRESHOLD } from "@/server/autopilot";
+import { effectiveStatus } from "@/server/lifecycle";
 import { referralLinkFor } from "@/server/referrals";
 import { requireOwner } from "@/server/session";
 import { openPortalAction, startCheckoutAction } from "./actions";
@@ -32,9 +34,11 @@ export default async function BillingPage(props: PageProps<"/billing">) {
   const waitingForStripe = paidJustNow && terms.allowed;
   const errorMsg = typeof params.error === "string" ? errors[params.error] : undefined;
   const current = workspace.plan ? pricing.plans[workspace.plan as PlanId] : null;
-  // Plan #47: only while referrals are switched on (flag and an amount) — hidden entirely otherwise.
-  const referral = referralCredit();
-  const shareLink = referral ? await referralLinkFor(workspace.id) : null;
+  // Plan #47: only while referrals are switched on — hidden entirely otherwise.
+  const share = referralsVisible()
+    ? shareCardCopy({ plan: workspace.plan, status: effectiveStatus(workspace) }, EARN_THRESHOLD)
+    : null;
+  const shareLink = share ? await referralLinkFor(workspace.id) : null;
 
   return (
     <>
@@ -145,22 +149,17 @@ export default async function BillingPage(props: PageProps<"/billing">) {
         )
       ) : null}
 
-      {referral && shareLink ? (
+      {share && shareLink ? (
         <section aria-labelledby="refer" className="flex flex-col gap-3 rounded-xl border p-4">
           <h2 id="refer" className="text-xl font-black">
-            Share Squared Away
+            {share.title}
           </h2>
+          <p>{share.intro}</p>
           <p>
-            Know another contractor who&apos;d like this? Send them your link. Once they&apos;ve
-            paid and finished their setup call,{" "}
-            {referral.sides.length === 2
-              ? `you each get ${formatDollars(referral.cents)} off your bill`
-              : referral.sides[0] === "referrer"
-                ? `you get ${formatDollars(referral.cents)} off your bill`
-                : `they get ${formatDollars(referral.cents)} off their bill`}
-            . Once per new business. They need to join the waitlist from your link, or it won&apos;t
-            count.
+            {share.plan}
+            {share.setup ? ` ${share.setup}` : null}
           </p>
+          <p>{share.after}</p>
           <CopyLink url={shareLink} label="Your link" />
         </section>
       ) : null}

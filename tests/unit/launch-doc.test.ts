@@ -659,7 +659,9 @@ describe("LAUNCH.md structure", () => {
 
   it("the referral decision in step 13 matches the committed config", () => {
     const pricing = readFileSync(join(ROOT, "src/config/pricing.ts"), "utf8");
-    expect(pricing).toMatch(/REFERRAL_CREDIT_TO\b[^=]*=\s*"referrer"/);
+    // Offer A rewards the referrer only (Davi, 2026-10-13 and 2026-10-15).
+    expect(pricing).toMatch(/REFERRAL_REWARD\b[^=]*=\s*"free_month_one_plan_up"/);
+    expect(pricing).toContain("Only the referrer is rewarded");
     expect(flat(sections[13]!.body)).toContain("referrer only");
   });
 

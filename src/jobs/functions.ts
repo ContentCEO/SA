@@ -416,7 +416,7 @@ export const workspaceLifecycle = inngest.createFunction(
     await step.run("draft-messages-cleanup", () => runDraftMessagesCleanup());
     // Plan #34: a quote request waiting over 4 business hours → one phone notification.
     await step.run("lead-at-risk-pushes", () => sendLeadAtRiskPushes());
-    // Plan #47 (off unless FEATURE_REFERRALS and an amount): add referral credits still waiting.
+    // Plan #47 (off unless FEATURE_REFERRALS): settle referrals whose move to active was missed.
     await step.run("referral-credits", () => applyPendingReferralCredits());
     return { started, expired, voiceRestarted: voice.length, accessAlerts: alerts.sent };
   },

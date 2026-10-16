@@ -14,18 +14,37 @@ export const pricing = {
 
 export type PlanId = keyof typeof pricing.plans;
 
-/**
- * Plan #47 referral credit, in US cents, added to the Stripe balance once per referral when the
- * referred account becomes active. ASK DAVI — no number picked. While this is null, referrals do
- * nothing at all, even with FEATURE_REFERRALS on.
- */
-export const REFERRAL_CREDIT_CENTS: number | null = null;
+/** Plans from smallest to largest ("the plan above yours", plan #47). */
+export const PLAN_ORDER: readonly PlanId[] = ["solo", "crew", "company"];
+
+/** A plan's place in PLAN_ORDER; no plan ranks below every plan. */
+export function planRank(plan: PlanId | null | undefined): number {
+  return plan ? PLAN_ORDER.indexOf(plan) : -1;
+}
+
+/** The plan one up: Solo → Crew, Crew → Company, Company → Company. */
+export function planAbove(plan: PlanId): PlanId {
+  return PLAN_ORDER[Math.min(planRank(plan) + 1, PLAN_ORDER.length - 1)]!;
+}
+
+/** Inboxes a plan includes. Before a plan is chosen (evaluation), a workspace gets one. */
+export function mailboxLimitFor(plan: PlanId | null | undefined): number {
+  return plan ? pricing.plans[plan].mailboxLimit : 1;
+}
+
+/** Whether a plan comes with autopilot (Crew and Company). */
+export function planHasAutopilot(plan: PlanId | null | undefined): boolean {
+  return !!plan && pricing.plans[plan].autopilot;
+}
 
 /**
- * Plan #47: who gets the credit. Davi, 2026-10-13: only the owner who shared the link (the new
- * customer gets nothing). Ask Davi before changing.
+ * Plan #47 (Davi, 2026-10-15, offer A): when someone you referred has paid and is active, your
+ * next month is free on the plan above yours; afterwards you go back to your own plan unless you
+ * tap Keep (normal price). Only the referrer is rewarded (Davi, 2026-10-13). One free month at a
+ * time, no yearly cap (Davi, 2026-10-16). Nothing happens unless FEATURE_REFERRALS is on too.
+ * Ask Davi before changing.
  */
-export const REFERRAL_CREDIT_TO: "both" | "referrer" | "referred" = "referrer";
+export const REFERRAL_REWARD: "free_month_one_plan_up" | null = "free_month_one_plan_up";
 
 export function formatDollars(cents: number): string {
   const dollars = cents / 100;
