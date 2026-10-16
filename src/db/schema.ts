@@ -37,6 +37,10 @@ export const mailboxProviderEnum = pgEnum("mailbox_provider", ["gmail"]);
 
 export const mailboxStatusEnum = pgEnum("mailbox_status", ["active", "reconnect_needed", "paused"]);
 
+/** Why a mailbox is `paused` (plan #47 offer A): more inboxes than the plan includes. */
+export const MAILBOX_PAUSED_REASONS = ["over_plan"] as const;
+export type MailboxPausedReason = (typeof MAILBOX_PAUSED_REASONS)[number];
+
 export const actorEnum = pgEnum("actor", ["squared_away", "owner"]);
 
 const createdAt = () => timestamp("created_at", { withTimezone: true }).notNull().defaultNow();
@@ -116,6 +120,19 @@ export const workspaces = pgTable(
       (): AnyPgColumn => workspaces.id,
       { onDelete: "set null" },
     ),
+    /**
+     * Plan #47 offer A: the plan given free during a running referral month, and when that month
+     * ends. Set when a reward goes `running`, cleared when it is `done`. Features read the higher
+     * of this and `plan` only while `free_plan_until` is in the future (`effectivePlan`), so they
+     * drop at the end even if no job runs.
+     */
+    freePlan: planEnum("free_plan"),
+    freePlanUntil: timestamp("free_plan_until", { withTimezone: true }),
+    /**
+     * When Stripe will end the subscription (`cancel_at`, or the period end when it is set to
+     * cancel then), from a fresh read. Only the status lines read it. Null = renews.
+     */
+    stripeCancelAt: timestamp("stripe_cancel_at", { withTimezone: true }),
   },
   (t) => [
     // One owner per workspace for the MVP.
@@ -150,6 +167,11 @@ export const mailboxes = pgTable(
     /** Last sync problem as a short code (access_lost / rate_limited / sync_failed) — never text. */
     lastSyncErrorCode: text("last_sync_error_code"),
     lastSyncErrorAt: timestamp("last_sync_error_at", { withTimezone: true }),
+    /**
+     * Why the inbox is `paused`: 'over_plan' = more inboxes than the plan includes (the end of a
+     * free referral month, or a move down a plan). Nothing is deleted; every job skips it.
+     */
+    pausedReason: text("paused_reason").$type<MailboxPausedReason>(),
     createdAt: createdAt(),
   },
   (t) => [
@@ -628,12 +650,45 @@ export type PriceHistory = typeof priceHistory.$inferSelect;
 export const REFERRAL_SIDES = ["referrer", "referred"] as const;
 export type ReferralSide = (typeof REFERRAL_SIDES)[number];
 /**
- * pending = waiting to be added in Stripe (e.g. no Stripe customer yet); applied = added;
- * failed = Stripe refused it for good (shown in /admin, never retried); skipped = the referral
- * was settled with nothing to pay (the feature was off or had no amount when it went active).
+ * Plan #47 offer A (Davi, 2026-10-15): the referrer's next month free, one plan up.
+ * pending = earned, waiting to be booked on the referrer's subscription (no plan yet, account
+ * off, another free month first, or Stripe busy); scheduled = the coupon is on the subscription
+ * and makes the next renewal's plan line free; running = the free month itself
+ * ([starts_at, ends_at), `workspaces.free_plan` set); done = it ended and the plan effects ran;
+ * failed = Stripe used it early or refused the coupon (/admin, by hand); skipped = settled with
+ * nothing to give (`skip_reason`). applied = legacy (the old balance credit; never written now).
  */
-export const REFERRAL_CREDIT_STATUSES = ["pending", "applied", "failed", "skipped"] as const;
+export const REFERRAL_CREDIT_STATUSES = [
+  "pending",
+  "scheduled",
+  "running",
+  "done",
+  "failed",
+  "skipped",
+  "applied",
+] as const;
 export type ReferralCreditStatus = (typeof REFERRAL_CREDIT_STATUSES)[number];
+
+/** What a reward row gives. `balance_credit` = legacy rows only. */
+export const REFERRAL_REWARD_KINDS = ["balance_credit", "free_month_up"] as const;
+export type ReferralRewardKind = (typeof REFERRAL_REWARD_KINDS)[number];
+
+/** Why a referral was settled with nothing to give. */
+export const REFERRAL_SKIP_REASONS = ["off", "self", "same_domain", "house"] as const;
+export type ReferralSkipReason = (typeof REFERRAL_SKIP_REASONS)[number];
+
+/** The latest thing /admin should look at on a reward row (a fixed code, never text). */
+export const REFERRAL_ADMIN_FLAGS = [
+  "renewed_without_discount",
+  "discount_removed",
+  "plan_changed_in_free_month",
+  "charged_for_free_days",
+  "invoice_not_final",
+  "discount_lingered",
+  "unknown_price",
+  "not_fully_free",
+] as const;
+export type ReferralAdminFlag = (typeof REFERRAL_ADMIN_FLAGS)[number];
 
 /**
  * Plan #47 referral credits. Each referral is settled once, the first time the referred
@@ -663,11 +718,56 @@ export const referralCredits = pgTable(
     lastErrorCode: text("last_error_code"),
     createdAt: createdAt(),
     appliedAt: timestamp("applied_at", { withTimezone: true }),
+    // --- Plan #47 offer A: a free month, one plan up (0028; every column nullable or defaulted).
+    /** `free_month_up` for everything new code writes; legacy rows keep the default. */
+    reward: text("reward").$type<ReferralRewardKind>().notNull().default("balance_credit"),
+    /** 'live' / 'test': the Stripe key's mode when it settled. A test reward never goes live. */
+    stripeMode: text("stripe_mode").$type<"live" | "test">(),
+    skipReason: text("skip_reason").$type<ReferralSkipReason>(),
+    /** What it went on in Stripe, and the invoice that used it. Ids only. */
+    stripeSubscriptionId: text("stripe_subscription_id"),
+    stripeCouponId: text("stripe_coupon_id"),
+    stripeDiscountId: text("stripe_discount_id"),
+    stripeInvoiceId: text("stripe_invoice_id"),
+    /** `Discount.start` (Stripe's clock, so Test Clocks work). */
+    attachedAt: timestamp("attached_at", { withTimezone: true }),
+    /** When the invoice that used it was seen finalized (null while running = provisional). */
+    invoiceFinalAt: timestamp("invoice_final_at", { withTimezone: true }),
+    /** A 2-minute lease for attach / detach / strip / Keep / Go back. */
+    claimedAt: timestamp("claimed_at", { withTimezone: true }),
+    /** Bumped on each Keep / Go back claim: part of that tap's Stripe idempotency key. */
+    planChangeSeq: integer("plan_change_seq").notNull().default(0),
+    /** What the free month's plan line billed: the plan, its price id and unit amount. */
+    paidPlan: planEnum("paid_plan"),
+    paidPriceId: text("paid_price_id"),
+    paidPriceCents: integer("paid_price_cents"),
+    /** `planAbove(paid_plan)`. */
+    freePlan: planEnum("free_plan"),
+    /** The expected start while scheduled; the plan line's period once running. */
+    startsAt: timestamp("starts_at", { withTimezone: true }),
+    endsAt: timestamp("ends_at", { withTimezone: true }),
+    /** The owner's "Keep" tap, and the price they confirmed. */
+    keptAt: timestamp("kept_at", { withTimezone: true }),
+    keptPriceCents: integer("kept_price_cents"),
+    /** When `done` ran. */
+    endedAt: timestamp("ended_at", { withTimezone: true }),
+    /** The subscription's billing mode (`flexible` / `classic`), for /admin. */
+    billingMode: text("billing_mode"),
+    /** The latest thing /admin should look at, and when it was raised. */
+    adminFlag: text("admin_flag").$type<ReferralAdminFlag>(),
+    flaggedAt: timestamp("flagged_at", { withTimezone: true }),
   },
   (t) => [
     // Once per referral, ever.
     uniqueIndex("referral_credits_email_side_uq").on(t.referredEmailSha256, t.side),
     index("referral_credits_status_idx").on(t.status),
+    // One free month at a time: at most one booked and one running per workspace.
+    uniqueIndex("referral_credits_one_scheduled_uq")
+      .on(t.beneficiaryWorkspaceId)
+      .where(sql`status = 'scheduled'`),
+    uniqueIndex("referral_credits_one_running_uq")
+      .on(t.beneficiaryWorkspaceId)
+      .where(sql`status = 'running'`),
   ],
 );
 export type ReferralCredit = typeof referralCredits.$inferSelect;

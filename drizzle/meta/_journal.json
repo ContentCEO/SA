@@ -197,6 +197,13 @@
       "when": 1792087655328,
       "tag": "0027_terms_acceptance",
       "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1792151512476,
+      "tag": "0028_referral_free_month",
+      "breakpoints": true
     }
   ]
 }
