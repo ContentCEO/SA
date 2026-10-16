@@ -110,7 +110,15 @@ export function Markdown({ source }: { source: string }) {
       const rows: string[][] = [];
       while (i < lines.length && lines[i]!.trim().startsWith("|")) rows.push(cells(lines[i++]!));
       blocks.push(
-        <div key={key} className="overflow-x-auto rounded-xl border">
+        // Focusable with a name, so the sideways scroll works from a keyboard too (round 2, TC:
+        // axe's scrollable-region-focusable).
+        <div
+          key={key}
+          role="region"
+          aria-label="Table, scrolls sideways"
+          tabIndex={0}
+          className="overflow-x-auto rounded-xl border focus-visible:outline-2 focus-visible:outline-ring"
+        >
           <table className="w-full min-w-[36rem] border-collapse text-left">
             <thead>
               <tr>

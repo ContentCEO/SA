@@ -64,6 +64,11 @@ export const invites = pgTable("invites", {
   invitedAt: timestamp("invited_at", { withTimezone: true }).notNull().defaultNow(),
   acceptedAt: timestamp("accepted_at", { withTimezone: true }),
   /**
+   * Round 2 (FW A4): Davi ticked "Added as a Google test user" for this address. Only matters
+   * while the Google app is in Testing (an owner who isn't a test user can't connect Gmail).
+   */
+  testUserAddedAt: timestamp("test_user_added_at", { withTimezone: true }),
+  /**
    * Plan #47 (behind FEATURE_REFERRALS): the workspace whose referral link this owner came
    * from. Used up (set back to null) at the first sign-in, when it moves onto their workspace.
    */
@@ -223,6 +228,12 @@ export const threads = pgTable(
      * "looks great" can't make an unhappy customer look like a review prospect.
      */
     complainedAt: timestamp("complained_at", { withTimezone: true }),
+    /**
+     * Round 2 (FW E11): the owner tapped "I called them": answered by phone at this time. Until
+     * the customer writes again it counts as the owner's answer: no auto draft, no nudge, off
+     * "Needs you", and the scorecard counts it. A later customer email starts things over.
+     */
+    handledOfflineAt: timestamp("handled_offline_at", { withTimezone: true }),
     /**
      * Plan M8 (A11): set when this thread is first sorted as a quote request, to the time of the
      * customer's FIRST email on the thread (what response time and the monthly counts measure
@@ -412,6 +423,8 @@ export const businessProfiles = pgTable("business_profile", {
   neverSay: jsonb("never_say").$type<string[]>().notNull().default([]),
   /** The owner hid the getting-started checklist (only offered once every step is done). */
   onboardingDismissedAt: timestamp("onboarding_dismissed_at", { withTimezone: true }),
+  /** Round 2 (FW D1/D2): the owner hid the "your last 30 days" card on the queue. */
+  firstLookHiddenAt: timestamp("first_look_hidden_at", { withTimezone: true }),
   /** Emails mentioning more than this go to the owner. */
   amountThresholdDollars: integer("amount_threshold_dollars").notNull().default(2500),
   /** Nudge quiet quotes and invoices after this many days without a reply. */

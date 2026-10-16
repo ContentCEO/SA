@@ -1003,6 +1003,54 @@ default, CI too) and refuses a non-local `DATABASE_URL` or an `APP_URL` that isn
     re-sorts mailboxes with mail unsorted 10+ minutes (`unsortedSweepMailboxes`, skips capped /
     read-only / inactive). `AssistantBanner` (every signed-in screen, counts only): limit used
     up (and when it restarts, owner's clock), "N new emails aren't sorted yet", 80% warning.
+- **Round 2 first week (2026-10-16, branch `round2-fixes`; review "First Week" R2-C, Growth G3,
+  Trust Check privacy lines):** migration 0030 (additive): `threads.handled_offline_at`,
+  `invites.test_user_added_at`, `business_profile.first_look_hidden_at`. Pure rules and wording in
+  `src/server/first-week-rules.ts`; DB side in `first-week.ts` and `invite-email.ts`.
+  - **"I called them" (E11):** on draft and needs-you cards (`queue/called-them.tsx`, confirm
+    step). Sets `handled_offline_at`, expires the waiting draft (`expirePendingDraft`, claim
+    first, Gmail draft deleted). `lastOutSql` = greatest(owner email, the call), so every "who
+    wrote last" read counts the call; `answeredByPhoneSql` (call ≥ newest inbound) keeps it off
+    follow-ups, auto drafts and Needs you; `createDraftForThread` skips it for jobs; the
+    scorecard's first answer counts it. The customer writing again undoes all of it.
+  - **E9:** every card says "Wrote N days ago" (`QueueItem.customerWroteAt`, newest inbound).
+  - **Setup (C1/C10):** required three marked "(required)", the rest folded under "More
+    details, optional" on /welcome/profile only (opens if one needs fixing); the setup form sends
+    the browser's time zone (`businessProfileInput.timeZone`, bad zones dropped). The sent
+    screen's "I'll nudge Dana on Thursday" uses the owner's zone. Connect page says "Step 1 of 3"
+    on a first connect; the queue shows one big Connect Gmail before anything else.
+  - **D1/D2:** "Your last 30 days" card on the queue for 7 days after the first read (accounts
+    under 14 days old only, `NEW_ACCOUNT_DAYS`; Hide this), and on the learning screen. Counts:
+    emails read in the 30 days before the first read, conversations sorted in the last 14 days by
+    category. Found money = quote requests waiting with no draft + answered quotes quiet past the
+    follow-up wait with no nudge sent; "Draft them" (once, `app_settings`
+    `found-money-drafted:<ws>`) enqueues `found-money-drafts` (owner-trigger replies, follow-up
+    trigger nudges, ≤10). Drafts only.
+  - **D4:** `sendFirstDraftsReady` (after drafting + the 15-min job): once ever per account
+    (`first-drafts-ready:<ws>`), new accounts whose inbox was read in the last 3 days, voice done,
+    a draft waiting; email + any phone push; counts only.
+  - **Trial (E6/E7/F2):** practice copies tick "Check your first 3 drafts" (each draft once);
+    read-only accounts get "Choose a plan to keep going" instead. Last 24 hours: inverted banner
+    with sorted/drafted counts and a Choose a plan button; expired banner says what's waiting
+    (counts). Expired wording: "Choose a plan to switch sending on" / "Sending turns on once you
+    choose a plan". Push says "ready to check" unless the account can send.
+  - **Billing:** each plan card shows the first charge from config (`firstChargeLine`: plan +
+    setup when due, plus tax, then monthly). Paid + setup call pending → "What happens next" on
+    /billing. **K7:** `notifyPaymentReceived` emails ADMIN_EMAIL once per checkout session
+    (content-free: plan + setup yes/no; marker `payment-notice:<session>`), never fails the webhook.
+  - **Invites (A1/A4):** `sendInviteEmail` after a new invite (form or waitlist): sign-in link,
+    10 minutes, what to have ready; once per invite (marker keyed by a salted hash + invite time),
+    skipped once accepted, never fails the invite. /admin invite rows show "Add … as a Google test
+    user" + "I added them" (`test_user_added_at`).
+  - **Wording:** terms box label has no links (tapping the words ticks it; "Read the Terms of
+    Service" / "Read the Privacy Policy" sit below); the terms screen's way out names only what
+    this person has (`leaveOptionsLine`); FAQ no longer says "send from either place"; Growth's
+    "Book a free call" is "Ask Davi to call me" everywhere (it's a callback request).
+  - **Privacy (TC):** breach notice (MA 93H), processed in the US, sender + subject go to the
+    AI, the one-line reasons are kept past the purge, voice-example placeholder wording made
+    true, the new emails and the payment notice named. Both documents and `TERMS_VERSION` moved
+    to 2026-10-16 (the same date review-fixes uses), so everyone agrees again once. /privacy
+    tables are focusable regions; `src/app/favicon.ico` exists.
 - **M11 security audit (S4, 2026-10-13):** static tests guard the surface —
   `tests/unit/security-surface.test.ts` (C1 every server action awaits `requireOwner` /
   `requireAdmin` first, reviewed public/inline allow-lists; C2 admin pages + no `loading.tsx` over

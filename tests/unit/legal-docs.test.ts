@@ -253,12 +253,51 @@ describe("privacy policy", () => {
     expect(policy).toContain("the account's AI cost, plan price and usage counts");
   });
 
+  it("round 2 (TC): breach notice, where it's processed, what goes to the AI, reasons kept", () => {
+    expect(policy).toContain("as Massachusetts law (Chapter 93H) requires");
+    expect(policy).toContain("**Where it's processed:** Squared Away runs in the United States.");
+    // The classifier is shown the sender and the subject, not only the text.
+    expect(policy).toContain("with each one's sender (name and email address) and subject");
+    const classify = readFileSync("src/ai/prompts/classify.v4.ts", "utf8");
+    expect(classify).toContain("Sender: ${from");
+    expect(classify).toContain("Subject: ${e.subject");
+    // Needs-you and draft reasons are not purged with the text, so they're named as kept.
+    expect(policy).toContain("a one-line reason when something needs you");
+    expect(
+      bullet(
+        raw("privacy-policy.md"),
+        "Who, when, subject, summaries, the one-line reasons and categories",
+      ),
+    ).toContain("kept so your inbox");
+    // Voice examples: names depend on the AI; our code scrubs the rest.
+    expect(policy).not.toContain("placeholders in place of names");
+    expect(policy).toContain(
+      "our own code also replaces any email addresses, phone numbers, prices and street addresses",
+    );
+  });
+
+  it("round 2 (FW): the emails we send and the notices we get are all named", () => {
+    expect(policy).toContain("your invite with the sign-in link");
+    expect(policy).toContain('a one-time "your first drafts are ready" email');
+    expect(policy).toContain(
+      "when someone pays (it names only the plan and whether the setup fee was included)",
+    );
+    expect(policy).toContain("when you marked a conversation as answered by phone");
+    expect(policy).not.toMatch(/book a free/i);
+  });
+
   it("says nothing about referrals while they are switched off", () => {
     expect(policy).not.toMatch(/referr/i);
   });
 });
 
 describe("homepage FAQ", () => {
+  it("the Gmail Drafts answer doesn't point to sending from Gmail (the trial's side door)", () => {
+    const a = homepageFaq("Do I have to change how I do email?");
+    expect(a).not.toMatch(/send from either place/i);
+    expect(a).toContain("Gmail Drafts folder");
+  });
+
   it("the deletion answer says exactly what the policy says", () => {
     const a = homepageFaq("What if I stop?");
     expect(a).toContain(DELETION_SENTENCE);
@@ -267,7 +306,7 @@ describe("homepage FAQ", () => {
 
   it("the trial answer doesn't claim nothing at all can be sent", () => {
     const a = homepageFaq("What does the trial look like?");
-    expect(a).toContain("nothing can go to a customer during the trial");
+    expect(a).toContain("Squared Away won't send anything to a customer during the trial");
   });
 
   it("the Gmail-access answer matches the policy: 30 days, then new mail, and the sent mail read", () => {

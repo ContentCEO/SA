@@ -1,6 +1,6 @@
 /**
  * Squared Away Growth: the services we take on, one-on-one. One list: the
- * services section, the "Book a free call" form, its validation and the admin
+ * services section, the call-request form, its validation and the admin
  * page all read it. The blurbs are the card text on the Growth chapter.
  */
 export const GROWTH_SERVICES = [

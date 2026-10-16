@@ -65,7 +65,7 @@ const goodForm = {
   services: ["reviews", "google_ads"],
 };
 
-describe("Book a free call: what we accept", () => {
+describe("Ask Davi to call me: what we accept", () => {
   it("an empty submit explains every required field in plain words, and saves nothing", async () => {
     const r = await requestGrowthCallAction({ status: "idle" }, form({}));
     expect(r.status).toBe("error");
@@ -128,7 +128,7 @@ describe("Book a free call: what we accept", () => {
   });
 });
 
-describe("Book a free call: where it's kept", () => {
+describe("Ask Davi to call me: where it's kept", () => {
   it("a new email gets a Growth-only waitlist row that can't sign in", async () => {
     expect(await requestGrowthCall(parse())).toBe("requested");
     const [row] = await database.select().from(waitlist);
@@ -227,7 +227,7 @@ describe("Book a free call: where it's kept", () => {
   });
 });
 
-describe("Book a free call: the form action", () => {
+describe("Ask Davi to call me: the form action", () => {
   it("a bot that fills the hidden field is told it worked; nothing is stored, sent or counted", async () => {
     const r = await requestGrowthCallAction(
       { status: "idle" },

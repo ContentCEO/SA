@@ -3,7 +3,7 @@ import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { mailboxes, threads } from "@/db/schema";
 import { FOLLOWUP_CATEGORIES, followupSettings, MAX_FOLLOWUPS } from "./drafts";
-import { lastInSql, lastOutSql } from "./thread-sql";
+import { lastInSql, lastOutSql, answeredByPhoneSql } from "./thread-sql";
 
 /** Don't chase anything the owner last wrote about more than this long ago. */
 export const FOLLOWUP_MAX_AGE_DAYS = 21;
@@ -75,6 +75,8 @@ export async function threadsToFollowUp(
         sql`not ${pending}`,
         sql`not ${purposeSent}`,
         sql`not ${saidPaid}`,
+        // "I called them" (round 2, FW E11): the call answered it, so no nudge.
+        sql`not ${answeredByPhoneSql()}`,
       ),
     )
     .orderBy(desc(threads.lastMessageAt))

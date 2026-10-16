@@ -92,14 +92,21 @@ describe("#36 phone notifications", () => {
   });
 
   it("what the phone shows: counts only", () => {
-    expect(pushSummaryText({ replies: 2, needsYou: 1 })).toBe(
+    expect(pushSummaryText({ replies: 2, needsYou: 1, canSend: true })).toBe(
       "1 email needs you · 2 replies ready to send",
+    );
+    // During the trial (or unpaid) nothing can be sent to a customer: "ready to check".
+    expect(pushSummaryText({ replies: 2, needsYou: 1 })).toBe(
+      "1 email needs you · 2 replies ready to check",
+    );
+    expect(pushSummaryText({ replies: 1, needsYou: 0, canSend: false })).toBe(
+      "1 reply ready to check",
     );
     expect(pushSummaryText({ replies: 0, needsYou: 0 })).toBe("Your queue is up to date.");
   });
 
   it("leads at risk come first, as a count (plan #34)", () => {
-    expect(pushSummaryText({ replies: 1, needsYou: 0, atRisk: 2 })).toBe(
+    expect(pushSummaryText({ replies: 1, needsYou: 0, atRisk: 2, canSend: true })).toBe(
       "2 quote requests have waited over 4 hours · 1 reply ready to send",
     );
     expect(pushSummaryText({ replies: 0, needsYou: 1, atRisk: 1 })).toBe(

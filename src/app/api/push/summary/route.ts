@@ -7,6 +7,7 @@ import { countQueue, queueCardIds, queueMembership } from "@/server/drafts";
 import { leadsAtRisk } from "@/server/leads-at-risk";
 import { notificationUrl } from "@/server/leads-at-risk-rules";
 import { pushSummaryText } from "@/server/push-alerts";
+import { canSend } from "@/server/lifecycle";
 import { hitLimit } from "@/server/rate-limit";
 import { termsRequiredResponse } from "@/server/session";
 import { termsAccepted } from "@/server/terms";
@@ -61,6 +62,7 @@ export async function GET() {
         replies: counts.drafts,
         needsYou: counts.needsYou,
         atRisk: atRisk.length,
+        canSend: canSend(workspace, now),
       }),
       url,
       count: badgeCountOf(workspace, counts, now),

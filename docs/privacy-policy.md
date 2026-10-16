@@ -3,7 +3,7 @@
 
 # Privacy Policy
 
-_Last updated: October 15, 2026_
+_Last updated: October 16, 2026_
 
 Squared Away is run by {{OPERATOR}}, {{LOCATION}}. It helps small trade businesses answer their
 email: it sorts incoming business email, writes reply drafts in the owner's own voice, and holds
@@ -23,7 +23,7 @@ The short version:
 ## Who this policy covers
 
 This policy covers the owners and staff who sign in to Squared Away ("you"), and people who join
-our waitlist or book a free Squared Away Growth call on our website. It also explains how we handle
+our waitlist or ask for a free Squared Away Growth call on our website. It also explains how we handle
 information about the people who email your business (your customers and suppliers), because their
 messages pass through Squared Away.
 
@@ -37,11 +37,11 @@ to add (phone number, a note). To stop spam, we briefly keep a scrambled (hashed
 IP address to limit how many times a form can be sent; it can't be turned back into your IP
 address and is deleted within three days.
 
-**When you book a free Growth call:** your name, phone number, email address, trade, the services
+**When you ask for a free Growth call:** your name, phone number, email address, trade, the services
 you want help with (for example Google ads or reviews), when you asked, and anything you add in the
 note. We use it only to contact you about Squared Away Growth. If you're already on the app
-waitlist, we add your request to that entry and keep everything you gave us before. Booking a call
-doesn't sign you up for the app or let you sign in. The same scrambled IP address limit applies to
+waitlist, we add your request to that entry and keep everything you gave us before. Asking for a
+call doesn't sign you up for the app or let you sign in. The same scrambled IP address limit applies to
 this form.
 
 **When you sign in with Google:** your name and email address. Sign-in asks Google only for "who you are" (`openid`, `email`, `profile`). It does not give us
@@ -71,7 +71,8 @@ Settings removes all of our access, that one included.
 - For conversations in your inbox: the text of the messages, so we can sort them and write replies.
   We don't download the text of mail outside your inbox (for example archived newsletters).
 - A one-line summary of what each conversation is about (for example "Wants a quote for a deck
-  repair"), the category we sorted it into, and facts pulled from it: the kind of job, a street
+  repair"), a one-line reason when something needs you or a draft is written a certain way (for
+  example "Lawyer's letter about a lien"), the category we sorted it into, and facts pulled from it: the kind of job, a street
   address, dates, amounts mentioned, invoice details (number, amount, due date, paid or not) and
   building-permit details (permit number, who issued it, inspection time and result, and any
   corrections the inspector asked for).
@@ -79,7 +80,9 @@ Settings removes all of our access, that one included.
   them (for example "Mentions $450 — that price isn't in the email or your profile").
 - **How you write:** a description of your writing (your usual greeting, sign-off, length and
   common phrases) and up to five short example replies in your style. These examples are written
-  by the AI with placeholders in place of names, addresses, phone numbers, emails and prices. To
+  by the AI, which is told to use placeholders instead of customers' names and details; before we
+  save them, our own code also replaces any email addresses, phone numbers, prices and street
+  addresses it finds with placeholders. To
   learn it we read up to 200 of your sent emails from the last year: when you first connect,
   again about once a week (skipped if you have edited your style yourself), when you tap
   **Re-learn from my sent mail**, and again automatically if a read stops part-way. Those sent
@@ -87,8 +90,9 @@ Settings removes all of our access, that one included.
 - Prices you quoted (the amount, the kind of job and the date), kept as your price memory. Only
   you see them, and they are never sent to the AI.
 - Which invoices are marked paid (or "not owed to me"), a marker on conversations that were ever
-  a complaint (so we never offer to ask that customer for a review), and which customers were
-  sent a review request.
+  a complaint (so we never offer to ask that customer for a review), which customers were
+  sent a review request, and when you marked a conversation as answered by phone (**I called
+  them**).
 
 **What you tell us:** your business details (business name, trade, services, service area, hours,
 price list, payment terms, policies, things you never promise, words you never use, short
@@ -169,14 +173,14 @@ your ad accounts) is agreed with you directly, outside this app.
 We use these service providers. Each gets only what it needs:
 
 - **Google** — your Gmail, through the permissions above.
-- **Anthropic** — the text of the emails being sorted or answered, your business details and your
-  writing-style description, sent for the task at hand only: sorting a message, learning your
+- **Anthropic** — the text of the emails being sorted or answered, with each one's sender (name
+  and email address) and subject, your business details and your writing-style description, sent for the task at hand only: sorting a message, learning your
   style from your sent mail, writing a draft, follow-up, deposit or review note, rewording a draft
   when you ask, or comparing a reply before and after you edited it to see how the tone changed.
   Your price memory is never sent. Under Anthropic's commercial terms, this data is not used to
   train their models. Anthropic may keep it for a limited time under its own policies, for example
   to prevent misuse.
-- **Vercel** — hosts the website and app.
+- **Vercel** — hosts the website and app, on servers in the United States (its US East region).
 - **Neon** — hosts our database (in the United States).
 - **Inngest** — runs our background jobs. It sees IDs and counts, not email text.
 - **Stripe** — takes payments. It receives your email address and your business name (or your
@@ -184,12 +188,14 @@ We use these service providers. Each gets only what it needs:
   page may also ask for your billing address, which Stripe uses to work out sales tax; Squared Away
   doesn't store it. Stripe saves that address, and the name you enter there, on its customer record
   of you.
-- **Resend** — delivers our emails to you (the morning summary, the monthly summary and the
-  Gmail-access alert and reminder), which never contain a customer's name or words, and two kinds
-  of notice to us: when someone books a Growth call (it says only that a request came in, with no
-  name, number or email address), and when an account's AI cost runs high for its plan (the
-  business name, or the owner's email address if no business name is set, and the account's AI
-  cost, plan price and usage counts).
+- **Resend** — delivers our emails to you (your invite with the sign-in link, a one-time "your
+  first drafts are ready" email, the morning summary, the monthly summary and the Gmail-access
+  alert and reminder), which never contain a customer's name or words, and three kinds of notice
+  to us: when someone asks for a Growth call (it says only that a request came in, with no name,
+  number or email address), when someone pays (it names only the plan and whether the setup fee
+  was included), and when an account's AI cost runs high for its plan (the business name, or the
+  owner's email address if no business name is set, and the account's AI cost, plan price and
+  usage counts).
 - **Twilio** — only if you turn on text alerts: delivers texts to your own phone (the code that
   confirms your number, then counts and a link).
 - **Your browser's push service** (Google, Apple, Mozilla or Microsoft) — only if you turn on
@@ -199,6 +205,10 @@ We use these service providers. Each gets only what it needs:
 
 We may also share information if the law requires it, or to protect the safety of people or the
 service.
+
+**Where it's processed:** Squared Away runs in the United States. The app runs on Vercel's servers
+in the United States and our database is hosted in the United States; the providers above process
+what they receive under their own policies.
 
 ## Google API Services: Limited Use
 
@@ -224,7 +234,7 @@ In plain words:
   is deleted after 30 days by a daily job. The street address, dates and inspector's corrections
   pulled from a conversation are deleted once its newest email is more than 30 days old. Mail
   older than 30 days is never stored with its text in the first place.
-- **Who, when, subject, summaries and categories**, the kind of job, amounts mentioned, invoice
+- **Who, when, subject, summaries, the one-line reasons and categories**, the kind of job, amounts mentioned, invoice
   details (number, amount, due date, paid or not) and permit details (permit number, who issued
   it, inspection time and result) are kept so your inbox, quotes, money owed and activity history
   keep working, until you disconnect that Gmail address or delete your account.
@@ -277,6 +287,10 @@ are never shown in the browser or written to logs. Our logs never contain email 
 tokens or customers' personal details. Only the account owner can see their mail in the app; our
 admin page shows account health and counts, plus the waitlist and Growth call requests people send
 us from the website.
+
+If a security breach exposes your information, we'll tell you as soon as we can and without
+unreasonable delay, as Massachusetts law (Chapter 93H) requires, and we'll notify the authorities
+that law names.
 
 ## Changes
 

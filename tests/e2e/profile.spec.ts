@@ -21,6 +21,8 @@ test("onboarding: business profile, then the learning screen", async ({ page, co
   await page
     .getByLabel("What work do you take on?")
     .fill("Service calls, panel upgrades, EV chargers.");
+  // Round 2 (FW): everything optional is folded away during setup.
+  await page.getByText("More details, optional").click();
   await page
     .getByLabel("Things we should never promise")
     .fill("Same-day service\nA price over email");

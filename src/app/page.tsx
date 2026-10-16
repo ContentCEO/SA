@@ -98,7 +98,7 @@ const faqs = [
   },
   {
     q: "Do I have to change how I do email?",
-    a: "No. It works inside the Gmail you already use. Drafts appear in your Gmail Drafts folder too, so you can send from either place.",
+    a: "No. It works inside the Gmail you already use. Each draft is also saved in your Gmail Drafts folder, so you can read it there too.",
   },
   {
     q: "Can it see all my email?",
@@ -110,7 +110,7 @@ const faqs = [
   },
   {
     q: "What does the trial look like?",
-    a: "Three days with your real inbox. It sorts and drafts so you can judge the replies — nothing can go to a customer during the trial. If it's not for you, disconnect and you're done.",
+    a: "Three days with your real inbox. It sorts and drafts so you can judge the replies — Squared Away won't send anything to a customer during the trial. If it's not for you, disconnect and you're done.",
   },
   {
     q: "What if I stop?",

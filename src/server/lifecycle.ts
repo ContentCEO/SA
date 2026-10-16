@@ -122,7 +122,7 @@ export function sendingBlockedReason(w: Payable, now: Date = new Date()): string
     case "evaluating":
       return "Read the drafts and see if they sound like you.";
     case "evaluation_expired":
-      return "Your three days are up. Nothing else changes until then.";
+      return "Your three days are up. Choose a plan to switch sending on.";
     case "past_due":
       return "Sending is paused until the payment issue is sorted.";
     case "canceled":
@@ -143,7 +143,7 @@ export function sendingOffLabel(w: Payable, now: Date = new Date()): string {
     case "evaluating":
       return "Sending is off during your three days";
     case "evaluation_expired":
-      return "Sending turns on after setup";
+      return "Sending turns on once you choose a plan";
     case "past_due":
       return "Sending paused — payment issue";
     default:

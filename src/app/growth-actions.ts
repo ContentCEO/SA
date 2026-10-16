@@ -16,7 +16,7 @@ export type GrowthState = {
 };
 
 /**
- * "Book a free call" (Squared Away Growth). Public form: validated server-side, the same
+ * The call-request form (Squared Away Growth). Public form: validated server-side, the same
  * hashed-IP limit bucket as the app waitlist, and the hidden "website" field for bots.
  * It never invites anyone to the app.
  */

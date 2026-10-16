@@ -51,7 +51,7 @@ test("after the three days: read-only, and it says why", async ({ page, context 
 
   const card = page.getByRole("article", { name: "Draft reply to Priya" });
   await expect(card).toContainText("Asked for the address and panel age.");
-  await expect(card.getByRole("note")).toContainText("Sending turns on after setup");
+  await expect(card.getByRole("note")).toContainText("Sending turns on once you choose a plan");
   await expect(card.getByRole("button", { name: "Edit" })).toHaveCount(0);
   await expect(card.getByRole("button", { name: "Discard" })).toHaveCount(0);
   await expect(card.getByRole("button", { name: "Send reply" })).toHaveCount(0);
@@ -133,6 +133,14 @@ test("admin: invite an owner", async ({ page, context }) => {
   await page.waitForURL(/done=invited/);
   await expect(page.getByText("Invited. They can sign in now")).toBeVisible();
   await expect(page.getByText(email)).toBeVisible();
+  // Round 2 (FW A4): the Google test-user reminder, ticked off by hand.
+  const item = page.getByRole("listitem").filter({ hasText: email });
+  await expect(item).toContainText("Add them as a Google test user");
+  await item.getByRole("button", { name: "I added them" }).click();
+  await page.waitForURL(/done=test_user/);
+  await expect(page.getByRole("listitem").filter({ hasText: email })).toContainText(
+    "Google test user: added",
+  );
 
   const [row] = await testDb.select().from(schema.invites).where(eq(schema.invites.email, email));
   expect(row?.trade).toBe("electrical");

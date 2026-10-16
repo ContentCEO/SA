@@ -79,6 +79,7 @@ import { isInvoiceThread, paymentSaid } from "./money-rules";
 import { quoteStopsNudges } from "./quote-rules";
 import { BACK_ON_TOP_MS, isEmergency } from "./snooze-rules";
 import { headerPickIds, toNeedsYouItem } from "./digest-rules";
+import { answeredByPhone } from "./first-week-rules";
 import {
   asDate,
   messageReplyAddress,
@@ -86,6 +87,7 @@ import {
   notDraftMessage,
   sideEmailSql,
   waitingSinceSql,
+  answeredByPhoneSql,
 } from "./thread-sql";
 import { closingQuestionAllowed, recentReviewAddresses, reviewAllowed } from "./offers";
 import { lockReviewAddress } from "./review-lock";
@@ -148,6 +150,8 @@ export type CreateOutcome =
         | "municipal"
         // Round 2: asks to pay a new account (A11) — only the owner's tap drafts one.
         | "payment_change"
+        // Round 2 (FW E11): the owner said they called after the newest email.
+        | "answered_by_phone"
         // Purpose drafts (plan #26 #28 #29). S6 adds the per-purpose eligibility reasons.
         | "purpose_not_allowed"
         | "feature_off"
@@ -496,6 +500,18 @@ export async function createDraftForThread(
   const { thread, mailbox, workspace } = row;
   if (!jobsAllowed(workspace, now)) return { status: "skipped", reason: "read_only" };
   if (mailbox.status !== "active") return { status: "skipped", reason: "mailbox_inactive" };
+  // "I called them" after the customer's newest email (round 2, FW E11): a job writes nothing
+  // (no reply, no nudge) until they write again. The owner's own tap still drafts.
+  if (opts.trigger !== "owner" && thread.handledOfflineAt) {
+    const [newestIn] = await db()
+      .select({ at: messages.sentAt })
+      .from(messages)
+      .where(and(eq(messages.threadId, threadId), eq(messages.direction, "in")))
+      .orderBy(desc(messages.sentAt))
+      .limit(1);
+    if (answeredByPhone(thread.handledOfflineAt, newestIn?.at ?? null))
+      return { status: "skipped", reason: "answered_by_phone" };
+  }
   // Review requests and closing questions come from the owner's tap, never a job.
   if (
     opts.purpose !== undefined &&
@@ -1828,11 +1844,36 @@ export async function expirePendingNudge(
   note: string,
   opts: DraftDeps = {},
 ): Promise<boolean> {
+  return expireWaiting(waitingNudge(threadId), note, opts);
+}
+
+/**
+ * Round 2 (FW E11): the owner answered by phone, so whatever draft waits on the thread (a reply
+ * or a nudge) goes, here and in Gmail — the same claim-first rules as `expirePendingNudge`. A
+ * reply already tapped Send (in its undo window) is left alone.
+ */
+export async function expirePendingDraft(
+  threadId: string,
+  note: string,
+  opts: DraftDeps = {},
+): Promise<boolean> {
+  return expireWaiting(
+    and(eq(drafts.threadId, threadId), eq(drafts.status, "pending"), isNull(drafts.sendAfter))!,
+    note,
+    opts,
+  );
+}
+
+async function expireWaiting(
+  where: ReturnType<typeof and>,
+  note: string,
+  opts: DraftDeps,
+): Promise<boolean> {
   const now = opts.now?.() ?? new Date();
   const [claimed] = await db()
     .update(drafts)
     .set({ status: "expired", closedNote: note, decidedAt: now })
-    .where(waitingNudge(threadId))
+    .where(where)
     .returning({
       id: drafts.id,
       threadId: drafts.threadId,
@@ -2030,6 +2071,8 @@ export type QueueItem = {
   gmailThreadId: string;
   mailboxEmail: string;
   lastMessageAt: Date | null;
+  /** When the customer's newest email was written (round 2, FW E9: shown on every card). */
+  customerWroteAt: Date | null;
 };
 
 /** Plan #6: back from a snooze within the last day — pinned on top. */
@@ -2103,6 +2146,8 @@ export async function queueMembership(
           inArray(threads.mailboxId, boxIds),
           eq(threads.needsOwner, true),
           eq(threads.inInbox, true),
+          // "I called them" (round 2, FW E11): answered, until the customer writes again.
+          sql`not ${answeredByPhoneSql()}`,
         ),
       )
       .orderBy(desc(threads.lastMessageAt))
@@ -2218,7 +2263,12 @@ export async function listQueue(
   const draftById = new Map(draftRows.map((r) => [r.draft.id, r]));
 
   // The customer as a reply addresses them: a website form's Reply-To, else the sender.
-  type Who = { name: string | null; address: string | null; redirected: boolean };
+  type Who = {
+    name: string | null;
+    address: string | null;
+    redirected: boolean;
+    sentAt: Date | null;
+  };
   const senders = async (threadIds: string[]) => {
     if (!threadIds.length) return new Map<string, Who>();
     const rows = await db()
@@ -2235,7 +2285,12 @@ export async function listQueue(
     const out = new Map<string, Who>();
     for (const r of rows)
       if (!out.has(r.threadId))
-        out.set(r.threadId, { name: r.name, address: r.address, redirected: !!r.redirected });
+        out.set(r.threadId, {
+          name: r.name,
+          address: r.address,
+          redirected: !!r.redirected,
+          sentAt: r.sentAt,
+        });
     return out;
   };
   const who = await senders([...needIds, ...members.drafts.map((m) => m.threadId)]);
@@ -2269,6 +2324,7 @@ export async function listQueue(
           gmailThreadId: t.gmailThreadId,
           mailboxEmail: emailOf.get(t.mailboxId) ?? "",
           lastMessageAt: t.lastMessageAt,
+          customerWroteAt: who.get(t.id)?.sentAt ?? null,
         } satisfies QueueItem,
       ];
     }),
@@ -2301,6 +2357,7 @@ export async function listQueue(
           gmailThreadId: thread.gmailThreadId,
           mailboxEmail: emailOf.get(draft.mailboxId) ?? "",
           lastMessageAt: thread.lastMessageAt,
+          customerWroteAt: who.get(thread.id)?.sentAt ?? null,
         } satisfies QueueItem,
       ];
     }),
@@ -2339,6 +2396,8 @@ export async function threadsToAutoDraft(mailboxId: string, limit = 10): Promise
         sql`${threads.classifiedAt} is not null and ${threads.classifiedAt} >= ${lastIn}`,
         sql`(${lastOut} is null or ${lastOut} < ${lastIn})`,
         sql`(${lastDraft} is null or ${lastDraft} < ${lastIn})`,
+        // "I called them" after the newest email (round 2, FW E11): nothing to draft.
+        sql`(${threads.handledOfflineAt} is null or ${threads.handledOfflineAt} < ${lastIn})`,
       ),
     )
     .orderBy(desc(threads.lastMessageAt))

@@ -40,7 +40,7 @@ const oneLine = (v: unknown) => (typeof v === "string" ? scrubMarker(collapseLin
 const serviceOrder = (picked: readonly string[]) =>
   GROWTH_SERVICES.map((s) => s.value).filter((v) => picked.includes(v));
 
-/** "Book a free call": plain-language messages, exactly as on the page. */
+/** The call-request form: plain-language messages, exactly as on the page. */
 export const growthInput = z.object({
   name: z.preprocess(oneLine, z.string().min(1, msg.nameEmpty).max(120, msg.nameLong)),
   phone: z.string().transform((raw, ctx) => {
@@ -144,7 +144,7 @@ export function growthNotifyKey(email: string, now: Date) {
   return `growth-${h}-${localStamp(now).slice(0, 10)}`;
 }
 
-/** The form waits for the notice; a Resend that hangs must not leave the visitor on "Booking…". */
+/** The form waits for the notice; a Resend that hangs must not leave the visitor on "Sending…". */
 export const GROWTH_NOTIFY_TIMEOUT_MS = 5000;
 
 /**

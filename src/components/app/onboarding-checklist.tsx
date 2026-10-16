@@ -40,8 +40,11 @@ export function OnboardingChecklist({
               >
                 {s.done ? "✓" : i + 1}
               </span>
-              <span className={cn("flex-1", s.done ? "line-through opacity-70" : "font-semibold")}>
-                {s.label}
+              <span className="flex flex-1 flex-col py-1">
+                <span className={s.done ? "line-through opacity-70" : "font-semibold"}>
+                  {s.label}
+                </span>
+                {s.hint && !s.done ? <span className="text-sm">{s.hint}</span> : null}
               </span>
               {s.detail && !s.done ? <span className="text-sm">{s.detail}</span> : null}
             </Link>

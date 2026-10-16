@@ -83,6 +83,7 @@ describe("job wiring", () => {
         "purge-expired-bodies",
         "send-after-undo",
         "voice-ideas",
+        "found-money-drafts",
       ].sort(),
     );
   });

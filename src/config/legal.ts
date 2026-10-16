@@ -14,7 +14,7 @@
  * documents: everyone is then asked to agree again on their next screen. A unit test keeps the
  * three in step.
  */
-export const TERMS_VERSION = "2026-10-15";
+export const TERMS_VERSION = "2026-10-16";
 
 /**
  * Set by the sign-in button's server action when the box is ticked, read (and deleted) when

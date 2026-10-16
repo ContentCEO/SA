@@ -211,6 +211,13 @@
       "when": 1792161746148,
       "tag": "0029_remodeling_extra_trades",
       "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "7",
+      "when": 1792174183546,
+      "tag": "0030_first_week",
+      "breakpoints": true
     }
   ]
 }

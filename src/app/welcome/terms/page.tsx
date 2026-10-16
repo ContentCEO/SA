@@ -17,7 +17,12 @@ import { phoneHref } from "@/lib/phone-href";
 import { listMailboxes } from "@/server/mailboxes";
 import { requireSignedIn } from "@/server/session";
 import { termsOf } from "@/server/terms";
-import { hasCurrentTerms, safeNextPath, termsScreenCopy } from "@/server/terms-rules";
+import {
+  hasCurrentTerms,
+  leaveOptionsLine,
+  safeNextPath,
+  termsScreenCopy,
+} from "@/server/terms-rules";
 import {
   agreeToTermsAction,
   deleteAccountFromTermsAction,
@@ -78,8 +83,11 @@ export default async function TermsAgreementPage(props: PageProps<"/welcome/term
             Don&apos;t agree?
           </h2>
           <p className="text-muted-foreground">
-            You can still leave. Cancel your plan, disconnect Gmail or delete your account right
-            here, or just sign out. Questions? Call or text us at{" "}
+            {leaveOptionsLine({
+              canManageBilling: Boolean(workspace.stripeCustomerId),
+              hasGmail: mailboxes.length > 0,
+            })}{" "}
+            Questions? Call or text us at{" "}
             <a
               href={phoneHref("tel", siteConfig.phone)}
               className="font-semibold text-charcoal underline underline-offset-4"

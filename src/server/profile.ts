@@ -101,6 +101,17 @@ export const businessProfileInput = z.object({
     .int("Whole dollars, please.")
     .min(0)
     .max(10_000_000),
+  /**
+   * Round 2 (FW C10): the browser's time zone, sent by the setup form only. Anything that isn't
+   * a real zone is dropped (left as it was), never an error.
+   */
+  timeZone: z
+    .string()
+    .trim()
+    .max(64)
+    .refine((tz) => isTimeZone(tz))
+    .optional()
+    .catch(undefined),
 });
 export type BusinessProfileInput = z.input<typeof businessProfileInput>;
 
@@ -119,7 +130,8 @@ export async function saveBusinessProfile(
   data: z.output<typeof businessProfileInput>,
   now: Date = new Date(),
 ) {
-  const { businessName, trade, extraTrades, ...profile } = data;
+  const { businessName, trade, extraTrades, timeZone, ...rest } = data;
+  const profile = { ...rest, ...(timeZone ? { timeZone } : {}) };
   await db()
     .update(workspaces)
     .set({

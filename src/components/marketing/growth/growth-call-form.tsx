@@ -73,7 +73,7 @@ function Success({ phone }: { phone?: string }) {
   );
 }
 
-/** "Book a free call" for Squared Away Growth. Lives in an off-white `.sa-light` card. */
+/** The call-request form for Squared Away Growth. Lives in an off-white `.sa-light` card. */
 export function GrowthCallForm() {
   const [state, action] = useActionState<GrowthState, FormData>(requestGrowthCallAction, {
     status: "idle",

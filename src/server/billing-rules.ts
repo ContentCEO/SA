@@ -1,4 +1,4 @@
-import { pricing, type PlanId } from "@/config/pricing";
+import { formatDollars, pricing, type PlanId } from "@/config/pricing";
 import type { Workspace } from "@/db/schema";
 import { effectiveStatus, SENDING_ALLOWED, setupReallyPaid } from "./lifecycle";
 
@@ -59,6 +59,21 @@ export const SALES_TAX_ON_NOTE =
 
 /** The owner-facing note next to plan prices (homepage and /billing). */
 export const SALES_TAX_NOTE = "Plus sales tax where it applies.";
+
+/**
+ * Round 2 (FW): the first charge, said plainly before Stripe's page, from the config: the plan's
+ * first month plus the one-time setup fee when it's still due, then the monthly price. Tax is
+ * on top (prices are tax-exclusive), so it says so.
+ */
+export function firstChargeLine(plan: PlanId, includeSetupFee: boolean): string {
+  const month = pricing.plans[plan].amountCents;
+  const fmt = (c: number) => formatDollars(c);
+  if (!includeSetupFee) {
+    return `Your first payment is ${fmt(month)} for the first month, plus sales tax where it applies. Then ${fmt(month)} a month.`;
+  }
+  const setup = pricing.setupFee.amountCents;
+  return `Your first payment is ${fmt(setup + month)}: ${fmt(setup)} for setup and ${fmt(month)} for the first month, plus sales tax where it applies. Then ${fmt(month)} a month.`;
+}
 
 /**
  * The /admin Payments line when a checkout had to go without Stripe's "I agree" box (Davi,

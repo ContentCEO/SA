@@ -178,7 +178,8 @@ export const sideEmailSql = (alias: string) => sql`(${sideInSql(alias)} or ${sid
 
 /**
  * When the customer / the owner last wrote on the thread (correlated subqueries). Neither an
- * unsent Gmail draft nor a side conversation (a forward to the crew, `sideEmailSql`) counts:
+ * unsent Gmail draft nor a side conversation (a forward to the crew, `sideEmailSql`) counts;
+ * the owner's "I called them" (`threads.handled_offline_at`, round 2 FW E11) does:
  * one answer for "the owner wrote" everywhere — leads at risk, the scorecard, Quotes'
  * stages, the digest's waits, no-answer guesses and follow-ups.
  */
@@ -189,7 +190,15 @@ export const lastInSql = () =>
 export const lastOutSql = () =>
   sql<
     string | Date | null
-  >`(select max(m.sent_at) from messages m where m.thread_id = ${outerThreadId()} and m.direction = 'out' and ${notDraftSql("m")} and not ${sideEmailSql("m")})`;
+  >`greatest((select max(m.sent_at) from messages m where m.thread_id = ${outerThreadId()} and m.direction = 'out' and ${notDraftSql("m")} and not ${sideEmailSql("m")}), ${threads.handledOfflineAt})`;
+
+/**
+ * Round 2 (FW E11): the owner said they answered by phone ("I called them") after the
+ * customer's newest email. Never NULL. Follow-ups and auto drafts skip these: the call was
+ * the answer, so nothing is drafted until the customer writes again.
+ */
+export const answeredByPhoneSql = () =>
+  sql`(${threads.handledOfflineAt} is not null and ${threads.handledOfflineAt} >= coalesce(${lastInSql()}, '-infinity'::timestamptz))`;
 
 /**
  * Since when the customer has been waiting (plan M8 A14): their first message after the

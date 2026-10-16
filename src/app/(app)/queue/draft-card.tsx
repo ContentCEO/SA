@@ -9,6 +9,7 @@ import type { ConfidenceLabel } from "@/config/drafting";
 import { BodyWithGaps, ConfidenceTag, PastPrices, WhyThis, type PastPrice } from "./draft-parts";
 import { SayAChange, TweakChips } from "./revise-controls";
 import { RemindMe, type SnoozeOption } from "./remind-me";
+import { CalledThem } from "./called-them";
 import {
   addIntent,
   intentsServerSnapshot,
@@ -36,6 +37,8 @@ export type DraftCardProps = {
   /** The customer's email named this address to reply to (a website form's Reply-To). */
   toFromReplyTo?: boolean;
   tag: string;
+  /** Round 2 (FW E9): when the customer wrote ("Wrote 9 days ago"), on every card. */
+  wrote?: string | null;
   /** One line on what the customer wants, from sorting — so the card reads without opening Gmail. */
   summary?: string | null;
   reason: string;
@@ -226,6 +229,7 @@ export function DraftCard(p: DraftCardProps) {
         </div>
         <ToLine address={p.toAddress} fromReplyTo={p.toFromReplyTo} />
         <span className="text-sm font-semibold">{p.tag}</span>
+        {p.wrote ? <span className="text-sm">{p.wrote}</span> : null}
         {p.summary ? <p className="font-semibold">{p.summary}</p> : null}
         <p className={p.summary ? "text-muted-foreground" : undefined}>{p.reason}</p>
       </header>
@@ -477,6 +481,7 @@ export function DraftCard(p: DraftCardProps) {
                 </div>
               )}
               <RemindMe threadId={p.threadId} options={p.remindOptions ?? []} />
+              {p.readOnly ? null : <CalledThem threadId={p.threadId} hasDraft />}
             </div>
           )}
         </>

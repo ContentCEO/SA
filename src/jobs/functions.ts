@@ -42,11 +42,13 @@ import {
   type MailboxBackfillResult,
 } from "@/server/reply-to-backfill";
 import { runM7Backfill } from "@/server/m7-backfill";
+import { draftFoundMoneyThread, sendFirstDraftsReady } from "@/server/first-week";
 import { applyPendingReferralCredits } from "@/server/referrals";
 import { considerAutopilot, overdueAutopilotDrafts, runAutopilotSend } from "@/server/autopilot";
 import {
   autopilotSendRequested,
   draftSendQueued,
+  foundMoneyDraftsRequested,
   inngest,
   mailboxClassifyRequested,
   mailboxConnected,
@@ -220,6 +222,15 @@ export const draftMailbox = inngest.createFunction(
       }
       if (r.status === "reconnect_needed" || (r.status === "skipped" && r.reason === "capped"))
         break;
+    }
+    // Round 2 (FW D4): the first drafts after the first read → tell the owner, once ever.
+    if (created) {
+      const workspaceId = await step.run("workspace", () => getMailboxWorkspace(mailboxId));
+      if (workspaceId) {
+        await step.run("first-drafts-ready", () =>
+          sendFirstDraftsReady(new Date(), { workspaceId }),
+        );
+      }
     }
     return { created };
   },
@@ -434,6 +445,8 @@ export const workspaceLifecycle = inngest.createFunction(
     await step.run("lead-at-risk-pushes", () => sendLeadAtRiskPushes());
     // Plan #47 (off unless FEATURE_REFERRALS and an amount): add referral credits still waiting.
     await step.run("referral-credits", () => applyPendingReferralCredits());
+    // Round 2 (FW D4): backstop for "your first drafts are ready" (once ever per account).
+    await step.run("first-drafts-ready", () => sendFirstDraftsReady());
     return {
       started,
       expired,
@@ -469,6 +482,36 @@ export const replyToBackfill = inngest.createFunction(
     }
     const done = await step.run("finish", () => finishReplyToBackfill(results));
     return { ran: true, done };
+  },
+);
+
+/**
+ * Round 2 (FW D2): the owner's "Draft them" on found money. One thread per step; every result
+ * is a draft in the queue, nothing is sent. Stops at the AI cap or lost Google access.
+ */
+export const foundMoneyDrafts = inngest.createFunction(
+  {
+    id: "found-money-drafts",
+    triggers: [foundMoneyDraftsRequested],
+    concurrency: { key: "event.data.workspaceId", limit: 1 },
+    retries: 3,
+  },
+  async ({ event, step }) => {
+    const { workspaceId, replies, nudges } = event.data;
+    const jobs = [
+      ...replies.map((id) => ({ id, kind: "reply" as const })),
+      ...nudges.map((id) => ({ id, kind: "nudge" as const })),
+    ];
+    let created = 0;
+    for (const j of jobs) {
+      const r = await step.run(`draft-${j.kind}-${j.id}`, () =>
+        politely(() => draftFoundMoneyThread(workspaceId, j.id, j.kind)),
+      );
+      if (r.status === "created") created++;
+      if (r.status === "reconnect_needed" || (r.status === "skipped" && r.reason === "capped"))
+        break;
+    }
+    return { created };
   },
 );
 
@@ -514,4 +557,5 @@ export const functions = [
   sendAfterUndo,
   voiceIdeas,
   replyToBackfill,
+  foundMoneyDrafts,
 ];

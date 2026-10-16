@@ -30,14 +30,16 @@ const at = (d: Date) => sql`${d.toISOString()}::timestamptz`;
  * (when it was okayed), or a send waiting out its undo window (as leadsAtRisk, A12). A reply
  * sent from the app counts at once, before the next sync brings in its email. Forwarding the
  * request to the crew answers nobody (`sideEmailSql`, the same rule as leads at risk), but a
- * reply to a contact-form lead's Reply-To address does.
+ * reply to a contact-form lead's Reply-To address does. So does the owner's "I called them"
+ * (round 2, FW E11): the time they tapped it, the only record we have of the call.
  */
 function firstAnswerSql(after: SQL, now: Date): SQL {
   const queued = sql`least(coalesce(d.send_after, d.send_claimed_at), ${at(now)})`;
   return sql`least(
     (select min(o.sent_at) from messages o where o.thread_id = ${threads.id} and o.direction = 'out' and ${notDraftSql("o")} and o.sent_at > ${after} and o.sent_at <= ${at(now)} and not ${sideEmailSql("o")}),
     (select min(d.decided_at) from drafts d where d.thread_id = ${threads.id} and d.status in ('sent', 'edited_and_sent') and d.decided_at > ${after} and d.decided_at <= ${at(now)}),
-    (select min(${queued}) from drafts d where d.thread_id = ${threads.id} and d.status = 'pending' and (d.send_after is not null or d.send_claimed_at is not null) and ${queued} > ${after})
+    (select min(${queued}) from drafts d where d.thread_id = ${threads.id} and d.status = 'pending' and (d.send_after is not null or d.send_claimed_at is not null) and ${queued} > ${after}),
+    (case when ${threads.handledOfflineAt} > ${after} and ${threads.handledOfflineAt} <= ${at(now)} then ${threads.handledOfflineAt} end)
   )`;
 }
 
