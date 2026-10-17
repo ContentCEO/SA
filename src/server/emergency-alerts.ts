@@ -3,7 +3,7 @@ import { and, count, desc, eq, gte, inArray, isNotNull, isNull, lte, or, sql } f
 import { db } from "@/db";
 import { activityLog, businessProfiles, mailboxes, threads, workspaces } from "@/db/schema";
 import { appUrl } from "@/lib/app-url";
-import { sendSms, type SmsSender } from "@/lib/sms";
+import { sendSms, smsConfigured, type SmsSender } from "@/lib/sms";
 import { pushConfigured, sendPush, type PushSender } from "@/lib/web-push";
 import {
   dayStart,
@@ -139,17 +139,22 @@ export async function sendEmergencyAlerts(
     deps.push || pushConfigured()
       ? await pushEndpointsByWorkspace(deps.workspaceId)
       : new Map<string, string[]>();
-  const texting = await db()
-    .select({ workspaceId: businessProfiles.workspaceId })
-    .from(businessProfiles)
-    .where(
-      and(
-        deps.workspaceId ? eq(businessProfiles.workspaceId, deps.workspaceId) : undefined,
-        eq(businessProfiles.smsAlertsEnabled, true),
-        isNotNull(businessProfiles.alertPhoneVerifiedAt),
-        isNotNull(businessProfiles.alertPhone),
-      ),
-    );
+  // Texting switched off for the app (no Twilio settings): nobody is texted, and an owner with
+  // texts alone isn't claimed and handed back on every run.
+  const canText = !!deps.send || smsConfigured();
+  const texting = canText
+    ? await db()
+        .select({ workspaceId: businessProfiles.workspaceId })
+        .from(businessProfiles)
+        .where(
+          and(
+            deps.workspaceId ? eq(businessProfiles.workspaceId, deps.workspaceId) : undefined,
+            eq(businessProfiles.smsAlertsEnabled, true),
+            isNotNull(businessProfiles.alertPhoneVerifiedAt),
+            isNotNull(businessProfiles.alertPhone),
+          ),
+        )
+    : [];
   const ids = [...new Set([...phonesBy.keys(), ...texting.map((r) => r.workspaceId)])];
   if (!ids.length) return { sent: 0 };
 
@@ -168,7 +173,9 @@ export async function sendEmergencyAlerts(
       if (p && !p.emergencyAlertsEnabled) continue;
       const phones = phonesBy.get(w.id) ?? [];
       const smsTo =
-        p?.smsAlertsEnabled && p.alertPhoneVerifiedAt && p.alertPhone ? p.alertPhone : null;
+        canText && p?.smsAlertsEnabled && p.alertPhoneVerifiedAt && p.alertPhone
+          ? p.alertPhone
+          : null;
       if (!phones.length && !smsTo) continue;
 
       const candidates = await emergencyCandidates(w.id, now);
