@@ -35,6 +35,26 @@ test("home page: promise, pricing from config, and a way in", async ({ page }) =
   expect(overflow).toBe(false);
 });
 
+test("home page: the queue picture shows Send reply, and the trade cards come first (375px)", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 375, height: 812 });
+  await page.goto("/");
+  // Check 6 P4: the picture shows the main action; the caption says the trial rule once.
+  const figure = page.locator("figure").first();
+  await expect(figure).toContainText("Send reply");
+  await expect(figure.locator("p").last()).toContainText("won't send to a customer");
+  // Check 34 P2: the first "what it does" card is what a trade inbox tool does.
+  const cards = page.getByRole("region", { name: "What it does" }).getByRole("heading", {
+    level: 3,
+  });
+  await expect(cards.first()).toHaveText("Knows your trade");
+  const overflow = await page.evaluate(
+    () => document.documentElement.scrollWidth > document.documentElement.clientWidth,
+  );
+  expect(overflow).toBe(false);
+});
+
 test.describe("waitlist form", () => {
   // Its own address, so the shared form limit (10 an hour) isn't spent by other tests.
   test.use({ extraHTTPHeaders: { "x-forwarded-for": "198.51.100.11" } });

@@ -242,7 +242,8 @@ export default async function HomePage(props: PageProps<"/">) {
             <p className="text-lg font-semibold">
               On every plan, each reply waits for your okay, and follow-ups are two nudges at most,
               each one a draft you approve. Where autopilot is included, it stays off until you earn
-              it, and every autopilot reply waits 10 minutes so you can stop it.
+              it, it never answers a complaint or sends a reply that mentions money, and every
+              autopilot reply waits 10 minutes so you can stop it.
             </p>
             <p className="text-slate">
               Prices in US dollars. Month to month — stop any time. Every plan starts with the

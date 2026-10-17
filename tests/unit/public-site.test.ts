@@ -4,10 +4,12 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { Headline } from "@/components/brand/headline";
+import { features } from "@/components/marketing/home-copy";
 import { pricing } from "@/config/pricing";
 import { siteConfig } from "@/config/site";
 import { beforeSend, countedUrl } from "@/lib/analytics-rules";
 import { jsonLd, structuredData } from "@/lib/structured-data";
+import { QUOTE_STAGES, stageLabel } from "@/server/quote-rules";
 import sitemap from "@/app/sitemap";
 
 const files = (dir: string): string[] =>
@@ -152,5 +154,34 @@ describe("/growth's own share card", () => {
     expect(og).toContain("growthCopy.opener.serif");
     expect(og).not.toMatch(/serif: "your inbox|heavy: "handled/);
     expect(readFileSync("src/app/growth/page.tsx", "utf8")).not.toContain("/opengraph-image");
+  });
+});
+
+describe("homepage feature cards (Check 34 P2, Check 6 P5, Check 34 P3)", () => {
+  const titles = () => features.map((f) => f.title);
+
+  it("leads with what a trade inbox tool does, and keeps the grid at nine cards", () => {
+    expect(titles().slice(0, 2)).toEqual(["Knows your trade", "Won't take orders from strangers"]);
+    expect(features.length).toBeLessThanOrEqual(9);
+    // Phone alerts wait on their keys (not live), so no card claims them yet.
+    expect(titles()).not.toContain("Buzzes you when it matters");
+  });
+
+  it("tells visitors about Quotes, Money and Customers", () => {
+    for (const t of ["Every quote in one list", "Who owes you", "Your customers, in one place"])
+      expect(titles()).toContain(t);
+    const quotes = features.find((f) => f.title === "Every quote in one list")!.body;
+    for (const s of QUOTE_STAGES) expect(quotes).toContain(stageLabel[s].toLowerCase());
+  });
+
+  it("no card brags", () => {
+    for (const f of features) expect(f.body, f.title).not.toMatch(/only one|unlike|best/i);
+  });
+
+  it("the follow-up card names the two limits the scan keeps", () => {
+    const body = features.find((f) => f.title === "Chases quiet quotes")!.body;
+    expect(body).toContain("emailed you");
+    expect(body).toContain("other software");
+    expect(body).toContain("I called them");
   });
 });

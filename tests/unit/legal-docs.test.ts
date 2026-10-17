@@ -403,8 +403,9 @@ describe("owner-facing copy about the trial", () => {
   });
 
   it("the homepage states the nudge cap the code keeps (nudges sent, each a draft)", () => {
+    // Check 34 P3: and only where the customer emailed and the owner emailed back.
     expect(flat(readFileSync("src/components/marketing/home-copy.ts", "utf8"))).toContain(
-      "Two nudges at most per conversation — each one a draft that waits for your okay.",
+      "it drafts a friendly nudge, two at most, each one waiting for your okay.",
     );
   });
 
