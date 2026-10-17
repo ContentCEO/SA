@@ -36,6 +36,7 @@ import {
   type FirstLookCounts,
 } from "./first-week-rules";
 import { effectiveStatus, isReadOnly, jobsAllowed, ReadOnlyError } from "./lifecycle";
+import { clearNeedsOwnerNow } from "./needs-owner";
 import { pushEndpointsByWorkspace, removePushSubscription } from "./push-alerts";
 import { answeredByPhoneSql, lastInSql, lastOutSql, waitingSinceSql } from "./thread-sql";
 
@@ -60,6 +61,11 @@ export async function markAnsweredByPhone(
   workspaceId: string,
   threadId: string,
   opts: DraftDeps = {},
+  /**
+   * Check 11 P8: Quotes' "I sent the price another way" (estimate software emails the customer
+   * itself): the same mark, logged with `via: "other"`, plus the price the owner typed.
+   */
+  other: { via: "other"; amountCents?: number | null } | null = null,
 ): Promise<"marked" | "not_found"> {
   const now = opts.now?.() ?? new Date();
   const [row] = await db()
@@ -70,18 +76,30 @@ export async function markAnsweredByPhone(
     .where(and(eq(threads.id, threadId), eq(mailboxes.workspaceId, workspaceId)));
   if (!row) return "not_found";
   if (isReadOnly(row.workspace, now)) throw new ReadOnlyError(effectiveStatus(row.workspace, now));
-  await db().update(threads).set({ handledOfflineAt: now }).where(eq(threads.id, threadId));
+  const typed = other?.amountCents != null;
+  await db()
+    .update(threads)
+    .set({ handledOfflineAt: now, ...(typed ? { quoteAmountCents: other!.amountCents } : {}) })
+    .where(eq(threads.id, threadId));
+  // Check 10 P1: the call answered it, so "Needs you" lets go too (Inbox, Queue, follow-ups).
+  await clearNeedsOwnerNow(workspaceId, threadId, "phone");
   const draftRemoved = await expirePendingDraft(threadId, "Answered by phone.", {
     ...opts,
     now: () => now,
   });
-  await db().insert(activityLog).values({
-    workspaceId,
-    actor: "owner",
-    action: "answered_by_phone",
-    threadId,
-    detail: { draftRemoved },
-  });
+  await db()
+    .insert(activityLog)
+    .values({
+      workspaceId,
+      actor: "owner",
+      action: "answered_by_phone",
+      threadId,
+      // `amountTyped` (yes/no, never the amount) keeps a typed price out of price memory, like a
+      // typed Won amount.
+      detail: other
+        ? { draftRemoved, via: other.via, ...(typed ? { amountTyped: true } : {}) }
+        : { draftRemoved },
+    });
   return "marked";
 }
 

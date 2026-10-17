@@ -4,7 +4,12 @@ import { redirect } from "next/navigation";
 import { z } from "zod";
 import { ReadOnlyError } from "@/server/lifecycle";
 import { LOST_REASONS, parseDollars } from "@/server/quote-rules";
-import { setLostReason, setQuoteOutcome } from "@/server/quotes";
+import {
+  markQuoteSentAnotherWay,
+  setLostReason,
+  setQuoteDismissed,
+  setQuoteOutcome,
+} from "@/server/quotes";
 import { requireOwner } from "@/server/session";
 
 const input = z.object({
@@ -69,4 +74,43 @@ export async function lostReasonAction(formData: FormData) {
   }
   const back = parsed.data.stage ? `&stage=${encodeURIComponent(parsed.data.stage)}` : "";
   redirect(r === "ok" ? `/quotes?done=lost_reason${back}` : "/quotes?error=unknown");
+}
+
+/**
+ * Check 11 P8: "I sent the price another way" (QuickBooks, Jobber…). Counts as the owner's
+ * answer, with the price typed if any. Drafts and sends nothing.
+ */
+export async function sentAnotherWayAction(formData: FormData) {
+  const { workspace } = await requireOwner();
+  const threadId = z.string().uuid().safeParse(formData.get("threadId"));
+  if (!threadId.success) redirect("/quotes?error=unknown");
+  const raw = formData.get("amount");
+  const amount = typeof raw === "string" && raw.trim() ? parseDollars(raw) : undefined;
+  if (amount === null) redirect("/quotes?error=amount");
+  let r;
+  try {
+    r = await markQuoteSentAnotherWay(workspace.id, threadId.data, amount ?? null);
+  } catch (err) {
+    if (err instanceof ReadOnlyError) redirect("/quotes?error=readonly");
+    throw err;
+  }
+  redirect(r === "marked" ? "/quotes?done=sent_other" : "/quotes?error=unknown");
+}
+
+/** Check 11 P8: "Not a quote" and "Put back". Only the mark changes. */
+export async function dismissQuoteAction(formData: FormData) {
+  const { workspace } = await requireOwner();
+  const parsed = z
+    .object({ threadId: z.string().uuid(), dismiss: z.enum(["yes", "no"]) })
+    .safeParse({ threadId: formData.get("threadId"), dismiss: formData.get("dismiss") });
+  if (!parsed.success) redirect("/quotes?error=unknown");
+  const dismiss = parsed.data.dismiss === "yes";
+  let ok;
+  try {
+    ok = await setQuoteDismissed(workspace.id, parsed.data.threadId, dismiss);
+  } catch (err) {
+    if (err instanceof ReadOnlyError) redirect("/quotes?error=readonly");
+    throw err;
+  }
+  redirect(ok ? `/quotes?done=${dismiss ? "dismissed" : "restored"}` : "/quotes?error=unknown");
 }

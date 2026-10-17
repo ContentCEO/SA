@@ -18,7 +18,8 @@ import { isFoldableJunk, searchText } from "@/server/inbox-rules";
 import { draftReplyAction } from "../queue/actions";
 import { channelKind, channelName, openSiteUrl } from "@/server/channel-rules";
 import { InboxSearch } from "./inbox-search";
-import { markNeedsOwnerAction } from "./actions";
+import { markNeedsOwnerAction, takeOffListAction } from "./actions";
+import { CalledThem } from "../queue/called-them";
 import { Notice } from "@/components/app/notice";
 import { NoteLine } from "@/components/app/note-line";
 import { ResortSheet, SenderRuleSheet } from "@/components/app/sender-sheets";
@@ -32,6 +33,13 @@ const INBOX_ERRORS: Record<string, string> = {
   readonly:
     "Your account is read-only right now, so nothing was changed. The note at the top says why.",
   unknown: "That didn't work. Refresh and try again.",
+};
+
+const INBOX_DONE: Record<string, string> = {
+  ...CONTROL_DONE,
+  called:
+    "Marked as answered by phone. No draft and no nudge for that one unless they write again.",
+  off_list: "Taken off your list. It comes back if they write again and it needs you.",
 };
 
 /** Inbox rows keep "Ask for a review" (a finished job); "Say thanks" is Money's (2026-10-16). */
@@ -152,7 +160,7 @@ export default async function InboxPage(props: PageProps<"/inbox">) {
     rows.map((r) => r.id),
   );
   const own = boxes.map((b) => b.email);
-  const doneMsg = typeof params.done === "string" ? CONTROL_DONE[params.done] : undefined;
+  const doneMsg = typeof params.done === "string" ? INBOX_DONE[params.done] : undefined;
   const errorMsg = typeof params.error === "string" ? INBOX_ERRORS[params.error] : undefined;
 
   // Junk folds into one line on "All" (outside review); the Junk chip lists it as usual.
@@ -248,6 +256,24 @@ export default async function InboxPage(props: PageProps<"/inbox">) {
                 company={companyChoice(customerOf.get(row.id)!.address!, own)}
                 back="inbox"
               />
+            ) : null}
+            {!readOnly && row.replyState === "Waiting on you" ? (
+              // Check 10 P1: answered by phone, from the Inbox too.
+              <CalledThem
+                threadId={row.id}
+                hasDraft={false}
+                inverted={row.needsOwner}
+                back="inbox"
+              />
+            ) : null}
+            {!readOnly && row.needsOwner && row.replyState !== "Waiting on you" ? (
+              // Check 10 P1: the customer isn't waiting, so any flag can come off by hand.
+              <form action={takeOffListAction}>
+                <input type="hidden" name="threadId" value={row.id} />
+                <Button type="submit" variant="outline" className="w-full">
+                  Take it off my list
+                </Button>
+              </form>
             ) : null}
             {!row.needsOwner ? (
               <form action={markNeedsOwnerAction}>

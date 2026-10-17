@@ -4,6 +4,7 @@ import type { Category } from "@/ai/prompts/classify.v4";
 import { db } from "@/db";
 import { mailboxes, threads } from "@/db/schema";
 import { replyState, type ReplyState } from "./inbox-rules";
+import { openNeedsOwnerSql } from "./needs-owner";
 import { asDate, customerAddressSql, customerNameSql, lastInSql, lastOutSql } from "./thread-sql";
 
 export type InboxFilter =
@@ -18,6 +19,7 @@ export type InboxRow = {
   summary: string | null;
   category: string | null;
   priority: string | null;
+  /** Check 10 P1: open needs-you (flagged and the owner hasn't answered since). */
   needsOwner: boolean;
   needsOwnerReason: string | null;
   lastMessageAt: Date | null;
@@ -37,7 +39,8 @@ export async function listInboxThreads(
   limit = 100,
 ): Promise<InboxRow[]> {
   const where: SQL[] = [eq(mailboxes.workspaceId, workspaceId), eq(threads.inInbox, true)];
-  if (filter.kind === "needs_me") where.push(eq(threads.needsOwner, true));
+  // Check 10 P1: "needs me" is the open rule (answered from Gmail or by phone lets go).
+  if (filter.kind === "needs_me") where.push(openNeedsOwnerSql());
   if (filter.kind === "unsorted") where.push(isNull(threads.category));
   if (filter.kind === "category") where.push(eq(threads.category, filter.category));
 
@@ -48,7 +51,8 @@ export async function listInboxThreads(
       summary: threads.summary,
       category: threads.category,
       priority: threads.priority,
-      needsOwner: threads.needsOwner,
+      // Check 10 P1: flagged AND not answered since (a reply or a call), never the raw column.
+      needsOwner: openNeedsOwnerSql(),
       needsOwnerReason: threads.needsOwnerReason,
       lastMessageAt: threads.lastMessageAt,
       extracted: threads.extracted,
@@ -62,7 +66,7 @@ export async function listInboxThreads(
     .from(threads)
     .innerJoin(mailboxes, eq(mailboxes.id, threads.mailboxId))
     .where(and(...where))
-    .orderBy(desc(threads.needsOwner), desc(threads.lastMessageAt))
+    .orderBy(desc(openNeedsOwnerSql()), desc(threads.lastMessageAt))
     .limit(limit);
   return rows.map(({ lastIn, lastOut, ...r }) => ({
     ...r,

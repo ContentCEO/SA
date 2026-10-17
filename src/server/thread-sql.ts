@@ -1,5 +1,5 @@
 import "server-only";
-import { eq, isNotNull, or, sql, type SQL } from "drizzle-orm";
+import { and, eq, isNotNull, or, sql, type SQL } from "drizzle-orm";
 import { EMAIL_TO_TEXT_DOMAINS, PHONE_SERVICES } from "@/config/phone-services";
 import { messages, threads } from "@/db/schema";
 import { NO_REPLY_LOCAL_PATTERN, PUBLIC_WEBMAIL_DOMAINS } from "./sender-rules";
@@ -221,20 +221,32 @@ export const waitingReplySql = () =>
 
 /**
  * SQL twin of `isQuoteThread`: sorted as a quote request, or has ever had an outcome
- * (a cleared guess or an owner's reopen keeps its source), whatever its category now.
+ * (a cleared guess or an owner's reopen keeps its source), whatever its category now —
+ * unless the owner said "Not a quote" (Check 11 P8) and hasn't marked an outcome since.
  */
 export const quoteThreadSql = () =>
-  or(
-    eq(threads.category, "quote_request"),
-    isNotNull(threads.quoteOutcome),
-    isNotNull(threads.quoteOutcomeSource),
-  );
+  and(
+    or(
+      eq(threads.category, "quote_request"),
+      isNotNull(threads.quoteOutcome),
+      isNotNull(threads.quoteOutcomeSource),
+    ),
+    quoteNotDismissedSql(),
+  )!;
+
+/**
+ * Check 11 P8: not "Not a quote", or the owner marked an outcome after saying so. Never NULL
+ * (callers negate it).
+ */
+export const quoteNotDismissedSql = () =>
+  sql`(${threads.quoteDismissedAt} is null or coalesce(${threads.quoteOutcomeSource} = 'owner' and ${threads.quoteOutcomeAt} > ${threads.quoteDismissedAt}, false))`;
 
 /**
  * A quote request, even one later re-sorted (plan M8 A11): the sticky `quote_requested_at`
  * mark from classification, or the current quote-thread rule (older threads have no mark).
  */
-export const quoteRequestSql = () => or(isNotNull(threads.quoteRequestedAt), quoteThreadSql());
+export const quoteRequestSql = () =>
+  and(or(isNotNull(threads.quoteRequestedAt), quoteThreadSql()), quoteNotDismissedSql())!;
 
 /**
  * When a quote request was asked for, for the scorecard and the monthly summary: the sticky

@@ -67,7 +67,18 @@ export function isQuoteThread(t: {
   category: string | null;
   quoteOutcome: string | null;
   quoteOutcomeSource: string | null;
+  /** Check 11 P8: the owner's "Not a quote" (absent = never dismissed). */
+  quoteDismissedAt?: Date | null;
+  quoteOutcomeAt?: Date | null;
 }): boolean {
+  const dismissed =
+    t.quoteDismissedAt != null &&
+    !(
+      t.quoteOutcomeSource === "owner" &&
+      t.quoteOutcomeAt != null &&
+      t.quoteOutcomeAt.getTime() > t.quoteDismissedAt.getTime()
+    );
+  if (dismissed) return false;
   return t.category === "quote_request" || t.quoteOutcome != null || t.quoteOutcomeSource != null;
 }
 
@@ -167,6 +178,8 @@ export function quoteAccepted(f: {
     category: string | null;
     quoteOutcome: string | null;
     quoteOutcomeSource: string | null;
+    quoteDismissedAt?: Date | null;
+    quoteOutcomeAt?: Date | null;
   };
   category: string;
   ownerWroteBefore: boolean;

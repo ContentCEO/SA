@@ -4,7 +4,7 @@ import { db } from "@/db";
 import { mailboxes, threads } from "@/db/schema";
 import { mailboxOn } from "./mailbox-plan-rules";
 import { FOLLOWUP_CATEGORIES, followupSettings, MAX_FOLLOWUPS } from "./drafts";
-import { lastInSql, lastOutSql, answeredByPhoneSql } from "./thread-sql";
+import { lastInSql, lastOutSql, answeredByPhoneSql, quoteNotDismissedSql } from "./thread-sql";
 import { isAway } from "./away";
 
 /** Don't chase anything the owner last wrote about more than this long ago. */
@@ -73,6 +73,8 @@ export async function threadsToFollowUp(
         sql`(${threads.quoteOutcome} is null or (${threads.quoteOutcome} = 'won' and ${threads.category} = 'invoice_payment'))`,
         isNull(threads.invoicePaidAt),
         inArray(threads.category, [...FOLLOWUP_CATEGORIES]),
+        // Check 11 P8: the owner said "Not a quote", so no "following up on my quote".
+        sql`not (${threads.category} = 'quote_request' and not ${quoteNotDismissedSql()})`,
         // Never chase a bill the owner owes (round 2, TW A2).
         sql`(${threads.extracted}->>'bill_direction') is distinct from 'owed_by_business'`,
         sql`${lastIn} is not null`,

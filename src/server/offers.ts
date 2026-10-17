@@ -60,6 +60,8 @@ async function threadFacts(workspaceId: string, threadIds: string[]) {
       invoicePaidSource: threads.invoicePaidSource,
       quoteOutcome: threads.quoteOutcome,
       quoteOutcomeSource: threads.quoteOutcomeSource,
+      quoteOutcomeAt: threads.quoteOutcomeAt,
+      quoteDismissedAt: threads.quoteDismissedAt,
       // Where a reply goes (a website form's Reply-To, else the sender) and who sent it.
       customerAddress: customerAddressSql(),
       senderAddress: sql<

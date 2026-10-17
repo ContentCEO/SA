@@ -4,6 +4,7 @@ import { prepareBody } from "@/ai/classify";
 import { db } from "@/db";
 import { activityLog, mailboxes, messages, priceHistory, threads, workspaces } from "@/db/schema";
 import { expirePendingNudge, flagPendingNudge, followupSettings, type DraftDeps } from "./drafts";
+import { markAnsweredByPhone } from "./first-week";
 import { effectiveStatus, JOBS_ALLOWED, jobsAllowed, ReadOnlyError } from "./lifecycle";
 import {
   asDate,
@@ -12,6 +13,7 @@ import {
   lastInSql,
   lastOutSql,
   notDraftMessage,
+  quoteNotDismissedSql,
   quoteThreadSql,
 } from "./thread-sql";
 import {
@@ -557,7 +559,8 @@ async function backfillPriceMemory(workspaceId?: string): Promise<number> {
         sql`not exists (select 1 from price_history ph where ph.thread_id = ${threads.id})`,
         // Scoped by workspace so activity_log's (workspace_id, created_at) index applies —
         // this runs on every Quotes view, and the log grows with every account.
-        sql`not exists (select 1 from activity_log a where a.workspace_id = ${mailboxes.workspaceId} and a.thread_id = ${threads.id} and a.action = 'quote_marked' and a.detail->>'amountTyped' = 'true')`,
+        // Check 11 P8: a price typed on "I sent the price another way" stays out too.
+        sql`not exists (select 1 from activity_log a where a.workspace_id = ${mailboxes.workspaceId} and a.thread_id = ${threads.id} and a.action in ('quote_marked', 'answered_by_phone') and a.detail->>'amountTyped' = 'true')`,
       ),
     )
     .limit(500);
@@ -620,4 +623,79 @@ export async function setLostReason(
     detail: { reason },
   });
   return "ok";
+}
+
+/**
+ * Check 11 P8: Quotes' "I sent the price another way" — an estimate sent from QuickBooks or
+ * Jobber never shows in the Gmail thread. The same mark as "I called them" (it counts as the
+ * owner's answer until the customer writes again), logged with `via: "other"`, plus the price
+ * the owner typed, if any. Owner-scoped; read-only refused (ReadOnlyError). Drafts nothing.
+ */
+export async function markQuoteSentAnotherWay(
+  workspaceId: string,
+  threadId: string,
+  amountCents: number | null,
+  opts: DraftDeps = {},
+): Promise<"marked" | "not_found"> {
+  const t = await ownedThread(workspaceId, threadId);
+  if (!t) return "not_found";
+  return markAnsweredByPhone(workspaceId, threadId, opts, { via: "other", amountCents });
+}
+
+/**
+ * Check 11 P8: "Not a quote" (sorting got it wrong) and "Put back". Only the mark changes:
+ * nothing is drafted or sent. Owner-scoped; read-only refused. Content-free log.
+ */
+export async function setQuoteDismissed(
+  workspaceId: string,
+  threadId: string,
+  dismissed: boolean,
+  now: Date = new Date(),
+): Promise<boolean> {
+  const t = await ownedThread(workspaceId, threadId);
+  if (!t) return false;
+  if (!jobsAllowed(t.workspace, now)) throw new ReadOnlyError(effectiveStatus(t.workspace, now));
+  await db()
+    .update(threads)
+    .set({ quoteDismissedAt: dismissed ? now : null })
+    .where(eq(threads.id, threadId));
+  await db()
+    .insert(activityLog)
+    .values({
+      workspaceId,
+      actor: "owner",
+      action: dismissed ? "quote_dismissed" : "quote_restored",
+      threadId,
+      detail: {},
+    });
+  return true;
+}
+
+export type DismissedQuote = {
+  threadId: string;
+  customerName: string | null;
+  customerAddress: string | null;
+  summary: string | null;
+};
+
+/** Check 11 P8: threads the owner said are "Not a quote", newest first, for "Put back". */
+export async function listDismissedQuotes(workspaceId: string): Promise<DismissedQuote[]> {
+  return db()
+    .select({
+      threadId: threads.id,
+      customerName: customerNameSql(),
+      customerAddress: customerAddressSql(),
+      summary: threads.summary,
+    })
+    .from(threads)
+    .innerJoin(mailboxes, eq(mailboxes.id, threads.mailboxId))
+    .where(
+      and(
+        eq(mailboxes.workspaceId, workspaceId),
+        isNotNull(threads.quoteDismissedAt),
+        sql`not ${quoteNotDismissedSql()}`,
+      ),
+    )
+    .orderBy(desc(threads.quoteDismissedAt))
+    .limit(100);
 }

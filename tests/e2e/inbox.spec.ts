@@ -220,3 +220,32 @@ test("inbox: a word per row, junk folded into one line, and a search that stays 
   );
   expect(overflow).toBe(false);
 });
+
+test("Check 10 P1: 'I called them' on an Inbox card turns it back to a normal card, no longer first", async ({
+  page,
+  context,
+}) => {
+  const owner = await seedOwner({ mailbox: true, backfilled: true });
+  await seedThreads(owner.mailboxId!);
+  // Dana's complaint is the oldest, so only the flag puts it first.
+  await testDb
+    .update(schema.threads)
+    .set({ lastMessageAt: new Date(Date.now() - 60 * 60_000) })
+    .where(eq(schema.threads.gmailThreadId, `b-${owner.mailboxId}`));
+  await signInAs(context, owner);
+  await page.goto("/inbox");
+  const items = page.locator("main li");
+  await expect(items.first()).toContainText("Dana");
+  await expect(items.first()).toContainText("Needs you");
+
+  await page.getByText("Dana", { exact: true }).click();
+  await items.first().getByRole("button", { name: "I called them" }).click();
+  await page.getByRole("button", { name: "Yes, I called them" }).click();
+  await expect(page).toHaveURL(/\/inbox\?done=called/);
+  await expect(page.getByText("Marked as answered by phone.")).toBeVisible();
+  await expect(items.first()).not.toContainText("Dana");
+  const dana = items.filter({ hasText: "Dana" });
+  await expect(dana).not.toContainText("Needs you");
+  await expect(dana).toContainText("Replied");
+  await expect(dana.locator("details")).not.toHaveClass(/sa-inverted/);
+});

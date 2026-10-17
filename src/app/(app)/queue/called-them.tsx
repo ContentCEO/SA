@@ -16,6 +16,7 @@ export function CalledThem({
   inverted,
   label = "I called them",
   confirm = "Yes, I called them",
+  back,
 }: {
   threadId: string;
   hasDraft: boolean;
@@ -23,6 +24,8 @@ export function CalledThem({
   /** Leads package: "Done — I answered" / "Done — I called back" on lead cards. */
   label?: string;
   confirm?: string;
+  /** Check 10 P1: the Inbox's cards come back to the Inbox. */
+  back?: "inbox";
 }) {
   const done = label !== "I called them";
   const [asking, setAsking] = useState(false);
@@ -49,12 +52,17 @@ export function CalledThem({
     >
       <input type="hidden" name="threadId" value={threadId} />
       {done ? <input type="hidden" name="as" value="done" /> : null}
+      {back ? <input type="hidden" name="back" value={back} /> : null}
       <p className="font-semibold">
-        {done
-          ? "Answered them another way? It leaves this list and we won't nudge them."
-          : hasDraft
-            ? "Answered by phone? This draft is removed (from Gmail too) and we won't nudge them."
-            : "Answered by phone? It leaves this list and we won't nudge them."}{" "}
+        {back === "inbox"
+          ? hasDraft
+            ? "Answered by phone? It's no longer waiting on you, the waiting draft is removed (from Gmail too) and we won't nudge them."
+            : "Answered by phone? It's no longer waiting on you and we won't nudge them."
+          : done
+            ? "Answered them another way? It leaves this list and we won't nudge them."
+            : hasDraft
+              ? "Answered by phone? This draft is removed (from Gmail too) and we won't nudge them."
+              : "Answered by phone? It leaves this list and we won't nudge them."}{" "}
         If they write again, it comes back.
       </p>
       <PendingButton pending="Saving…" className="w-full">
