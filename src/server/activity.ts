@@ -209,7 +209,14 @@ export function describeActivity(
       return detail.includesSetup
         ? "Payment received — setup paid and sending switched on"
         : "Payment received — your plan is back on";
-    case "subscription_changed":
+    case "subscription_changed": {
+      // Check 17 P1: while paused, Stripe's news is kept for when the account is resumed.
+      const held = (detail.pausedFrom as { after?: unknown } | undefined)?.after;
+      if (detail.to === "paused" && (held === "past_due" || held === "canceled")) {
+        return held === "past_due"
+          ? "A payment didn't go through while your account was paused"
+          : "Your plan ended while your account was paused — nothing was deleted";
+      }
       return detail.to === "past_due"
         ? "A payment didn't go through — paused until your card is updated"
         : detail.to === "canceled"
@@ -217,6 +224,7 @@ export function describeActivity(
           : detail.from === "past_due" || detail.from === "canceled"
             ? "Payment sorted — switched back on"
             : "Your plan was updated";
+    }
     case "digest_sent":
       return "Sent your morning summary";
     case "monthly_summary_sent":

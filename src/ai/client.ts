@@ -231,11 +231,12 @@ export async function callStructured<S extends z.ZodType>(opts: {
       break;
     } catch (err) {
       const missing = isModelUnavailable(err);
+      const label = errorLabel(err);
       console.error("ai_call_failed", {
         promptVersion: opts.promptVersion,
         model,
         latencyMs: Date.now() - started,
-        error: errorLabel(err),
+        error: label,
         fallbackUsed,
       });
       if (missing) {

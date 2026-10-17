@@ -35,6 +35,7 @@ import {
 } from "@/server/billing-rules";
 import { canSend, jobsAllowed } from "@/server/lifecycle";
 import { applyAdminMove } from "@/server/workspace-lifecycle";
+import { describeActivity } from "@/server/activity";
 import { isTermsUrlMissingError } from "@/server/stripe-error-rules";
 import { createTestDb } from "../support/db";
 
@@ -719,6 +720,9 @@ describe("pause and resume never switch a failed or canceled plan back on (Check
       to: "paused",
       pausedFrom: { before: "active", after: "canceled" },
     });
+    expect(describeActivity("subscription_changed", log.at(-1)!.detail, null)).toBe(
+      "Your plan ended while your account was paused — nothing was deleted",
+    );
     expect(await applyAdminMove(workspace.id, "resume", LATER)).toBe("canceled");
     const after = await reload();
     expect(canSend(after, LATER)).toBe(false);
