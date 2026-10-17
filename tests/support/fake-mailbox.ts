@@ -18,6 +18,8 @@ export class FakeMailbox {
   oldestHistory = 0;
   revoked = false;
   bodyFetches: string[] = [];
+  /** Metadata reads (no body), by id. */
+  metaFetches: string[] = [];
   /** Metadata reads that asked for only some headers (the Reply-To backfill / lazy read). */
   headerRequests: { id: string; headers: readonly string[] }[] = [];
   calls = 0;
@@ -70,9 +72,17 @@ export class FakeMailbox {
         const days = Number(/newer_than:(\d+)d/.exec(query)?.[1] ?? 9999);
         const cutoff = new Date("2026-09-28T12:00:00Z").getTime() - days * 86_400_000;
         const sentOnly = query.includes("in:sent");
+        // Like Gmail: `in:inbox` / `-in:inbox`; Spam and Trash are never listed.
+        const inbox = /(^|\s)-in:inbox/.test(query)
+          ? false
+          : /(^|\s)in:inbox/.test(query)
+            ? true
+            : undefined;
         const all = this.messages
           .filter((m) => m.internalDate >= cutoff)
+          .filter((m) => !m.labelIds.includes("SPAM") && !m.labelIds.includes("TRASH"))
           .filter((m) => !sentOnly || m.labelIds.includes("SENT"))
+          .filter((m) => inbox === undefined || m.labelIds.includes("INBOX") === inbox)
           .map((m) => ({ id: m.providerMessageId, threadId: m.providerThreadId }));
         const start = Number(pageToken ?? 0);
         const next = start + (maxResults ?? pageSize);
@@ -87,6 +97,7 @@ export class FakeMailbox {
         const m = this.messages.find((x) => x.providerMessageId === id);
         if (!m) return null;
         if (withBody) this.bodyFetches.push(id);
+        else this.metaFetches.push(id);
         // Like the real client: the default metadata list includes Reply-To; a subset only
         // returns what it named.
         const asked = !withBody && headers ? headers.map((h) => h.toLowerCase()) : null;

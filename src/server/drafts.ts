@@ -84,14 +84,13 @@ import {
   type DraftPurpose,
   type Mailbox,
 } from "@/db/schema";
-import { decryptSecret } from "@/lib/crypto";
 import {
   MailboxAuthError,
   MailboxRateLimitError,
   type MailboxReader,
   type MailboxWriter,
 } from "@/mailbox/connector";
-import { createGmailReader } from "@/mailbox/gmail/api";
+import { gmailClientFor } from "./gmail-units";
 import { buildReplyMime, replySubject, sameText, toGmailRaw } from "@/mailbox/mime";
 import {
   canSend,
@@ -170,8 +169,7 @@ export type DraftDeps = {
   now?: () => Date;
 };
 
-export const defaultWriter = (m: Mailbox) =>
-  createGmailReader({ refreshToken: decryptSecret(m.encryptedRefreshToken) });
+export const defaultWriter = (m: Mailbox) => gmailClientFor(m);
 
 export type CreateOutcome =
   | { status: "created"; draftId: string }

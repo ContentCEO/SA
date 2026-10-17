@@ -11,7 +11,6 @@ import {
   workspaces,
   type Mailbox,
 } from "@/db/schema";
-import { decryptSecret } from "@/lib/crypto";
 import {
   HistoryExpiredError,
   MailboxAuthError,
@@ -20,7 +19,7 @@ import {
   type MailMessage,
   type MessageRef,
 } from "@/mailbox/connector";
-import { createGmailReader } from "@/mailbox/gmail/api";
+import { gmailClientFor, logGmailUnits } from "./gmail-units";
 import { parseAddressList } from "@/mailbox/gmail/parse";
 import { jobsAllowed } from "./lifecycle";
 import { mailboxRunning } from "./mailbox-plan";
@@ -28,13 +27,17 @@ import { mailboxOn } from "./mailbox-plan-rules";
 import { pickReplyTo, type ReplyToHeader } from "./reply-address-rules";
 import { unsentDraftMessage } from "./thread-sql";
 
+const MAIL_INBOX = "INBOX";
+
 /** How far back the first sync reaches. */
 export const BACKFILL_DAYS = 30;
 /** When the history cursor has expired, re-read this many days instead. */
 export const RESYNC_DAYS = 7;
 /**
- * Gmail allows roughly 50 message reads a second per user, and refuses bursts
- * well before that. Four at a time stays comfortably under it.
+ * Google's quota page (developers.google.com/workspace/gmail/api/reference/quota, last updated
+ * 2026-09-10) allows 6,000 units a minute per user, and a message read costs 20: about 5 reads a
+ * second. The shared unit budget (src/server/gmail-units.ts) enforces that across every job;
+ * this only bounds how many requests one job has in flight.
  */
 const FETCH_CONCURRENCY = 4;
 /** Messages per backfill step. Smaller pages mean a retry redoes less work. */
@@ -50,8 +53,7 @@ export type SyncOutcome =
   | { status: "skipped"; reason: "not_found" | "not_active" | "not_ready" | "read_only" }
   | { status: "reconnect_needed" };
 
-export const defaultReaderFor = (m: Mailbox) =>
-  createGmailReader({ refreshToken: decryptSecret(m.encryptedRefreshToken) });
+export const defaultReaderFor = (m: Mailbox) => gmailClientFor(m);
 
 async function mapLimit<T, R>(
   items: T[],
@@ -165,6 +167,34 @@ function windowQuery(days: number) {
 }
 
 /**
+ * A window is listed in two passes, inbox first (`in:inbox`, so each ref is known to be an
+ * inbox email and is read in full in one call), then everything else (read as metadata). The
+ * page token carries the pass: "inbox:<gmail token>" / "rest:<gmail token>".
+ */
+async function windowPage(
+  reader: Pick<MailboxReader, "listMessages">,
+  window: string,
+  token: string | undefined,
+  maxResults: number,
+): Promise<{ messages: MessageRef[]; nextPageToken?: string }> {
+  const pass = token?.startsWith("rest:") ? "rest" : "inbox";
+  const gmailToken = token ? token.slice(token.indexOf(":") + 1) || undefined : undefined;
+  const page = await reader.listMessages({
+    query: pass === "inbox" ? `in:inbox ${window}` : `-in:inbox ${window}`,
+    pageToken: gmailToken,
+    maxResults,
+  });
+  const messages =
+    pass === "inbox" ? page.messages.map((m) => ({ ...m, labelIds: [MAIL_INBOX] })) : page.messages;
+  const nextPageToken = page.nextPageToken
+    ? `${pass}:${page.nextPageToken}`
+    : pass === "inbox"
+      ? "rest:"
+      : undefined;
+  return { messages, nextPageToken };
+}
+
+/**
  * Store a batch of messages. Idempotent: already-stored messages are skipped,
  * threads are merged. Bodies are fetched only for threads in the inbox, and
  * never for mail already past the retention window.
@@ -196,30 +226,44 @@ async function ingest(
   const todo = unique.filter((r) => !have.has(r.id));
   if (todo.length === 0) return 0;
 
-  const meta = (
-    await mapLimit(todo, FETCH_CONCURRENCY, (r) => reader.getMessage(r.id, { withBody: false }))
-  )
-    .filter((m): m is MailMessage => m !== null)
-    // Drafts are skipped before anything is written: no row, no thread, no lastMessageAt move.
-    .filter((m) => !isUnsentDraft(m.labelIds));
-  if (meta.length === 0) return 0;
-
-  const threadIds = [...new Set(meta.map((m) => m.providerThreadId))];
+  const refThreadIds = [...new Set(todo.map((r) => r.threadId))];
   const knownThreads = await db()
     .select()
     .from(threads)
-    .where(and(eq(threads.mailboxId, mailbox.id), inArray(threads.gmailThreadId, threadIds)));
+    .where(and(eq(threads.mailboxId, mailbox.id), inArray(threads.gmailThreadId, refThreadIds)));
   const known = new Map(knownThreads.map((t) => [t.gmailThreadId, t]));
-
   const inboxThreads = new Set(knownThreads.filter((t) => t.inInbox).map((t) => t.gmailThreadId));
-  for (const m of meta) if (m.labelIds.includes("INBOX")) inboxThreads.add(m.providerThreadId);
 
+  // Check 25 P1: an email known to be in the inbox (listed with in:inbox, or history said so,
+  // or its conversation is already in the inbox) is read in full in one call. Everything else
+  // is read as metadata, and read again in full only if it turns out to belong in the inbox.
+  const knownInbox = (r: MessageRef) =>
+    (r.labelIds ?? []).includes(MAIL_INBOX) || inboxThreads.has(r.threadId);
   const retentionCutoff = now.getTime() - bodyRetentionDays() * 86_400_000;
-  const full = await mapLimit(meta, FETCH_CONCURRENCY, async (m) =>
-    inboxThreads.has(m.providerThreadId) && m.internalDate >= retentionCutoff
+  const firstRead = (
+    await mapLimit(todo, FETCH_CONCURRENCY, async (r) => {
+      const withBody = knownInbox(r);
+      const m = await reader.getMessage(r.id, { withBody });
+      return m ? { m, full: withBody } : null;
+    })
+  )
+    .filter((x): x is { m: MailMessage; full: boolean } => x !== null)
+    // Drafts are skipped before anything is written: no row, no thread, no lastMessageAt move.
+    .filter((x) => !isUnsentDraft(x.m.labelIds));
+  if (firstRead.length === 0) return 0;
+
+  for (const { m } of firstRead)
+    if (m.labelIds.includes(MAIL_INBOX)) inboxThreads.add(m.providerThreadId);
+
+  const full = await mapLimit(firstRead, FETCH_CONCURRENCY, async ({ m, full: read }) => {
+    if (read) {
+      // Read in full already; a body past retention is still never kept.
+      return m.internalDate >= retentionCutoff ? m : { ...m, bodyText: undefined };
+    }
+    return inboxThreads.has(m.providerThreadId) && m.internalDate >= retentionCutoff
       ? ((await reader.getMessage(m.providerMessageId, { withBody: true })) ?? m)
-      : m,
-  );
+      : m;
+  });
 
   const self = mailbox.email.toLowerCase();
   // Every mailbox of the workspace: a form set to reply to the shop's other Gmail is no
@@ -365,7 +409,7 @@ export async function beginBackfill(mailboxId: string, deps: SyncDeps = {}): Pro
   });
 }
 
-/** Step 2, repeated: one page (up to 100 messages) of the 30-day window. */
+/** Step 2, repeated: one page (up to BACKFILL_PAGE_SIZE = 50 messages) of the 30-day window. */
 export async function backfillPage(
   mailboxId: string,
   pageToken: string | undefined,
@@ -376,12 +420,14 @@ export async function backfillPage(
   const reader = (deps.readerFor ?? defaultReaderFor)(mailbox);
   const now = deps.now?.() ?? new Date();
   return guarded(mailbox, async () => {
-    const page = await reader.listMessages({
-      query: windowQuery(BACKFILL_DAYS),
+    const page = await windowPage(
+      reader,
+      windowQuery(BACKFILL_DAYS),
       pageToken,
-      maxResults: BACKFILL_PAGE_SIZE,
-    });
+      BACKFILL_PAGE_SIZE,
+    );
     const ingested = await ingest(mailbox, reader, page.messages, now);
+    logGmailUnits("backfill", mailbox.id, reader);
     return { status: "ok", ingested, nextPageToken: page.nextPageToken };
   });
 }
@@ -442,7 +488,7 @@ export async function incrementalSync(
       const profile = await reader.getProfile();
       let pageToken: string | undefined;
       do {
-        const page = await reader.listMessages({ query: windowQuery(RESYNC_DAYS), pageToken });
+        const page = await windowPage(reader, windowQuery(RESYNC_DAYS), pageToken, 100);
         ingested += await ingest(mailbox, reader, page.messages, now);
         pageToken = page.nextPageToken;
       } while (pageToken);
@@ -452,6 +498,7 @@ export async function incrementalSync(
       .update(mailboxes)
       .set({ historyId: cursor, lastSyncedAt: now })
       .where(eq(mailboxes.id, mailbox.id));
+    logGmailUnits("sync", mailbox.id, reader);
     return { status: "ok", ingested };
   });
 }

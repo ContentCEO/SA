@@ -11,6 +11,7 @@ import {
 } from "../connector";
 import { googleEndpoints } from "@/config/e2e";
 import { extractBodyText, toMailMessage, type GmailMessageResource } from "./parse";
+import { GMAIL_UNITS, type GmailBudget, type GmailMethod } from "./quota";
 
 type Fetch = typeof fetch;
 type Sleep = (ms: number) => Promise<void>;
@@ -22,6 +23,12 @@ export type GmailReaderOptions = {
   /** Retries for 429/5xx before giving up. */
   maxRetries?: number;
   random?: () => number;
+  /**
+   * The mailbox's shared unit budget (Check 25 P1). With it, every request reserves its
+   * units first and a spent minute stops the call before any fetch. Tests may leave it out.
+   */
+  mailboxId?: string;
+  budget?: GmailBudget;
 };
 
 /** Gmail error reasons that mean "slow down", not "you did something wrong". */
@@ -59,12 +66,21 @@ export function parseRetryAfter(message: string | undefined): Date | undefined {
 
 const tokenResponse = z.object({ access_token: z.string(), expires_in: z.number().optional() });
 
-export function createGmailReader(opts: GmailReaderOptions): MailboxReader & MailboxWriter {
+export type GmailClient = MailboxReader & MailboxWriter & { gmailUnits(): number };
+
+export function createGmailReader(opts: GmailReaderOptions): GmailClient {
   const fetchImpl = opts.fetchImpl ?? fetch;
   const sleep: Sleep = opts.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
   const maxRetries = opts.maxRetries ?? 5;
   const random = opts.random ?? Math.random;
   let accessToken: string | undefined;
+  let unitsUsed = 0;
+
+  /** Units are counted per request Google sees, retries included. */
+  async function reserve(method: GmailMethod) {
+    if (opts.budget) await opts.budget.reserve(method);
+    unitsUsed += GMAIL_UNITS[method];
+  }
 
   async function refresh(): Promise<string> {
     const clientId = process.env.AUTH_GOOGLE_ID;
@@ -100,11 +116,13 @@ export function createGmailReader(opts: GmailReaderOptions): MailboxReader & Mai
 
   /** GET/POST against the Gmail API with auth refresh and backoff. Returns null on 404. */
   async function call<T>(
+    unit: GmailMethod,
     path: string,
     init?: { method?: string; body?: unknown },
   ): Promise<T | null> {
     let refreshedAfter401 = false;
     for (let attempt = 0; ; attempt++) {
+      await reserve(unit);
       const token = accessToken ?? (await refresh());
       const res = await fetchImpl(`${googleEndpoints().gmailApi}${path}`, {
         method: init?.method ?? "GET",
@@ -137,6 +155,11 @@ export function createGmailReader(opts: GmailReaderOptions): MailboxReader & Mai
         (res.status === 403 && RATE_LIMIT_REASONS.has(reason ?? ""));
       // Gmail gave a cool-down time: retrying before it only extends it.
       if (retryable && retryAt) {
+        // Shared with every other job for this inbox, so they all wait together.
+        if (opts.budget)
+          await opts.budget.coolUntil(retryAt).catch((e: unknown) => {
+            console.error("gmail_cool_store_failed", { name: (e as Error)?.name });
+          });
         throw new MailboxRateLimitError(
           `Gmail API ${res.status} (${reason ?? "rate limited"}): ${googleMessage}`,
           retryAt,
@@ -162,8 +185,11 @@ export function createGmailReader(opts: GmailReaderOptions): MailboxReader & Mai
   }
 
   return {
+    /** Units this client has used (for the content-free per-run log). */
+    gmailUnits: () => unitsUsed,
+
     async getProfile() {
-      const p = await call<{ emailAddress: string; historyId: string }>("/profile");
+      const p = await call<{ emailAddress: string; historyId: string }>("getProfile", "/profile");
       if (!p) throw new Error("Gmail profile not found.");
       return p;
     },
@@ -174,7 +200,7 @@ export function createGmailReader(opts: GmailReaderOptions): MailboxReader & Mai
       const r = await call<{
         messages?: { id: string; threadId: string }[];
         nextPageToken?: string;
-      }>(`/messages?${qs}`);
+      }>("messages.list", `/messages?${qs}`);
       return { messages: r?.messages ?? [], nextPageToken: r?.nextPageToken };
     },
 
@@ -182,7 +208,10 @@ export function createGmailReader(opts: GmailReaderOptions): MailboxReader & Mai
       const qs = new URLSearchParams({ format: withBody ? "full" : "metadata" });
       const asked = withBody ? [] : (headers ?? DEFAULT_METADATA_HEADERS);
       for (const h of asked) qs.append("metadataHeaders", h);
-      const r = await call<GmailMessageResource>(`/messages/${encodeURIComponent(id)}?${qs}`);
+      const r = await call<GmailMessageResource>(
+        "messages.get",
+        `/messages/${encodeURIComponent(id)}?${qs}`,
+      );
       // From the request we made, not from the response: a metadata read that didn't ask for
       // Reply-To says nothing about whether the email has one.
       const replyToRead = withBody || asked.some((h) => h.toLowerCase() === "reply-to");
@@ -196,7 +225,7 @@ export function createGmailReader(opts: GmailReaderOptions): MailboxReader & Mai
       qs.append("historyTypes", "messageAdded");
       qs.append("historyTypes", "labelAdded");
       if (pageToken) qs.set("pageToken", pageToken);
-      type Ref = { id: string; threadId: string };
+      type Ref = { id: string; threadId: string; labelIds?: string[] };
       const r = await call<{
         history?: {
           messagesAdded?: { message: Ref }[];
@@ -204,10 +233,14 @@ export function createGmailReader(opts: GmailReaderOptions): MailboxReader & Mai
         }[];
         nextPageToken?: string;
         historyId: string;
-      }>(`/history?${qs}`);
+      }>("history.list", `/history?${qs}`);
       if (!r) throw new HistoryExpiredError();
       const added = (r.history ?? []).flatMap((h) => [
-        ...(h.messagesAdded ?? []).map((m) => m.message),
+        ...(h.messagesAdded ?? []).map((m) => ({
+          id: m.message.id,
+          threadId: m.message.threadId,
+          ...(m.message.labelIds ? { labelIds: m.message.labelIds } : {}),
+        })),
         ...(h.labelsAdded ?? [])
           .filter((l) => (l.labelIds ?? []).includes("SENT"))
           .map((l) => ({ id: l.message.id, threadId: l.message.threadId })),
@@ -216,7 +249,7 @@ export function createGmailReader(opts: GmailReaderOptions): MailboxReader & Mai
     },
 
     async createDraft({ threadId, raw }) {
-      const r = await call<{ id: string; message: { id: string } }>("/drafts", {
+      const r = await call<{ id: string; message: { id: string } }>("drafts.create", "/drafts", {
         method: "POST",
         body: { message: { raw, threadId } },
       });
@@ -226,6 +259,7 @@ export function createGmailReader(opts: GmailReaderOptions): MailboxReader & Mai
 
     async getDraft(draftId) {
       const r = await call<{ id: string; message: GmailMessageResource }>(
+        "drafts.get",
         `/drafts/${encodeURIComponent(draftId)}?format=full`,
       );
       if (!r) return null;
@@ -239,6 +273,7 @@ export function createGmailReader(opts: GmailReaderOptions): MailboxReader & Mai
 
     async updateDraft(draftId, { threadId, raw }) {
       const r = await call<{ id: string; message: { id: string } }>(
+        "drafts.update",
         `/drafts/${encodeURIComponent(draftId)}`,
         {
           method: "PUT",
@@ -250,13 +285,14 @@ export function createGmailReader(opts: GmailReaderOptions): MailboxReader & Mai
     },
 
     async deleteDraft(draftId) {
-      await call(`/drafts/${encodeURIComponent(draftId)}`, { method: "DELETE" });
+      await call("drafts.delete", `/drafts/${encodeURIComponent(draftId)}`, { method: "DELETE" });
     },
 
     async threadDraftMessageIds(threadId) {
       // format=minimal still carries each message's snippet (body text), so the `fields` mask
       // asks Google for message ids and labels only: no headers, snippet or text reach us.
       const r = await call<{ messages?: { id: string; labelIds?: string[] }[] }>(
+        "threads.get",
         `/threads/${encodeURIComponent(threadId)}?format=minimal&fields=${encodeURIComponent("messages(id,labelIds)")}`,
       );
       return (r?.messages ?? [])
@@ -265,7 +301,7 @@ export function createGmailReader(opts: GmailReaderOptions): MailboxReader & Mai
     },
 
     async sendDraft(draftId) {
-      const r = await call<{ id: string; threadId: string }>("/drafts/send", {
+      const r = await call<{ id: string; threadId: string }>("drafts.send", "/drafts/send", {
         method: "POST",
         body: { id: draftId },
       });
@@ -274,7 +310,7 @@ export function createGmailReader(opts: GmailReaderOptions): MailboxReader & Mai
     },
 
     async sendMessage(raw) {
-      const r = await call<{ id: string }>("/messages/send", {
+      const r = await call<{ id: string }>("messages.send", "/messages/send", {
         method: "POST",
         body: { raw },
       });
@@ -283,7 +319,7 @@ export function createGmailReader(opts: GmailReaderOptions): MailboxReader & Mai
     },
 
     async watch(topicName) {
-      const r = await call<{ historyId: string; expiration: string }>("/watch", {
+      const r = await call<{ historyId: string; expiration: string }>("watch", "/watch", {
         method: "POST",
         body: { topicName, labelIds: ["INBOX"], labelFilterBehavior: "include" },
       });

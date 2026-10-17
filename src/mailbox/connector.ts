@@ -57,7 +57,15 @@ export type MailMessage = {
   bodyText?: string;
 };
 
-export type MessageRef = { id: string; threadId: string };
+export type MessageRef = {
+  id: string;
+  threadId: string;
+  /**
+   * Labels, when the listing already said (history's messagesAdded, or an `in:inbox` listing).
+   * Only a hint for how to read the message (Check 25 P1); what's stored comes from the read.
+   */
+  labelIds?: string[];
+};
 
 export type HistoryPage = {
   added: MessageRef[];

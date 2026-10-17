@@ -25,6 +25,7 @@ import { sendMonthlySummaries } from "@/server/monthly-summary";
 import { threadsToFollowUp } from "@/server/followups";
 import { getMailboxWorkspace } from "@/server/mailboxes";
 import { purgeRateLimits } from "@/server/rate-limit";
+import { purgeGmailUnits } from "@/server/gmail-units";
 import { purgeEmailSentRecords } from "@/lib/email";
 import { sendAccessLostAlerts } from "@/server/alerts";
 import { captureQuoteAmounts, guessNoAnswers } from "@/server/quotes";
@@ -546,7 +547,11 @@ export const purgeBodies = inngest.createFunction(
     // And what each edit did (counts only), for "ideas from your edits" (plan #21).
     await step.run("capture-edit-signals", () => captureEditSignals());
     const purged = await step.run("purge", () => purgeExpiredBodies());
-    await step.run("purge-rate-limits", () => purgeRateLimits());
+    // Gmail unit minutes (Check 25 P1) go in the same step: no extra execution.
+    await step.run("purge-rate-limits", async () => {
+      await purgeRateLimits();
+      await purgeGmailUnits();
+    });
     await step.run("purge-expired-notes", () => purgeExpiredNotes());
     // Plan #45: tell Davi when an account's AI cost passes 40% of its plan.
     await step.run("cost-alerts", () => sendCostAlerts());

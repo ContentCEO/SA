@@ -13,6 +13,7 @@ import {
   jsonb,
   pgEnum,
   pgTable,
+  primaryKey,
   text,
   timestamp,
   uniqueIndex,
@@ -200,6 +201,11 @@ export const mailboxes = pgTable(
      * a plan pause are told apart (a paused address can need reconnecting too).
      */
     planPausedAt: timestamp("plan_paused_at", { withTimezone: true }),
+    /**
+     * Check 25 P1: Gmail itself said "slow down until …". Every Gmail call for this inbox stops
+     * before any fetch until then, so all its jobs wait together.
+     */
+    gmailCoolUntil: timestamp("gmail_cool_until", { withTimezone: true }),
     createdAt: createdAt(),
   },
   (t) => [
@@ -816,6 +822,23 @@ export const rateLimits = pgTable("rate_limits", {
   windowStart: timestamp("window_start", { withTimezone: true }).notNull(),
   count: integer("count").notNull(),
 });
+
+/**
+ * Check 25 P1: Gmail quota units used per mailbox per minute (Google allows 6,000 a minute per
+ * user; we stop at 5,400). One atomic upsert per request, shared by every job for the inbox.
+ * Counts only. Purged daily.
+ */
+export const gmailUnits = pgTable(
+  "gmail_units",
+  {
+    mailboxId: uuid("mailbox_id")
+      .notNull()
+      .references(() => mailboxes.id, { onDelete: "cascade" }),
+    minute: timestamp("minute", { withTimezone: true }).notNull(),
+    units: integer("units").notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.mailboxId, t.minute] })],
+);
 
 export const stripeEvents = pgTable("stripe_events", {
   id: text("id").primaryKey(),

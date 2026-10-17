@@ -195,8 +195,8 @@ describe("incremental sync", () => {
       sentAt: new Date(NOW.getTime() - 0.5 * 86_400_000),
     });
     expect(byId.m1!.labelIds).toEqual(["INBOX"]);
-    // history + metadata and body for old-draft only.
-    expect(fake.calls - calls).toBe(3);
+    // history + one full read of old-draft only (its conversation is in the inbox, Check 25 P1).
+    expect(fake.calls - calls).toBe(2);
     expect(fake.bodyFetches).toEqual(["old-draft"]);
   });
 
@@ -419,5 +419,32 @@ describe("Reply-To (website forms, review B1)", () => {
     await runBackfill(mailboxId, { readerFor: () => subset, now: () => NOW });
     const [row] = await database.select().from(messages);
     expect(row!.replyToHeader).toBeNull();
+  });
+});
+
+describe("Gmail quota (Check 25 P1)", () => {
+  it("reads inbox emails once, in full; everything else as metadata", async () => {
+    fake.add({ id: "i1", threadId: "t1", labelIds: ["INBOX"] });
+    fake.add({ id: "i2", threadId: "t2", labelIds: ["INBOX"] });
+    fake.add({ id: "i3", threadId: "t3", labelIds: ["INBOX"] });
+    fake.add({ id: "a1", threadId: "t4", labelIds: [] });
+    fake.add({ id: "a2", threadId: "t5", labelIds: ["CATEGORY_UPDATES"] });
+    await runBackfill(mailboxId, deps());
+    expect(fake.bodyFetches.sort()).toEqual(["i1", "i2", "i3"]);
+    expect(fake.metaFetches.sort()).toEqual(["a1", "a2"]);
+    const rows = await database.select().from(messages);
+    expect(rows).toHaveLength(5);
+    expect(rows.find((r) => r.gmailMessageId === "a1")!.bodyText).toBeNull();
+  });
+
+  it("an inbox email past retention is read once and its body still isn't kept", async () => {
+    process.env.RETENTION_BODY_DAYS = "10";
+    fake.add({ id: "old", threadId: "t1", labelIds: ["INBOX"], daysAgo: 20 });
+    await runBackfill(mailboxId, deps());
+    const [row] = await database.select().from(messages);
+    expect(row!.bodyText).toBeNull();
+    expect(row!.snippet).toBeNull();
+    expect(fake.bodyFetches).toEqual(["old"]);
+    delete process.env.RETENTION_BODY_DAYS;
   });
 });

@@ -11,9 +11,8 @@ import {
 import { AiCapReachedError } from "@/ai/usage";
 import { db } from "@/db";
 import { activityLog, mailboxes, voiceProfiles, workspaces, type Mailbox } from "@/db/schema";
-import { decryptSecret } from "@/lib/crypto";
 import { MailboxAuthError, type MailboxReader } from "@/mailbox/connector";
-import { createGmailReader } from "@/mailbox/gmail/api";
+import { gmailClientFor, logGmailUnits } from "./gmail-units";
 import { mailboxRunning } from "./mailbox-plan";
 import { jobsAllowed } from "./lifecycle";
 import { markReconnectNeeded } from "./sync";
@@ -93,10 +92,7 @@ export async function learnVoice(
   if (!mailbox) return "no_mailbox";
 
   await setStatus(workspaceId, "learning", now);
-  const reader = (
-    opts.readerFor ??
-    ((m) => createGmailReader({ refreshToken: decryptSecret(m.encryptedRefreshToken) }))
-  )(mailbox);
+  const reader = (opts.readerFor ?? ((m) => gmailClientFor(m)))(mailbox);
 
   let bodies: string[];
   try {
@@ -124,6 +120,7 @@ export async function learnVoice(
       bodies.push(b);
       total += b.length;
     }
+    logGmailUnits("voice", mailbox.id, reader);
   } catch (err) {
     if (err instanceof MailboxAuthError) {
       await markReconnectNeeded(mailbox);
