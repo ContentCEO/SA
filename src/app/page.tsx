@@ -8,6 +8,7 @@ import { Headline } from "@/components/brand/headline";
 import { Wordmark } from "@/components/brand/wordmark";
 import { QueuePreview } from "@/components/marketing/queue-preview";
 import { WaitlistForm } from "@/components/marketing/waitlist-form";
+import { faqs, features, promiseBand, steps } from "@/components/marketing/home-copy";
 import { isReferralCode, referralsVisible } from "@/server/referral-rules";
 import { SALES_TAX_NOTE } from "@/server/billing-rules";
 import { formatDollars, pricing } from "@/config/pricing";
@@ -48,78 +49,6 @@ export const metadata: Metadata = {
       "Built for carpenters, plumbers, and electricians. Nothing goes out without your okay.",
   },
 };
-
-const steps = [
-  {
-    n: "1",
-    title: "Connect your Gmail",
-    body: "We show you exactly what Squared Away can and can't do before Google asks for permission.",
-  },
-  {
-    n: "2",
-    title: "It sorts and drafts",
-    body: "Every email is sorted — quote, question, scheduling, invoice, complaint, junk — and replies are written in your own words, as real Gmail drafts.",
-  },
-  {
-    n: "3",
-    title: "You tap Send reply",
-    body: "Read it, change it if you like, send it. From the truck, between jobs, one-handed.",
-  },
-];
-
-const features = [
-  {
-    title: "Sorts every email",
-    body: "Quote requests, questions, scheduling, invoices, suppliers. Complaints and anything big are put in front of you, not answered.",
-  },
-  {
-    title: "Writes like you",
-    body: "It learns your greetings, sign-off and phrases from your sent mail. The drafts are written by AI, so you read each one. If a draft mentions a price, a day or a promise you didn't give it, it's flagged so you can check it before you send.",
-  },
-  {
-    title: "Chases quiet quotes",
-    body: "If a customer goes quiet on a quote or invoice, it drafts a friendly nudge. Two nudges at most per conversation — each one a draft that waits for your okay.",
-  },
-  {
-    title: "Morning summary",
-    body: "When you're set up, it sends one short email at the time you choose: what's waiting and what needs you. Skipped on quiet mornings.",
-  },
-  {
-    title: "Autopilot, when you're ready",
-    body: "Off by default. Earned one kind of email at a time, never for complaints or money, and every reply waits 10 minutes so you can stop it.",
-  },
-  {
-    title: "Your data stays yours",
-    body: "Email text is deleted after 30 days. It's only used to write your replies — never to train AI. Disconnect any time.",
-  },
-];
-
-const faqs = [
-  {
-    q: "Will it send emails without me?",
-    a: "No. Every reply waits in your queue until you tap Send reply. Autopilot exists, but it's off until you switch it on for a specific kind of email, and only after you've approved ten of those yourself.",
-  },
-  {
-    q: "Do I have to change how I do email?",
-    a: "No. It works inside the Gmail you already use. Each draft is also saved in your Gmail Drafts folder, so you can read it there too.",
-  },
-  {
-    q: "Can it see all my email?",
-    a: "It has permission to read your Gmail. When you connect, it reads the last 30 days of your email (the text only for your inbox), then new mail as it arrives, and up to 200 of your sent emails from the last year to learn how you write. It keeps email text for 30 days. It can't delete, archive or move anything.",
-  },
-  {
-    q: "Does it work with Outlook?",
-    a: "Gmail only for now, including Google Workspace. Outlook is on the list — join the waitlist anyway.",
-  },
-  {
-    q: "What does the trial look like?",
-    a: "Three days with your real inbox. It sorts and drafts so you can judge the replies — Squared Away won't send anything to a customer during the trial. Your drafts are in your Gmail Drafts folder too, so you can send one from Gmail yourself if you want. If it's not for you, disconnect and you're done.",
-  },
-  {
-    q: "What if I stop?",
-    a: "Disconnect Gmail in Settings and our access is removed at Google straight away. Want it all gone? Delete my account in Settings deletes your account and everything in it from Squared Away, after one confirmation. Stripe keeps its own payment records. Month to month, no contract.",
-  },
-];
 
 function Section({
   id,
@@ -251,13 +180,7 @@ export default async function HomePage(props: PageProps<"/">) {
                 <span className="sa-headline-serif text-4xl sm:text-5xl">the one rule,</span>{" "}
                 <span className="sa-headline-heavy text-5xl sm:text-7xl">your okay first.</span>
               </p>
-              <p className="max-w-2xl text-xl leading-relaxed text-ash">
-                Squared Away drafts; you decide. Replies sit in your queue until you tap Send reply
-                — and during your three-day trial, Squared Away won&apos;t send anything to a
-                customer: its Send reply is switched off in the code, not just hidden behind a
-                button. Your drafts are in your Gmail Drafts folder too, so you can send one from
-                Gmail yourself if you want.
-              </p>
+              <p className="max-w-2xl text-xl leading-relaxed text-ash">{promiseBand.join(" ")}</p>
             </div>
           </section>
 

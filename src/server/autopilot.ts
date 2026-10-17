@@ -3,6 +3,7 @@ import { hasUnfilledGap } from "@/ai/gaps";
 import { mentionsMoney } from "@/ai/money-words";
 import { and, count, desc, eq, gte, inArray, isNotNull, isNull, lte, sql } from "drizzle-orm";
 import { pricing } from "@/config/pricing";
+import { EARN_THRESHOLD, GRACE_MINUTES } from "@/config/rules";
 import { db } from "@/db";
 import {
   activityLog,
@@ -49,9 +50,8 @@ export { knownCustomer };
  * sending.
  */
 export const AUTOPILOT_CATEGORIES = AUTO_DRAFT_CATEGORIES;
-export const EARN_THRESHOLD = 10;
+export { EARN_THRESHOLD, GRACE_MINUTES };
 export const MIN_CONFIDENCE_PCT = 85;
-export const GRACE_MINUTES = 10;
 export const DAILY_AUTOPILOT_CAP = 20;
 
 type Category = (typeof AUTOPILOT_CATEGORIES)[number];
