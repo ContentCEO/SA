@@ -147,6 +147,7 @@ import {
 } from "./channel-rules";
 import { knownCustomer, ownerWroteBefore } from "./known-customer";
 import { isFirstContact, isFirstContactOpening, storedOpening } from "./first-contact-rules";
+import { hasVoiceContent } from "./voice-rules";
 
 /** Categories we draft for without being asked. Complaints and noise never are. */
 export const AUTO_DRAFT_CATEGORIES = [
@@ -541,8 +542,9 @@ export async function workspaceContext(
       text,
       endsOn,
     })),
+    // Check 24 P1: a stored voice is used whatever the newest learn said.
     voice:
-      voice?.status === "ready"
+      voice && hasVoiceContent(voice)
         ? {
             summary: voice.summary,
             greetingStyle: voice.greetingStyle,

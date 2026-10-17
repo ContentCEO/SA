@@ -1,5 +1,5 @@
 import "server-only";
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, eq, sql } from "drizzle-orm";
 import { callStructured } from "@/ai/client";
 import { prepareBody } from "@/ai/classify";
 import {
@@ -10,13 +10,24 @@ import {
 } from "@/ai/prompts/voice.v2";
 import { AiCapReachedError } from "@/ai/usage";
 import { db } from "@/db";
-import { activityLog, mailboxes, voiceProfiles, workspaces, type Mailbox } from "@/db/schema";
+import {
+  activityLog,
+  appSettings,
+  mailboxes,
+  users,
+  voiceProfiles,
+  workspaces,
+  type Mailbox,
+} from "@/db/schema";
 import { decryptSecret } from "@/lib/crypto";
+import { sendEmail, type EmailSender } from "@/lib/email";
+import { appUrl } from "@/lib/app-url";
 import { MailboxAuthError, type MailboxReader } from "@/mailbox/connector";
 import { createGmailReader } from "@/mailbox/gmail/api";
 import { mailboxRunning } from "./mailbox-plan";
 import { jobsAllowed } from "./lifecycle";
 import { markReconnectNeeded } from "./sync";
+import { MAX_VOICE_RESTARTS, voiceAttempt, voiceAttemptAt, type VoiceAttempt } from "./voice-rules";
 
 export const MAX_SENT_EMAILS = 200;
 /** Fewer than this and there's not enough to learn from. */
@@ -52,15 +63,55 @@ export function scrubExample(text: string): string {
     .trim();
 }
 
-async function setStatus(
+/** A voice is stored on the row (SQL twin of `hasVoiceContent`). */
+const storedVoiceSql = sql`(coalesce(btrim(${voiceProfiles.summary}), '') <> ''
+  or coalesce(btrim(${voiceProfiles.greetingStyle}), '') <> ''
+  or coalesce(btrim(${voiceProfiles.signoffStyle}), '') <> ''
+  or jsonb_array_length(${voiceProfiles.examples}) > 0)`;
+
+/** What `status` says for an attempt on a row with no stored voice. */
+const STATUS_FOR: Record<
+  Exclude<VoiceAttempt, "ready">,
+  "learning" | "not_enough_mail" | "failed"
+> = {
+  learning: "learning",
+  not_enough_mail: "not_enough_mail",
+  failed: "failed",
+  capped: "failed",
+  reconnect_needed: "failed",
+};
+
+/**
+ * Check 24 P1: record how this attempt is going. A row that already holds a voice stays
+ * "ready" whatever the attempt says (decided in SQL, so an owner's save made meanwhile counts),
+ * so drafts keep the stored voice; only a row with nothing stored shows the attempt's status.
+ */
+async function recordAttempt(
   workspaceId: string,
-  status: "learning" | "not_enough_mail" | "failed",
+  attempt: Exclude<VoiceAttempt, "ready">,
   now: Date,
 ) {
+  const status = STATUS_FOR[attempt];
   await db()
     .insert(voiceProfiles)
-    .values({ workspaceId, status, updatedAt: now })
-    .onConflictDoUpdate({ target: voiceProfiles.workspaceId, set: { status, updatedAt: now } });
+    .values({ workspaceId, status, lastAttempt: attempt, lastAttemptAt: now, updatedAt: now })
+    .onConflictDoUpdate({
+      target: voiceProfiles.workspaceId,
+      set: {
+        status: sql`case when ${storedVoiceSql} then 'ready'::voice_status else ${status}::voice_status end`,
+        lastAttempt: attempt,
+        lastAttemptAt: now,
+        updatedAt: now,
+      },
+    });
+}
+
+/** Check 29 P2: the owner tapped "Re-learn" (an explicit owner action): restarts count again. */
+export async function resetVoiceRestarts(workspaceId: string) {
+  await db()
+    .update(voiceProfiles)
+    .set({ restartCount: 0 })
+    .where(eq(voiceProfiles.workspaceId, workspaceId));
 }
 
 /**
@@ -92,7 +143,27 @@ export async function learnVoice(
     .limit(1);
   if (!mailbox) return "no_mailbox";
 
-  await setStatus(workspaceId, "learning", now);
+  await recordAttempt(workspaceId, "learning", now);
+  try {
+    return await learnFrom(workspaceId, mailbox, opts, now);
+  } catch (err) {
+    // Check 29 P2: a crash never leaves the row at "learning" (the backstop would restart it
+    // all day). The job's own retries still run.
+    try {
+      await recordAttempt(workspaceId, "failed", now);
+    } catch {
+      // Keep the original error.
+    }
+    throw err;
+  }
+}
+
+async function learnFrom(
+  workspaceId: string,
+  mailbox: Mailbox,
+  opts: VoiceDeps,
+  now: Date,
+): Promise<VoiceOutcome> {
   const reader = (
     opts.readerFor ??
     ((m) => createGmailReader({ refreshToken: decryptSecret(m.encryptedRefreshToken) }))
@@ -127,14 +198,14 @@ export async function learnVoice(
   } catch (err) {
     if (err instanceof MailboxAuthError) {
       await markReconnectNeeded(mailbox);
-      await setStatus(workspaceId, "failed", now);
+      await recordAttempt(workspaceId, "reconnect_needed", now);
       return "reconnect_needed";
     }
     throw err;
   }
 
   if (bodies.length < MIN_SENT_EMAILS) {
-    await setStatus(workspaceId, "not_enough_mail", now);
+    await recordAttempt(workspaceId, "not_enough_mail", now);
     return "not_enough_mail";
   }
 
@@ -153,13 +224,13 @@ export async function learnVoice(
     result = (await callStructured(request)) ?? (await callStructured(request));
   } catch (err) {
     if (err instanceof AiCapReachedError) {
-      await setStatus(workspaceId, "failed", now);
+      await recordAttempt(workspaceId, "capped", now);
       return "capped";
     }
     throw err;
   }
   if (!result) {
-    await setStatus(workspaceId, "failed", now);
+    await recordAttempt(workspaceId, "failed", now);
     return "failed";
   }
 
@@ -177,6 +248,9 @@ export async function learnVoice(
     learnedFromCount: bodies.length,
     learnedAt: now,
     updatedAt: now,
+    lastAttempt: "ready",
+    lastAttemptAt: now,
+    restartCount: 0,
   };
   await db()
     .insert(voiceProfiles)
@@ -193,17 +267,26 @@ export async function learnVoice(
   return "ready";
 }
 
-/**
- * Backstop for the poll: workspaces whose first read is done but whose voice
- * was never learned, or whose learn died part-way (rate limits, timeouts).
- */
-export async function workspacesNeedingVoice(now: Date = new Date()): Promise<string[]> {
+type VoiceCandidate = {
+  workspaceId: string;
+  /** never: no voice row yet · stuck: died at "learning" · gave_up: stuck after 2 restarts. */
+  reason: "never" | "stuck" | "gave_up";
+  restartCount: number;
+};
+
+async function voiceCandidates(now: Date): Promise<VoiceCandidate[]> {
   const rows = await db()
     .select({
       workspaceId: mailboxes.workspaceId,
       backfillCompletedAt: mailboxes.backfillCompletedAt,
-      status: voiceProfiles.status,
-      updatedAt: voiceProfiles.updatedAt,
+      voice: {
+        workspaceId: voiceProfiles.workspaceId,
+        status: voiceProfiles.status,
+        lastAttempt: voiceProfiles.lastAttempt,
+        lastAttemptAt: voiceProfiles.lastAttemptAt,
+        updatedAt: voiceProfiles.updatedAt,
+        restartCount: voiceProfiles.restartCount,
+      },
       workspace: { status: workspaces.status, evaluationEndsAt: workspaces.evaluationEndsAt },
     })
     .from(mailboxes)
@@ -211,13 +294,125 @@ export async function workspacesNeedingVoice(now: Date = new Date()): Promise<st
     .leftJoin(voiceProfiles, eq(voiceProfiles.workspaceId, mailboxes.workspaceId))
     .where(mailboxRunning());
   const stuckBefore = now.getTime() - VOICE_STUCK_AFTER_MS;
-  const due = rows.filter(
-    (r) =>
-      r.backfillCompletedAt &&
-      jobsAllowed(r.workspace, now) &&
-      (!r.status || (r.status === "learning" && (r.updatedAt?.getTime() ?? 0) < stuckBefore)),
-  );
-  return [...new Set(due.map((r) => r.workspaceId))];
+  const out = new Map<string, VoiceCandidate>();
+  for (const r of rows) {
+    if (!r.backfillCompletedAt || !jobsAllowed(r.workspace, now) || out.has(r.workspaceId))
+      continue;
+    const v = r.voice?.workspaceId ? r.voice : null;
+    if (!v) {
+      out.set(r.workspaceId, { workspaceId: r.workspaceId, reason: "never", restartCount: 0 });
+      continue;
+    }
+    const stuck = voiceAttempt(v) === "learning" && voiceAttemptAt(v).getTime() < stuckBefore;
+    if (!stuck) continue;
+    out.set(r.workspaceId, {
+      workspaceId: r.workspaceId,
+      reason: v.restartCount >= MAX_VOICE_RESTARTS ? "gave_up" : "stuck",
+      restartCount: v.restartCount,
+    });
+  }
+  return [...out.values()];
+}
+
+/**
+ * Backstop for the poll: workspaces whose first read is done but whose voice
+ * was never learned, or whose learn died part-way (rate limits, timeouts). A learn
+ * restarted twice for being stuck is not restarted again (Check 29 P2).
+ */
+export async function workspacesNeedingVoice(now: Date = new Date()): Promise<string[]> {
+  return (await voiceCandidates(now))
+    .filter((c) => c.reason !== "gave_up")
+    .map((c) => c.workspaceId);
+}
+
+/**
+ * The 15-minute lifecycle step. Returns the workspaces to (re)start. A stuck learn counts a
+ * restart (claimed in one conditional UPDATE, so two runs can't both count it); one stuck after
+ * two restarts is marked failed instead, and Davi gets one content-free email that day.
+ */
+export async function restartVoiceLearns(
+  now: Date = new Date(),
+  deps: { send?: EmailSender } = {},
+): Promise<string[]> {
+  const start: string[] = [];
+  for (const c of await voiceCandidates(now)) {
+    if (c.reason === "never") {
+      start.push(c.workspaceId);
+    } else if (c.reason === "stuck") {
+      const [claimed] = await db()
+        .update(voiceProfiles)
+        .set({ restartCount: c.restartCount + 1, lastAttemptAt: now, updatedAt: now })
+        .where(
+          and(
+            eq(voiceProfiles.workspaceId, c.workspaceId),
+            eq(voiceProfiles.restartCount, c.restartCount),
+          ),
+        )
+        .returning({ workspaceId: voiceProfiles.workspaceId });
+      if (claimed) start.push(c.workspaceId);
+    } else {
+      await recordAttempt(c.workspaceId, "failed", now);
+      console.error("voice_learn_gave_up", { workspaceId: c.workspaceId });
+      await alertVoiceGaveUp(c.workspaceId, now, deps.send ?? sendEmail);
+    }
+  }
+  return start;
+}
+
+/** "Voice learning failed twice for this account" to ADMIN_EMAIL, once per workspace per day. */
+async function alertVoiceGaveUp(workspaceId: string, now: Date, send: EmailSender) {
+  const to = process.env.ADMIN_EMAIL;
+  if (!to) return;
+  const day = now.toISOString().slice(0, 10);
+  const key = `voice_failed_alert:${workspaceId}:${day}`;
+  const [seen] = await db().select().from(appSettings).where(eq(appSettings.key, key));
+  if (seen) return;
+  const [who] = await db()
+    .select({ businessName: workspaces.businessName, ownerEmail: users.email })
+    .from(workspaces)
+    .innerJoin(users, eq(users.id, workspaces.ownerUserId))
+    .where(eq(workspaces.id, workspaceId));
+  const label = who?.businessName?.trim() || who?.ownerEmail || "An account";
+  const text = [
+    `${label}: Voice learning failed twice for this account.`,
+    "It won't be restarted on its own. Drafts keep any voice already stored; the owner can tap Re-learn in Settings → Your voice.",
+    `See ${appUrl("/admin")}`,
+  ].join("\n\n");
+  try {
+    const result = await send({
+      to,
+      subject: `Voice learning failed twice: ${label}`,
+      text,
+      html: text
+        .split("\n\n")
+        .map(
+          (p) =>
+            `<p>${p.replace(/[<>&]/g, (ch) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;" })[ch]!)}</p>`,
+        )
+        .join(""),
+      idempotencyKey: `voice-failed-${workspaceId}-${day}`,
+    });
+    if (result === "not_configured") return;
+    await db().insert(appSettings).values({ key, value: now.toISOString() }).onConflictDoNothing();
+  } catch (err) {
+    console.error("voice_failed_alert_error", {
+      workspaceId,
+      error: err instanceof Error ? err.name : "unknown",
+    });
+  }
+}
+
+/** Daily: yesterday's voice alert markers aren't needed any more. */
+export async function purgeVoiceAlertMarkers(now: Date = new Date()) {
+  const day = now.toISOString().slice(0, 10);
+  await db()
+    .delete(appSettings)
+    .where(
+      and(
+        sql`${appSettings.key} like 'voice_failed_alert:%'`,
+        sql`right(${appSettings.key}, 10) < ${day}`,
+      ),
+    );
 }
 
 /** Workspaces due for the weekly refresh: learned (not hand-edited) and older than a week. */

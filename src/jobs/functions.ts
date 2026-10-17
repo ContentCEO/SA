@@ -33,7 +33,12 @@ import { sendEmergencyAlerts } from "@/server/emergency-alerts";
 import { sendPushAlerts } from "@/server/push-alerts";
 import { sendLeadAtRiskPushes } from "@/server/leads-at-risk";
 import { purgeExpiredNotes } from "@/server/seasonal-notes";
-import { learnVoice, workspacesDueForVoiceRefresh, workspacesNeedingVoice } from "@/server/voice";
+import {
+  learnVoice,
+  purgeVoiceAlertMarkers,
+  restartVoiceLearns,
+  workspacesDueForVoiceRefresh,
+} from "@/server/voice";
 import { expireEvaluations, startPendingEvaluations } from "@/server/workspace-lifecycle";
 import { fitAllMailboxesToPlans } from "@/server/mailbox-plan";
 import { sendTrialEmails } from "@/server/trial-emails";
@@ -436,7 +441,7 @@ export const workspaceLifecycle = inngest.createFunction(
       );
     }
     // Also restart any voice learning that never ran or died part-way.
-    const voice = await step.run("voice", () => workspacesNeedingVoice());
+    const voice = await step.run("voice", () => restartVoiceLearns());
     if (voice.length) {
       await step.sendEvent(
         "learn-voice",
@@ -551,6 +556,7 @@ export const purgeBodies = inngest.createFunction(
     // Plan #45: tell Davi when an account's AI cost passes 40% of its plan.
     await step.run("cost-alerts", () => sendCostAlerts());
     await step.run("purge-cost-markers", () => purgeCostAlertMarkers());
+    await step.run("purge-voice-alert-markers", () => purgeVoiceAlertMarkers());
     await step.run("purge-email-sent-records", () => purgeEmailSentRecords());
     return { purged };
   },

@@ -18,6 +18,7 @@ import { decideSuggestion } from "@/server/edit-learning";
 import { hitLimit } from "@/server/rate-limit";
 import { requireOwner } from "@/server/session";
 import { resumeTrialEmails, stopTrialEmails } from "@/server/trial-emails";
+import { resetVoiceRestarts } from "@/server/voice";
 
 export type FormState = { errors?: Record<string, string[]>; values?: Record<string, string> };
 
@@ -66,6 +67,8 @@ export async function relearnVoiceAction() {
   const { workspace } = await requireOwner();
   if (!(await hitLimit("relearn", workspace.id)).allowed)
     redirect("/settings/writing?error=relearn_busy");
+  // Check 29 P2: an explicit owner action, so the stuck-restart count starts again.
+  await resetVoiceRestarts(workspace.id);
   await enqueue(voiceLearnRequested.create({ workspaceId: workspace.id, force: true }));
   redirect("/settings/writing?done=relearn");
 }

@@ -621,6 +621,14 @@ export const voiceProfiles = pgTable("voice_profile", {
   learnedFromCount: integer("learned_from_count").notNull().default(0),
   learnedAt: timestamp("learned_at", { withTimezone: true }),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  /**
+   * Check 24 P1: how the newest learn went (learning | ready | not_enough_mail | failed | capped |
+   * reconnect_needed), apart from `status`, which stays "ready" while a voice is stored.
+   */
+  lastAttempt: text("last_attempt"),
+  lastAttemptAt: timestamp("last_attempt_at", { withTimezone: true }),
+  /** Check 29 P2: times the 15-minute backstop restarted a learn stuck at "learning". */
+  restartCount: integer("restart_count").notNull().default(0),
 });
 
 /**

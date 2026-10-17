@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { setModelTransportForTests } from "@/ai/client";
 import type { ModelVoice } from "@/ai/prompts/voice.v2";
 import type { Database } from "@/db";
@@ -10,11 +10,15 @@ import { saveConnectedMailbox } from "@/server/mailboxes";
 import { saveVoiceEdits, voiceEditInput } from "@/server/profile";
 import {
   learnVoice,
+  resetVoiceRestarts,
+  restartVoiceLearns,
   scrubExample,
   VOICE_STUCK_AFTER_MS,
   workspacesDueForVoiceRefresh,
   workspacesNeedingVoice,
 } from "@/server/voice";
+import { workspaceContext } from "@/server/drafts";
+import { lastUpdateNote, voiceListLine } from "@/server/voice-rules";
 import { createTestDb } from "../support/db";
 import { FakeMailbox } from "../support/fake-mailbox";
 import { fakeTransport } from "../support/fake-model";
@@ -184,6 +188,184 @@ describe("restarting voice learning that never finished", () => {
       .set({ status: "not_enough_mail" })
       .where(eq(voiceProfiles.workspaceId, workspaceId));
     expect(await workspacesNeedingVoice(later)).toEqual([]);
+  });
+});
+
+const edits = (over: Record<string, string> = {}) =>
+  voiceEditInput.parse({
+    greetingStyle: "Morning",
+    signoffStyle: "– Mike",
+    formality: "casual",
+    avgLengthWords: "30",
+    phrasesUsed: "",
+    phrasesAvoided: "",
+    summary: "",
+    ...over,
+  });
+const ctxVoice = async () =>
+  (await workspaceContext(workspaceId, { businessName: "Shop", trade: "electrical" })).voice;
+const row = async () =>
+  (
+    await database.select().from(voiceProfiles).where(eq(voiceProfiles.workspaceId, workspaceId))
+  )[0]!;
+
+describe("Check 24 P1: a learn that doesn't finish keeps the stored voice in drafts", () => {
+  it("an edited voice survives a forced re-learn that finds too little mail", async () => {
+    await saveVoiceEdits(workspaceId, edits());
+    addSent(3);
+    setModelTransportForTests(fakeTransport([]).transport);
+    expect(await learnVoice(workspaceId, { ...deps(), force: true })).toBe("not_enough_mail");
+    expect(await row()).toMatchObject({
+      status: "ready",
+      source: "edited",
+      lastAttempt: "not_enough_mail",
+      signoffStyle: "– Mike",
+    });
+    expect(await ctxVoice()).toMatchObject({ greetingStyle: "Morning", signoffStyle: "– Mike" });
+  });
+
+  it("an edited voice survives a forced re-learn that hits lost Google access, and the reconnect", async () => {
+    await saveVoiceEdits(workspaceId, edits());
+    fake.revoked = true;
+    expect(await learnVoice(workspaceId, { ...deps(), force: true })).toBe("reconnect_needed");
+    expect(await row()).toMatchObject({ status: "ready", lastAttempt: "reconnect_needed" });
+    expect(await ctxVoice()).toMatchObject({ signoffStyle: "– Mike" });
+    // Reconnected: the backfill asks for a normal learn, which leaves the edits alone.
+    fake.revoked = false;
+    await database.update(mailboxes).set({ status: "active" });
+    expect(await learnVoice(workspaceId, deps())).toBe("skipped_edited");
+    expect(await ctxVoice()).toMatchObject({ greetingStyle: "Morning", signoffStyle: "– Mike" });
+  });
+
+  it("a learned voice survives a weekly refresh whose model output is unusable twice", async () => {
+    addSent(6);
+    setModelTransportForTests(fakeTransport([voice()]).transport);
+    expect(await learnVoice(workspaceId, deps())).toBe("ready");
+    setModelTransportForTests(fakeTransport([null, null]).transport);
+    expect(
+      await learnVoice(workspaceId, { ...deps(), now: () => new Date("2026-10-05T12:00:00Z") }),
+    ).toBe("failed");
+    expect(await row()).toMatchObject({ status: "ready", lastAttempt: "failed" });
+    expect(await ctxVoice()).toMatchObject({ greetingStyle: "Hey", signoffStyle: "Thanks, Davi" });
+  });
+
+  it("drafts written while a refresh is running still get the stored voice", async () => {
+    addSent(6);
+    setModelTransportForTests(fakeTransport([voice()]).transport);
+    await learnVoice(workspaceId, deps());
+    let during: Awaited<ReturnType<typeof ctxVoice>> | undefined;
+    let statusDuring: string | undefined;
+    const { transport } = fakeTransport([voice({ greeting_style: "Hi" })]);
+    setModelTransportForTests(async (req) => {
+      during = await ctxVoice();
+      statusDuring = (await row()).lastAttempt ?? undefined;
+      return transport(req);
+    });
+    expect(await learnVoice(workspaceId, deps())).toBe("ready");
+    expect(statusDuring).toBe("learning");
+    expect(during).toMatchObject({ greetingStyle: "Hey", signoffStyle: "Thanks, Davi" });
+    expect(await ctxVoice()).toMatchObject({ greetingStyle: "Hi" });
+  });
+
+  it("a first-ever learn that fails still gives drafts no voice", async () => {
+    addSent(6);
+    setModelTransportForTests(fakeTransport([null, null]).transport);
+    expect(await learnVoice(workspaceId, deps())).toBe("failed");
+    expect(await row()).toMatchObject({ status: "failed", lastAttempt: "failed" });
+    expect(await ctxVoice()).toBeNull();
+  });
+
+  it("the screens say the last update didn't finish instead of 'Not learned yet'", () => {
+    const v = {
+      status: "ready",
+      source: "learned",
+      summary: null,
+      greetingStyle: "Hey",
+      signoffStyle: null,
+      examples: [],
+      lastAttempt: "failed",
+      lastAttemptAt: new Date("2026-10-13T15:00:00Z"),
+      updatedAt: new Date("2026-10-13T15:00:00Z"),
+    };
+    expect(lastUpdateNote(v, "America/New_York")).toBe(
+      "The last update didn't finish (Oct 13). We're still using this voice.",
+    );
+    expect(voiceListLine(v)).toBe("Learned from your sent mail");
+    expect(voiceListLine({ ...v, greetingStyle: null, status: "failed" })).toBe("Not learned yet");
+    expect(lastUpdateNote({ ...v, lastAttempt: "ready" }, "America/New_York")).toBeNull();
+  });
+});
+
+describe("Check 29 P2: a learn that keeps dying is restarted at most twice", () => {
+  const t0 = new Date("2026-09-28T12:00:00Z");
+  const later = (n: number) => new Date(t0.getTime() + n * (VOICE_STUCK_AFTER_MS + 60_000));
+  const stuck = async (restartCount: number) => {
+    await database.update(mailboxes).set({ backfillCompletedAt: t0 });
+    await database
+      .insert(voiceProfiles)
+      .values({
+        workspaceId,
+        status: "learning",
+        lastAttempt: "learning",
+        lastAttemptAt: t0,
+        updatedAt: t0,
+        restartCount,
+      })
+      .onConflictDoUpdate({
+        target: voiceProfiles.workspaceId,
+        set: { status: "learning", lastAttempt: "learning", lastAttemptAt: t0, restartCount },
+      });
+  };
+
+  it("restarts a stuck learn once and counts it", async () => {
+    await stuck(0);
+    const send = vi.fn(async () => "sent" as const);
+    expect(await restartVoiceLearns(later(1), { send })).toEqual([workspaceId]);
+    expect((await row()).restartCount).toBe(1);
+    // Counted and re-armed: not restarted again by the very next run.
+    expect(await restartVoiceLearns(later(1), { send })).toEqual([]);
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("gives up after two restarts: status failed and one email to Davi", async () => {
+    process.env.ADMIN_EMAIL = "davi@example.com";
+    await stuck(2);
+    expect(await workspacesNeedingVoice(later(1))).toEqual([]);
+    const sent: { to: string; subject: string; text: string }[] = [];
+    const send = vi.fn(async (e: { to: string; subject: string; text: string }) => {
+      sent.push(e);
+      return "sent" as const;
+    });
+    expect(await restartVoiceLearns(later(1), { send })).toEqual([]);
+    expect(await row()).toMatchObject({ status: "failed", lastAttempt: "failed" });
+    expect(sent).toHaveLength(1);
+    expect(sent[0]!.to).toBe("davi@example.com");
+    expect(sent[0]!.text).toContain("Voice learning failed twice for this account");
+    // Stuck again later the same day: still no restart and no second email.
+    await stuck(2);
+    expect(await restartVoiceLearns(later(2), { send })).toEqual([]);
+    expect(sent).toHaveLength(1);
+    delete process.env.ADMIN_EMAIL;
+  });
+
+  it("a successful learn and the owner's re-learn both reset the count", async () => {
+    await stuck(2);
+    addSent(6);
+    setModelTransportForTests(fakeTransport([voice()]).transport);
+    expect(await learnVoice(workspaceId, deps())).toBe("ready");
+    expect((await row()).restartCount).toBe(0);
+    await database.update(voiceProfiles).set({ restartCount: 2 });
+    await resetVoiceRestarts(workspaceId);
+    expect((await row()).restartCount).toBe(0);
+  });
+
+  it("a thrown error in the model call leaves status failed, not learning", async () => {
+    addSent(6);
+    setModelTransportForTests(async () => {
+      throw new Error("boom");
+    });
+    await expect(learnVoice(workspaceId, deps())).rejects.toThrow();
+    expect(await row()).toMatchObject({ status: "failed", lastAttempt: "failed" });
   });
 });
 

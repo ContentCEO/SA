@@ -6,6 +6,7 @@ import { openSuggestions } from "@/server/edit-learning";
 import { listMailboxes } from "@/server/mailboxes";
 import { describeVoice, getBusinessProfile, getVoiceProfile } from "@/server/profile";
 import { requireOwner } from "@/server/session";
+import { hasVoiceContent, lastUpdateNote, voiceAttempt } from "@/server/voice-rules";
 import { decideVoiceIdeaAction, relearnVoiceAction } from "../profile-actions";
 import { SettingsScreen } from "../screen";
 import { saveNeverSayAction } from "../wording-actions";
@@ -20,16 +21,19 @@ export default async function WritingSettingsPage(props: PageProps<"/settings/wr
     openSuggestions(workspace.id),
     listMailboxes(workspace.id),
   ]);
-  const voiceLine =
-    voice?.status === "ready"
-      ? describeVoice(voice)
-      : voice?.status === "learning"
-        ? "Reading your sent mail to learn how you write…"
-        : voice?.status === "not_enough_mail"
-          ? "Not enough sent mail to learn from yet. You can describe it yourself."
-          : voice?.status === "failed"
-            ? "Couldn't learn your style last time. You can describe it yourself, or try again."
-            : "Not learned yet. It starts once your email has been read.";
+  // Check 24 P1: what's stored decides the screen; the newest attempt only adds a note.
+  const stored = hasVoiceContent(voice);
+  const attempt = voice ? voiceAttempt(voice) : null;
+  const voiceLine = stored
+    ? describeVoice(voice!) || "We've learned how you write."
+    : attempt === "learning"
+      ? "Reading your sent mail to learn how you write…"
+      : attempt === "not_enough_mail"
+        ? "Not enough sent mail to learn from yet. You can describe it yourself."
+        : attempt === "failed" || attempt === "capped" || attempt === "reconnect_needed"
+          ? "Couldn't learn your style last time. You can describe it yourself, or try again."
+          : "Not learned yet. It starts once your email has been read.";
+  const updateNote = lastUpdateNote(voice, profile?.timeZone ?? "America/New_York");
 
   return (
     <SettingsScreen path="/settings/writing" heavy="your voice." params={await props.searchParams}>
@@ -39,12 +43,13 @@ export default async function WritingSettingsPage(props: PageProps<"/settings/wr
         </h2>
         <div className="flex flex-col gap-2 rounded-xl border bg-card p-4">
           <p className="text-lg">{voiceLine}</p>
-          {voice?.status === "ready" && voice.phrasesUsed.length ? (
+          {updateNote ? <p className="font-semibold">{updateNote}</p> : null}
+          {stored && voice?.phrasesUsed.length ? (
             <p className="text-muted-foreground">
               You say things like “{voice.phrasesUsed.slice(0, 3).join("”, “")}”.
             </p>
           ) : null}
-          {voice?.status === "ready" && voice.phrasesAvoided.length ? (
+          {stored && voice?.phrasesAvoided.length ? (
             <p className="text-muted-foreground">
               Drafts will never say “{voice.phrasesAvoided.slice(0, 2).join("” or “")}”.
             </p>
