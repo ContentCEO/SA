@@ -102,3 +102,10 @@ For the integrator to fold into `CLAUDE.md` (Decisions), `docs/LAUNCH.md` and th
   capped at 40 (never Ready), and the fixed task line appended to the conversation's task.
   Stored prompt version `draft.v7+dispute-caution.v1` (or `revise.v2+…`). Eval cases
   `d-lawyer-reply`, `d-refund-dispute` (field `disputeCaution`); evals not run.
+- **Check 9 P10 (stopped / late sends):** `sentDraftSummary` now returns `stopped: {why}` when the
+  newest send step for the draft is `send_stopped` (pending) or `send_stood_down` (expired),
+  and `late` when its window ended over a minute ago and no job holds it. The Queue shows
+  "Didn't send. It was changed in Gmail, so it's back below to check." (words shared with
+  Activity via `sendStoppedWhy`), and lists late sends on top ("Waiting to send: reply to
+  Priya", "Still sending. This is taking longer than usual.", Stop it = undo while unclaimed),
+  refreshing every 10 s (`late-sends.tsx`, `lateSends()`).

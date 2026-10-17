@@ -61,3 +61,40 @@ test("an old draft that says 'tomorrow' asks once more: Send reply anyway or Edi
   expect(after!.sendAfter).toBeNull();
   expect(after!.status).toBe("pending");
 });
+
+test("a stopped send says why, and a late one waits on top with Stop it (Check 9 P10)", async ({
+  page,
+  context,
+}) => {
+  const owner = await paidOwner();
+  const { draft } = await seedQueue(owner.mailboxId!);
+  // The send job stopped it after the window: changed in Gmail, back in the queue.
+  await testDb.insert(schema.activityLog).values({
+    workspaceId: owner.workspaceId,
+    actor: "squared_away",
+    action: "send_stopped",
+    threadId: draft.threadId,
+    detail: { draftId: draft.id, why: "changed_in_gmail" },
+  });
+  await signInAs(context, owner);
+  await page.goto(`/queue?sent=${draft.id}`);
+  await expect(
+    page.getByText("Didn't send. It was changed in Gmail, so it's back below to check."),
+  ).toBeVisible();
+  await expect(page.getByText("reply sent,")).toHaveCount(0);
+  await expect(page.getByRole("article", { name: "Draft reply to Priya" })).toBeVisible();
+
+  // Tapped again, and the job's event was lost: two minutes past the window, nobody holds it.
+  await testDb
+    .update(schema.drafts)
+    .set({ sendAfter: new Date(Date.now() - 2 * 60_000) })
+    .where(eq(schema.drafts.id, draft.id));
+  await page.goto("/queue");
+  await expect(page.getByText("Waiting to send: reply to Priya")).toBeVisible();
+  await expect(page.getByText("Still sending. This is taking longer than usual.")).toBeVisible();
+  await page.getByRole("button", { name: "Stop it" }).click();
+  await expect(page.getByText("Stopped. Nothing was sent")).toBeVisible();
+  const [after] = await testDb.select().from(schema.drafts).where(eq(schema.drafts.id, draft.id));
+  expect(after!.sendAfter).toBeNull();
+  expect(after!.status).toBe("pending");
+});

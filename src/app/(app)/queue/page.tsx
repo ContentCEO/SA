@@ -9,6 +9,7 @@ import { gmailThreadLink } from "@/lib/gmail-link";
 import {
   bodyHash,
   draftGmailLink,
+  lateSends,
   listQueue,
   sentDraftSummary,
   type QueueItem,
@@ -32,6 +33,8 @@ import { OnboardingChecklist } from "@/components/app/onboarding-checklist";
 import { checklistFor } from "@/server/onboarding";
 import { DraftCard } from "./draft-card";
 import { UndoSend } from "./undo-send";
+import { LateSends } from "./late-sends";
+import { sendStoppedWhy } from "@/server/activity";
 import { OfflineQueue } from "./offline-queue";
 import { devicePrefs } from "@/lib/device-prefs";
 import { ScrollToThread } from "./scroll-to-thread";
@@ -76,6 +79,7 @@ function nextLine(
   return `I'll let you know when ${name ?? "they"} write${name ? "s" : ""} back.`;
 }
 const firstName = (name: string | null) => (name ? name.split(/[\s,]+/)[0] : null);
+const capitalize = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
 const gmailLink = (i: QueueItem) => gmailThreadLink(i);
 
@@ -91,9 +95,13 @@ export default async function QueuePage(props: PageProps<"/queue">) {
   const sentIds = (Array.isArray(params.sent) ? params.sent : params.sent ? [params.sent] : [])
     .filter((s) => /^[0-9a-f-]{36}$/i.test(s))
     .slice(0, 50);
-  const sentAll = (await Promise.all(sentIds.map((d) => sentDraftSummary(workspace.id, d)))).filter(
-    (s) => s !== null,
-  );
+  const summaries = (
+    await Promise.all(sentIds.map((d) => sentDraftSummary(workspace.id, d)))
+  ).filter((s) => s !== null);
+  // Check 9 P10: a tap that was stopped says so; a late one waits on top with Stop it.
+  const stopped = summaries.filter((s) => s.stopped);
+  const sentAll = summaries.filter((s) => !s.stopped && !s.late);
+  const late = await lateSends(workspace.id);
   const sent = sentAll.length === 1 ? sentAll[0]! : null;
   const sendingIds = sentAll.filter((s) => s.sendingAt).map((s) => s.draftId);
   const sendAt = sentAll
@@ -253,6 +261,15 @@ export default async function QueuePage(props: PageProps<"/queue">) {
       ) : (
         <Headline serif="waiting on you," heavy="the queue." />
       )}
+
+      {stopped.map((s) => (
+        <Notice key={s.draftId} strong>
+          {s.stopped!.why === "answered_elsewhere"
+            ? `Didn't send. Someone had already answered ${firstName(s.toName) ?? "them"} from Gmail, so this reply was set aside.`
+            : `Didn't send. ${capitalize(sendStoppedWhy(s.stopped!.why))}, so it's back below to check.`}
+        </Notice>
+      ))}
+      <LateSends items={late} />
 
       {away.on && away.backOn ? (
         <form

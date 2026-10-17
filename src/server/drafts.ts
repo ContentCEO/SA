@@ -3214,12 +3214,69 @@ export async function threadsToAutoDraft(mailboxId: string, limit = 10): Promise
 }
 
 /** For the "squared away." moment: a draft this workspace just sent. */
-export async function sentDraftSummary(workspaceId: string, draftId: string) {
+/** Check 9 P10: the send-path rows of Activity that say what last happened to a tap. */
+const SEND_STEPS = ["send_approved", "send_undone", "send_stopped", "send_stood_down"] as const;
+
+/** Check 9 P10: a send is "late" once its window ended this long ago and nobody holds it. */
+export const LATE_SEND_MS = 60_000;
+
+const lateWhere = (now: Date) =>
+  and(
+    eq(drafts.status, "pending"),
+    isNotNull(drafts.sendAfter),
+    lte(drafts.sendAfter, new Date(now.getTime() - LATE_SEND_MS)),
+    or(
+      isNull(drafts.sendClaimedAt),
+      lt(drafts.sendClaimedAt, new Date(now.getTime() - SEND_CLAIM_LEASE_MS)),
+    ),
+  );
+
+export async function sentDraftSummary(
+  workspaceId: string,
+  draftId: string,
+  now: Date = new Date(),
+) {
   const row = await loadOwnedDraft(workspaceId, draftId);
   if (!row) return null;
-  const sendingAt = row.draft.status === "pending" ? row.draft.sendAfter : null;
-  if (!sendingAt && row.draft.status !== "sent" && row.draft.status !== "edited_and_sent")
-    return null;
+  const pending = row.draft.status === "pending";
+  const sendingAt = pending ? row.draft.sendAfter : null;
+  if (!sendingAt && row.draft.status !== "sent" && row.draft.status !== "edited_and_sent") {
+    // Check 9 P10: a tap that didn't end in a send says why, instead of vanishing — the send
+    // was stopped after the undo window (back in the queue) or stood down (set aside).
+    if (!pending && row.draft.status !== "expired") return null;
+    const [last] = await db()
+      .select({ action: activityLog.action, detail: activityLog.detail })
+      .from(activityLog)
+      .where(
+        and(
+          eq(activityLog.workspaceId, workspaceId),
+          inArray(activityLog.action, [...SEND_STEPS]),
+          sql`${activityLog.detail}->>'draftId' = ${draftId}`,
+        ),
+      )
+      .orderBy(desc(activityLog.createdAt))
+      .limit(1);
+    const why =
+      pending && last?.action === "send_stopped"
+        ? String(last.detail.why ?? "unknown")
+        : !pending && last?.action === "send_stood_down"
+          ? String(last.detail.reason ?? "answered_elsewhere")
+          : null;
+    if (!why) return null;
+    return {
+      draftId: row.draft.id,
+      sendingAt: null,
+      stopped: { why },
+      late: false,
+      toName: (await customerOf(row.thread.id))?.name ?? null,
+      toAddress: row.draft.toAddress,
+      category: row.thread.category,
+      kind: row.draft.kind,
+      purpose: row.draft.purpose ?? null,
+      nudgeOn: null,
+      lastNudgeUsed: false,
+    };
+  }
   const to = await customerOf(row.thread.id);
   const settings = await followupSettings(workspaceId);
   const chased =
@@ -3237,6 +3294,17 @@ export async function sentDraftSummary(workspaceId: string, draftId: string) {
     draftId: row.draft.id,
     /** Plan #7: still in its undo window until then. Null once sent. */
     sendingAt,
+    /** Check 9 P10: set when the tap didn't end in a send (why: a send_stopped reason). */
+    stopped: null as { why: string } | null,
+    /**
+     * Check 9 P10: the window ended over a minute ago and no send job holds it (a lost event):
+     * "Still sending. This is taking longer than usual." with Stop it.
+     */
+    late:
+      sendingAt != null &&
+      sendingAt.getTime() <= now.getTime() - LATE_SEND_MS &&
+      (row.draft.sendClaimedAt == null ||
+        row.draft.sendClaimedAt.getTime() < now.getTime() - SEND_CLAIM_LEASE_MS),
     toName: to?.name ?? null,
     toAddress: row.draft.toAddress,
     category: row.thread.category,
@@ -3251,3 +3319,23 @@ export async function sentDraftSummary(workspaceId: string, draftId: string) {
   };
 }
 
+/**
+ * Check 9 P10: sends whose undo window ended over a minute ago and that no job holds (the
+ * queue event was lost; the 15-minute backstop will send them). They're hidden from the queue
+ * meanwhile, so the Queue lists them on top: "Waiting to send: reply to Priya", with Stop it.
+ */
+export async function lateSends(workspaceId: string, now: Date = new Date()) {
+  const rows = await db()
+    .select({ draftId: drafts.id, threadId: drafts.threadId, toAddress: drafts.toAddress })
+    .from(drafts)
+    .innerJoin(mailboxes, eq(mailboxes.id, drafts.mailboxId))
+    .where(and(eq(mailboxes.workspaceId, workspaceId), lateWhere(now)))
+    .orderBy(asc(drafts.sendAfter))
+    .limit(10);
+  return Promise.all(
+    rows.map(async (r) => {
+      const who = await customerOf(r.threadId);
+      return { draftId: r.draftId, to: who?.name || who?.address || r.toAddress };
+    }),
+  );
+}
