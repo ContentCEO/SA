@@ -112,6 +112,9 @@ describe("lifecycle rules (pure)", () => {
     expect(canMakeMove("pause", from("canceled"), T0)).toBe(false);
     // An evaluation whose clock ran out can be extended.
     expect(canMakeMove("extend_evaluation", from("evaluating"), at(4))).toBe(true);
+    // Check 16 P2: never from invited — the clock starts on the first Gmail connect.
+    expect(canMakeMove("extend_evaluation", from("invited"), T0)).toBe(false);
+    expect(canMakeMove("extend_evaluation", from("evaluation_expired"), T0)).toBe(true);
   });
 
   it("resuming goes back as far as the account had got", () => {
@@ -251,6 +254,28 @@ describe("lifecycle in the database", () => {
       expect(await applyAdminMove(workspaceId, "mark_setup_call_done", T0)).toBe("active");
       const [log] = await logged("workspace_status_changed");
       expect(log!.detail).toMatchObject({ by: "admin", move: "house_account" });
+    });
+
+    it("Check 16 P2: an invited account's clock can't be started from /admin", async () => {
+      const { workspace: w } = await ensureUserAndWorkspace({ email: "new@shop.com" });
+      expect(w.status).toBe("invited");
+      await expect(applyAdminMove(w.id, "extend_evaluation", T0)).rejects.toBeInstanceOf(
+        MoveNotAllowedError,
+      );
+      const [still] = await database.select().from(workspaces).where(eq(workspaces.id, w.id));
+      expect(still!.status).toBe("invited");
+      expect(still!.evaluationEndsAt).toBeNull();
+      // Connecting Gmail later still starts a full three days.
+      await saveConnectedMailbox(still!, {
+        email: "new@shop.com",
+        refreshToken: "rt",
+        grantedScopes: [],
+      });
+      const [started] = await database.select().from(workspaces).where(eq(workspaces.id, w.id));
+      expect(started!.status).toBe("evaluating");
+      expect(started!.evaluationEndsAt!.getTime() - started!.evaluationStartedAt!.getTime()).toBe(
+        3 * DAY,
+      );
     });
 
     it("refuses moves that don't fit the current status", async () => {

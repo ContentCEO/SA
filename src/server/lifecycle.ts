@@ -160,7 +160,9 @@ export function sendingOffLabel(w: Payable, now: Date = new Date()): string {
  * the workspace Davi himself owns (checked server-side in applyAdminMove).
  */
 export const ADMIN_MOVES = {
-  extend_evaluation: ["invited", "evaluating", "evaluation_expired"],
+  // Not from "invited" (Check 16 P2): the clock starts on the first Gmail connect, and
+  // startEvaluation only runs from invited, so extending first would lose those days.
+  extend_evaluation: ["evaluating", "evaluation_expired"],
   house_account: ["invited", "evaluating", "evaluation_expired", "setup_paid", "active"],
   mark_setup_call_done: ["setup_paid"],
   pause: ["invited", "evaluating", "evaluation_expired", "setup_paid", "active", "past_due"],

@@ -150,6 +150,19 @@ test("admin: one stuck inbox inverts the System box and its card (Check 16 P1)",
   await expect(card).not.toContainText("healthy");
 });
 
+test("admin: an invited owner's card has no Give 3 more days (Check 16 P2)", async ({
+  page,
+  context,
+}) => {
+  const invited = await seedOwner();
+  const admin = await seedAdmin();
+  await signInAs(context, admin);
+  await page.goto("/admin");
+  const card = page.getByRole("article", { name: invited.email });
+  await expect(card).toContainText("Invited");
+  await expect(card.getByText("Give 3 more days")).toHaveCount(0);
+});
+
 test("admin: invite an owner", async ({ page, context }) => {
   const admin = await seedAdmin();
   await signInAs(context, admin);

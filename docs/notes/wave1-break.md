@@ -24,3 +24,6 @@
   subscription id (→ canceled), with or without paused_from; the house account is unchanged.
   (The checkout-while-paused case is an extension of the spec: a checkout started before the
   pause and paid after it used to un-pause the account.)
+- **Check 16 P2:** `ADMIN_MOVES.extend_evaluation` = evaluating / evaluation_expired only (not
+  invited: the clock starts on the first Gmail connect). docs/google-verification.md's
+  "Give 3 more days" line still holds (it's about trial accounts).
