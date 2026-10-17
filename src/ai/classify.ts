@@ -442,6 +442,11 @@ export type ClassifyOpts = {
   channel?: { kind: ChannelKind; name: string } | null;
   /** Leads package (B9): the owner's towns; empty = no check. */
   serviceTowns?: readonly string[];
+  /**
+   * Check 22 P5: the thread is a supplier's (its stored bills are owed BY the business), so
+   * "our bank details changed" counts even without an explicit ask.
+   */
+  supplierThread?: boolean;
 };
 
 /** The checks in code that never wait on the model, over the text the model would read. */
@@ -500,6 +505,7 @@ function codeChecks(email: EmailInput, opts: Pick<ClassifyOpts, "alsoCheck" | "s
     asksAi,
     allText,
     checked,
+    fullText,
     injection,
     injectionReasons,
     gasInText,
@@ -593,6 +599,7 @@ export async function classifyEmail(
     asksAi,
     allText,
     checked,
+    fullText,
     gasInText,
     coInText,
     electricalInText,
@@ -629,7 +636,15 @@ export async function classifyEmail(
   const coAlarm = !gasSmell && (coInText || result.signals.co_alarm);
   const electricalHazard = !gasSmell && !coAlarm && electricalInText;
   const waterSmell = !gasSmell && !coAlarm && waterInText;
-  const paymentChange = paymentChangeInText || result.signals.payment_change_request;
+  // Check 22 P5: a supplier the owner pays (this email sorted as one, or the thread's bills)
+  // saying its details changed counts without an explicit "please update".
+  const supplier = result.category === "supplier_vendor" || opts.supplierThread === true;
+  const paymentChange =
+    paymentChangeInText ||
+    result.signals.payment_change_request ||
+    (supplier &&
+      (looksLikePaymentChange(checked, { supplier }) ||
+        looksLikePaymentChange(fullText, { supplier })));
   // Round 2 TW A1: "the adjuster approved the claim" is paperwork, not a lawsuit. The legal mark
   // only drops when the model itself calls it routine AND no word of a real dispute or threat
   // is in the email; a refund or dispute signal still stands on its own.

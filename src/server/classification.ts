@@ -234,6 +234,7 @@ export async function classifyPending(
       injection?: unknown;
       payment_change?: unknown;
       asks_if_ai?: unknown;
+      bill_direction?: unknown;
     };
     // The burst the model reads with it (B4), oldest first.
     const earlier = older
@@ -382,6 +383,8 @@ export async function classifyPending(
             sticky,
             channel: channel ? { kind: channel.kind, name: channelName(channel.key) ?? "" } : null,
             serviceTowns: business.serviceTowns,
+            // Check 22 P5: a supplier's thread (its bills are owed by the business).
+            supplierThread: prevMarks.bill_direction === "owed_by_business",
           },
         );
       } catch (err) {

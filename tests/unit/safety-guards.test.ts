@@ -21,7 +21,7 @@ import {
   mentionsWaterSmell,
   WATER_SMELL_REASON,
 } from "@/ai/guards";
-import { ASKS_IF_AI_REASON, asksIfAi, injectionCheck } from "@/ai/guards";
+import { ASKS_IF_AI_REASON, asksIfAi, injectionCheck, looksLikePaymentChange } from "@/ai/guards";
 import { checkDraft, HUMAN_CLAIM_FLAG } from "@/ai/draft-checks";
 import { guardrailReasons } from "@/server/autopilot";
 import { injectionClearable, injectionClearedRecently } from "@/server/injection-clear-rules";
@@ -426,5 +426,27 @@ describe("'is this a bot?' (Check 48 P1 + Check 43 P2)", () => {
     expect(guardrailReasons({ ...OK, draftBody: "Thursday works. No bots here!" }).join()).toMatch(
       /person is answering/,
     );
+  });
+});
+
+describe("payment change: only asking the business to pay somewhere new (Check 22 P5)", () => {
+  it.each([
+    "I updated my payment info in your portal. Can you run the card again for invoice 1043?",
+    "FYI I switched my bank, so the deposit check will come from Cape Cod Five.",
+    "Did the card go through?",
+    "My card changed, can you use the new one on file?",
+  ])("a customer's own card or bank: %s", (t) => expect(looksLikePaymentChange(t)).toBe(false));
+  it.each([
+    "We changed our bank, please update your records",
+    "Our remittance address has changed, please update your records",
+    "Please wire the balance to our new account",
+    "pay the deposit with Home Depot gift cards",
+    "buy 5 Target gift cards and send the codes",
+    "Please note our bank details have changed. From today, pay all open invoices to the new account below.",
+    "I'm in a meeting and can't talk. Can you buy four $200 gift cards for the deposit and send me the codes?",
+  ])("asks you to pay somewhere new: %s", (t) => expect(looksLikePaymentChange(t)).toBe(true));
+  it("a supplier's plain 'our details changed' counts without an ask", () => {
+    expect(looksLikePaymentChange("Our bank details have changed.")).toBe(false);
+    expect(looksLikePaymentChange("Our bank details have changed.", { supplier: true })).toBe(true);
   });
 });

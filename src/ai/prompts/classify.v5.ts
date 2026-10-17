@@ -8,6 +8,8 @@
  * - Check 22 P3: a short reply ("please read the letter below") comes with the start of the
  *   quoted or forwarded text it cut, in its own untrusted block, labelled as older and possibly
  *   from someone else.
+ * - Check 22 P5: payment_change_request is only a request to pay somewhere new, never a
+ *   customer's own card or bank changing.
  * - Check 48 P1 + 43 P2: asking whether a person or an AI is answering is not an attempt to
  *   instruct the assistant (the code gives it its own needs-you reason).
  *
@@ -127,7 +129,7 @@ Only fill in what the email actually says. Do not guess.
 
 - mentions_legal: lawyers, liens filed or threatened, courts, lawsuits, small claims, legal threats. Not routine insurance or warranty claims, lien waivers or insurance certificates.
 - routine_paperwork: insurance or home-warranty claims and adjuster notes, claim or dispatch numbers, lien waivers, certificates of insurance, W-9s, lender draw paperwork — business as usual, not a dispute.
-- payment_change_request: the email says bank, wire or payment details changed, asks to pay a new account, or asks for payment in gift cards.
+- payment_change_request: the email asks the business to pay somewhere new — says the sender's bank, wire or payment details changed, asks to pay a new account, or asks for payment in gift cards. A customer saying their OWN card, bank or payment info changed ("I updated my card in your portal", "the check will come from my new bank") is not this.
 - smells_gas: the sender says they smell gas or propane, or rotten eggs in the air, or says a gas line, pipe or appliance is leaking or hissing, or the gas company shut off or red-tagged something. Sulfur-smelling or rotten-egg-smelling WATER alone (hot water, the shower, well water) is not a gas smell. Safety advice printed in a utility's bill, footer or newsletter ("Smell gas? Leave the building and call 911") is not someone smelling gas.
 - co_alarm: the sender says a carbon monoxide (CO) alarm or detector went off or is sounding, or someone feels sick from carbon monoxide. A request to install CO detectors, or a low-battery chirp, is not this.
 - mentions_refund_or_dispute: asks for money back, disputes a charge, refuses to pay.

@@ -152,20 +152,55 @@ export const ASKS_IF_AI_REASON =
  * Payment-change fraud (review A11): "our bank details changed", "wire it to this new
  * account", "pay with gift cards". A real supplier rarely does this by email, and a scammer
  * always does. Always the owner's call, with a plain safety line.
+ *
+ * Check 22 P5: only emails that ask the BUSINESS to pay somewhere new. A customer's own card or
+ * bank changing ("I updated my payment info in your portal", "I switched my bank, the check
+ * will come from Cape Cod Five") is not it.
  */
-const PAYMENT_CHANGE_PATTERNS: RegExp[] = [
-  /\b(bank|banking|account|wire|wiring|ach|remit|remittance|payment) (details|info|information|instructions|account|number|address)\b.{0,40}\b(changed|have changed|has changed|are changing|is changing|updated|have been updated|has been updated|are new|is new)\b/,
-  /\b(new|updated|different|changed) (bank|banking|wire|wiring|ach|remit|remittance|payment|routing) (details|info|information|instructions|account|number|address)\b/,
-  /\b(changed|switched|moved|updated) (our|my) (bank|banks|banking|bank account|account details|remittance address|remit address|payment details|payment instructions|payment info)\b/,
-  /\b(wire|send|transfer|pay|deposit)\b.{0,30}\b(to|into) (this|our|my|the|a) new (account|bank)\b/,
-  /\b(do not|don't|dont|stop) (send|sending|pay|paying) (it |payment |payments )?(to|into) (the|our|my) (old|previous|usual) (account|bank|address)\b/,
-  /\b(pay|payment|paying|deposit)\b.{0,30}\b(in|with|by|using|via) (itunes |apple |google play |amazon |steam |visa )?gift ?cards?\b/,
+/** Always a request to pay somewhere new. */
+const PAY_SOMEWHERE_NEW: RegExp[] = [
+  /\b(wire|send|transfer|pay|deposit|remit)\b.{0,30}\b(to|into) (this|our|the|a) new (account|bank|bank account)\b/,
+  /\b(do not|don't|dont|stop) (send|sending|pay|paying|remit|remitting) (it |payment |payments )?(to|into) (the|our) (old|previous|usual) (account|bank|address)\b/,
+  /\bupdate (your|the) (records|files?|vendor (file|files|records|info|information|profile)|system|ap|accounts payable)\b.{0,60}\b(new|changed|updated) (bank|banking|account|remit|remittance|payment|wire|ach)\b/,
+  // Gift cards, any brand of up to three words ("with Home Depot gift cards").
+  /\b(pay|payment|paying|deposit)\b.{0,30}\b(in|with|by|using|via) ([a-z0-9'&-]+ ){0,3}gift ?cards?\b/,
   /\b(buy|purchase|get)\b.{0,20}\bgift ?cards?\b.{0,40}\b(pay|payment|invoice|deposit|codes|pins?)\b/,
 ];
 
-export function looksLikePaymentChange(text: string | null | undefined): boolean {
+/**
+ * "Our bank details have changed" — a request only when it's the sender's business ("our" /
+ * "the") and they ask the reader to act within 60 characters (update, use, send, pay, remit,
+ * wire, or new details attached / below), or when the sender is a supplier whose bills the
+ * owner pays.
+ */
+const DETAILS_CHANGED: RegExp[] = [
+  /\b((?:our|the|my) )?(bank|banking|account|wire|wiring|ach|remit|remittance|payment) (details|info|information|instructions|account|number|address)\b.{0,40}\b(changed|have changed|has changed|are changing|is changing|updated|have been updated|has been updated|are new|is new)\b/,
+  /\b((?:our|the|my) )?(new|updated|different|changed) (bank|banking|wire|wiring|ach|remit|remittance|payment|routing) (details|info|information|instructions|account|number|address)\b/,
+  /\b(changed|switched|moved|updated) (our|my|the) (bank|banks|banking|bank account|account details|remittance address|remit address|payment details|payment instructions|payment info|card|credit card)\b/,
+];
+const ASKS_READER =
+  /\b(update|use|send|remit|pay|wire|transfer|deposit|attached|below|enclosed|going forward|from (now|today) on|from today)\b/;
+/** The writer's own way of paying: "my card", "my payment info", "I switched my bank". */
+const OWN_METHOD = /\b(my|i)\b/;
+
+export function looksLikePaymentChange(
+  text: string | null | undefined,
+  /** The sender is a supplier the owner pays (its bills are owed by the business). */
+  opts: { supplier?: boolean } = {},
+): boolean {
   const flat = (text ?? "").toLowerCase().replace(/\s+/g, " ");
-  return PAYMENT_CHANGE_PATTERNS.some((p) => p.test(flat));
+  if (PAY_SOMEWHERE_NEW.some((p) => p.test(flat))) return true;
+  for (const p of DETAILS_CHANGED) {
+    for (const m of flat.matchAll(new RegExp(p.source, "g"))) {
+      const at = m.index ?? 0;
+      const lead = flat.slice(Math.max(0, at - 12), at) + m[0].slice(0, 30);
+      const own = OWN_METHOD.test(lead) && !/\b(our|the)\b/.test(lead);
+      if (opts.supplier) return true;
+      if (own) continue;
+      if (ASKS_READER.test(flat.slice(at + m[0].length, at + m[0].length + 60))) return true;
+    }
+  }
+  return false;
 }
 
 export const PAYMENT_CHANGE_REASON =

@@ -699,3 +699,36 @@ describe("Promotions and Social mail that must be read (Check 22 P1)", () => {
     expect(row.needsOwner).toBe(true);
   });
 });
+
+describe("a customer's own card change isn't payment fraud (Check 22 P5)", () => {
+  it("no payment-change mark, and the next email isn't held either", async () => {
+    const t = await thread("card");
+    await message(t.id, "card", {
+      bodyText:
+        "I updated my payment info in your portal. Can you run the card again for invoice 1043?",
+    });
+    setModelTransportForTests(
+      fakeTransport([classification({ category: "invoice_payment", confidence: 0.95 })]).transport,
+    );
+    await classifyPending(mailboxId, { now: NOW });
+    const row = await threadRow(t.id);
+    expect((row.extracted as { payment_change?: boolean }).payment_change).toBeUndefined();
+    expect(row.needsOwnerReason).not.toBe(PAYMENT_CHANGE_REASON);
+  });
+
+  it("a supplier's thread: 'our bank details have changed' still counts", async () => {
+    const t = await thread("supplier");
+    await message(t.id, "supplier", {
+      fromAddress: "ar@supply.test",
+      bodyText: "Heads up, our bank details have changed.",
+    });
+    setModelTransportForTests(
+      fakeTransport([classification({ category: "supplier_vendor", confidence: 0.95 })]).transport,
+    );
+    await classifyPending(mailboxId, { now: NOW });
+    expect(await threadRow(t.id)).toMatchObject({
+      needsOwner: true,
+      needsOwnerReason: PAYMENT_CHANGE_REASON,
+    });
+  });
+});

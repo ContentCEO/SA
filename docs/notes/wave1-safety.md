@@ -7,7 +7,8 @@ Builder notes for `CLAUDE.md` (Decisions, Prompt versions, Waiting on Davi), `do
 
 - **classify.v5** (this branch): Check 22 P4 + 36 P1 (smells_gas widened, `co_alarm` signal),
   Check 22 P3 (a short reply's quoted text in its own untrusted block), Check 48 P1 (a "bot?"
-  question is not `tries_to_instruct_assistant`).
+  question is not `tries_to_instruct_assistant`), Check 22 P5 (`payment_change_request` is only
+  a request to pay somewhere new).
 - **draft.v8** (this branch): Check 48 P1's "Who is writing" rule. The categories, business block and
   types are re-exported from classify.v4, so screens importing `Category` from v4 are unchanged.
   `co_alarm` is `z.boolean().catch(false)` (a missing value reads false, as draft.v7's `opening`).
@@ -146,6 +147,15 @@ Builder notes for `CLAUDE.md` (Decisions, Prompt versions, Waiting on Davi), `do
   occupancy in the subject or snippet; and anything the code checks catch (gas, CO, electrical,
   payment change, attack). A lead site's own marketing keeps the shortcut. The municipal, phone
   and sticky-mark exceptions are unchanged; the shortcut's result shape is unchanged.
+
+- **Payment change (Check 22 P5):** `looksLikePaymentChange(text, { supplier })` splits "pay
+  somewhere new" (pay / wire / send TO a new account, "update your records … new bank", "don't
+  pay the old account", gift cards of any brand up to three words) from "details changed", which
+  counts only with "our" / "the" and an ask within 60 characters (update, use, send, remit, pay,
+  wire, attached, below, going forward) — or always for a supplier (`supplier_vendor` sort, or a
+  thread whose stored `bill_direction` is `owed_by_business`). A customer's own card, bank or
+  payment info ("my", "I") never counts. classify.v5's `payment_change_request` says the same.
+  The reason text is unchanged.
 
 ## Privacy policy lines (for the integrator)
 

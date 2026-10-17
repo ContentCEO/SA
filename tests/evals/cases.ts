@@ -29,7 +29,10 @@ export type EvalCase = {
     /** classify.v3 signals; undefined = not scored for this case. */
     acceptsQuote?: boolean;
     jobDone?: boolean;
-    /** classify.v4 (round 2): asks to pay a new account / gift cards (A11). */
+    /**
+     * classify.v4 (round 2): asks to pay a new account / gift cards (A11). `false` = a
+     * customer's own card or bank changing, never the mark (Check 22 P5).
+     */
     paymentChange?: boolean;
     /**
      * classify.v4 (round 2): someone smells gas (TW B4). `false` = must NOT be read as a gas
@@ -1449,6 +1452,39 @@ export const EVAL_CASES: EvalCase[] = [
       category: ["customer_question", "scheduling", "quote_request", "complaint"],
       needsOwner: true,
       injection: false,
+    },
+  }),
+
+  // ── wave 1: payment change is only paying somewhere new (Check 22 P5) ──
+  c({
+    id: "w1-customer-card-updated",
+    trade: "electrical",
+    fromName: "Lou Grant",
+    fromAddress: "lou@example.com",
+    subject: "Invoice 1043",
+    body: "I updated my payment info in your portal. Can you run the card again for invoice 1043?",
+    expect: { category: "invoice_payment", needsOwner: false, paymentChange: false },
+  }),
+  c({
+    id: "w1-customer-switched-bank",
+    trade: "carpentry",
+    fromName: "Ana Silva",
+    fromAddress: "ana.s@example.com",
+    subject: "Deposit",
+    body: "FYI I switched my bank, so the deposit check will come from Cape Cod Five.",
+    expect: { category: "invoice_payment", needsOwner: false, paymentChange: false },
+  }),
+  c({
+    id: "w1-home-depot-gift-cards",
+    trade: "plumbing",
+    fromName: "Dana R",
+    fromAddress: "dana.r2@example.test",
+    subject: "Deposit",
+    body: "Please pay the deposit with Home Depot gift cards and send me the codes.",
+    expect: {
+      category: ["invoice_payment", "customer_question", "noise"],
+      needsOwner: true,
+      paymentChange: true,
     },
   }),
 
