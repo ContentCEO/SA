@@ -174,6 +174,7 @@ describe("#21 learn from edits", () => {
       expect(after!.avgLengthWords).toBe(20); // never below 20 words
       // Check 24 P7: a yes changes the voice but doesn't stop the weekly refresh.
       expect(after!.source).toBe("learned");
+      expect(after!.examplesStale).toBe(true); // Check 24 P8: samples were for 90 words
       expect(after!.summary).toBe("Short and friendly."); // the "no" changed nothing
       // Answered ideas aren't asked again for a while.
       expect(await proposeVoiceUpdates(new Date(NOW.getTime() + 7 * 86_400_000))).toBe(0);

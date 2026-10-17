@@ -61,7 +61,7 @@ export default async function WritingSettingsPage(props: PageProps<"/settings/wr
               Drafts will never say “{voice.phrasesAvoided.slice(0, 2).join("” or “")}”.
             </p>
           ) : null}
-          {voice?.examples.length ? (
+          {voice?.examples.length && !voice.examplesStale ? (
             <details>
               <summary className="inline-flex min-h-tap cursor-pointer items-center font-semibold">
                 Sample replies in your style

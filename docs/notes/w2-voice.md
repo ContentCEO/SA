@@ -73,3 +73,43 @@
   one-off script): an "edited" row could also hold the owner's own typed edits, and the
   activity log can't always tell which came last without guessing. They keep working as before
   (weekly refresh skips them; "Re-learn" brings them back). Davi can ask for a script if wanted.
+- **Stale sample replies (Check 24 P8, migration `voice_examples_stale`; adapted):**
+  `voice_profile.examples_stale` is set when greeting, sign-off, formality or length change
+  through `saveVoiceEdits` (decided in SQL against the stored row; "or"-ed, so changing back
+  doesn't revive old samples) or `decideSuggestion` (formality/length), and by `learnVoice` when a
+  re-applied accepted idea moved the model's length or formality; a learn whose ideas change
+  nothing clears it. While stale, `workspaceContext` passes `examples: []` and Settings hides the
+  samples. **Not built (needs the Prompt versions group):** the `voice/examples.requested` job and
+  its prompt `voice-examples.v1` (this group may not write prompt files). Until then stale samples
+  stay unused until the next successful learn (never for a hand-edited voice unless the owner
+  taps Re-learn). Spec for the integrator / Prompt versions group:
+  - Event `voice/examples.requested` `{ workspaceId }`; function `voice-examples`
+    (singleton per workspace, skip; retries 3; `jobsAllowed` + AI cap like `learnVoice`); enqueue
+    it from `saveVoiceEditsAction` and `decideVoiceIdeaAction` when the save set the flag, and from
+    `learnVoice` when it stored `examplesStale: true`.
+  - Server function `rewriteVoiceExamples(workspaceId)` in `src/server/voice.ts`: read the stored
+    row only (no sent mail), one `callStructured` (role "voice", Sonnet, maxTokens 1500, one
+    retry), run every sample through `scrubText(…, scrubAllowFrom(signature))`, cap 5 × 600 chars,
+    then in one UPDATE … WHERE `updated_at` = the value read (so an edit made meanwhile wins and
+    re-flags): `examples = …, examples_stale = false`. Unusable output twice → leave the flag set.
+  - Prompt `src/ai/prompts/voice-examples.v1.ts` (`VOICE_EXAMPLES_PROMPT_VERSION =
+    "voice-examples.v1"`, registry line, prompt-versions test), exact lines:
+    ```
+    // Check 24 P8: five sample replies written from the owner's stored voice settings only.
+    export const VOICE_EXAMPLES_INSTRUCTIONS = `You write five short sample email replies for a small trade contractor, in their own voice, so an assistant can copy the style.
+    Use only the voice settings given. Follow them exactly:
+    - Open with the greeting style given (or no greeting if none is given).
+    - End with the sign-off given (or none).
+    - Keep each reply close to the average length given, in words.
+    - Match the formality given (casual, neutral or formal).
+    - Use the phrases they use where they fit naturally; never use the phrases they avoid.
+    Write five different everyday situations: answering a quote request, confirming a visit, a schedule change, a payment reminder, and a quick thank-you.
+    Never write a real name, email address, phone number, street address, price or date. Use placeholders instead: [name], [email], [phone], [address], [price], [date], [time].
+    Return JSON only.`;
+    export const voiceExamplesSchema = z.object({ examples: z.array(z.string().min(1).max(800)).length(5) });
+    export function voiceSettingsBlock(v) — "<voice_settings>\nGreeting: …\nSign-off: …\nAverage length: N words\nFormality: …\nPhrases they use: …\nPhrases they avoid: …\nSummary: …\n</voice_settings>" (owner-typed text passed through `untrusted()`).
+    ```
+  - Eval cases: three voice settings (casual "Hey"/"Thanks, Sam" 40 words; formal "Good morning"
+    / "Best regards" 120 words; one with a never-say phrase) — pass = 5 samples, each starts with
+    the greeting and ends with the sign-off, avoided phrase absent, no digits except in
+    placeholders, length within ±50% of the average.

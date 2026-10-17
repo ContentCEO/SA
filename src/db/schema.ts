@@ -633,6 +633,11 @@ export const voiceProfiles = pgTable("voice_profile", {
   learnedFromMailboxId: uuid("learned_from_mailbox_id").references(() => mailboxes.id, {
     onDelete: "set null",
   }),
+  /**
+   * Check 24 P8: greeting, sign-off, formality or length changed since the sample replies were
+   * written, so drafts get no samples until new ones are written.
+   */
+  examplesStale: boolean("examples_stale").notNull().default(false),
 });
 
 /**

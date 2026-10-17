@@ -553,7 +553,8 @@ export async function workspaceContext(
             formality: voice.formality,
             phrasesUsed: voice.phrasesUsed,
             phrasesAvoided: voice.phrasesAvoided,
-            examples: voice.examples,
+            // Check 24 P8: samples written before the owner changed the voice would contradict it.
+            examples: voice.examplesStale ? [] : voice.examples,
           }
         : null,
   };

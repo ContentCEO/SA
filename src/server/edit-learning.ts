@@ -189,10 +189,11 @@ export async function decideSuggestion(
     .from(voiceProfiles)
     .where(eq(voiceProfiles.workspaceId, workspaceId));
   if (!v) return "accepted";
-  const change: Partial<typeof voiceProfiles.$inferInsert> = {
-    ...ideaChanges(v, [{ kind: s.kind, targetWords: s.targetWords }]),
-    updatedAt: now,
-  };
+  const shaped = ideaChanges(v, [{ kind: s.kind, targetWords: s.targetWords }]);
+  const change: Partial<typeof voiceProfiles.$inferInsert> = { ...shaped, updatedAt: now };
+  // Check 24 P8: samples written the old way would contradict the new length or formality.
+  if (shaped.formality !== v.formality || shaped.avgLengthWords !== v.avgLengthWords)
+    change.examplesStale = true;
   await db().update(voiceProfiles).set(change).where(eq(voiceProfiles.workspaceId, workspaceId));
   return "accepted";
 }

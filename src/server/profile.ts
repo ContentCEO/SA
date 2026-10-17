@@ -1,5 +1,5 @@
 import "server-only";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { z } from "zod";
 import { cleanExtraTrades, MAX_EXTRA_TRADES, TRADES } from "@/config/trades";
 import { db } from "@/db";
@@ -300,12 +300,25 @@ export async function saveVoiceEdits(
   data: z.output<typeof voiceEditInput>,
   now = new Date(),
 ) {
+  // Check 24 P8: a changed greeting, sign-off, formality or length makes the stored sample
+  // replies stale (drafts then get none until new ones are written). Decided in SQL against the
+  // stored row, so it can't race a learn.
+  const changed = sql`(${voiceProfiles.greetingStyle} is distinct from ${data.greetingStyle}
+    or ${voiceProfiles.signoffStyle} is distinct from ${data.signoffStyle}
+    or ${voiceProfiles.formality} is distinct from ${data.formality}
+    or ${voiceProfiles.avgLengthWords} is distinct from ${data.avgLengthWords}::integer)`;
   await db()
     .insert(voiceProfiles)
     .values({ workspaceId, ...data, status: "ready", source: "edited", updatedAt: now })
     .onConflictDoUpdate({
       target: voiceProfiles.workspaceId,
-      set: { ...data, status: "ready", source: "edited", updatedAt: now },
+      set: {
+        ...data,
+        status: "ready",
+        source: "edited",
+        updatedAt: now,
+        examplesStale: sql`${voiceProfiles.examplesStale} or ${changed}`,
+      },
     });
   await db()
     .insert(activityLog)

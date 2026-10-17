@@ -179,6 +179,15 @@ describe("learning the owner's voice", () => {
     expect(box!.status).toBe("reconnect_needed");
   });
 
+  it("a learn with no accepted ideas writes fresh samples (Check 24 P8)", async () => {
+    await database.insert(voiceProfiles).values({ workspaceId, examplesStale: true });
+    addSent(6);
+    setModelTransportForTests(fakeTransport([voice()]).transport);
+    await learnVoice(workspaceId, deps());
+    expect((await row()).examplesStale).toBe(false);
+    expect((await ctxVoice())!.examples).toHaveLength(5);
+  });
+
   it("is due for a weekly refresh only after a week", async () => {
     addSent(6);
     setModelTransportForTests(fakeTransport([voice()]).transport);

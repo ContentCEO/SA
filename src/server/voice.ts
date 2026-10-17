@@ -313,6 +313,11 @@ async function learnFrom(
     phrasesUsed: result.phrases_used.slice(0, 10).map((p) => clean(p, 120)),
     phrasesAvoided: result.phrases_avoided.slice(0, 10).map((p) => clean(p, 120)),
     examples: result.examples.slice(0, 5).map((e) => clean(e, 600)),
+    // Check 24 P8: the samples were written for the model's length and formality; an accepted
+    // idea that moved either makes them stale.
+    examplesStale:
+      shaped.formality !== result.formality ||
+      shaped.avgLengthWords !== Math.max(10, Math.min(400, Math.round(result.avg_length_words))),
     learnedFromCount: bodies.length,
     learnedFromMailboxId: mailbox.id,
     learnedAt: now,
