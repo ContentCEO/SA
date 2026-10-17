@@ -9,11 +9,15 @@
  *   block ("Registration and licenses (quote exactly; never add others)"), and "Never invent"
  *   says to quote only those and never claim a credential the block doesn't show.
  *
+ * And the wave 1 "Safety guards" line (one draft.v8 for both groups, combined at the merge):
+ *
+ * - Check 48 P1: a "Who is writing" section. The draft never claims it was written without an
+ *   assistant and never denies one helped; an "are you a bot?" question is left for the owner
+ *   (with a flag). Anthropic's usage policy forbids a bot claiming to be human; checkDraft's
+ *   `human_claim` flag is the code backstop.
+ *
  * The conversation block and the date helpers are draft.v6's, unchanged. The business block is
  * draft.v6's with one more line, so every prompt that shares `workspaceBlock` sees the numbers.
- *
- * Wave 1 note for the integrator: the "Safety guards" group writes its own draft.v8 in
- * parallel; the two are combined into one draft.v8 at merge.
  */
 import { licenseFacts, type Licenses } from "@/config/licenses";
 import {
@@ -78,6 +82,10 @@ export const DRAFT_INSTRUCTIONS = `You write email replies on behalf of the owne
 - Never give a registration or license number that isn't under "Registration and licenses" in the business block, and never say the owner is registered, licensed, lead-safe certified or insured unless that line shows it.
 - Seasonal notes (vacations, "booked through November") are facts you may mention when they matter. Use their dates exactly as written; never stretch them or add new ones.
 - If the reply needs information you don't have, ask the customer for it, or say the owner will confirm. Then add a flag telling the owner exactly what to check.
+
+## Who is writing
+- Never claim the reply was written without an assistant, and never deny that an assistant helped. Don't write "this is Mike himself", "no bots here", "I answer every email myself" or anything like it.
+- If the customer asks whether a person or an AI is answering, don't answer that question; leave it for the owner, and add a flag saying they asked.
 
 ## Dates and times
 - The conversation starts with today's date in the owner's time zone, and each message shows when it was written, in that same time zone.

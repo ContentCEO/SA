@@ -1,9 +1,9 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState, useState, type FormEvent } from "react";
 import { TimeZoneInput } from "./time-zone-input";
 import { LICENSE_LABELS, type Licenses } from "@/config/licenses";
-import { MAX_EXTRA_TRADES, TRADE_OPTIONS } from "@/config/trades";
+import { amountSuggestionsFor, MAX_EXTRA_TRADES, TRADE_OPTIONS } from "@/config/trades";
 import { US_STATES } from "@/config/us-states";
 import { depositTermsWarning } from "@/server/deposit-rules";
 import { saveBusinessProfileAction, type FormState } from "@/app/(app)/settings/profile-actions";
@@ -93,7 +93,63 @@ export function BusinessProfileForm({
     state.values?.[k] ?? fallback;
   const lv = (k: string, fallback: string | undefined) => state.values?.[k] ?? fallback ?? "";
   const joined = (list: string[]) => list.join("\n");
-  const optionalNeedsFixing = OPTIONAL_FIELDS.some((k) => e[k]?.length);
+  // Check 38 P3: a remodeler's emails nearly all name big numbers, so the amount is asked up
+  // front with suggestions (read live from the trade choices; the stored default is unchanged).
+  const [suggestions, setSuggestions] = useState(() =>
+    amountSuggestionsFor(
+      v("trade", defaults.trade) as string | null,
+      state.values?.extraTrades !== undefined
+        ? String(state.values.extraTrades).split(",")
+        : defaults.extraTrades,
+    ),
+  );
+  const [amount, setAmount] = useState(
+    String(v("amountThresholdDollars", defaults.amountThresholdDollars) ?? ""),
+  );
+  const readTrades = (ev: FormEvent<HTMLFormElement>) => {
+    const t = ev.target as HTMLInputElement | HTMLSelectElement;
+    if (t.name !== "trade" && t.name !== "extraTrades") return;
+    const data = new FormData(ev.currentTarget);
+    setSuggestions(
+      amountSuggestionsFor(String(data.get("trade") ?? ""), data.getAll("extraTrades").map(String)),
+    );
+  };
+  // Folded with the other optional fields, unless the trade wants it up front.
+  const optionalNeedsFixing = OPTIONAL_FIELDS.some(
+    (k) => e[k]?.length && !(k === "amountThresholdDollars" && suggestions),
+  );
+  const amountField = (
+    <div className="flex flex-col gap-2">
+      <TextField
+        name="amountThresholdDollars"
+        label="Send me anything that mentions more than"
+        hint={
+          suggestions
+            ? "Most of your job emails mention big numbers. Pick the amount where you want to see every email yourself."
+            : "In dollars. Emails with bigger numbers always come to you."
+        }
+        inputMode="numeric"
+        value={amount}
+        onValueChange={setAmount}
+        error={e.amountThresholdDollars}
+      />
+      {suggestions ? (
+        <div className="flex flex-wrap gap-2">
+          {suggestions.map((n) => (
+            <Button
+              key={n}
+              type="button"
+              variant="outline"
+              aria-pressed={amount === String(n)}
+              onClick={() => setAmount(String(n))}
+            >
+              ${n.toLocaleString("en-US")}
+            </Button>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
   // Check 38 P2: a non-blocking line under "How do you get paid?" (the save still goes through).
   const depositWarning = depositTermsWarning(
     v("state", defaults.state) as string | null,
@@ -279,19 +335,18 @@ export function BusinessProfileForm({
           error={e.insuranceCarrier}
         />
       </fieldset>
-      <TextField
-        name="amountThresholdDollars"
-        label="Send me anything that mentions more than"
-        hint="In dollars. Emails with bigger numbers always come to you."
-        inputMode="numeric"
-        defaultValue={v("amountThresholdDollars", defaults.amountThresholdDollars) as string}
-        error={e.amountThresholdDollars}
-      />
+      {setup && suggestions ? null : amountField}
     </>
   );
 
   return (
-    <form ref={formRef} action={action} className="flex flex-col gap-6" noValidate>
+    <form
+      ref={formRef}
+      action={action}
+      onChange={readTrades}
+      className="flex flex-col gap-6"
+      noValidate
+    >
       <input type="hidden" name="returnTo" value={returnTo} />
       {setup ? <TimeZoneInput fallback="America/New_York" /> : null}
       {state.errors ? (
@@ -320,6 +375,7 @@ export function BusinessProfileForm({
         defaultValue={v("services", defaults.services) as string}
         error={e.services}
       />
+      {setup && suggestions ? amountField : null}
       {setup ? (
         <details open={optionalNeedsFixing || undefined} className="flex flex-col gap-6">
           <summary className="flex min-h-tap cursor-pointer items-center rounded-lg border-2 border-charcoal px-4 font-black">

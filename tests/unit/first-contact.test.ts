@@ -8,7 +8,7 @@ import {
   FIRST_CONTACT_TASK,
   replyDraftSchema,
   type ModelReplyDraft,
-} from "@/ai/prompts/draft.v7";
+} from "@/ai/prompts/draft.v8";
 import { draftSchema } from "@/ai/prompts/draft.v6";
 import { DRAFT_INSTRUCTIONS as ACTIVE_DRAFT_INSTRUCTIONS } from "@/ai/prompts/draft.v8";
 import { OPENING_TWEAKS } from "@/ai/prompts/opening-tweaks.v1";
@@ -114,8 +114,8 @@ describe("first replies: the rules (pure)", () => {
     for (const v of Object.values(OPENING_TWEAKS)) expect(v.ask).toMatch(/No price|no price/i);
   });
 
-  it("draft.v7 keeps draft.v6's rules and adds the first-contact section", () => {
-    expect(DRAFT_PROMPT_VERSION).toBe("draft.v7");
+  it("draft.v8 keeps draft.v6's rules, draft.v7's first-contact section and adds who is writing", () => {
+    expect(DRAFT_PROMPT_VERSION).toBe("draft.v8");
     for (const rule of [
       "## Never invent",
       "## Gaps for the owner to fill in",
@@ -124,6 +124,9 @@ describe("first replies: the rules (pure)", () => {
       "## First contact",
       "never ask for anything they already told you",
       "Never promise a time",
+      // Check 48 P1.
+      "## Who is writing",
+      "never deny that an assistant helped",
     ])
       expect(DRAFT_INSTRUCTIONS).toContain(rule);
     expect(replyDraftSchema.parse({ ...reply("x"), opening: "bogus" }).opening).toBe("not_first");

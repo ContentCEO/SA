@@ -2,6 +2,7 @@
 
 import { redirect } from "next/navigation";
 import { z } from "zod";
+import { clearInjectionMark } from "@/server/injection-clear";
 import { addServiceTown, closeComplaintCheckin, markComplaintFixed } from "@/server/leads";
 import { ReadOnlyError } from "@/server/lifecycle";
 import { hitLimit } from "@/server/rate-limit";
@@ -54,4 +55,22 @@ export async function addTownAction(formData: FormData) {
   if (!(await hitLimit("draft", workspace.id)).allowed) redirect("/queue?error=busy");
   const r = await readOnlyGuard(() => addServiceTown(workspace.id, id.data));
   redirect(r === "added" ? "/queue?done=town_added" : "/queue?error=unknown");
+}
+
+/**
+ * Check 22 P2: "This is a normal email" on a card marked as trying to instruct the assistant.
+ * Refused for hidden or encoded text (`not_clearable`), checked again on the server.
+ */
+export async function clearInjectionAction(formData: FormData) {
+  const { workspace } = await requireOwner();
+  const id = threadId(formData);
+  if (!id.success) redirect("/queue?error=unknown");
+  const r = await readOnlyGuard(() => clearInjectionMark(workspace.id, id.data));
+  redirect(
+    r === "cleared"
+      ? "/queue?done=normal_email"
+      : r === "not_clearable"
+        ? "/queue?error=not_clearable"
+        : "/queue?error=unknown",
+  );
 }

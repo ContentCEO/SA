@@ -19,6 +19,9 @@ export const QUEUE_DONE: Record<string, string> = {
   fixed: "Marked fixed. I'll remind you to check in with them in 2 days.",
   checkin_closed: "Good. That one's closed.",
   town_added: "Town added to your list. Draft a reply when you're ready.",
+  // Check 22 P2: the owner said a flagged email was normal.
+  normal_email:
+    "Marked as a normal email. Autopilot still leaves this conversation to you for 30 days.",
   found_money:
     "Writing those drafts now. They show up below in a minute or two, and each one waits for you.",
 };
@@ -28,6 +31,8 @@ export const QUEUE_DONE: Record<string, string> = {
  */
 export const QUEUE_ERRORS: Record<string, string> = {
   ...CONTROL_ERRORS,
+  not_clearable:
+    "That one has hidden or coded text in it, so it stays marked. Read it in Gmail before you answer.",
   // Check 23 P7: plain words, no braces.
   gaps: "Fill in every blank before sending. Nothing was sent.",
   busy: "That's a lot in a short time, so we've paused it for a bit. Nothing was sent. Try again in a few minutes.",

@@ -567,6 +567,38 @@ describe("in the database", () => {
       expect(writer.sent).toHaveLength(0);
     });
 
+    it("GUARDRAIL: a lawyer in the quoted part, or a purged email, waits (Check 20 P5)", async () => {
+      const setBody = (t: string, bodyText: string | null) =>
+        database
+          .update(messages)
+          .set({ bodyText })
+          .where(and(eq(messages.threadId, t), eq(messages.direction, "in")));
+      // Without the quote: the countdown starts.
+      const plain = await conversation();
+      await setBody(plain, "Fine, Thursday at 10 then.");
+      expect(await considerAutopilot(await drafted(plain), NOW)).toEqual(later(GRACE_MINUTES));
+
+      const quoted = await conversation();
+      await setBody(
+        quoted,
+        "Fine, Thursday at 10 then.\n\n> If the leak isn't fixed this week I'm calling our lawyer.",
+      );
+      expect(await considerAutopilot(await drafted(quoted), NOW)).toBeNull();
+
+      const gas = await conversation();
+      await setBody(
+        gas,
+        "Thursday works.\n\nOn Mon, Oct 12, Dana wrote:\n> it smells like gas by the stove",
+      );
+      expect(await considerAutopilot(await drafted(gas), NOW)).toBeNull();
+
+      const purged = await conversation();
+      const purgedDraft = await drafted(purged);
+      await setBody(purged, null);
+      expect(await considerAutopilot(purgedDraft, NOW)).toBeNull();
+      expect(writer.sent).toHaveLength(0);
+    });
+
     it("doesn't start for strangers, money, flags, low confidence, complaints or other categories", async () => {
       const cases = [
         await drafted(await conversation({ known: false, from: "new@person.com" })),

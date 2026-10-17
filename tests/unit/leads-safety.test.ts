@@ -288,7 +288,7 @@ describe("lead websites and voicemail emails are answered off email", () => {
 });
 
 describe("classification stores where a lead came from", () => {
-  it("a voicemail in Promotions is still read; a site's mail there stays junk", async () => {
+  it("a voicemail in Promotions is still read; a site's marketing there stays junk", async () => {
     const vm = await lead({
       from: "voice-noreply@google.com",
       classified: false,
@@ -299,6 +299,11 @@ describe("classification stores where a lead came from", () => {
       classified: false,
       labelIds: ["INBOX", "CATEGORY_PROMOTIONS"],
     });
+    // Its own marketing, not a lead (a site's lead in Promotions is read since Check 22 P1).
+    await database
+      .update(messages)
+      .set({ subject: "Upgrade your plan today", bodyText: "Get more jobs with Pro." })
+      .where(eq(messages.threadId, site.id));
     const { transport, calls } = fakeTransport([
       classification({ category: "quote_request", needs_owner_reason: "Dana at 12 Elm" }),
     ]);

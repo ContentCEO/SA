@@ -131,6 +131,28 @@ const SOFT_PROMISES: [string, RegExp][] = [
   ],
 ];
 
+/**
+ * Check 48 P1: a draft that says a person wrote it with no help ("this is Mike himself", "no
+ * bots here", "I answer every email myself"). Anthropic's usage policy forbids a bot claiming
+ * to be human; the owner may say it if it's true, so it's a flag, never rewritten.
+ */
+const HUMAN_CLAIMS: RegExp[] = [
+  /\b(this is|it's|it is|i'm|i am) [a-z][a-z'-]* (himself|herself|themself|themselves|myself)\b/i,
+  /\bno bots?\b/i,
+  /\bnot (a |an )?(bot|robot|ai|machine|computer)\b/i,
+  /\b(a |an )?real (person|human)\b/i,
+  /\bi (answer|write|read|reply to|handle) (every|each|all (of )?(my|the|your)?) ?(emails?|messages?|repl(y|ies))( \w+)? myself\b/i,
+  /\bnobody else (writes|answers|reads|replies)\b/i,
+  /\bnot automated\b/i,
+];
+export const HUMAN_CLAIM_FLAG =
+  "Says a person wrote this without help. Check it's true before sending.";
+
+/** The draft says a person wrote it with no help (Check 48 P1). */
+export function claimsHuman(body: string): boolean {
+  return HUMAN_CLAIMS.some((re) => re.test(body));
+}
+
 /** Words that make a commitment the owner has to stand behind. */
 const COMMITMENT =
   /\b(guarantee[sd]?|guaranteeing|warrant(?:y|ies|ied)|promise[sd]?|promising)\b/gi;
@@ -258,7 +280,9 @@ export type CheckHit =
    * Check 23 P14: a listed price without its "from", or used for another job. Flag only — it
    * joins REGENERATE_ON only if Davi says so (that's why it isn't the "money" hit).
    */
-  | "price_list";
+  | "price_list"
+  /** Check 48 P1: says a person wrote it with no help. Flag only, never regenerated. */
+  | "human_claim";
 export type CheckResult = { flags: string[]; confidenceCap: number; hits: CheckHit[] };
 
 /**
@@ -931,6 +955,14 @@ export function checkDraft(draftBody: string, ctx: CheckContext): CheckResult {
     flags.push(...[...new Set(contact)].slice(0, 2));
     cap = Math.min(cap, 0.3);
     hits.push("contact");
+  }
+
+  // Check 48 P1: never claim no assistant helped. A flag, never regenerated (it may be true of
+  // the owner's own words; they decide).
+  if (claimsHuman(body)) {
+    flags.push(HUMAN_CLAIM_FLAG);
+    cap = Math.min(cap, 0.2);
+    hits.push("human_claim");
   }
 
   // Never-promise list: flag when the key words of an item all show up in the draft.

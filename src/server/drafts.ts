@@ -17,7 +17,13 @@ import {
   sql,
 } from "drizzle-orm";
 import { callStructured } from "@/ai/client";
-import { checkDraft, hasLink, REGENERATE_ON, type CheckResult } from "@/ai/draft-checks";
+import {
+  checkDraft,
+  claimsHuman,
+  hasLink,
+  REGENERATE_ON,
+  type CheckResult,
+} from "@/ai/draft-checks";
 import { asksWhenAvailable, spellDate } from "@/ai/when-words";
 import { licenseFacts } from "@/config/licenses";
 import { injectionCheck, looksLikePaymentChange } from "@/ai/guards";
@@ -116,7 +122,7 @@ import { batchEligible, firstLine } from "./batch-rules";
 import { isInvoiceThread, paymentSaid } from "./money-rules";
 import { quoteStopsNudges } from "./quote-rules";
 import { BACK_ON_TOP_MS, isEmergency } from "./snooze-rules";
-import { inEmergencyLane } from "./emergency-rules";
+import { inEmergencyLane, recentEmergency } from "./emergency-rules";
 import { CHECKIN_AFTER_DAYS, CHECKIN_MAX_DAYS } from "./complaint-rules";
 import { headerPickIds, toNeedsYouItem } from "./digest-rules";
 import { answeredByPhone } from "./first-week-rules";
@@ -208,6 +214,8 @@ export type CreateOutcome =
         | "municipal"
         // Round 2: asks to pay a new account (A11) — only the owner's tap drafts one.
         | "payment_change"
+        /** Check 48 P1: "is this a bot?" — only the owner's tap drafts it. */
+        | "asks_if_ai"
         // Round 2 (FW E11): the owner said they called after the newest email.
         | "answered_by_phone"
         // Purpose drafts (plan #26 #28 #29). S6 adds the per-purpose eligibility reasons.
@@ -281,6 +289,47 @@ export const TEXT_ADDRESS_NOTE =
 /** First flag on the safety note: it keeps it out of batch and autopilot too. */
 export const SAFETY_NOTE_FLAG =
   "They say they smell gas. Call them now; this note only tells them what to do meanwhile.";
+/** Check 22 P4: the carbon monoxide note's own "prompt version" (code, never a model). */
+export const CO_SAFETY_NOTE_VERSION = "safety-note-co.v1";
+/** First flag on the carbon monoxide note (keeps it out of batch and autopilot). */
+export const CO_SAFETY_NOTE_FLAG =
+  "They say a carbon monoxide alarm went off. Call them now; this note only tells them what to do meanwhile.";
+
+/** Check 37 P1: the electrical safety note's own "prompt version" (code, never a model). */
+export const ELECTRICAL_SAFETY_NOTE_VERSION = "safety-note-electrical.v1";
+/** First flag on the electrical note (keeps it out of batch and autopilot). */
+export const ELECTRICAL_SAFETY_NOTE_FLAG =
+  "Sounds like an electrical fire risk. Call them now; this note only tells them what to do meanwhile.";
+
+/** Which fixed safety note a thread's marks call for, if any (gas, then CO, then electrical). */
+export type SafetyKind = "gas" | "co" | "electrical";
+export function safetyKindOf(marks: {
+  gas_smell?: unknown;
+  co_alarm?: unknown;
+  electrical_hazard?: unknown;
+}): SafetyKind | null {
+  if (marks.gas_smell === true) return "gas";
+  if (marks.co_alarm === true) return "co";
+  if (marks.electrical_hazard === true) return "electrical";
+  return null;
+}
+
+const SAFETY_NOTES: Record<
+  SafetyKind,
+  {
+    version: string;
+    flag: string;
+    note: (ctx: Pick<WorkspaceContext, "signature" | "businessName">) => ModelDraft;
+  }
+> = {
+  gas: { version: SAFETY_NOTE_VERSION, flag: SAFETY_NOTE_FLAG, note: (c) => safetyNote(c) },
+  co: { version: CO_SAFETY_NOTE_VERSION, flag: CO_SAFETY_NOTE_FLAG, note: (c) => coSafetyNote(c) },
+  electrical: {
+    version: ELECTRICAL_SAFETY_NOTE_VERSION,
+    flag: ELECTRICAL_SAFETY_NOTE_FLAG,
+    note: (c) => electricalSafetyNote(c),
+  },
+};
 
 /**
  * The fixed safety note for a gas smell (TW B4). Plain, no prices, no times, nothing invented:
@@ -298,6 +347,56 @@ export function safetyNote(ctx: Pick<WorkspaceContext, "signature" | "businessNa
       ...(sign ? ["", sign] : []),
     ].join("\n"),
     reason: "They smell gas. A safety note is ready; call them too.",
+    flags: [],
+    confidence: 0.5,
+    used_facts: sign && ctx.signature?.trim() ? ["signature"] : [],
+  };
+}
+
+/**
+ * Check 22 P4: the fixed note for a carbon monoxide alarm. The usual fire-safety advice: get
+ * out to fresh air, call 911 from outside, don't go back in until the fire department says so.
+ * Wording waits on Davi's okay (see docs/notes). No model, nothing invented.
+ */
+export function coSafetyNote(
+  ctx: Pick<WorkspaceContext, "signature" | "businessName">,
+): ModelDraft {
+  const sign = ctx.signature?.trim() || ctx.businessName?.trim() || "";
+  return {
+    body: [
+      "Hi,",
+      "",
+      "If your carbon monoxide alarm is going off, please don't wait on email. Get everyone out of the house into fresh air right away, pets too, and call 911 from outside. Don't go back in until the fire department says it's safe.",
+      "",
+      "I'll call you as soon as I can.",
+      ...(sign ? ["", sign] : []),
+    ].join("\n"),
+    reason: "Their carbon monoxide alarm went off. A safety note is ready; call them too.",
+    flags: [],
+    confidence: 0.5,
+    used_facts: sign && ctx.signature?.trim() ? ["signature"] : [],
+  };
+}
+
+/**
+ * Check 37 P1: the fixed note for electrical fire signs, from the usual electrical safety advice
+ * (warm outlets, a burning smell and sparks mean call an electrician; fire means 911). Wording
+ * waits on Davi's okay (see docs/notes). No model, nothing invented.
+ */
+export function electricalSafetyNote(
+  ctx: Pick<WorkspaceContext, "signature" | "businessName">,
+): ModelDraft {
+  const sign = ctx.signature?.trim() || ctx.businessName?.trim() || "";
+  return {
+    body: [
+      "Hi,",
+      "",
+      "If you see smoke or flames, get everyone out and call 911 from outside. If it's safe to reach your panel, switch off the breaker for that area and don't use that outlet or switch until we've looked at it. If wires are down outside, stay well away and call your electric company.",
+      "",
+      "I'll call you as soon as I can.",
+      ...(sign ? ["", sign] : []),
+    ].join("\n"),
+    reason: "Sounds like an electrical fire risk. A safety note is ready; call them too.",
     flags: [],
     confidence: 0.5,
     used_facts: sign && ctx.signature?.trim() ? ["signature"] : [],
@@ -702,6 +801,9 @@ export async function createDraftForThread(
     injection?: boolean;
     payment_change?: boolean;
     gas_smell?: boolean;
+    co_alarm?: boolean;
+    electrical_hazard?: boolean;
+    asks_if_ai?: boolean;
     bill_direction?: string;
     model_category?: string;
   };
@@ -710,6 +812,8 @@ export async function createDraftForThread(
     if (marks.injection) return { status: "skipped", reason: "untrusted" };
     if (marks.municipal) return { status: "skipped", reason: "municipal" };
     if (marks.payment_change) return { status: "skipped", reason: "payment_change" };
+    // Check 48 P1 + 43 P2: "is this a bot?" — the owner answers it (their tap drafts it).
+    if (marks.asks_if_ai) return { status: "skipped", reason: "asks_if_ai" };
     // Ideas H4: a kind the owner chose feeds a job's draft only when the sorter's own kind
     // would have been drafted too ("out of Junk" on something it called junk is a tap only).
     if (
@@ -740,9 +844,11 @@ export async function createDraftForThread(
   // Round 2 (TW B4): someone smells gas. A job writes one fixed safety note (no model), once
   // per thread, and it waits for the owner's tap like everything else. After that the thread
   // is the owner's, as any needs-you email is.
+  // Check 22 P4: a carbon monoxide alarm gets its own fixed note, the same way.
+  const safetyKind = safetyKindOf(marks);
   const safety =
     opts.trigger === "auto" &&
-    marks.gas_smell === true &&
+    safetyKind !== null &&
     opts.purpose === undefined &&
     !(await purposeOnThread(threadId, "safety"));
   if (opts.trigger === "auto" && !safety) {
@@ -899,6 +1005,10 @@ export async function createDraftForThread(
   // Reply-To, a portal's dispatch address. Not even on the owner's tap — nobody reads it, and
   // "Reply sent." would be untrue. They answer those on the platform or by phone.
   if (isNoReplyAddress(to)) return { status: "skipped", reason: "no_reply_address" };
+  // Check 22 P4: a safety note never goes to mail sorted as junk (a utility's bill, a
+  // newsletter) unless the owner has written to that address before.
+  if (safety && thread.category === "noise" && !(await knownCustomer(mailbox.id, to, now)))
+    return { status: "skipped", reason: "noise" };
   const withText = recent
     .map((m) => ({
       m,
@@ -910,7 +1020,19 @@ export async function createDraftForThread(
   // newest one the sorter saw: an older "ignore the above…" still in view means no job draft.
   if (opts.trigger !== "owner") {
     const inbound = withText.filter((x) => x.m.direction === "in").map((x) => x.text);
-    if (inbound.some((t) => injectionCheck(t).flagged))
+    // Check 22 P2: emails the owner already said were normal ("This is a normal email") aren't
+    // held against the thread; anything newer still is.
+    const clearedAt = (thread.extracted as { injection_cleared_at?: unknown } | null)
+      ?.injection_cleared_at;
+    const clearedMs = typeof clearedAt === "string" ? Date.parse(clearedAt) : NaN;
+    const unchecked = withText
+      .filter(
+        (x) =>
+          x.m.direction === "in" &&
+          !(Number.isFinite(clearedMs) && x.m.sentAt.getTime() <= clearedMs),
+      )
+      .map((x) => x.text);
+    if (unchecked.some((t) => injectionCheck(t).flagged))
       return { status: "skipped", reason: "untrusted" };
     if (inbound.some((t) => looksLikePaymentChange(t)))
       return { status: "skipped", reason: "payment_change" };
@@ -929,7 +1051,7 @@ export async function createDraftForThread(
     followup,
     purpose,
     category: thread.category,
-    gasSmell: marks.gas_smell === true,
+    gasSmell: safetyKind !== null,
     handledOffline: thread.handledOfflineAt != null,
   };
   // The database is only asked when everything else already says "first contact". The
@@ -1042,19 +1164,21 @@ export async function createDraftForThread(
       wrote: withText.filter((x) => x.m.direction === "out").map((x) => x.text),
     }),
   };
-  const basePromptVersion = safety
-    ? SAFETY_NOTE_VERSION
-    : followup
-      ? FOLLOWUP_PROMPT_VERSION
-      : purpose
-        ? `${DRAFT_PROMPT_VERSION}+${PURPOSE_PROMPT_VERSION}`
-        : DRAFT_PROMPT_VERSION;
+  const basePromptVersion =
+    safety && safetyKind
+      ? SAFETY_NOTES[safetyKind].version
+      : followup
+        ? FOLLOWUP_PROMPT_VERSION
+        : purpose
+          ? `${DRAFT_PROMPT_VERSION}+${PURPOSE_PROMPT_VERSION}`
+          : DRAFT_PROMPT_VERSION;
+  // Check 43 P9: the dispute caution is recorded as a suffix on whichever prompt drafted it.
   const promptVersion = dispute
     ? `${basePromptVersion}+${DISPUTE_CAUTION_PROMPT_VERSION}`
     : basePromptVersion;
 
   let result: (ModelDraft & { opening?: Opening }) | null = null;
-  if (safety) result = safetyNote(ctx);
+  if (safety && safetyKind) result = SAFETY_NOTES[safetyKind].note(ctx);
   else
     try {
       const request = {
@@ -1094,7 +1218,7 @@ export async function createDraftForThread(
   const { body, flags: purposeFlags } = purposeGuards(purpose, result.body.trim(), ctx);
   const scored = scoreDraft(result, checkDraft(body, checkContext), [
     ...(maybeText ? [MAYBE_TEXT_FLAG] : []),
-    ...(safety ? [SAFETY_NOTE_FLAG, ...purposeFlags] : purposeFlags),
+    ...(safety && safetyKind ? [SAFETY_NOTES[safetyKind].flag, ...purposeFlags] : purposeFlags),
   ]);
   // Check 43 P9: the fixed caution goes first (so the cut to six never drops it), and the
   // card never says Ready on one of these. Check 38 P1: a change order's reminder next.
@@ -2031,6 +2155,7 @@ export type BatchRow = {
 export async function batchCandidates(
   workspaceId: string,
   picked: readonly string[],
+  now: Date = new Date(),
 ): Promise<BatchRow[]> {
   const rows = await db()
     .select({ draft: drafts, thread: threads })
@@ -2055,6 +2180,9 @@ export async function batchCandidates(
       accepts_quote?: boolean;
       payment_change?: boolean;
       gas_smell?: boolean;
+      co_alarm?: boolean;
+      electrical_hazard?: boolean;
+      asks_if_ai?: boolean;
     };
     const ok = batchEligible(
       {
@@ -2068,7 +2196,14 @@ export async function batchCandidates(
           extracted.injection === true ||
           extracted.municipal === true ||
           extracted.payment_change === true ||
-          extracted.gas_smell === true,
+          extracted.gas_smell === true ||
+          extracted.co_alarm === true ||
+          extracted.electrical_hazard === true ||
+          // Check 48 P1: "is this a bot?", or a draft that says a person wrote it alone.
+          extracted.asks_if_ai === true ||
+          claimsHuman(draft.body ?? "") ||
+          // Check 36 P2: an emergency in the last 48 hours, whatever the thread is now.
+          recentEmergency(extracted, now),
         autopilotCounting: draft.autoSendAt !== null,
         acceptsQuote: extracted.accepts_quote === true,
         purpose: draft.purpose ?? null,
@@ -2107,7 +2242,9 @@ export async function batchSend(
     seen?: ReadonlyMap<string, { hash: string; to?: string }>;
   } = {},
 ): Promise<{ queued: { draftId: string; sendAfter: Date }[]; refused: number }> {
-  const allowed = new Set((await batchCandidates(workspaceId, picked)).map((r) => r.draftId));
+  const allowed = new Set(
+    (await batchCandidates(workspaceId, picked, opts.now?.() ?? new Date())).map((r) => r.draftId),
+  );
   const queued: { draftId: string; sendAfter: Date }[] = [];
   let refused = 0;
   for (const id of new Set(draftIds)) {
@@ -3344,35 +3481,46 @@ export async function threadsToAutoDraft(mailboxId: string, limit = 10): Promise
   // an older real lead. Leave those out here. An unchecked Reply-To (NULL) stays in: a form
   // sent from no-reply@ often carries the customer's own address there.
   const newestInNoReply = sql`exists (select 1 from (select nr_m.reply_to_header, nr_m.from_address from messages nr_m where nr_m.thread_id = ${threads.id} and nr_m.direction = 'in' order by nr_m.sent_at desc limit 1) nr where nr.reply_to_header is not null and ${noReplySql(replyAddressSql("nr"))})`;
-  const rows = await db()
-    .select({ id: threads.id })
-    .from(threads)
-    .where(
+  // A gas smell, CO alarm or electrical fire sign (round 2 TW B4, Check 22 P4, Check 37 P1)
+  // still waiting for its fixed note.
+  const safetyWaiting = and(
+    sql`coalesce(${threads.extracted}->>'gas_smell' = 'true' or ${threads.extracted}->>'co_alarm' = 'true' or ${threads.extracted}->>'electrical_hazard' = 'true', false)`,
+    sql`not exists (select 1 from drafts d where d.thread_id = ${threads.id} and d.purpose = 'safety')`,
+  );
+  const due = and(
+    eq(threads.mailboxId, mailboxId),
+    eq(threads.inInbox, true),
+    // A safety note is written whatever the sort; createDraftForThread writes it once per
+    // thread, then the thread waits for the owner.
+    or(
+      and(eq(threads.needsOwner, false), inArray(threads.category, [...AUTO_DRAFT_CATEGORIES])),
       and(
-        eq(threads.mailboxId, mailboxId),
-        eq(threads.inInbox, true),
-        // A gas smell (round 2, TW B4) gets its one fixed safety note whatever its sort;
-        // createDraftForThread writes it once per thread, then the thread waits for the owner.
-        or(
-          and(eq(threads.needsOwner, false), inArray(threads.category, [...AUTO_DRAFT_CATEGORIES])),
-          and(
-            sql`${threads.extracted}->>'gas_smell' = 'true'`,
-            sql`not exists (select 1 from drafts d where d.thread_id = ${threads.id} and d.purpose = 'safety')`,
-          ),
-        ),
-        sql`${threads.classifiedAt} is not null and ${threads.classifiedAt} >= ${lastIn}`,
-        sql`(${lastOut} is null or ${lastOut} < ${lastIn})`,
-        sql`(${lastDraft} is null or ${lastDraft} < ${lastIn})`,
-        // "I called them" after the newest email (round 2, FW E11): nothing to draft.
-        sql`(${threads.handledOfflineAt} is null or ${threads.handledOfflineAt} < ${lastIn})`,
-        sql`not ${newestInNoReply}`,
-        // Ideas H3: the newest email was sorted under a "Never draft" rule.
-        sql`(${threads.extracted}->>'sender_rule') is distinct from 'no_draft'`,
+        safetyWaiting,
+        // Never on junk unless the owner has written on the conversation (the note itself
+        // re-checks the address, createDraftForThread).
+        sql`(${threads.category} is distinct from 'noise' or exists (select 1 from messages o where o.thread_id = ${threads.id} and o.direction = 'out'))`,
       ),
-    )
-    .orderBy(desc(threads.lastMessageAt))
-    .limit(limit);
-  return rows.map((r) => r.id);
+    ),
+    sql`${threads.classifiedAt} is not null and ${threads.classifiedAt} >= ${lastIn}`,
+    sql`(${lastOut} is null or ${lastOut} < ${lastIn})`,
+    sql`(${lastDraft} is null or ${lastDraft} < ${lastIn})`,
+    // "I called them" after the newest email (round 2, FW E11): nothing to draft.
+    sql`(${threads.handledOfflineAt} is null or ${threads.handledOfflineAt} < ${lastIn})`,
+    sql`not ${newestInNoReply}`,
+    // Ideas H3: the newest email was sorted under a "Never draft" rule.
+    sql`(${threads.extracted}->>'sender_rule') is distinct from 'no_draft'`,
+  );
+  const pick = (where: ReturnType<typeof and>) =>
+    db()
+      .select({ id: threads.id })
+      .from(threads)
+      .where(where)
+      .orderBy(desc(threads.lastMessageAt))
+      .limit(limit);
+  // Check 39 P1: safety notes first. They need no model, so they are written even when the
+  // day's AI limit stops the draft loop at the first reply that needs one.
+  const [first, rest] = [await pick(and(due, safetyWaiting)), await pick(due)];
+  return [...new Set([...first, ...rest].map((r) => r.id))].slice(0, limit);
 }
 
 /** For the "squared away." moment: a draft this workspace just sent. */

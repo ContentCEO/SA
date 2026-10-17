@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { setModelTransportForTests, type Transport } from "@/ai/client";
-import { CATEGORIES, type ModelClassification } from "@/ai/prompts/classify.v4";
+import { CATEGORIES, type ModelClassification } from "@/ai/prompts/classify.v5";
 import { TRADES } from "@/config/trades";
 import { EVAL_CASES, type EvalCase } from "../evals/cases";
 import { OPENING_TWEAKS } from "@/ai/prompts/opening-tweaks.v1";
@@ -165,12 +165,17 @@ describe("evaluation set (#46)", () => {
           job_done: c.expect.jobDone === true,
           payment_change_request: c.expect.paymentChange === true,
           smells_gas: c.expect.gasSmell === true,
+          co_alarm: c.expect.coAlarm === true,
           routine_paperwork: c.expect.routinePaperwork === true,
         },
         extracted: {
           ...base.extracted,
           invoice_direction: c.expect.billOwedByBusiness ? "owed_by_business" : "unknown",
-          dollar_amounts: [],
+          // Check 22 P6: every $ figure in the email, as a real model lists them, so the amount
+          // rule is exercised.
+          dollar_amounts: [
+            ...`${c.subject}\n${c.body}`.matchAll(/\$\s?(\d[\d,]*(?:\.\d{1,2})?)(\s?k\b)?/gi),
+          ].map((m) => Number(m[1]!.replace(/,/g, "")) * (m[2] ? 1000 : 1)),
           permit: c.expect.permitResult
             ? {
                 issuing_body: null,
@@ -249,8 +254,15 @@ describe("evaluation set (#46)", () => {
     setModelTransportForTests(undefined);
 
     expect(run.results).toHaveLength(EVAL_CASES.length);
+    // Check 22 P6: with real amounts in the stand-in's answers, every case's needs-you
+    // expectation must match what the code decides.
+    const wrongNeeds = run.results
+      .filter((r) => EVAL_CASES.find((c) => c.id === r.id)!.expect.needsOwner !== r.needsOwner)
+      .map((r) => r.id);
+    expect(wrongNeeds).toEqual([]);
     expect(run.scores).toMatchObject({
       categoryAccuracy: 1,
+      needsOwnerAccuracy: 1,
       needsOwnerRecall: 1,
       injectionRecall: 1,
       injectionFalseAlarms: 0,
@@ -261,6 +273,9 @@ describe("evaluation set (#46)", () => {
       jobDoneAccuracy: 1,
       paymentChangeRecall: 1,
       gasSmellRecall: 1,
+      coAlarmRecall: 1,
+      electricalHazardRecall: 1,
+      gasFalseAlarms: 0,
       billDirectionAccuracy: 1,
       routinePaperworkAccuracy: 1,
       draftPassRate: 1,

@@ -1,5 +1,14 @@
 import "server-only";
+import { claimsHuman } from "@/ai/draft-checks";
 import { hasUnfilledGap } from "@/ai/gaps";
+import {
+  looksLikePaymentChange,
+  mentionsCarbonMonoxide,
+  mentionsElectricalHazard,
+  mentionsGasSmell,
+  mentionsLegalThreat,
+  mentionsRealLegal,
+} from "@/ai/guards";
 import { mentionsMoney } from "@/ai/money-words";
 import {
   and,
@@ -44,6 +53,8 @@ import { canSend, effectiveStatus, setupReallyPaid } from "./lifecycle";
 import { knownCustomer } from "./known-customer";
 import { isEmailToTextAddress, looksLikePhoneAddress } from "./channel-rules";
 import { complainedAddresses } from "./offers";
+import { recentEmergency } from "./emergency-rules";
+import { injectionClearedRecently } from "./injection-clear-rules";
 import { markReconnectNeeded } from "./sync";
 import { staleTiming, timingNote } from "./draft-timing";
 import { workspaceTimeZone } from "./snooze";
@@ -134,8 +145,28 @@ export type GuardrailInput = {
   complainedRecently?: boolean;
   /** Round 2 A11: the email asks to pay a new or different account. */
   paymentChange?: boolean;
+  /**
+   * Check 20 P5: a lawyer, a lien or small claims anywhere in the customer's newest email,
+   * quoted part included (the sorter only reads the newest part).
+   */
+  legalInEmail?: boolean;
+  /** Check 20 P5: the customer's newest email has no text left to check (purged). */
+  emailUnreadable?: boolean;
   /** Round 2 TW B4: someone smells gas. */
   gasSmell?: boolean;
+  /** Check 22 P4: a carbon monoxide alarm went off. */
+  coAlarm?: boolean;
+  /** Check 37 P1: electrical fire signs. */
+  electricalHazard?: boolean;
+  /**
+   * Check 48 P1: the customer asked whether a person is answering, or the draft says a person
+   * wrote it with no help.
+   */
+  asksIfAi?: boolean;
+  /** Check 22 P2: the owner cleared an attack mark on this thread in the last 30 days. */
+  injectionCleared?: boolean;
+  /** Check 36 P2: an emergency on this conversation in the last 48 hours. */
+  recentEmergency?: boolean;
   /** Ideas H4: the owner chose this kind and the sorter said otherwise. */
   ownerMoved?: boolean;
   /** Leads package: a lead-site / voicemail / text-message thread. */
@@ -177,7 +208,20 @@ export function guardrailReasons(g: GuardrailInput): string[] {
   if (g.complainedRecently)
     out.push("This customer complained in the last 12 months, so it waits for you.");
   if (g.paymentChange) out.push("Asks to pay a new account, so it waits for you.");
+  if (g.legalInEmail)
+    out.push("Something legal is mentioned in this conversation, so it waits for you.");
+  if (g.emailUnreadable) out.push("We can't read their email any more, so it waits for you.");
   if (g.gasSmell) out.push("Someone smells gas. Call them.");
+  if (g.coAlarm) out.push("A carbon monoxide alarm went off. Call them.");
+  if (g.asksIfAi || claimsHuman(g.draftBody))
+    out.push("Asks if a person is answering, so it waits for you.");
+  if (g.injectionCleared)
+    out.push("You said an email here was normal after we flagged it, so it waits for you.");
+  if (g.electricalHazard) out.push("Sounds like an electrical fire risk. Call them.");
+  if (g.recentEmergency)
+    out.push(
+      "There was an emergency on this conversation in the last 2 days, so it waits for you.",
+    );
   if (g.ownerMoved) out.push("You chose this kind yourself, so it waits for you.");
   if (g.leadChannel) out.push("Lead-site and voicemail emails always wait for you.");
   if (g.textAddress) out.push("That address may turn into a text message, so it waits for you.");
@@ -344,6 +388,8 @@ async function blockers(row: NonNullable<Awaited<ReturnType<typeof loadForAutopi
       address: messages.fromAddress,
       replyToHeader: messages.replyToHeader,
       sentAt: messages.sentAt,
+      subject: messages.subject,
+      bodyText: messages.bodyText,
     })
     .from(messages)
     .where(and(eq(messages.threadId, thread.id), eq(messages.direction, "in")))
@@ -371,9 +417,16 @@ async function blockers(row: NonNullable<Awaited<ReturnType<typeof loadForAutopi
     accepts_quote?: boolean;
     payment_change?: boolean;
     gas_smell?: boolean;
+    co_alarm?: boolean;
+    electrical_hazard?: boolean;
     model_category?: string;
   };
   const complainedRecently = await customerComplainedRecently(workspace.id, draft.toAddress, now);
+  // Check 20 P5: the WHOLE newest customer email, quoted part included ("Fine, Thursday at 10"
+  // above "> If the leak isn't fixed I'm calling our lawyer"). Never logged. A purged body
+  // can't be checked, so it waits.
+  const fullBody = customer?.bodyText ?? null;
+  const fullText = fullBody === null ? "" : `${customer?.subject ?? ""}\n${fullBody}`;
   return guardrailReasons({
     category: thread.category,
     needsOwner: thread.needsOwner || thread.needsOwnerManual,
@@ -394,8 +447,15 @@ async function blockers(row: NonNullable<Awaited<ReturnType<typeof loadForAutopi
       draft.toAddress.trim().toLowerCase() !== (customer.address ?? "").trim().toLowerCase(),
     replyToUnchecked: !customer || customer.replyToHeader === null,
     complainedRecently,
-    paymentChange: extracted.payment_change === true,
-    gasSmell: extracted.gas_smell === true,
+    paymentChange: extracted.payment_change === true || looksLikePaymentChange(fullText),
+    gasSmell: extracted.gas_smell === true || mentionsGasSmell(fullText),
+    coAlarm: extracted.co_alarm === true || mentionsCarbonMonoxide(fullText),
+    electricalHazard: extracted.electrical_hazard === true || mentionsElectricalHazard(fullText),
+    legalInEmail: mentionsRealLegal(fullText) || mentionsLegalThreat(fullText),
+    recentEmergency: recentEmergency(thread.extracted, now),
+    injectionCleared: injectionClearedRecently(thread.extracted, now),
+    asksIfAi: (extracted as { asks_if_ai?: unknown }).asks_if_ai === true,
+    emailUnreadable: fullBody === null,
     ownerMoved: thread.categoryManual != null && thread.categoryManual !== extracted.model_category,
     leadChannel: thread.leadChannel != null,
     textAddress: isEmailToTextAddress(draft.toAddress) || looksLikePhoneAddress(draft.toAddress),
