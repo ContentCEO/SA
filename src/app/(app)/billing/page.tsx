@@ -13,7 +13,6 @@ import {
   checkoutTerms,
   firstChargeLine,
   PLAN_IDS,
-  SALES_TAX_NOTE,
 } from "@/server/billing-rules";
 import { effectiveStatus, setupReallyPaid } from "@/server/lifecycle";
 import { phoneHref } from "@/lib/phone-href";
@@ -189,7 +188,7 @@ export default async function BillingPage(props: PageProps<"/billing">) {
                 );
               })}
             </ul>
-            <p className="text-sm text-muted-foreground">{SALES_TAX_NOTE}</p>
+            {/* Each card's first-payment line already says "plus sales tax" (Check 35 P2). */}
             <p className="text-sm text-muted-foreground">
               Paid securely through Stripe. Month to month — cancel any time from Manage billing.
             </p>

@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { eq } from "drizzle-orm";
 import * as schema from "../../src/db/schema";
+import { firstChargeLine, PLAN_IDS } from "../../src/server/billing-rules";
 import { seedAdmin, signInAs, testDb } from "./support";
 
 const unique = () => `lead-${Date.now()}-${Math.random().toString(36).slice(2, 6)}@example.com`;
@@ -20,8 +21,12 @@ test("home page: promise, pricing from config, and a way in", async ({ page }) =
   for (const text of ["$499 once", "Solo", "$99", "Crew", "$199", "Company", "$299"]) {
     await expect(pricing).toContainText(text);
   }
-  // Stripe Tax (Davi, 2026-10-14): prices are tax-exclusive, and the page says so.
-  await expect(pricing.getByText("Plus sales tax where it applies.")).toBeVisible();
+  // Check 35 P2: each card says the first payment in /billing's words (built from the config),
+  // and with it the sales tax (Stripe Tax, Davi 2026-10-14), once per card and not again below.
+  for (const id of PLAN_IDS) {
+    await expect(pricing.getByText(firstChargeLine(id, true), { exact: true })).toBeVisible();
+  }
+  await expect(pricing.getByText("Plus sales tax where it applies.")).toHaveCount(0);
   await page
     .getByRole("navigation", { name: "Site" })
     .getByRole("link", { name: "Sign in" })

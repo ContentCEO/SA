@@ -7,10 +7,16 @@ import { SiteFooter } from "@/components/app/site-footer";
 import { Headline } from "@/components/brand/headline";
 import { Wordmark } from "@/components/brand/wordmark";
 import { QueuePreview } from "@/components/marketing/queue-preview";
+import { PlanCards } from "@/components/marketing/plan-cards";
 import { WaitlistForm } from "@/components/marketing/waitlist-form";
-import { faqs, features, promiseBand, steps } from "@/components/marketing/home-copy";
+import {
+  faqs,
+  features,
+  pricingPromise,
+  promiseBand,
+  steps,
+} from "@/components/marketing/home-copy";
 import { isReferralCode, referralsVisible } from "@/server/referral-rules";
-import { SALES_TAX_NOTE } from "@/server/billing-rules";
 import { formatDollars, pricing } from "@/config/pricing";
 import { siteConfig } from "@/config/site";
 import { cn } from "@/lib/utils";
@@ -75,7 +81,6 @@ export default async function HomePage(props: PageProps<"/">) {
   // Plan #47: a referral link's code rides along on the waitlist form — only while it's switched on.
   const { ref } = await props.searchParams;
   const referralCode = referralsVisible() && isReferralCode(ref) ? ref : undefined;
-  const plans = Object.values(pricing.plans);
 
   return (
     <div className="flex flex-1 flex-col">
@@ -211,40 +216,8 @@ export default async function HomePage(props: PageProps<"/">) {
                 </span>
               </div>
             </div>
-            <ul className="grid gap-4 md:grid-cols-3">
-              {plans.map((p) => (
-                <li
-                  key={p.name}
-                  className={cn(
-                    "flex flex-col gap-3 rounded-2xl p-6",
-                    p.name === "Crew" ? "sa-inverted" : "border bg-card",
-                  )}
-                >
-                  <span className="text-xl font-black">{p.name}</span>
-                  <span>
-                    <span className="sa-headline-heavy text-5xl">
-                      {formatDollars(p.amountCents)}
-                    </span>
-                    <span className={p.name === "Crew" ? "text-ash" : "text-slate"}> / month</span>
-                  </span>
-                  <ul className="flex flex-col gap-1.5 text-lg">
-                    <li>
-                      {p.mailboxLimit} Gmail inbox{p.mailboxLimit === 1 ? "" : "es"}
-                    </li>
-                    <li>Sorting, drafts, follow-ups, morning summary</li>
-                    {p.autopilot ? <li>Autopilot for the emails you choose</li> : null}
-                    {p.name === "Company" ? <li>Priority support</li> : null}
-                  </ul>
-                </li>
-              ))}
-            </ul>
-            <p className="text-slate">{SALES_TAX_NOTE}</p>
-            <p className="text-lg font-semibold">
-              On every plan, each reply waits for your okay, and follow-ups are two nudges at most,
-              each one a draft you approve. Where autopilot is included, it stays off until you earn
-              it, it never answers a complaint or sends a reply that mentions money, and every
-              autopilot reply waits 10 minutes so you can stop it.
-            </p>
+            <PlanCards />
+            <p className="text-lg font-semibold">{pricingPromise}</p>
             <p className="text-slate">
               Prices in US dollars. Month to month — stop any time. Every plan starts with the
               three-day trial.

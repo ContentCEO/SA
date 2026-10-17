@@ -1,9 +1,14 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { faqs, features, promiseBand } from "@/components/marketing/home-copy";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { faqs, features, pricingPromise, promiseBand } from "@/components/marketing/home-copy";
+import { PlanCards } from "@/components/marketing/plan-cards";
 import { UNDO_WINDOW_SECONDS } from "@/config/drafting";
-import { pricing } from "@/config/pricing";
-import { EARN_THRESHOLD, GRACE_MINUTES } from "@/config/rules";
+import { formatDollars, pricing } from "@/config/pricing";
+import { EARN_THRESHOLD, GRACE_MINUTES, MAX_FOLLOWUPS } from "@/config/rules";
+import { numberWord } from "@/lib/number-words";
+import { firstChargeLine, PLAN_IDS } from "@/server/billing-rules";
 import { TRIAL_NO_SEND_LINE, TRIAL_SIDE_DOOR_LINE } from "@/server/trial-email-rules";
 
 /** The homepage's words, held to what the code does (wave 1, Homepage words). */
@@ -66,5 +71,48 @@ describe("changing how you do email (Check 34 P6)", () => {
     expect(a).toContain("Squared Away queue");
     expect(a).toContain("Gmail Drafts folder");
     expect(a).not.toMatch(/send (it |one )?from Gmail|works inside/i);
+  });
+});
+
+describe("plan cards (Check 35 P2)", () => {
+  it("each card states the first payment in /billing's words, with tax said once per card", () => {
+    const html = renderToStaticMarkup(createElement(PlanCards)).replace(/&#x27;/g, "'");
+    for (const id of PLAN_IDS) {
+      const line = firstChargeLine(id, true);
+      expect(html).toContain(line);
+      expect(line).toContain(formatDollars(pricing.setupFee.amountCents));
+      expect(line).toContain(formatDollars(pricing.plans[id].amountCents));
+    }
+    expect(html.match(/plus sales tax where it applies/g)).toHaveLength(PLAN_IDS.length);
+    expect(html).not.toContain("Plus sales tax where it applies.");
+  });
+});
+
+describe("rule numbers come from their constants (Check 35 P5)", () => {
+  const all = () =>
+    [...features.map((f) => f.body), ...faqs.map((f) => f.a), pricingPromise].join(" ");
+
+  it("the nudge cap, the earn rule and the autopilot hold", () => {
+    expect(all()).toContain(`${numberWord(MAX_FOLLOWUPS)} at most`);
+    expect(pricingPromise).toContain(`${numberWord(MAX_FOLLOWUPS)} nudges at most`);
+    expect(all()).toContain(`${EARN_THRESHOLD} replies without changing a word`);
+    expect(pricingPromise).toContain(`${GRACE_MINUTES} minutes`);
+  });
+
+  it("no rule number is typed into the homepage or its copy", () => {
+    for (const f of ["src/app/page.tsx", "src/components/marketing/home-copy.ts"]) {
+      const src = flat(readFileSync(f, "utf8"));
+      expect(src, f).not.toMatch(/\b(two|ten) (nudges|replies)|\b10 minutes|approved ten/i);
+    }
+  });
+
+  it("the server keeps using the same constants", async () => {
+    expect((await import("@/server/autopilot")).EARN_THRESHOLD).toBe(EARN_THRESHOLD);
+    expect((await import("@/server/autopilot")).GRACE_MINUTES).toBe(GRACE_MINUTES);
+    expect((await import("@/server/drafts")).MAX_FOLLOWUPS).toBe(MAX_FOLLOWUPS);
+  });
+
+  it("numberWord spells one to ten and leaves larger numbers as digits", () => {
+    expect([1, 2, 10, 11, 14].map(numberWord)).toEqual(["one", "two", "ten", "11", "14"]);
   });
 });

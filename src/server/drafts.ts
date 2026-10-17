@@ -1,4 +1,5 @@
 import "server-only";
+import { MAX_FOLLOWUPS } from "@/config/rules";
 import { createHash } from "node:crypto";
 import {
   and,
@@ -158,8 +159,8 @@ export const AUTO_DRAFT_CATEGORIES = [
 ] as const;
 /** Quiet threads in these categories get nudged. */
 export const FOLLOWUP_CATEGORIES = ["quote_request", "invoice_payment"] as const;
-/** Nudges per thread, ever. A guardrail, not a setting. */
-export const MAX_FOLLOWUPS = 2;
+/** Nudges per thread, ever (src/config/rules.ts, where the homepage reads it too). */
+export { MAX_FOLLOWUPS };
 const CONVERSATION_MESSAGES = 6;
 const PER_MESSAGE_CHARS = 3_000;
 

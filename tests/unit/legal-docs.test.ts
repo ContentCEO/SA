@@ -1,6 +1,8 @@
 import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { faqs } from "@/components/marketing/home-copy";
+import { faqs, features } from "@/components/marketing/home-copy";
+import { MAX_FOLLOWUPS } from "@/config/rules";
+import { numberWord } from "@/lib/number-words";
 import { loadLegalDoc } from "@/components/marketing/legal-page";
 import { UNDO_WINDOW_SECONDS } from "@/config/drafting";
 import { bodyRetentionDays } from "@/config/retention";
@@ -325,6 +327,17 @@ describe("homepage FAQ", () => {
     expect(a).toContain("Gmail Drafts folder");
   });
 
+  it("answers why not Gmail's own AI or Jobber, second, in plain words (Check 34 P1)", () => {
+    const q = "How is this different from Gmail's own AI, or from Jobber?";
+    expect(faqs[1].q).toBe(q);
+    const a = homepageFaq(q);
+    expect(a).toContain("price list");
+    expect(a).toContain("building-department");
+    expect(a).toContain("without your okay");
+    expect(a).not.toMatch(/only one|unlike any|best|never sends anything/i);
+    expect(a).not.toContain('"');
+  });
+
   it("the deletion answer says exactly what the policy says", () => {
     const a = homepageFaq("What if I stop?");
     expect(a).toContain(DELETION_SENTENCE);
@@ -404,8 +417,8 @@ describe("owner-facing copy about the trial", () => {
 
   it("the homepage states the nudge cap the code keeps (nudges sent, each a draft)", () => {
     // Check 34 P3: and only where the customer emailed and the owner emailed back.
-    expect(flat(readFileSync("src/components/marketing/home-copy.ts", "utf8"))).toContain(
-      "it drafts a friendly nudge, two at most, each one waiting for your okay.",
+    expect(features.find((f) => f.title === "Chases quiet quotes")?.body).toContain(
+      `it drafts a friendly nudge, ${numberWord(MAX_FOLLOWUPS)} at most, each one waiting for your okay.`,
     );
   });
 

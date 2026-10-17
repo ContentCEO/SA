@@ -1,7 +1,8 @@
 import { pricing } from "@/config/pricing";
 import { UNDO_WINDOW_SECONDS } from "@/config/drafting";
 import { bodyRetentionDays } from "@/config/retention";
-import { EARN_THRESHOLD, GRACE_MINUTES } from "@/config/rules";
+import { EARN_THRESHOLD, GRACE_MINUTES, MAX_FOLLOWUPS } from "@/config/rules";
+import { numberWord } from "@/lib/number-words";
 import { QUOTE_STAGES, stageLabel } from "@/server/quote-rules";
 
 /**
@@ -66,7 +67,7 @@ export const features = [
     title: "Chases quiet quotes",
     // Check 34 P3: followups.ts only nudges a thread where the customer emailed and the owner
     // replied last from this Gmail. "I called them" (queue/called-them.tsx) stops the nudges.
-    body: "If a customer who emailed you goes quiet after you email back a quote or an invoice, it drafts a friendly nudge, two at most, each one waiting for your okay. Quotes sent from other software are left to that software. Called them instead? Tap I called them and it stops chasing.",
+    body: `If a customer who emailed you goes quiet after you email back a quote or an invoice, it drafts a friendly nudge, ${numberWord(MAX_FOLLOWUPS)} at most, each one waiting for your okay. Quotes sent from other software are left to that software. Called them instead? Tap I called them and it stops chasing.`,
   },
   {
     title: "Every quote in one list",
@@ -97,6 +98,12 @@ export const faqs = [
     // Check 6 P3: autopilot needs a plan with it, the setup call done, and replies sent exactly
     // as drafted (src/server/autopilot.ts).
     a: `No. Every reply waits in your queue until you tap Send reply. Autopilot is the one exception, and you choose it: it's only on the ${pricing.plans.crew.name} and ${pricing.plans.company.name} plans, only after your setup call, and only for a kind of email where you've sent ${EARN_THRESHOLD} replies without changing a word. Even then, each one waits ${GRACE_MINUTES} minutes so you can stop it.`,
+  },
+  {
+    q: "How is this different from Gmail's own AI, or from Jobber?",
+    // Check 34 P1. Each clause is in the code: the price-list rule (draft prompt + checkDraft),
+    // trade questions (src/ai/prompts/trades), looksMunicipal, injectionCheck, /quotes and /money.
+    a: `Gmail's AI and other email assistants can suggest replies in your voice, and the careful ones wait for you to send. Job software like Jobber can send quote reminders and answer calls on its own. Squared Away is built only for a trade shop's email: it quotes prices from your price list as written, asks the questions your trade needs before a quote, keeps town and building-department mail out of junk, holds an email that looks like it's trying to give it orders, and keeps your quotes and the money you're owed in one place. Use it next to your job software: it answers the email around the jobs. Squared Away doesn't send anything to a customer without your okay (autopilot, if you earn it and switch it on, waits ${GRACE_MINUTES} minutes so you can stop it), and the setup call is where we load your prices and rules with you.`,
   },
   {
     q: "Do I have to change how I do email?",
@@ -134,3 +141,9 @@ export const promiseBand = [
   "Its Send reply is switched off in the code, not just hidden behind a button.",
   "Your drafts are in your Gmail Drafts folder too, so you can send one from Gmail yourself if you want.",
 ];
+
+/**
+ * Under the plan cards (Check 35 P5): the rules every plan keeps, with each number taken from
+ * the constant the server enforces.
+ */
+export const pricingPromise = `On every plan, each reply waits for your okay, and follow-ups are ${numberWord(MAX_FOLLOWUPS)} nudges at most, each one a draft you approve. Where autopilot is included, it stays off until you earn it, it never answers a complaint or sends a reply that mentions money, and every autopilot reply waits ${GRACE_MINUTES} minutes so you can stop it.`;
