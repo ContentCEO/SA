@@ -398,10 +398,38 @@ export const ELECTRICAL_HAZARD_REASON =
  * suing, a lien filed or threatened against the property, small claims, regulators.
  */
 const REAL_LEGAL =
-  /\b(attorney|attorneys|lawyer|lawyers|legal action|lawsuit|law suit|sue|suing|sued|court|small claims|litigation|demand letter|cease and desist|better business bureau|bbb|attorney general|consumer protection|93a|licensing board|report you|denied|denial|dispute|disputing|disputed)\b|\b(place|put|file|filed|filing|placing|record|recorded|slap)\b.{0,20}\blien\b|\blien (on|against) (the|my|our|your) (house|home|property)\b/;
+  /\b(attorney|attorneys|lawyer|lawyers|legal action|lawsuit|law suit|sue|suing|sued|small claims|litigation|demand letter|cease and desist|better business bureau|bbb|attorney general|consumer protection|93a|licensing board|report you|chargebacks?|charge back)\b|\b(place|put|file|filed|filing|placing|record|recorded|slap)\b.{0,20}\blien\b|\blien (on|against) (the|my|our|your) (house|home|property)\b|\b(take|taking|see|seeing) (you|them|him|her|us) (to|in) court\b|\bcourt (date|case|filing|order)\b|\b(dispute|disputing|disputed) (the|this|that|your|a|his|her) (charge|charges|bill|invoice|payment|transaction)\b|\bdisputing (the|your|this|that)\b|\bfiled (a |the )?dispute\b/;
+
+/**
+ * Check 45 P4: other states' consumer-protection laws and licensing boards (whole words; "roc"
+ * only as "ROC complaint" or "Registrar of Contractors"), and Spanish. Not "corte" or a bare
+ * "demanda" (a water cut-off, demand).
+ */
+const STATE_LEGAL =
+  /\b(dtpa|fdutpa|cutpa|cslb|contractors state license board|registrar of contractors|roc complaint|dbpr|tdlr|licensing board complaint|recovery fund|deceptive trade practices?|unfair trade practices?|abogados?|demandar(te|lo|la|les)?|poner una demanda|queja formal)\b/;
+
+/**
+ * Check 22 P11: a lawyer at a house closing ("our attorney is reviewing the closing documents")
+ * is not a threat. Only that sentence is excused, and only for the lawyer word.
+ */
+const LAWYER = /\b(attorney|attorneys|lawyer|lawyers)\b/;
+const CLOSING_WORDS = /\b(closing|title|real estate|purchase and sale|p&s)\b/;
+
+/** Each sentence; a lawyer word next to closing / title words is dropped from that sentence. */
+function legalSentences(text: string | null | undefined): string[] {
+  return (text ?? "")
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .split(/(?<=[.!?;])\s+|\n/)
+    .map((sentence) =>
+      LAWYER.test(sentence) && CLOSING_WORDS.test(sentence)
+        ? sentence.replace(new RegExp(LAWYER.source, "g"), " ")
+        : sentence,
+    );
+}
 
 export function mentionsRealLegal(text: string | null | undefined): boolean {
-  return REAL_LEGAL.test((text ?? "").toLowerCase().replace(/\s+/g, " "));
+  return legalSentences(text).some((s) => REAL_LEGAL.test(s) || STATE_LEGAL.test(s));
 }
 
 /**
@@ -414,11 +442,10 @@ const LEGAL_THREAT =
   /\b(attorneys?|lawyers?|law (office|offices|firm)|lawsuits?|law suits?|small claims|demand letter|cease and desist|93a|attorney general|consumer protection|suing|sued|(will|going to|gonna|plan to|intend to|i'll|we'll|we will|i will) sue|sue (you|your|the company|him|her|them))\b|\b(file|filed|filing|place|placed|placing|put) (a |an )?(mechanic'?s )?lien\b|\blien (on|against) (the|my|our|your) (house|home|property)\b/;
 
 export function mentionsLegalThreat(text: string | null | undefined): boolean {
-  const flat = (text ?? "")
-    .toLowerCase()
-    .replace(/\s+/g, " ")
-    .replace(/\bpower of attorney\b/g, " ");
-  return LEGAL_THREAT.test(flat);
+  // Check 22 P11 / 45 P4: a closing lawyer isn't a threat; other states' words are.
+  return legalSentences((text ?? "").replace(/\bpower of attorney\b/gi, " ")).some(
+    (s) => LEGAL_THREAT.test(s) || STATE_LEGAL.test(s),
+  );
 }
 
 /**

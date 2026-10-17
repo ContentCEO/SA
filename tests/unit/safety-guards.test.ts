@@ -18,6 +18,7 @@ import {
   mentionsElectricalHazard,
   mentionsGasSmell,
   mentionsLegalThreat,
+  mentionsRealLegal,
   mentionsWaterSmell,
   WATER_SMELL_REASON,
 } from "@/ai/guards";
@@ -449,4 +450,40 @@ describe("payment change: only asking the business to pay somewhere new (Check 2
     expect(looksLikePaymentChange("Our bank details have changed.")).toBe(false);
     expect(looksLikePaymentChange("Our bank details have changed.", { supplier: true })).toBe(true);
   });
+});
+
+describe("real legal words (Check 22 P11 + Check 36 P6 + Check 45 P4)", () => {
+  it.each([
+    "The carrier denied coverage for the ceiling but approved the roof. Claim 22-1180. Can you send a revised estimate for just the roof?",
+    "Is the dispute over the color resolved?",
+    "Our attorney is reviewing the closing documents",
+    "Your claim WC-88231 has been denied. The unit was installed without an expansion tank.",
+    "Warranty claim denied: no proof of annual flushing.",
+    "Your Mass Save rebate application was denied: missing AHRI number.",
+    "The inspector denied the permit until the plans show the cleanout.",
+    "the adjuster approved the claim",
+    "rock wall estimate",
+    "the recovery time for the sealant",
+    "hay mucha demanda",
+    "corte de agua mañana",
+  ])("routine, not legal: %s", (t) => {
+    expect(mentionsRealLegal(t)).toBe(false);
+    expect(mentionsLegalThreat(t)).toBe(false);
+  });
+  it.each([
+    "We are disputing your invoice and have contacted our attorney",
+    // Round 2 r2-real-lien-threat.
+    "If the bathroom isn't finished by Friday my lawyer will be in touch and I'm disputing the last payment.",
+    "If this isn't fixed by Friday we will file a lien and see you in small claims.",
+    "I'm filing a complaint with the CSLB about your work.",
+    "I will be filing a DTPA claim if this isn't fixed.",
+    "We are reporting you to the Registrar of Contractors.",
+    "I've contacted the DBPR about your license.",
+    "I filed a complaint with TDLR.",
+    "This violates FDUTPA and I will pursue it.",
+    "I'll be taking this to the Contractors State License Board.",
+    "I'm filing with the state recovery fund.",
+    "Vamos a llamar a un abogado si no lo arreglan.",
+    "I disputed the charge with my bank.",
+  ])("legal: %s", (t) => expect(mentionsRealLegal(t)).toBe(true));
 });

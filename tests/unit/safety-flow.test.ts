@@ -732,3 +732,48 @@ describe("a customer's own card change isn't payment fraud (Check 22 P5)", () =>
     });
   });
 });
+
+describe("routine denials aren't legal threats (Check 22 P11 + Check 36 P6)", () => {
+  const legalAndPaperwork = classification({
+    category: "customer_question",
+    confidence: 0.95,
+    signals: { ...classification().signals, mentions_legal: true, routine_paperwork: true },
+  });
+
+  it.each([
+    "The carrier denied coverage for the ceiling but approved the roof. Claim 22-1180. Can you send a revised estimate for just the roof?",
+    "Your claim WC-88231 has been denied. The unit was installed without an expansion tank.",
+  ])("no legal reason, no complaint mark: %s", async (bodyText) => {
+    const t = await thread("deny");
+    await message(t.id, "deny", { bodyText });
+    setModelTransportForTests(fakeTransport([legalAndPaperwork]).transport);
+    await classifyPending(mailboxId, { now: NOW });
+    const row = await threadRow(t.id);
+    expect(row.needsOwnerReason).not.toBe(LEGAL_REASON);
+    expect((row.extracted as { disputed?: boolean }).disputed).toBeUndefined();
+    expect(row.complainedAt).toBeNull();
+  });
+
+  it("a lien threat stays legal, paperwork or not; the model's legal alone still counts", async () => {
+    const t = await thread("lien");
+    await message(t.id, "lien", {
+      bodyText: "We will file a lien on the house if this isn't fixed.",
+    });
+    setModelTransportForTests(fakeTransport([legalAndPaperwork]).transport);
+    await classifyPending(mailboxId, { now: NOW });
+    expect(await threadRow(t.id)).toMatchObject({ needsOwnerReason: LEGAL_REASON });
+
+    const u = await thread("legal-only");
+    await message(u.id, "legal-only", { bodyText: "This is getting serious." });
+    setModelTransportForTests(
+      fakeTransport([
+        classification({
+          category: "customer_question",
+          signals: { ...classification().signals, mentions_legal: true },
+        }),
+      ]).transport,
+    );
+    await classifyPending(mailboxId, { now: NOW });
+    expect(await threadRow(u.id)).toMatchObject({ needsOwnerReason: LEGAL_REASON });
+  });
+});

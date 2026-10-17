@@ -157,6 +157,20 @@ Builder notes for `CLAUDE.md` (Decisions, Prompt versions, Waiting on Davi), `do
   payment info ("my", "I") never counts. classify.v5's `payment_change_request` says the same.
   The reason text is unchanged.
 
+- **Real legal words (Check 22 P11 + 36 P6 + 45 P4):** `REAL_LEGAL` drops "denied", "denial" and
+  a bare "court" (kept: "take / see you in court", "court date / case / order"); "dispute" counts
+  only as disputing a charge / bill / invoice / payment, "disputing the / your…", "filed a
+  dispute" or a chargeback. Added other states' words (DTPA, FDUTPA, CUTPA, CSLB / Contractors
+  State License Board, Registrar of Contractors / "ROC complaint", DBPR, TDLR, licensing board
+  complaint, recovery fund, deceptive / unfair trade practices) and Spanish (abogado(s),
+  demandar, poner una demanda, queja formal; not "corte" or a bare "demanda"). A lawyer word in
+  the same sentence as closing / title / real estate / purchase and sale is not a threat. Both
+  `mentionsRealLegal` and the code legal check `mentionsLegalThreat` use the sentence rule and
+  the state words. Note: removing "dispute" alone / "court" / "denied" can drop a legal mark that
+  was set before, as Check 22 P11 and 36 P6 ask; Check 45 P4's "only add" applies to its own
+  words. Evals not run (`pnpm eval --no-drafts` needs `ANTHROPIC_API_KEY`), so needs-owner recall
+  wasn't measured live.
+
 ## Privacy policy lines (for the integrator)
 
 - Under "What we store", with the other content-free marks: "Whether an email looked like a gas
