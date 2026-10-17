@@ -2,6 +2,9 @@ import { UNDO_WINDOW_SECONDS } from "@/config/drafting";
 import { bodyRetentionDays } from "@/config/retention";
 import { EARN_THRESHOLD, GRACE_MINUTES, MAX_FOLLOWUPS } from "@/config/rules";
 import { numberWord } from "@/lib/number-words";
+import { capitalized, daysPhrase } from "@/lib/trial-words";
+import { pricing } from "@/config/pricing";
+import { TRIAL_NO_SEND_LINE } from "@/server/trial-email-rules";
 import { autopilotPlanNames } from "@/server/plan-features";
 import { QUOTE_STAGES, stageLabel } from "@/server/quote-rules";
 
@@ -121,7 +124,7 @@ export const faqs = [
   },
   {
     q: "What does the trial look like?",
-    a: "Three days with your real inbox. It sorts and drafts so you can judge the replies — Squared Away won't send anything to a customer during the trial. Your drafts are in your Gmail Drafts folder too, so you can send one from Gmail yourself if you want. If it's not for you, disconnect and you're done.",
+    a: `${capitalized(daysPhrase(pricing.evaluationDays))} with your real inbox. It sorts and drafts so you can judge the replies — Squared Away won't send anything to a customer during the trial. Your drafts are in your Gmail Drafts folder too, so you can send one from Gmail yourself if you want. If it's not for you, disconnect and you're done.`,
   },
   {
     q: "What if I stop?",
@@ -137,7 +140,7 @@ export const promiseBand = [
   "Squared Away drafts. You decide.",
   `Every reply sits in your queue until you tap Send reply, and you have ${UNDO_WINDOW_SECONDS} seconds to take it back.`,
   "The only exception is autopilot, and only if you turn it on.",
-  "During your three-day trial, Squared Away won't send anything to a customer.",
+  TRIAL_NO_SEND_LINE,
   "Its Send reply is switched off in the code, not just hidden behind a button.",
   "Your drafts are in your Gmail Drafts folder too, so you can send one from Gmail yourself if you want.",
 ];

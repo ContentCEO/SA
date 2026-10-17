@@ -45,7 +45,7 @@ describe("the trial's side door stays (Davi): Squared Away sends nothing, the dr
   const SAYS_IT: Record<string, string> = {
     "src/components/marketing/home-copy.ts": TRIAL_SIDE_DOOR_LINE,
     "src/app/(app)/connect/page.tsx": TRIAL_SIDE_DOOR_LINE,
-    "src/components/app/status-banner.tsx": "{TRIAL_SIDE_DOOR_LINE}",
+    "src/components/app/trial-clock.tsx": "{TRIAL_SIDE_DOOR_LINE}",
     "src/app/(app)/welcome/learning/page.tsx": "${TRIAL_NO_SEND_LINE} ${TRIAL_SIDE_DOOR_LINE}",
     "src/app/(app)/billing/page.tsx": "{TRIAL_NO_SEND_LINE} {TRIAL_SIDE_DOOR_LINE}",
     "docs/privacy-policy.md": TRIAL_SIDE_DOOR_LINE,
@@ -94,6 +94,7 @@ describe("the trial's side door stays (Davi): Squared Away sends nothing, the dr
       "src/components/marketing/home-copy.ts",
       "src/app/(app)/connect/page.tsx",
       "src/components/app/status-banner.tsx",
+      "src/components/app/trial-clock.tsx",
       "src/components/marketing/queue-preview.tsx",
       "src/app/(app)/welcome/learning/page.tsx",
       "src/app/(app)/billing/page.tsx",

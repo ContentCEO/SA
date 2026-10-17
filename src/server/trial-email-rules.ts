@@ -13,6 +13,8 @@
  * Each goes once ever, only at or after the owner's morning-email hour in their own time zone and
  * before 8 PM there — never at night. Counts only: no names, subjects or email text.
  */
+import { pricing } from "@/config/pricing";
+import { dayAdjective } from "@/lib/trial-words";
 import { localParts, usableTimeZone } from "./snooze-rules";
 
 export const TRIAL_EMAIL_KINDS = ["day2", "day3", "after"] as const;
@@ -105,8 +107,7 @@ export function localClock(at: Date, timeZone: string): string {
  * Away's own Send is off during the trial; the drafts are real Gmail drafts, so the owner can
  * send one from Gmail themselves. Used on every screen and email that describes the trial.
  */
-export const TRIAL_NO_SEND_LINE =
-  "During your three-day trial, Squared Away won't send anything to a customer.";
+export const TRIAL_NO_SEND_LINE = `During your ${dayAdjective(pricing.evaluationDays)} trial, Squared Away won't send anything to a customer.`;
 export const TRIAL_SIDE_DOOR_LINE =
   "Your drafts are in your Gmail Drafts folder too, so you can send one from Gmail yourself if you want.";
 
@@ -165,7 +166,7 @@ export function trialEmailCopy(
   if (kind === "day2") {
     return {
       subject: "Day 2 of your Squared Away trial",
-      serif: "day 2 of 3,",
+      serif: `day 2 of ${pricing.evaluationDays},`,
       heavy: "here's where things stand.",
       lines: [
         soFar(o.counts),

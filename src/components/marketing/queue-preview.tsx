@@ -1,3 +1,6 @@
+import { pricing } from "@/config/pricing";
+import { dayAdjective } from "@/lib/trial-words";
+
 /**
  * A still of the real Queue, drawn in HTML (not a screenshot) so it stays crisp and on-brand.
  * Check 6 P4: it shows the main action, Send reply, laid out as the real draft card lays it out
@@ -5,11 +8,12 @@
  * caption under the phone. Decorative: screen readers get one plain sentence instead.
  */
 export function QueuePreview() {
+  const trial = dayAdjective(pricing.evaluationDays);
   return (
     <figure className="relative mx-auto w-full max-w-sm">
       <figcaption className="sr-only">
         An example of the Squared Away queue: a quote request from Dana with a drafted reply and a
-        Send reply button. During the three-day trial, Squared Away won&apos;t send anything to a
+        Send reply button. During the {trial} trial, Squared Away won&apos;t send anything to a
         customer.
       </figcaption>
       <div
@@ -61,7 +65,7 @@ export function QueuePreview() {
       </div>
       {/* The figcaption above says this for screen readers. */}
       <p aria-hidden className="mt-4 text-center text-slate">
-        Example. During your three-day trial it drafts like this, but won&apos;t send to a customer.
+        Example. During your {trial} trial it drafts like this, but won&apos;t send to a customer.
       </p>
     </figure>
   );

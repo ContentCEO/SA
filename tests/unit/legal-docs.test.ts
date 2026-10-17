@@ -390,6 +390,7 @@ describe("owner-facing copy about the trial", () => {
       "src/components/marketing/home-copy.ts",
       "src/app/(app)/connect/page.tsx",
       "src/components/app/status-banner.tsx",
+      "src/components/app/trial-clock.tsx",
       "src/components/marketing/queue-preview.tsx",
     ];
     for (const f of files) {

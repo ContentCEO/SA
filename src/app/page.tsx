@@ -20,6 +20,7 @@ import {
 import { isReferralCode, referralsVisible } from "@/server/referral-rules";
 import { formatDollars, pricing } from "@/config/pricing";
 import { siteConfig } from "@/config/site";
+import { capitalized, dayAdjective } from "@/lib/trial-words";
 import { cn } from "@/lib/utils";
 import { Phone } from "lucide-react";
 import { AboutDavi } from "@/components/marketing/about-davi";
@@ -150,8 +151,8 @@ export default async function HomePage(props: PageProps<"/">) {
                   </Link>
                 </div>
                 <p className="text-slate">
-                  Works with Gmail · On the web or as an app on your phone · Three-day trial on your
-                  real inbox.
+                  Works with Gmail · On the web or as an app on your phone ·{" "}
+                  {capitalized(dayAdjective(pricing.evaluationDays))} trial on your real inbox.
                 </p>
                 <Link
                   href="#growth"
@@ -219,8 +220,8 @@ export default async function HomePage(props: PageProps<"/">) {
             <PlanCards />
             <p className="text-lg font-semibold">{pricingPromise}</p>
             <p className="text-slate">
-              Prices in US dollars. Month to month — stop any time. Every plan starts with the
-              three-day trial.
+              Prices in US dollars. Month to month — stop any time. Every plan starts with the{" "}
+              {dayAdjective(pricing.evaluationDays)} trial.
             </p>
             <p className="text-lg">
               Questions about which plan fits?{" "}

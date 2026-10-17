@@ -1,3 +1,5 @@
+import { pricing } from "@/config/pricing";
+import { daysPhrase } from "@/lib/trial-words";
 import { relativeTime } from "@/lib/relative-time";
 import { TRIAL_NO_SEND_LINE, TRIAL_SIDE_DOOR_LINE } from "./trial-email-rules";
 
@@ -152,7 +154,7 @@ export function inviteEmailCopy(o: {
     lines: [
       `${o.operatorFirstName} has let you into Squared Away. Sign in with Google using this email address.`,
       "Setting up takes about 10 minutes. Have these handy: the password for the Gmail you run the business from, and your price list if you have one.",
-      "For your first three days it reads your email and writes drafts for you to check. It won't send anything to a customer during those days.",
+      `For your first ${daysPhrase(pricing.evaluationDays)} it reads your email and writes drafts for you to check. It won't send anything to a customer during those days.`,
       // The trial's side door (Davi, 2026-10-16): the drafts are real Gmail drafts.
       TRIAL_SIDE_DOOR_LINE,
     ],
