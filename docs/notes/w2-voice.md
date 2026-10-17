@@ -19,3 +19,17 @@
   business name or owner email only; marker `voice_failed_alert:<ws>:<day>`, purged daily). Reset
   to 0 on a successful learn and on the owner's "Re-learn from my sent mail". Any unexpected error
   after "learning" records "failed" and rethrows (job retries unchanged).
+- **Voice learning reads only the owner's own words (Check 24 P2):** `ownWords` /
+  `splitOwnWords` (`src/server/voice-text.ts`, pure) replace `prepareBody` in `learnVoice`. Cuts
+  at reply headers ("On/El/Em/Le … wrote / escribió / escreveu / a écrit", also wrapped over up
+  to 3 lines; only when quoted text follows, the email ends, or the header names an address, a
+  year or a clock time — so "On Friday the inspector wrote:" in the owner's text stays), Gmail
+  and Apple Mail forwards, Outlook's underscore rule or From/Sent|Date/Subject block,
+  "Original Message"; drops ">" lines, phone/app footers, an RFC "-- " signature and, in the last
+  block of 2+ short lines, everything from the first line that is mostly a phone, link or
+  license number (the sign-off above it stays). Any email with one word left counts ("Sounds
+  good"); a forward with under 5 own words is skipped and counted. `console.info("voice_learn",
+  {workspaceId, outcome, emailsRead, forwardsSkipped})` — counts only. Classification's
+  `prepareBody` is unchanged (separate decision).
+  The review's Check 24 script wasn't available to this builder: the 36 cases in
+  `tests/unit/voice-text.test.ts` were re-invented to cover every category the review lists.

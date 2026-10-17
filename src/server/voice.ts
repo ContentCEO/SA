@@ -1,7 +1,6 @@
 import "server-only";
 import { and, asc, eq, sql } from "drizzle-orm";
 import { callStructured } from "@/ai/client";
-import { prepareBody } from "@/ai/classify";
 import {
   sentMailBlock,
   VOICE_INSTRUCTIONS,
@@ -27,6 +26,7 @@ import { createGmailReader } from "@/mailbox/gmail/api";
 import { mailboxRunning } from "./mailbox-plan";
 import { jobsAllowed } from "./lifecycle";
 import { markReconnectNeeded } from "./sync";
+import { splitOwnWords, wordCount } from "./voice-text";
 import { MAX_VOICE_RESTARTS, voiceAttempt, voiceAttemptAt, type VoiceAttempt } from "./voice-rules";
 
 export const MAX_SENT_EMAILS = 200;
@@ -36,6 +36,8 @@ const PER_EMAIL_CHARS = 1_500;
 const TOTAL_CHARS = 150_000;
 /** Sent mail is read in one go, so keep it gentle: Gmail refuses bursts. */
 const FETCH_CONCURRENCY = 3;
+/** A forward whose own note is shorter than this says nothing about how the owner writes. */
+const FORWARD_MIN_WORDS = 5;
 /** A learn that has said "learning" this long without finishing has died; start it again. */
 export const VOICE_STUCK_AFTER_MS = 30 * 60_000;
 
@@ -145,7 +147,11 @@ export async function learnVoice(
 
   await recordAttempt(workspaceId, "learning", now);
   try {
-    return await learnFrom(workspaceId, mailbox, opts, now);
+    const stats: LearnStats = { emailsRead: 0, forwardsSkipped: 0 };
+    const outcome = await learnFrom(workspaceId, mailbox, opts, now, stats);
+    // Counts only: never ids, addresses or text.
+    console.info("voice_learn", { workspaceId, outcome, ...stats });
+    return outcome;
   } catch (err) {
     // Check 29 P2: a crash never leaves the row at "learning" (the backstop would restart it
     // all day). The job's own retries still run.
@@ -158,11 +164,14 @@ export async function learnVoice(
   }
 }
 
+type LearnStats = { emailsRead: number; forwardsSkipped: number };
+
 async function learnFrom(
   workspaceId: string,
   mailbox: Mailbox,
   opts: VoiceDeps,
   now: Date,
+  stats: LearnStats,
 ): Promise<VoiceOutcome> {
   const reader = (
     opts.readerFor ??
@@ -183,8 +192,15 @@ async function learnFrom(
         while (next < refs.length) {
           const i = next++;
           const m = await reader.getMessage(refs[i]!.id, { withBody: true });
-          const text = m?.bodyText ? prepareBody(m.bodyText).slice(0, PER_EMAIL_CHARS) : "";
-          fetched[i] = text.length >= 20 ? text : null;
+          // Check 24 P2: only the owner's own words; short replies ("Sounds good") count, a
+          // forward with under 5 words of the owner's is skipped (and counted).
+          const own = m?.bodyText ? splitOwnWords(m.bodyText) : { text: "", forward: false };
+          const words = wordCount(own.text);
+          if (own.forward && words < FORWARD_MIN_WORDS) stats.forwardsSkipped++;
+          fetched[i] =
+            words >= 1 && !(own.forward && words < FORWARD_MIN_WORDS)
+              ? own.text.slice(0, PER_EMAIL_CHARS)
+              : null;
         }
       }),
     );
@@ -195,6 +211,7 @@ async function learnFrom(
       bodies.push(b);
       total += b.length;
     }
+    stats.emailsRead = bodies.length;
   } catch (err) {
     if (err instanceof MailboxAuthError) {
       await markReconnectNeeded(mailbox);

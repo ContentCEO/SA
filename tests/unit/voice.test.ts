@@ -209,6 +209,37 @@ const row = async () =>
     await database.select().from(voiceProfiles).where(eq(voiceProfiles.workspaceId, workspaceId))
   )[0]!;
 
+describe("Check 24 P2: only the owner's own words go to the model", () => {
+  it("drops Outlook-quoted and forwarded customer mail, keeps short replies, skips bare forwards", async () => {
+    addSent(4);
+    fake.add({
+      id: "outlook",
+      threadId: "o",
+      labelIds: ["SENT"],
+      bodyText:
+        "OWNER-OUTLOOK I'll price it out.\n\n________________________________\nFrom: Dana <dana@example.com>\nSent: Tuesday\nTo: Mike\nSubject: RE: Deck\n\nCUSTOMER-OUTLOOK 45 Maple Street",
+    });
+    fake.add({ id: "short", threadId: "sh", labelIds: ["SENT"], bodyText: "Sounds good" });
+    fake.add({
+      id: "fwd",
+      threadId: "f",
+      labelIds: ["SENT"],
+      bodyText:
+        "FYI\n\n---------- Forwarded message ---------\nFrom: Dana <dana@example.com>\n\nCUSTOMER-FORWARD 978-555-0177",
+    });
+    const { transport, calls } = fakeTransport([voice()]);
+    setModelTransportForTests(transport);
+    expect(await learnVoice(workspaceId, deps())).toBe("ready");
+    const user = calls[0]!.user;
+    expect(user).toContain("Here are 6 emails the owner sent");
+    expect(user).toContain("OWNER-OUTLOOK");
+    expect(user).toContain("Sounds good");
+    expect(user).not.toContain("CUSTOMER-");
+    expect(user).not.toContain("45 Maple Street");
+    expect(user).not.toContain("978-555-0177");
+  });
+});
+
 describe("Check 24 P1: a learn that doesn't finish keeps the stored voice in drafts", () => {
   it("an edited voice survives a forced re-learn that finds too little mail", async () => {
     await saveVoiceEdits(workspaceId, edits());
