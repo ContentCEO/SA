@@ -107,9 +107,15 @@ describe("terms", () => {
     expect(deletion).toContain("cancelSubscriptionNow(");
   });
 
-  it("the trial can't send to customers; practice copies go only to the owner", () => {
-    expect(terms).toContain("sending to customers is switched off");
+  it("Squared Away sends nothing to customers in the trial; the Gmail side door is said (2026-10-16)", () => {
+    expect(terms).toContain(
+      "it won't send anything to a customer: its own sending is switched off",
+    );
     expect(terms).toContain("practice copies, to your own address");
+    expect(terms).toContain(
+      "Your drafts are real Gmail drafts, in your Gmail Drafts folder too, so you can send one from Gmail yourself if you want",
+    );
+    expect(terms).not.toContain("sending to customers is switched off");
   });
 
   it("autopilot only on plans that include it, after setup, one kind of email at a time", () => {
@@ -354,7 +360,7 @@ describe("owner-facing copy about the trial", () => {
 
   it("the pre-consent Gmail explainer says only customers are off-limits during the trial", () => {
     expect(flat(readFileSync("src/app/(app)/connect/page.tsx", "utf8"))).toContain(
-      "Squared Away won&apos;t send anything to a customer: you can only send yourself practice copies.",
+      "Squared Away won&apos;t send anything to a customer: from Squared Away you can only send yourself practice copies. Your drafts are in your Gmail Drafts folder too, so you can send one from Gmail yourself if you want.",
     );
   });
 
@@ -405,5 +411,39 @@ describe("owner-facing copy about the trial", () => {
     );
     expect(page).not.toMatch(/only when you tap <strong>Send reply<\/strong>\./);
     expect(page).not.toMatch(/three things|all three|read, draft, and send/);
+  });
+
+  it("names what the leads package stores and promises (lead sources, Call / Text, towns)", () => {
+    const policy = flat(raw("privacy-policy.md"));
+    expect(policy).toContain(
+      "Which lead website or phone service a conversation came through (for example Thumbtack or Google Voice)",
+    );
+    expect(policy).toContain("the towns you work in");
+    expect(policy).toContain(
+      "To show **Call** and **Text** buttons, we look for a phone number in the customer's email when you open your queue. We don't store the number. Calls and texts go from your own phone: Squared Away never calls or texts your customers.",
+    );
+    expect(policy).toContain(
+      "we never draft or send to an email-to-text address, because that would text your customer.",
+    );
+    expect(policy).toContain("lead-source, done and fixed marks");
+  });
+
+  it("names what the replies package stores and sends (first replies, emergencies, money totals)", async () => {
+    const policy = flat(raw("privacy-policy.md"));
+    const { EMERGENCY_ALERTS, emergencyAlertText } = await import("@/server/emergency-alert-rules");
+    expect(policy).toContain("which kind of first reply the draft is");
+    expect(policy).toContain("when we let your phone know about an emergency email");
+    expect(policy).toContain("first-reply labels, when we alerted you to an emergency");
+    expect(policy).toContain("**Emergencies, even at night**");
+    // The words and caps the code keeps.
+    expect(emergencyAlertText(1)).toContain("An emergency email just came in.");
+    expect(policy).toContain('It says only "An emergency email just came in."');
+    expect(policy).toContain(
+      `at most ${EMERGENCY_ALERTS.nightCap} a night and ${EMERGENCY_ALERTS.dayCap} a day`,
+    );
+    expect(policy).toContain(
+      "this month's money so far as totals (quotes you won, invoices paid and what's still owed)",
+    );
+    expect(policy).toContain("It's a draft like any other and waits for your **Send reply**.");
   });
 });

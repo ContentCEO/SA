@@ -7,11 +7,16 @@
 import { neon } from "@neondatabase/serverless";
 import { drizzle } from "drizzle-orm/neon-http";
 import { migrate } from "drizzle-orm/neon-http/migrator";
+import { checkAfterMigrate, checkBeforeMigrate, type Query } from "./migrate-guard";
 
 async function main() {
   const url = process.env.DATABASE_URL;
   if (!url) throw new Error("DATABASE_URL is not set.");
-  await migrate(drizzle(neon(url)), { migrationsFolder: "./drizzle" });
+  const sql = neon(url);
+  const query: Query = (text) => sql.query(text) as unknown as ReturnType<Query>;
+  await checkBeforeMigrate(query, "./drizzle");
+  await migrate(drizzle(sql), { migrationsFolder: "./drizzle" });
+  await checkAfterMigrate(query, "./drizzle");
   console.log("Migrations applied.");
 }
 

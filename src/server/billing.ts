@@ -30,6 +30,7 @@ import {
 } from "./billing-rules";
 import { paymentNoticeCopy } from "./first-week-rules";
 import { setupReallyPaid } from "./lifecycle";
+import { fitMailboxesToPlan } from "./mailbox-plan";
 import { creditReferralSafely } from "./referrals";
 import { isTermsUrlMissingError, stripeErrorReason } from "./stripe-error-rules";
 
@@ -474,6 +475,21 @@ export async function notifyPaymentReceived(
   }
 }
 
+/**
+ * The plan's Gmail limit after a payment or plan change (2026-10-16). Never fails the webhook:
+ * the 15-minute job fits it again if this didn't (`fitAllMailboxesToPlans`). Ids and names only.
+ */
+async function fitMailboxesSafely(workspaceId: string, now: Date) {
+  try {
+    await fitMailboxesToPlan(workspaceId, now);
+  } catch (err) {
+    console.error("mailbox_plan_fit_failed", {
+      workspaceId,
+      error: err instanceof Error ? err.name : "unknown",
+    });
+  }
+}
+
 export async function applyCheckoutCompleted(
   session: Stripe.Checkout.Session,
   now = new Date(),
@@ -505,6 +521,7 @@ export async function applyCheckoutCompleted(
     })
     .where(eq(workspaces.id, w.id));
   await log(w.id, "payment_received", { plan, includesSetup, from: w.status, to });
+  await fitMailboxesSafely(w.id, now);
   await notifyPaymentReceived(session.id, { plan, includesSetup }, deps);
   // Plan #47: a referral is settled the first time the account is active. Never fails the webhook.
   if (to === "active") await creditReferralSafely(w.id, now);
@@ -531,6 +548,8 @@ export async function applySubscription(sub: Stripe.Subscription, now = new Date
   if (to !== w.status || plan !== w.plan) {
     await log(w.id, "subscription_changed", { stripeStatus: sub.status, from: w.status, to, plan });
   }
+  // A cheaper plan pauses the Gmail addresses it doesn't cover; a bigger one turns them back on.
+  if (plan !== w.plan) await fitMailboxesSafely(w.id, now);
   if (to === "active") await creditReferralSafely(w.id, now);
   return "applied";
 }

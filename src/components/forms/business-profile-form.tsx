@@ -15,6 +15,8 @@ export type ProfileDefaults = {
   extraTrades: string[];
   services: string | null;
   serviceArea: string | null;
+  /** Leads package (B9): the exact towns list (pre-filled as a suggestion while empty). */
+  serviceTowns: string[];
   hours: string | null;
   leadTime: string | null;
   pricingNotes: string | null;
@@ -34,6 +36,7 @@ const extraChoices = TRADE_OPTIONS.filter((t) => t.value !== "other");
 const OPTIONAL_FIELDS = [
   "extraTrades",
   "serviceArea",
+  "serviceTowns",
   "hours",
   "leadTime",
   "pricingNotes",
@@ -117,6 +120,14 @@ export function BusinessProfileForm({
         defaultValue={v("serviceArea", defaults.serviceArea) as string}
         error={e.serviceArea}
         rows={2}
+      />
+      <TextArea
+        name="serviceTowns"
+        label="Towns you work in (optional)"
+        hint="One per line, like “Lowell, MA”. “Where do you work?” is what replies say. This list is exact: we'll point out quote requests that name a town that isn't on it. Leave it empty to skip."
+        defaultValue={v("serviceTowns", joined(defaults.serviceTowns)) as string}
+        error={e.serviceTowns}
+        rows={3}
       />
       <TextArea
         name="hours"

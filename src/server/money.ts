@@ -54,8 +54,16 @@ const asDate = (v: unknown) => (v ? new Date(v as string | Date) : null);
  * lists keep), so old paid invoices and "paid" emails never push an old, still-owed one
  * past the cap. `openOnly` keeps just the unmarked or put-back ones (receipt matching).
  */
-async function moneyThreads(workspaceId: string, now: Date, opts: { openOnly?: boolean } = {}) {
-  const shownSince = new Date(now.getTime() - PAID_SHOWN_DAYS * DAY_MS);
+async function moneyThreads(
+  workspaceId: string,
+  now: Date,
+  opts: { openOnly?: boolean; paidSince?: Date } = {},
+) {
+  // Paid rows shown on the screen (30 days), or since the start of the owner's month for the
+  // month's totals when that is further back (a 31-day month's last evening).
+  const shownSince = new Date(
+    Math.min(now.getTime() - PAID_SHOWN_DAYS * DAY_MS, opts.paidSince?.getTime() ?? Infinity),
+  );
   const unmarkedOwed = and(
     isNull(threads.invoicePaidAt),
     isNull(threads.invoicePaidSource),
@@ -153,6 +161,37 @@ function toRow(
     paidAt: asDate(r.paidAt),
     paidSource: r.paidSource ?? null,
     lastMessageAt: asDate(r.lastMessageAt),
+  };
+}
+
+/**
+ * Replies package: the invoice side of "this month so far" (the morning email, Activity),
+ * from Money's own rows so its exclusions hold — no supplier bill, receipt sender or bill the
+ * owner owes, nothing marked "Not owed to me". Paid = marked paid (the owner's mark or our
+ * guess) since `paidSince`; owed = what Money owed lists now, and its total. Amounts only.
+ */
+export async function invoiceTotals(
+  workspaceId: string,
+  now: Date,
+  paidSince: Date,
+): Promise<{ paidCents: (number | null)[]; owedCount: number; owedCents: number }> {
+  const rows = await moneyThreads(workspaceId, now, { paidSince });
+  const paid = rows.filter((r) => {
+    const at = asDate(r.paidAt);
+    return (
+      !!at &&
+      (r.paidSource === "owner" || r.paidSource === "auto") &&
+      at.getTime() >= paidSince.getTime() &&
+      at.getTime() <= now.getTime()
+    );
+  });
+  const owed = rows.filter((r) =>
+    isOwed({ invoice: r.invoice, paidAt: asDate(r.paidAt), paidSource: r.paidSource }),
+  );
+  return {
+    paidCents: paid.map((r) => (r.invoice?.amount ? toCents(r.invoice.amount) : null)),
+    owedCount: owed.length,
+    owedCents: owed.reduce((t, r) => t + owedCents(r.invoice), 0),
   };
 }
 

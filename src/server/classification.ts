@@ -1,5 +1,5 @@
 import "server-only";
-import { looksMunicipal } from "@/ai/guards";
+import { injectionCheck, looksMunicipal } from "@/ai/guards";
 import { and, count, desc, eq, gte, inArray, isNull, lt, sql } from "drizzle-orm";
 import { classifyEmail, DISPUTE_REASONS, type Classification } from "@/ai/classify";
 import { AiCapReachedError } from "@/ai/usage";
@@ -13,6 +13,7 @@ import {
   threads,
   workspaces,
 } from "@/db/schema";
+import { mailboxOn } from "./mailbox-plan-rules";
 import { afterClassified } from "./auto-outcomes";
 import { unflagPendingNudge } from "./drafts";
 import { jobsAllowed } from "./lifecycle";
@@ -31,6 +32,9 @@ import { keepQuoteAccepted, quoteAccepted } from "./quote-rules";
 import { ownerGavePrice } from "./quotes";
 import { messageReplyAddress, notDraftMessage, notDraftSql, sideEmailSql } from "./thread-sql";
 import { customerReplyAddress, replyRedirected } from "./reply-address-rules";
+import { junkShortcutBlocked, matchRules } from "./owner-sender-rule-rules";
+import { rulesForWorkspace } from "./sender-rule-store";
+import { channelName, channelOf } from "./channel-rules";
 
 /** Classify inbound mail from this far back on the first pass; everything new after that. */
 export const CLASSIFY_LOOKBACK_DAYS = 14;
@@ -117,7 +121,8 @@ export async function classifyPending(
     .from(mailboxes)
     .innerJoin(workspaces, eq(workspaces.id, mailboxes.workspaceId))
     .where(eq(mailboxes.id, mailboxId));
-  if (!box || box.mailbox.status !== "active" || !jobsAllowed(box.workspace, now))
+  // Lost access or paused on the plan (2026-10-16): nothing is sorted, no AI spent.
+  if (!box || !mailboxOn(box.mailbox) || !jobsAllowed(box.workspace, now))
     return { classified: 0, superseded: 0, remaining: 0, capped: false };
 
   const since = new Date(now.getTime() - CLASSIFY_LOOKBACK_DAYS * 86_400_000);
@@ -145,7 +150,10 @@ export async function classifyPending(
     extraTrades: box.workspace.extraTrades ?? [],
     amountThresholdDollars: profile?.amountThresholdDollars ?? DEFAULT_AMOUNT_THRESHOLD_DOLLARS,
     vipSenders: (profile?.vipSenders ?? []).map((v) => v.toLowerCase()),
+    serviceTowns: profile?.serviceTowns ?? [],
   };
+  // The owner's sender rules (ideas H3), read once per run. Never sent to the model.
+  const senderRules = await rulesForWorkspace(box.workspace.id);
 
   const batch = [...newestPerThread.values()].slice(0, limit);
   let classified = 0;
@@ -166,6 +174,7 @@ export async function classifyPending(
         needsOwnerReason: threads.needsOwnerReason,
         quoteAmountCents: threads.quoteAmountCents,
         quoteRequestedAt: threads.quoteRequestedAt,
+        categoryManual: threads.categoryManual,
       })
       .from(threads)
       .where(eq(threads.id, m.threadId));
@@ -173,8 +182,43 @@ export async function classifyPending(
       injection?: unknown;
       payment_change?: unknown;
     };
-    if (
+    // Where it came from, decided in code from the sender (leads package): a voicemail or
+    // text-message email, a lead website, or null for a person writing directly.
+    const channel = channelOf(m.fromAddress);
+    // Ideas H3: the owner's sender rules. Caution (a VIP, a company "Always needs me") matches
+    // the sender or the reply address; "Always junk" only the sender, in the safe direction.
+    const rule = matchRules(senderRules, {
+      from: m.fromAddress,
+      replyAddress: customerReplyAddress(m),
+      replyToHeader: m.replyToHeader,
+      vips: business.vipSenders,
+    });
+    const ruleText = `${m.subject ?? ""}\n${m.bodyText ?? m.snippet ?? ""}`;
+    const junkByRule =
+      rule.junk &&
+      !thread?.categoryManual &&
+      // Voicemail and text-message emails are always read (leads package): a company rule
+      // (say, everyone at google.com) never quietly junks a caller.
+      channel?.kind !== "phone" &&
+      channel?.kind !== "phone_text" &&
+      !looksMunicipal(m.fromAddress, m.fromName) &&
+      prevMarks.injection !== true &&
+      prevMarks.payment_change !== true &&
+      !injectionCheck(ruleText).flagged &&
+      !junkShortcutBlocked(ruleText);
+    if (junkByRule) {
+      // No model call: the owner said this sender is junk, and nothing in it says otherwise.
+      result = {
+        ...NOISE,
+        summary: m.subject ? `Junk (your rule): ${m.subject}` : "Junk (your rule).",
+        extracted: { ...NOISE.extracted, sender_rule: "junk" },
+      };
+    } else if (
       m.labelIds.some((l) => NOISE_LABELS.includes(l)) &&
+      // Voicemail and text-message emails are few and never marketing: always read. Lead
+      // websites keep the shortcut (their marketing would eat the daily AI limit).
+      channel?.kind !== "phone" &&
+      channel?.kind !== "phone_text" &&
       // A building department landing in Promotions still gets read.
       !looksMunicipal(m.fromAddress, m.fromName) &&
       // A thread already marked keeps its mark (B3): it is never quietly turned into junk.
@@ -242,6 +286,7 @@ export async function classifyPending(
           },
           {
             senderIsVip,
+            senderNeedsMe: rule.caution === "needs_me",
             now,
             // Every older unsorted email is checked in code too, even outside the burst (B3):
             // the drafter reads them.
@@ -252,6 +297,8 @@ export async function classifyPending(
               injection: prevMarks.injection === true,
               paymentChange: prevMarks.payment_change === true,
             },
+            channel: channel ? { kind: channel.kind, name: channelName(channel.key) ?? "" } : null,
+            serviceTowns: business.serviceTowns,
           },
         );
       } catch (err) {
@@ -262,6 +309,16 @@ export async function classifyPending(
         throw err;
       }
       viaModel = true;
+      // What the sorter itself said (ideas H4): a kind the owner chose never feeds automatic
+      // drafts or autopilot unless the sorter's own kind would have. Content-free.
+      result = {
+        ...result,
+        extracted: {
+          ...result.extracted,
+          model_category: result.category,
+          ...(rule.noDraft ? { sender_rule: "no_draft" as const } : {}),
+        },
+      };
       if (result.extracted.accepts_quote) {
         const [ownerBefore] = await db()
           .select({ n: count() })
@@ -420,11 +477,15 @@ export async function classifyPending(
       thread?.quoteRequestedAt != null ||
       thread?.quoteOutcome != null ||
       thread?.quoteOutcomeSource != null;
+    // The owner's own kind (ideas H4) wins, decided in SQL so a "Move it" tapped while the
+    // model was reading isn't overwritten: `category = coalesce(category_manual, model)`.
+    const effectiveCategory = sql`coalesce(${threads.categoryManual}, ${result.category})`;
     const isQuoteNow = result.category === "quote_request";
-    const markQuote = !injection && (legacyQuote || isQuoteNow);
+    const markQuote = !injection && (legacyQuote || isQuoteNow || thread?.categoryManual != null);
+    const quoteNowSql = sql`(${legacyQuote ? sql`true` : sql`false`} or ${effectiveCategory} = 'quote_request')`;
     const requestAt = new Date(m.sentAt).toISOString();
     const jobKind =
-      !injection && (wasQuote || isQuoteNow)
+      !injection && (wasQuote || isQuoteNow || thread?.categoryManual != null)
         ? jobKindOf(
             box.workspace.trade,
             stored.service_requested ?? null,
@@ -435,7 +496,7 @@ export async function classifyPending(
     await db()
       .update(threads)
       .set({
-        category: result.category,
+        category: effectiveCategory,
         priority: result.priority,
         // The owner's own "This one needs me" always wins.
         needsOwner: sql`${threads.needsOwnerManual} or ${result.needsOwner}`,
@@ -443,6 +504,8 @@ export async function classifyPending(
         summary: result.summary,
         extracted: stored,
         classifiedAt: now,
+        // Leads package: kept once set — a later email on the thread doesn't clear it.
+        ...(channel ? { leadChannel: channel.key } : {}),
         // Sticky (A1): a later "looks great" never makes a complaint look like a happy
         // customer, so the mark is never cleared. It holds the LATEST complaint (the
         // 12-month rule counts from the most recent one), and a thread that was sorted as a
@@ -462,19 +525,21 @@ export async function classifyPending(
           ? {
               // `requestAt` is an ISO string, never a Date: postgres.js can't bind a Date
               // inside raw SQL (A10; the classification tests' driver refuses one).
-              quoteRequestedAt: sql`coalesce(${threads.quoteRequestedAt}, ${
+              quoteRequestedAt: sql`case when not ${quoteNowSql} then ${threads.quoteRequestedAt} else coalesce(${threads.quoteRequestedAt}, ${
                 legacyQuote
                   ? sql`(select min(i.sent_at) from messages i where i.thread_id = ${threads.id} and i.direction = 'in')`
                   : sql`(select min(i.sent_at) from messages i where i.thread_id = ${threads.id} and i.direction = 'in' and not ${sideEmailSql("i")} and i.sent_at <= ${requestAt}::timestamptz and i.sent_at > coalesce((select max(o.sent_at) from messages o where o.thread_id = ${threads.id} and o.direction = 'out' and ${notDraftSql("o")} and not ${sideEmailSql("o")} and o.sent_at < ${requestAt}::timestamptz), '-infinity'::timestamptz))`
-              }, ${requestAt}::timestamptz)`,
+              }, ${requestAt}::timestamptz) end`,
             }
           : {}),
         ...(jobKind === null
           ? {}
           : jobKind === OTHER_JOB_KIND
-            ? { jobKind: sql`coalesce(${threads.jobKind}, ${jobKind})` }
+            ? {
+                jobKind: sql`case when ${wasQuote ? sql`true` : sql`false`} or ${effectiveCategory} = 'quote_request' then coalesce(${threads.jobKind}, ${jobKind}) else ${threads.jobKind} end`,
+              }
             : {
-                jobKind: sql`case when ${threads.jobKind} is null or ${threads.jobKind} = ${OTHER_JOB_KIND} then ${jobKind} else ${threads.jobKind} end`,
+                jobKind: sql`case when not (${wasQuote ? sql`true` : sql`false`} or ${effectiveCategory} = 'quote_request') then ${threads.jobKind} when ${threads.jobKind} is null or ${threads.jobKind} = ${OTHER_JOB_KIND} then ${jobKind} else ${threads.jobKind} end`,
               }),
         ...(reopen
           ? {

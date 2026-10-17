@@ -11,6 +11,7 @@ import {
   type BusinessProfile,
   type VoiceProfile,
 } from "@/db/schema";
+import { normalizeTown } from "./service-area-rules";
 
 /** Textareas: trim, cap, empty → null. */
 const longText = (max = 2000) =>
@@ -37,6 +38,31 @@ const lines = (maxItems: number, maxLen = 200) =>
         .array(z.string().max(maxLen, `Keep each line under ${maxLen} characters.`))
         .max(maxItems, `Up to ${maxItems} lines.`),
     );
+
+export const MAX_CREW_ADDRESSES = 30;
+
+/**
+ * Check 50 P3: the owner's crew addresses (`business_profile.crew_addresses`), one per line:
+ * each an email, lowercased, de-duplicated after lowercasing, at most 30. Not in any form yet.
+ */
+export const crewAddressesSchema = z
+  .string()
+  .transform((v) =>
+    v
+      .split("\n")
+      .map((l) => l.trim().toLowerCase())
+      .filter(Boolean),
+  )
+  .pipe(
+    z.array(
+      z
+        .string()
+        .max(254, "Keep each line under 254 characters.")
+        .email("Each line should be one email address."),
+    ),
+  )
+  .transform((list) => [...new Set(list)])
+  .pipe(z.array(z.string()).max(MAX_CREW_ADDRESSES, `Up to ${MAX_CREW_ADDRESSES} addresses.`));
 
 export const REVIEW_URL_MESSAGE =
   "That doesn't look like a web link. Copy it from your Google or Yelp page — it starts with https://";
@@ -85,6 +111,21 @@ export const businessProfileInput = z.object({
     .optional(),
   services: z.string().trim().min(1, "Tell us what work you do.").max(2000),
   serviceArea: longText(),
+  /**
+   * Leads package (B9): "Towns you work in", one per line, de-duplicated by town name. Left out
+   * entirely (a form without the field) = leave the list as it is.
+   */
+  serviceTowns: lines(100, 60)
+    .transform((list) => {
+      const seen = new Set<string>();
+      return list.filter((t) => {
+        const key = JSON.stringify(normalizeTown(t));
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+    })
+    .optional(),
   hours: longText(500),
   leadTime: longText(500),
   pricingNotes: longText(),

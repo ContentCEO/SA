@@ -13,6 +13,7 @@ import {
 } from "@/db/schema";
 import { isAdminEmail } from "./admin";
 import { canMakeMove, EVALUATION_MS, resumeTarget, type AdminMove } from "./lifecycle";
+import { fitMailboxesToPlan } from "./mailbox-plan";
 import { creditReferralSafely } from "./referrals";
 
 /**
@@ -212,4 +213,7 @@ export async function setWorkspacePlan(
       action: "plan_changed",
       detail: { by: "admin", from: w.plan, to: plan },
     });
+  // A plan covering fewer Gmail addresses pauses the extra ones; a bigger one turns them back
+  // on (Davi, 2026-10-16).
+  await fitMailboxesToPlan(workspaceId, now);
 }

@@ -462,6 +462,24 @@ describe("in the database", () => {
       expect(writer.sent).toHaveLength(0);
     });
 
+    it("GUARDRAIL: a first reply to a new lead (draft.v7) never goes on its own", async () => {
+      const draftId = await drafted(await conversation());
+      await database.update(drafts).set({ opening: "details" }).where(eq(drafts.id, draftId));
+      expect(await considerAutopilot(draftId, NOW)).toBeNull();
+      // Even the model's "not_first" on a first contact: the code said first contact.
+      await database.update(drafts).set({ opening: "not_first" }).where(eq(drafts.id, draftId));
+      expect(await considerAutopilot(draftId, NOW)).toBeNull();
+      await database.update(drafts).set({ opening: null }).where(eq(drafts.id, draftId));
+      expect(await considerAutopilot(draftId, NOW)).toEqual(later(GRACE_MINUTES));
+      // And at send time too: a countdown never survives a first-reply mark.
+      await database.update(drafts).set({ opening: "vague" }).where(eq(drafts.id, draftId));
+      expect(await runAutopilotSend(draftId, deps(later(GRACE_MINUTES)))).toMatchObject({
+        status: "stood_down",
+        reasons: expect.arrayContaining(["First replies to new customers always wait for you."]),
+      });
+      expect(writer.sent).toHaveLength(0);
+    });
+
     it("doesn't start for strangers, money, flags, low confidence, complaints or other categories", async () => {
       const cases = [
         await drafted(await conversation({ known: false, from: "new@person.com" })),

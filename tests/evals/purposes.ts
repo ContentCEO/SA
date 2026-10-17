@@ -1,6 +1,8 @@
 /**
- * Eval cases for purpose drafts (purpose.v1 on top of draft.v5; plan #26 #28 #29):
- * deposit details on an accepted quote, review requests, and the one closing question.
+ * Eval cases for purpose drafts (purpose.v2 on top of the drafting prompt, now draft.v7;
+ * plan #26 #28 #29, and the thank-you for a paid invoice, 2026-10-16): deposit details on an
+ * accepted quote, review requests, the one closing question, and "Say thanks" with and
+ * without the review ask.
  * All text is invented. `paymentTerms` overrides the eval profile's terms for that case
  * (null = the owner wrote none down).
  */
@@ -9,18 +11,19 @@ import { checkDraft } from "@/ai/draft-checks";
 import {
   conversationBlock,
   DRAFT_INSTRUCTIONS,
-  draftSchema,
+  DRAFT_PROMPT_VERSION,
+  replyDraftSchema,
   workspaceBlock,
   type WorkspaceContext,
-} from "@/ai/prompts/draft.v6";
+} from "@/ai/prompts/draft.v7";
 import {
   closingQuestionTask,
   DEPOSIT_GAP,
   depositTask,
   PURPOSE_PROMPT_VERSION,
   reviewRequestTask,
-} from "@/ai/prompts/purpose.v1";
-import { DRAFT_PROMPT_VERSION } from "@/ai/prompts/draft.v6";
+  thankYouTask,
+} from "@/ai/prompts/purpose.v2";
 import { ensureDepositGap } from "@/ai/purpose";
 import type { Trade } from "@/config/trades";
 import type { DraftPurpose } from "@/db/schema";
@@ -194,6 +197,57 @@ export const PURPOSE_CASES: PurposeCase[] = [
     mustNotContain: ["$", "guarantee", "discount", "just checking in", "following up"],
     noInventedMoney: true,
   },
+  // "Say thanks" (2026-10-16): a thank-you only — nothing asked for, no amount repeated.
+  {
+    id: "thanks-plain",
+    purpose: "thank_you",
+    trade: "plumbing",
+    messages: [
+      { direction: "out", from: "owner", body: "Invoice 318 attached: $1,850. Alex", daysAgo: 5 },
+      {
+        direction: "in",
+        from: "Lee Grant",
+        body: "Sent the $1,850 balance by Zelle this morning.",
+        daysAgo: 0,
+      },
+    ],
+    mustNotContain: ["review", "http", "1,850", "discount", "zelle"],
+    noInventedMoney: true,
+  },
+  {
+    id: "thanks-plain-happy-customer",
+    purpose: "thank_you",
+    trade: "electrical",
+    messages: [
+      {
+        direction: "in",
+        from: "Jordan Fox",
+        body: "Paid invoice 77. Lights work great — would you be up for the garage next spring?",
+        daysAgo: 1,
+      },
+    ],
+    // No review link may be asked for without the rules allowing it, and no new work promised.
+    mustNotContain: ["review", "http", "spring", "discount"],
+    noInventedMoney: true,
+  },
+  // The review rules allow it: the same note carries the ask, at exactly the owner's link.
+  {
+    id: "thanks-with-review",
+    purpose: "thank_you_review",
+    trade: "carpentry",
+    messages: [
+      { direction: "out", from: "owner", body: "All done — railing's in. Alex", daysAgo: 3 },
+      {
+        direction: "in",
+        from: "Jo Park",
+        body: "Just paid invoice 2210 online. The new railing looks great, thanks again!",
+        daysAgo: 0,
+      },
+    ],
+    mustContain: [EVAL_REVIEW_URL],
+    mustNotContain: ["discount", "gift card", "coupon", "% off", "2210"],
+    noInventedMoney: true,
+  },
 ];
 
 const PROFILE: Omit<WorkspaceContext, "trade" | "paymentTerms"> = {
@@ -230,7 +284,9 @@ export async function runPurposeEvals(workspaceId: string) {
         ? depositTask({ paymentTerms: ctx.paymentTerms })
         : c.purpose === "review_request"
           ? reviewRequestTask({ reviewUrl: EVAL_REVIEW_URL })
-          : closingQuestionTask({ daysQuiet: Math.max(1, lastOut?.daysAgo ?? 7) });
+          : c.purpose === "thank_you" || c.purpose === "thank_you_review"
+            ? thankYouTask({ reviewUrl: c.purpose === "thank_you_review" ? EVAL_REVIEW_URL : null })
+            : closingQuestionTask({ daysQuiet: Math.max(1, lastOut?.daysAgo ?? 7) });
     const r = await callStructured({
       workspaceId,
       role: "draft",
@@ -243,7 +299,12 @@ export async function runPurposeEvals(workspaceId: string) {
       ],
       user: conversationBlock({
         subject: "Your quote",
-        category: c.purpose === "review_request" ? "customer_question" : "quote_request",
+        category:
+          c.purpose === "review_request"
+            ? "customer_question"
+            : c.purpose === "thank_you" || c.purpose === "thank_you_review"
+              ? "invoice_payment"
+              : "quote_request",
         summary: null,
         extracted: null,
         task,
@@ -254,7 +315,8 @@ export async function runPurposeEvals(workspaceId: string) {
           body: m.body,
         })),
       }),
-      schema: draftSchema,
+      // The app sends purpose notes with draft.v7's instructions and reply schema.
+      schema: replyDraftSchema,
     });
     const problems: string[] = [];
     if (!r || !r.body.trim()) problems.push("no usable draft");
@@ -289,7 +351,14 @@ export async function runPurposeEvals(workspaceId: string) {
                 .map((m) => m.body)
                 .join("\n")
             : "",
-        review: c.purpose === "review_request" ? { url: EVAL_REVIEW_URL } : undefined,
+        // As createDraftForThread's termsCheck: a thank-you is checked like a review request,
+        // and with no review ask, any link at all is flagged.
+        review:
+          c.purpose === "review_request" || c.purpose === "thank_you_review"
+            ? { url: EVAL_REVIEW_URL }
+            : c.purpose === "thank_you"
+              ? { url: null }
+              : undefined,
       });
       if (c.noInventedMoney) problems.push(...check.flags.filter((f) => f.includes("price")));
       problems.push(

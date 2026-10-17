@@ -15,6 +15,7 @@ import {
   type Workspace,
 } from "@/db/schema";
 import { MailboxAuthError } from "@/mailbox/connector";
+import { MAILBOX_PAUSED_LINE, mailboxOn } from "./mailbox-plan-rules";
 import {
   AUTO_DRAFT_CATEGORIES,
   defaultWriter,
@@ -24,6 +25,7 @@ import {
 } from "./drafts";
 import { canSend, effectiveStatus, setupReallyPaid } from "./lifecycle";
 import { knownCustomer } from "./known-customer";
+import { isEmailToTextAddress, looksLikePhoneAddress } from "./channel-rules";
 import { complainedAddresses } from "./offers";
 import { markReconnectNeeded } from "./sync";
 import { unsentDraftMessage } from "./thread-sql";
@@ -92,7 +94,7 @@ export type GuardrailInput = {
   municipal?: boolean;
   /** The customer's email accepts a quote (classify.v3 signal) — the owner answers those. */
   acceptsQuote?: boolean;
-  /** Deposit details, review request or closing question (plan #26 #28 #29). */
+  /** Deposit details, review request, thank-you or closing question (plan #26 #28 #29). */
   purpose: string | null;
   /**
    * A Gmail draft older sync stored after the customer's email, not yet checked with Gmail
@@ -116,6 +118,18 @@ export type GuardrailInput = {
   paymentChange?: boolean;
   /** Round 2 TW B4: someone smells gas. */
   gasSmell?: boolean;
+  /** Ideas H4: the owner chose this kind and the sorter said otherwise. */
+  ownerMoved?: boolean;
+  /** Leads package: a lead-site / voicemail / text-message thread. */
+  leadChannel?: boolean;
+  /** Leads package: the reply goes to an email-to-text gateway or a phone-number address. */
+  textAddress?: boolean;
+  /**
+   * Replies package (draft.v7): a first reply to someone the owner never wrote to. Davi said
+   * no to any instant reply to a new lead, so it always waits for a tap — even when an old
+   * forward to that address makes them look known.
+   */
+  firstReply?: boolean;
 };
 
 /** Layer 3. Every reason this email must wait for the owner; empty = may go. */
@@ -136,6 +150,7 @@ export function guardrailReasons(g: GuardrailInput): string[] {
   if (g.untrusted) out.push("This email tried to give instructions to the assistant.");
   if (g.municipal) out.push("Building departments always wait for you.");
   if (g.acceptsQuote) out.push("Quote acceptances always wait for you.");
+  // Thank-you notes (2026-10-16) are purpose notes too, so this line covers them.
   if (g.purpose != null) out.push("Deposit, review and closing notes always wait for you.");
   if (g.maybeAnswered) out.push("You might already have answered this in Gmail.");
   if (g.redirected)
@@ -145,6 +160,10 @@ export function guardrailReasons(g: GuardrailInput): string[] {
     out.push("This customer complained in the last 12 months, so it waits for you.");
   if (g.paymentChange) out.push("Asks to pay a new account, so it waits for you.");
   if (g.gasSmell) out.push("Someone smells gas. Call them.");
+  if (g.ownerMoved) out.push("You chose this kind yourself, so it waits for you.");
+  if (g.leadChannel) out.push("Lead-site and voicemail emails always wait for you.");
+  if (g.textAddress) out.push("That address may turn into a text message, so it waits for you.");
+  if (g.firstReply) out.push("First replies to new customers always wait for you.");
   return out;
 }
 
@@ -163,6 +182,9 @@ export async function earnedCounts(workspaceId: string): Promise<Map<string, num
         isNull(drafts.purpose),
         eq(drafts.status, "sent"),
         sql`${drafts.sentGmailMessageId} is not null`,
+        // Ideas H4: replies on a conversation the owner moved to a kind the sorter didn't pick
+        // never earn that kind.
+        sql`(${threads.categoryManual} is null or ${threads.categoryManual} = ${threads.extracted}->>'model_category')`,
       ),
     )
     .groupBy(threads.category);
@@ -294,6 +316,9 @@ async function blockers(row: NonNullable<Awaited<ReturnType<typeof loadForAutopi
   const { draft, thread, mailbox, workspace } = row;
   const locked = accountLockReason(workspace, now);
   if (locked) return [locked];
+  // The plan covers fewer Gmail addresses and this one is paused (2026-10-16): nothing from it
+  // goes on its own (sendDraft refuses it too).
+  if (mailbox.planPausedAt) return [MAILBOX_PAUSED_LINE];
   const mode = (await modes(workspace.id)).get(thread.category ?? "");
   if (mode !== "autopilot") return ["Autopilot is off for this kind of email."];
   const [customer] = await db()
@@ -328,6 +353,7 @@ async function blockers(row: NonNullable<Awaited<ReturnType<typeof loadForAutopi
     accepts_quote?: boolean;
     payment_change?: boolean;
     gas_smell?: boolean;
+    model_category?: string;
   };
   const complainedRecently = await customerComplainedRecently(workspace.id, draft.toAddress, now);
   return guardrailReasons({
@@ -352,6 +378,11 @@ async function blockers(row: NonNullable<Awaited<ReturnType<typeof loadForAutopi
     complainedRecently,
     paymentChange: extracted.payment_change === true,
     gasSmell: extracted.gas_smell === true,
+    ownerMoved: thread.categoryManual != null && thread.categoryManual !== extracted.model_category,
+    leadChannel: thread.leadChannel != null,
+    textAddress: isEmailToTextAddress(draft.toAddress) || looksLikePhoneAddress(draft.toAddress),
+    // Any stored opening means the drafter was told it's a first contact (even "not_first").
+    firstReply: draft.opening != null,
   });
 }
 
@@ -432,7 +463,7 @@ export async function runAutopilotSend(
   // The owner may be writing their own reply in Gmail right now: sync doesn't store drafts,
   // so only Gmail can say. Asked only when sending is otherwise allowed — a blocked account
   // or a lost mailbox gets no Google call (sendDraft refuses those before any).
-  if (!reasons.length && canSend(row.workspace, now) && row.mailbox.status === "active") {
+  if (!reasons.length && canSend(row.workspace, now) && mailboxOn(row.mailbox)) {
     const writer = (opts.writerFor ?? defaultWriter)(row.mailbox);
     try {
       const own = row.draft.gmailDraftId ? await writer.getDraft(row.draft.gmailDraftId) : null;

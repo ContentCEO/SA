@@ -3,7 +3,7 @@ import { and, count, eq, gte, inArray, lt, sql, type SQL } from "drizzle-orm";
 import { MINUTES_PER_SENT_REPLY } from "@/config/drafting";
 import { db } from "@/db";
 import { drafts, mailboxes, threads } from "@/db/schema";
-import { averageMinutes, weekBounds, type ScorecardNumbers } from "./scorecard-rules";
+import { averageMinutes, quoteSpeed, weekBounds, type ScorecardNumbers } from "./scorecard-rules";
 import {
   asDate,
   noReplySql,
@@ -108,10 +108,39 @@ export function scorecardQueries(workspaceId: string, start: Date, end: Date, no
         sql`${requestedAt} >= ${at(start)}`,
         sql`${requestedAt} < ${at(end)}`,
         sql`not ${noReplySql(requester)}`,
+        // Leads package: a lead website's or a phone message's request is answered off email,
+        // so there's no email to time (it still counts as a quote request).
+        sql`${threads.leadChannel} is null`,
       ),
     );
 
-  return { sent, quotesOut, response };
+  // Ideas H8: drafts sent from the app this week, and how many went exactly as written. Only
+  // sends we made (a Gmail message id we recorded: one reconcile marked "sent" from Gmail is
+  // in neither number), never autopilot's. Filling a {{gap}} isn't a change, so a draft that
+  // had gaps is left out of both (`hadGaps` recorded at send time; for older sends, the
+  // draft's own text while it's still there — a purged one drops out rather than be guessed).
+  const reply = sql`(select a.detail from activity_log a where a.workspace_id = ${workspaceId} and a.action = 'reply_sent' and a.detail->>'draftId' = ${drafts.id}::text order by a.created_at desc limit 1)`;
+  const asWritten = db()
+    .select({
+      asWritten: sql<number>`count(*) filter (where ${drafts.status} = 'sent')::int`,
+      counted: sql<number>`count(*)::int`,
+    })
+    .from(drafts)
+    .innerJoin(mailboxes, eq(mailboxes.id, drafts.mailboxId))
+    .where(
+      and(
+        eq(mailboxes.workspaceId, workspaceId),
+        inArray(drafts.status, ["sent", "edited_and_sent"]),
+        inArray(drafts.kind, ["reply", "followup"]),
+        gte(drafts.decidedAt, start),
+        lt(drafts.decidedAt, end),
+        sql`${drafts.sentGmailMessageId} is not null`,
+        sql`coalesce(${reply}->>'autopilot', 'false') <> 'true'`,
+        sql`(case when ${reply} ? 'hadGaps' then ${reply}->>'hadGaps' = 'false' else (${drafts.originalBody} is not null and ${drafts.originalBody} not like '%{{%') end)`,
+      ),
+    );
+
+  return { sent, quotesOut, response, asWritten };
 }
 
 /** One week's numbers: [start, end), with replies to that week's requests counted up to now. */
@@ -122,18 +151,27 @@ export async function weeklyScorecard(
   now: Date = new Date(),
 ): Promise<Scorecard> {
   const q = scorecardQueries(workspaceId, start, end, now);
-  const [sent, out, requests] = await Promise.all([q.sent, q.quotesOut, q.response]);
+  const [sent, out, requests, written] = await Promise.all([
+    q.sent,
+    q.quotesOut,
+    q.response,
+    q.asWritten,
+  ]);
   const sentOf = (kind: "reply" | "followup") => Number(sent.find((r) => r.kind === kind)?.n ?? 0);
   const repliesSent = sentOf("reply");
   const followupsSent = sentOf("followup");
 
   const pairs: { from: Date; to: Date }[] = [];
+  const waiting: Date[] = [];
   let unanswered = 0;
   for (const r of requests) {
     const from = asDate(r.firstIn);
     const to = asDate(r.firstOut);
     if (from && to) pairs.push({ from, to });
-    else if (!r.settled) unanswered += 1;
+    else if (!r.settled) {
+      unanswered += 1;
+      if (from) waiting.push(from);
+    }
   }
 
   return {
@@ -143,6 +181,14 @@ export async function weeklyScorecard(
     response: { avgMinutes: averageMinutes(pairs), answered: pairs.length, unanswered },
     // Same rule as the month: every drafted reply or follow-up the owner sent.
     minutesSaved: MINUTES_PER_SENT_REPLY * (repliesSent + followupsSent),
+    // Ideas C8: within 24 hours, calendar time. Known edge: Monday's email counts last week
+    // at send time, so a late-Sunday request still inside its first day is left out of it
+    // (never marked slow early); the Activity card counts it once its 24 hours are up.
+    speed: quoteSpeed(pairs, waiting, now),
+    asWritten: {
+      asWritten: Number(written[0]?.asWritten ?? 0),
+      counted: Number(written[0]?.counted ?? 0),
+    },
   };
 }
 

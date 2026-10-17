@@ -26,6 +26,8 @@ export type EvalResult = {
   disputed: boolean;
   /** Draft rule failures (empty = passed); undefined = no draft for this case. */
   draftProblems?: string[];
+  /** draft.v7: the first-reply shape the drafter picked; undefined = no draft. */
+  opening?: string;
 };
 
 export type Scores = {
@@ -58,8 +60,16 @@ export type Scores = {
   revisePassRate: number;
   /** Tone of an owner's edit named correctly (edit-tone prompt). 1 when not run. */
   toneAccuracy: number;
-  /** Deposit / review / closing drafts that kept to the rules (purpose.v1). 1 when not run. */
+  /**
+   * Deposit / review / closing / thank-you drafts that kept to the rules (purpose.v2). 1 when not
+   * run.
+   */
   purposePassRate: number;
+  /**
+   * draft.v7: of drafted cases, the first-reply shape named right — details / vague / urgent /
+   * price_only on a first contact, "not_first" on every ordinary reply. 1 when not run.
+   */
+  openingAccuracy: number;
 };
 
 const ratio = (hit: number, of: number) => (of === 0 ? 1 : Math.round((hit / of) * 1000) / 1000);
@@ -88,6 +98,7 @@ export function score(cases: EvalCase[], results: EvalResult[]): Scores {
   const bills = where((c) => c.expect.billOwedByBusiness === true);
   const routine = where((c) => c.expect.routinePaperwork === true);
   const drafted = pairs.filter(([, r]) => r!.draftProblems !== undefined);
+  const opened = pairs.filter(([, r]) => r!.opening !== undefined);
 
   return {
     cases: pairs.length,
@@ -119,6 +130,10 @@ export function score(cases: EvalCase[], results: EvalResult[]): Scores {
     revisePassRate: 1,
     toneAccuracy: 1,
     purposePassRate: 1,
+    openingAccuracy: ratio(
+      opened.filter(([c, r]) => r!.opening === (c.firstContact ?? "not_first")).length,
+      opened.length,
+    ),
   };
 }
 

@@ -670,8 +670,11 @@ describe("LAUNCH.md structure", () => {
   function step13Parts() {
     const body = sections[13]!.body;
     const decided = body.indexOf("### Decided on ");
-    expect(body.indexOf("### Decided on 2026-10-15"), "the 2026-10-15 list first").toBe(decided);
-    expect(body.indexOf("### Decided on 2026-10-14")).toBeGreaterThan(decided);
+    expect(body.indexOf("### Decided on 2026-10-16"), "the 2026-10-16 list first").toBe(decided);
+    expect(body.indexOf("### Decided on 2026-10-15")).toBeGreaterThan(decided);
+    expect(body.indexOf("### Decided on 2026-10-14")).toBeGreaterThan(
+      body.indexOf("### Decided on 2026-10-15"),
+    );
     const open = body.indexOf("### Still open");
     const needed = body.indexOf("### Still needed from you");
     expect(decided, "a Decided part").toBeGreaterThan(0);
@@ -701,7 +704,8 @@ describe("LAUNCH.md structure", () => {
       "Gmail draft check",
       "The homepage's About section",
       "someone in the trades.",
-      "Reset test payments and past-due accounts",
+      // 2026-10-16: whether the trial clarification in the terms needs a re-agreement.
+      "Agreeing to the terms again",
     ]) {
       expect(open, phrase).toContain(phrase);
     }
@@ -713,6 +717,24 @@ describe("LAUNCH.md structure", () => {
     expect(flat(sections.find((s) => s.n === 1)!.body)).toContain("The homepage's About section");
     const about = readFileSync(join(ROOT, "src/components/marketing/about-davi.tsx"), "utf8");
     expect(about).toContain('heavy="someone in the trades."');
+  });
+
+  it("Davi's 2026-10-16 decisions are recorded as decided, not asked again", () => {
+    const { decided, open } = step13Parts();
+    for (const phrase of [
+      "Built for carpenters, plumbers, and electricians",
+      "The trial's side door stays.",
+      "Trial emails: yes.",
+      "**Stop these emails**",
+      "A lower plan pauses extra Gmail addresses, and the owner picks which.",
+      "**Use this one instead**",
+      "Reset test payments and past-due accounts: let it be usable",
+      "Other.",
+      "**Say thanks**",
+    ]) {
+      expect(decided, phrase).toContain(phrase);
+    }
+    expect(open).not.toContain("Reset test payments and past-due accounts");
   });
 
   it("Davi's 2026-10-14 decisions are recorded as decided, not asked again", () => {
@@ -864,7 +886,7 @@ describe("LAUNCH.md structure", () => {
   });
 
   it("the Neon plan check comes before step 0 and says where to look and what it costs", () => {
-    const at = launch.indexOf("## Check your Neon plan now (this week)");
+    const at = launch.indexOf("## Check your free plans now (this week)");
     expect(at).toBeGreaterThan(0);
     expect(at).toBeLessThan(launch.indexOf("## 0. "));
     const neon = flat(launch.slice(at, launch.indexOf("## 0. ")));
@@ -903,7 +925,7 @@ describe("what LAUNCH.md tells Davi to look for is what the code shows", () => {
       evaluationEndsAt: new Date(Date.now() + 86_400_000),
       setupPaidVia: null,
     } as never);
-    expect(trialLabel).toBe("Sending is off during your three days");
+    expect(trialLabel).toBe("Send reply is off during your three days");
     expect(flat(launch)).toContain(trialLabel);
     for (const text of [
       "Stripe connected in LIVE mode. Real cards will be charged.",
@@ -986,5 +1008,53 @@ describe("what LAUNCH.md tells Davi to look for is what the code shows", () => {
     ]) {
       expect(existsSync(join(ROOT, path)), path).toBe(true);
     }
+  });
+});
+
+describe("main only takes green CI (Check 31 P3)", () => {
+  const section = (heading: string) => {
+    const at = launch.indexOf(heading);
+    expect(at, heading).toBeGreaterThan(0);
+    const next = launch.indexOf("\n## ", at + heading.length);
+    return flat(launch.slice(at, next));
+  };
+  const ci = readFileSync(join(ROOT, ".github/workflows/ci.yml"), "utf8");
+
+  it("LAUNCH.md has a 'Protect main' step with the ruleset taps", () => {
+    const protect = section("## Protect main (before the next merge)");
+    for (const phrase of [
+      "**Settings** → **Rules** → **Rulesets** → **New ruleset** → **New branch ruleset**",
+      "**Include by pattern** → type `main`",
+      "**Restrict deletions** and **Block force pushes**",
+      "**Require a pull request before merging**",
+      "**Require status checks to pass** → **Add checks** → type `check`",
+      "`old-code-new-schema`",
+      "the engineers don't have",
+      "Worked when",
+    ]) {
+      expect(protect, phrase).toContain(phrase);
+    }
+    expect(launch).toContain("](#protect-main-before-the-next-merge)");
+  });
+
+  it("LAUNCH.md has a 'Hold production for CI' step with Vercel's path and the fallback", () => {
+    const hold = section("## Hold production for CI (right after Protect main)");
+    for (const phrase of [
+      "**Settings** → **Build and Deployment** → **Deployment Checks** → **Add Checks**",
+      "provider **GitHub**",
+      "If your plan doesn't offer it",
+      "rely on [Protect main](#protect-main-before-the-next-merge)",
+      "Worked when",
+    ]) {
+      expect(hold, phrase).toContain(phrase);
+    }
+    expect(launch).toContain("](#hold-production-for-ci-right-after-protect-main)");
+  });
+
+  it("ci.yml still has the jobs the ruleset names", () => {
+    expect(ci).toMatch(
+      /^jobs:\n  # Required check on main\. Renaming it breaks the ruleset\.\n  check:$/m,
+    );
+    expect(ci).toMatch(/^  old-code-new-schema:$/m);
   });
 });

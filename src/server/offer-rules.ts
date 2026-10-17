@@ -80,6 +80,34 @@ export function reviewOfferReason(f: ReviewFacts): ReviewOfferReason | null {
   return null;
 }
 
+/**
+ * "Say thanks" on a paid invoice (Davi, 2026-10-16). Why the owner can't thank this customer
+ * from Money, or null when they can. Looser than a review request on purpose: a big invoice
+ * that needed the owner, or a customer who once complained, still gets a plain thank-you — only
+ * the review ask inside it follows every review rule (`reviewOfferReason`). Never a robot, a
+ * receipt, a supplier, junk, or an email that tried to instruct the assistant or came from a
+ * building department; once per thread.
+ */
+export type ThankYouOfferReason = "not_eligible" | "already_asked";
+
+export type ThankYouFacts = Pick<
+  ReviewFacts,
+  "category" | "untrusted" | "invoicePaid" | "customerAddress" | "senderAddress"
+> & {
+  /** A thank-you was already written on this thread (waiting, sent or discarded). */
+  thankedBefore: boolean;
+};
+
+export function thankYouOfferReason(f: ThankYouFacts): ThankYouOfferReason | null {
+  if (f.thankedBefore) return "already_asked";
+  if (!f.invoicePaid) return "not_eligible";
+  if (f.untrusted) return "not_eligible";
+  if (f.category === "noise" || f.category === "supplier_vendor") return "not_eligible";
+  if (!f.customerAddress || isAutomatedSender(f.customerAddress)) return "not_eligible";
+  if (f.senderAddress && isReceiptSender(f.senderAddress)) return "not_eligible";
+  return null;
+}
+
 export type ClosingQuestionReason = "feature_off" | "complaint" | "not_eligible" | "already_asked";
 
 export type ClosingFacts = {

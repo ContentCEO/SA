@@ -105,7 +105,8 @@ export function PushToggle({ publicKey }: { publicKey: string }) {
       </Button>
       <p className="text-sm text-muted-foreground">
         {state === "on" ? "On. " : ""}A buzz when a quote request or an email that needs you comes
-        in — like “2 emails need you”. Never a name or what they wrote. Quiet 9pm–7am.
+        in — like “2 emails need you”. Never a name or what they wrote. Quiet 9pm–7am, except
+        emergencies if you leave that on.
       </p>
       {note ? (
         <p role="status" className="text-sm font-semibold">

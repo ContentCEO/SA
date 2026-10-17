@@ -1,6 +1,7 @@
 import { drizzle } from "drizzle-orm/postgres-js";
 import type { PgDatabase, PgQueryResultHKT } from "drizzle-orm/pg-core";
 import postgres from "postgres";
+import { assertPreviewSafe } from "../config/environment-guard";
 import * as schema from "./schema";
 
 /** Any Postgres-backed Drizzle database with our schema (Neon/local Postgres, PGlite in tests). */
@@ -11,6 +12,8 @@ let _db: Database | undefined;
 function createDb(): Database {
   const url = process.env.DATABASE_URL;
   if (!url) throw new Error("DATABASE_URL is not set. See .env.example.");
+  // Check 26 P2: a preview pointed at production's database or keys stops here, before connecting.
+  assertPreviewSafe();
   // Neon's pooled endpoint runs PgBouncer in transaction mode: no prepared statements.
   const client = postgres(url, { prepare: false, max: 5 });
   return drizzle(client, { schema }) as unknown as Database;

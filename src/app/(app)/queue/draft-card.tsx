@@ -7,7 +7,7 @@ import { addNeverSayAction } from "../settings/wording-actions";
 import { fillGap, findGaps } from "@/ai/gaps";
 import type { ConfidenceLabel } from "@/config/drafting";
 import { BodyWithGaps, ConfidenceTag, PastPrices, WhyThis, type PastPrice } from "./draft-parts";
-import { SayAChange, TweakChips } from "./revise-controls";
+import { OtherWaysToReply, SayAChange, TweakChips } from "./revise-controls";
 import { RemindMe, type SnoozeOption } from "./remind-me";
 import { CalledThem } from "./called-them";
 import {
@@ -39,6 +39,12 @@ export type DraftCardProps = {
   tag: string;
   /** Round 2 (FW E9): when the customer wrote ("Wrote 9 days ago"), on every card. */
   wrote?: string | null;
+  /** Leads package (B14 / B9): one-liners from code ("Repeat customer: …"). */
+  leadLines?: string[];
+  /** Replies package: "First reply: asks 2 questions · …" on a first reply to a new lead. */
+  openingLine?: string | null;
+  /** Replies package: show "Other ways to reply" (a first reply that can still be changed). */
+  otherWays?: boolean;
   /** One line on what the customer wants, from sorting — so the card reads without opening Gmail. */
   summary?: string | null;
   reason: string;
@@ -69,6 +75,10 @@ export type DraftCardProps = {
    * a figure reaches the draft only when they tap it into a {{price}} gap.
    */
   priceMemory?: PastPrice[];
+  /** Ideas G7: the owner's private note line (rendered by the server page). */
+  noteLine?: React.ReactNode;
+  /** Ideas H4: "Wrong kind?" (rendered by the server page). */
+  moreActions?: React.ReactNode;
 };
 
 function Pending({
@@ -235,6 +245,13 @@ export function DraftCard(p: DraftCardProps) {
         <ToLine address={p.toAddress} fromReplyTo={p.toFromReplyTo} />
         <span className="text-sm font-semibold">{p.tag}</span>
         {p.wrote ? <span className="text-sm">{p.wrote}</span> : null}
+        {(p.leadLines ?? []).map((line) => (
+          <p key={line} className="text-sm font-semibold">
+            {line}
+          </p>
+        ))}
+        {p.openingLine ? <p className="text-sm font-semibold">{p.openingLine}</p> : null}
+        {p.noteLine}
         {p.summary ? <p className="font-semibold">{p.summary}</p> : null}
         <p className={p.summary ? "text-muted-foreground" : undefined}>{p.reason}</p>
       </header>
@@ -356,6 +373,7 @@ export function DraftCard(p: DraftCardProps) {
           ) : null}
 
           <WhyThis reason={p.reason} usedFacts={p.usedFacts} flags={p.flags} />
+          {p.readOnly ? null : p.moreActions}
 
           {discardIn !== null ? (
             <form
@@ -496,6 +514,7 @@ export function DraftCard(p: DraftCardProps) {
                   </Button>
                 </div>
               )}
+              {canChange && p.otherWays ? <OtherWaysToReply draftId={p.draftId} /> : null}
               {canChange && changing ? (
                 <div
                   id={`change-${p.draftId}`}

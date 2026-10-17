@@ -14,11 +14,17 @@ export function CalledThem({
   threadId,
   hasDraft,
   inverted,
+  label = "I called them",
+  confirm = "Yes, I called them",
 }: {
   threadId: string;
   hasDraft: boolean;
   inverted?: boolean;
+  /** Leads package: "Done — I answered" / "Done — I called back" on lead cards. */
+  label?: string;
+  confirm?: string;
 }) {
+  const done = label !== "I called them";
   const [asking, setAsking] = useState(false);
   if (!asking) {
     return (
@@ -28,7 +34,7 @@ export function CalledThem({
         className="w-full"
         onClick={() => setAsking(true)}
       >
-        I called them
+        {label}
       </Button>
     );
   }
@@ -42,14 +48,17 @@ export function CalledThem({
       }
     >
       <input type="hidden" name="threadId" value={threadId} />
+      {done ? <input type="hidden" name="as" value="done" /> : null}
       <p className="font-semibold">
-        {hasDraft
-          ? "Answered by phone? This draft is removed (from Gmail too) and we won't nudge them."
-          : "Answered by phone? It leaves this list and we won't nudge them."}{" "}
+        {done
+          ? "Answered them another way? It leaves this list and we won't nudge them."
+          : hasDraft
+            ? "Answered by phone? This draft is removed (from Gmail too) and we won't nudge them."
+            : "Answered by phone? It leaves this list and we won't nudge them."}{" "}
         If they write again, it comes back.
       </p>
       <PendingButton pending="Saving…" className="w-full">
-        Yes, I called them
+        {confirm}
       </PendingButton>
       <Button type="button" variant="ghost" className="w-full" onClick={() => setAsking(false)}>
         Keep it

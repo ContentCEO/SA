@@ -16,6 +16,12 @@ voice, puts them in your queue and in your Gmail Drafts folder, and drafts follo
 invoices that have gone quiet (at most two per conversation). How we handle your information is
 explained in our [Privacy Policy](/privacy).
 
+Text alerts, phone notifications and emergency alerts are optional and only a convenience: they
+can arrive late or not at all (a phone that's off, a carrier delay), so don't rely on them alone
+for emergencies. Squared Away Growth (ads, reviews, your Google listing, your website and similar
+work done for you) is a separate service under its own agreement with {{OPERATOR}}; its dashboard
+in this app shows only what {{OPERATOR}} enters for you.
+
 ## You approve what gets sent
 
 Squared Away sends a reply only when you approve it in the app (for example by tapping **Send
@@ -39,8 +45,11 @@ in for you.
 ## The trial
 
 New accounts start with a three-day trial on your real inbox. During the trial Squared Away sorts
-and drafts, but sending to customers is switched off; you can only send yourself practice copies,
-to your own address. When the trial ends, your account becomes read-only until you choose a plan.
+and drafts, but it won't send anything to a customer: its own sending is switched off, and from
+Squared Away you can only send yourself practice copies, to your own address. Your drafts are real
+Gmail drafts, in your Gmail Drafts folder too, so you can send one from Gmail yourself if you want;
+what you send from Gmail yourself is your own email. When the trial ends, your account becomes
+read-only until you choose a plan.
 
 ## Plans and payment
 
@@ -52,6 +61,9 @@ to your own address. When the trial ends, your account becomes read-only until y
 - **[To confirm]** Whether the setup fee and the current month are refundable, and in which cases.
 - If a payment fails, sending and background work pause until it's sorted. We don't delete your
   data because a payment failed.
+- If your plan covers fewer Gmail addresses than you've connected, the extra ones are paused:
+  nothing in them is read, drafted or sent until your plan covers them again, and nothing in them
+  is deleted.
 - We'll give you notice before changing the price of a plan you're on.
 
 ## Your data

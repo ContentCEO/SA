@@ -23,6 +23,8 @@ import {
 import { createGmailReader } from "@/mailbox/gmail/api";
 import { parseAddressList } from "@/mailbox/gmail/parse";
 import { jobsAllowed } from "./lifecycle";
+import { mailboxRunning } from "./mailbox-plan";
+import { mailboxOn } from "./mailbox-plan-rules";
 import { pickReplyTo, type ReplyToHeader } from "./reply-address-rules";
 import { unsentDraftMessage } from "./thread-sql";
 
@@ -77,7 +79,8 @@ async function loadActiveMailbox(mailboxId: string) {
     .where(eq(mailboxes.id, mailboxId));
   if (!row)
     return { mailbox: undefined, skip: { status: "skipped", reason: "not_found" } as const };
-  if (row.mailbox.status !== "active") {
+  // Lost Google access, or paused because the plan covers fewer addresses (2026-10-16).
+  if (!mailboxOn(row.mailbox)) {
     return { mailbox: undefined, skip: { status: "skipped", reason: "not_active" } as const };
   }
   // Read-only workspaces (expired, paused, past due, canceled) aren't synced.
@@ -463,7 +466,7 @@ export async function listSyncableMailboxes(now: Date = new Date()) {
     })
     .from(mailboxes)
     .innerJoin(workspaces, eq(workspaces.id, mailboxes.workspaceId))
-    .where(eq(mailboxes.status, "active"));
+    .where(mailboxRunning());
   return rows
     .filter((r) => jobsAllowed(r.workspace, now))
     .map(({ id, backfillCompletedAt }) => ({ id, backfillCompletedAt }));
@@ -481,7 +484,7 @@ export async function renewWatches(deps: SyncDeps = {}): Promise<number> {
     .innerJoin(workspaces, eq(workspaces.id, mailboxes.workspaceId))
     .where(
       and(
-        eq(mailboxes.status, "active"),
+        mailboxRunning(),
         isNotNull(mailboxes.backfillCompletedAt),
         or(isNull(mailboxes.watchExpiresAt), lt(mailboxes.watchExpiresAt, soon)),
       ),

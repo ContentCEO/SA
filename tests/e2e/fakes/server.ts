@@ -712,7 +712,14 @@ export function createFakes() {
         type: "message",
         role: "assistant",
         model,
-        content: [{ type: "text", text: JSON.stringify(fakeOutput(kind)) }],
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(
+              fakeOutput(kind, { firstContact: text.includes("FIRST CONTACT") }),
+            ),
+          },
+        ],
         stop_reason: "end_turn",
         stop_sequence: null,
         usage: {

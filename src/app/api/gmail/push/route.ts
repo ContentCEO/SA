@@ -1,10 +1,11 @@
 import { timingSafeEqual } from "node:crypto";
-import { and, eq, sql } from "drizzle-orm";
+import { and, sql } from "drizzle-orm";
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import { db } from "@/db";
 import { mailboxes } from "@/db/schema";
 import { enqueue, mailboxSyncRequested } from "@/jobs/client";
+import { mailboxRunning } from "@/server/mailbox-plan";
 
 export const dynamic = "force-dynamic";
 
@@ -47,7 +48,8 @@ export async function POST(request: NextRequest) {
     .from(mailboxes)
     .where(
       and(
-        eq(mailboxes.status, "active"),
+        // Lost access or paused on the plan: nothing to sync (2026-10-16).
+        mailboxRunning(),
         sql`lower(${mailboxes.email}) = ${note.data.emailAddress.toLowerCase()}`,
       ),
     );

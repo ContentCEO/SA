@@ -1,4 +1,8 @@
-import { askClosingQuestionAction, askForReviewAction } from "@/app/(app)/inbox/actions";
+import {
+  askClosingQuestionAction,
+  askForReviewAction,
+  sayThanksAction,
+} from "@/app/(app)/inbox/actions";
 import { PendingButton } from "@/components/app/pending-button";
 import type { ThreadOffers } from "@/server/offers";
 
@@ -17,9 +21,19 @@ export function OfferButtons({
   threadId: string;
   offers: ThreadOffers | undefined;
 }) {
-  if (!offers || (!offers.review && !offers.closingQuestion)) return null;
+  if (!offers || (!offers.review && !offers.closingQuestion && !offers.thankYou)) return null;
   return (
     <div className="flex flex-col gap-2">
+      {offers.thankYou ? (
+        // A paid invoice (2026-10-16): a thank-you, with the review ask inside only when every
+        // review rule allows it. The server decides; the button is the same either way.
+        <form action={sayThanksAction}>
+          <input type="hidden" name="threadId" value={threadId} />
+          <PendingButton pending="Writing it…" variant="outline" className={wrap}>
+            Say thanks
+          </PendingButton>
+        </form>
+      ) : null}
       {offers.review ? (
         <form action={askForReviewAction}>
           <input type="hidden" name="threadId" value={threadId} />

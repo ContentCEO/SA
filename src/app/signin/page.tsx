@@ -16,7 +16,7 @@ export const metadata: Metadata = { title: "Sign in · Squared Away" };
 export default async function SignInPage(props: PageProps<"/signin">) {
   const session = await auth();
   // A session for an account that no longer exists (deleted on another device) stays here.
-  if (session?.user?.id && (await getWorkspaceForUser(session.user.id))) redirect("/queue");
+  if (session?.user?.id && (await getWorkspaceForUser(session.user.id))) redirect("/start");
   const { error } = await props.searchParams;
 
   return (

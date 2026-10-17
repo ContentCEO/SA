@@ -95,7 +95,7 @@ const uncheckedLine = (n: number) => (n > 0 ? ` Couldn't check ${accounts(n)}. T
 /**
  * The reset's one status change, said plainly on the /admin confirm and in LAUNCH.md 7c (review,
  * 2026-10-15): a past_due account leaves read-only (jobs and AI resume) without a payment, and
- * still can't send. Davi is asked in LAUNCH.md step 13 whether that's okay.
+ * still can't send. Davi decided on 2026-10-16: "let it be usable" (kept as built).
  */
 export const PAST_DUE_RESET_NOTE =
   "An account that was past due is switched back on: its new mail is sorted and drafted again (on your AI bill), but it still can't send until it pays.";

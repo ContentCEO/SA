@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Database } from "@/db";
-import { drafts, mailboxes, messages, threads, workspaces } from "@/db/schema";
+import { businessProfiles, drafts, mailboxes, messages, threads, workspaces } from "@/db/schema";
 import { ensureUserAndWorkspace } from "@/server/accounts";
 import { recordTermsAcceptance } from "@/server/terms";
 import { saveConnectedMailbox } from "@/server/mailboxes";
@@ -129,6 +129,26 @@ describe("/api/push/summary counts like the queue (plan #36, M8 A1)", () => {
   it("signed out → 401", async () => {
     session.userId = null;
     expect((await summary()).status).toBe(401);
+  });
+
+  it("right after an emergency push: the emergency words and that card, nothing else (B5 part 2)", async () => {
+    const t = await thread({
+      needsOwner: true,
+      needsOwnerReason: "SECRET-REASON",
+      priority: "high",
+      extracted: { urgency: "emergency", address: "SECRET 12 Elm St" },
+      emergencyAlertedAt: at(-1),
+    });
+    await thread({ needsOwner: true, needsOwnerReason: "SECRET-REASON" });
+    const { json } = await summary();
+    expect(json.body).toBe("An emergency email just came in. Open Squared Away.");
+    expect(json.url).toBe(`/queue?t=${t.id}#t-${t.id}`);
+    expect(json.count).toBe(2);
+    expect(JSON.stringify(json)).not.toMatch(/SECRET|@example\.com|Elm/i);
+    // A later ordinary push takes the words back to counts.
+    const [w] = await database.select().from(workspaces);
+    await database.insert(businessProfiles).values({ workspaceId: w!.id, pushLastSentAt: at(0) });
+    expect((await summary()).json.body).toBe("2 emails need you");
   });
 
   it("the route's source counts from the content-free membership and never listQueue", () => {

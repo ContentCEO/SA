@@ -24,7 +24,7 @@ test("during the three days: the clock is on every screen and sending is off", a
   await expect(clock).toContainText("Day 1 of 3");
   await expect(clock).toContainText("2 days");
   const card = page.getByRole("article", { name: "Draft reply to Priya" });
-  await expect(card.getByRole("note")).toContainText("Sending is off during your three days");
+  await expect(card.getByRole("note")).toContainText("Send reply is off during your three days");
   await expect(card.getByRole("button", { name: "Edit" })).toBeVisible();
 
   await page.goto("/inbox");
