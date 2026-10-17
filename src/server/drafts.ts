@@ -189,6 +189,12 @@ export type CreateOutcome =
         | "read_only"
         | "followup_not_allowed"
         | "customer_replied"
+        // Check 20 P4: the newest email is an automatic reply (jobs only).
+        | "auto_reply"
+        // Check 21 P1: the newest email only acknowledges ("we'll look it over"): no reply.
+        | "acknowledgement"
+        // Check 21 P1: the owner's email bounced: no nudge.
+        | "bounced"
         | "followup_cap"
         | "untrusted"
         | "municipal"
@@ -644,6 +650,7 @@ export async function createDraftForThread(
     gas_smell?: boolean;
     bill_direction?: string;
     model_category?: string;
+    bounced?: boolean;
   };
   // Only the owner's tap drafts for these (feature plan #17, #42; round 2 A11) — never a job.
   if (opts.trigger !== "owner") {
@@ -714,6 +721,8 @@ export async function createDraftForThread(
     ) {
       return { status: "skipped", reason: "followup_not_allowed" };
     }
+    // Check 21 P1: the owner's email never arrived; a nudge would bounce too.
+    if (marks.bounced === true) return { status: "skipped", reason: "bounced" };
     const sentNudges = await countSentFollowups(threadId);
     if (sentNudges >= MAX_FOLLOWUPS) return { status: "skipped", reason: "followup_cap" };
     nudgeNumber = sentNudges === 0 ? 1 : 2;
@@ -751,9 +760,28 @@ export async function createDraftForThread(
   // and the crew's reply, `sideEmailSql`): the same "who wrote last" as the follow-up scan,
   // so a thread it picks isn't skipped here, and the note is threaded to — and only shows
   // the model — the conversation with the customer.
+  // Check 20 P4 / 21 P1: for a job, an automatic reply or bounce is not part of the
+  // conversation either: it is never answered, and never what a nudge follows. The owner's own
+  // tap sees everything.
+  if (opts.trigger === "auto") {
+    const [newestIn] = await db()
+      .select({ autoReply: messages.autoReply, ackOnly: messages.ackOnly })
+      .from(messages)
+      .where(and(eq(messages.threadId, threadId), eq(messages.direction, "in"), notDraftMessage()))
+      .orderBy(desc(messages.sentAt))
+      .limit(1);
+    if (newestIn?.autoReply) return { status: "skipped", reason: "auto_reply" };
+    if (newestIn?.ackOnly) return { status: "skipped", reason: "acknowledgement" };
+  }
+  const notAuto = opts.trigger === "owner" ? undefined : eq(messages.autoReply, false);
   const conversation = afterOwner
-    ? and(eq(messages.threadId, threadId), notDraftMessage(), sql`not ${sideEmailSql("messages")}`)
-    : and(eq(messages.threadId, threadId), notDraftMessage());
+    ? and(
+        eq(messages.threadId, threadId),
+        notDraftMessage(),
+        sql`not ${sideEmailSql("messages")}`,
+        notAuto,
+      )
+    : and(eq(messages.threadId, threadId), notDraftMessage(), notAuto);
   const recent = (
     await db()
       .select()
@@ -764,7 +792,16 @@ export async function createDraftForThread(
   ).reverse();
   const last = recent.at(-1);
   if (!last) return { status: "skipped", reason: "no_text" };
-  if (afterOwner && last.direction !== "out")
+  // Check 21 P1: after the owner's email the customer only acknowledged it ("Thanks, we'll
+  // look it over"): the ball is in their court, so the nudge still comes, threaded to their
+  // acknowledgement. Any real question since the owner wrote stops it.
+  const lastOutIdx = recent.map((m) => m.direction).lastIndexOf("out");
+  const onlyAcksSince =
+    followup &&
+    lastOutIdx >= 0 &&
+    recent.slice(lastOutIdx + 1).length > 0 &&
+    recent.slice(lastOutIdx + 1).every((m) => m.direction === "in" && m.ackOnly);
+  if (afterOwner && last.direction !== "out" && !onlyAcksSince)
     return { status: "skipped", reason: "customer_replied" };
   if (
     !afterOwner &&
@@ -2284,7 +2321,7 @@ export async function reconcileDrafts(mailboxId: string, opts: DraftDeps = {}) {
         continue;
       }
       const newer = await db()
-        .select({ direction: messages.direction })
+        .select({ direction: messages.direction, autoReply: messages.autoReply })
         .from(messages)
         .where(
           and(
@@ -2294,7 +2331,9 @@ export async function reconcileDrafts(mailboxId: string, opts: DraftDeps = {}) {
             notDraftMessage(),
           ),
         );
-      if (newer.some((m) => m.direction === "in")) {
+      // An automatic reply (out-of-office, bounce) never replaces the email the draft answers
+      // (Check 20 P4 / 21 P1).
+      if (newer.some((m) => m.direction === "in" && !m.autoReply)) {
         if (d.gmailDraftId) await writer.deleteDraft(d.gmailDraftId);
         await closeDraft(
           d,
@@ -2798,7 +2837,10 @@ export async function listQueue(
  * written since that message.
  */
 export async function threadsToAutoDraft(mailboxId: string, limit = 10): Promise<string[]> {
-  const lastIn = sql`(select max(m.sent_at) from messages m where m.thread_id = ${threads.id} and m.direction = 'in')`;
+  // Check 20 P4 / 21 P1: an automatic reply is nothing to answer, and never moves the time.
+  const lastIn = sql`(select max(m.sent_at) from messages m where m.thread_id = ${threads.id} and m.direction = 'in' and not m.auto_reply)`;
+  // Nor is a bare acknowledgement ("Thanks, we'll look it over"): no reply is drafted for it.
+  const newestInAck = sql`coalesce((select m.ack_only from messages m where m.thread_id = ${threads.id} and m.direction = 'in' and not m.auto_reply order by m.sent_at desc limit 1), false)`;
   // Deliberately counts a Gmail draft older sync stored as owner mail (not notDraftSql): until
   // draft-message-cleanup has checked it with Gmail it might be the owner's answer, sent under
   // the same id, and an auto-draft could go out on autopilot. No reply drafted until checked;
@@ -2809,7 +2851,7 @@ export async function threadsToAutoDraft(mailboxId: string, limit = 10): Promise
   // draft, so it would stay a candidate until new mail came and could fill every slot ahead of
   // an older real lead. Leave those out here. An unchecked Reply-To (NULL) stays in: a form
   // sent from no-reply@ often carries the customer's own address there.
-  const newestInNoReply = sql`exists (select 1 from (select nr_m.reply_to_header, nr_m.from_address from messages nr_m where nr_m.thread_id = ${threads.id} and nr_m.direction = 'in' order by nr_m.sent_at desc limit 1) nr where nr.reply_to_header is not null and ${noReplySql(replyAddressSql("nr"))})`;
+  const newestInNoReply = sql`exists (select 1 from (select nr_m.reply_to_header, nr_m.from_address from messages nr_m where nr_m.thread_id = ${threads.id} and nr_m.direction = 'in' and not nr_m.auto_reply order by nr_m.sent_at desc limit 1) nr where nr.reply_to_header is not null and ${noReplySql(replyAddressSql("nr"))})`;
   const rows = await db()
     .select({ id: threads.id })
     .from(threads)
@@ -2832,6 +2874,7 @@ export async function threadsToAutoDraft(mailboxId: string, limit = 10): Promise
         // "I called them" after the newest email (round 2, FW E11): nothing to draft.
         sql`(${threads.handledOfflineAt} is null or ${threads.handledOfflineAt} < ${lastIn})`,
         sql`not ${newestInNoReply}`,
+        sql`not ${newestInAck}`,
         // Ideas H3: the newest email was sorted under a "Never draft" rule.
         sql`(${threads.extracted}->>'sender_rule') is distinct from 'no_draft'`,
       ),

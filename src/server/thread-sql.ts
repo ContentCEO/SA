@@ -187,11 +187,34 @@ export const sideEmailSql = (alias: string) => sql`(${sideInSql(alias)} or ${sid
 export const lastInSql = () =>
   sql<
     string | Date | null
-  >`(select max(m.sent_at) from messages m where m.thread_id = ${outerThreadId()} and m.direction = 'in' and not ${sideEmailSql("m")})`;
+  >`(select max(m.sent_at) from messages m where m.thread_id = ${outerThreadId()} and m.direction = 'in' and not m.auto_reply and not ${sideEmailSql("m")})`;
 export const lastOutSql = () =>
   sql<
     string | Date | null
   >`greatest((select max(m.sent_at) from messages m where m.thread_id = ${outerThreadId()} and m.direction = 'out' and ${notDraftSql("m")} and not ${sideEmailSql("m")}), ${threads.handledOfflineAt})`;
+
+/**
+ * Check 21 P1: the customer's newest email that needs an answer — not an automatic reply, not
+ * a bare acknowledgement ("Thanks, we'll look it over and get back to you", `ack_only`).
+ */
+export const lastAnswerInSql = () =>
+  sql<
+    string | Date | null
+  >`(select max(m.sent_at) from messages m where m.thread_id = ${outerThreadId()} and m.direction = 'in' and not m.auto_reply and not m.ack_only and not ${sideEmailSql("m")})`;
+
+/**
+ * Check 21 P1: the ball is in the customer's court — the owner wrote, and everything the
+ * customer sent since was an acknowledgement or an automatic reply. Never NULL.
+ */
+export const ballInTheirCourtSql = () =>
+  sql`(${lastOutSql()} is not null and ${lastOutSql()} > coalesce(${lastAnswerInSql()}, '-infinity'::timestamptz))`;
+
+/**
+ * Check 21 P1: when the quiet started — the owner's last email, or the customer's later
+ * acknowledgement ("we'll look it over" on Tuesday: the wait counts from Tuesday).
+ */
+export const quietSinceSql = () =>
+  sql<string | Date | null>`greatest(${lastOutSql()}, ${lastInSql()})`;
 
 /**
  * Round 2 (FW E11): the owner said they answered by phone ("I called them") after the
@@ -209,15 +232,15 @@ export const answeredByPhoneSql = () =>
 export const waitingSinceSql = () =>
   sql<
     string | Date | null
-  >`(select min(w.sent_at) from messages w where w.thread_id = ${outerThreadId()} and w.direction = 'in' and not ${sideEmailSql("w")} and w.sent_at > coalesce(${lastOutSql()}, '-infinity'::timestamptz))`;
+  >`(select min(w.sent_at) from messages w where w.thread_id = ${outerThreadId()} and w.direction = 'in' and not w.auto_reply and not ${sideEmailSql("w")} and w.sent_at > coalesce(${lastOutSql()}, '-infinity'::timestamptz))`;
 
 /** The sender of that first waiting email (for WHERE clauses only: A2). */
 export const waitingSenderSql = () =>
-  sql`(select w.from_address from messages w where w.thread_id = ${outerThreadId()} and w.direction = 'in' and not ${sideEmailSql("w")} and w.sent_at > coalesce(${lastOutSql()}, '-infinity'::timestamptz) order by w.sent_at asc, w.id asc limit 1)`;
+  sql`(select w.from_address from messages w where w.thread_id = ${outerThreadId()} and w.direction = 'in' and not w.auto_reply and not ${sideEmailSql("w")} and w.sent_at > coalesce(${lastOutSql()}, '-infinity'::timestamptz) order by w.sent_at asc, w.id asc limit 1)`;
 
 /** Where a reply to that first waiting email goes (`replyAddressSql`; WHERE clauses only). */
 export const waitingReplySql = () =>
-  sql`(select ${replyAddressSql("w")} from messages w where w.thread_id = ${outerThreadId()} and w.direction = 'in' and not ${sideEmailSql("w")} and w.sent_at > coalesce(${lastOutSql()}, '-infinity'::timestamptz) order by w.sent_at asc, w.id asc limit 1)`;
+  sql`(select ${replyAddressSql("w")} from messages w where w.thread_id = ${outerThreadId()} and w.direction = 'in' and not w.auto_reply and not ${sideEmailSql("w")} and w.sent_at > coalesce(${lastOutSql()}, '-infinity'::timestamptz) order by w.sent_at asc, w.id asc limit 1)`;
 
 /**
  * SQL twin of `isQuoteThread`: sorted as a quote request, or has ever had an outcome

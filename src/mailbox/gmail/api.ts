@@ -42,6 +42,12 @@ export const DEFAULT_METADATA_HEADERS = [
   "References",
   "In-Reply-To",
   "Reply-To",
+  // Check 20 P4 / 21 P1: automatic replies (RFC 3834). Only a true/false is kept.
+  "Auto-Submitted",
+  "X-Autoreply",
+  "X-Autorespond",
+  "Precedence",
+  "X-Auto-Response-Suppress",
 ] as const;
 
 const RATE_LIMIT_REASONS = new Set(["rateLimitExceeded", "userRateLimitExceeded", "backendError"]);

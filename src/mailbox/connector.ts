@@ -64,6 +64,15 @@ export type MailMessage = {
      * only the first may be stored as "no Reply-To".
      */
     replyToRead?: boolean;
+    /**
+     * Check 20 P4 / 21 P1: machine-written mail (RFC 3834). Read only to set
+     * `messages.auto_reply`; never stored or logged. Undefined = not present (or not asked).
+     */
+    autoSubmitted?: string;
+    xAutoreply?: string;
+    xAutorespond?: string;
+    precedence?: string;
+    autoResponseSuppress?: string;
   };
   /** Only present when fetched with bodies. */
   bodyText?: string;

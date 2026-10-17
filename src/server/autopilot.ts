@@ -130,6 +130,8 @@ export type GuardrailInput = {
    * forward to that address makes them look known.
    */
   firstReply?: boolean;
+  /** Check 20 P4: the newest email in the conversation is an automatic reply (or a bounce). */
+  autoReply?: boolean;
 };
 
 /** Layer 3. Every reason this email must wait for the owner; empty = may go. */
@@ -164,6 +166,7 @@ export function guardrailReasons(g: GuardrailInput): string[] {
   if (g.leadChannel) out.push("Lead-site and voicemail emails always wait for you.");
   if (g.textAddress) out.push("That address may turn into a text message, so it waits for you.");
   if (g.firstReply) out.push("First replies to new customers always wait for you.");
+  if (g.autoReply) out.push("That was an automatic reply, so it waits for you.");
   return out;
 }
 
@@ -326,6 +329,7 @@ async function blockers(row: NonNullable<Awaited<ReturnType<typeof loadForAutopi
       address: messages.fromAddress,
       replyToHeader: messages.replyToHeader,
       sentAt: messages.sentAt,
+      autoReply: messages.autoReply,
     })
     .from(messages)
     .where(and(eq(messages.threadId, thread.id), eq(messages.direction, "in")))
@@ -383,6 +387,7 @@ async function blockers(row: NonNullable<Awaited<ReturnType<typeof loadForAutopi
     textAddress: isEmailToTextAddress(draft.toAddress) || looksLikePhoneAddress(draft.toAddress),
     // Any stored opening means the drafter was told it's a first contact (even "not_first").
     firstReply: draft.opening != null,
+    autoReply: customer?.autoReply === true,
   });
 }
 

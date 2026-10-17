@@ -26,7 +26,8 @@ import { jobsAllowed } from "./lifecycle";
 import { mailboxRunning } from "./mailbox-plan";
 import { mailboxOn } from "./mailbox-plan-rules";
 import { pickReplyTo, type ReplyToHeader } from "./reply-address-rules";
-import { unsentDraftMessage } from "./thread-sql";
+import { isAutoReply } from "./auto-reply-rules";
+import { lastInSql, lastOutSql, unsentDraftMessage } from "./thread-sql";
 
 const MAIL_INBOX = "INBOX";
 
@@ -359,6 +360,8 @@ async function ingest(
         ccAddresses: parseAddressList(m.headers.cc).map((a) => a.email),
         subject: m.headers.subject ?? null,
         direction: outbound ? ("out" as const) : ("in" as const),
+        // Check 20 P4 / 21 P1: only the true/false, never the header values.
+        autoReply: !outbound && isAutoReply(m.headers, from?.email),
         labelIds: m.labelIds,
         snippet: m.internalDate >= retentionCutoff ? m.snippet : null,
         bodyText: m.bodyText ?? null,
@@ -385,8 +388,30 @@ async function ingest(
       })
       .returning({ id: messages.id });
     ingested += inserted.length;
+    if (inserted.length) await markBounce(thread!.id);
   }
   return ingested;
+}
+
+/**
+ * Check 21 P1: a bounce (mailer-daemon / postmaster) that came after the owner's newest email,
+ * with no real customer email since, means the customer never got it: `extracted.bounced`
+ * (the card says so, and no nudge is drafted). Cleared once the owner writes again or the
+ * customer answers.
+ */
+async function markBounce(threadId: string) {
+  const bounced = sql`(exists (select 1 from messages b where b.thread_id = ${threads.id} and b.direction = 'in' and b.auto_reply and lower(coalesce(b.from_address, '')) ~ '^(mailer-daemon|postmaster)@' and b.sent_at >= ${lastOutSql()}) and ${lastOutSql()} > coalesce(${lastInSql()}, '-infinity'::timestamptz))`;
+  await db()
+    .update(threads)
+    .set({
+      extracted: sql`case when ${bounced} then coalesce(${threads.extracted}, '{}'::jsonb) || '{"bounced": true}'::jsonb else ${threads.extracted} - 'bounced' end`,
+    })
+    .where(
+      and(
+        eq(threads.id, threadId),
+        sql`(${bounced} or coalesce(${threads.extracted} ? 'bounced', false))`,
+      ),
+    );
 }
 
 /**

@@ -88,6 +88,11 @@ export function toMailMessage(
       inReplyTo: header(p, "In-Reply-To"),
       replyTo: header(p, "Reply-To"),
       replyToRead: withBody || !!opts.replyToRead,
+      autoSubmitted: header(p, "Auto-Submitted"),
+      xAutoreply: header(p, "X-Autoreply"),
+      xAutorespond: header(p, "X-Autorespond"),
+      precedence: header(p, "Precedence"),
+      autoResponseSuppress: header(p, "X-Auto-Response-Suppress"),
     },
     bodyText: withBody ? extractBodyText(p) : undefined,
   };

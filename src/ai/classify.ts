@@ -42,6 +42,13 @@ export type Extracted = ModelClassification["extracted"] & {
   injection?: boolean;
   accepts_quote?: boolean;
   job_done?: boolean;
+  /**
+   * Check 21 P1: the email only thanks or acknowledges ("we'll look it over and get back to
+   * you"), asks nothing and needs no answer. Read from the model's
+   * `signals.acknowledgment_only`, which the next classify prompt version adds (until then it
+   * is never present). Only ever present as `true`.
+   */
+  acknowledgment_only?: boolean;
   quote_accepted?: boolean;
   /** When the acceptance email was written (ISO), kept with `quote_accepted`. */
   quote_accepted_at?: string;
@@ -431,6 +438,10 @@ export async function classifyEmail(
       // Signals only — they never change needs_owner (applyOwnerRules ignores them).
       ...(result.signals.accepts_quote ? { accepts_quote: true } : {}),
       ...(result.signals.job_done ? { job_done: true } : {}),
+      // Check 21 P1: inert until the classify prompt's schema carries the signal.
+      ...((result.signals as { acknowledgment_only?: unknown }).acknowledgment_only === true
+        ? { acknowledgment_only: true }
+        : {}),
       ...(result.signals.routine_paperwork ? { routine_paperwork: true } : {}),
       ...(result.signals.mentions_refund_or_dispute || legal ? { disputed: true } : {}),
       owner_rule_hits: hits,

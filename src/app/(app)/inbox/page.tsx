@@ -2,6 +2,7 @@ import Link from "next/link";
 import { Headline } from "@/components/brand/headline";
 import { OfferButtons } from "@/components/app/offer-buttons";
 import { PermitCard } from "@/components/app/permit-card";
+import { bouncedLine } from "@/server/auto-reply-rules";
 import { Button } from "@/components/ui/button";
 import { CATEGORIES } from "@/ai/prompts/classify.v4";
 import { categoryLabels, categoryTag, isCategory } from "@/config/categories";
@@ -183,6 +184,7 @@ export default async function InboxPage(props: PageProps<"/inbox">) {
               {row.needsOwner ? " · Needs you" : ""}
               {row.priority === "high" && !row.needsOwner ? " · Urgent" : ""}
               {row.replyState ? ` · ${row.replyState}` : ""}
+              {bouncedLine(row.extracted) ? " · Your email bounced" : ""}
             </span>
             <span className={cn("line-clamp-2", row.needsOwner ? "" : "text-muted-foreground")}>
               {row.summary ?? row.subject ?? "(no subject)"}
@@ -193,6 +195,9 @@ export default async function InboxPage(props: PageProps<"/inbox">) {
             {row.subject ? <p className="text-sm">Subject: {row.subject}</p> : null}
             {row.needsOwner && row.needsOwnerReason ? (
               <p className="font-semibold">Why: {row.needsOwnerReason}</p>
+            ) : null}
+            {bouncedLine(row.extracted) ? (
+              <p className="font-semibold">{bouncedLine(row.extracted)}</p>
             ) : null}
             <PermitCard
               permit={
