@@ -25,3 +25,18 @@ export function dailyAiCallCap(): number {
   const n = Number(process.env.AI_DAILY_CALL_CAP ?? 500);
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : 500;
 }
+
+/**
+ * Check 48 P7: where email text may go. Today every model call is one synchronous
+ * `messages.parse` request (src/ai/client.ts), which the privacy policy covers ("Where your
+ * information goes" → Anthropic). Anthropic's Message Batches API stores jobs and results, and its
+ * Files API keeps files until deleted, so neither may be used until this switch is turned on
+ * together with a privacy-policy update and a TERMS_VERSION bump (src/config/legal.ts).
+ * tests/unit/data-paths.test.ts enforces it.
+ */
+export const ALLOWED_DATA_PATHS = {
+  /** Anthropic's Message Batches API (`messages.batches`). */
+  batch: false,
+  /** Anthropic's Files API (`files.upload`, `beta.files`). */
+  files: false,
+} as const;

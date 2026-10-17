@@ -4,10 +4,18 @@ import { categoryLabels, categoryTag, isCategory } from "@/config/categories";
 import { db } from "@/db";
 import { activityLog, drafts, mailboxes, messages, threads } from "@/db/schema";
 import { MINUTES_PER_SENT_REPLY } from "@/config/drafting";
-import { dollarsToCents, tally, type MonthMoney } from "./activity-rules";
+import { dollarsToCents, tally, type MoneySoFar, type MonthMoney } from "./activity-rules";
+import { invoiceTotals } from "./money";
 import { atRiskActivityLine } from "./leads-at-risk-rules";
+import { emergencyActivityLine } from "./emergency-alert-rules";
 import { invoiceOf } from "./money-rules";
-import { closeRate, isQuoteOutcome, type QuoteOutcome } from "./quote-rules";
+import {
+  closeRate,
+  isLostReason,
+  isQuoteOutcome,
+  type LostReason,
+  type QuoteOutcome,
+} from "./quote-rules";
 import { referralActivityLine } from "./referral-rules";
 import { workspaceTimeZone } from "./snooze";
 import { localMonthStart, usableTimeZone } from "./snooze-rules";
@@ -48,6 +56,9 @@ export function describeActivity(
       if (detail.purpose === "deposit")
         return `Drafted deposit details${name ? ` for ${name}` : ""}${who ? ` · ${categoryTag.quote_request}` : ""}`;
       if (detail.purpose === "review_request") return `Drafted a review request${to}`;
+      if (detail.purpose === "thank_you") return `Drafted a thank-you for the payment${to}`;
+      if (detail.purpose === "thank_you_review")
+        return `Drafted a thank-you for the payment, with a review request${to}`;
       if (detail.purpose === "safety") return `Wrote a gas safety note${to}`;
       return `Drafted a reply${to}${about}`;
     case "closing_question":
@@ -82,9 +93,10 @@ export function describeActivity(
     case "send_undone":
       return `You stopped the reply${to} before it went`;
     case "send_stopped":
-      // A paused inbox's drafts are off the queue, so this one never says "back in your queue".
-      if (detail.why === "inbox_paused")
-        return `Didn't send the reply${to} — that inbox is paused (your plan's inboxes are all in use). It's still in that inbox's Gmail drafts`;
+      // A plan-paused address's drafts stay on the queue as read-only cards (and in Gmail), but
+      // "back in your queue" would suggest Send works again: say what stopped it instead.
+      if (detail.why === "mailbox_paused")
+        return `Didn't send the reply${to} — that Gmail address is paused on your plan. It's still in its Gmail drafts`;
       return `Didn't send the reply${to} — ${
         detail.why === "changed_in_gmail"
           ? "it was changed in Gmail"
@@ -123,6 +135,22 @@ export function describeActivity(
       return `You said ${name ? `${name}'s invoice` : "an invoice"} isn't owed to you`;
     case "invoice_reopened":
       return `${name ? `${name}'s conversation` : "A conversation"} mentions a new invoice, so it's back on Money owed`;
+    // Ideas H3/H4/E7: content-free; never the address or the note.
+    case "sender_rule_added":
+      return "You set a sender rule";
+    case "vip_added":
+      return "You added a VIP";
+    case "thread_resorted":
+      return isCategory(detail.to)
+        ? `You moved an email${from} to ${categoryLabels[detail.to]}`
+        : null;
+    case "away_on":
+      return "You turned on away mode";
+    case "away_off":
+      return "You turned off away mode";
+    // Ideas C5: the reason shows on Quotes and in the month's line, not as its own entry.
+    case "quote_lost_reason":
+      return null;
     case "marked_needs_owner":
       return `You marked a conversation${name ? ` with ${name}` : ""} as needing you`;
     case "mailbox_connected":
@@ -137,6 +165,13 @@ export function describeActivity(
       return atRiskActivityLine(detail.leads);
     case "sms_alert_sent":
       return "Texted you about new emails that need you";
+    // Replies package (B5 part 2): counts only, never which email.
+    case "emergency_alert_sent":
+      return emergencyActivityLine(detail.emergencies);
+    case "emergency_alerts_changed":
+      return detail.enabled
+        ? "You turned on emergency alerts, even at night"
+        : "You turned off emergency alerts at night";
     case "sms_alerts_changed":
       return detail.enabled ? "You turned on text alerts" : "You turned off text alerts";
     case "access_alert_sent":
@@ -410,17 +445,7 @@ export async function monthMoney(
   timeZone?: string,
 ): Promise<MonthMoney> {
   const start = localMonthStart(now, await monthZone(workspaceId, timeZone));
-  const won = await db()
-    .select({ cents: threads.quoteAmountCents })
-    .from(threads)
-    .innerJoin(mailboxes, eq(mailboxes.id, threads.mailboxId))
-    .where(
-      and(
-        eq(mailboxes.workspaceId, workspaceId),
-        eq(threads.quoteOutcome, "won"),
-        gte(threads.quoteOutcomeAt, start),
-      ),
-    );
+  const won = await wonSince(workspaceId, start);
   const paid = await db()
     .select({ extracted: threads.extracted })
     .from(threads)
@@ -443,4 +468,66 @@ export async function monthMoney(
     won: tally(won.map((r) => r.cents)),
     paidAfterNudge: tally(paid.map((r) => dollarsToCents(invoiceOf(r.extracted)?.amount))),
   };
+}
+
+/** Quotes marked won since `start` (the owner's mark or our guess), with the quoted amount. */
+async function wonSince(workspaceId: string, start: Date) {
+  return db()
+    .select({ cents: threads.quoteAmountCents })
+    .from(threads)
+    .innerJoin(mailboxes, eq(mailboxes.id, threads.mailboxId))
+    .where(
+      and(
+        eq(mailboxes.workspaceId, workspaceId),
+        eq(threads.quoteOutcome, "won"),
+        gte(threads.quoteOutcomeAt, start),
+      ),
+    );
+}
+
+/**
+ * Replies package (Davi, 2026-10-16): "this month so far" for the morning email and
+ * Activity — quotes won (the same rows as "Quotes won" above), invoices paid this month and
+ * what's still owed, from Money's own data (`invoiceTotals`). The month is the owner's,
+ * in their time zone. Totals only: no name, subject or customer detail leaves here.
+ */
+export async function moneySoFar(
+  workspaceId: string,
+  now: Date = new Date(),
+  timeZone?: string,
+): Promise<MoneySoFar> {
+  const start = localMonthStart(now, await monthZone(workspaceId, timeZone));
+  const [won, invoices] = await Promise.all([
+    wonSince(workspaceId, start),
+    invoiceTotals(workspaceId, now, start),
+  ]);
+  return {
+    won: tally(won.map((r) => r.cents)),
+    paid: tally(invoices.paidCents),
+    owed: { count: invoices.owedCount, cents: invoices.owedCents },
+  };
+}
+
+/**
+ * Ideas C5: why quotes were lost this month (the owner's taps), by `quote_outcome_at` in the
+ * owner's month — the same quotes as the month's Lost count. Counts only.
+ */
+export async function lostReasonsBetween(workspaceId: string, start: Date, end: Date | null) {
+  const rows = await db()
+    .select({ reason: threads.quoteLostReason, n: count() })
+    .from(threads)
+    .innerJoin(mailboxes, eq(mailboxes.id, threads.mailboxId))
+    .where(
+      and(
+        eq(mailboxes.workspaceId, workspaceId),
+        eq(threads.quoteOutcome, "lost"),
+        isNotNull(threads.quoteLostReason),
+        gte(threads.quoteOutcomeAt, start),
+        end ? lt(threads.quoteOutcomeAt, end) : undefined,
+      ),
+    )
+    .groupBy(threads.quoteLostReason);
+  const out: Partial<Record<LostReason, number>> = {};
+  for (const r of rows) if (isLostReason(r.reason)) out[r.reason] = Number(r.n);
+  return out;
 }

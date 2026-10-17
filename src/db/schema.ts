@@ -6,6 +6,8 @@ import { sql } from "drizzle-orm";
 import {
   type AnyPgColumn,
   boolean,
+  check,
+  date,
   index,
   integer,
   jsonb,
@@ -16,7 +18,9 @@ import {
   uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
+import type { GrowthService } from "../config/growth";
 import { TRADES, type Trade } from "../config/trades";
+import type { LostReason } from "../server/quote-rules";
 import type { ReplyToHeader } from "../server/reply-address-rules";
 
 export const tradeEnum = pgEnum("trade", TRADES);
@@ -79,6 +83,15 @@ export const invites = pgTable("invites", {
   referredByWorkspaceId: uuid("referred_by_workspace_id").references(() => workspaces.id, {
     onDelete: "set null",
   }),
+  /**
+   * Squared Away Growth (2026-10-16): Davi's "Invite to Growth" for someone with no account yet.
+   * While set, their next sign-in makes the new account a Growth client with these services and
+   * this start date, then clears all three. Never starts an app trial (that still begins only
+   * when Gmail is connected).
+   */
+  growthInvitedAt: timestamp("growth_invited_at", { withTimezone: true }),
+  growthServices: text("growth_services").array().$type<GrowthService[]>(),
+  growthStartedOn: date("growth_started_on", { mode: "string" }),
 });
 
 /** People who asked for access on the public site. Davi invites from /admin. */
@@ -151,6 +164,17 @@ export const workspaces = pgTable(
      * cancel then), from a fresh read. Only the status lines read it. Null = renews.
      */
     stripeCancelAt: timestamp("stripe_cancel_at", { withTimezone: true }),
+    /**
+     * Trial emails (Davi, 2026-10-16): the owner tapped "Stop these emails" (or switched them
+     * off in Settings). Null = they go. Only the trial emails read it; the morning email has
+     * its own switch.
+     */
+    trialEmailsStoppedAt: timestamp("trial_emails_stopped_at", { withTimezone: true }),
+    /**
+     * Which trial emails already went ("day2", "day3", "after"), so each goes once ever. Written
+     * only after Resend took it. Day 1 is the "first drafts are ready" email (its own marker).
+     */
+    trialEmailsSent: text("trial_emails_sent").array().notNull().default([]),
   },
   (t) => [
     // One owner per workspace for the MVP.
@@ -186,10 +210,20 @@ export const mailboxes = pgTable(
     lastSyncErrorCode: text("last_sync_error_code"),
     lastSyncErrorAt: timestamp("last_sync_error_at", { withTimezone: true }),
     /**
-     * Why the inbox is `paused`: 'over_plan' = more inboxes than the plan includes (the end of a
-     * free referral month, or a move down a plan). Nothing is deleted; every job skips it.
+     * Unused since the referral merge (2026-10-17). Plan #47's branch paused over-plan inboxes
+     * with `status = 'paused'` + this reason; the decisions package's `plan_paused_at` (below)
+     * does the same job everywhere, so the referral code now uses that. The column stays only
+     * because its migration (0039) is kept byte-identical; nothing reads or writes it.
      */
     pausedReason: text("paused_reason").$type<MailboxPausedReason>(),
+    /**
+     * Davi, 2026-10-16: the plan covers fewer Gmail addresses than are connected, so this one is
+     * paused — nothing is read, sorted, drafted, sent, alerted or learned from it; its data is
+     * kept. Null = on. Set and cleared only by `fitMailboxesToPlan` / `swapPlanMailbox`
+     * (src/server/mailbox-plan.ts). A column, not a `status` value, so lost Google access and
+     * a plan pause are told apart (a paused address can need reconnecting too).
+     */
+    planPausedAt: timestamp("plan_paused_at", { withTimezone: true }),
     createdAt: createdAt(),
   },
   (t) => [
@@ -264,6 +298,21 @@ export const threads = pgTable(
      */
     handledOfflineAt: timestamp("handled_offline_at", { withTimezone: true }),
     /**
+     * Leads package (B2 / B3): where the lead came from, decided in code from the sender
+     * (`channelOf`, src/server/channel-rules.ts): a phone service key ("google_voice"),
+     * "phone_text" (an email-to-text gateway) or a lead-site key ("thumbtack"). Null = a direct
+     * email. Set at classification; a later email on the thread doesn't clear it. Such threads
+     * are never drafted by email (answered on the site or from the owner's own phone).
+     */
+    leadChannel: text("lead_channel"),
+    /**
+     * Leads package (G5): the owner tapped "Mark fixed" on a complaint. Two days later, if the
+     * customer hasn't written, a "Check in" card asks whether they're happy (once per fix).
+     */
+    complaintFixedAt: timestamp("complaint_fixed_at", { withTimezone: true }),
+    /** G5: the owner closed that check-in ("All good"). A new Mark fixed re-arms it. */
+    complaintCheckinDoneAt: timestamp("complaint_checkin_done_at", { withTimezone: true }),
+    /**
      * Plan M8 (A11): set when this thread is first sorted as a quote request, to the time of the
      * customer's FIRST email on the thread (what response time and the monthly counts measure
      * from). Sticky like complained_at: a customer's later "Tuesday works" re-sorts the thread
@@ -278,6 +327,23 @@ export const threads = pgTable(
     jobKind: text("job_kind"),
     /** Plan #34: when we last pushed "a lead is waiting" for this thread's current wait. */
     atRiskAlertedAt: timestamp("at_risk_alerted_at", { withTimezone: true }),
+    /**
+     * Replies package (B5 part 2): when the owner's phone was told about this thread's
+     * emergency ("An emergency email just came in."). Once per thread, ever; never cleared.
+     */
+    emergencyAlertedAt: timestamp("emergency_alerted_at", { withTimezone: true }),
+    /**
+     * Ideas H4: the kind the owner moved this conversation to ("Wrong kind?"). It wins over the
+     * sorter on every later email (written into `category` in SQL), like needs_owner_manual.
+     * One of the classifier's categories, checked in code. Null = the sorter's kind stands.
+     */
+    categoryManual: text("category_manual"),
+    /**
+     * Ideas C5: why the owner says a quote was lost (price / timing / someone_else / other), one tap,
+     * optional. Read only while quote_outcome = 'lost' (older code can leave a stale value).
+     */
+    quoteLostReason: text("quote_lost_reason").$type<LostReason>(),
+    categoryManualAt: timestamp("category_manual_at", { withTimezone: true }),
     createdAt: createdAt(),
   },
   (t) => [
@@ -321,6 +387,16 @@ export const messages = pgTable(
     sentAt: timestamp("sent_at", { withTimezone: true }).notNull(),
     /** Set once classification ran (or was deliberately skipped) for this message. */
     classifiedAt: timestamp("classified_at", { withTimezone: true }),
+    /**
+     * Check 50 P3 (reserved, not read or written yet): an automatic reply (out-of-office,
+     * auto-responder headers). Check 20 P4 and 21 P1 use this column and add no migration.
+     */
+    autoReply: boolean("auto_reply").notNull().default(false),
+    /**
+     * Check 50 P3 (reserved, not read or written yet): a bare acknowledgement ("thanks!") that
+     * needs no answer. Check 21 P1 uses this column and adds no migration.
+     */
+    ackOnly: boolean("ack_only").notNull().default(false),
     createdAt: createdAt(),
   },
   (t) => [
@@ -359,7 +435,19 @@ export const draftKindEnum = pgEnum("draft_kind", ["reply", "followup"]);
  * Owner-asked special replies (plan #26 #28 #29). They are kind `reply` with a purpose, so
  * follow-up counts never change. Null = an ordinary reply or follow-up.
  */
-export const DRAFT_PURPOSES = ["deposit", "review_request", "closing_question", "safety"] as const;
+export const DRAFT_PURPOSES = [
+  "deposit",
+  "review_request",
+  "closing_question",
+  "safety",
+  // Davi, 2026-10-16: "Say thanks" on a paid invoice. `thank_you_review` is the same note with
+  // the review ask in it (only when every review-request rule allows one); it counts as that
+  // customer's review request. Plain text column, so no migration of the values.
+  "thank_you",
+  "thank_you_review",
+] as const;
+/** The two kinds of thank-you note: once per thread between them (`drafts_one_thank_you_per_thread`). */
+export const THANK_YOU_PURPOSES = ["thank_you", "thank_you_review"] as const;
 export type DraftPurpose = (typeof DRAFT_PURPOSES)[number];
 
 /**
@@ -417,6 +505,13 @@ export const drafts = pgTable(
     sendClaimedAt: timestamp("send_claimed_at", { withTimezone: true }),
     /** Plan #26 #28 #29: deposit / review request / closing question. Null = ordinary. */
     purpose: text("purpose").$type<DraftPurpose>(),
+    /**
+     * Replies package (draft.v7): a first reply to someone the owner never wrote to, and the
+     * shape the drafter chose from what they said — details / vague / urgent / price_only, or
+     * not_first when it didn't write one. A key, never text. Null = not a first contact (and
+     * every draft written before draft.v7).
+     */
+    opening: text("opening"),
   },
   (t) => [
     index("drafts_mailbox_status_idx").on(t.mailboxId, t.status),
@@ -428,6 +523,11 @@ export const drafts = pgTable(
     uniqueIndex("drafts_one_closing_question_per_thread")
       .on(t.threadId)
       .where(sql`purpose = 'closing_question'`),
+    // "Say thanks" (2026-10-16): once per thread. One that went stale (the customer wrote
+    // again before the owner tapped anything) doesn't count.
+    uniqueIndex("drafts_one_thank_you_per_thread")
+      .on(t.threadId)
+      .where(sql`purpose in ('thank_you', 'thank_you_review') and status <> 'expired'`),
   ],
 );
 
@@ -454,6 +554,11 @@ export const businessProfiles = pgTable("business_profile", {
   onboardingDismissedAt: timestamp("onboarding_dismissed_at", { withTimezone: true }),
   /** Round 2 (FW D1/D2): the owner hid the "your last 30 days" card on the queue. */
   firstLookHiddenAt: timestamp("first_look_hidden_at", { withTimezone: true }),
+  /**
+   * Leads package (B9): the towns the owner works in, exact, one per entry. Empty = no check.
+   * Quote requests whose job town (parsed in code from the address) isn't on it get a line.
+   */
+  serviceTowns: jsonb("service_towns").$type<string[]>().notNull().default([]),
   /** Emails mentioning more than this go to the owner. */
   amountThresholdDollars: integer("amount_threshold_dollars").notNull().default(2500),
   /** Nudge quiet quotes and invoices after this many days without a reply. */
@@ -474,12 +579,37 @@ export const businessProfiles = pgTable("business_profile", {
   smsAlertsEnabled: boolean("sms_alerts_enabled").notNull().default(false),
   /** Newest classification already covered by a text, and when the last text went out. */
   smsAlertCursor: timestamp("sms_alert_cursor", { withTimezone: true }),
+  /**
+   * Replies package (B5 part 2): "Emergencies, even at night". On by default: an emergency
+   * reaches the owner's phone (notifications and texts they switched on) at once, quiet hours
+   * or not, within its own caps. Off = emergencies wait like any other email.
+   */
+  emergencyAlertsEnabled: boolean("emergency_alerts_enabled").notNull().default(true),
   /** Plan #36 phone notifications: same throttle and cursor as texts, kept apart. */
   pushLastSentAt: timestamp("push_last_sent_at", { withTimezone: true }),
   pushAlertCursor: timestamp("push_alert_cursor", { withTimezone: true }),
   smsLastSentAt: timestamp("sms_last_sent_at", { withTimezone: true }),
   /** Plan #35: the owner's local month ('YYYY-MM') last summarized (sent, or skipped as empty). */
   monthlySummaryLastSentFor: text("monthly_summary_last_sent_for"),
+  /**
+   * Ideas E7 away mode: the owner's first day back, as their local date (YYYY-MM-DD). Away while
+   * that day hasn't come yet (read at use, no job turns it off). Null = not away.
+   */
+  awayBackOn: text("away_back_on"),
+  /**
+   * Check 50 P3 (reserved, not read or written yet): the owner's two-letter US state code.
+   * Check 38 P2, 44 P1 and 45 P2 use this column and add no migration.
+   */
+  state: text("state"),
+  /**
+   * Check 50 P3 (reserved, not shown in any form yet): the owner's crew addresses, lowercased,
+   * de-duplicated, max 30 (`crewAddressesSchema` in src/server/profile.ts). Check 22 P10 and
+   * 41 P6 use this one list (not a "team_addresses") and add no migration.
+   */
+  crewAddresses: text("crew_addresses")
+    .array()
+    .notNull()
+    .default(sql`'{}'::text[]`),
   completedAt: timestamp("completed_at", { withTimezone: true }),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
@@ -557,9 +687,76 @@ export const seasonalNotes = pgTable(
     text: text("text").notNull(),
     /** Last day the note applies, in the owner's local calendar (YYYY-MM-DD). */
     endsOn: text("ends_on").notNull(),
+    /** Ideas E7: the one note away mode writes ("Away until …"). Not counted in the 5. */
+    away: boolean("away").notNull().default(false),
     createdAt: createdAt(),
   },
-  (t) => [index("seasonal_notes_workspace_idx").on(t.workspaceId, t.endsOn)],
+  (t) => [
+    index("seasonal_notes_workspace_idx").on(t.workspaceId, t.endsOn),
+    uniqueIndex("seasonal_notes_one_away")
+      .on(t.workspaceId)
+      .where(sql`away`),
+  ],
+);
+
+/** Ideas H3: what a sender rule does. `needs_me` is company-wide only (an address is a VIP). */
+export const OWNER_SENDER_RULE_ACTIONS = ["junk", "no_draft", "needs_me"] as const;
+export type OwnerSenderRuleAction = (typeof OWNER_SENDER_RULE_ACTIONS)[number];
+export const OWNER_SENDER_RULE_SCOPES = ["address", "domain"] as const;
+export type OwnerSenderRuleScope = (typeof OWNER_SENDER_RULE_SCOPES)[number];
+
+/**
+ * Ideas H3: the owner's own rules for a sender — one address or everyone at a company's web
+ * address. Never sent to the AI. Goes with the workspace (Delete my account).
+ */
+export const ownerSenderRules = pgTable(
+  "owner_sender_rules",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    /** 'dana@example.com' or 'hillpm.com', lowercased. */
+    pattern: text("pattern").notNull(),
+    scope: text("scope").$type<OwnerSenderRuleScope>().notNull(),
+    action: text("action").$type<OwnerSenderRuleAction>().notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex("owner_sender_rules_workspace_pattern_uq").on(t.workspaceId, t.pattern),
+    check("owner_sender_rules_action", sql`${t.action} in ('junk', 'no_draft', 'needs_me')`),
+    check("owner_sender_rules_scope", sql`${t.scope} in ('address', 'domain')`),
+    check(
+      "owner_sender_rules_needs_me_domain",
+      sql`${t.action} <> 'needs_me' or ${t.scope} = 'domain'`,
+    ),
+  ],
+);
+
+/**
+ * Ideas G7: the owner's private note about a customer (gate code, dog, best time to call).
+ * Only the owner sees it: never sent to customers or the AI, never in alerts, emails or admin.
+ * Goes with the Gmail address it was written under (disconnect) and the workspace.
+ */
+export const customerNotes = pgTable(
+  "customer_notes",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    mailboxId: uuid("mailbox_id")
+      .notNull()
+      .references(() => mailboxes.id, { onDelete: "cascade" }),
+    /** The customer's reply address, lowercased. */
+    address: text("address").notNull(),
+    body: text("body").notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("customer_notes_workspace_address_uq").on(t.workspaceId, t.address),
+    check("customer_notes_body_len", sql`char_length(${t.body}) between 1 and 200`),
+  ],
 );
 
 /**
@@ -789,7 +986,7 @@ export const referralCredits = pgTable(
     endedAt: timestamp("ended_at", { withTimezone: true }),
     /**
      * When the Stripe follow-up after `done` (strip our coupon if it stayed on, sweep or flag
-     * charges for free days) fully went through. Null on a done row = the sweep tries again (0029).
+     * charges for free days) fully went through. Null on a done row = the sweep tries again (0040).
      */
     afterEndCheckedAt: timestamp("after_end_checked_at", { withTimezone: true }),
     /** The subscription's billing mode (`flexible` / `classic`), for /admin. */
@@ -812,6 +1009,99 @@ export const referralCredits = pgTable(
   ],
 );
 export type ReferralCredit = typeof referralCredits.$inferSelect;
+
+/** Squared Away Growth (2026-10-16): where a client stands. Only active and paused see the portal. */
+export const GROWTH_CLIENT_STATUSES = ["active", "paused", "ended"] as const;
+export type GrowthClientStatus = (typeof GROWTH_CLIENT_STATUSES)[number];
+
+/**
+ * Squared Away Growth clients: an account Davi does Growth work for (ads, posts, Google
+ * Business Profile, reviews, websites). One per workspace; goes with it (Delete my account).
+ * Nothing here comes from email.
+ */
+export const growthClients = pgTable(
+  "growth_clients",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    status: text("status").$type<GrowthClientStatus>().notNull().default("active"),
+    /** The day Growth work began, a calendar date (the owner's own calendar). */
+    startedOn: date("started_on", { mode: "string" }).notNull(),
+    /** Ids from GROWTH_SERVICES (src/config/growth.ts), checked in code. */
+    services: text("services").array().$type<GrowthService[]>().notNull().default([]),
+    /**
+     * The client's time zone for their dashboard's months, set by Davi in /admin. Growth never
+     * reads the inbox app's business profile (Growth never uses inbox data).
+     */
+    timeZone: text("time_zone").notNull().default("America/New_York"),
+    createdAt: createdAt(),
+    endedAt: timestamp("ended_at", { withTimezone: true }),
+  },
+  (t) => [
+    uniqueIndex("growth_clients_workspace_uq").on(t.workspaceId),
+    check("growth_clients_status", sql`${t.status} in ('active', 'paused', 'ended')`),
+  ],
+);
+export type GrowthClient = typeof growthClients.$inferSelect;
+
+/**
+ * Davi's updates to a Growth client, in his own words (never anything from email). Emailed once
+ * (`notified_at` set only after the email went out).
+ */
+export const growthUpdates = pgTable(
+  "growth_updates",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    growthClientId: uuid("growth_client_id")
+      .notNull()
+      .references(() => growthClients.id, { onDelete: "cascade" }),
+    postedAt: timestamp("posted_at", { withTimezone: true }).notNull().defaultNow(),
+    title: text("title").notNull(),
+    body: text("body").notNull(),
+    notifiedAt: timestamp("notified_at", { withTimezone: true }),
+  },
+  (t) => [
+    index("growth_updates_client_idx").on(t.growthClientId, t.postedAt),
+    check("growth_updates_title_len", sql`char_length(${t.title}) between 1 and 80`),
+    check("growth_updates_body_len", sql`char_length(${t.body}) between 1 and 2000`),
+  ],
+);
+export type GrowthUpdate = typeof growthUpdates.$inferSelect;
+
+/**
+ * The numbers Davi enters after each monthly check-in with a Growth client, one row per month
+ * ('YYYY-MM', the client's own calendar). Every number is optional: blank = not entered.
+ */
+export const growthMonthly = pgTable(
+  "growth_monthly",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    growthClientId: uuid("growth_client_id")
+      .notNull()
+      .references(() => growthClients.id, { onDelete: "cascade" }),
+    month: text("month").notNull(),
+    newLeads: integer("new_leads"),
+    calls: integer("calls"),
+    jobsWon: integer("jobs_won"),
+    moneyWonCents: integer("money_won_cents"),
+    reviewsGained: integer("reviews_gained"),
+    adSpendCents: integer("ad_spend_cents"),
+    note: text("note"),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("growth_monthly_client_month_uq").on(t.growthClientId, t.month),
+    check("growth_monthly_month", sql`${t.month} ~ '^[0-9]{4}-(0[1-9]|1[0-2])$'`),
+    check(
+      "growth_monthly_not_negative",
+      sql`coalesce(${t.newLeads}, 0) >= 0 and coalesce(${t.calls}, 0) >= 0 and coalesce(${t.jobsWon}, 0) >= 0 and coalesce(${t.moneyWonCents}, 0) >= 0 and coalesce(${t.reviewsGained}, 0) >= 0 and coalesce(${t.adSpendCents}, 0) >= 0`,
+    ),
+    check("growth_monthly_note_len", sql`${t.note} is null or char_length(${t.note}) <= 280`),
+  ],
+);
+export type GrowthMonthly = typeof growthMonthly.$inferSelect;
 export type User = typeof users.$inferSelect;
 export type BusinessProfile = typeof businessProfiles.$inferSelect;
 export type VoiceProfile = typeof voiceProfiles.$inferSelect;

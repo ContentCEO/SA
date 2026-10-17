@@ -198,7 +198,7 @@ that can send without a Stripe payment; whether to record this way is Davi's dec
 "Reviewer test account", which also has option B, a separate demo account):
 
 - **Make your workspace the house account** (once; without it the draft card at step 9 has no
-  **Send reply** button: it says "Sending is off during your three days" or "Waiting on your setup
+  **Send reply** button: it says "Send reply is off during your three days" or "Waiting on your setup
   payment", and may offer a practice copy instead): `/admin` → your own
   card (always shown first) → **Use as my own test account** → **Yes, this is my account**. The
   button only shows on your own card, and the server refuses it for any other account. Worked
@@ -277,8 +277,10 @@ option B, the separate demo account after its test-card payment):
 
 15. **A trial account connects.** Sign in to an invited account that hasn't paid, connect the demo
     Gmail the same way (steps 2–7). The banner shows day 1 of 3.
-16. **Sending to customers is off.** On the Queue the draft card says sending is off during the trial
-    and has no Send reply button. Say that our server refuses a send too, not just the screen.
+16. **Squared Away sends nothing to customers.** On the Queue the draft card says Send reply is off
+    during the trial and has no Send reply button. Say that our server refuses a send too, not
+    just the screen. (The draft is still a real Gmail draft, so the owner could send it from Gmail
+    themselves; Squared Away never does.)
 17. **Practice copy (`gmail.compose`, `messages.send`).** Tap "Send it to yourself instead". Switch to
     Gmail → Inbox: a new email marked "[Practice]" arrived from the owner to the owner. Dana got
     nothing.

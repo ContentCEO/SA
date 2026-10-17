@@ -21,7 +21,13 @@ import { accountLockReason } from "@/server/autopilot";
 import { ensureUserAndWorkspace } from "@/server/accounts";
 import { setStripeForTests, stripeMode } from "@/server/billing";
 import { checkoutTerms, stripeKeyMode } from "@/server/billing-rules";
-import { canSend, jobsAllowed, resumeTarget, sendingBlockedReason } from "@/server/lifecycle";
+import {
+  canSend,
+  isReadOnly,
+  jobsAllowed,
+  resumeTarget,
+  sendingBlockedReason,
+} from "@/server/lifecycle";
 import {
   checkTestPayments,
   lastTestPaymentsResult,
@@ -40,6 +46,9 @@ import {
 import { applyAdminMove } from "@/server/workspace-lifecycle";
 import { runReferralRewards } from "@/server/referrals";
 import { setReferralConfigForTests } from "@/server/referral-rules";
+import { createDraftForThread } from "@/server/drafts";
+import { saveConnectedMailbox } from "@/server/mailboxes";
+import { listSyncableMailboxes } from "@/server/sync";
 import { createTestDb } from "../support/db";
 import { TERMS_VERSION } from "@/config/legal";
 
@@ -420,8 +429,46 @@ describe("resetting", () => {
     const launch = readFileSync("docs/LAUNCH.md", "utf8").replace(/\s+/g, " ");
     const reset = launch.slice(launch.indexOf("**7c. Reset test payments.**"));
     expect(reset.slice(0, reset.indexOf("**7d."))).toContain(PAST_DUE_RESET_NOTE);
+    // Davi, 2026-10-16: "let it be usable" — decided, no longer an open question.
+    const decided = launch.slice(
+      launch.indexOf("### Decided on 2026-10-16"),
+      launch.indexOf("### Decided on 2026-10-15"),
+    );
+    expect(decided).toContain("**Reset test payments and past-due accounts: let it be usable**");
     const open = launch.slice(launch.indexOf("### Still open"), launch.indexOf("### Still needed"));
-    expect(open).toContain("**Reset test payments and past-due accounts.**");
+    expect(open).not.toContain("Reset test payments and past-due");
+  });
+
+  it("Davi 2026-10-16 'let it be usable': a past-due test account works again everywhere but Send", async () => {
+    const id = await testPaid("past_due");
+    const box = await saveConnectedMailbox(
+      { id, plan: "crew", freePlan: null, freePlanUntil: null },
+      { email: "pastdue@shop.com", refreshToken: "rt", grantedScopes: [] },
+    );
+    await database
+      .update(mailboxes)
+      .set({ backfillCompletedAt: PAID_AT })
+      .where(eq(mailboxes.id, box.id));
+    // Before: read-only — not synced, no drafts.
+    expect((await listSyncableMailboxes(NOW)).map((b) => b.id)).not.toContain(box.id);
+    expect(await resetTestPayments(NOW)).toEqual({ reset: 1, unchecked: 0 });
+    const w = await row(id);
+    expect(w.status).toBe("setup_paid"); // where a recovered payment would put it
+    expect(isReadOnly(w, NOW)).toBe(false);
+    // Its Gmail is read again and an owner's tap is no longer refused as read-only…
+    expect((await listSyncableMailboxes(NOW)).map((b) => b.id)).toContain(box.id);
+    const [t] = await database
+      .insert(threads)
+      .values({ mailboxId: box.id, gmailThreadId: "pd1", inInbox: true })
+      .returning();
+    const tap = await createDraftForThread(t!.id, { trigger: "owner", workspaceId: id });
+    expect(tap).not.toEqual({ status: "skipped", reason: "read_only" });
+    // …but nothing is sent until it really pays (the send gate reads setup_paid_via).
+    expect(canSend(w, NOW)).toBe(false);
+    expect(sendingBlockedReason(w, NOW)).toBe(
+      "Sending turns on once your setup payment goes through. Choose a plan in Settings → Plan & billing.",
+    );
+    expect(checkoutTerms(w, NOW)).toEqual({ allowed: true, includeSetupFee: true });
   });
 
   it("every other status stays as it is", async () => {

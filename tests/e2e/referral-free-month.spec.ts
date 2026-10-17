@@ -196,7 +196,7 @@ test("after the free month ends: no banner, even before any job runs", async ({
   await expect(page.getByText(/free until/)).toHaveCount(0);
 });
 
-test("a paused inbox: Settings says why and offers the switch; the queue says replies wait", async ({
+test("a paused inbox: the queue marks its reply; Settings offers the switch or a plan up", async ({
   page,
   context,
 }) => {
@@ -215,8 +215,8 @@ test("a paused inbox: Settings says why and offers the switch; the queue says re
       email: `paused-${randomUUID().slice(0, 6)}@example.com`,
       encryptedRefreshToken: encryptSecret("fake-refresh-token"),
       scopes: "gmail",
-      status: "paused",
-      pausedReason: "over_plan",
+      status: "active",
+      planPausedAt: new Date(),
       backfillCompletedAt: new Date(),
     })
     .returning();
@@ -256,22 +256,19 @@ test("a paused inbox: Settings says why and offers the switch; the queue says re
   });
   await signInAs(context, owner);
 
+  // Since the referral merge the plan pause is the decisions package's: the reply stays on the
+  // queue as a read-only card that says why it can't be sent.
   await page.goto("/queue");
-  await expect(
-    page.getByText(
-      "1 reply is waiting in a paused inbox. Solo includes 1 inbox. It's still in that inbox's Gmail drafts.",
-    ),
-  ).toBeVisible();
+  await expect(page.getByText("This Gmail address is paused on your plan.").first()).toBeVisible();
 
   await page.goto("/settings/gmail");
-  await expect(
-    page.getByText(
-      "Paused. Solo includes 1 inbox. Nothing is read or drafted here, and nothing was deleted.",
-    ),
-  ).toBeVisible();
-  const swap = page.getByText("Switch this one on instead", { exact: true });
+  const card = page.getByRole("listitem", { name: paused!.email });
+  await expect(card).toContainText("Paused: your plan covers 1 Gmail address.");
+  const swap = card.getByRole("button", { name: "Use this one instead" });
   await expect(swap).toBeVisible();
   expect((await swap.boundingBox())!.height).toBeGreaterThanOrEqual(44);
-  await swap.click();
-  await expect(page.getByRole("button", { name: "Switch inboxes" })).toBeVisible();
+  // Plan #47's way out: one plan up, on Plan & billing.
+  const up = card.getByRole("link", { name: "Or move to Crew in Plan & billing." });
+  await expect(up).toHaveAttribute("href", "/billing");
+  expect((await up.boundingBox())!.height).toBeGreaterThanOrEqual(44);
 });

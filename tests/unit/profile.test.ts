@@ -9,8 +9,10 @@ import { classifyPending } from "@/server/classification";
 import { saveConnectedMailbox } from "@/server/mailboxes";
 import {
   businessProfileInput,
+  crewAddressesSchema,
   describeVoice,
   getBusinessProfile,
+  MAX_CREW_ADDRESSES,
   REVIEW_URL_MESSAGE,
   saveBusinessProfile,
 } from "@/server/profile";
@@ -225,5 +227,21 @@ describe("profile drives classification", () => {
       businessProfileInput.parse({ ...valid, reviewUrl: "" }),
     );
     expect((await getBusinessProfile(workspace.id))!.reviewUrl).toBeNull();
+  });
+});
+
+describe("crew addresses rule (Check 50 P3, not in a form yet)", () => {
+  it("lowercases, trims and de-duplicates emails", () => {
+    expect(crewAddressesSchema.parse(" Mike@Shop.com\nmike@shop.com\n\nana@shop.com ")).toEqual([
+      "mike@shop.com",
+      "ana@shop.com",
+    ]);
+  });
+
+  it("refuses a line that isn't an email, and more than 30 addresses", () => {
+    expect(crewAddressesSchema.safeParse("mike at shop").success).toBe(false);
+    const many = Array.from({ length: MAX_CREW_ADDRESSES + 1 }, (_, i) => `c${i}@shop.com`);
+    expect(crewAddressesSchema.safeParse(many.join("\n")).success).toBe(false);
+    expect(crewAddressesSchema.safeParse(many.slice(1).join("\n")).success).toBe(true);
   });
 });

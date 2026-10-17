@@ -17,7 +17,8 @@ export function proxy(request: NextRequest) {
 }
 
 /**
- * The signed-in screens only (the top-level folders of src/app/(app), plus /welcome); a unit test
+ * The signed-in screens only (the top-level folders of src/app/(app), plus /welcome, /start and
+ * /my-growth); a unit test
  * keeps this list in step with those folders. Server actions post to their screen's path, so
  * they're covered too. Marketing pages, API routes and files never run it.
  */
@@ -36,5 +37,8 @@ export const config = {
     "/record/:path*",
     "/admin/:path*",
     "/welcome/:path*",
+    // Squared Away Growth (2026-10-16): the sign-in choice and the client's dashboard.
+    "/start/:path*",
+    "/my-growth/:path*",
   ],
 };

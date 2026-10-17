@@ -501,6 +501,7 @@ export function shortDate(d: Date, timeZone: string | null | undefined = DEFAULT
 
 const planName = (p: PlanId) => pricing.plans[p].name;
 const inboxes = (n: number) => `${n} inbox${n === 1 ? "" : "es"}`;
+const addresses = (n: number) => `${n} Gmail address${n === 1 ? "" : "es"}`;
 
 /** "Solo includes 1 inbox" (or the no-plan allowance). */
 export function planIncludes(plan: PlanId | null): string {
@@ -750,20 +751,13 @@ export function goBackCopy(x: {
   };
 }
 
-/** §4.5 Settings → Your Gmail, on an inbox paused for being over the plan. */
+/**
+ * §4.5 Settings → Your Gmail, under a Gmail address paused for being over the plan (the
+ * decisions package's card says why and offers "Use this one instead"): the way up a plan.
+ */
 export function pausedInboxCopy(plan: PlanId | null) {
   const more = planForMore(plan);
-  return {
-    line: `Paused. ${planIncludes(plan)}. Nothing is read or drafted here, and nothing was deleted.`,
-    button: "Switch this one on instead",
-    more: more ? `or move to ${planName(more)} in Plan & billing.` : null,
-  };
-}
-
-/** §4.5 Reconnecting an over-plan inbox while the plan's inboxes are all in use. */
-export function reconnectRefusedLine(plan: PlanId | null): string {
-  const more = planForMore(plan);
-  return `This inbox is paused: ${planIncludes(plan)}. Switch it on instead of another one${more ? `, or move to ${planName(more)}` : ""}.`;
+  return { more: more ? `Or move to ${planName(more)} in Plan & billing.` : null };
 }
 
 /** §4.5 "Add another inbox" during a free month, with the paid plan's inboxes already in use. */
@@ -778,18 +772,6 @@ export function autopilotFreeMonthLine(
   timeZone?: string | null,
 ): string {
   return `Autopilot is part of your free ${planName(free)} month until ${shortDate(until, timeZone)}.`;
-}
-
-/** §4.6 The queue's one line about drafts in paused inboxes. */
-export function pausedDraftsLine(count: number, plan: PlanId | null): string {
-  const waiting = count === 1 ? "1 reply is" : `${count} replies are`;
-  const still = count === 1 ? "It's" : "They're";
-  return `${waiting} waiting in a paused inbox. ${planIncludes(plan)}. ${still} still in that inbox's Gmail drafts.`;
-}
-
-/** §4.6 Tapping Send on a draft in a paused inbox. */
-export function inboxPausedSendLine(plan: PlanId | null): string {
-  return `This inbox is paused. ${planIncludes(plan)}. The reply is still in that inbox's Gmail drafts.`;
 }
 
 // --- Activity (§4.7): short, no trailing period; details hold plan ids, dates, prices, counts --
@@ -869,24 +851,21 @@ export function referralActivityLine(
       }
     case "autopilot_turned_off_plan":
       return "Autopilot is off again. It comes with Crew and Company";
-    case "inboxes_paused_plan": {
-      const n = countOf(detail.count) ?? 1;
-      const plan = planOf(detail.plan);
+    // The plan pause (decisions 2026-10-16, `mailbox-plan.ts`), which plan #47's free months
+    // drive too: a free month ending or a move down pauses addresses, Keep or more room resumes.
+    case "mailboxes_fit_plan": {
+      const paused = countOf(detail.paused);
+      const resumed = countOf(detail.resumed);
       const limit = countOf(detail.limit);
-      const includes =
-        plan && limit
-          ? ` ${plan} includes ${limit}.`
-          : limit
-            ? ` Your plan includes ${limit}.`
-            : "";
-      return `Paused ${inboxes(n)}.${includes} Nothing was deleted`;
+      if (paused)
+        return limit
+          ? `Paused ${addresses(paused)}. Your plan covers ${addresses(limit)}. Nothing was deleted`
+          : `Paused ${addresses(paused)} over your plan. Nothing was deleted`;
+      if (resumed) return `Switched ${addresses(resumed)} back on`;
+      return null;
     }
-    case "inboxes_resumed_plan": {
-      const n = countOf(detail.count) ?? 1;
-      return `Switched ${n} paused inbox${n === 1 ? "" : "es"} back on`;
-    }
-    case "inbox_swapped":
-      return "You switched which inbox is on";
+    case "mailbox_plan_swap":
+      return "You switched which Gmail address is on";
     default:
       return null;
   }

@@ -1,7 +1,7 @@
 import "server-only";
-import { and, asc, eq, exists, inArray, isNotNull, isNull, lte, sql } from "drizzle-orm";
+import { and, eq, exists, inArray, isNotNull, lte, sql } from "drizzle-orm";
 import { db, type Database } from "@/db";
-import { mailboxLimitFor, planHasAutopilot } from "@/config/pricing";
+import { planHasAutopilot } from "@/config/pricing";
 import {
   activityLog,
   drafts,
@@ -14,6 +14,7 @@ import {
 import { isAdminEmail } from "./admin";
 import { canMakeMove, EVALUATION_MS, resumeTarget, type AdminMove } from "./lifecycle";
 import { effectivePlan } from "./referral-rules";
+import { fitMailboxesToPlan } from "./mailbox-plan";
 import { creditReferralSafely } from "./referrals";
 
 /**
@@ -281,123 +282,12 @@ export async function enforcePlanAutopilot(now: Date = new Date()): Promise<numb
   return fixed;
 }
 
-/** Inboxes that count against the plan: every one not paused for being over it, oldest first. */
-async function countedInboxes(workspaceId: string, executor: Executor) {
-  return executor
-    .select({ id: mailboxes.id })
-    .from(mailboxes)
-    .where(and(eq(mailboxes.workspaceId, workspaceId), isNull(mailboxes.pausedReason)))
-    .orderBy(asc(mailboxes.createdAt), asc(mailboxes.id));
-}
-
-/**
- * Plan #47 offer A, §3.6 (and Davi's Q2, 2026-10-16: a move down a plan on Stripe's page too):
- * more inboxes than the plan that counts includes → the newest-created extras pause
- * (`paused`, reason `over_plan`). Ranked by `created_at`, which a reconnect never resets, so
- * the first inbox stays on. Inboxes needing a reconnect count. Nothing is deleted; their
- * countdowns stop, and a send in its undo window stops through the normal send path. Returns
- * how many it paused.
- */
-export async function inboxLimitEffects(
-  workspaceId: string,
-  now: Date = new Date(),
-  executor: Executor = db(),
-): Promise<number> {
-  const w = await planFields(workspaceId, executor);
-  if (!w) return 0;
-  const plan = effectivePlan(w, now);
-  const limit = mailboxLimitFor(plan);
-  const extra = (await countedInboxes(workspaceId, executor)).slice(limit).map((m) => m.id);
-  if (!extra.length) return 0;
-  const paused = await executor
-    .update(mailboxes)
-    .set({ status: "paused", pausedReason: "over_plan" })
-    .where(
-      and(
-        eq(mailboxes.workspaceId, workspaceId),
-        inArray(mailboxes.id, extra),
-        isNull(mailboxes.pausedReason),
-      ),
-    )
-    .returning({ id: mailboxes.id });
-  await clearMailboxCountdowns(
-    paused.map((m) => m.id),
-    executor,
-  );
-  if (paused.length) {
-    await executor.insert(activityLog).values({
-      workspaceId,
-      actor: "squared_away",
-      action: "inboxes_paused_plan",
-      detail: { count: paused.length, plan, limit },
-      createdAt: now,
-    });
-  }
-  return paused.length;
-}
-
-/**
- * What a paused-for-the-plan inbox goes back to: one that lost Google access while it was on
- * (sync set `access_lost_at`, which only a reconnect clears) is still `reconnect_needed`, so the
- * banner and the access-lost alerts don't treat it as healthy — or tell the owner twice.
- */
-export const resumedInboxStatus = sql<
-  "active" | "reconnect_needed"
->`(case when ${mailboxes.accessLostAt} is not null then 'reconnect_needed' else 'active' end)::mailbox_status`;
-
-/**
- * Wherever the limit can rise or a slot frees up (a plan change, a free month starting, Keep,
- * a disconnect): switch over-plan inboxes back on, oldest-created first, up to the limit. Only
- * ever resumes, so it changes nothing for anyone without paused inboxes. Returns how many.
- */
-export async function resumeOverPlanInboxes(
-  workspaceId: string,
-  now: Date = new Date(),
-  executor: Executor = db(),
-): Promise<number> {
-  const w = await planFields(workspaceId, executor);
-  if (!w) return 0;
-  const room =
-    mailboxLimitFor(effectivePlan(w, now)) - (await countedInboxes(workspaceId, executor)).length;
-  if (room <= 0) return 0;
-  const waiting = await executor
-    .select({ id: mailboxes.id })
-    .from(mailboxes)
-    .where(and(eq(mailboxes.workspaceId, workspaceId), eq(mailboxes.pausedReason, "over_plan")))
-    .orderBy(asc(mailboxes.createdAt), asc(mailboxes.id))
-    .limit(room);
-  if (!waiting.length) return 0;
-  const resumed = await executor
-    .update(mailboxes)
-    .set({ status: resumedInboxStatus, pausedReason: null })
-    .where(
-      and(
-        inArray(
-          mailboxes.id,
-          waiting.map((m) => m.id),
-        ),
-        eq(mailboxes.pausedReason, "over_plan"),
-      ),
-    )
-    .returning({ id: mailboxes.id });
-  if (resumed.length) {
-    await executor.insert(activityLog).values({
-      workspaceId,
-      actor: "squared_away",
-      action: "inboxes_resumed_plan",
-      detail: { count: resumed.length },
-      createdAt: now,
-    });
-  }
-  return resumed.length;
-}
-
 /**
  * Davi sets the plan by hand until Stripe does (Milestone 10). The plan
  * decides mailbox limits and whether autopilot can be unlocked. Dropping to a
  * plan without autopilot switches it off and stops anything counting down
- * (autopilotPlanEffects, the same code every plan path runs); a plan with room
- * switches paused over-plan inboxes back on.
+ * (autopilotPlanEffects, the same code every plan path runs); `fitMailboxesToPlan`
+ * pauses or turns back on Gmail addresses for the plan that counts.
  */
 export async function setWorkspacePlan(
   workspaceId: string,
@@ -408,7 +298,6 @@ export async function setWorkspacePlan(
   if (!w) throw new Error("Workspace not found.");
   await db().update(workspaces).set({ plan }).where(eq(workspaces.id, workspaceId));
   await autopilotPlanEffects(workspaceId, now);
-  await resumeOverPlanInboxes(workspaceId, now);
   await db()
     .insert(activityLog)
     .values({
@@ -417,4 +306,7 @@ export async function setWorkspacePlan(
       action: "plan_changed",
       detail: { by: "admin", from: w.plan, to: plan },
     });
+  // A plan covering fewer Gmail addresses pauses the extra ones; a bigger one turns them back
+  // on (Davi, 2026-10-16).
+  await fitMailboxesToPlan(workspaceId, now);
 }

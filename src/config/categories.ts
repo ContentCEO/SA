@@ -22,6 +22,20 @@ export const categoryTag: Record<Category, string> = {
   noise: "Junk / notice",
 };
 
+/**
+ * Leads package (B5): the categories a person writes in with a job — what the emergency lane,
+ * lead-site cards and Call / Text buttons are for. Noise, suppliers and invoices aren't leads.
+ */
+export const LEAD_CATEGORIES = [
+  "quote_request",
+  "customer_question",
+  "scheduling",
+  "complaint",
+] as const satisfies readonly Category[];
+
+export const isLeadCategory = (c: string | null | undefined): boolean =>
+  (LEAD_CATEGORIES as readonly string[]).includes(c ?? "");
+
 export function isCategory(v: unknown): v is Category {
   return typeof v === "string" && v in categoryLabels;
 }
@@ -38,6 +52,8 @@ export function draftTag(d: {
   const category = isCategory(d.category) ? categoryTag[d.category] : "Email";
   if (d.purpose === "deposit") return `Deposit details · ${categoryTag.quote_request}`;
   if (d.purpose === "review_request") return "Review request";
+  if (d.purpose === "thank_you") return "Thank-you for the payment";
+  if (d.purpose === "thank_you_review") return "Thank-you + review request";
   if (d.purpose === "closing_question") return "Closing question";
   if (d.purpose === "safety") return "Gas smell · safety note";
   return d.kind === "followup" ? `Follow-up · ${category}` : category;

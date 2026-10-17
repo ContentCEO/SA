@@ -8,7 +8,6 @@ import { ensureUserAndWorkspace } from "@/server/accounts";
 import {
   deliverQueuedSend,
   listQueue,
-  pausedInboxDraftCount,
   queueCounts,
   queueMembership,
   queueSend,
@@ -20,8 +19,9 @@ import { createTestDb } from "../support/db";
 import { FakeWriter } from "../support/fake-writer";
 
 /**
- * Plan #47 offer A, §3.8: an inbox paused for being over the plan sends nothing (no Gmail
- * call), is off the queue and every count, and the queue says how many replies wait there.
+ * Plan #47 offer A, §3.8, on the decisions package's plan pause (since the referral merge,
+ * 2026-10-17): an address paused for being over the plan that counts sends nothing (no Gmail
+ * call) and is out of every count; the queue still shows its drafts as read-only cards.
  */
 
 const NOW = new Date("2026-10-16T16:00:00Z");
@@ -45,7 +45,7 @@ describe("plan #47: a paused inbox", () => {
       .update(workspaces)
       .set({ status: "active", setupPaidVia: "stripe", plan: "crew" })
       .where(eq(workspaces.id, workspaceId));
-    const crew = { ...workspace, plan: "crew" as const };
+    const crew = { ...workspace, plan: "crew" as const, freePlan: null, freePlanUntil: null };
     boxA = (
       await saveConnectedMailbox(crew, {
         email: "owner@shop.com",
@@ -64,10 +64,7 @@ describe("plan #47: a paused inbox", () => {
   });
 
   const pause = (id: string) =>
-    database
-      .update(mailboxes)
-      .set({ status: "paused", pausedReason: "over_plan" })
-      .where(eq(mailboxes.id, id));
+    database.update(mailboxes).set({ planPausedAt: NOW }).where(eq(mailboxes.id, id));
 
   async function seed(mailboxId: string, over: { needsOwner?: boolean } = {}) {
     const g = `t${++n}`;
@@ -122,11 +119,11 @@ describe("plan #47: a paused inbox", () => {
     return { thread: t!, draft: d! };
   }
 
-  it("Send reply on a paused inbox → inbox_paused, with no Gmail call and nothing queued", async () => {
+  it("Send reply on a paused inbox → mailbox_paused, with no Gmail call and nothing queued", async () => {
     const { draft } = await seed(boxB);
     await pause(boxB);
-    expect(await queueSend(workspaceId, draft!.id, deps())).toEqual({ status: "inbox_paused" });
-    expect(await sendDraft(workspaceId, draft!.id, deps())).toEqual({ status: "inbox_paused" });
+    expect(await queueSend(workspaceId, draft!.id, deps())).toEqual({ status: "mailbox_paused" });
+    expect(await sendDraft(workspaceId, draft!.id, deps())).toEqual({ status: "mailbox_paused" });
     expect(writer.calls).toEqual([]);
     expect(writer.sent).toEqual([]);
     const [d] = await database.select().from(drafts).where(eq(drafts.id, draft!.id));
@@ -141,7 +138,7 @@ describe("plan #47: a paused inbox", () => {
     await pause(boxB);
     writer.calls.length = 0;
     const r = await deliverQueuedSend(draft!.id, deps(new Date(NOW.getTime() + 60_000)));
-    expect(r).toEqual({ status: "stopped", why: "inbox_paused" });
+    expect(r).toEqual({ status: "stopped", why: "mailbox_paused" });
     expect(writer.sent).toEqual([]);
     const [d] = await database.select().from(drafts).where(eq(drafts.id, draft!.id));
     expect(d!.status).toBe("pending");
@@ -150,36 +147,35 @@ describe("plan #47: a paused inbox", () => {
       .select()
       .from(activityLog)
       .where(eq(activityLog.action, "send_stopped"));
-    expect(logs.map((l) => l.detail)).toEqual([{ draftId: draft!.id, why: "inbox_paused" }]);
-    // Activity never promises a queue card the queue doesn't show.
+    expect(logs.map((l) => l.detail)).toEqual([{ draftId: draft!.id, why: "mailbox_paused" }]);
+    // Activity never says "back in your queue" (Send stays off there while it's paused).
     const line = describeActivity("send_stopped", logs[0]!.detail as Record<string, unknown>, {
       name: "Dana Ruiz",
       category: "scheduling",
     });
     expect(line).toBe(
-      "Didn't send the reply to Dana — that inbox is paused (your plan's inboxes are all in use). It's still in that inbox's Gmail drafts",
+      "Didn't send the reply to Dana — that Gmail address is paused on your plan. It's still in its Gmail drafts",
     );
     expect(line).not.toMatch(/queue/);
   });
 
-  it("the queue, its counts (badge, digest, push) and needs-you leave paused inboxes out", async () => {
+  it("the counts (badge, digest, push) leave paused inboxes out; the queue marks their cards", async () => {
     const on = await seed(boxA);
     await seed(boxB);
     await seed(boxB);
     await seed(boxB, { needsOwner: true });
     expect((await queueCounts(workspaceId, NOW)).drafts).toBe(3);
     expect((await queueCounts(workspaceId, NOW)).needsYou).toBe(1);
-    expect(await pausedInboxDraftCount(workspaceId)).toBe(0);
 
     await pause(boxB);
     const counts = await queueCounts(workspaceId, NOW);
     expect(counts).toMatchObject({ drafts: 1, needsYou: 0 });
     const members = await queueMembership(workspaceId, NOW);
-    expect(members.drafts.map((d) => d.draftId)).toEqual([on.draft!.id]);
+    expect(members.drafts.filter((d) => !d.paused).map((d) => d.draftId)).toEqual([on.draft!.id]);
     const screen = await listQueue(workspaceId, NOW);
-    expect(screen.drafts.map((d) => d.draftId)).toEqual([on.draft!.id]);
-    expect(screen.needsYou).toEqual([]);
-    expect(await pausedInboxDraftCount(workspaceId)).toBe(2);
+    const paused = screen.drafts.filter((d) => d.mailboxPaused).length;
+    expect(paused).toBe(2);
+    expect(screen.drafts.find((d) => d.draftId === on.draft!.id)?.mailboxPaused).toBe(false);
   });
 
   it("Settings' health lines don't call a paused inbox's quiet a problem", () => {

@@ -9,7 +9,10 @@ export async function ReconnectBanner() {
   if (!session?.user?.id) return null;
   const workspace = await getWorkspaceForUser(session.user.id);
   if (!workspace) return null;
-  const broken = (await listMailboxes(workspace.id)).filter((m) => m.status === "reconnect_needed");
+  // A Gmail address paused on the plan isn't read anyway; Settings → Your Gmail explains it.
+  const broken = (await listMailboxes(workspace.id)).filter(
+    (m) => m.status === "reconnect_needed" && !m.planPausedAt,
+  );
   if (broken.length === 0) return null;
   return (
     <div role="alert" className="sa-inverted flex flex-col gap-3 rounded-xl p-4">

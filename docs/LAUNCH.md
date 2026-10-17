@@ -6,11 +6,14 @@ goes straight into Vercel, Google or Stripe and is never written here, in chat o
 
 Where a step says "the engineers", they do that part and tell you when it's done. Everything else
 here is yours to do or decide: merging, deploying and every other switch. Engineering details live
-in [SETUP.md](SETUP.md); this page links to it where a step needs more.
+in [SETUP.md](SETUP.md); this page links to it where a step needs more. Every outside account
+(its plan, the limit that bites and whose login holds it) is listed in [VENDORS.md](VENDORS.md).
 
 Contents:
 
-- [Check your Neon plan now (this week)](#check-your-neon-plan-now-this-week)
+- [Check your free plans now (this week)](#check-your-free-plans-now-this-week)
+- [Protect main (before the next merge)](#protect-main-before-the-next-merge)
+- [Hold production for CI (right after Protect main)](#hold-production-for-ci-right-after-protect-main)
 - [Start your sales tax registration now (it takes days)](#start-your-sales-tax-registration-now-it-takes-days)
 - [Add your terms link in Stripe (right after step 1)](#add-your-terms-link-in-stripe-right-after-step-1)
 - [0. Start now: Google verification (takes weeks)](#0-start-now-google-verification-takes-weeks)
@@ -28,7 +31,14 @@ Contents:
 - [12. Smoke test after each production deploy](#12-smoke-test-after-each-production-deploy)
 - [13. Decisions waiting on you](#13-decisions-waiting-on-you)
 
-## Check your Neon plan now (this week)
+## Check your free plans now (this week)
+
+Several outside accounts are on free plans whose limits can stop the app or break a rule. Each item
+below says where to look and what the numbers mean. The numbers are the engineers' estimates from
+each company's published pages, not quotes. Every account, its plan and its limit are listed in
+[VENDORS.md](VENDORS.md).
+
+### Neon (the database)
 
 **A money decision, and it can't wait for the launch.** The app checks every connected Gmail for
 new mail every 5 minutes, and each check uses the database. Neon only lets a database sleep after
@@ -53,6 +63,115 @@ something Neon has told us.
 - Worked when: you know which plan production is on and how much it has used this period, and
   either it's on Launch or you've chosen to stay on Free knowing it may pause mid-month. Tell the
   engineers which.
+
+### Inngest (background jobs)
+
+Every sync, sort, draft, follow-up and morning email is an Inngest job. Inngest's free plan pauses
+**every** job once the account reaches 50,000 executions in a month; nothing then syncs, sorts or
+drafts until the next month. On October 16 the account showed 21,029 executions since October 1,
+with one shop.
+
+- Where: vercel.com → the `sa` project → **Integrations** → **Inngest** → open the Inngest
+  dashboard → **Billing** or **Usage** (check the page names there; they may differ).
+- What the numbers mean: this month's execution count against the 50,000 limit. At October's pace
+  one shop uses about 40,000 a month, so a second shop would pass the limit. The paid plan's price
+  is on the same page.
+- Paste: nothing.
+- Worked when: you know this month's count and the plan, and either it's on a paid plan or you've
+  chosen to stay on free knowing jobs stop at 50,000. Tell the engineers which.
+
+### Vercel (hosting)
+
+The `sa` team is on Vercel's **Hobby** (free) plan. Vercel's fair-use rules say Hobby is for
+non-commercial use only, and taking payments is commercial, so the app needs **Pro** (about $20 a
+month per team member) before real customers pay.
+
+- Where: vercel.com → your team → **Settings** → **Billing**.
+- What the numbers mean: the page shows Hobby or Pro. Pro is needed for commercial use; it also
+  lifts limits (Vercel's own pages list them).
+- Paste: nothing.
+- Worked when: Billing shows Pro, or you've decided when to switch (before the first paying
+  customer). Tell the engineers.
+
+### Resend (the app's emails)
+
+Resend's free plan sends at most 100 emails a day and 3,000 a month. Past that, invites, morning
+summaries and Gmail-access alerts stop until the next day or month.
+
+- Where: resend.com → **Settings** → **Billing** or **Usage** (check the page names there; they
+  may differ).
+- What the numbers mean: today's and this month's sent counts against 100 a day and 3,000 a month.
+  Each shop gets about one morning email a day plus a few others, so the daily limit is reached
+  somewhere past 50 shops.
+- Paste: nothing.
+- Worked when: you know the plan and this month's count, and when you'd move to a paid plan.
+
+### Anthropic (the AI)
+
+The AI runs on prepaid credit with a monthly spend limit. If the credit runs out or the limit is
+reached, sorting and drafting stop for every shop.
+
+- Where: console.anthropic.com → **Settings** → **Billing** (the credit balance) and **Limits**
+  (the monthly spend limit). Check the page names there; they may differ.
+- What the numbers mean: the balance left and how close this month's spend is to the limit.
+  `/admin/costs` shows what each shop costs per month.
+- Paste: nothing.
+- Worked when: you know the balance and the limit, and auto-reload or a reminder is set so the
+  credit never runs out.
+
+## Protect main (before the next merge)
+
+**Today anything can reach production without a green CI.** GitHub shows `main` as unprotected,
+and Vercel builds production from every push to `main` straight away: a merge whose checks fail
+goes live anyway, and a direct push skips review. A ruleset makes GitHub refuse both. Only you can
+set it: it needs the repository's admin rights, which the engineers don't have.
+
+- Where: github.com → the `ContentCEO/SA` repository → **Settings** → **Rules** → **Rulesets** →
+  **New ruleset** → **New branch ruleset**.
+- Then:
+  1. Ruleset name: `Protect main`. Enforcement status: **Active**.
+  2. Target branches → **Add target** → **Include by pattern** → type `main` → **Add inclusion
+     pattern**.
+  3. Under Rules, tick **Restrict deletions** and **Block force pushes** (leave them ticked).
+  4. Tick **Require a pull request before merging** (the other boxes under it can stay as they
+     are).
+  5. Tick **Require status checks to pass** → **Add checks** → type `check` → pick it. Do the same
+     for `old-code-new-schema` (it only shows up after it has run once on a pull request; add it
+     then if it isn't listed yet).
+  6. **Create**.
+- What the names mean: `check` is the main CI job (lint, format, types, unit tests, build, browser
+  tests) and `old-code-new-schema` runs the live code's tests against a branch's new database
+  migrations. They're the job names in `.github/workflows/ci.yml`; renaming a job there means
+  changing it here too.
+- Paste: nothing.
+- Worked when: Rulesets lists `Protect main` as Active, and a pull request into `main` shows
+  "Merging is blocked" until `check` (and `old-code-new-schema`) are green.
+
+## Hold production for CI (right after Protect main)
+
+Vercel starts a production build the moment something lands on `main`, without waiting for CI.
+Vercel's **Deployment Checks** hold each production deployment until the GitHub checks you pick
+have passed, and only then put it on the production address.
+
+- Where: vercel.com → the `sa` project → **Settings** → **Build and Deployment** → **Deployment
+  Checks** → **Add Checks**.
+- Then: first check Settings → **Environments** → **Production** has automatic aliasing for
+  production turned on (Vercel's docs ask for it). Back in Deployment Checks → **Add Checks** →
+  provider **GitHub** → search for `check` → select it → save. Pick only `check`: the
+  `old-code-new-schema` job runs on pull requests, not on `main`, so production would wait for it
+  forever.
+- What it means: production deployments are still built, but aren't put live until `check` has
+  passed. A deployment can be pushed live anyway with **Force Promote** on its page (emergencies
+  only). Vercel's docs say the hold applies to the project's custom production domains, so it may
+  only take full effect once the production domain is bought (step 5); until then, check what a
+  test deployment does on `sa-dac3.vercel.app`.
+- If your plan doesn't offer it (Vercel's docs page doesn't name the plans; the team is on Hobby
+  today): leave Vercel's automatic production deploys on as they are and rely on
+  [Protect main](#protect-main-before-the-next-merge). Nothing reaches `main` before `check` is
+  green, so production only builds code that passed.
+- Paste: nothing.
+- Worked when: Deployment Checks lists `check`, and the next production deployment shows it
+  waiting for checks before going live (or you've noted that your plan doesn't offer it).
 
 ## Start your sales tax registration now (it takes days)
 
@@ -449,6 +568,31 @@ Also: Vercel → sa → Settings → Environment Variables → keep **"Automatic
 Environment Variables"** on. Preview addresses and the safety switch that keeps test mode off on
 every Vercel deploy depend on it.
 
+**The preview guard (code, Check 26 P2).** The app can refuse to run a preview that is pointed at
+production: on a preview, before it connects to the database or unlocks Gmail access, it compares
+a scrambled fingerprint (sha256) of the preview's database host, `TOKEN_ENCRYPTION_KEY` and
+`AUTH_SECRET` with production's. If one matches, the preview stops with "This preview is pointed at
+production. See docs/LAUNCH.md step 2." and its `/api/health` answers
+`{ ok: false, reason: "preview_uses_production" }`. Production, your computer and the tests are
+never blocked. The fingerprints live in `src/config/environment-guard.ts`
+(`PRODUCTION_DB_HOST_SHA256` and `PRODUCTION_KEY_SHA256S`); a fingerprint can't be turned back into
+the value, so it's safe in the code.
+
+- **To do (you, or the engineers with your okay):** the lists ship **empty**, so today the guard
+  blocks nothing. Either give the engineers production's fingerprints, or skip it: once 2a–2e are
+  done previews have their own database and keys, which is the real fix, and the guard is then
+  only a safety net. To make the fingerprints without showing anyone a value: on your computer, in
+  the project folder, pull production's settings into a file (`vercel env pull
+.env.production.local --environment=production`), run `pnpm fingerprint .env.production.local`,
+  send the engineers the three lines it prints (hashes only), then delete
+  `.env.production.local`.
+- **If production's database or keys change** (a new Neon host, or a new `TOKEN_ENCRYPTION_KEY` or
+  `AUTH_SECRET`): run `pnpm fingerprint` again the same way and have the engineers replace the old
+  hashes. The Neon password change in step 3 doesn't change the host, so it needs nothing.
+- Worked when: with the fingerprints in, a preview built with production's settings fails with the
+  message above and `/api/health` says `preview_uses_production`; after 2a–2e the preview starts
+  normally.
+
 ## 3. Change the passwords that were pasted in chat
 
 The Neon database password and the Google client secret were once pasted into a chat. Replace both.
@@ -653,7 +797,7 @@ test payment back afterwards.
   a test card back to unpaid, so they keep their data, can't send, and pay the setup fee for real
   at their next checkout (your own test account keeps sending). An account that was past due is
   switched back on: its new mail is sorted and drafted again (on your AI bill), but it still can't
-  send until it pays. ([Step 13](#13-decisions-waiting-on-you) asks whether that's okay.)
+  send until it pays. (You decided that on 2026-10-16: "let it be usable".)
 - Worked when: the notice says "Test payments reset for N accounts." and the card reads "Test
   payments: none left."; those accounts' cards now say **Setup paid**: Not yet. If it adds
   "Couldn't check M accounts. Tap again.", Stripe didn't answer for those: tap again (it's safe to
@@ -835,8 +979,7 @@ fixed.
 3. Connect Gmail (or check Settings → Your Gmail shows access is fine).
 4. Within about 5 minutes, **Inbox** shows mail sorted into categories and **Queue** shows a draft
    reply. Don't send anything to a real customer as a test.
-5. On a trial account (a second address of yours, invited in `/admin`): a draft card says "Sending
-   is off during your three days" and has no **Send reply** button.
+5. On a trial account (a second address of yours, invited in `/admin`): a draft card says "Send reply is off during your three days" and has no **Send reply** button.
 6. `/privacy` and `/terms`: no `{{` anywhere, and the support email is shown.
 7. `/admin` loads for you; signed in as anyone else it shows a 404 page ("This page could not be
    found.").
@@ -856,7 +999,10 @@ with the merge after the "I agree" one):
   draft shows "To: …". Leads already stored are checked again in the background; a waiting draft
   to a robot address is re-pointed (and flagged), and a reply already sent to one shows in
   Activity with "Send it again from Gmail." Autopilot never sends to a form's reply address.
-  Thumbtack and Angi relay addresses are still answered on the platform, as before.
+  Thumbtack and Angi relay addresses are still answered on the platform, as before — and
+  (leads package, after its privacy lines are approved) lead-website emails get their own card
+  with an **Open Thumbtack**-style button and no draft, voicemail emails get **Call back**, and
+  nothing is ever drafted or sent to an email-to-text address.
 - **Waitlist:** you get a "New waitlist sign-up" email (no name or address in it), and the person
   gets "You're on the Squared Away list" once (after step 6). Sign-ups and Growth requests record
   where they came from (link tags and the referring site), shown as "Came from" in `/admin`.
@@ -880,9 +1026,8 @@ with the merge after the "I agree" one):
 
 Waiting on you from that review (nothing here is built or changed until you say so):
 
-- Everything in its "Your calls" list: the trial side door (the app now says Squared Away won't
-  send to a customer during the trial; `docs/terms.md` and the privacy policy's trial sentence
-  still say "sending to customers is switched off", to be made to match once you decide), the
+- Everything in its "Your calls" list: the trial side door (decided 2026-10-16: it stays, and every
+  screen, email and both legal documents now say so; see "Decided on 2026-10-16"), the
   setup fee, the trial length, the terms' [To confirm] items, the hero line, the homepage test,
   the referral amount and any founding or association offer, an instant "got it" reply, more
   Google permissions, money in the morning email, Outlook and an app-store version.
@@ -896,6 +1041,54 @@ Waiting on you from that review (nothing here is built or changed until you say 
   in Google Search Console.
 - A booking calendar link for the confirmation email, if you want one (it needs an account).
 - Your picks from the review's 100 ideas.
+
+### Decided on 2026-10-16
+
+- **Homepage headline:** "Built for carpenters, plumbers, and electricians", in the hero, the
+  search and share descriptions and the share picture.
+- **The trial's side door stays.** During the three days Squared Away's own Send reply is off,
+  but the drafts are real Gmail drafts, so an owner can open one in Gmail and send it themselves.
+  Every place that describes the trial now says so in the same words: "During your three-day
+  trial, Squared Away won't send anything to a customer. Your drafts are in your Gmail Drafts
+  folder too, so you can send one from Gmail yourself if you want." That includes the trial
+  paragraph of `docs/terms.md` and the privacy policy's trial sentence. Both documents keep
+  today's date (2026-10-16), so nobody is asked to agree again; see "Still open" if you'd rather
+  they were.
+- **Trial emails: yes.** One short email on day 2 and on the last day ("Your trial ends today at
+  3:00 PM", with **Choose a plan**), and one a week after a trial ran out unpaid ("Your drafts are
+  still here"). Day 1 is the "your first drafts are ready" email that already existed. Counts
+  only, at or after the owner's morning-email hour in their own time zone, never at night, each
+  once. Every one has a **Stop these emails** link (and a switch in Settings → Morning email).
+  Like every email from the app they need Resend ([step 6](#6-morning-emails-from-your-own-domain-resend)).
+- **A lower plan pauses extra Gmail addresses, and the owner picks which.** When a plan covers
+  fewer Gmail addresses than are connected (your plan change in `/admin`, or a cheaper plan
+  chosen on Stripe's page), the oldest-connected stay on and the rest are paused: nothing in
+  them is read, sorted, drafted or sent, and nothing is deleted. Settings → Your Gmail says
+  "Paused: your plan covers 1 Gmail address." with **Use this one instead**. A bigger plan turns
+  them back on. The first 15-minute run after this ships does the same for any account that is
+  already over its plan's limit (an account with no plan yet counts as one address).
+- **Reset test payments and past-due accounts: let it be usable** (as built): the reset switches a
+  past-due test account back on (sorting and drafting resume, on your AI bill); it still can't send
+  until it really pays.
+- **"Why you lost it" has a fourth button, Other.**
+- **Say thanks for a paid invoice.** A paid row on Money offers **Say thanks** (instead of "Ask
+  for a review"): a short thank-you draft, with the review ask in the same note when every review
+  rule allows it (a review link on file, no complaint in 12 months, someone you've written to,
+  none asked in 12 months…). It counts as that customer's review request. Owner tap only, once per
+  conversation, and it waits for **Send reply** like every draft.
+- **Warm first replies: yes.** When someone you've never written to asks about a job, the draft
+  thanks them and asks only what's missing (or, if something is going wrong right now, asks for
+  the best number and the address). The card says what kind of first reply it is and offers
+  **Other ways to reply** (Ask a few questions / Offer to come take a look / Short and friendly).
+  Autopilot never sends a first reply to a new customer.
+- **Money in the morning email: yes.** "This month so far: $X in quotes you won · $Y in invoices
+  paid." and "Still owed to you: $Z on Money owed." — totals only, the same numbers as Activity.
+  Phone notifications and texts still carry no amounts.
+- **Emergencies, even at night: yes** (on by default, one switch in Settings → Notifications and
+  Text alerts). An email that sounds like an emergency reaches your phone right away, even
+  between 9pm and 7am: "An emergency email just came in." Once per conversation, at most 3 a
+  night and 6 a day. Texts need Twilio ([step 10](#10-optional-text-alerts-and-instant-gmail-notifications));
+  add the second sample message from `docs/SETUP.md` §6c to the A2P registration.
 
 ### Decided on 2026-10-15
 
@@ -1001,8 +1194,28 @@ Recorded here so nobody asks again.
 
 Nothing below is switched on or changed until you say so.
 
-- **Your Neon plan** ([check it this week](#check-your-neon-plan-now-this-week)): stay on Free
+- **Agreeing to the terms again (2026-10-16, merged 2026-10-17).** The terms' trial paragraph
+  now says the drafts can be sent from Gmail during the trial (it used to say only "sending to
+  customers is switched off"), and the terms and privacy policy gained lines for the trial
+  emails, paused Gmail addresses on a lower plan, warm first replies, money totals in the
+  morning email, emergency alerts (voicemails included), alerts being a convenience you
+  shouldn't rely on alone, and the Growth dashboard as a separate service. All are
+  clarifications or new optional features, so the date stayed at 2026-10-16 and nobody is asked
+  to agree again. If you want everyone to agree to the new wording, the engineers move the
+  documents' date and `TERMS_VERSION` together.
+- **Emergency voicemails alert too (your lead engineer's call at the merge, 2026-10-17).** A
+  voicemail or text message your phone service emails you (Google Voice sends them from a
+  "no-reply" address) now reaches your phone at night when it sounds like an emergency. Other
+  "no-reply" senders (alarm companies, form robots without the customer's address) still never
+  alert. The alert goes only to your phone; the caller gets nothing from the app. Say if you'd
+  rather voicemails waited like other email.
+
+- **Your Neon plan** ([check it this week](#check-your-free-plans-now-this-week)): stay on Free
   (production may pause mid-month) or move to Launch (about $19–20 a month).
+- **Your Inngest plan** ([check it this week](#inngest-background-jobs)): the free plan pauses
+  every job at 50,000 executions a month; one shop already uses about 40,000.
+- **Vercel Pro** ([check it this week](#vercel-hosting)): Hobby is for non-commercial use only;
+  move to Pro (about $20 a month) before the first paying customer.
 - **Terms: the three [To confirm] items.** The wording in `docs/terms.md` stays as it is until
   you pick. Recommended (option A for each):
   - Refunds: monthly plans can be cancelled any time and stay on to the end of the paid month, with
@@ -1043,11 +1256,6 @@ Nothing below is switched on or changed until you say so.
   the tool for A&C Construction's own inbox." Keep that, or tell the engineers what it should say.
   Unlike the rest of this list, it goes live with the merge ([step 1](#1-merge-the-launch-branch)).
   Your photo and the license line are separate (under "Still needed from you").
-- **Reset test payments and past-due accounts.** As built, an account whose test-card renewal had
-  failed (past due: nothing new is read or drafted) is switched back on by the reset: its new mail
-  is sorted and drafted again, on your AI bill, though it still can't send until it pays. Okay?
-  The other way is to keep it read-only until it pays (a small code change). It only matters if a
-  test account is past due when you reach [step 7c](#7-stripe-live-mode).
 - **Deleted owners:** Delete my account also removes their invite, so someone who deletes their
   account needs a new invite from `/admin` to come back (if they were invited from their
   waitlist entry, that card then says the invite is gone and shows "Invite … again"; otherwise
@@ -1055,12 +1263,26 @@ Nothing below is switched on or changed until you say so.
 - **PDF quotes:** a quote sent only as an attached PDF (no `$` in the email) isn't counted as a
   price given, so "Let's do it" isn't marked Won automatically and gets no deposit draft. You can
   still tap Won. Change it only if you want it.
-- **Growth, still open:** a written agreement (Growth terms of service); a Settings link to
-  `/growth` for signed-in owners; a Remove button in `/admin` for waitlist entries and Growth call
-  requests (Delete my account keeps them, as a separate service, and removing one on request is
-  done by hand in the database for now; the policy says "ask us and we'll delete it"); and whether
-  a Growth call request should ever carry a referral (today only an app waitlist sign-up from the
-  link does). No tracking pixels on `/growth` without a privacy-policy change.
+- **Growth, still open:** whether a Growth call request should ever carry a referral (today only
+  an app waitlist sign-up from the link does); no tracking pixels on `/growth` without a
+  privacy-policy change. Built on 2026-10-16 (ships with its merge): the Growth client dashboard,
+  the "You own everything" pledge, the More screen's Growth line, and Remove on a waitlist card's
+  Growth request.
+- **Growth agreement: a lawyer's review.** The draft is [docs/growth-agreement.md](growth-agreement.md)
+  ("not legal advice"). Bring it with the app's terms. Its **[To confirm]** items are yours: who
+  signs (you or an LLC), the notice to cancel, refunds, the liability limit, the hand-back time,
+  and Massachusetts law and courts.
+- **Growth prices.** Nothing on the site or in the app shows a Growth price, and nothing will
+  until you pick them: the monthly fee, any setup or website fee, and whether a website has a
+  minimum term (all **[To confirm]** in the agreement draft).
+- **How to start a Growth client** (no decision needed, just the steps): open `/admin` → Growth
+  clients (its own page, `/admin/growth`). If they already have an account, tap **Start Growth for this account**, pick it, tick
+  the services, set the start date and their time zone. If not, use **Invite to Growth** (or
+  the same button on their waitlist card's Growth request); they get an email with the sign-in
+  link, and while the Google app is in Testing add them as a Google test user too (the list
+  under Invite an owner). Signing in never starts an app trial. After each monthly check-in,
+  open **Monthly numbers** and fill in what they told you; use **Post an update** for news
+  (they get one email with the title and a link). Their dashboard shows only what you enter.
 - **Gmail draft check (counts only, for the engineers):** whether Gmail keeps a draft's id when
   it's sent. The app is safe either way. The query is in [step 1](#1-merge-the-launch-branch);
   run it **before merging**: after the merge it always reads 0.
@@ -1073,7 +1295,7 @@ Nothing below is switched on or changed until you say so.
 - The `ANTHROPIC_API_KEY` repository secret for the "Prompt evals" GitHub action.
 - Your Massachusetts sales tax registration: start it now (it takes days;
   [details](#start-your-sales-tax-registration-now-it-takes-days)), then [step 7e](#7-stripe-live-mode).
-- The Neon plan check ([this week](#check-your-neon-plan-now-this-week)).
+- The Neon plan check ([this week](#check-your-free-plans-now-this-week)).
 - The `sa-preview` Neon project and its pooled string ([step 2](#2-give-previews-their-own-database)).
 - The phone-notification keys ([step 9](#9-phone-notifications-vapid-keys)); the engineers can make
   and add them if you say so.

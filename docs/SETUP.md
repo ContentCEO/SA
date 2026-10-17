@@ -85,6 +85,10 @@ pnpm build
 pnpm test:e2e       # browser tests against the production build (see §1 step 8 and §3)
 ```
 
+Several builder sessions often run at once. Before starting one, read "Working in parallel" in
+`CLAUDE.md` (branch names, one migration at a time, notes in `docs/notes/`) and find the step in
+`docs/BUILD-ORDER.md`.
+
 ## 3. End-to-end tests with fake Google and Anthropic
 
 The browser tests drive the real app (`pnpm start`, the production build) against local fakes of
@@ -142,6 +146,9 @@ In a sandbox with a preinstalled Chromium:
 `PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-browsers/chromium pnpm test:e2e`.
 
 ## 4. Environment variables
+
+Every outside account behind these settings (its plan, the limit that bites and whose login holds
+it) is listed in [VENDORS.md](VENDORS.md).
 
 Every variable the code reads. "Environments" says where it belongs in Vercel (Settings →
 Environment Variables); a change there needs a redeploy. Previews and production share one
@@ -244,14 +251,20 @@ or query strings, user reduced to an id, email addresses masked. No tracing or s
 
 Owners can opt in to a text when a new quote request or an email that needs them arrives. Texts
 are counts plus a link only (no names, no email text), confirmed with a 6-digit code, quiet from
-9pm–7am in the owner's time zone, max one per 10 minutes and 10 a day. Costs: about $1.15/month
+9pm–7am in the owner's time zone, max one per 10 minutes and 10 a day. An emergency email (a leak,
+no heat, no power, a gas smell) is the one exception while the owner leaves "Emergencies, even at
+night" on (it's on by default): "An emergency email just came in." right away, night or day, once
+per conversation, at most 3 a night and 6 a day (phone notifications follow the same switch). A
+voicemail or text message emailed by a phone service (Google Voice) counts, though its sender is
+no-reply. Costs: about $1.15/month
 for the number plus about $0.01 per text, and a one-time US carrier (A2P 10DLC) registration.
 
 1. twilio.com → sign up → upgrade the account (add a card).
 2. Phone Numbers → Buy a number (local, SMS-capable).
 3. Messaging → Regulatory compliance → **A2P 10DLC**: register the brand (your business) and a
    campaign. Use case "Account notifications"; sample message
-   `Squared Away: 1 new quote request needs you. Open: https://…/queue`; opt-in = "the business
+   `Squared Away: 1 new quote request needs you. Open: https://…/queue` (and a second one,
+   `Squared Away: An emergency email just came in. Open: https://…/queue`); opt-in = "the business
    owner enters their own mobile number in Settings and confirms a texted code". Approval takes
    days; texts may be blocked by carriers until it's approved.
 4. Messaging → Services → Create → add the number to the service. Opt-out (STOP/HELP) handling is
@@ -428,6 +441,12 @@ The digest is sent through Resend's HTTP API (`src/lib/email.ts`). Without `RESE
 4. Put both in Vercel (Production) and redeploy.
 
 The digest carries counts and categories only — no customer names, subjects or email text.
+
+The trial emails (2026-10-16, `src/server/trial-emails.ts`: day 2, the last day, and one a week
+after an unpaid trial ends) use the same key and sender, counts only, from the 15-minute
+lifecycle job. Each carries a one-click "Stop these emails" link signed with `AUTH_SECRET`
+(rotating it makes old links land on "that link didn't work"; owners can still switch them off in
+Settings → Morning email).
 
 The same key and sender also carry the waitlist emails (`src/server/waitlist-emails.ts`): a
 content-free "New waitlist sign-up" notice to `ADMIN_EMAIL`, and one "You're on the Squared Away

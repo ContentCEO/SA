@@ -4,6 +4,7 @@ import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { z } from "zod";
 import { holdAutopilot } from "@/server/autopilot";
+import { isOpeningTweak } from "@/ai/prompts/opening-tweaks.v1";
 import { isTweak } from "@/ai/prompts/revise.v2";
 import { draftSendQueued, enqueue } from "@/jobs/client";
 import { isBatchCategory } from "@/server/batch-rules";
@@ -66,11 +67,13 @@ export async function sendDraftAction(formData: FormData) {
       redirect("/queue?error=gaps");
     case "no_reply_address":
       redirect("/queue?error=no_reply_address");
+    case "text_address":
+      redirect("/queue?error=textaddr");
     case "deleted_in_gmail":
       redirect("/queue?error=deleted");
     case "reconnect_needed":
       redirect("/queue?error=reconnect");
-    case "inbox_paused":
+    case "mailbox_paused":
       redirect("/queue?error=paused");
     case "not_found":
       redirect("/queue?error=gone");
@@ -103,7 +106,7 @@ export async function practiceSendAction(formData: FormData) {
   }
   if (r.status === "sent") redirect(`/queue?done=practice&left=${r.left}`);
   redirect(
-    `/queue?error=${r.status === "limit" ? "practice_limit" : r.status === "reconnect_needed" ? "reconnect" : "unknown"}`,
+    `/queue?error=${r.status === "limit" ? "practice_limit" : r.status === "reconnect_needed" ? "reconnect" : r.status === "mailbox_paused" ? "paused" : "unknown"}`,
   );
 }
 
@@ -170,7 +173,9 @@ export async function saveDraftEditAction(formData: FormData) {
       ? "/queue?done=saved"
       : r === "deleted_in_gmail"
         ? "/queue?error=deleted"
-        : "/queue?error=unknown",
+        : r === "mailbox_paused"
+          ? "/queue?error=paused"
+          : "/queue?error=unknown",
   );
 }
 
@@ -209,25 +214,34 @@ export async function draftReplyAction(formData: FormData) {
     gmail_busy: "gmail_busy",
     reply_to_unread: "reply_to_unread",
     no_reply_address: "no_reply_address",
+    text_address: "textaddr",
+    lead_site: "leadsite",
+    phone_message: "phonemsg",
+    mailbox_paused: "paused",
   };
   redirect(`/queue?error=${reasons[r.reason] ?? "draftfailed"}`);
 }
 
-/** Quick tweak chips (plan #3) and "Say a change" (plan #4). Rewrites the draft; never sends. */
+/**
+ * Quick tweak chips (plan #3), "Say a change" (plan #4) and, on a first reply to a new lead,
+ * "Other ways to reply" (replies package). Rewrites the draft; never sends.
+ */
 export async function reviseDraftAction(formData: FormData) {
   const { workspace } = await requireOwner();
   const draftId = id.safeParse(formData.get("draftId"));
   if (!draftId.success) redirect("/queue?error=unknown");
   const tweak = formData.get("tweak");
+  const opening = formData.get("opening");
   const spoken = z.string().trim().min(2).max(500).safeParse(formData.get("spoken"));
-  if (!isTweak(tweak) && !spoken.success) redirect("/queue?error=unknown");
+  if (!isTweak(tweak) && !isOpeningTweak(opening) && !spoken.success)
+    redirect("/queue?error=unknown");
   if (!(await hitLimit("revise", workspace.id)).allowed) redirect("/queue?error=busy");
   let r;
   try {
     r = await reviseDraft(
       workspace.id,
       draftId.data,
-      isTweak(tweak) ? { tweak } : { spoken: spoken.data! },
+      isTweak(tweak) ? { tweak } : isOpeningTweak(opening) ? { opening } : { spoken: spoken.data! },
     );
   } catch (err) {
     if (err instanceof ReadOnlyError) redirect("/queue?error=readonly");
@@ -239,7 +253,9 @@ export async function reviseDraftAction(formData: FormData) {
     capped: "capped",
     deleted_in_gmail: "deleted",
     reconnect_needed: "reconnect",
+    mailbox_paused: "paused",
     not_found: "unknown",
+    not_first_contact: "unknown",
   };
   redirect(r.status === "revised" ? "/queue?done=revised" : `/queue?error=${errors[r.status]}`);
 }

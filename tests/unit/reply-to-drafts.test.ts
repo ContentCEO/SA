@@ -216,6 +216,8 @@ describe("drafting to the customer's reply address", () => {
 });
 
 describe("no-reply addresses", () => {
+  // Leads package: a lead website's robot is now refused as `lead_site` (before the no-reply
+  // rule); the card offers "Open Angi" instead.
   it("an Angi-style lead (no-reply From, no Reply-To): jobs skip it before the model", async () => {
     const { thread } = await lead({
       from: "noreply@angi.com",
@@ -226,7 +228,7 @@ describe("no-reply addresses", () => {
     setModelTransportForTests(transport);
     expect(await createDraftForThread(thread.id, { trigger: "auto", ...deps() })).toEqual({
       status: "skipped",
-      reason: "no_reply_address",
+      reason: "lead_site",
     });
     expect(calls).toHaveLength(0);
   });
@@ -241,7 +243,7 @@ describe("no-reply addresses", () => {
     setModelTransportForTests(transport);
     expect(
       await createDraftForThread(thread.id, { trigger: "owner", workspaceId, ...deps() }),
-    ).toEqual({ status: "skipped", reason: "no_reply_address" });
+    ).toEqual({ status: "skipped", reason: "lead_site" });
     expect(calls).toHaveLength(0);
     expect(writer.calls).not.toContain("createDraft");
   });

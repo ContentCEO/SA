@@ -474,6 +474,7 @@ test.describe("homepage: the way into Squared Away Growth", () => {
       "Introducing Squared Away Growth",
       "Squared Away Growth",
       "What we take on",
+      "You own everything",
       "How Growth works",
       "Ground rules",
       "Growth questions",
@@ -1239,17 +1240,23 @@ test("admin: Growth requests and app sign-ups side by side; Growth-only is never
   await expect(b.getByText("Growth call", { exact: true })).toBeVisible();
   await expect(b.getByText("App waitlist", { exact: true })).toHaveCount(0);
   await expect(b).toContainText(
-    "Not on the app waitlist. A Growth call never invites anyone to the app.",
+    "Not on the app waitlist. Asking for a Growth call never invites anyone.",
   );
   await expect(b).toContainText("Wants help with: Google ads, Reviews");
-  await expect(b.getByRole("button")).toHaveCount(0);
+  // No app invite on a Growth-only row: only the explicit Growth controls.
+  await expect(b.getByRole("button", { name: /^Invite Sam/ })).toHaveCount(0);
+  await expect(b.locator("summary", { hasText: /^Invite to Growth$/ })).toBeVisible();
+  await expect(b.locator("summary", { hasText: /^Remove Growth request$/ })).toBeVisible();
   await expect(b).not.toContainText("growth-only");
   await expect(page.getByText("Earlier request")).toHaveCount(0);
 
   // A posted invite for a Growth-only email (e.g. a stale page) invites nobody and says why.
-  await a.locator('input[name="email"]').evaluate((el, v) => {
-    (el as HTMLInputElement).value = v;
-  }, only);
+  await a
+    .locator("form", { has: page.getByRole("button", { name: "Invite Rosa" }) })
+    .locator('input[name="email"]')
+    .evaluate((el, v) => {
+      (el as HTMLInputElement).value = v;
+    }, only);
   await a.getByRole("button", { name: "Invite Rosa" }).click();
   await expect(page).toHaveURL(/\/admin\?error=growth_only#waitlist$/);
   await expect(

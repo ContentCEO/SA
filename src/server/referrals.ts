@@ -1,7 +1,7 @@
 import "server-only";
 import { and, asc, eq, exists, inArray, isNotNull, isNull, not, or, sql } from "drizzle-orm";
 import type Stripe from "stripe";
-import { mailboxLimitFor, planAbove, pricing, type PlanId } from "@/config/pricing";
+import { planAbove, pricing, type PlanId } from "@/config/pricing";
 import { db } from "@/db";
 import {
   activityLog,
@@ -46,12 +46,9 @@ import {
   referralReward,
   referredEmailHash,
 } from "./referral-rules";
+import { fitMailboxesToPlan } from "./mailbox-plan";
 import { workspaceTimeZone } from "./snooze";
-import {
-  autopilotPlanEffects,
-  inboxLimitEffects,
-  resumeOverPlanInboxes,
-} from "./workspace-lifecycle";
+import { autopilotPlanEffects } from "./workspace-lifecycle";
 
 /**
  * Plan #47 referrals (behind FEATURE_REFERRALS). Offer A: the referrer's next month free, one
@@ -592,7 +589,7 @@ async function startFreeMonth(row: Row, w: W, sub: Sub, inv: Stripe.Invoice, now
       .update(workspaces)
       .set({ freePlan, freePlanUntil: endsAt })
       .where(eq(workspaces.id, w.id));
-    await resumeOverPlanInboxes(w.id, now, tx);
+    await fitMailboxesToPlan(w.id, now, tx);
     await logActivity(
       w.id,
       "referral_free_month_started",
@@ -756,12 +753,10 @@ async function syncBilledPlan(row: Row, w: W, sub: Sub, now: Date) {
   const billed = planFromLookupKey(item?.price?.lookup_key);
   if (!billed) return;
   if (billed !== w.plan) {
-    const movedDown = mailboxLimitFor(billed) < mailboxLimitFor(w.plan);
     await db().transaction(async (tx) => {
       await tx.update(workspaces).set({ plan: billed }).where(eq(workspaces.id, w.id));
       await autopilotPlanEffects(w.id, now, tx);
-      if (movedDown) await inboxLimitEffects(w.id, now, tx);
-      await resumeOverPlanInboxes(w.id, now, tx);
+      await fitMailboxesToPlan(w.id, now, tx);
     });
   }
   // The Keep record follows Stripe; a change the owner didn't tap here is never "you chose".
@@ -808,7 +803,7 @@ async function endFreeMonth(row: Row, w: W, now: Date): Promise<boolean> {
       .where(eq(workspaces.id, w.id))
       .returning({ plan: workspaces.plan });
     await autopilotPlanEffects(w.id, now, tx);
-    await inboxLimitEffects(w.id, now, tx);
+    await fitMailboxesToPlan(w.id, now, tx);
     await logActivity(
       w.id,
       "referral_free_month_ended",
@@ -1282,8 +1277,7 @@ async function changePlan(
       tx,
     );
     await autopilotPlanEffects(w.id, now, tx);
-    await inboxLimitEffects(w.id, now, tx);
-    await resumeOverPlanInboxes(w.id, now, tx);
+    await fitMailboxesToPlan(w.id, now, tx);
   });
   return keep
     ? { status: "kept", plan: keep.plan, priceCents: keep.priceCents, from: keep.firstChargeAt }
@@ -1354,7 +1348,7 @@ export async function freeMonthView(workspaceId: string): Promise<FreeMonthView>
       db()
         .select({ id: mailboxes.id })
         .from(mailboxes)
-        .where(and(eq(mailboxes.workspaceId, workspaceId), isNull(mailboxes.pausedReason))),
+        .where(and(eq(mailboxes.workspaceId, workspaceId), isNull(mailboxes.planPausedAt))),
       db()
         .select({ category: rules.category })
         .from(rules)
@@ -1428,7 +1422,7 @@ export async function clearTestModeRewards(now: Date = new Date()): Promise<numb
         .set({ freePlan: null, freePlanUntil: null })
         .where(eq(workspaces.id, id));
       await autopilotPlanEffects(id, now, tx);
-      await inboxLimitEffects(id, now, tx);
+      await fitMailboxesToPlan(id, now, tx);
     }
     return gone.length;
   });

@@ -12,6 +12,7 @@ import {
   localFunctions,
   otherExports,
   parse,
+  parseText,
   rel,
   ROOT,
   sourceFiles,
@@ -238,6 +239,8 @@ describe("C2: admin pages 404 for everyone else, and nothing streams a 200 first
       ADMIN,
       join(APP, "(app)", "customers", "[key]"),
       join(APP, "(app)", "record", "[draftId]"),
+      // Squared Away Growth: anyone who isn't an active or paused client gets a 404.
+      join(APP, "my-growth"),
     ];
     const loadings = ALL.filter((f) => NEXT_FILE("loading").test(f));
     for (const dir of mustNotFound) {
@@ -262,6 +265,7 @@ describe("C3: every route handler is in the table with the guard it uses", () =>
     | "inngest-signature" // the Inngest SDK's signing key check
     | "e2e-hook" // local e2e only: 404 unless e2e mode + ≥32-char secret (the e2e app is bound to loopback in playwright.config.ts)
     | "authjs" // Auth.js's own handlers
+    | "signed-link" // a link we emailed: HMAC over the id with AUTH_SECRET, constant-time, first
     | "public"; // static, reads nothing private
   const ROUTES: Record<string, Guard> = {
     "src/app/api/badge/route.ts": "session",
@@ -274,6 +278,7 @@ describe("C3: every route handler is in the table with the guard it uses", () =>
     "src/app/api/test-hooks/run/route.ts": "e2e-hook",
     "src/app/api/auth/[...nextauth]/route.ts": "authjs",
     "src/app/api/health/route.ts": "public",
+    "src/app/api/emails/stop/route.ts": "signed-link",
     "src/app/app-icon/[size]/route.tsx": "public",
   };
   const routeFiles = routeFilesIn(ALL).map(rel);
@@ -348,6 +353,24 @@ describe("C3: every route handler is in the table with the guard it uses", () =>
           const [post] = handlers(file);
           expect(firstStatement(post!.fn)).toBe("const secret = e2eHookSecret();");
           expect(src).toContain('secretMatches(secret, request.headers.get("x-e2e-hook-secret"))');
+          break;
+        }
+        case "signed-link": {
+          // Trial emails' "Stop these emails" (2026-10-16): the signature is checked first, and
+          // the only thing the route can do is switch trial emails off.
+          const hs = handlers(file);
+          expect(hs.map((h) => h.name).sort()).toEqual(["GET", "POST"]);
+          for (const h of hs)
+            expect(firstStatement(h.fn), h.name).toBe(
+              "const link = verifiedStopLink(request.nextUrl.searchParams);",
+            );
+          expect(readFileSync("src/server/trial-email-links.ts", "utf8")).toContain(
+            "timingSafeEqual",
+          );
+          expect(src.match(/await [a-zA-Z.]+\(/g)).toEqual([
+            "await stopTrialEmails(",
+            "await stopTrialEmails(",
+          ]);
           break;
         }
         case "authjs":
@@ -1186,5 +1209,122 @@ describe("Secrets at rest (re-confirmed in the M11 audit)", () => {
     expect(src).toContain("const value = encryptSecret(endpoint.secret);");
     expect(src).toContain(".values({ key: WEBHOOK_SECRET_KEY, value })");
     expect(src).toContain("return row ? decryptSecret(row.value) : null;");
+  });
+});
+
+/**
+ * Check 31 P1: the core promise ("nothing leaves the inbox without the owner's okay") rests on
+ * the only two Gmail send calls: writer.sendDraft inside sendDraft (behind canSend) and
+ * writer.sendMessage inside practiceSend (to the owner only, checked by onlyToOwner). A third
+ * call fails here. A new send path needs Davi's okay and a new row in SEND_SITES.
+ */
+describe("Only two places can send mail", () => {
+  const SEND_METHODS = new Set(["sendDraft", "sendMessage"]);
+  /** file → enclosing function, with the reason it may send. */
+  const SEND_SITES: Array<{ site: string; why: string }> = [
+    {
+      site: "src/server/drafts.ts → sendDraft",
+      why: "the owner's tap (or earned autopilot), behind canSend and every send check",
+    },
+    {
+      site: "src/server/practice.ts → practiceSend",
+      why: "a practice copy to the owner's own address only, checked by onlyToOwner",
+    },
+  ];
+  /** Where the writer methods and their types are defined. */
+  const DEFINED_IN = (file: string) => file.startsWith("src/mailbox/");
+
+  /** The nearest named function around a node ("(top level)" if none). */
+  function enclosingName(n: ts.Node): string {
+    for (let p: ts.Node | undefined = n.parent; p; p = p.parent) {
+      if ((ts.isFunctionDeclaration(p) || ts.isMethodDeclaration(p)) && p.name) {
+        return p.name.getText();
+      }
+      if (
+        (ts.isArrowFunction(p) || ts.isFunctionExpression(p)) &&
+        ts.isVariableDeclaration(p.parent) &&
+        ts.isIdentifier(p.parent.name)
+      ) {
+        return p.parent.name.text;
+      }
+    }
+    return "(top level)";
+  }
+
+  /**
+   * Every use of a writer send method in a file: `x.sendDraft`, `x?.sendMessage`,
+   * `x["sendMessage"]`, and `const { sendMessage } = x` (called or not: a method passed along
+   * can be called anywhere).
+   */
+  function sendUses(sf: ts.SourceFile): string[] {
+    const out: string[] = [];
+    walk(sf, (n) => {
+      const hit =
+        (ts.isPropertyAccessExpression(n) && SEND_METHODS.has(n.name.text)) ||
+        (ts.isElementAccessExpression(n) &&
+          ts.isStringLiteralLike(n.argumentExpression) &&
+          SEND_METHODS.has(n.argumentExpression.text)) ||
+        (ts.isBindingElement(n) && SEND_METHODS.has((n.propertyName ?? n.name).getText()));
+      if (hit) out.push(enclosingName(n));
+    });
+    return out;
+  }
+
+  /** String literals naming a Gmail send endpoint. */
+  function sendEndpoints(sf: ts.SourceFile): string[] {
+    const out: string[] = [];
+    walk(sf, (n) => {
+      if (
+        (ts.isStringLiteralLike(n) || ts.isTemplateLiteralToken(n)) &&
+        /\/(messages|drafts)\/send/.test(n.text)
+      ) {
+        out.push(n.text);
+      }
+    });
+    return out;
+  }
+
+  it("finds exactly the two allowed send calls in src/", () => {
+    const found: string[] = [];
+    for (const f of ALL) {
+      const file = rel(f);
+      if (DEFINED_IN(file)) continue;
+      for (const fn of sendUses(parse(f))) found.push(`${file} → ${fn}`);
+    }
+    expect(found.sort()).toEqual(SEND_SITES.map((s) => s.site).sort());
+    for (const s of SEND_SITES) expect(s.why.length, s.site).toBeGreaterThan(10);
+  });
+
+  it("names Gmail's send endpoints only in the Gmail client", () => {
+    const found: string[] = [];
+    for (const f of ALL) {
+      const file = rel(f);
+      for (const text of sendEndpoints(parse(f))) found.push(`${file}: ${text}`);
+    }
+    expect(found.map((x) => x.split(":")[0]).every((f) => f === "src/mailbox/gmail/api.ts")).toBe(
+      true,
+    );
+    expect(found.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("self-test: catches the four call shapes, and the endpoint strings", () => {
+    const uses = (code: string) => sendUses(parseText("fixture.ts", code));
+    expect(uses("async function quickReply(obj) { await obj.sendMessage(x); }")).toEqual([
+      "quickReply",
+    ]);
+    expect(uses("const fire = async (w) => { await w.sendDraft(id); };")).toEqual(["fire"]);
+    expect(
+      uses("function nudge(writer) { const { sendMessage } = writer; return sendMessage(x); }"),
+    ).toEqual(["nudge"]);
+    expect(uses("async function maybe(writer) { await writer?.sendDraft(id); }")).toEqual([
+      "maybe",
+    ]);
+    expect(uses('async function odd(w) { await w["sendMessage"](x); }')).toEqual(["odd"]);
+    expect(uses("const s = { sendMessage: 1 }; send(s);")).toEqual([]);
+    expect(
+      sendEndpoints(
+        parseText("f.ts", 'fetch(base + "/messages/send"); fetch(`${b}/drafts/send`);'),
+      ),
+    ).toHaveLength(2);
   });
 });

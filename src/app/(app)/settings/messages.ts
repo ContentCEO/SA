@@ -12,14 +12,12 @@ export const SCREEN_MESSAGES = {
     done: {
       connected: "Gmail connected.",
       disconnected: "Gmail disconnected. We've removed our access at Google.",
-      swapped: "Switched. That inbox is on now, and the other one is paused. Nothing was deleted.",
+      swapped: "Done. That Gmail is on now, and the other one is paused.",
+      resumed: "Done. That Gmail is on now.",
     },
     error: {
       limit: "Your plan is at its mailbox limit. Disconnect one first, or ask about a bigger plan.",
-      // Plan #47: the Gmail screen words this one with the plan that counts (reconnectRefusedLine).
-      paused_limit:
-        "This inbox is paused: your plan's inboxes are all in use. Switch it on instead of another one.",
-      swap: "Those inboxes couldn't be switched. Refresh and try again.",
+      choose: "Pick which Gmail to pause instead.",
       busy: "That's a lot in a short time, so we've paused it for a bit. Try again in a few minutes.",
       unknown: UNKNOWN,
     },
@@ -68,13 +66,14 @@ export const SCREEN_MESSAGES = {
     done: { saved: "Saved." },
     error: { unknown: UNKNOWN },
   },
-  "/settings/notifications": { done: {}, error: {} },
+  "/settings/notifications": { done: { saved: "Saved." }, error: {} },
   "/settings/texts": {
     done: {
       sms_code: "Code sent. Type it in below.",
       sms_on: "Text alerts are on.",
       sms_off: "Text alerts are off.",
       sms_removed: "Number removed.",
+      saved: "Saved.",
     },
     error: {
       sms_phone: "That doesn't look like a US mobile number.",
@@ -83,6 +82,24 @@ export const SCREEN_MESSAGES = {
       sms_not_configured: "Texting isn't switched on yet.",
       sms_not_verified: "Confirm your number first.",
     },
+  },
+  "/settings/away": {
+    done: {
+      away_on: "Away mode is on.",
+      away_off: "Welcome back. Away mode is off.",
+    },
+    error: {
+      away_past: "Pick a day after today.",
+      away_too_far: "Pick a day in the next 90 days.",
+      away_invalid: "Pick the day you're back.",
+      readonly:
+        "Your account is read-only right now, so nothing was changed. The note at the top says why.",
+      unknown: UNKNOWN,
+    },
+  },
+  "/settings/sender-rules": {
+    done: { rule_removed: "Rule removed." },
+    error: { unknown: UNKNOWN },
   },
   "/settings/phone": {
     done: { saved: "Saved for this phone." },

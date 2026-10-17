@@ -9,6 +9,7 @@ import { isLastDay, trialSoFarLine, waitingLine } from "@/server/first-week-rule
 import { effectiveStatus, evaluationClock, setupReallyPaid, timeLeft } from "@/server/lifecycle";
 import { freeMonthBanner, freeMonthRunning } from "@/server/referral-rules";
 import { freeMonthView, viewChanges } from "@/server/referrals";
+import { TRIAL_SIDE_DOOR_LINE } from "@/server/trial-email-rules";
 
 function Contact() {
   const support = process.env.SUPPORT_EMAIL;
@@ -91,8 +92,8 @@ export async function StatusBanner() {
           <p className="text-lg font-black">Your three days end in {timeLeft(clock.msLeft)}.</p>
           {soFar ? <p>{soFar}</p> : null}
           <p className="text-ash">
-            Choose a plan to keep it going and switch sending on. Every reply still waits for your
-            okay.
+            Choose a plan to keep it going and to send replies from Squared Away. Every reply still
+            waits for your okay. Until then, your drafts are in your Gmail Drafts folder too.
           </p>
           <Link
             href="/billing"
@@ -113,7 +114,7 @@ export async function StatusBanner() {
         </p>
         <p>
           Squared Away is reading and drafting, but it won&apos;t send anything to a customer during
-          your three days. See if the drafts sound like you.
+          your three days. {TRIAL_SIDE_DOOR_LINE}
         </p>
         <Link
           href="/billing"
@@ -164,8 +165,8 @@ export async function StatusBanner() {
               <span className="font-semibold">{waiting}</span>{" "}
             </>
           ) : null}
-          Everything here stays as it is, read-only. Nothing new is read or drafted, and nothing is
-          sent. To switch sending on, choose a plan — or talk to us first. <Contact />
+          Everything here stays as it is, read-only: Squared Away reads, drafts and sends nothing
+          new. To send replies from Squared Away, choose a plan — or talk to us first. <Contact />
         </>,
         "Choose a plan",
       );

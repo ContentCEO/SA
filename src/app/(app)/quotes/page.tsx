@@ -19,7 +19,10 @@ import {
 } from "@/server/quote-rules";
 import { listQuotes, type QuoteRow } from "@/server/quotes";
 import { requireOwner } from "@/server/session";
-import { markQuoteAction } from "./actions";
+import { lostReasonAction, markQuoteAction } from "./actions";
+import { leadSourcePay } from "@/server/lead-pay";
+import { leadPaySentence } from "@/server/quote-rules";
+import { LOST_REASON_BUTTONS, LOST_REASON_WORDS, LOST_REASONS } from "@/server/quote-rules";
 
 export const metadata: Metadata = { title: "Quotes" };
 
@@ -36,7 +39,8 @@ const OPEN: QuoteStage[] = ["waiting_on_you", "talking", "quiet"];
 
 const done: Record<string, string> = {
   won: "Marked won. Nice one.",
-  lost: "Marked lost.",
+  lost: "Marked lost. Why? One tap on the card, optional.",
+  lost_reason: "Got it.",
   no_answer: "Marked no answer.",
   reopen: "Reopened.",
 };
@@ -94,10 +98,33 @@ function QuoteCard({
         // Plan #26: only on a quote that went quiet after both nudges (the server decides).
         <OfferButtons
           threadId={q.threadId}
-          offers={offers ? { review: false, closingQuestion: offers.closingQuestion } : undefined}
+          offers={
+            offers
+              ? { review: false, closingQuestion: offers.closingQuestion, thankYou: false }
+              : undefined
+          }
         />
       )}
 
+      {q.stage === "lost" && q.lostReason ? (
+        <p className="font-semibold">Lost: {LOST_REASON_WORDS[q.lostReason]}</p>
+      ) : null}
+      {q.stage === "lost" && !readOnly ? (
+        <details className="rounded-lg border" open={!q.lostReason}>
+          <summary className="flex min-h-tap cursor-pointer list-none items-center px-3 font-semibold underline underline-offset-4">
+            {q.lostReason ? "Change why" : "Why did you lose it?"}
+          </summary>
+          <form action={lostReasonAction} className="flex flex-wrap gap-2 px-3 pb-3">
+            <input type="hidden" name="threadId" value={q.threadId} />
+            <input type="hidden" name="stage" value={filter} />
+            {LOST_REASONS.map((r) => (
+              <Button key={r} type="submit" name="reason" value={r} variant="outline">
+                {LOST_REASON_BUTTONS[r]}
+              </Button>
+            ))}
+          </form>
+        </details>
+      ) : null}
       {readOnly ? null : decided ? (
         // One tap to change it — our guess or the owner's own mark.
         <form action={markQuoteAction} className="flex flex-col gap-2">
@@ -169,7 +196,10 @@ export default async function QuotesPage(props: PageProps<"/quotes">) {
   const filter: Filter = FILTERS.some(([k]) => k === params.stage)
     ? (params.stage as Filter)
     : "open";
-  const { quotes, totals, quietDays } = await listQuotes(workspace.id);
+  const [{ quotes, totals, quietDays }, leadPay] = await Promise.all([
+    listQuotes(workspace.id),
+    leadSourcePay(workspace.id),
+  ]);
   const readOnly = isReadOnly(workspace);
   const shown = quotes.filter((q) =>
     filter === "open" ? OPEN.includes(q.stage) : q.stage === filter,
@@ -221,6 +251,28 @@ export default async function QuotesPage(props: PageProps<"/quotes">) {
           Amounts come from the price in your reply, or what you type.
         </p>
       </section>
+
+      {leadPay ? (
+        <section
+          aria-labelledby="sources"
+          className="flex flex-col gap-2 rounded-xl border bg-card p-4"
+        >
+          <h2 id="sources" className="text-lg font-black">
+            Where your work comes from
+          </h2>
+          <p className="text-sm text-muted-foreground">Quote requests from the last 90 days.</p>
+          <ul className="flex flex-col gap-1">
+            {leadPay.map((r) => (
+              <li key={r.label}>{leadPaySentence(r)}</li>
+            ))}
+          </ul>
+          <p className="text-sm text-muted-foreground">
+            Won amounts are the largest price in your own reply, or the amount you typed when you
+            marked it won. Quotes you sent only as a PDF count once you type the amount on Won. Won
+            can be our guess for email leads — check Quotes.
+          </p>
+        </section>
+      ) : null}
 
       <nav aria-label="Quote filter" className="-mx-1 flex gap-1 overflow-x-auto pb-1">
         {FILTERS.map(([key, label]) => (

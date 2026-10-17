@@ -228,3 +228,141 @@ export function parseDollars(input: string | null | undefined): number | null {
   const cents = Math.round(Number(cleaned) * 100);
   return cents > 0 && cents < 1_000_000_000 ? cents : null;
 }
+
+/**
+ * Ideas C5: why a quote was lost, in one optional tap. ("No answer" is its own outcome.) "Other"
+ * added 2026-10-16 (Davi: yes). The column is plain text (no check constraint): older code reads
+ * "other" as no reason and simply doesn't show it.
+ */
+export const LOST_REASONS = ["price", "timing", "someone_else", "other"] as const;
+export type LostReason = (typeof LOST_REASONS)[number];
+export const isLostReason = (v: unknown): v is LostReason =>
+  typeof v === "string" && (LOST_REASONS as readonly string[]).includes(v);
+
+/** The buttons' words. */
+export const LOST_REASON_BUTTONS: Record<LostReason, string> = {
+  price: "Price",
+  timing: "Timing",
+  someone_else: "Went with someone else",
+  other: "Other",
+};
+/** "Lost: price" on a card. */
+export const LOST_REASON_WORDS: Record<LostReason, string> = {
+  price: "price",
+  timing: "timing",
+  someone_else: "went with someone else",
+  other: "another reason",
+};
+
+/** The reason, only while the quote is lost: a stale value left on a reopened quote never shows. */
+export function shownLostReason(outcome: string | null, reason: unknown): LostReason | null {
+  return outcome === "lost" && isLostReason(reason) ? reason : null;
+}
+
+/**
+ * "Lost this month: 4 on price, 1 on timing, 2 went with someone else, 1 for another reason." —
+ * and when one named reason is at least half of them and 3 or more: "You lost 4 on price this
+ * month." "Other" is never the headline (it says nothing the owner can act on). Null with none set.
+ */
+export function lostReasonsSentence(counts: Partial<Record<LostReason, number>>): string | null {
+  const n = (r: LostReason) => Math.max(0, Math.round(counts[r] ?? 0));
+  const parts = [
+    n("price") ? `${n("price")} on price` : null,
+    n("timing") ? `${n("timing")} on timing` : null,
+    n("someone_else") ? `${n("someone_else")} went with someone else` : null,
+    n("other")
+      ? `${n("other")} for ${n("other") === 1 ? "another reason" : "other reasons"}`
+      : null,
+  ].filter((p): p is string => !!p);
+  if (!parts.length) return null;
+  const total = LOST_REASONS.reduce((sum, r) => sum + n(r), 0);
+  const top = LOST_REASONS.filter((r) => r !== "other").sort((a, b) => n(b) - n(a))[0]!;
+  const lead = `Lost this month: ${parts.join(", ")}.`;
+  if (n(top) >= 3 && n(top) * 2 >= total)
+    return `${lead} ${
+      top === "someone_else"
+        ? `${n(top)} went with someone else this month.`
+        : `You lost ${n(top)} on ${top} this month.`
+    }`;
+  return lead;
+}
+
+/** Ideas K2: which lead sources pay — the window, the row cap, and when the card shows. */
+export const LEAD_PAY_DAYS = 90;
+export const LEAD_PAY_MAX_ROWS = 6;
+export const WEBSITE_FORM = "Website form";
+export const EVERYWHERE_ELSE = "Everywhere else";
+
+export type LeadPayInput = {
+  label: string;
+  /** Answered off email (a lead site): we can't see those replies, so only the owner's Won counts. */
+  offEmail: boolean;
+  outcome: string | null;
+  outcomeSource: string | null;
+  amountCents: number | null;
+};
+export type LeadPayRow = {
+  label: string;
+  offEmail: boolean;
+  requests: number;
+  won: number;
+  wonCents: number;
+};
+
+/**
+ * One row per source: requests, won and won dollars. For an off-email source a won counts only
+ * when the owner marked it (our guesses come from email we can't see there). Sorted by won
+ * dollars, then won, then requests; past 6 rows the rest fold into "Everywhere else". Null
+ * when fewer than two sources have requests (nothing to compare).
+ */
+export function leadPayRows(rows: readonly LeadPayInput[]): LeadPayRow[] | null {
+  const by = new Map<string, LeadPayRow>();
+  for (const r of rows) {
+    const row = by.get(r.label) ?? {
+      label: r.label,
+      offEmail: r.offEmail,
+      requests: 0,
+      won: 0,
+      wonCents: 0,
+    };
+    row.requests += 1;
+    const won = r.outcome === "won" && (!r.offEmail || (r.outcomeSource ?? "owner") === "owner");
+    if (won) {
+      row.won += 1;
+      row.wonCents += r.amountCents ?? 0;
+    }
+    by.set(r.label, row);
+  }
+  if (by.size < 2) return null;
+  const sorted = [...by.values()].sort(
+    (a, b) => b.wonCents - a.wonCents || b.won - a.won || b.requests - a.requests,
+  );
+  if (sorted.length <= LEAD_PAY_MAX_ROWS) return sorted;
+  const kept = sorted.slice(0, LEAD_PAY_MAX_ROWS - 1);
+  const rest = sorted.slice(LEAD_PAY_MAX_ROWS - 1).reduce<LeadPayRow>(
+    (t, r) => ({
+      ...t,
+      offEmail: t.offEmail || r.offEmail,
+      requests: t.requests + r.requests,
+      won: t.won + r.won,
+      wonCents: t.wonCents + r.wonCents,
+    }),
+    { label: EVERYWHERE_ELSE, offEmail: false, requests: 0, won: 0, wonCents: 0 },
+  );
+  return [...kept, rest];
+}
+
+/**
+ * "Direct email: 9 requests, 3 won, $6,200." / "Thumbtack: 6 requests, 2 you marked won,
+ * $3,100." / "Thumbtack: 6 requests. Tap Won on Quotes to count jobs you won here." Never
+ * "0 won" for a lead site.
+ */
+export function leadPaySentence(r: LeadPayRow): string {
+  const req = `${r.requests} request${r.requests === 1 ? "" : "s"}`;
+  const money = r.wonCents > 0 ? `, ${formatCents(r.wonCents)}` : "";
+  if (r.offEmail) {
+    if (r.won === 0) return `${r.label}: ${req}. Tap Won on Quotes to count jobs you won here.`;
+    return `${r.label}: ${req}, ${r.won} you marked won${money}.`;
+  }
+  return `${r.label}: ${req}, ${r.won} won${money}.`;
+}

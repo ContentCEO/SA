@@ -138,7 +138,15 @@ describe("weeklyScorecard: replies and follow-ups sent (#32)", () => {
     await draft(t, { status: "sent", decidedAt: day(0, 10) });
     const s = await week();
     expect(Object.keys(s).sort()).toEqual(
-      ["followupsSent", "minutesSaved", "quotesOut", "repliesSent", "response"].sort(),
+      [
+        "asWritten",
+        "followupsSent",
+        "minutesSaved",
+        "quotesOut",
+        "repliesSent",
+        "response",
+        "speed",
+      ].sort(),
     );
     expect(Object.keys(s.response).sort()).toEqual(["answered", "avgMinutes", "unanswered"]);
     expect(JSON.stringify(s)).not.toMatch(/SECRET|@/);
@@ -522,6 +530,8 @@ describe("weeklyScorecard is scoped to the workspace", () => {
       quotesOut: 0,
       response: { avgMinutes: null, answered: 0, unanswered: 0 },
       minutesSaved: 0,
+      speed: { fast: 0, counted: 0 },
+      asWritten: { asWritten: 0, counted: 0 },
     });
     const theirs = await weeklyScorecard(other.workspaceId, WEEK.start, WEEK.end, NOW);
     expect(theirs).toMatchObject({ repliesSent: 1, followupsSent: 1, quotesOut: 1 });

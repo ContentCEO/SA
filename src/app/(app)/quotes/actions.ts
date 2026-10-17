@@ -3,8 +3,8 @@
 import { redirect } from "next/navigation";
 import { z } from "zod";
 import { ReadOnlyError } from "@/server/lifecycle";
-import { parseDollars } from "@/server/quote-rules";
-import { setQuoteOutcome } from "@/server/quotes";
+import { LOST_REASONS, parseDollars } from "@/server/quote-rules";
+import { setLostReason, setQuoteOutcome } from "@/server/quotes";
 import { requireOwner } from "@/server/session";
 
 const input = z.object({
@@ -43,4 +43,30 @@ export async function markQuoteAction(formData: FormData) {
   }
   const back = stage ? `&stage=${encodeURIComponent(stage)}` : "";
   redirect(ok ? `/quotes?done=${outcome}${back}` : "/quotes?error=unknown");
+}
+
+/** Ideas C5: "Why did you lose it?" — one tap, optional. Only on a quote that is lost. */
+export async function lostReasonAction(formData: FormData) {
+  const { workspace } = await requireOwner();
+  const parsed = z
+    .object({
+      threadId: z.string().uuid(),
+      reason: z.enum(LOST_REASONS),
+      stage: z.string().max(20).optional(),
+    })
+    .safeParse({
+      threadId: formData.get("threadId"),
+      reason: formData.get("reason"),
+      stage: formData.get("stage") ?? undefined,
+    });
+  if (!parsed.success) redirect("/quotes?error=unknown");
+  let r;
+  try {
+    r = await setLostReason(workspace.id, parsed.data.threadId, parsed.data.reason);
+  } catch (err) {
+    if (err instanceof ReadOnlyError) redirect("/quotes?error=readonly");
+    throw err;
+  }
+  const back = parsed.data.stage ? `&stage=${encodeURIComponent(parsed.data.stage)}` : "";
+  redirect(r === "ok" ? `/quotes?done=lost_reason${back}` : "/quotes?error=unknown");
 }

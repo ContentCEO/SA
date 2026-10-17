@@ -699,12 +699,39 @@ describe("digest: needs-you header, queue agreement and Monday's last week (plan
     ]);
     const quote = await thread({ category: "quote_request" });
     await draft(quote.id);
+    // Replies package: the month's money is in it too — totals only, from threads that are
+    // full of SECRET names, subjects and invoice numbers.
+    await thread({
+      category: "quote_request",
+      quoteOutcome: "won",
+      quoteOutcomeSource: "owner",
+      quoteOutcomeAt: hoursAgo(48),
+      quoteAmountCents: 420_000,
+    });
+    await thread({
+      category: "invoice_payment",
+      invoicePaidAt: hoursAgo(24),
+      invoicePaidSource: "owner",
+      extracted: {
+        invoice: { invoice_number: "SECRET-INV-9", amount: 1200, due_date: null, status: "paid" },
+      },
+    });
+    await thread({
+      category: "invoice_payment",
+      extracted: {
+        invoice: { invoice_number: "SECRET-INV-10", amount: 500, due_date: null, status: "unpaid" },
+      },
+    });
 
     const { email } = await runDigest();
     expect(email).toBeDefined();
     const all = `${email!.subject}\n${email!.text}\n${email!.html}`;
     expect(all).not.toMatch(/SECRET/i);
     expect(all).not.toContain("@example.com");
+    expect(email!.text).toContain(
+      "This month so far: $4,200 in quotes you won · $1,200 in invoices paid.",
+    );
+    expect(email!.text).toContain("Still owed to you: $500 on Money owed.");
     expect(email!.text).toContain(
       `• A complaint — waiting 2 hours: ${appUrl("/queue")}#t-${complaint.id}`,
     );

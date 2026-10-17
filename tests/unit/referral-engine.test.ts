@@ -140,7 +140,7 @@ const sub = () => fake.sub("sub_ref");
 const item = () => sub().items.data[0]!;
 const log = async () =>
   (await database.select().from(activityLog))
-    .filter((l) => /referral|autopilot_turned|inbox/.test(l.action))
+    .filter((l) => /referral|autopilot_turned|inbox|mailbox/.test(l.action))
     .map((l) => [l.action, l.detail, l.actor]);
 const writes = () => fake.writes.map((c) => c.method);
 const updates = () => fake.writes.filter((c) => c.method === "subscriptions.update");
@@ -624,16 +624,18 @@ describe("the end of a free month", () => {
     const [d] = await database.select().from(drafts).where(eq(drafts.id, draftId));
     expect(d!.autoSendAt).toBeNull();
     const boxes = await database.select().from(mailboxes);
-    expect(Object.fromEntries(boxes.map((b) => [b.email, [b.status, b.pausedReason]]))).toEqual({
-      "rosa@gmail.com": ["active", null],
-      "office@rosa.com": ["paused", "over_plan"],
-      "van@rosa.com": ["paused", "over_plan"],
+    expect(
+      Object.fromEntries(boxes.map((b) => [b.email, [b.status, b.planPausedAt !== null]])),
+    ).toEqual({
+      "rosa@gmail.com": ["active", false],
+      "office@rosa.com": ["active", true],
+      "van@rosa.com": ["active", true],
     });
     const actions = (await log()).map(([a, d]) => [a, d]);
     expect(actions).toEqual(
       expect.arrayContaining([
         ["autopilot_turned_off_plan", { count: 1 }],
-        ["inboxes_paused_plan", { count: 2, plan: "solo", limit: 1 }],
+        ["mailboxes_fit_plan", { paused: 2, resumed: 0, limit: 1 }],
         ["referral_free_month_ended", { plan: "crew", backTo: "solo" }],
       ]),
     );
@@ -786,10 +788,9 @@ describe("the end of a free month", () => {
     await database.execute(sql.raw(`drop trigger fail_always on mailboxes`));
     await runReferralRewards(end);
     expect((await reward()).status).toBe("done");
-    expect((await database.select().from(mailboxes)).map((m) => m.status).sort()).toEqual([
-      "active",
-      "paused",
-    ]);
+    expect(
+      (await database.select().from(mailboxes)).map((m) => m.planPausedAt !== null).sort(),
+    ).toEqual([false, true]);
   });
 });
 

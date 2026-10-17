@@ -29,7 +29,7 @@ export function QueuePreview() {
           <span className="font-black">Day 1 of 3 · 2 days left</span>
           <span className="text-xs">
             Squared Away is reading and drafting, but it won&apos;t send anything to a customer
-            during your three days.
+            during your three days. Your drafts are in your Gmail Drafts folder too.
           </span>
         </div>
 
@@ -47,7 +47,7 @@ export function QueuePreview() {
             <span className="text-slate">Thanks, Mike</span>
           </div>
           <div className="sa-inverted mt-1 flex flex-col justify-center rounded-lg px-3 py-2">
-            <span className="font-black">Nothing goes to a customer during your three days</span>
+            <span className="font-black">Send reply is off during your three days</span>
             <span className="text-xs text-ash">
               Read the drafts and see if they sound like you.
             </span>

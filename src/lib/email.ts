@@ -12,6 +12,11 @@ export type OutgoingEmail = {
   idempotencyKey: string;
   /** Where a reply to this email goes (Resend `reply_to`). Only set from SUPPORT_EMAIL. */
   replyTo?: string;
+  /**
+   * Extra headers (Resend `headers`): only the one-click unsubscribe pair on trial emails
+   * (`List-Unsubscribe` / `List-Unsubscribe-Post`), never anything an email or a person typed.
+   */
+  headers?: Record<string, string>;
 };
 
 /**
@@ -110,6 +115,7 @@ export const sendEmail: EmailSender = async (email) => {
       html: email.html,
       text: email.text,
       ...(email.replyTo ? { reply_to: email.replyTo } : {}),
+      ...(email.headers ? { headers: email.headers } : {}),
     }),
   });
   if (

@@ -5,19 +5,19 @@ import { Button, buttonVariants } from "@/components/ui/button";
 import { relativeTime } from "@/lib/relative-time";
 import { cn } from "@/lib/utils";
 import { mailboxHealth } from "@/server/mailbox-health";
+import { planPausedLine } from "@/server/mailbox-plan-rules";
 import { listMailboxes, mailboxLimit, type MailboxSummary } from "@/server/mailboxes";
 import { requireOwner } from "@/server/session";
 import { BACKFILL_DAYS, syncSummary } from "@/server/sync";
-import { mailboxLimitFor, type PlanId } from "@/config/pricing";
+import { mailboxLimitFor } from "@/config/pricing";
 import {
   addInboxFreeMonthNote,
   effectivePlan,
   freeMonthRunning,
   pausedInboxCopy,
-  reconnectRefusedLine,
 } from "@/server/referral-rules";
 import { getBusinessProfile } from "@/server/profile";
-import { disconnectMailboxAction, swapInboxAction } from "../actions";
+import { disconnectMailboxAction, swapMailboxAction } from "../actions";
 import { SettingsScreen } from "../screen";
 
 export const metadata: Metadata = { title: "Your Gmail" };
@@ -49,12 +49,14 @@ export default async function GmailSettingsPage(props: PageProps<"/settings/gmai
       mailboxes.map(async (m) => [m.id, (await syncSummary(m.id)).messageCount] as const),
     ),
   );
-  const params = await props.searchParams;
-  // Plan #47: the plan that counts (a free month's while it runs) decides the inbox limit;
-  // inboxes paused for being over it don't count.
+  // Plan #47: the plan that counts (a free month's while it runs) decides the limit.
   const planNow = effectivePlan(workspace, now);
-  const counted = mailboxes.filter((m) => m.pausedReason == null);
-  const canAddMore = counted.length < mailboxLimit(workspace, now);
+  const limit = mailboxLimit(workspace, now);
+  const canAddMore = mailboxes.length < limit;
+  // A lower plan pauses the Gmail addresses it doesn't cover (2026-10-16); the owner picks.
+  const onNow = mailboxes.filter((m) => !m.planPausedAt);
+  const roomOnPlan = onNow.length < limit;
+  const moreOnPlan = pausedInboxCopy(planNow).more;
   const freeMonth =
     freeMonthRunning(workspace, now) && workspace.freePlan && workspace.freePlanUntil
       ? { free: workspace.freePlan, until: workspace.freePlanUntil }
@@ -63,7 +65,7 @@ export default async function GmailSettingsPage(props: PageProps<"/settings/gmai
     freeMonth &&
     canAddMore &&
     workspace.plan !== freeMonth.free &&
-    counted.length >= mailboxLimitFor(workspace.plan)
+    mailboxes.length >= mailboxLimitFor(workspace.plan)
       ? addInboxFreeMonthNote(
           freeMonth.free,
           freeMonth.until,
@@ -72,12 +74,7 @@ export default async function GmailSettingsPage(props: PageProps<"/settings/gmai
       : null;
 
   return (
-    <SettingsScreen
-      path="/settings/gmail"
-      heavy="your gmail."
-      params={params}
-      errorText={params.error === "paused_limit" ? reconnectRefusedLine(planNow) : undefined}
-    >
+    <SettingsScreen path="/settings/gmail" heavy="your gmail." params={await props.searchParams}>
       <section aria-labelledby="mailbox" className="flex flex-col gap-4">
         <h2 id="mailbox" className="sr-only">
           Your Gmail
@@ -92,6 +89,80 @@ export default async function GmailSettingsPage(props: PageProps<"/settings/gmai
         ) : (
           <ul className="flex flex-col gap-3">
             {mailboxes.map((m) => {
+              if (m.planPausedAt) {
+                return (
+                  <li
+                    key={m.id}
+                    aria-labelledby={`paused-${m.id}`}
+                    className="flex flex-col gap-3 rounded-xl border-2 border-charcoal p-4"
+                  >
+                    <div className="flex flex-col">
+                      <span id={`paused-${m.id}`} className="text-lg font-semibold break-all">
+                        {m.email}
+                      </span>
+                      <span className="font-black">{planPausedLine(limit)}</span>
+                      <span className="mt-1 text-muted-foreground">
+                        Nothing in it is read, sorted or drafted, and its drafts can&apos;t be sent
+                        from here. Everything already here is kept.
+                      </span>
+                    </div>
+                    {roomOnPlan ? (
+                      <form action={swapMailboxAction}>
+                        <input type="hidden" name="mailboxId" value={m.id} />
+                        <Button type="submit" className="w-full">
+                          Use this one instead
+                        </Button>
+                      </form>
+                    ) : onNow.length === 1 ? (
+                      <form action={swapMailboxAction} className="flex flex-col gap-1">
+                        <input type="hidden" name="mailboxId" value={m.id} />
+                        <input type="hidden" name="replaceId" value={onNow[0]!.id} />
+                        <Button type="submit" className="w-full">
+                          Use this one instead
+                        </Button>
+                        <span className="text-sm break-all text-muted-foreground">
+                          {onNow[0]!.email} is paused in its place.
+                        </span>
+                      </form>
+                    ) : (
+                      <details className="rounded-lg border">
+                        <summary className="flex min-h-tap cursor-pointer list-none items-center px-3 font-semibold underline underline-offset-4">
+                          Use this one instead
+                        </summary>
+                        <div className="flex flex-col gap-2 px-3 pb-3">
+                          <p className="text-sm text-muted-foreground">Which one should pause?</p>
+                          {onNow.map((o) => (
+                            <form key={o.id} action={swapMailboxAction}>
+                              <input type="hidden" name="mailboxId" value={m.id} />
+                              <input type="hidden" name="replaceId" value={o.id} />
+                              <Button
+                                type="submit"
+                                variant="outline"
+                                className="h-auto min-h-tap w-full py-2 break-all whitespace-normal"
+                              >
+                                Pause {o.email}
+                              </Button>
+                            </form>
+                          ))}
+                        </div>
+                      </details>
+                    )}
+                    {moreOnPlan ? (
+                      <Link
+                        href="/billing"
+                        className="inline-flex min-h-tap items-center font-semibold underline underline-offset-4"
+                      >
+                        {moreOnPlan}
+                      </Link>
+                    ) : null}
+                    <DisconnectButton
+                      mailboxId={m.id}
+                      email={m.email}
+                      action={disconnectMailboxAction}
+                    />
+                  </li>
+                );
+              }
               const health = mailboxHealth(m, now, Boolean(process.env.GMAIL_PUBSUB_TOPIC));
               const needsYou = health.needsReconnect;
               return (
@@ -108,14 +179,9 @@ export default async function GmailSettingsPage(props: PageProps<"/settings/gmai
                       {statusWords[m.status]}
                     </span>
                     <span className={cn("mt-1", needsYou ? "" : "text-muted-foreground")}>
-                      {m.pausedReason === "over_plan"
-                        ? pausedInboxCopy(planNow).line
-                        : syncLine(m, counts.get(m.id) ?? 0)}
+                      {syncLine(m, counts.get(m.id) ?? 0)}
                     </span>
                   </div>
-                  {m.pausedReason === "over_plan" ? (
-                    <SwapInbox paused={m} counted={counted} plan={planNow} />
-                  ) : null}
                   <dl aria-label={`Health of ${m.email}`} className="flex flex-col gap-1.5">
                     {health.lines.map((l) => (
                       <div key={l.label} className="flex flex-col">
@@ -153,67 +219,5 @@ export default async function GmailSettingsPage(props: PageProps<"/settings/gmai
         ) : null}
       </section>
     </SettingsScreen>
-  );
-}
-
-/**
- * Plan #47: an inbox paused for being over the plan. The owner can switch it on instead of one
- * that's on (newest preselected); the plan's limit holds. Or move up a plan.
- */
-function SwapInbox({
-  paused,
-  counted,
-  plan,
-}: {
-  paused: MailboxSummary;
-  counted: MailboxSummary[];
-  plan: PlanId | null;
-}) {
-  const copy = pausedInboxCopy(plan);
-  const newest = counted[counted.length - 1];
-  return (
-    <div className="flex flex-col gap-2">
-      {newest ? (
-        <details className="group flex flex-col gap-2">
-          <summary
-            className={cn(
-              buttonVariants({ variant: "outline", size: "lg" }),
-              "w-full cursor-pointer list-none",
-            )}
-          >
-            {copy.button}
-          </summary>
-          <form action={swapInboxAction} className="mt-2 flex flex-col gap-3">
-            <input type="hidden" name="resumeId" value={paused.id} />
-            <fieldset className="flex flex-col gap-2">
-              <legend className="mb-1 font-semibold">Which inbox should pause instead?</legend>
-              {counted.map((c) => (
-                <label key={c.id} className="flex min-h-tap items-center gap-3 break-all">
-                  <input
-                    type="radio"
-                    name="pauseId"
-                    value={c.id}
-                    defaultChecked={c.id === newest.id}
-                    className="size-5 shrink-0"
-                  />
-                  {c.email}
-                </label>
-              ))}
-            </fieldset>
-            <Button type="submit" size="lg" className="w-full">
-              Switch inboxes
-            </Button>
-          </form>
-        </details>
-      ) : null}
-      {copy.more ? (
-        <p className="text-muted-foreground">
-          Or{" "}
-          <Link href="/billing" className="font-semibold underline underline-offset-4">
-            {copy.more.replace(/^or /, "")}
-          </Link>
-        </p>
-      ) : null}
-    </div>
   );
 }

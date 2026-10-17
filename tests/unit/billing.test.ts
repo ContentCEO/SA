@@ -785,7 +785,10 @@ describe("plan #47 §1.9: the webhook reads the live subscription", () => {
   }
   const boxes = async () =>
     Object.fromEntries(
-      (await database.select().from(mailboxes)).map((m) => [m.email, [m.status, m.pausedReason]]),
+      (await database.select().from(mailboxes)).map((m) => [
+        m.email,
+        [m.status, m.planPausedAt !== null],
+      ]),
     );
   const actions = async () =>
     (await database.select().from(activityLog)).map((l) => [l.action, l.detail]);
@@ -886,36 +889,42 @@ describe("plan #47 §1.9: the webhook reads the live subscription", () => {
     expect(after!.autoSendAt).toBeNull();
     // Solo includes 1 inbox: the first-created stays on, nothing is deleted.
     expect(await boxes()).toEqual({
-      "owner@shop.com": ["active", null],
-      "office@shop.com": ["paused", "over_plan"],
-      "crew@shop.com": ["paused", "over_plan"],
+      "owner@shop.com": ["active", false],
+      "office@shop.com": ["active", true],
+      "crew@shop.com": ["active", true],
     });
     expect(second && third).toBeTruthy();
     const log = await actions();
     expect(log).toContainEqual(["autopilot_turned_off_plan", { count: 1 }]);
-    expect(log).toContainEqual(["inboxes_paused_plan", { count: 2, plan: "solo", limit: 1 }]);
+    expect(log).toContainEqual(["mailboxes_fit_plan", { paused: 2, resumed: 0, limit: 1 }]);
 
     // Moving back up (Crew includes 3) switches them on again.
     fake.portalChange("sub_1", priceOf("crew"));
     await applySubscription(snapshot("crew"), NOW);
     expect(Object.values(await boxes())).toEqual([
-      ["active", null],
-      ["active", null],
-      ["active", null],
+      ["active", false],
+      ["active", false],
+      ["active", false],
     ]);
-    expect(await actions()).toContainEqual(["inboxes_resumed_plan", { count: 2 }]);
+    expect(await actions()).toContainEqual([
+      "mailboxes_fit_plan",
+      { paused: 0, resumed: 2, limit: 3 },
+    ]);
   });
 
-  it("an event that isn't a move down pauses nothing (even for an account already over its limit)", async () => {
+  it("any event fits the inboxes to the plan (as the 15-minute backstop would anyway)", async () => {
+    // Since the referral merge both sides share the decisions package's plan pause, whose
+    // `fitAllMailboxesToPlans` step fits every account every 15 minutes: an account already over
+    // its limit is paused by the next event (e.g. a card update) instead of waiting for it.
     await database.update(workspaces).set({ plan: "solo" }).where(eq(workspaces.id, workspace.id));
     fake.sub("sub_1").items.data[0]!.price = fake.price(priceOf("solo"));
     await threeInboxes();
     await applySubscription(snapshot("solo"), NOW); // e.g. a card update
-    expect(Object.values(await boxes())).toEqual([
-      ["active", null],
-      ["active", null],
-      ["active", null],
-    ]);
+    expect(await boxes()).toEqual({
+      "owner@shop.com": ["active", false],
+      "office@shop.com": ["active", true],
+      "crew@shop.com": ["active", true],
+    });
   });
 
   for (const order of ["checkout first", "subscription first"] as const) {
@@ -955,13 +964,13 @@ describe("plan #47 §1.9: the webhook reads the live subscription", () => {
       }
       expect((await reload()).plan).toBe("solo");
       expect(await boxes()).toEqual({
-        "owner@shop.com": ["active", null],
-        "office@shop.com": ["paused", "over_plan"],
-        "crew@shop.com": ["paused", "over_plan"],
+        "owner@shop.com": ["active", false],
+        "office@shop.com": ["active", true],
+        "crew@shop.com": ["active", true],
       });
       expect((await database.select().from(rules))[0]!.mode).toBe("draft");
-      expect((await actions()).filter(([a]) => a === "inboxes_paused_plan")).toEqual([
-        ["inboxes_paused_plan", { count: 2, plan: "solo", limit: 1 }],
+      expect((await actions()).filter(([a]) => a === "mailboxes_fit_plan")).toEqual([
+        ["mailboxes_fit_plan", { paused: 2, resumed: 0, limit: 1 }],
       ]);
     });
   }
@@ -978,7 +987,7 @@ describe("plan #47 §1.9: the webhook reads the live subscription", () => {
     fake.portalChange("sub_1", priceOf("solo"));
     await applySubscription(snapshot("solo"), NOW);
     expect((await reload()).plan).toBe("solo");
-    expect(Object.values(await boxes()).every(([s]) => s === "active")).toBe(true);
+    expect(Object.values(await boxes()).every(([, paused]) => paused === false)).toBe(true);
     expect((await database.select().from(rules))[0]!.mode).toBe("autopilot");
   });
 });

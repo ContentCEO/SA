@@ -166,15 +166,15 @@ describe("C5: the send API refuses anything but a same-origin request, without t
     expect(gmail.writer!.sent).toEqual([]);
   });
 
-  it("plan #47: a paused inbox → 409 inbox_paused, with no Gmail call and nothing queued", async () => {
+  it("plan #47: an inbox paused on the plan → 403 mailbox_paused, with no Gmail call and nothing queued", async () => {
     await status({ status: "active", setupPaidVia: "stripe" });
     await database
       .update(mailboxes)
-      .set({ status: "paused", pausedReason: "over_plan" })
+      .set({ planPausedAt: new Date() })
       .where(eq(mailboxes.workspaceId, workspaceId));
     const res = await send({ origin: `https://${HOST}` });
-    expect(res.status).toBe(409);
-    expect(await res.json()).toEqual({ status: "inbox_paused" });
+    expect(res.status).toBe(403);
+    expect(await res.json()).toMatchObject({ status: "mailbox_paused" });
     expect(gmail.writer!.calls).toEqual([]);
     expect(queued).toEqual([]);
   });

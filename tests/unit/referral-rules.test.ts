@@ -21,7 +21,6 @@ import {
   goBackCopy,
   goBackOffer,
   idOf,
-  inboxPausedSendLine,
   invoiceSubscriptionId,
   invoiceUsed,
   isReferralDiscount,
@@ -29,14 +28,12 @@ import {
   keepOffer,
   lineDiscountedBy,
   linePriceId,
-  pausedDraftsLine,
   pausedInboxCopy,
   planChangesWaitLine,
   planIncludes,
   planLine,
   planLineFullyFree,
   portalSchedulesDowngrades,
-  reconnectRefusedLine,
   REFERRAL_COUPON_NAME,
   REFERRAL_COUPON_PREFIX,
   referralCouponId,
@@ -656,29 +653,13 @@ describe("copy", () => {
   it("§4.5 Settings and §4.6 Queue lines", () => {
     expect(planIncludes("solo")).toBe("Solo includes 1 inbox");
     expect(planIncludes("crew")).toBe("Crew includes 3 inboxes");
-    expect(pausedInboxCopy("solo")).toEqual({
-      line: "Paused. Solo includes 1 inbox. Nothing is read or drafted here, and nothing was deleted.",
-      button: "Switch this one on instead",
-      more: "or move to Crew in Plan & billing.",
-    });
+    expect(pausedInboxCopy("solo")).toEqual({ more: "Or move to Crew in Plan & billing." });
     expect(pausedInboxCopy("company").more).toBeNull();
-    expect(reconnectRefusedLine("solo")).toBe(
-      "This inbox is paused: Solo includes 1 inbox. Switch it on instead of another one, or move to Crew.",
-    );
     expect(addInboxFreeMonthNote("crew", NOV15, TZ)).toBe(
       "This inbox pauses on Nov 15 unless you keep Crew. Nothing is deleted.",
     );
     expect(autopilotFreeMonthLine("crew", NOV15, TZ)).toBe(
       "Autopilot is part of your free Crew month until Nov 15.",
-    );
-    expect(pausedDraftsLine(3, "solo")).toBe(
-      "3 replies are waiting in a paused inbox. Solo includes 1 inbox. They're still in that inbox's Gmail drafts.",
-    );
-    expect(pausedDraftsLine(1, "solo")).toBe(
-      "1 reply is waiting in a paused inbox. Solo includes 1 inbox. It's still in that inbox's Gmail drafts.",
-    );
-    expect(inboxPausedSendLine("solo")).toBe(
-      "This inbox is paused. Solo includes 1 inbox. The reply is still in that inbox's Gmail drafts.",
     );
   });
 });
@@ -742,12 +723,19 @@ describe("§4.7 Activity lines (plan ids, dates, prices and counts only)", () =>
     expect(line("autopilot_turned_off_plan", { count: 2 })).toBe(
       "Autopilot is off again. It comes with Crew and Company",
     );
-    expect(line("inboxes_paused_plan", { count: 2, plan: "solo", limit: 1 })).toBe(
-      "Paused 2 inboxes. Solo includes 1. Nothing was deleted",
+    // The plan pause the free months drive (mailbox-plan.ts's Activity rows).
+    expect(line("mailboxes_fit_plan", { paused: 2, resumed: 0, limit: 1 })).toBe(
+      "Paused 2 Gmail addresses. Your plan covers 1 Gmail address. Nothing was deleted",
     );
-    expect(line("inboxes_resumed_plan", { count: 2 })).toBe("Switched 2 paused inboxes back on");
-    expect(line("inboxes_resumed_plan", { count: 1 })).toBe("Switched 1 paused inbox back on");
-    expect(line("inbox_swapped")).toBe("You switched which inbox is on");
+    expect(line("mailboxes_fit_plan", { paused: 0, resumed: 2, limit: 3 })).toBe(
+      "Switched 2 Gmail addresses back on",
+    );
+    expect(line("mailboxes_fit_plan", { paused: 0, resumed: 1, limit: 3 })).toBe(
+      "Switched 1 Gmail address back on",
+    );
+    expect(line("mailbox_plan_swap", { resumed: "a", paused: "b" })).toBe(
+      "You switched which Gmail address is on",
+    );
     // History from the old cash credit stays describable.
     expect(line("referral_credit_applied")).toBe("A referral credit was added to your account");
   });
@@ -759,8 +747,9 @@ describe("§4.7 Activity lines (plan ids, dates, prices and counts only)", () =>
     expect(line("referral_plan_kept", { plan: "<b>x</b>" })).toBe(
       "You chose to keep your free month's plan",
     );
-    expect(line("inboxes_paused_plan", { count: "lots" })).toBe(
-      "Paused 1 inbox. Nothing was deleted",
+    expect(line("mailboxes_fit_plan", { paused: "lots" })).toBeNull();
+    expect(line("mailboxes_fit_plan", { paused: 2, limit: "x" })).toBe(
+      "Paused 2 Gmail addresses over your plan. Nothing was deleted",
     );
     expect(referralActivityLine("draft_created", {})).toBeNull();
   });

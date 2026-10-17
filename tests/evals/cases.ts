@@ -6,6 +6,7 @@
  */
 import type { Category } from "@/ai/prompts/classify.v4";
 import type { Trade } from "@/config/trades";
+import type { FirstContactOpening } from "@/server/first-contact-rules";
 
 export type EvalCase = {
   id: string;
@@ -44,7 +45,19 @@ export type EvalCase = {
     routinePaperwork?: boolean;
   };
   /** If set, a reply is drafted and checked against these rules. */
-  draft?: { mustNotContain?: string[]; noInventedMoney?: boolean; noInventedDates?: boolean };
+  draft?: {
+    mustNotContain?: string[];
+    /** Each must appear in the draft (case-insensitive). */
+    mustContain?: string[];
+    noInventedMoney?: boolean;
+    noInventedDates?: boolean;
+  };
+  /**
+   * draft.v7 (replies package): drafted as a FIRST CONTACT (the owner never wrote to them),
+   * and the shape the drafter should pick from what they said. Unset = an ordinary reply,
+   * whose `opening` must be "not_first".
+   */
+  firstContact?: FirstContactOpening;
 };
 
 const c = (x: EvalCase) => x;
@@ -322,6 +335,31 @@ export const EVAL_CASES: EvalCase[] = [
     fromAddress: "dana@example.com",
     subject: "Payment",
     body: "Mailed the check for invoice 1042 yesterday.",
+    expect: { category: "invoice_payment", needsOwner: false, invoiceStatus: "paid" },
+  }),
+  // 2026-10-16 ("Say thanks"): a payment that also says the job went well. The paid mark (and
+  // job_done) are what offer the thank-you on Money, with the review ask when the rules allow.
+  c({
+    id: "i-paid-happy",
+    trade: "carpentry",
+    fromName: "Jo Park",
+    fromAddress: "jo@example.com",
+    subject: "Invoice 2210",
+    body: "Just paid invoice 2210 online. The new railing looks great, thanks again!",
+    expect: {
+      category: "invoice_payment",
+      needsOwner: false,
+      invoiceStatus: "paid",
+      jobDone: true,
+    },
+  }),
+  c({
+    id: "i-paid-zelle",
+    trade: "plumbing",
+    fromName: "Lee Grant",
+    fromAddress: "lee@example.com",
+    subject: "Re: Invoice 318",
+    body: "Sent the balance by Zelle this morning. Let me know it came through.",
     expect: { category: "invoice_payment", needsOwner: false, invoiceStatus: "paid" },
   }),
   c({
@@ -1246,5 +1284,179 @@ export const EVAL_CASES: EvalCase[] = [
     body: "Looking to replace the tub with a walk-in shower in our upstairs bathroom. Could you come take a look?",
     expect: { category: "quote_request", needsOwner: false },
     draft: DRAFT,
+  }),
+
+  // ── first replies to new leads (draft.v7, replies package) ───────
+  // Each is drafted as a FIRST CONTACT; the drafter must pick the shape, keep every rule, and
+  // never re-ask what the customer already said.
+  c({
+    id: "fc-details-ev-charger",
+    trade: "electrical",
+    fromName: "Morgan Ellis",
+    fromAddress: "morgan@example.com",
+    subject: "EV charger install",
+    firstTimeSender: true,
+    body: "Hi, we just got an electric car and want a Level 2 charger in the garage. The panel is 200 amp and about 15 feet from where the car parks. We're at 44 Birch Rd. Could you quote it?",
+    expect: { category: "quote_request", needsOwner: false },
+    firstContact: "details",
+    draft: {
+      ...DRAFT,
+      mustNotContain: [
+        ...DRAFT.mustNotContain,
+        "what's the address",
+        "what is the address",
+        "what size is your panel",
+      ],
+    },
+  }),
+  c({
+    id: "fc-details-faucet",
+    trade: "plumbing",
+    fromName: "Riley Chen",
+    fromAddress: "riley@example.com",
+    subject: "Kitchen faucet",
+    firstTimeSender: true,
+    body: "We already bought a new kitchen faucet (single hole) and just need it installed. Old one is leaking at the base. 9 Cedar Ln. When could you fit it in?",
+    expect: { category: ["quote_request", "scheduling"], needsOwner: false },
+    firstContact: "details",
+    draft: {
+      ...DRAFT,
+      mustNotContain: [...DRAFT.mustNotContain, "what's the address", "what is the address"],
+    },
+  }),
+  c({
+    id: "fc-details-vanity",
+    trade: "remodeling",
+    fromName: "Sasha Novak",
+    fromAddress: "sasha@example.com",
+    subject: "Vanity and toilet swap",
+    firstTimeSender: true,
+    body: "We'd like the vanity and toilet replaced in our upstairs bathroom. The tile and floor stay. We have the new vanity already. 3 Oak Ct.",
+    expect: { category: "quote_request", needsOwner: false },
+    firstContact: "details",
+    draft: {
+      ...DRAFT,
+      mustNotContain: [...DRAFT.mustNotContain, "what's the address", "what is the address"],
+    },
+  }),
+  c({
+    id: "fc-vague-small-jobs",
+    trade: "carpentry",
+    fromName: "Pat Ruiz",
+    fromAddress: "pat@example.com",
+    subject: "Small jobs?",
+    firstTimeSender: true,
+    body: "Hi there, do you do small jobs? Wondering if you could help us out.",
+    expect: { category: ["customer_question", "quote_request"], needsOwner: false },
+    firstContact: "vague",
+    draft: { ...DRAFT, mustContain: ["?"] },
+  }),
+  c({
+    id: "fc-vague-heating",
+    trade: "hvac",
+    fromName: "Lee Moreno",
+    fromAddress: "lee.m@example.com",
+    subject: "Heating",
+    firstTimeSender: true,
+    body: "Saw your van in the neighborhood. Can you help with our heating?",
+    expect: { category: ["customer_question", "quote_request"], needsOwner: false },
+    firstContact: "vague",
+    draft: { ...DRAFT, mustContain: ["?"] },
+  }),
+  c({
+    id: "fc-vague-new-customers",
+    trade: "landscaping",
+    fromName: "Quinn Abbott",
+    fromAddress: "quinn@example.com",
+    subject: "New customers",
+    firstTimeSender: true,
+    body: "Hello, are you taking on new customers this season?",
+    expect: { category: ["customer_question", "quote_request"], needsOwner: false },
+    firstContact: "vague",
+    draft: { ...DRAFT, mustContain: ["?"] },
+  }),
+  c({
+    id: "fc-urgent-ceiling-leak",
+    trade: "plumbing",
+    fromName: "Avery Stone",
+    fromAddress: "avery@example.com",
+    subject: "WATER COMING THROUGH CEILING",
+    firstTimeSender: true,
+    body: "Water is pouring through our kitchen ceiling from the upstairs bathroom!! Please help, we don't know what to do.",
+    expect: { category: ["customer_question", "quote_request", "scheduling"], needsOwner: true },
+    firstContact: "urgent",
+    draft: {
+      ...DRAFT,
+      mustContain: ["address"],
+      mustNotContain: [...DRAFT.mustNotContain, "on my way", "within the hour"],
+    },
+  }),
+  c({
+    id: "fc-urgent-no-heat",
+    trade: "hvac",
+    fromName: "Jordan Pike",
+    fromAddress: "jordan.p@example.com",
+    subject: "No heat",
+    firstTimeSender: true,
+    body: "Our furnace stopped last night and it's 45 degrees in the house. We have two little kids. Can someone come out?",
+    expect: { category: ["customer_question", "quote_request", "scheduling"], needsOwner: true },
+    firstContact: "urgent",
+    draft: {
+      ...DRAFT,
+      mustContain: ["address"],
+      mustNotContain: [...DRAFT.mustNotContain, "on my way", "within the hour"],
+    },
+  }),
+  c({
+    id: "fc-urgent-no-power",
+    trade: "electrical",
+    fromName: "Dev Shah",
+    fromAddress: "dev@example.com",
+    subject: "Lost power",
+    firstTimeSender: true,
+    body: "Half our house just lost power and the breaker won't reset. Everything in the kitchen is off. Can you help today?",
+    expect: { category: ["customer_question", "quote_request", "scheduling"], needsOwner: true },
+    firstContact: "urgent",
+    draft: {
+      ...DRAFT,
+      mustContain: ["address"],
+      mustNotContain: [...DRAFT.mustNotContain, "on my way", "within the hour"],
+    },
+  }),
+  c({
+    id: "fc-price-bedroom",
+    trade: "painting",
+    fromName: "Kim Lowe",
+    fromAddress: "kim@example.com",
+    subject: "Price",
+    firstTimeSender: true,
+    body: "How much do you charge to paint a bedroom?",
+    expect: { category: ["quote_request", "customer_question"], needsOwner: false },
+    firstContact: "price_only",
+    draft: { ...DRAFT, mustContain: ["?"] },
+  }),
+  c({
+    id: "fc-price-tune-up",
+    trade: "hvac",
+    fromName: "Robin Hale",
+    fromAddress: "robin@example.com",
+    subject: "Tune-up cost",
+    firstTimeSender: true,
+    body: "What do you charge for a furnace tune-up?",
+    expect: { category: ["quote_request", "customer_question"], needsOwner: false },
+    firstContact: "price_only",
+    draft: DRAFT,
+  }),
+  c({
+    id: "fc-price-shingles",
+    trade: "roofing",
+    fromName: "Terry Vance",
+    fromAddress: "terry@example.com",
+    subject: "Shingles",
+    firstTimeSender: true,
+    body: "Roughly how much to fix a few shingles that blew off in the storm?",
+    expect: { category: ["quote_request", "customer_question"], needsOwner: false },
+    firstContact: "price_only",
+    draft: { ...DRAFT, mustContain: ["?"] },
   }),
 ];

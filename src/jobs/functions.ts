@@ -29,6 +29,7 @@ import { purgeEmailSentRecords } from "@/lib/email";
 import { sendAccessLostAlerts } from "@/server/alerts";
 import { captureQuoteAmounts, guessNoAnswers } from "@/server/quotes";
 import { sendLeadAlerts } from "@/server/sms-alerts";
+import { sendEmergencyAlerts } from "@/server/emergency-alerts";
 import { sendPushAlerts } from "@/server/push-alerts";
 import { sendLeadAtRiskPushes } from "@/server/leads-at-risk";
 import { purgeExpiredNotes } from "@/server/seasonal-notes";
@@ -38,6 +39,8 @@ import {
   expireEvaluations,
   startPendingEvaluations,
 } from "@/server/workspace-lifecycle";
+import { fitAllMailboxesToPlans } from "@/server/mailbox-plan";
+import { sendTrialEmails } from "@/server/trial-emails";
 import { runDraftMessagesCleanup } from "@/server/draft-message-cleanup";
 import {
   finishReplyToBackfill,
@@ -61,13 +64,18 @@ import {
   voiceLearnRequested,
 } from "./client";
 
-/** Text / notify the owner about new leads in this mailbox's workspace (no-op unless opted in). */
+/**
+ * Text / notify the owner about new leads in this mailbox's workspace (no-op unless opted in).
+ * An emergency goes first, on its own (replies package, B5 part 2): it takes the shared slot,
+ * and the ordinary alert then leaves it out.
+ */
 async function alertsForMailbox(mailboxId: string) {
   const workspaceId = await getMailboxWorkspace(mailboxId);
   if (!workspaceId) return { sent: 0 };
+  const emergency = await sendEmergencyAlerts(new Date(), { workspaceId });
   const push = await sendPushAlerts(new Date(), { workspaceId });
   const sms = await sendLeadAlerts(new Date(), { workspaceId });
-  return { sent: sms.sent, pushed: push.sent };
+  return { sent: sms.sent, pushed: push.sent, emergencies: emergency.sent };
 }
 
 /**
@@ -403,6 +411,9 @@ export const workspaceLifecycle = inngest.createFunction(
     const expired = await step.run("expire", () => expireEvaluations());
     // Plan #47: no category stays on autopilot under a plan without it (any path, any delay).
     await step.run("enforce-plan-autopilot", () => enforcePlanAutopilot());
+    // 2026-10-16: Gmail addresses over the plan's limit are paused (and back on with room).
+    // Plan changes do this themselves; this catches one that didn't finish.
+    await step.run("fit-mailboxes-to-plans", () => fitAllMailboxesToPlans());
     // Autopilot drafts whose send event was lost: send (or stand down) now.
     const overdue = await step.run("autopilot-overdue", () => overdueAutopilotDrafts());
     if (overdue.length) {
@@ -440,6 +451,8 @@ export const workspaceLifecycle = inngest.createFunction(
     }
     // Tell owners when Gmail access is lost (and remind once), so leads aren't silently missed.
     const alerts = await step.run("access-lost-alerts", () => sendAccessLostAlerts());
+    // Replies package (B5 part 2): emergencies a run missed (an alert that reached no phone).
+    await step.run("emergency-alerts", () => sendEmergencyAlerts());
     // Backstop for text alerts held overnight or throttled.
     await step.run("text-alerts", () => sendLeadAlerts());
     await step.run("push-alerts", () => sendPushAlerts());
@@ -454,6 +467,9 @@ export const workspaceLifecycle = inngest.createFunction(
     await step.run("referral-rewards", () => runReferralRewards());
     // Round 2 (FW D4): backstop for "your first drafts are ready" (once ever per account).
     await step.run("first-drafts-ready", () => sendFirstDraftsReady());
+    // 2026-10-16: the trial's day-2 and day-3 emails and the one a week after it ran out, each
+    // once ever, at the owner's morning hour or later in their zone (never at night).
+    await step.run("trial-emails", () => sendTrialEmails());
     return {
       started,
       expired,

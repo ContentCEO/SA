@@ -7,9 +7,10 @@ import { z } from "zod";
 import { signOut } from "@/auth";
 import { createGmailConnector } from "@/mailbox/gmail/connector";
 import { deleteAccount, SubscriptionCancelError } from "@/server/account-deletion";
-import { disconnectMailbox, InboxSwapError, swapPausedInbox } from "@/server/mailboxes";
+import { disconnectMailbox } from "@/server/mailboxes";
 import { hitLimit } from "@/server/rate-limit";
 import { requireOwner } from "@/server/session";
+import { swapPlanMailbox } from "@/server/mailbox-plan";
 
 const input = z.object({ mailboxId: z.string().uuid() });
 
@@ -22,28 +23,24 @@ export async function disconnectMailboxAction(formData: FormData) {
   redirect(ok ? "/settings/gmail?done=disconnected" : "/settings/gmail?error=unknown");
 }
 
-const swapInput = z.object({ resumeId: z.string().uuid(), pauseId: z.string().uuid() });
-
 /**
- * Plan #47: "Switch this one on instead" on an inbox paused for being over the plan. The owner
- * picks which inbox pauses in its place; the plan's limit holds. Both ids are re-checked
- * against this workspace inside swapPausedInbox. Uses the Gmail-connect rate limit.
+ * "Use this one instead" (2026-10-16): a Gmail address paused on the plan comes on, and the one
+ * named in `replaceId` is paused in its place. The server re-checks the plan's limit.
  */
-export async function swapInboxAction(formData: FormData) {
+export async function swapMailboxAction(formData: FormData) {
   const { workspace } = await requireOwner();
-  const parsed = swapInput.safeParse({
-    resumeId: formData.get("resumeId"),
-    pauseId: formData.get("pauseId"),
-  });
-  if (!parsed.success) redirect("/settings/gmail?error=swap");
+  const parsed = z
+    .object({ mailboxId: z.string().uuid(), replaceId: z.string().uuid().nullable() })
+    .safeParse({
+      mailboxId: formData.get("mailboxId"),
+      replaceId: formData.get("replaceId") || null,
+    });
+  if (!parsed.success) redirect("/settings/gmail?error=unknown");
+  // The Gmail-connect rate limit (plan #47's swap had one; kept at the merge).
   if (!(await hitLimit("connect", workspace.id)).allowed) redirect("/settings/gmail?error=busy");
-  try {
-    await swapPausedInbox(workspace.id, parsed.data.resumeId, parsed.data.pauseId);
-  } catch (err) {
-    if (err instanceof InboxSwapError) redirect("/settings/gmail?error=swap");
-    throw err;
-  }
-  redirect("/settings/gmail?done=swapped");
+  const r = await swapPlanMailbox(workspace.id, parsed.data.mailboxId, parsed.data.replaceId);
+  if (r === "swapped" || r === "resumed") redirect(`/settings/gmail?done=${r}`);
+  redirect(r === "choose" ? "/settings/gmail?error=choose" : "/settings/gmail?error=unknown");
 }
 
 export async function deleteAccountAction() {

@@ -1,7 +1,7 @@
 import "server-only";
 import { eq } from "drizzle-orm";
 import Stripe from "stripe";
-import { mailboxLimitFor, pricing, type PlanId } from "@/config/pricing";
+import { pricing, type PlanId } from "@/config/pricing";
 import { db } from "@/db";
 import {
   activityLog,
@@ -31,14 +31,11 @@ import {
 } from "./billing-rules";
 import { paymentNoticeCopy } from "./first-week-rules";
 import { setupReallyPaid } from "./lifecycle";
+import { fitMailboxesToPlan } from "./mailbox-plan";
 import { freeMonthRunning, portalSchedulesDowngrades } from "./referral-rules";
 import { creditReferralSafely, reconcileReferralSafely } from "./referrals";
 import { isTermsUrlMissingError, stripeErrorReason } from "./stripe-error-rules";
-import {
-  autopilotPlanEffects,
-  inboxLimitEffects,
-  resumeOverPlanInboxes,
-} from "./workspace-lifecycle";
+import { autopilotPlanEffects } from "./workspace-lifecycle";
 
 let client: Stripe | undefined;
 let override: Stripe | undefined;
@@ -657,7 +654,6 @@ export async function applyCheckoutCompleted(
   // The plan's effects land with the plan, whichever event Stripe delivers first: a canceled
   // Crew owner who comes back on Solo has the extra inboxes paused here, because once the plan
   // reads Solo the subscription event no longer sees a move down (Q2).
-  const movedDown = mailboxLimitFor(plan) < mailboxLimitFor(w.plan);
   await db().transaction(async (tx) => {
     await tx
       .update(workspaces)
@@ -679,8 +675,9 @@ export async function applyCheckoutCompleted(
       })
       .where(eq(workspaces.id, w.id));
     await autopilotPlanEffects(w.id, now, tx);
-    if (movedDown) await inboxLimitEffects(w.id, now, tx);
-    await resumeOverPlanInboxes(w.id, now, tx);
+    // A cheaper plan pauses the Gmail addresses it doesn't cover; a bigger one turns them back
+    // on (decisions 2026-10-16; plan #47's Q2), for the plan that counts (`effectivePlan`).
+    await fitMailboxesToPlan(w.id, now, tx);
   });
   await log(w.id, "payment_received", { plan, includesSetup, from: w.status, to });
   await notifyPaymentReceived(session.id, { plan, includesSetup }, deps);
@@ -723,7 +720,6 @@ export async function applyLiveSubscription(
   const to = statusAfterSubscription(w, sub.status, now);
   const plan = planFromLookupKey(sub.items.data[0]?.price?.lookup_key) ?? w.plan;
   const ended = sub.status === "canceled" || sub.status === "incomplete_expired";
-  const movedDown = mailboxLimitFor(plan) < mailboxLimitFor(w.plan);
   await db().transaction(async (tx) => {
     await tx
       .update(workspaces)
@@ -735,8 +731,9 @@ export async function applyLiveSubscription(
       })
       .where(eq(workspaces.id, w.id));
     await autopilotPlanEffects(w.id, now, tx);
-    if (movedDown) await inboxLimitEffects(w.id, now, tx);
-    await resumeOverPlanInboxes(w.id, now, tx);
+    // A cheaper plan pauses the Gmail addresses it doesn't cover; a bigger one turns them back
+    // on (decisions 2026-10-16; plan #47's Q2), for the plan that counts (`effectivePlan`).
+    await fitMailboxesToPlan(w.id, now, tx);
   });
   if (to !== w.status || plan !== w.plan) {
     await log(w.id, "subscription_changed", { stripeStatus: sub.status, from: w.status, to, plan });

@@ -39,6 +39,7 @@ import { phoneHref } from "@/lib/phone-href";
 import { listMailboxes } from "@/server/mailboxes";
 import { freeMonthView, referralLinkFor, viewChanges } from "@/server/referrals";
 import { requireOwner } from "@/server/session";
+import { TRIAL_NO_SEND_LINE, TRIAL_SIDE_DOOR_LINE } from "@/server/trial-email-rules";
 import { goBackAction, keepFreePlanAction, openPortalAction, startCheckoutAction } from "./actions";
 
 export const metadata: Metadata = { title: "Plan & billing" };
@@ -88,7 +89,7 @@ export default async function BillingPage(props: PageProps<"/billing">) {
     !running && workspace.stripeCustomerId
       ? downgradePausesLine(
           workspace.plan,
-          (await listMailboxes(workspace.id)).filter((m) => m.pausedReason == null).length,
+          (await listMailboxes(workspace.id)).filter((m) => m.planPausedAt == null).length,
         )
       : null;
   const keep = running ? keepOffer(workspace, running.row, now) : null;
@@ -138,11 +139,19 @@ export default async function BillingPage(props: PageProps<"/billing">) {
   const awaitingSetupCall =
     effectiveStatus(workspace) === "setup_paid" && setupReallyPaid(workspace);
   const davi = siteConfig.operator.split(" ")[0];
+  const onTrial = effectiveStatus(workspace) === "evaluating";
 
   return (
     <>
       <Headline serif="your plan," heavy="plain and simple." />
       {doneMsg ? <Notice>{doneMsg}</Notice> : null}
+      {onTrial ? (
+        // The trial's side door (Davi, 2026-10-16), and what a plan changes.
+        <p className="text-lg">
+          {TRIAL_NO_SEND_LINE} {TRIAL_SIDE_DOOR_LINE} A plan turns on Send reply in Squared Away,
+          and every reply still waits for your okay.
+        </p>
+      ) : null}
       {errorMsg ? <Notice strong>{errorMsg}</Notice> : null}
 
       {waitingForStripe ? (
@@ -322,6 +331,7 @@ export default async function BillingPage(props: PageProps<"/billing">) {
             <h2 id="choose" className="text-xl font-black">
               Choose a plan
             </h2>
+
             {terms.includeSetupFee ? (
               <p>
                 Every plan starts with a one-time{" "}

@@ -11,6 +11,7 @@ import {
   type EmailInput,
   type ModelClassification,
 } from "./prompts/classify.v4";
+import { SENDER_NEEDS_ME_REASON } from "@/server/owner-sender-rule-rules";
 import {
   GAS_SMELL_REASON,
   INJECTION_REASON,
@@ -21,6 +22,10 @@ import {
   mentionsRealLegal,
   PAYMENT_CHANGE_REASON,
 } from "./guards";
+import { isLeadCategory } from "@/config/categories";
+import { EMERGENCY_REASON } from "@/server/emergency-rules";
+import { OUTSIDE_AREA_REASON, outsideArea } from "@/server/service-area-rules";
+import type { ChannelKind } from "@/server/channel-rules";
 
 /**
  * What we keep about an email. The model's facts, plus flags:
@@ -71,7 +76,42 @@ export type Extracted = ModelClassification["extracted"] & {
    * signal only; it never sets the complaint mark. Only ever present as `true`.
    */
   routine_paperwork?: boolean;
+  /**
+   * Ideas H3: the owner's sender rule that applied to this email: "junk" (sorted as junk by the
+   * rule, no model call) or "no_draft" (sorted as usual, never drafted by a job).
+   */
+  sender_rule?: "junk" | "no_draft";
+  /** Ideas H4: the sorter's own kind for this email, whatever kind the owner chose. */
+  model_category?: Category;
+  /**
+   * Leads package: every owner rule this email matched, as fixed content-free keys
+   * (`OWNER_RULE_KEYS`). Cards read these, never the reason text.
+   */
+  owner_rule_hits?: string[];
 };
+
+/** The owner-rule keys, in display order (leads package §1g). */
+export const OWNER_RULE_KEYS = [
+  "injection",
+  "gas",
+  "payment_change",
+  "complaint",
+  "legal",
+  "dispute",
+  "vip",
+  "sender_rule",
+  "amount",
+  "big_new_job",
+  "emergency",
+  "phone",
+  "site",
+  "outside_area",
+  "low_confidence",
+  "model",
+] as const;
+export type OwnerRuleKey = (typeof OWNER_RULE_KEYS)[number];
+/** Hits whose fixed text always wins over the model's own reason (no town or name rides along). */
+const FIXED_TEXT_HITS: readonly OwnerRuleKey[] = ["emergency", "phone", "site", "outside_area"];
 
 /** The needs-owner reasons a dispute or legal threat gets (when the model gave none). */
 export const LEGAL_REASON = "Mentions something legal.";
@@ -128,53 +168,118 @@ export function applyOwnerRules(
   ctx: {
     firstTimeSender: boolean;
     senderIsVip: boolean;
+    /** Ideas H3: a company-wide "Always needs me" rule matched the sender or reply address. */
+    senderNeedsMe?: boolean;
     amountThresholdDollars: number;
     injection?: boolean;
     /** Someone smells gas (round 2, TW B4): top priority, whatever the model said. */
     gasSmell?: boolean;
     /** Asks to pay a new account (round 2, A11). */
     paymentChange?: boolean;
+    /** Leads package: the email came through a phone service or a lead website (code-decided). */
+    channel?: { kind: ChannelKind; name: string } | null;
+    /** Leads package (B9): a quote request from a town that isn't on the owner's list. */
+    outsideArea?: boolean;
   },
-): Pick<Classification, "needsOwner" | "needsOwnerReason" | "priority"> {
+): Pick<Classification, "needsOwner" | "needsOwnerReason" | "priority"> & { hits: OwnerRuleKey[] } {
   // Never let the model's own words explain away an email that tried to instruct it.
   if (ctx.injection) {
     return {
       needsOwner: true,
       needsOwnerReason: INJECTION_REASON,
       priority: ctx.gasSmell ? "high" : "normal",
+      hits: ["injection"],
     };
   }
   if (ctx.gasSmell)
-    return { needsOwner: true, needsOwnerReason: GAS_SMELL_REASON, priority: "high" };
-  if (ctx.paymentChange)
-    return { needsOwner: true, needsOwnerReason: PAYMENT_CHANGE_REASON, priority: "high" };
-  const overThreshold = m.extracted.dollar_amounts.some((a) => a > ctx.amountThresholdDollars);
-  const confidence = Math.max(0, Math.min(1, m.confidence));
-  const reasons: [boolean, string][] = [
-    [m.category === "complaint", "Complaint — you'll want to handle this yourself."],
-    [m.signals.mentions_legal, LEGAL_REASON],
-    [m.signals.mentions_refund_or_dispute, DISPUTE_REASON],
-    [ctx.senderIsVip, "From someone on your VIP list."],
-    [overThreshold, `Mentions more than $${ctx.amountThresholdDollars.toLocaleString("en-US")}.`],
-    [ctx.firstTimeSender && m.signals.large_request, "New customer asking about a big job."],
-    [confidence < CONFIDENCE_THRESHOLD, "Not sure what this one is — take a look."],
-  ];
-  const hit = reasons.find(([when]) => when);
-
-  if (m.category === "noise" && !hit) {
-    return { needsOwner: false, needsOwnerReason: null, priority: "low" };
-  }
-  if (hit) {
     return {
       needsOwner: true,
-      needsOwnerReason: m.needs_owner && m.needs_owner_reason ? m.needs_owner_reason : hit[1],
-      priority: m.category === "complaint" || m.signals.mentions_legal ? "high" : m.priority,
+      needsOwnerReason: GAS_SMELL_REASON,
+      priority: "high",
+      hits: ["gas"],
+    };
+  if (ctx.paymentChange)
+    return {
+      needsOwner: true,
+      needsOwnerReason: PAYMENT_CHANGE_REASON,
+      priority: "high",
+      hits: ["payment_change"],
+    };
+  const overThreshold = m.extracted.dollar_amounts.some((a) => a > ctx.amountThresholdDollars);
+  const confidence = Math.max(0, Math.min(1, m.confidence));
+  // Leads package: a lead-site or phone email someone wrote with a job (a phone message about
+  // anything but junk or a supplier); an emergency from someone with a job.
+  const channel = ctx.channel ?? null;
+  const channelLead =
+    !!channel &&
+    (channel.kind === "site"
+      ? isLeadCategory(m.category)
+      : m.category !== "noise" && m.category !== "supplier_vendor");
+  const emergency = m.extracted.urgency === "emergency" && isLeadCategory(m.category);
+  const reasons: [boolean, OwnerRuleKey, string][] = [
+    [m.category === "complaint", "complaint", "Complaint — you'll want to handle this yourself."],
+    [m.signals.mentions_legal, "legal", LEGAL_REASON],
+    [m.signals.mentions_refund_or_dispute, "dispute", DISPUTE_REASON],
+    [ctx.senderIsVip, "vip", "From someone on your VIP list."],
+    [ctx.senderNeedsMe === true, "sender_rule", SENDER_NEEDS_ME_REASON],
+    [
+      overThreshold,
+      "amount",
+      `Mentions more than $${ctx.amountThresholdDollars.toLocaleString("en-US")}.`,
+    ],
+    [
+      ctx.firstTimeSender && m.signals.large_request,
+      "big_new_job",
+      "New customer asking about a big job.",
+    ],
+    [emergency, "emergency", EMERGENCY_REASON],
+    [
+      channelLead && channel?.kind !== "site",
+      "phone",
+      channel?.kind === "phone_text"
+        ? "Text message — text them back from your phone."
+        : "Voicemail — call them back.",
+    ],
+    [
+      channelLead && channel?.kind === "site",
+      "site",
+      `Came through ${channel?.name ?? "a lead website"} — answer them there.`,
+    ],
+    [!!ctx.outsideArea && m.category === "quote_request", "outside_area", OUTSIDE_AREA_REASON],
+    [
+      confidence < CONFIDENCE_THRESHOLD,
+      "low_confidence",
+      "Not sure what this one is — take a look.",
+    ],
+  ];
+  const matched = reasons.filter(([when]) => when);
+  const hit = matched[0];
+  const hits: OwnerRuleKey[] = [
+    ...matched.map(([, key]) => key),
+    ...(m.needs_owner ? (["model"] as const) : []),
+  ];
+
+  if (m.category === "noise" && !hit) {
+    return { needsOwner: false, needsOwnerReason: null, priority: "low", hits };
+  }
+  if (hit) {
+    // A channel, emergency or outside-area rule: always our own fixed words, never the model's
+    // prose (which could carry a town or a name past the 30-day purge).
+    const fixed = matched.some(([, key]) => FIXED_TEXT_HITS.includes(key));
+    return {
+      needsOwner: true,
+      needsOwnerReason:
+        !fixed && m.needs_owner && m.needs_owner_reason ? m.needs_owner_reason : hit[2],
+      priority:
+        m.category === "complaint" || m.signals.mentions_legal || emergency ? "high" : m.priority,
+      hits,
     };
   }
   return {
     needsOwner: m.needs_owner,
     needsOwnerReason: m.needs_owner ? (m.needs_owner_reason ?? "Take a look at this one.") : null,
     priority: m.priority,
+    hits,
   };
 }
 
@@ -207,11 +312,16 @@ export async function classifyEmail(
   email: EmailInput,
   opts: {
     senderIsVip: boolean;
+    senderNeedsMe?: boolean;
     now?: Date;
     /** Older unsorted emails on the thread: checked in code, never sent to the model (B3). */
     alsoCheck?: string[];
     /** Marks the thread already carries, kept whatever this email says (B3). */
     sticky?: { injection?: boolean; paymentChange?: boolean };
+    /** Leads package: where the email came from, decided in code from the sender. */
+    channel?: { kind: ChannelKind; name: string } | null;
+    /** Leads package (B9): the owner's towns; empty = no check. */
+    serviceTowns?: readonly string[];
   },
 ): Promise<Classification> {
   const body = prepareBody(email.body);
@@ -282,13 +392,21 @@ export async function classifyEmail(
     ...result,
     signals: { ...result.signals, mentions_legal: legal },
   };
-  const rules = applyOwnerRules(model, {
+  const { hits, ...rules } = applyOwnerRules(model, {
     firstTimeSender: email.firstTimeSender,
     senderIsVip: opts.senderIsVip,
+    senderNeedsMe: opts.senderNeedsMe,
     amountThresholdDollars: business.amountThresholdDollars,
     injection,
     gasSmell,
     paymentChange,
+    channel: opts.channel ?? null,
+    outsideArea:
+      outsideArea({
+        category: result.category,
+        address: result.extracted.address,
+        towns: opts.serviceTowns ?? [],
+      }) !== null,
   });
   // Building departments are never noise.
   const category: Category =
@@ -315,6 +433,7 @@ export async function classifyEmail(
       ...(result.signals.job_done ? { job_done: true } : {}),
       ...(result.signals.routine_paperwork ? { routine_paperwork: true } : {}),
       ...(result.signals.mentions_refund_or_dispute || legal ? { disputed: true } : {}),
+      owner_rule_hits: hits,
     },
     unreadable: false,
   };
