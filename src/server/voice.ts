@@ -1,5 +1,5 @@
 import "server-only";
-import { and, asc, eq, sql } from "drizzle-orm";
+import { and, asc, eq, isNotNull, sql } from "drizzle-orm";
 import { callStructured } from "@/ai/client";
 import {
   sentMailBlock,
@@ -12,6 +12,7 @@ import { db } from "@/db";
 import {
   activityLog,
   appSettings,
+  drafts,
   mailboxes,
   users,
   voiceProfiles,
@@ -147,7 +148,7 @@ export async function learnVoice(
 
   await recordAttempt(workspaceId, "learning", now);
   try {
-    const stats: LearnStats = { emailsRead: 0, forwardsSkipped: 0 };
+    const stats: LearnStats = { emailsRead: 0, forwardsSkipped: 0, appSentSkipped: 0 };
     const outcome = await learnFrom(workspaceId, mailbox, opts, now, stats);
     // Counts only: never ids, addresses or text.
     console.info("voice_learn", { workspaceId, outcome, ...stats });
@@ -164,7 +165,23 @@ export async function learnVoice(
   }
 }
 
-type LearnStats = { emailsRead: number; forwardsSkipped: number };
+type LearnStats = { emailsRead: number; forwardsSkipped: number; appSentSkipped: number };
+
+/** Gmail ids of replies sent unchanged from the app, across the workspace's mailboxes. */
+async function appSentMessageIds(workspaceId: string): Promise<Set<string>> {
+  const rows = await db()
+    .select({ id: drafts.sentGmailMessageId })
+    .from(drafts)
+    .innerJoin(mailboxes, eq(mailboxes.id, drafts.mailboxId))
+    .where(
+      and(
+        eq(mailboxes.workspaceId, workspaceId),
+        eq(drafts.status, "sent"),
+        isNotNull(drafts.sentGmailMessageId),
+      ),
+    );
+  return new Set(rows.map((r) => r.id!));
+}
 
 async function learnFrom(
   workspaceId: string,
@@ -184,7 +201,14 @@ async function learnFrom(
       query: "in:sent newer_than:365d",
       maxResults: MAX_SENT_EMAILS,
     });
-    const refs = list.messages.slice(0, MAX_SENT_EMAILS);
+    // Check 24 P3: replies the app sent exactly as drafted (by the owner's tap or autopilot) are
+    // the drafter's words, not the owner's. Edited-and-sent ones keep the owner's edits.
+    const appSent = await appSentMessageIds(workspaceId);
+    const refs = list.messages.slice(0, MAX_SENT_EMAILS).filter((r) => {
+      if (!appSent.has(r.id)) return true;
+      stats.appSentSkipped++;
+      return false;
+    });
     const fetched: (string | null)[] = new Array(refs.length).fill(null);
     let next = 0;
     await Promise.all(

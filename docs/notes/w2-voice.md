@@ -33,3 +33,9 @@
   `prepareBody` is unchanged (separate decision).
   The review's Check 24 script wasn't available to this builder: the 36 cases in
   `tests/unit/voice-text.test.ts` were re-invented to cover every category the review lists.
+- **Voice learning skips the app's own replies (Check 24 P3):** before fetching bodies,
+  `learnVoice` drops sent-folder ids that match `drafts.sent_gmail_message_id` with status
+  `sent` (sent exactly as drafted, by a tap or autopilot) on any of the workspace's mailboxes;
+  `edited_and_sent` ones stay (the owner's edits are his words). The count is logged as
+  `appSentSkipped` in `voice_learn`. Fewer than 5 left → not_enough_mail (a stored voice stays in
+  use, P1).

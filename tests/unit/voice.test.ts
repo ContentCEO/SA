@@ -4,7 +4,7 @@ import { setModelTransportForTests } from "@/ai/client";
 import type { ModelVoice } from "@/ai/prompts/voice.v2";
 import type { Database } from "@/db";
 import { eq } from "drizzle-orm";
-import { mailboxes, messages, voiceProfiles } from "@/db/schema";
+import { drafts, mailboxes, messages, threads, voiceProfiles } from "@/db/schema";
 import { ensureUserAndWorkspace } from "@/server/accounts";
 import { saveConnectedMailbox } from "@/server/mailboxes";
 import { saveVoiceEdits, voiceEditInput } from "@/server/profile";
@@ -237,6 +237,57 @@ describe("Check 24 P2: only the owner's own words go to the model", () => {
     expect(user).not.toContain("CUSTOMER-");
     expect(user).not.toContain("45 Maple Street");
     expect(user).not.toContain("978-555-0177");
+  });
+});
+
+describe("Check 24 P3: replies the app wrote aren't learned as the owner's", () => {
+  it("skips replies sent unchanged from the app, keeps ones the owner edited", async () => {
+    addSent(6);
+    fake.add({ id: "app-sent", threadId: "a", labelIds: ["SENT"], bodyText: "DRAFTER-WORDS hi" });
+    fake.add({ id: "edited", threadId: "e", labelIds: ["SENT"], bodyText: "OWNER-EDIT words" });
+    const [box] = await database.select().from(mailboxes);
+    const [thread] = await database
+      .insert(threads)
+      .values({ mailboxId: box!.id, gmailThreadId: "a" })
+      .returning();
+    const draft = { threadId: thread!.id, mailboxId: box!.id, toAddress: "x@example.com" };
+    await database.insert(drafts).values([
+      { ...draft, subject: "Re", reason: "r", status: "sent", sentGmailMessageId: "app-sent" },
+      {
+        ...draft,
+        subject: "Re",
+        reason: "r",
+        status: "edited_and_sent",
+        sentGmailMessageId: "edited",
+      },
+    ]);
+    const { transport, calls } = fakeTransport([voice()]);
+    setModelTransportForTests(transport);
+    expect(await learnVoice(workspaceId, deps())).toBe("ready");
+    expect(calls[0]!.user).not.toContain("DRAFTER-WORDS");
+    expect(calls[0]!.user).toContain("OWNER-EDIT");
+  });
+
+  it("too few left once the app's own replies are dropped counts as not enough mail", async () => {
+    await saveVoiceEdits(workspaceId, edits());
+    addSent(5);
+    const [box] = await database.select().from(mailboxes);
+    const [thread] = await database
+      .insert(threads)
+      .values({ mailboxId: box!.id, gmailThreadId: "a" })
+      .returning();
+    await database.insert(drafts).values({
+      threadId: thread!.id,
+      mailboxId: box!.id,
+      toAddress: "x@example.com",
+      subject: "Re",
+      reason: "r",
+      status: "sent",
+      sentGmailMessageId: "s0",
+    });
+    setModelTransportForTests(fakeTransport([]).transport);
+    expect(await learnVoice(workspaceId, { ...deps(), force: true })).toBe("not_enough_mail");
+    expect(await ctxVoice()).toMatchObject({ signoffStyle: "– Mike" });
   });
 });
 
