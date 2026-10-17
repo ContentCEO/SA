@@ -1,0 +1,2 @@
+ALTER TABLE "voice_profile" ADD COLUMN "learned_from_mailbox_id" uuid;--> statement-breakpoint
+ALTER TABLE "voice_profile" ADD CONSTRAINT "voice_profile_learned_from_mailbox_id_mailboxes_id_fk" FOREIGN KEY ("learned_from_mailbox_id") REFERENCES "public"."mailboxes"("id") ON DELETE set null ON UPDATE no action;

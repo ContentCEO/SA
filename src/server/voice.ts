@@ -60,6 +60,26 @@ export function scrubExample(text: string, allow?: ScrubAllow): string {
   return scrubText(text, allow);
 }
 
+/**
+ * Check 24 P6: which inbox the voice is learned from. Only addresses that are on (Google access
+ * works and the plan covers them, 2026-10-16): the owner's own sign-in address if it is one of
+ * them, else the oldest connected (by when it was first added, so a reconnect doesn't reorder).
+ */
+export async function voiceMailbox(workspaceId: string): Promise<Mailbox | undefined> {
+  const [mailbox] = await db()
+    .select({ mailbox: mailboxes })
+    .from(mailboxes)
+    .innerJoin(workspaces, eq(workspaces.id, mailboxes.workspaceId))
+    .innerJoin(users, eq(users.id, workspaces.ownerUserId))
+    .where(and(eq(mailboxes.workspaceId, workspaceId), mailboxRunning()))
+    .orderBy(
+      sql`case when lower(${mailboxes.email}) = lower(${users.email}) then 0 else 1 end`,
+      asc(mailboxes.createdAt),
+    )
+    .limit(1);
+  return mailbox?.mailbox;
+}
+
 /** A voice is stored on the row (SQL twin of `hasVoiceContent`). */
 const storedVoiceSql = sql`(coalesce(btrim(${voiceProfiles.summary}), '') <> ''
   or coalesce(btrim(${voiceProfiles.greetingStyle}), '') <> ''
@@ -131,13 +151,7 @@ export async function learnVoice(
   const [ws] = await db().select().from(workspaces).where(eq(workspaces.id, workspaceId));
   if (!ws || !jobsAllowed(ws, now)) return "read_only";
 
-  // The oldest address that's on: Google access works and the plan covers it (2026-10-16).
-  const [mailbox] = await db()
-    .select()
-    .from(mailboxes)
-    .where(and(eq(mailboxes.workspaceId, workspaceId), mailboxRunning()))
-    .orderBy(asc(mailboxes.createdAt))
-    .limit(1);
+  const mailbox = await voiceMailbox(workspaceId);
   if (!mailbox) return "no_mailbox";
 
   await recordAttempt(workspaceId, "learning", now);
@@ -289,6 +303,7 @@ async function learnFrom(
     phrasesAvoided: result.phrases_avoided.slice(0, 10).map((p) => clean(p, 120)),
     examples: result.examples.slice(0, 5).map((e) => clean(e, 600)),
     learnedFromCount: bodies.length,
+    learnedFromMailboxId: mailbox.id,
     learnedAt: now,
     updatedAt: now,
     lastAttempt: "ready",

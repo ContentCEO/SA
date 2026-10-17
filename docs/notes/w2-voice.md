@@ -58,3 +58,9 @@
   Davi's call ("Your call" on the Check 24 page) whether to soften it to "replaces the email
   addresses, phone numbers, prices and street addresses it recognizes" — pattern rules can't
   catch every way people write an address (e.g. "the yellow house past the church").
+- **Voice inbox (Check 24 P6, migration `voice_learned_from`):** `voiceMailbox()` picks, among
+  running mailboxes (`mailboxRunning()`), the owner's sign-in address (`users.email`) if it's one
+  of them, else the oldest by `created_at` (not `connected_at`, which a reconnect resets, so the
+  choice would jump). `no_mailbox` only when none is running (already true at the base; the
+  backstop uses the same filter, so no 15-minute re-queue). `voice_profile.learned_from_mailbox_id`
+  (FK, set null) → Settings → Your voice shows "Learned from mike@shop.com".

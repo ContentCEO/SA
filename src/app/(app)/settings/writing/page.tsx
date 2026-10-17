@@ -34,6 +34,10 @@ export default async function WritingSettingsPage(props: PageProps<"/settings/wr
           ? "Couldn't learn your style last time. You can describe it yourself, or try again."
           : "Not learned yet. It starts once your email has been read.";
   const updateNote = lastUpdateNote(voice, profile?.timeZone ?? "America/New_York");
+  // Check 24 P6: which inbox the voice came from (the owner's own address when it's connected).
+  const learnedFrom = stored
+    ? mailboxes.find((m) => m.id === voice?.learnedFromMailboxId)?.email
+    : undefined;
 
   return (
     <SettingsScreen path="/settings/writing" heavy="your voice." params={await props.searchParams}>
@@ -44,6 +48,9 @@ export default async function WritingSettingsPage(props: PageProps<"/settings/wr
         <div className="flex flex-col gap-2 rounded-xl border bg-card p-4">
           <p className="text-lg">{voiceLine}</p>
           {updateNote ? <p className="font-semibold">{updateNote}</p> : null}
+          {learnedFrom ? (
+            <p className="break-all text-muted-foreground">Learned from {learnedFrom}</p>
+          ) : null}
           {stored && voice?.phrasesUsed.length ? (
             <p className="text-muted-foreground">
               You say things like “{voice.phrasesUsed.slice(0, 3).join("”, “")}”.

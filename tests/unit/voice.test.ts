@@ -4,7 +4,7 @@ import { setModelTransportForTests } from "@/ai/client";
 import type { ModelVoice } from "@/ai/prompts/voice.v2";
 import type { Database } from "@/db";
 import { eq } from "drizzle-orm";
-import { drafts, mailboxes, messages, threads, voiceProfiles } from "@/db/schema";
+import { drafts, mailboxes, messages, threads, voiceProfiles, workspaces } from "@/db/schema";
 import { ensureUserAndWorkspace } from "@/server/accounts";
 import { saveConnectedMailbox } from "@/server/mailboxes";
 import { saveVoiceEdits, voiceEditInput } from "@/server/profile";
@@ -310,6 +310,76 @@ describe("Check 24 P3: replies the app wrote aren't learned as the owner's", () 
     setModelTransportForTests(fakeTransport([]).transport);
     expect(await learnVoice(workspaceId, { ...deps(), force: true })).toBe("not_enough_mail");
     expect(await ctxVoice()).toMatchObject({ signoffStyle: "– Mike" });
+  });
+});
+
+describe("Check 24 P6: the right inbox when a shop has more than one", () => {
+  const second = async (email: string) => {
+    const [ws] = await database.select().from(workspaces).where(eq(workspaces.id, workspaceId));
+    await database.update(workspaces).set({ plan: "company" }).where(eq(workspaces.id, ws!.id));
+    return saveConnectedMailbox(
+      { id: workspaceId, plan: "company" },
+      {
+        email,
+        refreshToken: "rt2",
+        grantedScopes: [],
+      },
+    );
+  };
+  const readerBy = (byEmail: Record<string, FakeMailbox>) => ({
+    ...deps(),
+    readerFor: (m: { email: string }) => byEmail[m.email]!.reader(),
+  });
+
+  it("learns from the second inbox when the first lost access", async () => {
+    const info = await second("info@shop.com");
+    await database
+      .update(mailboxes)
+      .set({ status: "reconnect_needed" })
+      .where(eq(mailboxes.email, "owner@shop.com"));
+    const other = new FakeMailbox();
+    for (let i = 0; i < 6; i++)
+      other.add({ id: `i${i}`, threadId: `ti${i}`, labelIds: ["SENT"], bodyText: `INFO-BOX ${i}` });
+    const { transport, calls } = fakeTransport([voice()]);
+    setModelTransportForTests(transport);
+    expect(await learnVoice(workspaceId, readerBy({ "info@shop.com": other }))).toBe("ready");
+    expect(calls[0]!.user).toContain("INFO-BOX");
+    expect((await row()).learnedFromMailboxId).toBe(info.id);
+  });
+
+  it("prefers the owner's own address over info@ when both are on", async () => {
+    // info@ added first, so it's the older row; the owner's address still wins.
+    await database.delete(mailboxes);
+    await second("info@shop.com");
+    await saveConnectedMailbox(
+      { id: workspaceId, plan: "company" },
+      {
+        email: "owner@shop.com",
+        refreshToken: "rt",
+        grantedScopes: [],
+      },
+    );
+    const info = new FakeMailbox();
+    for (let i = 0; i < 6; i++)
+      info.add({ id: `i${i}`, threadId: `ti${i}`, labelIds: ["SENT"], bodyText: `INFO-BOX ${i}` });
+    addSent(6);
+    const { transport, calls } = fakeTransport([voice()]);
+    setModelTransportForTests(transport);
+    expect(
+      await learnVoice(workspaceId, readerBy({ "info@shop.com": info, "owner@shop.com": fake })),
+    ).toBe("ready");
+    expect(calls[0]!.user).not.toContain("INFO-BOX");
+    expect(calls[0]!.user).toContain("Hey Marco");
+  });
+
+  it("isn't due again after a successful learn", async () => {
+    const now = new Date("2026-09-28T12:00:00Z");
+    await database.update(mailboxes).set({ backfillCompletedAt: now });
+    expect(await workspacesNeedingVoice(now)).toEqual([workspaceId]);
+    addSent(6);
+    setModelTransportForTests(fakeTransport([voice()]).transport);
+    expect(await learnVoice(workspaceId, deps())).toBe("ready");
+    expect(await workspacesNeedingVoice(new Date(now.getTime() + 86_400_000))).toEqual([]);
   });
 });
 

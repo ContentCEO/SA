@@ -629,6 +629,10 @@ export const voiceProfiles = pgTable("voice_profile", {
   lastAttemptAt: timestamp("last_attempt_at", { withTimezone: true }),
   /** Check 29 P2: times the 15-minute backstop restarted a learn stuck at "learning". */
   restartCount: integer("restart_count").notNull().default(0),
+  /** Check 24 P6: the inbox the stored voice was learned from ("Learned from mike@…"). */
+  learnedFromMailboxId: uuid("learned_from_mailbox_id").references(() => mailboxes.id, {
+    onDelete: "set null",
+  }),
 });
 
 /**
