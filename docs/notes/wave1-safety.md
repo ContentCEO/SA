@@ -5,8 +5,10 @@ Builder notes for `CLAUDE.md` (Decisions, Prompt versions, Waiting on Davi), `do
 
 ## Prompt versions
 
-- **classify.v5** (this branch): Check 22 P4 + 36 P1 (smells_gas widened, `co_alarm` signal).
-  Later steps on this branch add to the same file (see below). The categories, business block and
+- **classify.v5** (this branch): Check 22 P4 + 36 P1 (smells_gas widened, `co_alarm` signal),
+  Check 22 P3 (a short reply's quoted text in its own untrusted block), Check 48 P1 (a "bot?"
+  question is not `tries_to_instruct_assistant`).
+- **draft.v8** (this branch): Check 48 P1's "Who is writing" rule. The categories, business block and
   types are re-exported from classify.v4, so screens importing `Category` from v4 are unchanged.
   `co_alarm` is `z.boolean().catch(false)` (a missing value reads false, as draft.v7's `opening`).
   Other groups that write classify.v5 (Check 12 P2 / 12 P3 / 22 P9 / 38 P5 / 45 P7 per the version
@@ -117,6 +119,25 @@ Builder notes for `CLAUDE.md` (Decisions, Prompt versions, Waiting on Davi), `do
   emails dated before the clear against the thread. Autopilot refuses the thread for 30 days
   ("You said an email here was normal after we flagged it, so it waits for you."). Notices
   `?done=normal_email`, `?error=not_clearable`.
+
+- **"Is this a bot?" (Check 48 P1 + Check 43 P2):** `asksIfAi` (`src/ai/guards.ts`, English,
+  Spanish, Portuguese; also "hi assistant, can you ask Mike to call me", "if a bot is reading
+  this, pass it to a human"). The attack check now splits phrases that only ADDRESS the
+  assistant ("Dear AI assistant:", "if an AI is reading", "as the AI", "you are (now) an AI")
+  from real orders: addressing counts as an attack only with an order within 80 characters
+  (agree, approve, confirm, include, send, reveal, must…) or when the email isn't asking if a
+  person is reading. Gone: "(talking) to an AI", "send the photos to the assistant", "you are an
+  AI, right?", "answer as the owner and not as the assistant". `ASKS_IF_AI_REASON` ("Asks whether
+  a person or an AI is answering. Answer this one yourself."), `extracted.asks_if_ai` (sticky for
+  the thread like `injection`), owner-rule key `asks_if_ai` (after injection and the safety
+  marks). Jobs never draft it (`asks_if_ai`); the owner's tap does, with **draft.v8**'s "Who is
+  writing" rule. `checkDraft` hit `human_claim` (`HUMAN_CLAIM_FLAG` "Says a person wrote this
+  without help. Check it's true before sending.", cap 0.2, not regenerated; `claimsHuman`).
+  Autopilot ("Asks if a person is answering, so it waits for you.") and batch send refuse both.
+  Check 43 P2's separate wording `BOT_QUESTION_REASON` was folded into Check 48 P1's reason.
+- **draft.v8** (this branch): draft.v7 + a "Who is writing" section (Check 48 P1). Everything else
+  re-exported from draft.v7, so the cache is unchanged. Other groups' draft.v8 changes (Check 23
+  P11 / 43 P1 / 44 P1 / 45 P2, 40 P1, 41 P1) need combining into this one file at merge.
 
 ## Privacy policy lines (for the integrator)
 

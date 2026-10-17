@@ -16,7 +16,13 @@ import {
   sql,
 } from "drizzle-orm";
 import { callStructured } from "@/ai/client";
-import { checkDraft, hasLink, REGENERATE_ON, type CheckResult } from "@/ai/draft-checks";
+import {
+  checkDraft,
+  claimsHuman,
+  hasLink,
+  REGENERATE_ON,
+  type CheckResult,
+} from "@/ai/draft-checks";
 import { injectionCheck, looksLikePaymentChange } from "@/ai/guards";
 import {
   REVISE_INSTRUCTIONS,
@@ -38,7 +44,7 @@ import {
   type ModelDraft,
   type Opening,
   type WorkspaceContext,
-} from "@/ai/prompts/draft.v7";
+} from "@/ai/prompts/draft.v8";
 import {
   OPENING_TWEAKS,
   OPENING_TWEAKS_PROMPT_VERSION,
@@ -196,6 +202,8 @@ export type CreateOutcome =
         | "municipal"
         // Round 2: asks to pay a new account (A11) — only the owner's tap drafts one.
         | "payment_change"
+        /** Check 48 P1: "is this a bot?" — only the owner's tap drafts it. */
+        | "asks_if_ai"
         // Round 2 (FW E11): the owner said they called after the newest email.
         | "answered_by_phone"
         // Purpose drafts (plan #26 #28 #29). S6 adds the per-purpose eligibility reasons.
@@ -737,6 +745,7 @@ export async function createDraftForThread(
     gas_smell?: boolean;
     co_alarm?: boolean;
     electrical_hazard?: boolean;
+    asks_if_ai?: boolean;
     bill_direction?: string;
     model_category?: string;
   };
@@ -745,6 +754,8 @@ export async function createDraftForThread(
     if (marks.injection) return { status: "skipped", reason: "untrusted" };
     if (marks.municipal) return { status: "skipped", reason: "municipal" };
     if (marks.payment_change) return { status: "skipped", reason: "payment_change" };
+    // Check 48 P1 + 43 P2: "is this a bot?" — the owner answers it (their tap drafts it).
+    if (marks.asks_if_ai) return { status: "skipped", reason: "asks_if_ai" };
     // Ideas H4: a kind the owner chose feeds a job's draft only when the sorter's own kind
     // would have been drafted too ("out of Junk" on something it called junk is a tap only).
     if (
@@ -1801,6 +1812,7 @@ export async function batchCandidates(
       gas_smell?: boolean;
       co_alarm?: boolean;
       electrical_hazard?: boolean;
+      asks_if_ai?: boolean;
     };
     const ok = batchEligible(
       {
@@ -1817,6 +1829,9 @@ export async function batchCandidates(
           extracted.gas_smell === true ||
           extracted.co_alarm === true ||
           extracted.electrical_hazard === true ||
+          // Check 48 P1: "is this a bot?", or a draft that says a person wrote it alone.
+          extracted.asks_if_ai === true ||
+          claimsHuman(draft.body ?? "") ||
           // Check 36 P2: an emergency in the last 48 hours, whatever the thread is now.
           recentEmergency(extracted, now),
         autopilotCounting: draft.autoSendAt !== null,

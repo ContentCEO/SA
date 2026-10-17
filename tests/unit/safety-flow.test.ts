@@ -12,6 +12,7 @@ import {
   CO_REASON,
   ELECTRICAL_HAZARD_REASON,
   GAS_SMELL_REASON,
+  ASKS_IF_AI_REASON,
   INJECTION_REASON,
   PAYMENT_CHANGE_REASON,
   WATER_SMELL_REASON,
@@ -546,5 +547,72 @@ describe("'This is a normal email' (Check 22 P2)", () => {
     const { workspace: stranger } = await ensureUserAndWorkspace({ email: "else@shop.test" });
     expect(await clearInjectionMark(stranger.id, other.id, NOW)).toBe("not_found");
     expect((await threadRow(other.id)).extracted).toMatchObject({ injection: true });
+  });
+});
+
+describe("'is this a bot?', sorted and batched (Check 48 P1 + Check 43 P2)", () => {
+  it("needs you with the plain reason, no attack mark, no automatic draft; sticky", async () => {
+    const t = await thread("bot");
+    await message(t.id, "bot1", {
+      bodyText: "Am I talking to an AI? Your replies come back really fast.",
+      sentAt: minsAgo(60),
+    });
+    setModelTransportForTests(
+      fakeTransport([classification({ category: "customer_question", confidence: 0.95 })])
+        .transport,
+    );
+    await classifyPending(mailboxId, { now: minsAgo(50) });
+    const row = await threadRow(t.id);
+    expect(row).toMatchObject({ needsOwner: true, needsOwnerReason: ASKS_IF_AI_REASON });
+    expect(row.extracted).toMatchObject({ asks_if_ai: true });
+    expect((row.extracted as { injection?: boolean }).injection).toBeUndefined();
+    expect(await threadsToAutoDraft(mailboxId)).not.toContain(t.id);
+    expect(await createDraftForThread(t.id, { trigger: "auto", ...deps() })).toEqual({
+      status: "skipped",
+      reason: "asks_if_ai",
+    });
+
+    // The next "ok thanks" keeps it the owner's.
+    await message(t.id, "bot2", { bodyText: "Ok thanks.", sentAt: minsAgo(30) });
+    setModelTransportForTests(
+      fakeTransport([classification({ category: "customer_question", confidence: 0.95 })])
+        .transport,
+    );
+    await classifyPending(mailboxId, { now: NOW });
+    expect((await threadRow(t.id)).needsOwnerReason).toBe(ASKS_IF_AI_REASON);
+  });
+
+  it("batch send refuses a draft that claims a person wrote it alone", async () => {
+    const t = await thread("claim", {
+      category: "scheduling",
+      classifiedAt: minsAgo(20),
+      needsOwner: false,
+    });
+    await message(t.id, "claim", { bodyText: "Can you come Thursday?", sentAt: minsAgo(30) });
+    const [inbound] = await database
+      .select()
+      .from(messages)
+      .where(eq(messages.gmailMessageId, "claim"));
+    const draftRow = (body: string, g: string) => ({
+      threadId: t.id,
+      mailboxId,
+      gmailDraftId: g,
+      replyToMessageId: inbound!.id,
+      toAddress: "dana@x.test",
+      subject: "Re: Help",
+      body,
+      originalBody: body,
+      reason: "Confirming.",
+      flags: [],
+      confidence: 95,
+      createdAt: minsAgo(20),
+    });
+    await database
+      .insert(drafts)
+      .values(draftRow("Thursday works. This is Mike himself, no bots.", "g1"));
+    expect(await batchCandidates(workspaceId, ["scheduling"], NOW)).toEqual([]);
+    await database.delete(drafts);
+    await database.insert(drafts).values(draftRow("Thursday works.", "g2"));
+    expect(await batchCandidates(workspaceId, ["scheduling"], NOW)).toHaveLength(1);
   });
 });

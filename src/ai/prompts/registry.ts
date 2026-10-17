@@ -10,7 +10,7 @@
  * prompts belong in it, so each version is written once.
  */
 import { CLASSIFY_PROMPT_VERSION } from "./classify.v5";
-import { DRAFT_PROMPT_VERSION } from "./draft.v7";
+import { DRAFT_PROMPT_VERSION } from "./draft.v8";
 import { EDIT_TONE_PROMPT_VERSION } from "./edit-tone.v1";
 import { FOLLOWUP_PROMPT_VERSION } from "./followup.v4";
 import { OPENING_TWEAKS_PROMPT_VERSION } from "./opening-tweaks.v1";

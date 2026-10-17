@@ -14,7 +14,7 @@ import {
   FIRST_CONTACT_TASK,
   replyDraftSchema,
   workspaceBlock,
-} from "@/ai/prompts/draft.v7";
+} from "@/ai/prompts/draft.v8";
 import { ACTIVE } from "@/ai/prompts/registry";
 import { usage } from "@/db/schema";
 import { ensureUserAndWorkspace } from "@/server/accounts";

@@ -2,6 +2,33 @@
  * Checks in code that don't trust the model (feature plan #17, #42; review round 2). Pure.
  */
 
+/**
+ * Check 48 P1 + Check 43 P2: phrases that only ADDRESS the assistant ("Dear AI assistant:",
+ * "if a bot is reading this", "as the AI"). An attack when an order comes with them, or when
+ * the email isn't simply asking whether a person is reading or to pass a message on
+ * (`asksIfAi`). Lower-cased, whitespace-collapsed.
+ */
+const ADDRESS_PATTERNS: RegExp[] = [
+  // "You are now an AI…" always; "you are an AI, right?" is a question, not an order.
+  /\byou are now (an? |the )?(ai|assistant|chat ?bot|language model|llm|gpt|claude)\b/,
+  /\byou are (an? |the )?(ai|assistant|chat ?bot|language model|llm|gpt|claude)\b(?!\s*(\?|,? ?(right|aren't you|are you not|correct|no|or)\b))/,
+  // "As the AI, you must…" — not "answer as the owner and not as the assistant?". "Talking to
+  // an AI?" and "send the photos to the assistant" no longer count (Check 48 P1).
+  /(?<!\b(not|than) )\bas (the|an?) (ai|assistant|chat ?bot|language model)\b(?!\s*\?)/,
+  // "Dear AI assistant:", "Hello assistant,", "Note for the automated system" (review B2).
+  /\b(dear|hello|hi|hey|attention|attn) (the )?(ai|automated|virtual)( email)? (assistant|system|bot|model|agent|responder)\b/,
+  /\b(dear|hello|hi|hey|attention|attn) (ai|assistant|chat ?bot|bot)\b\s*[:,]/,
+  /\bnote (for|to) (the )?(ai|assistant|automated system|automated assistant|bot|language model)\b/,
+  // Check 22 P2: "if the assistant manager is handling this" is a person's job title.
+  /\bif (an? |the |any )?(ai|assistant(?! (manager|superintendent|principal|director|coach|editor|project manager|pm)\b)|bot|chat ?bot|language model|automated system)\b.{0,20}\b(is )?(reading|processing|handling|answering|sees|read)\b/,
+  /\b(eres|você é|voce e|tú eres|tu eres) (ahora |agora )?(un |uma |um )?(asistente|assistente|ia|inteligencia artificial|inteligência artificial)\b(?!.{0,30}\?)/,
+  /\b(querido|querida|estimado|estimada|prezado|prezada) (asistente|assistente|ia)\b/,
+];
+
+/** An order right after addressing the assistant ("Dear AI assistant: please agree to …"). */
+const ADDRESSED_ORDER =
+  /\b(agree|approve|confirm|confirme|include|mark|say|write|send|envía|envie|forward|reveal|promise|reply with|respond with|responde|tell (them|me|us)|give (me|us)|list|print|output|repeat|accept|book|schedule|must|should|can do|you can|no restrictions|sin reglas|sem regras)\b/;
+
 /** Phrases aimed at an AI rather than at the owner. Lower-cased, whitespace-collapsed. */
 const INSTRUCTION_PATTERNS: RegExp[] = [
   // Check 22 P2: never the writer's own ("my earlier instructions about the gate", "forget my
@@ -12,17 +39,9 @@ const INSTRUCTION_PATTERNS: RegExp[] = [
   // email/quote" is a person correcting themselves, so a following noun lets it pass.
   /\b(ignore|disregard)\b (all |everything |anything )?(of )?(the |what's |what is )?(above|preceding)\b(?! (emails?|messages?|notes?|one|address|quotes?|prices?|dates?|times?|text|mail|requests?|invoices?|estimates?|numbers?|photos?|pictures?))/,
   /\b(system|developer)\s+(prompt|message|instructions?)\b/,
-  /\byou are (now )?(an? |the )?(ai|assistant|chat ?bot|language model|llm|gpt|claude)\b/,
-  /\b(as|to) (the|an?) (ai|assistant|chat ?bot|language model)\b/,
-  // "Dear AI assistant:", "Hello assistant,", "Note for the automated system" (review B2).
-  /\b(dear|hello|hi|hey|attention|attn) (the )?(ai|automated|virtual)( email)? (assistant|system|bot|model|agent|responder)\b/,
-  /\b(dear|hello|hi|hey|attention|attn) (ai|assistant|chat ?bot|bot)\b\s*[:,]/,
-  /\bnote (for|to) (the )?(ai|assistant|automated system|automated assistant|bot|language model)\b/,
   // Check 22 P2: only with an order about what to say ("…confirm the job is free", "…always
   // include the owner's cell"), never "when writing your response, list your exclusions".
   /\bwhen (drafting|writing|generating|composing) (your|the|a) (reply|response|answer)\b.{0,60}\b(say|says|include|mention|add|reveal|confirm|agree|promise|state|tell|always|never)\b/,
-  // Check 22 P2: "if the assistant manager is handling this" is a person's job title.
-  /\bif (an? |the |any )?(ai|assistant(?! (manager|superintendent|principal|director|coach|editor|project manager|pm)\b)|bot|chat ?bot|language model|automated system)\b.{0,20}\b(is )?(reading|processing|handling|answering|sees|read)\b/,
   /\b(reveal|print|repeat|output) (your|the) (instructions|prompt|system)/,
   // Check 22 P2: only what belongs to someone else or is a secret. "Send me all of the
   // invoices from September" (a bookkeeper, an adjuster, a lender's draw) is ordinary.
@@ -36,8 +55,6 @@ const INSTRUCTION_PATTERNS: RegExp[] = [
   /\b(ignora|ignore|ignorar|olvida|olvide|olvidar|esquece|esqueça|esquecer|desconsidera|desconsidere)\b.{0,30}((todas (las|as) |todas )(instrucciones|instruções|instrucoes|reglas|regras)|(instrucciones|instruções|instrucoes|reglas|regras) (anteriores|previas|prévias|previas))\b/,
   /\b(ignora|olvida|esquece|esqueça|desconsidera)\b (todo|tudo) (lo |o )?(anterior|acima)\b/,
   /\b(instrucciones|instruções|instrucoes) (anteriores|previas|prévias)\b/,
-  /\b(eres|você é|voce e|tú eres|tu eres) (ahora |agora )?(un |uma |um )?(asistente|assistente|ia|inteligencia artificial|inteligência artificial)\b/,
-  /\b(querido|querida|estimado|estimada|prezado|prezada) (asistente|assistente|ia)\b/,
 ];
 
 /**
@@ -70,6 +87,17 @@ export function injectionCheck(text: string | null | undefined): InjectionCheck 
   const flat = raw.toLowerCase().replace(/\s+/g, " ");
   const reasons: string[] = [];
   if (INSTRUCTION_PATTERNS.some((p) => p.test(flat))) reasons.push("instructions");
+  else {
+    // Check 48 P1 + 43 P2: addressing the assistant is an attack when an order follows it, or
+    // when the email isn't simply asking whether a person is reading / to pass a message on.
+    const addressed = ADDRESS_PATTERNS.map((p) => p.exec(flat)).filter(
+      (m): m is RegExpExecArray => m !== null,
+    );
+    const ordered = addressed.some((m) =>
+      ADDRESSED_ORDER.test(flat.slice(m.index + m[0].length, m.index + m[0].length + 80)),
+    );
+    if (addressed.length && (ordered || !asksIfAi(flat))) reasons.push("instructions");
+  }
   // Links are left out: tracking links from lead sites and stores carry long random tokens.
   const joined = raw.replace(/\bhttps?:\/\/\S+/gi, " ").replace(/[\r\n]+/g, "");
   if ([...joined.matchAll(BASE64_RUN)].some((m) => looksEncoded(m[0]))) reasons.push("encoded");
@@ -81,6 +109,44 @@ export function injectionCheck(text: string | null | undefined): InjectionCheck 
 }
 
 export const INJECTION_REASON = "This email tries to give instructions to the assistant.";
+
+/**
+ * Check 48 P1 + Check 43 P2: the customer asks whether a person or an AI is answering ("Am I
+ * talking to an AI?", "is this a real person or a bot?", "¿es un robot?", "você é um robô?"),
+ * or asks the assistant to pass a message to the owner ("Hi assistant, can you ask Mike to call
+ * me back?", "if a bot is reading this, pass it to a human"). An honest question, never an
+ * attack: the owner answers it. Pure; kept apart from the attack patterns.
+ */
+const ASKS_IF_AI_PATTERNS: RegExp[] = [
+  /\b(am i|are we) (talking|speaking|writing|chatting|emailing) (to|with) (an? |the )?(ai|bot|robot|chat ?bot|chatgpt|computer|machine|real person|person|human|assistant)\b/,
+  /\b(is|was) (this|that|it) (a |an )?(bot|robot|ai|chat ?bot|chatgpt|computer|machine|real person|person|human|automated|auto(matic)?(ally)? (generated|written|reply))\b/,
+  /\bare (you|these|those|your) (emails? |replies |responses )?(a |an )?(real person|real human|person|human|bot|robot|ai|chat ?bot|machine|computer|automated|auto-?generated)\b/,
+  /\byou are (an? |the )?(ai|bot|robot|assistant|chat ?bot)\b,? ?(right|aren't you|are you not|correct)?\s*\?/,
+  /\b(did|does|do) (a |an |the )?(computer|ai|bot|robot|chat ?bot|chatgpt|assistant|machine|program|software) (write|wrote|answer|reply|respond|read)\b/,
+  /\b(written|answered|sent|generated|replied) by (a |an |the )?(computer|ai|bot|robot|chat ?bot|chatgpt|machine|program|software)\b/,
+  /\b(real person|a human|real human|actual person)\b.{0,40}\?|\bor (a |an )?(bot|robot|ai|machine|computer|chat ?bot)\s*\?/,
+  /\bsounded like (chatgpt|a bot|a robot|an ai|ai|a computer)\b/,
+  /\bis (anyone|somebody|someone|a person|a human) (actually |really )?(reading|there|answering)\b/,
+  /\b(send|give|email) (the |my )?\w+ to the assistant or (to )?(you|\w+)\b/,
+  /\bas the owner (and )?not as the assistant\b/,
+  // Asks the assistant to pass a message on.
+  /\b(hi|hey|hello|dear) (ai )?(assistant|bot)\b.{0,40}\b(ask|tell|have|let|get) (\w+ )?(to )?(call|text|reach|get back|contact|know)\b/,
+  /\b(pass|forward|give|send) (this|it|my message|the message) (on |along )?(to|for) (a |the )?(human|person|owner|boss|real person)\b/,
+  /\b(have|ask|get) the owner (to )?(call|text|email|contact|reach)\b/,
+  // Spanish and Portuguese.
+  /\b(es|eres|es usted|sos) (un |una )?(robot|bot|asistente|ia|inteligencia artificial|persona( real)?|humano)\b.{0,30}\?/,
+  /\b(hablo|estoy hablando) con (un |una )?(robot|bot|persona|humano|máquina|maquina|ia)\b/,
+  /(?<![a-z])(é|você é|voce e|vc é) (um |uma )?(robô|robo|bot|assistente|ia|pessoa( de verdade)?|humano)(?![a-z]).{0,30}\?/,
+  /\b(estou falando|falo) com (um |uma )?(robô|robo|bot|pessoa|humano|ia)(?![a-z])/,
+];
+
+export function asksIfAi(text: string | null | undefined): boolean {
+  const flat = (text ?? "").toLowerCase().replace(/\s+/g, " ");
+  return ASKS_IF_AI_PATTERNS.some((p) => p.test(flat));
+}
+
+export const ASKS_IF_AI_REASON =
+  "Asks whether a person or an AI is answering. Answer this one yourself.";
 
 /**
  * Payment-change fraud (review A11): "our bank details changed", "wire it to this new

@@ -13,6 +13,8 @@ import {
 } from "./prompts/classify.v5";
 import { SENDER_NEEDS_ME_REASON } from "@/server/owner-sender-rule-rules";
 import {
+  ASKS_IF_AI_REASON,
+  asksIfAi,
   CO_REASON,
   ELECTRICAL_HAZARD_REASON,
   GAS_SMELL_REASON,
@@ -101,6 +103,12 @@ export type Extracted = ModelClassification["extracted"] & {
    */
   injection_cleared_by_owner?: boolean;
   injection_cleared_at?: string;
+  /**
+   * Check 48 P1 + 43 P2: the customer asks whether a person or an AI is answering (or asks the
+   * assistant to pass a message on). Needs the owner, never drafted by a job, never autopilot.
+   * Sticky for the thread, like `injection`. Only ever present as `true`.
+   */
+  asks_if_ai?: boolean;
   /** Round 2 TW B4: someone smells gas. Only ever present as `true`. */
   gas_smell?: boolean;
   /**
@@ -145,6 +153,7 @@ export const OWNER_RULE_KEYS = [
   "co_alarm",
   "electrical",
   "payment_change",
+  "asks_if_ai",
   "complaint",
   "legal",
   "dispute",
@@ -263,6 +272,8 @@ export function applyOwnerRules(
     paymentChange?: boolean;
     /** Check 22 P3: lawyers, liens, small claims found in code anywhere in the email. */
     legalThreat?: boolean;
+    /** Check 48 P1: asks whether a person or an AI is answering. */
+    asksIfAi?: boolean;
     /** The water smells like rotten eggs, nothing says gas (Check 36 P1). */
     waterSmell?: boolean;
     /** Leads package: the email came through a phone service or a lead website (code-decided). */
@@ -307,6 +318,13 @@ export function applyOwnerRules(
       needsOwnerReason: PAYMENT_CHANGE_REASON,
       priority: "high",
       hits: ["payment_change"],
+    };
+  if (ctx.asksIfAi)
+    return {
+      needsOwner: true,
+      needsOwnerReason: ASKS_IF_AI_REASON,
+      priority: m.priority === "low" ? "normal" : m.priority,
+      hits: ["asks_if_ai"],
     };
   const overThreshold = m.extracted.dollar_amounts.some((a) => a > ctx.amountThresholdDollars);
   const confidence = Math.max(0, Math.min(1, m.confidence));
@@ -419,7 +437,7 @@ export type ClassifyOpts = {
   /** Older unsorted emails on the thread: checked in code, never sent to the model (B3). */
   alsoCheck?: string[];
   /** Marks the thread already carries, kept whatever this email says (B3). */
-  sticky?: { injection?: boolean; paymentChange?: boolean };
+  sticky?: { injection?: boolean; paymentChange?: boolean; asksIfAi?: boolean };
   /** Leads package: where the email came from, decided in code from the sender. */
   channel?: { kind: ChannelKind; name: string } | null;
   /** Leads package (B9): the owner's towns; empty = no check. */
@@ -468,6 +486,9 @@ function codeChecks(email: EmailInput, opts: Pick<ClassifyOpts, "alsoCheck" | "s
     looksLikePaymentChange(checked) ||
     looksLikePaymentChange(fullText) ||
     opts.sticky?.paymentChange === true;
+  // Check 48 P1: "am I talking to an AI?" — the newest part (and older unsorted emails), never
+  // the quoted text (the owner's own words). Sticky for the thread.
+  const asksAi = asksIfAi(checked) || opts.sticky?.asksIfAi === true;
   // Check 22 P3: lawyers, liens, small claims — anywhere in the email, in code.
   const legalThreat = mentionsLegalThreat(checked) || mentionsLegalThreat(fullText);
   const municipalSender = looksMunicipal(email.fromAddress, email.fromName);
@@ -476,6 +497,7 @@ function codeChecks(email: EmailInput, opts: Pick<ClassifyOpts, "alsoCheck" | "s
     earlier,
     quoted,
     legalThreat,
+    asksAi,
     allText,
     checked,
     injection,
@@ -528,6 +550,7 @@ function codeFallback(email: EmailInput, c: ReturnType<typeof codeChecks>): Clas
       ...(electrical ? { electrical_hazard: true } : {}),
       ...(c.waterInText ? { water_smell: true } : {}),
       ...(c.paymentChangeInText ? { payment_change: true } : {}),
+      ...(c.asksAi ? { asks_if_ai: true } : {}),
       ...(hits.length ? { owner_rule_hits: hits } : {}),
     },
     summary: email.subject ? `Email: ${email.subject}` : "Email with no subject.",
@@ -567,6 +590,7 @@ export async function classifyEmail(
     earlier,
     quoted,
     legalThreat,
+    asksAi,
     allText,
     checked,
     gasInText,
@@ -630,6 +654,7 @@ export async function classifyEmail(
     electricalHazard,
     paymentChange,
     legalThreat,
+    asksIfAi: asksAi,
     waterSmell,
     channel: opts.channel ?? null,
     outsideArea:
@@ -686,6 +711,7 @@ export async function classifyEmail(
       ...(electricalHazard ? { electrical_hazard: true } : {}),
       ...(waterSmell ? { water_smell: true } : {}),
       ...(paymentChange ? { payment_change: true } : {}),
+      ...(asksAi ? { asks_if_ai: true } : {}),
       // Signals only — they never change needs_owner (applyOwnerRules ignores them).
       ...(result.signals.accepts_quote ? { accepts_quote: true } : {}),
       ...(result.signals.job_done ? { job_done: true } : {}),

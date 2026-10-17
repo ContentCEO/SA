@@ -193,6 +193,7 @@ export async function classifyPending(
     const prevMarks = (thread?.extracted ?? {}) as {
       injection?: unknown;
       payment_change?: unknown;
+      asks_if_ai?: unknown;
     };
     // The burst the model reads with it (B4), oldest first.
     const earlier = older
@@ -212,6 +213,8 @@ export async function classifyPending(
     const sticky = {
       injection: prevMarks.injection === true,
       paymentChange: prevMarks.payment_change === true,
+      // Check 48 P1: "is this a bot?" stays the owner's to answer for the whole thread.
+      asksIfAi: prevMarks.asks_if_ai === true,
     };
     // Check 39 P1: past the day's AI limit, only what the checks in code catch is stored now (a
     // gas smell, a CO alarm, a new bank account, an attack), through the same write as any

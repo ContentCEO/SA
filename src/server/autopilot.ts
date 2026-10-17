@@ -1,4 +1,5 @@
 import "server-only";
+import { claimsHuman } from "@/ai/draft-checks";
 import { hasUnfilledGap } from "@/ai/gaps";
 import {
   looksLikePaymentChange,
@@ -139,6 +140,11 @@ export type GuardrailInput = {
   coAlarm?: boolean;
   /** Check 37 P1: electrical fire signs. */
   electricalHazard?: boolean;
+  /**
+   * Check 48 P1: the customer asked whether a person is answering, or the draft says a person
+   * wrote it with no help.
+   */
+  asksIfAi?: boolean;
   /** Check 22 P2: the owner cleared an attack mark on this thread in the last 30 days. */
   injectionCleared?: boolean;
   /** Check 36 P2: an emergency on this conversation in the last 48 hours. */
@@ -189,6 +195,8 @@ export function guardrailReasons(g: GuardrailInput): string[] {
   if (g.emailUnreadable) out.push("We can't read their email any more, so it waits for you.");
   if (g.gasSmell) out.push("Someone smells gas. Call them.");
   if (g.coAlarm) out.push("A carbon monoxide alarm went off. Call them.");
+  if (g.asksIfAi || claimsHuman(g.draftBody))
+    out.push("Asks if a person is answering, so it waits for you.");
   if (g.injectionCleared)
     out.push("You said an email here was normal after we flagged it, so it waits for you.");
   if (g.electricalHazard) out.push("Sounds like an electrical fire risk. Call them.");
@@ -428,6 +436,7 @@ async function blockers(row: NonNullable<Awaited<ReturnType<typeof loadForAutopi
     legalInEmail: mentionsRealLegal(fullText) || mentionsLegalThreat(fullText),
     recentEmergency: recentEmergency(thread.extracted, now),
     injectionCleared: injectionClearedRecently(thread.extracted, now),
+    asksIfAi: (extracted as { asks_if_ai?: unknown }).asks_if_ai === true,
     emailUnreadable: fullBody === null,
     ownerMoved: thread.categoryManual != null && thread.categoryManual !== extracted.model_category,
     leadChannel: thread.leadChannel != null,
