@@ -328,6 +328,16 @@ export const messages = pgTable(
     sentAt: timestamp("sent_at", { withTimezone: true }).notNull(),
     /** Set once classification ran (or was deliberately skipped) for this message. */
     classifiedAt: timestamp("classified_at", { withTimezone: true }),
+    /**
+     * Check 50 P3 (reserved, not read or written yet): an automatic reply (out-of-office,
+     * auto-responder headers). Check 20 P4 and 21 P1 use this column and add no migration.
+     */
+    autoReply: boolean("auto_reply").notNull().default(false),
+    /**
+     * Check 50 P3 (reserved, not read or written yet): a bare acknowledgement ("thanks!") that
+     * needs no answer. Check 21 P1 uses this column and adds no migration.
+     */
+    ackOnly: boolean("ack_only").notNull().default(false),
     createdAt: createdAt(),
   },
   (t) => [
@@ -497,6 +507,20 @@ export const businessProfiles = pgTable("business_profile", {
    * that day hasn't come yet (read at use, no job turns it off). Null = not away.
    */
   awayBackOn: text("away_back_on"),
+  /**
+   * Check 50 P3 (reserved, not read or written yet): the owner's two-letter US state code.
+   * Check 38 P2, 44 P1 and 45 P2 use this column and add no migration.
+   */
+  state: text("state"),
+  /**
+   * Check 50 P3 (reserved, not shown in any form yet): the owner's crew addresses, lowercased,
+   * de-duplicated, max 30 (`crewAddressesSchema` in src/server/profile.ts). Check 22 P10 and
+   * 41 P6 use this one list (not a "team_addresses") and add no migration.
+   */
+  crewAddresses: text("crew_addresses")
+    .array()
+    .notNull()
+    .default(sql`'{}'::text[]`),
   completedAt: timestamp("completed_at", { withTimezone: true }),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });

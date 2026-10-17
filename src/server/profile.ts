@@ -39,6 +39,31 @@ const lines = (maxItems: number, maxLen = 200) =>
         .max(maxItems, `Up to ${maxItems} lines.`),
     );
 
+export const MAX_CREW_ADDRESSES = 30;
+
+/**
+ * Check 50 P3: the owner's crew addresses (`business_profile.crew_addresses`), one per line:
+ * each an email, lowercased, de-duplicated after lowercasing, at most 30. Not in any form yet.
+ */
+export const crewAddressesSchema = z
+  .string()
+  .transform((v) =>
+    v
+      .split("\n")
+      .map((l) => l.trim().toLowerCase())
+      .filter(Boolean),
+  )
+  .pipe(
+    z.array(
+      z
+        .string()
+        .max(254, "Keep each line under 254 characters.")
+        .email("Each line should be one email address."),
+    ),
+  )
+  .transform((list) => [...new Set(list)])
+  .pipe(z.array(z.string()).max(MAX_CREW_ADDRESSES, `Up to ${MAX_CREW_ADDRESSES} addresses.`));
+
 export const REVIEW_URL_MESSAGE =
   "That doesn't look like a web link. Copy it from your Google or Yelp page — it starts with https://";
 

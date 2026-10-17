@@ -60,4 +60,11 @@ describe("migration journal", () => {
     expect(at("0034_numbers")).toBe(34);
     expect(entries[33]!.when).toBeGreaterThan(entries[32]!.when);
   });
+
+  it("puts wave 0's reserved columns (Check 50 P3) at 0035, after 0034_numbers", () => {
+    // Branches built alongside wave 0 renumber their migrations after this one.
+    const at = (tag: string) => entries.findIndex((e) => e.tag === tag);
+    expect(at("0035_reserved_columns")).toBe(35);
+    expect(entries[35]!.when).toBeGreaterThan(entries[34]!.when);
+  });
 });
