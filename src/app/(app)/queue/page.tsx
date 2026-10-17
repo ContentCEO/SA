@@ -6,7 +6,13 @@ import { draftTag } from "@/config/categories";
 import { findGaps } from "@/ai/gaps";
 import { confidenceLabel } from "@/config/drafting";
 import { gmailThreadLink } from "@/lib/gmail-link";
-import { bodyHash, listQueue, sentDraftSummary, type QueueItem } from "@/server/drafts";
+import {
+  bodyHash,
+  draftGmailLink,
+  listQueue,
+  sentDraftSummary,
+  type QueueItem,
+} from "@/server/drafts";
 import {
   canPracticeSend,
   canSend,
@@ -170,6 +176,18 @@ export default async function QueuePage(props: PageProps<"/queue">) {
   );
   const clock = new Intl.DateTimeFormat("en-US", { hour: "numeric", minute: "2-digit", timeZone });
   const readOnly = isReadOnly(workspace);
+  // Check 42 P1: "This was already answered from Gmail at 2:14pm. Nothing was sent."
+  const answeredAt = params.error === "answered" ? Number(params.at) : NaN;
+  const answered =
+    params.error === "answered"
+      ? {
+          at: Number.isFinite(answeredAt) && answeredAt > 0 ? new Date(answeredAt) : null,
+          href:
+            typeof params.d === "string" && /^[0-9a-f-]{36}$/i.test(params.d)
+              ? await draftGmailLink(workspace.id, params.d)
+              : null,
+        }
+      : null;
   const firstLook = await firstLookFor(workspace);
   const empty = queue.needsYou.length === 0 && queue.drafts.length === 0;
   const now = new Date();
@@ -314,6 +332,28 @@ export default async function QueuePage(props: PageProps<"/queue">) {
       ) : null}
       {doneMsg ? <Notice>{doneMsg}</Notice> : null}
       {errorMsg ? <Notice strong>{errorMsg}</Notice> : null}
+      {answered ? (
+        <Notice strong>
+          This was already answered from Gmail
+          {answered.at
+            ? ` at ${clock.format(answered.at).replace(/\s?([AP])M$/, (_, m: string) => `${m.toLowerCase()}m`)}`
+            : ""}
+          . Nothing was sent.
+          {answered.href ? (
+            <>
+              {" "}
+              <a
+                href={answered.href}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex min-h-tap items-center underline underline-offset-4"
+              >
+                Open the conversation in Gmail
+              </a>
+            </>
+          ) : null}
+        </Notice>
+      ) : null}
 
       <OfflineQueue enabled={device.offline} />
       {/* A fresh key per server render: a later navigation or action remounts it, so a

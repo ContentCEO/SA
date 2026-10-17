@@ -488,6 +488,14 @@ export const drafts = pgTable(
      * every draft written before draft.v7).
      */
     opening: text("opening"),
+    /**
+     * Check 14 P1: how a sent draft left. app = the owner's tap here, autopilot = autopilot,
+     * gmail = our draft sent from Gmail (same or edited text), own_words = closed because the
+     * owner wrote their own reply in Gmail (status stays `sent` so caps hold, but it never counts
+     * as a drafted reply sent or as time saved). Null = sent before this column (counted as
+     * before).
+     */
+    sentVia: text("sent_via").$type<"app" | "autopilot" | "gmail" | "own_words">(),
   },
   (t) => [
     index("drafts_mailbox_status_idx").on(t.mailboxId, t.status),

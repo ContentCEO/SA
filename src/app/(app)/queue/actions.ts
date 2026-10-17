@@ -71,6 +71,9 @@ export async function sendDraftAction(formData: FormData) {
     case "changed_in_gmail":
     case "changed_since_seen":
       redirect("/queue?error=changed");
+    case "answered_elsewhere":
+      // Check 42 P1: no "Send anyway". The owner can tap Draft a reply for a second message.
+      redirect(`/queue?error=answered&d=${draftId.data}&at=${outcome.at.getTime()}`);
     case "to_changed":
       redirect("/queue?error=to_changed");
     case "gaps_unfilled":

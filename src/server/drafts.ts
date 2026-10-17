@@ -92,6 +92,7 @@ import {
   type MailboxWriter,
 } from "@/mailbox/connector";
 import { createGmailReader } from "@/mailbox/gmail/api";
+import { gmailThreadLink } from "@/lib/gmail-link";
 import { buildReplyMime, replySubject, sameText, toGmailRaw } from "@/mailbox/mime";
 import {
   canSend,
@@ -1200,7 +1201,46 @@ export type SendOutcome =
   | { status: "not_found" }
   | { status: "reconnect_needed" }
   /** The plan covers fewer Gmail addresses and this one is paused (MAILBOX_PAUSED_LINE). */
-  | { status: "mailbox_paused" };
+  | { status: "mailbox_paused" }
+  /**
+   * Check 42 P1: someone already answered the customer from Gmail (the office, or the owner
+   * at a computer) after this draft was written. Nothing is sent: a second answer would go out.
+   */
+  | { status: "answered_elsewhere"; at: Date };
+
+/** Check 42 P1: the note on a reply set aside because the customer was answered from Gmail. */
+export const ANSWERED_ELSEWHERE_NOTE =
+  "Someone answered this from Gmail, so this reply was set aside.";
+
+/**
+ * Check 42 P1: when the customer was first answered from Gmail after `since`, or null. An email
+ * from the shop's address on the thread counts unless it is an unsent Gmail draft, a practice
+ * copy (it went only to the mailbox's own address) or a side conversation (a forward to the
+ * crew, `sideEmailSql`): those answer nobody.
+ */
+export async function answeredSince(
+  threadId: string,
+  since: Date,
+  mailboxEmail: string,
+): Promise<Date | null> {
+  const own = mailboxEmail.trim().toLowerCase();
+  const [first] = await db()
+    .select({ at: messages.sentAt })
+    .from(messages)
+    .where(
+      and(
+        eq(messages.threadId, threadId),
+        eq(messages.direction, "out"),
+        gt(messages.sentAt, since),
+        notDraftMessage(),
+        sql`not (jsonb_array_length(${messages.toAddresses} || ${messages.ccAddresses}) > 0 and not exists (select 1 from jsonb_array_elements_text(${messages.toAddresses} || ${messages.ccAddresses}) as ae_r(a) where lower(trim(ae_r.a)) <> ${own}))`,
+        sql`not ${sideEmailSql("messages")}`,
+      ),
+    )
+    .orderBy(asc(messages.sentAt))
+    .limit(1);
+  return first?.at ?? null;
+}
 
 /**
  * Send a pending draft — the only way anything leaves the owner's inbox.
@@ -1243,6 +1283,10 @@ export async function sendDraft(
     await closeDraft(draft, workspaceId, "discarded", TEXT_ADDRESS_NOTE, now);
     return { status: "text_address" };
   }
+  // Check 42 P1: answered from Gmail since this was written (also covers a send in its undo
+  // window): never a second answer. Checked before any Gmail call.
+  const answeredAt = await answeredSince(thread.id, draft.createdAt, mailbox.email);
+  if (answeredAt) return { status: "answered_elsewhere", at: answeredAt };
 
   const writer = (opts.writerFor ?? defaultWriter)(mailbox);
   try {
@@ -1281,6 +1325,7 @@ export async function sendDraft(
       .update(drafts)
       .set({
         status: edited ? "edited_and_sent" : "sent",
+        sentVia: opts.by === "autopilot" ? "autopilot" : "app",
         body,
         decidedAt: now,
         sentGmailMessageId: sent.messageId,
@@ -1451,6 +1496,10 @@ export async function queueSend(
   // Refused at the tap, before anything is queued (leads package). Nothing is closed here:
   // the owner sees why and the card stays until reconcile clears it.
   if (isEmailToTextAddress(draft.toAddress)) return { status: "text_address" };
+  // Check 42 P1: someone answered from Gmail since this was written. Nothing is queued; the
+  // next sync sets the draft aside (reconcileDrafts).
+  const answeredAt = await answeredSince(thread.id, draft.createdAt, mailbox.email);
+  if (answeredAt) return { status: "answered_elsewhere", at: answeredAt };
 
   const writer = (opts.writerFor ?? defaultWriter)(mailbox);
   let body = draft.body ?? "";
@@ -1627,6 +1676,12 @@ export async function deliverQueuedSend(
   try {
     const outcome = await sendDraft(workspaceId, draftId, { ...opts, queued: true });
     if (outcome.status === "sent") return { status: "sent" };
+    if (outcome.status === "answered_elsewhere") {
+      // Check 42 P1: the customer was answered from Gmail during the undo window. The window
+      // ends quietly: the reply is set aside (here and in Gmail), never sent.
+      await standDownAnswered(draftId, workspaceId, claimed.threadId, opts, now);
+      return { status: "stopped", why: "answered_elsewhere" };
+    }
     why = outcome.status;
   } catch (err) {
     if (!(err instanceof SendingBlockedError)) throw err; // the claim lapses; a retry takes it
@@ -1644,6 +1699,63 @@ export async function deliverQueuedSend(
     detail: { draftId, why },
   });
   return { status: "stopped", why };
+}
+
+/**
+ * Check 42 P1: a queued reply whose customer was answered from Gmail meanwhile. It is closed as
+ * expired (only while still pending), its Gmail draft deleted (best effort), and one
+ * content-free `send_stood_down` row says why.
+ */
+async function standDownAnswered(
+  draftId: string,
+  workspaceId: string,
+  threadId: string,
+  opts: DraftDeps,
+  now: Date,
+) {
+  const [closed] = await db()
+    .update(drafts)
+    .set({
+      status: "expired",
+      closedNote: ANSWERED_ELSEWHERE_NOTE,
+      decidedAt: now,
+      sendAfter: null,
+      sendClaimedAt: null,
+    })
+    .where(and(eq(drafts.id, draftId), eq(drafts.status, "pending")))
+    .returning({ gmailDraftId: drafts.gmailDraftId, mailboxId: drafts.mailboxId });
+  if (!closed) return;
+  if (closed.gmailDraftId) {
+    const [mailbox] = await db().select().from(mailboxes).where(eq(mailboxes.id, closed.mailboxId));
+    try {
+      if (mailbox)
+        await (opts.writerFor ?? defaultWriter)(mailbox).deleteDraft(closed.gmailDraftId);
+    } catch (err) {
+      if (err instanceof MailboxAuthError && mailbox) await markReconnectNeeded(mailbox);
+      else
+        console.error("stood_down_gmail_delete_failed", {
+          draftId,
+          error: err instanceof Error ? err.name : "unknown",
+        });
+    }
+  }
+  await db()
+    .insert(activityLog)
+    .values({
+      workspaceId,
+      actor: "squared_away",
+      action: "send_stood_down",
+      threadId,
+      detail: { draftId, reason: "answered_elsewhere" },
+    });
+}
+
+/** Check 42 P1: the Gmail link of a draft's conversation, for the owner's own draft only. */
+export async function draftGmailLink(workspaceId: string, draftId: string) {
+  const row = await loadOwnedDraft(workspaceId, draftId);
+  return row
+    ? gmailThreadLink({ mailboxEmail: row.mailbox.email, gmailThreadId: row.thread.gmailThreadId })
+    : null;
 }
 
 /** Backstop for lost events: sends whose window ended a minute ago and nobody holds. */
@@ -2250,6 +2362,49 @@ export async function unflagPendingNudge(threadId: string, flag: string): Promis
 }
 
 /**
+ * Check 14 P1: our Gmail draft is gone and the shop wrote on the thread since. Which email
+ * was it? Our draft sent from Gmail (its message id, or the same text) → sent via `gmail`
+ * (`edited_and_sent` when Gmail kept the id but the text changed). Anything else is the owner's
+ * own reply: status stays `sent` (so the two-nudge cap and the thread stay as before) but
+ * `sent_via = own_words`, which never counts as a drafted reply sent or as time saved, and
+ * Activity says "You answered Dana yourself in Gmail". decidedAt = when that email went.
+ */
+async function closeSentFromGmail(
+  d: Draft,
+  workspaceId: string,
+  outs: { gmailMessageId: string; sentAt: Date; bodyText: string | null }[],
+) {
+  const same = (m: { bodyText: string | null }) =>
+    m.bodyText != null && d.body != null && sameText(prepareBody(m.bodyText), d.body);
+  const byId = d.gmailMessageId ? outs.find((m) => m.gmailMessageId === d.gmailMessageId) : null;
+  const match = byId ?? outs.find(same) ?? null;
+  const newest = outs.reduce((a, b) => (b.sentAt > a.sentAt ? b : a));
+  const ownWords = match == null;
+  // Gmail kept our draft's id but the text is different: edited there, then sent. A purged
+  // text can't be compared; it counts as sent as written.
+  const status: "sent" | "edited_and_sent" =
+    byId && byId.bodyText != null && !same(byId) ? "edited_and_sent" : "sent";
+  await db()
+    .update(drafts)
+    .set({
+      status,
+      sentVia: ownWords ? "own_words" : "gmail",
+      closedNote: ownWords ? "You answered them yourself in Gmail." : "You sent this from Gmail.",
+      decidedAt: (match ?? newest).sentAt,
+    })
+    .where(eq(drafts.id, d.id));
+  await db()
+    .insert(activityLog)
+    .values({
+      workspaceId,
+      actor: "owner",
+      action: ownWords ? "owner_wrote_own_reply" : "reply_sent_from_gmail",
+      threadId: d.threadId,
+      detail: { draftId: d.id },
+    });
+}
+
+/**
  * Keep the queue honest about what happened in Gmail:
  * - draft gone and the owner replied in the thread → they sent it from Gmail;
  * - draft gone otherwise → they deleted it;
@@ -2298,7 +2453,12 @@ export async function reconcileDrafts(mailboxId: string, opts: DraftDeps = {}) {
         continue;
       }
       const newer = await db()
-        .select({ direction: messages.direction })
+        .select({
+          direction: messages.direction,
+          gmailMessageId: messages.gmailMessageId,
+          sentAt: messages.sentAt,
+          bodyText: messages.bodyText,
+        })
         .from(messages)
         .where(
           and(
@@ -2323,15 +2483,18 @@ export async function reconcileDrafts(mailboxId: string, opts: DraftDeps = {}) {
       }
       const remote = d.gmailDraftId ? await writer.getDraft(d.gmailDraftId) : null;
       if (!remote) {
-        const ownerReplied = newer.some((m) => m.direction === "out");
-        await closeDraft(
-          d,
-          mailbox.workspaceId,
-          ownerReplied ? "sent" : "discarded",
-          ownerReplied ? "You sent this from Gmail." : "You deleted this draft in Gmail.",
-          now,
-          "owner",
-        );
+        const outs = newer.filter((m) => m.direction === "out");
+        const ownerReplied = outs.length > 0;
+        if (ownerReplied) await closeSentFromGmail(d, mailbox.workspaceId, outs);
+        else
+          await closeDraft(
+            d,
+            mailbox.workspaceId,
+            "discarded",
+            "You deleted this draft in Gmail.",
+            now,
+            "owner",
+          );
         if (ownerReplied) {
           await db()
             .update(threads)
@@ -2357,6 +2520,15 @@ export async function reconcileDrafts(mailboxId: string, opts: DraftDeps = {}) {
             : "You wrote to them since, so this note was out of date.",
           now,
         );
+        closed++;
+      } else if (
+        d.kind === "reply" &&
+        (await answeredSince(d.threadId, d.createdAt, mailbox.email)) !== null
+      ) {
+        // Check 42 P1: someone answered the customer from Gmail since this was written (the
+        // office, or the owner at a computer). A second answer would go out, so it is set aside.
+        await writer.deleteDraft(d.gmailDraftId!);
+        await closeDraft(d, mailbox.workspaceId, "expired", ANSWERED_ELSEWHERE_NOTE, now);
         closed++;
       } else if (!sameText(remote.bodyText, d.body)) {
         // Changed in Gmail: the owner hasn't approved this text, so any send stops too.

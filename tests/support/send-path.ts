@@ -91,6 +91,7 @@ export async function sendPathWorld() {
         threadId: t!.id,
         mailboxId: mailbox.id,
         gmailDraftId: gmail.draftId,
+        gmailMessageId: gmail.messageId,
         replyToMessageId: m!.id,
         toAddress: "dana@x.com",
         subject: "Re: Deck",

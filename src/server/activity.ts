@@ -67,6 +67,12 @@ export function describeActivity(
       }`;
     case "reply_sent_from_gmail":
       return `You sent the draft${to} from Gmail`;
+    // Check 14 P1: our draft was deleted and the owner wrote their own reply in Gmail.
+    case "owner_wrote_own_reply":
+      return `You answered ${name ?? "them"} yourself in Gmail`;
+    // Check 42 P1: the customer was answered from Gmail during the undo window.
+    case "send_stood_down":
+      return `Didn't send the reply${to}: someone had already answered from Gmail`;
     case "draft_discarded":
       return `You discarded the draft${to}`;
     // Review B1: website-form leads now go to the customer's own address.
@@ -359,6 +365,8 @@ export async function monthSummary(
       and(
         inArray(drafts.mailboxId, boxes),
         inArray(drafts.status, ["sent", "edited_and_sent"]),
+        // Check 14 P1: the owner's own Gmail reply is theirs, not a drafted reply sent.
+        sql`${drafts.sentVia} is distinct from 'own_words'`,
         gte(drafts.decidedAt, start),
       ),
     );
@@ -449,6 +457,7 @@ export async function monthMoney(
           where ${drafts.threadId} = ${threads.id}
             and ${drafts.kind} = 'followup'
             and ${drafts.status} in ('sent', 'edited_and_sent')
+            and ${drafts.sentVia} is distinct from 'own_words'
             and ${drafts.decidedAt} < ${threads.invoicePaidAt}
         )`,
       ),
