@@ -6,9 +6,9 @@ const c = growthCopy.inApp;
 
 /**
  * The one mention of Squared Away Growth inside the app (Davi, 2026-10-16), on the More screen
- * only. No props on purpose: the same static words for every owner, never tied to their mail,
- * drafts, quotes, money owed or activity (Growth never uses inbox data). Never on /billing,
- * read-only or expired screens, or in any email, digest, alert or text.
+ * only. No props on purpose: the same static words for every owner, never tied to anything
+ * the inbox app holds (Growth never uses inbox data). Never on /billing, read-only or expired
+ * screens, or in any email, alert or text.
  */
 export function GrowthMention() {
   return (

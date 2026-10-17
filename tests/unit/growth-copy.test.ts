@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { growthCopy } from "@/components/marketing/growth/growth-copy";
-import { GROWTH_SERVICES } from "@/config/growth";
+import { GROWTH_OWNED, GROWTH_SERVICES } from "@/config/growth";
 
 /** Squared Away Growth copy guard: what the page may and may not say. */
 const SOURCES = [
@@ -18,6 +18,7 @@ const SOURCES = [
   "src/app/growth/page.tsx",
   "src/app/growth-actions.ts",
   "src/server/growth.ts",
+  "src/components/app/growth-mention.tsx",
 ];
 const source = SOURCES.map((f) => readFileSync(f, "utf8")).join("\n");
 
@@ -113,6 +114,27 @@ describe("Squared Away Growth copy", () => {
     expect(withoutSiteAnalytics).not.toMatch(
       /fbq|gtag|googletagmanager|facebook\.net|analytics|pixel/i,
     );
+  });
+
+  it("the pledge names what the client owns for every service, and takes no percentage", () => {
+    const pledge = `${growthCopy.pledge.body} ${growthCopy.pledge.percent}`.toLowerCase();
+    for (const s of GROWTH_SERVICES) {
+      expect(GROWTH_OWNED[s.value], s.value).toBeTruthy();
+      expect(pledge, s.value).toContain(GROWTH_OWNED[s.value].toLowerCase());
+    }
+    expect(growthCopy.pledge.heavy).toBe("you own everything.");
+    expect(pledge).toContain("never take a percentage of your jobs");
+    expect(pledge).toContain("photos");
+    expect(pledge).toContain("in your name");
+    // Shown on /growth and the homepage Growth half (both render GrowthChapter).
+    const chapter = readFileSync("src/components/marketing/growth/growth-chapter.tsx", "utf8");
+    expect(chapter).toContain("c.pledge.body");
+    expect(chapter).toContain("c.pledge.percent");
+  });
+
+  it("the in-app mention says Growth is separate and uses nothing from email", () => {
+    expect(growthCopy.inApp.line).toContain("separate service");
+    expect(growthCopy.inApp.line).toContain("Nothing from your email is used for it.");
   });
 
   it("labels the decorative switch plainly", () => {

@@ -474,6 +474,7 @@ test.describe("homepage: the way into Squared Away Growth", () => {
       "Introducing Squared Away Growth",
       "Squared Away Growth",
       "What we take on",
+      "You own everything",
       "How Growth works",
       "Ground rules",
       "Growth questions",
@@ -1239,10 +1240,13 @@ test("admin: Growth requests and app sign-ups side by side; Growth-only is never
   await expect(b.getByText("Growth call", { exact: true })).toBeVisible();
   await expect(b.getByText("App waitlist", { exact: true })).toHaveCount(0);
   await expect(b).toContainText(
-    "Not on the app waitlist. A Growth call never invites anyone to the app.",
+    "Not on the app waitlist. Asking for a Growth call never invites anyone.",
   );
   await expect(b).toContainText("Wants help with: Google ads, Reviews");
-  await expect(b.getByRole("button")).toHaveCount(0);
+  // No app invite on a Growth-only row: only the explicit Growth controls.
+  await expect(b.getByRole("button", { name: /^Invite Sam/ })).toHaveCount(0);
+  await expect(b.getByText("Invite to Growth", { exact: true })).toBeVisible();
+  await expect(b.getByText("Remove Growth request", { exact: true })).toBeVisible();
   await expect(b).not.toContainText("growth-only");
   await expect(page.getByText("Earlier request")).toHaveCount(0);
 

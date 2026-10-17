@@ -1040,12 +1040,26 @@ Nothing below is switched on or changed until you say so.
 - **PDF quotes:** a quote sent only as an attached PDF (no `$` in the email) isn't counted as a
   price given, so "Let's do it" isn't marked Won automatically and gets no deposit draft. You can
   still tap Won. Change it only if you want it.
-- **Growth, still open:** a written agreement (Growth terms of service); a Settings link to
-  `/growth` for signed-in owners; a Remove button in `/admin` for waitlist entries and Growth call
-  requests (Delete my account keeps them, as a separate service, and removing one on request is
-  done by hand in the database for now; the policy says "ask us and we'll delete it"); and whether
-  a Growth call request should ever carry a referral (today only an app waitlist sign-up from the
-  link does). No tracking pixels on `/growth` without a privacy-policy change.
+- **Growth, still open:** whether a Growth call request should ever carry a referral (today only
+  an app waitlist sign-up from the link does); no tracking pixels on `/growth` without a
+  privacy-policy change. Built on 2026-10-16 (ships with its merge): the Growth client dashboard,
+  the "You own everything" pledge, the More screen's Growth line, and Remove on a waitlist card's
+  Growth request.
+- **Growth agreement: a lawyer's review.** The draft is [docs/growth-agreement.md](growth-agreement.md)
+  ("not legal advice"). Bring it with the app's terms. Its **[To confirm]** items are yours: who
+  signs (you or an LLC), the notice to cancel, refunds, the liability limit, the hand-back time,
+  and Massachusetts law and courts.
+- **Growth prices.** Nothing on the site or in the app shows a Growth price, and nothing will
+  until you pick them: the monthly fee, any setup or website fee, and whether a website has a
+  minimum term (all **[To confirm]** in the agreement draft).
+- **How to start a Growth client** (no decision needed, just the steps): open `/admin` → Growth
+  clients. If they already have an account, tap **Start Growth for this account**, pick it, tick
+  the services, set the start date and their time zone. If not, use **Invite to Growth** (or
+  the same button on their waitlist card's Growth request); they get an email with the sign-in
+  link, and while the Google app is in Testing add them as a Google test user too (the list
+  under Invite an owner). Signing in never starts an app trial. After each monthly check-in,
+  open **Monthly numbers** and fill in what they told you; use **Post an update** for news
+  (they get one email with the title and a link). Their dashboard shows only what you enter.
 - **Gmail draft check (counts only, for the engineers):** whether Gmail keeps a draft's id when
   it's sent. The app is safe either way. The query is in [step 1](#1-merge-the-launch-branch);
   run it **before merging**: after the merge it always reads 0.

@@ -54,7 +54,7 @@ export const growthCopy = {
     items: GROWTH_SERVICES.map((s) => ({ title: s.label, body: s.blurb })),
   },
   /**
-   * The pledge (Davi, 2026-10-16: "I'm not taking a percentage of the business"). Names what the
+   * The pledge (agreed 2026-10-16: no percentage of the business). Names what the
    * client owns for every service in src/config/growth.ts (GROWTH_OWNED; the copy test checks).
    */
   pledge: {

@@ -63,8 +63,8 @@ export function growthServiceLabel(value: GrowthService): string {
 }
 
 /**
- * The "You own everything" pledge (Davi, 2026-10-16: "I'm not taking a percentage of the
- * business"): for each service, what the client owns. `Record<GrowthService, …>` makes a new
+ * The You-own-everything pledge (agreed 2026-10-16: no percentage of the business): for
+ * each service, what the client owns. `Record<GrowthService, …>` makes a new
  * service without an entry a compile error, and tests/unit/growth-copy.test.ts checks that the
  * pledge on /growth names every one.
  */

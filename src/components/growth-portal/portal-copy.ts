@@ -4,7 +4,7 @@ import { siteConfig } from "@/config/site";
  * Every string on the signed-in Growth screens (/start and /my-growth) that isn't a number's
  * source line (those live in src/server/growth-client-rules.ts). Names and the phone number
  * come from siteConfig. tests/unit/growth-portal.test.ts guards it like the public Growth copy:
- * no pronouns for Davi, no "we made you", no promises of results.
+ * no pronouns for Davi, no claims that Growth earned the money, no promises of results.
  */
 const davi = siteConfig.operator.split(" ")[0]!;
 const phone = siteConfig.phone;

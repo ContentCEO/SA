@@ -42,7 +42,7 @@ export const canStartGrowth = (existing: GrowthStatus | null | undefined): boole
   !existing || existing === "ended";
 
 // ---------------------------------------------------------------------------------------------
-// Dates. Davi types start dates in his own calendar (Eastern); the dashboard reads months in the
+// Dates. Davi types start dates in Davi's own calendar (Eastern); the dashboard reads months in the
 // client's time zone (growth_clients.time_zone, set by Davi; Eastern by default).
 
 const DATE = /^(\d{4})-(\d{2})-(\d{2})$/;
