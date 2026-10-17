@@ -988,3 +988,51 @@ describe("what LAUNCH.md tells Davi to look for is what the code shows", () => {
     }
   });
 });
+
+describe("main only takes green CI (Check 31 P3)", () => {
+  const section = (heading: string) => {
+    const at = launch.indexOf(heading);
+    expect(at, heading).toBeGreaterThan(0);
+    const next = launch.indexOf("\n## ", at + heading.length);
+    return flat(launch.slice(at, next));
+  };
+  const ci = readFileSync(join(ROOT, ".github/workflows/ci.yml"), "utf8");
+
+  it("LAUNCH.md has a 'Protect main' step with the ruleset taps", () => {
+    const protect = section("## Protect main (before the next merge)");
+    for (const phrase of [
+      "**Settings** → **Rules** → **Rulesets** → **New ruleset** → **New branch ruleset**",
+      "**Include by pattern** → type `main`",
+      "**Restrict deletions** and **Block force pushes**",
+      "**Require a pull request before merging**",
+      "**Require status checks to pass** → **Add checks** → type `check`",
+      "`old-code-new-schema`",
+      "the engineers don't have",
+      "Worked when",
+    ]) {
+      expect(protect, phrase).toContain(phrase);
+    }
+    expect(launch).toContain("](#protect-main-before-the-next-merge)");
+  });
+
+  it("LAUNCH.md has a 'Hold production for CI' step with Vercel's path and the fallback", () => {
+    const hold = section("## Hold production for CI (right after Protect main)");
+    for (const phrase of [
+      "**Settings** → **Build and Deployment** → **Deployment Checks** → **Add Checks**",
+      "provider **GitHub**",
+      "If your plan doesn't offer it",
+      "rely on [Protect main](#protect-main-before-the-next-merge)",
+      "Worked when",
+    ]) {
+      expect(hold, phrase).toContain(phrase);
+    }
+    expect(launch).toContain("](#hold-production-for-ci-right-after-protect-main)");
+  });
+
+  it("ci.yml still has the jobs the ruleset names", () => {
+    expect(ci).toMatch(
+      /^jobs:\n  # Required check on main\. Renaming it breaks the ruleset\.\n  check:$/m,
+    );
+    expect(ci).toMatch(/^  old-code-new-schema:$/m);
+  });
+});

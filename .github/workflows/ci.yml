@@ -10,6 +10,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Required check on main. Renaming it breaks the ruleset.
   check:
     runs-on: ubuntu-latest
     # The unit suite alone takes ~14 minutes on a GitHub runner (1,500+ tests, each DB test on a
@@ -76,6 +77,7 @@ jobs:
   # Check 31 P2: previews and production share one database, and every preview build runs this
   # branch's migrations on it before review. So the code on main (what's live) must keep passing
   # its own unit tests against this branch's migrations. Required on main alongside "check".
+  # Also required on main (docs/LAUNCH.md "Protect main"); renaming it breaks the ruleset.
   old-code-new-schema:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest

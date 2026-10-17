@@ -11,6 +11,8 @@ in [SETUP.md](SETUP.md); this page links to it where a step needs more.
 Contents:
 
 - [Check your Neon plan now (this week)](#check-your-neon-plan-now-this-week)
+- [Protect main (before the next merge)](#protect-main-before-the-next-merge)
+- [Hold production for CI (right after Protect main)](#hold-production-for-ci-right-after-protect-main)
 - [Start your sales tax registration now (it takes days)](#start-your-sales-tax-registration-now-it-takes-days)
 - [Add your terms link in Stripe (right after step 1)](#add-your-terms-link-in-stripe-right-after-step-1)
 - [0. Start now: Google verification (takes weeks)](#0-start-now-google-verification-takes-weeks)
@@ -53,6 +55,60 @@ something Neon has told us.
 - Worked when: you know which plan production is on and how much it has used this period, and
   either it's on Launch or you've chosen to stay on Free knowing it may pause mid-month. Tell the
   engineers which.
+
+## Protect main (before the next merge)
+
+**Today anything can reach production without a green CI.** GitHub shows `main` as unprotected,
+and Vercel builds production from every push to `main` straight away: a merge whose checks fail
+goes live anyway, and a direct push skips review. A ruleset makes GitHub refuse both. Only you can
+set it: it needs the repository's admin rights, which the engineers don't have.
+
+- Where: github.com → the `ContentCEO/SA` repository → **Settings** → **Rules** → **Rulesets** →
+  **New ruleset** → **New branch ruleset**.
+- Then:
+  1. Ruleset name: `Protect main`. Enforcement status: **Active**.
+  2. Target branches → **Add target** → **Include by pattern** → type `main` → **Add inclusion
+     pattern**.
+  3. Under Rules, tick **Restrict deletions** and **Block force pushes** (leave them ticked).
+  4. Tick **Require a pull request before merging** (the other boxes under it can stay as they
+     are).
+  5. Tick **Require status checks to pass** → **Add checks** → type `check` → pick it. Do the same
+     for `old-code-new-schema` (it only shows up after it has run once on a pull request; add it
+     then if it isn't listed yet).
+  6. **Create**.
+- What the names mean: `check` is the main CI job (lint, format, types, unit tests, build, browser
+  tests) and `old-code-new-schema` runs the live code's tests against a branch's new database
+  migrations. They're the job names in `.github/workflows/ci.yml`; renaming a job there means
+  changing it here too.
+- Paste: nothing.
+- Worked when: Rulesets lists `Protect main` as Active, and a pull request into `main` shows
+  "Merging is blocked" until `check` (and `old-code-new-schema`) are green.
+
+## Hold production for CI (right after Protect main)
+
+Vercel starts a production build the moment something lands on `main`, without waiting for CI.
+Vercel's **Deployment Checks** hold each production deployment until the GitHub checks you pick
+have passed, and only then put it on the production address.
+
+- Where: vercel.com → the `sa` project → **Settings** → **Build and Deployment** → **Deployment
+  Checks** → **Add Checks**.
+- Then: first check Settings → **Environments** → **Production** has automatic aliasing for
+  production turned on (Vercel's docs ask for it). Back in Deployment Checks → **Add Checks** →
+  provider **GitHub** → search for `check` → select it → save. Pick only `check`: the
+  `old-code-new-schema` job runs on pull requests, not on `main`, so production would wait for it
+  forever.
+- What it means: production deployments are still built, but aren't put live until `check` has
+  passed. A deployment can be pushed live anyway with **Force Promote** on its page (emergencies
+  only). Vercel's docs say the hold applies to the project's custom production domains, so it may
+  only take full effect once the production domain is bought (step 5); until then, check what a
+  test deployment does on `sa-dac3.vercel.app`.
+- If your plan doesn't offer it (Vercel's docs page doesn't name the plans; the team is on Hobby
+  today): leave Vercel's automatic production deploys on as they are and rely on
+  [Protect main](#protect-main-before-the-next-merge). Nothing reaches `main` before `check` is
+  green, so production only builds code that passed.
+- Paste: nothing.
+- Worked when: Deployment Checks lists `check`, and the next production deployment shows it
+  waiting for checks before going live (or you've noted that your plan doesn't offer it).
 
 ## Start your sales tax registration now (it takes days)
 

@@ -1789,6 +1789,10 @@ Davi runs several builder sessions at once. The build order for review prompts i
 
 ## Waiting on Davi
 
+- **Protect main + hold production for CI (Check 31 P3):** tap through `docs/LAUNCH.md` "Protect
+  main" (GitHub ruleset: PR required, checks `check` + `old-code-new-schema`, no force push or
+  delete) and "Hold production for CI" (Vercel Deployment Checks on `check`, or the stated
+  fallback). Needs his admin rights; the engineers can't do it.
 - **Preview guard fingerprints (Check 26 P2):** `src/config/environment-guard.ts` ships with empty
   `PRODUCTION_DB_HOST_SHA256` / `PRODUCTION_KEY_SHA256S`, so it blocks nothing yet. Either Davi
   supplies production's fingerprints (`pnpm fingerprint <pulled env file>` prints hashes only;
