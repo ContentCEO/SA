@@ -51,6 +51,20 @@ import { describeWaitlistEntry, formatStamp } from "@/server/growth-note";
 import { growthCopy } from "@/components/marketing/growth/growth-copy";
 import { phoneHref } from "@/lib/phone-href";
 import { pricing } from "@/config/pricing";
+import { adminToday, type GrowthStatus } from "@/server/growth-client-rules";
+import {
+  growthAccountChoices,
+  growthStateForEmails,
+  listGrowthAdmin,
+} from "@/server/growth-clients";
+import {
+  GROWTH_DONE,
+  GROWTH_ERRORS,
+  GrowthClientsSection,
+  WAITLIST_GROWTH_DONE,
+  WAITLIST_GROWTH_ERRORS,
+  WaitlistGrowthControls,
+} from "./growth-admin";
 
 export const metadata: Metadata = { title: "Admin", robots: { index: false } };
 
@@ -146,11 +160,16 @@ function WaitlistEntry({
   w,
   now,
   referrals,
+  growth,
+  today,
 }: {
   w: Awaited<ReturnType<typeof listWaitlist>>[number];
   now: Date;
   /** Plan #47: referralsVisible(), so a stored code shows only while referrals are on. */
   referrals: boolean;
+  /** Squared Away Growth: a Growth invite waiting, or already a client (by email). */
+  growth: { invitedAt: Date | null; client: GrowthStatus | null } | undefined;
+  today: string;
 }) {
   const facts = describeWaitlistEntry(w);
   const request = facts.growth[0];
@@ -210,6 +229,16 @@ function WaitlistEntry({
           {request.nameGiven ? <span>{ga.nameGiven(request.nameGiven)}</span> : null}
           {request.tradeGiven ? <span>{ga.tradeGiven(request.tradeGiven)}</span> : null}
           {request.note ? <p className="text-muted-foreground">“{request.note}”</p> : null}
+          <WaitlistGrowthControls
+            email={w.email}
+            trade={w.trade}
+            growthOnly={!facts.app}
+            request={request}
+            state={growth}
+            hasAccount={w.inviteState === "has_account"}
+            today={today}
+            now={now}
+          />
         </div>
       ) : null}
       {!facts.app ? (
@@ -446,19 +475,41 @@ export default async function AdminPage(props: PageProps<"/admin">) {
   // Test payments can only be told apart with the live key. The counts come from the last check
   // (database only): a plain page load asks Stripe nothing new.
   const live = stripeConfigured() && stripeMode() === "live";
-  const [rows, total, invited, waiting, stripeAt, system, salesTax, testPayments, termsBoxOff] =
-    await Promise.all([
-      adminOverview(now),
-      countWorkspaces(),
-      listInvites(),
-      listWaitlist(),
-      stripeConnectedAt(),
-      systemHealth(now),
-      salesTaxStatus(),
-      live ? lastTestPaymentsResult() : null,
-      // Database only: set by the last checkout that had to go without the terms box.
-      termsBoxOffSince(),
-    ]);
+  const [
+    rows,
+    total,
+    invited,
+    waiting,
+    stripeAt,
+    system,
+    salesTax,
+    testPayments,
+    termsBoxOff,
+    growthData,
+    growthChoices,
+  ] = await Promise.all([
+    adminOverview(now),
+    countWorkspaces(),
+    listInvites(),
+    listWaitlist(),
+    stripeConnectedAt(),
+    systemHealth(now),
+    salesTaxStatus(),
+    live ? lastTestPaymentsResult() : null,
+    // Database only: set by the last checkout that had to go without the terms box.
+    termsBoxOffSince(),
+    listGrowthAdmin(),
+    growthAccountChoices(),
+  ]);
+  const growthStates = await growthStateForEmails(waiting.map((w) => w.email));
+  const today = adminToday(now);
+  // Growth notices show in their own sections (the page scrolls there), not at the top.
+  const code = (v: unknown, prefix: string) =>
+    typeof v === "string" && v.startsWith(prefix) ? v : undefined;
+  const growthDone = GROWTH_DONE[code(params.done, "growth_") ?? ""];
+  const growthError = GROWTH_ERRORS[code(params.error, "growth_") ?? ""];
+  const waitlistDone = WAITLIST_GROWTH_DONE[code(params.done, "wl_") ?? ""];
+  const waitlistError = WAITLIST_GROWTH_ERRORS[code(params.error, "wl_") ?? ""];
   // Payment messages show inside the Payments section (the page scrolls there), not at the top.
   const isStripe = (k: unknown) => typeof k === "string" && k.startsWith("stripe");
   const doneMsg =
@@ -577,16 +628,34 @@ export default async function AdminPage(props: PageProps<"/admin">) {
         <h2 id="waitlist-heading" className="text-xl font-black">
           {ga.heading(waiting.length)}
         </h2>
+        {waitlistDone ? <Notice>{waitlistDone}</Notice> : null}
+        {waitlistError ? <Notice strong>{waitlistError}</Notice> : null}
         {waiting.length === 0 ? (
           <p>{ga.empty}</p>
         ) : (
           <ul className="flex flex-col gap-3">
             {waiting.map((w) => (
-              <WaitlistEntry key={w.email} w={w} now={now} referrals={referrals} />
+              <WaitlistEntry
+                key={w.email}
+                w={w}
+                now={now}
+                referrals={referrals}
+                growth={growthStates.get(w.email.toLowerCase())}
+                today={today}
+              />
             ))}
           </ul>
         )}
       </section>
+
+      <GrowthClientsSection
+        data={growthData}
+        choices={growthChoices}
+        today={today}
+        now={now}
+        done={growthDone}
+        error={growthError}
+      />
 
       <section aria-labelledby="invite" className="flex flex-col gap-3">
         <h2 id="invite" className="text-xl font-black">

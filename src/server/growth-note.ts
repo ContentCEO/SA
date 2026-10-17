@@ -175,6 +175,14 @@ export function withGrowthBlock(note: string | null | undefined, request: Growth
   return [appNote, ...blocks].filter(Boolean).join("\n\n");
 }
 
+/**
+ * The note with every Growth block taken out (admin "Remove", Davi 2026-10-16): only the app
+ * note before the first block is left (trimmed), or null when there was none.
+ */
+export function withoutGrowthBlocks(note: string | null | undefined): string | null {
+  return splitWaitlistNote(note).appNote;
+}
+
 export type WaitlistEntryFacts = {
   teamSize: string | null;
   note: string | null;

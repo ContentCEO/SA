@@ -1,5 +1,5 @@
 import { randomBytes, randomUUID } from "node:crypto";
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { eq } from "drizzle-orm";
 import { NextRequest } from "next/server";
@@ -231,6 +231,11 @@ describe("the proxy", () => {
     const matched = new Set(config.matcher.map((m) => m.replace(/^\/([^/]+)\/:path\*$/, "$1")));
     for (const f of folders) expect(matched.has(f), f).toBe(true);
     expect(matched.has("welcome")).toBe(true);
+    // Squared Away Growth's signed-in screens live outside (app): the choice and the dashboard.
+    for (const f of ["start", "my-growth"]) {
+      expect(matched.has(f), f).toBe(true);
+      expect(existsSync(join("src", "app", f, "page.tsx")), f).toBe(true);
+    }
     // Never the API, the Auth.js routes, or the public pages.
     for (const m of config.matcher) expect(m).not.toMatch(/^\/(api|terms|privacy|signin|_next)/);
   });
@@ -314,7 +319,7 @@ describe("sign-in", () => {
       },
     ]);
     expect(TERMS_COOKIE_MAX_AGE_SECONDS).toBeLessThanOrEqual(15 * 60);
-    expect(req.signIn).toEqual([["google", { redirectTo: "/queue" }]]);
+    expect(req.signIn).toEqual([["google", { redirectTo: "/start" }]]);
   });
 
   it("Google's callback records the acceptance from the cookie, and deletes the cookie", async () => {

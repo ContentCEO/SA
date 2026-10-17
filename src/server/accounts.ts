@@ -2,6 +2,7 @@ import "server-only";
 import { eq, inArray, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { invites, users, workspaces, type User, type Workspace } from "@/db/schema";
+import { linkGrowthInvite } from "./growth-clients";
 import { referralRefusal, referralsVisible } from "./referral-rules";
 
 export function normalizeEmail(email: string) {
@@ -76,6 +77,19 @@ export async function ensureUserAndWorkspace(input: {
 
   if (invite && !invite.acceptedAt) {
     await db().update(invites).set({ acceptedAt: new Date() }).where(eq(invites.email, email));
+  }
+  // Squared Away Growth: Davi's "Invite to Growth" makes this account a Growth client (once).
+  // It starts no trial: the app's clock still starts only when Gmail is connected. A failure
+  // here never stops the sign-in; the invite stays marked, so the next sign-in tries again.
+  if (invite?.growthInvitedAt) {
+    try {
+      await linkGrowthInvite(email, workspace.id);
+    } catch (err) {
+      console.error("growth_invite_link_failed", {
+        workspaceId: workspace.id,
+        error: err instanceof Error ? err.name : "unknown",
+      });
+    }
   }
   return { user, workspace };
 }

@@ -7,6 +7,7 @@ import {
   type AnyPgColumn,
   boolean,
   check,
+  date,
   index,
   integer,
   jsonb,
@@ -17,6 +18,7 @@ import {
   uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
+import type { GrowthService } from "../config/growth";
 import { TRADES, type Trade } from "../config/trades";
 import type { LostReason } from "../server/quote-rules";
 import type { ReplyToHeader } from "../server/reply-address-rules";
@@ -77,6 +79,15 @@ export const invites = pgTable("invites", {
   referredByWorkspaceId: uuid("referred_by_workspace_id").references(() => workspaces.id, {
     onDelete: "set null",
   }),
+  /**
+   * Squared Away Growth (2026-10-16): Davi's "Invite to Growth" for someone with no account yet.
+   * While set, their next sign-in makes the new account a Growth client with these services and
+   * this start date, then clears all three. Never starts an app trial (that still begins only
+   * when Gmail is connected).
+   */
+  growthInvitedAt: timestamp("growth_invited_at", { withTimezone: true }),
+  growthServices: text("growth_services").array().$type<GrowthService[]>(),
+  growthStartedOn: date("growth_started_on", { mode: "string" }),
 });
 
 /** People who asked for access on the public site. Davi invites from /admin. */
@@ -810,6 +821,99 @@ export const referralCredits = pgTable(
   ],
 );
 export type ReferralCredit = typeof referralCredits.$inferSelect;
+
+/** Squared Away Growth (2026-10-16): where a client stands. Only active and paused see the portal. */
+export const GROWTH_CLIENT_STATUSES = ["active", "paused", "ended"] as const;
+export type GrowthClientStatus = (typeof GROWTH_CLIENT_STATUSES)[number];
+
+/**
+ * Squared Away Growth clients: an account Davi does Growth work for (ads, posts, Google
+ * Business Profile, reviews, websites). One per workspace; goes with it (Delete my account).
+ * Nothing here comes from email.
+ */
+export const growthClients = pgTable(
+  "growth_clients",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    status: text("status").$type<GrowthClientStatus>().notNull().default("active"),
+    /** The day Growth work began, a calendar date (the owner's own calendar). */
+    startedOn: date("started_on", { mode: "string" }).notNull(),
+    /** Ids from GROWTH_SERVICES (src/config/growth.ts), checked in code. */
+    services: text("services").array().$type<GrowthService[]>().notNull().default([]),
+    /**
+     * The client's time zone for their dashboard's months, set by Davi in /admin. Growth never
+     * reads the inbox app's business profile (Growth never uses inbox data).
+     */
+    timeZone: text("time_zone").notNull().default("America/New_York"),
+    createdAt: createdAt(),
+    endedAt: timestamp("ended_at", { withTimezone: true }),
+  },
+  (t) => [
+    uniqueIndex("growth_clients_workspace_uq").on(t.workspaceId),
+    check("growth_clients_status", sql`${t.status} in ('active', 'paused', 'ended')`),
+  ],
+);
+export type GrowthClient = typeof growthClients.$inferSelect;
+
+/**
+ * Davi's updates to a Growth client, in his own words (never anything from email). Emailed once
+ * (`notified_at` set only after the email went out).
+ */
+export const growthUpdates = pgTable(
+  "growth_updates",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    growthClientId: uuid("growth_client_id")
+      .notNull()
+      .references(() => growthClients.id, { onDelete: "cascade" }),
+    postedAt: timestamp("posted_at", { withTimezone: true }).notNull().defaultNow(),
+    title: text("title").notNull(),
+    body: text("body").notNull(),
+    notifiedAt: timestamp("notified_at", { withTimezone: true }),
+  },
+  (t) => [
+    index("growth_updates_client_idx").on(t.growthClientId, t.postedAt),
+    check("growth_updates_title_len", sql`char_length(${t.title}) between 1 and 80`),
+    check("growth_updates_body_len", sql`char_length(${t.body}) between 1 and 2000`),
+  ],
+);
+export type GrowthUpdate = typeof growthUpdates.$inferSelect;
+
+/**
+ * The numbers Davi enters after each monthly check-in with a Growth client, one row per month
+ * ('YYYY-MM', the client's own calendar). Every number is optional: blank = not entered.
+ */
+export const growthMonthly = pgTable(
+  "growth_monthly",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    growthClientId: uuid("growth_client_id")
+      .notNull()
+      .references(() => growthClients.id, { onDelete: "cascade" }),
+    month: text("month").notNull(),
+    newLeads: integer("new_leads"),
+    calls: integer("calls"),
+    jobsWon: integer("jobs_won"),
+    moneyWonCents: integer("money_won_cents"),
+    reviewsGained: integer("reviews_gained"),
+    adSpendCents: integer("ad_spend_cents"),
+    note: text("note"),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("growth_monthly_client_month_uq").on(t.growthClientId, t.month),
+    check("growth_monthly_month", sql`${t.month} ~ '^[0-9]{4}-(0[1-9]|1[0-2])$'`),
+    check(
+      "growth_monthly_not_negative",
+      sql`coalesce(${t.newLeads}, 0) >= 0 and coalesce(${t.calls}, 0) >= 0 and coalesce(${t.jobsWon}, 0) >= 0 and coalesce(${t.moneyWonCents}, 0) >= 0 and coalesce(${t.reviewsGained}, 0) >= 0 and coalesce(${t.adSpendCents}, 0) >= 0`,
+    ),
+    check("growth_monthly_note_len", sql`${t.note} is null or char_length(${t.note}) <= 280`),
+  ],
+);
+export type GrowthMonthly = typeof growthMonthly.$inferSelect;
 export type User = typeof users.$inferSelect;
 export type BusinessProfile = typeof businessProfiles.$inferSelect;
 export type VoiceProfile = typeof voiceProfiles.$inferSelect;

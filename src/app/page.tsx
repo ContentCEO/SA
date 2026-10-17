@@ -141,7 +141,8 @@ function Section({
 
 export default async function HomePage(props: PageProps<"/">) {
   const session = await auth();
-  if (session?.user?.id) redirect("/queue");
+  // Signed in: /start (the inbox, or for a Growth client the choice of inbox or Growth).
+  if (session?.user?.id) redirect("/start");
   // Plan #47: a referral link's code rides along on the waitlist form — only while it's switched on.
   const { ref } = await props.searchParams;
   const referralCode = referralsVisible() && isReferralCode(ref) ? ref : undefined;
