@@ -123,6 +123,33 @@ test("admin: sees health with no email content, and can turn sending on", async 
   expect(w!.setupPaidVia).toBeNull();
 });
 
+test("admin: one stuck inbox inverts the System box and its card (Check 16 P1)", async ({
+  page,
+  context,
+}) => {
+  const owner = await seedOwner({ mailbox: true, backfilled: true });
+  await setWorkspace(owner.workspaceId, { status: "active", businessName: "Stale Pipes" });
+  await testDb
+    .update(schema.mailboxes)
+    .set({
+      lastSyncedAt: new Date(Date.now() - 6 * 3_600_000),
+      lastSyncErrorCode: "sync_failed",
+      lastSyncErrorAt: new Date(),
+    })
+    .where(eq(schema.mailboxes.id, owner.mailboxId!));
+  const admin = await seedAdmin();
+  await signInAs(context, admin);
+  await page.goto("/admin");
+
+  const system = page.getByRole("region", { name: /System|stuck|stopped/ });
+  await expect(system).toContainText(/ha(s|ve)n't been checked for over 30 minutes/);
+  const card = page.getByRole("article", { name: owner.email });
+  await expect(card).toContainText("Stuck");
+  await expect(card).toContainText("not checked for 6 hours");
+  await expect(card).toContainText("checks failing");
+  await expect(card).not.toContainText("healthy");
+});
+
 test("admin: invite an owner", async ({ page, context }) => {
   const admin = await seedAdmin();
   await signInAs(context, admin);

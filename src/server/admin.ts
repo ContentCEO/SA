@@ -16,6 +16,7 @@ import {
   workspaces,
 } from "@/db/schema";
 import { mailboxOn } from "./mailbox-plan-rules";
+import { STALE_SYNC_MS } from "./mailbox-health";
 import { normalizeEmail } from "./accounts";
 import { effectiveStatus, jobsAllowed } from "./lifecycle";
 import { referralsVisible } from "./referral-rules";
@@ -36,7 +37,19 @@ export type AdminRow = {
   evaluationEndsAt: Date | null;
   setupPaidAt: Date | null;
   setupPaidVia: "stripe" | "house" | null;
-  mailboxes: { total: number; needReconnect: number; lastSyncedAt: Date | null };
+  mailboxes: {
+    total: number;
+    needReconnect: number;
+    lastSyncedAt: Date | null;
+    /** Check 16 P1: working mailboxes not checked within STALE_SYNC_MS (the owner's own line). */
+    stale: number;
+    /** The oldest last check among the stale ones (null = never checked). */
+    oldestStaleSyncAt: Date | null;
+    /** Still on their first read more than FIRST_READ_STUCK_MS after connecting. */
+    stuckFirstRead: number;
+    /** The newest sync problem code (access_lost / rate_limited / sync_failed), never text. */
+    errorCode: string | null;
+  };
   drafts: { pending: number; sentLast7Days: number; createdThisMonth: number };
   ai: { callsToday: number; callsThisMonth: number; costCentsThisMonth: number };
   /** When each part of the pipeline last did something for this account. */
@@ -100,16 +113,51 @@ export async function adminOverview(now: Date = new Date()): Promise<AdminRow[]>
   if (ws.length === 0) return [];
   const ids = ws.map((w) => w.id);
 
-  const boxes = await db()
+  // Check 16 P1: one row per mailbox (states, times and a fixed code only — never the address),
+  // folded per workspace below with the same rule systemHealth uses.
+  const boxRows = await db()
     .select({
       workspaceId: mailboxes.workspaceId,
-      total: sql<number>`count(*)::int`,
-      needReconnect: sql<number>`count(*) filter (where ${mailboxes.status} = 'reconnect_needed')::int`,
-      lastSyncedAt: max(mailboxes.lastSyncedAt),
+      status: mailboxes.status,
+      planPausedAt: mailboxes.planPausedAt,
+      lastSyncedAt: mailboxes.lastSyncedAt,
+      backfillCompletedAt: mailboxes.backfillCompletedAt,
+      createdAt: mailboxes.createdAt,
+      lastSyncErrorCode: mailboxes.lastSyncErrorCode,
+      lastSyncErrorAt: mailboxes.lastSyncErrorAt,
     })
     .from(mailboxes)
-    .where(inArray(mailboxes.workspaceId, ids))
-    .groupBy(mailboxes.workspaceId);
+    .where(inArray(mailboxes.workspaceId, ids));
+  const wsById = new Map(ws.map((w) => [w.id, w]));
+  const grouped = new Map<string, typeof boxRows>();
+  for (const r of boxRows) grouped.set(r.workspaceId, [...(grouped.get(r.workspaceId) ?? []), r]);
+  const boxes = [...grouped].map(([workspaceId, list]) => {
+    const w = wsById.get(workspaceId)!;
+    const trouble = list.map((r) => ({ r, t: mailboxTrouble(r, w, now) }));
+    const stale = trouble.filter((x) => x.t.stale).map((x) => x.r);
+    const coded = trouble
+      .filter((x) => x.t.watched && x.r.lastSyncErrorCode)
+      .map((x) => x.r)
+      .sort((a, b) => (b.lastSyncErrorAt?.getTime() ?? 0) - (a.lastSyncErrorAt?.getTime() ?? 0));
+    return {
+      workspaceId,
+      total: list.length,
+      needReconnect: list.filter((r) => r.status === "reconnect_needed").length,
+      lastSyncedAt: list.reduce<Date | null>(
+        (a, r) => (r.lastSyncedAt && (!a || r.lastSyncedAt > a) ? r.lastSyncedAt : a),
+        null,
+      ),
+      stale: stale.length,
+      oldestStaleSyncAt: stale.some((r) => !r.lastSyncedAt)
+        ? null
+        : stale.reduce<Date | null>(
+            (a, r) => (r.lastSyncedAt && (!a || r.lastSyncedAt < a) ? r.lastSyncedAt : a),
+            null,
+          ),
+      stuckFirstRead: trouble.filter((x) => x.t.stuckFirstRead).length,
+      errorCode: coded[0]?.lastSyncErrorCode ?? null,
+    };
+  });
 
   const draftCounts = await db()
     .select({
@@ -209,6 +257,10 @@ export async function adminOverview(now: Date = new Date()): Promise<AdminRow[]>
       total: b.get(w.id)?.total ?? 0,
       needReconnect: b.get(w.id)?.needReconnect ?? 0,
       lastSyncedAt: b.get(w.id)?.lastSyncedAt ?? null,
+      stale: b.get(w.id)?.stale ?? 0,
+      oldestStaleSyncAt: b.get(w.id)?.oldestStaleSyncAt ?? null,
+      stuckFirstRead: b.get(w.id)?.stuckFirstRead ?? 0,
+      errorCode: b.get(w.id)?.errorCode ?? null,
     },
     drafts: {
       pending: d.get(w.id)?.pending ?? 0,
@@ -237,9 +289,42 @@ export async function adminOverview(now: Date = new Date()): Promise<AdminRow[]>
 /** The 5-minute poll syncs every working mailbox; much older than that means jobs stopped. */
 export const JOBS_STALE_AFTER_MS = 20 * 60 * 1000;
 
+/** Check 16 P1: a first read (the 30-day backfill) still going after this looks stuck. */
+export const FIRST_READ_STUCK_MS = 2 * 60 * 60 * 1000;
+
+/**
+ * Check 16 P1: is this one mailbox stuck? Only mailboxes we're meant to be reading count: on
+ * (not lost, not plan-paused) in an account whose jobs run. `stale` uses the owner's own
+ * STALE_SYNC_MS, so /admin flags it in the same 30 minutes Settings tells the owner to wait.
+ */
+export function mailboxTrouble(
+  m: {
+    status: string;
+    planPausedAt: Date | null;
+    lastSyncedAt: Date | null;
+    backfillCompletedAt: Date | null;
+    createdAt: Date;
+  },
+  workspace: Parameters<typeof jobsAllowed>[0],
+  now: Date,
+): { watched: boolean; stale: boolean; stuckFirstRead: boolean } {
+  const watched = mailboxOn(m) && jobsAllowed(workspace, now);
+  return {
+    watched,
+    stale:
+      watched &&
+      !!m.backfillCompletedAt &&
+      (!m.lastSyncedAt || now.getTime() - m.lastSyncedAt.getTime() > STALE_SYNC_MS),
+    stuckFirstRead:
+      watched &&
+      !m.backfillCompletedAt &&
+      now.getTime() - m.createdAt.getTime() > FIRST_READ_STUCK_MS,
+  };
+}
+
 /**
  * App-wide health for the top of /admin: are background jobs running, and how
- * many mailboxes need their owner to reconnect. Counts only.
+ * many mailboxes need their owner to reconnect, are stale or stuck on a first read. Counts only.
  */
 export async function systemHealth(now: Date = new Date()) {
   const rows = await db()
@@ -248,6 +333,7 @@ export async function systemHealth(now: Date = new Date()) {
       planPausedAt: mailboxes.planPausedAt,
       lastSyncedAt: mailboxes.lastSyncedAt,
       backfillCompletedAt: mailboxes.backfillCompletedAt,
+      createdAt: mailboxes.createdAt,
       workspace: { status: workspaces.status, evaluationEndsAt: workspaces.evaluationEndsAt },
     })
     .from(mailboxes)
@@ -260,12 +346,15 @@ export async function systemHealth(now: Date = new Date()) {
     (a, r) => (r.lastSyncedAt && (!a || r.lastSyncedAt > a) ? r.lastSyncedAt : a),
     null,
   );
+  const trouble = rows.map((r) => mailboxTrouble(r, r.workspace, now));
   return {
     workingMailboxes: working.length,
     needReconnect: rows.filter((r) => r.status === "reconnect_needed").length,
     lastSyncAt: newest,
     jobsLookStopped:
       working.length > 0 && (!newest || now.getTime() - newest.getTime() > JOBS_STALE_AFTER_MS),
+    staleMailboxes: trouble.filter((t) => t.stale).length,
+    stuckFirstReads: trouble.filter((t) => t.stuckFirstRead).length,
   };
 }
 
