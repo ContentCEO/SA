@@ -177,11 +177,27 @@ export function canMakeMove(move: AdminMove, w: Clocked, now: Date = new Date())
   return (ADMIN_MOVES[move] as readonly Status[]).includes(effectiveStatus(w, now));
 }
 
-/** Where a paused workspace goes back to: as far as it had got before. */
+/**
+ * Where a paused workspace goes back to. Check 17 P1: where it stood when paused (`pausedFrom`,
+ * which Stripe webhooks keep up to date while it's paused); an evaluation whose clock ran out
+ * meanwhile comes back expired. Rows paused before `pausedFrom` existed go as far as they had
+ * got, except that a Stripe-paid account with no subscription comes back canceled: Resume never
+ * hands out setup_paid or active without a live subscription (or Davi's own house account).
+ */
 export function resumeTarget(
-  w: Pick<Workspace, "setupPaidAt" | "setupCallCompletedAt" | "evaluationEndsAt">,
+  w: Pick<Workspace, "setupPaidAt" | "setupCallCompletedAt" | "evaluationEndsAt" | "setupPaidVia"> &
+    Partial<Pick<Workspace, "pausedFrom" | "stripeSubscriptionId">>,
   now: Date = new Date(),
 ): Status {
+  const noSubscription = w.setupPaidVia === "stripe" && !w.stripeSubscriptionId;
+  if (w.pausedFrom && w.pausedFrom !== "paused") {
+    if (w.pausedFrom === "evaluating" && (!w.evaluationEndsAt || w.evaluationEndsAt <= now))
+      return "evaluation_expired";
+    if ((w.pausedFrom === "setup_paid" || w.pausedFrom === "active") && noSubscription)
+      return "canceled";
+    return w.pausedFrom;
+  }
+  if (noSubscription) return "canceled";
   if (w.setupCallCompletedAt) return "active";
   if (w.setupPaidAt) return "setup_paid";
   if (w.evaluationEndsAt) return w.evaluationEndsAt > now ? "evaluating" : "evaluation_expired";

@@ -126,6 +126,12 @@ export const workspaces = pgTable(
      */
     extraTrades: text("extra_trades").array().$type<Trade[]>().notNull().default([]),
     status: workspaceStatusEnum("status").notNull().default("invited"),
+    /**
+     * Check 17 P1: where a paused account stood when Davi paused it (its effective status then),
+     * kept up to date by Stripe webhooks while it's paused, and where Resume takes it back to.
+     * Null when not paused (or paused before this column existed: see `resumeTarget`).
+     */
+    pausedFrom: workspaceStatusEnum("paused_from"),
     evaluationStartedAt: timestamp("evaluation_started_at", { withTimezone: true }),
     evaluationEndsAt: timestamp("evaluation_ends_at", { withTimezone: true }),
     setupPaidAt: timestamp("setup_paid_at", { withTimezone: true }),
