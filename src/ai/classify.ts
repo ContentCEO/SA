@@ -10,17 +10,21 @@ import {
   type Category,
   type EmailInput,
   type ModelClassification,
-} from "./prompts/classify.v4";
+} from "./prompts/classify.v5";
 import { SENDER_NEEDS_ME_REASON } from "@/server/owner-sender-rule-rules";
 import {
+  CO_REASON,
   GAS_SMELL_REASON,
   INJECTION_REASON,
   injectionCheck,
   looksLikePaymentChange,
   looksMunicipal,
+  mentionsCarbonMonoxide,
   mentionsGasSmell,
   mentionsRealLegal,
+  mentionsWaterSmell,
   PAYMENT_CHANGE_REASON,
+  WATER_SMELL_REASON,
 } from "./guards";
 import { isLeadCategory } from "@/config/categories";
 import { EMERGENCY_REASON } from "@/server/emergency-rules";
@@ -72,6 +76,16 @@ export type Extracted = ModelClassification["extracted"] & {
   /** Round 2 TW B4: someone smells gas. Only ever present as `true`. */
   gas_smell?: boolean;
   /**
+   * Check 22 P4: a carbon monoxide alarm went off. Treated like a gas smell (needs you, top
+   * priority, emergency, one fixed safety note). Only ever present as `true`.
+   */
+  co_alarm?: boolean;
+  /**
+   * Check 36 P1: the water smells like rotten eggs and nothing says gas (the anode rod). Needs
+   * the owner, no safety note, no emergency. Only ever present as `true`.
+   */
+  water_smell?: boolean;
+  /**
    * Round 2 TW A1: routine insurance / warranty / lien-waiver paperwork the model saw. A
    * signal only; it never sets the complaint mark. Only ever present as `true`.
    */
@@ -94,6 +108,7 @@ export type Extracted = ModelClassification["extracted"] & {
 export const OWNER_RULE_KEYS = [
   "injection",
   "gas",
+  "co_alarm",
   "payment_change",
   "complaint",
   "legal",
@@ -103,6 +118,7 @@ export const OWNER_RULE_KEYS = [
   "amount",
   "big_new_job",
   "emergency",
+  "water_smell",
   "phone",
   "site",
   "outside_area",
@@ -111,7 +127,13 @@ export const OWNER_RULE_KEYS = [
 ] as const;
 export type OwnerRuleKey = (typeof OWNER_RULE_KEYS)[number];
 /** Hits whose fixed text always wins over the model's own reason (no town or name rides along). */
-const FIXED_TEXT_HITS: readonly OwnerRuleKey[] = ["emergency", "phone", "site", "outside_area"];
+const FIXED_TEXT_HITS: readonly OwnerRuleKey[] = [
+  "emergency",
+  "water_smell",
+  "phone",
+  "site",
+  "outside_area",
+];
 
 /** The needs-owner reasons a dispute or legal threat gets (when the model gave none). */
 export const LEGAL_REASON = "Mentions something legal.";
@@ -174,8 +196,12 @@ export function applyOwnerRules(
     injection?: boolean;
     /** Someone smells gas (round 2, TW B4): top priority, whatever the model said. */
     gasSmell?: boolean;
+    /** A carbon monoxide alarm went off (Check 22 P4): like gas, its own reason. */
+    coAlarm?: boolean;
     /** Asks to pay a new account (round 2, A11). */
     paymentChange?: boolean;
+    /** The water smells like rotten eggs, nothing says gas (Check 36 P1). */
+    waterSmell?: boolean;
     /** Leads package: the email came through a phone service or a lead website (code-decided). */
     channel?: { kind: ChannelKind; name: string } | null;
     /** Leads package (B9): a quote request from a town that isn't on the owner's list. */
@@ -187,7 +213,7 @@ export function applyOwnerRules(
     return {
       needsOwner: true,
       needsOwnerReason: INJECTION_REASON,
-      priority: ctx.gasSmell ? "high" : "normal",
+      priority: ctx.gasSmell || ctx.coAlarm ? "high" : "normal",
       hits: ["injection"],
     };
   }
@@ -197,6 +223,13 @@ export function applyOwnerRules(
       needsOwnerReason: GAS_SMELL_REASON,
       priority: "high",
       hits: ["gas"],
+    };
+  if (ctx.coAlarm)
+    return {
+      needsOwner: true,
+      needsOwnerReason: CO_REASON,
+      priority: "high",
+      hits: ["co_alarm"],
     };
   if (ctx.paymentChange)
     return {
@@ -233,6 +266,7 @@ export function applyOwnerRules(
       "New customer asking about a big job.",
     ],
     [emergency, "emergency", EMERGENCY_REASON],
+    [!!ctx.waterSmell, "water_smell", WATER_SMELL_REASON],
     [
       channelLead && channel?.kind !== "site",
       "phone",
@@ -271,7 +305,12 @@ export function applyOwnerRules(
       needsOwnerReason:
         !fixed && m.needs_owner && m.needs_owner_reason ? m.needs_owner_reason : hit[2],
       priority:
-        m.category === "complaint" || m.signals.mentions_legal || emergency ? "high" : m.priority,
+        m.category === "complaint" || m.signals.mentions_legal || emergency
+          ? "high"
+          : // Check 36 P1: smelly water is worth a call, not a 2am emergency.
+            hit[1] === "water_smell"
+            ? "normal"
+            : m.priority,
       hits,
     };
   }
@@ -336,6 +375,10 @@ export async function classifyEmail(
   const injectedText = injectionCheck(checked).flagged;
   const preCheck = { flagged: injectedText || opts.sticky?.injection === true };
   const gasInText = mentionsGasSmell(checked);
+  // Check 22 P4: a carbon monoxide alarm; Check 36 P1: rotten-egg WATER with no gas word.
+  const coInText = mentionsCarbonMonoxide(checked);
+  const waterInText = !gasInText && mentionsWaterSmell(checked);
+  const safetyInText = gasInText || coInText;
   const paymentChangeInText =
     looksLikePaymentChange(checked) || opts.sticky?.paymentChange === true;
   const municipalSender = looksMunicipal(email.fromAddress, email.fromName);
@@ -362,16 +405,20 @@ export async function classifyEmail(
         ? { needsOwnerReason: INJECTION_REASON }
         : gasInText
           ? { needsOwnerReason: GAS_SMELL_REASON }
-          : paymentChangeInText
-            ? { needsOwnerReason: PAYMENT_CHANGE_REASON }
-            : {}),
-      ...(gasInText || paymentChangeInText ? { priority: "high" as const } : {}),
+          : coInText
+            ? { needsOwnerReason: CO_REASON }
+            : paymentChangeInText
+              ? { needsOwnerReason: PAYMENT_CHANGE_REASON }
+              : {}),
+      ...(safetyInText || paymentChangeInText ? { priority: "high" as const } : {}),
       extracted: {
         ...UNREADABLE.extracted,
-        ...(gasInText ? { urgency: "emergency" as const } : {}),
+        ...(safetyInText ? { urgency: "emergency" as const } : {}),
         ...(preCheck.flagged ? { injection: true } : {}),
         ...(municipalSender ? { municipal: true } : {}),
         ...(gasInText ? { gas_smell: true } : {}),
+        ...(coInText ? { co_alarm: true } : {}),
+        ...(waterInText ? { water_smell: true } : {}),
         ...(paymentChangeInText ? { payment_change: true } : {}),
       },
       summary: email.subject ? `Email: ${email.subject}` : "Email with no subject.",
@@ -380,7 +427,13 @@ export async function classifyEmail(
 
   const injection = preCheck.flagged || result.signals.tries_to_instruct_assistant;
   const municipal = municipalSender || result.signals.from_building_department;
-  const gasSmell = gasInText || result.signals.smells_gas;
+  // Check 36 P1: when the code read sulfur WATER, the model's gas signal only wins if the email
+  // itself names gas or propane somewhere.
+  const gasSmell =
+    gasInText ||
+    (result.signals.smells_gas && (!waterInText || /\b(gas|propane)\b/i.test(checked)));
+  const coAlarm = !gasSmell && (coInText || result.signals.co_alarm);
+  const waterSmell = !gasSmell && !coAlarm && waterInText;
   const paymentChange = paymentChangeInText || result.signals.payment_change_request;
   // Round 2 TW A1: "the adjuster approved the claim" is paperwork, not a lawsuit. The legal mark
   // only drops when the model itself calls it routine AND no word of a real dispute or threat
@@ -399,7 +452,9 @@ export async function classifyEmail(
     amountThresholdDollars: business.amountThresholdDollars,
     injection,
     gasSmell,
+    coAlarm,
     paymentChange,
+    waterSmell,
     channel: opts.channel ?? null,
     outsideArea:
       outsideArea({
@@ -423,10 +478,12 @@ export async function classifyEmail(
     confidence: Math.max(0, Math.min(1, result.confidence)),
     extracted: {
       ...result.extracted,
-      ...(gasSmell ? { urgency: "emergency" as const } : {}),
+      ...(gasSmell || coAlarm ? { urgency: "emergency" as const } : {}),
       ...(injection ? { injection: true } : {}),
       ...(municipal ? { municipal: true } : {}),
       ...(gasSmell ? { gas_smell: true } : {}),
+      ...(coAlarm ? { co_alarm: true } : {}),
+      ...(waterSmell ? { water_smell: true } : {}),
       ...(paymentChange ? { payment_change: true } : {}),
       // Signals only — they never change needs_owner (applyOwnerRules ignores them).
       ...(result.signals.accepts_quote ? { accepts_quote: true } : {}),

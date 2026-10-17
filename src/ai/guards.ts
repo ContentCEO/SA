@@ -97,22 +97,146 @@ export const PAYMENT_CHANGE_REASON =
 /**
  * Someone smells gas (review TW B4): the one email that can't wait. Top of the queue, needs the
  * owner, and a fixed safety note offered as a draft.
+ *
+ * Check 22 P4 + Check 36 P1: split in two. GAS_SMELL_PATTERNS name gas outright (a smell of gas
+ * or propane, a gas leak, a hissing line, a red tag from the gas company); EGG_SMELL_PATTERNS
+ * name a rotten-egg or sulfur smell, which is a gas smell in the air but usually the water
+ * heater's anode rod when it's the water that smells (see `mentionsWaterSmell`).
  */
 const GAS_SMELL_PATTERNS: RegExp[] = [
   /\b(smell|smells|smelled|smelling|smelt|odor|odour)\b (of |like )?(natural |propane )?gas\b/,
   /\bgas (smell|odor|odour)\b/,
-  /\bsmell(s|ed|ing)? (like )?(rotten eggs?|sulfur|sulphur)\b/,
-  /\b(huele|olor) a gas\b|\bcheiro de g[aá]s\b/,
+  // Propane (Check 22 P4, Check 36 P1): "I smell propane", "propane smell in the closet".
+  /\b(smell|smells|smelled|smelling|smelt)\b (of |like )?propane\b/,
+  /\bpropane (smell|smells|odor|odour|leak|leaks|leaking)\b/,
+  // A leak said outright. Not "gas leak detector" / "gas leak test" (an install or a job).
+  /\bgas leak(s)?\b(?! (detectors?|tests?|testing|checks?|inspections?|survey))/,
+  /\b(leaking|leaks) (natural |propane )?gas\b/,
+  /\bgas (line|pipe|piping|meter|valve|hose|connector)\b.{0,30}\b(is |was |keeps )?(hiss|hisses|hissing|leak|leaks|leaking)\b/,
+  /\bhiss(es|ing)?\b (sound |noise )?(coming )?(from|near|by|at|behind) the (gas|stove|range|oven|dryer|meter|furnace|boiler|water heater)\b/,
+  // Spanish and Portuguese.
+  /\b(huele|olía|olia|olor) (como )?a gas\b|\bcheiro de g[aá]s\b|\bfuga de g[aá]s\b|\bvazamento de g[aá]s\b/,
 ];
+
+/** A rotten-egg or sulfur smell: gas in the air, or (often) smelly well water. */
+const EGG_SMELL_PATTERNS: RegExp[] = [
+  /\b(smell|smells|smelled|smelling|smelt|odor|odour)\b (of |like )?(rotten eggs?|sulfur|sulphur)\b/,
+  /\brotten[- ]eggs? (smell|smells|odor|odour)\b/,
+  /\b(sulfur|sulphur) (smell|smells|odor|odour)\b/,
+];
+
+/**
+ * A gas company red tag ("shut off our meter and red-tagged the water heater"). Only with a gas
+ * word: an electrical inspector also "red tags" a failed inspection, which is not a gas leak.
+ */
+const RED_TAG = /\bred[- ]?tag(ged|s)?\b/;
+const GAS_WORD_FOR_TAG = /\b(gas|propane)\b/;
+
+/**
+ * Advice printed in a gas utility's footer or a newsletter ("Smell gas? Leave the building and
+ * call 911", "If you ever smell gas…", "Gas odor calls are up") is not someone reporting a
+ * smell (Check 22 P4). Removed before matching; "it smells like gas near the stove" and "no gas
+ * smell anymore" still match.
+ */
+const GAS_ADVICE: RegExp[] = [
+  // A whole sentence that opens with the question: "Smell gas? Leave the building …".
+  /(^|[.!?\n]\s*)(do you )?smell (natural )?gas\?[^.!\n]*[.!]?/g,
+  /\bsmell (natural )?gas\?/g,
+  /\bif you (ever )?(smell|detect|notice) (natural |propane )?gas\b( or [a-z ]{0,40})?/g,
+  /\bif you (ever )?(smell|detect|notice) (a |the )?(rotten[- ]egg|sulfur) (smell|odor)\b/g,
+  /\bgas (odor|odour|smell|leak) (calls|reports|safety|awareness|tips?)\b/g,
+];
+
+const flatten = (text: string | null | undefined) =>
+  (text ?? "").toLowerCase().replace(/\s+/g, " ");
+
+function withoutGasAdvice(flat: string): string {
+  return GAS_ADVICE.reduce((t, p) => t.replace(p, " "), flat);
+}
+
+/** Water words for the sulfur-water exception. A water heater is a gas appliance: not one. */
+const WATER_WORD = /\b(water|shower|showers|faucet|faucets|tap|taps)\b/;
+/** Any of these anywhere means the smell may well be gas: no water exception. */
+const GAS_WORD =
+  /\b(gas|propane|meter|stove|range|oven|furnace|boiler|pilot|dryer|in the air|whole house)\b/;
+
+type SmellRead = { gas: boolean; water: boolean };
+
+function readSmell(text: string | null | undefined): SmellRead {
+  const flat = withoutGasAdvice(flatten(text));
+  if (GAS_SMELL_PATTERNS.some((p) => p.test(flat))) return { gas: true, water: false };
+  if (RED_TAG.test(flat) && GAS_WORD_FOR_TAG.test(flat)) return { gas: true, water: false };
+  // A water heater is a gas appliance, not water: read it as "heater" from here on.
+  const noWaterHeater = flat.replace(/\b(hot )?water (heater|heaters|tank|tanks)\b/g, "heater");
+  const eggs = EGG_SMELL_PATTERNS.flatMap((p) => [
+    ...noWaterHeater.matchAll(new RegExp(p.source, "g")),
+  ]).map((m) => m.index ?? 0);
+  if (eggs.length === 0) return { gas: false, water: false };
+  // Check 36 P1: "the hot water smells like rotten eggs" (well water, the anode rod) is not a
+  // gas leak — but only when EVERY egg/sulfur smell sits next to a water word and nothing in the
+  // email names gas or a gas appliance. Narrow on purpose: when in doubt, it's gas.
+  // Within 40 characters before or 60 after, and in the same sentence.
+  const nearWater = (at: number) => {
+    const before =
+      noWaterHeater
+        .slice(Math.max(0, at - 40), at)
+        .split(/[.!?;]/)
+        .pop() ?? "";
+    const after = noWaterHeater.slice(at, at + 60).split(/[.!?;]/)[0] ?? "";
+    return WATER_WORD.test(before + after);
+  };
+  if (!GAS_WORD.test(noWaterHeater) && eggs.every(nearWater)) return { gas: false, water: true };
+  return { gas: true, water: false };
+}
 
 /** Any mention counts, even "the gas smell is gone now": worth a call either way. */
 export function mentionsGasSmell(text: string | null | undefined): boolean {
-  const flat = (text ?? "").toLowerCase().replace(/\s+/g, " ");
-  return GAS_SMELL_PATTERNS.some((p) => p.test(flat));
+  return readSmell(text).gas;
+}
+
+/**
+ * Check 36 P1: the water smells like rotten eggs or sulfur and nothing says gas — usually the
+ * water heater's anode rod with well water. Needs the owner, no safety note, no emergency.
+ */
+export function mentionsWaterSmell(text: string | null | undefined): boolean {
+  return readSmell(text).water;
 }
 
 export const GAS_SMELL_REASON =
   "Says they smell gas. Call them now; a safety note is ready for you to send.";
+export const WATER_SMELL_REASON =
+  "Says the water smells like rotten eggs. Often the water heater's anode rod; call if they also smell it in the air.";
+
+/**
+ * Check 22 P4: a carbon monoxide alarm going off. Treated like a gas smell (needs you, top
+ * priority, emergency, its own fixed safety note). Only a CO word next to something happening
+ * (went off, beeping, a reading, feeling sick) counts: "quote to install carbon monoxide
+ * detectors" is a job, and a low-battery chirp is not an alarm.
+ */
+const CO_TERM =
+  /\b(carbon monoxide|co (alarm|alarms|detector|detectors|monitor|sensor|levels?|reading)|co2 (alarm|detector|detectors))\b/g;
+const CO_EVENT =
+  /\b(went off|going off|goes off|gone off|go off|keeps? going off|sounded|sounding|reading (of |was |is |at )?\d+|reads \d+|\d+ ?ppm|ppm|detected|high levels?|poison(ing|ed)?|headaches?|dizzy|nause(a|ous))\b/;
+/** Beeping is an alarm too, unless it's the low-battery chirp. */
+const CO_BEEP = /\b(beeping|beeped|beeps|alarming|keeps? (beeping|sounding|alarming))\b/;
+const CO_BATTERY = /\b(batter(y|ies)|chirp(s|ing|ed)?)\b/;
+const DETECTOR_BY_APPLIANCE =
+  /\b(detector|alarm) (is |was |keeps )?(going off|went off|sounding|beeping)\b.{0,40}\b(furnace|boiler|heater|water heater|garage|basement)\b|\b(furnace|boiler|heater)\b.{0,40}\b(detector|alarm) (is |was |keeps )?(going off|went off|sounding|beeping)\b/;
+
+export function mentionsCarbonMonoxide(text: string | null | undefined): boolean {
+  const flat = flatten(text);
+  for (const m of flat.matchAll(CO_TERM)) {
+    const at = m.index ?? 0;
+    const around = flat.slice(Math.max(0, at - 60), at + m[0].length + 60);
+    if (CO_EVENT.test(around)) return true;
+    if (CO_BEEP.test(around) && !CO_BATTERY.test(around)) return true;
+  }
+  if (DETECTOR_BY_APPLIANCE.test(flat) && !/\bsmoke (detector|alarm)/.test(flat)) return true;
+  return false;
+}
+
+export const CO_REASON =
+  "Says a carbon monoxide alarm went off. Call them now; a safety note is ready for you to send.";
 
 /**
  * Routine insurance and lien paperwork is not a lawsuit (review TW A1): "the adjuster approved

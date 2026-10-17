@@ -9,7 +9,7 @@
  * Before writing a new version, check docs/BUILD-ORDER.md (and docs/notes/) for which review
  * prompts belong in it, so each version is written once.
  */
-import { CLASSIFY_PROMPT_VERSION } from "./classify.v4";
+import { CLASSIFY_PROMPT_VERSION } from "./classify.v5";
 import { DRAFT_PROMPT_VERSION } from "./draft.v7";
 import { EDIT_TONE_PROMPT_VERSION } from "./edit-tone.v1";
 import { FOLLOWUP_PROMPT_VERSION } from "./followup.v4";

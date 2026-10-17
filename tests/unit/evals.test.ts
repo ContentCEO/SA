@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { setModelTransportForTests, type Transport } from "@/ai/client";
-import { CATEGORIES, type ModelClassification } from "@/ai/prompts/classify.v4";
+import { CATEGORIES, type ModelClassification } from "@/ai/prompts/classify.v5";
 import { TRADES } from "@/config/trades";
 import { EVAL_CASES, type EvalCase } from "../evals/cases";
 import { OPENING_TWEAKS } from "@/ai/prompts/opening-tweaks.v1";
@@ -165,6 +165,7 @@ describe("evaluation set (#46)", () => {
           job_done: c.expect.jobDone === true,
           payment_change_request: c.expect.paymentChange === true,
           smells_gas: c.expect.gasSmell === true,
+          co_alarm: c.expect.coAlarm === true,
           routine_paperwork: c.expect.routinePaperwork === true,
         },
         extracted: {
@@ -261,6 +262,8 @@ describe("evaluation set (#46)", () => {
       jobDoneAccuracy: 1,
       paymentChangeRecall: 1,
       gasSmellRecall: 1,
+      coAlarmRecall: 1,
+      gasFalseAlarms: 0,
       billDirectionAccuracy: 1,
       routinePaperworkAccuracy: 1,
       draftPassRate: 1,

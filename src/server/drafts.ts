@@ -269,6 +269,22 @@ export const TEXT_ADDRESS_NOTE =
 /** First flag on the safety note: it keeps it out of batch and autopilot too. */
 export const SAFETY_NOTE_FLAG =
   "They say they smell gas. Call them now; this note only tells them what to do meanwhile.";
+/** Check 22 P4: the carbon monoxide note's own "prompt version" (code, never a model). */
+export const CO_SAFETY_NOTE_VERSION = "safety-note-co.v1";
+/** First flag on the carbon monoxide note (keeps it out of batch and autopilot). */
+export const CO_SAFETY_NOTE_FLAG =
+  "They say a carbon monoxide alarm went off. Call them now; this note only tells them what to do meanwhile.";
+
+/** Which fixed safety note a thread's marks call for, if any (gas first). */
+export type SafetyKind = "gas" | "co";
+export function safetyKindOf(marks: {
+  gas_smell?: unknown;
+  co_alarm?: unknown;
+}): SafetyKind | null {
+  if (marks.gas_smell === true) return "gas";
+  if (marks.co_alarm === true) return "co";
+  return null;
+}
 
 /**
  * The fixed safety note for a gas smell (TW B4). Plain, no prices, no times, nothing invented:
@@ -286,6 +302,31 @@ export function safetyNote(ctx: Pick<WorkspaceContext, "signature" | "businessNa
       ...(sign ? ["", sign] : []),
     ].join("\n"),
     reason: "They smell gas. A safety note is ready; call them too.",
+    flags: [],
+    confidence: 0.5,
+    used_facts: sign && ctx.signature?.trim() ? ["signature"] : [],
+  };
+}
+
+/**
+ * Check 22 P4: the fixed note for a carbon monoxide alarm. The usual fire-safety advice: get
+ * out to fresh air, call 911 from outside, don't go back in until the fire department says so.
+ * Wording waits on Davi's okay (see docs/notes). No model, nothing invented.
+ */
+export function coSafetyNote(
+  ctx: Pick<WorkspaceContext, "signature" | "businessName">,
+): ModelDraft {
+  const sign = ctx.signature?.trim() || ctx.businessName?.trim() || "";
+  return {
+    body: [
+      "Hi,",
+      "",
+      "If your carbon monoxide alarm is going off, please don't wait on email. Get everyone out of the house into fresh air right away, pets too, and call 911 from outside. Don't go back in until the fire department says it's safe.",
+      "",
+      "I'll call you as soon as I can.",
+      ...(sign ? ["", sign] : []),
+    ].join("\n"),
+    reason: "Their carbon monoxide alarm went off. A safety note is ready; call them too.",
     flags: [],
     confidence: 0.5,
     used_facts: sign && ctx.signature?.trim() ? ["signature"] : [],
@@ -644,6 +685,7 @@ export async function createDraftForThread(
     injection?: boolean;
     payment_change?: boolean;
     gas_smell?: boolean;
+    co_alarm?: boolean;
     bill_direction?: string;
     model_category?: string;
   };
@@ -682,9 +724,11 @@ export async function createDraftForThread(
   // Round 2 (TW B4): someone smells gas. A job writes one fixed safety note (no model), once
   // per thread, and it waits for the owner's tap like everything else. After that the thread
   // is the owner's, as any needs-you email is.
+  // Check 22 P4: a carbon monoxide alarm gets its own fixed note, the same way.
+  const safetyKind = safetyKindOf(marks);
   const safety =
     opts.trigger === "auto" &&
-    marks.gas_smell === true &&
+    safetyKind !== null &&
     opts.purpose === undefined &&
     !(await purposeOnThread(threadId, "safety"));
   if (opts.trigger === "auto" && !safety) {
@@ -835,6 +879,10 @@ export async function createDraftForThread(
   // Reply-To, a portal's dispatch address. Not even on the owner's tap — nobody reads it, and
   // "Reply sent." would be untrue. They answer those on the platform or by phone.
   if (isNoReplyAddress(to)) return { status: "skipped", reason: "no_reply_address" };
+  // Check 22 P4: a safety note never goes to mail sorted as junk (a utility's bill, a
+  // newsletter) unless the owner has written to that address before.
+  if (safety && thread.category === "noise" && !(await knownCustomer(mailbox.id, to, now)))
+    return { status: "skipped", reason: "noise" };
   const withText = recent
     .map((m) => ({
       m,
@@ -865,7 +913,7 @@ export async function createDraftForThread(
     followup,
     purpose,
     category: thread.category,
-    gasSmell: marks.gas_smell === true,
+    gasSmell: safetyKind !== null,
     handledOffline: thread.handledOfflineAt != null,
   };
   // The database is only asked when everything else already says "first contact". The
@@ -946,7 +994,9 @@ export async function createDraftForThread(
     }),
   };
   const promptVersion = safety
-    ? SAFETY_NOTE_VERSION
+    ? safetyKind === "co"
+      ? CO_SAFETY_NOTE_VERSION
+      : SAFETY_NOTE_VERSION
     : followup
       ? FOLLOWUP_PROMPT_VERSION
       : purpose
@@ -954,7 +1004,7 @@ export async function createDraftForThread(
         : DRAFT_PROMPT_VERSION;
 
   let result: (ModelDraft & { opening?: Opening }) | null = null;
-  if (safety) result = safetyNote(ctx);
+  if (safety) result = safetyKind === "co" ? coSafetyNote(ctx) : safetyNote(ctx);
   else
     try {
       const request = {
@@ -994,7 +1044,9 @@ export async function createDraftForThread(
   const { body, flags: purposeFlags } = purposeGuards(purpose, result.body.trim(), ctx);
   const { flags, confidence } = scoreDraft(result, checkDraft(body, checkContext), [
     ...(maybeText ? [MAYBE_TEXT_FLAG] : []),
-    ...(safety ? [SAFETY_NOTE_FLAG, ...purposeFlags] : purposeFlags),
+    ...(safety
+      ? [safetyKind === "co" ? CO_SAFETY_NOTE_FLAG : SAFETY_NOTE_FLAG, ...purposeFlags]
+      : purposeFlags),
   ]);
 
   const subject = replySubject(last.subject ?? thread.subject);
@@ -1686,6 +1738,7 @@ export async function batchCandidates(
       accepts_quote?: boolean;
       payment_change?: boolean;
       gas_smell?: boolean;
+      co_alarm?: boolean;
     };
     const ok = batchEligible(
       {
@@ -1699,7 +1752,8 @@ export async function batchCandidates(
           extracted.injection === true ||
           extracted.municipal === true ||
           extracted.payment_change === true ||
-          extracted.gas_smell === true,
+          extracted.gas_smell === true ||
+          extracted.co_alarm === true,
         autopilotCounting: draft.autoSendAt !== null,
         acceptsQuote: extracted.accepts_quote === true,
         purpose: draft.purpose ?? null,
@@ -2798,8 +2852,12 @@ export async function threadsToAutoDraft(mailboxId: string, limit = 10): Promise
         or(
           and(eq(threads.needsOwner, false), inArray(threads.category, [...AUTO_DRAFT_CATEGORIES])),
           and(
-            sql`${threads.extracted}->>'gas_smell' = 'true'`,
+            // Check 22 P4: a carbon monoxide alarm too.
+            sql`(${threads.extracted}->>'gas_smell' = 'true' or ${threads.extracted}->>'co_alarm' = 'true')`,
             sql`not exists (select 1 from drafts d where d.thread_id = ${threads.id} and d.purpose = 'safety')`,
+            // Never on junk unless the owner has written on the conversation (the note itself
+            // re-checks the address, createDraftForThread).
+            sql`(${threads.category} is distinct from 'noise' or exists (select 1 from messages o where o.thread_id = ${threads.id} and o.direction = 'out'))`,
           ),
         ),
         sql`${threads.classifiedAt} is not null and ${threads.classifiedAt} >= ${lastIn}`,

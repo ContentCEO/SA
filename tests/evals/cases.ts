@@ -31,8 +31,13 @@ export type EvalCase = {
     jobDone?: boolean;
     /** classify.v4 (round 2): asks to pay a new account / gift cards (A11). */
     paymentChange?: boolean;
-    /** classify.v4 (round 2): someone smells gas (TW B4). */
+    /**
+     * classify.v4 (round 2): someone smells gas (TW B4). `false` = must NOT be read as a gas
+     * smell (a utility's footer, sulfur water; Check 22 P4 + Check 36 P1).
+     */
     gasSmell?: boolean;
+    /** classify.v5 (Check 22 P4): a carbon monoxide alarm went off. */
+    coAlarm?: boolean;
     /**
      * classify.v4 (round 2, TW A2): true = a bill the business owes, so it must never land on
      * Money owed (sorted as something other than an invoice, or read as owed by the business).
@@ -1079,6 +1084,118 @@ export const EVAL_CASES: EvalCase[] = [
       priority: "high",
       gasSmell: true,
     },
+  }),
+
+  // ── wave 1 safety guards: gas, propane, CO, smelly water (Check 22 P4 + 36 P1) ──
+  c({
+    id: "w1-gas-bill-footer",
+    trade: "plumbing",
+    fromName: "Bay State Gas Billing",
+    fromAddress: "billing@baygas.test",
+    subject: "Your bill is ready",
+    body: "Your October bill is ready to view. Amount due: $84.12 by November 3.\n\nSmell gas? Leave the building right away and call 911 from outside.",
+    expect: { category: "noise", needsOwner: false, gasSmell: false },
+  }),
+  c({
+    id: "w1-gas-newsletter",
+    trade: "hvac",
+    fromName: "Trade Weekly",
+    fromAddress: "news@tradeweekly.test",
+    subject: "Gas odor calls are up",
+    body: "Gas odor calls are up 30% this fall. Here's what your techs should tell homeowners, and a 10% off code for detectors.",
+    expect: { category: "noise", needsOwner: false, gasSmell: false },
+  }),
+  c({
+    id: "w1-propane",
+    trade: "plumbing",
+    fromName: "Rae Kim",
+    fromAddress: "rae@example.com",
+    subject: "Smell by the heater",
+    body: "We smell propane by the tankless heater in the utility closet. Can someone come today?",
+    expect: {
+      category: ["customer_question", "scheduling", "quote_request"],
+      needsOwner: true,
+      priority: "high",
+      gasSmell: true,
+    },
+  }),
+  c({
+    id: "w1-gas-line-hissing",
+    trade: "plumbing",
+    fromName: "Lee Park",
+    fromAddress: "lee@example.com",
+    subject: "Hissing",
+    body: "I think the gas line behind the dryer is leaking, I can hear a hissing sound.",
+    expect: {
+      category: ["customer_question", "scheduling", "quote_request"],
+      needsOwner: true,
+      priority: "high",
+      gasSmell: true,
+    },
+  }),
+  c({
+    id: "w1-rotten-egg-basement",
+    trade: "hvac",
+    fromName: "Jo Diaz",
+    fromAddress: "jo@example.com",
+    subject: "Weird smell",
+    body: "There's a rotten egg smell in the basement near the boiler. Is that bad?",
+    expect: {
+      category: ["customer_question", "scheduling", "quote_request"],
+      needsOwner: true,
+      priority: "high",
+      gasSmell: true,
+    },
+  }),
+  c({
+    id: "w1-gas-spanish",
+    trade: "plumbing",
+    fromName: "Marta Ruiz",
+    fromAddress: "marta@example.com",
+    subject: "Urgente",
+    body: "Huele como a gas en la cocina desde anoche. ¿Pueden venir?",
+    expect: {
+      category: ["customer_question", "scheduling", "quote_request"],
+      needsOwner: true,
+      priority: "high",
+      gasSmell: true,
+    },
+  }),
+  c({
+    id: "w1-sulfur-well-water",
+    trade: "plumbing",
+    fromName: "Pat Doyle",
+    fromAddress: "pat@example.com",
+    subject: "Hot water smell",
+    body: "The hot water smells like rotten eggs since the new heater went in. We're on a well. Cold water is fine.",
+    expect: {
+      category: ["customer_question", "quote_request", "scheduling"],
+      needsOwner: true,
+      gasSmell: false,
+    },
+  }),
+  c({
+    id: "w1-co-alarm",
+    trade: "hvac",
+    fromName: "Sam Ortiz",
+    fromAddress: "sam.o@example.com",
+    subject: "Alarm",
+    body: "Our carbon monoxide alarm went off twice last night. We opened the windows. Can someone check the furnace?",
+    expect: {
+      category: ["customer_question", "scheduling", "complaint", "quote_request"],
+      needsOwner: true,
+      priority: "high",
+      coAlarm: true,
+    },
+  }),
+  c({
+    id: "w1-co-detector-install",
+    trade: "electrical",
+    fromName: "Kim Hall",
+    fromAddress: "kim.h@example.com",
+    subject: "Detectors",
+    body: "Can you quote installing smoke and carbon monoxide detectors in all three bedrooms? We're selling the house.",
+    expect: { category: "quote_request", needsOwner: false, gasSmell: false },
   }),
 
   // ── round 2: claims and paperwork aren't lawsuits (TW A1) ────────

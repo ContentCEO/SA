@@ -118,6 +118,8 @@ export type GuardrailInput = {
   paymentChange?: boolean;
   /** Round 2 TW B4: someone smells gas. */
   gasSmell?: boolean;
+  /** Check 22 P4: a carbon monoxide alarm went off. */
+  coAlarm?: boolean;
   /** Ideas H4: the owner chose this kind and the sorter said otherwise. */
   ownerMoved?: boolean;
   /** Leads package: a lead-site / voicemail / text-message thread. */
@@ -160,6 +162,7 @@ export function guardrailReasons(g: GuardrailInput): string[] {
     out.push("This customer complained in the last 12 months, so it waits for you.");
   if (g.paymentChange) out.push("Asks to pay a new account, so it waits for you.");
   if (g.gasSmell) out.push("Someone smells gas. Call them.");
+  if (g.coAlarm) out.push("A carbon monoxide alarm went off. Call them.");
   if (g.ownerMoved) out.push("You chose this kind yourself, so it waits for you.");
   if (g.leadChannel) out.push("Lead-site and voicemail emails always wait for you.");
   if (g.textAddress) out.push("That address may turn into a text message, so it waits for you.");
@@ -353,6 +356,7 @@ async function blockers(row: NonNullable<Awaited<ReturnType<typeof loadForAutopi
     accepts_quote?: boolean;
     payment_change?: boolean;
     gas_smell?: boolean;
+    co_alarm?: boolean;
     model_category?: string;
   };
   const complainedRecently = await customerComplainedRecently(workspace.id, draft.toAddress, now);
@@ -378,6 +382,7 @@ async function blockers(row: NonNullable<Awaited<ReturnType<typeof loadForAutopi
     complainedRecently,
     paymentChange: extracted.payment_change === true,
     gasSmell: extracted.gas_smell === true,
+    coAlarm: extracted.co_alarm === true,
     ownerMoved: thread.categoryManual != null && thread.categoryManual !== extracted.model_category,
     leadChannel: thread.leadChannel != null,
     textAddress: isEmailToTextAddress(draft.toAddress) || looksLikePhoneAddress(draft.toAddress),
