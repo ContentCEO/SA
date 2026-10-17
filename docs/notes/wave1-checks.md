@@ -164,3 +164,36 @@ Notes for the integrator: what CLAUDE.md should say, by step. Files in this grou
   ("Uses your $1,450 price for something else. Check it."). **Adapted:** hit `price_list`, not
   `money`, because the prompt says these join `REGENERATE_ON` only if Davi says so (`money` is
   in it). Cap 0.5.
+
+## Integration notes (expected conflicts)
+
+- `src/ai/prompts/draft.v8.ts`: the "Safety guards" group writes its own draft.v8. Ours is a full
+  copy of draft.v7's instructions plus three marked lines (Check 40 P1 deductible, Check 41 P1
+  safety, Check 38 P6 licenses) in "Never invent", and a `workspaceBlock` that wraps draft.v6's
+  with the licenses line. Combine both into one draft.v8.
+- `src/ai/prompts/registry.ts`: draft → draft.v8, voice → voice.v3.
+- `src/server/drafts.ts`: both check-context builders (createDraftForThread, reviseDraft) gained
+  fields; `workspaceContext` adds `licenses` and `state`. The send-path group also edits this file.
+- Migration `drizzle/0039_licenses.sql` (+ snapshot / journal): renumber at merge.
+- Tests pinned to the stored version now say `draft.v8` (drafts.test.ts, purposes.test.ts,
+  first-contact.test.ts); `first-contact.test.ts` compares the system prompt with draft.v8's
+  instructions.
+- `src/components/forms/field.tsx` (`SelectField.emptyLabel`) and
+  `src/components/forms/business-profile-form.tsx` (licenses group, state select, deposit line).
+
+## Questions for Davi
+
+1. The Massachusetts deposit wording is legal text and needs your okay before it ships:
+   Settings: "In Massachusetts a deposit can't be more than one-third of the contract, unless
+   special-order materials cost more (c.142A §2). Check this line." Draft flag: "Massachusetts
+   caps a deposit at one-third, or the cost of special-order materials if higher. Check this
+   before sending."
+2. Should setup pre-pick Massachusetts when the phone's time zone is Eastern? Built: no, the
+   owner picks their state.
+3. Price-list wording flags (dropped "from", a price used for another job) only flag today.
+   Should they also get one automatic rewrite, like invented prices?
+4. First replies keep "Thanks for reaching out" (your warm-first-replies decision), while every
+   other draft now flags it as filler. Okay?
+5. "We're licensed" is accepted when you've saved a CSL number or a license number appears in
+   your own text (like "Lic. MP-31872" in a signature). Plumbers and electricians have no field
+   of their own yet. Want one ("Trade license number")?
