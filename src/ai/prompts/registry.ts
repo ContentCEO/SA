@@ -13,7 +13,7 @@ import { CLASSIFY_PROMPT_VERSION } from "./classify.v4";
 import { DRAFT_PROMPT_VERSION } from "./draft.v6";
 import { EDIT_TONE_PROMPT_VERSION } from "./edit-tone.v1";
 import { FOLLOWUP_PROMPT_VERSION } from "./followup.v4";
-import { PURPOSE_PROMPT_VERSION } from "./purpose.v1";
+import { PURPOSE_PROMPT_VERSION } from "./purpose.v2";
 import { REVISE_PROMPT_VERSION } from "./revise.v2";
 import { VOICE_PROMPT_VERSION } from "./voice.v2";
 

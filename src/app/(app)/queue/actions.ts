@@ -72,6 +72,8 @@ export async function sendDraftAction(formData: FormData) {
       redirect("/queue?error=deleted");
     case "reconnect_needed":
       redirect("/queue?error=reconnect");
+    case "mailbox_paused":
+      redirect("/queue?error=paused");
     case "not_found":
       redirect("/queue?error=gone");
     default:
@@ -103,7 +105,7 @@ export async function practiceSendAction(formData: FormData) {
   }
   if (r.status === "sent") redirect(`/queue?done=practice&left=${r.left}`);
   redirect(
-    `/queue?error=${r.status === "limit" ? "practice_limit" : r.status === "reconnect_needed" ? "reconnect" : "unknown"}`,
+    `/queue?error=${r.status === "limit" ? "practice_limit" : r.status === "reconnect_needed" ? "reconnect" : r.status === "mailbox_paused" ? "paused" : "unknown"}`,
   );
 }
 
@@ -170,7 +172,9 @@ export async function saveDraftEditAction(formData: FormData) {
       ? "/queue?done=saved"
       : r === "deleted_in_gmail"
         ? "/queue?error=deleted"
-        : "/queue?error=unknown",
+        : r === "mailbox_paused"
+          ? "/queue?error=paused"
+          : "/queue?error=unknown",
   );
 }
 
@@ -212,6 +216,7 @@ export async function draftReplyAction(formData: FormData) {
     text_address: "textaddr",
     lead_site: "leadsite",
     phone_message: "phonemsg",
+    mailbox_paused: "paused",
   };
   redirect(`/queue?error=${reasons[r.reason] ?? "draftfailed"}`);
 }
@@ -242,6 +247,7 @@ export async function reviseDraftAction(formData: FormData) {
     capped: "capped",
     deleted_in_gmail: "deleted",
     reconnect_needed: "reconnect",
+    mailbox_paused: "paused",
     not_found: "unknown",
   };
   redirect(r.status === "revised" ? "/queue?done=revised" : `/queue?error=${errors[r.status]}`);

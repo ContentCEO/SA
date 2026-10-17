@@ -13,6 +13,7 @@ import {
 } from "@/db/schema";
 import { MailboxAuthError, type MailboxReader, type MailboxWriter } from "@/mailbox/connector";
 import { sameText } from "@/mailbox/mime";
+import { mailboxOn } from "./mailbox-plan-rules";
 import { defaultWriter, mimeFor, replyToHeaders } from "./drafts";
 import { jobsAllowed } from "./lifecycle";
 import { storeReplyTo, workspaceMailboxEmails } from "./reply-address";
@@ -162,9 +163,8 @@ export async function runReplyToBackfillMailbox(
       !mailbox.backfillCompletedAt ||
       (mailbox.lastSyncedAt != null &&
         now.getTime() - mailbox.lastSyncedAt.getTime() < SYNC_BUSY_MS);
-    if (mailbox.status !== "active" || !jobsAllowed(workspace, now) || busy)
-      return empty("skipped");
-  } else if (mailbox.status !== "active" || !jobsAllowed(workspace, now)) {
+    if (!mailboxOn(mailbox) || !jobsAllowed(workspace, now) || busy) return empty("skipped");
+  } else if (!mailboxOn(mailbox) || !jobsAllowed(workspace, now)) {
     // Nothing left to read; re-pointing still needs Gmail, so it waits too.
     return empty("skipped");
   }

@@ -797,7 +797,7 @@ test payment back afterwards.
   a test card back to unpaid, so they keep their data, can't send, and pay the setup fee for real
   at their next checkout (your own test account keeps sending). An account that was past due is
   switched back on: its new mail is sorted and drafted again (on your AI bill), but it still can't
-  send until it pays. ([Step 13](#13-decisions-waiting-on-you) asks whether that's okay.)
+  send until it pays. (You decided that on 2026-10-16: "let it be usable".)
 - Worked when: the notice says "Test payments reset for N accounts." and the card reads "Test
   payments: none left."; those accounts' cards now say **Setup paid**: Not yet. If it adds
   "Couldn't check M accounts. Tap again.", Stripe didn't answer for those: tap again (it's safe to
@@ -979,8 +979,7 @@ fixed.
 3. Connect Gmail (or check Settings → Your Gmail shows access is fine).
 4. Within about 5 minutes, **Inbox** shows mail sorted into categories and **Queue** shows a draft
    reply. Don't send anything to a real customer as a test.
-5. On a trial account (a second address of yours, invited in `/admin`): a draft card says "Sending
-   is off during your three days" and has no **Send reply** button.
+5. On a trial account (a second address of yours, invited in `/admin`): a draft card says "Send reply is off during your three days" and has no **Send reply** button.
 6. `/privacy` and `/terms`: no `{{` anywhere, and the support email is shown.
 7. `/admin` loads for you; signed in as anyone else it shows a 404 page ("This page could not be
    found.").
@@ -1027,9 +1026,8 @@ with the merge after the "I agree" one):
 
 Waiting on you from that review (nothing here is built or changed until you say so):
 
-- Everything in its "Your calls" list: the trial side door (the app now says Squared Away won't
-  send to a customer during the trial; `docs/terms.md` and the privacy policy's trial sentence
-  still say "sending to customers is switched off", to be made to match once you decide), the
+- Everything in its "Your calls" list: the trial side door (decided 2026-10-16: it stays, and every
+  screen, email and both legal documents now say so; see "Decided on 2026-10-16"), the
   setup fee, the trial length, the terms' [To confirm] items, the hero line, the homepage test,
   the referral amount and any founding or association offer, an instant "got it" reply, more
   Google permissions, money in the morning email, Outlook and an app-store version.
@@ -1043,6 +1041,41 @@ Waiting on you from that review (nothing here is built or changed until you say 
   in Google Search Console.
 - A booking calendar link for the confirmation email, if you want one (it needs an account).
 - Your picks from the review's 100 ideas.
+
+### Decided on 2026-10-16
+
+- **Homepage headline:** "Built for carpenters, plumbers, and electricians", in the hero, the
+  search and share descriptions and the share picture.
+- **The trial's side door stays.** During the three days Squared Away's own Send reply is off,
+  but the drafts are real Gmail drafts, so an owner can open one in Gmail and send it themselves.
+  Every place that describes the trial now says so in the same words: "During your three-day
+  trial, Squared Away won't send anything to a customer. Your drafts are in your Gmail Drafts
+  folder too, so you can send one from Gmail yourself if you want." That includes the trial
+  paragraph of `docs/terms.md` and the privacy policy's trial sentence. Both documents keep
+  today's date (2026-10-16), so nobody is asked to agree again; see "Still open" if you'd rather
+  they were.
+- **Trial emails: yes.** One short email on day 2 and on the last day ("Your trial ends today at
+  3:00 PM", with **Choose a plan**), and one a week after a trial ran out unpaid ("Your drafts are
+  still here"). Day 1 is the "your first drafts are ready" email that already existed. Counts
+  only, at or after the owner's morning-email hour in their own time zone, never at night, each
+  once. Every one has a **Stop these emails** link (and a switch in Settings → Morning email).
+  Like every email from the app they need Resend ([step 6](#6-morning-emails-from-your-own-domain-resend)).
+- **A lower plan pauses extra Gmail addresses, and the owner picks which.** When a plan covers
+  fewer Gmail addresses than are connected (your plan change in `/admin`, or a cheaper plan
+  chosen on Stripe's page), the oldest-connected stay on and the rest are paused: nothing in
+  them is read, sorted, drafted or sent, and nothing is deleted. Settings → Your Gmail says
+  "Paused: your plan covers 1 Gmail address." with **Use this one instead**. A bigger plan turns
+  them back on. The first 15-minute run after this ships does the same for any account that is
+  already over its plan's limit (an account with no plan yet counts as one address).
+- **Reset test payments and past-due accounts: let it be usable** (as built): the reset switches a
+  past-due test account back on (sorting and drafting resume, on your AI bill); it still can't send
+  until it really pays.
+- **"Why you lost it" has a fourth button, Other.**
+- **Say thanks for a paid invoice.** A paid row on Money offers **Say thanks** (instead of "Ask
+  for a review"): a short thank-you draft, with the review ask in the same note when every review
+  rule allows it (a review link on file, no complaint in 12 months, someone you've written to,
+  none asked in 12 months…). It counts as that customer's review request. Owner tap only, once per
+  conversation, and it waits for **Send reply** like every draft.
 
 ### Decided on 2026-10-15
 
@@ -1129,6 +1162,12 @@ Recorded here so nobody asks again.
 
 Nothing below is switched on or changed until you say so.
 
+- **Agreeing to the terms again (2026-10-16).** The terms' trial paragraph now says the drafts
+  can be sent from Gmail during the trial (it used to say only "sending to customers is switched
+  off"). It's a clarification of how the app already works, so the date stayed at 2026-10-16 and
+  nobody is asked to agree again. If you want everyone to agree to the new wording, the engineers
+  move the documents' date and `TERMS_VERSION` together.
+
 - **Your Neon plan** ([check it this week](#check-your-free-plans-now-this-week)): stay on Free
   (production may pause mid-month) or move to Launch (about $19–20 a month).
 - **Your Inngest plan** ([check it this week](#inngest-background-jobs)): the free plan pauses
@@ -1176,11 +1215,6 @@ Nothing below is switched on or changed until you say so.
   the tool for A&C Construction's own inbox." Keep that, or tell the engineers what it should say.
   Unlike the rest of this list, it goes live with the merge ([step 1](#1-merge-the-launch-branch)).
   Your photo and the license line are separate (under "Still needed from you").
-- **Reset test payments and past-due accounts.** As built, an account whose test-card renewal had
-  failed (past due: nothing new is read or drafted) is switched back on by the reset: its new mail
-  is sorted and drafted again, on your AI bill, though it still can't send until it pays. Okay?
-  The other way is to keep it read-only until it pays (a small code change). It only matters if a
-  test account is past due when you reach [step 7c](#7-stripe-live-mode).
 - **Deleted owners:** Delete my account also removes their invite, so someone who deletes their
   account needs a new invite from `/admin` to come back (if they were invited from their
   waitlist entry, that card then says the invite is gone and shows "Invite … again"; otherwise

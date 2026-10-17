@@ -1,5 +1,5 @@
 import "server-only";
-import { and, eq, gt, lt, or } from "drizzle-orm";
+import { and, eq, gt, isNull, lt, or } from "drizzle-orm";
 import { db } from "@/db";
 import { activityLog, mailboxes, users, workspaces } from "@/db/schema";
 import { appUrl } from "@/lib/app-url";
@@ -50,6 +50,8 @@ export async function sendAccessLostAlerts(
     .where(
       and(
         eq(mailboxes.status, "reconnect_needed"),
+        // A Gmail address paused on the plan isn't nagged about (2026-10-16).
+        isNull(mailboxes.planPausedAt),
         or(
           eq(mailboxes.accessAlertsSent, 0),
           and(

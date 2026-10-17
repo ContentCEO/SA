@@ -206,7 +206,10 @@ test("a review request waits in the Queue, labelled, with the owner's link", asy
   await expect(page.locator("form button", { hasText: "Ask for a review" })).toHaveCount(0);
 });
 
-test("money: a paid invoice offers a review request", async ({ page, context }) => {
+test("money: a paid invoice offers Say thanks (it carries the review ask when allowed)", async ({
+  page,
+  context,
+}) => {
   const owner = await seedOwner({ mailbox: true, backfilled: true });
   await testDb
     .insert(schema.businessProfiles)
@@ -234,7 +237,9 @@ test("money: a paid invoice offers a review request", async ({ page, context }) 
   await page.goto("/money");
   const paid = page.getByRole("region", { name: "Paid in the last 30 days" });
   await expect(paid).toContainText("Priya Shah");
-  await expect(paid.getByRole("button", { name: "Ask for a review" })).toBeVisible();
+  // 2026-10-16: one button on a paid row; the separate "Ask for a review" isn't shown there.
+  await expect(paid.getByRole("button", { name: "Say thanks" })).toBeVisible();
+  await expect(paid.getByRole("button", { name: "Ask for a review" })).toHaveCount(0);
   await expect(page.getByText(CLOSING)).toHaveCount(0);
   await noOverflow(page);
 });

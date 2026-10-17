@@ -263,6 +263,7 @@ describe("C3: every route handler is in the table with the guard it uses", () =>
     | "inngest-signature" // the Inngest SDK's signing key check
     | "e2e-hook" // local e2e only: 404 unless e2e mode + ≥32-char secret (the e2e app is bound to loopback in playwright.config.ts)
     | "authjs" // Auth.js's own handlers
+    | "signed-link" // a link we emailed: HMAC over the id with AUTH_SECRET, constant-time, first
     | "public"; // static, reads nothing private
   const ROUTES: Record<string, Guard> = {
     "src/app/api/badge/route.ts": "session",
@@ -275,6 +276,7 @@ describe("C3: every route handler is in the table with the guard it uses", () =>
     "src/app/api/test-hooks/run/route.ts": "e2e-hook",
     "src/app/api/auth/[...nextauth]/route.ts": "authjs",
     "src/app/api/health/route.ts": "public",
+    "src/app/api/emails/stop/route.ts": "signed-link",
     "src/app/app-icon/[size]/route.tsx": "public",
   };
   const routeFiles = routeFilesIn(ALL).map(rel);
@@ -349,6 +351,24 @@ describe("C3: every route handler is in the table with the guard it uses", () =>
           const [post] = handlers(file);
           expect(firstStatement(post!.fn)).toBe("const secret = e2eHookSecret();");
           expect(src).toContain('secretMatches(secret, request.headers.get("x-e2e-hook-secret"))');
+          break;
+        }
+        case "signed-link": {
+          // Trial emails' "Stop these emails" (2026-10-16): the signature is checked first, and
+          // the only thing the route can do is switch trial emails off.
+          const hs = handlers(file);
+          expect(hs.map((h) => h.name).sort()).toEqual(["GET", "POST"]);
+          for (const h of hs)
+            expect(firstStatement(h.fn), h.name).toBe(
+              "const link = verifiedStopLink(request.nextUrl.searchParams);",
+            );
+          expect(readFileSync("src/server/trial-email-links.ts", "utf8")).toContain(
+            "timingSafeEqual",
+          );
+          expect(src.match(/await [a-zA-Z.]+\(/g)).toEqual([
+            "await stopTrialEmails(",
+            "await stopTrialEmails(",
+          ]);
           break;
         }
         case "authjs":

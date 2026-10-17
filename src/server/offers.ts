@@ -11,8 +11,10 @@ import {
   COMPLAINT_MEMORY_DAYS,
   REVIEW_REQUEST_WINDOW_DAYS,
   reviewOfferReason,
+  thankYouOfferReason,
   type ClosingQuestionReason,
   type ReviewOfferReason,
+  type ThankYouOfferReason,
 } from "./offer-rules";
 import { isQuoteThread } from "./quote-rules";
 import { customerAddressSql, messageReplyAddress, notDraftSql } from "./thread-sql";
@@ -23,7 +25,18 @@ import { customerAddressSql, messageReplyAddress, notDraftSql } from "./thread-s
  * `createDraftForThread` asks the same questions (reviewAllowed / closingQuestionAllowed)
  * before any model call — so a stale screen or a forged form can't get past them.
  */
-export type ThreadOffers = { review: boolean; closingQuestion: boolean };
+export type ThreadOffers = {
+  review: boolean;
+  closingQuestion: boolean;
+  /** "Say thanks" on a paid invoice (2026-10-16). Only Money shows it. */
+  thankYou: boolean;
+};
+
+/**
+ * The purposes that ask a customer for a review: the review request itself, and a thank-you
+ * that carried the review ask (2026-10-16). One per address per 12 months between them.
+ */
+const REVIEW_ASK_PURPOSES = ["review_request", "thank_you_review"] as const;
 
 const DAY_MS = 86_400_000;
 const LIVE_OR_SENT = ["pending", "sent", "edited_and_sent"] as const;
@@ -60,6 +73,10 @@ async function threadFacts(workspaceId: string, threadIds: string[]) {
       >`(select max(m.sent_at) from messages m where m.thread_id = ${threads.id} and m.direction = 'out' and ${notDraftSql("m")})`,
       sentNudges: sql<number>`(select count(*) from drafts d where d.thread_id = ${threads.id} and d.kind = 'followup' and d.status in ('sent', 'edited_and_sent'))::int`,
       askedClosing: sql<boolean>`exists (select 1 from drafts d where d.thread_id = ${threads.id} and d.purpose = 'closing_question')`,
+      // Once per thread (the unique index's own rule: a stale, expired one doesn't count).
+      thanked: sql<boolean>`exists (select 1 from drafts d where d.thread_id = ${threads.id} and d.purpose in ('thank_you', 'thank_you_review') and d.status <> 'expired')`,
+      // A Gmail address paused on the plan offers nothing: nothing can be drafted from it.
+      mailboxPaused: sql<boolean>`(${mailboxes.planPausedAt} is not null)`,
       // Two things the create path refuses that the rules don't know about: a draft already
       // waiting on the thread (already_pending), and a newest message whose text was purged
       // (no_text). An offer that can only fail isn't shown.
@@ -76,6 +93,8 @@ async function threadFacts(workspaceId: string, threadIds: string[]) {
     lastOutboundAt: asDate(r.lastOutboundAt),
     sentNudges: Number(r.sentNudges),
     askedClosing: r.askedClosing === true,
+    thanked: r.thanked === true,
+    mailboxPaused: r.mailboxPaused === true,
     hasPending: r.hasPending === true,
     newestHasText: r.newestHasText === true,
   }));
@@ -149,7 +168,7 @@ export async function recentReviewAddresses(
     .where(
       and(
         eq(mailboxes.workspaceId, workspaceId),
-        eq(drafts.purpose, "review_request"),
+        inArray(drafts.purpose, [...REVIEW_ASK_PURPOSES]),
         inArray(drafts.status, [...LIVE_OR_SENT]),
         // The 12 months count from when it reached the customer: a sent one by when it was
         // sent (a note drafted 370 days ago but sent 340 days ago still blocks), a waiting
@@ -267,12 +286,14 @@ export async function threadOffers(
   const review = await reviewReasons(workspaceId, facts, now);
   const on = featureOn("closingQuestion");
   for (const f of facts) {
-    // createDraftForThread would stop at "a draft is already waiting" or "no text": the
-    // server rule is unchanged, the button just doesn't show for a tap that can only fail.
-    const draftable = !f.hasPending && f.newestHasText;
+    // createDraftForThread would stop at "a draft is already waiting", "no text" or a paused
+    // Gmail address: the server rule is unchanged, the button just doesn't show for a tap that
+    // can only fail.
+    const draftable = !f.hasPending && f.newestHasText && !f.mailboxPaused;
     out.set(f.id, {
       review: draftable && review.get(f.id) === null,
       closingQuestion: draftable && closingReason(f, on, now) === null,
+      thankYou: draftable && thankYouReason(f) === null,
     });
   }
   return out;
@@ -290,6 +311,41 @@ export async function reviewAllowed(
   const [f] = await threadFacts(workspaceId, [threadId]);
   if (!f) return "not_found";
   return (await reviewReasons(workspaceId, [f], now)).get(f.id) ?? null;
+}
+
+function thankYouReason(f: Facts): ThankYouOfferReason | null {
+  const marks = (f.extracted ?? {}) as { injection?: unknown; municipal?: unknown };
+  return thankYouOfferReason({
+    category: f.category,
+    untrusted: marks.injection === true || marks.municipal === true,
+    // "Not owed to me" also sets invoice_paid_at; only a real paid mark counts.
+    invoicePaid:
+      f.invoicePaidAt != null &&
+      (f.invoicePaidSource === "owner" || f.invoicePaidSource === "auto"),
+    customerAddress: f.customerAddress,
+    senderAddress: f.senderAddress,
+    thankedBefore: f.thanked,
+  });
+}
+
+/**
+ * "Say thanks" (2026-10-16): why this thread can't get a thank-you, or — when it can — whether
+ * the note may carry the review ask too: every review-request rule must allow one for this
+ * customer (a review link on file, no complaint in 12 months, a known customer, none asked in 12
+ * months…). `createDraftForThread` calls it before any model call; the review part is checked
+ * again under the per-address lock before the draft is saved.
+ */
+export async function thankYouAllowed(
+  workspaceId: string,
+  threadId: string,
+  now: Date = new Date(),
+): Promise<{ why: ThankYouOfferReason | "not_found" } | { why: null; withReview: boolean }> {
+  const [f] = await threadFacts(workspaceId, [threadId]);
+  if (!f) return { why: "not_found" };
+  const why = thankYouReason(f);
+  if (why) return { why };
+  const review = (await reviewReasons(workspaceId, [f], now)).get(f.id) ?? null;
+  return { why: null, withReview: review === null };
 }
 
 /** Why the closing question can't be asked on this thread, or null when it can (plan #26). */

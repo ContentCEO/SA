@@ -267,7 +267,7 @@ describe("deposit (#28)", () => {
     expect(d).toMatchObject({
       purpose: "deposit",
       kind: "reply",
-      promptVersion: "draft.v6+purpose.v1",
+      promptVersion: "draft.v6+purpose.v2",
       status: "pending",
       toAddress: "dana@customer.com",
       flags: [],

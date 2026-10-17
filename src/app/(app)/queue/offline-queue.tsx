@@ -22,6 +22,7 @@ const WHY: Record<string, string> = {
   text_address: "it would turn into a text message — text them from your own phone",
   intent_expired: "you okayed it more than 12 hours ago",
   reconnect_needed: "Gmail needs reconnecting",
+  mailbox_paused: "that Gmail address is paused on your plan",
   blocked: "sending isn't switched on for your account",
   // The terms changed while this phone was offline (the API's 403 says which).
   terms_required: "you need to agree to our updated terms first",

@@ -8,6 +8,7 @@ import { SENDING_BLOCKED_MESSAGE, SendingBlockedError } from "@/server/lifecycle
 import { hitLimit } from "@/server/rate-limit";
 import { termsRequiredResponse } from "@/server/session";
 import { termsAccepted } from "@/server/terms";
+import { MAILBOX_PAUSED_LINE } from "@/server/mailbox-plan-rules";
 
 export const dynamic = "force-dynamic";
 
@@ -83,6 +84,13 @@ export async function POST(request: NextRequest, ctx: RouteContext<"/api/drafts/
           error:
             "That address turns email into a text message, and Squared Away never texts customers. Use Text from my phone instead.",
         },
+        { status: 403 },
+      );
+    }
+    if (outcome.status === "mailbox_paused") {
+      // 2026-10-16: the plan covers fewer Gmail addresses and this one is paused.
+      return NextResponse.json(
+        { status: "mailbox_paused", error: MAILBOX_PAUSED_LINE },
         { status: 403 },
       );
     }

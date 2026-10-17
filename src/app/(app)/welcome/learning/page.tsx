@@ -10,6 +10,8 @@ import { syncSummary } from "@/server/sync";
 import { CLASSIFY_LOOKBACK_DAYS } from "@/server/classification";
 import { firstLookCounts } from "@/server/first-week";
 import { firstLookLines } from "@/server/first-week-rules";
+import { effectiveStatus } from "@/server/lifecycle";
+import { TRIAL_NO_SEND_LINE, TRIAL_SIDE_DOOR_LINE } from "@/server/trial-email-rules";
 
 function Step({ done, children }: { done: boolean; children: React.ReactNode }) {
   return (
@@ -44,6 +46,8 @@ export default async function WelcomeLearningPage() {
       : null;
   // Round 2 (FW D4): only promise the email when email is set up.
   const emailsOn = Boolean(process.env.RESEND_API_KEY && process.env.EMAIL_FROM);
+  // The trial's side door (Davi, 2026-10-16), said once the drafts are about to show up.
+  const onTrial = effectiveStatus(workspace) === "evaluating";
 
   return (
     <>
@@ -103,7 +107,9 @@ export default async function WelcomeLearningPage() {
 
       <p className="text-muted-foreground">
         {allDone
-          ? "Nothing gets sent without you. Drafts show up in your queue for you to check."
+          ? `Nothing gets sent without you. Drafts show up in your queue for you to check.${
+              onTrial ? ` ${TRIAL_NO_SEND_LINE} ${TRIAL_SIDE_DOOR_LINE}` : ""
+            }`
           : `A busy inbox takes longer: Google has us read it in batches, with pauses. You can leave this screen — it keeps going in the background${
               emailsOn ? ", and we'll email you when your first drafts are ready" : ""
             }.`}

@@ -4,7 +4,8 @@ import { TimeZoneInput } from "@/components/forms/time-zone-input";
 import { Button } from "@/components/ui/button";
 import { DIGEST_HOURS, getBusinessProfile } from "@/server/profile";
 import { requireOwner } from "@/server/session";
-import { saveDigestSettingsAction } from "../profile-actions";
+import { trialEmailsMatter } from "@/server/trial-emails";
+import { saveDigestSettingsAction, saveTrialEmailsAction } from "../profile-actions";
 import { SettingsScreen } from "../screen";
 
 export const metadata: Metadata = { title: "Morning email" };
@@ -58,6 +59,29 @@ export default async function MorningEmailSettingsPage(
           Save
         </Button>
       </AutoSaveForm>
+      {trialEmailsMatter(workspace) ? (
+        // 2026-10-16: the trial's short emails (day 2, the last day, and one a week after it ends).
+        <AutoSaveForm action={saveTrialEmailsAction} hideButton className="flex flex-col gap-2">
+          <label className="flex min-h-tap items-center gap-3">
+            <input
+              type="checkbox"
+              name="trialEmails"
+              value="on"
+              defaultChecked={!workspace.trialEmailsStoppedAt}
+              aria-describedby="trial-emails-note"
+              className="size-6 shrink-0"
+            />
+            <span className="font-semibold">Trial emails</span>
+          </label>
+          <p id="trial-emails-note" className="-mt-1 pl-9 text-muted-foreground">
+            A short one on day 2 and on your last day, and one a week after your trial ends. Counts
+            only. The &ldquo;Stop these emails&rdquo; link in them switches this off too.
+          </p>
+          <Button type="submit" variant="outline" className="sa-autosave-button w-full">
+            Save
+          </Button>
+        </AutoSaveForm>
+      ) : null}
     </SettingsScreen>
   );
 }

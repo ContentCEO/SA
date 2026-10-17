@@ -359,6 +359,7 @@ describe("review request (#29)", () => {
     expect((await threadOffers(workspaceId, [t], NOW)).get(t)).toEqual({
       review: true,
       closingQuestion: false,
+      thankYou: false,
     });
     const calls = model(reviewBody);
     const r = await askReview(t);
@@ -1055,6 +1056,7 @@ describe("GUARDRAIL: closing question never twice", () => {
     expect((await threadOffers(workspaceId, [t], NOW)).get(t)).toEqual({
       review: false,
       closingQuestion: true,
+      thankYou: false,
     });
     const calls = model(closingBody, closingBody);
     const r = await askClosing(t);

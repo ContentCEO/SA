@@ -187,6 +187,8 @@ export async function freshLeads(workspaceId: string, cursor: Date | null, now: 
     .where(
       and(
         eq(mailboxes.workspaceId, workspaceId),
+        // A Gmail address paused on the plan raises no alerts (2026-10-16).
+        isNull(mailboxes.planPausedAt),
         eq(threads.inInbox, true),
         gt(threads.classifiedAt, cursor ?? new Date(now.getTime() - 60 * 60 * 1000)),
         gt(threads.lastMessageAt, new Date(now.getTime() - SMS.freshMs)),

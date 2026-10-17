@@ -10,7 +10,7 @@ import { cn } from "@/lib/utils";
 import { listInboxThreads, type InboxFilter, type InboxRow } from "@/server/inbox";
 import { listMailboxes } from "@/server/mailboxes";
 import { isReadOnly } from "@/server/lifecycle";
-import { threadOffers } from "@/server/offers";
+import { threadOffers, type ThreadOffers } from "@/server/offers";
 import { priceMemoryFor, type PriceMemoryItem } from "@/server/price-memory";
 import { getBusinessProfile } from "@/server/profile";
 import { requireOwner } from "@/server/session";
@@ -33,6 +33,10 @@ const INBOX_ERRORS: Record<string, string> = {
     "Your account is read-only right now, so nothing was changed. The note at the top says why.",
   unknown: "That didn't work. Refresh and try again.",
 };
+
+/** Inbox rows keep "Ask for a review" (a finished job); "Say thanks" is Money's (2026-10-16). */
+const inboxOffers = (o: ThreadOffers | undefined): ThreadOffers | undefined =>
+  o ? { ...o, thankYou: false } : undefined;
 
 function parseFilter(v: string | string[] | undefined): InboxFilter {
   if (v === "needs_me") return { kind: "needs_me" };
@@ -223,7 +227,10 @@ export default async function InboxPage(props: PageProps<"/inbox">) {
                 </Button>
               </form>
             ) : null}
-            {!readOnly ? <OfferButtons threadId={row.id} offers={offers.get(row.id)} /> : null}
+            {!readOnly ? (
+              // "Say thanks" lives on Money's paid rows only (2026-10-16).
+              <OfferButtons threadId={row.id} offers={inboxOffers(offers.get(row.id))} />
+            ) : null}
             {!readOnly ? (
               <ResortSheet threadId={row.id} current={row.category} back="inbox" />
             ) : null}

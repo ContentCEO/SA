@@ -107,6 +107,9 @@ describe("evaluation set (#46)", () => {
     expect(n((c) => c.purpose === "deposit" && c.paymentTerms === null)).toBeGreaterThanOrEqual(1);
     expect(n((c) => c.purpose === "review_request")).toBeGreaterThanOrEqual(2);
     expect(n((c) => c.purpose === "closing_question")).toBeGreaterThanOrEqual(1);
+    // "Say thanks" (2026-10-16): with and without the review ask.
+    expect(n((c) => c.purpose === "thank_you")).toBeGreaterThanOrEqual(2);
+    expect(n((c) => c.purpose === "thank_you_review")).toBeGreaterThanOrEqual(1);
   });
 
   it("uses only invented addresses", () => {
@@ -183,7 +186,11 @@ describe("evaluation set (#46)", () => {
           ? `Hi Casey,\n\nThanks again for having us out. If you have a minute, a short review would mean a lot:\n${/https:\/\/\S+/.exec(req.user)![0]}\n\nThanks,\nAlex`
           : req.user.includes("## Task: closing question")
             ? "Hi Drew,\n\nDid you go another way, or did the timing change? Either answer is fine.\n\nThanks,\nAlex"
-            : null;
+            : req.user.includes("## Task: thank you")
+              ? /written on its own line: (\S+)/.test(req.user)
+                ? `Hi Jo,\n\nThanks so much for the payment, and for having us out. If you have a minute, a short review would mean a lot:\n${/written on its own line: (\S+)/.exec(req.user)![1]}\n\nThanks,\nAlex`
+                : "Hi,\n\nGot it — thank you for taking care of that so quickly. It was good working with you.\n\nThanks,\nAlex"
+              : null;
       const parsed = isTone
         ? { tone_shift: TONE_CASES[++tone]!.expect[0] }
         : isRevise

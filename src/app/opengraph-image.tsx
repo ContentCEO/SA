@@ -9,6 +9,6 @@ export default function OpengraphImage() {
   return shareCard({
     serif: "your inbox,",
     heavy: "handled.",
-    line: "Built for carpenters and the trades they work with. Nothing goes out without your okay.",
+    line: "Built for carpenters, plumbers, and electricians. Nothing goes out without your okay.",
   });
 }

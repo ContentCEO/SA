@@ -27,7 +27,7 @@ import { phoneHref } from "@/lib/phone-href";
 const telHref = phoneHref("tel", siteConfig.phone);
 
 const description =
-  "AI email help for contractors, built for carpenters and the trades they work with: Squared Away sorts your business email, drafts replies in your voice, and drafts quote follow-ups — and nothing goes out without your okay.";
+  "AI email help for contractors, built for carpenters, plumbers, and electricians: Squared Away sorts your business email, drafts replies in your voice, and drafts quote follow-ups — and nothing goes out without your okay.";
 
 export const metadata: Metadata = {
   // The words people search for; the share card keeps the brand line.
@@ -39,13 +39,13 @@ export const metadata: Metadata = {
     siteName: "Squared Away",
     title: "Squared Away — your inbox, handled.",
     description:
-      "Built for carpenters and the trades they work with. Sorts your business email, drafts replies in your voice, and waits for your okay before anything goes out.",
+      "Built for carpenters, plumbers, and electricians. Sorts your business email, drafts replies in your voice, and waits for your okay before anything goes out.",
   },
   twitter: {
     card: "summary_large_image",
     title: "Squared Away — your inbox, handled.",
     description:
-      "Built for carpenters and the trades they work with. Nothing goes out without your okay.",
+      "Built for carpenters, plumbers, and electricians. Nothing goes out without your okay.",
   },
 };
 
@@ -113,7 +113,7 @@ const faqs = [
   },
   {
     q: "What does the trial look like?",
-    a: "Three days with your real inbox. It sorts and drafts so you can judge the replies — Squared Away won't send anything to a customer during the trial. If it's not for you, disconnect and you're done.",
+    a: "Three days with your real inbox. It sorts and drafts so you can judge the replies — Squared Away won't send anything to a customer during the trial. Your drafts are in your Gmail Drafts folder too, so you can send one from Gmail yourself if you want. If it's not for you, disconnect and you're done.",
   },
   {
     q: "What if I stop?",
@@ -192,7 +192,7 @@ export default async function HomePage(props: PageProps<"/">) {
             <div className="grid items-center gap-12 lg:grid-cols-[1.1fr_1fr]">
               <div className="flex flex-col gap-6">
                 <p className="font-semibold text-slate">
-                  Built for carpenters, and the trades they work with
+                  Built for carpenters, plumbers, and electricians
                 </p>
                 <Headline serif="your inbox," heavy="handled." size="xl" />
                 <p className="max-w-lg text-xl leading-relaxed">
@@ -253,7 +253,9 @@ export default async function HomePage(props: PageProps<"/">) {
               <p className="max-w-2xl text-xl leading-relaxed text-ash">
                 Squared Away drafts; you decide. Replies sit in your queue until you tap Send reply
                 — and during your three-day trial, Squared Away won&apos;t send anything to a
-                customer: that&apos;s switched off in the code, not just hidden behind a button.
+                customer: its Send reply is switched off in the code, not just hidden behind a
+                button. Your drafts are in your Gmail Drafts folder too, so you can send one from
+                Gmail yourself if you want.
               </p>
             </div>
           </section>

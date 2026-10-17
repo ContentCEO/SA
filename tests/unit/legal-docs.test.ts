@@ -107,9 +107,15 @@ describe("terms", () => {
     expect(deletion).toContain("cancelSubscriptionNow(");
   });
 
-  it("the trial can't send to customers; practice copies go only to the owner", () => {
-    expect(terms).toContain("sending to customers is switched off");
+  it("Squared Away sends nothing to customers in the trial; the Gmail side door is said (2026-10-16)", () => {
+    expect(terms).toContain(
+      "it won't send anything to a customer: its own sending is switched off",
+    );
     expect(terms).toContain("practice copies, to your own address");
+    expect(terms).toContain(
+      "Your drafts are real Gmail drafts, in your Gmail Drafts folder too, so you can send one from Gmail yourself if you want",
+    );
+    expect(terms).not.toContain("sending to customers is switched off");
   });
 
   it("autopilot only on plans that include it, after setup, one kind of email at a time", () => {
@@ -354,7 +360,7 @@ describe("owner-facing copy about the trial", () => {
 
   it("the pre-consent Gmail explainer says only customers are off-limits during the trial", () => {
     expect(flat(readFileSync("src/app/(app)/connect/page.tsx", "utf8"))).toContain(
-      "Squared Away won&apos;t send anything to a customer: you can only send yourself practice copies.",
+      "Squared Away won&apos;t send anything to a customer: from Squared Away you can only send yourself practice copies. Your drafts are in your Gmail Drafts folder too, so you can send one from Gmail yourself if you want.",
     );
   });
 

@@ -1,4 +1,5 @@
 import { randomBytes, randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { beforeEach, describe, expect, it } from "vitest";
 import type { Database } from "@/db";
 import { activityLog, drafts, messages, threads } from "@/db/schema";
@@ -203,6 +204,37 @@ describe("C5 why you lost it", () => {
     expect(shownLostReason("won", "price")).toBeNull();
     expect(shownLostReason("lost", "price")).toBe("price");
     expect(shownLostReason("lost", "nonsense")).toBeNull();
+  });
+
+  it("'Other' (Davi, 2026-10-16): a fourth button, counted, never the headline", async () => {
+    const {
+      lostReasonsSentence,
+      shownLostReason,
+      LOST_REASONS,
+      LOST_REASON_BUTTONS,
+      LOST_REASON_WORDS,
+    } = await import("@/server/quote-rules");
+    expect(LOST_REASONS).toEqual(["price", "timing", "someone_else", "other"]);
+    expect(LOST_REASON_BUTTONS.other).toBe("Other");
+    expect(`Lost: ${LOST_REASON_WORDS.other}`).toBe("Lost: another reason");
+    expect(shownLostReason("lost", "other")).toBe("other");
+    expect(lostReasonsSentence({ other: 1 })).toBe("Lost this month: 1 for another reason.");
+    expect(lostReasonsSentence({ price: 1, other: 2 })).toBe(
+      "Lost this month: 1 on price, 2 for other reasons.",
+    );
+    // "Other" counts toward the total, so it can stop a named reason from being "most of them".
+    expect(lostReasonsSentence({ price: 3, other: 4 })).toBe(
+      "Lost this month: 3 on price, 4 for other reasons.",
+    );
+    expect(lostReasonsSentence({ someone_else: 3, other: 1 })).toBe(
+      "Lost this month: 3 went with someone else, 1 for another reason. 3 went with someone else this month.",
+    );
+    // The Lost card offers every reason, and the action accepts each one.
+    const page = readFileSync("src/app/(app)/quotes/page.tsx", "utf8");
+    expect(page).toContain("{LOST_REASONS.map((r) => (");
+    expect(readFileSync("src/app/(app)/quotes/actions.ts", "utf8")).toContain(
+      "reason: z.enum(LOST_REASONS)",
+    );
   });
 
   it("only on a lost quote; scoped; re-marking clears it; stale reasons never show or count", async () => {

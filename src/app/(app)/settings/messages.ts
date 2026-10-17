@@ -12,9 +12,12 @@ export const SCREEN_MESSAGES = {
     done: {
       connected: "Gmail connected.",
       disconnected: "Gmail disconnected. We've removed our access at Google.",
+      swapped: "Done. That Gmail is on now, and the other one is paused.",
+      resumed: "Done. That Gmail is on now.",
     },
     error: {
       limit: "Your plan is at its mailbox limit. Disconnect one first, or ask about a bigger plan.",
+      choose: "Pick which Gmail to pause instead.",
       unknown: UNKNOWN,
     },
   },

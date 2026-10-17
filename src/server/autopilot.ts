@@ -15,6 +15,7 @@ import {
   type Workspace,
 } from "@/db/schema";
 import { MailboxAuthError } from "@/mailbox/connector";
+import { MAILBOX_PAUSED_LINE, mailboxOn } from "./mailbox-plan-rules";
 import {
   AUTO_DRAFT_CATEGORIES,
   defaultWriter,
@@ -93,7 +94,7 @@ export type GuardrailInput = {
   municipal?: boolean;
   /** The customer's email accepts a quote (classify.v3 signal) — the owner answers those. */
   acceptsQuote?: boolean;
-  /** Deposit details, review request or closing question (plan #26 #28 #29). */
+  /** Deposit details, review request, thank-you or closing question (plan #26 #28 #29). */
   purpose: string | null;
   /**
    * A Gmail draft older sync stored after the customer's email, not yet checked with Gmail
@@ -143,6 +144,7 @@ export function guardrailReasons(g: GuardrailInput): string[] {
   if (g.untrusted) out.push("This email tried to give instructions to the assistant.");
   if (g.municipal) out.push("Building departments always wait for you.");
   if (g.acceptsQuote) out.push("Quote acceptances always wait for you.");
+  // Thank-you notes (2026-10-16) are purpose notes too, so this line covers them.
   if (g.purpose != null) out.push("Deposit, review and closing notes always wait for you.");
   if (g.maybeAnswered) out.push("You might already have answered this in Gmail.");
   if (g.redirected)
@@ -307,6 +309,9 @@ async function blockers(row: NonNullable<Awaited<ReturnType<typeof loadForAutopi
   const { draft, thread, mailbox, workspace } = row;
   const locked = accountLockReason(workspace, now);
   if (locked) return [locked];
+  // The plan covers fewer Gmail addresses and this one is paused (2026-10-16): nothing from it
+  // goes on its own (sendDraft refuses it too).
+  if (mailbox.planPausedAt) return [MAILBOX_PAUSED_LINE];
   const mode = (await modes(workspace.id)).get(thread.category ?? "");
   if (mode !== "autopilot") return ["Autopilot is off for this kind of email."];
   const [customer] = await db()
@@ -449,7 +454,7 @@ export async function runAutopilotSend(
   // The owner may be writing their own reply in Gmail right now: sync doesn't store drafts,
   // so only Gmail can say. Asked only when sending is otherwise allowed — a blocked account
   // or a lost mailbox gets no Google call (sendDraft refuses those before any).
-  if (!reasons.length && canSend(row.workspace, now) && row.mailbox.status === "active") {
+  if (!reasons.length && canSend(row.workspace, now) && mailboxOn(row.mailbox)) {
     const writer = (opts.writerFor ?? defaultWriter)(row.mailbox);
     try {
       const own = row.draft.gmailDraftId ? await writer.getDraft(row.draft.gmailDraftId) : null;

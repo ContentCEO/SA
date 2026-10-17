@@ -20,6 +20,7 @@ import { listMailboxes } from "@/server/mailboxes";
 import { getBusinessProfile } from "@/server/profile";
 import { priceMemoryFor } from "@/server/price-memory";
 import { requireOwner } from "@/server/session";
+import { MAILBOX_PAUSED_LINE } from "@/server/mailbox-plan-rules";
 import { dismissChecklistAction } from "./actions";
 import { OnboardingChecklist } from "@/components/app/onboarding-checklist";
 import { checklistFor } from "@/server/onboarding";
@@ -105,10 +106,13 @@ const errors: Record<string, string> = {
   not_eligible: "That one isn't ready for that kind of note.",
   feature_off: "That isn't switched on for your account yet.",
   already_asked: "You've already asked them once.",
+  thanked: "You've already written them a thank-you for that one.",
   no_review_link: "Add your review link in Settings → Business profile first.",
   review_recent: "You asked them for a review in the last 12 months.",
   complaint: "Not for a complaint — reply to that one yourself.",
   has_draft: "Send or discard the reply first.",
+  paused:
+    "That Gmail address is paused on your plan, so nothing was sent or written. Pick which one is on in Settings → Your Gmail.",
   unknown: "That didn't work. Refresh and try again.",
 };
 
@@ -237,7 +241,8 @@ export default async function QueuePage(props: PageProps<"/queue">) {
     lead: leadCards.get(i.threadId),
     who: who(i),
     tag: tag(i),
-    readOnly,
+    // A Gmail address paused on the plan: shown, but nothing is drafted or changed from it.
+    readOnly: readOnly || i.mailboxPaused,
     remindOptions: remindOptions(i),
     gmailHref: gmailLink(i),
     timeZone,
@@ -419,12 +424,16 @@ export default async function QueuePage(props: PageProps<"/queue">) {
               usedFacts={i.usedFacts}
               revisionsLeft={i.revisionsLeft}
               needsOwnerReason={i.needsOwnerReason}
-              canSend={sending}
-              readOnly={readOnly}
+              canSend={sending && !i.mailboxPaused}
+              readOnly={readOnly || i.mailboxPaused}
               autoSendAt={i.autoSendAt ? clock.format(i.autoSendAt) : null}
-              sendingOffLabel={sendingOffLabel(workspace)}
-              sendingOffDetail={sendingBlockedReason(workspace)}
-              practiceLeft={practiceLeft}
+              sendingOffLabel={i.mailboxPaused ? MAILBOX_PAUSED_LINE : sendingOffLabel(workspace)}
+              sendingOffDetail={
+                i.mailboxPaused
+                  ? "Your plan covers fewer Gmail addresses than you've connected. Pick which one is on in Settings → Your Gmail."
+                  : sendingBlockedReason(workspace)
+              }
+              practiceLeft={i.mailboxPaused ? null : practiceLeft}
               priceMemory={priceMemory.get(i.threadId)}
               noteLine={noteFor(i)}
               moreActions={

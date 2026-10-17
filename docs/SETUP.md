@@ -392,6 +392,12 @@ The digest is sent through Resend's HTTP API (`src/lib/email.ts`). Without `RESE
 
 The digest carries counts and categories only — no customer names, subjects or email text.
 
+The trial emails (2026-10-16, `src/server/trial-emails.ts`: day 2, the last day, and one a week
+after an unpaid trial ends) use the same key and sender, counts only, from the 15-minute
+lifecycle job. Each carries a one-click "Stop these emails" link signed with `AUTH_SECRET`
+(rotating it makes old links land on "that link didn't work"; owners can still switch them off in
+Settings → Morning email).
+
 The same key and sender also carry the waitlist emails (`src/server/waitlist-emails.ts`): a
 content-free "New waitlist sign-up" notice to `ADMIN_EMAIL`, and one "You're on the Squared Away
 list" to the person who joined (replies go to `SUPPORT_EMAIL` when it is set). Until a domain is

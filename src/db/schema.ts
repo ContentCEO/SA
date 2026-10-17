@@ -136,6 +136,17 @@ export const workspaces = pgTable(
       (): AnyPgColumn => workspaces.id,
       { onDelete: "set null" },
     ),
+    /**
+     * Trial emails (Davi, 2026-10-16): the owner tapped "Stop these emails" (or switched them
+     * off in Settings). Null = they go. Only the trial emails read it; the morning email has
+     * its own switch.
+     */
+    trialEmailsStoppedAt: timestamp("trial_emails_stopped_at", { withTimezone: true }),
+    /**
+     * Which trial emails already went ("day2", "day3", "after"), so each goes once ever. Written
+     * only after Resend took it. Day 1 is the "first drafts are ready" email (its own marker).
+     */
+    trialEmailsSent: text("trial_emails_sent").array().notNull().default([]),
   },
   (t) => [
     // One owner per workspace for the MVP.
@@ -170,6 +181,14 @@ export const mailboxes = pgTable(
     /** Last sync problem as a short code (access_lost / rate_limited / sync_failed) — never text. */
     lastSyncErrorCode: text("last_sync_error_code"),
     lastSyncErrorAt: timestamp("last_sync_error_at", { withTimezone: true }),
+    /**
+     * Davi, 2026-10-16: the plan covers fewer Gmail addresses than are connected, so this one is
+     * paused — nothing is read, sorted, drafted, sent, alerted or learned from it; its data is
+     * kept. Null = on. Set and cleared only by `fitMailboxesToPlan` / `swapPlanMailbox`
+     * (src/server/mailbox-plan.ts). A column, not a `status` value, so lost Google access and
+     * a plan pause are told apart (a paused address can need reconnecting too).
+     */
+    planPausedAt: timestamp("plan_paused_at", { withTimezone: true }),
     createdAt: createdAt(),
   },
   (t) => [
@@ -280,7 +299,7 @@ export const threads = pgTable(
      */
     categoryManual: text("category_manual"),
     /**
-     * Ideas C5: why the owner says a quote was lost (price / timing / someone_else), one tap,
+     * Ideas C5: why the owner says a quote was lost (price / timing / someone_else / other), one tap,
      * optional. Read only while quote_outcome = 'lost' (older code can leave a stale value).
      */
     quoteLostReason: text("quote_lost_reason").$type<LostReason>(),
@@ -376,7 +395,19 @@ export const draftKindEnum = pgEnum("draft_kind", ["reply", "followup"]);
  * Owner-asked special replies (plan #26 #28 #29). They are kind `reply` with a purpose, so
  * follow-up counts never change. Null = an ordinary reply or follow-up.
  */
-export const DRAFT_PURPOSES = ["deposit", "review_request", "closing_question", "safety"] as const;
+export const DRAFT_PURPOSES = [
+  "deposit",
+  "review_request",
+  "closing_question",
+  "safety",
+  // Davi, 2026-10-16: "Say thanks" on a paid invoice. `thank_you_review` is the same note with
+  // the review ask in it (only when every review-request rule allows one); it counts as that
+  // customer's review request. Plain text column, so no migration of the values.
+  "thank_you",
+  "thank_you_review",
+] as const;
+/** The two kinds of thank-you note: once per thread between them (`drafts_one_thank_you_per_thread`). */
+export const THANK_YOU_PURPOSES = ["thank_you", "thank_you_review"] as const;
 export type DraftPurpose = (typeof DRAFT_PURPOSES)[number];
 
 /**
@@ -445,6 +476,11 @@ export const drafts = pgTable(
     uniqueIndex("drafts_one_closing_question_per_thread")
       .on(t.threadId)
       .where(sql`purpose = 'closing_question'`),
+    // "Say thanks" (2026-10-16): once per thread. One that went stale (the customer wrote
+    // again before the owner tapped anything) doesn't count.
+    uniqueIndex("drafts_one_thank_you_per_thread")
+      .on(t.threadId)
+      .where(sql`purpose in ('thank_you', 'thank_you_review') and status <> 'expired'`),
   ],
 );
 
