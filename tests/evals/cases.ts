@@ -491,6 +491,30 @@ export const EVAL_CASES: EvalCase[] = [
     body: "I represent the homeowners at 4 Oak St regarding water damage following your roof work. Please preserve all records.",
     expect: { category: "complaint", needsOwner: true },
   }),
+  // Check 38 P1: a yes on a job already won is a change order (the app answers it as an
+  // ordinary reply, never with a deposit note). The classifier still sees the yes.
+  c({
+    id: "co-s3-lights",
+    trade: "electrical",
+    fromName: "Dana Ruiz",
+    fromAddress: "dana@example.com",
+    subject: "Re: Kitchen lights",
+    body: "Sounds good, go ahead with the lights and the outlet.",
+    threadSummary:
+      "The job is already booked and the deposit was paid by phone. The owner wrote: four recessed lights over the island and moving the outlet adds $1,850.",
+    expect: { category: "quote_request", needsOwner: false, acceptsQuote: true },
+  }),
+  c({
+    id: "co-e02-vanity",
+    trade: "plumbing",
+    fromName: "Lee Park",
+    fromAddress: "lee@example.com",
+    subject: "Re: Bathroom job",
+    body: "Yes, please swap in the double vanity too. Same plan otherwise.",
+    threadSummary:
+      "The bathroom remodel was won and is under way. The owner wrote: switching to the double vanity adds $640 in parts and labor.",
+    expect: { category: "quote_request", needsOwner: false, acceptsQuote: true },
+  }),
   // Check 43 P9: the owner taps Draft a reply on a lawyer's letter or a refund dispute. The
   // fixed task keeps it short and factual: no cause, no fault, no refund, no dates or work.
   c({

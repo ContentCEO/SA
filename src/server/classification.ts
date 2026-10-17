@@ -169,6 +169,7 @@ export async function classifyPending(
         extracted: threads.extracted,
         quoteOutcome: threads.quoteOutcome,
         quoteOutcomeSource: threads.quoteOutcomeSource,
+        quoteOutcomeAt: threads.quoteOutcomeAt,
         invoicePaidAt: threads.invoicePaidAt,
         invoicePaidSource: threads.invoicePaidSource,
         needsOwnerReason: threads.needsOwnerReason,
@@ -319,7 +320,19 @@ export async function classifyPending(
           ...(rule.noDraft ? { sender_rule: "no_draft" as const } : {}),
         },
       };
-      if (result.extracted.accepts_quote) {
+      // Check 38 P1: a yes on a job already won before this email is a change order, not the
+      // quote's acceptance (any source of the win: the owner's, or our guess they left alone).
+      const wonBefore =
+        thread?.quoteOutcome === "won" &&
+        thread.quoteOutcomeAt != null &&
+        thread.quoteOutcomeAt.getTime() < new Date(m.sentAt).getTime();
+      if (result.extracted.accepts_quote && wonBefore) {
+        if (result.extracted.injection !== true)
+          result = {
+            ...result,
+            extracted: { ...result.extracted, change_order_approved: true },
+          };
+      } else if (result.extracted.accepts_quote) {
         const [ownerBefore] = await db()
           .select({ n: count() })
           .from(messages)

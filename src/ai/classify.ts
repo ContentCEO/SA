@@ -46,6 +46,12 @@ export type Extracted = ModelClassification["extracted"] & {
   /** When the acceptance email was written (ISO), kept with `quote_accepted`. */
   quote_accepted_at?: string;
   /**
+   * Check 38 P1: THIS email says yes on a job that was already won before it (a change order:
+   * "go ahead with the lights and the outlet"). Set instead of `quote_accepted`, so no deposit
+   * note is written for it. Content-free; only ever present as `true`; not carried over.
+   */
+  change_order_approved?: boolean;
+  /**
    * The customer disputes a charge, asks for money back or mentions something legal
    * (the model's mentions_refund_or_dispute / mentions_legal signals). Treated as a
    * complaint for review requests: it sets the sticky `threads.complained_at`. Only ever

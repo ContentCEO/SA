@@ -109,3 +109,11 @@ For the integrator to fold into `CLAUDE.md` (Decisions), `docs/LAUNCH.md` and th
   Activity via `sendStoppedWhy`), and lists late sends on top ("Waiting to send: reply to
   Priya", "Still sending. This is taking longer than usual.", Stop it = undo while unclaimed),
   refreshing every 10 s (`late-sends.tsx`, `lateSends()`).
+- **Check 38 P1 (change orders):** classification sets `extracted.change_order_approved` (only
+  `true`, content-free) instead of `quote_accepted` when the email accepts and the thread's
+  outcome was won before this email (`quote_outcome_at` < the email; any source; a legacy won
+  with no time is not "before"). `createDraftForThread` never picks a deposit when the newest
+  email is a change-order approval or the outcome was won before the newest customer email,
+  and adds the fixed flag "Change order approved. Put it in writing with the price and any new
+  finish date." Autopilot keeps refusing (accepts_quote). Eval cases `co-s3-lights`,
+  `co-e02-vanity` (invented stand-ins: the review's E02 text wasn't in the prompt).

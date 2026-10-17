@@ -729,6 +729,8 @@ export async function createDraftForThread(
     if (sentNudges >= MAX_FOLLOWUPS) return { status: "skipped", reason: "followup_cap" };
     nudgeNumber = sentNudges === 0 ? 1 : 2;
   }
+  // Check 38 P1: the newest email approves a change order on a job already won.
+  const changeOrder = changeOrderApproved(thread);
   // The owner's purpose, or deposit details when the newest email accepts the quote (#28, A5).
   // Only once per thread: after a deposit note was drafted (whatever became of it), or when
   // the email itself says it paid ("Sent the deposit, when can you start?"), it is answered
@@ -742,6 +744,10 @@ export async function createDraftForThread(
       : (opts.purpose ??
         (!followup &&
         isQuoteAcceptance(thread) &&
+        // Check 38 P1: a yes to a change order on a job already won is answered as an
+        // ordinary reply, never with a deposit note.
+        !changeOrder &&
+        !(await wonBeforeNewestEmail(thread)) &&
         paymentSaid(thread.extracted) === null &&
         !(await depositAlreadyOn(threadId))
           ? "deposit"
@@ -1013,8 +1019,12 @@ export async function createDraftForThread(
     ...(safety ? [SAFETY_NOTE_FLAG, ...purposeFlags] : purposeFlags),
   ]);
   // Check 43 P9: the fixed caution goes first (so the cut to six never drops it), and the
-  // card never says Ready on one of these.
-  const flags = dispute ? [DISPUTE_FLAG, ...scored.flags].slice(0, 6) : scored.flags;
+  // card never says Ready on one of these. Check 38 P1: a change order's reminder next.
+  const fixedFlags = [
+    ...(dispute ? [DISPUTE_FLAG] : []),
+    ...(changeOrder && !followup && !safety ? [CHANGE_ORDER_FLAG] : []),
+  ];
+  const flags = [...new Set([...fixedFlags, ...scored.flags])].slice(0, 6);
   const confidence = dispute
     ? Math.min(scored.confidence, Math.round(DISPUTE_CONFIDENCE_CAP * 100))
     : scored.confidence;
@@ -1240,6 +1250,35 @@ function disputeThread(t: { extracted: unknown; needsOwnerReason: string | null 
     (t.extracted as { disputed?: boolean } | null)?.disputed === true ||
     (t.needsOwnerReason != null && DISPUTE_REASONS.includes(t.needsOwnerReason))
   );
+}
+
+/** Check 38 P1: the fixed flag on a reply to a change-order approval (no legal claim). */
+export const CHANGE_ORDER_FLAG =
+  "Change order approved. Put it in writing with the price and any new finish date.";
+
+/** Check 38 P1: the newest email said yes on a job that was already won (classification). */
+function changeOrderApproved(t: { extracted: unknown }) {
+  return (
+    (t.extracted as { change_order_approved?: boolean } | null)?.change_order_approved === true
+  );
+}
+
+/**
+ * Check 38 P1: the thread's quote was marked won (by anyone) before its newest customer email,
+ * so a yes in that email is about something else — a change order — not the quote.
+ */
+async function wonBeforeNewestEmail(t: {
+  id: string;
+  quoteOutcome: string | null;
+  quoteOutcomeAt: Date | null;
+}) {
+  if (t.quoteOutcome !== "won" || !t.quoteOutcomeAt) return false;
+  const [newest] = await db()
+    .select({ at: sql<string | Date | null>`max(${messages.sentAt})` })
+    .from(messages)
+    .where(and(eq(messages.threadId, t.id), eq(messages.direction, "in"), notDraftMessage()));
+  const at = asDate(newest?.at);
+  return at != null && at.getTime() > t.quoteOutcomeAt.getTime();
 }
 
 /** What the drafter is asked when no other task applies (draft.vN's own default words). */
@@ -2302,8 +2341,12 @@ export async function reviseDraft(
     ...addressFlags,
     ...purposeFlags,
   ]);
-  // Check 43 P9: a tweak never lifts the caution or its cap.
-  const flags = dispute ? [DISPUTE_FLAG, ...scored.flags].slice(0, 6) : scored.flags;
+  // Check 43 P9: a tweak never lifts the caution or its cap (nor Check 38 P1's reminder).
+  const fixedFlags = [
+    ...(dispute ? [DISPUTE_FLAG] : []),
+    ...((draft.flags ?? []).includes(CHANGE_ORDER_FLAG) ? [CHANGE_ORDER_FLAG] : []),
+  ];
+  const flags = [...new Set([...fixedFlags, ...scored.flags])].slice(0, 6);
   const confidence = dispute
     ? Math.min(scored.confidence, Math.round(DISPUTE_CONFIDENCE_CAP * 100))
     : scored.confidence;
