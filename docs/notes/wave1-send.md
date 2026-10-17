@@ -117,3 +117,40 @@ For the integrator to fold into `CLAUDE.md` (Decisions), `docs/LAUNCH.md` and th
   and adds the fixed flag "Change order approved. Put it in writing with the price and any new
   finish date." Autopilot keeps refusing (accepts_quote). Eval cases `co-s3-lights`,
   `co-e02-vanity` (invented stand-ins: the review's E02 text wasn't in the prompt).
+- **Follow-ups on this branch:** the queue write also refuses a draft an autopilot run has
+  claimed meanwhile (`already_sending`); the Send reply handler returns a kind and the actions
+  redirect to fixed paths (the open-redirect fence, security-surface C4, stays unchanged).
+
+## Migrations and prompt versions
+
+- `0039_send_path_sent_via` (drafts.sent_via) and `0040_send_path_autopilot_claim`
+  (drafts.auto_send_claimed_at): additive, nullable; renumber at merge as needed.
+- New prompt kind `dispute-caution.v1` (registry `disputeCaution`), recorded as a suffix
+  (`draft.v7+dispute-caution.v1`). No draft.v8 from this group. Evals not run (no key).
+
+## Integration notes (expected conflicts)
+
+- `src/server/drafts.ts` (queueSend / sendDraft / reconcileDrafts / saveDraftEdit /
+  reviseDraft / createDraftForThread flags and task): anyone touching these.
+- `src/app/(app)/queue/page.tsx`: the `done` / `errors` maps moved to
+  `src/app/(app)/queue/queue-messages.ts`; add new notices there. `actions.ts`:
+  `saveDraftEditAction` is gone (the Edit box uses `editorAction`); `sendDraftAction` goes
+  through `sendTap`. `draft-card.tsx`: the Edit form moved to `draft-editor.tsx`; the Send
+  reply button is `send-button.tsx`.
+- `holdAutopilot` returns `{status}` instead of a boolean; `QueueItem` has `draftCreatedAt`;
+  `sentDraftSummary` takes `now` and returns `stopped` / `late`.
+- `tests/unit/autopilot.test.ts`, `draft-revise.test.ts`, `first-contact.test.ts`,
+  `queue-actions-limit.test.ts` got small expectation updates.
+
+## Questions for Davi
+
+1. A forward of the lead to the crew is not counted as "someone answered from Gmail" (it uses
+   the side-conversation rule), so it doesn't set the app's reply aside. OK?
+2. The stale-timing note says what "tomorrow" meant when written ("which meant Saturday")
+   rather than the spec's "which now means Saturday". OK?
+3. A won quote with no recorded time (from before outcome times were kept) is not treated as
+   "won before" this email, so a yes there can still get a deposit note. OK, or treat any won
+   as before?
+4. When the owner deletes our draft and sends near-identical words from Gmail (Gmail adds a
+   signature, say), we count it as their own words, not as our draft sent (time saved stays
+   conservative). OK?
