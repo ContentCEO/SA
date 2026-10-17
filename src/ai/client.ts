@@ -27,9 +27,28 @@ export type Transport = (req: StructuredRequest) => Promise<TransportResult>;
 
 let client: Anthropic | undefined;
 
+/**
+ * Check 29 P1: the model's answer, checked by us. JSON that doesn't parse or doesn't match the
+ * schema (often cut off at max_tokens) is `null` with the real usage, never a thrown error: the
+ * call was billed, so it's recorded, and the caller's retry-once / unreadable path runs.
+ */
+export function parseStructuredText(text: string | null, schema: z.ZodType): unknown | null {
+  if (text === null) return null;
+  let json: unknown;
+  try {
+    json = JSON.parse(text);
+  } catch {
+    return null;
+  }
+  const checked = schema.safeParse(json);
+  return checked.success ? checked.data : null;
+}
+
 const anthropicTransport: Transport = async (req) => {
   client ??= new Anthropic(anthropicClientOptions());
-  const response = await client.messages.parse({
+  // Check 29 P1: messages.create with the same parameters messages.parse sends (parse is create
+  // plus a parser that throws on a bad answer); we parse the text ourselves below.
+  const response = await client.messages.create({
     model: req.model,
     max_tokens: req.maxTokens,
     system: req.system.map((b) => ({
@@ -43,8 +62,9 @@ const anthropicTransport: Transport = async (req) => {
       ...(req.effort ? { effort: req.effort } : {}),
     },
   });
+  const text = response.content.find((b) => b.type === "text");
   return {
-    parsed: response.parsed_output ?? null,
+    parsed: parseStructuredText(text?.type === "text" ? text.text : null, req.schema),
     stopReason: response.stop_reason ?? null,
     usage: {
       inputTokens: response.usage.input_tokens,
@@ -60,6 +80,16 @@ let transport: Transport = anthropicTransport;
 /** Tests only. */
 export function setModelTransportForTests(t: Transport | undefined) {
   transport = t ?? anthropicTransport;
+}
+
+/**
+ * A fault on the provider's side: an API error with no status, 408, 429 or 5xx (529 overloaded
+ * included), or no connection / a timeout (APIConnectionError and its timeout subclass).
+ */
+export function isProviderFault(err: unknown): boolean {
+  if (err instanceof Anthropic.APIConnectionError) return true;
+  if (!(err instanceof Anthropic.APIError)) return false;
+  return err.status === undefined || err.status === 408 || err.status === 429 || err.status >= 500;
 }
 
 /**
@@ -103,14 +133,9 @@ export async function callStructured<S extends z.ZodType>(opts: {
     });
     // The provider failed (outage, overload, rate limit, timeout, no connection): the call
     // doesn't count against the day (review D5). A request the provider refused as wrong
-    // (400, 401…) still counts, so a bug can't loop for free.
-    const providerFault =
-      !(err instanceof Anthropic.APIError) ||
-      err.status === undefined ||
-      err.status === 408 ||
-      err.status === 429 ||
-      err.status >= 500;
-    if (providerFault) {
+    // (400, 401…) still counts, so a bug can't loop for free; so does any error of our own
+    // (Check 29 P1: only the provider's faults are handed back).
+    if (isProviderFault(err)) {
       try {
         await refundAiCall(opts.workspaceId, now);
       } catch (refundErr) {
@@ -123,6 +148,7 @@ export async function callStructured<S extends z.ZodType>(opts: {
     throw err;
   }
 
+  // Every answer the provider returned is billed, valid or not: record it (Check 29 P1).
   const costCentiCents = estimateCostCentiCents(model, result.usage);
   await recordAiUsage(opts.workspaceId, { ...result.usage, costCentiCents }, now);
 

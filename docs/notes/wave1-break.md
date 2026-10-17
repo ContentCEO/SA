@@ -27,3 +27,10 @@
 - **Check 16 P2:** `ADMIN_MOVES.extend_evaluation` = evaluating / evaluation_expired only (not
   invited: the clock starts on the first Gmail connect). docs/google-verification.md's
   "Give 3 more days" line still holds (it's about trial accounts).
+- **Check 29 P1 (broken AI answers):** `src/ai/client.ts` calls `messages.create` with the same
+  parameters `messages.parse` sent and parses the first text block itself
+  (`parseStructuredText`: JSON.parse + Zod; any failure → `parsed: null` with the real usage).
+  Every returned answer is recorded in `usage` with its cost. `isProviderFault` = APIError with no
+  status / 408 / 429 / ≥500, or APIConnectionError (timeouts included); only those are refunded,
+  our own errors are not. maxTokens: drafts and rewrites 4096, voice 8192 (Sonnet thinks inside
+  max_tokens). `data-paths.test.ts` now checks for `messages.create` (was `messages.parse`).

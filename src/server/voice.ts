@@ -144,7 +144,7 @@ export async function learnVoice(
       workspaceId,
       role: "voice" as const,
       promptVersion: VOICE_PROMPT_VERSION,
-      maxTokens: 4096,
+      maxTokens: 8192,
       system: [{ text: VOICE_INSTRUCTIONS, cache: false }],
       user: sentMailBlock(bodies),
       schema: voiceSchema,

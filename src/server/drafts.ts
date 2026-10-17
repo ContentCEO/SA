@@ -961,7 +961,7 @@ export async function createDraftForThread(
         workspaceId: workspace.id,
         role: "draft" as const,
         promptVersion,
-        maxTokens: 2048,
+        maxTokens: 4096,
         effort: "medium" as const,
         system: [
           { text: followup ? FOLLOWUP_INSTRUCTIONS : DRAFT_INSTRUCTIONS, cache: false },
@@ -1926,7 +1926,7 @@ export async function reviseDraft(
       opening !== null
         ? `${REVISE_PROMPT_VERSION}+${OPENING_TWEAKS_PROMPT_VERSION}`
         : REVISE_PROMPT_VERSION,
-    maxTokens: 2048,
+    maxTokens: 4096,
     effort: "medium" as const,
     system: [
       { text: REVISE_INSTRUCTIONS, cache: false },

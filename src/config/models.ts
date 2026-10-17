@@ -28,7 +28,7 @@ export function dailyAiCallCap(): number {
 
 /**
  * Check 48 P7: where email text may go. Today every model call is one synchronous
- * `messages.parse` request (src/ai/client.ts), which the privacy policy covers ("Where your
+ * `messages.create` request (src/ai/client.ts), which the privacy policy covers ("Where your
  * information goes" → Anthropic). Anthropic's Message Batches API stores jobs and results, and its
  * Files API keeps files until deleted, so neither may be used until this switch is turned on
  * together with a privacy-policy update and a TERMS_VERSION bump (src/config/legal.ts).
