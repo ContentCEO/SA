@@ -474,7 +474,13 @@ describe("Check 24 P1: a learn that doesn't finish keeps the stored voice in dra
       "The last update didn't finish (Oct 13). We're still using this voice.",
     );
     expect(voiceListLine(v)).toBe("Learned from your sent mail");
-    expect(voiceListLine({ ...v, greetingStyle: null, status: "failed" })).toBe("Not learned yet");
+    expect(voiceListLine({ ...v, greetingStyle: null, status: "failed" })).toBe(
+      "Not learned yet: we'll try again soon",
+    );
+    expect(
+      voiceListLine({ ...v, greetingStyle: null, status: "not_enough_mail", lastAttempt: null }),
+    ).toBe("Not learned yet: not enough sent mail");
+    expect(voiceListLine(null)).toBe("Not learned yet");
     expect(lastUpdateNote({ ...v, lastAttempt: "ready" }, "America/New_York")).toBeNull();
   });
 });
@@ -549,6 +555,55 @@ describe("Check 29 P2: a learn that keeps dying is restarted at most twice", () 
     });
     await expect(learnVoice(workspaceId, deps())).rejects.toThrow();
     expect(await row()).toMatchObject({ status: "failed", lastAttempt: "failed" });
+  });
+});
+
+describe("Check 24 P12: a failed first learn is retried the same day", () => {
+  const t0 = new Date("2026-09-28T12:00:00Z");
+  const failedAt = async (at: Date, over: Partial<typeof voiceProfiles.$inferInsert> = {}) => {
+    await database.update(mailboxes).set({ backfillCompletedAt: t0 });
+    await database.insert(voiceProfiles).values({
+      workspaceId,
+      status: "failed",
+      lastAttempt: "failed",
+      lastAttemptAt: at,
+      updatedAt: at,
+      ...over,
+    });
+  };
+
+  it("a failed row 2 hours old is due; 30 minutes old is not", async () => {
+    await failedAt(new Date(t0.getTime() - 2 * 3_600_000));
+    expect(await workspacesNeedingVoice(t0)).toEqual([workspaceId]);
+    await database
+      .update(voiceProfiles)
+      .set({ lastAttemptAt: new Date(t0.getTime() - 30 * 60_000) });
+    expect(await workspacesNeedingVoice(t0)).toEqual([]);
+  });
+
+  it("the AI cap counts too, but a stored voice or the gave-up mark doesn't retry", async () => {
+    await failedAt(new Date(t0.getTime() - 2 * 3_600_000), { lastAttempt: "capped" });
+    expect(await workspacesNeedingVoice(t0)).toEqual([workspaceId]);
+    await database.update(voiceProfiles).set({ restartCount: 2 });
+    expect(await workspacesNeedingVoice(t0)).toEqual([]);
+    await database.update(voiceProfiles).set({ restartCount: 0, greetingStyle: "Hey" });
+    expect(await workspacesNeedingVoice(t0)).toEqual([]);
+  });
+
+  it("three tries a day, then not again until tomorrow", async () => {
+    await failedAt(new Date(t0.getTime() - 2 * 3_600_000));
+    let now = t0;
+    for (let i = 1; i <= 3; i++) {
+      expect(await restartVoiceLearns(now)).toEqual([workspaceId]);
+      expect((await row()).retriesThatDay).toBe(i);
+      // The try fails again; an hour and a bit later it's due once more.
+      now = new Date(now.getTime() + 61 * 60_000);
+    }
+    expect(await workspacesNeedingVoice(now)).toEqual([]); // fourth try in a day
+    expect(await restartVoiceLearns(now)).toEqual([]);
+    const tomorrow = new Date("2026-09-29T09:00:00Z");
+    expect(await restartVoiceLearns(tomorrow)).toEqual([workspaceId]);
+    expect((await row()).retriesThatDay).toBe(1);
   });
 });
 

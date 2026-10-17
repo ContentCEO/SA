@@ -113,3 +113,11 @@
     / "Best regards" 120 words; one with a never-say phrase) — pass = 5 samples, each starts with
     the greeting and ends with the sign-off, avoided phrase absent, no digits except in
     placeholders, length within ±50% of the average.
+- **Failed first learn retried the same day (Check 24 P12, migration `voice_retries`):**
+  `voice_profile.retry_day` (UTC date) / `retries_that_day`. The 15-minute backstop also restarts
+  a row whose newest attempt is failed or capped, older than 1 hour, with **no stored voice**, not
+  given up by the stuck backstop (restart_count < 2), at most 3 times a UTC day (claimed in a
+  conditional UPDATE). A failed refresh of a stored voice waits for the weekly run, as before
+  (drafts keep the stored voice). Copy: welcome/learning "Couldn't learn your style this time.
+  We'll try again within the hour, and you can set it by hand in Settings."; Settings list "Not
+  learned yet: not enough sent mail" / "Not learned yet: we'll try again soon".

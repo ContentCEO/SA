@@ -1,5 +1,5 @@
 import "server-only";
-import { and, asc, eq, isNotNull, sql } from "drizzle-orm";
+import { and, asc, eq, isNotNull, isNull, sql } from "drizzle-orm";
 import { callStructured } from "@/ai/client";
 import {
   sentMailBlock,
@@ -32,7 +32,15 @@ import { ideaChanges } from "./edit-learning-rules";
 import { scrubAllowFrom, scrubText, type ScrubAllow } from "./scrub";
 import { markReconnectNeeded } from "./sync";
 import { splitOwnWords, wordCount } from "./voice-text";
-import { MAX_VOICE_RESTARTS, voiceAttempt, voiceAttemptAt, type VoiceAttempt } from "./voice-rules";
+import {
+  hasVoiceContent,
+  MAX_VOICE_RESTARTS,
+  VOICE_RETRIES_PER_DAY,
+  VOICE_RETRY_AFTER_MS,
+  voiceAttempt,
+  voiceAttemptAt,
+  type VoiceAttempt,
+} from "./voice-rules";
 
 export const MAX_SENT_EMAILS = 200;
 /** Fewer than this and there's not enough to learn from. */
@@ -343,9 +351,14 @@ async function learnFrom(
 
 type VoiceCandidate = {
   workspaceId: string;
-  /** never: no voice row yet · stuck: died at "learning" · gave_up: stuck after 2 restarts. */
-  reason: "never" | "stuck" | "gave_up";
+  /**
+   * never: no voice row yet · stuck: died at "learning" · gave_up: stuck after 2 restarts ·
+   * retry: a first learn that failed (or hit the AI cap) over an hour ago (Check 24 P12).
+   */
+  reason: "never" | "stuck" | "gave_up" | "retry";
   restartCount: number;
+  retryDay?: string | null;
+  retriesThatDay?: number;
 };
 
 async function voiceCandidates(now: Date): Promise<VoiceCandidate[]> {
@@ -360,6 +373,12 @@ async function voiceCandidates(now: Date): Promise<VoiceCandidate[]> {
         lastAttemptAt: voiceProfiles.lastAttemptAt,
         updatedAt: voiceProfiles.updatedAt,
         restartCount: voiceProfiles.restartCount,
+        retryDay: voiceProfiles.retryDay,
+        retriesThatDay: voiceProfiles.retriesThatDay,
+        summary: voiceProfiles.summary,
+        greetingStyle: voiceProfiles.greetingStyle,
+        signoffStyle: voiceProfiles.signoffStyle,
+        examples: voiceProfiles.examples,
       },
       workspace: { status: workspaces.status, evaluationEndsAt: workspaces.evaluationEndsAt },
     })
@@ -377,8 +396,30 @@ async function voiceCandidates(now: Date): Promise<VoiceCandidate[]> {
       out.set(r.workspaceId, { workspaceId: r.workspaceId, reason: "never", restartCount: 0 });
       continue;
     }
-    const stuck = voiceAttempt(v) === "learning" && voiceAttemptAt(v).getTime() < stuckBefore;
-    if (!stuck) continue;
+    const attempt = voiceAttempt(v);
+    const stuck = attempt === "learning" && voiceAttemptAt(v).getTime() < stuckBefore;
+    if (!stuck) {
+      // Check 24 P12: a first learn that failed is tried again within the hour, 3 times a day,
+      // so it isn't left for the Monday refresh (maybe after the trial). Not after the stuck
+      // backstop gave up (Davi was told it won't restart on its own), not with a voice stored.
+      const today = now.toISOString().slice(0, 10);
+      const triesToday = v.retryDay === today ? v.retriesThatDay : 0;
+      if (
+        (attempt === "failed" || attempt === "capped") &&
+        !hasVoiceContent(v) &&
+        v.restartCount < MAX_VOICE_RESTARTS &&
+        voiceAttemptAt(v).getTime() < now.getTime() - VOICE_RETRY_AFTER_MS &&
+        triesToday < VOICE_RETRIES_PER_DAY
+      )
+        out.set(r.workspaceId, {
+          workspaceId: r.workspaceId,
+          reason: "retry",
+          restartCount: v.restartCount,
+          retryDay: v.retryDay,
+          retriesThatDay: v.retriesThatDay,
+        });
+      continue;
+    }
     out.set(r.workspaceId, {
       workspaceId: r.workspaceId,
       reason: v.restartCount >= MAX_VOICE_RESTARTS ? "gave_up" : "stuck",
@@ -420,6 +461,26 @@ export async function restartVoiceLearns(
           and(
             eq(voiceProfiles.workspaceId, c.workspaceId),
             eq(voiceProfiles.restartCount, c.restartCount),
+          ),
+        )
+        .returning({ workspaceId: voiceProfiles.workspaceId });
+      if (claimed) start.push(c.workspaceId);
+    } else if (c.reason === "retry") {
+      // Claimed in one conditional UPDATE: two runs can't both count (or both start) a retry.
+      const today = now.toISOString().slice(0, 10);
+      const sameDay = c.retryDay === today;
+      const [claimed] = await db()
+        .update(voiceProfiles)
+        .set({
+          retryDay: today,
+          retriesThatDay: sameDay ? (c.retriesThatDay ?? 0) + 1 : 1,
+          lastAttemptAt: now,
+        })
+        .where(
+          and(
+            eq(voiceProfiles.workspaceId, c.workspaceId),
+            eq(voiceProfiles.retriesThatDay, c.retriesThatDay ?? 0),
+            c.retryDay ? eq(voiceProfiles.retryDay, c.retryDay) : isNull(voiceProfiles.retryDay),
           ),
         )
         .returning({ workspaceId: voiceProfiles.workspaceId });

@@ -638,6 +638,9 @@ export const voiceProfiles = pgTable("voice_profile", {
    * written, so drafts get no samples until new ones are written.
    */
   examplesStale: boolean("examples_stale").notNull().default(false),
+  /** Check 24 P12: the UTC day of the backstop's retries of a failed first learn, and how many. */
+  retryDay: text("retry_day"),
+  retriesThatDay: integer("retries_that_day").notNull().default(0),
 });
 
 /**

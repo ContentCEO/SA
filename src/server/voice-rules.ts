@@ -16,6 +16,10 @@ export const UNFINISHED_ATTEMPTS: readonly VoiceAttempt[] = [
 
 /** Times the 15-minute backstop may restart a learn that died at "learning". */
 export const MAX_VOICE_RESTARTS = 2;
+/** Check 24 P12: a failed first learn is tried again after this long… */
+export const VOICE_RETRY_AFTER_MS = 60 * 60_000;
+/** …at most this many times a day. */
+export const VOICE_RETRIES_PER_DAY = 3;
 
 type StoredVoice = {
   summary: string | null;
@@ -77,6 +81,11 @@ export function lastUpdateNote(v: VoiceRow | null | undefined, timeZone: string)
 export function voiceListLine(v: (VoiceRow & { source: string }) | null | undefined): string {
   if (v && hasVoiceContent(v))
     return v.source === "edited" ? "Learned, with your changes" : "Learned from your sent mail";
-  if (v && voiceAttempt(v) === "learning") return "Learning from your sent mail…";
+  const attempt = v ? voiceAttempt(v) : null;
+  if (attempt === "learning") return "Learning from your sent mail…";
+  // Check 24 P12: say what happens next.
+  if (attempt === "not_enough_mail") return "Not learned yet: not enough sent mail";
+  if (attempt === "failed" || attempt === "capped" || attempt === "reconnect_needed")
+    return "Not learned yet: we'll try again soon";
   return "Not learned yet";
 }
