@@ -50,6 +50,8 @@ export function DraftEditor(p: {
   toLine: React.ReactNode;
   toAddress: string;
   canSend: boolean;
+  /** Check 43 P7: the card shows a timing note; Send reply here confirms it. */
+  confirmTiming?: boolean;
   onCancel: () => void;
 }) {
   const [state, formAction] = useActionState(editorAction, START);
@@ -132,7 +134,14 @@ export function DraftEditor(p: {
             Fill in {gapsLeft.join(", ")} first
           </div>
         ) : (
-          <SendButton name="intent" value="send" />
+          <>
+            {p.confirmTiming ? <input type="hidden" name="confirmedTiming" value="1" /> : null}
+            <SendButton
+              name="intent"
+              value="send"
+              label={p.confirmTiming ? "Send reply anyway" : "Send reply"}
+            />
+          </>
         )
       ) : null}
       <SaveButton />

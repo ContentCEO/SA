@@ -47,6 +47,7 @@ import { notAnsweredRows } from "@/server/never-answered";
 import { NotAnsweredCard } from "./not-answered-card";
 import { FirstLookCard } from "./first-look";
 import { QUEUE_DONE as done, QUEUE_ERRORS as errors } from "./queue-messages";
+import { staleTiming, timingNote } from "@/server/draft-timing";
 import { NoteLine } from "@/components/app/note-line";
 import { ResortSheet } from "@/components/app/sender-sheets";
 import { notesForAddresses, notesForThreads } from "@/server/customer-notes";
@@ -200,6 +201,11 @@ export default async function QueuePage(props: PageProps<"/queue">) {
     note: noteFor(i),
     resort: <ResortSheet threadId={i.threadId} current={i.category} back="queue" />,
   });
+  // Check 43 P7: "Written Friday. It says “tomorrow”, which meant Saturday. Check the timing."
+  const timingNoteFor = (i: QueueItem) => {
+    const t = i.draftCreatedAt ? staleTiming(i.body ?? "", i.draftCreatedAt, now, timeZone) : null;
+    return t ? timingNote(t) : null;
+  };
   const draftLeadLines = (i: QueueItem) => {
     const lc = leadCards.get(i.threadId);
     return [
@@ -405,6 +411,7 @@ export default async function QueuePage(props: PageProps<"/queue">) {
               reason={i.reason ?? ""}
               body={i.body ?? ""}
               seenHash={bodyHash(i.body ?? "")}
+              timingNote={timingNoteFor(i)}
               flags={i.flags}
               label={confidenceLabel({
                 confidencePct: i.confidence,

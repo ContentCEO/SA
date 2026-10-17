@@ -53,6 +53,11 @@ export type DraftCardProps = {
   body: string;
   /** Check 9 P1: the fingerprint of `body`, posted with Send reply so a changed draft waits. */
   seenHash: string;
+  /**
+   * Check 43 P7: the draft's time words may be out of date ("Written Friday. It says
+   * “tomorrow”…"). Send reply becomes "Send reply anyway", which confirms it.
+   */
+  timingNote?: string | null;
   flags: string[];
   /** Plan #8: Ready / Check the details / Check everything. */
   label: ConfidenceLabel;
@@ -273,6 +278,13 @@ export function DraftCard(p: DraftCardProps) {
         </form>
       ) : null}
 
+      {p.timingNote && !p.readOnly ? (
+        <div role="note" className="rounded-lg border-2 border-charcoal p-3">
+          <p className="font-black">{p.timingNote}</p>
+          <p className="text-sm">Read it again before it goes, or tap Edit to change it.</p>
+        </div>
+      ) : null}
+
       {p.flags.length || p.label === "check_everything" ? (
         <div className="rounded-lg border-2 border-charcoal p-3">
           <p className="font-black">Check before sending</p>
@@ -296,6 +308,7 @@ export function DraftCard(p: DraftCardProps) {
           toAddress={p.toAddress}
           toLine={<ToLine address={p.toAddress} fromReplyTo={p.toFromReplyTo} />}
           canSend={p.canSend}
+          confirmTiming={!!p.timingNote}
           onCancel={() => {
             setKept(null);
             setEditing(false);
@@ -407,7 +420,8 @@ export function DraftCard(p: DraftCardProps) {
                   <input type="hidden" name="seen" value={p.seenHash} />
                   {p.toAddress ? <input type="hidden" name="seenTo" value={p.toAddress} /> : null}
                   {body !== p.body ? <input type="hidden" name="body" value={body} /> : null}
-                  <SendButton />
+                  {p.timingNote ? <input type="hidden" name="confirmedTiming" value="1" /> : null}
+                  <SendButton label={p.timingNote ? "Send reply anyway" : "Send reply"} />
                 </form>
               ) : (
                 <>

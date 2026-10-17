@@ -52,6 +52,9 @@ export const QUEUE_ERRORS: Record<string, string> = {
   draftfailed: "Couldn't write a draft for that one. Try again in a minute.",
   gmail_busy: "Gmail asked us to slow down. Nothing was sent. Try again in a minute.",
   gmail_failed: "Gmail didn't answer, so nothing was sent. Try again in a minute.",
+  // Check 43 P7.
+  timing:
+    "That reply has time words that may be out of date, so nothing was sent. Read the note on the card, then tap Send reply anyway or Edit.",
   gmail_busy_discard:
     "Gmail asked us to slow down, so the draft is still here and in Gmail. Try again in a minute.",
   gmail_failed_discard:

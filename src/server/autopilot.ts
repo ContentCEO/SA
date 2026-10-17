@@ -43,6 +43,8 @@ import { knownCustomer } from "./known-customer";
 import { isEmailToTextAddress, looksLikePhoneAddress } from "./channel-rules";
 import { complainedAddresses } from "./offers";
 import { markReconnectNeeded } from "./sync";
+import { staleTiming, timingNote } from "./draft-timing";
+import { workspaceTimeZone } from "./snooze";
 import { unsentDraftMessage } from "./thread-sql";
 
 export { knownCustomer };
@@ -488,9 +490,17 @@ export async function runAutopilotSend(
       ),
     )
     .limit(1);
+  // Check 43 P7: an old "tomorrow" or "in a few minutes" waits for the owner, always.
+  const timing = staleTiming(
+    row.draft.body ?? "",
+    row.draft.createdAt,
+    now,
+    await workspaceTimeZone(row.workspace.id),
+  );
   const reasons = [
     ...(await blockers(row, now)),
     ...(newer.length ? ["There's newer mail in this conversation."] : []),
+    ...(timing ? [timingNote(timing)] : []),
   ];
   // Layer 1 already needs what the send gate needs. If they ever differ, stand down here rather
   // than let sendDraft refuse: a refusal throws, and the backstop would retry it forever.

@@ -64,6 +64,8 @@ async function sendTap(workspaceId: string, formData: FormData): Promise<SendTap
       device: await device(),
       seenTo,
       seenHash: seen,
+      // Check 43 P7: tapped "Send reply anyway" under the timing note.
+      confirmedTiming: formData.get("confirmedTiming") === "1",
     });
   } catch (err) {
     if (err instanceof SendingBlockedError) return { refused: "blocked" };
@@ -100,6 +102,8 @@ async function sendTap(workspaceId: string, formData: FormData): Promise<SendTap
     case "gmail_busy":
     case "gmail_failed":
       return { refused: outcome.status };
+    case "timing_check":
+      return { refused: "timing" };
     case "not_found":
       return { go: "/queue?error=gone" };
     default:

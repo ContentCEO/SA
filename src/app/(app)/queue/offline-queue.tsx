@@ -18,6 +18,7 @@ const WHY: Record<string, string> = {
   deleted_in_gmail: "it was deleted or sent from Gmail",
   not_found: "it's no longer waiting",
   gaps_unfilled: "it still has gaps to fill in",
+  timing_check: "its time words (like “tomorrow”) may be out of date — check it first",
   no_reply_address: "it would go to a no-reply address",
   text_address: "it would turn into a text message — text them from your own phone",
   intent_expired: "you okayed it more than 12 hours ago",

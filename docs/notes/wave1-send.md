@@ -80,3 +80,17 @@ For the integrator to fold into `CLAUDE.md` (Decisions), `docs/LAUNCH.md` and th
   "Replace each [ ] before sending."; Send reply is replaced by "Fill in [time] first" while one
   is left; the text goes back with tokens (`toEditorText` / `fromEditorText` /
   `editorGapsLeft` in `src/ai/gaps.ts`), so the server's gap gate is unchanged.
+- **Check 43 P7 (stale "tomorrow"):** pure `staleTiming(body, createdAt, now, timeZone)` in
+  `src/server/draft-timing.ts`: day words (today, tonight, tomorrow, this morning / afternoon /
+  evening, this week / weekend, next week, later today; hoy, mañana, esta tarde; hoje, amanhã)
+  when the draft's local day (owner's zone) is before today's; minute/hour words (in a few
+  minutes, in an hour, shortly, right away) also when it's over 2 hours old. `sendDraft` and
+  `queueSend` return `timing_check` {words, writtenOn, meant} before any Gmail call unless
+  `confirmedTiming`; the queued send (`deliverQueuedSend`) passes it (the tap was checked
+  seconds before); autopilot stands down with the note and can never confirm; batch counts it
+  refused. The card shows "Written Friday. It says “tomorrow”, which meant Saturday. Check the
+  timing." and Send reply becomes "Send reply anyway" (posts `confirmedTiming=1`), Edit stays.
+  The JSON route takes `confirmedTiming: true` (else 409 `timing_check`); offline okays are
+  refused with "its time words … may be out of date". **Wording differs from the spec** ("which
+  now means Saturday" was wrong for a draft read days later): it says what "tomorrow" meant
+  when written.

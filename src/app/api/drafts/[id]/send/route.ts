@@ -55,6 +55,7 @@ export async function POST(request: NextRequest, ctx: RouteContext<"/api/drafts/
     seen?: unknown;
     okayedAt?: unknown;
     seenTo?: unknown;
+    confirmedTiming?: unknown;
   };
   const editedBody =
     typeof payload.body === "string" && payload.body.trim() ? payload.body : undefined;
@@ -71,7 +72,14 @@ export async function POST(request: NextRequest, ctx: RouteContext<"/api/drafts/
     typeof payload.seenTo === "string" && payload.seenTo.length <= 320 ? payload.seenTo : undefined;
 
   try {
-    const outcome = await queueSend(workspace.id, id, { editedBody, offline, seenTo, seenHash });
+    const outcome = await queueSend(workspace.id, id, {
+      editedBody,
+      offline,
+      seenTo,
+      seenHash,
+      // Check 43 P7: only an explicit yes; anything else gets 409 timing_check.
+      confirmedTiming: payload.confirmedTiming === true,
+    });
     if (outcome.status === "gaps_unfilled") {
       return NextResponse.json(
         { error: "Fill in every highlighted gap before sending." },

@@ -93,6 +93,8 @@ import {
 } from "@/mailbox/connector";
 import { createGmailReader } from "@/mailbox/gmail/api";
 import { gmailThreadLink } from "@/lib/gmail-link";
+import { staleTiming, type StaleTiming } from "./draft-timing";
+import { workspaceTimeZone } from "./snooze";
 import { buildReplyMime, replySubject, sameText, toGmailRaw } from "@/mailbox/mime";
 import {
   canSend,
@@ -1206,7 +1208,17 @@ export type SendOutcome =
    * Check 42 P1: someone already answered the customer from Gmail (the office, or the owner
    * at a computer) after this draft was written. Nothing is sent: a second answer would go out.
    */
-  | { status: "answered_elsewhere"; at: Date };
+  | { status: "answered_elsewhere"; at: Date }
+  /**
+   * Check 43 P7: the draft says "tomorrow" (or "in a few minutes") but was written on an earlier
+   * day (or hours ago). Nothing is sent until the owner confirms (`confirmedTiming`).
+   */
+  | ({ status: "timing_check" } & StaleTiming);
+
+/** Check 43 P7: the draft's time words that may be out of date now, in the owner's zone. */
+async function timingFor(workspaceId: string, body: string, createdAt: Date, now: Date) {
+  return staleTiming(body, createdAt, now, await workspaceTimeZone(workspaceId));
+}
 
 /** Check 42 P1: the note on a reply set aside because the customer was answered from Gmail. */
 export const ANSWERED_ELSEWHERE_NOTE =
@@ -1257,6 +1269,8 @@ export async function sendDraft(
     by?: "owner" | "autopilot";
     /** The undo window has ended and this caller holds the claim (deliverQueuedSend). */
     queued?: boolean;
+    /** Check 43 P7: the owner saw the timing note and tapped Send reply anyway. */
+    confirmedTiming?: boolean;
   } = {},
 ): Promise<SendOutcome> {
   const now = opts.now?.() ?? new Date();
@@ -1291,6 +1305,17 @@ export async function sendDraft(
   // window): never a second answer. Checked before any Gmail call.
   const answeredAt = await answeredSince(thread.id, draft.createdAt, mailbox.email);
   if (answeredAt) return { status: "answered_elsewhere", at: answeredAt };
+  // Check 43 P7: an old "tomorrow" never leaves without the owner seeing the note. Autopilot
+  // can't confirm, so it never sends one.
+  if (!opts.confirmedTiming) {
+    const t = await timingFor(
+      workspaceId,
+      opts.editedBody ?? draft.body ?? "",
+      draft.createdAt,
+      now,
+    );
+    if (t) return { status: "timing_check", ...t };
+  }
 
   const writer = (opts.writerFor ?? defaultWriter)(mailbox);
   try {
@@ -1490,6 +1515,8 @@ export async function queueSend(
      * device), nothing is queued: the owner reads the new text first.
      */
     seenHash?: string;
+    /** Check 43 P7: the owner saw the timing note and tapped Send reply anyway. */
+    confirmedTiming?: boolean;
   } = {},
 ): Promise<QueueSendOutcome> {
   const now = opts.now?.() ?? new Date();
@@ -1522,6 +1549,15 @@ export async function queueSend(
   // next sync sets the draft aside (reconcileDrafts).
   const answeredAt = await answeredSince(thread.id, draft.createdAt, mailbox.email);
   if (answeredAt) return { status: "answered_elsewhere", at: answeredAt };
+  if (!opts.confirmedTiming) {
+    const t = await timingFor(
+      workspaceId,
+      opts.editedBody ?? draft.body ?? "",
+      draft.createdAt,
+      now,
+    );
+    if (t) return { status: "timing_check", ...t };
+  }
 
   const writer = (opts.writerFor ?? defaultWriter)(mailbox);
   let body = draft.body ?? "";
@@ -1709,7 +1745,12 @@ export async function deliverQueuedSend(
 
   let why: string;
   try {
-    const outcome = await sendDraft(workspaceId, draftId, { ...opts, queued: true });
+    // The timing words were checked (or confirmed) at the tap, seconds ago: the owner's okay.
+    const outcome = await sendDraft(workspaceId, draftId, {
+      ...opts,
+      queued: true,
+      confirmedTiming: true,
+    });
     if (outcome.status === "sent") return { status: "sent" };
     if (outcome.status === "answered_elsewhere") {
       // Check 42 P1: the customer was answered from Gmail during the undo window. The window
@@ -2655,6 +2696,8 @@ export async function reconcileDrafts(mailboxId: string, opts: DraftDeps = {}) {
 
 export type QueueItem = {
   draftId: string | null;
+  /** Check 43 P7: when the draft was written (its time words are read against it). */
+  draftCreatedAt: Date | null;
   kind: "reply" | "followup" | null;
   /** Deposit details / review request / closing question (plan #26 #28 #29). Null = ordinary. */
   purpose: DraftPurpose | null;
@@ -3003,6 +3046,7 @@ export async function listQueue(
       return [
         {
           draftId: null,
+          draftCreatedAt: null,
           kind: null,
           purpose: null,
           autoSendAt: null,
@@ -3043,6 +3087,7 @@ export async function listQueue(
       return [
         {
           draftId: draft.id,
+          draftCreatedAt: draft.createdAt,
           kind: draft.kind,
           purpose: draft.purpose ?? null,
           autoSendAt: draft.autoSendAt,
@@ -3165,3 +3210,4 @@ export async function sentDraftSummary(workspaceId: string, draftId: string) {
     lastNudgeUsed: chased && sentNudges >= MAX_FOLLOWUPS,
   };
 }
+
