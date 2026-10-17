@@ -454,6 +454,8 @@ export async function runAutopilotSend(
   const reasons = [
     ...(await blockers(row, now)),
     ...(newer.length ? ["There's newer mail in this conversation."] : []),
+    // Check 25 P2: archived, deleted or marked spam in Gmail during the hold.
+    ...(row.thread.inInbox ? [] : ["This conversation left your inbox in Gmail."]),
   ];
   // Layer 1 already needs what the send gate needs. If they ever differ, stand down here rather
   // than let sendDraft refuse: a refusal throws, and the backstop would retry it forever.

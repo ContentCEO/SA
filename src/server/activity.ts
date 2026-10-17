@@ -95,7 +95,11 @@ export function describeActivity(
             ? "sending was switched off"
             : detail.why === "reconnect_needed"
               ? "Gmail needs reconnecting"
-              : "something changed"
+              : detail.why === "archived_in_gmail"
+                ? "you archived the conversation in Gmail"
+                : detail.why === "left_inbox"
+                  ? "the conversation left your inbox in Gmail"
+                  : "something changed"
       }. It's back in your queue`;
     case "snoozed":
       return `You put off the conversation${name ? ` with ${name}` : ""} till later`;

@@ -13,6 +13,7 @@ import {
 } from "@/db/schema";
 import {
   HistoryExpiredError,
+  type HistoryPage,
   MailboxAuthError,
   MailboxRateLimitError,
   type MailboxReader,
@@ -391,6 +392,210 @@ export async function recordSentMessage(
   return ingest(mailbox, reader, [sent], now);
 }
 
+export const TRASHED_NOTE = "You deleted this in Gmail.";
+export const SPAM_NOTE = "You marked this as spam in Gmail.";
+/** Shown on a waiting draft whose conversation the owner archived in Gmail (Check 25 P2). */
+export const ARCHIVED_LINE = "You archived this in Gmail.";
+const GONE_LABELS = ["TRASH", "SPAM"];
+
+/**
+ * Check 25 P2: follow what the owner did in Gmail — archive, Trash, Spam, Not spam, delete.
+ * Called after each history page is ingested. Never writes to the owner's Gmail.
+ *
+ * - Stored messages take the label changes (history order; the last change to a label wins,
+ *   so replaying a page is harmless). A message deleted for good is treated like Trash: its
+ *   row stays (drafts may point at it) with INBOX removed and TRASH added.
+ * - A message that gains INBOX and has no body yet (it arrived in Spam, say) is read in full if
+ *   still within retention, and sorted again. One we never stored is stored now.
+ * - `threads.in_inbox` is recomputed for every touched conversation: some stored message has
+ *   INBOX and isn't in Trash or Spam.
+ * - Every message trashed / spam / deleted → waiting drafts expire with a plain note, and any
+ *   send or autopilot countdown on them is dropped. Archived only → the draft stays in the Queue
+ *   (with ARCHIVED_LINE), its autopilot countdown and any send still in its undo window stop.
+ */
+export async function applyLabelChanges(
+  mailbox: Mailbox,
+  reader: Pick<MailboxReader, "getMessage">,
+  page: Pick<HistoryPage, "labelChanges" | "deleted">,
+  now: Date,
+): Promise<{ ingested: number; changed: number }> {
+  const changes = page.labelChanges ?? [];
+  const deleted = page.deleted ?? [];
+  if (changes.length === 0 && deleted.length === 0) return { ingested: 0, changed: 0 };
+
+  const ids = [...new Set([...changes.map((c) => c.id), ...deleted.map((d) => d.id)])];
+  const stored = await db()
+    .select({
+      id: messages.id,
+      gmailMessageId: messages.gmailMessageId,
+      threadId: messages.threadId,
+      labelIds: messages.labelIds,
+      bodyText: messages.bodyText,
+      sentAt: messages.sentAt,
+    })
+    .from(messages)
+    .where(and(eq(messages.mailboxId, mailbox.id), inArray(messages.gmailMessageId, ids)));
+  const byGmailId = new Map(stored.map((r) => [r.gmailMessageId, r]));
+
+  const labels = new Map(stored.map((r) => [r.gmailMessageId, new Set(r.labelIds)]));
+  /** Messages we never stored whose last INBOX change was an add (Not spam on new mail). */
+  const toStore = new Map<string, MessageRef>();
+  for (const c of changes) {
+    const set = labels.get(c.id);
+    if (set) {
+      for (const l of c.added) set.add(l);
+      for (const l of c.removed) set.delete(l);
+    } else if (c.added.includes(MAIL_INBOX)) {
+      toStore.set(c.id, { id: c.id, threadId: c.threadId, labelIds: [MAIL_INBOX] });
+    } else if (c.removed.includes(MAIL_INBOX)) {
+      toStore.delete(c.id);
+    }
+  }
+  for (const d of deleted) {
+    toStore.delete(d.id);
+    const set = labels.get(d.id);
+    if (set) {
+      set.delete(MAIL_INBOX);
+      set.add("TRASH");
+    }
+  }
+
+  let changed = 0;
+  const retentionCutoff = now.getTime() - bodyRetentionDays() * 86_400_000;
+  const touchedThreads = new Set<string>();
+  const resort = new Set<string>();
+  for (const row of stored) {
+    const before = row.labelIds;
+    const after = [...labels.get(row.gmailMessageId)!];
+    touchedThreads.add(row.threadId);
+    const same = before.length === after.length && before.every((l) => after.includes(l));
+    if (same) continue;
+    changed++;
+    const gainedInbox =
+      !before.includes(MAIL_INBOX) &&
+      after.includes(MAIL_INBOX) &&
+      !after.some((l) => GONE_LABELS.includes(l));
+    if (gainedInbox && row.bodyText === null && row.sentAt.getTime() >= retentionCutoff) {
+      const full = await reader.getMessage(row.gmailMessageId, { withBody: true });
+      if (full) {
+        await db()
+          .update(messages)
+          .set({
+            labelIds: full.labelIds,
+            bodyText: full.bodyText ?? null,
+            snippet: full.snippet,
+            classifiedAt: null,
+          })
+          .where(eq(messages.id, row.id));
+        resort.add(row.threadId);
+        continue;
+      }
+    }
+    await db().update(messages).set({ labelIds: after }).where(eq(messages.id, row.id));
+  }
+
+  const ingested = toStore.size ? await ingest(mailbox, reader, [...toStore.values()], now) : 0;
+  if (toStore.size) {
+    const newThreads = await db()
+      .select({ id: threads.id })
+      .from(threads)
+      .where(
+        and(
+          eq(threads.mailboxId, mailbox.id),
+          inArray(threads.gmailThreadId, [
+            ...new Set([...toStore.values()].map((r) => r.threadId)),
+          ]),
+        ),
+      );
+    for (const t of newThreads) touchedThreads.add(t.id);
+  }
+  if (touchedThreads.size === 0) return { ingested, changed };
+  const touched = [...touchedThreads];
+
+  if (resort.size) {
+    await db()
+      .update(threads)
+      .set({ classifiedAt: null })
+      .where(inArray(threads.id, [...resort]));
+  }
+
+  const liveInbox = sql`exists (select 1 from messages li where li.thread_id = ${threads.id} and li.label_ids ? 'INBOX' and not li.label_ids ? 'TRASH' and not li.label_ids ? 'SPAM')`;
+  const before = await db()
+    .select({ id: threads.id, inInbox: threads.inInbox })
+    .from(threads)
+    .where(inArray(threads.id, touched));
+  const after = await db()
+    .update(threads)
+    .set({ inInbox: liveInbox })
+    .where(inArray(threads.id, touched))
+    .returning({ id: threads.id, inInbox: threads.inInbox });
+  const wasInInbox = new Map(before.map((t) => [t.id, t.inInbox]));
+  const outOfInbox = after.filter((t) => !t.inInbox).map((t) => t.id);
+  if (outOfInbox.length === 0) return { ingested, changed };
+
+  // Which conversations are gone altogether (every message in Trash or Spam), and why.
+  const fate = await db()
+    .select({
+      threadId: messages.threadId,
+      total: sql<number>`count(*)::int`,
+      gone: sql<number>`count(*) filter (where ${messages.labelIds} ? 'TRASH' or ${messages.labelIds} ? 'SPAM')::int`,
+      spam: sql<number>`count(*) filter (where ${messages.labelIds} ? 'SPAM')::int`,
+    })
+    .from(messages)
+    .where(inArray(messages.threadId, outOfInbox))
+    .groupBy(messages.threadId);
+  for (const f of fate) {
+    if (f.total > 0 && f.gone === f.total) {
+      await db()
+        .update(drafts)
+        .set({
+          status: "expired",
+          closedNote: f.spam === f.total ? SPAM_NOTE : TRASHED_NOTE,
+          decidedAt: now,
+          autoSendAt: null,
+          sendAfter: null,
+          sendClaimedAt: null,
+        })
+        .where(and(eq(drafts.threadId, f.threadId), eq(drafts.status, "pending")));
+    } else if (wasInInbox.get(f.threadId)) {
+      // Archived just now: the draft waits for a tap, nothing goes on its own. A send already
+      // being delivered (claimed) is left to finish.
+      await db()
+        .update(drafts)
+        .set({ autoSendAt: null })
+        .where(and(eq(drafts.threadId, f.threadId), eq(drafts.status, "pending")));
+      const unqueued = await db()
+        .update(drafts)
+        .set({ sendAfter: null })
+        .where(
+          and(
+            eq(drafts.threadId, f.threadId),
+            eq(drafts.status, "pending"),
+            isNotNull(drafts.sendAfter),
+            isNull(drafts.sendClaimedAt),
+          ),
+        )
+        .returning({ id: drafts.id });
+      for (const d of unqueued)
+        await db()
+          .insert(activityLog)
+          .values({
+            workspaceId: mailbox.workspaceId,
+            actor: "squared_away",
+            action: "send_stopped",
+            threadId: f.threadId,
+            detail: { draftId: d.id, why: "archived_in_gmail" },
+          });
+    } else {
+      await db()
+        .update(drafts)
+        .set({ autoSendAt: null })
+        .where(and(eq(drafts.threadId, f.threadId), eq(drafts.status, "pending")));
+    }
+  }
+  return { ingested, changed };
+}
+
 /**
  * Step 1 of the first sync: remember where "now" is in the mailbox's history
  * before reading the past, so nothing that arrives during backfill is missed.
@@ -480,6 +685,7 @@ export async function incrementalSync(
       do {
         const page = await reader.listHistory({ startHistoryId: mailbox.historyId!, pageToken });
         ingested += await ingest(mailbox, reader, page.added, now);
+        ingested += (await applyLabelChanges(mailbox, reader, page, now)).ingested;
         cursor = page.historyId;
         pageToken = page.nextPageToken;
       } while (pageToken);

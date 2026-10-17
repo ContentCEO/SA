@@ -221,6 +221,8 @@ describe("history", () => {
       );
     await expect(reader(f).r.listHistory({ startHistoryId: "1" })).resolves.toEqual({
       added: [{ id: "a", threadId: "t" }],
+      labelChanges: [],
+      deleted: [],
       historyId: "9",
       nextPageToken: undefined,
     });
@@ -250,7 +252,39 @@ describe("history", () => {
       { id: "a", threadId: "t" },
     ]);
     const url = new URL(String(f.mock.calls[1]![0]));
-    expect(url.searchParams.getAll("historyTypes").sort()).toEqual(["labelAdded", "messageAdded"]);
+    expect(url.searchParams.getAll("historyTypes").sort()).toEqual([
+      "labelAdded",
+      "labelRemoved",
+      "messageAdded",
+      "messageDeleted",
+    ]);
+  });
+
+  it("maps labelsAdded, labelsRemoved and messagesDeleted (Check 25 P2)", async () => {
+    const f = vi
+      .fn()
+      .mockResolvedValueOnce(token())
+      .mockResolvedValueOnce(
+        json({
+          historyId: "20",
+          history: [
+            { labelsAdded: [{ message: { id: "a", threadId: "t1" }, labelIds: ["INBOX"] }] },
+            { labelsRemoved: [{ message: { id: "b", threadId: "t2" }, labelIds: ["INBOX"] }] },
+            { labelsAdded: [{ message: { id: "c", threadId: "t3" }, labelIds: ["TRASH"] }] },
+            { messagesDeleted: [{ message: { id: "d", threadId: "t4" } }] },
+            { labelsAdded: [{ message: { id: "e", threadId: "t5" }, labelIds: ["SENT"] }] },
+          ],
+        }),
+      );
+    const page = await reader(f).r.listHistory({ startHistoryId: "1" });
+    expect(page.added).toEqual([{ id: "e", threadId: "t5" }]);
+    expect(page.labelChanges).toEqual([
+      { id: "a", threadId: "t1", added: ["INBOX"], removed: [] },
+      { id: "b", threadId: "t2", added: [], removed: ["INBOX"] },
+      { id: "c", threadId: "t3", added: ["TRASH"], removed: [] },
+      { id: "e", threadId: "t5", added: ["SENT"], removed: [] },
+    ]);
+    expect(page.deleted).toEqual([{ id: "d", threadId: "t4" }]);
   });
 
   it("lists a thread's unsent drafts by id only (format=minimal); [] when the thread is gone", async () => {

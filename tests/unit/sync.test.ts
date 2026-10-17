@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { beforeEach, describe, expect, it } from "vitest";
 import type { Database } from "@/db";
-import { activityLog, mailboxes, messages, threads } from "@/db/schema";
+import { activityLog, drafts, mailboxes, messages, threads } from "@/db/schema";
 import { ensureUserAndWorkspace } from "@/server/accounts";
 import { saveConnectedMailbox } from "@/server/mailboxes";
 import { incrementalSync, purgeExpiredBodies, recordSentMessage, runBackfill } from "@/server/sync";
@@ -181,7 +181,7 @@ describe("incremental sync", () => {
       daysAgo: 1,
     });
     fake.relabel("old-draft", ["SENT"], 0.5);
-    // A label change on mail already stored as real mail is never refetched or rewritten.
+    // A label change on mail already stored as real mail is never refetched.
     fake.relabel("m1", ["INBOX", "IMPORTANT"]);
     fake.bodyFetches = [];
     const calls = fake.calls;
@@ -194,7 +194,8 @@ describe("incremental sync", () => {
       labelIds: ["SENT"],
       sentAt: new Date(NOW.getTime() - 0.5 * 86_400_000),
     });
-    expect(byId.m1!.labelIds).toEqual(["INBOX"]);
+    // Check 25 P2: a label change on stored mail updates its labels, without reading it again.
+    expect(byId.m1!.labelIds).toEqual(["INBOX", "IMPORTANT"]);
     // history + one full read of old-draft only (its conversation is in the inbox, Check 25 P1).
     expect(fake.calls - calls).toBe(2);
     expect(fake.bodyFetches).toEqual(["old-draft"]);
@@ -446,5 +447,171 @@ describe("Gmail quota (Check 25 P1)", () => {
     expect(row!.snippet).toBeNull();
     expect(fake.bodyFetches).toEqual(["old"]);
     delete process.env.RETENTION_BODY_DAYS;
+  });
+});
+
+describe("label changes made in Gmail (Check 25 P2)", () => {
+  const pendingDraft = async (
+    gmailThreadId: string,
+    extra: Partial<typeof drafts.$inferInsert> = {},
+  ) => {
+    const [t] = await database
+      .select()
+      .from(threads)
+      .where(eq(threads.gmailThreadId, gmailThreadId));
+    const [d] = await database
+      .insert(drafts)
+      .values({
+        threadId: t!.id,
+        mailboxId,
+        toAddress: `customer-${gmailThreadId}@example.com`,
+        subject: "Re: x",
+        body: "Hi",
+        reason: "Replying",
+        ...extra,
+      })
+      .returning();
+    return d!;
+  };
+  const threadRow = async (gmailThreadId: string) =>
+    (await database.select().from(threads).where(eq(threads.gmailThreadId, gmailThreadId)))[0]!;
+
+  it("Spam then Not spam: read in full, back in the inbox, sorted again", async () => {
+    fake.add({ id: "m0", threadId: "t0" });
+    await runBackfill(mailboxId, deps());
+    // A lead lands in Spam (history reports it; listing never shows Spam).
+    fake.add({ id: "lead", threadId: "t1", labelIds: ["SPAM"], daysAgo: 0.5 });
+    await incrementalSync(mailboxId, deps());
+    let [msg] = await database.select().from(messages).where(eq(messages.gmailMessageId, "lead"));
+    expect(msg!.labelIds).toEqual(["SPAM"]);
+    expect(msg!.bodyText).toBeNull();
+    expect((await threadRow("t1")).inInbox).toBe(false);
+
+    await database
+      .update(threads)
+      .set({ classifiedAt: NOW })
+      .where(eq(threads.gmailThreadId, "t1"));
+    fake.notSpam("lead");
+    fake.bodyFetches = [];
+    await incrementalSync(mailboxId, deps());
+    [msg] = await database.select().from(messages).where(eq(messages.gmailMessageId, "lead"));
+    expect(msg!.labelIds).toEqual(["INBOX"]);
+    expect(msg!.bodyText).toBe("body of lead");
+    expect(msg!.classifiedAt).toBeNull();
+    expect(fake.bodyFetches).toEqual(["lead"]);
+    const t1 = await threadRow("t1");
+    expect(t1.inInbox).toBe(true);
+    expect(t1.classifiedAt).toBeNull();
+  });
+
+  it("Not spam on an email we never stored stores it in full", async () => {
+    fake.add({ id: "m0", threadId: "t0" });
+    await runBackfill(mailboxId, deps());
+    fake.add({ id: "lead", threadId: "t1", labelIds: ["SPAM"], daysAgo: 0.5 });
+    fake.log = fake.log.filter((h) => h.id !== "lead"); // history never told us it arrived
+    fake.notSpam("lead");
+    await incrementalSync(mailboxId, deps());
+    const [msg] = await database.select().from(messages).where(eq(messages.gmailMessageId, "lead"));
+    expect(msg!.labelIds).toEqual(["INBOX"]);
+    expect(msg!.bodyText).toBe("body of lead");
+    expect((await threadRow("t1")).inInbox).toBe(true);
+  });
+
+  it("Trash: out of the inbox, the waiting draft expires with a note, countdown and send dropped", async () => {
+    fake.add({ id: "m1", threadId: "t1", daysAgo: 1 });
+    fake.add({
+      id: "m2",
+      threadId: "t1",
+      labelIds: ["SENT"],
+      headers: { from: "owner@shop.com", to: "customer-t1@example.com" },
+      daysAgo: 0.9,
+    });
+    await runBackfill(mailboxId, deps());
+    const d = await pendingDraft("t1", {
+      autoSendAt: new Date(NOW.getTime() + 600_000),
+      sendAfter: new Date(NOW.getTime() + 5_000),
+    });
+    fake.trash("m1");
+    fake.trash("m2");
+    await incrementalSync(mailboxId, deps());
+    expect((await threadRow("t1")).inInbox).toBe(false);
+    const [after] = await database.select().from(drafts).where(eq(drafts.id, d.id));
+    expect(after).toMatchObject({
+      status: "expired",
+      closedNote: "You deleted this in Gmail.",
+      autoSendAt: null,
+      sendAfter: null,
+      sendClaimedAt: null,
+    });
+  });
+
+  it("Spam on a whole conversation says so", async () => {
+    fake.add({ id: "m1", threadId: "t1" });
+    await runBackfill(mailboxId, deps());
+    const d = await pendingDraft("t1");
+    fake.spam("m1");
+    await incrementalSync(mailboxId, deps());
+    const [after] = await database.select().from(drafts).where(eq(drafts.id, d.id));
+    expect(after).toMatchObject({
+      status: "expired",
+      closedNote: "You marked this as spam in Gmail.",
+    });
+  });
+
+  it("Archive: out of the inbox, the draft stays, countdown and queued send stop", async () => {
+    fake.add({ id: "m1", threadId: "t1" });
+    await runBackfill(mailboxId, deps());
+    const d = await pendingDraft("t1", {
+      autoSendAt: new Date(NOW.getTime() + 600_000),
+      sendAfter: new Date(NOW.getTime() + 5_000),
+    });
+    fake.archive("m1");
+    await incrementalSync(mailboxId, deps());
+    expect((await threadRow("t1")).inInbox).toBe(false);
+    const [after] = await database.select().from(drafts).where(eq(drafts.id, d.id));
+    expect(after).toMatchObject({ status: "pending", autoSendAt: null, sendAfter: null });
+    const [msg] = await database.select().from(messages).where(eq(messages.gmailMessageId, "m1"));
+    expect(msg!.labelIds).toEqual([]);
+    const log = await database
+      .select()
+      .from(activityLog)
+      .where(eq(activityLog.action, "send_stopped"));
+    expect(log).toHaveLength(1);
+    expect(log[0]!.detail).toEqual({ draftId: d.id, why: "archived_in_gmail" });
+  });
+
+  it("deleted for good on every message behaves like Trash", async () => {
+    fake.add({ id: "m1", threadId: "t1", daysAgo: 1 });
+    fake.add({ id: "m2", threadId: "t1", daysAgo: 0.5 });
+    await runBackfill(mailboxId, deps());
+    const d = await pendingDraft("t1");
+    fake.remove("m1");
+    fake.remove("m2");
+    await incrementalSync(mailboxId, deps());
+    expect((await threadRow("t1")).inInbox).toBe(false);
+    const [after] = await database.select().from(drafts).where(eq(drafts.id, d.id));
+    expect(after).toMatchObject({ status: "expired", closedNote: "You deleted this in Gmail." });
+  });
+
+  it("one email trashed out of two keeps the conversation and its draft", async () => {
+    fake.add({ id: "m1", threadId: "t1", daysAgo: 1 });
+    fake.add({ id: "m2", threadId: "t1", daysAgo: 0.5 });
+    await runBackfill(mailboxId, deps());
+    const d = await pendingDraft("t1");
+    fake.trash("m1");
+    await incrementalSync(mailboxId, deps());
+    expect((await threadRow("t1")).inInbox).toBe(true);
+    const [after] = await database.select().from(drafts).where(eq(drafts.id, d.id));
+    expect(after!.status).toBe("pending");
+  });
+
+  it("archived and then moved back to the inbox is in the inbox again", async () => {
+    fake.add({ id: "m1", threadId: "t1" });
+    await runBackfill(mailboxId, deps());
+    fake.archive("m1");
+    await incrementalSync(mailboxId, deps());
+    fake.relabel("m1", ["INBOX"]);
+    await incrementalSync(mailboxId, deps());
+    expect((await threadRow("t1")).inInbox).toBe(true);
   });
 });

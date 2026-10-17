@@ -21,6 +21,7 @@ import { getBusinessProfile } from "@/server/profile";
 import { priceMemoryFor } from "@/server/price-memory";
 import { requireOwner } from "@/server/session";
 import { MAILBOX_PAUSED_LINE } from "@/server/mailbox-plan-rules";
+import { ARCHIVED_LINE } from "@/server/sync";
 import { dismissChecklistAction } from "./actions";
 import { OnboardingChecklist } from "@/components/app/onboarding-checklist";
 import { checklistFor } from "@/server/onboarding";
@@ -255,6 +256,7 @@ export default async function QueuePage(props: PageProps<"/queue">) {
     return [
       lc?.repeat,
       lc?.outsideTown ? `${lc.outsideTown} isn't one of your towns.` : null,
+      i.archivedInGmail ? ARCHIVED_LINE : null,
     ].filter((l): l is string => !!l);
   };
 

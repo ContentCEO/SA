@@ -1605,12 +1605,17 @@ export async function deliverQueuedSend(
 
   let why: string;
   try {
+    // Check 25 P2: the conversation left the inbox in Gmail. Archived after the tap already
+    // un-queued it (applyLabelChanges); here, every email of it is in Trash or Spam.
+    if (await threadGoneInGmail(claimed.threadId)) throw new LeftInboxSignal();
     const outcome = await sendDraft(workspaceId, draftId, { ...opts, queued: true });
     if (outcome.status === "sent") return { status: "sent" };
     why = outcome.status;
   } catch (err) {
-    if (!(err instanceof SendingBlockedError)) throw err; // the claim lapses; a retry takes it
-    why = "blocked";
+    if (err instanceof LeftInboxSignal) why = "left_inbox";
+    else if (!(err instanceof SendingBlockedError))
+      throw err; // the claim lapses; a retry takes it
+    else why = "blocked";
   }
   await db()
     .update(drafts)
@@ -1624,6 +1629,23 @@ export async function deliverQueuedSend(
     detail: { draftId, why },
   });
   return { status: "stopped", why };
+}
+
+class LeftInboxSignal extends Error {}
+
+/**
+ * Check 25 P2: the conversation is out of the inbox and every stored email of it is in Trash or
+ * Spam (or was deleted) in Gmail.
+ */
+export async function threadGoneInGmail(threadId: string): Promise<boolean> {
+  const [row] = await db()
+    .select({
+      inInbox: threads.inInbox,
+      live: sql<number>`(select count(*)::int from messages g where g.thread_id = ${threads.id} and not (g.label_ids ? 'TRASH' or g.label_ids ? 'SPAM'))`,
+    })
+    .from(threads)
+    .where(eq(threads.id, threadId));
+  return !!row && !row.inInbox && row.live === 0;
 }
 
 /** Backstop for lost events: sends whose window ended a minute ago and nobody holds. */
@@ -2391,6 +2413,8 @@ export type QueueItem = {
    * or changed from it (MAILBOX_PAUSED_LINE).
    */
   mailboxPaused: boolean;
+  /** Check 25 P2: the owner archived this conversation in Gmail; the draft still waits here. */
+  archivedInGmail: boolean;
 };
 
 /** Plan #6: back from a snooze within the last day — pinned on top. */
@@ -2720,6 +2744,7 @@ export async function listQueue(
           checkIn: m.checkIn,
           complaintFixedAt: t.complaintFixedAt,
           mailboxPaused: pausedBoxes.has(t.mailboxId),
+          archivedInGmail: false,
         } satisfies QueueItem,
       ];
     }),
@@ -2760,6 +2785,7 @@ export async function listQueue(
           checkIn: false,
           complaintFixedAt: thread.complaintFixedAt,
           mailboxPaused: pausedBoxes.has(draft.mailboxId),
+          archivedInGmail: !thread.inInbox,
         } satisfies QueueItem,
       ];
     }),

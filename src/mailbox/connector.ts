@@ -67,8 +67,16 @@ export type MessageRef = {
   labelIds?: string[];
 };
 
+/** A label change history reported on one message (Check 25 P2). */
+export type LabelChange = { id: string; threadId: string; added: string[]; removed: string[] };
+
 export type HistoryPage = {
+  /** New messages, plus messages that gained SENT (a sent draft may keep its id). */
   added: MessageRef[];
+  /** Every label added or removed, in history order (archive, Trash, Spam, Not spam…). */
+  labelChanges: LabelChange[];
+  /** Messages deleted for good in Gmail. */
+  deleted: MessageRef[];
   nextPageToken?: string;
   /** Newest cursor seen; store it once the page is processed. */
   historyId: string;

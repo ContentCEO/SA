@@ -29,3 +29,27 @@ CLAUDE.md line (Decisions): "**Gmail quota (wave 2, C25 P1):** per-mailbox unit 
 `gmail_units` (5,400 of Google's 6,000 units a minute); every Gmail request reserves first; a
 spent minute or Gmail's own retry time (`mailboxes.gmail_cool_until`) stops calls before any
 fetch and `politely()` pauses. Inbox emails are read once (full); others as metadata."
+
+## Step 2 · Check 25 P2: archive, Trash, Spam and Not spam from Gmail
+
+- `HistoryPage` gains `labelChanges` and `deleted`; `listHistory` asks for messageAdded,
+  labelAdded, labelRemoved and messageDeleted (the `added` list is unchanged).
+- `applyLabelChanges` (sync.ts) runs after each history page: stored labels follow Gmail; a
+  message that gains INBOX with no body is read in full (within retention) and re-sorted
+  (`classified_at` cleared on the message and thread); a Not-spam email never stored is stored;
+  `threads.in_inbox` is recomputed for touched threads (some message with INBOX, not in
+  Trash/Spam). A message deleted for good keeps its row (drafts may point at it) as INBOX
+  removed + TRASH added.
+- Whole conversation in Trash / Spam / deleted → pending drafts expire with "You deleted this in
+  Gmail." / "You marked this as spam in Gmail.", countdown and send dropped. Nothing is deleted
+  in the owner's Gmail (our Gmail draft stays there).
+- Archive only → the draft stays in the Queue with the line "You archived this in Gmail."
+  (`QueueItem.archivedInGmail`), its autopilot countdown is cleared, and a send still in its undo
+  window is un-queued (activity `send_stopped` why `archived_in_gmail`: "Didn't send the reply …
+  — you archived the conversation in Gmail. It's back in your queue").
+- `runAutopilotSend` stands down when `threads.in_inbox` is false ("This conversation left your
+  inbox in Gmail."). `deliverQueuedSend` stops (why `left_inbox`) when every email of the
+  conversation is in Trash/Spam. **Adapted:** a tap on Send for a draft whose conversation was
+  *already* archived still sends (the owner saw the archived line and chose to send); an archive
+  *after* the tap un-queues it. needs wave 1: the send path group may prefer a check inside
+  `queueSend` / `sendDraft`.

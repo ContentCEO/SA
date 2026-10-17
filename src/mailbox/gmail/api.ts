@@ -219,23 +219,28 @@ export function createGmailReader(opts: GmailReaderOptions): GmailClient {
     },
 
     async listHistory({ startHistoryId, pageToken }): Promise<HistoryPage> {
-      // New messages, and messages that gained SENT: a sent draft may keep its id (DRAFT
-      // swapped for SENT), which history reports as a label change, not a new message.
+      // New messages and every label change (Check 25 P2: archive, Trash, Spam and Not spam in
+      // Gmail), plus permanent deletes. A sent draft may keep its id (DRAFT swapped for SENT),
+      // which history reports as a label change, so a SENT add also counts as added.
       const qs = new URLSearchParams({ startHistoryId });
-      qs.append("historyTypes", "messageAdded");
-      qs.append("historyTypes", "labelAdded");
+      for (const t of ["messageAdded", "labelAdded", "labelRemoved", "messageDeleted"])
+        qs.append("historyTypes", t);
       if (pageToken) qs.set("pageToken", pageToken);
       type Ref = { id: string; threadId: string; labelIds?: string[] };
+      type Labelled = { message: Ref; labelIds?: string[] };
       const r = await call<{
         history?: {
           messagesAdded?: { message: Ref }[];
-          labelsAdded?: { message: Ref; labelIds?: string[] }[];
+          labelsAdded?: Labelled[];
+          labelsRemoved?: Labelled[];
+          messagesDeleted?: { message: Ref }[];
         }[];
         nextPageToken?: string;
         historyId: string;
       }>("history.list", `/history?${qs}`);
       if (!r) throw new HistoryExpiredError();
-      const added = (r.history ?? []).flatMap((h) => [
+      const history = r.history ?? [];
+      const added = history.flatMap((h) => [
         ...(h.messagesAdded ?? []).map((m) => ({
           id: m.message.id,
           threadId: m.message.threadId,
@@ -245,7 +250,30 @@ export function createGmailReader(opts: GmailReaderOptions): GmailClient {
           .filter((l) => (l.labelIds ?? []).includes("SENT"))
           .map((l) => ({ id: l.message.id, threadId: l.message.threadId })),
       ]);
-      return { added, nextPageToken: r.nextPageToken, historyId: r.historyId };
+      const labelChanges = history.flatMap((h) => [
+        ...(h.labelsAdded ?? []).map((l) => ({
+          id: l.message.id,
+          threadId: l.message.threadId,
+          added: l.labelIds ?? [],
+          removed: [],
+        })),
+        ...(h.labelsRemoved ?? []).map((l) => ({
+          id: l.message.id,
+          threadId: l.message.threadId,
+          added: [],
+          removed: l.labelIds ?? [],
+        })),
+      ]);
+      const deleted = history.flatMap((h) =>
+        (h.messagesDeleted ?? []).map((m) => ({ id: m.message.id, threadId: m.message.threadId })),
+      );
+      return {
+        added,
+        labelChanges,
+        deleted,
+        nextPageToken: r.nextPageToken,
+        historyId: r.historyId,
+      };
     },
 
     async createDraft({ threadId, raw }) {
