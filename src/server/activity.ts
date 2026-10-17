@@ -1,5 +1,7 @@
 import "server-only";
 import { and, count, desc, eq, gte, inArray, isNotNull, lt, sql } from "drizzle-orm";
+import { pricing } from "@/config/pricing";
+import { daysPhrase } from "@/lib/trial-words";
 import { categoryLabels, categoryTag, isCategory } from "@/config/categories";
 import { db } from "@/db";
 import { activityLog, drafts, mailboxes, messages, threads } from "@/db/schema";
@@ -228,9 +230,10 @@ export function describeActivity(
         ? "Your test payment was cleared — the setup fee is still due"
         : null;
     case "evaluation_started":
-      return "Your three days started";
+      return `Your ${daysPhrase(pricing.evaluationDays)} started`;
     case "evaluation_expired":
-      return "Your three days ended";
+      // The trial may have been extended, so not "three days".
+      return "Your trial ended";
     case "workspace_status_changed":
       return detail.to === "setup_paid"
         ? "Setup paid — sending switched on"
@@ -239,7 +242,7 @@ export function describeActivity(
           : detail.to === "paused"
             ? "Your account was paused"
             : detail.to === "evaluating"
-              ? "Your three days were extended"
+              ? `Your trial was extended by ${daysPhrase(pricing.evaluationDays)}`
               : "Your account status changed";
     default:
       return null;

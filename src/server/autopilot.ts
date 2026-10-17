@@ -16,6 +16,8 @@ import {
   sql,
 } from "drizzle-orm";
 import { pricing } from "@/config/pricing";
+import { EARN_THRESHOLD, GRACE_MINUTES } from "@/config/rules";
+import { autopilotPlanNames } from "./plan-features";
 import { db } from "@/db";
 import {
   activityLog,
@@ -66,9 +68,8 @@ export { knownCustomer };
  * sending.
  */
 export const AUTOPILOT_CATEGORIES = AUTO_DRAFT_CATEGORIES;
-export const EARN_THRESHOLD = 10;
+export { EARN_THRESHOLD, GRACE_MINUTES };
 export const MIN_CONFIDENCE_PCT = 85;
-export const GRACE_MINUTES = 10;
 export const DAILY_AUTOPILOT_CAP = 20;
 
 type Category = (typeof AUTOPILOT_CATEGORIES)[number];
@@ -82,7 +83,7 @@ export function accountLockReason(
   now: Date = new Date(),
 ): string | null {
   if (!w.plan || !pricing.plans[w.plan].autopilot) {
-    return "Autopilot comes with the Crew and Company plans.";
+    return `Autopilot comes with the ${autopilotPlanNames()} plans.`;
   }
   if (effectiveStatus(w, now) !== "active") {
     return "Autopilot opens up once your setup call is done.";

@@ -22,6 +22,8 @@ import {
 import {
   billingStatusLine,
   checkoutTerms,
+  firstChargeLine,
+  PLAN_IDS,
   planFromLookupKey,
   planLookupKey,
   SALES_TAX_LINES,
@@ -618,10 +620,20 @@ describe("sales tax (Stripe Tax, Davi 2026-10-14)", () => {
     expect(calls).toHaveLength(0);
   });
 
-  it("owners see the tax note next to the prices (homepage and /billing); admin shows the line", () => {
+  it("owners see sales tax once per plan card (homepage and /billing); admin shows the line", () => {
     expect(SALES_TAX_NOTE).toBe("Plus sales tax where it applies.");
+    // Check 35 P2: each card's first-payment line says it, so no second note under the list.
+    for (const id of PLAN_IDS)
+      for (const setup of [true, false])
+        expect(firstChargeLine(id, setup)).toContain("plus sales tax where it applies");
+    expect(readFileSync("src/components/marketing/plan-cards.tsx", "utf8")).toContain(
+      "{firstChargeLine(id, true)}",
+    );
+    expect(readFileSync("src/app/(app)/billing/page.tsx", "utf8")).toContain(
+      "{firstChargeLine(id, terms.includeSetupFee)}",
+    );
     for (const f of ["src/app/page.tsx", "src/app/(app)/billing/page.tsx"]) {
-      expect(readFileSync(f, "utf8"), f).toContain("{SALES_TAX_NOTE}");
+      expect(readFileSync(f, "utf8"), f).not.toContain("{SALES_TAX_NOTE}");
     }
     const admin = readFileSync("src/app/(app)/admin/page.tsx", "utf8");
     expect(admin).toContain("{salesTax ? <p>{SALES_TAX_LINES[salesTax]}</p> : null}");

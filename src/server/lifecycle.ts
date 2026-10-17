@@ -1,4 +1,5 @@
 import { pricing } from "@/config/pricing";
+import { daysPhrase } from "@/lib/trial-words";
 import type { Workspace } from "@/db/schema";
 
 /**
@@ -12,7 +13,9 @@ import type { Workspace } from "@/db/schema";
  */
 type Status = Workspace["status"];
 type Clocked = Pick<Workspace, "status" | "evaluationEndsAt">;
-type Payable = Clocked & Pick<Workspace, "setupPaidVia">;
+type Payable = Clocked &
+  Pick<Workspace, "setupPaidVia"> &
+  Partial<Pick<Workspace, "evaluationStartedAt">>;
 
 export const EVALUATION_MS = pricing.evaluationDays * 86_400_000;
 
@@ -123,7 +126,7 @@ export function sendingBlockedReason(w: Payable, now: Date = new Date()): string
       // The trial's side door (Davi, 2026-10-16): every draft is a real Gmail draft.
       return "Read the drafts and see if they sound like you. This one is in your Gmail Drafts folder too, if you'd rather send it from Gmail yourself.";
     case "evaluation_expired":
-      return "Your three days are up. Choose a plan to switch sending on.";
+      return `Your ${daysPhrase(trialLengthDays(w))} are up. Choose a plan to switch sending on.`;
     case "past_due":
       return "Sending is paused until the payment issue is sorted.";
     case "canceled":
@@ -143,7 +146,7 @@ export function sendingOffLabel(w: Payable, now: Date = new Date()): string {
   switch (status) {
     case "evaluating":
       // Squared Away's own button, not sending in general: the draft is in Gmail too (2026-10-16).
-      return "Send reply is off during your three days";
+      return `Send reply is off during your ${daysPhrase(trialLengthDays(w))}`;
     case "evaluation_expired":
       return "Sending turns on once you choose a plan";
     case "past_due":
@@ -189,6 +192,20 @@ export function resumeTarget(
 }
 
 export type Clock = { day: number; of: number; msLeft: number };
+
+/**
+ * Check 35 P1: how long this account's trial is (or was), in whole days. The config's length,
+ * or longer after "Give more days" in /admin, matching the clock's "Day N of M".
+ */
+export function trialLengthDays(
+  w: Partial<Pick<Workspace, "evaluationStartedAt" | "evaluationEndsAt">>,
+): number {
+  if (!w.evaluationStartedAt || !w.evaluationEndsAt) return pricing.evaluationDays;
+  return Math.max(
+    1,
+    Math.round((w.evaluationEndsAt.getTime() - w.evaluationStartedAt.getTime()) / 86_400_000),
+  );
+}
 
 /** "Day 2 of 3", for the evaluation banner. Null outside an evaluation. */
 export function evaluationClock(

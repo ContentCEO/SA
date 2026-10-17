@@ -36,7 +36,8 @@ export async function joinWaitlistAction(
   if (!(await hitLimit("waitlist", ipKey(h))).allowed) {
     return {
       status: "error",
-      errors: { email: ["Too many tries from here. Try again in an hour, or give us a call."] },
+      // Check 6 P10: a form-wide message, so it doesn't read as if the email were wrong.
+      errors: { form: ["Too many tries from here. Try again in an hour, or give us a call."] },
       values: raw,
     };
   }

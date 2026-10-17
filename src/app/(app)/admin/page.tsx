@@ -74,9 +74,9 @@ const statusLabel: Record<AdminRow["status"], string> = {
 
 const moves: Record<AdminMove, { label: string; explain: string; confirm: string }> = {
   extend_evaluation: {
-    label: "Give 3 more days",
+    label: `Give ${pricing.evaluationDays} more days`,
     explain: "Restarts drafting if it had stopped. Sending stays off.",
-    confirm: "Add 3 days",
+    confirm: `Add ${pricing.evaluationDays} days`,
   },
   house_account: {
     label: "Use as my own test account",

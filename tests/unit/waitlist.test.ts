@@ -163,8 +163,20 @@ describe("waitlist form, submitted", () => {
     expect(r.errors?.name?.[0]).toBe("Tell us your name.");
     expect(r.errors?.email?.[0]).toBe("Tell us your email address.");
     expect(r.errors?.trade?.[0]).toBe("Pick your trade.");
-    expect(r.errors?.teamSize?.[0]).toBe("Pick how many people work with you.");
+    expect(r.errors?.teamSize?.[0]).toBe("Pick how many people are in the business.");
     expect(await database.select().from(waitlist)).toEqual([]);
+  });
+
+  it("too many tries: the message is for the whole form, not under the email (Check 6 P10)", async () => {
+    let r = await joinWaitlistAction({ status: "idle" }, form({}));
+    for (let i = 0; i < 20 && !r.errors?.form; i++) {
+      r = await joinWaitlistAction({ status: "idle" }, form({}));
+    }
+    expect(r.status).toBe("error");
+    expect(r.errors?.form?.[0]).toBe(
+      "Too many tries from here. Try again in an hour, or give us a call.",
+    );
+    expect(r.errors?.email).toBeUndefined();
   });
 
   it("a bad email is refused with a plain message, and what they typed comes back", async () => {

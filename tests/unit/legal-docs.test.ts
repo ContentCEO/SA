@@ -1,5 +1,8 @@
 import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { faqs, features } from "@/components/marketing/home-copy";
+import { MAX_FOLLOWUPS } from "@/config/rules";
+import { numberWord } from "@/lib/number-words";
 import { loadLegalDoc } from "@/components/marketing/legal-page";
 import { UNDO_WINDOW_SECONDS } from "@/config/drafting";
 import { bodyRetentionDays } from "@/config/retention";
@@ -36,12 +39,11 @@ function bullet(doc: string, label: string): string {
   return flat(end === -1 ? rest : rest.slice(0, end));
 }
 
+/** A homepage FAQ answer as visitors read it (src/app/page.tsx renders home-copy.ts). */
 function homepageFaq(question: string): string {
-  const src = readFileSync("src/app/page.tsx", "utf8");
-  const escaped = question.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const m = src.match(new RegExp(`q: "${escaped}",\\s*a:\\s*"([^"]+)"`));
-  expect(m, `FAQ "${question}"`).not.toBeNull();
-  return m![1];
+  const f = faqs.find((x) => x.q === question);
+  expect(f, `FAQ "${question}"`).toBeDefined();
+  return f!.a;
 }
 
 afterEach(() => vi.unstubAllEnvs());
@@ -325,6 +327,17 @@ describe("homepage FAQ", () => {
     expect(a).toContain("Gmail Drafts folder");
   });
 
+  it("answers why not Gmail's own AI or Jobber, second, in plain words (Check 34 P1)", () => {
+    const q = "How is this different from Gmail's own AI, or from Jobber?";
+    expect(faqs[1].q).toBe(q);
+    const a = homepageFaq(q);
+    expect(a).toContain("price list");
+    expect(a).toContain("building-department");
+    expect(a).toContain("without your okay");
+    expect(a).not.toMatch(/only one|unlike any|best|never sends anything/i);
+    expect(a).not.toContain('"');
+  });
+
   it("the deletion answer says exactly what the policy says", () => {
     const a = homepageFaq("What if I stop?");
     expect(a).toContain(DELETION_SENTENCE);
@@ -343,14 +356,20 @@ describe("homepage FAQ", () => {
       "When you connect, it reads the last 30 days of your email (the text only for your inbox), then new mail as it arrives",
     );
     expect(a).toContain(`up to ${MAX_SENT_EMAILS} of your sent emails from the last year`);
-    expect(a).toContain(`It keeps email text for ${bodyRetentionDays()} days.`);
+    // Check 6 P2: bodies are purged; who, when, subject and summaries stay (as the policy says).
+    expect(a).toContain(`It deletes the body of each email after ${bodyRetentionDays()} days.`);
+    expect(a).toContain("It has no permission to delete, archive or move your emails.");
   });
 });
 
 describe("owner-facing copy about the trial", () => {
   // Practice copies to the owner's own address go out (through gmail.compose) during the trial, so
   // no screen may say sending is off altogether (the policy's scope table says otherwise).
-  const screens = ["src/app/page.tsx", "src/app/(app)/connect/page.tsx"];
+  const screens = [
+    "src/app/page.tsx",
+    "src/components/marketing/home-copy.ts",
+    "src/app/(app)/connect/page.tsx",
+  ];
 
   it("never says sending is switched off completely", () => {
     for (const f of screens) {
@@ -368,8 +387,10 @@ describe("owner-facing copy about the trial", () => {
     // Practice copies go out during the trial; and every nudge is a draft the owner okays.
     const files = [
       "src/app/page.tsx",
+      "src/components/marketing/home-copy.ts",
       "src/app/(app)/connect/page.tsx",
       "src/components/app/status-banner.tsx",
+      "src/components/app/trial-clock.tsx",
       "src/components/marketing/queue-preview.tsx",
     ];
     for (const f of files) {
@@ -383,15 +404,28 @@ describe("owner-facing copy about the trial", () => {
         // The cap counts nudges sent; a discarded one doesn't count, so never promise drafts.
         "nudge drafts at most",
         "sending is off",
+        // Check 6 P1: checkDraft flags after the fact; it can't stop the AI inventing.
+        "never invents",
+        // Check 6 P2: email is used for sorting, quotes, money and customers too; and the
+        // compose permission removes the drafts it wrote.
+        "only used to write your replies",
+        "can't delete, archive or move anything",
       ]) {
         expect(text, `${f}: ${bad}`).not.toContain(bad);
       }
     }
   });
 
+  it("the homepage says replies are drafted in the owner's voice, not their own words (Check 6 P8)", () => {
+    for (const f of ["src/app/page.tsx", "src/components/marketing/home-copy.ts"]) {
+      expect(flat(readFileSync(f, "utf8")).toLowerCase(), f).not.toContain("in your own words");
+    }
+  });
+
   it("the homepage states the nudge cap the code keeps (nudges sent, each a draft)", () => {
-    expect(flat(readFileSync("src/app/page.tsx", "utf8"))).toContain(
-      "Two nudges at most per conversation — each one a draft that waits for your okay.",
+    // Check 34 P3: and only where the customer emailed and the owner emailed back.
+    expect(features.find((f) => f.title === "Chases quiet quotes")?.body).toContain(
+      `it drafts a friendly nudge, ${numberWord(MAX_FOLLOWUPS)} at most, each one waiting for your okay.`,
     );
   });
 

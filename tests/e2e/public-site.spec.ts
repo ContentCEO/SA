@@ -159,7 +159,8 @@ test("homepage: share card tags, the call button and the trial clock in the phon
     .getByRole("link", { name: /^Call 978-201-9763$/ });
   await expect(call).toHaveAttribute("href", "tel:+19782019763");
   expect((await call.boundingBox())!.height).toBeGreaterThanOrEqual(44);
-  await expect(page.getByText("Day 1 of 3 · 2 days left")).toBeAttached();
+  // Check 6 P4: the queue picture shows Send reply; the trial rule is its caption.
+  await expect(page.locator("figure").first()).toContainText("Send reply");
   await expect(page.getByRole("region", { name: "Who's behind this" })).toContainText(
     "A&C Construction",
   );

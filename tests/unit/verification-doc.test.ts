@@ -1,4 +1,5 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { pricing } from "@/config/pricing";
 import { describe, expect, it } from "vitest";
 import { UNDO_WINDOW_SECONDS } from "@/config/drafting";
 import { modelPricing, models } from "@/config/models";
@@ -128,7 +129,9 @@ describe("the demo video script matches the end-to-end journey", () => {
     // The admin button's real label.
     expect(r).toContain("`/admin` (Give 3 more days)");
     expect(r).not.toContain("extend 3 days");
-    expect(adminPage).toContain('label: "Give 3 more days"');
+    // Check 35 P1: the label takes its number from the config (3 today, as the doc says).
+    expect(adminPage).toContain("label: `Give ${pricing.evaluationDays} more days`");
+    expect(pricing.evaluationDays).toBe(3);
   });
 
   it("option B (a separate demo account on Stripe's test card) is cleared before Stripe goes live", () => {
