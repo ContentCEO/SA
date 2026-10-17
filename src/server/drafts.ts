@@ -461,6 +461,11 @@ function termsCheck(
   };
 }
 
+/** Check 23 P5: the owner's written terms — payment terms, policies and price list. */
+function ownerTerms(ctx: DraftContext): string {
+  return [ctx.paymentTerms, ctx.policies, ctx.pricingNotes].filter(Boolean).join("\n");
+}
+
 /**
  * Where a day, date or time in a draft may come from (Check 20 P1, Check 23 P3 + P4): the
  * conversation (both sides), seasonal notes with their end dates ("November 27"), and what the
@@ -989,6 +994,13 @@ export async function createDraftForThread(
     phrasesAvoided: ctx.voice?.phrasesAvoided ?? [],
     neverSay: ctx.neverSay,
     licenses: ctx.licenses,
+    // Check 23 P5: every reply carries the owner's terms for the light payment-terms check
+    // (deposit and review notes replace these with their own, stricter check below).
+    termsSource: ownerTerms(ctx),
+    ownerWrote: withText
+      .filter((x) => x.m.direction === "out")
+      .map((x) => x.text)
+      .join("\n"),
     // Deposit and review notes: no percentage, way to pay or incentive the owner never set (A4).
     ...termsCheck(purpose, ctx, {
       wrote: withText.filter((x) => x.m.direction === "out").map((x) => x.text),
@@ -1955,6 +1967,15 @@ export async function reviseDraft(
     phrasesAvoided: ctx.voice?.phrasesAvoided ?? [],
     neverSay: ctx.neverSay,
     licenses: ctx.licenses,
+    // Check 23 P5: the light payment-terms check on every reply; what the owner said and a
+    // clean draft's text count as theirs.
+    termsSource: [ownerTerms(ctx), spoken].filter(Boolean).join("\n"),
+    ownerWrote: [
+      ...withText.filter((x) => x.m.direction === "out").map((x) => x.text),
+      (draft.flags ?? []).length === 0 ? draft.body : null,
+    ]
+      .filter(Boolean)
+      .join("\n"),
     // A tweak on a deposit or review note keeps the terms check (A4): "friendlier" can't add
     // Venmo or "10% off". What the owner said, and a clean draft's text, are theirs.
     ...termsCheck(draft.purpose, ctx, {

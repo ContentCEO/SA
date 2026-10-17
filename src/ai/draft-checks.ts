@@ -207,7 +207,13 @@ export type CheckHit =
   /** Check 41 P1: lead-paint and "safe for kids and pets" claims. */
   | "safety"
   /** Check 39 P4: a rebate, tax-credit or refrigerant rule the owner never wrote. Flag only. */
-  | "rule_claim";
+  | "rule_claim"
+  /**
+   * Check 23 P5: an ordinary reply names payment terms the owner never set ("net 30", "Venmo
+   * works", "half down"). Its own hit, apart from the deposit / review "terms" check, so it
+   * flags without a rewrite (it is not in REGENERATE_ON).
+   */
+  | "payment_terms";
 export type CheckResult = { flags: string[]; confidenceCap: number; hits: CheckHit[] };
 
 /**
@@ -399,6 +405,26 @@ const METHODS: [string, RegExp, RegExp][] = [
   ["card", /\b(?:by|with|via)\s+(?:a\s+)?card\b/i, /\bcards?\b/i],
   ["cash", /\bcash\b(?!\s?app)/i, /\bcash\b(?!\s?app)/i],
 ];
+
+/**
+ * Check 23 P5: the payment methods for the light check on ordinary replies — METHODS, with cash
+ * needing a payment context too ("pay in cash", "cash works"), so "save some cash" stays clean.
+ */
+const LIGHT_METHODS: [string, RegExp, RegExp][] = METHODS.map(([label, inBody, inTerms]) =>
+  label === "cash"
+    ? [
+        label,
+        /\b(?:in|with|by|pay(?:ing)?(?: in| with| by)?|take|accept)\s+cash\b|\bcash (?:is fine|works|only|is ok|is okay)\b/i,
+        inTerms,
+      ]
+    : [label, inBody, inTerms],
+);
+/** "half down", "a deposit of", "30% up front". */
+const LIGHT_DEPOSIT =
+  /\bhalf (?:down|up ?front)\b|\b(?:a |the )?deposit of\b|\b\d+\s?% (?:down|up ?front|deposit)\b/gi;
+/** "net 30", "due in 15 days", "pay later", "payment plan", "financing". */
+const LIGHT_CREDIT =
+  /\bnet \d+\b|\bdue in \d+ days\b|\bpay (?:it )?later\b|\bpayment plans?\b|\bfinancing\b/gi;
 
 /** Something offered in return. "Feel free to call" is not an incentive; "free of charge" is. */
 const INCENTIVES: [string, RegExp][] = [
@@ -658,6 +684,35 @@ export function checkDraft(draftBody: string, ctx: CheckContext): CheckResult {
       flags.push(`Says “${phrase.trim()}”, which is on your never-say list.`);
       cap = Math.min(cap, 0.2);
       hits.push("never_say");
+    }
+  }
+
+  // Check 23 P5: a light payment-terms check on every ordinary reply that carries the owner's
+  // terms. A way to pay said the draft's way ("Venmo works", "by Zelle"), deposit wording, or
+  // credit terms, when the owner's terms and own emails don't say it. "Let me check" and "card"
+  // on its own stay clean. Flag only.
+  if (!ctx.checkTerms && ctx.termsSource !== undefined) {
+    const terms = ctx.termsSource ?? "";
+    const owner = ctx.ownerWrote ?? "";
+    const ownerSaid = `${terms}\n${owner}`;
+    const found: string[] = [];
+    for (const [label, inBody, inTerms] of LIGHT_METHODS)
+      if (inBody.test(body) && !inTerms.test(terms) && !inBody.test(owner)) found.push(label);
+    for (const m of body.matchAll(LIGHT_DEPOSIT))
+      if (!/\bdeposit|\bdown\b|\bup ?front\b|\bhalf\b|%/i.test(ownerSaid)) found.push(m[0].trim());
+    for (const m of body.matchAll(LIGHT_CREDIT)) {
+      const said = m[0].toLowerCase().replace(/\s+/g, " ");
+      const key =
+        /^net/.test(said) || /^due in/.test(said) ? said : said.replace(/^pay (it )?/, "");
+      if (!ownerSaid.toLowerCase().replace(/\s+/g, " ").includes(key)) found.push(m[0]);
+    }
+    const unique = [...new Set(found.map((f) => f.toLowerCase()))];
+    if (unique.length) {
+      flags.push(
+        `Mentions “${[...new Set(found)].slice(0, 3).join("”, “")}” — that isn't in your payment terms. Check it.`,
+      );
+      cap = Math.min(cap, 0.5);
+      hits.push("payment_terms");
     }
   }
 

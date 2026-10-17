@@ -94,3 +94,15 @@ Notes for the integrator: what CLAUDE.md should say, by step. Files in this grou
   covered, "covered under warranty / labor"; not "covered with plastic" or "you're covered for
   Tuesday"), "fix it for free", "add it to the (final) bill / invoice / price", "that's fine"
   right before an amount or "over", "no extra charge / cost / fee".
+- **Light payment-terms check (Check 23 P5, wave 1):** every ordinary reply now carries
+  `termsSource` (payment terms + policies + price list, plus the owner's spoken words on a
+  tweak) and `ownerWrote` (the owner's emails on the thread, a clean earlier draft). checkDraft
+  flags a way to pay said the draft's way ("Venmo works", "by Zelle", "pay in cash"), deposit
+  wording ("half down", "a deposit of", "30% up front") and credit terms ("net 30", "due in 15
+  days", "pay later", "payment plan", "financing") that the owner's terms and emails don't say:
+  "Mentions “net 30” — that isn't in your payment terms. Check it.", cap 0.5. **Adapted:** its
+  hit is `payment_terms`, not `terms` as the prompt says, because `terms` is in `REGENERATE_ON`
+  and the prompt says this one must flag without a rewrite. Off when a caller gives no
+  `termsSource` (old callers unchanged). "Let me check" and "card" alone stay clean.
+  (draft.v6's vocabulary line "T&M vs. fixed price, net 30" is Check 23 P11's, in the review's
+  draft.v7 bundle — not done here.)

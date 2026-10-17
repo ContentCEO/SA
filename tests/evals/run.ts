@@ -128,6 +128,8 @@ export async function runEvals(
           hoursText: PROFILE.hours,
           leadTimeText: PROFILE.leadTime,
           allowHours: asksWhenAvailable(c.body),
+          // Check 23 P5: the light payment-terms check runs on every reply, as in the app.
+          termsSource: PROFILE.paymentTerms,
           doNotPromise: PROFILE.doNotPromise,
           neverSay: PROFILE.neverSay,
           phrasesAvoided: [],

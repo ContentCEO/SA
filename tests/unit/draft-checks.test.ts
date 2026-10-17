@@ -523,3 +523,50 @@ describe("“that's covered” and “we'll add it to the bill” (Check 38 P7)"
     );
   });
 });
+
+describe("light payment-terms check on every reply (Check 23 P5)", () => {
+  const reply = (termsSource: string, ownerWrote = "") => ({
+    sourceText: "Can we pay by Venmo? When can you start?",
+    ownerSourceText: "",
+    doNotPromise: [] as string[],
+    phrasesAvoided: [] as string[],
+    termsSource,
+    ownerWrote,
+  });
+  const TERMS = "Due on receipt. Check or card.";
+
+  it.each([
+    ["We just need half down to get on the schedule.", "half down"],
+    ["Net 30 is fine.", "Net 30"],
+    ["Venmo works fine.", "Venmo"],
+  ])("%s → flagged, never rewritten", (body, label) => {
+    const r = checkDraft(body, reply(TERMS));
+    expect(r.hits).toContain("payment_terms");
+    expect(r.flags).toContain(`Mentions “${label}” — that isn't in your payment terms. Check it.`);
+    expect(REGENERATE_ON).not.toContain("payment_terms");
+  });
+
+  it("what the terms or the owner's own emails say is fine; everyday words stay clean", () => {
+    expect(checkDraft("Check or card is fine.", reply("Check or card")).hits).toEqual([]);
+    expect(checkDraft("You can pay by check on the day.", reply(TERMS)).hits).toEqual([]);
+    expect(checkDraft("Venmo works fine.", reply(TERMS, "Venmo is easiest for me")).hits).toEqual(
+      [],
+    );
+    expect(checkDraft("Let me check the schedule.", reply(TERMS)).hits).toEqual([]);
+    expect(checkDraft("I'll card it on my list.", reply(TERMS)).hits).toEqual([]);
+    expect(
+      checkDraft("Half down, balance at completion.", reply("Half down, balance at completion"))
+        .hits,
+    ).toEqual([]);
+  });
+
+  it("is off when the caller gives no terms (as before)", () => {
+    expect(
+      checkDraft("Net 30 is fine.", {
+        sourceText: "",
+        doNotPromise: [],
+        phrasesAvoided: [],
+      }).hits,
+    ).toEqual([]);
+  });
+});
