@@ -295,6 +295,20 @@
       "when": 1792271229521,
       "tag": "0041_licenses",
       "breakpoints": true
+    },
+    {
+      "idx": 42,
+      "version": "7",
+      "when": 1792276181035,
+      "tag": "0042_paused_from",
+      "breakpoints": true
+    },
+    {
+      "idx": 43,
+      "version": "7",
+      "when": 1792276182158,
+      "tag": "0043_fallback_calls",
+      "breakpoints": true
     }
   ]
 }

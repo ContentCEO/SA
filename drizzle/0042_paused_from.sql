@@ -1,0 +1,1 @@
+ALTER TABLE "workspaces" ADD COLUMN "paused_from" "workspace_status";

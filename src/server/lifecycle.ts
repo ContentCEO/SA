@@ -163,7 +163,9 @@ export function sendingOffLabel(w: Payable, now: Date = new Date()): string {
  * the workspace Davi himself owns (checked server-side in applyAdminMove).
  */
 export const ADMIN_MOVES = {
-  extend_evaluation: ["invited", "evaluating", "evaluation_expired"],
+  // Not from "invited" (Check 16 P2): the clock starts on the first Gmail connect, and
+  // startEvaluation only runs from invited, so extending first would lose those days.
+  extend_evaluation: ["evaluating", "evaluation_expired"],
   house_account: ["invited", "evaluating", "evaluation_expired", "setup_paid", "active"],
   mark_setup_call_done: ["setup_paid"],
   pause: ["invited", "evaluating", "evaluation_expired", "setup_paid", "active", "past_due"],
@@ -180,11 +182,27 @@ export function canMakeMove(move: AdminMove, w: Clocked, now: Date = new Date())
   return (ADMIN_MOVES[move] as readonly Status[]).includes(effectiveStatus(w, now));
 }
 
-/** Where a paused workspace goes back to: as far as it had got before. */
+/**
+ * Where a paused workspace goes back to. Check 17 P1: where it stood when paused (`pausedFrom`,
+ * which Stripe webhooks keep up to date while it's paused); an evaluation whose clock ran out
+ * meanwhile comes back expired. Rows paused before `pausedFrom` existed go as far as they had
+ * got, except that a Stripe-paid account with no subscription comes back canceled: Resume never
+ * hands out setup_paid or active without a live subscription (or Davi's own house account).
+ */
 export function resumeTarget(
-  w: Pick<Workspace, "setupPaidAt" | "setupCallCompletedAt" | "evaluationEndsAt">,
+  w: Pick<Workspace, "setupPaidAt" | "setupCallCompletedAt" | "evaluationEndsAt" | "setupPaidVia"> &
+    Partial<Pick<Workspace, "pausedFrom" | "stripeSubscriptionId">>,
   now: Date = new Date(),
 ): Status {
+  const noSubscription = w.setupPaidVia === "stripe" && !w.stripeSubscriptionId;
+  if (w.pausedFrom && w.pausedFrom !== "paused") {
+    if (w.pausedFrom === "evaluating" && (!w.evaluationEndsAt || w.evaluationEndsAt <= now))
+      return "evaluation_expired";
+    if ((w.pausedFrom === "setup_paid" || w.pausedFrom === "active") && noSubscription)
+      return "canceled";
+    return w.pausedFrom;
+  }
+  if (noSubscription) return "canceled";
   if (w.setupCallCompletedAt) return "active";
   if (w.setupPaidAt) return "setup_paid";
   if (w.evaluationEndsAt) return w.evaluationEndsAt > now ? "evaluating" : "evaluation_expired";

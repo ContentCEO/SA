@@ -186,6 +186,8 @@ export type DraftDeps = {
   /** Reads a stored email's Reply-To when sync never did (defaults to the writer's client). */
   readerFor?: (m: Mailbox) => Pick<MailboxReader, "getMessage">;
   now?: () => Date;
+  /** Check 48 P4: the owner is waiting on this tap (shorter model time limit). */
+  aiMode?: "interactive" | "job";
 };
 
 export const defaultWriter = (m: Mailbox) =>
@@ -1185,8 +1187,9 @@ export async function createDraftForThread(
         workspaceId: workspace.id,
         role: "draft" as const,
         promptVersion,
-        maxTokens: 2048,
+        maxTokens: 4096,
         effort: "medium" as const,
+        mode: opts.aiMode ?? ("job" as const),
         system: [
           { text: followup ? FOLLOWUP_INSTRUCTIONS : DRAFT_INSTRUCTIONS, cache: false },
           { text: wsBlock, cache: true },
@@ -2556,8 +2559,9 @@ export async function reviseDraft(
         ? `${REVISE_PROMPT_VERSION}+${OPENING_TWEAKS_PROMPT_VERSION}`
         : REVISE_PROMPT_VERSION
     }${dispute ? `+${DISPUTE_CAUTION_PROMPT_VERSION}` : ""}`,
-    maxTokens: 2048,
+    maxTokens: 4096,
     effort: "medium" as const,
+    mode: opts.aiMode ?? ("job" as const),
     system: [
       { text: REVISE_INSTRUCTIONS, cache: false },
       { text: workspaceBlock(ctx), cache: true },

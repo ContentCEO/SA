@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { z } from "zod";
 import { markNeedsOwner } from "@/server/classification";
+import { isTemporaryAiFailure } from "@/ai/client";
 import { createDraftForThread, type OwnerPurpose } from "@/server/drafts";
 import { hitLimit } from "@/server/rate-limit";
 import { requireOwner } from "@/server/session";
@@ -58,11 +59,19 @@ async function askFor(purpose: OwnerPurpose, formData: FormData): Promise<never>
   const parsed = input.safeParse({ threadId: formData.get("threadId") });
   if (!parsed.success) redirect("/queue?error=unknown");
   if (!(await hitLimit("draft", workspace.id)).allowed) redirect("/queue?error=busy");
-  const r = await createDraftForThread(parsed.data.threadId, {
-    trigger: "owner",
-    workspaceId: workspace.id,
-    purpose,
-  });
+  let r;
+  try {
+    r = await createDraftForThread(parsed.data.threadId, {
+      trigger: "owner",
+      workspaceId: workspace.id,
+      purpose,
+      aiMode: "interactive",
+    });
+  } catch (err) {
+    // Check 48 P4: a plain retry message, never a hang.
+    if (isTemporaryAiFailure(err)) redirect("/queue?error=ai_busy");
+    throw err;
+  }
   if (r.status === "created") redirect("/queue?done=drafted");
   if (r.status === "reconnect_needed") redirect("/queue?error=reconnect");
   if (purpose === "thank_you" && r.reason === "already_asked") redirect("/queue?error=thanked");

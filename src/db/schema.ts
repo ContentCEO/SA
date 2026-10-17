@@ -127,6 +127,12 @@ export const workspaces = pgTable(
      */
     extraTrades: text("extra_trades").array().$type<Trade[]>().notNull().default([]),
     status: workspaceStatusEnum("status").notNull().default("invited"),
+    /**
+     * Check 17 P1: where a paused account stood when Davi paused it (its effective status then),
+     * kept up to date by Stripe webhooks while it's paused, and where Resume takes it back to.
+     * Null when not paused (or paused before this column existed: see `resumeTarget`).
+     */
+    pausedFrom: workspaceStatusEnum("paused_from"),
     evaluationStartedAt: timestamp("evaluation_started_at", { withTimezone: true }),
     evaluationEndsAt: timestamp("evaluation_ends_at", { withTimezone: true }),
     setupPaidAt: timestamp("setup_paid_at", { withTimezone: true }),
@@ -665,6 +671,8 @@ export const usage = pgTable(
     emailsSent: integer("emails_sent").notNull().default(0),
     /** Hundredths of a cent, so tiny Haiku calls don't round to zero. */
     estimatedCostCentiCents: integer("estimated_cost_centicents").notNull().default(0),
+    /** Check 48 P3: calls answered by the role's approved stand-in model (models.ts). */
+    fallbackCalls: integer("fallback_calls").notNull().default(0),
     capAlertedAt: timestamp("cap_alerted_at", { withTimezone: true }),
   },
   (t) => [uniqueIndex("usage_workspace_period_uq").on(t.workspaceId, t.period)],

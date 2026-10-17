@@ -7,6 +7,7 @@ import { holdAutopilot } from "@/server/autopilot";
 import { isOpeningTweak } from "@/ai/prompts/opening-tweaks.v1";
 import { isTweak } from "@/ai/prompts/revise.v2";
 import { draftSendQueued, enqueue } from "@/jobs/client";
+import { isTemporaryAiFailure } from "@/ai/client";
 import { isBatchCategory } from "@/server/batch-rules";
 import {
   batchSend,
@@ -324,10 +325,18 @@ export async function draftReplyAction(formData: FormData) {
   const threadId = id.safeParse(formData.get("threadId"));
   if (!threadId.success) redirect("/queue?error=unknown");
   if (!(await hitLimit("draft", workspace.id)).allowed) redirect("/queue?error=busy");
-  const r = await createDraftForThread(threadId.data, {
-    trigger: "owner",
-    workspaceId: workspace.id,
-  });
+  let r;
+  try {
+    r = await createDraftForThread(threadId.data, {
+      trigger: "owner",
+      workspaceId: workspace.id,
+      aiMode: "interactive",
+    });
+  } catch (err) {
+    // Check 48 P4: the model is slow, down or missing — a plain retry message, never a hang.
+    if (isTemporaryAiFailure(err)) redirect("/queue?error=ai_busy");
+    throw err;
+  }
   if (r.status === "created") redirect("/queue?done=drafted");
   if (r.status === "reconnect_needed") redirect("/queue?error=reconnect");
   const reasons: Record<string, string> = {
@@ -367,11 +376,13 @@ export async function reviseDraftAction(formData: FormData) {
       workspace.id,
       draftId.data,
       isTweak(tweak) ? { tweak } : isOpeningTweak(opening) ? { opening } : { spoken: spoken.data! },
-      // Check 42 P2: the text the card showed when the change was asked for.
-      { openedHash: seenHash(formData.get("seen")) ?? undefined },
+      // Check 42 P2: the text the card showed when the change was asked for. Check 48 P4: a tap
+      // waits at most the interactive time limit.
+      { openedHash: seenHash(formData.get("seen")) ?? undefined, aiMode: "interactive" },
     );
   } catch (err) {
     if (err instanceof ReadOnlyError) redirect("/queue?error=readonly");
+    if (isTemporaryAiFailure(err)) redirect("/queue?error=ai_busy");
     throw err;
   }
   const errors: Record<string, string> = {

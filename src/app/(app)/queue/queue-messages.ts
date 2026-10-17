@@ -56,6 +56,8 @@ export const QUEUE_ERRORS: Record<string, string> = {
   gone: "That draft isn't waiting any more, so nothing was sent.",
   snooze: "That can't be put off that long — it looks urgent. Pick an earlier time.",
   draftfailed: "Couldn't write a draft for that one. Try again in a minute.",
+  // Check 48 P4: a slow, down or missing model on a tap.
+  ai_busy: "Writing is slow right now, so nothing changed. Try again in a moment.",
   gmail_busy: "Gmail asked us to slow down. Nothing was sent. Try again in a minute.",
   gmail_failed: "Gmail didn't answer, so nothing was sent. Try again in a minute.",
   // Check 43 P7.

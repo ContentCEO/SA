@@ -112,15 +112,41 @@ describe("lifecycle rules (pure)", () => {
     expect(canMakeMove("pause", from("canceled"), T0)).toBe(false);
     // An evaluation whose clock ran out can be extended.
     expect(canMakeMove("extend_evaluation", from("evaluating"), at(4))).toBe(true);
+    // Check 16 P2: never from invited — the clock starts on the first Gmail connect.
+    expect(canMakeMove("extend_evaluation", from("invited"), T0)).toBe(false);
+    expect(canMakeMove("extend_evaluation", from("evaluation_expired"), T0)).toBe(true);
   });
 
   it("resuming goes back as far as the account had got", () => {
-    const base = { setupPaidAt: null, setupCallCompletedAt: null, evaluationEndsAt: null };
+    const base = {
+      setupPaidAt: null,
+      setupCallCompletedAt: null,
+      evaluationEndsAt: null,
+      setupPaidVia: null,
+    };
     expect(resumeTarget(base)).toBe("invited");
     expect(resumeTarget({ ...base, evaluationEndsAt: at(3) }, T0)).toBe("evaluating");
     expect(resumeTarget({ ...base, evaluationEndsAt: at(3) }, at(4))).toBe("evaluation_expired");
     expect(resumeTarget({ ...base, setupPaidAt: T0 })).toBe("setup_paid");
     expect(resumeTarget({ ...base, setupPaidAt: T0, setupCallCompletedAt: T0 })).toBe("active");
+    // Check 17 P1: where it was paused from wins; a run-out evaluation comes back expired.
+    expect(resumeTarget({ ...base, pausedFrom: "past_due" })).toBe("past_due");
+    expect(
+      resumeTarget({ ...base, pausedFrom: "evaluating", evaluationEndsAt: at(3) }, at(4)),
+    ).toBe("evaluation_expired");
+    // Never setup_paid / active for a Stripe-paid account with no subscription.
+    const stripePaid = {
+      ...base,
+      setupPaidAt: T0,
+      setupCallCompletedAt: T0,
+      setupPaidVia: "stripe" as const,
+      stripeSubscriptionId: null,
+    };
+    expect(resumeTarget(stripePaid)).toBe("canceled");
+    expect(resumeTarget({ ...stripePaid, pausedFrom: "active" })).toBe("canceled");
+    expect(resumeTarget({ ...stripePaid, stripeSubscriptionId: "sub_1" })).toBe("active");
+    // The house account keeps today's behavior.
+    expect(resumeTarget({ ...stripePaid, setupPaidVia: "house" as const })).toBe("active");
   });
 
   it("shows day N of 3 and time left", () => {
@@ -230,6 +256,28 @@ describe("lifecycle in the database", () => {
       expect(log!.detail).toMatchObject({ by: "admin", move: "house_account" });
     });
 
+    it("Check 16 P2: an invited account's clock can't be started from /admin", async () => {
+      const { workspace: w } = await ensureUserAndWorkspace({ email: "new@shop.com" });
+      expect(w.status).toBe("invited");
+      await expect(applyAdminMove(w.id, "extend_evaluation", T0)).rejects.toBeInstanceOf(
+        MoveNotAllowedError,
+      );
+      const [still] = await database.select().from(workspaces).where(eq(workspaces.id, w.id));
+      expect(still!.status).toBe("invited");
+      expect(still!.evaluationEndsAt).toBeNull();
+      // Connecting Gmail later still starts a full three days.
+      await saveConnectedMailbox(still!, {
+        email: "new@shop.com",
+        refreshToken: "rt",
+        grantedScopes: [],
+      });
+      const [started] = await database.select().from(workspaces).where(eq(workspaces.id, w.id));
+      expect(started!.status).toBe("evaluating");
+      expect(started!.evaluationEndsAt!.getTime() - started!.evaluationStartedAt!.getTime()).toBe(
+        3 * DAY,
+      );
+    });
+
     it("refuses moves that don't fit the current status", async () => {
       await expect(applyAdminMove(workspaceId, "mark_setup_call_done", T0)).rejects.toBeInstanceOf(
         MoveNotAllowedError,
@@ -252,11 +300,23 @@ describe("lifecycle in the database", () => {
     it("pause then resume returns to where it was", async () => {
       await database
         .update(workspaces)
-        .set({ status: "setup_paid", setupPaidAt: T0, setupPaidVia: "stripe" })
+        .set({
+          status: "setup_paid",
+          setupPaidAt: T0,
+          setupPaidVia: "stripe",
+          stripeSubscriptionId: "sub_1",
+        })
         .where(eq(workspaces.id, workspaceId));
       await applyAdminMove(workspaceId, "pause", T0);
       expect((await workspace()).status).toBe("paused");
       expect(await applyAdminMove(workspaceId, "resume", T0)).toBe("setup_paid");
+      // Check 17 P1: without a live subscription a Stripe-paid account comes back canceled.
+      await database
+        .update(workspaces)
+        .set({ stripeSubscriptionId: null })
+        .where(eq(workspaces.id, workspaceId));
+      await applyAdminMove(workspaceId, "pause", T0);
+      expect(await applyAdminMove(workspaceId, "resume", T0)).toBe("canceled");
     });
   });
 

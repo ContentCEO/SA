@@ -16,6 +16,9 @@ import {
   type AdminRow,
 } from "@/server/admin";
 import { requireAdmin } from "@/server/session";
+import { mailboxesLine, mailboxesStuck, systemTroubleLines } from "@/server/admin-mailbox-rules";
+import { modelDownLine, stoppedHeading } from "@/server/model-alert-rules";
+import { modelsDownToday } from "@/server/model-alerts";
 import { isAdminEmail } from "@/server/admin";
 import { ADMIN_MOVES, canMakeMove, type AdminMove } from "@/server/lifecycle";
 import {
@@ -27,7 +30,11 @@ import {
   testUserAddedAction,
   resetTestPaymentsAction,
   setPlanAction,
+  tickLaunchAction,
 } from "./actions";
+import { LaunchReady } from "./launch-ready";
+import { launchChecks } from "@/server/launch-ready";
+import { loadLaunchFacts } from "@/server/launch-ticks";
 import { PendingButton } from "@/components/app/pending-button";
 import {
   salesTaxStatus,
@@ -108,6 +115,7 @@ const done: Record<string, string> = {
   pause: "Account paused.",
   resume: "Account resumed.",
   plan: "Plan saved.",
+  launch_ticked: "Marked done.",
   stripe_test:
     "Stripe connected in TEST mode: prices, billing portal and payment notifications are set up. Use card 4242 4242 4242 4242 to try it.",
   stripe_live: "Stripe connected in LIVE mode. Real cards will be charged.",
@@ -327,11 +335,15 @@ function WorkspaceCard({ w, now }: { w: AdminRow; now: Date }) {
       (m !== "house_account" || (own && w.setupPaidVia !== "house")),
   );
   const inverted = ["evaluation_expired", "past_due", "paused", "canceled"].includes(w.status);
+  const stuck = mailboxesStuck(w.mailboxes);
   return (
     <article
       aria-label={w.ownerEmail}
       className="flex flex-col gap-3 rounded-xl border bg-card p-4"
     >
+      {stuck ? (
+        <p className="sa-inverted self-start rounded-md px-2 py-1 text-sm font-black">Stuck</p>
+      ) : null}
       <header className="flex flex-wrap items-baseline justify-between gap-2">
         <div className="flex min-w-0 flex-col">
           <span className="truncate text-lg font-black">{w.businessName || w.ownerEmail}</span>
@@ -370,14 +382,7 @@ function WorkspaceCard({ w, now }: { w: AdminRow; now: Date }) {
           }
           value={w.evaluationEndsAt ? et.format(w.evaluationEndsAt) : "Not started"}
         />
-        <Stat
-          label="Mailboxes"
-          value={
-            w.mailboxes.total === 0
-              ? "None connected"
-              : `${w.mailboxes.total}${w.mailboxes.needReconnect ? `, ${w.mailboxes.needReconnect} need reconnect` : ", healthy"}`
-          }
-        />
+        <Stat label="Mailboxes" value={mailboxesLine(w.mailboxes, now)} />
         <Stat
           label="Last sync"
           value={w.mailboxes.lastSyncedAt ? relativeTime(w.mailboxes.lastSyncedAt, now) : "Never"}
@@ -479,6 +484,8 @@ export default async function AdminPage(props: PageProps<"/admin">) {
     testPayments,
     termsBoxOff,
     growthClientCount,
+    modelsDown,
+    launchFacts,
   ] = await Promise.all([
     adminOverview(now),
     countWorkspaces(),
@@ -491,6 +498,8 @@ export default async function AdminPage(props: PageProps<"/admin">) {
     // Database only: set by the last checkout that had to go without the terms box.
     termsBoxOffSince(),
     countGrowthClients(),
+    modelsDownToday(now),
+    loadLaunchFacts(),
   ]);
   const growthStates = await growthStateForEmails(waiting.map((w) => w.email));
   const today = adminToday(now);
@@ -516,6 +525,10 @@ export default async function AdminPage(props: PageProps<"/admin">) {
   const stripeError = isStripe(params.error) ? errors[params.error as string] : undefined;
   // Only a fixed code travels in the URL (M11 C10); anything else shows nothing.
   const stripeReason = stripeReasonText(params.reason);
+  // Check 16 P1: one stuck inbox inverts the box, even when the others are fine.
+  const troubleLines = systemTroubleLines(system);
+  // Check 48 P3: a model Anthropic said was missing today. Model names and times only.
+  const systemInverted = system.jobsLookStopped || troubleLines.length > 0 || modelsDown.length > 0;
 
   return (
     <>
@@ -535,13 +548,19 @@ export default async function AdminPage(props: PageProps<"/admin">) {
       <section
         aria-labelledby="system"
         className={
-          system.jobsLookStopped
+          systemInverted
             ? "sa-inverted flex flex-col gap-2 rounded-xl p-4"
             : "flex flex-col gap-2 rounded-xl border-2 border-charcoal p-4"
         }
       >
         <h2 id="system" className="text-lg font-black">
-          {system.jobsLookStopped ? "Background jobs look stopped" : "System"}
+          {system.jobsLookStopped
+            ? "Background jobs look stopped"
+            : modelsDown.length
+              ? stoppedHeading(modelsDown.map((m) => m.role))
+              : troubleLines.length
+                ? "An inbox looks stuck"
+                : "System"}
         </h2>
         <p>
           {system.workingMailboxes === 0
@@ -551,6 +570,16 @@ export default async function AdminPage(props: PageProps<"/admin">) {
             ? ` ${system.needReconnect} need${system.needReconnect === 1 ? "s" : ""} reconnecting.`
             : ""}
         </p>
+        {modelsDown.map((m) => (
+          <p key={`${m.role}:${m.model}`} className="font-semibold">
+            {modelDownLine(m.role, m.model, et.format(m.since))}
+          </p>
+        ))}
+        {troubleLines.map((line) => (
+          <p key={line} className="font-semibold">
+            {line}
+          </p>
+        ))}
         {system.jobsLookStopped ? (
           <p>
             Mail is normally checked every 5 minutes. Open the Inngest dashboard (Vercel → sa →
@@ -558,6 +587,8 @@ export default async function AdminPage(props: PageProps<"/admin">) {
           </p>
         ) : null}
       </section>
+
+      <LaunchReady rows={launchChecks(process.env, launchFacts)} tickAction={tickLaunchAction} />
 
       <section aria-labelledby="accounts" className="flex flex-col gap-3">
         <h2 id="accounts" className="text-xl font-black">
