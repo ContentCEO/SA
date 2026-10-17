@@ -26,7 +26,9 @@ test("home page: promise, pricing from config, and a way in", async ({ page }) =
   for (const id of PLAN_IDS) {
     await expect(pricing.getByText(firstChargeLine(id, true), { exact: true })).toBeVisible();
   }
-  await expect(pricing.getByText("Plus sales tax where it applies.")).toHaveCount(0);
+  await expect(pricing.getByText("Plus sales tax where it applies.", { exact: true })).toHaveCount(
+    0,
+  );
   // Check 6 P9: one name for the join action.
   const nav = page.getByRole("navigation", { name: "Site" });
   await expect(nav.getByRole("link", { name: "Join the waitlist" })).toBeVisible();
