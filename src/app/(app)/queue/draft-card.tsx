@@ -10,7 +10,9 @@ import { OtherWaysToReply, SayAChange, TweakChips } from "./revise-controls";
 import { RemindMe, type SnoozeOption } from "./remind-me";
 import { CalledThem } from "./called-them";
 import { AutopilotCountdown } from "./autopilot-countdown";
-import { DraftEditor } from "./draft-editor";
+import { DraftEditor, keptEditKey } from "./draft-editor";
+import { SendButton } from "./send-button";
+import { readKept } from "@/lib/kept-text";
 import {
   addIntent,
   intentsServerSnapshot,
@@ -133,6 +135,15 @@ const buzz = () => {
  */
 export function DraftCard(p: DraftCardProps) {
   const [editing, setEditing] = useState(false);
+  // Check 8 P1 / 9 P4: text typed in Edit before a reload or a failed save, kept in this tab.
+  const [kept, setKept] = useState<string | null>(null);
+  useEffect(() => {
+    const k = readKept(keptEditKey(p.draftId), p.seenHash);
+    if (k === null) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- read once from the browser after mount
+    setKept(k);
+    setEditing(true);
+  }, [p.draftId, p.seenHash]);
   const [expanded, setExpanded] = useState(false);
   // Outside review (2026-10-15): the quick changes live behind one button, so Send reply
   // stays on the first screen of a card.
@@ -280,11 +291,15 @@ export function DraftCard(p: DraftCardProps) {
         <DraftEditor
           draftId={p.draftId}
           body={body}
+          kept={kept}
           seenHash={p.seenHash}
           toAddress={p.toAddress}
           toLine={<ToLine address={p.toAddress} fromReplyTo={p.toFromReplyTo} />}
           canSend={p.canSend}
-          onCancel={() => setEditing(false)}
+          onCancel={() => {
+            setKept(null);
+            setEditing(false);
+          }}
         />
       ) : null}
       {editing ? null : (
@@ -381,12 +396,18 @@ export function DraftCard(p: DraftCardProps) {
                   </Button>
                 </div>
               ) : p.canSend ? (
-                <form action={sendDraftAction} onSubmit={okayOffline}>
+                <form
+                  action={sendDraftAction}
+                  onSubmit={okayOffline}
+                  // Check 8 P1: with offline okays on, the no-signal guard lets this one through
+                  // (it's kept on the phone); otherwise a tap with no signal is stopped first.
+                  data-offline-ok={p.offlineEnabled ? "" : undefined}
+                >
                   <input type="hidden" name="draftId" value={p.draftId} />
                   <input type="hidden" name="seen" value={p.seenHash} />
                   {p.toAddress ? <input type="hidden" name="seenTo" value={p.toAddress} /> : null}
                   {body !== p.body ? <input type="hidden" name="body" value={body} /> : null}
-                  <Pending label="Send reply" busy="Sending…" size="lg" className="w-full" />
+                  <SendButton />
                 </form>
               ) : (
                 <>

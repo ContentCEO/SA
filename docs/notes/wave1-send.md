@@ -55,3 +55,28 @@ For the integrator to fold into `CLAUDE.md` (Decisions), `docs/LAUNCH.md` and th
   now `draft-editor.tsx` with `editorAction` (useActionState; `saveDraftEditAction` is gone):
   it answers inside the card, puts the newest text in the box and keeps what was typed in a
   read-only "Your text" box. Quick changes redirect to `?error=changed_editing`.
+- **Check 8 P1 (no signal):** `NoSignalGuard` (`src/components/app/no-signal-guard.tsx`, once in
+  the (app) layout) stops any form submit while `navigator.onLine` is false — a capture
+  listener on `window`, ahead of React's own on `document` — unless the form is inside
+  `[data-offline-ok]` (only the card's Send reply, and only with offline okays on). Strip above
+  the tab bar: "No signal. Nothing was sent or changed. Try again when you have a bar."
+  (role=alert, inverted), and a quieter "No signal right now." whenever offline. New
+  `src/app/(app)/error.tsx` keeps the header and tab bar; offline or a failed request (a
+  `TypeError`) says "We couldn't reach Squared Away. If this was a reply, open the Queue when
+  you have signal: if the card is still there, it wasn't sent." Send reply shows "Still trying.
+  Weak signal. Don't close the app." after 12 s (`send-button.tsx`, words only). Typed text is
+  kept per tab in sessionStorage (`src/lib/kept-text.ts`, fingerprinted by what the screen
+  showed so a stale copy is dropped once the save went through): the Edit box (key per draft;
+  the card reopens the editor on reload) and the business profile form (`use-kept-form.ts`).
+- **Check 9 P3 (Gmail hiccups):** queueSend, saveDraftEdit, reviseDraft and discardDraft return
+  `gmail_busy` (MailboxRateLimitError) or `gmail_failed` (anything else Gmail threw) instead of
+  throwing; logged as `<where>_gmail_failed` {draftId, kind, error name}. Queue notices:
+  `gmail_failed` "Gmail didn't answer, so nothing was sent. Try again in a minute.", and every
+  notice a Send reply tap can reach now says whether anything was sent (unit test pins it).
+  The Queue's notice words moved to `src/app/(app)/queue/queue-messages.ts`.
+- **Check 9 P4 (Edit box keeps the text):** the Edit box's Save changes and Send reply both go
+  through `editorAction` (useActionState, `intent` = save | send); refusals answer inside the
+  card (role=alert) and the editor stays open. Gaps show as words ([time], [job address]) with
+  "Replace each [ ] before sending."; Send reply is replaced by "Fill in [time] first" while one
+  is left; the text goes back with tokens (`toEditorText` / `fromEditorText` /
+  `editorGapsLeft` in `src/ai/gaps.ts`), so the server's gap gate is unchanged.

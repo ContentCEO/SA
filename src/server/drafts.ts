@@ -1425,8 +1425,25 @@ async function whyNotQueued(draftId: string): Promise<{ status: "already_sending
   return sending ? { status: "already_sending" } : { status: "not_found" };
 }
 
+/**
+ * Check 9 P3: Gmail failed while a tap was being handled. Nothing was sent (and nothing
+ * changed); the owner is told so and can try again. Rate limit → gmail_busy, anything else
+ * (5xx, network) → gmail_failed. Only the error's name and the draft id are logged.
+ */
+export type GmailHiccup = "gmail_busy" | "gmail_failed";
+function gmailHiccup(err: unknown, where: string, draftId: string): GmailHiccup {
+  const kind = err instanceof MailboxRateLimitError ? "gmail_busy" : "gmail_failed";
+  console.error(`${where}_gmail_failed`, {
+    draftId,
+    kind,
+    error: err instanceof Error ? err.name : "unknown",
+  });
+  return kind;
+}
+
 export type QueueSendOutcome =
   | { status: "queued"; sendAfter: Date }
+  | { status: GmailHiccup }
   | { status: "changed_since_seen" }
   | { status: "intent_expired" }
   /** Who it goes to changed since the card was shown (a Reply-To re-point): look again. */
@@ -1552,7 +1569,8 @@ export async function queueSend(
       await markReconnectNeeded(mailbox);
       return { status: "reconnect_needed" };
     }
-    throw err;
+    // Nothing is queued yet: the tap failed, nothing went.
+    return { status: gmailHiccup(err, "queue_send", draft.id) };
   }
 
   const sendAfter = new Date(now.getTime() + UNDO_WINDOW_SECONDS * 1000);
@@ -1936,7 +1954,8 @@ export type SaveEditOutcome =
   /** Check 42 P2: changed in Gmail since; nothing written, the Gmail text is now the draft's. */
   | "changed_in_gmail"
   /** Check 42 P2: saved from another device since this editor opened; nothing written. */
-  | "changed_since_opened";
+  | "changed_since_opened"
+  | GmailHiccup;
 
 export async function saveDraftEdit(
   workspaceId: string,
@@ -1988,7 +2007,7 @@ export async function saveDraftEdit(
       await markReconnectNeeded(mailbox);
       return "reconnect_needed";
     }
-    throw err;
+    return gmailHiccup(err, "save_edit", draft.id);
   }
 }
 
@@ -2005,6 +2024,7 @@ export type ReviseOutcome =
   /** Check 42 P2: changed in Gmail (or on another device) since; nothing rewritten. */
   | { status: "changed_in_gmail" }
   | { status: "changed_since_opened" }
+  | { status: GmailHiccup }
   | { status: "not_found" };
 
 /**
@@ -2070,7 +2090,7 @@ export async function reviseDraft(
       await markReconnectNeeded(mailbox);
       return { status: "reconnect_needed" };
     }
-    throw err;
+    return { status: gmailHiccup(err, "revise", draft.id) };
   }
 
   const spoken = "spoken" in change ? change.spoken.trim().slice(0, 500) : null;
@@ -2220,7 +2240,7 @@ export async function reviseDraft(
       await markReconnectNeeded(mailbox);
       return { status: "reconnect_needed" };
     }
-    throw err;
+    return { status: gmailHiccup(err, "revise", draft.id) };
   }
   await db()
     .update(drafts)
@@ -2298,7 +2318,7 @@ export async function discardDraft(
   workspaceId: string,
   draftId: string,
   opts: DraftDeps = {},
-): Promise<"discarded" | "not_found"> {
+): Promise<"discarded" | "not_found" | GmailHiccup> {
   const row = await loadOwnedDraft(workspaceId, draftId);
   if (!row || row.draft.status !== "pending" || row.draft.sendAfter) return "not_found";
   const now = opts.now?.() ?? new Date();
@@ -2309,7 +2329,8 @@ export async function discardDraft(
     try {
       await writer.deleteDraft(row.draft.gmailDraftId);
     } catch (err) {
-      if (!(err instanceof MailboxAuthError)) throw err;
+      // Check 9 P3: Gmail didn't answer. The draft stays here and in Gmail; try again.
+      if (!(err instanceof MailboxAuthError)) return gmailHiccup(err, "discard", row.draft.id);
       await markReconnectNeeded(row.mailbox);
     }
   }

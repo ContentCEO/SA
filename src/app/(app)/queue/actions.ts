@@ -26,6 +26,7 @@ import { ReadOnlyError, SendingBlockedError } from "@/server/lifecycle";
 import { hitLimit } from "@/server/rate-limit";
 import { dismissChecklist } from "@/server/onboarding";
 import { requireOwner } from "@/server/session";
+import { QUEUE_ERRORS } from "./queue-messages";
 
 const id = z.string().uuid();
 const body = z.string().trim().min(1, "The reply is empty.").max(20_000);
@@ -35,31 +36,37 @@ const seenHash = (v: FormDataEntryValue | null) =>
 const address = (v: FormDataEntryValue | null) =>
   typeof v === "string" && v.length <= 320 ? v : undefined;
 
-export async function sendDraftAction(formData: FormData) {
-  const { workspace } = await requireOwner();
+/**
+ * What a Send reply tap came to: a place to go (sent, or the card is gone), or a refusal that
+ * leaves the draft waiting — always with nothing sent. Shared by the card's Send reply and the
+ * Edit box's (which shows a refusal inside the card instead of leaving it).
+ */
+type SendTap = { go: string } | { refused: string; changed?: boolean; at?: number };
+
+async function sendTap(workspaceId: string, formData: FormData): Promise<SendTap> {
   const draftId = id.safeParse(formData.get("draftId"));
-  if (!draftId.success) redirect("/queue?error=unknown");
+  if (!draftId.success) return { go: "/queue?error=unknown" };
   const edited = formData.get("body");
   const editedBody = typeof edited === "string" ? body.safeParse(edited) : null;
-  if (editedBody && !editedBody.success) redirect("/queue?error=empty");
-  if (!(await hitLimit("send", workspace.id)).allowed) redirect("/queue?error=busy");
+  if (editedBody && !editedBody.success) return { refused: "empty" };
+  if (!(await hitLimit("send", workspaceId)).allowed) return { refused: "busy" };
   // The "To:" the card showed (H7). Missing (an old page) = not checked.
   const seenTo = address(formData.get("seenTo"));
   // Check 9 P1: the text the card showed. Every card sends it; without it we can't tell what
   // the owner read, so nothing is queued and the queue shows the latest text.
   const seen = seenHash(formData.get("seen"));
-  if (!seen) redirect("/queue?error=changed");
+  if (!seen) return { refused: "changed", changed: true };
 
   let outcome;
   try {
-    outcome = await queueSend(workspace.id, draftId.data, {
+    outcome = await queueSend(workspaceId, draftId.data, {
       editedBody: editedBody?.data,
       device: await device(),
       seenTo,
       seenHash: seen,
     });
   } catch (err) {
-    if (err instanceof SendingBlockedError) redirect("/queue?error=blocked");
+    if (err instanceof SendingBlockedError) return { refused: "blocked" };
     throw err;
   }
   switch (outcome.status) {
@@ -67,34 +74,46 @@ export async function sendDraftAction(formData: FormData) {
       await enqueue(
         draftSendQueued.create({ draftId: draftId.data, at: outcome.sendAfter.toISOString() }),
       );
-      redirect(`/queue?sent=${draftId.data}`);
+      return { go: `/queue?sent=${draftId.data}` };
     case "already_sending":
-      redirect(`/queue?sent=${draftId.data}`);
+      return { go: `/queue?sent=${draftId.data}` };
     case "changed_in_gmail":
     case "changed_since_seen":
-      redirect("/queue?error=changed");
+      return { refused: "changed", changed: true };
     case "answered_elsewhere":
       // Check 42 P1: no "Send anyway". The owner can tap Draft a reply for a second message.
-      redirect(`/queue?error=answered&d=${draftId.data}&at=${outcome.at.getTime()}`);
+      return { refused: "answered", at: outcome.at.getTime() };
     case "to_changed":
-      redirect("/queue?error=to_changed");
+      return { refused: "to_changed" };
     case "gaps_unfilled":
-      redirect("/queue?error=gaps");
+      return { refused: "gaps" };
     case "no_reply_address":
-      redirect("/queue?error=no_reply_address");
+      return { refused: "no_reply_address" };
     case "text_address":
-      redirect("/queue?error=textaddr");
+      return { refused: "textaddr" };
     case "deleted_in_gmail":
-      redirect("/queue?error=deleted");
+      return { go: "/queue?error=deleted" };
     case "reconnect_needed":
-      redirect("/queue?error=reconnect");
+      return { refused: "reconnect" };
     case "mailbox_paused":
-      redirect("/queue?error=paused");
+      return { refused: "paused" };
+    case "gmail_busy":
+    case "gmail_failed":
+      return { refused: outcome.status };
     case "not_found":
-      redirect("/queue?error=gone");
+      return { go: "/queue?error=gone" };
     default:
-      redirect("/queue?error=unknown");
+      return { refused: "unknown" };
   }
+}
+
+export async function sendDraftAction(formData: FormData) {
+  const { workspace } = await requireOwner();
+  const r = await sendTap(workspace.id, formData);
+  if ("go" in r) redirect(r.go);
+  if (r.refused === "answered")
+    redirect(`/queue?error=answered&d=${String(formData.get("draftId"))}&at=${r.at}`);
+  redirect(`/queue?error=${r.refused}`);
 }
 
 /** For the proof-of-okay record (#41): phone or computer, from the browser's own description. */
@@ -188,6 +207,9 @@ export type EditorState = {
 
 const CHANGED_WHILE_EDITING =
   "This reply changed while you were editing. Here's the newest version; make your change again. Nothing was saved or sent.";
+const CHANGED_WHILE_EDITING_SEND =
+  "This reply changed while you were editing, so nothing was sent. Here's the newest version; make your change again, then tap Send reply.";
+const GAPS_IN_EDITOR = "Replace each [ ] before sending. Nothing was sent.";
 
 /** The newest text of a draft, as the editor needs it: the text and its fingerprint. */
 async function latestFor(workspaceId: string, draftId: string) {
@@ -196,8 +218,9 @@ async function latestFor(workspaceId: string, draftId: string) {
 }
 
 /**
- * Save changes from the Edit box. Refusals come back to the open editor (nothing typed is
- * lost); only a save that worked, or a draft that's gone, leaves the card.
+ * The Edit box's Save changes and Send reply (Check 9 P4, Check 42 P2). A refusal comes back to
+ * the open editor with the words inside the card — nothing typed is lost; only a save or send
+ * that worked, or a draft that's gone, leaves the card.
  */
 export async function editorAction(_prev: EditorState, formData: FormData): Promise<EditorState> {
   const { workspace } = await requireOwner();
@@ -205,6 +228,21 @@ export async function editorAction(_prev: EditorState, formData: FormData): Prom
   if (!draftId.success) redirect("/queue?error=unknown");
   const typed = typeof formData.get("body") === "string" ? String(formData.get("body")) : "";
   const keep = (message: string): EditorState => ({ message, latest: null, typed: null });
+  const changed = async (message: string): Promise<EditorState> => {
+    const latest = await latestFor(workspace.id, draftId.data);
+    if (!latest) redirect("/queue?error=gone");
+    return { message, latest, typed };
+  };
+
+  if (formData.get("intent") === "send") {
+    const r = await sendTap(workspace.id, formData);
+    if ("go" in r) redirect(r.go);
+    if (r.refused === "answered") redirect(`/queue?error=answered&d=${draftId.data}&at=${r.at}`);
+    if (r.changed) return changed(CHANGED_WHILE_EDITING_SEND);
+    if (r.refused === "gaps") return keep(GAPS_IN_EDITOR);
+    return keep(QUEUE_ERRORS[r.refused] ?? QUEUE_ERRORS.unknown!);
+  }
+
   const text = body.safeParse(typed);
   if (!text.success) return keep("The reply is empty, so nothing was saved.");
   if (!(await hitLimit("gmailWrite", workspace.id)).allowed)
@@ -223,17 +261,18 @@ export async function editorAction(_prev: EditorState, formData: FormData): Prom
     case "saved":
       redirect("/queue?done=saved");
     case "changed_in_gmail":
-    case "changed_since_opened": {
-      const latest = await latestFor(workspace.id, draftId.data);
-      if (!latest) redirect("/queue?error=gone");
-      return { message: CHANGED_WHILE_EDITING, latest, typed };
-    }
+    case "changed_since_opened":
+      return changed(CHANGED_WHILE_EDITING);
     case "deleted_in_gmail":
       redirect("/queue?error=deleted");
     case "mailbox_paused":
       redirect("/queue?error=paused");
     case "reconnect_needed":
       return keep("Google access was lost. Nothing was saved. Reconnect Gmail in Settings.");
+    case "gmail_busy":
+      return keep("Gmail asked us to slow down. Nothing was saved. Try again in a minute.");
+    case "gmail_failed":
+      return keep("Gmail didn't answer, so nothing was saved. Try again in a minute.");
     default:
       redirect("/queue?error=gone");
   }
@@ -244,12 +283,15 @@ export async function discardDraftAction(formData: FormData) {
   const draftId = id.safeParse(formData.get("draftId"));
   if (!draftId.success) redirect("/queue?error=unknown");
   if (!(await hitLimit("gmailWrite", workspace.id)).allowed) redirect("/queue?error=busy");
+  let r;
   try {
-    await discardDraft(workspace.id, draftId.data);
+    r = await discardDraft(workspace.id, draftId.data);
   } catch (err) {
     if (err instanceof ReadOnlyError) redirect("/queue?error=readonly");
     throw err;
   }
+  // Check 9 P3: Gmail didn't answer — the draft is still there, nothing changed.
+  if (r === "gmail_busy" || r === "gmail_failed") redirect(`/queue?error=${r}_discard`);
   redirect("/queue?done=discarded");
 }
 
@@ -320,6 +362,8 @@ export async function reviseDraftAction(formData: FormData) {
     not_first_contact: "unknown",
     changed_in_gmail: "changed_editing",
     changed_since_opened: "changed_editing",
+    gmail_busy: "gmail_busy",
+    gmail_failed: "gmail_failed",
   };
   redirect(r.status === "revised" ? "/queue?done=revised" : `/queue?error=${errors[r.status]}`);
 }
