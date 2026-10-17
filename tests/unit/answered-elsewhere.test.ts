@@ -223,6 +223,11 @@ describe("Check 14 P1: the owner's own Gmail reply isn't our draft sent", () => 
     expect((await deliverQueuedSend(draft.id, w.deps(at(21)))).status).toBe("sent");
     expect((await w.row(draft.id)).sentVia).toBe("app");
     const two = await w.seed();
+    // Autopilot sends only a draft it holds: counting down and claimed (Check 9 P2).
+    await w.database
+      .update(drafts)
+      .set({ autoSendAt: NOW, autoSendClaimedAt: NOW })
+      .where(eq(drafts.id, two.draft.id));
     const r = await sendDraft(w.workspace.id, two.draft.id, { ...w.deps(), by: "autopilot" });
     expect(r.status).toBe("sent");
     expect((await w.row(two.draft.id)).sentVia).toBe("autopilot");

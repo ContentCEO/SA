@@ -1268,6 +1268,10 @@ export async function sendDraft(
   if (opts.queued ? !draft.sendAfter : draft.sendAfter) {
     return opts.queued ? { status: "not_found" } : { status: "already_sending" };
   }
+  // Check 9 P2: autopilot sends only a draft it still holds: counting down (not held, edited
+  // or switched off since) and claimed by this run. Anything that cleared the countdown wins.
+  if (opts.by === "autopilot" && (!draft.autoSendAt || !draft.autoSendClaimedAt))
+    return { status: "not_found" };
   if (!canSend(workspace, now)) throw new SendingBlockedError(effectiveStatus(workspace, now));
   // Paused on the plan (2026-10-16): refused before any Gmail call, whoever pressed send.
   if (mailbox.planPausedAt) return { status: "mailbox_paused" };
@@ -1476,7 +1480,8 @@ export async function queueSend(
   if (!row || row.draft.status !== "pending" || !row.draft.gmailDraftId)
     return { status: "not_found" };
   const { draft, mailbox, thread, workspace } = row;
-  if (draft.sendAfter) return { status: "already_sending" };
+  // Check 9 P2: autopilot is sending this one right now; a tap can't start a second send.
+  if (draft.sendAfter || autopilotSending(draft, now)) return { status: "already_sending" };
   if (!canSend(workspace, now)) throw new SendingBlockedError(effectiveStatus(workspace, now));
   if (opts.offline) {
     const age = now.getTime() - opts.offline.okayedAt.getTime();
@@ -1635,6 +1640,18 @@ export async function undoSend(workspaceId: string, draftId: string): Promise<bo
 
 /** A claim older than this belongs to a run that died; another may take it. */
 const SEND_CLAIM_LEASE_MS = 2 * 60_000;
+
+/** Check 9 P2: the same for autopilot's claim (`drafts.auto_send_claimed_at`). */
+export const AUTOPILOT_CLAIM_LEASE_MS = 2 * 60_000;
+
+/** Check 9 P2: an autopilot run holds this draft right now (Hold it is too late). */
+export const autopilotSending = (
+  d: Pick<Draft, "autoSendAt" | "autoSendClaimedAt">,
+  now: Date,
+): boolean =>
+  d.autoSendAt != null &&
+  d.autoSendClaimedAt != null &&
+  d.autoSendClaimedAt.getTime() > now.getTime() - AUTOPILOT_CLAIM_LEASE_MS;
 
 export type DeliverResult =
   { status: "sent" } | { status: "not_due" } | { status: "stopped"; why: string };

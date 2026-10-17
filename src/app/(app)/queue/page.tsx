@@ -118,6 +118,10 @@ const errors: Record<string, string> = {
   review_recent: "You asked them for a review in the last 12 months.",
   complaint: "Not for a complaint — reply to that one yourself.",
   has_draft: "Send or discard the reply first.",
+  // Check 9 P2: Hold it never says "Held." for a reply that went.
+  autopilot_sending:
+    "Too late to hold: autopilot is sending it right now. It shows on Activity in a minute.",
+  hold_gone: "That reply isn't counting down any more, so there was nothing to hold.",
   paused:
     "That Gmail address is paused on your plan, so nothing was sent or written. Pick which one is on in Settings → Your Gmail.",
   unknown: "That didn't work. Refresh and try again.",
@@ -332,6 +336,22 @@ export default async function QueuePage(props: PageProps<"/queue">) {
       ) : null}
       {doneMsg ? <Notice>{doneMsg}</Notice> : null}
       {errorMsg ? <Notice strong>{errorMsg}</Notice> : null}
+      {params.error === "autopilot_sent" ? (
+        <Notice strong>
+          Too late, autopilot already sent it. See it on Activity.
+          {typeof params.d === "string" && /^[0-9a-f-]{36}$/i.test(params.d) ? (
+            <>
+              {" "}
+              <Link
+                href={`/record/${params.d}`}
+                className="inline-flex min-h-tap items-center underline underline-offset-4"
+              >
+                See record
+              </Link>
+            </>
+          ) : null}
+        </Notice>
+      ) : null}
       {answered ? (
         <Notice strong>
           This was already answered from Gmail
@@ -475,7 +495,8 @@ export default async function QueuePage(props: PageProps<"/queue">) {
               needsOwnerReason={i.needsOwnerReason}
               canSend={sending && !i.mailboxPaused}
               readOnly={readOnly || i.mailboxPaused}
-              autoSendAt={i.autoSendAt ? clock.format(i.autoSendAt) : null}
+              autoSendAt={i.autoSendAt ? i.autoSendAt.toISOString() : null}
+              autoSendClock={i.autoSendAt ? clock.format(i.autoSendAt) : null}
               sendingOffLabel={i.mailboxPaused ? MAILBOX_PAUSED_LINE : sendingOffLabel(workspace)}
               sendingOffDetail={
                 i.mailboxPaused

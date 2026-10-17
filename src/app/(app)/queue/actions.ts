@@ -285,8 +285,14 @@ export async function holdAutopilotAction(formData: FormData) {
   const { workspace } = await requireOwner();
   const draftId = id.safeParse(formData.get("draftId"));
   if (!draftId.success) redirect("/queue?error=unknown");
-  const held = await holdAutopilot(workspace.id, draftId.data);
-  redirect(held ? "/queue?done=held" : "/queue?error=unknown");
+  const r = await holdAutopilot(workspace.id, draftId.data);
+  // Check 9 P2: "Held." only for a draft that did not go.
+  if (r.status === "held") redirect("/queue?done=held");
+  if (r.status === "too_late")
+    redirect(
+      r.sent ? `/queue?error=autopilot_sent&d=${draftId.data}` : "/queue?error=autopilot_sending",
+    );
+  redirect("/queue?error=hold_gone");
 }
 
 /** Hide the getting-started list — allowed only once every step is done. */

@@ -10,6 +10,7 @@ import { BodyWithGaps, ConfidenceTag, PastPrices, WhyThis, type PastPrice } from
 import { OtherWaysToReply, SayAChange, TweakChips } from "./revise-controls";
 import { RemindMe, type SnoozeOption } from "./remind-me";
 import { CalledThem } from "./called-them";
+import { AutopilotCountdown } from "./autopilot-countdown";
 import {
   addIntent,
   intentsServerSnapshot,
@@ -66,8 +67,10 @@ export type DraftCardProps = {
   canSend: boolean;
   /** Read-only account: show the draft, but no edit, discard or swipe. */
   readOnly?: boolean;
-  /** Autopilot will send this at this (formatted) time unless held. */
+  /** Autopilot will send this at this time (ISO) unless held (Check 9 P2: a live countdown). */
   autoSendAt?: string | null;
+  /** The same time as a clock ("9:42 AM"), in the owner's time zone. */
+  autoSendClock?: string | null;
   sendingOffLabel: string;
   sendingOffDetail: string;
   /** Plan #40: practice sends left during the three days; null outside them. */
@@ -267,10 +270,7 @@ export function DraftCard(p: DraftCardProps) {
           className="sa-inverted flex flex-col gap-2 rounded-lg p-3"
         >
           <input type="hidden" name="draftId" value={p.draftId} />
-          <p>
-            <span className="font-black">Autopilot sends this at {p.autoSendAt}</span>{" "}
-            <span className="text-ash">unless you hold it.</span>
-          </p>
+          <AutopilotCountdown sendAt={p.autoSendAt} clock={p.autoSendClock ?? ""} />
           <Pending label="Hold it" busy="Holding…" className="w-full" />
         </form>
       ) : null}

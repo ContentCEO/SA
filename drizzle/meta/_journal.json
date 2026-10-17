@@ -281,6 +281,13 @@
       "when": 1792258162358,
       "tag": "0039_send_path_sent_via",
       "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "7",
+      "when": 1792258870232,
+      "tag": "0040_send_path_autopilot_claim",
+      "breakpoints": true
     }
   ]
 }

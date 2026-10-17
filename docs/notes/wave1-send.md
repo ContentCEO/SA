@@ -33,3 +33,16 @@ For the integrator to fold into `CLAUDE.md` (Decisions), `docs/LAUNCH.md` and th
   `owner_wrote_own_reply` "You answered Dana yourself in Gmail" (no See record). decidedAt =
   that email's time. own_words is left out of monthSummary, the weekly scorecard's sent count,
   monthMoney's "paid after a follow-up" and the digest's "sent yesterday".
+- **Check 9 P2 (honest Hold it; migration `0040_send_path_autopilot_claim`, additive):**
+  `drafts.auto_send_claimed_at`. `runAutopilotSend` claims the draft in one conditional UPDATE
+  (pending, countdown due, unclaimed or claim older than `AUTOPILOT_CLAIM_LEASE_MS` = 2 min)
+  before any Gmail call; only the claimer goes on, and the claim is released when it stands
+  down, fails or throws. `sendDraft(by: "autopilot")` sends only a draft that is still counting
+  down **and** claimed (an edit, hold or plan change that cleared the countdown wins);
+  `queueSend` answers `already_sending` while a live autopilot claim holds it.
+  `holdAutopilot` → `{status: "held"} | {status: "too_late", sent} | {status: "not_found"}`;
+  "Held." only for a draft that did not go; too late → "Too late, autopilot already sent it.
+  See it on Activity." (+ See record) or "Too late to hold: autopilot is sending it right now."
+  The card shows a live countdown (`autopilot-countdown.tsx`: "Sends in 6 min", seconds in the
+  last minute; the clock time once for screen readers) and refreshes every 4 s for a minute at
+  zero.

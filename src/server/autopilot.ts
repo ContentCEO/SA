@@ -1,7 +1,20 @@
 import "server-only";
 import { hasUnfilledGap } from "@/ai/gaps";
 import { mentionsMoney } from "@/ai/money-words";
-import { and, count, desc, eq, gte, inArray, isNotNull, isNull, lte, sql } from "drizzle-orm";
+import {
+  and,
+  count,
+  desc,
+  eq,
+  gte,
+  inArray,
+  isNotNull,
+  isNull,
+  lt,
+  lte,
+  or,
+  sql,
+} from "drizzle-orm";
 import { pricing } from "@/config/pricing";
 import { db } from "@/db";
 import {
@@ -18,6 +31,8 @@ import { MailboxAuthError } from "@/mailbox/connector";
 import { MAILBOX_PAUSED_LINE, mailboxOn } from "./mailbox-plan-rules";
 import {
   AUTO_DRAFT_CATEGORIES,
+  AUTOPILOT_CLAIM_LEASE_MS,
+  autopilotSending,
   defaultWriter,
   sendDraft,
   type DraftDeps,
@@ -441,6 +456,28 @@ export async function runAutopilotSend(
   if (!row.draft.autoSendAt) return { status: "stood_down", reasons: ["Held or edited by you."] };
   if (row.draft.autoSendAt > now) return { status: "not_due" };
 
+  // Check 9 P2: claim it before any Gmail call. Only one run ever holds it, and once it does,
+  // Hold it is too late (and says so) instead of saying "Held." while the reply goes out.
+  const [claimed] = await db()
+    .update(drafts)
+    .set({ autoSendClaimedAt: now })
+    .where(
+      and(
+        eq(drafts.id, draftId),
+        eq(drafts.status, "pending"),
+        isNotNull(drafts.autoSendAt),
+        lte(drafts.autoSendAt, now),
+        or(
+          isNull(drafts.autoSendClaimedAt),
+          lt(drafts.autoSendClaimedAt, new Date(now.getTime() - AUTOPILOT_CLAIM_LEASE_MS)),
+        ),
+      ),
+    )
+    .returning({ id: drafts.id });
+  if (!claimed) return { status: "not_due" };
+  const release = () =>
+    db().update(drafts).set({ autoSendClaimedAt: null }).where(eq(drafts.id, draftId));
+
   const newer = await db()
     .select({ id: messages.id })
     .from(messages)
@@ -473,6 +510,7 @@ export async function runAutopilotSend(
       );
       if (others.length) reasons.push("You're writing a reply in Gmail.");
     } catch (err) {
+      await release();
       if (err instanceof MailboxAuthError) {
         await markReconnectNeeded(row.mailbox);
         return { status: "failed", outcome: "reconnect_needed" };
@@ -481,7 +519,10 @@ export async function runAutopilotSend(
     }
   }
   if (reasons.length) {
-    await db().update(drafts).set({ autoSendAt: null }).where(eq(drafts.id, draftId));
+    await db()
+      .update(drafts)
+      .set({ autoSendAt: null, autoSendClaimedAt: null })
+      .where(eq(drafts.id, draftId));
     await db()
       .insert(activityLog)
       .values({
@@ -494,14 +535,37 @@ export async function runAutopilotSend(
     return { status: "stood_down", reasons };
   }
 
-  const outcome = await sendDraft(row.workspace.id, draftId, { ...opts, by: "autopilot" });
-  return outcome.status === "sent"
-    ? { status: "sent" }
-    : { status: "failed", outcome: outcome.status };
+  let outcome;
+  try {
+    outcome = await sendDraft(row.workspace.id, draftId, { ...opts, by: "autopilot" });
+  } catch (err) {
+    // Not sent (a sent draft is no longer pending, so this touches nothing then): let a retry
+    // or the backstop claim it again.
+    await release();
+    throw err;
+  }
+  if (outcome.status === "sent") return { status: "sent" };
+  await release();
+  return { status: "failed", outcome: outcome.status };
 }
 
-/** The owner's "Hold it": the draft stays, and waits for their tap like any other. */
-export async function holdAutopilot(workspaceId: string, draftId: string): Promise<boolean> {
+/**
+ * The owner's "Hold it" (Check 9 P2): held only while no autopilot run has claimed it, so
+ * "Held." is only ever said of a draft that did not go. Too late once a run holds it (or it
+ * went); not found otherwise.
+ */
+export type HoldResult =
+  { status: "held" } | { status: "too_late"; sent: boolean } | { status: "not_found" };
+
+export async function holdAutopilot(
+  workspaceId: string,
+  draftId: string,
+  now: Date = new Date(),
+): Promise<HoldResult> {
+  const owned = inArray(
+    drafts.mailboxId,
+    db().select({ id: mailboxes.id }).from(mailboxes).where(eq(mailboxes.workspaceId, workspaceId)),
+  );
   const held = await db()
     .update(drafts)
     .set({ autoSendAt: null })
@@ -510,25 +574,38 @@ export async function holdAutopilot(workspaceId: string, draftId: string): Promi
         eq(drafts.id, draftId),
         eq(drafts.status, "pending"),
         isNotNull(drafts.autoSendAt),
-        inArray(
-          drafts.mailboxId,
-          db()
-            .select({ id: mailboxes.id })
-            .from(mailboxes)
-            .where(eq(mailboxes.workspaceId, workspaceId)),
+        or(
+          isNull(drafts.autoSendClaimedAt),
+          lt(drafts.autoSendClaimedAt, new Date(now.getTime() - AUTOPILOT_CLAIM_LEASE_MS)),
         ),
+        owned,
       ),
     )
     .returning({ threadId: drafts.threadId });
-  if (!held.length) return false;
-  await db().insert(activityLog).values({
-    workspaceId,
-    actor: "owner",
-    action: "autopilot_held",
-    threadId: held[0]!.threadId,
-    detail: { draftId },
-  });
-  return true;
+  if (held.length) {
+    await db().insert(activityLog).values({
+      workspaceId,
+      actor: "owner",
+      action: "autopilot_held",
+      threadId: held[0]!.threadId,
+      detail: { draftId },
+    });
+    return { status: "held" };
+  }
+  const [d] = await db()
+    .select({
+      status: drafts.status,
+      autoSendAt: drafts.autoSendAt,
+      autoSendClaimedAt: drafts.autoSendClaimedAt,
+    })
+    .from(drafts)
+    .where(and(eq(drafts.id, draftId), owned));
+  if (!d) return { status: "not_found" };
+  if (d.status === "sent" || d.status === "edited_and_sent")
+    return { status: "too_late", sent: true };
+  if (d.status === "pending" && autopilotSending(d, now))
+    return { status: "too_late", sent: false };
+  return { status: "not_found" };
 }
 
 /** Backstop for lost events: drafts whose window ended a while ago and are still waiting. */

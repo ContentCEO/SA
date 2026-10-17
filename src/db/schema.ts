@@ -472,6 +472,12 @@ export const drafts = pgTable(
     /** Autopilot: when this draft will send unless the owner holds it. Null = waits for a tap. */
     autoSendAt: timestamp("auto_send_at", { withTimezone: true }),
     /**
+     * Check 9 P2: the autopilot run that is sending this right now (set atomically before any
+     * Gmail call; cleared when it stands down). While set, Hold it is too late. A claim older
+     * than AUTOPILOT_CLAIM_LEASE_MS belongs to a run that died and may be retaken.
+     */
+    autoSendClaimedAt: timestamp("auto_send_claimed_at", { withTimezone: true }),
+    /**
      * Plan #7 undo send: the owner tapped Send reply; it goes at this time unless
      * they tap Undo. The draft stays `pending` meanwhile (so it still holds the
      * thread's one live slot) but is out of the queue. Null = not sending.

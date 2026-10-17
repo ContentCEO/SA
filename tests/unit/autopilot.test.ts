@@ -29,7 +29,13 @@ import {
   setAutopilot,
   type GuardrailInput,
 } from "@/server/autopilot";
-import { createDraftForThread, saveDraftEdit, threadsToAutoDraft } from "@/server/drafts";
+import {
+  createDraftForThread,
+  queueSend,
+  saveDraftEdit,
+  sendDraft,
+  threadsToAutoDraft,
+} from "@/server/drafts";
 import { saveConnectedMailbox } from "@/server/mailboxes";
 import { setWorkspacePlan } from "@/server/workspace-lifecycle";
 import { createTestDb } from "../support/db";
@@ -306,7 +312,7 @@ describe("in the database", () => {
     it("Hold it: never sends, and it waits for the owner's tap", async () => {
       const draftId = await drafted(await conversation());
       await considerAutopilot(draftId, NOW);
-      expect(await holdAutopilot(workspaceId, draftId)).toBe(true);
+      expect(await holdAutopilot(workspaceId, draftId)).toEqual({ status: "held" });
       expect(await runAutopilotSend(draftId, deps(later(30)))).toMatchObject({
         status: "stood_down",
       });
@@ -315,11 +321,92 @@ describe("in the database", () => {
       expect(d).toMatchObject({ status: "pending", autoSendAt: null });
     });
 
+    it("Check 9 P2: hold before the claim stops the send with zero Gmail send calls", async () => {
+      const draftId = await drafted(await conversation());
+      await considerAutopilot(draftId, NOW);
+      writer.calls = [];
+      expect(await holdAutopilot(workspaceId, draftId, later(GRACE_MINUTES))).toEqual({
+        status: "held",
+      });
+      expect(await runAutopilotSend(draftId, deps(later(GRACE_MINUTES)))).toMatchObject({
+        status: "stood_down",
+      });
+      expect(writer.calls).not.toContain("sendDraft");
+      expect(writer.sent).toHaveLength(0);
+    });
+
+    it("Check 9 P2: hold after the claim is too late, and the draft sends exactly once", async () => {
+      const draftId = await drafted(await conversation());
+      await considerAutopilot(draftId, NOW);
+      // The owner taps Hold it while the run is between its claim and Gmail's send.
+      const realSend = writer.sendDraft.bind(writer);
+      let hold: Awaited<ReturnType<typeof holdAutopilot>> | null = null;
+      writer.sendDraft = async (id: string) => {
+        hold = await holdAutopilot(workspaceId, draftId, later(GRACE_MINUTES));
+        return realSend(id);
+      };
+      expect(await runAutopilotSend(draftId, deps(later(GRACE_MINUTES)))).toEqual({
+        status: "sent",
+      });
+      expect(hold).toEqual({ status: "too_late", sent: false });
+      expect(writer.sent).toHaveLength(1);
+      // After it went: still too late, never "held".
+      expect(await holdAutopilot(workspaceId, draftId, later(GRACE_MINUTES + 1))).toEqual({
+        status: "too_late",
+        sent: true,
+      });
+      const held = await database
+        .select()
+        .from(activityLog)
+        .where(eq(activityLog.action, "autopilot_held"));
+      expect(held).toEqual([]);
+      expect(await runAutopilotSend(draftId, deps(later(20)))).toEqual({ status: "gone" });
+      expect(writer.sent).toHaveLength(1);
+    });
+
+    it("Check 9 P2: the claim is exclusive under two runners at once", async () => {
+      const draftId = await drafted(await conversation());
+      await considerAutopilot(draftId, NOW);
+      const results = await Promise.all([
+        runAutopilotSend(draftId, deps(later(GRACE_MINUTES))),
+        runAutopilotSend(draftId, deps(later(GRACE_MINUTES))),
+      ]);
+      expect(results.map((r) => r.status).sort()).toEqual(["not_due", "sent"]);
+      expect(writer.sent).toHaveLength(1);
+    });
+
+    it("Check 9 P2: a tap on Send reply while autopilot holds the claim starts no second send", async () => {
+      const draftId = await drafted(await conversation());
+      await considerAutopilot(draftId, NOW);
+      await database
+        .update(drafts)
+        .set({ autoSendClaimedAt: later(GRACE_MINUTES) })
+        .where(eq(drafts.id, draftId));
+      expect(await queueSend(workspaceId, draftId, deps(later(GRACE_MINUTES)))).toEqual({
+        status: "already_sending",
+      });
+      // And autopilot only sends what it still holds: an unclaimed countdown is refused.
+      await database.update(drafts).set({ autoSendClaimedAt: null }).where(eq(drafts.id, draftId));
+      expect(
+        await sendDraft(workspaceId, draftId, { ...deps(later(GRACE_MINUTES)), by: "autopilot" }),
+      ).toEqual({ status: "not_found" });
+      expect(writer.sent).toHaveLength(0);
+    });
+
+    it("Check 9 P2: a stood-down run lets go of its claim", async () => {
+      const draftId = await drafted(await conversation());
+      await considerAutopilot(draftId, NOW);
+      await database.update(workspaces).set({ setupPaidVia: null });
+      await runAutopilotSend(draftId, deps(later(GRACE_MINUTES)));
+      const [d] = await database.select().from(drafts).where(eq(drafts.id, draftId));
+      expect(d!.autoSendClaimedAt).toBeNull();
+    });
+
     it("someone else can't hold (or see) another owner's draft", async () => {
       const draftId = await drafted(await conversation());
       await considerAutopilot(draftId, NOW);
       const { workspace: other } = await ensureUserAndWorkspace({ email: "other@shop.com" });
-      expect(await holdAutopilot(other.id, draftId)).toBe(false);
+      expect(await holdAutopilot(other.id, draftId)).toEqual({ status: "not_found" });
     });
 
     it("an owner edit stands autopilot down", async () => {
