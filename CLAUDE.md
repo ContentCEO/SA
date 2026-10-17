@@ -1745,6 +1745,17 @@ Davi runs several builder sessions at once. The build order for review prompts i
   phone-like addresses. `NeedsYouCard` takes the private note line and the Move it sheet (not on
   check-ins or read-only accounts); draft cards show the lead lines then the note. Quote speed
   (C8) reads the same request query as response time, so it leaves lead-channel threads out too.
+- **Growth cross-sell rule (Check 5 P1, 2026-10-17):** the app may mention Growth only with static
+  text that is the same for every owner (no props, no counts, no conditions on mail, drafts,
+  quotes, money owed or activity). No Growth mention on /billing, read-only or expired screens, or
+  in lifecycle, digest, monthly-summary, alert or text-message content. No app data is ever copied
+  into a Growth lead. The one allowed line is `GrowthMention` (`src/components/app/growth-mention.tsx`,
+  no props, not placed yet: where it appears is Davi's call).
+- **Growth code may not import inbox modules or tables (Check 2 P5):** no `@/mailbox`, `@/ai`,
+  `@/jobs`, sync / classification / inbox / drafts / voice / quotes / customers / followups / digest,
+  and no threads, messages, drafts, mailboxes, voice or business profile, usage or activity log
+  tables. `tests/unit/growth-boundary.test.ts` enforces both rules; a new Growth file (like the
+  client portal) is added to its `GROWTH_PATHS` / `MENTIONS` lists on purpose, with a reason.
 
 ## Milestones
 

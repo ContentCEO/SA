@@ -115,6 +115,13 @@ describe("Squared Away Growth copy", () => {
     );
   });
 
+  it("the FAQ says a support look is never used for Growth (Check 2 P5)", () => {
+    const answer = growthCopy.faq.items.find((i) => i.q === "Will you see my customers' emails?");
+    expect(answer && typeof answer.a !== "string" ? answer.a.after : "").toBe(
+      " explains the few times a person might look, such as when you ask us for help. Even when Davi looks at your app account because you asked for help, nothing seen there is used for Growth.",
+    );
+  });
+
   it("labels the decorative switch plainly", () => {
     expect(growthCopy.switch).toEqual({ from: "The app", to: "One-on-one" });
   });

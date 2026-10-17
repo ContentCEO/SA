@@ -125,7 +125,7 @@ export const growthCopy = {
           before:
             "Growth work never uses your inbox. Nothing the app reads from your email is used for ads, posts or anything else we do for Growth. The app's ",
           link: "privacy policy",
-          after: " explains the few times a person might look, such as when you ask us for help.",
+          after: ` explains the few times a person might look, such as when you ask us for help. Even when ${davi} looks at your app account because you asked for help, nothing seen there is used for Growth.`,
         },
       },
       {
@@ -200,6 +200,14 @@ export const growthCopy = {
     title: "Squared Away Growth — ads, reviews and your website, done for you.",
     description: `Google ads, Facebook and Instagram ads, social media posts, Google Business Profile, reviews and websites for anyone in the trades. Done for you, one-on-one. Ask ${davi} to call you.`,
     twitterDescription: `Ads, posts, reviews, your Google listing and your website, done for you, one-on-one. For anyone in the trades. Ask ${davi} to call you.`,
+  },
+  /**
+   * The one line the signed-in app may show about Growth (GrowthMention). Static and the same for
+   * every owner: CLAUDE.md "Growth cross-sell rule", tests/unit/growth-boundary.test.ts.
+   */
+  appMention: {
+    line: "Want more work coming in? Squared Away Growth is a separate service. Nothing from your email is used for it.",
+    link: "See Squared Away Growth",
   },
   admin: {
     heading: (n: number) => `Waitlist and Growth calls (${n})`,
