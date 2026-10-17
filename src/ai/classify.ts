@@ -83,6 +83,24 @@ export type Extracted = ModelClassification["extracted"] & {
    */
   emergency?: boolean;
   emergency_at?: string;
+  /**
+   * Check 22 P2: why the attack mark was set — content-free codes ("instructions", "encoded",
+   * "hidden", "sticky", "model"). The owner may clear only a mark with no "hidden" / "encoded".
+   */
+  injection_reasons?: string[];
+  /** Check 22 P2: the owner rules' answer with the attack mark left out (for clearing it). */
+  without_injection?: {
+    needs_owner: boolean;
+    reason: string | null;
+    priority: "high" | "normal" | "low";
+    hits: string[];
+  };
+  /**
+   * Check 22 P2: the owner said "This is a normal email" (`injection_cleared_at`, ISO). Kept
+   * across later sorts; autopilot stays away for 30 days.
+   */
+  injection_cleared_by_owner?: boolean;
+  injection_cleared_at?: string;
   /** Round 2 TW B4: someone smells gas. Only ever present as `true`. */
   gas_smell?: boolean;
   /**
@@ -432,8 +450,14 @@ function codeChecks(email: EmailInput, opts: Pick<ClassifyOpts, "alsoCheck" | "s
       : null;
   // Checked in code first: the model is the thing being attacked. Every email in the burst,
   // and every older unsorted one the drafter may read.
-  const injectedText = injectionCheck(checked).flagged;
-  const injection = injectedText || opts.sticky?.injection === true;
+  const attack = injectionCheck(checked);
+  const injection = attack.flagged || opts.sticky?.injection === true;
+  // Check 22 P2: why, content-free ("instructions", "encoded", "hidden", "sticky"). The owner may
+  // clear only an "instructions" mark: hidden or encoded text is never ordinary.
+  const injectionReasons = [
+    ...attack.reasons,
+    ...(opts.sticky?.injection === true ? ["sticky"] : []),
+  ];
   const gasInText = mentionsGasSmell(checked) || mentionsGasSmell(fullText);
   // Check 22 P4: a carbon monoxide alarm; Check 36 P1: rotten-egg WATER with no gas word.
   const coInText = mentionsCarbonMonoxide(checked) || mentionsCarbonMonoxide(fullText);
@@ -455,6 +479,7 @@ function codeChecks(email: EmailInput, opts: Pick<ClassifyOpts, "alsoCheck" | "s
     allText,
     checked,
     injection,
+    injectionReasons,
     gasInText,
     coInText,
     electricalInText,
@@ -496,7 +521,7 @@ function codeFallback(email: EmailInput, c: ReturnType<typeof codeChecks>): Clas
     extracted: {
       ...UNREADABLE.extracted,
       ...(safety ? { urgency: "emergency" as const } : {}),
-      ...(c.injection ? { injection: true } : {}),
+      ...(c.injection ? { injection: true, injection_reasons: c.injectionReasons } : {}),
       ...(c.municipalSender ? { municipal: true } : {}),
       ...(c.gasInText ? { gas_smell: true } : {}),
       ...(co ? { co_alarm: true } : {}),
@@ -594,7 +619,7 @@ export async function classifyEmail(
     ...result,
     signals: { ...result.signals, mentions_legal: legal },
   };
-  const { hits, ...rules } = applyOwnerRules(model, {
+  const ownerCtx = {
     firstTimeSender: email.firstTimeSender,
     senderIsVip: opts.senderIsVip,
     senderNeedsMe: opts.senderNeedsMe,
@@ -613,7 +638,13 @@ export async function classifyEmail(
         address: result.extracted.address,
         towns: opts.serviceTowns ?? [],
       }) !== null,
-  });
+  };
+  const { hits, ...rules } = applyOwnerRules(model, ownerCtx);
+  // Check 22 P2: what the rules say with the attack mark left out, kept so the owner's "This is
+  // a normal email" can put the card right without another model call.
+  const withoutInjection = injection
+    ? applyOwnerRules(model, { ...ownerCtx, injection: false })
+    : null;
   // Building departments are never noise.
   const category: Category =
     municipal && result.category === "noise"
@@ -630,7 +661,25 @@ export async function classifyEmail(
     extracted: {
       ...result.extracted,
       ...(gasSmell || coAlarm || electricalHazard ? { urgency: "emergency" as const } : {}),
-      ...(injection ? { injection: true } : {}),
+      ...(injection
+        ? {
+            injection: true,
+            injection_reasons: [
+              ...checks.injectionReasons,
+              ...(result.signals.tries_to_instruct_assistant ? ["model"] : []),
+            ],
+          }
+        : {}),
+      ...(withoutInjection
+        ? {
+            without_injection: {
+              needs_owner: withoutInjection.needsOwner,
+              reason: withoutInjection.needsOwnerReason,
+              priority: withoutInjection.priority,
+              hits: withoutInjection.hits,
+            },
+          }
+        : {}),
       ...(municipal ? { municipal: true } : {}),
       ...(gasSmell ? { gas_smell: true } : {}),
       ...(coAlarm ? { co_alarm: true } : {}),

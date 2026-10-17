@@ -945,7 +945,19 @@ export async function createDraftForThread(
   // newest one the sorter saw: an older "ignore the above…" still in view means no job draft.
   if (opts.trigger !== "owner") {
     const inbound = withText.filter((x) => x.m.direction === "in").map((x) => x.text);
-    if (inbound.some((t) => injectionCheck(t).flagged))
+    // Check 22 P2: emails the owner already said were normal ("This is a normal email") aren't
+    // held against the thread; anything newer still is.
+    const clearedAt = (thread.extracted as { injection_cleared_at?: unknown } | null)
+      ?.injection_cleared_at;
+    const clearedMs = typeof clearedAt === "string" ? Date.parse(clearedAt) : NaN;
+    const unchecked = withText
+      .filter(
+        (x) =>
+          x.m.direction === "in" &&
+          !(Number.isFinite(clearedMs) && x.m.sentAt.getTime() <= clearedMs),
+      )
+      .map((x) => x.text);
+    if (unchecked.some((t) => injectionCheck(t).flagged))
       return { status: "skipped", reason: "untrusted" };
     if (inbound.some((t) => looksLikePaymentChange(t)))
       return { status: "skipped", reason: "payment_change" };

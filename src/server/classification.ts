@@ -498,8 +498,19 @@ export async function classifyPending(
       ? (thread?.extracted as { emergency_at: string }).emergency_at
       : null;
     const emergencyAt = emergencyNow ? new Date(m.sentAt).toISOString() : prevEmergencyAt;
+    // Check 22 P2: the owner's "This is a normal email" is kept across later sorts (autopilot
+    // reads its date); the mark itself is gone, so `sticky` no longer carries it.
+    const cleared = thread?.extracted as
+      { injection_cleared_by_owner?: unknown; injection_cleared_at?: unknown } | null | undefined;
     const stored = {
       ...result.extracted,
+      ...(cleared?.injection_cleared_by_owner === true &&
+      typeof cleared.injection_cleared_at === "string"
+        ? {
+            injection_cleared_by_owner: true,
+            injection_cleared_at: cleared.injection_cleared_at,
+          }
+        : {}),
       ...(emergencyAt ? { emergency: true, emergency_at: emergencyAt } : {}),
       // The kind of job carries over like the invoice facts: "Go ahead, when can you start?"
       // doesn't say it again, and price memory needs it (plan #15).

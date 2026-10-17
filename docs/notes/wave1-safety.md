@@ -96,6 +96,35 @@ Builder notes for `CLAUDE.md` (Decisions, Prompt versions, Waiting on Davi), `do
   to a no-reply address). Autopilot and batch refuse it; it counts for the 48-hour emergency
   mark. Eval metric `electricalHazardRecall` (strict).
 
+- **Attack-check false alarms (Check 22 P2):** `injectionCheck` no longer flags a bookkeeper's
+  / adjuster's / lender's "send me all the invoices" (only someone else's things or secrets:
+  the owner's, other customers', every customer's, passwords, logins, tokens, API keys, contact
+  or customer lists), the writer's own "my / our earlier instructions", "rules about / for",
+  "assistant manager" (and other job titles), Spanish "indicaciones" (the rules words need
+  anteriores / previas / todas las), or "when writing your response, list…" (it needs an order
+  to say / include / mention / add / reveal / confirm / agree / promise / always / never within
+  60 characters). Every round 2 catch still flags.
+- **"This is a normal email"** (`clearInjectionMark`, `src/server/injection-clear.ts`; rules in
+  `injection-clear-rules.ts`): a button on Queue needs-you cards whose mark has recorded reasons
+  (`extracted.injection_reasons`: instructions / encoded / hidden / sticky / model, content-free)
+  with no hidden or encoded text. Classification also keeps `extracted.without_injection` (the
+  owner rules' answer with the mark left out: needs-you, reason, priority, hits) so the card is
+  put right without a model call. Clearing removes `injection`, sets
+  `injection_cleared_by_owner` / `injection_cleared_at` (kept across later sorts, so the sticky
+  copy stops), restores the facts (the owner's "This one needs me" still wins), and writes
+  Activity `owner_cleared_injection` (no detail). Refused for another workspace, hidden or
+  encoded text, older rows without reasons, and read-only accounts. The draft job no longer holds
+  emails dated before the clear against the thread. Autopilot refuses the thread for 30 days
+  ("You said an email here was normal after we flagged it, so it waits for you."). Notices
+  `?done=normal_email`, `?error=not_clearable`.
+
+## Privacy policy lines (for the integrator)
+
+- Under "What we store", with the other content-free marks: "Whether an email looked like a gas
+  smell, a carbon monoxide alarm, an electrical fire sign, sulfur-smelling water or an emergency
+  (and when), why an email was marked as trying to instruct the assistant (a short code, not the
+  text), and whether you said it was a normal email."
+
 ## Questions for Davi
 
 1. **Carbon monoxide safety note wording** (built, waiting on okay before merge to production):

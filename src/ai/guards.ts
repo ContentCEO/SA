@@ -4,7 +4,10 @@
 
 /** Phrases aimed at an AI rather than at the owner. Lower-cased, whitespace-collapsed. */
 const INSTRUCTION_PATTERNS: RegExp[] = [
-  /\b(ignore|disregard|forget|override)\b.{0,40}\b(previous|prior|above|earlier|all|your|system)\b.{0,20}\b(instructions?|prompts?|rules)\b/,
+  // Check 22 P2: never the writer's own ("my earlier instructions about the gate", "forget my
+  // previous instructions, the lockbox code changed"), and never "rules about / for" (the HOA's
+  // old rules about work hours). "Ignore all previous instructions" still flags.
+  /\b(ignore|disregard|forget|override)\b(?:(?!\b(?:my|our)\b).){0,40}\b(previous|prior|above|earlier|all|your|system)\b(?:(?!\b(?:my|our)\b).){0,20}\b(instructions?|prompts?|rules(?! (about|for|on|regarding)\b))\b/,
   // "Ignore the above and …", "disregard everything above" (review B2). "Ignore the above
   // email/quote" is a person correcting themselves, so a following noun lets it pass.
   /\b(ignore|disregard)\b (all |everything |anything )?(of )?(the |what's |what is )?(above|preceding)\b(?! (emails?|messages?|notes?|one|address|quotes?|prices?|dates?|times?|text|mail|requests?|invoices?|estimates?|numbers?|photos?|pictures?))/,
@@ -15,14 +18,22 @@ const INSTRUCTION_PATTERNS: RegExp[] = [
   /\b(dear|hello|hi|hey|attention|attn) (the )?(ai|automated|virtual)( email)? (assistant|system|bot|model|agent|responder)\b/,
   /\b(dear|hello|hi|hey|attention|attn) (ai|assistant|chat ?bot|bot)\b\s*[:,]/,
   /\bnote (for|to) (the )?(ai|assistant|automated system|automated assistant|bot|language model)\b/,
-  /\bwhen (drafting|writing|generating|composing) (your|the|a) (reply|response|answer)\b/,
-  /\bif (an? |the |any )?(ai|assistant|bot|chat ?bot|language model|automated system)\b.{0,20}\b(is )?(reading|processing|handling|answering|sees|read)\b/,
+  // Check 22 P2: only with an order about what to say ("…confirm the job is free", "…always
+  // include the owner's cell"), never "when writing your response, list your exclusions".
+  /\bwhen (drafting|writing|generating|composing) (your|the|a) (reply|response|answer)\b.{0,60}\b(say|says|include|mention|add|reveal|confirm|agree|promise|state|tell|always|never)\b/,
+  // Check 22 P2: "if the assistant manager is handling this" is a person's job title.
+  /\bif (an? |the |any )?(ai|assistant(?! (manager|superintendent|principal|director|coach|editor|project manager|pm)\b)|bot|chat ?bot|language model|automated system)\b.{0,20}\b(is )?(reading|processing|handling|answering|sees|read)\b/,
   /\b(reveal|print|repeat|output) (your|the) (instructions|prompt|system)/,
-  /\b(send|forward|email|give|share) (me|us) (the |your )?(owner'?s?|all( of)?( the)?|every|other customers'?)\b.{0,40}\b(emails?|passwords?|logins?|bank|account|card|tokens?|api key|contacts?|customers?|invoices?)\b/,
+  // Check 22 P2: only what belongs to someone else or is a secret. "Send me all of the
+  // invoices from September" (a bookkeeper, an adjuster, a lender's draw) is ordinary.
+  /\b(send|forward|email|give|share) (me|us) (the |your )?(owner'?s?|other customers'?|every customer'?s?|all( of)?( the| your)? other customers'?)\b.{0,40}\b(emails?|passwords?|logins?|bank|account|card|tokens?|api key|contacts?|customers?|invoices?|phone|numbers?|address(es)?)\b/,
+  /\b(send|forward|email|give|share) (me|us) (the |your )?(all( of)?( the| your)? |every )?(passwords?|logins?|tokens?|api keys?|contacts?( list)?|customer (list|contacts|emails|addresses))\b/,
   /\bnew instructions\b|\bbegin (new )?instructions\b|\[\s*(system|inst)\s*\]|<\|?\s*(im_start|system)\s*\|?>/,
   // Spanish and Portuguese (review B2): "ignora las instrucciones anteriores",
   // "ignore as instruções anteriores", "olvida todo lo anterior".
-  /\b(ignora|ignore|ignorar|olvida|olvide|olvidar|esquece|esqueça|esquecer|desconsidera|desconsidere)\b.{0,30}(instrucciones|instruções|instrucoes|indicaciones|reglas|regras)\b/,
+  // Check 22 P2: no "indicaciones" (directions to the house), and the rules only with
+  // anteriores / previas / todas las.
+  /\b(ignora|ignore|ignorar|olvida|olvide|olvidar|esquece|esqueça|esquecer|desconsidera|desconsidere)\b.{0,30}((todas (las|as) |todas )(instrucciones|instruções|instrucoes|reglas|regras)|(instrucciones|instruções|instrucoes|reglas|regras) (anteriores|previas|prévias|previas))\b/,
   /\b(ignora|olvida|esquece|esqueça|desconsidera)\b (todo|tudo) (lo |o )?(anterior|acima)\b/,
   /\b(instrucciones|instruções|instrucoes) (anteriores|previas|prévias)\b/,
   /\b(eres|você é|voce e|tú eres|tu eres) (ahora |agora )?(un |uma |um )?(asistente|assistente|ia|inteligencia artificial|inteligência artificial)\b/,

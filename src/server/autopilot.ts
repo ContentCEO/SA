@@ -36,6 +36,7 @@ import { knownCustomer } from "./known-customer";
 import { isEmailToTextAddress, looksLikePhoneAddress } from "./channel-rules";
 import { complainedAddresses } from "./offers";
 import { recentEmergency } from "./emergency-rules";
+import { injectionClearedRecently } from "./injection-clear-rules";
 import { markReconnectNeeded } from "./sync";
 import { unsentDraftMessage } from "./thread-sql";
 
@@ -138,6 +139,8 @@ export type GuardrailInput = {
   coAlarm?: boolean;
   /** Check 37 P1: electrical fire signs. */
   electricalHazard?: boolean;
+  /** Check 22 P2: the owner cleared an attack mark on this thread in the last 30 days. */
+  injectionCleared?: boolean;
   /** Check 36 P2: an emergency on this conversation in the last 48 hours. */
   recentEmergency?: boolean;
   /** Ideas H4: the owner chose this kind and the sorter said otherwise. */
@@ -186,6 +189,8 @@ export function guardrailReasons(g: GuardrailInput): string[] {
   if (g.emailUnreadable) out.push("We can't read their email any more, so it waits for you.");
   if (g.gasSmell) out.push("Someone smells gas. Call them.");
   if (g.coAlarm) out.push("A carbon monoxide alarm went off. Call them.");
+  if (g.injectionCleared)
+    out.push("You said an email here was normal after we flagged it, so it waits for you.");
   if (g.electricalHazard) out.push("Sounds like an electrical fire risk. Call them.");
   if (g.recentEmergency)
     out.push(
@@ -422,6 +427,7 @@ async function blockers(row: NonNullable<Awaited<ReturnType<typeof loadForAutopi
     electricalHazard: extracted.electrical_hazard === true || mentionsElectricalHazard(fullText),
     legalInEmail: mentionsRealLegal(fullText) || mentionsLegalThreat(fullText),
     recentEmergency: recentEmergency(thread.extracted, now),
+    injectionCleared: injectionClearedRecently(thread.extracted, now),
     emailUnreadable: fullBody === null,
     ownerMoved: thread.categoryManual != null && thread.categoryManual !== extracted.model_category,
     leadChannel: thread.leadChannel != null,
