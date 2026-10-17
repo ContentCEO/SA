@@ -107,5 +107,35 @@ edits this file after it is created.
 - [x] Wave 0, Ground rules and safety nets, 11) C26 P2
 - [x] Wave 0, Ground rules and safety nets, 12) C31 P3
 - [x] Wave 0, Ground rules and safety nets, 13) C49 P1
+- [x] Wave 1, Send path, 1) C09 P1
+- [x] Wave 1, Send path, 2) C42 P1 + C14 P1 [M]
+- [x] Wave 1, Send path, 3) C09 P2 [M]
+- [x] Wave 1, Send path, 4) C42 P2
+- [x] Wave 1, Send path, 5) C08 P1 + C09 P3 + C09 P4
+- [x] Wave 1, Send path, 6) C43 P7
+- [x] Wave 1, Send path, 7) C43 P9
+- [x] Wave 1, Send path, 8) C09 P10
+- [x] Wave 1, Send path, 9) C38 P1
+- [x] Wave 1, Draft checks, 1) C20 P1 + C23 P3 + C23 P4
+- [x] Wave 1, Draft checks, 2) C23 P1 + C20 P11 + C36 P10
+- [x] Wave 1, Draft checks, 3) C23 P2 + C38 P6 + C36 P7 [M]
+- [x] Wave 1, Draft checks, 4) C40 P1
+- [x] Wave 1, Draft checks, 5) C41 P1
+- [x] Wave 1, Draft checks, 6) C39 P4 + C37 P5
+- [x] Wave 1, Draft checks, 7) C38 P7
+- [x] Wave 1, Draft checks, 8) C23 P5
+- [x] Wave 1, Draft checks, 9) C38 P2
+- [x] Wave 1, Draft checks, 10) C23 P6
+- [x] Wave 1, Draft checks, 11) C23 P7
+- [x] Wave 1, Draft checks, 12) C23 P10
+- [x] Wave 1, Draft checks, 13) C23 P13
+- [x] Wave 1, Draft checks, 14) C23 P14
+- [x] Wave 1, Homepage words, 1) C06 P1
+- [x] Wave 1, Homepage words, 2) C06 P2 + C06 P3 + C06 P7 + C34 P6
+- [x] Wave 1, Homepage words, 3) C06 P4 + C06 P5 + C34 P2 + C34 P3
+- [x] Wave 1, Homepage words, 4) C34 P1 + C35 P2 + C35 P5
+- [x] Wave 1, Homepage words, 5) C35 P4 + C35 P3
+- [x] Wave 1, Homepage words, 6) C35 P1
+- [x] Wave 1, Homepage words, 7) C06 P8 + C06 P9 + C06 P10 + C34 P5 + C42 P7
 
 Later steps are added to this list as their pull requests merge.

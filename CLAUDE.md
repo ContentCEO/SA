@@ -1779,8 +1779,9 @@ Davi runs several builder sessions at once. The build order for review prompts i
   `<kind>.v<N>.ts` file (constant `<KIND>_PROMPT_VERSION = "<kind>.v<N>"`) plus one line in
   `ACTIVE`; `prompt-versions.test.ts` fails on two files with one version, a gap, an `ACTIVE`
   that isn't the newest file, or code that records a version imported from an older file.
-  Active after the integration: classify.v4, draft.v7, followup.v4, voice.v2, revise.v2,
-  purpose.v2, edit-tone.v1, opening-tweaks.v1. Taken, so the review pages' names shift:
+  Active after the wave 1 integration: classify.v4, draft.v8, followup.v4, voice.v3, revise.v2,
+  purpose.v2, edit-tone.v1, opening-tweaks.v1, dispute-caution.v1 (a suffix on draft / revise
+  versions, never stored alone). Taken, so the review pages' names shift:
   - **draft.v8** = the review's "draft.v7" bundle: Check 23 P11 + 43 P1 + 44 P1 (and 45 P2) + the
     prompt parts of 40 P1 and 41 P1. Then the trade files of Check 36 P8, 37 P4 and 39 P6, in
     draft.v8 or the next version (**draft.v9**).
@@ -2009,6 +2010,347 @@ null}` flags any link on a plain one); reconcile expires it like a review note; 
     covers /admin/growth's readers. The terms and privacy policy took clarifications only (trial
     emails, plan pause, emergency voicemails, alerts as a convenience, Growth as a separate
     service); the date stays 2026-10-16 with `TERMS_VERSION` (re-agree is Davi's call, LAUNCH.md).
+
+- **Wave 1 integration (2026-10-17, branch `integrate-w1` on `claude/squared-away-mvp-ddxl7s`):**
+  `wave1-send`, `wave1-checks` and `wave1-home` merged with `--no-ff` in that order.
+  - **Migrations:** one chain after 0038 in merge order: `0039_send_path_sent_via` (when
+    1792258162358), `0040_send_path_autopilot_claim` (1792258870232), `0041_licenses`
+    (1792271229521; `0039_licenses` on its branch, regenerated with drizzle-kit on top of 0040, SQL
+    byte-identical). Applied on a scratch database on top of main's journal: 42 rows, nothing
+    skipped. The referral branch takes the numbers after these.
+  - **Prompts:** `draft.v8` (Draft checks: Check 38 P6 licenses line, Check 40 P1 deductible, Check
+    41 P1 safety), `voice.v3` (Check 23 P7 typed blanks), new kind `dispute-caution.v1` (Check 43
+    P9). A dispute / legal draft stores `draft.v8+dispute-caution.v1` (a tweak
+    `revise.v2+dispute-caution.v1`); `dispute-caution.test.ts` pins it to `ACTIVE.draft`.
+  - **Edit box and blanks:** the Edit box's word swap (Check 9 P4: `{{time}}` shows as `[time]`)
+    swaps only typed gaps; a `[name]`-style blank (Check 23 P7) shows as written, goes back
+    unchanged, and is named in "Fill in [name] first" (`src/ai/gaps.ts`, test in
+    `gmail-hiccups.test.ts`). The Queue's gap notice lives in `queue-messages.ts`: "Fill in every
+    blank before sending. Nothing was sent."
+  - **Send path (wave 1, group "Send path"):**
+    - **Check 9 P1 (seen text):** every Send reply (card, Edit box) posts `seen` = `bodyHash` of the
+      text the card showed; the review page posts `seen:<draftId>` / `seenTo:<draftId>` per row.
+      `queueSend({ seenHash })` returns `changed_since_seen` when the stored text differs, and the
+      queue write itself only lands while `drafts.body` is still the text that was checked. The
+      server action refuses a tap with no fingerprint (an old page) the same way; the JSON route
+      takes an optional `seen` for online sends (409 `changed_since_seen`). Notice:
+      "That draft changed since you opened it, so nothing was sent. Here's the latest version. Read
+      it, then tap Send reply again."
+    - **Check 42 P1 (answered from Gmail):** `answeredSince(threadId, since, mailboxEmail)`
+      (`src/server/drafts.ts`): an email from the shop on the thread after the draft was written,
+      not an unsent Gmail draft, not a practice copy (To/Cc only the mailbox's own address) and
+      **not a side conversation** (`sideEmailSql`: a forward to the crew is no answer; the spec
+      didn't say, but without it a forward to the crew would set the reply aside). queueSend and
+      sendDraft return `answered_elsewhere` (with when) before any Gmail call; the Queue shows "This
+      was already answered from Gmail at 2:14pm. Nothing was sent." with "Open the conversation in
+      Gmail" (no Send anyway). reconcileDrafts sets a waiting reply aside (expired, Gmail draft
+      deleted, note "Someone answered this from Gmail, so this reply was set aside.") after the
+      customer-wrote-again and the Gmail-draft-gone branches. A send in its undo window is closed
+      the same way by deliverQueuedSend, which logs `send_stood_down` {draftId, reason} (Activity:
+      "Didn't send the reply to Dana: someone had already answered from Gmail") instead of
+      `send_stopped`. Autopilot unchanged (its own newer-mail check runs first).
+    - **Check 14 P1 (`drafts.sent_via`, migration `0039_send_path_sent_via`, additive):** app /
+      autopilot / gmail / own_words; null = older rows, counted as before. Reconcile with our Gmail
+      draft gone and a newer shop email: our message id or the same text (`prepareBody` +
+      `sameText`) → `gmail` (`edited_and_sent` when the id matched but the text differs); otherwise
+      `own_words` with status still `sent` (two-nudge cap unchanged), Activity
+      `owner_wrote_own_reply` "You answered Dana yourself in Gmail" (no See record). decidedAt =
+      that email's time. own_words is left out of monthSummary, the weekly scorecard's sent count,
+      monthMoney's "paid after a follow-up" and the digest's "sent yesterday".
+    - **Check 9 P2 (honest Hold it; migration `0040_send_path_autopilot_claim`, additive):**
+      `drafts.auto_send_claimed_at`. `runAutopilotSend` claims the draft in one conditional UPDATE
+      (pending, countdown due, unclaimed or claim older than `AUTOPILOT_CLAIM_LEASE_MS` = 2 min)
+      before any Gmail call; only the claimer goes on, and the claim is released when it stands
+      down, fails or throws. `sendDraft(by: "autopilot")` sends only a draft that is still counting
+      down **and** claimed (an edit, hold or plan change that cleared the countdown wins);
+      `queueSend` answers `already_sending` while a live autopilot claim holds it.
+      `holdAutopilot` → `{status: "held"} | {status: "too_late", sent} | {status: "not_found"}`;
+      "Held." only for a draft that did not go; too late → "Too late, autopilot already sent it.
+      See it on Activity." (+ See record) or "Too late to hold: autopilot is sending it right now."
+      The card shows a live countdown (`autopilot-countdown.tsx`: "Sends in 6 min", seconds in the
+      last minute; the clock time once for screen readers) and refreshes every 4 s for a minute at
+      zero.
+    - **Check 42 P2 (never overwrite Gmail's text):** `saveDraftEdit` and `reviseDraft` read the
+      Gmail draft first (reviseDraft before the model is called, and again before it writes): a
+      different text there becomes the draft's (`takeGmailText`, countdown and queued send
+      cleared) and they return `changed_in_gmail` without writing to Gmail. Both take an
+      `openedHash` (the Edit box posts `opened`, the quick-change forms post `seen`): a stored text
+      that moved on since → `changed_since_opened`, no Gmail call, no model call. The Edit box is
+      now `draft-editor.tsx` with `editorAction` (useActionState; `saveDraftEditAction` is gone):
+      it answers inside the card, puts the newest text in the box and keeps what was typed in a
+      read-only "Your text" box. Quick changes redirect to `?error=changed_editing`.
+    - **Check 8 P1 (no signal):** `NoSignalGuard` (`src/components/app/no-signal-guard.tsx`, once in
+      the (app) layout) stops any form submit while `navigator.onLine` is false — a capture
+      listener on `window`, ahead of React's own on `document` — unless the form is inside
+      `[data-offline-ok]` (only the card's Send reply, and only with offline okays on). Strip above
+      the tab bar: "No signal. Nothing was sent or changed. Try again when you have a bar."
+      (role=alert, inverted), and a quieter "No signal right now." whenever offline. New
+      `src/app/(app)/error.tsx` keeps the header and tab bar; offline or a failed request (a
+      `TypeError`) says "We couldn't reach Squared Away. If this was a reply, open the Queue when
+      you have signal: if the card is still there, it wasn't sent." Send reply shows "Still trying.
+      Weak signal. Don't close the app." after 12 s (`send-button.tsx`, words only). Typed text is
+      kept per tab in sessionStorage (`src/lib/kept-text.ts`, fingerprinted by what the screen
+      showed so a stale copy is dropped once the save went through): the Edit box (key per draft;
+      the card reopens the editor on reload) and the business profile form (`use-kept-form.ts`).
+    - **Check 9 P3 (Gmail hiccups):** queueSend, saveDraftEdit, reviseDraft and discardDraft return
+      `gmail_busy` (MailboxRateLimitError) or `gmail_failed` (anything else Gmail threw) instead of
+      throwing; logged as `<where>_gmail_failed` {draftId, kind, error name}. Queue notices:
+      `gmail_failed` "Gmail didn't answer, so nothing was sent. Try again in a minute.", and every
+      notice a Send reply tap can reach now says whether anything was sent (unit test pins it).
+      The Queue's notice words moved to `src/app/(app)/queue/queue-messages.ts`.
+    - **Check 9 P4 (Edit box keeps the text):** the Edit box's Save changes and Send reply both go
+      through `editorAction` (useActionState, `intent` = save | send); refusals answer inside the
+      card (role=alert) and the editor stays open. Gaps show as words ([time], [job address]) with
+      "Replace each [ ] before sending."; Send reply is replaced by "Fill in [time] first" while one
+      is left; the text goes back with tokens (`toEditorText` / `fromEditorText` /
+      `editorGapsLeft` in `src/ai/gaps.ts`), so the server's gap gate is unchanged.
+    - **Check 43 P7 (stale "tomorrow"):** pure `staleTiming(body, createdAt, now, timeZone)` in
+      `src/server/draft-timing.ts`: day words (today, tonight, tomorrow, this morning / afternoon /
+      evening, this week / weekend, next week, later today; hoy, mañana, esta tarde; hoje, amanhã)
+      when the draft's local day (owner's zone) is before today's; minute/hour words (in a few
+      minutes, in an hour, shortly, right away) also when it's over 2 hours old. `sendDraft` and
+      `queueSend` return `timing_check` {words, writtenOn, meant} before any Gmail call unless
+      `confirmedTiming`; the queued send (`deliverQueuedSend`) passes it (the tap was checked
+      seconds before); autopilot stands down with the note and can never confirm; batch counts it
+      refused. The card shows "Written Friday. It says “tomorrow”, which meant Saturday. Check the
+      timing." and Send reply becomes "Send reply anyway" (posts `confirmedTiming=1`), Edit stays.
+      The JSON route takes `confirmedTiming: true` (else 409 `timing_check`); offline okays are
+      refused with "its time words … may be out of date". **Wording differs from the spec** ("which
+      now means Saturday" was wrong for a draft read days later): it says what "tomorrow" meant
+      when written.
+    - **Check 43 P9 (dispute caution; prompt `dispute-caution.v1`, new kind in the registry):** on a
+      thread with `extracted.disputed` or the needs-owner reason LEGAL_REASON / DISPUTE_REASON,
+      every draft (the owner's tap; jobs never draft these) and every quick change gets the fixed
+      flag first ("This is about a dispute or something legal. What you write can be used later.
+      Keep it short and factual; many owners call their lawyer or insurer first."), confidence
+      capped at 40 (never Ready), and the fixed task line appended to the conversation's task.
+      Stored prompt version `draft.v8+dispute-caution.v1` (was `draft.v7+…` on its branch) (or `revise.v2+…`). Eval cases
+      `d-lawyer-reply`, `d-refund-dispute` (field `disputeCaution`); evals not run.
+    - **Check 9 P10 (stopped / late sends):** `sentDraftSummary` now returns `stopped: {why}` when the
+      newest send step for the draft is `send_stopped` (pending) or `send_stood_down` (expired),
+      and `late` when its window ended over a minute ago and no job holds it. The Queue shows
+      "Didn't send. It was changed in Gmail, so it's back below to check." (words shared with
+      Activity via `sendStoppedWhy`), and lists late sends on top ("Waiting to send: reply to
+      Priya", "Still sending. This is taking longer than usual.", Stop it = undo while unclaimed),
+      refreshing every 10 s (`late-sends.tsx`, `lateSends()`).
+    - **Check 38 P1 (change orders):** classification sets `extracted.change_order_approved` (only
+      `true`, content-free) instead of `quote_accepted` when the email accepts and the thread's
+      outcome was won before this email (`quote_outcome_at` < the email; any source; a legacy won
+      with no time is not "before"). `createDraftForThread` never picks a deposit when the newest
+      email is a change-order approval or the outcome was won before the newest customer email,
+      and adds the fixed flag "Change order approved. Put it in writing with the price and any new
+      finish date." Autopilot keeps refusing (accepts_quote). Eval cases `co-s3-lights`,
+      `co-e02-vanity` (invented stand-ins: the review's E02 text wasn't in the prompt).
+    - **Follow-ups on this branch:** the queue write also refuses a draft an autopilot run has
+      claimed meanwhile (`already_sending`); the Send reply handler returns a kind and the actions
+      redirect to fixed paths (the open-redirect fence, security-surface C4, stays unchanged).
+  - **Draft checks (wave 1, group "Draft checks"):**
+    - **Days and times as whole words (Check 20 P1 + 23 P3 + 23 P4, wave 1):** `src/ai/when-words.ts`
+      (pure). `normalizeWhen` writes days, dates and times one way ("Fri" → friday, "8 a.m." → 8am,
+      "Nov 27th" → november 27, "Mon–Fri" / "weekdays" → each day; "Sat", "Sun", "Wed" only when
+      capitalised, since they are everyday words) and `whenTokens` turns them into keys; the check
+      compares keys, never substrings ("fridge" no longer excuses "Fri"). New sources in
+      `CheckContext`: `whenSourceText` (the conversation, seasonal notes **and their end dates**
+      written "November 27", the owner's instruction / spoken words / a clean earlier draft — never
+      the hours, lead time or policies), `hoursText` (its times always count; its days only with
+      `allowHours`: the "Add my availability" tweak, or the customer asked when the owner is open,
+      `asksWhenAvailable`), `leadTimeText` (only its "two weeks out" wording counts). Times now include
+      "at 9", "around 8", "9:30", "9 o'clock", "10 a.m.", "in the morning"; loose timing adds "within
+      the hour", "before the day is out", "by tonight", holidays as deadlines ("before Thanksgiving";
+      any mention of the holiday in the conversation allows it), lead times ("three weeks out",
+      "booked up through …"). A "today"/"tonight"/"tomorrow" whose only source is a customer email
+      from an earlier local day gets "Says “tomorrow”, but they wrote that on Tuesday. Check the day."
+      A never-promise item about same-day work is broken by "today", "tonight", "within the hour" or
+      "before the day is out". Built in `whenContext()` in `src/server/drafts.ts` for new drafts and
+      revisions. "This coming Friday" reads as Friday (the day token covers it).
+    - **Money however it's said, round 2 (Check 23 P1 + 20 P11 + 36 P10, wave 1):** `moneyMentions`
+      now reads k-ranges ("3-4k" → 3000 and 4000; not "model 3-4K" or "10k BTU"), spoken prices
+      ("fourteen fifty", "twelve-fifty", "nineteen ninety-nine", "one fifty to come out" — only next
+      to a price word; for one to twelve only the clearly-price words, since "it's nine thirty" is a
+      time), "ninety-five bucks", "a buck fifty", "a hundred and a quarter/half", "seven hundred
+      fifty" (750) and "two thousand five hundred" (2500), €/£, "dólares"/"reais"/"pesos" (with
+      "1.500" thousands), "R$ 1.500,00", "mil quinientos", and the price words es / cuesta (unos) /
+      custa / fica em. New `vagueMoney()` ("low four figures", "a few bucks", "couple hundred
+      bucks"): autopilot's `mentionsMoney` counts it, and checkDraft flags it (hit `money`, cap 0.3)
+      "Gives a rough price (“low four figures”). Check you want to name a number." unless the owner
+      wrote it. Soft promise "for free" (also free of cost / won't cost you / we'll cover it); an
+      owner whose text offers free estimates may say "estimates are for free".
+    - **Claims, licenses and credentials (Check 23 P2 + 38 P6 + 36 P7, wave 1, migration
+      `0039_licenses` on this branch — renumber at merge):** `business_profile.licenses` jsonb
+      (`src/config/licenses.ts`: `hic_number`, `hic_expires_on`, `csl_number`, `lead_safe_license`,
+      `insurance_carrier`; one line each, ≤40 characters). Settings → Your business → Edit business
+      profile has a "Licenses and registrations (optional)" group (also in setup's optional
+      section); a form without the fields leaves them alone, an emptied line clears it. Settings →
+      Your business lists them and shows one line when the HIC runs out within 30 days (no email).
+      **Never on the public site** (Davi: no license number published until confirmed). Drafting:
+      `draft.v8`'s business block adds "Registration and licenses (quote exactly; never add
+      others)" (so revise / follow-up / purpose prompts that share `workspaceBlock` see it too), and
+      "Never invent" says never give another number or claim an unsaved credential; the numbers are
+      owner text for the check. checkDraft: a number after HIC / CSL / CS- / MP- / JP- / MGF / LR- /
+      license / lic. / registration / reg # (3+ digits) whose digits aren't in the owner's text →
+      hit `license` ("Mentions a license or registration number you haven't saved. Check it.", cap
+      0.3, in `REGENERATE_ON`), and the money finder never reads it as a price; "we're registered /
+      licensed / lead-safe certified / insured" with the matching field empty and not in the
+      owner's own words → hit `credential` ("Says you're registered and licensed. Add it in
+      Settings or take it out.", cap 0.5, flag only). "Licensed" is also backed by a license
+      number in the owner's text (a plumber's MP- in the signature). The old "licensed and
+      insured" soft promise became these claims. Warranty / guarantee / promise words now compare
+      with the owner's text only (a customer's "is that under warranty?" no longer excuses it). New
+      soft promises: no permit needed (incl. "skip the inspection"), up to code, waived fee, price
+      match, fit you in.
+    - **Prompt versions after wave 1 "Draft checks":** `draft.v8` (Check 38 P6 so far; later steps
+      add to it). `draft.v8` re-exports draft.v7's reply schema / openings / first-contact task and
+      draft.v6's conversation block; its `workspaceBlock` is v6's plus the licenses line.
+    - **Insurance-job promises (Check 40 P1, wave 1):** `INSURANCE_PROMISES` in draft-checks.ts —
+      cover / waive / absorb / eat / take care of / pay the deductible, "insurance will cover",
+      negotiating or dealing with the adjuster, handling the homeowner's claim, assignment of
+      benefits, "sign … today", "free roof", "no cost to you" / "nothing out of pocket". Only when
+      the owner never wrote it. Hit `insurance`, cap 0.2, in `REGENERATE_ON` (one fresh attempt),
+      flag "Talks about the deductible or the insurance claim in a way you may not be allowed to
+      promise. Check it." Any flag already keeps a draft out of autopilot and Send together (tested).
+      `draft.v8` "Never invent" gains the deductible / claim / sign-today line.
+    - **Lead-paint and safety claims (Check 41 P1, wave 1):** `SAFETY_CLAIMS` in draft-checks.ts —
+      "no lead worries" (no need to worry about lead, lead-free, no lead), "safe for people or
+      pets" (safe / harmless / non-toxic within a sentence of kids, baby, pets, dogs, family…,
+      either order), "pet and kid safe" (pet-safe, kid-friendly…), and on an older home only
+      (`olderHome()`: a year 1800–1977 near built / house / home / colonial, or "old house",
+      "pre-1978", "victorian") power sanding, sandblasting, torching, burning off, heat guns. Only
+      when the owner never wrote it. Hit `safety`, cap 0.3, in `REGENERATE_ON`; flag "Says “…”.
+      Safety and lead claims are yours to make, not the assistant's. Check it before sending."
+      `draft.v8` "Never invent" gains the safe / non-toxic / lead line. Eval cases: nursery paint,
+      1924 colonial exterior, lawn treatment with dogs, mice bait with a toddler.
+    - **Rule claims and rebate promises (Check 39 P4 + 37 P5, wave 1):** a draft sentence naming a
+      program or rule word (rebate, incentive, tax credit / credit — not "credit card" — HEAT Loan,
+      Mass Save, 0% loan, qualify, eligible, EPA, R-22, R-410A, R-454B, R-32, freon, refrigerant,
+      banned, phased out, legal / illegal, no longer made / allowed, code requires) that the owner's
+      own text (profile, price list, notes, instruction, their emails) never uses → hit
+      `rule_claim`, "Says something about a rebate, tax credit or refrigerant rule. Check it's still
+      true before sending.", cap 0.5, flag only (not in `REGENERATE_ON`, no extra model call). New
+      soft promise "a rebate or utility will pay" (Eversource / National Grid / Unitil / Mass Save /
+      the utility / rebates … covers / pays for / gives back / free / no cost; "you'll qualify for
+      the rebate").
+    - **“That's covered” and overages (Check 38 P7, wave 1):** new soft promises (owner-text rule,
+      usual "make sure you stand behind that" wording): "that's covered" (that's / it's / this is
+      covered, "covered under warranty / labor"; not "covered with plastic" or "you're covered for
+      Tuesday"), "fix it for free", "add it to the (final) bill / invoice / price", "that's fine"
+      right before an amount or "over", "no extra charge / cost / fee".
+    - **Light payment-terms check (Check 23 P5, wave 1):** every ordinary reply now carries
+      `termsSource` (payment terms + policies + price list, plus the owner's spoken words on a
+      tweak) and `ownerWrote` (the owner's emails on the thread, a clean earlier draft). checkDraft
+      flags a way to pay said the draft's way ("Venmo works", "by Zelle", "pay in cash"), deposit
+      wording ("half down", "a deposit of", "30% up front") and credit terms ("net 30", "due in 15
+      days", "pay later", "payment plan", "financing") that the owner's terms and emails don't say:
+      "Mentions “net 30” — that isn't in your payment terms. Check it.", cap 0.5. **Adapted:** its
+      hit is `payment_terms`, not `terms` as the prompt says, because `terms` is in `REGENERATE_ON`
+      and the prompt says this one must flag without a rewrite. Off when a caller gives no
+      `termsSource` (old callers unchanged). "Let me check" and "card" alone stay clean.
+      (draft.v6's vocabulary line "T&M vs. fixed price, net 30" is Check 23 P11's, in the review's
+      draft.v7 bundle — not done here.)
+    - **Massachusetts deposit cap (Check 38 P2, wave 1; uses wave 0's `business_profile.state`, no
+      migration):** "Which state do you work in?" (two-letter select, "Not set" allowed; in setup's
+      optional section and Settings; **no** preselect from the browser's time zone — the owner
+      picks it). `src/server/deposit-rules.ts` (pure): `depositShare()` reads the largest share paid
+      before work ("50%", "40 percent down", "half down", "two-thirds up front", "a third at
+      signing", "60/40", "in full up front"; a share only counts in a deposit clause, so "70% on
+      completion" and "10% off" don't), `overMaDepositCap()` (> one-third, MA only; "33%" and
+      "one-third" are fine). Wording and numbers in `src/config/ma-rules.ts`. An MA shop whose
+      payment terms ask for more sees, under "How do you get paid?" and on Settings → Your
+      business, "In Massachusetts a deposit can't be more than one-third of the contract, unless
+      special-order materials cost more (c.142A §2). Check this line." (the save still goes
+      through). checkDraft flags any MA draft (deposit notes included) that states a share over a
+      third: hit `deposit_cap`, "Massachusetts caps a deposit at one-third, or the cost of
+      special-order materials if higher. Check this before sending.", cap 0.5, never rewritten.
+      `SelectField` gained `emptyLabel` (an empty choice the owner can pick).
+    - **Phone numbers, links and names nobody gave (Check 23 P6, wave 1):** checkDraft flags (hit
+      `contact`, cap 0.3, in `REGENERATE_ON` — one fresh attempt) a US phone number whose digits
+      aren't in `sourceText` ("Has the number 978-555-0142, which isn't in your profile or this
+      email. Check it."), any link or email address not in `sourceText` (a review request's own link
+      keeps its own check), and a name the draft introduces — "my guy Pete", "our tech Luis", "the
+      Hendersons", "for Marie last week" — found nowhere in the conversation, the profile or the
+      conversation's From names (`knownNames`, from drafts.ts) ("Mentions “Pete”, who isn't in this
+      email or your profile. Check it."). Narrow on purpose: greetings, towns, streets, days,
+      holidays and brands ("for Eversource customers") don't trip it. At most two contact lines per
+      draft. Any flag already keeps a draft from autopilot (tested).
+    - **[name]-style blanks are gaps (Check 23 P7, wave 1):** `findGaps` now also returns the
+      blanks the send gate already refused (`OTHER_PLACEHOLDER`): "[name]" → their name, "[time]"
+      → time, "[date]" / "[day]" → date, "[price]" / "[amount]" / "$___" / "$X,XXX" → price,
+      anything else → its own words; `fillGap` fills them the same way, in text order. So the card
+      shows a chip, counts it in "Fill in N gaps to send", and never shows Send reply or Ready
+      until it's filled. checkDraft adds "Has a blank (“[name]”) to fill in." (hit `blank`, cap
+      0.6, no rewrite). The queue's gap notice is now "Fill in every blank before sending. Nothing
+      was sent." Prompt **`voice.v3`**: sample replies use `{{custom:name}}`, `{{custom:address}}`,
+      `{{date}}`, `{{time}}`, `{{price}}`; Settings → Your voice shows them as "[name]" etc.
+      (`showGaps`), never braces. Profiles learned with v2 keep "[name]"; the card handles those.
+      No voice eval set exists, so none was extended.
+    - **Whole-word phrases (Check 23 P10, wave 1):** `phraseRegex()` in draft-checks.ts (escaped,
+      inner spaces match any whitespace incl. a line break, no letter or digit either side, `iu`,
+      curly quotes read as straight) for the never-say list, the voice's avoided phrases and FILLER.
+      "hun" no longer flags "hunt", "sir" no longer flags "desire"; "Thanks hun!", "no problem!"
+      and "a.s.a.p." still do.
+    - **Filler variants (Check 23 P13, wave 1):** FILLER adds thanks (so much) for reaching out, I
+      hope you're / you are doing well, hope all is well, don't / do not hesitate, I / we apologize
+      for any inconvenience, at your earliest convenience, please be advised, rest assured, valued
+      customer ("sorry for the delay" stays off). **Adapted:** on a first reply to a new lead
+      (`firstContact` in the check context, from drafts.ts) "Thanks (so much) for reaching out" is
+      not filler, because draft.v7's first-contact section (Davi, 2026-10-16) tells the drafter it
+      may open that way.
+    - **Price-list wording (Check 23 P14, wave 1):** `priceListRows()` reads each price-list line:
+      its amounts, the qualifier on its first price ("from", "starting at", "starts at", "about"
+      before it; "plus parts" / "+ parts", "per hour" after it) and its job words (longer than
+      three letters, before the colon or the first price). checkDraft (given `priceList` = the
+      owner's price list, from drafts.ts) flags a listed amount written without its qualifier
+      ("Gives $1,450 without “from”, as your price list has it. Check it." — "from", "starting" and
+      "starts" count as the same) or in a sentence with none of the line's job words, as whole words
+      ("Uses your $1,450 price for something else. Check it."). **Adapted:** hit `price_list`, not
+      `money`, because the prompt says these join `REGENERATE_ON` only if Davi says so (`money` is
+      in it). Cap 0.5.
+  - **Homepage words (wave 1, group "Homepage words"):**
+    - **Homepage copy module (wave 1, Homepage words):** the homepage's steps, feature cards, FAQ,
+      promise band and pricing paragraph live in `src/components/marketing/home-copy.ts` (pure);
+      `src/app/page.tsx` renders them, and tests read the strings as visitors see them
+      (`homepageFaq()` in `legal-docs.test.ts` now looks the answer up in `faqs`). Plan cards are
+      `src/components/marketing/plan-cards.tsx`, keyed on plan ids.
+    - **Rule numbers in one pure place:** `src/config/rules.ts` holds `EARN_THRESHOLD`,
+      `GRACE_MINUTES` and `MAX_FOLLOWUPS` (re-exported from `src/server/autopilot.ts` and
+      `src/server/drafts.ts`, so callers didn't change). The homepage builds every rule number from
+      them (`numberWord()` in `src/lib/number-words.ts` spells 1–10).
+    - **Trial length words:** `src/lib/trial-words.ts` (`dayWord`, `daysPhrase`, `dayAdjective`);
+      nothing in `src/` types "three days" / "three-day" / "Day N of 3" / "3 more days" (guard test
+      in `tests/unit/trial-words.test.ts`, skipping `src/ai/prompts/` and comment lines; setup
+      steps "Step 1 of 3" aren't the trial and aren't caught). `TRIAL_NO_SEND_LINE` is built from
+      `pricing.evaluationDays`. The trial banner is `TrialClock` (`src/components/app/trial-clock.tsx`)
+      and says the clock's own length (`daysPhrase(clock.of)`), so a trial extended in /admin reads
+      "Day 3 of 6 · … your six days". `trialLengthDays(w)` (lifecycle.ts) gives the same length to
+      the Send reply note and the after-trial reason/banner ("Your six days are up."). Activity:
+      "Your three days started" (config), "Your trial ended", "Your trial was extended by three
+      days". Practice copies say "During your trial, Squared Away only sends to you." Admin buttons:
+      `Give ${evaluationDays} more days` / `Add ${evaluationDays} days`. A unit test fails with "ask
+      Davi to update the terms" if `evaluationDays` changes while `docs/terms.md` says "three-day
+      trial".
+    - **Plan lines by id:** `src/server/plan-features.ts` (pure): `FEATURED_PLAN`,
+      `planFeatureLines(id)`, `autopilotPlanNames()`, `SIGN_INS_PER_PLAN`. Used by the homepage
+      cards, `/billing` and autopilot's lock reason. No page compares a plan's display name.
+    - **First payment on the homepage cards:** each card shows `firstChargeLine(id, true)` (the
+      setup fee always included for a visitor), as `/billing` does. The standalone "Plus sales tax
+      where it applies." note is gone from the homepage and `/billing` (each card's line says it);
+      `SALES_TAX_NOTE` stays exported.
+    - **Setup call wording:** `SETUP_CALL_COVERS` + `setupCallSentence("before" | "after")` in
+      `billing-rules.ts`: "your prices, hours, service area and the things you never promise", then
+      "tune your drafts until they sound like you". Used by the homepage setup box, `/billing`
+      (before and after paying) and the setup_paid banner. "Scheduling" is gone.
+    - **Homepage feature cards (nine):** Knows your trade · Won't take orders from strangers · Sorts
+      every email (with the morning summary as its last sentence) · Writes like you · Chases quiet
+      quotes (only quotes the customer emailed about and the owner emailed back; "Quotes sent from
+      other software are left to that software"; "I called them" stops it) · Every quote in one list
+      (stage names from `stageLabel`) · Who owes you · Your customers, in one place · Your data stays
+      yours. No "Buzzes you" card (phone alerts aren't live until the VAPID keys are in) and no
+      Autopilot card (its rules are in the first FAQ, the plan cards and the pricing paragraph,
+      which now also says autopilot never answers a complaint or sends a reply that mentions money).
+    - **Queue picture:** shows Send reply (across the card) with Edit and Discard under it, as the
+      real card lays them out; no trial banner inside the phone; one caption under it: "Example.
+      During your three-day trial it drafts like this, but won't send to a customer."
+    - **Join button:** the header says "Join the waitlist" (was "Get on the list"), like every other
+      join action.
 
 ## Milestones
 
