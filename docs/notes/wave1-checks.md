@@ -147,3 +147,10 @@ Notes for the integrator: what CLAUDE.md should say, by step. Files in this grou
   curly quotes read as straight) for the never-say list, the voice's avoided phrases and FILLER.
   "hun" no longer flags "hunt", "sir" no longer flags "desire"; "Thanks hun!", "no problem!"
   and "a.s.a.p." still do.
+- **Filler variants (Check 23 P13, wave 1):** FILLER adds thanks (so much) for reaching out, I
+  hope you're / you are doing well, hope all is well, don't / do not hesitate, I / we apologize
+  for any inconvenience, at your earliest convenience, please be advised, rest assured, valued
+  customer ("sorry for the delay" stays off). **Adapted:** on a first reply to a new lead
+  (`firstContact` in the check context, from drafts.ts) "Thanks (so much) for reaching out" is
+  not filler, because draft.v7's first-contact section (Davi, 2026-10-16) tells the drafter it
+  may open that way.

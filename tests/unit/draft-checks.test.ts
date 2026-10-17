@@ -656,3 +656,36 @@ describe("never-say and avoided phrases as whole words (Check 23 P10)", () => {
     expect(checkDraft("Don’t worry, sweetie.", ctx(["don't worry"])).hits).toContain("never_say");
   });
 });
+
+describe("the common filler variants (Check 23 P13)", () => {
+  const ctx = { sourceText: "", doNotPromise: [] as string[], phrasesAvoided: [] as string[] };
+  it.each([
+    "Thanks for reaching out, happy to help.",
+    "Thanks so much for reaching out!",
+    "I hope you're doing well!",
+    "I hope you are doing well.",
+    "Hope all is well.",
+    "Don't hesitate to call.",
+    "Do not hesitate to call.",
+    "I apologize for any inconvenience.",
+    "We apologize for any inconvenience.",
+    "Reply at your earliest convenience.",
+    "Please be advised the office is closed.",
+    "Rest assured we'll sort it.",
+    "As a valued customer, you're first.",
+  ])("%s → doesn't sound like you", (body) => {
+    expect(checkDraft(body, ctx).flags[0]).toContain("doesn't sound like you");
+  });
+  it("“sorry for the delay” and a clean draft stay clean", () => {
+    expect(checkDraft("Sorry for the delay — what's the address?", ctx).hits).toEqual([]);
+    expect(checkDraft("Happy to look. What's the address?", ctx).hits).toEqual([]);
+  });
+  it("a first reply's warm opener isn't filler (draft.v7)", () => {
+    expect(
+      checkDraft("Thanks for reaching out, happy to help.", { ...ctx, firstContact: true }).hits,
+    ).toEqual([]);
+    expect(checkDraft("Don't hesitate to call.", { ...ctx, firstContact: true }).hits).toContain(
+      "filler",
+    );
+  });
+});

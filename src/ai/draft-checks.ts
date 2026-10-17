@@ -25,7 +25,28 @@ const FILLER = [
   "just circling back",
   "just following up on my last",
   "friendly reminder",
+  // Check 23 P13: the everyday variants. "Sorry for the delay" stays off: sometimes the owner
+  // really was late.
+  "thanks for reaching out",
+  "thanks so much for reaching out",
+  "i hope you're doing well",
+  "i hope you are doing well",
+  "hope all is well",
+  "don't hesitate",
+  "do not hesitate",
+  "i apologize for any inconvenience",
+  "we apologize for any inconvenience",
+  "at your earliest convenience",
+  "please be advised",
+  "rest assured",
+  "valued customer",
 ];
+
+/**
+ * A first reply to a new lead may open with a plain "Thanks for reaching out" (draft.v7's
+ * first contact, Davi 2026-10-16), so these two aren't filler there.
+ */
+const FIRST_REPLY_OPENERS = new Set(["thanks for reaching out", "thanks so much for reaching out"]);
 
 /*
  * Days, dates, times and loose timing ("today", "ASAP", "within the hour", "before
@@ -176,6 +197,8 @@ export type CheckContext = {
    * own name from the email's From line, the owner's.
    */
   knownNames?: string[];
+  /** A first reply to a new lead (draft.v7): "Thanks for reaching out" is its warm opener. */
+  firstContact?: boolean;
   /** Check 38 P2: the owner's two-letter state; "MA" turns on the one-third deposit check. */
   state?: string | null;
   /** Review requests only: the one link allowed, and nothing offered in return. */
@@ -875,9 +898,10 @@ export function checkDraft(draftBody: string, ctx: CheckContext): CheckResult {
     }
   }
 
-  const avoided = [...FILLER, ...ctx.phrasesAvoided.map((p) => p.trim().toLowerCase())].filter(
-    (p) => p && phraseRegex(p).test(phraseBody),
-  );
+  const avoided = [
+    ...FILLER.filter((p) => !(ctx.firstContact && FIRST_REPLY_OPENERS.has(p))),
+    ...ctx.phrasesAvoided.map((p) => p.trim().toLowerCase()),
+  ].filter((p) => p && phraseRegex(p).test(phraseBody));
   if (avoided.length) {
     flags.push(`Uses “${avoided[0]}”, which doesn't sound like you.`);
     cap = Math.min(cap, 0.6);

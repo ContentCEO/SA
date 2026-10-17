@@ -1002,6 +1002,8 @@ export async function createDraftForThread(
     neverSay: ctx.neverSay,
     licenses: ctx.licenses,
     state: ctx.state,
+    // Check 23 P13: a first reply's "Thanks for reaching out" isn't filler.
+    firstContact,
     // Check 23 P6: the names on the conversation's From lines may be used.
     knownNames: withText
       .flatMap(({ m }) => [m.fromName, customerReplyName(m)])
@@ -1980,6 +1982,8 @@ export async function reviseDraft(
     neverSay: ctx.neverSay,
     licenses: ctx.licenses,
     state: ctx.state,
+    // Check 23 P13: a first reply's "Thanks for reaching out" isn't filler.
+    firstContact: isFirstContactOpening(draft.opening) && draft.kind === "reply" && !draft.purpose,
     // Check 23 P6: the names on the conversation's From lines may be used.
     knownNames: withText
       .flatMap(({ m }) => [m.fromName, customerReplyName(m)])
