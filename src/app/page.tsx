@@ -113,7 +113,7 @@ const faqs = [
   },
   {
     q: "What does the trial look like?",
-    a: "Three days with your real inbox. It sorts and drafts so you can judge the replies — Squared Away won't send anything to a customer during the trial. If it's not for you, disconnect and you're done.",
+    a: "Three days with your real inbox. It sorts and drafts so you can judge the replies — Squared Away won't send anything to a customer during the trial. Your drafts are in your Gmail Drafts folder too, so you can send one from Gmail yourself if you want. If it's not for you, disconnect and you're done.",
   },
   {
     q: "What if I stop?",
@@ -253,7 +253,9 @@ export default async function HomePage(props: PageProps<"/">) {
               <p className="max-w-2xl text-xl leading-relaxed text-ash">
                 Squared Away drafts; you decide. Replies sit in your queue until you tap Send reply
                 — and during your three-day trial, Squared Away won&apos;t send anything to a
-                customer: that&apos;s switched off in the code, not just hidden behind a button.
+                customer: its Send reply is switched off in the code, not just hidden behind a
+                button. Your drafts are in your Gmail Drafts folder too, so you can send one from
+                Gmail yourself if you want.
               </p>
             </div>
           </section>

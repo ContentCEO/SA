@@ -175,9 +175,10 @@ replies** after reviewing several together). You then have 20 seconds to undo it
 We don't draft replies to lead-website notices or voicemail emails — answer those on the
 website or from your own phone — and we never draft or send to an email-to-text address,
 because that would text your customer.
-During your three-day trial, sending to customers is switched off in the code. You can still send
-yourself a practice copy of a draft: it goes only to your own Gmail address, as a new email marked
-"[Practice]", never to the customer.
+During your three-day trial, Squared Away won't send anything to a customer: its own sending is
+switched off in the code. You can still send yourself a practice copy of a draft: it goes only to
+your own Gmail address, as a new email marked "[Practice]", never to the customer. Your drafts are
+in your Gmail Drafts folder too, so you can send one from Gmail yourself if you want.
 
 Autopilot is off unless you turn it on, one kind of email at a time, and only on plans that
 include it after your setup call. It only becomes available for a kind of email after you have

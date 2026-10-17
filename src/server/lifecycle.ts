@@ -120,7 +120,8 @@ export function sendingBlockedReason(w: Payable, now: Date = new Date()): string
   }
   switch (status) {
     case "evaluating":
-      return "Read the drafts and see if they sound like you.";
+      // The trial's side door (Davi, 2026-10-16): every draft is a real Gmail draft.
+      return "Read the drafts and see if they sound like you. This one is in your Gmail Drafts folder too, if you'd rather send it from Gmail yourself.";
     case "evaluation_expired":
       return "Your three days are up. Choose a plan to switch sending on.";
     case "past_due":
@@ -141,7 +142,8 @@ export function sendingOffLabel(w: Payable, now: Date = new Date()): string {
     return "Waiting on your setup payment";
   switch (status) {
     case "evaluating":
-      return "Sending is off during your three days";
+      // Squared Away's own button, not sending in general: the draft is in Gmail too (2026-10-16).
+      return "Send reply is off during your three days";
     case "evaluation_expired":
       return "Sending turns on once you choose a plan";
     case "past_due":

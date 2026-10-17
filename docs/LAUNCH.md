@@ -835,8 +835,7 @@ fixed.
 3. Connect Gmail (or check Settings → Your Gmail shows access is fine).
 4. Within about 5 minutes, **Inbox** shows mail sorted into categories and **Queue** shows a draft
    reply. Don't send anything to a real customer as a test.
-5. On a trial account (a second address of yours, invited in `/admin`): a draft card says "Sending
-   is off during your three days" and has no **Send reply** button.
+5. On a trial account (a second address of yours, invited in `/admin`): a draft card says "Send reply is off during your three days" and has no **Send reply** button.
 6. `/privacy` and `/terms`: no `{{` anywhere, and the support email is shown.
 7. `/admin` loads for you; signed in as anyone else it shows a 404 page ("This page could not be
    found.").

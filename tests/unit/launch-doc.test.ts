@@ -903,7 +903,7 @@ describe("what LAUNCH.md tells Davi to look for is what the code shows", () => {
       evaluationEndsAt: new Date(Date.now() + 86_400_000),
       setupPaidVia: null,
     } as never);
-    expect(trialLabel).toBe("Sending is off during your three days");
+    expect(trialLabel).toBe("Send reply is off during your three days");
     expect(flat(launch)).toContain(trialLabel);
     for (const text of [
       "Stripe connected in LIVE mode. Real cards will be charged.",

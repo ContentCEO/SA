@@ -385,7 +385,7 @@ export async function sendFirstDraftsReady(
     // then, carries the one-click stop link, and isn't emailed to someone who stopped them.
     const trial = effectiveStatus(r.workspace, now) === "evaluating";
     const stopLink = trial ? stopLinkFor(r.workspace.id) : null;
-    const emailIt = !trial || (!r.workspace.trialEmailsStoppedAt && !!stopLink);
+    const emailIt = !trial || !r.workspace.trialEmailsStoppedAt;
     const c = firstDraftsEmailCopy({ queueUrl: appUrl("/queue"), drafts: totals.drafts, trial });
     const { text, html } = brandEmail({
       serif: c.serif,

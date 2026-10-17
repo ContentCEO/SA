@@ -261,7 +261,7 @@ describe("the demo video script matches the end-to-end journey", () => {
       evaluationEndsAt: soon,
       setupPaidVia: null,
     } as never);
-    expect(trial).toBe("Sending is off during your three days");
+    expect(trial).toBe("Send reply is off during your three days");
     for (const status of ["setup_paid", "active"]) {
       const unpaid = sendingOffLabel({
         status,

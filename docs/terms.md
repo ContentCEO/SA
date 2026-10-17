@@ -39,8 +39,11 @@ in for you.
 ## The trial
 
 New accounts start with a three-day trial on your real inbox. During the trial Squared Away sorts
-and drafts, but sending to customers is switched off; you can only send yourself practice copies,
-to your own address. When the trial ends, your account becomes read-only until you choose a plan.
+and drafts, but it won't send anything to a customer: its own sending is switched off, and from
+Squared Away you can only send yourself practice copies, to your own address. Your drafts are real
+Gmail drafts, in your Gmail Drafts folder too, so you can send one from Gmail yourself if you want;
+what you send from Gmail yourself is your own email. When the trial ends, your account becomes
+read-only until you choose a plan.
 
 ## Plans and payment
 
