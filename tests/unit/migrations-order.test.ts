@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { journalProblems } from "../../scripts/migrate-guard";
 
 /**
  * Previews and production share one database, and drizzle's migrator applies only the
@@ -30,6 +31,10 @@ describe("migration journal", () => {
         `${entries[i]!.tag} must be later than ${entries[i - 1]!.tag}`,
       ).toBeGreaterThan(entries[i - 1]!.when);
     }
+  });
+
+  it("passes the build's migration guard (scripts/migrate-guard.ts, Check 30 P2)", () => {
+    expect(journalProblems(entries)).toEqual([]);
   });
 
   it("has one SQL file per entry and no stray migration files", () => {

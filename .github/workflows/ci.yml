@@ -41,6 +41,13 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      # Check 30 P2: drizzle silently skips a migration stamped older than one already applied,
+      # so this branch's journal must be main's journal unchanged plus new entries at the end.
+      - name: Migration journal only grows
+        run: |
+          git fetch --no-tags --depth=1 origin main
+          git show origin/main:drizzle/meta/_journal.json > "$RUNNER_TEMP/main-journal.json"
+          pnpm exec tsx scripts/check-journal.ts "$RUNNER_TEMP/main-journal.json"
       - run: pnpm lint
       - run: pnpm format:check
       - run: pnpm typecheck
