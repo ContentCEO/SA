@@ -148,5 +148,14 @@ edits this file after it is created.
 - [x] Wave 1, Safety guards, 9) C22 P5
 - [x] Wave 1, Safety guards, 10) C22 P11 + C36 P6 + C45 P4
 - [x] Wave 1, Safety guards, 11) C38 P3 + C22 P6 + C39 P2
+- [x] Wave 1, When things break, 1) C18 P1
+- [x] Wave 1, When things break, 2) C16 P1
+- [x] Wave 1, When things break, 3) C17 P1 [M]
+- [x] Wave 1, When things break, 4) C16 P2
+- [x] Wave 1, When things break, 5) C29 P1
+- [x] Wave 1, When things break, 6) C48 P3 [M]
+- [x] Wave 1, When things break, 7) C48 P4
+- [x] Wave 1, When things break, 8) C01 P4
+- [x] Wave 1, When things break, 9) C50 P6
 
 Later steps are added to this list as their pull requests merge.

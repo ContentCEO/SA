@@ -9,6 +9,9 @@ here is yours to do or decide: merging, deploying and every other switch. Engine
 in [SETUP.md](SETUP.md); this page links to it where a step needs more. Every outside account
 (its plan, the limit that bites and whose login holds it) is listed in [VENDORS.md](VENDORS.md).
 
+`/admin` → **Ready for paying owners** lists what's left; tick the hand rows there as you finish
+them.
+
 Contents:
 
 - [Check your free plans now (this week)](#check-your-free-plans-now-this-week)
@@ -968,6 +971,9 @@ morning emails all run as background jobs.
      `morning-digest`.
   2. The next day, `purge-expired-bodies` → Runs shows a **Completed** run.
   3. `/admin` → the first box is titled **System**, not "Background jobs look stopped".
+- Optional but recommended: point a free uptime monitor at /api/health/deep
+  ([SETUP.md](SETUP.md) §6g). It emails you "Background jobs look stopped" at most once an hour,
+  even when Inngest itself is down.
 
 ## 12. Smoke test after each production deploy
 
@@ -1331,6 +1337,20 @@ Nothing below is switched on or changed until you say so.
   - **Big supplier statements:** a supplier's monthly statement over your amount (say "Balance:
     $3,420.17") goes to Needs you today. Keep that, or let supplier bills (money you owe) skip the
     amount rule?
+- **Wave 1: when things break (merged 2026-10-17).**
+  - Should pausing an account in `/admin` also pause its Stripe billing? Today Stripe keeps
+    charging a paused account; only where Resume goes back to changed. (Not built.)
+  - The 30-minute "jobs look stopped" check through Vercel Cron needs Vercel Pro (Hobby allows
+    a daily cron only, and a more frequent one can stop the deploy). Until then a free uptime
+    monitor pointed at /api/health/deep ([SETUP.md](SETUP.md) §6g) does the same job. Want the
+    `vercel.json` added once you're on Pro?
+  - Stand-in models (all off): sorting → Claude Haiku 5.5, drafting and voice → Claude Sonnet
+    5.5. Turn one on (`fallbackApproved: true` in `src/config/models.ts`) only after
+    `pnpm eval` passes on it. Haiku 5.5 thinks by default; check the sorter's 1,024-token answer
+    limit holds there.
+  - Done at the merge (was a question): the missing-model email and the `/admin` System box now
+    name the part that stopped: "Sorting is stopped", "Drafting is stopped" or "Voice learning
+    is stopped".
 - **Gmail draft check (counts only, for the engineers):** whether Gmail keeps a draft's id when
   it's sent. The app is safe either way. The query is in [step 1](#1-merge-the-launch-branch);
   run it **before merging**: after the merge it always reads 0.
