@@ -670,8 +670,11 @@ describe("LAUNCH.md structure", () => {
   function step13Parts() {
     const body = sections[13]!.body;
     const decided = body.indexOf("### Decided on ");
-    expect(body.indexOf("### Decided on 2026-10-15"), "the 2026-10-15 list first").toBe(decided);
-    expect(body.indexOf("### Decided on 2026-10-14")).toBeGreaterThan(decided);
+    expect(body.indexOf("### Decided on 2026-10-16"), "the 2026-10-16 list first").toBe(decided);
+    expect(body.indexOf("### Decided on 2026-10-15")).toBeGreaterThan(decided);
+    expect(body.indexOf("### Decided on 2026-10-14")).toBeGreaterThan(
+      body.indexOf("### Decided on 2026-10-15"),
+    );
     const open = body.indexOf("### Still open");
     const needed = body.indexOf("### Still needed from you");
     expect(decided, "a Decided part").toBeGreaterThan(0);
@@ -701,7 +704,8 @@ describe("LAUNCH.md structure", () => {
       "Gmail draft check",
       "The homepage's About section",
       "someone in the trades.",
-      "Reset test payments and past-due accounts",
+      // 2026-10-16: whether the trial clarification in the terms needs a re-agreement.
+      "Agreeing to the terms again",
     ]) {
       expect(open, phrase).toContain(phrase);
     }
@@ -713,6 +717,24 @@ describe("LAUNCH.md structure", () => {
     expect(flat(sections.find((s) => s.n === 1)!.body)).toContain("The homepage's About section");
     const about = readFileSync(join(ROOT, "src/components/marketing/about-davi.tsx"), "utf8");
     expect(about).toContain('heavy="someone in the trades."');
+  });
+
+  it("Davi's 2026-10-16 decisions are recorded as decided, not asked again", () => {
+    const { decided, open } = step13Parts();
+    for (const phrase of [
+      "Built for carpenters, plumbers, and electricians",
+      "The trial's side door stays.",
+      "Trial emails: yes.",
+      "**Stop these emails**",
+      "A lower plan pauses extra Gmail addresses, and the owner picks which.",
+      "**Use this one instead**",
+      "Reset test payments and past-due accounts: let it be usable",
+      "Other.",
+      "**Say thanks**",
+    ]) {
+      expect(decided, phrase).toContain(phrase);
+    }
+    expect(open).not.toContain("Reset test payments and past-due accounts");
   });
 
   it("Davi's 2026-10-14 decisions are recorded as decided, not asked again", () => {
