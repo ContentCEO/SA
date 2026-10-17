@@ -41,11 +41,27 @@ const address = (v: FormDataEntryValue | null) =>
  * leaves the draft waiting — always with nothing sent. Shared by the card's Send reply and the
  * Edit box's (which shows a refusal inside the card instead of leaving it).
  */
-type SendTap = { go: string } | { refused: string; changed?: boolean; at?: number };
+type SendTap =
+  | { go: "sent" | "deleted" | "gone" | "unknown"; draftId: string }
+  | { refused: string; changed?: boolean; at?: number };
+
+/** Where a tap that left the card goes: always one of our own paths. */
+function goAfterTap(r: { go: "sent" | "deleted" | "gone" | "unknown"; draftId: string }): never {
+  switch (r.go) {
+    case "sent":
+      redirect(`/queue?sent=${r.draftId}`);
+    case "deleted":
+      redirect("/queue?error=deleted");
+    case "gone":
+      redirect("/queue?error=gone");
+    default:
+      redirect("/queue?error=unknown");
+  }
+}
 
 async function sendTap(workspaceId: string, formData: FormData): Promise<SendTap> {
   const draftId = id.safeParse(formData.get("draftId"));
-  if (!draftId.success) return { go: "/queue?error=unknown" };
+  if (!draftId.success) return { go: "unknown", draftId: "" };
   const edited = formData.get("body");
   const editedBody = typeof edited === "string" ? body.safeParse(edited) : null;
   if (editedBody && !editedBody.success) return { refused: "empty" };
@@ -76,9 +92,9 @@ async function sendTap(workspaceId: string, formData: FormData): Promise<SendTap
       await enqueue(
         draftSendQueued.create({ draftId: draftId.data, at: outcome.sendAfter.toISOString() }),
       );
-      return { go: `/queue?sent=${draftId.data}` };
+      return { go: "sent", draftId: draftId.data };
     case "already_sending":
-      return { go: `/queue?sent=${draftId.data}` };
+      return { go: "sent", draftId: draftId.data };
     case "changed_in_gmail":
     case "changed_since_seen":
       return { refused: "changed", changed: true };
@@ -94,7 +110,7 @@ async function sendTap(workspaceId: string, formData: FormData): Promise<SendTap
     case "text_address":
       return { refused: "textaddr" };
     case "deleted_in_gmail":
-      return { go: "/queue?error=deleted" };
+      return { go: "deleted", draftId: draftId.data };
     case "reconnect_needed":
       return { refused: "reconnect" };
     case "mailbox_paused":
@@ -105,7 +121,7 @@ async function sendTap(workspaceId: string, formData: FormData): Promise<SendTap
     case "timing_check":
       return { refused: "timing" };
     case "not_found":
-      return { go: "/queue?error=gone" };
+      return { go: "gone", draftId: draftId.data };
     default:
       return { refused: "unknown" };
   }
@@ -114,9 +130,12 @@ async function sendTap(workspaceId: string, formData: FormData): Promise<SendTap
 export async function sendDraftAction(formData: FormData) {
   const { workspace } = await requireOwner();
   const r = await sendTap(workspace.id, formData);
-  if ("go" in r) redirect(r.go);
-  if (r.refused === "answered")
-    redirect(`/queue?error=answered&d=${String(formData.get("draftId"))}&at=${r.at}`);
+  if ("go" in r) goAfterTap(r);
+  if (r.refused === "answered") {
+    // Only reached for a valid draft id (sendTap checked it).
+    const d = id.parse(formData.get("draftId"));
+    redirect(`/queue?error=answered&d=${d}&at=${r.at}`);
+  }
   redirect(`/queue?error=${r.refused}`);
 }
 
@@ -240,7 +259,7 @@ export async function editorAction(_prev: EditorState, formData: FormData): Prom
 
   if (formData.get("intent") === "send") {
     const r = await sendTap(workspace.id, formData);
-    if ("go" in r) redirect(r.go);
+    if ("go" in r) goAfterTap(r);
     if (r.refused === "answered") redirect(`/queue?error=answered&d=${draftId.data}&at=${r.at}`);
     if (r.changed) return changed(CHANGED_WHILE_EDITING_SEND);
     if (r.refused === "gaps") return keep(GAPS_IN_EDITOR);
