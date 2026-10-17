@@ -89,3 +89,8 @@ Notes for the integrator: what CLAUDE.md should say, by step. Files in this grou
   soft promise "a rebate or utility will pay" (Eversource / National Grid / Unitil / Mass Save /
   the utility / rebates … covers / pays for / gives back / free / no cost; "you'll qualify for
   the rebate").
+- **“That's covered” and overages (Check 38 P7, wave 1):** new soft promises (owner-text rule,
+  usual "make sure you stand behind that" wording): "that's covered" (that's / it's / this is
+  covered, "covered under warranty / labor"; not "covered with plastic" or "you're covered for
+  Tuesday"), "fix it for free", "add it to the (final) bill / invoice / price", "that's fine"
+  right before an amount or "over", "no extra charge / cost / fee".

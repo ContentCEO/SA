@@ -83,6 +83,24 @@ const SOFT_PROMISES: [string, RegExp][] = [
     /\b(?:match|beat) (?:their|that|the|his|her|your|any) (?:price|quote|number|bid)\b|\bprice[- ]match\b/i,
   ],
   ["fit you in", /\b(?:squeeze|fit|sneak) (?:you|it|them) in\b/i],
+  // Check 38 P7: agreeing to cover a callback or an overage in passing.
+  [
+    "that's covered",
+    /\b(?:that's|that is|it's|it is|this is|that'll be|this'll be) (?:all )?covered\b(?! (?:with|in|by)\b)|\bcovered under (?:the |our |your )?(?:warranty|guarantee|labor|workmanship)\b/i,
+  ],
+  ["fix it for free", /\b(?:fix|repair|replace|redo) (?:it|that|this|them) (?:for )?free\b/i],
+  [
+    "add it to the bill",
+    /\b(?:add|put|tack|throw) (?:it|that|this|the difference|the extra|the overage)(?: on)? (?:on|onto|to) (?:the |your )?(?:final )?(?:bill|invoice|price|tab|total)\b/i,
+  ],
+  [
+    "that's fine",
+    /\b(?:that's|that is) (?:fine|ok|okay|no problem)\b[,;:]?\s*(?:\$\s?\d|\d[\d,]*\s?(?:dollars|bucks)\b|(?:going |being |a (?:bit |little )?)?over\b)/i,
+  ],
+  [
+    "no extra charge",
+    /\bno (?:extra|additional) (?:charge|cost|fee)s?\b|\bwon't cost (?:you )?(?:anything )?extra\b/i,
+  ],
   // Check 37 P5: rebates belong to the utility; a draft can't promise they'll pay.
   [
     "a rebate or utility will pay",

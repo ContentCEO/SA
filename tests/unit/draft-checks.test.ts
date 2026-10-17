@@ -493,3 +493,33 @@ describe("claims an owner has to stand behind (Check 23 P2, Check 36 P7, Check 3
     ).toEqual([]);
   });
 });
+
+describe("“that's covered” and “we'll add it to the bill” (Check 38 P7)", () => {
+  const ctx = {
+    sourceText: "The shower you did last year is leaking again. Also the tile came in $1,100 over.",
+    ownerSourceText: "",
+    doNotPromise: [] as string[],
+    phrasesAvoided: [] as string[],
+  };
+  it.each([
+    ["Sorry to hear that. That's covered, we'll come fix it. What days work?", "that's covered"],
+    ["That's fine, we'll add it to the final bill.", "add it to the bill"],
+    ["We'll fix it for free.", "fix it for free"],
+    ["That's fine, $1,100 over is no problem.", "that's fine"],
+    ["No extra charge for the second visit.", "no extra charge"],
+  ])("%s", (body, label) => {
+    const r = checkDraft(body, ctx);
+    expect(r.hits).toContain("soft_promise");
+    expect(r.flags.join(" ")).toContain(`“${label}”`);
+    expect(r.flags.join(" ")).toContain("make sure you stand behind that");
+  });
+  it.each([
+    "The floor is covered with plastic while we work.",
+    "You're covered for Tuesday, see you then.",
+    "That's fine, see you then.",
+  ])("everyday words stay clean: %s", (body) => {
+    expect(checkDraft(body, { ...ctx, sourceText: "Tuesday works" }).hits).not.toContain(
+      "soft_promise",
+    );
+  });
+});
