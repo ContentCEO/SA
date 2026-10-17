@@ -62,8 +62,10 @@ describe("the promise band (Check 6 P7)", () => {
   });
 
   it("keeps Davi's trial words (2026-10-16) word for word", () => {
-    expect(text).toContain(`${TRIAL_NO_SEND_LINE}`);
-    expect(text).toContain(TRIAL_SIDE_DOOR_LINE);
+    expect(text).toContain(`${TRIAL_NO_SEND_LINE} ${TRIAL_SIDE_DOOR_LINE}`);
+    expect(TRIAL_NO_SEND_LINE).toBe(
+      "During your three-day trial, Squared Away won't send anything to a customer.",
+    );
     expect(text).toContain("won't send anything to a customer");
   });
 

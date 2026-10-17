@@ -1,13 +1,13 @@
 import { UNDO_WINDOW_SECONDS } from "@/config/drafting";
+import { pricing } from "@/config/pricing";
 import { bodyRetentionDays } from "@/config/retention";
 import { EARN_THRESHOLD, GRACE_MINUTES, MAX_FOLLOWUPS } from "@/config/rules";
+import { siteConfig } from "@/config/site";
 import { numberWord } from "@/lib/number-words";
 import { capitalized, daysPhrase } from "@/lib/trial-words";
-import { pricing } from "@/config/pricing";
-import { TRIAL_NO_SEND_LINE } from "@/server/trial-email-rules";
-import { siteConfig } from "@/config/site";
 import { autopilotPlanNames, moreInboxesLine } from "@/server/plan-features";
 import { QUOTE_STAGES, stageLabel } from "@/server/quote-rules";
+import { TRIAL_NO_SEND_LINE, TRIAL_SIDE_DOOR_LINE } from "@/server/trial-email-rules";
 
 /**
  * The homepage's words (src/app/page.tsx renders them). Kept in a pure module so tests read the
@@ -52,7 +52,7 @@ export const features = [
     // trades/<trade>.ts "Before quoting, find out"; draft prompt's price-list rule, with
     // checkDraft flagging any other figure; looksMunicipal / the classifier's building-department
     // signal keep town mail out of junk (src/ai/guards.ts).
-    body: "Asks the questions your trade needs before a quote, quotes prices from your price list as written and flags any other figure, and keeps permit and inspection emails from the town out of junk.",
+    body: "Asks the questions your trade needs before a quote, quotes the prices on your price list as written and flags a price you didn't give it, and keeps permit and inspection emails from the town out of junk.",
   },
   {
     title: "Won't take orders from strangers",
@@ -147,9 +147,10 @@ export const promiseBand = [
   "Squared Away drafts. You decide.",
   `Every reply sits in your queue until you tap Send reply, and you have ${UNDO_WINDOW_SECONDS} seconds to take it back.`,
   "The only exception is autopilot, and only if you turn it on.",
+  // Davi's two trial sentences (2026-10-16), side by side as decided.
   TRIAL_NO_SEND_LINE,
-  "Its Send reply is switched off in the code, not just hidden behind a button.",
-  "Your drafts are in your Gmail Drafts folder too, so you can send one from Gmail yourself if you want.",
+  TRIAL_SIDE_DOOR_LINE,
+  "Squared Away's own Send reply is switched off in the code, not just hidden behind a button.",
 ];
 
 /**
