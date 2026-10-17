@@ -7,6 +7,7 @@ import { sum } from "drizzle-orm";
 import { classifyEmail } from "@/ai/classify";
 import { callStructured } from "@/ai/client";
 import { checkDraft } from "@/ai/draft-checks";
+import { asksWhenAvailable } from "@/ai/when-words";
 import {
   conversationBlock,
   DRAFT_INSTRUCTIONS,
@@ -14,7 +15,7 @@ import {
   FIRST_CONTACT_TASK,
   replyDraftSchema,
   workspaceBlock,
-} from "@/ai/prompts/draft.v7";
+} from "@/ai/prompts/draft.v8";
 import { DISPUTE_TASK } from "@/ai/prompts/dispute-caution.v1";
 import { ACTIVE } from "@/ai/prompts/registry";
 import { usage } from "@/db/schema";
@@ -127,6 +128,14 @@ export async function runEvals(
       else {
         const check = checkDraft(draft.body, {
           sourceText: [c.body, workspaceBlock(ctx)].join("\n"),
+          // Check 20 P1 / 23 P3: days and times come from the conversation; the hours' days
+          // only when the customer asked when the owner is open, as in the app.
+          whenSourceText: c.body,
+          hoursText: PROFILE.hours,
+          leadTimeText: PROFILE.leadTime,
+          allowHours: asksWhenAvailable(c.body),
+          // Check 23 P5: the light payment-terms check runs on every reply, as in the app.
+          termsSource: PROFILE.paymentTerms,
           doNotPromise: PROFILE.doNotPromise,
           neverSay: PROFILE.neverSay,
           phrasesAvoided: [],
@@ -138,7 +147,18 @@ export async function runEvals(
         problems.push(
           ...check.flags.filter(
             (f) =>
-              f.includes("never-promise") || f.includes("never-say") || f.includes("stand behind"),
+              f.includes("never-promise") ||
+              f.includes("never-say") ||
+              f.includes("stand behind") ||
+              // draft.v8 (Check 38 P6): no made-up license number, no unbacked credential.
+              f.includes("license or registration number") ||
+              f.includes("Add it in Settings") ||
+              // Check 40 P1: no deductible or insurance-claim promises.
+              f.includes("deductible or the insurance claim") ||
+              // Check 41 P1: no safety or lead claims.
+              f.includes("Safety and lead claims") ||
+              // Check 39 P4: no rebate, tax-credit or refrigerant rule the owner never wrote.
+              f.includes("rebate, tax credit or refrigerant rule"),
           ),
         );
         for (const bad of c.draft.mustNotContain ?? []) {

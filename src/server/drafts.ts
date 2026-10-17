@@ -17,6 +17,8 @@ import {
 } from "drizzle-orm";
 import { callStructured } from "@/ai/client";
 import { checkDraft, hasLink, REGENERATE_ON, type CheckResult } from "@/ai/draft-checks";
+import { asksWhenAvailable, spellDate } from "@/ai/when-words";
+import { licenseFacts } from "@/config/licenses";
 import { injectionCheck, looksLikePaymentChange } from "@/ai/guards";
 import {
   REVISE_INSTRUCTIONS,
@@ -38,7 +40,7 @@ import {
   type ModelDraft,
   type Opening,
   type WorkspaceContext,
-} from "@/ai/prompts/draft.v7";
+} from "@/ai/prompts/draft.v8";
 import {
   OPENING_TWEAKS,
   OPENING_TWEAKS_PROMPT_VERSION,
@@ -429,6 +431,8 @@ type DraftContext = WorkspaceContext & {
   reviewUrl: string | null;
   /** The owner's time zone, for "Today is…" and each email's time (review A8). */
   timeZone: string | null;
+  /** Check 38 P2: the owner's two-letter state, for the Massachusetts deposit rule. */
+  state?: string | null;
 };
 
 /**
@@ -465,6 +469,43 @@ function termsCheck(
         : purpose === "thank_you"
           ? { url: null }
           : undefined,
+  };
+}
+
+/** Check 23 P5: the owner's written terms — payment terms, policies and price list. */
+function ownerTerms(ctx: DraftContext): string {
+  return [ctx.paymentTerms, ctx.policies, ctx.pricingNotes].filter(Boolean).join("\n");
+}
+
+/**
+ * Where a day, date or time in a draft may come from (Check 20 P1, Check 23 P3 + P4): the
+ * conversation (both sides), seasonal notes with their end dates ("November 27"), and what the
+ * owner said for this draft. The hours and lead time go apart: the hours' times always count,
+ * their days only when `allowHours`; only the lead time's own "two weeks out" counts.
+ */
+function whenContext(
+  ctx: DraftContext,
+  conversation: { m: { direction: string; sentAt: Date }; text: string }[],
+  ownerSaid: (string | null | undefined)[],
+  now: Date,
+  allowHours: boolean,
+) {
+  return {
+    whenSourceText: [
+      ...conversation.map((x) => x.text),
+      ...ctx.seasonalNotes.flatMap((n) => [n.text, spellDate(n.endsOn)]),
+      ...ownerSaid,
+    ]
+      .filter(Boolean)
+      .join("\n"),
+    hoursText: ctx.hours,
+    leadTimeText: ctx.leadTime,
+    allowHours,
+    customerMessages: conversation
+      .filter((x) => x.m.direction === "in")
+      .map((x) => ({ text: x.text, sentAt: x.m.sentAt })),
+    now,
+    timeZone: ctx.timeZone,
   };
 }
 
@@ -546,6 +587,8 @@ export async function workspaceContext(
     signature: profile?.signature ?? null,
     doNotPromise: profile?.doNotPromise ?? [],
     neverSay: profile?.neverSay ?? [],
+    // Check 38 P6: the saved registration and license numbers.
+    licenses: profile?.licenses ?? {},
     seasonalNotes: (await activeNotes(workspaceId, now)).map(({ text, endsOn }) => ({
       text,
       endsOn,
@@ -564,7 +607,12 @@ export async function workspaceContext(
           }
         : null,
   };
-  return { ...ctx, reviewUrl: profile?.reviewUrl ?? null, timeZone: profile?.timeZone ?? null };
+  return {
+    ...ctx,
+    reviewUrl: profile?.reviewUrl ?? null,
+    timeZone: profile?.timeZone ?? null,
+    state: profile?.state ?? null,
+  };
 }
 
 /**
@@ -941,12 +989,24 @@ export async function createDraftForThread(
     ctx.paymentTerms,
     ctx.services,
     ctx.signature,
+    // Check 38 P6: the saved license numbers are the owner's own words.
+    licenseFacts(ctx.licenses),
     ...ctx.seasonalNotes.map((n) => n.text),
+    // Check 23 P3: a seasonal note's last day, as a draft would write it ("November 27").
+    ...ctx.seasonalNotes.map((n) => spellDate(n.endsOn)),
   ];
+  const lastInbound = [...withText].reverse().find((x) => x.m.direction === "in");
   const checkContext = {
     sourceText: [withText.map((x) => x.text).join("\n"), ...ownerFacts, opts.ownerNote]
       .filter(Boolean)
       .join("\n"),
+    ...whenContext(
+      ctx,
+      withText,
+      [opts.ownerNote],
+      now,
+      asksWhenAvailable(lastInbound?.text ?? ""),
+    ),
     // Amounts only the customer named aren't the owner's price (round 2 A4).
     ownerSourceText: [
       ...withText.filter((x) => x.m.direction === "out").map((x) => x.text),
@@ -959,6 +1019,23 @@ export async function createDraftForThread(
     doNotPromise: ctx.doNotPromise,
     phrasesAvoided: ctx.voice?.phrasesAvoided ?? [],
     neverSay: ctx.neverSay,
+    licenses: ctx.licenses,
+    state: ctx.state,
+    // Check 23 P14: hold the price list's "from" and the job each price is for.
+    priceList: ctx.pricingNotes,
+    // Check 23 P13: a first reply's "Thanks for reaching out" isn't filler.
+    firstContact,
+    // Check 23 P6: the names on the conversation's From lines may be used.
+    knownNames: withText
+      .flatMap(({ m }) => [m.fromName, customerReplyName(m)])
+      .filter((n): n is string => !!n),
+    // Check 23 P5: every reply carries the owner's terms for the light payment-terms check
+    // (deposit and review notes replace these with their own, stricter check below).
+    termsSource: ownerTerms(ctx),
+    ownerWrote: withText
+      .filter((x) => x.m.direction === "out")
+      .map((x) => x.text)
+      .join("\n"),
     // Deposit and review notes: no percentage, way to pay or incentive the owner never set (A4).
     ...termsCheck(purpose, ctx, {
       wrote: withText.filter((x) => x.m.direction === "out").map((x) => x.text),
@@ -2248,15 +2325,29 @@ export async function reviseDraft(
     ctx.paymentTerms,
     ctx.services,
     ctx.signature,
+    // Check 38 P6: the saved license numbers are the owner's own words.
+    licenseFacts(ctx.licenses),
     ...ctx.seasonalNotes.map((n) => n.text),
+    // Check 23 P3: a seasonal note's last day, as a draft would write it ("November 27").
+    ...ctx.seasonalNotes.map((n) => spellDate(n.endsOn)),
     // What the owner said counts as a fact they gave us (plan #4).
     spoken,
     // Facts already in a clean draft stay allowed. A flagged draft's text
     // doesn't count, so a tweak can never launder a flag away.
     (draft.flags ?? []).length === 0 ? draft.body : null,
   ];
+  const lastInbound = [...withText].reverse().find((x) => x.m.direction === "in");
   const checkContext = {
     sourceText: [withText.map((x) => x.text).join("\n"), ...ownerFacts].filter(Boolean).join("\n"),
+    // Check 23 P3: "Add my availability" writes the hours on purpose, so their days count.
+    ...whenContext(
+      ctx,
+      withText,
+      [spoken, (draft.flags ?? []).length === 0 ? draft.body : null],
+      now,
+      ("tweak" in change && change.tweak === "availability") ||
+        asksWhenAvailable(lastInbound?.text ?? ""),
+    ),
     // Round 2 A4: an amount only the customer named isn't the owner's price.
     ownerSourceText: [
       ...withText.filter((x) => x.m.direction === "out").map((x) => x.text),
@@ -2269,6 +2360,25 @@ export async function reviseDraft(
     doNotPromise: ctx.doNotPromise,
     phrasesAvoided: ctx.voice?.phrasesAvoided ?? [],
     neverSay: ctx.neverSay,
+    licenses: ctx.licenses,
+    state: ctx.state,
+    // Check 23 P14: hold the price list's "from" and the job each price is for.
+    priceList: ctx.pricingNotes,
+    // Check 23 P13: a first reply's "Thanks for reaching out" isn't filler.
+    firstContact: isFirstContactOpening(draft.opening) && draft.kind === "reply" && !draft.purpose,
+    // Check 23 P6: the names on the conversation's From lines may be used.
+    knownNames: withText
+      .flatMap(({ m }) => [m.fromName, customerReplyName(m)])
+      .filter((n): n is string => !!n),
+    // Check 23 P5: the light payment-terms check on every reply; what the owner said and a
+    // clean draft's text count as theirs.
+    termsSource: [ownerTerms(ctx), spoken].filter(Boolean).join("\n"),
+    ownerWrote: [
+      ...withText.filter((x) => x.m.direction === "out").map((x) => x.text),
+      (draft.flags ?? []).length === 0 ? draft.body : null,
+    ]
+      .filter(Boolean)
+      .join("\n"),
     // A tweak on a deposit or review note keeps the terms check (A4): "friendlier" can't add
     // Venmo or "10% off". What the owner said, and a clean draft's text, are theirs.
     ...termsCheck(draft.purpose, ctx, {

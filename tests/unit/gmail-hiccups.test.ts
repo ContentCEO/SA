@@ -95,6 +95,17 @@ describe("Check 9 P4: gaps in the Edit box", () => {
     expect(hasUnfilledGap(back)).toBe(false);
   });
 
+  it("a [name]-style blank (Check 23 P7) shows as written and is named until filled", () => {
+    const withBlank = "Hi [name],\nIt's {{price}}.";
+    const shown = toEditorText(withBlank);
+    expect(shown).toBe("Hi [name],\nIt's [price].");
+    expect(editorGapsLeft(shown, withBlank)).toEqual(["[name]", "[price]"]);
+    expect(fromEditorText(shown, withBlank)).toBe("Hi [name],\nIt's {{price}}.");
+    const filled = shown.replace("[name]", "Dana").replace("[price]", "$450");
+    expect(editorGapsLeft(filled, withBlank)).toEqual([]);
+    expect(hasUnfilledGap(fromEditorText(filled, withBlank))).toBe(false);
+  });
+
   it("a body with no gaps passes through untouched", () => {
     const plain = "Hi Dana, [see attached] thanks.";
     expect(toEditorText(plain)).toBe(plain);

@@ -7,6 +7,7 @@ import {
   DISPUTE_FLAG,
   DISPUTE_TASK,
 } from "@/ai/prompts/dispute-caution.v1";
+import { ACTIVE } from "@/ai/prompts/registry";
 import { confidenceLabel } from "@/config/drafting";
 import { drafts, messages, threads, workspaces } from "@/db/schema";
 import { considerAutopilot } from "@/server/autopilot";
@@ -114,6 +115,9 @@ describe("Check 43 P9: dispute and legal threads", () => {
       });
       expect(["check_everything", "check_details"]).toContain(label);
       expect(draft.promptVersion).toContain(`+${DISPUTE_CAUTION_PROMPT_VERSION}`);
+      // Integration (wave 1): the stored version names the live drafting prompt, then the caution.
+      expect(draft.promptVersion).toBe(`${ACTIVE.draft}+${DISPUTE_CAUTION_PROMPT_VERSION}`);
+      expect(draft.promptVersion).toBe("draft.v8+dispute-caution.v1");
       expect(JSON.stringify(calls[0])).toContain(DISPUTE_TASK);
     });
   }

@@ -19,6 +19,7 @@ import {
   uuid,
 } from "drizzle-orm/pg-core";
 import type { GrowthService } from "../config/growth";
+import type { Licenses } from "../config/licenses";
 import { TRADES, type Trade } from "../config/trades";
 import type { LostReason } from "../server/quote-rules";
 import type { ReplyToHeader } from "../server/reply-address-rules";
@@ -587,8 +588,9 @@ export const businessProfiles = pgTable("business_profile", {
    */
   awayBackOn: text("away_back_on"),
   /**
-   * Check 50 P3 (reserved, not read or written yet): the owner's two-letter US state code.
-   * Check 38 P2, 44 P1 and 45 P2 use this column and add no migration.
+   * Check 50 P3: the owner's two-letter US state code. Written by the business profile form and
+   * read by the Massachusetts deposit rule since Check 38 P2; 44 P1 and 45 P2 use it too and
+   * add no migration.
    */
   state: text("state"),
   /**
@@ -600,6 +602,11 @@ export const businessProfiles = pgTable("business_profile", {
     .array()
     .notNull()
     .default(sql`'{}'::text[]`),
+  /**
+   * Check 38 P6: registration and license numbers as the owner typed them (src/config/licenses.ts).
+   * Drafts quote only these; the draft check flags any other number or unbacked claim.
+   */
+  licenses: jsonb("licenses").$type<Licenses>().notNull().default({}),
   completedAt: timestamp("completed_at", { withTimezone: true }),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });

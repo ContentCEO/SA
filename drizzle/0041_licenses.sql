@@ -1,0 +1,1 @@
+ALTER TABLE "business_profile" ADD COLUMN "licenses" jsonb DEFAULT '{}'::jsonb NOT NULL;

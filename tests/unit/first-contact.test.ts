@@ -10,6 +10,7 @@ import {
   type ModelReplyDraft,
 } from "@/ai/prompts/draft.v7";
 import { draftSchema } from "@/ai/prompts/draft.v6";
+import { DRAFT_INSTRUCTIONS as ACTIVE_DRAFT_INSTRUCTIONS } from "@/ai/prompts/draft.v8";
 import { OPENING_TWEAKS } from "@/ai/prompts/opening-tweaks.v1";
 import { MAX_REVISIONS_PER_DRAFT } from "@/config/drafting";
 import { OPENING_TWEAK_LABELS } from "@/config/tweaks";
@@ -217,11 +218,11 @@ describe("first replies: drafting (stand-in model)", () => {
     const r = await createDraftForThread(t.id, { trigger: "auto", ...deps() });
     expect(r.status).toBe("created");
     expect(calls).toHaveLength(1);
-    expect(calls[0]!.system[0]!.text).toBe(DRAFT_INSTRUCTIONS);
+    expect(calls[0]!.system[0]!.text).toBe(ACTIVE_DRAFT_INSTRUCTIONS);
     expect(calls[0]!.user).toContain(FIRST_CONTACT_TASK);
     expect(calls[0]!.schema).toBe(replyDraftSchema);
     const d = await draftOf(t.id);
-    expect(d).toMatchObject({ opening: "details", promptVersion: "draft.v7", status: "pending" });
+    expect(d).toMatchObject({ opening: "details", promptVersion: "draft.v8", status: "pending" });
     // Nothing sent: a real Gmail draft that waits for the owner's tap.
     expect(writer.sent).toEqual([]);
     const [row] = await database

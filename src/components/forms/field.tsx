@@ -90,7 +90,12 @@ export function SelectField({
   options,
   defaultValue,
   ...p
-}: Common & { options: { value: string; label: string }[]; defaultValue?: string | null }) {
+}: Common & {
+  options: readonly { value: string; label: string }[];
+  defaultValue?: string | null;
+  /** Check 38 P2: an optional select's empty choice ("Not set"), which the owner can pick. */
+  emptyLabel?: string;
+}) {
   return (
     <label className={cn("flex flex-col gap-1.5", p.className)}>
       <span className="font-semibold">{p.label}</span>
@@ -103,8 +108,8 @@ export function SelectField({
         aria-describedby={describedBy(p)}
         className={cn(control, "min-h-tap")}
       >
-        <option value="" disabled>
-          Choose one
+        <option value="" disabled={!p.emptyLabel}>
+          {p.emptyLabel ?? "Choose one"}
         </option>
         {options.map((o) => (
           <option key={o.value} value={o.value}>

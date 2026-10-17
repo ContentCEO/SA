@@ -288,6 +288,13 @@
       "when": 1792258870232,
       "tag": "0040_send_path_autopilot_claim",
       "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "7",
+      "when": 1792271229521,
+      "tag": "0041_licenses",
+      "breakpoints": true
     }
   ]
 }
