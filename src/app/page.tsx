@@ -74,7 +74,7 @@ const features = [
   },
   {
     title: "Writes like you",
-    body: "It learns your greetings, sign-off and phrases from your sent mail. It never invents a price, a date or a promise — it asks, or flags it for you.",
+    body: "It learns your greetings, sign-off and phrases from your sent mail. The drafts are written by AI, so you read each one. If a draft mentions a price, a day or a promise you didn't give it, it's flagged so you can check it before you send.",
   },
   {
     title: "Chases quiet quotes",

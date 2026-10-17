@@ -383,6 +383,8 @@ describe("owner-facing copy about the trial", () => {
         // The cap counts nudges sent; a discarded one doesn't count, so never promise drafts.
         "nudge drafts at most",
         "sending is off",
+        // Check 6 P1: checkDraft flags after the fact; it can't stop the AI inventing.
+        "never invents",
       ]) {
         expect(text, `${f}: ${bad}`).not.toContain(bad);
       }
