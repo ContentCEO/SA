@@ -121,6 +121,8 @@ const errors: Record<string, string> = {
   // Check 9 P2: Hold it never says "Held." for a reply that went.
   autopilot_sending:
     "Too late to hold: autopilot is sending it right now. It shows on Activity in a minute.",
+  changed_editing:
+    "This reply changed while you were editing. Here's the newest version; make your change again. Nothing was sent.",
   hold_gone: "That reply isn't counting down any more, so there was nothing to hold.",
   paused:
     "That Gmail address is paused on your plan, so nothing was sent or written. Pick which one is on in Settings → Your Gmail.",

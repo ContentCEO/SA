@@ -1767,6 +1767,12 @@ async function standDownAnswered(
     });
 }
 
+/** Check 42 P2: a waiting draft's current text, for the owner's own draft only. */
+export async function pendingDraftText(workspaceId: string, draftId: string) {
+  const row = await loadOwnedDraft(workspaceId, draftId);
+  return row && row.draft.status === "pending" ? (row.draft.body ?? "") : null;
+}
+
 /** Check 42 P1: the Gmail link of a draft's conversation, for the owner's own draft only. */
 export async function draftGmailLink(workspaceId: string, draftId: string) {
   const row = await loadOwnedDraft(workspaceId, draftId);
@@ -1910,12 +1916,37 @@ export async function batchSend(
 }
 
 /** Save the owner's edits to the Gmail draft without sending. */
+/**
+ * Check 42 P2: the Gmail draft's text differs from ours, so someone changed it there (the
+ * office typed a price in). Their text becomes the draft's; any countdown or queued send stops.
+ */
+async function takeGmailText(draftId: string, text: string) {
+  await db()
+    .update(drafts)
+    .set({ body: text, autoSendAt: null, sendAfter: null })
+    .where(and(eq(drafts.id, draftId), eq(drafts.status, "pending")));
+}
+
+export type SaveEditOutcome =
+  | "saved"
+  | "not_found"
+  | "deleted_in_gmail"
+  | "reconnect_needed"
+  | "mailbox_paused"
+  /** Check 42 P2: changed in Gmail since; nothing written, the Gmail text is now the draft's. */
+  | "changed_in_gmail"
+  /** Check 42 P2: saved from another device since this editor opened; nothing written. */
+  | "changed_since_opened";
+
 export async function saveDraftEdit(
   workspaceId: string,
   draftId: string,
   body: string,
-  opts: DraftDeps = {},
-): Promise<"saved" | "not_found" | "deleted_in_gmail" | "reconnect_needed" | "mailbox_paused"> {
+  opts: DraftDeps & {
+    /** Check 42 P2: bodyHash of the text the editor opened with. */
+    openedHash?: string;
+  } = {},
+): Promise<SaveEditOutcome> {
   const row = await loadOwnedDraft(workspaceId, draftId);
   if (!row || row.draft.status !== "pending" || !row.draft.gmailDraftId || row.draft.sendAfter)
     return "not_found";
@@ -1923,6 +1954,8 @@ export async function saveDraftEdit(
   const now = opts.now?.() ?? new Date();
   if (!jobsAllowed(workspace, now)) throw new ReadOnlyError(effectiveStatus(workspace, now));
   if (mailbox.planPausedAt) return "mailbox_paused";
+  if (opts.openedHash !== undefined && opts.openedHash !== bodyHash(draft.body ?? ""))
+    return "changed_since_opened";
   const writer = (opts.writerFor ?? defaultWriter)(mailbox);
   try {
     const remote = await writer.getDraft(draft.gmailDraftId!);
@@ -1935,6 +1968,10 @@ export async function saveDraftEdit(
         now,
       );
       return "deleted_in_gmail";
+    }
+    if (!sameText(remote.bodyText, draft.body)) {
+      await takeGmailText(draft.id, remote.bodyText);
+      return "changed_in_gmail";
     }
     await writer.updateDraft(draft.gmailDraftId!, {
       threadId: thread.gmailThreadId,
@@ -1965,6 +2002,9 @@ export type ReviseOutcome =
   | { status: "deleted_in_gmail" }
   | { status: "reconnect_needed" }
   | { status: "mailbox_paused" }
+  /** Check 42 P2: changed in Gmail (or on another device) since; nothing rewritten. */
+  | { status: "changed_in_gmail" }
+  | { status: "changed_since_opened" }
   | { status: "not_found" };
 
 /**
@@ -1978,7 +2018,10 @@ export async function reviseDraft(
   workspaceId: string,
   draftId: string,
   change: { tweak: Tweak } | { spoken: string } | { opening: OpeningTweak },
-  opts: DraftDeps = {},
+  opts: DraftDeps & {
+    /** Check 42 P2: bodyHash of the text the card showed when the change was asked for. */
+    openedHash?: string;
+  } = {},
 ): Promise<ReviseOutcome> {
   const row = await loadOwnedDraft(workspaceId, draftId);
   if (!row || row.draft.status !== "pending" || !row.draft.gmailDraftId || row.draft.sendAfter)
@@ -1996,6 +2039,39 @@ export async function reviseDraft(
     !(isFirstContactOpening(draft.opening) && draft.kind === "reply" && !draft.purpose)
   )
     return { status: "not_first_contact" };
+  // Check 42 P2: a change asked of text that has moved on (another device, or Gmail) is never
+  // made: both are checked before the model is called, so its rewrite can't wipe theirs.
+  if (opts.openedHash !== undefined && opts.openedHash !== bodyHash(draft.body ?? ""))
+    return { status: "changed_since_opened" };
+  const writer = (opts.writerFor ?? defaultWriter)(mailbox);
+  const gmailMoved = async (): Promise<ReviseOutcome | null> => {
+    const remote = await writer.getDraft(draft.gmailDraftId!);
+    if (!remote) {
+      await closeDraft(
+        draft,
+        workspaceId,
+        "discarded",
+        "You deleted or sent this draft in Gmail.",
+        now,
+      );
+      return { status: "deleted_in_gmail" };
+    }
+    if (!sameText(remote.bodyText, draft.body)) {
+      await takeGmailText(draft.id, remote.bodyText);
+      return { status: "changed_in_gmail" };
+    }
+    return null;
+  };
+  try {
+    const moved = await gmailMoved();
+    if (moved) return moved;
+  } catch (err) {
+    if (err instanceof MailboxAuthError) {
+      await markReconnectNeeded(mailbox);
+      return { status: "reconnect_needed" };
+    }
+    throw err;
+  }
 
   const spoken = "spoken" in change ? change.spoken.trim().slice(0, 500) : null;
   const ask =
@@ -2131,19 +2207,10 @@ export async function reviseDraft(
     ...purposeFlags,
   ]);
 
-  const writer = (opts.writerFor ?? defaultWriter)(mailbox);
   try {
-    const remote = await writer.getDraft(draft.gmailDraftId!);
-    if (!remote) {
-      await closeDraft(
-        draft,
-        workspaceId,
-        "discarded",
-        "You deleted or sent this draft in Gmail.",
-        now,
-      );
-      return { status: "deleted_in_gmail" };
-    }
+    // Again after the model's few seconds: someone may have typed in Gmail meanwhile.
+    const moved = await gmailMoved();
+    if (moved) return moved;
     await writer.updateDraft(draft.gmailDraftId!, {
       threadId: thread.gmailThreadId,
       raw: mimeFor(draft, mailbox, body, await replyToHeaders(draft)),

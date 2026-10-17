@@ -46,3 +46,12 @@ For the integrator to fold into `CLAUDE.md` (Decisions), `docs/LAUNCH.md` and th
   The card shows a live countdown (`autopilot-countdown.tsx`: "Sends in 6 min", seconds in the
   last minute; the clock time once for screen readers) and refreshes every 4 s for a minute at
   zero.
+- **Check 42 P2 (never overwrite Gmail's text):** `saveDraftEdit` and `reviseDraft` read the
+  Gmail draft first (reviseDraft before the model is called, and again before it writes): a
+  different text there becomes the draft's (`takeGmailText`, countdown and queued send
+  cleared) and they return `changed_in_gmail` without writing to Gmail. Both take an
+  `openedHash` (the Edit box posts `opened`, the quick-change forms post `seen`): a stored text
+  that moved on since → `changed_since_opened`, no Gmail call, no model call. The Edit box is
+  now `draft-editor.tsx` with `editorAction` (useActionState; `saveDraftEditAction` is gone):
+  it answers inside the card, puts the newest text in the box and keeps what was typed in a
+  read-only "Your text" box. Quick changes redirect to `?error=changed_editing`.

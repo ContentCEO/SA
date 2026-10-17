@@ -449,7 +449,8 @@ describe("first replies: drafting (stand-in model)", () => {
       info.mockRestore();
       const after = (await draftOf(d.threadId))!;
       expect(after).toMatchObject({ status: "pending", revisions: 1, opening: "details" });
-      expect(writer.calls).toEqual(["getDraft", "updateDraft"]);
+      // Check 42 P2: Gmail is read before the model and again before writing.
+      expect(writer.calls).toEqual(["getDraft", "getDraft", "updateDraft"]);
       expect(writer.sent).toEqual([]);
       const [row] = await database
         .select()

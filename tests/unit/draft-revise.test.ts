@@ -100,7 +100,8 @@ describe("#3 quick tweaks and #4 voice edits", () => {
     expect(after!.status).toBe("pending");
     expect(after!.revisions).toBe(1);
     expect(FakeWriter.bodyOf(writer.drafts.get(d.gmailDraftId!)!.raw)).toBe("Hi Dana — address?");
-    expect(writer.calls).toEqual(["getDraft", "updateDraft"]);
+    // Check 42 P2: Gmail is read before the model (and again before writing), never sent.
+    expect(writer.calls).toEqual(["getDraft", "getDraft", "updateDraft"]);
     expect(writer.sent).toEqual([]);
   });
 

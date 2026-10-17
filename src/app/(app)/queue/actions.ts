@@ -11,7 +11,9 @@ import { isBatchCategory } from "@/server/batch-rules";
 import {
   batchSend,
   createDraftForThread,
+  bodyHash,
   discardDraft,
+  pendingDraftText,
   queueSend,
   reviseDraft,
   saveDraftEdit,
@@ -174,29 +176,67 @@ export async function batchSendAction(formData: FormData) {
   redirect(`/queue?${qs}`);
 }
 
-export async function saveDraftEditAction(formData: FormData) {
+/**
+ * The Edit box's state (Check 42 P2): a message shown inside the card, and — when the reply
+ * changed while it was open — the newest text to edit, with what the person typed kept below.
+ */
+export type EditorState = {
+  message: string | null;
+  latest: { body: string; hash: string } | null;
+  typed: string | null;
+};
+
+const CHANGED_WHILE_EDITING =
+  "This reply changed while you were editing. Here's the newest version; make your change again. Nothing was saved or sent.";
+
+/** The newest text of a draft, as the editor needs it: the text and its fingerprint. */
+async function latestFor(workspaceId: string, draftId: string) {
+  const text = await pendingDraftText(workspaceId, draftId);
+  return text === null ? null : { body: text, hash: bodyHash(text) };
+}
+
+/**
+ * Save changes from the Edit box. Refusals come back to the open editor (nothing typed is
+ * lost); only a save that worked, or a draft that's gone, leaves the card.
+ */
+export async function editorAction(_prev: EditorState, formData: FormData): Promise<EditorState> {
   const { workspace } = await requireOwner();
   const draftId = id.safeParse(formData.get("draftId"));
-  const text = body.safeParse(formData.get("body"));
   if (!draftId.success) redirect("/queue?error=unknown");
-  if (!text.success) redirect("/queue?error=empty");
-  if (!(await hitLimit("gmailWrite", workspace.id)).allowed) redirect("/queue?error=busy");
+  const typed = typeof formData.get("body") === "string" ? String(formData.get("body")) : "";
+  const keep = (message: string): EditorState => ({ message, latest: null, typed: null });
+  const text = body.safeParse(typed);
+  if (!text.success) return keep("The reply is empty, so nothing was saved.");
+  if (!(await hitLimit("gmailWrite", workspace.id)).allowed)
+    return keep(
+      "That's a lot in a short time, so we've paused it for a bit. Nothing was saved. Try again in a few minutes.",
+    );
+  const opened = seenHash(formData.get("opened")) ?? undefined;
   let r;
   try {
-    r = await saveDraftEdit(workspace.id, draftId.data, text.data);
+    r = await saveDraftEdit(workspace.id, draftId.data, text.data, { openedHash: opened });
   } catch (err) {
     if (err instanceof ReadOnlyError) redirect("/queue?error=readonly");
     throw err;
   }
-  redirect(
-    r === "saved"
-      ? "/queue?done=saved"
-      : r === "deleted_in_gmail"
-        ? "/queue?error=deleted"
-        : r === "mailbox_paused"
-          ? "/queue?error=paused"
-          : "/queue?error=unknown",
-  );
+  switch (r) {
+    case "saved":
+      redirect("/queue?done=saved");
+    case "changed_in_gmail":
+    case "changed_since_opened": {
+      const latest = await latestFor(workspace.id, draftId.data);
+      if (!latest) redirect("/queue?error=gone");
+      return { message: CHANGED_WHILE_EDITING, latest, typed };
+    }
+    case "deleted_in_gmail":
+      redirect("/queue?error=deleted");
+    case "mailbox_paused":
+      redirect("/queue?error=paused");
+    case "reconnect_needed":
+      return keep("Google access was lost. Nothing was saved. Reconnect Gmail in Settings.");
+    default:
+      redirect("/queue?error=gone");
+  }
 }
 
 export async function discardDraftAction(formData: FormData) {
@@ -262,6 +302,8 @@ export async function reviseDraftAction(formData: FormData) {
       workspace.id,
       draftId.data,
       isTweak(tweak) ? { tweak } : isOpeningTweak(opening) ? { opening } : { spoken: spoken.data! },
+      // Check 42 P2: the text the card showed when the change was asked for.
+      { openedHash: seenHash(formData.get("seen")) ?? undefined },
     );
   } catch (err) {
     if (err instanceof ReadOnlyError) redirect("/queue?error=readonly");
@@ -276,6 +318,8 @@ export async function reviseDraftAction(formData: FormData) {
     mailbox_paused: "paused",
     not_found: "unknown",
     not_first_contact: "unknown",
+    changed_in_gmail: "changed_editing",
+    changed_since_opened: "changed_editing",
   };
   redirect(r.status === "revised" ? "/queue?done=revised" : `/queue?error=${errors[r.status]}`);
 }

@@ -1,9 +1,8 @@
 "use client";
 
-import { useEffect, useRef, useState, useSyncExternalStore, useTransition } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useFormStatus } from "react-dom";
 import { Button } from "@/components/ui/button";
-import { addNeverSayAction } from "../settings/wording-actions";
 import { fillGap, findGaps } from "@/ai/gaps";
 import type { ConfidenceLabel } from "@/config/drafting";
 import { BodyWithGaps, ConfidenceTag, PastPrices, WhyThis, type PastPrice } from "./draft-parts";
@@ -11,6 +10,7 @@ import { OtherWaysToReply, SayAChange, TweakChips } from "./revise-controls";
 import { RemindMe, type SnoozeOption } from "./remind-me";
 import { CalledThem } from "./called-them";
 import { AutopilotCountdown } from "./autopilot-countdown";
+import { DraftEditor } from "./draft-editor";
 import {
   addIntent,
   intentsServerSnapshot,
@@ -23,7 +23,6 @@ import {
   discardDraftAction,
   holdAutopilotAction,
   practiceSendAction,
-  saveDraftEditAction,
   sendDraftAction,
 } from "./actions";
 
@@ -176,7 +175,6 @@ export function DraftCard(p: DraftCardProps) {
     const t = setTimeout(() => setDiscardIn((s) => (s === null ? null : s - 1)), 1000);
     return () => clearTimeout(t);
   }, [discardIn]);
-  const editor = useRef<HTMLTextAreaElement>(null);
   // The body as the owner sees it — gaps they fill in change it before sending.
   const [body, setBody] = useState(p.body);
   const gapsLeft = findGaps(body).length;
@@ -186,17 +184,6 @@ export function DraftCard(p: DraftCardProps) {
     if (priceGap >= 0) setBody(fillGap(body, priceGap, value));
   };
   const pastPrices = p.priceMemory ?? [];
-  const [neverSayNote, setNeverSayNote] = useState<string | null>(null);
-  const [savingPhrase, startSaving] = useTransition();
-  const neverSay = () => {
-    const el = editor.current;
-    const phrase = el ? el.value.slice(el.selectionStart, el.selectionEnd).trim() : "";
-    if (!phrase) {
-      setNeverSayNote("Select the words first — press and hold, then drag.");
-      return;
-    }
-    startSaving(async () => setNeverSayNote((await addNeverSayAction(phrase)).message));
-  };
 
   const onPointerDown = (e: React.PointerEvent) => {
     if (editing || p.readOnly || e.pointerType === "mouse") return;
@@ -290,61 +277,15 @@ export function DraftCard(p: DraftCardProps) {
       ) : null}
 
       {editing ? (
-        <form className="flex flex-col gap-3">
-          <input type="hidden" name="draftId" value={p.draftId} />
-          <input type="hidden" name="seen" value={p.seenHash} />
-          {p.toAddress ? <input type="hidden" name="seenTo" value={p.toAddress} /> : null}
-          <ToLine address={p.toAddress} fromReplyTo={p.toFromReplyTo} />
-          <label className="flex flex-col gap-1.5">
-            <span className="font-semibold">Your reply</span>
-            <textarea
-              ref={editor}
-              name="body"
-              defaultValue={body}
-              rows={10}
-              autoFocus
-              className="w-full rounded-lg border border-input bg-paper px-3 py-2.5 text-base"
-            />
-          </label>
-          {p.canSend ? (
-            <Pending
-              formAction={sendDraftAction}
-              label="Send reply"
-              busy="Sending…"
-              size="lg"
-              className="w-full"
-            />
-          ) : null}
-          <Pending
-            formAction={saveDraftEditAction}
-            label="Save changes"
-            busy="Saving…"
-            variant="outline"
-            className="w-full"
-          />
-          <Button
-            type="button"
-            variant="outline"
-            className="w-full"
-            disabled={savingPhrase}
-            onClick={neverSay}
-          >
-            {savingPhrase ? "Adding…" : "Never say this"}
-          </Button>
-          {neverSayNote ? (
-            <p role="status" className="text-sm font-semibold">
-              {neverSayNote}
-            </p>
-          ) : null}
-          <Button
-            type="button"
-            variant="ghost"
-            className="w-full"
-            onClick={() => setEditing(false)}
-          >
-            Cancel
-          </Button>
-        </form>
+        <DraftEditor
+          draftId={p.draftId}
+          body={body}
+          seenHash={p.seenHash}
+          toAddress={p.toAddress}
+          toLine={<ToLine address={p.toAddress} fromReplyTo={p.toFromReplyTo} />}
+          canSend={p.canSend}
+          onCancel={() => setEditing(false)}
+        />
       ) : null}
       {editing ? null : (
         <>
@@ -518,7 +459,9 @@ export function DraftCard(p: DraftCardProps) {
                   </Button>
                 </div>
               )}
-              {canChange && p.otherWays ? <OtherWaysToReply draftId={p.draftId} /> : null}
+              {canChange && p.otherWays ? (
+                <OtherWaysToReply draftId={p.draftId} seenHash={p.seenHash} />
+              ) : null}
               {canChange && changing ? (
                 <div
                   id={`change-${p.draftId}`}
@@ -527,8 +470,8 @@ export function DraftCard(p: DraftCardProps) {
                   <p className="text-sm text-muted-foreground">
                     Each change writes a new version for you to read. Nothing is sent.
                   </p>
-                  <TweakChips draftId={p.draftId} />
-                  <SayAChange draftId={p.draftId} />
+                  <TweakChips draftId={p.draftId} seenHash={p.seenHash} />
+                  <SayAChange draftId={p.draftId} seenHash={p.seenHash} />
                 </div>
               ) : null}
               <RemindMe threadId={p.threadId} options={p.remindOptions ?? []} />
