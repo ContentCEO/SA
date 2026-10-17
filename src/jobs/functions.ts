@@ -6,6 +6,8 @@ import {
   finishBackfill,
   incrementalSync,
   listSyncableMailboxes,
+  MAX_RESYNC_PAGES_PER_RUN,
+  resyncPage,
   purgeExpiredBodies,
   renewWatches,
 } from "@/server/sync";
@@ -153,6 +155,26 @@ export const syncMailbox = inngest.createFunction(
     const result = await step.run("sync", () => politely(() => incrementalSync(mailboxId)));
     if (result.status === "reconnect_needed") {
       throw new NonRetriableError("Mailbox needs reconnecting.");
+    }
+    if (result.status === "resync_needed") {
+      // Check 25 P3: Gmail's history expired; re-read the gap one page per step. A very big gap
+      // stops after MAX_RESYNC_PAGES_PER_RUN and the next sync event carries on from the token.
+      let ingested = 0;
+      for (let page = 0; page < MAX_RESYNC_PAGES_PER_RUN; page++) {
+        const r = await step.run(`resync-page-${page}`, () =>
+          politely(() => resyncPage(mailboxId)),
+        );
+        if (r.status === "reconnect_needed")
+          throw new NonRetriableError("Mailbox needs reconnecting.");
+        if (r.status !== "ok") return r;
+        ingested += r.ingested;
+        if (r.done) {
+          await step.sendEvent("next", afterSync(mailboxId, ingested));
+          return { status: "ok" as const, ingested };
+        }
+      }
+      if (ingested > 0) await step.sendEvent("next", afterSync(mailboxId, ingested));
+      return { status: "resync_continuing" as const, ingested };
     }
     if (result.status === "ok") {
       await step.sendEvent("next", afterSync(mailboxId, result.ingested));

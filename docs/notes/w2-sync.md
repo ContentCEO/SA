@@ -68,3 +68,18 @@ fetch and `politely()` pauses. Inbox emails are read once (full); others as meta
 - e2e fake Google: `registerScenario(…, { noGmail: true })` makes the profile answer 400
   failedPrecondition.
 - Every connect now makes one extra Gmail call (profile, 1 unit) before userinfo.
+
+## Step 4 · Check 25 P3: re-read the whole gap when Gmail's history expired
+
+- Migration `0040_resync_cursor`: `mailboxes.resync_since`, `mailboxes.resync_page_token`.
+- On a history 404, `incrementalSync` takes a fresh cursor with getProfile, **stores it at once**
+  (adapted: the spec stores it at the end; storing it first is equivalent — mail after it comes
+  through history, mail before it through the re-read — and needs no third column), sets
+  `resync_since = now − clamp(ceil(gap days) + 1, 7, 30)` and returns
+  `{ status: "resync_needed", since }`. The window is a fixed `after:<epoch seconds>`.
+- `resyncPage(mailboxId)` reads one page (50, inbox pass first) from the saved token; when done it
+  clears the re-read and sets `last_synced_at`. Every sync continues an unfinished re-read before
+  using history. The `sync-mailbox` job loops `resync-page-N` steps, at most 300 per run.
+- A gap longer than 30 days writes one `mail_gap` activity row `{ mailboxId, fromDay, toDay }`
+  (dates only; hidden on Activity until a screen uses it — idea E4).
+- `runIncrementalSync` = sync + whole re-read in one go (tests and the e2e hook).

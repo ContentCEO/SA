@@ -206,6 +206,12 @@ export const mailboxes = pgTable(
      * before any fetch until then, so all its jobs wait together.
      */
     gmailCoolUntil: timestamp("gmail_cool_until", { withTimezone: true }),
+    /**
+     * Check 25 P3: Gmail's history expired, so the gap is re-read from this time, one page per
+     * step. Null = no re-read under way. `resync_page_token` is where the next page starts.
+     */
+    resyncSince: timestamp("resync_since", { withTimezone: true }),
+    resyncPageToken: text("resync_page_token"),
     createdAt: createdAt(),
   },
   (t) => [

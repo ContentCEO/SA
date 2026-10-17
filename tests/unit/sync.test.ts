@@ -5,7 +5,14 @@ import type { Database } from "@/db";
 import { activityLog, drafts, mailboxes, messages, threads } from "@/db/schema";
 import { ensureUserAndWorkspace } from "@/server/accounts";
 import { saveConnectedMailbox } from "@/server/mailboxes";
-import { incrementalSync, purgeExpiredBodies, recordSentMessage, runBackfill } from "@/server/sync";
+import {
+  incrementalSync,
+  purgeExpiredBodies,
+  recordSentMessage,
+  resyncPage,
+  runBackfill,
+  runIncrementalSync,
+} from "@/server/sync";
 import { createTestDb } from "../support/db";
 import { FakeMailbox } from "../support/fake-mailbox";
 
@@ -221,7 +228,8 @@ describe("incremental sync", () => {
     fake.add({ id: "m2", threadId: "t2", daysAgo: 2 });
     fake.oldestHistory = fake.history + 1; // everything we know is too old now
 
-    const out = await incrementalSync(mailboxId, deps());
+    expect(await incrementalSync(mailboxId, deps())).toMatchObject({ status: "resync_needed" });
+    const out = await runIncrementalSync(mailboxId, deps());
     expect(out).toMatchObject({ status: "ok", ingested: 1 });
     const [box] = await database.select().from(mailboxes);
     expect(box!.historyId).toBe(String(fake.history));
@@ -613,5 +621,82 @@ describe("label changes made in Gmail (Check 25 P2)", () => {
     fake.relabel("m1", ["INBOX"]);
     await incrementalSync(mailboxId, deps());
     expect((await threadRow("t1")).inInbox).toBe(true);
+  });
+});
+
+describe("expired history after a long pause (Check 25 P3)", () => {
+  const at = (daysAfterNow: number) => () => new Date(NOW.getTime() + daysAfterNow * 86_400_000);
+  /** A message `daysAgo` before the later "now". */
+  const addAt = (id: string, laterDays: number, daysAgo: number) =>
+    fake.add({ id, threadId: `t-${id}`, now: at(laterDays)(), daysAgo });
+
+  it("re-reads the whole gap: last sync 12 days ago, emails 11, 9, 8, 3 and 1 days old", async () => {
+    fake.add({ id: "m0", threadId: "t0" });
+    await runBackfill(mailboxId, deps());
+    for (const [id, ago] of [
+      ["a11", 11],
+      ["a9", 9],
+      ["a8", 8],
+      ["a3", 3],
+      ["a1", 1],
+    ] as const)
+      addAt(id, 12, ago);
+    fake.oldestHistory = fake.history + 1;
+    const later = { readerFor: () => fake.reader(), now: at(12) };
+    const out = await runIncrementalSync(mailboxId, later);
+    expect(out).toMatchObject({ status: "ok", ingested: 5 });
+    const ids = (await database.select().from(messages)).map((r) => r.gmailMessageId).sort();
+    expect(ids).toEqual(["a1", "a11", "a3", "a8", "a9", "m0"]);
+    const [box] = await database.select().from(mailboxes);
+    expect(box!.resyncSince).toBeNull();
+    expect(box!.lastSyncedAt).toEqual(at(12)());
+    expect(
+      await database.select().from(activityLog).where(eq(activityLog.action, "mail_gap")),
+    ).toEqual([]);
+  });
+
+  it("a 45-day gap reads 30 days and writes one mail_gap row with dates only", async () => {
+    fake.add({ id: "m0", threadId: "t0" });
+    await runBackfill(mailboxId, deps());
+    addAt("old", 45, 40); // inside the gap but past 30 days: not read
+    addAt("new", 45, 20);
+    fake.oldestHistory = fake.history + 1;
+    const later = { readerFor: () => fake.reader(), now: at(45) };
+    expect(await runIncrementalSync(mailboxId, later)).toMatchObject({ status: "ok", ingested: 1 });
+    const gaps = await database
+      .select()
+      .from(activityLog)
+      .where(eq(activityLog.action, "mail_gap"));
+    expect(gaps).toHaveLength(1);
+    expect(gaps[0]!.detail).toEqual({ mailboxId, fromDay: "2026-09-28", toDay: "2026-10-13" });
+  });
+
+  it("an interrupted re-read resumes from the saved token and stores each message once", async () => {
+    fake.add({ id: "m0", threadId: "t0", daysAgo: 5 }); // before the re-read window
+    await runBackfill(mailboxId, deps());
+    // 120 inbox emails = 3 pages of 50, then the (empty) rest pass.
+    for (let i = 0; i < 120; i++) addAt(`x${i}`, 10, 1 + (i % 8));
+    fake.oldestHistory = fake.history + 1;
+    const later = { readerFor: () => fake.reader(), now: at(10) };
+    expect(await incrementalSync(mailboxId, later)).toMatchObject({ status: "resync_needed" });
+    expect(await resyncPage(mailboxId, later)).toMatchObject({
+      status: "ok",
+      ingested: 50,
+      done: false,
+    });
+    // The run stops here (a deploy, a timeout). The next sync event carries on.
+    const [mid] = await database.select().from(mailboxes);
+    expect(mid!.resyncPageToken).toBe("inbox:50");
+    expect(await incrementalSync(mailboxId, later)).toMatchObject({ status: "resync_needed" });
+    fake.bodyFetches = [];
+    expect(await runIncrementalSync(mailboxId, later)).toMatchObject({
+      status: "ok",
+      ingested: 70,
+    });
+    expect(fake.bodyFetches).toHaveLength(70);
+    expect(await database.select().from(messages)).toHaveLength(121);
+    // Back to ordinary history-based sync from the fresh cursor.
+    fake.oldestHistory = 0;
+    expect(await incrementalSync(mailboxId, later)).toMatchObject({ status: "ok", ingested: 0 });
   });
 });

@@ -51,6 +51,8 @@ export type SyncDeps = {
 
 export type SyncOutcome =
   | { status: "ok"; ingested: number; nextPageToken?: string }
+  /** Check 25 P3: history expired; re-read from `since` (ISO) with `resyncPage`. */
+  | { status: "resync_needed"; since: string }
   | { status: "skipped"; reason: "not_found" | "not_active" | "not_ready" | "read_only" }
   | { status: "reconnect_needed" };
 
@@ -132,7 +134,8 @@ async function noteSyncError(mailboxId: string, code: SyncErrorCode | null) {
 async function guarded(mailbox: Mailbox, fn: () => Promise<SyncOutcome>): Promise<SyncOutcome> {
   try {
     const outcome = await fn();
-    if (outcome.status === "ok") await noteSyncError(mailbox.id, null);
+    if (outcome.status === "ok" || outcome.status === "resync_needed")
+      await noteSyncError(mailbox.id, null);
     return outcome;
   } catch (err) {
     if (err instanceof MailboxAuthError) {
@@ -165,6 +168,11 @@ export function isUnsentDraft(labelIds: readonly string[]): boolean {
 
 function windowQuery(days: number) {
   return `newer_than:${days}d`;
+}
+
+/** A fixed window start (Gmail's `after:` takes epoch seconds), so a re-read never drifts. */
+function afterQuery(since: Date) {
+  return `after:${Math.floor(since.getTime() / 1000)}`;
 }
 
 /**
@@ -676,6 +684,9 @@ export async function incrementalSync(
   if (skip) return skip;
   if (!mailbox.backfillCompletedAt || !mailbox.historyId)
     return { status: "skipped", reason: "not_ready" };
+  // A re-read after expired history is still under way: finish it first (Check 25 P3).
+  if (mailbox.resyncSince)
+    return { status: "resync_needed", since: mailbox.resyncSince.toISOString() };
   const reader = (deps.readerFor ?? defaultReaderFor)(mailbox);
   const now = deps.now?.() ?? new Date();
 
@@ -693,14 +704,7 @@ export async function incrementalSync(
       } while (pageToken);
     } catch (err) {
       if (!(err instanceof HistoryExpiredError)) throw err;
-      const profile = await reader.getProfile();
-      let pageToken: string | undefined;
-      do {
-        const page = await windowPage(reader, windowQuery(RESYNC_DAYS), pageToken, 100);
-        ingested += await ingest(mailbox, reader, page.messages, now);
-        pageToken = page.nextPageToken;
-      } while (pageToken);
-      cursor = profile.historyId;
+      return startResync(mailbox, reader, now);
     }
     await db()
       .update(mailboxes)
@@ -709,6 +713,103 @@ export async function incrementalSync(
     logGmailUnits("sync", mailbox.id, reader);
     return { status: "ok", ingested };
   });
+}
+
+const DAY_MS = 86_400_000;
+const isoDay = (d: Date) => d.toISOString().slice(0, 10);
+
+/**
+ * Check 25 P3: Gmail's history no longer reaches back to our cursor (a long pause, a read-only
+ * stretch between a trial and a payment). Take a fresh cursor first (so nothing arriving from
+ * now on is missed), then re-read the whole gap — at least RESYNC_DAYS, at most BACKFILL_DAYS
+ * — one page per step (`resyncPage`). A gap longer than BACKFILL_DAYS is logged once as
+ * `mail_gap` (dates only) so a screen can tell the owner.
+ */
+async function startResync(
+  mailbox: Mailbox,
+  reader: Pick<MailboxReader, "getProfile">,
+  now: Date,
+): Promise<SyncOutcome> {
+  const profile = await reader.getProfile();
+  const last = mailbox.lastSyncedAt ?? mailbox.backfillCompletedAt ?? now;
+  const gapDays = Math.ceil((now.getTime() - last.getTime()) / DAY_MS) + 1;
+  const days = Math.min(BACKFILL_DAYS, Math.max(RESYNC_DAYS, gapDays));
+  const since = new Date(now.getTime() - days * DAY_MS);
+  // The fresh cursor is stored now: mail from here on comes through history; the re-read
+  // covers everything before it. Until the re-read is done every sync continues it first.
+  await db()
+    .update(mailboxes)
+    .set({ historyId: profile.historyId, resyncSince: since, resyncPageToken: null })
+    .where(eq(mailboxes.id, mailbox.id));
+  if (gapDays > BACKFILL_DAYS) {
+    await db()
+      .insert(activityLog)
+      .values({
+        workspaceId: mailbox.workspaceId,
+        actor: "squared_away",
+        action: "mail_gap",
+        detail: { mailboxId: mailbox.id, fromDay: isoDay(last), toDay: isoDay(since) },
+      });
+  }
+  return { status: "resync_needed", since: since.toISOString() };
+}
+
+/**
+ * One page (BACKFILL_PAGE_SIZE) of a history-expired re-read, from the saved token. Done →
+ * the re-read is cleared and `last_synced_at` set. Idempotent: stored messages are skipped.
+ */
+export async function resyncPage(
+  mailboxId: string,
+  deps: SyncDeps = {},
+): Promise<SyncOutcome & { done?: boolean }> {
+  const { mailbox, skip } = await loadActiveMailbox(mailboxId);
+  if (skip) return skip;
+  const now = deps.now?.() ?? new Date();
+  if (!mailbox.resyncSince) return { status: "ok", ingested: 0, done: true };
+  const reader = (deps.readerFor ?? defaultReaderFor)(mailbox);
+  return guarded(mailbox, async () => {
+    const page = await windowPage(
+      reader,
+      afterQuery(mailbox.resyncSince!),
+      mailbox.resyncPageToken ?? undefined,
+      BACKFILL_PAGE_SIZE,
+    );
+    const ingested = await ingest(mailbox, reader, page.messages, now);
+    const done = !page.nextPageToken;
+    await db()
+      .update(mailboxes)
+      .set(
+        done
+          ? { resyncSince: null, resyncPageToken: null, lastSyncedAt: now }
+          : { resyncPageToken: page.nextPageToken },
+      )
+      .where(eq(mailboxes.id, mailbox.id));
+    logGmailUnits("resync", mailbox.id, reader);
+    return { status: "ok", ingested, done };
+  });
+}
+
+/** Most re-read pages one sync run may take; the next sync event continues from the token. */
+export const MAX_RESYNC_PAGES_PER_RUN = 300;
+
+/**
+ * Incremental sync plus any re-read it needs, in one go. Used by tests and the e2e hook; the
+ * job runs the re-read one page per step.
+ */
+export async function runIncrementalSync(
+  mailboxId: string,
+  deps: SyncDeps = {},
+): Promise<SyncOutcome> {
+  const first = await incrementalSync(mailboxId, deps);
+  if (first.status !== "resync_needed") return first;
+  let total = 0;
+  for (let i = 0; i < MAX_RESYNC_PAGES_PER_RUN; i++) {
+    const page = await resyncPage(mailboxId, deps);
+    if (page.status !== "ok") return page;
+    total += page.ingested;
+    if (page.done) break;
+  }
+  return { status: "ok", ingested: total };
 }
 
 /** Mailboxes that should be polled / backfilled right now. */

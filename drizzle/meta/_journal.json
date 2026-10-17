@@ -281,6 +281,13 @@
       "when": 1792276309904,
       "tag": "0039_gmail_units",
       "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "7",
+      "when": 1792277847706,
+      "tag": "0040_resync_cursor",
+      "breakpoints": true
     }
   ]
 }

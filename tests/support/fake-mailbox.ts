@@ -134,7 +134,10 @@ export class FakeMailbox {
       listMessages: async ({ query, pageToken, maxResults }) => {
         guard();
         const days = Number(/newer_than:(\d+)d/.exec(query)?.[1] ?? 9999);
-        const cutoff = new Date("2026-09-28T12:00:00Z").getTime() - days * 86_400_000;
+        const after = /(?:^|\s)after:(\d+)/.exec(query)?.[1];
+        const cutoff = after
+          ? Number(after) * 1000
+          : new Date("2026-09-28T12:00:00Z").getTime() - days * 86_400_000;
         const sentOnly = query.includes("in:sent");
         // Like Gmail: `in:inbox` / `-in:inbox`; Spam and Trash are never listed.
         const inbox = /(^|\s)-in:inbox/.test(query)
