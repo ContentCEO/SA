@@ -7,6 +7,7 @@ import { sum } from "drizzle-orm";
 import { classifyEmail } from "@/ai/classify";
 import { callStructured } from "@/ai/client";
 import { checkDraft } from "@/ai/draft-checks";
+import { asksWhenAvailable } from "@/ai/when-words";
 import {
   conversationBlock,
   DRAFT_INSTRUCTIONS,
@@ -121,6 +122,12 @@ export async function runEvals(
       else {
         const check = checkDraft(draft.body, {
           sourceText: [c.body, workspaceBlock(ctx)].join("\n"),
+          // Check 20 P1 / 23 P3: days and times come from the conversation; the hours' days
+          // only when the customer asked when the owner is open, as in the app.
+          whenSourceText: c.body,
+          hoursText: PROFILE.hours,
+          leadTimeText: PROFILE.leadTime,
+          allowHours: asksWhenAvailable(c.body),
           doNotPromise: PROFILE.doNotPromise,
           neverSay: PROFILE.neverSay,
           phrasesAvoided: [],

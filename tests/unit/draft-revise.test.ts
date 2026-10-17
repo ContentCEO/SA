@@ -6,7 +6,7 @@ import type { ModelDraft } from "@/ai/prompts/draft.v6";
 import { isTweak, TWEAKS } from "@/ai/prompts/revise.v2";
 import { MAX_REVISIONS_PER_DRAFT } from "@/config/drafting";
 import type { Database } from "@/db";
-import { activityLog, drafts, messages, threads, workspaces } from "@/db/schema";
+import { activityLog, businessProfiles, drafts, messages, threads, workspaces } from "@/db/schema";
 import { ensureUserAndWorkspace } from "@/server/accounts";
 import { describeActivity } from "@/server/activity";
 import { createDraftForThread, reviseDraft } from "@/server/drafts";
@@ -102,6 +102,28 @@ describe("#3 quick tweaks and #4 voice edits", () => {
     expect(FakeWriter.bodyOf(writer.drafts.get(d.gmailDraftId!)!.raw)).toBe("Hi Dana — address?");
     expect(writer.calls).toEqual(["getDraft", "updateDraft"]);
     expect(writer.sent).toEqual([]);
+  });
+
+  it("Check 23 P3: “Add my availability” may write the hours' days, with no retry", async () => {
+    await database
+      .insert(businessProfiles)
+      .values({ workspaceId, hours: "Mon–Fri 7am–4pm" })
+      .onConflictDoUpdate({
+        target: businessProfiles.workspaceId,
+        set: { hours: "Mon–Fri 7am–4pm" },
+      });
+    const d = await pendingDraft();
+    const withHours = "Hi Dana, I'm around Monday to Friday, 7am to 4pm. What's the address?";
+    // Any other tweak that adds those days is flagged (the customer never named them).
+    setModelTransportForTests(fakeTransport([draft(withHours), draft(withHours)]).transport);
+    const warmer = await reviseDraft(workspaceId, d.id, { tweak: "warmer" }, deps());
+    expect(warmer.status === "revised" && warmer.flags.join(" ")).toContain("monday");
+    // "Add my availability" writes them on purpose: no retry, no flag.
+    const { transport, calls } = fakeTransport([draft(withHours), draft("retry")]);
+    setModelTransportForTests(transport);
+    const r = await reviseDraft(workspaceId, d.id, { tweak: "availability" }, deps());
+    expect(r).toEqual({ status: "revised", flags: [] });
+    expect(calls).toHaveLength(1);
   });
 
   it("a tweak can't introduce a price: one retry, then a flag", async () => {

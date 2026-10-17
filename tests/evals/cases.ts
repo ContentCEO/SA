@@ -1459,4 +1459,28 @@ export const EVAL_CASES: EvalCase[] = [
     firstContact: "price_only",
     draft: { ...DRAFT, mustContain: ["?"] },
   }),
+
+  // ── draft checks (wave 1) ──────────────────────────────────────────
+  // Check 20 P1: the shop's hours (Mon–Fri in the eval profile) never excuse a day the
+  // customer didn't name, and a time other than the one they asked for is flagged.
+  c({
+    id: "dc-when-hours-no-day",
+    trade: "plumbing",
+    fromName: "Lee Morgan",
+    fromAddress: "lee@example.com",
+    subject: "Dripping faucet",
+    body: "Our kitchen faucet drips all night. Could someone come take a look sometime?",
+    expect: { category: ["scheduling", "quote_request", "customer_question"], needsOwner: false },
+    draft: DRAFT,
+  }),
+  c({
+    id: "dc-when-thursday-at-2",
+    trade: "electrical",
+    fromName: "Pat Quinn",
+    fromAddress: "pat@example.com",
+    subject: "Outlet",
+    body: "The outlet in the bathroom stopped working. Could you come Thursday at 2?",
+    expect: { category: ["scheduling", "customer_question"], needsOwner: false },
+    draft: DRAFT,
+  }),
 ];

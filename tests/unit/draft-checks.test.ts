@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { checkDraft, hasLink, REGENERATE_ON } from "@/ai/draft-checks";
+import { guardrailReasons } from "@/server/autopilot";
 
 const ctx = {
   sourceText: "Can you come Tuesday? Service call is $95 per my pricing.",
@@ -193,5 +194,151 @@ describe("payment terms check (deposit and review notes only — A4)", () => {
     expect(
       checkDraft("For the deposit:\n\n{{custom:deposit instructions}}", terms("")).flags,
     ).toEqual([]);
+  });
+});
+
+describe("days and times as whole words (Check 20 P1, Check 23 P3 + P4)", () => {
+  const base = { doNotPromise: [] as string[], phrasesAvoided: [] as string[] };
+  const when = (
+    body: string,
+    extra: Partial<Parameters<typeof checkDraft>[1]> & { sourceText: string },
+  ) => checkDraft(body, { ...base, ...extra });
+
+  it("the hours line never excuses a day the customer didn't name", () => {
+    const convo = "Can you come look at the leak under the sink?";
+    const r = when("How about Friday at 9?", {
+      sourceText: `${convo}\nMonday to Friday, 7am to 4pm`,
+      whenSourceText: convo,
+      hoursText: "Monday to Friday, 7am to 4pm",
+    });
+    expect(r.hits).toContain("when");
+    expect(r.flags[0]).toContain("friday");
+    // The hours' times still count ("7am" is the owner's own).
+    expect(
+      when("We start at 7am.", {
+        sourceText: convo,
+        whenSourceText: convo,
+        hoursText: "Mon–Fri 7am–4pm",
+      }).hits,
+    ).not.toContain("when");
+  });
+
+  it("a time the customer didn't give is flagged; one they wrote isn't", () => {
+    const r = when("Thursday at 10:30 works.", { sourceText: "Can you come Thursday at 2?" });
+    expect(r.hits).toContain("when");
+    expect(r.flags[0]).toContain("10:30");
+    expect(r.flags[0]).not.toContain("thursday");
+    expect(
+      when("10:30 is great, see you then.", { sourceText: "10:30 works for me" }).hits,
+    ).toEqual([]);
+    expect(when("8 am Thursday works.", { sourceText: "Could you do 8am Thursday?" }).hits).toEqual(
+      [],
+    );
+    expect(when("I'll be there at 8.", { sourceText: "Could you do 8am?" }).hits).toEqual([]);
+  });
+
+  it.each([
+    ["I can come Fri to replace the line.", "The fridge water line is leaking."],
+    ["Mon works for me.", "It started leaking last month."],
+    ["How's Sat?", "We weren't satisfied with the last guy."],
+    ["Sun afternoon is open.", "The leak is in the sunroom."],
+    ["Wednesday then.", "We're getting ready for a wedding."],
+  ])("a substring never excuses a day: %s", (body, sourceText) => {
+    expect(when(body, { sourceText }).hits).toContain("when");
+  });
+
+  it("“Tuesday works.” after “Can you come Tuesday?” still passes", () => {
+    expect(when("Tuesday works.", { sourceText: "Can you come Tuesday?" }).flags).toEqual([]);
+  });
+
+  it("a seasonal note's end date counts", () => {
+    expect(
+      when("We're booked until Nov 27, sorry.", {
+        sourceText: "x",
+        whenSourceText: "Booked solid with roofs\nNovember 27",
+      }).hits,
+    ).toEqual([]);
+  });
+
+  it("the availability tweak may give the hours' days; otherwise they're flagged", () => {
+    const body = "I'm around Monday to Friday, 7am to 4pm.";
+    const src = {
+      sourceText: "Need a quote",
+      whenSourceText: "Need a quote",
+      hoursText: "Mon–Fri 7am–4pm",
+    };
+    expect(when(body, { ...src, allowHours: true }).hits).toEqual([]);
+    expect(when(body, src).hits).toContain("when");
+  });
+
+  it.each([
+    "I'll be there at 10 a.m.",
+    "I'll be there at 9 sharp",
+    "We'll have someone there within the hour.",
+    "We'll have it wrapped up before Thanksgiving.",
+    "We're about three weeks out right now.",
+    "I can come by 9 o'clock.",
+    "Thursday in the morning works.",
+  ])("dots, bare hours, holidays and lead time are seen: %s", (body) => {
+    expect(
+      when(body, {
+        sourceText: "Can you come Thursday?",
+        leadTimeText: "About two weeks out",
+      }).hits,
+    ).toContain("when");
+  });
+
+  it("the profile's own lead time is allowed; ordinary numbers stay clean", () => {
+    const src = { sourceText: "Can you do the job?", leadTimeText: "About two weeks out" };
+    expect(when("We're about two weeks out right now.", src).hits).toEqual([]);
+    expect(when("The bathroom is on the 2nd floor.", src).hits).toEqual([]);
+    expect(when("After three weeks of rain the roof needs a look.", src).hits).toEqual([]);
+    expect(when("We'll use 1/2 inch pipe at 9 Elm St.", src).hits).toEqual([]);
+    expect(when("I'll be there at 8am.", { sourceText: "8am works" }).hits).toEqual([]);
+  });
+
+  it("same-day words break a same-day never-promise item", () => {
+    const r = when("I'll get a tech to you before the day is out.", {
+      sourceText: "Water everywhere!",
+      doNotPromise: ["same-day service"],
+    });
+    expect(r.hits).toContain("never_promise");
+  });
+
+  it("a “tomorrow” from an email written days ago is flagged; today's isn't", () => {
+    const msg = "Can you come tomorrow?";
+    const now = new Date("2026-10-16T15:00:00Z"); // a Friday
+    const old = when("Tomorrow works.", {
+      sourceText: msg,
+      customerMessages: [{ text: msg, sentAt: new Date("2026-10-13T15:00:00Z") }],
+      now,
+      timeZone: "America/New_York",
+    });
+    expect(old.hits).toContain("when");
+    expect(old.flags).toContain("Says “tomorrow”, but they wrote that on Tuesday. Check the day.");
+    const fresh = when("Tomorrow works.", {
+      sourceText: msg,
+      customerMessages: [{ text: msg, sentAt: new Date("2026-10-16T13:00:00Z") }],
+      now,
+      timeZone: "America/New_York",
+    });
+    expect(fresh.hits).toEqual([]);
+  });
+
+  it("a draft with a day nobody named never gets an autopilot countdown", () => {
+    const r = when("Thursday at 10:30 works.", { sourceText: "Can you come Thursday at 2?" });
+    expect(
+      guardrailReasons({
+        category: "scheduling",
+        needsOwner: false,
+        kind: "reply",
+        confidencePct: Math.round(r.confidenceCap * 100),
+        flags: r.flags,
+        amountsInEmail: [],
+        draftBody: "Thursday at 10:30 works.",
+        knownCustomer: true,
+        purpose: null,
+      }),
+    ).toContain("Has things to check before sending.");
   });
 });

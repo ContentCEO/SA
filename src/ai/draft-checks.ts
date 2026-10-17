@@ -5,6 +5,10 @@
  */
 import { withoutGaps } from "./gaps";
 import { allNumbers, moneyMentions } from "./money-words";
+import { localDay } from "./prompts/draft.v6";
+import { newWhenTokens, normalizeWhen, whenTokens } from "./when-words";
+
+export { normalizeWhen } from "./when-words";
 
 const FILLER = [
   "i hope this email finds you well",
@@ -20,17 +24,11 @@ const FILLER = [
   "friendly reminder",
 ];
 
-const DAYS =
-  /\b(mon|tues?|wed(nes)?|thu(rs)?|fri|sat(ur)?|sun)(day)?\b|\b(tomorrow|tonight|this (morning|afternoon|evening|week(end)?)|next week)\b/gi;
-const TIMES = /\b\d{1,2}(:\d{2})?\s?(am|pm)\b|\b(noon|midnight)\b/gi;
-const DATES =
-  /\b\d{1,2}\/\d{1,2}\b|\b(jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.? \d{1,2}(st|nd|rd|th)?\b/gi;
-/**
- * Loose timing (review A2): "today", "ASAP", "in an hour", "on the 3rd", "end of the week",
- * "first thing", "between 8 and 10". Each is a commitment when nobody in the thread said it.
+/*
+ * Days, dates, times and loose timing ("today", "ASAP", "within the hour", "before
+ * Thanksgiving", "three weeks out") live in when-words.ts as whole-word tokens (Check 20 P1,
+ * Check 23 P3 + P4). Each is a commitment when nobody in the conversation said it.
  */
-const LOOSE_WHEN =
-  /\b(today|later today|asap|a\.s\.a\.p|same[- ]day|first thing|end of (the )?(day|week|month)|by (the )?end of (the )?(day|week|month))\b|\bin (an?|one|two|three|a few|a couple( of)?|\d{1,2}) (hours?|hrs?|minutes?|mins?|days?|weeks?)\b|\b(on |by )?the \d{1,2}(st|nd|rd|th)\b(?! (floor|time|step|stair|row))|\bbetween \d{1,2}(:\d{2})?\s?(am|pm)? and \d{1,2}(:\d{2})?\s?(am|pm)?\b/gi;
 
 /** Every amount named as money, however it's written (review A1; see money-words.ts). */
 function money(text: string): number[] {
@@ -76,6 +74,29 @@ function lowerWords(text: string) {
 export type CheckContext = {
   /** Everything the draft is allowed to draw facts from: the conversation and the business profile. */
   sourceText: string;
+  /**
+   * Check 20 P1: where a day, date or time may come from — the conversation (both sides),
+   * seasonal notes and their end dates, and the owner's own instruction. Never the hours,
+   * lead time or policies (a shop open "Monday to Friday" can't excuse every "Friday").
+   * Left out, `sourceText` is used, as before.
+   */
+  whenSourceText?: string;
+  /**
+   * Check 23 P3: the business hours. Their times count ("7am"); a day named only in the
+   * hours counts only when `allowHours` (the "Add my availability" tweak, or the customer
+   * asked when the owner is open).
+   */
+  hoursText?: string | null;
+  allowHours?: boolean;
+  /** Check 23 P4: the owner's lead time; only its "two weeks out" wording counts. */
+  leadTimeText?: string | null;
+  /**
+   * Check 23 P4: the customer's emails with when they were written, so a "tomorrow" read from
+   * a three-day-old email is caught. Needs `now`; days are the owner's (`timeZone`).
+   */
+  customerMessages?: { text: string; sentAt: Date }[];
+  now?: Date;
+  timeZone?: string | null;
   doNotPromise: string[];
   phrasesAvoided: string[];
   /** The owner's own "Never say this" list (plan #23). */
@@ -180,6 +201,35 @@ export function hasLink(text: string, url: string): boolean {
   return [...text.matchAll(URL)].some((m) => sameUrl(m[0], url));
 }
 
+/** A never-promise item about same-day work, and the draft words that promise it (Check 23 P4). */
+const SAME_DAY_ITEM = /\bsame[- ]?day\b/i;
+const SAME_DAY_WHEN = /\b(today|tonight|within the hour|within an hour|before the day is out)\b/;
+
+/**
+ * Check 23 P4: the draft says "today", "tonight" or "tomorrow" and the only place that word
+ * came from is a customer email written on an earlier day (in the owner's time zone).
+ */
+function staleRelativeDay(body: string, ctx: CheckContext): string | null {
+  if (!ctx.customerMessages?.length || !ctx.now) return null;
+  const today = localDay(ctx.now, ctx.timeZone);
+  const inBody = new Set(whenTokens(body).map((t) => t.key));
+  for (const [word, key] of [
+    ["tomorrow", "r:tomorrow"],
+    ["tonight", "r:tonight"],
+    ["today", "l:today"],
+  ] as const) {
+    if (!inBody.has(key)) continue;
+    const has = (t: string | null | undefined) => whenTokens(t ?? "").some((x) => x.key === key);
+    if (has(ctx.ownerInstruction)) continue;
+    const from = ctx.customerMessages.filter((m) => has(m.text));
+    if (!from.length || from.some((m) => localDay(m.sentAt, ctx.timeZone) === today)) continue;
+    const latest = from.reduce((a, b) => (b.sentAt > a.sentAt ? b : a));
+    const weekday = localDay(latest.sentAt, ctx.timeZone).split(",")[0];
+    return `Says “${word}”, but they wrote that on ${weekday}. Check the day.`;
+  }
+  return null;
+}
+
 export function checkDraft(draftBody: string, ctx: CheckContext): CheckResult {
   // Placeholders ({{price}}…) are gaps for the owner, not facts — check the words around them.
   const body = withoutGaps(draftBody);
@@ -243,23 +293,29 @@ export function checkDraft(draftBody: string, ctx: CheckContext): CheckResult {
     }
   }
 
-  // Days, dates and times the customer didn't bring up are commitments.
-  const whenInBody = [
-    ...body.matchAll(DAYS),
-    ...body.matchAll(TIMES),
-    ...body.matchAll(DATES),
-    ...body.matchAll(LOOSE_WHEN),
-  ].map((m) =>
-    m[0]
-      .toLowerCase()
-      .trim()
-      .replace(/^(on|by) /, ""),
-  );
-  const newWhen = [...new Set(whenInBody)].filter((w) => !source.includes(w));
+  // Days, dates and times nobody in the conversation brought up are commitments (Check 20 P1,
+  // Check 23 P3): whole words, both sides normalised, never a substring of the hours.
+  const newWhen = [
+    ...new Set(
+      newWhenTokens(body, {
+        text: ctx.whenSourceText ?? ctx.sourceText,
+        hours: ctx.hoursText,
+        allowHours: ctx.allowHours,
+        leadTime: ctx.leadTimeText,
+      }).map((t) => t.label),
+    ),
+  ];
   if (newWhen.length) {
     flags.push(`Mentions “${newWhen.join("”, “")}” — make sure you can commit to that.`);
     cap = Math.min(cap, 0.5);
     hits.push("when");
+  }
+  // "Tomorrow" read from an email written days ago (Check 23 P4).
+  const stale = staleRelativeDay(body, ctx);
+  if (stale) {
+    flags.push(stale);
+    cap = Math.min(cap, 0.5);
+    if (!hits.includes("when")) hits.push("when");
   }
 
   // Guarantee / warranty / promise language the customer and profile never used.
@@ -288,7 +344,8 @@ export function checkDraft(draftBody: string, ctx: CheckContext): CheckResult {
     const words = lowerWords(item)
       .split(" ")
       .filter((w) => w.length > 3);
-    if (words.length && words.every((w) => lowerWords(body).includes(w))) {
+    const sameDayPromise = SAME_DAY_ITEM.test(item) && SAME_DAY_WHEN.test(normalizeWhen(body));
+    if ((words.length && words.every((w) => lowerWords(body).includes(w))) || sameDayPromise) {
       flags.push(`Looks like it promises “${item}”, which is on your never-promise list.`);
       cap = Math.min(cap, 0.2);
       hits.push("never_promise");

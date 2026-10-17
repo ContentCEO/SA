@@ -17,6 +17,7 @@ import {
 } from "drizzle-orm";
 import { callStructured } from "@/ai/client";
 import { checkDraft, hasLink, REGENERATE_ON, type CheckResult } from "@/ai/draft-checks";
+import { asksWhenAvailable, spellDate } from "@/ai/when-words";
 import { injectionCheck, looksLikePaymentChange } from "@/ai/guards";
 import {
   REVISE_INSTRUCTIONS,
@@ -456,6 +457,38 @@ function termsCheck(
         : purpose === "thank_you"
           ? { url: null }
           : undefined,
+  };
+}
+
+/**
+ * Where a day, date or time in a draft may come from (Check 20 P1, Check 23 P3 + P4): the
+ * conversation (both sides), seasonal notes with their end dates ("November 27"), and what the
+ * owner said for this draft. The hours and lead time go apart: the hours' times always count,
+ * their days only when `allowHours`; only the lead time's own "two weeks out" counts.
+ */
+function whenContext(
+  ctx: DraftContext,
+  conversation: { m: { direction: string; sentAt: Date }; text: string }[],
+  ownerSaid: (string | null | undefined)[],
+  now: Date,
+  allowHours: boolean,
+) {
+  return {
+    whenSourceText: [
+      ...conversation.map((x) => x.text),
+      ...ctx.seasonalNotes.flatMap((n) => [n.text, spellDate(n.endsOn)]),
+      ...ownerSaid,
+    ]
+      .filter(Boolean)
+      .join("\n"),
+    hoursText: ctx.hours,
+    leadTimeText: ctx.leadTime,
+    allowHours,
+    customerMessages: conversation
+      .filter((x) => x.m.direction === "in")
+      .map((x) => ({ text: x.text, sentAt: x.m.sentAt })),
+    now,
+    timeZone: ctx.timeZone,
   };
 }
 
@@ -923,11 +956,21 @@ export async function createDraftForThread(
     ctx.services,
     ctx.signature,
     ...ctx.seasonalNotes.map((n) => n.text),
+    // Check 23 P3: a seasonal note's last day, as a draft would write it ("November 27").
+    ...ctx.seasonalNotes.map((n) => spellDate(n.endsOn)),
   ];
+  const lastInbound = [...withText].reverse().find((x) => x.m.direction === "in");
   const checkContext = {
     sourceText: [withText.map((x) => x.text).join("\n"), ...ownerFacts, opts.ownerNote]
       .filter(Boolean)
       .join("\n"),
+    ...whenContext(
+      ctx,
+      withText,
+      [opts.ownerNote],
+      now,
+      asksWhenAvailable(lastInbound?.text ?? ""),
+    ),
     // Amounts only the customer named aren't the owner's price (round 2 A4).
     ownerSourceText: [
       ...withText.filter((x) => x.m.direction === "out").map((x) => x.text),
@@ -1871,14 +1914,26 @@ export async function reviseDraft(
     ctx.services,
     ctx.signature,
     ...ctx.seasonalNotes.map((n) => n.text),
+    // Check 23 P3: a seasonal note's last day, as a draft would write it ("November 27").
+    ...ctx.seasonalNotes.map((n) => spellDate(n.endsOn)),
     // What the owner said counts as a fact they gave us (plan #4).
     spoken,
     // Facts already in a clean draft stay allowed. A flagged draft's text
     // doesn't count, so a tweak can never launder a flag away.
     (draft.flags ?? []).length === 0 ? draft.body : null,
   ];
+  const lastInbound = [...withText].reverse().find((x) => x.m.direction === "in");
   const checkContext = {
     sourceText: [withText.map((x) => x.text).join("\n"), ...ownerFacts].filter(Boolean).join("\n"),
+    // Check 23 P3: "Add my availability" writes the hours on purpose, so their days count.
+    ...whenContext(
+      ctx,
+      withText,
+      [spoken, (draft.flags ?? []).length === 0 ? draft.body : null],
+      now,
+      ("tweak" in change && change.tweak === "availability") ||
+        asksWhenAvailable(lastInbound?.text ?? ""),
+    ),
     // Round 2 A4: an amount only the customer named isn't the owner's price.
     ownerSourceText: [
       ...withText.filter((x) => x.m.direction === "out").map((x) => x.text),
