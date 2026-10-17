@@ -921,7 +921,8 @@ Waiting on you from that review (nothing here is built or changed until you say 
   chosen on Stripe's page), the oldest-connected stay on and the rest are paused: nothing in
   them is read, sorted, drafted or sent, and nothing is deleted. Settings → Your Gmail says
   "Paused: your plan covers 1 Gmail address." with **Use this one instead**. A bigger plan turns
-  them back on.
+  them back on. The first 15-minute run after this ships does the same for any account that is
+  already over its plan's limit (an account with no plan yet counts as one address).
 - **Reset test payments and past-due accounts: let it be usable** (as built): the reset switches a
   past-due test account back on (sorting and drafting resume, on your AI bill); it still can't send
   until it really pays.

@@ -198,7 +198,7 @@ export function trialEmailCopy(
     serif: "still here,",
     heavy: "your drafts are waiting.",
     lines: [
-      "Your trial ended a week ago. Everything Squared Away sorted and drafted is still in your account.",
+      "Your Squared Away trial has ended. Everything it sorted and drafted is still in your account.",
       ...(wait ? [wait] : []),
       "Choose a plan and it picks up where it left off. Every reply still waits for your okay.",
     ],
@@ -208,6 +208,6 @@ export function trialEmailCopy(
 
 /** The footer every trial email carries, and the one-click way out. */
 export function trialEmailFooter(o: { operatorFirstName: string; phone: string }) {
-  return `You're getting this because you're trying Squared Away. Questions? Call or text ${o.operatorFirstName} at ${o.phone}.`;
+  return `You're getting this because you signed up for a Squared Away trial. Questions? Call or text ${o.operatorFirstName} at ${o.phone}.`;
 }
 export const STOP_TRIAL_EMAILS_LABEL = "Stop these emails";
