@@ -342,3 +342,37 @@ describe("days and times as whole words (Check 20 P1, Check 23 P3 + P4)", () => 
     ).toContain("Has things to check before sending.");
   });
 });
+
+describe("spoken prices and “for free” (Check 23 P1, Check 20 P11)", () => {
+  const ctx = {
+    sourceText: "How much to swap the water heater?",
+    doNotPromise: [],
+    phrasesAvoided: [],
+  };
+  it.each(["Ballpark 3-4k depending on access.", "It's fourteen fifty for the swap."])(
+    "%s → money, capped at 0.3",
+    (body) => {
+      const r = checkDraft(body, ctx);
+      expect(r.hits).toContain("money");
+      expect(r.confidenceCap).toBeLessThanOrEqual(0.3);
+    },
+  );
+  it("a rough price asks the owner to check", () => {
+    const r = checkDraft("Usually low four figures.", ctx);
+    expect(r.hits).toContain("money");
+    expect(r.flags).toContain(
+      "Gives a rough price (“low four figures”). Check you want to name a number.",
+    );
+  });
+  it("“for free” is a promise; “feel free” and the owner's free estimates aren't", () => {
+    expect(checkDraft("I'll come fix it for free.", ctx).hits).toContain("soft_promise");
+    expect(checkDraft("We'll cover the cost.", ctx).hits).toContain("soft_promise");
+    expect(checkDraft("Feel free to call me.", ctx).hits).toEqual([]);
+    expect(
+      checkDraft("Estimates are for free, so happy to come look.", {
+        ...ctx,
+        ownerSourceText: "Free estimates",
+      }).hits,
+    ).toEqual([]);
+  });
+});

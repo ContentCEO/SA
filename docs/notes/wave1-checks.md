@@ -23,3 +23,15 @@ Notes for the integrator: what CLAUDE.md should say, by step. Files in this grou
   A never-promise item about same-day work is broken by "today", "tonight", "within the hour" or
   "before the day is out". Built in `whenContext()` in `src/server/drafts.ts` for new drafts and
   revisions. "This coming Friday" reads as Friday (the day token covers it).
+- **Money however it's said, round 2 (Check 23 P1 + 20 P11 + 36 P10, wave 1):** `moneyMentions`
+  now reads k-ranges ("3-4k" → 3000 and 4000; not "model 3-4K" or "10k BTU"), spoken prices
+  ("fourteen fifty", "twelve-fifty", "nineteen ninety-nine", "one fifty to come out" — only next
+  to a price word; for one to twelve only the clearly-price words, since "it's nine thirty" is a
+  time), "ninety-five bucks", "a buck fifty", "a hundred and a quarter/half", "seven hundred
+  fifty" (750) and "two thousand five hundred" (2500), €/£, "dólares"/"reais"/"pesos" (with
+  "1.500" thousands), "R$ 1.500,00", "mil quinientos", and the price words es / cuesta (unos) /
+  custa / fica em. New `vagueMoney()` ("low four figures", "a few bucks", "couple hundred
+  bucks"): autopilot's `mentionsMoney` counts it, and checkDraft flags it (hit `money`, cap 0.3)
+  "Gives a rough price (“low four figures”). Check you want to name a number." unless the owner
+  wrote it. Soft promise "for free" (also free of cost / won't cost you / we'll cover it); an
+  owner whose text offers free estimates may say "estimates are for free".

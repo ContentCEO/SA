@@ -4,7 +4,7 @@
  * never rewrite the draft — they flag it for the owner and lower confidence.
  */
 import { withoutGaps } from "./gaps";
-import { allNumbers, moneyMentions } from "./money-words";
+import { allNumbers, moneyMentions, vagueMoney } from "./money-words";
 import { localDay } from "./prompts/draft.v6";
 import { newWhenTokens, normalizeWhen, whenTokens } from "./when-words";
 
@@ -60,12 +60,19 @@ const SOFT_PROMISES: [string, RegExp][] = [
     /\b(will|it'll|should|is going to|gonna) pass (the |your )?inspection\b/i,
   ],
   ["definitely", /\bdefinitely\b/i],
+  // Check 20 P11: "for free" and friends ("feel free" and "free estimate" aren't these).
+  [
+    "for free",
+    /\b(?:for free|free of cost|won't cost you|will not cost you|we'll cover (?:it|the cost)|we will cover (?:it|the cost))\b/i,
+  ],
   ["licensed and insured", /\b(fully )?licensed and insured\b/i],
 ];
 
 /** Words that make a commitment the owner has to stand behind. */
 const COMMITMENT =
   /\b(guarantee[sd]?|guaranteeing|warrant(?:y|ies|ied)|promise[sd]?|promising)\b/gi;
+
+const normalizeSpace = (t: string) => t.toLowerCase().replace(/[\s-]+/g, " ");
 
 function lowerWords(text: string) {
   return text.toLowerCase().replace(/[^a-z0-9$ ]+/g, " ");
@@ -264,6 +271,15 @@ export function checkDraft(draftBody: string, ctx: CheckContext): CheckResult {
     cap = Math.min(cap, 0.3);
     hits.push("money");
   }
+  // Money named without a number (Check 23 P1): "low four figures", "a few bucks".
+  const vague = vagueMoney(body).filter(
+    (v) => !normalizeSpace(ownerText).includes(normalizeSpace(v)),
+  );
+  if (vague.length) {
+    flags.push(`Gives a rough price (“${vague[0]}”). Check you want to name a number.`);
+    cap = Math.min(cap, 0.3);
+    if (!hits.includes("money")) hits.push("money");
+  }
   // An amount only the customer named isn't the owner's price (review A4): "we can match the
   // $3,200" repeats a competitor's quote. Flagged for a look, never rewritten.
   if (ctx.ownerSourceText !== undefined && !ctx.checkTerms) {
@@ -330,8 +346,12 @@ export function checkDraft(draftBody: string, ctx: CheckContext): CheckResult {
 
   // Soft promises and admissions the owner never wrote themselves (review A3). The customer
   // asking "will it pass inspection?" doesn't make it the owner's promise.
+  // An owner who offers free estimates may have the draft say "estimates are for free".
+  const softBody = /\bfree (?:estimates?|quotes?)\b/i.test(ownerText)
+    ? body.replace(/\b(estimates?|quotes?)\s+(?:are\s+|is\s+)?(?:always\s+)?for free\b/gi, "$1")
+    : body;
   const soft = SOFT_PROMISES.filter(
-    ([, re]) => re.test(body) && !re.test(ctx.ownerSourceText ?? ctx.sourceText),
+    ([, re]) => re.test(softBody) && !re.test(ctx.ownerSourceText ?? ctx.sourceText),
   ).map(([label]) => label);
   if (soft.length) {
     flags.push(`Says “${soft.join("”, “")}” — make sure you stand behind that.`);
