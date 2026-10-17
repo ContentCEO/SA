@@ -1397,7 +1397,7 @@ Davi runs several builder sessions at once. The build order for review prompts i
     30-day month at 0.25 CU (more if it autoscales) against Free's 100 per project, so on Free it
     would likely be suspended around day 16–17 of each billing period. Launch = $0.106/CU-hour,
     about $19–20 a month for that compute (estimate from Neon's prices). Production's plan isn't
-    visible to the engineers. LAUNCH.md "Check your Neon plan now (this week)", before step 0.
+    visible to the engineers. LAUNCH.md "Check your free plans now (this week)", before step 0.
   - **Test-mode Stripe accounts: reset them** with the built `/admin` → Payments → Reset test
     payments after the live key swap and Connect Stripe (LAUNCH.md 7c; see "Reset test
     payments" above).
@@ -1789,6 +1789,11 @@ Davi runs several builder sessions at once. The build order for review prompts i
 
 ## Waiting on Davi
 
+- **Inngest plan (Check 49 P1):** the free plan pauses every job at 50,000 executions a month (21,029
+  from Oct 1 to 16 with one shop). `docs/LAUNCH.md` "Check your free plans now", Inngest item.
+- **Vercel Pro (Check 49 P1):** the team is on Hobby, which is non-commercial only; Pro (about $20 a
+  month) before the first paying customer. `docs/LAUNCH.md` "Check your free plans now", Vercel
+  item. All outside accounts: `docs/VENDORS.md`.
 - **Protect main + hold production for CI (Check 31 P3):** tap through `docs/LAUNCH.md` "Protect
   main" (GitHub ruleset: PR required, checks `check` + `old-code-new-schema`, no force push or
   delete) and "Hold production for CI" (Vercel Deployment Checks on `check`, or the stated
@@ -1815,7 +1820,7 @@ Davi runs several builder sessions at once. The build order for review prompts i
   2026-10-14", "Still open" and "Still needed from you"). The items below are the same list in engineering words.
 - **Neon plan (urgent, this week):** check Neon → Billing and production's Usage box; on Free the
   5-minute poll likely uses up the 100 CU-hours mid-period and pauses production. Launch is about
-  $19–20 a month (LAUNCH.md "Check your Neon plan now"). His money decision.
+  $19–20 a month (LAUNCH.md "Check your free plans now"). His money decision.
 - **Preview database (decided: option B):** Davi creates the Neon project `sa-preview`, copies
   its pooled string and tells the engineers; they untick Preview on the shared `DATABASE_URL`
   (Vercel API, target only); Davi adds `DATABASE_URL` as a Preview-only Secret with that string;

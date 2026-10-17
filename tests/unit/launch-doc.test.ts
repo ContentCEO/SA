@@ -864,7 +864,7 @@ describe("LAUNCH.md structure", () => {
   });
 
   it("the Neon plan check comes before step 0 and says where to look and what it costs", () => {
-    const at = launch.indexOf("## Check your Neon plan now (this week)");
+    const at = launch.indexOf("## Check your free plans now (this week)");
     expect(at).toBeGreaterThan(0);
     expect(at).toBeLessThan(launch.indexOf("## 0. "));
     const neon = flat(launch.slice(at, launch.indexOf("## 0. ")));

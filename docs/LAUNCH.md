@@ -6,11 +6,12 @@ goes straight into Vercel, Google or Stripe and is never written here, in chat o
 
 Where a step says "the engineers", they do that part and tell you when it's done. Everything else
 here is yours to do or decide: merging, deploying and every other switch. Engineering details live
-in [SETUP.md](SETUP.md); this page links to it where a step needs more.
+in [SETUP.md](SETUP.md); this page links to it where a step needs more. Every outside account
+(its plan, the limit that bites and whose login holds it) is listed in [VENDORS.md](VENDORS.md).
 
 Contents:
 
-- [Check your Neon plan now (this week)](#check-your-neon-plan-now-this-week)
+- [Check your free plans now (this week)](#check-your-free-plans-now-this-week)
 - [Protect main (before the next merge)](#protect-main-before-the-next-merge)
 - [Hold production for CI (right after Protect main)](#hold-production-for-ci-right-after-protect-main)
 - [Start your sales tax registration now (it takes days)](#start-your-sales-tax-registration-now-it-takes-days)
@@ -30,7 +31,14 @@ Contents:
 - [12. Smoke test after each production deploy](#12-smoke-test-after-each-production-deploy)
 - [13. Decisions waiting on you](#13-decisions-waiting-on-you)
 
-## Check your Neon plan now (this week)
+## Check your free plans now (this week)
+
+Several outside accounts are on free plans whose limits can stop the app or break a rule. Each item
+below says where to look and what the numbers mean. The numbers are the engineers' estimates from
+each company's published pages, not quotes. Every account, its plan and its limit are listed in
+[VENDORS.md](VENDORS.md).
+
+### Neon (the database)
 
 **A money decision, and it can't wait for the launch.** The app checks every connected Gmail for
 new mail every 5 minutes, and each check uses the database. Neon only lets a database sleep after
@@ -55,6 +63,61 @@ something Neon has told us.
 - Worked when: you know which plan production is on and how much it has used this period, and
   either it's on Launch or you've chosen to stay on Free knowing it may pause mid-month. Tell the
   engineers which.
+
+### Inngest (background jobs)
+
+Every sync, sort, draft, follow-up and morning email is an Inngest job. Inngest's free plan pauses
+**every** job once the account reaches 50,000 executions in a month; nothing then syncs, sorts or
+drafts until the next month. On October 16 the account showed 21,029 executions since October 1,
+with one shop.
+
+- Where: vercel.com → the `sa` project → **Integrations** → **Inngest** → open the Inngest
+  dashboard → **Billing** or **Usage** (check the page names there; they may differ).
+- What the numbers mean: this month's execution count against the 50,000 limit. At October's pace
+  one shop uses about 40,000 a month, so a second shop would pass the limit. The paid plan's price
+  is on the same page.
+- Paste: nothing.
+- Worked when: you know this month's count and the plan, and either it's on a paid plan or you've
+  chosen to stay on free knowing jobs stop at 50,000. Tell the engineers which.
+
+### Vercel (hosting)
+
+The `sa` team is on Vercel's **Hobby** (free) plan. Vercel's fair-use rules say Hobby is for
+non-commercial use only, and taking payments is commercial, so the app needs **Pro** (about $20 a
+month per team member) before real customers pay.
+
+- Where: vercel.com → your team → **Settings** → **Billing**.
+- What the numbers mean: the page shows Hobby or Pro. Pro is needed for commercial use; it also
+  lifts limits (Vercel's own pages list them).
+- Paste: nothing.
+- Worked when: Billing shows Pro, or you've decided when to switch (before the first paying
+  customer). Tell the engineers.
+
+### Resend (the app's emails)
+
+Resend's free plan sends at most 100 emails a day and 3,000 a month. Past that, invites, morning
+summaries and Gmail-access alerts stop until the next day or month.
+
+- Where: resend.com → **Settings** → **Billing** or **Usage** (check the page names there; they
+  may differ).
+- What the numbers mean: today's and this month's sent counts against 100 a day and 3,000 a month.
+  Each shop gets about one morning email a day plus a few others, so the daily limit is reached
+  somewhere past 50 shops.
+- Paste: nothing.
+- Worked when: you know the plan and this month's count, and when you'd move to a paid plan.
+
+### Anthropic (the AI)
+
+The AI runs on prepaid credit with a monthly spend limit. If the credit runs out or the limit is
+reached, sorting and drafting stop for every shop.
+
+- Where: console.anthropic.com → **Settings** → **Billing** (the credit balance) and **Limits**
+  (the monthly spend limit). Check the page names there; they may differ.
+- What the numbers mean: the balance left and how close this month's spend is to the limit.
+  `/admin/costs` shows what each shop costs per month.
+- Paste: nothing.
+- Worked when: you know the balance and the limit, and auto-reload or a reminder is set so the
+  credit never runs out.
 
 ## Protect main (before the next merge)
 
@@ -1066,8 +1129,12 @@ Recorded here so nobody asks again.
 
 Nothing below is switched on or changed until you say so.
 
-- **Your Neon plan** ([check it this week](#check-your-neon-plan-now-this-week)): stay on Free
+- **Your Neon plan** ([check it this week](#check-your-free-plans-now-this-week)): stay on Free
   (production may pause mid-month) or move to Launch (about $19–20 a month).
+- **Your Inngest plan** ([check it this week](#inngest-background-jobs)): the free plan pauses
+  every job at 50,000 executions a month; one shop already uses about 40,000.
+- **Vercel Pro** ([check it this week](#vercel-hosting)): Hobby is for non-commercial use only;
+  move to Pro (about $20 a month) before the first paying customer.
 - **Terms: the three [To confirm] items.** The wording in `docs/terms.md` stays as it is until
   you pick. Recommended (option A for each):
   - Refunds: monthly plans can be cancelled any time and stay on to the end of the paid month, with
@@ -1139,7 +1206,7 @@ Nothing below is switched on or changed until you say so.
 - The `ANTHROPIC_API_KEY` repository secret for the "Prompt evals" GitHub action.
 - Your Massachusetts sales tax registration: start it now (it takes days;
   [details](#start-your-sales-tax-registration-now-it-takes-days)), then [step 7e](#7-stripe-live-mode).
-- The Neon plan check ([this week](#check-your-neon-plan-now-this-week)).
+- The Neon plan check ([this week](#check-your-free-plans-now-this-week)).
 - The `sa-preview` Neon project and its pooled string ([step 2](#2-give-previews-their-own-database)).
 - The phone-notification keys ([step 9](#9-phone-notifications-vapid-keys)); the engineers can make
   and add them if you say so.

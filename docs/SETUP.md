@@ -147,6 +147,9 @@ In a sandbox with a preinstalled Chromium:
 
 ## 4. Environment variables
 
+Every outside account behind these settings (its plan, the limit that bites and whose login holds
+it) is listed in [VENDORS.md](VENDORS.md).
+
 Every variable the code reads. "Environments" says where it belongs in Vercel (Settings →
 Environment Variables); a change there needs a redeploy. Previews and production share one
 database until the preview split (`docs/LAUNCH.md` step 2: an empty Neon project, `sa-preview`,
