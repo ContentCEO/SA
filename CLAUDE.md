@@ -1756,6 +1756,11 @@ Davi runs several builder sessions at once. The build order for review prompts i
   and no threads, messages, drafts, mailboxes, voice or business profile, usage or activity log
   tables. `tests/unit/growth-boundary.test.ts` enforces both rules; a new Growth file (like the
   client portal) is added to its `GROWTH_PATHS` / `MENTIONS` lists on purpose, with a reason.
+- **Where email text may go (Check 48 P7, 2026-10-17):** only to Anthropic, as one synchronous
+  `messages.parse` per task (`src/ai/client.ts`), as the privacy policy says. No Message Batches or
+  Files API until `ALLOWED_DATA_PATHS` (`src/config/models.ts`) turns one on with a policy update
+  and a `TERMS_VERSION` bump; no "Covered Model" (30-day retention); `fetch` only to hosts tied to
+  a privacy-policy line; no other AI SDK. `tests/unit/data-paths.test.ts` enforces it.
 
 ## Milestones
 
