@@ -38,6 +38,16 @@ const MENTIONS: Record<string, string> = {
   "src/components/app/growth-mention.tsx": "the one static app mention (no props)",
   "src/components/app/site-footer.tsx":
     "the public pages' static footer link (/, /signin, /not-invited, /goodbye, legal pages)",
+  // Growth client portal (integration 2026-10-17): Davi-entered numbers only.
+  "src/app/(app)/more/page.tsx":
+    "places GrowthMention (hidden when read-only or expired) and a client's /my-growth link",
+  "src/app/(app)/admin/growth/page.tsx": "/admin/growth: Davi's Growth clients page",
+  "src/app/(app)/admin/growth-actions.ts": "/admin/growth's actions (clients, updates, numbers)",
+  "src/app/(app)/admin/growth-admin.tsx": "/admin/growth's forms and lists",
+  "src/server/growth-client-rules.ts": "the portal's pure rules (months, numbers, words)",
+  "src/server/growth-clients.ts": "the portal's reads and writes (growth_* tables, invites)",
+  "src/server/accounts.ts":
+    "first sign-in calls linkGrowthInvite (invites row → growth_clients; no inbox data)",
 };
 
 /** Growth's own code (Check 2 P5). The client portal's files are added here when it merges. */
@@ -48,6 +58,15 @@ const GROWTH_PATHS = [
   "src/app/growth/",
   "src/components/marketing/growth/",
   "src/components/app/growth-mention.tsx",
+  // The client portal: /start, /my-growth and /admin/growth, and what they read.
+  "src/server/growth-client-rules.ts",
+  "src/server/growth-clients.ts",
+  "src/app/start/page.tsx",
+  "src/app/my-growth/page.tsx",
+  "src/app/(app)/admin/growth/page.tsx",
+  "src/app/(app)/admin/growth-actions.ts",
+  "src/app/(app)/admin/growth-admin.tsx",
+  "src/components/growth-portal/portal-copy.ts",
 ];
 
 /** Server files that may import Growth's modules. */
@@ -57,6 +76,10 @@ const MAY_IMPORT_GROWTH = new Set([
   "src/server/waitlist.ts",
   "src/server/waitlist-emails.ts",
   "src/server/account-deletion.ts",
+  // The portal reuses how a Growth request is stored on a waitlist row (inviting from it).
+  "src/server/growth-clients.ts",
+  // First sign-in links a Growth invite to the new workspace (linkGrowthInvite).
+  "src/server/accounts.ts",
 ]);
 
 /** Inbox modules: anything that reads mail, drafts, the AI, jobs or the owner's numbers. */
@@ -102,6 +125,10 @@ const NEVER_MENTION = [
   "src/server/push-alerts.ts",
   "src/server/lifecycle.ts",
   "src/server/workspace-lifecycle.ts",
+  // Integration 2026-10-17: the trial emails, first-week emails and emergency alerts too.
+  "src/server/trial-email",
+  "src/server/first-week.ts",
+  "src/server/emergency-alert",
 ];
 
 const ALL = sourceFiles().map((f) => ({ file: rel(f), text: readFileSync(f, "utf8") }));
@@ -259,7 +286,14 @@ describe("Growth never touches inbox data (Check 5 P1 + Check 2 P5)", () => {
       (f) => f.file.startsWith("src/server/") && !MAY_IMPORT_GROWTH.has(f.file),
     ).flatMap((f) =>
       importsOf(f.file, f.text)
-        .filter((i) => i.module === "@/server/growth" || i.module === "@/server/growth-note")
+        .filter((i) =>
+          [
+            "@/server/growth",
+            "@/server/growth-note",
+            "@/server/growth-clients",
+            "@/server/growth-client-rules",
+          ].includes(i.module),
+        )
         .map((i) => `${f.file} imports ${i.module}`),
     );
     expect(bad).toEqual([]);

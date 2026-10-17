@@ -6,6 +6,15 @@ import { drafts, messages, priceHistory, threads, usage } from "@/db/schema";
 import { ensureUserAndWorkspace } from "@/server/accounts";
 import { adminOverview, listInvites, systemHealth } from "@/server/admin";
 import { costRows } from "@/server/admin-costs";
+import {
+  countGrowthClients,
+  growthAccountChoices,
+  growthStateForEmails,
+  listGrowthAdmin,
+  postGrowthUpdate,
+  saveGrowthMonth,
+  startGrowth,
+} from "@/server/growth-clients";
 import { saveConnectedMailbox } from "@/server/mailboxes";
 import { lastTestPaymentsResult } from "@/server/test-payments";
 import { createTestDb } from "../support/db";
@@ -116,11 +125,51 @@ describe("admin readers return no email content (Check 16 P11)", () => {
   it("lastTestPaymentsResult", async () => {
     expect(JSON.stringify(await lastTestPaymentsResult())).not.toMatch(LEAK);
   });
+
+  it("/admin/growth's readers (listGrowthAdmin, growthAccountChoices, growthStateForEmails, countGrowthClients)", async () => {
+    // A Growth client on the same SECRET-filled workspace, with Davi's own update and numbers.
+    const before = await growthAccountChoices();
+    expect(before).toHaveLength(1);
+    expect(JSON.stringify(before)).not.toMatch(LEAK);
+    expect(
+      await startGrowth({
+        workspaceId: before[0]!.workspaceId,
+        services: ["google_ads"],
+        startedOn: "2026-09-01",
+        timeZone: "America/New_York",
+      }),
+    ).toBe("started");
+    const list = await listGrowthAdmin();
+    expect(list.clients).toHaveLength(1);
+    const clientId = list.clients[0]!.id;
+    await postGrowthUpdate(clientId, { title: "Ads live", body: "New ads went live." }, NOW);
+    await saveGrowthMonth(
+      clientId,
+      "2026-09",
+      {
+        newLeads: 4,
+        calls: null,
+        jobsWon: null,
+        moneyWonCents: null,
+        reviewsGained: null,
+        adSpendCents: null,
+      },
+      "Good month.",
+      NOW,
+    );
+    expect(await countGrowthClients()).toBe(1);
+    expect(JSON.stringify(await listGrowthAdmin())).not.toMatch(LEAK);
+    expect(JSON.stringify([...(await growthStateForEmails(["owner@shop.com"]))])).not.toMatch(LEAK);
+  });
 });
 
 /** The admin code read as text: src/server/admin.ts, admin-costs.ts and every admin screen. */
 function adminFiles(): string[] {
-  const out = ["src/server/admin.ts", "src/server/admin-costs.ts"];
+  const out = [
+    "src/server/admin.ts",
+    "src/server/admin-costs.ts",
+    "src/server/growth-client-rules.ts",
+  ];
   const walkDir = (dir: string) => {
     for (const name of readdirSync(dir)) {
       const path = join(dir, name);
@@ -198,6 +247,26 @@ describe("admin code never reads content columns (static)", () => {
       contentReads(f, readFileSync(f, "utf8")).map((hit) => `${f}: ${hit}`),
     );
     expect(found).toEqual([]);
+  });
+
+  it("/admin/growth's readers in growth-clients.ts read no content columns", () => {
+    // Only the functions /admin and /admin/growth call: the client's own dashboard and Davi's
+    // emails (his own update words) live in the same file and aren't admin readers.
+    const text = readFileSync("src/server/growth-clients.ts", "utf8");
+    const readers = [
+      "countGrowthClients",
+      "listGrowthAdmin",
+      "growthAccountChoices",
+      "growthStateForEmails",
+    ];
+    for (const name of readers) {
+      const start = text.indexOf(`export async function ${name}(`);
+      expect(start, name).toBeGreaterThan(-1);
+      const body = text.slice(start, text.indexOf("\n}\n", start) + 2);
+      expect(contentReads(`${name}.ts`, body), name).toEqual([]);
+      // And none of them touches an inbox table at all.
+      expect(body, name).not.toMatch(/\b(threads|messages|drafts|mailboxes)\b/);
+    }
   });
 
   it("self-test: the guard catches each shape", () => {

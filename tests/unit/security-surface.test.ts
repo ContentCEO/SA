@@ -239,6 +239,8 @@ describe("C2: admin pages 404 for everyone else, and nothing streams a 200 first
       ADMIN,
       join(APP, "(app)", "customers", "[key]"),
       join(APP, "(app)", "record", "[draftId]"),
+      // Squared Away Growth: anyone who isn't an active or paused client gets a 404.
+      join(APP, "my-growth"),
     ];
     const loadings = ALL.filter((f) => NEXT_FILE("loading").test(f));
     for (const dir of mustNotFound) {

@@ -61,3 +61,31 @@ export const isGrowthService = (v: unknown): v is GrowthService =>
 export function growthServiceLabel(value: GrowthService): string {
   return GROWTH_SERVICES.find((s) => s.value === value)!.label;
 }
+
+/**
+ * The You-own-everything pledge (agreed 2026-10-16: no percentage of the business): for
+ * each service, what the client owns. `Record<GrowthService, …>` makes a new
+ * service without an entry a compile error, and tests/unit/growth-copy.test.ts checks that the
+ * pledge on /growth names every one.
+ */
+export const GROWTH_OWNED: Record<GrowthService, string> = {
+  google_ads: "your ad accounts",
+  facebook_ads: "your ad accounts",
+  instagram_ads: "your ad accounts",
+  social_posts: "your social media pages and posts",
+  google_business_profile: "your Google Business Profile",
+  reviews: "your reviews",
+  website: "your website and its domain",
+};
+
+/** Services in the page's order, once each; anything that isn't a service is dropped. */
+export function growthServicesFrom(values: readonly unknown[]): GrowthService[] {
+  const picked = new Set(values.filter(isGrowthService));
+  return GROWTH_SERVICE_VALUES.filter((v) => picked.has(v));
+}
+
+/** Service ids for the labels stored in a Growth call request ("Google ads" → google_ads). */
+export function growthServicesFromLabels(labels: readonly string[]): GrowthService[] {
+  const wanted = new Set(labels.map((l) => l.trim().toLowerCase()));
+  return GROWTH_SERVICES.filter((s) => wanted.has(s.label.toLowerCase())).map((s) => s.value);
+}

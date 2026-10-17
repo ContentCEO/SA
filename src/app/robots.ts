@@ -25,6 +25,8 @@ export default function robots(): MetadataRoute.Robots {
         "/signin",
         "/not-invited",
         "/goodbye",
+        "/start",
+        "/my-growth",
       ],
     },
     sitemap: appUrl("/sitemap.xml"),

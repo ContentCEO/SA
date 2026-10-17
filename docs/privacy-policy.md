@@ -210,6 +210,16 @@ work, ads or posts. Gmail data we receive through Google's APIs is never used fo
 Limited Use below). If you hire us for Growth, what we need from you (such as photos or access to
 your ad accounts) is agreed with you directly, outside this app.
 
+**If you're a Growth client:** you can sign in to a Growth dashboard. For it we keep which Growth
+services you have, the day Growth started, whether it is active, paused or ended, and the time
+zone your months are counted in; the updates {{OPERATOR}} posts for you (a title and text in
+{{OPERATOR}}'s own words) and when we emailed you about each one; and the numbers
+{{OPERATOR}} enters after each monthly check-in with you (new leads, calls, jobs won, money from
+jobs won, reviews gained, ad spend, and a short note). The dashboard shows only those numbers,
+as you told them to {{OPERATOR}}. It never reads anything from the inbox app: no email, no
+counts or totals from your inbox, quotes or drafts. If we invite you to Growth before you have
+an account, your invite notes the services and start date until you first sign in.
+
 ## Where your information goes
 
 We use these service providers. Each gets only what it needs:
@@ -234,10 +244,12 @@ We use these service providers. Each gets only what it needs:
   page may also ask for your billing address, which Stripe uses to work out sales tax; Squared Away
   doesn't store it. Stripe saves that address, and the name you enter there, on its customer record
   of you.
-- **Resend** — delivers our emails to you (your invite with the sign-in link, a one-time "your
-  first drafts are ready" email, during your trial a short email on day 2 and on the last day
-  and one a week after it ends unless you stop them, the morning summary, the monthly summary
-  and the Gmail-access alert and reminder), which never contain a customer's name or words; the email confirming you
+- **Resend** — delivers our emails to you (your invite with the sign-in link, your Growth
+  dashboard invite, a "New update from Squared Away Growth" email with the update's title and a
+  link, a one-time "your first drafts are ready" email, during your trial a short email on day 2
+  and on the last day and one a week after it ends unless you stop them, the morning summary, the
+  monthly summary and the Gmail-access alert and reminder), which never contain a customer's name
+  or words; the email confirming you
   joined the waitlist; and four kinds of notice to us: when someone joins the waitlist or asks for
   a Growth call (each says only that a sign-up or request came in, with no name, number or email
   address), when someone pays (it names only the plan and whether the setup fee was included),
@@ -301,6 +313,9 @@ In plain words:
   stops accepting them, or when you delete your account.
 - **Waitlist entries** are kept until you ask us to remove them. When we invite you, we note the
   date on your entry.
+- **Growth client records** (your services, start date, status, the updates posted for you and
+  the monthly numbers entered for you) are kept until you delete your account, or ask us to
+  remove them. Ending Growth closes the dashboard but keeps them.
 - **Growth call requests** are kept until you ask us to remove them (call, text or email us). If
   you send another request from the same email address, the newest one replaces the one before;
   the name and trade from your first entry stay on it.
@@ -337,7 +352,7 @@ Connections are encrypted (HTTPS). Google access tokens are encrypted before the
 are never shown in the browser or written to logs. Our logs never contain email text, access
 tokens or customers' personal details. Only the account owner can see their mail in the app; our
 admin page shows account health and counts, plus the waitlist and Growth call requests people send
-us from the website.
+us from the website, and for Growth clients what {{OPERATOR}} entered for them.
 
 If a security breach exposes your information, we'll tell you as soon as we can and without
 unreasonable delay, as Massachusetts law (Chapter 93H) requires, and we'll notify the authorities

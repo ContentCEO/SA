@@ -53,6 +53,17 @@ export const growthCopy = {
     heavy: "so you don't have to.",
     items: GROWTH_SERVICES.map((s) => ({ title: s.label, body: s.blurb })),
   },
+  /**
+   * The pledge (agreed 2026-10-16: no percentage of the business). Names what the
+   * client owns for every service in src/config/growth.ts (GROWTH_OWNED; the copy test checks).
+   */
+  pledge: {
+    region: "You own everything",
+    serif: "our pledge,",
+    heavy: "you own everything.",
+    body: "Your Google Business Profile and your reviews, your ad accounts, your social media pages and posts, your website and its domain, and your photos are in your name, and they stay yours if you stop.",
+    percent: "We never take a percentage of your jobs or your business.",
+  },
   how: {
     region: "How Growth works",
     serif: "how it works,",
@@ -202,10 +213,12 @@ export const growthCopy = {
     twitterDescription: `Ads, posts, reviews, your Google listing and your website, done for you, one-on-one. For anyone in the trades. Ask ${davi} to call you.`,
   },
   /**
-   * The one line the signed-in app may show about Growth (GrowthMention). Static and the same for
-   * every owner: CLAUDE.md "Growth cross-sell rule", tests/unit/growth-boundary.test.ts.
+   * The one mention of Growth the signed-in app may show (GrowthMention, on the More screen
+   * only). Static and the same for every owner, never tied to anything from their email:
+   * CLAUDE.md "Growth cross-sell rule", tests/unit/growth-boundary.test.ts.
    */
   appMention: {
+    label: "Grow your business",
     line: "Want more work coming in? Squared Away Growth is a separate service. Nothing from your email is used for it.",
     link: "See Squared Away Growth",
   },
@@ -219,7 +232,7 @@ export const growthCopy = {
     call: (p: string) => `Call ${p}`,
     nameGiven: (n: string) => `Name given: ${n}`,
     tradeGiven: (t: string) => `Trade given: ${t}`,
-    growthOnly: "Not on the app waitlist. A Growth call never invites anyone to the app.",
+    growthOnly: "Not on the app waitlist. Asking for a Growth call never invites anyone.",
     growthOnlyError: "That's a Growth call request, not an app sign-up, so nobody was invited.",
   },
   notify: {

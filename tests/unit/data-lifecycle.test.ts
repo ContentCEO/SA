@@ -12,6 +12,9 @@ import {
   customerNotes,
   drafts,
   editSignals,
+  growthClients,
+  growthMonthly,
+  growthUpdates,
   invites,
   mailboxes,
   messages,
@@ -315,6 +318,17 @@ async function seedOwner(email: string, tag: string, extra: { referredBy?: strin
     body: "Gate 4411",
   });
   await database.insert(waitlist).values({ email, name: "Owner", phone: "555-0100" });
+  // Squared Away Growth: the client row, its updates and months go with the workspace.
+  const [gc] = await database
+    .insert(growthClients)
+    .values({ workspaceId: ws, startedOn: "2026-10-01", services: ["reviews"] })
+    .returning();
+  await database
+    .insert(growthUpdates)
+    .values({ growthClientId: gc!.id, title: "Ads", body: "Live" });
+  await database
+    .insert(growthMonthly)
+    .values({ growthClientId: gc!.id, month: "2026-10", newLeads: 3 });
   await database.insert(appSettings).values([
     { key: `cost_alert:${ws}:2026-10`, value: "1" },
     { key: `email-sent:digest-${ws}-2026-10-12`, value: NOW.toISOString() },
