@@ -29,6 +29,7 @@ import { purgeEmailSentRecords } from "@/lib/email";
 import { sendAccessLostAlerts } from "@/server/alerts";
 import { captureQuoteAmounts, guessNoAnswers } from "@/server/quotes";
 import { sendLeadAlerts } from "@/server/sms-alerts";
+import { sendEmergencyAlerts } from "@/server/emergency-alerts";
 import { sendPushAlerts } from "@/server/push-alerts";
 import { sendLeadAtRiskPushes } from "@/server/leads-at-risk";
 import { purgeExpiredNotes } from "@/server/seasonal-notes";
@@ -59,13 +60,18 @@ import {
   voiceLearnRequested,
 } from "./client";
 
-/** Text / notify the owner about new leads in this mailbox's workspace (no-op unless opted in). */
+/**
+ * Text / notify the owner about new leads in this mailbox's workspace (no-op unless opted in).
+ * An emergency goes first, on its own (replies package, B5 part 2): it takes the shared slot,
+ * and the ordinary alert then leaves it out.
+ */
 async function alertsForMailbox(mailboxId: string) {
   const workspaceId = await getMailboxWorkspace(mailboxId);
   if (!workspaceId) return { sent: 0 };
+  const emergency = await sendEmergencyAlerts(new Date(), { workspaceId });
   const push = await sendPushAlerts(new Date(), { workspaceId });
   const sms = await sendLeadAlerts(new Date(), { workspaceId });
-  return { sent: sms.sent, pushed: push.sent };
+  return { sent: sms.sent, pushed: push.sent, emergencies: emergency.sent };
 }
 
 /**
@@ -439,6 +445,8 @@ export const workspaceLifecycle = inngest.createFunction(
     }
     // Tell owners when Gmail access is lost (and remind once), so leads aren't silently missed.
     const alerts = await step.run("access-lost-alerts", () => sendAccessLostAlerts());
+    // Replies package (B5 part 2): emergencies a run missed (an alert that reached no phone).
+    await step.run("emergency-alerts", () => sendEmergencyAlerts());
     // Backstop for text alerts held overnight or throttled.
     await step.run("text-alerts", () => sendLeadAlerts());
     await step.run("push-alerts", () => sendPushAlerts());

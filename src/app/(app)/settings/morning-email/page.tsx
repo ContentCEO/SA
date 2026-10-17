@@ -51,9 +51,10 @@ export default async function MorningEmailSettingsPage(
         </label>
         <TimeZoneInput fallback={profile?.timeZone ?? "America/New_York"} />
         <p className="text-muted-foreground">
-          Just counts — how many replies are waiting and what needs you. No customer names or email
-          text go in it. Skipped on mornings with nothing to say. On the 1st of each month you also
-          get a short summary of the month (counts only).
+          Just counts and totals — how many replies are waiting, what needs you, and this
+          month&apos;s money so far (quotes won, invoices paid, still owed). No customer names or
+          email text go in it. Skipped on mornings with nothing to say. On the 1st of each month you
+          also get a short summary of the month (counts only).
         </p>
         <Button type="submit" variant="outline" className="w-full">
           Save

@@ -1,5 +1,6 @@
 import "server-only";
 import { eq, isNotNull, or, sql, type SQL } from "drizzle-orm";
+import { EMAIL_TO_TEXT_DOMAINS, PHONE_SERVICES } from "@/config/phone-services";
 import { messages, threads } from "@/db/schema";
 import { NO_REPLY_LOCAL_PATTERN, PUBLIC_WEBMAIL_DOMAINS } from "./sender-rules";
 
@@ -264,3 +265,19 @@ export const requestReplySql = () =>
  */
 export const noReplySql = (address: SQL) =>
   sql`(position('@' in coalesce(${address}, '')) > 1 and regexp_replace(lower(trim(${address})), '@[^@]*$', '') ~ ${NO_REPLY_LOCAL_PATTERN})`;
+
+/**
+ * SQL twin of `channelOf(from)?.kind` being `phone` or `phone_text` (leads package): the sender
+ * is a voicemail-by-email service on `PHONE_SERVICES` (exact address) or an email-to-text
+ * gateway on `EMAIL_TO_TEXT_DOMAINS` (the domain or a subdomain). Pass the From address, not the
+ * Reply-To, as `channelOf` does. WHERE clauses only, so the address never leaves the database.
+ */
+export const phoneMessageSenderSql = (fromAddress: SQL) => {
+  const a = sql`lower(trim(coalesce(${fromAddress}, '')))`;
+  const host = sql`regexp_replace(${a}, '^.*@', '')`;
+  const senders = PHONE_SERVICES.flatMap((svc) => svc.senders).map((x) => sql`${x}`);
+  const gateways = EMAIL_TO_TEXT_DOMAINS.map(
+    (d) => sql`(${host} = ${d} or ${host} like ${`%.${d}`})`,
+  );
+  return sql`(position('@' in ${a}) > 1 and (${a} in (${sql.join(senders, sql`, `)}) or ${sql.join(gateways, sql` or `)}))`;
+};

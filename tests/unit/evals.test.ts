@@ -4,6 +4,7 @@ import { setModelTransportForTests, type Transport } from "@/ai/client";
 import { CATEGORIES, type ModelClassification } from "@/ai/prompts/classify.v4";
 import { TRADES } from "@/config/trades";
 import { EVAL_CASES, type EvalCase } from "../evals/cases";
+import { OPENING_TWEAKS } from "@/ai/prompts/opening-tweaks.v1";
 import { REVISE_CASES, TONE_CASES } from "../evals/edits";
 import { PURPOSE_CASES } from "../evals/purposes";
 import { runEvals } from "../evals/run";
@@ -97,6 +98,28 @@ describe("evaluation set (#46)", () => {
   it("covers the draft-editing prompts too", () => {
     expect(REVISE_CASES.length).toBeGreaterThanOrEqual(8);
     expect(TONE_CASES.length).toBeGreaterThanOrEqual(5);
+    // Replies package: every "Other ways to reply" chip has a case.
+    for (const k of Object.keys(OPENING_TWEAKS))
+      expect(
+        REVISE_CASES.some((c) => c.opening === k),
+        k,
+      ).toBe(true);
+  });
+
+  it("covers every first-reply shape (draft.v7) across trades, each drafted", () => {
+    const fc = EVAL_CASES.filter((c) => c.firstContact);
+    for (const shape of ["details", "vague", "urgent", "price_only"] as const)
+      expect(fc.filter((c) => c.firstContact === shape).length, shape).toBeGreaterThanOrEqual(3);
+    expect(new Set(fc.map((c) => c.trade)).size).toBeGreaterThanOrEqual(6);
+    for (const c of fc) {
+      expect(c.draft, c.id).toBeDefined();
+      expect(c.firstTimeSender, c.id).toBe(true);
+    }
+    // Urgent ones need the owner (the emergency lane) and ask for the address.
+    for (const c of fc.filter((x) => x.firstContact === "urgent")) {
+      expect(c.expect.needsOwner, c.id).toBe(true);
+      expect(c.draft!.mustContain, c.id).toContain("address");
+    }
   });
 
   it("covers every purpose draft (#26 #28 #29), with and without payment terms", () => {
@@ -175,7 +198,11 @@ describe("evaluation set (#46)", () => {
         ? "Hi Sam,\n\nIt's {{price}} and I can come {{date}}.\n\nAlex"
         : req.user.includes("out loud")
           ? "Hi Jordan,\n\nThursday morning works, and it's 180 for the visit. What's the address?\n\nAlex"
-          : "Hi Jordan,\n\nWhat's the address? A photo or two helps.\n\nAlex";
+          : req.user.includes(OPENING_TWEAKS.visit.ask)
+            ? "Hi Jordan,\n\nHappy to come take a look. What day suits you, and what's the address?\n\nAlex"
+            : "Hi Jordan,\n\nWhat's the address? A photo or two helps.\n\nAlex";
+      // draft.v7: a first contact answers with the case's shape, as a good model would.
+      const firstContact = req.user.includes("FIRST CONTACT") ? EVAL_CASES[i]!.firstContact : null;
       // Purpose drafts (#28 #29): echo the payment terms / the review link, as a good model would.
       const terms = /- Payment terms: (.*)/.exec(req.system[1]?.text ?? "")?.[1]?.trim();
       const purposeBody = req.user.includes("## Task: deposit")
@@ -197,11 +224,18 @@ describe("evaluation set (#46)", () => {
           ? { body: revised, reason: "Changed.", flags: [], confidence: 0.9, used_facts: [] }
           : isDraft
             ? {
-                body: purposeBody ?? "Hi,\n\nHappy to help — what's the address?\n\nThanks,\nAlex",
+                body:
+                  purposeBody ??
+                  (firstContact === "urgent"
+                    ? "Hi,\n\nSorry to hear it. What's the best number to reach you, and the address?\n\nThanks,\nAlex"
+                    : firstContact
+                      ? "Hi,\n\nThanks for reaching out, happy to help. Could you send a couple of photos?\n\nThanks,\nAlex"
+                      : "Hi,\n\nHappy to help — what's the address?\n\nThanks,\nAlex"),
                 reason: "Asked for the address.",
                 flags: [],
                 confidence: 0.9,
                 used_facts: [],
+                opening: firstContact ?? "not_first",
               }
             : oracle(EVAL_CASES[i]!);
       return {
@@ -233,8 +267,13 @@ describe("evaluation set (#46)", () => {
       revisePassRate: 1,
       toneAccuracy: 1,
       purposePassRate: 1,
+      openingAccuracy: 1,
     });
     expect(run.purposeProblems).toEqual({});
+    expect(run.reviseProblems).toEqual({});
+    // Every first-contact case was drafted and named its shape.
+    const fc = EVAL_CASES.filter((c) => c.firstContact).map((c) => c.id);
+    for (const id of fc) expect(run.results.find((r) => r.id === id)?.opening, id).toBeDefined();
     expect(run.tokens.input).toBeGreaterThan(0);
   }, 120_000);
 

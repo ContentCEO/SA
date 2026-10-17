@@ -7,7 +7,7 @@ import { addNeverSayAction } from "../settings/wording-actions";
 import { fillGap, findGaps } from "@/ai/gaps";
 import type { ConfidenceLabel } from "@/config/drafting";
 import { BodyWithGaps, ConfidenceTag, PastPrices, WhyThis, type PastPrice } from "./draft-parts";
-import { SayAChange, TweakChips } from "./revise-controls";
+import { OtherWaysToReply, SayAChange, TweakChips } from "./revise-controls";
 import { RemindMe, type SnoozeOption } from "./remind-me";
 import { CalledThem } from "./called-them";
 import {
@@ -41,6 +41,10 @@ export type DraftCardProps = {
   wrote?: string | null;
   /** Leads package (B14 / B9): one-liners from code ("Repeat customer: …"). */
   leadLines?: string[];
+  /** Replies package: "First reply: asks 2 questions · …" on a first reply to a new lead. */
+  openingLine?: string | null;
+  /** Replies package: show "Other ways to reply" (a first reply that can still be changed). */
+  otherWays?: boolean;
   /** One line on what the customer wants, from sorting — so the card reads without opening Gmail. */
   summary?: string | null;
   reason: string;
@@ -246,6 +250,7 @@ export function DraftCard(p: DraftCardProps) {
             {line}
           </p>
         ))}
+        {p.openingLine ? <p className="text-sm font-semibold">{p.openingLine}</p> : null}
         {p.noteLine}
         {p.summary ? <p className="font-semibold">{p.summary}</p> : null}
         <p className={p.summary ? "text-muted-foreground" : undefined}>{p.reason}</p>
@@ -509,6 +514,7 @@ export function DraftCard(p: DraftCardProps) {
                   </Button>
                 </div>
               )}
+              {canChange && p.otherWays ? <OtherWaysToReply draftId={p.draftId} /> : null}
               {canChange && changing ? (
                 <div
                   id={`change-${p.draftId}`}

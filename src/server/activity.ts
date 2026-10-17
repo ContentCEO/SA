@@ -4,8 +4,10 @@ import { categoryLabels, categoryTag, isCategory } from "@/config/categories";
 import { db } from "@/db";
 import { activityLog, drafts, mailboxes, messages, threads } from "@/db/schema";
 import { MINUTES_PER_SENT_REPLY } from "@/config/drafting";
-import { dollarsToCents, tally, type MonthMoney } from "./activity-rules";
+import { dollarsToCents, tally, type MoneySoFar, type MonthMoney } from "./activity-rules";
+import { invoiceTotals } from "./money";
 import { atRiskActivityLine } from "./leads-at-risk-rules";
+import { emergencyActivityLine } from "./emergency-alert-rules";
 import { invoiceOf } from "./money-rules";
 import {
   closeRate,
@@ -154,6 +156,13 @@ export function describeActivity(
       return atRiskActivityLine(detail.leads);
     case "sms_alert_sent":
       return "Texted you about new emails that need you";
+    // Replies package (B5 part 2): counts only, never which email.
+    case "emergency_alert_sent":
+      return emergencyActivityLine(detail.emergencies);
+    case "emergency_alerts_changed":
+      return detail.enabled
+        ? "You turned on emergency alerts, even at night"
+        : "You turned off emergency alerts at night";
     case "sms_alerts_changed":
       return detail.enabled ? "You turned on text alerts" : "You turned off text alerts";
     case "access_alert_sent":
@@ -425,17 +434,7 @@ export async function monthMoney(
   timeZone?: string,
 ): Promise<MonthMoney> {
   const start = localMonthStart(now, await monthZone(workspaceId, timeZone));
-  const won = await db()
-    .select({ cents: threads.quoteAmountCents })
-    .from(threads)
-    .innerJoin(mailboxes, eq(mailboxes.id, threads.mailboxId))
-    .where(
-      and(
-        eq(mailboxes.workspaceId, workspaceId),
-        eq(threads.quoteOutcome, "won"),
-        gte(threads.quoteOutcomeAt, start),
-      ),
-    );
+  const won = await wonSince(workspaceId, start);
   const paid = await db()
     .select({ extracted: threads.extracted })
     .from(threads)
@@ -457,6 +456,44 @@ export async function monthMoney(
   return {
     won: tally(won.map((r) => r.cents)),
     paidAfterNudge: tally(paid.map((r) => dollarsToCents(invoiceOf(r.extracted)?.amount))),
+  };
+}
+
+/** Quotes marked won since `start` (the owner's mark or our guess), with the quoted amount. */
+async function wonSince(workspaceId: string, start: Date) {
+  return db()
+    .select({ cents: threads.quoteAmountCents })
+    .from(threads)
+    .innerJoin(mailboxes, eq(mailboxes.id, threads.mailboxId))
+    .where(
+      and(
+        eq(mailboxes.workspaceId, workspaceId),
+        eq(threads.quoteOutcome, "won"),
+        gte(threads.quoteOutcomeAt, start),
+      ),
+    );
+}
+
+/**
+ * Replies package (Davi, 2026-10-16): "this month so far" for the morning email and
+ * Activity — quotes won (the same rows as "Quotes won" above), invoices paid this month and
+ * what's still owed, from Money's own data (`invoiceTotals`). The month is the owner's,
+ * in their time zone. Totals only: no name, subject or customer detail leaves here.
+ */
+export async function moneySoFar(
+  workspaceId: string,
+  now: Date = new Date(),
+  timeZone?: string,
+): Promise<MoneySoFar> {
+  const start = localMonthStart(now, await monthZone(workspaceId, timeZone));
+  const [won, invoices] = await Promise.all([
+    wonSince(workspaceId, start),
+    invoiceTotals(workspaceId, now, start),
+  ]);
+  return {
+    won: tally(won.map((r) => r.cents)),
+    paid: tally(invoices.paidCents),
+    owed: { count: invoices.owedCount, cents: invoices.owedCents },
   };
 }
 

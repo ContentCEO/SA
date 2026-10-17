@@ -427,4 +427,23 @@ describe("owner-facing copy about the trial", () => {
     );
     expect(policy).toContain("lead-source, done and fixed marks");
   });
+
+  it("names what the replies package stores and sends (first replies, emergencies, money totals)", async () => {
+    const policy = flat(raw("privacy-policy.md"));
+    const { EMERGENCY_ALERTS, emergencyAlertText } = await import("@/server/emergency-alert-rules");
+    expect(policy).toContain("which kind of first reply the draft is");
+    expect(policy).toContain("when we let your phone know about an emergency email");
+    expect(policy).toContain("first-reply labels, when we alerted you to an emergency");
+    expect(policy).toContain("**Emergencies, even at night**");
+    // The words and caps the code keeps.
+    expect(emergencyAlertText(1)).toContain("An emergency email just came in.");
+    expect(policy).toContain('It says only "An emergency email just came in."');
+    expect(policy).toContain(
+      `at most ${EMERGENCY_ALERTS.nightCap} a night and ${EMERGENCY_ALERTS.dayCap} a day`,
+    );
+    expect(policy).toContain(
+      "this month's money so far as totals (quotes you won, invoices paid and what's still owed)",
+    );
+    expect(policy).toContain("It's a draft like any other and waits for your **Send reply**.");
+  });
 });

@@ -97,12 +97,18 @@ export function outputKindFor(schemaProperties: string[]): FakeOutputKind | null
   return null;
 }
 
-export function fakeOutput(kind: FakeOutputKind): unknown {
+/**
+ * draft.v7 (replies package): a first reply to a new lead names its shape, as the real model
+ * is asked to when the request carries the "FIRST CONTACT" task line.
+ */
+export const FAKE_FIRST_REPLY = { ...FAKE_DRAFT, opening: "details" } as const;
+
+export function fakeOutput(kind: FakeOutputKind, opts: { firstContact?: boolean } = {}): unknown {
   switch (kind) {
     case "classify":
       return FAKE_CLASSIFICATION;
     case "draft":
-      return FAKE_DRAFT;
+      return opts.firstContact ? FAKE_FIRST_REPLY : FAKE_DRAFT;
     case "voice":
       return FAKE_VOICE;
     case "edit_tone":

@@ -7,6 +7,7 @@ import { checkDraft, REGENERATE_ON } from "@/ai/draft-checks";
 import { injectionCheck, looksMunicipal } from "@/ai/guards";
 import { classificationSchema } from "@/ai/prompts/classify.v4";
 import { draftSchema } from "@/ai/prompts/draft.v6";
+import { replyDraftSchema } from "@/ai/prompts/draft.v7";
 import { editToneSchema } from "@/ai/prompts/edit-tone.v1";
 import { voiceSchema } from "@/ai/prompts/voice.v2";
 import { anthropicClientOptions } from "@/config/e2e";
@@ -21,8 +22,10 @@ import {
   FAKE_CLASSIFICATION,
   FAKE_DRAFT,
   FAKE_EDIT_TONE,
+  FAKE_FIRST_REPLY,
   FAKE_VOICE,
   fakeCustomer,
+  fakeOutput,
   FORM_ROBOT,
   outputKindFor,
   refFor,
@@ -49,6 +52,11 @@ describe("the fake model outputs", () => {
   it("parse with the real prompt schemas", () => {
     expect(classificationSchema.parse(FAKE_CLASSIFICATION)).toEqual(FAKE_CLASSIFICATION);
     expect(draftSchema.parse(FAKE_DRAFT)).toEqual(FAKE_DRAFT);
+    // draft.v7: an ordinary reply reads as "not_first"; a first contact names its shape.
+    expect(replyDraftSchema.parse(FAKE_DRAFT)).toEqual({ ...FAKE_DRAFT, opening: "not_first" });
+    expect(replyDraftSchema.parse(FAKE_FIRST_REPLY)).toEqual(FAKE_FIRST_REPLY);
+    expect(fakeOutput("draft", { firstContact: true })).toBe(FAKE_FIRST_REPLY);
+    expect(fakeOutput("draft")).toBe(FAKE_DRAFT);
     expect(voiceSchema.parse(FAKE_VOICE)).toEqual(FAKE_VOICE);
     expect(editToneSchema.parse(FAKE_EDIT_TONE)).toEqual(FAKE_EDIT_TONE);
   });

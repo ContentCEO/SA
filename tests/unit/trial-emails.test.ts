@@ -8,6 +8,7 @@ import {
   activityLog,
   businessProfiles,
   drafts,
+  mailboxes,
   messages,
   threads,
   voiceProfiles,
@@ -247,6 +248,20 @@ describe("sending", () => {
     expect(sent[1]!.idempotencyKey).toBe(`trial-${workspaceId}-day3`);
     expect(sent[1]!.subject).toBe("Your trial ends today at 3:00 PM");
     expect((await ws()).trialEmailsSent).toEqual(["day2", "day3"]);
+  });
+
+  it("integration: none when the only Gmail address is paused on the plan", async () => {
+    await database
+      .update(mailboxes)
+      .set({ planPausedAt: new Date("2026-10-13T12:00:00Z") })
+      .where(eq(mailboxes.workspaceId, workspaceId));
+    expect((await sendTrialEmails(TUE_330PM, { send })).sent).toBe(0);
+    expect(sent).toEqual([]);
+    await database
+      .update(mailboxes)
+      .set({ planPausedAt: null })
+      .where(eq(mailboxes.workspaceId, workspaceId));
+    expect((await sendTrialEmails(TUE_330PM, { send })).sent).toBe(1);
   });
 
   it("at the owner's own hour in their zone, never at night", async () => {

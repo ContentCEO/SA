@@ -7,6 +7,7 @@ import { appUrl } from "@/lib/app-url";
 import { brandEmail } from "@/lib/email-layout";
 import { sendEmail, type EmailSender } from "@/lib/email";
 import { queueCounts } from "./drafts";
+import { notPlanPaused } from "./mailbox-plan";
 import { stopHeaders, stopLinkFor } from "./trial-email-links";
 import { trialCounts } from "./first-week";
 import { effectiveStatus, setupReallyPaid } from "./lifecycle";
@@ -96,8 +97,10 @@ export async function sendTrialEmails(
       and(
         inArray(workspaces.status, ["evaluating", "evaluation_expired"]),
         isNull(workspaces.trialEmailsStoppedAt),
-        // Only someone who connected Gmail has a trial to hear about.
-        sql`exists (select 1 from ${mailboxes} where ${mailboxes.workspaceId} = ${workspaces.id})`,
+        // Only someone who connected Gmail has a trial to hear about — an address the plan
+        // covers (a plan-paused one is left out, integration 2026-10-17). Its counts come from
+        // queueCounts, which leaves paused addresses out too.
+        sql`exists (select 1 from ${mailboxes} where ${mailboxes.workspaceId} = ${workspaces.id} and ${notPlanPaused()})`,
       ),
     );
   const run: TrialEmailRun = { sent: 0, failed: 0, notConfigured: false };

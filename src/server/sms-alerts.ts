@@ -173,7 +173,8 @@ export async function removeAlertPhone(workspaceId: string) {
 /**
  * New quote requests and emails that need the owner, sorted since `cursor`
  * (default: the last hour), fresh and still waiting on them. Shared by texts
- * and phone notifications (#36).
+ * and phone notifications (#36). An emergency the owner already heard about on its own
+ * (replies package, B5 part 2) is left out until a later email is sorted on that thread.
  */
 export async function freshLeads(workspaceId: string, cursor: Date | null, now: Date) {
   return db()
@@ -193,6 +194,10 @@ export async function freshLeads(workspaceId: string, cursor: Date | null, now: 
         gt(threads.classifiedAt, cursor ?? new Date(now.getTime() - 60 * 60 * 1000)),
         gt(threads.lastMessageAt, new Date(now.getTime() - SMS.freshMs)),
         or(eq(threads.category, "quote_request"), eq(threads.needsOwner, true)),
+        or(
+          isNull(threads.emergencyAlertedAt),
+          lt(threads.emergencyAlertedAt, threads.classifiedAt),
+        ),
         sql`(select m.direction from messages m where m.thread_id = ${threads.id} order by m.sent_at desc limit 1) = 'in'`,
       ),
     )

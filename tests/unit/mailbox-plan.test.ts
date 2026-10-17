@@ -18,12 +18,14 @@ import {
   batchCandidates,
   createDraftForThread,
   listQueue,
+  queueCounts,
   queueSend,
   reconcileDrafts,
   reviseDraft,
   saveDraftEdit,
   sendDraft,
 } from "@/server/drafts";
+import { digestCounts } from "@/server/digest";
 import { threadsToFollowUp } from "@/server/followups";
 import { fitAllMailboxesToPlans, fitMailboxesToPlan, swapPlanMailbox } from "@/server/mailbox-plan";
 import {
@@ -416,6 +418,44 @@ describe("GUARDRAIL: a paused address — nothing read, sorted, drafted, sent, a
     const page = readFileSync("src/app/(app)/queue/page.tsx", "utf8");
     expect(page).toContain("canSend={sending && !i.mailboxPaused}");
     expect(page).toContain("i.mailboxPaused ? MAILBOX_PAUSED_LINE");
+  });
+
+  it("integration: the morning email's counts leave out a paused address; the queue still shows it", async () => {
+    const onBox = boxes[0]!;
+    const tOn = await thread(onBox, "g-on");
+    await pendingDraft(tOn, onBox, { body: "Hi Dana", originalBody: "Hi Dana" });
+    const tPaused = await thread(paused, "g-off");
+    await pendingDraft(tPaused, paused, { body: "Hi Sam", originalBody: "Hi Sam" });
+    await thread(paused, "g-off-needs", { needsOwner: true });
+    await thread(onBox, "g-on-needs", { needsOwner: true });
+
+    const q = await listQueue(workspaceId, NOW);
+    expect(q.drafts.map((i) => i.mailboxPaused).sort()).toEqual([false, true]);
+    expect(q.needsYou.map((i) => i.mailboxPaused).sort()).toEqual([false, true]);
+
+    expect(await queueCounts(workspaceId, NOW)).toEqual({
+      needsYou: 1,
+      replies: 1,
+      nudges: 0,
+      drafts: 1,
+    });
+    const c = await digestCounts(workspaceId, NOW, "America/New_York");
+    expect(c.repliesReady).toBe(1);
+    expect(c.nudgesReady).toBe(0);
+    expect(c.needsYou).toHaveLength(1);
+  });
+
+  it("STATIC: the emergency alerts and the trial emails use the shared pause helpers", () => {
+    const emergency = readFileSync("src/server/emergency-alerts.ts", "utf8");
+    expect(emergency).toContain("mailboxRunning()");
+    expect(emergency).not.toMatch(/eq\(mailboxes\.status, "active"\)/);
+    const trial = readFileSync("src/server/trial-emails.ts", "utf8");
+    expect(trial).toContain("notPlanPaused()");
+    // Their counts: queueCounts leaves paused addresses out (countQueue → actionableQueue).
+    expect(trial).toContain("queueCounts(");
+    expect(readFileSync("src/server/drafts.ts", "utf8")).toMatch(
+      /export function countQueue\([^)]*\)[^{]*\{\s*const q = actionableQueue\(/,
+    );
   });
 
   it("STATIC: every job that skips a lost mailbox skips a paused one too", () => {

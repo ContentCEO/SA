@@ -21,7 +21,9 @@ import {
   toNeedsYouItem,
   type NeedsYouItem,
 } from "./digest-rules";
-import { queueMembership } from "./drafts";
+import { MONEY_SO_FAR_NOTE, moneySoFarLines, type MoneySoFar } from "./activity-rules";
+import { moneySoFar } from "./activity";
+import { actionableQueue, queueMembership } from "./drafts";
 import { leadsAtRisk } from "./leads-at-risk";
 import { atRiskDigestLine, atRiskOffQueueLine } from "./leads-at-risk-rules";
 import { jobsAllowed } from "./lifecycle";
@@ -72,6 +74,11 @@ export type DigestCounts = {
    * aren't already counted as leads at risk. A count, never which.
    */
   notAnswered?: number;
+  /**
+   * Replies package (Davi, 2026-10-16): this month's money so far — totals only (quotes won,
+   * invoices paid, still owed), the same numbers as Activity. Optional for older callers.
+   */
+  money?: MoneySoFar;
 };
 
 /**
@@ -104,7 +111,10 @@ export async function digestCounts(
   const dayAgo = new Date(now.getTime() - 86_400_000);
 
   // Who is waiting, and since when (the customer's first email after the owner last wrote, A14).
-  const q = await queueMembership(workspaceId, now);
+  // Integration 2026-10-17: only what the owner can act on — a plan-paused Gmail address's
+  // drafts and needs-you cards stay on the queue (marked paused) but are never counted here.
+  const all = await queueMembership(workspaceId, now);
+  const q = actionableQueue(all);
 
   const [sent] = await db()
     .select({ n: count() })
@@ -125,7 +135,7 @@ export async function digestCounts(
   // morning catch-up, and a count is harmless. Counts only.
   const tz = usableTimeZone(timeZone ?? (await workspaceTimeZone(workspaceId)));
   const atRisk = await leadsAtRisk(workspaceId, now, tz);
-  const onQueue = new Set([...q.needsYou, ...q.drafts].map((m) => m.threadId));
+  const onQueue = new Set([...all.needsYou, ...all.drafts].map((m) => m.threadId));
 
   return {
     repliesReady: q.drafts.filter((d) => d.kind === "reply").length,
@@ -143,6 +153,7 @@ export async function digestCounts(
         Infinity,
       )
     ).length,
+    money: await moneySoFar(workspaceId, now, tz),
   };
 }
 
@@ -194,6 +205,9 @@ export function buildDigest(
       : null,
   ].filter((l): l is string => !!l);
   const lastWeek = extras.lastWeek ?? [];
+  // This month's money so far (totals only); the section is left out when all of it is zero.
+  // It never makes a quiet morning worth an email on its own (`worthSending` ignores it).
+  const money = c.money ? moneySoFarLines(c.money) : [];
   const onQueue = c.needsYou.length + c.repliesReady + c.nudgesReady;
   const waiting = onQueue + c.leadsAtRiskOffQueue + (c.notAnswered ?? 0);
   const subject = waiting
@@ -213,6 +227,7 @@ export function buildDigest(
           ...(notAnswered ? [`• ${notAnswered.text}: ${notAnswered.href}`] : []),
         ]),
     ...(lines.length ? ["", ...lines] : []),
+    ...(money.length ? ["", ...money, MONEY_SO_FAR_NOTE] : []),
     ...(lastWeek.length ? ["", ...lastWeek] : []),
     "",
     ...(onQueue ? [`Open your queue: ${links.queueUrl}`, ""] : []),
@@ -245,6 +260,7 @@ ${needsHtml}
 <div style="margin:20px 0 0">
 ${lines.map(para).join("\n")}
 </div>
+${money.length ? `<div style="margin:20px 0 0;padding:16px 0 0;border-top:1px solid #1b1b1b">\n${money.map(para).join("\n")}\n<p style="margin:0;font-size:14px;color:#5e5d59">${esc(MONEY_SO_FAR_NOTE)}</p>\n</div>` : ""}
 ${lastWeek.length ? `<div style="margin:20px 0 0;padding:16px 0 0;border-top:1px solid #1b1b1b">\n${lastWeek.map(para).join("\n")}\n</div>` : ""}
 ${
   onQueue

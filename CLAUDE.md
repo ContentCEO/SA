@@ -1838,6 +1838,76 @@ null}` flags any link on a plain one); reconcile expires it like a review note; 
   - Privacy policy (same 2026-10-16 date): the trial emails in the Resend list, which trial emails
     went and whether they were stopped, and which Gmail address a plan pause stopped.
 
+- **Replies package (2026-10-16, branch `replies-build`; Davi's answers that day):** migration
+  0037 `replies` (0035 on its branch; additive: `drafts.opening`, `threads.emergency_alerted_at`,
+  `business_profile.emergency_alerts_enabled` default true). Prompts `draft.v7`,
+  `opening-tweaks.v1`; eval set +12 first-contact cases, +3 revise cases, metric
+  `openingAccuracy`. **The eval baseline is still empty** (no `ANTHROPIC_API_KEY` repo secret).
+  - **Warm first replies (draft.v7):** draft.v6's rules plus a "First contact" section, used only
+    when the code says so: `isFirstContact` (`first-contact-rules.ts`, pure) = an ordinary reply
+    (no nudge, purpose note or gas safety note) on quote_request / customer_question /
+    scheduling, no "I called them" on the thread, and `ownerWroteBefore`
+    (`known-customer.ts`) false — no non-draft, non-side owner email on this thread or to the
+    customer's reply address (never the From: a form robot is shared by every lead) from **any**
+    of the workspace's mailboxes, and no app send to them (sent, queued or claimed). Asked only when everything else already says first
+    contact. The task line `FIRST_CONTACT_TASK` tells the model; it picks `opening` details /
+    vague / urgent / price_only (`not_first` otherwise) via `replyDraftSchema` (draft.v6's
+    schema + `opening` with `.catch("not_first")`: a bad value never loses the draft; the SDK
+    puts enums in the description, so nothing enforces them at the API). Stored only on a first
+    contact (`storedOpening`; the model's "not_first" there is kept, so non-null = code said
+    first contact). The business block, conversation block and date helpers are re-exported
+    from draft.v6 unchanged (cache and nudges untouched); nudges keep `draftSchema`. Purpose notes
+    now use v7's instructions (evals too). `checkDraft`, regenerate rules and gaps unchanged.
+    v7 still bans "Thank you for reaching out" (checkDraft's filler); the warm opener is
+    "Thanks for reaching out". Activity `draft_created` gets `firstContact: true`.
+  - **Card:** "First reply: asks 2 questions · they described the job" (`openingLine`, counts
+    `?` runs in the current text) and **Other ways to reply** (`OtherWaysToReply`, below the
+    Discard · Change it · Edit row so Send reply stays put): Ask a few questions / Offer to come
+    take a look / Short and friendly (`OPENING_TWEAKS`, labels mirrored in
+    `OPENING_TWEAK_LABELS`, a test keeps them equal). `reviseDraft({ opening })` = revise.v2's
+    instructions + the fixed ask, logged `revise.v2+opening-tweaks.v1`, same 5-per-draft / 40-an-hour
+    limits; refused (`not_first_contact`, before any model call) unless the stored opening is one
+    of the four shapes on a plain reply. Hidden on read-only accounts (`offersOtherWays`).
+    **Autopilot refuses any draft with an opening** ("First replies to new customers always wait
+    for you."): Davi said no to instant replies to new leads, and an old forward could make a
+    new lead look known.
+  - **Money in the morning email:** `moneySoFar` (activity.ts) → `moneySoFarLines`
+    (activity-rules.ts): "This month so far: $X in quotes you won · $Y in invoices paid." and
+    "Still owed to you: $Z on Money owed.", plus Activity's own note (`MONEY_SO_FAR_NOTE`). Won =
+    `quote_outcome` won (owner or guess) by `quote_outcome_at` in the owner's month, from
+    `quote_amount_cents`; paid / owed = `invoiceTotals` (money.ts) on Money's own rows
+    (`moneyThreads`, now with `paidSince` so a 31-day month reaches past the 30-day paid list):
+    no supplier bills, receipt senders, bills the owner owes or "Not owed to me". Items with no
+    amount are counted and said. Zero parts left out; no section when all zero; it never makes a
+    quiet morning worth sending. Activity shows the same lines on its money card ("Nothing won or
+    paid yet" only when neither). The M7 privacy test now allows the total line in the email
+    (never a name, invoice number or due date); push and texts still carry no amounts.
+  - **Emergency alerts (B5 part 2)** (`emergency-alerts.ts`, rules in
+    `emergency-alert-rules.ts`): candidates = `inEmergencyLane` exactly (a gas smell counts via
+    its urgency mark), needs_owner, in the inbox, mailbox `active`, never alerted, not snoozed,
+    not injection, the customer's newest non-side email under an hour old **and already sorted**,
+    its reply address not no-reply, unanswered (owner email / "I called them" / app send / undo
+    window). One alert per run per owner covering every new emergency; caps 3 between 9pm and
+    7am (from the night's 9pm, across midnight) and 6 per local day, counted from
+    `emergency_alert_sent` rows; count + mark + Activity row in one transaction under
+    `pg_advisory_xact_lock(hashtext('emergency-alert:<ws>'))`. Sent through the owner's push
+    phones and verified text number; nothing reached → marks and row taken back. Takes the push /
+    SMS slots (`push_last_sent_at` / `sms_last_sent_at`) without waiting for them, so ordinary
+    alerts wait 10 minutes after it, and `freshLeads` leaves an alerted emergency out until a
+    later email is sorted on it. Words: "An emergency email just came in. Open Squared Away."
+    (push, via `/api/push/summary` while that alert is the newest push and < 30 min old,
+    `emergencySummaryApplies`; the tap opens `/queue?t=<uuid>#t-<uuid>`) and "Squared Away: An
+    emergency email just came in. Open: <deep link>" (text). Runs first in `alertsForMailbox`
+    (after sorting) and in the 15-minute backstop. Read-only accounts never. Setting
+    **Emergencies, even at night** (`EmergencySwitch`, one switch on both Notifications and Text
+    alerts; `saveEmergencyAlertsAction` → `?done=saved` on the screen it came from); off = an
+    emergency waits like any email. Activity "Let you know right away about an emergency email"
+    (counts) and the switch's on/off row.
+  - Privacy policy lines added (first-reply labels, emergency alert times, the switch, money totals
+    in the morning email); same 2026-10-16 date as `TERMS_VERSION` (as the other 2026-10-16
+    packages did, no new re-agree); `legal-docs.test.ts` holds them to the code. SETUP.md §6c
+    names the emergency exception and a second A2P sample message.
+
 ## Milestones
 
 - [x] **0. Scaffold**
@@ -1882,9 +1952,15 @@ null}` flags any link on a plain one); reconcile expires it like a review note; 
   Nextdoor, Porch, Bark, Networx, Google Local Services) — Primary or Promotions? does any take an
   email reply? does each fixed "Open <site>" link land on the pro's inbox? — and RingCentral /
   Grasshopper / OpenPhone voicemail emails. The site parsers and the Open links were written
-  against invented samples. (3) **Emergency alerts (B5 part 2)**, including at night — held.
-  (4) The eval baseline (`ANTHROPIC_API_KEY` repo secret) before classify.v5 (names / towns from
+  against invented samples. (3) Emergency alerts (B5 part 2): Davi said yes on 2026-10-16,
+  built in the replies package. (4) The eval baseline (`ANTHROPIC_API_KEY` repo secret) before classify.v5 (names / towns from
   the model, strict emergency wording) can be written and compared.
+- **Replies package (2026-10-16):** (1) the eval baseline (`ANTHROPIC_API_KEY` repo secret, then
+  run "Prompt evals") before draft.v7 can be compared with a live model; (2) a Google Voice
+  voicemail comes from `voice-noreply@google.com`, a no-reply sender, so an emergency
+  voicemail does **not** buzz at night (as specified) — his call whether it should; (3) the
+  privacy lines ride on the 2026-10-16 date: if another 2026-10-16 bump has already shipped when
+  this merges, batch them into one date move.
 - **The launch checklist is `docs/LAUNCH.md`** (in order, where to click, how to know it worked,
   and every open decision in its step 13, split into "Decided on 2026-10-15", "Decided on
   2026-10-14", "Still open" and "Still needed from you"). The items below are the same list in engineering words.

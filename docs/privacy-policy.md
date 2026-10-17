@@ -106,6 +106,9 @@ Settings removes all of our access, that one included.
   Google Voice), which of our "needs you" checks it matched (as short labels like "emergency" or
   "outside your towns", not text from the email), whether you marked it done, and when you marked
   a complaint fixed or closed its check-in.
+- For a first reply to someone you've never written to, which kind of first reply the draft is
+  (a short label like "urgent" or "asked about price", not text from the email), and when we let
+  your phone know about an emergency email.
 
 **What you tell us:** your business details (business name, trade, services, service area, hours,
 price list, payment terms, policies, things you never promise, words you never use, short
@@ -152,6 +155,9 @@ that copy.
   approve, and notes you can send: asking for the deposit after a customer accepts your quote,
   asking for a review when you tap **Ask for a review**, or, once a quote has had both follow-ups
   and a week of quiet, asking whether the customer went another way, only when you tap it.
+- To write a warm first reply when someone you've never written to asks about a job: it thanks
+  them and asks only what's missing, or asks for the best number and the address when something
+  is going wrong right now. It's a draft like any other and waits for your **Send reply**.
 - To reword a draft when you ask, by tapping a quick change or telling it what to change. If you
   speak the change, your browser turns your words into text using its own speech service (run by
   Google or Apple, depending on your phone); we receive only the text.
@@ -165,7 +171,11 @@ that copy.
   when you tap **Send it to yourself instead**.
 - To send you your morning summary, a monthly summary at the start of each month, an email if
   Google stops letting us read your Gmail (plus one reminder two days later), and, if you turn them
-  on, text alerts and phone notifications. The morning summary lists the kinds of email waiting and how long they have waited, with links into the app; the monthly summary has counts, your most common kinds of job and where requests came from; the Gmail alert names your own Gmail address; texts and notifications have counts only. None of them contain a customer's name or words.
+  on, text alerts and phone notifications. The morning summary lists the kinds of email waiting and how long they have waited, with links into the app, and this month's money so far as totals (quotes you won, invoices paid and what's still owed); the monthly summary has counts, your most common kinds of job and where requests came from; the Gmail alert names your own Gmail address; texts and notifications have counts only. None of them contain a customer's name or words.
+- If you leave **Emergencies, even at night** on, an email that sounds like an emergency (a leak,
+  no heat, no power, a gas smell) reaches your phone right away by the texts and notifications
+  you turned on, even between 9pm and 7am. It says only "An emergency email just came in." —
+  once per conversation, at most 3 a night and 6 a day. You can switch it off in Settings.
 - To run your account: billing, support, keeping the service working and secure.
 
 We don't sell your information or your customers' information. We don't use it for advertising.
@@ -276,8 +286,8 @@ In plain words:
   it, inspection time and result) are kept so your inbox, quotes, money owed and activity history
   keep working, until you disconnect that Gmail address or delete your account.
 - **Your price memory, quote won/lost marks, why a quote was lost, invoice paid marks, complaint
-  markers, review-request records, lead-source, done and fixed marks, and the counts and tone
-  change of edited replies** stay after the
+  markers, review-request records, lead-source, done and fixed marks, first-reply labels, when
+  we alerted you to an emergency, and the counts and tone change of edited replies** stay after the
   30-day email-text purge, until you disconnect that Gmail address or delete your account.
 - **Your writing style, style suggestions, business details, settings, activity history and AI
   usage counts** are kept until you delete your account.

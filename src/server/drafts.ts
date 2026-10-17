@@ -32,10 +32,18 @@ import {
   DRAFT_INSTRUCTIONS,
   DRAFT_PROMPT_VERSION,
   draftSchema,
+  FIRST_CONTACT_TASK,
+  replyDraftSchema,
   workspaceBlock,
   type ModelDraft,
+  type Opening,
   type WorkspaceContext,
-} from "@/ai/prompts/draft.v6";
+} from "@/ai/prompts/draft.v7";
+import {
+  OPENING_TWEAKS,
+  OPENING_TWEAKS_PROMPT_VERSION,
+  type OpeningTweak,
+} from "@/ai/prompts/opening-tweaks.v1";
 import { prepareBody } from "@/ai/classify";
 import {
   FOLLOWUP_INSTRUCTIONS,
@@ -137,7 +145,8 @@ import {
   isEmailToTextAddress,
   looksLikePhoneAddress,
 } from "./channel-rules";
-import { knownCustomer } from "./known-customer";
+import { knownCustomer, ownerWroteBefore } from "./known-customer";
+import { isFirstContact, isFirstContactOpening, storedOpening } from "./first-contact-rules";
 
 /** Categories we draft for without being asked. Complaints and noise never are. */
 export const AUTO_DRAFT_CATEGORIES = [
@@ -849,6 +858,27 @@ export async function createDraftForThread(
     return { status: "skipped", reason: "no_review_link" };
   // The link went from the profile since the check: a plain thank-you, never a broken ask.
   if (purpose === "thank_you_review" && !ctx.reviewUrl) purpose = "thank_you";
+  // Replies package (draft.v7): a first reply to someone the owner never wrote to — on any
+  // thread, from any mailbox, a side email to the crew aside — opens warmly and takes a shape
+  // from what they said. An ordinary reply about a job only; the gas safety note stays as is.
+  const contact = {
+    followup,
+    purpose,
+    category: thread.category,
+    gasSmell: marks.gas_smell === true,
+    handledOffline: thread.handledOfflineAt != null,
+  };
+  // The database is only asked when everything else already says "first contact". The
+  // customer is their reply address, as everywhere else (B1): a website form's robot From is
+  // shared by every lead, so an old reply to the robot never makes a new person "known".
+  const firstContact =
+    isFirstContact({ ...contact, ownerWroteBefore: false }) &&
+    !(await ownerWroteBefore({
+      workspaceId: workspace.id,
+      threadId,
+      addresses: [to],
+      before: now,
+    }));
   const daysQuiet = Math.max(1, Math.round((now.getTime() - last.sentAt.getTime()) / 86_400_000));
   const wsBlock = workspaceBlock(ctx);
   const convo = conversationBlock({
@@ -869,7 +899,9 @@ export async function createDraftForThread(
             ? closingQuestionTask({ daysQuiet })
             : isThankYou(purpose)
               ? thankYouTask({ reviewUrl: purpose === "thank_you_review" ? ctx.reviewUrl : null })
-              : undefined,
+              : firstContact
+                ? FIRST_CONTACT_TASK
+                : undefined,
     messages: withText.map(({ m, text }) => ({
       from:
         m.direction === "out"
@@ -921,7 +953,7 @@ export async function createDraftForThread(
         ? `${DRAFT_PROMPT_VERSION}+${PURPOSE_PROMPT_VERSION}`
         : DRAFT_PROMPT_VERSION;
 
-  let result: ModelDraft | null = null;
+  let result: (ModelDraft & { opening?: Opening }) | null = null;
   if (safety) result = safetyNote(ctx);
   else
     try {
@@ -936,7 +968,8 @@ export async function createDraftForThread(
           { text: wsBlock, cache: true },
         ],
         user: convo,
-        schema: draftSchema,
+        // Replies (and purpose notes) carry draft.v7's `opening`; nudges keep their own output.
+        schema: followup ? draftSchema : replyDraftSchema,
         now,
       };
       result = (await callStructured(request)) ?? (await callStructured(request));
@@ -1011,6 +1044,8 @@ export async function createDraftForThread(
         flags,
         confidence,
         usedFacts: [...new Set(result.used_facts ?? [])],
+        // A key, never text: the shape of a first reply (null on every other draft).
+        opening: storedOpening(firstContact, result.opening),
         promptVersion,
         createdAt: now,
       })
@@ -1108,6 +1143,7 @@ export async function createDraftForThread(
         flagCount: flags.length,
         ...(followup ? { nudgeNumber } : {}),
         ...(purpose ? { purpose } : {}),
+        ...(firstContact ? { firstContact: true } : {}),
       },
     });
   return { status: "created", draftId: row2.id };
@@ -1759,6 +1795,8 @@ export async function saveDraftEdit(
 export type ReviseOutcome =
   | { status: "revised"; flags: string[] }
   | { status: "limit" }
+  /** "Other ways to reply" asked of a draft that isn't a first reply (replies package). */
+  | { status: "not_first_contact" }
   | { status: "model_failed" }
   | { status: "capped" }
   | { status: "deleted_in_gmail" }
@@ -1776,7 +1814,7 @@ export type ReviseOutcome =
 export async function reviseDraft(
   workspaceId: string,
   draftId: string,
-  change: { tweak: Tweak } | { spoken: string },
+  change: { tweak: Tweak } | { spoken: string } | { opening: OpeningTweak },
   opts: DraftDeps = {},
 ): Promise<ReviseOutcome> {
   const row = await loadOwnedDraft(workspaceId, draftId);
@@ -1788,9 +1826,20 @@ export async function reviseDraft(
   if (mailbox.planPausedAt) return { status: "mailbox_paused" };
   if (mailbox.status !== "active") return { status: "reconnect_needed" };
   if (draft.revisions >= MAX_REVISIONS_PER_DRAFT) return { status: "limit" };
+  // Replies package: "Other ways to reply" is for a first reply to a new lead only.
+  const opening = "opening" in change ? change.opening : null;
+  if (
+    opening !== null &&
+    !(isFirstContactOpening(draft.opening) && draft.kind === "reply" && !draft.purpose)
+  )
+    return { status: "not_first_contact" };
 
   const spoken = "spoken" in change ? change.spoken.trim().slice(0, 500) : null;
-  const ask = spoken ?? TWEAKS[(change as { tweak: Tweak }).tweak].ask;
+  const ask =
+    spoken ??
+    (opening !== null
+      ? OPENING_TWEAKS[opening].ask
+      : TWEAKS[(change as { tweak: Tweak }).tweak].ask);
 
   const recent = (
     await db()
@@ -1873,7 +1922,10 @@ export async function reviseDraft(
   const request = {
     workspaceId: workspace.id,
     role: "draft" as const,
-    promptVersion: REVISE_PROMPT_VERSION,
+    promptVersion:
+      opening !== null
+        ? `${REVISE_PROMPT_VERSION}+${OPENING_TWEAKS_PROMPT_VERSION}`
+        : REVISE_PROMPT_VERSION,
     maxTokens: 2048,
     effort: "medium" as const,
     system: [
@@ -1963,7 +2015,12 @@ export async function reviseDraft(
       // Content-free: which tweak, or that it was spoken — never the words.
       detail: {
         draftId: draft.id,
-        via: spoken !== null ? "voice" : (change as { tweak: Tweak }).tweak,
+        via:
+          spoken !== null
+            ? "voice"
+            : opening !== null
+              ? `opening_${opening}`
+              : (change as { tweak: Tweak }).tweak,
       },
     });
   return { status: "revised", flags };
@@ -2308,6 +2365,8 @@ export type QueueItem = {
   confidence: number | null;
   /** Profile facts / voice traits the drafter relied on (keys). */
   usedFacts: string[];
+  /** Replies package (draft.v7): a first reply's shape (a key), else null. */
+  opening: string | null;
   /** Quick tweaks / voice edits left on this draft (plan #3, #4). */
   revisionsLeft: number;
   /** Plan #6: high priority and needs the owner — snooze only until tonight. */
@@ -2352,6 +2411,12 @@ export type QueueMember = {
   lane: boolean;
   /** Leads package (G5): a check-in two days after "Mark fixed". */
   checkIn: boolean;
+  /**
+   * Integration 2026-10-17: its Gmail address is paused on the plan. Still a card on the queue
+   * (marked paused), but never in a count: the owner can't act on it (`countQueue`,
+   * `actionableQueue`).
+   */
+  paused: boolean;
 };
 export type QueueMembership = {
   /** `waitingSince`: the customer's first email since the owner last wrote (plan M8 A14). */
@@ -2371,16 +2436,17 @@ export async function queueMembership(
   workspaceId: string,
   now: Date = new Date(),
 ): Promise<QueueMembership> {
-  const boxIds = (
-    await db()
-      .select({ id: mailboxes.id })
-      .from(mailboxes)
-      .where(eq(mailboxes.workspaceId, workspaceId))
-  ).map((b) => b.id);
+  const boxes = await db()
+    .select({ id: mailboxes.id, planPausedAt: mailboxes.planPausedAt })
+    .from(mailboxes)
+    .where(eq(mailboxes.workspaceId, workspaceId));
+  const boxIds = boxes.map((b) => b.id);
   if (boxIds.length === 0) return { needsYou: [], drafts: [] };
+  const pausedBoxes = new Set(boxes.filter((b) => b.planPausedAt).map((b) => b.id));
 
   const threadCols = {
     threadId: threads.id,
+    mailboxId: threads.mailboxId,
     category: threads.category,
     priority: threads.priority,
     needsOwner: threads.needsOwner,
@@ -2454,6 +2520,7 @@ export async function queueMembership(
     lastMessageAt: t.lastMessageAt,
     lane: false,
     checkIn: false,
+    paused: pausedBoxes.has(t.mailboxId),
   });
   // A stable sort: newest first, with anything back from a snooze on top — and the emergency
   // lane above everything (leads package, B5).
@@ -2498,8 +2565,21 @@ export async function queueCounts(
   return countQueue(await queueMembership(workspaceId, now));
 }
 
-/** The totals of a membership already loaded. */
-export function countQueue(q: QueueMembership): QueueTotals {
+/**
+ * Only what the owner can act on: members on a plan-paused Gmail address are left out
+ * (integration 2026-10-17). The queue screen still shows them, marked paused; every count —
+ * the morning email, the badge, the phone's notification, the banner — uses this.
+ */
+export function actionableQueue(q: QueueMembership): QueueMembership {
+  return {
+    needsYou: q.needsYou.filter((m) => !m.paused),
+    drafts: q.drafts.filter((m) => !m.paused),
+  };
+}
+
+/** The totals of a membership already loaded (plan-paused addresses left out). */
+export function countQueue(all: QueueMembership): QueueTotals {
+  const q = actionableQueue(all);
   const replies = q.drafts.filter((d) => d.kind === "reply").length;
   return {
     needsYou: q.needsYou.length,
@@ -2628,6 +2708,7 @@ export async function listQueue(
           flags: [],
           confidence: null,
           usedFacts: [],
+          opening: null,
           revisionsLeft: 0,
           emergency: m.emergency,
           backFromSnooze: m.backFromSnooze,
@@ -2667,6 +2748,7 @@ export async function listQueue(
           flags: draft.flags,
           confidence: draft.confidence,
           usedFacts: draft.usedFacts,
+          opening: draft.opening ?? null,
           revisionsLeft: Math.max(0, MAX_REVISIONS_PER_DRAFT - draft.revisions),
           emergency: m.emergency,
           backFromSnooze: m.backFromSnooze,

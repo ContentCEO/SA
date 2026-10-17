@@ -17,6 +17,15 @@ export function mailboxRunning(): SQL {
   return and(eq(mailboxes.status, "active"), isNull(mailboxes.planPausedAt))!;
 }
 
+/**
+ * SQL for "the plan covers this mailbox", whatever its Google access: for account-level
+ * checks that count a connected address even while it needs reconnecting (the trial emails'
+ * "connected Gmail" test). Anything that reads Gmail or acts uses `mailboxRunning()`.
+ */
+export function notPlanPaused(): SQL {
+  return isNull(mailboxes.planPausedAt);
+}
+
 type Tx = Parameters<Parameters<Database["transaction"]>[0]>[0];
 
 /** Locks the workspace row so a plan change and a swap can't interleave. Returns its plan. */
