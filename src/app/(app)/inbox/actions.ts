@@ -45,6 +45,7 @@ const OFFER_ERRORS: Record<string, string> = {
   not_found: "unknown",
   // Gmail needs a reconnect: trying again won't help until they do.
   mailbox_inactive: "reconnect",
+  mailbox_paused: "paused",
 };
 
 /**
@@ -64,6 +65,7 @@ async function askFor(purpose: OwnerPurpose, formData: FormData): Promise<never>
   });
   if (r.status === "created") redirect("/queue?done=drafted");
   if (r.status === "reconnect_needed") redirect("/queue?error=reconnect");
+  if (purpose === "thank_you" && r.reason === "already_asked") redirect("/queue?error=thanked");
   redirect(`/queue?error=${OFFER_ERRORS[r.reason] ?? "draftfailed"}`);
 }
 
@@ -73,6 +75,11 @@ export async function askForReviewAction(formData: FormData) {
 
 export async function askClosingQuestionAction(formData: FormData) {
   await askFor("closing_question", formData);
+}
+
+/** "Say thanks" on a paid Money row (2026-10-16). Drafts only, like every offer. */
+export async function sayThanksAction(formData: FormData) {
+  await askFor("thank_you", formData);
 }
 
 /** Ideas H4: "Move it". Fixes this conversation only; the server re-checks everything. */

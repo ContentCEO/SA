@@ -324,6 +324,31 @@ export const EVAL_CASES: EvalCase[] = [
     body: "Mailed the check for invoice 1042 yesterday.",
     expect: { category: "invoice_payment", needsOwner: false, invoiceStatus: "paid" },
   }),
+  // 2026-10-16 ("Say thanks"): a payment that also says the job went well. The paid mark (and
+  // job_done) are what offer the thank-you on Money, with the review ask when the rules allow.
+  c({
+    id: "i-paid-happy",
+    trade: "carpentry",
+    fromName: "Jo Park",
+    fromAddress: "jo@example.com",
+    subject: "Invoice 2210",
+    body: "Just paid invoice 2210 online. The new railing looks great, thanks again!",
+    expect: {
+      category: "invoice_payment",
+      needsOwner: false,
+      invoiceStatus: "paid",
+      jobDone: true,
+    },
+  }),
+  c({
+    id: "i-paid-zelle",
+    trade: "plumbing",
+    fromName: "Lee Grant",
+    fromAddress: "lee@example.com",
+    subject: "Re: Invoice 318",
+    body: "Sent the balance by Zelle this morning. Let me know it came through.",
+    expect: { category: "invoice_payment", needsOwner: false, invoiceStatus: "paid" },
+  }),
   c({
     id: "i-when-due",
     trade: "plumbing",

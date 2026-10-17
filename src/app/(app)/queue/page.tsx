@@ -106,6 +106,7 @@ const errors: Record<string, string> = {
   not_eligible: "That one isn't ready for that kind of note.",
   feature_off: "That isn't switched on for your account yet.",
   already_asked: "You've already asked them once.",
+  thanked: "You've already written them a thank-you for that one.",
   no_review_link: "Add your review link in Settings → Business profile first.",
   review_recent: "You asked them for a review in the last 12 months.",
   complaint: "Not for a complaint — reply to that one yourself.",

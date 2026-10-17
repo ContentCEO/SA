@@ -1,6 +1,20 @@
 import "server-only";
 import { createHash } from "node:crypto";
-import { and, asc, desc, eq, gt, inArray, isNotNull, isNull, lt, lte, or, sql } from "drizzle-orm";
+import {
+  and,
+  asc,
+  desc,
+  eq,
+  gt,
+  inArray,
+  isNotNull,
+  isNull,
+  lt,
+  lte,
+  ne,
+  or,
+  sql,
+} from "drizzle-orm";
 import { callStructured } from "@/ai/client";
 import { checkDraft, hasLink, REGENERATE_ON, type CheckResult } from "@/ai/draft-checks";
 import { injectionCheck, looksLikePaymentChange } from "@/ai/guards";
@@ -33,7 +47,8 @@ import {
   depositTask,
   PURPOSE_PROMPT_VERSION,
   reviewRequestTask,
-} from "@/ai/prompts/purpose.v1";
+  thankYouTask,
+} from "@/ai/prompts/purpose.v2";
 import {
   ensureDepositGap,
   isQuoteAcceptance,
@@ -53,6 +68,7 @@ import {
   drafts,
   mailboxes,
   messages,
+  THANK_YOU_PURPOSES,
   threads,
   voiceProfiles,
   workspaces,
@@ -96,7 +112,12 @@ import {
   waitingSinceSql,
   answeredByPhoneSql,
 } from "./thread-sql";
-import { closingQuestionAllowed, recentReviewAddresses, reviewAllowed } from "./offers";
+import {
+  closingQuestionAllowed,
+  recentReviewAddresses,
+  reviewAllowed,
+  thankYouAllowed,
+} from "./offers";
 import { lockReviewAddress } from "./review-lock";
 import { markReconnectNeeded, recordSentMessage } from "./sync";
 import { readReplyTo, workspaceMailboxEmails } from "./reply-address";
@@ -213,8 +234,20 @@ async function loadThread(threadId: string) {
   return row;
 }
 
-/** Purposes only the owner's tap may ask for. Deposit is never asked for: it's derived (#28). */
-export const OWNER_PURPOSES = ["review_request", "closing_question"] as const;
+/**
+ * Purposes only the owner's tap may ask for. Deposit is never asked for: it's derived (#28).
+ * "thank_you" (2026-10-16) is stored as `thank_you` or `thank_you_review`: the server decides
+ * whether the review ask goes in.
+ */
+export const OWNER_PURPOSES = ["review_request", "closing_question", "thank_you"] as const;
+
+/** A thank-you note, with or without the review ask in it. */
+export const isThankYou = (p: string | null | undefined): p is "thank_you" | "thank_you_review" =>
+  (THANK_YOU_PURPOSES as readonly (string | null | undefined)[]).includes(p);
+
+/** A note that asks the customer for a review: counts toward the one-a-year limit. */
+const asksForReview = (p: string | null | undefined) =>
+  p === "review_request" || p === "thank_you_review";
 
 /** Round 2 (TW B4): the fixed safety note's "prompt version" — code, never a model. */
 export const SAFETY_NOTE_VERSION = "safety-note.v1";
@@ -391,7 +424,7 @@ function termsCheck(
   ctx: DraftContext,
   owner: { wrote: (string | null)[]; terms?: (string | null)[] },
 ) {
-  if (purpose !== "deposit" && purpose !== "review_request") return {};
+  if (purpose !== "deposit" && purpose !== "review_request" && !isThankYou(purpose)) return {};
   const join = (xs: (string | null | undefined)[]) => xs.filter(Boolean).join("\n");
   return {
     checkTerms: true,
@@ -406,7 +439,14 @@ function termsCheck(
           ])
         : "",
     ownerWrote: purpose === "deposit" ? join(owner.wrote) : "",
-    review: purpose === "review_request" ? { url: ctx.reviewUrl } : undefined,
+    // A thank-you (2026-10-16) is checked like a review request: nothing offered, no way to pay,
+    // no amount, and no link but the review link — none at all when it carries no review ask.
+    review:
+      purpose === "review_request" || purpose === "thank_you_review"
+        ? { url: ctx.reviewUrl }
+        : purpose === "thank_you"
+          ? { url: null }
+          : undefined,
   };
 }
 
@@ -421,7 +461,7 @@ function purposeGuards(purpose: DraftPurpose | null, body: string, ctx: DraftCon
     body = ensureDepositGap(body);
     flags.push(NO_PAYMENT_TERMS_FLAG);
   }
-  if (purpose === "review_request" && !(ctx.reviewUrl && hasLink(body, ctx.reviewUrl))) {
+  if (asksForReview(purpose) && !(ctx.reviewUrl && hasLink(body, ctx.reviewUrl))) {
     flags.push(REVIEW_LINK_MISSING_FLAG);
   }
   return { body, flags };
@@ -581,6 +621,14 @@ export async function createDraftForThread(
     const why = await closingQuestionAllowed(workspace.id, threadId, now);
     if (why) return { status: "skipped", reason: why };
   }
+  // "Say thanks" on a paid invoice (2026-10-16): a paid mark, a real customer, once per thread;
+  // the review ask goes in only when every review-request rule allows one for this customer.
+  let thankWithReview = false;
+  if (opts.purpose === "thank_you") {
+    const ok = await thankYouAllowed(workspace.id, threadId, now);
+    if (ok.why) return { status: "skipped", reason: ok.why };
+    thankWithReview = ok.withReview;
+  }
 
   const marks = (thread.extracted ?? {}) as {
     municipal?: boolean;
@@ -667,15 +715,19 @@ export async function createDraftForThread(
   // Only once per thread: after a deposit note was drafted (whatever became of it), or when
   // the email itself says it paid ("Sent the deposit, when can you start?"), it is answered
   // as an ordinary reply.
-  const purpose: DraftPurpose | null = safety
+  let purpose: DraftPurpose | null = safety
     ? "safety"
-    : (opts.purpose ??
-      (!followup &&
-      isQuoteAcceptance(thread) &&
-      paymentSaid(thread.extracted) === null &&
-      !(await depositAlreadyOn(threadId))
-        ? "deposit"
-        : null));
+    : opts.purpose === "thank_you"
+      ? thankWithReview
+        ? "thank_you_review"
+        : "thank_you"
+      : (opts.purpose ??
+        (!followup &&
+        isQuoteAcceptance(thread) &&
+        paymentSaid(thread.extracted) === null &&
+        !(await depositAlreadyOn(threadId))
+          ? "deposit"
+          : null));
 
   const [pending] = await db()
     .select({ id: drafts.id })
@@ -707,7 +759,12 @@ export async function createDraftForThread(
   if (!last) return { status: "skipped", reason: "no_text" };
   if (afterOwner && last.direction !== "out")
     return { status: "skipped", reason: "customer_replied" };
-  if (!afterOwner && purpose !== "review_request" && last.direction !== "in")
+  if (
+    !afterOwner &&
+    purpose !== "review_request" &&
+    !isThankYou(purpose) &&
+    last.direction !== "in"
+  )
     return { status: "skipped", reason: "owner_replied_last" };
   // Who the reply goes to: the customer — whoever last wrote in.
   const customer =
@@ -790,6 +847,8 @@ export async function createDraftForThread(
   // Nothing to ask with: never call the model for a review request without the link.
   if (purpose === "review_request" && !ctx.reviewUrl)
     return { status: "skipped", reason: "no_review_link" };
+  // The link went from the profile since the check: a plain thank-you, never a broken ask.
+  if (purpose === "thank_you_review" && !ctx.reviewUrl) purpose = "thank_you";
   const daysQuiet = Math.max(1, Math.round((now.getTime() - last.sentAt.getTime()) / 86_400_000));
   const wsBlock = workspaceBlock(ctx);
   const convo = conversationBlock({
@@ -808,7 +867,9 @@ export async function createDraftForThread(
           ? reviewRequestTask({ reviewUrl: ctx.reviewUrl! })
           : purpose === "closing_question"
             ? closingQuestionTask({ daysQuiet })
-            : undefined,
+            : isThankYou(purpose)
+              ? thankYouTask({ reviewUrl: purpose === "thank_you_review" ? ctx.reviewUrl : null })
+              : undefined,
     messages: withText.map(({ m, text }) => ({
       from:
         m.direction === "out"
@@ -958,7 +1019,7 @@ export async function createDraftForThread(
 
   let row2: { id: string } | undefined;
   let reviewTaken = false;
-  if (purpose === "review_request") {
+  if (asksForReview(purpose)) {
     // One review request per address a year, even with two taps on two threads at once
     // (A16): the check and the insert run under a lock on this workspace + address.
     await db().transaction(async (tx) => {
@@ -985,6 +1046,21 @@ export async function createDraftForThread(
         .where(and(eq(drafts.threadId, threadId), eq(drafts.purpose, "closing_question")))
         .limit(1);
       if (asked) return { status: "skipped", reason: "already_asked" };
+    }
+    // The thank-you's own index (once per thread, 2026-10-16).
+    if (isThankYou(purpose)) {
+      const [thanked] = await db()
+        .select({ id: drafts.id })
+        .from(drafts)
+        .where(
+          and(
+            eq(drafts.threadId, threadId),
+            inArray(drafts.purpose, [...THANK_YOU_PURPOSES]),
+            ne(drafts.status, "expired"),
+          ),
+        )
+        .limit(1);
+      if (thanked) return { status: "skipped", reason: "already_asked" };
     }
     return { status: "skipped", reason: "already_pending" };
   }
@@ -2175,7 +2251,8 @@ export async function reconcileDrafts(mailboxId: string, opts: DraftDeps = {}) {
       } else if (
         (d.kind === "followup" ||
           d.purpose === "closing_question" ||
-          d.purpose === "review_request") &&
+          d.purpose === "review_request" ||
+          isThankYou(d.purpose)) &&
         newer.some((m) => m.direction === "out")
       ) {
         // The owner wrote to them some other way since; this nudge or note would repeat it.

@@ -58,7 +58,10 @@ export type Scores = {
   revisePassRate: number;
   /** Tone of an owner's edit named correctly (edit-tone prompt). 1 when not run. */
   toneAccuracy: number;
-  /** Deposit / review / closing drafts that kept to the rules (purpose.v1). 1 when not run. */
+  /**
+   * Deposit / review / closing / thank-you drafts that kept to the rules (purpose.v2). 1 when not
+   * run.
+   */
   purposePassRate: number;
 };
 

@@ -98,7 +98,11 @@ function QuoteCard({
         // Plan #26: only on a quote that went quiet after both nudges (the server decides).
         <OfferButtons
           threadId={q.threadId}
-          offers={offers ? { review: false, closingQuestion: offers.closingQuestion } : undefined}
+          offers={
+            offers
+              ? { review: false, closingQuestion: offers.closingQuestion, thankYou: false }
+              : undefined
+          }
         />
       )}
 

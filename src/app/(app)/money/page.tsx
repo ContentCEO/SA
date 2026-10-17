@@ -137,10 +137,15 @@ function SettledRow({
         </p>
       ) : null}
       {readOnly || kind !== "paid" ? null : (
-        // Plan #29: paid, so the job's done — offered only where the server's rules allow.
+        // Paid: "Say thanks" (2026-10-16) — it carries the review ask when the review rules allow
+        // one, so the separate "Ask for a review" button isn't shown here any more.
         <OfferButtons
           threadId={r.threadId}
-          offers={offers ? { review: offers.review, closingQuestion: false } : undefined}
+          offers={
+            offers
+              ? { review: false, closingQuestion: false, thankYou: offers.thankYou }
+              : undefined
+          }
         />
       )}
       {readOnly ? null : (
