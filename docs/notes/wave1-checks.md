@@ -154,3 +154,13 @@ Notes for the integrator: what CLAUDE.md should say, by step. Files in this grou
   (`firstContact` in the check context, from drafts.ts) "Thanks (so much) for reaching out" is
   not filler, because draft.v7's first-contact section (Davi, 2026-10-16) tells the drafter it
   may open that way.
+- **Price-list wording (Check 23 P14, wave 1):** `priceListRows()` reads each price-list line:
+  its amounts, the qualifier on its first price ("from", "starting at", "starts at", "about"
+  before it; "plus parts" / "+ parts", "per hour" after it) and its job words (longer than
+  three letters, before the colon or the first price). checkDraft (given `priceList` = the
+  owner's price list, from drafts.ts) flags a listed amount written without its qualifier
+  ("Gives $1,450 without “from”, as your price list has it. Check it." — "from", "starting" and
+  "starts" count as the same) or in a sentence with none of the line's job words, as whole words
+  ("Uses your $1,450 price for something else. Check it."). **Adapted:** hit `price_list`, not
+  `money`, because the prompt says these join `REGENERATE_ON` only if Davi says so (`money` is
+  in it). Cap 0.5.

@@ -689,3 +689,36 @@ describe("the common filler variants (Check 23 P13)", () => {
     );
   });
 });
+
+describe("price-list wording: keep 'from' and the job (Check 23 P14)", () => {
+  const LIST =
+    "Water heater swap, 40 gal tank: from $1,450 installed\nService call: $95\nLabor: $85 per hour";
+  const ctx = {
+    sourceText: `How much to swap our 40 gallon tank?\n${LIST}`,
+    ownerSourceText: LIST,
+    doNotPromise: [] as string[],
+    phrasesAvoided: [] as string[],
+    priceList: LIST,
+  };
+  it("dropping 'from' is flagged", () => {
+    const r = checkDraft("A 40 gal tank swap is $1,450 installed.", ctx);
+    expect(r.flags).toContain("Gives $1,450 without “from”, as your price list has it. Check it.");
+    expect(r.hits).toEqual(["price_list"]);
+    expect(REGENERATE_ON).not.toContain("price_list");
+  });
+  it("using the price for another job is flagged", () => {
+    expect(checkDraft("Tankless is from $1,450 installed.", ctx).flags).toContain(
+      "Uses your $1,450 price for something else. Check it.",
+    );
+  });
+  it("the list's own wording passes", () => {
+    expect(checkDraft("A 40 gal tank swap is from $1,450 installed.", ctx).hits).toEqual([]);
+    expect(checkDraft("Starting at $1,450 for a 40 gal swap.", ctx).hits).toEqual([]);
+    expect(checkDraft("Labor is $85 per hour on the heater swap.", ctx).hits).not.toContain(
+      "price_list",
+    );
+  });
+  it("a line without a qualifier never asks for one", () => {
+    expect(checkDraft("The service call is $95.", ctx).hits).toEqual([]);
+  });
+});

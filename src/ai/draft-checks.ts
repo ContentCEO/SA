@@ -199,6 +199,8 @@ export type CheckContext = {
   knownNames?: string[];
   /** A first reply to a new lead (draft.v7): "Thanks for reaching out" is its warm opener. */
   firstContact?: boolean;
+  /** Check 23 P14: the owner's price list, to hold its wording ("from") and its job. */
+  priceList?: string | null;
   /** Check 38 P2: the owner's two-letter state; "MA" turns on the one-third deposit check. */
   state?: string | null;
   /** Review requests only: the one link allowed, and nothing offered in return. */
@@ -251,7 +253,12 @@ export type CheckHit =
   /** Check 23 P6: a phone number, link, email address or name nobody gave. */
   | "contact"
   /** Check 23 P7: a "[name]"-style blank, so the card never reads Ready. Flag only. */
-  | "blank";
+  | "blank"
+  /**
+   * Check 23 P14: a listed price without its "from", or used for another job. Flag only — it
+   * joins REGENERATE_ON only if Davi says so (that's why it isn't the "money" hit).
+   */
+  | "price_list";
 export type CheckResult = { flags: string[]; confidenceCap: number; hits: CheckHit[] };
 
 /**
@@ -533,6 +540,127 @@ function staleRelativeDay(body: string, ctx: CheckContext): string | null {
   return null;
 }
 
+/** Check 23 P14: qualifiers a listed price carries, with the words that count as the same. */
+const BEFORE_QUALIFIERS: [RegExp, RegExp][] = [
+  [/\bfrom\b/i, /\b(?:from|starting|starts)\b/i],
+  [/\bstarting at\b/i, /\b(?:from|starting|starts)\b/i],
+  [/\bstarts at\b/i, /\b(?:from|starting|starts)\b/i],
+  [/\b(?:about|around|roughly)\b/i, /\b(?:about|around|roughly|approximately|ballpark)\b/i],
+];
+const AFTER_QUALIFIERS: [RegExp, RegExp][] = [
+  [/\bplus parts\b|\+\s?parts\b/i, /\bplus parts\b|\+\s?parts\b|\band parts\b|\bparts extra\b/i],
+  [/\bper hour\b|\/\s?(?:hr|hour)\b|\ban hour\b/i, /\bper hour\b|\/\s?(?:hr|hour)\b|\ban hour\b/i],
+];
+const PRICE_ROW_STOP = new Set([
+  "from",
+  "starting",
+  "starts",
+  "about",
+  "around",
+  "plus",
+  "parts",
+  "installed",
+  "each",
+  "with",
+  "includes",
+  "included",
+  "only",
+]);
+
+export type PriceListRow = {
+  amounts: number[];
+  /** The qualifier the line gives its first amount, as written ("from", "plus parts"), or null. */
+  qualifier: string | null;
+  /** The regex a draft's wording must match for that qualifier. */
+  qualifierRe: RegExp | null;
+  /** Whether the qualifier comes before the amount ("from $1,450") or after ("$95 plus parts"). */
+  qualifierBefore: boolean;
+  /** Words longer than three letters before the colon or the first amount: the job it's for. */
+  keyWords: string[];
+};
+
+/** Check 23 P14: one row per price-list line that names an amount. */
+export function priceListRows(pricingNotes: string | null | undefined): PriceListRow[] {
+  return (pricingNotes ?? "")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .flatMap((line) => {
+      const amounts = [...new Set(moneyMentions(line).map((m) => m.amount))];
+      if (!amounts.length) return [];
+      // Where the first price is: a "$" amount, else the first number after the colon.
+      const dollar = line.search(/\$\s?\d/);
+      const afterColon = line.indexOf(":") + 1;
+      const firstAt =
+        dollar >= 0 ? dollar : afterColon + Math.max(0, line.slice(afterColon).search(/\d/));
+      const colon = line.indexOf(":");
+      const head = line.slice(0, colon >= 0 && colon < firstAt ? colon : Math.max(firstAt, 0));
+      const keyWords = [
+        ...new Set(
+          head
+            .toLowerCase()
+            .split(/[^a-z]+/)
+            .filter((w) => w.length > 3 && !PRICE_ROW_STOP.has(w)),
+        ),
+      ];
+      const before = line.slice(colon >= 0 && colon < firstAt ? colon : 0, firstAt);
+      const after = line.slice(firstAt);
+      const b = BEFORE_QUALIFIERS.find(([q]) => q.test(before));
+      const a = b ? undefined : AFTER_QUALIFIERS.find(([q]) => q.test(after));
+      const pick = b ?? a;
+      return [
+        {
+          amounts,
+          qualifier: pick ? (pick[0].exec(b ? before : after)![0].toLowerCase() ?? null) : null,
+          qualifierRe: pick ? pick[1] : null,
+          qualifierBefore: !!b,
+          keyWords,
+        },
+      ];
+    });
+}
+
+/** Check 23 P14: every amount a body writes with digits, with where it is. */
+function amountsAt(body: string): { amount: number; at: number; end: number }[] {
+  return [
+    ...body.matchAll(/\$\s?(\d[\d,]*(?:\.\d{1,2})?)|\b(\d{1,3}(?:,\d{3})+|\d{2,6})(?:\.\d{2})?\b/g),
+  ].map((m) => ({
+    amount: Number((m[1] ?? m[2])!.replace(/,/g, "")),
+    at: m.index!,
+    end: m.index! + m[0].length,
+  }));
+}
+
+/** Check 23 P14: a listed price without its qualifier, or used for a different job. */
+function priceListFlags(body: string, priceList: string | null | undefined): string[] {
+  const rows = priceListRows(priceList);
+  if (!rows.length) return [];
+  const out: string[] = [];
+  for (const hit of amountsAt(body)) {
+    const row = rows.find((r) => r.amounts.includes(hit.amount));
+    if (!row) continue;
+    const money = `$${hit.amount.toLocaleString("en-US")}`;
+    if (row.qualifierRe) {
+      const near = row.qualifierBefore
+        ? body.slice(Math.max(0, hit.at - 40), hit.at)
+        : body.slice(hit.end, hit.end + 40);
+      if (!row.qualifierRe.test(near))
+        out.push(`Gives ${money} without “${row.qualifier}”, as your price list has it. Check it.`);
+    }
+    if (row.keyWords.length) {
+      const start =
+        Math.max(...[".", "!", "?", "\n"].map((c) => body.lastIndexOf(c, hit.at - 1))) + 1;
+      const ends = [".", "!", "?", "\n"].map((c) => body.indexOf(c, hit.end)).filter((i) => i >= 0);
+      const sentence = body
+        .slice(start, ends.length ? Math.min(...ends) : body.length)
+        .toLowerCase();
+      const forThisJob = row.keyWords.some((w) => new RegExp(`\\b${w}(?:s|es)?\\b`).test(sentence));
+      if (!forThisJob) out.push(`Uses your ${money} price for something else. Check it.`);
+    }
+  }
+  return [...new Set(out)];
+}
+
 const curlyToStraight = (t: string) => t.replace(/[’‘]/g, "'").replace(/[“”]/g, '"');
 
 /**
@@ -734,6 +862,15 @@ export function checkDraft(draftBody: string, ctx: CheckContext): CheckResult {
     );
     cap = Math.min(cap, 0.5);
     hits.push("rule_claim");
+  }
+
+  // The price list's own wording and job (Check 23 P14). A flag for the owner; it is not sent
+  // back for a rewrite unless Davi says so.
+  const listFlags = priceListFlags(moneyBody, ctx.priceList);
+  if (listFlags.length) {
+    flags.push(...listFlags.slice(0, 2));
+    cap = Math.min(cap, 0.5);
+    hits.push("price_list");
   }
 
   // A "[name]"-style blank (Check 23 P7): the send gate refuses it, so the card must not read
