@@ -48,3 +48,12 @@
   per call; migration `0040_fallback_calls` (`usage.fallback_calls`, additive) and
   `fallbackUsed: true` on the `ai_call` line. /admin's System box: "Sorting stopped since <time>:
   model not available (<model>)." and the heading "Sorting is stopped".
+- **Check 48 P4 (model time limits):** `aiTimeouts = { interactiveMs: 45000, jobMs: 90000 }`,
+  `aiMaxRetries = 1` in `src/config/models.ts`. The client is built with them (e2e mode still
+  overrides with `maxRetries: 0`); `callStructured({ mode })` ("job" by default) passes the time
+  left as the SDK's per-request `timeout` and also races its own deadline (one deadline for the
+  whole call, stand-in included), so a call that never answers ends as
+  `APIConnectionTimeoutError`: refunded, logged `ai_call_failed { error: "timeout" }`. Draft a
+  reply, tweak chips / Change it / Other ways to reply and the Inbox offers pass
+  `aiMode: "interactive"`; a slow, down or missing model (`isTemporaryAiFailure`) redirects to
+  `?error=ai_busy` "Writing is slow right now, so nothing changed. Try again in a moment."

@@ -92,6 +92,7 @@ const errors: Record<string, string> = {
   gone: "That draft isn't waiting any more, so nothing was sent.",
   snooze: "That can't be put off that long — it looks urgent. Pick an earlier time.",
   draftfailed: "Couldn't write a draft for that one. Try again in a minute.",
+  ai_busy: "Writing is slow right now, so nothing changed. Try again in a moment.",
   gmail_busy: "Gmail asked us to slow down. Try again in a minute.",
   reply_to_unread: "We couldn't check who this goes to. Try again in a minute.",
   no_reply_address:

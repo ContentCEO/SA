@@ -39,6 +39,14 @@ export const modelPricing: Record<ModelId, { inputPerMTok: number; outputPerMTok
   "claude-sonnet-5-5": { inputPerMTok: 2, outputPerMTok: 10 },
 };
 
+/**
+ * Check 48 P4: how long one model call may take, so it ends inside the server's own limit (the
+ * job route allows 300 s) and an owner's tap never hangs. Live sorting calls take about 2.5–10 s.
+ * The SDK retries once (its default is twice, with a 10-minute timeout each).
+ */
+export const aiTimeouts = { interactiveMs: 45_000, jobMs: 90_000 } as const;
+export const aiMaxRetries = 1;
+
 /** Per-workspace daily ceiling on model calls, so a runaway loop can't run up the bill. */
 export function dailyAiCallCap(): number {
   const n = Number(process.env.AI_DAILY_CALL_CAP ?? 500);

@@ -3,7 +3,14 @@ import Anthropic from "@anthropic-ai/sdk";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import type { z } from "zod";
 import { anthropicClientOptions } from "@/config/e2e";
-import { modelFallbacks, models, type ModelId, type ModelRole } from "@/config/models";
+import {
+  aiMaxRetries,
+  aiTimeouts,
+  modelFallbacks,
+  models,
+  type ModelId,
+  type ModelRole,
+} from "@/config/models";
 import { recordModelDown } from "@/server/model-alerts";
 import { estimateCostCentiCents, type TokenUsage } from "./cost";
 import { recordAiUsage, refundAiCall, reserveAiCall } from "./usage";
@@ -17,6 +24,8 @@ export type StructuredRequest = {
   schema: z.ZodType;
   /** Sonnet only; Haiku 4.5 rejects the effort setting. */
   effort?: "low" | "medium" | "high";
+  /** Check 48 P4: the SDK's time limit for this request, in milliseconds. */
+  timeoutMs?: number;
 };
 
 export type TransportResult = {
@@ -46,23 +55,31 @@ export function parseStructuredText(text: string | null, schema: z.ZodType): unk
 }
 
 const anthropicTransport: Transport = async (req) => {
-  client ??= new Anthropic(anthropicClientOptions());
+  // Check 48 P4: one retry and a time limit that fits the server's (e2e mode keeps its own).
+  client ??= new Anthropic({
+    maxRetries: aiMaxRetries,
+    timeout: aiTimeouts.jobMs,
+    ...anthropicClientOptions(),
+  });
   // Check 29 P1: messages.create with the same parameters messages.parse sends (parse is create
   // plus a parser that throws on a bad answer); we parse the text ourselves below.
-  const response = await client.messages.create({
-    model: req.model,
-    max_tokens: req.maxTokens,
-    system: req.system.map((b) => ({
-      type: "text" as const,
-      text: b.text,
-      ...(b.cache ? { cache_control: { type: "ephemeral" as const } } : {}),
-    })),
-    messages: [{ role: "user", content: req.user }],
-    output_config: {
-      format: zodOutputFormat(req.schema),
-      ...(req.effort ? { effort: req.effort } : {}),
+  const response = await client.messages.create(
+    {
+      model: req.model,
+      max_tokens: req.maxTokens,
+      system: req.system.map((b) => ({
+        type: "text" as const,
+        text: b.text,
+        ...(b.cache ? { cache_control: { type: "ephemeral" as const } } : {}),
+      })),
+      messages: [{ role: "user", content: req.user }],
+      output_config: {
+        format: zodOutputFormat(req.schema),
+        ...(req.effort ? { effort: req.effort } : {}),
+      },
     },
-  });
+    req.timeoutMs ? { timeout: req.timeoutMs } : undefined,
+  );
   const text = response.content.find((b) => b.type === "text");
   return {
     parsed: parseStructuredText(text?.type === "text" ? text.text : null, req.schema),
@@ -131,6 +148,32 @@ function isOverloaded(err: unknown): boolean {
   return err instanceof Anthropic.APIError && err.status === 529;
 }
 
+/**
+ * Check 48 P4: our own cut-off on top of the SDK's, so a request that never answers (or keeps
+ * retrying) ends at the limit as a timeout: a provider fault, so the call is refunded.
+ */
+async function withDeadline<T>(work: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      work,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Anthropic.APIConnectionTimeoutError()), ms);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * For the owner's taps: the model is slow, down or missing right now, so the plain answer is
+ * "try again in a moment" (never a hang or an error page).
+ */
+export function isTemporaryAiFailure(err: unknown): boolean {
+  return err instanceof ModelUnavailableError || isProviderFault(err);
+}
+
 /** A content-free label for the ai_call_failed line. */
 function errorLabel(err: unknown): string {
   if (err instanceof Anthropic.APIConnectionTimeoutError) return "timeout";
@@ -153,6 +196,8 @@ export async function callStructured<S extends z.ZodType>(opts: {
   user: string;
   schema: S;
   effort?: "low" | "medium" | "high";
+  /** Check 48 P4: "interactive" when the owner is waiting on a tap (45 s), else "job" (90 s). */
+  mode?: "interactive" | "job";
   now?: Date;
 }): Promise<z.infer<S> | null> {
   const now = opts.now ?? new Date();
@@ -163,17 +208,26 @@ export async function callStructured<S extends z.ZodType>(opts: {
   let model: ModelId = models[opts.role];
   let fallbackUsed = false;
   const started = Date.now();
+  // One deadline for the whole call, stand-in included: no call outlives its limit.
+  const limitMs = opts.mode === "interactive" ? aiTimeouts.interactiveMs : aiTimeouts.jobMs;
+  const deadline = started + limitMs;
   let result: TransportResult;
   for (;;) {
     try {
-      result = await transport({
-        model,
-        maxTokens: opts.maxTokens,
-        system: opts.system,
-        user: opts.user,
-        schema: opts.schema,
-        effort: opts.effort,
-      });
+      const leftMs = deadline - Date.now();
+      if (leftMs <= 0) throw new Anthropic.APIConnectionTimeoutError();
+      result = await withDeadline(
+        transport({
+          model,
+          maxTokens: opts.maxTokens,
+          system: opts.system,
+          user: opts.user,
+          schema: opts.schema,
+          effort: opts.effort,
+          timeoutMs: leftMs,
+        }),
+        leftMs,
+      );
       break;
     } catch (err) {
       const missing = isModelUnavailable(err);
