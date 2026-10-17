@@ -258,8 +258,11 @@ async function ingest(
 
   const full = await mapLimit(firstRead, FETCH_CONCURRENCY, async ({ m, full: read }) => {
     if (read) {
-      // Read in full already; a body past retention is still never kept.
-      return m.internalDate >= retentionCutoff ? m : { ...m, bodyText: undefined };
+      // Read in full already. A body past retention, or (if the listing was wrong) outside the
+      // inbox, is still never kept.
+      return m.internalDate >= retentionCutoff && inboxThreads.has(m.providerThreadId)
+        ? m
+        : { ...m, bodyText: undefined };
     }
     return inboxThreads.has(m.providerThreadId) && m.internalDate >= retentionCutoff
       ? ((await reader.getMessage(m.providerMessageId, { withBody: true })) ?? m)

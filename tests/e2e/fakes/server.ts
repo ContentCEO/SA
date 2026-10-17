@@ -523,9 +523,18 @@ export function createFakes() {
       const query = q.get("q") ?? "";
       const days = Number(query.match(/newer_than:(\d+)d/)?.[1] ?? 3650);
       const sentOnly = /\bin:sent\b/.test(query);
+      // Like Gmail: `in:inbox` / `-in:inbox` (the app lists a window inbox first, Check 25 P1),
+      // and Spam / Trash are never listed.
+      const inbox = /(^|\s)-in:inbox\b/.test(query)
+        ? false
+        : /(^|\s)in:inbox\b/.test(query)
+          ? true
+          : undefined;
       const all = [...s.messages.values()]
         .filter((m) => m.internalDate >= now - days * 86_400_000)
+        .filter((m) => !m.labelIds.includes("SPAM") && !m.labelIds.includes("TRASH"))
         .filter((m) => !sentOnly || m.labelIds.includes("SENT"))
+        .filter((m) => inbox === undefined || m.labelIds.includes("INBOX") === inbox)
         .sort((a, b) => b.internalDate - a.internalDate);
       const max = Math.min(500, Math.max(1, Number(q.get("maxResults") ?? 100)));
       const start = Number(q.get("pageToken") ?? 0) || 0;
