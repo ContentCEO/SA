@@ -275,16 +275,41 @@ export const CO_SAFETY_NOTE_VERSION = "safety-note-co.v1";
 export const CO_SAFETY_NOTE_FLAG =
   "They say a carbon monoxide alarm went off. Call them now; this note only tells them what to do meanwhile.";
 
-/** Which fixed safety note a thread's marks call for, if any (gas first). */
-export type SafetyKind = "gas" | "co";
+/** Check 37 P1: the electrical safety note's own "prompt version" (code, never a model). */
+export const ELECTRICAL_SAFETY_NOTE_VERSION = "safety-note-electrical.v1";
+/** First flag on the electrical note (keeps it out of batch and autopilot). */
+export const ELECTRICAL_SAFETY_NOTE_FLAG =
+  "Sounds like an electrical fire risk. Call them now; this note only tells them what to do meanwhile.";
+
+/** Which fixed safety note a thread's marks call for, if any (gas, then CO, then electrical). */
+export type SafetyKind = "gas" | "co" | "electrical";
 export function safetyKindOf(marks: {
   gas_smell?: unknown;
   co_alarm?: unknown;
+  electrical_hazard?: unknown;
 }): SafetyKind | null {
   if (marks.gas_smell === true) return "gas";
   if (marks.co_alarm === true) return "co";
+  if (marks.electrical_hazard === true) return "electrical";
   return null;
 }
+
+const SAFETY_NOTES: Record<
+  SafetyKind,
+  {
+    version: string;
+    flag: string;
+    note: (ctx: Pick<WorkspaceContext, "signature" | "businessName">) => ModelDraft;
+  }
+> = {
+  gas: { version: SAFETY_NOTE_VERSION, flag: SAFETY_NOTE_FLAG, note: (c) => safetyNote(c) },
+  co: { version: CO_SAFETY_NOTE_VERSION, flag: CO_SAFETY_NOTE_FLAG, note: (c) => coSafetyNote(c) },
+  electrical: {
+    version: ELECTRICAL_SAFETY_NOTE_VERSION,
+    flag: ELECTRICAL_SAFETY_NOTE_FLAG,
+    note: (c) => electricalSafetyNote(c),
+  },
+};
 
 /**
  * The fixed safety note for a gas smell (TW B4). Plain, no prices, no times, nothing invented:
@@ -327,6 +352,31 @@ export function coSafetyNote(
       ...(sign ? ["", sign] : []),
     ].join("\n"),
     reason: "Their carbon monoxide alarm went off. A safety note is ready; call them too.",
+    flags: [],
+    confidence: 0.5,
+    used_facts: sign && ctx.signature?.trim() ? ["signature"] : [],
+  };
+}
+
+/**
+ * Check 37 P1: the fixed note for electrical fire signs, from the usual electrical safety advice
+ * (warm outlets, a burning smell and sparks mean call an electrician; fire means 911). Wording
+ * waits on Davi's okay (see docs/notes). No model, nothing invented.
+ */
+export function electricalSafetyNote(
+  ctx: Pick<WorkspaceContext, "signature" | "businessName">,
+): ModelDraft {
+  const sign = ctx.signature?.trim() || ctx.businessName?.trim() || "";
+  return {
+    body: [
+      "Hi,",
+      "",
+      "If you see smoke or flames, get everyone out and call 911 from outside. If it's safe to reach your panel, switch off the breaker for that area and don't use that outlet or switch until we've looked at it. If wires are down outside, stay well away and call your electric company.",
+      "",
+      "I'll call you as soon as I can.",
+      ...(sign ? ["", sign] : []),
+    ].join("\n"),
+    reason: "Sounds like an electrical fire risk. A safety note is ready; call them too.",
     flags: [],
     confidence: 0.5,
     used_facts: sign && ctx.signature?.trim() ? ["signature"] : [],
@@ -686,6 +736,7 @@ export async function createDraftForThread(
     payment_change?: boolean;
     gas_smell?: boolean;
     co_alarm?: boolean;
+    electrical_hazard?: boolean;
     bill_direction?: string;
     model_category?: string;
   };
@@ -993,18 +1044,17 @@ export async function createDraftForThread(
       wrote: withText.filter((x) => x.m.direction === "out").map((x) => x.text),
     }),
   };
-  const promptVersion = safety
-    ? safetyKind === "co"
-      ? CO_SAFETY_NOTE_VERSION
-      : SAFETY_NOTE_VERSION
-    : followup
-      ? FOLLOWUP_PROMPT_VERSION
-      : purpose
-        ? `${DRAFT_PROMPT_VERSION}+${PURPOSE_PROMPT_VERSION}`
-        : DRAFT_PROMPT_VERSION;
+  const promptVersion =
+    safety && safetyKind
+      ? SAFETY_NOTES[safetyKind].version
+      : followup
+        ? FOLLOWUP_PROMPT_VERSION
+        : purpose
+          ? `${DRAFT_PROMPT_VERSION}+${PURPOSE_PROMPT_VERSION}`
+          : DRAFT_PROMPT_VERSION;
 
   let result: (ModelDraft & { opening?: Opening }) | null = null;
-  if (safety) result = safetyKind === "co" ? coSafetyNote(ctx) : safetyNote(ctx);
+  if (safety && safetyKind) result = SAFETY_NOTES[safetyKind].note(ctx);
   else
     try {
       const request = {
@@ -1044,9 +1094,7 @@ export async function createDraftForThread(
   const { body, flags: purposeFlags } = purposeGuards(purpose, result.body.trim(), ctx);
   const { flags, confidence } = scoreDraft(result, checkDraft(body, checkContext), [
     ...(maybeText ? [MAYBE_TEXT_FLAG] : []),
-    ...(safety
-      ? [safetyKind === "co" ? CO_SAFETY_NOTE_FLAG : SAFETY_NOTE_FLAG, ...purposeFlags]
-      : purposeFlags),
+    ...(safety && safetyKind ? [SAFETY_NOTES[safetyKind].flag, ...purposeFlags] : purposeFlags),
   ]);
 
   const subject = replySubject(last.subject ?? thread.subject);
@@ -1740,6 +1788,7 @@ export async function batchCandidates(
       payment_change?: boolean;
       gas_smell?: boolean;
       co_alarm?: boolean;
+      electrical_hazard?: boolean;
     };
     const ok = batchEligible(
       {
@@ -1755,6 +1804,7 @@ export async function batchCandidates(
           extracted.payment_change === true ||
           extracted.gas_smell === true ||
           extracted.co_alarm === true ||
+          extracted.electrical_hazard === true ||
           // Check 36 P2: an emergency in the last 48 hours, whatever the thread is now.
           recentEmergency(extracted, now),
         autopilotCounting: draft.autoSendAt !== null,
@@ -2845,9 +2895,10 @@ export async function threadsToAutoDraft(mailboxId: string, limit = 10): Promise
   // an older real lead. Leave those out here. An unchecked Reply-To (NULL) stays in: a form
   // sent from no-reply@ often carries the customer's own address there.
   const newestInNoReply = sql`exists (select 1 from (select nr_m.reply_to_header, nr_m.from_address from messages nr_m where nr_m.thread_id = ${threads.id} and nr_m.direction = 'in' order by nr_m.sent_at desc limit 1) nr where nr.reply_to_header is not null and ${noReplySql(replyAddressSql("nr"))})`;
-  // A gas smell or CO alarm (round 2 TW B4, Check 22 P4) still waiting for its fixed note.
+  // A gas smell, CO alarm or electrical fire sign (round 2 TW B4, Check 22 P4, Check 37 P1)
+  // still waiting for its fixed note.
   const safetyWaiting = and(
-    sql`coalesce(${threads.extracted}->>'gas_smell' = 'true' or ${threads.extracted}->>'co_alarm' = 'true', false)`,
+    sql`coalesce(${threads.extracted}->>'gas_smell' = 'true' or ${threads.extracted}->>'co_alarm' = 'true' or ${threads.extracted}->>'electrical_hazard' = 'true', false)`,
     sql`not exists (select 1 from drafts d where d.thread_id = ${threads.id} and d.purpose = 'safety')`,
   );
   const due = and(

@@ -82,6 +82,20 @@ Builder notes for `CLAUDE.md` (Decisions, Prompt versions, Waiting on Davi), `do
   CLAUDE.md's leads package says "emergencies are no longer auto-drafted", so that decision is
   kept until Davi says otherwise (question 2 below).
 
+- **Electrical fire signs (Check 37 P1):** `mentionsElectricalHazard` (`src/ai/guards.ts`, code
+  only, no prompt change): burning smells, smoke / sparks / arcing / hot to the touch / loud
+  buzzing / scorched / melted within 40 characters of an outlet, plug, switch, panel, breaker,
+  box, fixture, light, ceiling, meter, wire or cord (or "out of / behind the wall"), a shock,
+  wires down, the meter or service pulled off, lights going bright and dim, Spanish and
+  Portuguese. Smoke detectors / alarms, spark plugs, "a burning question", hot tubs and hot water
+  are taken out first. `ELECTRICAL_HAZARD_REASON`, `extracted.electrical_hazard`, urgency
+  emergency, owner-rule key `electrical`; order injection > gas > CO > electrical > payment
+  change. Also in the no-model fallback and the after-the-limit code path. One fixed
+  `electricalSafetyNote` per thread (purpose `safety`, `safety-note-electrical.v1`,
+  `ELECTRICAL_SAFETY_NOTE_FLAG`), same limits as the gas note (not on junk unless known, never
+  to a no-reply address). Autopilot and batch refuse it; it counts for the 48-hour emergency
+  mark. Eval metric `electricalHazardRecall` (strict).
+
 ## Questions for Davi
 
 1. **Carbon monoxide safety note wording** (built, waiting on okay before merge to production):
@@ -95,3 +109,8 @@ Builder notes for `CLAUDE.md` (Decisions, Prompt versions, Waiting on Davi), `do
    alert, and no reply is drafted until you tap "Draft a reply". The review asked for one draft
    ("Emergency: call them first. This reply only covers what to do meanwhile.") waiting for your
    Send reply. Kept as it is until you say yes.
+3. **Electrical safety note wording** (built, waiting on okay before merge to production):
+   "If you see smoke or flames, get everyone out and call 911 from outside. If it's safe to reach
+   your panel, switch off the breaker for that area and don't use that outlet or switch until
+   we've looked at it. If wires are down outside, stay well away and call your electric company.
+   / I'll call you as soon as I can." (From the review, based on NFPA's electrical safety tips.)

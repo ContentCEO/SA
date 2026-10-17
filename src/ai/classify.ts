@@ -14,12 +14,14 @@ import {
 import { SENDER_NEEDS_ME_REASON } from "@/server/owner-sender-rule-rules";
 import {
   CO_REASON,
+  ELECTRICAL_HAZARD_REASON,
   GAS_SMELL_REASON,
   INJECTION_REASON,
   injectionCheck,
   looksLikePaymentChange,
   looksMunicipal,
   mentionsCarbonMonoxide,
+  mentionsElectricalHazard,
   mentionsGasSmell,
   mentionsLegalThreat,
   mentionsRealLegal,
@@ -89,6 +91,12 @@ export type Extracted = ModelClassification["extracted"] & {
    */
   co_alarm?: boolean;
   /**
+   * Check 37 P1: electrical fire signs (burning smell, sparks, smoke or heat at an outlet or
+   * panel, a shock, wires down). Like gas: needs you, top priority, emergency, its own fixed
+   * safety note. Only ever present as `true`.
+   */
+  electrical_hazard?: boolean;
+  /**
    * Check 36 P1: the water smells like rotten eggs and nothing says gas (the anode rod). Needs
    * the owner, no safety note, no emergency. Only ever present as `true`.
    */
@@ -117,6 +125,7 @@ export const OWNER_RULE_KEYS = [
   "injection",
   "gas",
   "co_alarm",
+  "electrical",
   "payment_change",
   "complaint",
   "legal",
@@ -230,6 +239,8 @@ export function applyOwnerRules(
     gasSmell?: boolean;
     /** A carbon monoxide alarm went off (Check 22 P4): like gas, its own reason. */
     coAlarm?: boolean;
+    /** Electrical fire signs (Check 37 P1): like gas, its own reason. */
+    electricalHazard?: boolean;
     /** Asks to pay a new account (round 2, A11). */
     paymentChange?: boolean;
     /** Check 22 P3: lawyers, liens, small claims found in code anywhere in the email. */
@@ -247,7 +258,7 @@ export function applyOwnerRules(
     return {
       needsOwner: true,
       needsOwnerReason: INJECTION_REASON,
-      priority: ctx.gasSmell || ctx.coAlarm ? "high" : "normal",
+      priority: ctx.gasSmell || ctx.coAlarm || ctx.electricalHazard ? "high" : "normal",
       hits: ["injection"],
     };
   }
@@ -264,6 +275,13 @@ export function applyOwnerRules(
       needsOwnerReason: CO_REASON,
       priority: "high",
       hits: ["co_alarm"],
+    };
+  if (ctx.electricalHazard)
+    return {
+      needsOwner: true,
+      needsOwnerReason: ELECTRICAL_HAZARD_REASON,
+      priority: "high",
+      hits: ["electrical"],
     };
   if (ctx.paymentChange)
     return {
@@ -419,6 +437,8 @@ function codeChecks(email: EmailInput, opts: Pick<ClassifyOpts, "alsoCheck" | "s
   const gasInText = mentionsGasSmell(checked) || mentionsGasSmell(fullText);
   // Check 22 P4: a carbon monoxide alarm; Check 36 P1: rotten-egg WATER with no gas word.
   const coInText = mentionsCarbonMonoxide(checked) || mentionsCarbonMonoxide(fullText);
+  // Check 37 P1: electrical fire signs.
+  const electricalInText = mentionsElectricalHazard(checked) || mentionsElectricalHazard(fullText);
   const waterInText = !gasInText && mentionsWaterSmell(checked);
   const paymentChangeInText =
     looksLikePaymentChange(checked) ||
@@ -437,6 +457,7 @@ function codeChecks(email: EmailInput, opts: Pick<ClassifyOpts, "alsoCheck" | "s
     injection,
     gasInText,
     coInText,
+    electricalInText,
     waterInText,
     paymentChangeInText,
     municipalSender,
@@ -448,11 +469,14 @@ function codeChecks(email: EmailInput, opts: Pick<ClassifyOpts, "alsoCheck" | "s
  * checks found (an attack, a gas smell, a CO alarm, a new bank account).
  */
 function codeFallback(email: EmailInput, c: ReturnType<typeof codeChecks>): Classification {
-  const safety = c.gasInText || c.coInText;
+  const safety = c.gasInText || c.coInText || c.electricalInText;
+  const co = c.coInText && !c.gasInText;
+  const electrical = c.electricalInText && !c.gasInText && !co;
   const hits: OwnerRuleKey[] = [
     ...(c.injection ? (["injection"] as const) : []),
     ...(c.gasInText ? (["gas"] as const) : []),
-    ...(c.coInText && !c.gasInText ? (["co_alarm"] as const) : []),
+    ...(co ? (["co_alarm"] as const) : []),
+    ...(electrical ? (["electrical"] as const) : []),
     ...(c.paymentChangeInText ? (["payment_change"] as const) : []),
   ];
   return {
@@ -461,11 +485,13 @@ function codeFallback(email: EmailInput, c: ReturnType<typeof codeChecks>): Clas
       ? { needsOwnerReason: INJECTION_REASON }
       : c.gasInText
         ? { needsOwnerReason: GAS_SMELL_REASON }
-        : c.coInText
+        : co
           ? { needsOwnerReason: CO_REASON }
-          : c.paymentChangeInText
-            ? { needsOwnerReason: PAYMENT_CHANGE_REASON }
-            : {}),
+          : electrical
+            ? { needsOwnerReason: ELECTRICAL_HAZARD_REASON }
+            : c.paymentChangeInText
+              ? { needsOwnerReason: PAYMENT_CHANGE_REASON }
+              : {}),
     ...(safety || c.paymentChangeInText ? { priority: "high" as const } : {}),
     extracted: {
       ...UNREADABLE.extracted,
@@ -473,7 +499,8 @@ function codeFallback(email: EmailInput, c: ReturnType<typeof codeChecks>): Clas
       ...(c.injection ? { injection: true } : {}),
       ...(c.municipalSender ? { municipal: true } : {}),
       ...(c.gasInText ? { gas_smell: true } : {}),
-      ...(c.coInText && !c.gasInText ? { co_alarm: true } : {}),
+      ...(co ? { co_alarm: true } : {}),
+      ...(electrical ? { electrical_hazard: true } : {}),
       ...(c.waterInText ? { water_smell: true } : {}),
       ...(c.paymentChangeInText ? { payment_change: true } : {}),
       ...(hits.length ? { owner_rule_hits: hits } : {}),
@@ -494,7 +521,8 @@ export function codeOnlyClassification(
   opts: Pick<ClassifyOpts, "alsoCheck" | "sticky"> = {},
 ): Classification | null {
   const c = codeChecks(email, opts);
-  if (!(c.gasInText || c.coInText || c.paymentChangeInText || c.injection)) return null;
+  if (!(c.gasInText || c.coInText || c.electricalInText || c.paymentChangeInText || c.injection))
+    return null;
   return codeFallback(email, c);
 }
 
@@ -518,6 +546,7 @@ export async function classifyEmail(
     checked,
     gasInText,
     coInText,
+    electricalInText,
     waterInText,
     paymentChangeInText,
     municipalSender,
@@ -549,6 +578,7 @@ export async function classifyEmail(
     gasInText ||
     (result.signals.smells_gas && (!waterInText || /\b(gas|propane)\b/i.test(checked)));
   const coAlarm = !gasSmell && (coInText || result.signals.co_alarm);
+  const electricalHazard = !gasSmell && !coAlarm && electricalInText;
   const waterSmell = !gasSmell && !coAlarm && waterInText;
   const paymentChange = paymentChangeInText || result.signals.payment_change_request;
   // Round 2 TW A1: "the adjuster approved the claim" is paperwork, not a lawsuit. The legal mark
@@ -572,6 +602,7 @@ export async function classifyEmail(
     injection,
     gasSmell,
     coAlarm,
+    electricalHazard,
     paymentChange,
     legalThreat,
     waterSmell,
@@ -598,11 +629,12 @@ export async function classifyEmail(
     confidence: Math.max(0, Math.min(1, result.confidence)),
     extracted: {
       ...result.extracted,
-      ...(gasSmell || coAlarm ? { urgency: "emergency" as const } : {}),
+      ...(gasSmell || coAlarm || electricalHazard ? { urgency: "emergency" as const } : {}),
       ...(injection ? { injection: true } : {}),
       ...(municipal ? { municipal: true } : {}),
       ...(gasSmell ? { gas_smell: true } : {}),
       ...(coAlarm ? { co_alarm: true } : {}),
+      ...(electricalHazard ? { electrical_hazard: true } : {}),
       ...(waterSmell ? { water_smell: true } : {}),
       ...(paymentChange ? { payment_change: true } : {}),
       // Signals only — they never change needs_owner (applyOwnerRules ignores them).

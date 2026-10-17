@@ -239,6 +239,47 @@ export const CO_REASON =
   "Says a carbon monoxide alarm went off. Call them now; a safety note is ready for you to send.";
 
 /**
+ * Check 37 P1: electrical fire signs, caught in code (the model's own emergency is the main
+ * source; this is the backup). Burning smells, smoke / sparks / heat / loud buzzing at an outlet,
+ * switch, panel or fixture, a shock, wires down, lights surging. Routine jobs that share the
+ * words are taken out first: smoke detectors and alarms, spark plugs, "a burning question", hot
+ * tubs, hot water.
+ */
+const ELECTRICAL_LOOKALIKES =
+  /\bsmoke (detectors?|alarms?)\b|\bspark ?plugs?\b|\bburning (question|desire)\b|\bhot tubs?\b|\bhot water\b|\bwarm(er|ing)? drawers?\b/g;
+const ELECTRICAL_NOUN =
+  "(outlets?|plugs?|receptacles?|switch(es)?|switch ?plates?|panels?|breakers?|breaker box|boxes|box|fixtures?|lights?|ceiling|meter|wires?|wiring|cords?|sockets?|cover ?plates?)";
+const NEAR_SIGN =
+  "(smok(e|es|ed|ing)|spark(s|ed|ing)?|arc(ing|ed)|(hot|warm) to the touch|buzz(es|ing)? loud(ly)?|loud(ly)? buzz(ing)?|scorch(ed|ing)?|melt(ed|ing))";
+const ELECTRICAL_HAZARD_PATTERNS: RegExp[] = [
+  // Burning: "a burning smell", "smells like burning plastic", "smells like something electrical
+  // is burning".
+  /\b(smell|smells|smelled|smelling)\b (of |like )?(something )?(electrical )?(is )?burn(ing|t)\b/,
+  /\bburn(ing|t) (smell|smells|odor|odour|plastic|rubber|wire|wires|wiring)\b/,
+  new RegExp(`\\b${NEAR_SIGN}\\b.{0,40}\\b${ELECTRICAL_NOUN}\\b`),
+  new RegExp(`\\b${ELECTRICAL_NOUN}\\b.{0,40}\\b${NEAR_SIGN}\\b`),
+  // Out of the wall itself (not "smoke stained the wall").
+  /\b(smok(e|es|ing)|spark(s|ing)?|burning smell)\b.{0,20}\b(from|out of|behind|inside|in) the walls?\b/,
+  // A shock from a switch, a tap, a fixture.
+  /\b(got|get|getting|gets|gave me) (a |an )?(little |small |big |bad )?shock(ed)?\b|\btingl(e|es|ing) (from|when)\b|\bshocked me\b/,
+  // Wires down, the service torn off the house.
+  /\bwires? (are |is )?(down|hanging|on the ground|sparking)\b|\b(power|electric|electrical) lines? (are |is )?(down|on the ground)\b/,
+  /\b(meter|mast|service|service drop) (box )?(was |got |has been )?(pulled|ripped|torn|came|fell) (off|down|away)\b/,
+  // Lights surging.
+  /\blights? (keep |are |is )?(going|go|goes|get|getting|flicker(ing)?)( really)? (bright and dim|dim and bright|bright then dim)\b/,
+  // Spanish and Portuguese.
+  /\bolor a quemado\b|\bchispas\b|\bhumo (del|de la) (enchufe|toma|panel|caja)\b|\bcheiro de queimado\b|\bfa[ií]scas?\b|\btomada quente\b/,
+];
+
+export function mentionsElectricalHazard(text: string | null | undefined): boolean {
+  const flat = flatten(text).replace(ELECTRICAL_LOOKALIKES, " ");
+  return ELECTRICAL_HAZARD_PATTERNS.some((p) => p.test(flat));
+}
+
+export const ELECTRICAL_HAZARD_REASON =
+  "Sounds like an electrical fire risk. Call them now; a safety note is ready for you to send.";
+
+/**
  * Routine insurance and lien paperwork is not a lawsuit (review TW A1): "the adjuster approved
  * the claim", a home-warranty claim number, a lien waiver for a lender draw, a certificate of
  * insurance. Only the words of a real dispute or threat keep the legal mark: lawyers, courts,

@@ -88,6 +88,7 @@ export async function runEvals(
       paymentChange: r.extracted.payment_change === true,
       gasSmell: r.extracted.gas_smell === true,
       coAlarm: r.extracted.co_alarm === true,
+      electricalHazard: r.extracted.electrical_hazard === true,
       onMoneyOwed:
         r.category === "invoice_payment" && r.extracted.invoice_direction !== "owed_by_business",
       disputed: r.extracted.disputed === true,

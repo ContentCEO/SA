@@ -38,6 +38,8 @@ export type EvalCase = {
     gasSmell?: boolean;
     /** classify.v5 (Check 22 P4): a carbon monoxide alarm went off. */
     coAlarm?: boolean;
+    /** Check 37 P1 (code only): electrical fire signs. */
+    electricalHazard?: boolean;
     /**
      * classify.v4 (round 2, TW A2): true = a bill the business owes, so it must never land on
      * Money owed (sorted as something other than an invoice, or read as owed by the business).
@@ -1196,6 +1198,148 @@ export const EVAL_CASES: EvalCase[] = [
     subject: "Detectors",
     body: "Can you quote installing smoke and carbon monoxide detectors in all three bedrooms? We're selling the house.",
     expect: { category: "quote_request", needsOwner: false, gasSmell: false },
+  }),
+
+  // ── wave 1: electrical fire signs (Check 37 P1) ──
+  c({
+    id: "w1-elec-outlet-burning",
+    trade: "electrical",
+    fromName: "Chris Vale",
+    fromAddress: "chris0@example.com",
+    subject: "Electrical problem",
+    body: "There's a burning smell coming from the outlet in the kitchen. Should I be worried?",
+    expect: {
+      category: ["customer_question", "scheduling", "quote_request", "complaint"],
+      needsOwner: true,
+      priority: "high",
+      electricalHazard: true,
+    },
+  }),
+  c({
+    id: "w1-elec-burning-plastic",
+    trade: "electrical",
+    fromName: "Chris Vale",
+    fromAddress: "chris1@example.com",
+    subject: "Electrical problem",
+    body: "The outlet smells like burning plastic and the cover is warm.",
+    expect: {
+      category: ["customer_question", "scheduling", "quote_request", "complaint"],
+      needsOwner: true,
+      priority: "high",
+      electricalHazard: true,
+    },
+  }),
+  c({
+    id: "w1-elec-panel-sparks",
+    trade: "electrical",
+    fromName: "Chris Vale",
+    fromAddress: "chris2@example.com",
+    subject: "Electrical problem",
+    body: "Sparks came out of the panel when I flipped the breaker back on.",
+    expect: {
+      category: ["customer_question", "scheduling", "quote_request", "complaint"],
+      needsOwner: true,
+      priority: "high",
+      electricalHazard: true,
+    },
+  }),
+  c({
+    id: "w1-elec-switch-hot",
+    trade: "electrical",
+    fromName: "Chris Vale",
+    fromAddress: "chris3@example.com",
+    subject: "Electrical problem",
+    body: "The switch plate in the hall is hot to the touch.",
+    expect: {
+      category: ["customer_question", "scheduling", "quote_request", "complaint"],
+      needsOwner: true,
+      priority: "high",
+      electricalHazard: true,
+    },
+  }),
+  c({
+    id: "w1-elec-shock",
+    trade: "electrical",
+    fromName: "Chris Vale",
+    fromAddress: "chris4@example.com",
+    subject: "Electrical problem",
+    body: "I got a shock from the light switch in the bathroom this morning.",
+    expect: {
+      category: ["customer_question", "scheduling", "quote_request", "complaint"],
+      needsOwner: true,
+      priority: "high",
+      electricalHazard: true,
+    },
+  }),
+  c({
+    id: "w1-elec-ceiling-smoke",
+    trade: "electrical",
+    fromName: "Chris Vale",
+    fromAddress: "chris5@example.com",
+    subject: "Electrical problem",
+    body: "There's smoke coming from the ceiling light in the bedroom!",
+    expect: {
+      category: ["customer_question", "scheduling", "quote_request", "complaint"],
+      needsOwner: true,
+      priority: "high",
+      electricalHazard: true,
+    },
+  }),
+  c({
+    id: "w1-elec-panel-buzzing",
+    trade: "electrical",
+    fromName: "Chris Vale",
+    fromAddress: "chris6@example.com",
+    subject: "Electrical problem",
+    body: "The panel is buzzing loudly since last night's storm.",
+    expect: {
+      category: ["customer_question", "scheduling", "quote_request", "complaint"],
+      needsOwner: true,
+      priority: "high",
+      electricalHazard: true,
+    },
+  }),
+  c({
+    id: "w1-elec-wires-hanging",
+    trade: "electrical",
+    fromName: "Chris Vale",
+    fromAddress: "chris7@example.com",
+    subject: "Electrical problem",
+    body: "After the storm the wires are hanging down over the driveway.",
+    expect: {
+      category: ["customer_question", "scheduling", "quote_request", "complaint"],
+      needsOwner: true,
+      priority: "high",
+      electricalHazard: true,
+    },
+  }),
+  c({
+    id: "w1-elec-breaker-smoking",
+    trade: "electrical",
+    fromName: "Chris Vale",
+    fromAddress: "chris8@example.com",
+    subject: "Electrical problem",
+    body: "The breaker box is smoking a little, what do we do?",
+    expect: {
+      category: ["customer_question", "scheduling", "quote_request", "complaint"],
+      needsOwner: true,
+      priority: "high",
+      electricalHazard: true,
+    },
+  }),
+  c({
+    id: "w1-elec-something-burning",
+    trade: "electrical",
+    fromName: "Chris Vale",
+    fromAddress: "chris9@example.com",
+    subject: "Electrical problem",
+    body: "It smells like something electrical is burning in the basement.",
+    expect: {
+      category: ["customer_question", "scheduling", "quote_request", "complaint"],
+      needsOwner: true,
+      priority: "high",
+      electricalHazard: true,
+    },
   }),
 
   // ── wave 1: quoted and forwarded text (Check 22 P3) ──

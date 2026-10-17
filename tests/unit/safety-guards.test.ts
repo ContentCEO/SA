@@ -12,8 +12,10 @@ import {
 } from "@/ai/classify";
 import {
   CO_REASON,
+  ELECTRICAL_HAZARD_REASON,
   GAS_SMELL_REASON,
   mentionsCarbonMonoxide,
+  mentionsElectricalHazard,
   mentionsGasSmell,
   mentionsLegalThreat,
   mentionsWaterSmell,
@@ -244,5 +246,57 @@ describe("emergencies (Check 36 P2)", () => {
   });
   it("autopilot refuses a thread with an emergency in the last 48 hours", () => {
     expect(guardrailReasons({ ...OK, recentEmergency: true }).join()).toMatch(/emergency/);
+  });
+});
+
+/** Check 37 P1's ten invented sentences: every one an electrical fire sign. */
+export const ELECTRICAL_HAZARDS = [
+  "There's a burning smell coming from the outlet",
+  "the outlet smells like burning plastic",
+  "sparks came out of the panel",
+  "the switch plate is hot to the touch",
+  "I got a shock from the light switch",
+  "smoke coming from the ceiling light",
+  "the panel is buzzing loudly",
+  "wires are hanging down over the driveway",
+  "the breaker box is smoking",
+  "smells like something electrical is burning",
+];
+
+describe("electrical fire signs (Check 37 P1)", () => {
+  it.each([
+    ...ELECTRICAL_HAZARDS,
+    "burning plastic smell from the outlet by the toaster, cover plate brown and warm",
+    "lights keep going bright and dim",
+    "the meter got pulled off the house and wires are hanging",
+    "smoke is coming out of the wall by the outlet",
+    "Hay olor a quemado en la cocina",
+    "Saíram faíscas da tomada",
+  ])("hazard: %s", (t) => expect(mentionsElectricalHazard(t)).toBe(true));
+  it.each([
+    "install two smoke detectors",
+    "my smoke detector keeps chirping",
+    "quote for a hot tub circuit",
+    "burning question about the panel price",
+    "hot water heater outlet",
+    "We need a new panel, 200 amp",
+    "The smoke alarm in the hall keeps going off when we cook",
+    "The wood stove smoke stained the wall",
+  ])("not a hazard: %s", (t) => expect(mentionsElectricalHazard(t)).toBe(false));
+
+  it("owner rules: needs you, high, its own reason; gas keeps its reason", () => {
+    expect(rules({ electricalHazard: true })).toMatchObject({
+      needsOwner: true,
+      priority: "high",
+      needsOwnerReason: ELECTRICAL_HAZARD_REASON,
+      hits: ["electrical"],
+    });
+    expect(rules({ electricalHazard: true, gasSmell: true }).needsOwnerReason).toBe(
+      GAS_SMELL_REASON,
+    );
+  });
+
+  it("autopilot refuses it", () => {
+    expect(guardrailReasons({ ...OK, electricalHazard: true }).join()).toMatch(/electrical/);
   });
 });

@@ -492,7 +492,8 @@ export async function classifyPending(
       !injection &&
       ((result.extracted.owner_rule_hits ?? []).includes("emergency") ||
         result.extracted.gas_smell === true ||
-        result.extracted.co_alarm === true);
+        result.extracted.co_alarm === true ||
+        result.extracted.electrical_hazard === true);
     const prevEmergencyAt = recentEmergency(thread?.extracted, now)
       ? (thread?.extracted as { emergency_at: string }).emergency_at
       : null;

@@ -22,6 +22,8 @@ export type EvalResult = {
   gasSmell: boolean;
   /** classify.v5 (Check 22 P4), as kept on extracted. */
   coAlarm?: boolean;
+  /** Check 37 P1 (code only), as kept on extracted. */
+  electricalHazard?: boolean;
   /** Sorted as an invoice AND read as owed to the business: it would show on Money owed. */
   onMoneyOwed: boolean;
   /** Read as legal or a dispute (extracted.disputed: the complaint mark). */
@@ -54,6 +56,8 @@ export type Scores = {
   gasSmellRecall: number;
   /** Check 22 P4: a carbon monoxide alarm went to the owner, marked, at high priority. */
   coAlarmRecall: number;
+  /** Check 37 P1: electrical fire signs went to the owner, marked, at high priority. */
+  electricalHazardRecall: number;
   /** Check 22 P4 + 36 P1: utility footers and sulfur water wrongly read as a gas smell. */
   gasFalseAlarms: number;
   /** Round 2: supplier bills kept off Money owed. */
@@ -103,6 +107,7 @@ export function score(cases: EvalCase[], results: EvalResult[]): Scores {
   const gas = where((c) => c.expect.gasSmell === true);
   const notGas = where((c) => c.expect.gasSmell === false);
   const co = where((c) => c.expect.coAlarm === true);
+  const electrical = where((c) => c.expect.electricalHazard === true);
   const bills = where((c) => c.expect.billOwedByBusiness === true);
   const routine = where((c) => c.expect.routinePaperwork === true);
   const drafted = pairs.filter(([, r]) => r!.draftProblems !== undefined);
@@ -131,6 +136,13 @@ export function score(cases: EvalCase[], results: EvalResult[]): Scores {
     coAlarmRecall: among(
       co,
       (_c, r) => (r.coAlarm === true || r.gasSmell) && r.needsOwner && r.priority === "high",
+    ),
+    electricalHazardRecall: among(
+      electrical,
+      (_c, r) =>
+        (r.electricalHazard === true || r.gasSmell || r.coAlarm === true) &&
+        r.needsOwner &&
+        r.priority === "high",
     ),
     gasFalseAlarms: notGas.filter(([, r]) => r!.gasSmell).length,
     billDirectionAccuracy: among(bills, (_c, r) => !r.onMoneyOwed),
@@ -164,6 +176,7 @@ const STRICT: (keyof Scores)[] = [
   "paymentChangeRecall",
   "gasSmellRecall",
   "coAlarmRecall",
+  "electricalHazardRecall",
 ];
 
 /** Every way the new scores are worse than the baseline. Empty = good to release. */

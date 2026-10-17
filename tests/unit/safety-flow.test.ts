@@ -10,6 +10,7 @@ import { reserveAiCall } from "@/ai/usage";
 import { LEGAL_REASON } from "@/ai/classify";
 import {
   CO_REASON,
+  ELECTRICAL_HAZARD_REASON,
   GAS_SMELL_REASON,
   INJECTION_REASON,
   PAYMENT_CHANGE_REASON,
@@ -23,6 +24,7 @@ import {
   batchCandidates,
   CO_SAFETY_NOTE_FLAG,
   createDraftForThread,
+  ELECTRICAL_SAFETY_NOTE_FLAG,
   SAFETY_NOTE_FLAG,
   threadsToAutoDraft,
 } from "@/server/drafts";
@@ -440,5 +442,45 @@ describe("the model's emergency counts in code (Check 36 P2)", () => {
     // Two days on, the mark no longer holds the reply back.
     const later = new Date(NOW.getTime() + 48 * 3600_000);
     expect(await batchCandidates(workspaceId, ["scheduling"], later)).toHaveLength(1);
+  });
+});
+
+describe("electrical fire signs, sorted and drafted (Check 37 P1)", () => {
+  it("needs you as an emergency even when the model says no; one fixed note, no model call", async () => {
+    const t = await thread("outlet");
+    await message(t.id, "outlet", {
+      bodyText:
+        "Burning plastic smell from the outlet by the toaster, the cover plate is brown and warm.",
+    });
+    const { row, r, modelCalls } = await sortThenDraft(
+      t.id,
+      classification({ category: "customer_question", priority: "high", needs_owner: false }),
+    );
+    expect(row).toMatchObject({
+      needsOwner: true,
+      priority: "high",
+      needsOwnerReason: ELECTRICAL_HAZARD_REASON,
+    });
+    expect(row.extracted).toMatchObject({ electrical_hazard: true, urgency: "emergency" });
+    expect(r?.status).toBe("created");
+    expect(modelCalls).toBe(0);
+    const ds = await draftsOn(t.id);
+    expect(ds).toHaveLength(1);
+    expect(ds[0]).toMatchObject({
+      purpose: "safety",
+      status: "pending",
+      promptVersion: "safety-note-electrical.v1",
+    });
+    expect(ds[0]!.flags[0]).toBe(ELECTRICAL_SAFETY_NOTE_FLAG);
+    expect(ds[0]!.body).toMatch(/switch off the breaker/);
+
+    // Never again on this thread, whatever triggers it later.
+    await database.update(drafts).set({ status: "discarded" }).where(eq(drafts.id, ds[0]!.id));
+    expect(await threadsToAutoDraft(mailboxId)).toEqual([]);
+    expect(await createDraftForThread(t.id, { trigger: "auto", ...deps() })).toEqual({
+      status: "skipped",
+      reason: "needs_owner",
+    });
+    expect(await draftsOn(t.id)).toHaveLength(1);
   });
 });

@@ -263,6 +263,7 @@ describe("evaluation set (#46)", () => {
       paymentChangeRecall: 1,
       gasSmellRecall: 1,
       coAlarmRecall: 1,
+      electricalHazardRecall: 1,
       gasFalseAlarms: 0,
       billDirectionAccuracy: 1,
       routinePaperworkAccuracy: 1,

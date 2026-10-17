@@ -3,6 +3,7 @@ import { hasUnfilledGap } from "@/ai/gaps";
 import {
   looksLikePaymentChange,
   mentionsCarbonMonoxide,
+  mentionsElectricalHazard,
   mentionsGasSmell,
   mentionsLegalThreat,
   mentionsRealLegal,
@@ -135,6 +136,8 @@ export type GuardrailInput = {
   gasSmell?: boolean;
   /** Check 22 P4: a carbon monoxide alarm went off. */
   coAlarm?: boolean;
+  /** Check 37 P1: electrical fire signs. */
+  electricalHazard?: boolean;
   /** Check 36 P2: an emergency on this conversation in the last 48 hours. */
   recentEmergency?: boolean;
   /** Ideas H4: the owner chose this kind and the sorter said otherwise. */
@@ -183,6 +186,7 @@ export function guardrailReasons(g: GuardrailInput): string[] {
   if (g.emailUnreadable) out.push("We can't read their email any more, so it waits for you.");
   if (g.gasSmell) out.push("Someone smells gas. Call them.");
   if (g.coAlarm) out.push("A carbon monoxide alarm went off. Call them.");
+  if (g.electricalHazard) out.push("Sounds like an electrical fire risk. Call them.");
   if (g.recentEmergency)
     out.push(
       "There was an emergency on this conversation in the last 2 days, so it waits for you.",
@@ -383,6 +387,7 @@ async function blockers(row: NonNullable<Awaited<ReturnType<typeof loadForAutopi
     payment_change?: boolean;
     gas_smell?: boolean;
     co_alarm?: boolean;
+    electrical_hazard?: boolean;
     model_category?: string;
   };
   const complainedRecently = await customerComplainedRecently(workspace.id, draft.toAddress, now);
@@ -414,6 +419,7 @@ async function blockers(row: NonNullable<Awaited<ReturnType<typeof loadForAutopi
     paymentChange: extracted.payment_change === true || looksLikePaymentChange(fullText),
     gasSmell: extracted.gas_smell === true || mentionsGasSmell(fullText),
     coAlarm: extracted.co_alarm === true || mentionsCarbonMonoxide(fullText),
+    electricalHazard: extracted.electrical_hazard === true || mentionsElectricalHazard(fullText),
     legalInEmail: mentionsRealLegal(fullText) || mentionsLegalThreat(fullText),
     recentEmergency: recentEmergency(thread.extracted, now),
     emailUnreadable: fullBody === null,
