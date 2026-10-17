@@ -15,6 +15,7 @@ import {
   replyDraftSchema,
   workspaceBlock,
 } from "@/ai/prompts/draft.v7";
+import { DISPUTE_TASK } from "@/ai/prompts/dispute-caution.v1";
 import { ACTIVE } from "@/ai/prompts/registry";
 import { usage } from "@/db/schema";
 import { ensureUserAndWorkspace } from "@/server/accounts";
@@ -111,7 +112,12 @@ export async function runEvals(
           summary: r.summary,
           extracted: r.extracted,
           // draft.v7: a first contact gets the task line the app sends (replies package).
-          task: c.firstContact ? FIRST_CONTACT_TASK : undefined,
+          task: c.firstContact
+            ? FIRST_CONTACT_TASK
+            : c.disputeCaution
+              ? // Check 43 P9: the fixed task the app adds on dispute / legal threads.
+                `Write the owner's reply to the last CUSTOMER message.\n\n${DISPUTE_TASK}`
+              : undefined,
           messages: [{ from: c.fromName, direction: "in", sentAt: email.receivedAt, body: c.body }],
         }),
         schema: replyDraftSchema,

@@ -50,3 +50,28 @@ export function fillGap(body: string, index: number, value: string): string {
 export function withoutGaps(body: string): string {
   return body.replace(GAP, " ");
 }
+
+/**
+ * Check 9 P4: in the Edit box, gaps read as words: {{time}} → [time], {{custom:job address}}
+ * → [job address]. `fromEditorText` turns them back into tokens before the text leaves the
+ * phone, so the server's gap check still refuses any left unfilled.
+ */
+const editorWord = (g: Gap) => `[${g.label}]`;
+const canonical = (g: Gap) => (g.kind === "custom" ? `{{custom:${g.label}}}` : `{{${g.kind}}}`);
+
+export function toEditorText(body: string): string {
+  return body.replace(GAP, (token) => editorWord(findGaps(token)[0]!));
+}
+
+/** The gaps of `original` still showing as [words] in `text`, turned back into tokens. */
+export function fromEditorText(text: string, original: string): string {
+  const words = new Map(findGaps(original).map((g) => [editorWord(g), canonical(g)]));
+  let out = text;
+  for (const [word, token] of words) out = out.split(word).join(token);
+  return out;
+}
+
+/** The [words] of `original`'s gaps still left in the editor's text ("Fill in [time] first"). */
+export function editorGapsLeft(text: string, original: string): string[] {
+  return [...new Set(findGaps(original).map(editorWord))].filter((w) => text.includes(w));
+}

@@ -123,6 +123,8 @@ export async function digestCounts(
       and(
         inArray(drafts.mailboxId, boxes),
         inArray(drafts.status, ["sent", "edited_and_sent"]),
+        // Check 14 P1: the owner's own Gmail reply isn't a drafted reply sent.
+        sql`${drafts.sentVia} is distinct from 'own_words'`,
         gte(drafts.decidedAt, dayAgo),
       ),
     );

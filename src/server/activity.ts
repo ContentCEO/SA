@@ -67,6 +67,12 @@ export function describeActivity(
       }`;
     case "reply_sent_from_gmail":
       return `You sent the draft${to} from Gmail`;
+    // Check 14 P1: our draft was deleted and the owner wrote their own reply in Gmail.
+    case "owner_wrote_own_reply":
+      return `You answered ${name ?? "them"} yourself in Gmail`;
+    // Check 42 P1: the customer was answered from Gmail during the undo window.
+    case "send_stood_down":
+      return `Didn't send the reply${to}: someone had already answered from Gmail`;
     case "draft_discarded":
       return `You discarded the draft${to}`;
     // Review B1: website-form leads now go to the customer's own address.
@@ -88,15 +94,7 @@ export function describeActivity(
     case "send_undone":
       return `You stopped the reply${to} before it went`;
     case "send_stopped":
-      return `Didn't send the reply${to} — ${
-        detail.why === "changed_in_gmail"
-          ? "it was changed in Gmail"
-          : detail.why === "blocked"
-            ? "sending was switched off"
-            : detail.why === "reconnect_needed"
-              ? "Gmail needs reconnecting"
-              : "something changed"
-      }. It's back in your queue`;
+      return `Didn't send the reply${to} — ${sendStoppedWhy(detail.why)}. It's back in your queue`;
     case "snoozed":
       return `You put off the conversation${name ? ` with ${name}` : ""} till later`;
     case "draft_expired":
@@ -266,6 +264,22 @@ export type ActivityEntry = {
 };
 const SENT_ACTIONS = new Set(["reply_sent", "reply_sent_from_gmail", "reply_went_to_form"]);
 
+/**
+ * Why a send was stopped after its undo window, in a few plain words (Activity, and the Queue's
+ * "Didn't send" box, Check 9 P10).
+ */
+export function sendStoppedWhy(why: unknown): string {
+  return why === "changed_in_gmail"
+    ? "it was changed in Gmail"
+    : why === "blocked"
+      ? "sending was switched off"
+      : why === "reconnect_needed"
+        ? "Gmail needs reconnecting"
+        : why === "answered_elsewhere"
+          ? "someone had already answered from Gmail"
+          : "something changed";
+}
+
 export async function listActivity(workspaceId: string, limit = 100): Promise<ActivityEntry[]> {
   const rows = await db()
     .select()
@@ -359,6 +373,8 @@ export async function monthSummary(
       and(
         inArray(drafts.mailboxId, boxes),
         inArray(drafts.status, ["sent", "edited_and_sent"]),
+        // Check 14 P1: the owner's own Gmail reply is theirs, not a drafted reply sent.
+        sql`${drafts.sentVia} is distinct from 'own_words'`,
         gte(drafts.decidedAt, start),
       ),
     );
@@ -449,6 +465,7 @@ export async function monthMoney(
           where ${drafts.threadId} = ${threads.id}
             and ${drafts.kind} = 'followup'
             and ${drafts.status} in ('sent', 'edited_and_sent')
+            and ${drafts.sentVia} is distinct from 'own_words'
             and ${drafts.decidedAt} < ${threads.invoicePaidAt}
         )`,
       ),

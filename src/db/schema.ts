@@ -472,6 +472,12 @@ export const drafts = pgTable(
     /** Autopilot: when this draft will send unless the owner holds it. Null = waits for a tap. */
     autoSendAt: timestamp("auto_send_at", { withTimezone: true }),
     /**
+     * Check 9 P2: the autopilot run that is sending this right now (set atomically before any
+     * Gmail call; cleared when it stands down). While set, Hold it is too late. A claim older
+     * than AUTOPILOT_CLAIM_LEASE_MS belongs to a run that died and may be retaken.
+     */
+    autoSendClaimedAt: timestamp("auto_send_claimed_at", { withTimezone: true }),
+    /**
      * Plan #7 undo send: the owner tapped Send reply; it goes at this time unless
      * they tap Undo. The draft stays `pending` meanwhile (so it still holds the
      * thread's one live slot) but is out of the queue. Null = not sending.
@@ -488,6 +494,14 @@ export const drafts = pgTable(
      * every draft written before draft.v7).
      */
     opening: text("opening"),
+    /**
+     * Check 14 P1: how a sent draft left. app = the owner's tap here, autopilot = autopilot,
+     * gmail = our draft sent from Gmail (same or edited text), own_words = closed because the
+     * owner wrote their own reply in Gmail (status stays `sent` so caps hold, but it never counts
+     * as a drafted reply sent or as time saved). Null = sent before this column (counted as
+     * before).
+     */
+    sentVia: text("sent_via").$type<"app" | "autopilot" | "gmail" | "own_words">(),
   },
   (t) => [
     index("drafts_mailbox_status_idx").on(t.mailboxId, t.status),

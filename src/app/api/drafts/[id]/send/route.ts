@@ -55,6 +55,7 @@ export async function POST(request: NextRequest, ctx: RouteContext<"/api/drafts/
     seen?: unknown;
     okayedAt?: unknown;
     seenTo?: unknown;
+    confirmedTiming?: unknown;
   };
   const editedBody =
     typeof payload.body === "string" && payload.body.trim() ? payload.body : undefined;
@@ -63,13 +64,22 @@ export async function POST(request: NextRequest, ctx: RouteContext<"/api/drafts/
     typeof payload.seen === "string" && typeof payload.okayedAt === "number"
       ? { seenHash: payload.seen, okayedAt: new Date(payload.okayedAt) }
       : undefined;
+  // Check 9 P1: an online send may say which text it saw too; a change since → 409.
+  const seenHash = !offline && typeof payload.seen === "string" ? payload.seen : undefined;
 
   // The "To:" the phone showed when the owner okayed it (H7); a change there is refused.
   const seenTo =
     typeof payload.seenTo === "string" && payload.seenTo.length <= 320 ? payload.seenTo : undefined;
 
   try {
-    const outcome = await queueSend(workspace.id, id, { editedBody, offline, seenTo });
+    const outcome = await queueSend(workspace.id, id, {
+      editedBody,
+      offline,
+      seenTo,
+      seenHash,
+      // Check 43 P7: only an explicit yes; anything else gets 409 timing_check.
+      confirmedTiming: payload.confirmedTiming === true,
+    });
     if (outcome.status === "gaps_unfilled") {
       return NextResponse.json(
         { error: "Fill in every highlighted gap before sending." },

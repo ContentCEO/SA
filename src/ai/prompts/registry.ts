@@ -10,6 +10,7 @@
  * prompts belong in it, so each version is written once.
  */
 import { CLASSIFY_PROMPT_VERSION } from "./classify.v4";
+import { DISPUTE_CAUTION_PROMPT_VERSION } from "./dispute-caution.v1";
 import { DRAFT_PROMPT_VERSION } from "./draft.v7";
 import { EDIT_TONE_PROMPT_VERSION } from "./edit-tone.v1";
 import { FOLLOWUP_PROMPT_VERSION } from "./followup.v4";
@@ -28,6 +29,8 @@ export const ACTIVE = {
   editTone: EDIT_TONE_PROMPT_VERSION,
   /** "Other ways to reply" asks, run through revise (stored as `revise.vN+opening-tweaks.vN`). */
   openingTweaks: OPENING_TWEAKS_PROMPT_VERSION,
+  /** Check 43 P9: the fixed task and flag on dispute / legal threads (`draft.vN+dispute-caution.vN`). */
+  disputeCaution: DISPUTE_CAUTION_PROMPT_VERSION,
 } as const;
 
 export type PromptKind = keyof typeof ACTIVE;

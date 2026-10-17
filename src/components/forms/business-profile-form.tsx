@@ -6,6 +6,8 @@ import { MAX_EXTRA_TRADES, TRADE_OPTIONS } from "@/config/trades";
 import { saveBusinessProfileAction, type FormState } from "@/app/(app)/settings/profile-actions";
 import { Button } from "@/components/ui/button";
 import { useFocusFirstError } from "./use-focus-first-error";
+import { useKeptForm } from "./use-kept-form";
+import { fingerprintOf } from "@/lib/kept-text";
 import { SelectField, TextArea, TextField } from "./field";
 
 export type ProfileDefaults = {
@@ -71,6 +73,8 @@ export function BusinessProfileForm({
   );
   const e = state.errors ?? {};
   const formRef = useFocusFirstError(state.errors);
+  // Check 8 P1: what's typed survives no signal, a failed save or a reload (this tab only).
+  useKeptForm(formRef, "business-profile", fingerprintOf(JSON.stringify(defaults)));
   const v = (k: keyof ProfileDefaults, fallback: string | number | null) =>
     state.values?.[k] ?? fallback;
   const joined = (list: string[]) => list.join("\n");
