@@ -253,9 +253,7 @@ export async function sendEmergencyAlerts(
         await db()
           .update(threads)
           .set({ emergencyAlertedAt: null })
-          .where(
-            and(inArray(threads.id, reserved.threadIds), eq(threads.emergencyAlertedAt, now)),
-          );
+          .where(and(inArray(threads.id, reserved.threadIds), eq(threads.emergencyAlertedAt, now)));
         continue;
       }
       // Take the shared slots, so an ordinary alert waits its 10 minutes after this one.

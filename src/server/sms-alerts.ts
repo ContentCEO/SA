@@ -192,7 +192,10 @@ export async function freshLeads(workspaceId: string, cursor: Date | null, now: 
         gt(threads.classifiedAt, cursor ?? new Date(now.getTime() - 60 * 60 * 1000)),
         gt(threads.lastMessageAt, new Date(now.getTime() - SMS.freshMs)),
         or(eq(threads.category, "quote_request"), eq(threads.needsOwner, true)),
-        or(isNull(threads.emergencyAlertedAt), lt(threads.emergencyAlertedAt, threads.classifiedAt)),
+        or(
+          isNull(threads.emergencyAlertedAt),
+          lt(threads.emergencyAlertedAt, threads.classifiedAt),
+        ),
         sql`(select m.direction from messages m where m.thread_id = ${threads.id} order by m.sent_at desc limit 1) = 'in'`,
       ),
     )

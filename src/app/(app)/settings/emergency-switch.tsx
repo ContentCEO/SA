@@ -33,11 +33,11 @@ export function EmergencySwitch({
         <span className="font-semibold">Emergencies, even at night</span>
       </label>
       <p id={id} className="text-muted-foreground">
-        When an email sounds like an emergency — a leak, no heat, no power, a gas smell — we let
-        you know right away, even between 9pm and 7am: &ldquo;An emergency email just came
-        in.&rdquo; Never a name or what they wrote. Once per conversation, at most{" "}
-        {EMERGENCY_ALERTS.nightCap} a night and {EMERGENCY_ALERTS.dayCap} a day. Texts and phone
-        notifications both follow this switch.
+        When an email sounds like an emergency — a leak, no heat, no power, a gas smell — we let you
+        know right away, even between 9pm and 7am: &ldquo;An emergency email just came in.&rdquo;
+        Never a name or what they wrote. Once per conversation, at most {EMERGENCY_ALERTS.nightCap}{" "}
+        a night and {EMERGENCY_ALERTS.dayCap} a day. Texts and phone notifications both follow this
+        switch.
       </p>
       <Button type="submit" variant="outline" className="sa-autosave-button w-full">
         Save

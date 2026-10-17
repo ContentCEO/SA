@@ -10,14 +10,16 @@ import { checkDraft } from "@/ai/draft-checks";
 import { CLASSIFY_PROMPT_VERSION } from "@/ai/prompts/classify.v4";
 import { EDIT_TONE_PROMPT_VERSION } from "@/ai/prompts/edit-tone.v1";
 import { PURPOSE_PROMPT_VERSION } from "@/ai/prompts/purpose.v1";
+import { OPENING_TWEAKS_VERSION } from "@/ai/prompts/opening-tweaks.v1";
 import { REVISE_PROMPT_VERSION } from "@/ai/prompts/revise.v2";
 import {
   conversationBlock,
   DRAFT_INSTRUCTIONS,
   DRAFT_PROMPT_VERSION,
-  draftSchema,
+  FIRST_CONTACT_TASK,
+  replyDraftSchema,
   workspaceBlock,
-} from "@/ai/prompts/draft.v6";
+} from "@/ai/prompts/draft.v7";
 import { usage } from "@/db/schema";
 import { ensureUserAndWorkspace } from "@/server/accounts";
 import { createTestDb } from "../support/db";
@@ -30,6 +32,7 @@ export const PROMPT_VERSIONS = {
   classify: CLASSIFY_PROMPT_VERSION,
   draft: DRAFT_PROMPT_VERSION,
   revise: REVISE_PROMPT_VERSION,
+  openingTweaks: OPENING_TWEAKS_VERSION,
   editTone: EDIT_TONE_PROMPT_VERSION,
   purpose: PURPOSE_PROMPT_VERSION,
 };
@@ -117,9 +120,11 @@ export async function runEvals(
           category: r.category,
           summary: r.summary,
           extracted: r.extracted,
+          // draft.v7: a first contact gets the task line the app sends (replies package).
+          task: c.firstContact ? FIRST_CONTACT_TASK : undefined,
           messages: [{ from: c.fromName, direction: "in", sentAt: email.receivedAt, body: c.body }],
         }),
-        schema: draftSchema,
+        schema: replyDraftSchema,
       });
       const problems: string[] = [];
       if (!draft) problems.push("no usable draft");
@@ -143,6 +148,12 @@ export async function runEvals(
         for (const bad of c.draft.mustNotContain ?? []) {
           if (draft.body.toLowerCase().includes(bad.toLowerCase())) problems.push(`says "${bad}"`);
         }
+        for (const good of c.draft.mustContain ?? []) {
+          if (!draft.body.toLowerCase().includes(good.toLowerCase()))
+            problems.push(`missing "${good}"`);
+        }
+        // The shape the drafter picked: first contacts' own, "not_first" for everything else.
+        result.opening = draft.opening;
       }
       result.draftProblems = problems;
     }

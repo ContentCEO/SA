@@ -1,5 +1,6 @@
 /**
- * Eval cases for purpose drafts (purpose.v1 on top of draft.v5; plan #26 #28 #29):
+ * Eval cases for purpose drafts (purpose.v1 on top of the drafting prompt, now draft.v7;
+ * plan #26 #28 #29):
  * deposit details on an accepted quote, review requests, and the one closing question.
  * All text is invented. `paymentTerms` overrides the eval profile's terms for that case
  * (null = the owner wrote none down).
@@ -9,10 +10,11 @@ import { checkDraft } from "@/ai/draft-checks";
 import {
   conversationBlock,
   DRAFT_INSTRUCTIONS,
-  draftSchema,
+  DRAFT_PROMPT_VERSION,
+  replyDraftSchema,
   workspaceBlock,
   type WorkspaceContext,
-} from "@/ai/prompts/draft.v6";
+} from "@/ai/prompts/draft.v7";
 import {
   closingQuestionTask,
   DEPOSIT_GAP,
@@ -20,7 +22,6 @@ import {
   PURPOSE_PROMPT_VERSION,
   reviewRequestTask,
 } from "@/ai/prompts/purpose.v1";
-import { DRAFT_PROMPT_VERSION } from "@/ai/prompts/draft.v6";
 import { ensureDepositGap } from "@/ai/purpose";
 import type { Trade } from "@/config/trades";
 import type { DraftPurpose } from "@/db/schema";
@@ -254,7 +255,8 @@ export async function runPurposeEvals(workspaceId: string) {
           body: m.body,
         })),
       }),
-      schema: draftSchema,
+      // The app sends purpose notes with draft.v7's instructions and reply schema.
+      schema: replyDraftSchema,
     });
     const problems: string[] = [];
     if (!r || !r.body.trim()) problems.push("no usable draft");

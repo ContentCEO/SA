@@ -45,6 +45,7 @@ import { ResortSheet } from "@/components/app/sender-sheets";
 import { notesForAddresses, notesForThreads } from "@/server/customer-notes";
 import { awayState } from "@/server/away";
 import { awayUntilShort } from "@/server/away-rules";
+import { offersOtherWays, openingLine } from "@/server/first-contact-rules";
 import { turnAwayOffAction } from "../settings/away-actions";
 
 const done: Record<string, string> = {
@@ -417,6 +418,12 @@ export default async function QueuePage(props: PageProps<"/queue">) {
                 gaps: findGaps(i.body ?? "").length,
               })}
               usedFacts={i.usedFacts}
+              openingLine={openingLine(i.opening, i.body)}
+              otherWays={offersOtherWays({
+                opening: i.opening,
+                revisionsLeft: i.revisionsLeft,
+                readOnly,
+              })}
               revisionsLeft={i.revisionsLeft}
               needsOwnerReason={i.needsOwnerReason}
               canSend={sending}
