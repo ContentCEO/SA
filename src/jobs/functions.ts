@@ -308,6 +308,18 @@ export function reportSummaryFailures(
   }
 }
 
+/** Thrown when some alert emails were refused. Counts only — no ids, addresses or messages. */
+export class AlertFailuresError extends Error {
+  override readonly name = "AlertFailuresError";
+}
+
+/** Check 18 P1: fails a job run at its very end when any alert email failed. */
+export function reportAlertFailures(kind: "access" | "cost", result: { failed: number }): void {
+  if (result.failed > 0) {
+    throw new AlertFailuresError(`Alert emails failed: ${result.failed} ${kind}.`);
+  }
+}
+
 /**
  * Autopilot's grace window: wait until the send time (the owner can hold or
  * edit it meanwhile), then check everything again and send only if it all
@@ -463,6 +475,9 @@ export const workspaceLifecycle = inngest.createFunction(
     // 2026-10-16: the trial's day-2 and day-3 emails and the one a week after it ran out, each
     // once ever, at the owner's morning hour or later in their zone (never at night).
     await step.run("trial-emails", () => sendTrialEmails());
+    // Check 18 P1: a refused alert email fails the run only now, after every step has run, so
+    // error alerts still hear about it once. Retries replay the finished steps.
+    reportAlertFailures("access", alerts);
     return {
       started,
       expired,
@@ -549,9 +564,11 @@ export const purgeBodies = inngest.createFunction(
     await step.run("purge-rate-limits", () => purgeRateLimits());
     await step.run("purge-expired-notes", () => purgeExpiredNotes());
     // Plan #45: tell Davi when an account's AI cost passes 40% of its plan.
-    await step.run("cost-alerts", () => sendCostAlerts());
+    const costAlerts = await step.run("cost-alerts", () => sendCostAlerts());
     await step.run("purge-cost-markers", () => purgeCostAlertMarkers());
     await step.run("purge-email-sent-records", () => purgeEmailSentRecords());
+    // Check 18 P1: as in the lifecycle job, fail only after every step has run.
+    reportAlertFailures("cost", costAlerts);
     return { purged };
   },
 );

@@ -120,6 +120,48 @@ describe("Gmail access lost alerts", () => {
     ).toHaveLength(1);
   });
 
+  it("Check 18 P1: one refused email doesn't stop the next owner's alert, and is retried", async () => {
+    const first = await seed();
+    const { workspace: ws2 } = await ensureUserAndWorkspace({ email: "second@shop.com" });
+    await database.update(workspaces).set({ status: "active" }).where(eq(workspaces.id, ws2.id));
+    const mb2 = await saveConnectedMailbox(ws2, {
+      email: "office@second.com",
+      refreshToken: "rt",
+      grantedScopes: [],
+    });
+    await markReconnectNeeded({ id: first.mailboxId, workspaceId: first.workspace.id });
+    await markReconnectNeeded({ id: mb2.id, workspaceId: ws2.id });
+
+    const errors: unknown[][] = [];
+    const orig = console.error;
+    console.error = (...a: unknown[]) => void errors.push(a);
+    const refusing = async (e: OutgoingEmail) => {
+      if (e.to === "owner@shop.com") throw new Error("Resend 403.");
+      sent.push(e);
+      return "sent" as const;
+    };
+    let r;
+    try {
+      r = await sendAccessLostAlerts(NOW, { send: refusing });
+    } finally {
+      console.error = orig;
+    }
+    expect(r).toEqual({ sent: 1, failed: 1, notConfigured: false });
+    expect(sent.map((e) => e.to)).toEqual(["second@shop.com"]);
+    // Ids and the error's name only — never the message or an address.
+    expect(errors).toEqual([
+      ["access_alert_failed", { mailboxId: first.mailboxId, error: "Error" }],
+    ]);
+    const rows = await database.select().from(mailboxes);
+    expect(rows.find((m) => m.id === first.mailboxId)!.accessAlertsSent).toBe(0);
+    expect(rows.find((m) => m.id === mb2.id)!.accessAlertsSent).toBe(1);
+
+    // The next run tries the first owner again (and only them).
+    const again = await sendAccessLostAlerts(after(15 * 60_000), { send });
+    expect(again).toEqual({ sent: 1, failed: 0, notConfigured: false });
+    expect(sent.map((e) => e.to)).toEqual(["second@shop.com", "owner@shop.com"]);
+  });
+
   it("names only the owner's own mailbox", () => {
     const e = accessLostEmail("jobs@shop.com", false);
     expect(e.text).toContain("jobs@shop.com");

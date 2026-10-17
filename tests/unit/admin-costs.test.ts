@@ -86,8 +86,8 @@ describe("#45 admin costs", () => {
     });
 
     it("emails Davi once per account per month", async () => {
-      expect(await sendCostAlerts(NOW, { send })).toEqual({ sent: 1 });
-      expect(await sendCostAlerts(NOW, { send })).toEqual({ sent: 0 });
+      expect(await sendCostAlerts(NOW, { send })).toEqual({ sent: 1, failed: 0 });
+      expect(await sendCostAlerts(NOW, { send })).toEqual({ sent: 0, failed: 0 });
       expect(sent).toHaveLength(1);
       expect(sent[0]!.to).toBe("davi@example.com");
       expect(sent[0]!.subject).toBe("AI cost alert: Dear Plumbing at 51% of plan");
@@ -99,7 +99,49 @@ describe("#45 admin costs", () => {
         aiCalls: 1,
         estimatedCostCentiCents: 500_000,
       });
-      expect(await sendCostAlerts(new Date("2026-11-02T12:00:00Z"), { send })).toEqual({ sent: 1 });
+      expect(await sendCostAlerts(new Date("2026-11-02T12:00:00Z"), { send })).toEqual({
+        sent: 1,
+        failed: 0,
+      });
+    });
+
+    it("Check 18 P1: one refused alert doesn't stop the next account's; it's retried next run", async () => {
+      // Make the cheap account over the line too.
+      await database.insert(usage).values({
+        workspaceId: cheap,
+        period: "2026-10-06",
+        aiCalls: 5,
+        estimatedCostCentiCents: 900_000,
+      });
+      const subjects: string[] = [];
+      const orig = console.error;
+      const errors: unknown[][] = [];
+      console.error = (...a: unknown[]) => void errors.push(a);
+      let first;
+      let refusedSubject = "";
+      try {
+        let calls = 0;
+        first = await sendCostAlerts(NOW, {
+          send: async (e) => {
+            if (calls++ === 0) {
+              refusedSubject = e.subject;
+              throw new Error("Resend 403.");
+            }
+            subjects.push(e.subject);
+            return "sent" as const;
+          },
+        });
+      } finally {
+        console.error = orig;
+      }
+      expect(first).toEqual({ sent: 1, failed: 1 });
+      expect(subjects).toHaveLength(1);
+      expect(errors).toHaveLength(1);
+      expect(errors[0]![0]).toBe("cost_alert_failed");
+      expect(Object.keys(errors[0]![1] as object).sort()).toEqual(["error", "workspaceId"]);
+      // Next run: only the refused one goes again.
+      expect(await sendCostAlerts(NOW, { send })).toEqual({ sent: 1, failed: 0 });
+      expect(sent.map((e) => e.subject)).toEqual([refusedSubject]);
     });
 
     it("an alert Resend says it already sent (changed body, same key) is marked, not retried daily", async () => {
