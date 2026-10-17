@@ -352,7 +352,7 @@ describe("admin actions", () => {
           }),
         ),
       ),
-    ).toBe("/admin?error=growth_input#growth");
+    ).toBe("/admin/growth?error=growth_input");
     expect(
       await redirectOf(
         actions.startGrowthAction(
@@ -364,7 +364,7 @@ describe("admin actions", () => {
           }),
         ),
       ),
-    ).toBe("/admin?error=growth_input#growth");
+    ).toBe("/admin/growth?error=growth_input");
     const start = form({
       workspaceId: o.workspaceId,
       services: ["reviews", "nonsense"],
@@ -372,19 +372,19 @@ describe("admin actions", () => {
       timeZone: "America/Chicago",
     });
     expect(await redirectOf(actions.startGrowthAction(start))).toBe(
-      "/admin?done=growth_started#growth",
+      "/admin/growth?done=growth_started",
     );
     expect(await redirectOf(actions.startGrowthAction(start))).toBe(
-      "/admin?error=growth_already#growth",
+      "/admin/growth?error=growth_already",
     );
     const c = (await portalClient(o.workspaceId))!;
     expect(c).toMatchObject({ services: ["reviews"], timeZone: "America/Chicago" });
     expect(
       await redirectOf(actions.moveGrowthAction(form({ clientId: c.id, move: "resume" }))),
-    ).toBe("/admin?error=growth_status#growth");
+    ).toBe("/admin/growth?error=growth_status");
     expect(
       await redirectOf(actions.moveGrowthAction(form({ clientId: c.id, move: "pause" }))),
-    ).toBe("/admin?done=growth_pause#growth");
+    ).toBe("/admin/growth?done=growth_pause");
     expect(await portalClient(o.workspaceId)).not.toBeNull();
     expect(await moveGrowthClient(c.id, "end", NOW)).toBe("ok");
     expect(await portalClient(o.workspaceId)).toBeNull();
@@ -442,12 +442,12 @@ describe("admin actions", () => {
       await redirectOf(
         actions.postGrowthUpdateAction(form({ clientId: c.id, title: "", body: "x" })),
       ),
-    ).toBe("/admin?error=growth_update_input#growth");
+    ).toBe("/admin/growth?error=growth_update_input");
     expect(
       await redirectOf(
         actions.postGrowthUpdateAction(form({ clientId: c.id, title: "Hi", body: "Text" })),
       ),
-    ).toBe("/admin?done=growth_posted_emailed#growth");
+    ).toBe("/admin/growth?done=growth_posted_emailed");
     expect(sendEmail).toHaveBeenCalledTimes(1);
   });
 
@@ -459,16 +459,16 @@ describe("admin actions", () => {
     const save = (f: Record<string, string>) =>
       redirectOf(actions.saveGrowthMonthAction(form({ clientId: c.id, ...f })));
     expect(await save({ month: "2099-01", newLeads: "1" })).toBe(
-      "/admin?error=growth_month_input#growth",
+      "/admin/growth?error=growth_month_input",
     );
     expect(await save({ month: "2026-09", newLeads: "x" })).toBe(
-      "/admin?error=growth_month_input#growth",
+      "/admin/growth?error=growth_month_input",
     );
     expect(await save({ month: "2026-09", newLeads: "4", moneyWon: "1,200" })).toBe(
-      "/admin?done=growth_month_saved#growth",
+      "/admin/growth?done=growth_month_saved",
     );
     expect(await save({ month: "2026-09", newLeads: "5" })).toBe(
-      "/admin?done=growth_month_saved#growth",
+      "/admin/growth?done=growth_month_saved",
     );
     const [m] = await database.select().from(growthMonthly);
     expect(m).toMatchObject({ month: "2026-09", newLeads: 5, moneyWonCents: null });
@@ -671,7 +671,7 @@ describe("Growth never uses inbox data", () => {
     /\binbox\b/,
     /drafts/,
     /voice/,
-    /quotes/,
+    /quote/,
     /customers/,
     /followups/,
     /digest/,

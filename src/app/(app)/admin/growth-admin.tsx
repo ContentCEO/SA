@@ -4,6 +4,7 @@ import { GROWTH_SERVICES, growthServiceLabel, type GrowthService } from "@/confi
 import { relativeTime } from "@/lib/relative-time";
 import {
   CHECK_IN_FIELDS,
+  formatCents,
   GROWTH_BODY_MAX,
   GROWTH_NOTE_MAX,
   GROWTH_STATUS_LABEL,
@@ -17,7 +18,6 @@ import {
 } from "@/server/growth-client-rules";
 import type { growthAccountChoices, listGrowthAdmin } from "@/server/growth-clients";
 import type { GrowthRequest } from "@/server/growth-note";
-import { formatCents } from "@/server/quote-rules";
 import {
   emailGrowthUpdateAction,
   inviteToGrowthAction,
@@ -450,7 +450,7 @@ export function GrowthClientsSection({
   error?: string;
 }) {
   return (
-    <section id="growth" aria-labelledby="growth-heading" className="flex flex-col gap-3">
+    <section aria-labelledby="growth-heading" className="flex flex-col gap-3">
       <h2 id="growth-heading" className="text-xl font-black">
         Growth clients ({data.clients.length})
       </h2>

@@ -52,15 +52,8 @@ import { growthCopy } from "@/components/marketing/growth/growth-copy";
 import { phoneHref } from "@/lib/phone-href";
 import { pricing } from "@/config/pricing";
 import { adminToday, type GrowthStatus } from "@/server/growth-client-rules";
+import { countGrowthClients, growthStateForEmails } from "@/server/growth-clients";
 import {
-  growthAccountChoices,
-  growthStateForEmails,
-  listGrowthAdmin,
-} from "@/server/growth-clients";
-import {
-  GROWTH_DONE,
-  GROWTH_ERRORS,
-  GrowthClientsSection,
   WAITLIST_GROWTH_DONE,
   WAITLIST_GROWTH_ERRORS,
   WaitlistGrowthControls,
@@ -485,8 +478,7 @@ export default async function AdminPage(props: PageProps<"/admin">) {
     salesTax,
     testPayments,
     termsBoxOff,
-    growthData,
-    growthChoices,
+    growthClientCount,
   ] = await Promise.all([
     adminOverview(now),
     countWorkspaces(),
@@ -498,16 +490,13 @@ export default async function AdminPage(props: PageProps<"/admin">) {
     live ? lastTestPaymentsResult() : null,
     // Database only: set by the last checkout that had to go without the terms box.
     termsBoxOffSince(),
-    listGrowthAdmin(),
-    growthAccountChoices(),
+    countGrowthClients(),
   ]);
   const growthStates = await growthStateForEmails(waiting.map((w) => w.email));
   const today = adminToday(now);
-  // Growth notices show in their own sections (the page scrolls there), not at the top.
+  // Waitlist Growth notices show in the waitlist section (the page scrolls there).
   const code = (v: unknown, prefix: string) =>
     typeof v === "string" && v.startsWith(prefix) ? v : undefined;
-  const growthDone = GROWTH_DONE[code(params.done, "growth_") ?? ""];
-  const growthError = GROWTH_ERRORS[code(params.error, "growth_") ?? ""];
   const waitlistDone = WAITLIST_GROWTH_DONE[code(params.done, "wl_") ?? ""];
   const waitlistError = WAITLIST_GROWTH_ERRORS[code(params.error, "wl_") ?? ""];
   // Payment messages show inside the Payments section (the page scrolls there), not at the top.
@@ -648,14 +637,17 @@ export default async function AdminPage(props: PageProps<"/admin">) {
         )}
       </section>
 
-      <GrowthClientsSection
-        data={growthData}
-        choices={growthChoices}
-        today={today}
-        now={now}
-        done={growthDone}
-        error={growthError}
-      />
+      <section aria-labelledby="growth-heading" className="flex flex-col gap-2">
+        <h2 id="growth-heading" className="text-xl font-black">
+          Growth clients ({growthClientCount})
+        </h2>
+        <Link
+          href="/admin/growth"
+          className="inline-flex min-h-tap items-center self-start font-semibold underline underline-offset-4"
+        >
+          Start Growth, post updates and enter monthly numbers
+        </Link>
+      </section>
 
       <section aria-labelledby="invite" className="flex flex-col gap-3">
         <h2 id="invite" className="text-xl font-black">

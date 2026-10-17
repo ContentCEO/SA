@@ -29,8 +29,8 @@ import { requireAdmin } from "@/server/session";
 /**
  * Squared Away Growth, Davi's side (2026-10-16): every action re-checks requireAdmin() first
  * (anyone else gets the admin page's 404), validates on the server whatever the form sent, and
- * answers with a fixed code. Notices: `growth_*` show in the Growth clients section, `wl_*` in
- * the waitlist section.
+ * answers with a fixed code. `growth_*` notices show on /admin/growth, `wl_*` in /admin's
+ * waitlist section.
  */
 
 const id = z.string().uuid();
@@ -55,11 +55,11 @@ export async function startGrowthAction(formData: FormData) {
   const workspaceId = id.safeParse(formData.get("workspaceId"));
   const picked = servicesAndStart(formData);
   const timeZone = timeZoneOf(formData);
-  if (!workspaceId.success || !picked || !timeZone) redirect("/admin?error=growth_input#growth");
+  if (!workspaceId.success || !picked || !timeZone) redirect("/admin/growth?error=growth_input");
   const r = await startGrowth({ workspaceId: workspaceId.data, ...picked, timeZone });
-  if (r === "already") redirect("/admin?error=growth_already#growth");
-  if (r === "not_found") redirect("/admin?error=growth_not_found#growth");
-  redirect(`/admin?done=growth_${r}#growth`);
+  if (r === "already") redirect("/admin/growth?error=growth_already");
+  if (r === "not_found") redirect("/admin/growth?error=growth_not_found");
+  redirect(`/admin/growth?done=growth_${r}`);
 }
 
 /** Change a client's services, start date or time zone. */
@@ -68,10 +68,10 @@ export async function changeGrowthAction(formData: FormData) {
   const clientId = id.safeParse(formData.get("clientId"));
   const picked = servicesAndStart(formData);
   const timeZone = timeZoneOf(formData);
-  if (!clientId.success || !picked || !timeZone) redirect("/admin?error=growth_input#growth");
+  if (!clientId.success || !picked || !timeZone) redirect("/admin/growth?error=growth_input");
   if (!(await changeGrowth({ clientId: clientId.data, ...picked, timeZone })))
-    redirect("/admin?error=growth_not_found#growth");
-  redirect("/admin?done=growth_changed#growth");
+    redirect("/admin/growth?error=growth_not_found");
+  redirect("/admin/growth?done=growth_changed");
 }
 
 /** Pause, resume or end (each behind its own confirmation on the page). */
@@ -79,11 +79,11 @@ export async function moveGrowthAction(formData: FormData) {
   await requireAdmin();
   const clientId = id.safeParse(formData.get("clientId"));
   const move = formData.get("move");
-  if (!clientId.success || !isGrowthMove(move)) redirect("/admin?error=growth_input#growth");
+  if (!clientId.success || !isGrowthMove(move)) redirect("/admin/growth?error=growth_input");
   const r = await moveGrowthClient(clientId.data, move);
-  if (r === "not_found") redirect("/admin?error=growth_not_found#growth");
-  if (r === "not_allowed") redirect("/admin?error=growth_status#growth");
-  redirect(`/admin?done=growth_${move}#growth`);
+  if (r === "not_found") redirect("/admin/growth?error=growth_not_found");
+  if (r === "not_allowed") redirect("/admin/growth?error=growth_status");
+  redirect(`/admin/growth?done=growth_${move}`);
 }
 
 /** "Post an update": saved, then emailed to the client once (title and a link only). */
@@ -91,19 +91,19 @@ export async function postGrowthUpdateAction(formData: FormData) {
   await requireAdmin();
   const clientId = id.safeParse(formData.get("clientId"));
   const update = parseUpdate(formData.get("title"), formData.get("body"));
-  if (!clientId.success || !update.ok) redirect("/admin?error=growth_update_input#growth");
+  if (!clientId.success || !update.ok) redirect("/admin/growth?error=growth_update_input");
   const posted = await postGrowthUpdate(clientId.data, update);
-  if (posted.status === "ended") redirect("/admin?error=growth_ended#growth");
-  if (posted.status !== "posted") redirect("/admin?error=growth_not_found#growth");
+  if (posted.status === "ended") redirect("/admin/growth?error=growth_ended");
+  if (posted.status !== "posted") redirect("/admin/growth?error=growth_not_found");
   const mail = await notifyGrowthUpdate(posted.updateId);
   redirect(
-    `/admin?done=${
+    `/admin/growth?done=${
       mail === "sent" || mail === "already_sent"
         ? "growth_posted_emailed"
         : mail === "not_configured"
           ? "growth_posted_no_email"
           : "growth_posted_unsent"
-    }#growth`,
+    }`,
   );
 }
 
@@ -111,12 +111,12 @@ export async function postGrowthUpdateAction(formData: FormData) {
 export async function emailGrowthUpdateAction(formData: FormData) {
   await requireAdmin();
   const updateId = id.safeParse(formData.get("updateId"));
-  if (!updateId.success) redirect("/admin?error=growth_input#growth");
+  if (!updateId.success) redirect("/admin/growth?error=growth_input");
   const mail = await notifyGrowthUpdate(updateId.data);
-  if (mail === "not_configured") redirect("/admin?error=growth_email_off#growth");
-  if (mail === "failed") redirect("/admin?error=growth_email_failed#growth");
+  if (mail === "not_configured") redirect("/admin/growth?error=growth_email_off");
+  if (mail === "failed") redirect("/admin/growth?error=growth_email_failed");
   redirect(
-    `/admin?done=${mail === "skipped" ? "growth_already_emailed" : "growth_emailed"}#growth`,
+    `/admin/growth?done=${mail === "skipped" ? "growth_already_emailed" : "growth_emailed"}`,
   );
 }
 
@@ -127,10 +127,10 @@ export async function saveGrowthMonthAction(formData: FormData) {
   const month = formData.get("month");
   const parsed = parseCheckIn((f) => formData.get(f));
   if (!clientId.success || !checkInMonthOk(month, adminToday(new Date())) || !parsed.ok)
-    redirect("/admin?error=growth_month_input#growth");
+    redirect("/admin/growth?error=growth_month_input");
   const r = await saveGrowthMonth(clientId.data, month, parsed.numbers, parsed.note);
-  if (r === "not_found") redirect("/admin?error=growth_not_found#growth");
-  redirect(`/admin?done=growth_month_${r}#growth`);
+  if (r === "not_found") redirect("/admin/growth?error=growth_not_found");
+  redirect(`/admin/growth?done=growth_month_${r}`);
 }
 
 const growthInvite = z.object({
@@ -152,13 +152,14 @@ export async function inviteToGrowthAction(formData: FormData) {
   const picked = servicesAndStart(formData);
   // Answers go back to the section the form was in.
   const where = fromWaitlist ? "wl_growth" : "growth";
-  const anchor = fromWaitlist ? "waitlist" : "growth";
-  if (!parsed.success || !picked) redirect(`/admin?error=${where}_input#${anchor}`);
+  const page = fromWaitlist ? "" : "/growth";
+  const anchor = fromWaitlist ? "#waitlist" : "";
+  if (!parsed.success || !picked) redirect(`/admin${page}?error=${where}_input${anchor}`);
   const r = await inviteToGrowth({ ...parsed.data, ...picked });
-  if (r === "has_account") redirect(`/admin?error=${where}_has_account#${anchor}`);
+  if (r === "has_account") redirect(`/admin${page}?error=${where}_has_account${anchor}`);
   const mail = r === "invited" ? await sendGrowthInviteEmail(parsed.data.email) : null;
   const code = r === "updated" ? "invite_updated" : mail === "sent" ? "invited_emailed" : "invited";
-  redirect(`/admin?done=${where}_${code}#${anchor}`);
+  redirect(`/admin${page}?done=${where}_${code}${anchor}`);
 }
 
 /**

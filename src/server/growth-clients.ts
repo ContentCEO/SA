@@ -419,6 +419,13 @@ export async function removeGrowthRequest(
 
 const STATUS_ORDER = sql`case ${growthClients.status} when 'active' then 0 when 'paused' then 1 else 2 end`;
 
+export async function countGrowthClients(): Promise<number> {
+  const [row] = await db()
+    .select({ n: sql<number>`count(*)::int` })
+    .from(growthClients);
+  return row?.n ?? 0;
+}
+
 export async function listGrowthAdmin() {
   const clients = await db()
     .select({

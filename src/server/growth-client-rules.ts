@@ -7,10 +7,18 @@
  * from Gmail too): every number on the dashboard is one Davi entered after a monthly check-in.
  */
 import { siteConfig } from "@/config/site";
-import { formatCents } from "./quote-rules";
 import { atLocalHour, FALLBACK_TIME_ZONE, localParts, usableTimeZone } from "./snooze-rules";
 
 const davi = siteConfig.operator.split(" ")[0]!;
+
+/** "$4,500" / "$1,450.50": dollars from cents (kept here so Growth needs nothing from Quotes). */
+export function formatCents(cents: number): string {
+  const dollars = cents / 100;
+  return `$${dollars.toLocaleString("en-US", {
+    minimumFractionDigits: Number.isInteger(dollars) ? 0 : 2,
+    maximumFractionDigits: 2,
+  })}`;
+}
 
 export const GROWTH_STATUSES = ["active", "paused", "ended"] as const;
 export type GrowthStatus = (typeof GROWTH_STATUSES)[number];

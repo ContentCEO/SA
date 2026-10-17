@@ -70,6 +70,7 @@ test("/start sends an owner who isn't a Growth client straight to the queue", as
   await page.goto("/start");
   await expect(page).toHaveURL(/\/queue$/);
   expect((await page.goto("/my-growth"))?.status()).toBe(404);
+  expect((await page.goto("/admin/growth"))?.status()).toBe(404);
   // More shows the same static Growth line as everyone, and no dashboard link.
   await page.goto("/more");
   await expect(page.getByRole("complementary", { name: "Grow your business" })).toContainText(
@@ -176,8 +177,8 @@ test("admin: start Growth, post an update, enter a month, pause; the client sees
     .set({ businessName: `Portal Plumbing ${owner.email}` })
     .where(eq(schema.workspaces.id, owner.workspaceId));
   await signInAs(context, await seedAdmin());
-  await page.goto("/admin#growth");
-  const section = page.locator("#growth");
+  await page.goto("/admin/growth");
+  const section = page.getByRole("region", { name: /^Growth clients/ });
 
   const start = section.locator("details", {
     has: page.locator("summary", { hasText: /^Start Growth for this account$/ }),
@@ -189,8 +190,8 @@ test("admin: start Growth, post an update, enter a month, pause; the client sees
   await start.getByLabel("Reviews").check();
   await start.getByLabel("Start date").fill("2026-01-05");
   await start.getByRole("button", { name: "Start Growth" }).click();
-  await expect(page).toHaveURL(/done=growth_started#growth$/);
-  await expect(page.locator("#growth").getByRole("status")).toContainText("Growth started.");
+  await expect(page).toHaveURL(/done=growth_started$/);
+  await expect(section.getByRole("status")).toContainText("Growth started.");
 
   const card = page.getByRole("article", { name: `Growth client: Portal Plumbing ${owner.email}` });
   await card.getByText("Post an update", { exact: true }).click();
@@ -198,7 +199,7 @@ test("admin: start Growth, post an update, enter a month, pause; the client sees
   await card.getByLabel("What to tell them").fill("Send it to every customer.");
   await card.getByRole("button", { name: "Post update" }).click();
   // E2E has no email set up: posted, and it says nobody was emailed.
-  await expect(page).toHaveURL(/done=growth_posted_no_email#growth$/);
+  await expect(page).toHaveURL(/done=growth_posted_no_email$/);
   await expect(card).toContainText("Not emailed yet");
 
   await card.getByText("Add numbers for a month", { exact: true }).click();
@@ -206,12 +207,12 @@ test("admin: start Growth, post an update, enter a month, pause; the client sees
   await card.getByLabel("New leads").fill("12");
   await card.getByLabel("Money from jobs won ($)").fill("4,500");
   await card.getByRole("button", { name: "Save numbers" }).click();
-  await expect(page).toHaveURL(/done=growth_month_saved#growth$/);
+  await expect(page).toHaveURL(/done=growth_month_saved$/);
   await expect(card).toContainText("12 new leads · $4,500 money from jobs won");
 
   await card.getByText("Pause Growth", { exact: true }).click();
   await card.getByRole("button", { name: "Yes, pause Growth" }).click();
-  await expect(page).toHaveURL(/done=growth_pause#growth$/);
+  await expect(page).toHaveURL(/done=growth_pause$/);
   await expect(card).toContainText("Paused");
 
   // The client sees exactly that.
