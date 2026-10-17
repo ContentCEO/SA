@@ -722,3 +722,17 @@ describe("price-list wording: keep 'from' and the job (Check 23 P14)", () => {
     expect(checkDraft("The service call is $95.", ctx).hits).toEqual([]);
   });
 });
+
+describe("price-list wording leaves other numbers alone (Check 23 P14)", () => {
+  it("a 40 gal tank is not the $40 gutter price", () => {
+    const LIST = "Gutter cleaning: $40";
+    expect(
+      checkDraft("Your 40 gal tank is due for a swap. What's the address?", {
+        sourceText: `My 40 gallon tank leaks\n${LIST}`,
+        doNotPromise: [],
+        phrasesAvoided: [],
+        priceList: LIST,
+      }).hits,
+    ).not.toContain("price_list");
+  });
+});

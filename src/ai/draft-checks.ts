@@ -620,15 +620,22 @@ export function priceListRows(pricingNotes: string | null | undefined): PriceLis
     });
 }
 
-/** Check 23 P14: every amount a body writes with digits, with where it is. */
+/**
+ * Check 23 P14: every amount a body writes with digits, with where it is. A bare number counts
+ * only when the money finder reads it as money ("a 40 gal tank" is not $40).
+ */
 function amountsAt(body: string): { amount: number; at: number; end: number }[] {
+  const asMoney = new Set(moneyMentions(body).map((m) => m.amount));
   return [
     ...body.matchAll(/\$\s?(\d[\d,]*(?:\.\d{1,2})?)|\b(\d{1,3}(?:,\d{3})+|\d{2,6})(?:\.\d{2})?\b/g),
-  ].map((m) => ({
-    amount: Number((m[1] ?? m[2])!.replace(/,/g, "")),
-    at: m.index!,
-    end: m.index! + m[0].length,
-  }));
+  ]
+    .map((m) => ({
+      dollar: m[1] !== undefined,
+      amount: Number((m[1] ?? m[2])!.replace(/,/g, "")),
+      at: m.index!,
+      end: m.index! + m[0].length,
+    }))
+    .filter((h) => h.dollar || asMoney.has(h.amount));
 }
 
 /** Check 23 P14: a listed price without its qualifier, or used for a different job. */
