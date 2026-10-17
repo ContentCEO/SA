@@ -6,6 +6,7 @@ import type { Database } from "@/db";
 import {
   drafts,
   editSignals,
+  mailboxes,
   threads,
   voiceProfiles,
   voiceSuggestions,
@@ -20,6 +21,8 @@ import {
 } from "@/server/edit-learning";
 import { editShape, proposeSuggestions, type EditSignal } from "@/server/edit-learning-rules";
 import { saveConnectedMailbox } from "@/server/mailboxes";
+import { learnVoice, workspacesDueForVoiceRefresh } from "@/server/voice";
+import { FakeMailbox } from "../support/fake-mailbox";
 import { createTestDb } from "../support/db";
 import { fakeTransport } from "../support/fake-model";
 
@@ -169,10 +172,64 @@ describe("#21 learn from edits", () => {
 
       const [after] = await database.select().from(voiceProfiles);
       expect(after!.avgLengthWords).toBe(20); // never below 20 words
-      expect(after!.source).toBe("edited");
+      // Check 24 P7: a yes changes the voice but doesn't stop the weekly refresh.
+      expect(after!.source).toBe("learned");
       expect(after!.summary).toBe("Short and friendly."); // the "no" changed nothing
       // Answered ideas aren't asked again for a while.
       expect(await proposeVoiceUpdates(new Date(NOW.getTime() + 7 * 86_400_000))).toBe(0);
+    });
+
+    it("an accepted 'shorter' survives the weekly re-learn (Check 24 P7)", async () => {
+      const [idea] = await database
+        .insert(voiceSuggestions)
+        .values({ workspaceId, kind: "shorter", text: "Shorter?", targetWords: 45 })
+        .returning();
+      const formal = (
+        await database
+          .insert(voiceSuggestions)
+          .values({ workspaceId, kind: "more_formal", text: "More formal?" })
+          .returning()
+      )[0]!;
+      await database
+        .update(voiceProfiles)
+        .set({ learnedAt: NOW, greetingStyle: "Hey" })
+        .where(eq(voiceProfiles.workspaceId, workspaceId));
+      expect(await decideSuggestion(workspaceId, idea!.id, true, NOW)).toBe("accepted");
+      expect(await decideSuggestion(workspaceId, formal.id, true, NOW)).toBe("accepted");
+      const [v] = await database.select().from(voiceProfiles);
+      expect(v).toMatchObject({ source: "learned", avgLengthWords: 45, formality: "formal" });
+
+      await database.update(mailboxes).set({ backfillCompletedAt: NOW });
+      const weekLater = new Date(NOW.getTime() + 8 * 86_400_000);
+      expect(await workspacesDueForVoiceRefresh(weekLater)).toContain(workspaceId);
+
+      const fake = new FakeMailbox();
+      for (let i = 0; i < 6; i++)
+        fake.add({
+          id: `s${i}`,
+          threadId: `t${i}`,
+          labelIds: ["SENT"],
+          bodyText: `Hey, sure ${i}`,
+        });
+      setModelTransportForTests(
+        fakeTransport([
+          {
+            summary: "Chatty.",
+            greeting_style: "Hey",
+            signoff_style: "Sam",
+            avg_length_words: 140,
+            formality: "casual",
+            phrases_used: [],
+            phrases_avoided: [],
+            examples: [],
+          },
+        ]).transport,
+      );
+      expect(
+        await learnVoice(workspaceId, { readerFor: () => fake.reader(), now: () => weekLater }),
+      ).toBe("ready");
+      const [after] = await database.select().from(voiceProfiles);
+      expect(after).toMatchObject({ source: "learned", avgLengthWords: 45, formality: "formal" });
     });
 
     it("another workspace can't answer someone's idea", async () => {

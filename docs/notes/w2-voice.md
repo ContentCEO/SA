@@ -64,3 +64,12 @@
   choice would jump). `no_mailbox` only when none is running (already true at the base; the
   backstop uses the same filter, so no 15-minute re-queue). `voice_profile.learned_from_mailbox_id`
   (FK, set null) → Settings → Your voice shows "Learned from mike@shop.com".
+- **Accepted voice ideas don't stop the weekly refresh (Check 24 P7):** `decideSuggestion` no
+  longer sets `source = edited`; the change itself comes from `ideaChanges`
+  (`edit-learning-rules.ts`, pure; `SUMMARY_ADDS` moved there), and `learnVoice` re-applies every
+  accepted idea oldest first (`acceptedIdeas`) after building its values, so the newest
+  shorter/longer and more_formal/more_casual win and warmer/skip_opener lines are added once.
+  **Existing rows** marked edited only because of an accepted idea are **left alone** (no
+  one-off script): an "edited" row could also hold the owner's own typed edits, and the
+  activity log can't always tell which came last without guessing. They keep working as before
+  (weekly refresh skips them; "Re-learn" brings them back). Davi can ask for a script if wanted.

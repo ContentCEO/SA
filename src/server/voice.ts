@@ -27,6 +27,8 @@ import { MailboxAuthError, type MailboxReader } from "@/mailbox/connector";
 import { createGmailReader } from "@/mailbox/gmail/api";
 import { mailboxRunning } from "./mailbox-plan";
 import { jobsAllowed } from "./lifecycle";
+import { acceptedIdeas } from "./edit-learning";
+import { ideaChanges } from "./edit-learning-rules";
 import { scrubAllowFrom, scrubText, type ScrubAllow } from "./scrub";
 import { markReconnectNeeded } from "./sync";
 import { splitOwnWords, wordCount } from "./voice-text";
@@ -291,14 +293,23 @@ async function learnFrom(
     .where(eq(businessProfiles.workspaceId, workspaceId));
   const allow = scrubAllowFrom(business?.signature);
   const clean = (t: string, max: number) => scrubText(t, allow).slice(0, max);
+  // Check 24 P7: ideas the owner said yes to keep holding after a re-learn.
+  const shaped = ideaChanges(
+    {
+      avgLengthWords: Math.max(10, Math.min(400, Math.round(result.avg_length_words))),
+      formality: result.formality,
+      summary: clean(result.summary, 600),
+    },
+    await acceptedIdeas(workspaceId),
+  );
   const values = {
     status: "ready" as const,
     source: "learned" as const,
-    summary: clean(result.summary, 600),
+    summary: shaped.summary,
     greetingStyle: (result.greeting_style && clean(result.greeting_style, 100)) || null,
     signoffStyle: (result.signoff_style && clean(result.signoff_style, 100)) || null,
-    avgLengthWords: Math.max(10, Math.min(400, Math.round(result.avg_length_words))),
-    formality: result.formality,
+    avgLengthWords: shaped.avgLengthWords,
+    formality: shaped.formality,
     phrasesUsed: result.phrases_used.slice(0, 10).map((p) => clean(p, 120)),
     phrasesAvoided: result.phrases_avoided.slice(0, 10).map((p) => clean(p, 120)),
     examples: result.examples.slice(0, 5).map((e) => clean(e, 600)),
