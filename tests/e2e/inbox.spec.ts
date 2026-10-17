@@ -249,3 +249,42 @@ test("Check 10 P1: 'I called them' on an Inbox card turns it back to a normal ca
   await expect(dana).toContainText("Replied");
   await expect(dana.locator("details")).not.toHaveClass(/sa-inverted/);
 });
+
+test("Check 10 P3: a burst pipe from today says Emergency and comes first", async ({
+  page,
+  context,
+}) => {
+  const owner = await seedOwner({ mailbox: true, backfilled: true });
+  await seedThreads(owner.mailboxId!);
+  const at = new Date(Date.now() - 2 * 60 * 60_000);
+  const [t] = await testDb
+    .insert(schema.threads)
+    .values({
+      mailboxId: owner.mailboxId!,
+      gmailThreadId: `pipe-${owner.mailboxId}`,
+      inInbox: true,
+      category: "customer_question",
+      priority: "high",
+      needsOwner: true,
+      needsOwnerReason: "An emergency.",
+      summary: "Burst pipe in the basement, water everywhere.",
+      lastMessageAt: at,
+      extracted: { urgency: "emergency" },
+    })
+    .returning();
+  await testDb.insert(schema.messages).values({
+    threadId: t!.id,
+    mailboxId: owner.mailboxId!,
+    gmailMessageId: `pipe-m-${owner.mailboxId}`,
+    direction: "in",
+    fromName: "Kevin",
+    fromAddress: "kevin@example.com",
+    sentAt: at,
+  });
+  await signInAs(context, owner);
+  await page.goto("/inbox");
+  const first = page.locator("main li").first();
+  await expect(first).toContainText("Kevin");
+  await expect(first).toContainText("Emergency · Question · Needs you");
+  await expect(page.locator("main li").nth(1)).toContainText("Dana");
+});

@@ -39,6 +39,13 @@ Base: cd15c59. One commit per step. Nothing here needs wave 1 unless marked "nee
   `quote_restored` (content-free). Both never draft or send. Without Check 11 P6 both "sent
   another way" cases read "Quoted".
 
+- **Emergencies first (Check 10 P3):** `listInboxThreads` selects `extracted->>'urgency'` and
+  orders by a tier (`tierSql`, twin of the pure `inboxTier` / `inboxRank` / `compareInbox` in
+  `inbox-rules.ts`): emergency from the last 24 h that the customer wrote last on (4) + open
+  needs-you (2) + priority high in the last 24 h (1), then newest (no time last), then id. Cards
+  lead with "Emergency" (urgency) or "Urgent" (priority high) in font-black, on every card,
+  black ones included. `listInboxThreads`' third argument is now `{ limit?, now? }`.
+
 ## Integration notes
 
 - `src/app/(app)/quotes/page.tsx`, `quotes/actions.ts`, `src/server/quotes.ts`,

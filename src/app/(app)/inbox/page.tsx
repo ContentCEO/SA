@@ -14,7 +14,7 @@ import { threadOffers, type ThreadOffers } from "@/server/offers";
 import { priceMemoryFor, type PriceMemoryItem } from "@/server/price-memory";
 import { getBusinessProfile } from "@/server/profile";
 import { requireOwner } from "@/server/session";
-import { isFoldableJunk, searchText } from "@/server/inbox-rules";
+import { isFoldableJunk, searchText, urgencyWord } from "@/server/inbox-rules";
 import { draftReplyAction } from "../queue/actions";
 import { channelKind, channelName, openSiteUrl } from "@/server/channel-rules";
 import { InboxSearch } from "./inbox-search";
@@ -187,9 +187,10 @@ export default async function InboxPage(props: PageProps<"/inbox">) {
               </span>
             </div>
             <span className="text-sm font-semibold">
+              {/* Check 10 P3: by weight only, first, on every card. */}
+              {urgencyWord(row) ? <span className="font-black">{urgencyWord(row)} · </span> : null}
               {isCategory(row.category) ? categoryTag[row.category] : "Not sorted yet"}
               {row.needsOwner ? " · Needs you" : ""}
-              {row.priority === "high" && !row.needsOwner ? " · Urgent" : ""}
               {row.replyState ? ` · ${row.replyState}` : ""}
             </span>
             <span className={cn("line-clamp-2", row.needsOwner ? "" : "text-muted-foreground")}>
