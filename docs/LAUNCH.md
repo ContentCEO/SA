@@ -1053,7 +1053,7 @@ Nothing below is switched on or changed until you say so.
   until you pick them: the monthly fee, any setup or website fee, and whether a website has a
   minimum term (all **[To confirm]** in the agreement draft).
 - **How to start a Growth client** (no decision needed, just the steps): open `/admin` → Growth
-  clients. If they already have an account, tap **Start Growth for this account**, pick it, tick
+  clients (its own page, `/admin/growth`). If they already have an account, tap **Start Growth for this account**, pick it, tick
   the services, set the start date and their time zone. If not, use **Invite to Growth** (or
   the same button on their waitlist card's Growth request); they get an email with the sign-in
   link, and while the Google app is in Testing add them as a Google test user too (the list

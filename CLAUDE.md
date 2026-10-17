@@ -1742,9 +1742,10 @@ default, CI too) and refuses a non-local `DATABASE_URL` or an `APP_URL` that isn
     Both are outside `(app)` (own header, no tab bar), in the proxy matcher and robots, behind
     `requireOwner` (terms). `/my-growth` 404s for non-clients and ended clients (no
     loading.tsx; in the C2 must-404 list).
-  - **Admin "Growth clients" card** (`admin/growth-admin.tsx`, actions in
-    `admin/growth-actions.ts`, all `requireAdmin` first; notices `growth_*` in the card, `wl_*`
-    in the waitlist card): Start Growth for this account (accounts listed as business name +
+  - **Admin "Growth clients"** on its own page `/admin/growth` (/admin only links to it with a
+    count: with every client's forms inline, /admin got slow enough under load to time out older
+    admin e2e tests). `admin/growth-admin.tsx`, actions in `admin/growth-actions.ts`, all
+    `requireAdmin` first; `growth_*` notices on /admin/growth, `wl_*` in /admin's waitlist card: Start Growth for this account (accounts listed as business name +
     owner email; a client whose Growth ended can be started again), change services / start date
     / time zone, pause / resume / end (confirm each), Post an update, Monthly numbers (one form per
     month; emptying every box removes the month), Invite to Growth (no account yet).
