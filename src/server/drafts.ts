@@ -1689,6 +1689,11 @@ export async function queueSend(
         stillWaiting,
         eq(drafts.toAddress, draft.toAddress),
         sql`${drafts.body} is not distinct from ${draft.body}`,
+        // Check 9 P2: an autopilot run that claimed it meanwhile sends it; this tap doesn't.
+        or(
+          isNull(drafts.autoSendClaimedAt),
+          lt(drafts.autoSendClaimedAt, new Date(now.getTime() - AUTOPILOT_CLAIM_LEASE_MS)),
+        ),
       ),
     )
     .returning({ id: drafts.id });
@@ -1701,12 +1706,15 @@ export async function queueSend(
         body: drafts.body,
         status: drafts.status,
         sendAfter: drafts.sendAfter,
+        autoSendAt: drafts.autoSendAt,
+        autoSendClaimedAt: drafts.autoSendClaimedAt,
       })
       .from(drafts)
       .where(eq(drafts.id, draft.id));
     if (current?.status === "pending" && current.sendAfter == null) {
       if (!sameAddress(current.to, draft.toAddress)) return { status: "to_changed" };
       if ((current.body ?? "") !== (draft.body ?? "")) return { status: "changed_since_seen" };
+      if (autopilotSending(current, now)) return { status: "already_sending" };
     }
     return await whyNotQueued(draft.id);
   }

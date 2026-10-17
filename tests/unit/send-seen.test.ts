@@ -129,6 +129,30 @@ describe("Check 9 P1: refuse a send when the card showed different text", () => 
     expect(after.body).toBe(B_TEXT);
   });
 
+  it("an autopilot claim taken while the tap waits on Gmail wins: the tap queues nothing", async () => {
+    const { draft } = await w.seed();
+    await w.database.update(drafts).set({ autoSendAt: NOW }).where(eq(drafts.id, draft.id));
+    const realGet = w.writer.getDraft.bind(w.writer);
+    w.writer.getDraft = async (id: string) => {
+      const got = await realGet(id);
+      // Check 9 P2: the autopilot run claims it right now.
+      await w.database
+        .update(drafts)
+        .set({ autoSendClaimedAt: NOW })
+        .where(eq(drafts.id, draft.id));
+      return got;
+    };
+    const r = await queueSend(w.workspace.id, draft.id, {
+      ...w.deps(),
+      seenHash: bodyHash(READY_BODY),
+    });
+    expect(r).toEqual({ status: "already_sending" });
+    const after = await w.row(draft.id);
+    expect(after.sendAfter).toBeNull();
+    expect(after.autoSendAt).toEqual(NOW);
+    expect(w.writer.sent).toEqual([]);
+  });
+
   describe("through the server actions", () => {
     beforeEach(async () => {
       await recordTermsAcceptance(w.user.id);
@@ -173,10 +197,8 @@ describe("Check 9 P1: refuse a send when the card showed different text", () => 
     });
 
     it("the 'changed' notice says nothing was sent", async () => {
-      const src = await import("node:fs").then((fs) =>
-        fs.readFileSync("src/app/(app)/queue/page.tsx", "utf8"),
-      );
-      expect(src).toContain(
+      const { QUEUE_ERRORS } = await import("@/app/(app)/queue/queue-messages");
+      expect(QUEUE_ERRORS.changed).toBe(
         "That draft changed since you opened it, so nothing was sent. Here's the latest version. Read it, then tap Send reply again.",
       );
     });
