@@ -7,7 +7,7 @@ import {
   VOICE_INSTRUCTIONS,
   VOICE_PROMPT_VERSION,
   voiceSchema,
-} from "@/ai/prompts/voice.v2";
+} from "@/ai/prompts/voice.v3";
 import { AiCapReachedError } from "@/ai/usage";
 import { db } from "@/db";
 import { activityLog, mailboxes, voiceProfiles, workspaces, type Mailbox } from "@/db/schema";

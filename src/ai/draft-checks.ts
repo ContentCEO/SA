@@ -6,7 +6,7 @@
 import type { Licenses } from "@/config/licenses";
 import { MA_DEPOSIT_DRAFT_FLAG } from "@/config/ma-rules";
 import { overMaDepositCap } from "@/server/deposit-rules";
-import { withoutGaps } from "./gaps";
+import { blanks, withoutGaps } from "./gaps";
 import { allNumbers, moneyMentions, vagueMoney } from "./money-words";
 import { localDay } from "./prompts/draft.v6";
 import { newWhenTokens, normalizeWhen, whenTokens } from "./when-words";
@@ -226,7 +226,9 @@ export type CheckHit =
   /** Check 38 P2: asks a Massachusetts customer for more than a one-third deposit. Flag only. */
   | "deposit_cap"
   /** Check 23 P6: a phone number, link, email address or name nobody gave. */
-  | "contact";
+  | "contact"
+  /** Check 23 P7: a "[name]"-style blank, so the card never reads Ready. Flag only. */
+  | "blank";
 export type CheckResult = { flags: string[]; confidenceCap: number; hits: CheckHit[] };
 
 /**
@@ -696,6 +698,15 @@ export function checkDraft(draftBody: string, ctx: CheckContext): CheckResult {
     );
     cap = Math.min(cap, 0.5);
     hits.push("rule_claim");
+  }
+
+  // A "[name]"-style blank (Check 23 P7): the send gate refuses it, so the card must not read
+  // Ready. Flag only; the card shows it as a gap to fill in.
+  const blank = blanks(draftBody);
+  if (blank.length) {
+    flags.push(`Has a blank (“${blank[0]!.trim()}”) to fill in.`);
+    cap = Math.min(cap, 0.6);
+    hits.push("blank");
   }
 
   // Phone numbers, links, email addresses and names nobody gave (Check 23 P6).

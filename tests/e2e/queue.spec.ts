@@ -515,6 +515,41 @@ test("price memory: past prices for similar jobs, and a tap fills only the price
   expect(overflow).toBe(false);
 });
 
+test("a [name]-style blank is a gap: a chip, never Ready, Send reply only once filled (Check 23 P7)", async ({
+  page,
+  context,
+}) => {
+  const owner = await seedOwner({ mailbox: true, backfilled: true });
+  await setWorkspace(owner.workspaceId, {
+    status: "setup_paid",
+    setupPaidAt: new Date(),
+    setupPaidVia: "stripe",
+  });
+  const { draft } = await seedQueue(owner.mailboxId!);
+  await testDb
+    .update(schema.drafts)
+    .set({
+      body: "Hi [name],\n\nHappy to take a look. What's the address?\n\nThanks, Davi",
+      flags: ["Has a blank (“[name]”) to fill in."],
+      confidence: 60,
+    })
+    .where(eq(schema.drafts.id, draft.id));
+  await signInAs(context, owner);
+
+  await page.goto("/queue");
+  const card = page.getByRole("article", { name: "Draft reply to Priya" });
+  await expect(card.getByRole("button", { name: "Fill in their name" })).toBeVisible();
+  await expect(card.getByRole("note")).toContainText("Fill in 1 gap to send");
+  await expect(card.getByRole("button", { name: "Send reply" })).toHaveCount(0);
+  await expect(card).not.toContainText("Ready");
+
+  await card.getByRole("button", { name: "Fill in their name" }).click();
+  await card.getByLabel("What should “their name” say?").fill("Priya");
+  await card.getByRole("button", { name: "Fill in", exact: true }).click();
+  await expect(card).toContainText("Hi Priya,");
+  await expect(card.getByRole("button", { name: "Send reply" })).toBeEnabled();
+});
+
 test("a typical draft's Send reply is on the first screen of its card (outside review)", async ({
   page,
   context,

@@ -131,3 +131,14 @@ Notes for the integrator: what CLAUDE.md should say, by step. Files in this grou
   email or your profile. Check it."). Narrow on purpose: greetings, towns, streets, days,
   holidays and brands ("for Eversource customers") don't trip it. At most two contact lines per
   draft. Any flag already keeps a draft from autopilot (tested).
+- **[name]-style blanks are gaps (Check 23 P7, wave 1):** `findGaps` now also returns the
+  blanks the send gate already refused (`OTHER_PLACEHOLDER`): "[name]" → their name, "[time]"
+  → time, "[date]" / "[day]" → date, "[price]" / "[amount]" / "$___" / "$X,XXX" → price,
+  anything else → its own words; `fillGap` fills them the same way, in text order. So the card
+  shows a chip, counts it in "Fill in N gaps to send", and never shows Send reply or Ready
+  until it's filled. checkDraft adds "Has a blank (“[name]”) to fill in." (hit `blank`, cap
+  0.6, no rewrite). The queue's gap notice is now "Fill in every blank before sending. Nothing
+  was sent." Prompt **`voice.v3`**: sample replies use `{{custom:name}}`, `{{custom:address}}`,
+  `{{date}}`, `{{time}}`, `{{price}}`; Settings → Your voice shows them as "[name]" etc.
+  (`showGaps`), never braces. Profiles learned with v2 keep "[name]"; the card handles those.
+  No voice eval set exists, so none was extended.

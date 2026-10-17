@@ -72,7 +72,8 @@ const done: Record<string, string> = {
 };
 const errors: Record<string, string> = {
   ...CONTROL_ERRORS,
-  gaps: "Fill in every gap before sending (anything like {{price}} or [price]) — nothing was sent.",
+  // Check 23 P7: plain words, no braces.
+  gaps: "Fill in every blank before sending. Nothing was sent.",
   busy: "That's a lot in a short time, so we've paused it for a bit. Try again in a few minutes.",
   blocked: "Sending isn't switched on for your account, so nothing was sent.",
   changed:

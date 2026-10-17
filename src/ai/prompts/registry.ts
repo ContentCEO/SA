@@ -16,7 +16,7 @@ import { FOLLOWUP_PROMPT_VERSION } from "./followup.v4";
 import { OPENING_TWEAKS_PROMPT_VERSION } from "./opening-tweaks.v1";
 import { PURPOSE_PROMPT_VERSION } from "./purpose.v2";
 import { REVISE_PROMPT_VERSION } from "./revise.v2";
-import { VOICE_PROMPT_VERSION } from "./voice.v2";
+import { VOICE_PROMPT_VERSION } from "./voice.v3";
 
 export const ACTIVE = {
   classify: CLASSIFY_PROMPT_VERSION,
