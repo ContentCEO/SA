@@ -6,6 +6,7 @@ import { Headline } from "@/components/brand/headline";
 import { Button } from "@/components/ui/button";
 import { formatDollars, pricing, type PlanId } from "@/config/pricing";
 import { siteConfig } from "@/config/site";
+import { FEATURED_PLAN, planFeatureLines } from "@/server/plan-features";
 import { cn } from "@/lib/utils";
 import { stripeConfigured } from "@/server/billing";
 import {
@@ -13,6 +14,7 @@ import {
   checkoutTerms,
   firstChargeLine,
   PLAN_IDS,
+  setupCallSentence,
 } from "@/server/billing-rules";
 import { effectiveStatus, setupReallyPaid } from "@/server/lifecycle";
 import { phoneHref } from "@/lib/phone-href";
@@ -92,8 +94,7 @@ export default async function BillingPage(props: PageProps<"/billing">) {
               .
             </li>
             <li>
-              Have your price list handy. On the call, {davi} loads your prices, hours and the
-              things you never promise, and tunes your drafts with you.
+              Have your price list handy. On the call, {davi} {setupCallSentence("after")}.
             </li>
             <li>Sending is on now. Every reply still waits for you to tap Send reply.</li>
           </ol>
@@ -145,14 +146,14 @@ export default async function BillingPage(props: PageProps<"/billing">) {
                   {pricing.setupFee.name.toLowerCase()} of{" "}
                   {formatDollars(pricing.setupFee.amountCents)}
                 </span>
-                : a call with us to load your prices, hours and never-promise list, and tune your
-                drafts. It&apos;s added to your first payment.
+                : a call with us to {setupCallSentence("before")}. It&apos;s added to your first
+                payment.
               </p>
             ) : null}
             <ul className="flex flex-col gap-3">
               {PLAN_IDS.map((id) => {
                 const p = pricing.plans[id];
-                const featured = id === "crew";
+                const featured = id === FEATURED_PLAN;
                 return (
                   <li
                     key={id}
@@ -173,9 +174,7 @@ export default async function BillingPage(props: PageProps<"/billing">) {
                       </span>
                     </div>
                     <p className={featured ? "text-ash" : "text-muted-foreground"}>
-                      {p.mailboxLimit} Gmail inbox{p.mailboxLimit === 1 ? "" : "es"}
-                      {p.autopilot ? " · Autopilot" : ""}
-                      {id === "company" ? " · Priority support" : ""}
+                      {planFeatureLines(id).join(" · ")}
                     </p>
                     <p className="text-sm">{firstChargeLine(id, terms.includeSetupFee)}</p>
                     <form action={startCheckoutAction}>

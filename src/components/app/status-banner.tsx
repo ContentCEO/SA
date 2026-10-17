@@ -2,6 +2,7 @@ import Link from "next/link";
 import { auth } from "@/auth";
 import { siteConfig } from "@/config/site";
 import { getWorkspaceForUser } from "@/server/accounts";
+import { setupCallSentence } from "@/server/billing-rules";
 import { queueCounts } from "@/server/drafts";
 import { trialCounts } from "@/server/first-week";
 import { isLastDay, trialSoFarLine, waitingLine } from "@/server/first-week-rules";
@@ -139,8 +140,8 @@ export async function StatusBanner() {
       return inverted(
         "Setup's paid. Sending is on.",
         <>
-          Every reply still waits for your okay. We&apos;ll call to go through your pricing,
-          scheduling and never-promise list. <Contact />
+          Every reply still waits for your okay. On your setup call,{" "}
+          {siteConfig.operator.split(" ")[0]} {setupCallSentence("after")}. <Contact />
         </>,
       );
     case "past_due":

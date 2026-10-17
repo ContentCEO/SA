@@ -8,6 +8,7 @@ import { Headline } from "@/components/brand/headline";
 import { Wordmark } from "@/components/brand/wordmark";
 import { QueuePreview } from "@/components/marketing/queue-preview";
 import { PlanCards } from "@/components/marketing/plan-cards";
+import { setupCallSentence } from "@/server/billing-rules";
 import { WaitlistForm } from "@/components/marketing/waitlist-form";
 import {
   faqs,
@@ -211,8 +212,7 @@ export default async function HomePage(props: PageProps<"/">) {
                   {pricing.setupFee.name} — {formatDollars(pricing.setupFee.amountCents)} once
                 </span>
                 <span className="text-lg text-slate">
-                  A call with us to load your prices, hours, service area and the things you never
-                  promise, then tune the drafts until they sound like you.
+                  A call with us to {setupCallSentence("before")}.
                 </span>
               </div>
             </div>

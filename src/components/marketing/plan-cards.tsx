@@ -1,6 +1,7 @@
 import { formatDollars, pricing } from "@/config/pricing";
 import { cn } from "@/lib/utils";
 import { firstChargeLine, PLAN_IDS } from "@/server/billing-rules";
+import { FEATURED_PLAN, planFeatureLines } from "@/server/plan-features";
 
 /** The homepage's plan cards, keyed on plan ids (Check 35 P2 / P4). */
 export function PlanCards() {
@@ -8,7 +9,7 @@ export function PlanCards() {
     <ul className="grid gap-4 md:grid-cols-3">
       {PLAN_IDS.map((id) => {
         const p = pricing.plans[id];
-        const featured = id === "crew";
+        const featured = id === FEATURED_PLAN;
         return (
           <li
             key={id}
@@ -28,12 +29,9 @@ export function PlanCards() {
               {firstChargeLine(id, true)}
             </p>
             <ul className="flex flex-col gap-1.5 text-lg">
-              <li>
-                {p.mailboxLimit} Gmail inbox{p.mailboxLimit === 1 ? "" : "es"}
-              </li>
-              <li>Sorting, drafts, follow-ups, morning summary</li>
-              {p.autopilot ? <li>Autopilot for the emails you choose</li> : null}
-              {id === "company" ? <li>Priority support</li> : null}
+              {planFeatureLines(id).map((line) => (
+                <li key={line}>{line}</li>
+              ))}
             </ul>
           </li>
         );

@@ -1,8 +1,8 @@
-import { pricing } from "@/config/pricing";
 import { UNDO_WINDOW_SECONDS } from "@/config/drafting";
 import { bodyRetentionDays } from "@/config/retention";
 import { EARN_THRESHOLD, GRACE_MINUTES, MAX_FOLLOWUPS } from "@/config/rules";
 import { numberWord } from "@/lib/number-words";
+import { autopilotPlanNames } from "@/server/plan-features";
 import { QUOTE_STAGES, stageLabel } from "@/server/quote-rules";
 
 /**
@@ -97,7 +97,7 @@ export const faqs = [
     q: "Will it send emails without me?",
     // Check 6 P3: autopilot needs a plan with it, the setup call done, and replies sent exactly
     // as drafted (src/server/autopilot.ts).
-    a: `No. Every reply waits in your queue until you tap Send reply. Autopilot is the one exception, and you choose it: it's only on the ${pricing.plans.crew.name} and ${pricing.plans.company.name} plans, only after your setup call, and only for a kind of email where you've sent ${EARN_THRESHOLD} replies without changing a word. Even then, each one waits ${GRACE_MINUTES} minutes so you can stop it.`,
+    a: `No. Every reply waits in your queue until you tap Send reply. Autopilot is the one exception, and you choose it: it's only on the ${autopilotPlanNames()} plans, only after your setup call, and only for a kind of email where you've sent ${EARN_THRESHOLD} replies without changing a word. Even then, each one waits ${GRACE_MINUTES} minutes so you can stop it.`,
   },
   {
     q: "How is this different from Gmail's own AI, or from Jobber?",
