@@ -95,6 +95,38 @@ test("unticking a Gmail permission on Google's screen saves nothing and hands th
   expect(blocked).toEqual([]);
 });
 
+test("a Google account without Gmail is refused plainly and the trial doesn't start (Check 47 P1)", async ({
+  page,
+  context,
+  request,
+}) => {
+  await page.setViewportSize({ width: 375, height: 812 });
+  const email = newOwnerEmail();
+  const scenario = await registerScenario(request, email, {}, { noGmail: true });
+  const owner = await seedOwner({ email });
+  await signInAs(context, owner);
+  const { blocked } = await routeGoogleConsent(page, context);
+
+  await page.goto("/connect");
+  await page.getByRole("button", { name: "Connect Gmail" }).click();
+  await page.getByRole("link", { name: "Allow" }).click();
+
+  await expect(page).toHaveURL(/\/connect\?error=no_gmail$/);
+  await expect(page.getByRole("alert")).toContainText(
+    "This Google account doesn't have Gmail, so there's nothing for Squared Away to read.",
+  );
+  await noHorizontalScroll(page);
+  expect(await mailboxCount(owner.workspaceId)).toBe(0);
+  const [w] = await testDb
+    .select({ status: schema.workspaces.status, ends: schema.workspaces.evaluationEndsAt })
+    .from(schema.workspaces)
+    .where(eq(schema.workspaces.id, owner.workspaceId));
+  expect(w).toEqual({ status: "invited", ends: null });
+  const routes = (await calls(request, scenario.id)).map((c) => c.route);
+  expect(routes).toEqual(["consent", "token", "gmail.profile", "revoke"]);
+  expect(blocked).toEqual([]);
+});
+
 test("an owner whose older grant still carries gmail.send connects as usual", async ({
   page,
   context,

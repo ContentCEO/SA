@@ -28,6 +28,18 @@ export class MissingScopesError extends Error {
   }
 }
 
+/**
+ * Check 47 P1: the Google account has no Gmail (Gmail answers "Mail service not enabled"): a
+ * Google account made for Business Profile or Ads while the email lives on Outlook, or a
+ * Workspace with Gmail turned off. Nothing is saved and the token is revoked.
+ */
+export class NoGmailError extends Error {
+  constructor() {
+    super("This Google account has no Gmail.");
+    this.name = "NoGmailError";
+  }
+}
+
 /** A message as the sync engine sees it, independent of provider. */
 export type MailMessage = {
   providerMessageId: string;

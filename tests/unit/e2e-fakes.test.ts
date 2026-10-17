@@ -12,7 +12,7 @@ import { editToneSchema } from "@/ai/prompts/edit-tone.v1";
 import { voiceSchema } from "@/ai/prompts/voice.v2";
 import { anthropicClientOptions } from "@/config/e2e";
 import { models } from "@/config/models";
-import { MailboxAuthError, MissingScopesError } from "@/mailbox/connector";
+import { MailboxAuthError, MissingScopesError, NoGmailError } from "@/mailbox/connector";
 import { createGmailReader } from "@/mailbox/gmail/api";
 import { createGmailConnector } from "@/mailbox/gmail/connector";
 import { ALL_CONNECT_SCOPES, GMAIL_SCOPES } from "@/mailbox/gmail/scopes";
@@ -157,11 +157,11 @@ describe("the fake server", () => {
   const scenarioId = "7b0e5c9d-2f1a-4c3b-8d6e-0a1b2c3d4e5f";
   const ownerEmail = "owner-fake@example.com";
 
-  const register = async (id: string, email: string, grant: FakeGrant = {}) => {
+  const register = async (id: string, email: string, grant: FakeGrant = {}, noGmail = false) => {
     const res = await fetch(`${url}/__scenarios`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ id, ownerEmail: email, grant }),
+      body: JSON.stringify({ id, ownerEmail: email, grant, noGmail }),
     });
     expect(res.status).toBe(201);
   };
@@ -500,6 +500,23 @@ describe("the fake server", () => {
       raw: ownRaw("older@example.com"),
     });
     expect((await c.sendDraft(draft.draftId)).threadId).toBe(customer.gmailThreadId);
+  });
+
+  it("a Google account without Gmail: the profile answers failedPrecondition and connect refuses it (Check 47 P1)", async () => {
+    e2eEnv();
+    const id = "6a8c0e2f-5b7d-4e9f-8a1b-4c5d6e7f8091";
+    await register(id, "nogmail@example.com", {}, true);
+    await consent("nogmail@example.com");
+    const err = await createGmailConnector()
+      .exchangeCode({ code: `e2e-${id}`, redirectUri })
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(NoGmailError);
+    expect((await recorded(id)).map((c) => c.route)).toEqual([
+      "consent",
+      "token",
+      "gmail.profile",
+      "revoke",
+    ]);
   });
 
   it("a refresh token it never issued gets what real Google tells a dummy client", async () => {

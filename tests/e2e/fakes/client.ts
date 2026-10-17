@@ -25,11 +25,11 @@ export async function registerScenario(
   request: APIRequestContext,
   ownerEmail: string,
   grant: FakeGrant = {},
-  opts: { lead?: FakeLead } = {},
+  opts: { lead?: FakeLead; noGmail?: boolean } = {},
 ): Promise<{ id: string; ref: string }> {
   const id = randomUUID();
   const res = await request.post(`${fakesUrl()}/__scenarios`, {
-    data: { id, ownerEmail, grant, lead: opts.lead ?? "direct" },
+    data: { id, ownerEmail, grant, lead: opts.lead ?? "direct", noGmail: opts.noGmail ?? false },
   });
   if (res.status() !== 201) throw new Error(`Fake scenario not registered (${res.status()}).`);
   return (await res.json()) as { id: string; ref: string };

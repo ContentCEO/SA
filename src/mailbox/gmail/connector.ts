@@ -1,6 +1,11 @@
 import "server-only";
 import { z } from "zod";
-import { MissingScopesError, type ConnectResult, type MailboxConnector } from "../connector";
+import {
+  MissingScopesError,
+  NoGmailError,
+  type ConnectResult,
+  type MailboxConnector,
+} from "../connector";
 import { googleEndpoints } from "@/config/e2e";
 import { ALL_CONNECT_SCOPES, REQUIRED_GMAIL_SCOPES, missingScopes } from "./scopes";
 
@@ -84,6 +89,26 @@ export function createGmailConnector(fetchImpl: Fetch = fetch): MailboxConnector
         throw new MissingScopesError(missing);
       }
       if (!token.refresh_token) throw new Error("Google did not return a refresh token.");
+
+      // Check 47 P1: a Google account isn't always a Gmail account. Ask Gmail itself before
+      // anything is saved (the trial clock starts on the first save).
+      const profileRes = await fetchImpl(`${googleEndpoints().gmailApi}/profile`, {
+        headers: { authorization: `Bearer ${token.access_token}` },
+      });
+      if (!profileRes.ok) {
+        const err = (await profileRes.json().catch(() => ({}))) as {
+          error?: { message?: string; errors?: { reason?: string }[] };
+        };
+        const noGmail =
+          profileRes.status === 400 &&
+          (err.error?.errors?.[0]?.reason === "failedPrecondition" ||
+            /mail service not enabled/i.test(err.error?.message ?? ""));
+        if (noGmail) {
+          await revoke(token.refresh_token);
+          throw new NoGmailError();
+        }
+        throw new Error(`Gmail profile failed (${profileRes.status}).`);
+      }
 
       const infoRes = await fetchImpl(googleEndpoints().userinfo, {
         headers: { authorization: `Bearer ${token.access_token}` },

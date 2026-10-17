@@ -53,3 +53,18 @@ fetch and `politely()` pauses. Inbox emails are read once (full); others as meta
   *already* archived still sends (the owner saw the archived line and chose to send); an archive
   *after* the tap un-queues it. needs wave 1: the send path group may prefer a check inside
   `queueSend` / `sendDraft`.
+
+## Step 3 · Check 47 P1: refuse a Google account that has no Gmail
+
+- `exchangeCode` calls Gmail's `/profile` with the new access token after the scope check. A 400
+  `failedPrecondition` (or "Mail service not enabled") → the refresh token is revoked and
+  `NoGmailError` (src/mailbox/connector.ts) is thrown; any other non-OK answer is a plain error.
+- The callback maps it to `/connect?error=no_gmail` (log `gmail_connect_no_mailbox
+  { name: "NoGmailError" }` only). Nothing is saved, so the trial clock never starts.
+- Connect screen wording (phone from `siteConfig.phone`): "This Google account doesn't have
+  Gmail, so there's nothing for Squared Away to read. It works with Gmail and Google Workspace
+  for now. If your business email is on Outlook, call or text Davi at 978-201-9763; Outlook is on
+  the list."
+- e2e fake Google: `registerScenario(…, { noGmail: true })` makes the profile answer 400
+  failedPrecondition.
+- Every connect now makes one extra Gmail call (profile, 1 unit) before userinfo.

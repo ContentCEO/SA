@@ -47,6 +47,9 @@ const GMAIL_SEND = "https://www.googleapis.com/auth/gmail.send";
 const TOKEN_URL = "https://oauth2.googleapis.com/token";
 const USERINFO_URL = "https://openidconnect.googleapis.com/v1/userinfo";
 const REVOKE_URL = "https://oauth2.googleapis.com/revoke";
+const PROFILE_URL = "https://gmail.googleapis.com/gmail/v1/users/me/profile";
+/** Check 47 P1: whether the Google account has Gmail at all. */
+let hasGmail: boolean;
 
 let database: Database;
 let workspaceId: string;
@@ -65,6 +68,7 @@ beforeEach(async () => {
   req.session = { user: { id: user.id } };
   req.cookies = new Map([[GMAIL_STATE_COOKIE, "state-123"]]);
   google = [];
+  hasGmail = true;
   vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     google.push({ url, body: String(init?.body ?? "") });
@@ -73,6 +77,19 @@ beforeEach(async () => {
     if (url === TOKEN_URL)
       return json({ access_token: "at-new", refresh_token: "rt-new", scope: granted.join(" ") });
     if (url === USERINFO_URL) return json({ email: "owner@shop.com", email_verified: true });
+    if (url === PROFILE_URL)
+      return hasGmail
+        ? json({ emailAddress: "owner@shop.com", historyId: "1" })
+        : new Response(
+            JSON.stringify({
+              error: {
+                code: 400,
+                message: "Mail service not enabled",
+                errors: [{ reason: "failedPrecondition" }],
+              },
+            }),
+            { status: 400, headers: { "content-type": "application/json" } },
+          );
     if (url === REVOKE_URL) return new Response(null, { status: 200 });
     return new Response(null, { status: 404 });
   });
@@ -141,8 +158,26 @@ describe("Gmail connect callback: the two scopes", () => {
       expect(row?.status).toBe("active");
       expect(row?.scopes).toBe(granted.join(" "));
       expect(decryptSecret(row!.encryptedRefreshToken)).toBe("rt-new");
-      expect(google.map((c) => c.url)).toEqual([TOKEN_URL, USERINFO_URL]);
+      expect(google.map((c) => c.url)).toEqual([TOKEN_URL, PROFILE_URL, USERINFO_URL]);
       expect(await statusOf()).toBe("evaluating");
     }
+  });
+});
+
+describe("Gmail connect callback: a Google account without Gmail (Check 47 P1)", () => {
+  it("GUARDRAIL: redirects to no_gmail, saves nothing, and the trial clock doesn't start", async () => {
+    granted = ALL_CONNECT_SCOPES;
+    hasGmail = false;
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    expect(await callback()).toBe("/connect?error=no_gmail");
+    expect(await database.select().from(mailboxes)).toEqual([]);
+    const [w] = await database.select().from(workspaces).where(eq(workspaces.id, workspaceId));
+    expect(w!.status).toBe("invited");
+    expect(w!.evaluationEndsAt).toBeNull();
+    expect(google.map((c) => c.url)).toEqual([TOKEN_URL, PROFILE_URL, REVOKE_URL]);
+    expect(google[2]!.body).toBe("token=rt-new");
+    // Content-free: the kind of failure only.
+    expect(errors.mock.calls).toEqual([["gmail_connect_no_mailbox", { name: "NoGmailError" }]]);
+    errors.mockRestore();
   });
 });

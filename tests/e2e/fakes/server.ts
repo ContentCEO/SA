@@ -138,6 +138,8 @@ type Scenario = {
   ref: string;
   ownerEmail: string;
   grant: FakeGrant;
+  /** Check 47 P1: a Google account with no Gmail (Gmail answers "Mail service not enabled"). */
+  noGmail: boolean;
   /** What the owner allowed on the consent page; the authorization code carries it. */
   consented: string[] | null;
   /** What the issued tokens carry: null before the code exchange and after a revoke. */
@@ -317,6 +319,7 @@ export function createFakes() {
       ref: r,
       ownerEmail,
       grant,
+      noGmail: input.noGmail === true,
       consented: null,
       granted: null,
       messages: new Map(buildInbox(r, ownerEmail, Date.now(), { lead }).map((m) => [m.id, m])),
@@ -511,6 +514,8 @@ export function createFakes() {
 
     if (routeName === "gmail.profile") {
       at();
+      // What Gmail answers for a Google account that has no Gmail (Check 47 P1).
+      if (s.noGmail) throw gmailError(400, "Mail service not enabled", "failedPrecondition");
       return sendJson(res, 200, {
         emailAddress: s.ownerEmail,
         messagesTotal: s.messages.size,

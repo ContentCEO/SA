@@ -2,7 +2,7 @@ import { cookies } from "next/headers";
 import { NextResponse, type NextRequest } from "next/server";
 import { auth } from "@/auth";
 import { appUrl } from "@/lib/app-url";
-import { MissingScopesError } from "@/mailbox/connector";
+import { MissingScopesError, NoGmailError } from "@/mailbox/connector";
 import { createGmailConnector } from "@/mailbox/gmail/connector";
 import { GMAIL_STATE_COOKIE, gmailRedirectPath, statesMatch } from "@/mailbox/gmail/oauth-state";
 import { getWorkspaceForUser } from "@/server/accounts";
@@ -50,6 +50,10 @@ export async function GET(request: NextRequest) {
     return to(profile?.completedAt ? "/settings/gmail?done=connected" : "/welcome/profile");
   } catch (err) {
     if (err instanceof MissingScopesError) return to("/connect?error=scopes");
+    if (err instanceof NoGmailError) {
+      console.error("gmail_connect_no_mailbox", { name: "NoGmailError" });
+      return to("/connect?error=no_gmail");
+    }
     if (err instanceof MailboxLimitError) return to("/settings/gmail?error=limit");
     // No token or email content in logs — just the kind of failure.
     console.error("gmail_connect_failed", { name: (err as Error).name });

@@ -1,6 +1,6 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { MissingScopesError } from "@/mailbox/connector";
+import { MissingScopesError, NoGmailError } from "@/mailbox/connector";
 import { createGmailConnector } from "@/mailbox/gmail/connector";
 import {
   ALL_CONNECT_SCOPES,
@@ -64,6 +64,7 @@ describe("gmail code exchange", () => {
       .mockResolvedValueOnce(
         json({ access_token: "at", refresh_token: "rt", scope: allScopes.join(" ") }),
       )
+      .mockResolvedValueOnce(json({ emailAddress: "owner@shop.com", historyId: "1" }))
       .mockResolvedValueOnce(json({ email: "Owner@Shop.com", email_verified: true }));
     const result = await createGmailConnector(fetchMock).exchangeCode({
       code: "c",
@@ -83,14 +84,15 @@ describe("gmail code exchange", () => {
       .mockResolvedValueOnce(
         json({ access_token: "at", refresh_token: "rt", scope: older.join(" ") }),
       )
+      .mockResolvedValueOnce(json({ emailAddress: "owner@shop.com", historyId: "1" }))
       .mockResolvedValueOnce(json({ email: "owner@shop.com", email_verified: true }));
     const result = await createGmailConnector(fetchMock).exchangeCode({
       code: "c",
       redirectUri: "https://x/cb",
     });
     expect(result).toEqual({ email: "owner@shop.com", refreshToken: "rt", grantedScopes: older });
-    // No revoke: only the token exchange and the userinfo lookup.
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    // No revoke: only the token exchange, the Gmail check and the userinfo lookup.
+    expect(fetchMock).toHaveBeenCalledTimes(3);
     expect(fetchMock.mock.calls.map((c) => String(c[0]))).not.toContain(
       "https://oauth2.googleapis.com/revoke",
     );
@@ -138,6 +140,57 @@ describe("gmail code exchange", () => {
   });
 });
 
+describe("a Google account without Gmail (Check 47 P1)", () => {
+  const exchange = (profile: Response) => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        json({ access_token: "at", refresh_token: "rt", scope: allScopes.join(" ") }),
+      )
+      .mockResolvedValueOnce(profile)
+      .mockResolvedValueOnce(new Response(null, { status: 200 }));
+    const run = createGmailConnector(fetchMock)
+      .exchangeCode({ code: "c", redirectUri: "https://x/cb" })
+      .catch((e: unknown) => e);
+    return { fetchMock, run };
+  };
+
+  it("profile 400 failedPrecondition → revoked and NoGmailError, no userinfo", async () => {
+    const { fetchMock, run } = exchange(
+      json(
+        {
+          error: {
+            code: 400,
+            message: "Mail service not enabled",
+            errors: [{ reason: "failedPrecondition", message: "Mail service not enabled" }],
+          },
+        },
+        400,
+      ),
+    );
+    expect(await run).toBeInstanceOf(NoGmailError);
+    expect(fetchMock.mock.calls.map((c) => String(c[0]))).toEqual([
+      "https://oauth2.googleapis.com/token",
+      "https://gmail.googleapis.com/gmail/v1/users/me/profile",
+      "https://oauth2.googleapis.com/revoke",
+    ]);
+    expect(String((fetchMock.mock.calls[2]![1] as RequestInit).body)).toBe("token=rt");
+  });
+
+  it("a 400 that only says Mail service not enabled counts too", async () => {
+    const { run } = exchange(json({ error: { message: "Mail service not enabled" } }, 400));
+    expect(await run).toBeInstanceOf(NoGmailError);
+  });
+
+  it("profile 500 → a plain error, nothing revoked", async () => {
+    const { fetchMock, run } = exchange(json({ error: { message: "Backend Error" } }, 500));
+    const err = await run;
+    expect(err).toBeInstanceOf(Error);
+    expect(err).not.toBeInstanceOf(NoGmailError);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+});
+
 describe("gmail revoke", () => {
   it("treats an already-revoked token as success", async () => {
     const fetchMock = vi.fn().mockResolvedValue(json({ error: "invalid_token" }, 400));
@@ -164,6 +217,7 @@ describe("where it calls (Milestone 11 e2e seam)", () => {
       .mockResolvedValueOnce(
         json({ access_token: "at", refresh_token: "rt", scope: allScopes.join(" ") }),
       )
+      .mockResolvedValueOnce(json({ emailAddress: "owner@shop.com", historyId: "1" }))
       .mockResolvedValueOnce(json({ email: "owner@shop.com", email_verified: true }))
       .mockResolvedValueOnce(json({}, 200));
   async function urlsCalled() {
@@ -187,6 +241,7 @@ describe("where it calls (Milestone 11 e2e seam)", () => {
       for (const [k, v] of Object.entries(env)) vi.stubEnv(k, v);
       expect(await urlsCalled()).toEqual([
         "https://oauth2.googleapis.com/token",
+        "https://gmail.googleapis.com/gmail/v1/users/me/profile",
         "https://openidconnect.googleapis.com/v1/userinfo",
         "https://oauth2.googleapis.com/revoke",
         "https://accounts.google.com/o/oauth2/v2/auth",
@@ -200,6 +255,7 @@ describe("where it calls (Milestone 11 e2e seam)", () => {
     vi.stubEnv("VERCEL_ENV", undefined);
     expect(await urlsCalled()).toEqual([
       "http://127.0.0.1:3301/token",
+      "http://127.0.0.1:3301/gmail/v1/users/me/profile",
       "http://127.0.0.1:3301/userinfo",
       "http://127.0.0.1:3301/revoke",
       "https://accounts.google.com/o/oauth2/v2/auth",
