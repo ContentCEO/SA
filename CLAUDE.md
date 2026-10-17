@@ -78,6 +78,26 @@ default, CI too) and refuses a non-local `DATABASE_URL` or an `APP_URL` that isn
 `http://localhost:<PORT>`. Stop any `pnpm dev`/`pnpm start` on those ports first. In the
 `/home/user/SA-launch` worktree use `PORT=3300` (fakes 3301, database `squared_away_launch`).
 
+## Working in parallel
+
+Davi runs several builder sessions at once. The build order for review prompts is
+`docs/BUILD-ORDER.md`.
+
+1. Branch from the tip of `claude/squared-away-mvp-ddxl7s`; name the branch
+   `claude/c<check>-p<prompt>-<slug>` when the prompt came from a review page; put "Check N PN" in
+   the commit message.
+2. First confirm the problem in the prompt still exists at the tip; if it's fixed, stop and say so.
+3. Migrations: only one session adds migrations at a time. It holds the lane by assigning itself
+   the pinned GitHub issue titled "Migration lane" (create it if missing, with `gh issue create`)
+   and unassigns after its PR merges. Others don't run `pnpm db:generate` while the lane is taken.
+   Write the schema change last: rebase on the tip, then `pnpm db:generate`, then push at once.
+   Never renumber or edit a migration that has run on the shared database.
+4. Shared files: `CLAUDE.md`, `docs/LAUNCH.md` and `docs/privacy-policy.md` are edited only by the
+   session that merges branches (the integrator). Other builders write what those files need to
+   say in `docs/notes/<branch>.md`; the integrator folds it in and deletes the note.
+5. Open a draft pull request on the first push, titled with the check and prompt id.
+6. Don't run two sessions whose prompts name the same file in their "area" line.
+
 ## Conventions
 
 - Buttons name the action ("Send reply", never "Submit"); toast uses the same word ("Reply sent.").

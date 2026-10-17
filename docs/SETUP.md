@@ -85,6 +85,10 @@ pnpm build
 pnpm test:e2e       # browser tests against the production build (see §1 step 8 and §3)
 ```
 
+Several builder sessions often run at once. Before starting one, read "Working in parallel" in
+`CLAUDE.md` (branch names, one migration at a time, notes in `docs/notes/`) and find the step in
+`docs/BUILD-ORDER.md`.
+
 ## 3. End-to-end tests with fake Google and Anthropic
 
 The browser tests drive the real app (`pnpm start`, the production build) against local fakes of
