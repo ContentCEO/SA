@@ -657,6 +657,7 @@ const GROWTH_FILES = [
   "src/app/my-growth/page.tsx",
   "src/app/(app)/admin/growth-actions.ts",
   "src/app/(app)/admin/growth-admin.tsx",
+  "src/app/(app)/admin/growth/page.tsx",
   "src/components/growth-portal/portal-copy.ts",
   "src/components/app/growth-mention.tsx",
 ];
