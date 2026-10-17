@@ -1,5 +1,12 @@
 import "server-only";
-import { injectionCheck, looksMunicipal } from "@/ai/guards";
+import {
+  injectionCheck,
+  looksLikePaymentChange,
+  looksMunicipal,
+  mentionsCarbonMonoxide,
+  mentionsElectricalHazard,
+  mentionsGasSmell,
+} from "@/ai/guards";
 import { and, count, desc, eq, gte, inArray, isNull, lt, sql } from "drizzle-orm";
 import {
   classifyEmail,
@@ -33,7 +40,7 @@ import {
   isOwed,
   PAID_GUESS_FLAG,
 } from "./money-rules";
-import { jobKindOf } from "./monthly-rules";
+import { jobKindOf, leadPlatformOf } from "./monthly-rules";
 import { keepQuoteAccepted, quoteAccepted } from "./quote-rules";
 import { ownerGavePrice } from "./quotes";
 import { messageReplyAddress, notDraftMessage, notDraftSql, sideEmailSql } from "./thread-sql";
@@ -55,6 +62,39 @@ export const BURST_WINDOW_MS = 30 * 60_000;
 export const BURST_MAX = 4;
 /** Gmail tabs that are never a customer. Skipping the model call here saves real money. */
 const NOISE_LABELS = ["CATEGORY_PROMOTIONS", "CATEGORY_SOCIAL"];
+
+/** A lead site's subject that is a lead, not its marketing (Check 22 P1). */
+const LEAD_SUBJECT =
+  /\b(leads?|requests?|sent you a message|new message|quotes?|estimates?|hired|booked)\b/i;
+const PERMIT_WORDS = /\b(permits?|inspections?|certificate of occupancy)\b/i;
+
+/**
+ * Check 22 P1: Promotions / Social mail that must still be read by the sorter instead of being
+ * junked without a look: a lead from a lead site (Nextdoor, Angi, Houzz…), a Facebook lead ad,
+ * anything about a permit or inspection, and anything the checks in code catch (gas, CO,
+ * electrical fire signs, a new bank account, an attack). A lead site's own marketing ("Upgrade
+ * your plan") keeps the shortcut. Pure.
+ */
+export function mustReadDespiteTab(m: {
+  fromAddress: string | null;
+  subject: string | null;
+  snippet: string | null;
+  bodyText: string | null;
+}): boolean {
+  const subject = m.subject ?? "";
+  const from = (m.fromAddress ?? "").toLowerCase();
+  if (leadPlatformOf(from) && LEAD_SUBJECT.test(subject)) return true;
+  if (from.endsWith("@facebookmail.com") && /\blead/i.test(subject)) return true;
+  if (PERMIT_WORDS.test(`${subject}\n${m.snippet ?? ""}`)) return true;
+  const text = `${subject}\n${m.bodyText ?? m.snippet ?? ""}`;
+  return (
+    mentionsGasSmell(text) ||
+    mentionsCarbonMonoxide(text) ||
+    mentionsElectricalHazard(text) ||
+    looksLikePaymentChange(text) ||
+    injectionCheck(text).flagged
+  );
+}
 
 export type ClassifyRunResult = {
   classified: number;
@@ -279,7 +319,9 @@ export async function classifyPending(
       !looksMunicipal(m.fromAddress, m.fromName) &&
       // A thread already marked keeps its mark (B3): it is never quietly turned into junk.
       prevMarks.injection !== true &&
-      prevMarks.payment_change !== true
+      prevMarks.payment_change !== true &&
+      // Check 22 P1: a lead, a permit, or something the safety checks catch is always read.
+      !mustReadDespiteTab(m)
     ) {
       result = {
         ...NOISE,

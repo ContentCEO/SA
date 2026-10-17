@@ -616,3 +616,86 @@ describe("'is this a bot?', sorted and batched (Check 48 P1 + Check 43 P2)", () 
     expect(await batchCandidates(workspaceId, ["scheduling"], NOW)).toHaveLength(1);
   });
 });
+
+describe("Promotions and Social mail that must be read (Check 22 P1)", () => {
+  async function tabbed(
+    g: string,
+    over: { from: string; subject: string; body: string; label: string },
+  ) {
+    const t = await thread(g);
+    await message(t.id, g, {
+      fromAddress: over.from,
+      subject: over.subject,
+      bodyText: over.body,
+      labelIds: ["INBOX", over.label],
+    });
+    const { transport, calls } = fakeTransport([
+      classification({ category: "quote_request", confidence: 0.95 }),
+    ]);
+    setModelTransportForTests(transport);
+    await classifyPending(mailboxId, { now: NOW });
+    return { row: await threadRow(t.id), modelCalls: calls.length };
+  }
+
+  it.each([
+    {
+      from: "notify@nextdoor.com",
+      subject: "Dana R. sent you a message",
+      body: "How much to replace a 40 gallon water heater?",
+      label: "CATEGORY_SOCIAL",
+    },
+    {
+      from: "leads@angi.com",
+      subject: "New Lead: Ceiling fan install",
+      body: "A homeowner in Lowell wants a ceiling fan installed.",
+      label: "CATEGORY_PROMOTIONS",
+    },
+    {
+      from: "notification@facebookmail.com",
+      subject: "New lead from your ad",
+      body: "Someone filled in your bathroom remodel form.",
+      label: "CATEGORY_SOCIAL",
+    },
+    {
+      from: "no-reply@permitportal.test",
+      subject: "Permit BP-2026-0412 is ready to print",
+      body: "Your permit has been issued.",
+      label: "CATEGORY_PROMOTIONS",
+    },
+  ])("read by the sorter: $subject", async (over) => {
+    const { row, modelCalls } = await tabbed(over.subject.slice(0, 8), over);
+    expect(modelCalls).toBe(1);
+    expect(row.category).toBe("quote_request");
+  });
+
+  it.each([
+    {
+      from: "deals@angi.com",
+      subject: "Upgrade your plan today",
+      body: "Get more leads with Angi Pro.",
+      label: "CATEGORY_PROMOTIONS",
+    },
+    {
+      from: "notification@facebookmail.com",
+      subject: "You have 3 new notifications",
+      body: "See what your friends are up to.",
+      label: "CATEGORY_SOCIAL",
+    },
+  ])("still junk without a model call: $subject", async (over) => {
+    const { row, modelCalls } = await tabbed(over.subject.slice(0, 8), over);
+    expect(modelCalls).toBe(0);
+    expect(row.category).toBe("noise");
+  });
+
+  it("'I smell gas' in Social is read and marked", async () => {
+    const { row, modelCalls } = await tabbed("gas-social", {
+      from: "friend@social.test",
+      subject: "Help",
+      body: "I smell gas in the kitchen, can you come?",
+      label: "CATEGORY_SOCIAL",
+    });
+    expect(modelCalls).toBe(1);
+    expect(row.extracted).toMatchObject({ gas_smell: true });
+    expect(row.needsOwner).toBe(true);
+  });
+});

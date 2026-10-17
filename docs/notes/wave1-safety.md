@@ -139,6 +139,14 @@ Builder notes for `CLAUDE.md` (Decisions, Prompt versions, Waiting on Davi), `do
   re-exported from draft.v7, so the cache is unchanged. Other groups' draft.v8 changes (Check 23
   P11 / 43 P1 / 44 P1 / 45 P2, 40 P1, 41 P1) need combining into this one file at merge.
 
+- **Promotions / Social tabs (Check 22 P1):** `mustReadDespiteTab` (`src/server/classification.ts`)
+  skips the no-model junk shortcut for: a lead-site sender (`leadPlatformOf`) whose subject
+  looks like a lead (lead, request, sent you a message, new message, quote, estimate, hired,
+  booked); facebookmail.com with "lead" in the subject; permit / inspection / certificate of
+  occupancy in the subject or snippet; and anything the code checks catch (gas, CO, electrical,
+  payment change, attack). A lead site's own marketing keeps the shortcut. The municipal, phone
+  and sticky-mark exceptions are unchanged; the shortcut's result shape is unchanged.
+
 ## Privacy policy lines (for the integrator)
 
 - Under "What we store", with the other content-free marks: "Whether an email looked like a gas
