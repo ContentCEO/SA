@@ -133,3 +133,29 @@ No migration: uses wave 0's reserved `messages.auto_reply` and `messages.ack_onl
   - true: "Thanks, got it. We'll look it over and get back to you." / "Thanks! We'll talk it
     over this weekend and let you know." / "Got the estimate, appreciate it. Will be in touch."
   - false: "Thanks — does that include the permit?" / "Got it. Can you start before the 15th?"
+
+## Step 6 · Check 40 P2: photos and files that came with an email (counts only)
+
+- Migration `0041_attachment_counts`: `messages.attachment_images`, `attachment_pdfs`,
+  `attachment_other` (int, default 0). No file name or content is stored anywhere (a test greps
+  the schema).
+- `countAttachments(payload)` (src/mailbox/gmail/parse.ts): parts with a filename or an
+  attachment Content-Disposition, by kind; an inline image under 10 KB (signature logo) doesn't
+  count. Only full reads carry counts (`MailMessage.attachments`).
+- Inbox and Queue cards: "3 photos attached · open in Gmail" (`AttachmentLine`, 44px link to the
+  Gmail thread), summed over the customer's emails on the conversation (auto-replies left out).
+- **Adapted (needs the Prompt versions group):** parts 3 and 5 are prompt changes, so no prompt
+  file was written here. The plain words come from `attachmentWords()` in
+  `src/server/attachment-rules.ts` ("3 photos, 1 PDF"). Lines to add:
+  - classify `emailBlock` and draft conversation block, one line per email with attachments:
+    `Attached: ${attachmentWords(counts)} (the assistant can't see them)`.
+  - draft rule: "If the customer attached photos, don't ask for photos again; ask only for an
+    angle that's missing, or say you'll look at them."
+  - Part 5: an email whose only content is attachments should be classified with that line as
+    its text instead of being treated as having no text (the `Attached:` line makes the body
+    non-empty). The drafts test "the draft prompt carries 'Attached: 3 photos'" goes with that
+    change.
+
+### Privacy policy line (for Davi to approve; don't bump TERMS_VERSION)
+
+Under "What we store": "How many photos or files an email had (never the files or their names)."

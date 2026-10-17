@@ -53,6 +53,7 @@ export class FakeMailbox {
         messageId: `<${m.id}@mail.example.com>`,
       },
       bodyText: m.bodyText ?? `body of ${m.id}`,
+      ...(m.attachments ? { attachments: m.attachments } : {}),
       historyId: this.history,
     });
     this.log.push({
@@ -179,7 +180,13 @@ export class FakeMailbox {
             ? { replyTo: replyToRead ? m.headers.replyTo : undefined, replyToRead }
             : { ...m.headers, replyToRead },
         };
-        return withBody ? { ...copy, bodyText: m.bodyText } : copy;
+        return withBody
+          ? {
+              ...copy,
+              bodyText: m.bodyText,
+              ...(m.attachments ? { attachments: m.attachments } : {}),
+            }
+          : copy;
       },
       listHistory: async ({ startHistoryId }) => {
         guard();

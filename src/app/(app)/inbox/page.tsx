@@ -3,6 +3,7 @@ import { Headline } from "@/components/brand/headline";
 import { OfferButtons } from "@/components/app/offer-buttons";
 import { PermitCard } from "@/components/app/permit-card";
 import { bouncedLine } from "@/server/auto-reply-rules";
+import { AttachmentLine } from "@/components/app/attachment-line";
 import { Button } from "@/components/ui/button";
 import { CATEGORIES } from "@/ai/prompts/classify.v4";
 import { categoryLabels, categoryTag, isCategory } from "@/config/categories";
@@ -205,6 +206,7 @@ export default async function InboxPage(props: PageProps<"/inbox">) {
               }
             />
             <Details row={row} />
+            <AttachmentLine counts={row.attachments} gmail={row} />
             <PastPricesLine prices={pastPrices.get(row.id)} />
             {row.leadChannel ? (
               // Leads package: nobody reads an email reply to a lead website or a phone message.

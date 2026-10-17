@@ -288,6 +288,13 @@
       "when": 1792277847706,
       "tag": "0040_resync_cursor",
       "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "7",
+      "when": 1792280995713,
+      "tag": "0041_attachment_counts",
+      "breakpoints": true
     }
   ]
 }

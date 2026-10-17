@@ -385,6 +385,13 @@ export const messages = pgTable(
      * needs no answer. Check 21 P1 uses this column and adds no migration.
      */
     ackOnly: boolean("ack_only").notNull().default(false),
+    /**
+     * Check 40 P2: how many photos / PDFs / other files came with the email (full reads only).
+     * Counts only: no file name or content is ever stored.
+     */
+    attachmentImages: integer("attachment_images").notNull().default(0),
+    attachmentPdfs: integer("attachment_pdfs").notNull().default(0),
+    attachmentOther: integer("attachment_other").notNull().default(0),
     createdAt: createdAt(),
   },
   (t) => [

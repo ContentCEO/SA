@@ -76,6 +76,10 @@ export type MailMessage = {
   };
   /** Only present when fetched with bodies. */
   bodyText?: string;
+  /**
+   * Check 40 P2: attachments by kind (full reads only). Counts only — never names or content.
+   */
+  attachments?: { images: number; pdfs: number; other: number };
 };
 
 export type MessageRef = {

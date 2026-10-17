@@ -365,6 +365,10 @@ async function ingest(
         labelIds: m.labelIds,
         snippet: m.internalDate >= retentionCutoff ? m.snippet : null,
         bodyText: m.bodyText ?? null,
+        // Check 40 P2: counts by kind only.
+        attachmentImages: m.attachments?.images ?? 0,
+        attachmentPdfs: m.attachments?.pdfs ?? 0,
+        attachmentOther: m.attachments?.other ?? 0,
         sentAt: new Date(m.internalDate),
       };
     });
@@ -519,6 +523,9 @@ export async function applyLabelChanges(
             labelIds: full.labelIds,
             bodyText: full.bodyText ?? null,
             snippet: full.snippet,
+            attachmentImages: full.attachments?.images ?? 0,
+            attachmentPdfs: full.attachments?.pdfs ?? 0,
+            attachmentOther: full.attachments?.other ?? 0,
             classifiedAt: null,
           })
           .where(eq(messages.id, row.id));

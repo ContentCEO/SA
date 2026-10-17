@@ -22,6 +22,8 @@ import { priceMemoryFor } from "@/server/price-memory";
 import { requireOwner } from "@/server/session";
 import { MAILBOX_PAUSED_LINE } from "@/server/mailbox-plan-rules";
 import { ARCHIVED_LINE } from "@/server/sync";
+import { attachmentsForThreads } from "@/server/attachments";
+import { AttachmentLine } from "@/components/app/attachment-line";
 import { bouncedLine } from "@/server/auto-reply-rules";
 import { dismissChecklistAction } from "./actions";
 import { OnboardingChecklist } from "@/components/app/onboarding-checklist";
@@ -206,6 +208,13 @@ export default async function QueuePage(props: PageProps<"/queue">) {
     ),
     awayState(workspace.id, now),
   ]);
+  // Check 40 P2: what the customer attached, by kind (the files stay in Gmail).
+  const attachments = await attachmentsForThreads(
+    [...queue.needsYou, ...queue.drafts].map((i) => i.threadId),
+  );
+  const attachmentFor = (i: QueueItem) => (
+    <AttachmentLine counts={attachments.get(i.threadId)} gmail={i} />
+  );
   // A phone that keeps a copy of the queue (offline okays) never holds a note's text.
   const noteFor = (i: QueueItem) => (
     <NoteLine
@@ -249,7 +258,12 @@ export default async function QueuePage(props: PageProps<"/queue">) {
     remindOptions: remindOptions(i),
     gmailHref: gmailLink(i),
     timeZone,
-    note: noteFor(i),
+    note: (
+      <>
+        {noteFor(i)}
+        {attachmentFor(i)}
+      </>
+    ),
     resort: <ResortSheet threadId={i.threadId} current={i.category} back="queue" />,
   });
   const draftLeadLines = (i: QueueItem) => {
@@ -447,7 +461,12 @@ export default async function QueuePage(props: PageProps<"/queue">) {
               }
               practiceLeft={i.mailboxPaused ? null : practiceLeft}
               priceMemory={priceMemory.get(i.threadId)}
-              noteLine={noteFor(i)}
+              noteLine={
+                <>
+                  {noteFor(i)}
+                  {attachmentFor(i)}
+                </>
+              }
               moreActions={
                 <ResortSheet threadId={i.threadId} current={i.category} hasReply back="queue" />
               }

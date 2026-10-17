@@ -1,5 +1,5 @@
 import "server-only";
-import { and, desc, eq, isNull, type SQL } from "drizzle-orm";
+import { and, desc, eq, isNull, sql, type SQL } from "drizzle-orm";
 import type { Category } from "@/ai/prompts/classify.v4";
 import { db } from "@/db";
 import { mailboxes, threads } from "@/db/schema";
@@ -28,6 +28,11 @@ export type InboxRow = {
   leadChannel: string | null;
   /** "Replied" / "Waiting on you"; null for junk or no customer email. */
   replyState: ReplyState | null;
+  /** For "open in Gmail" (Check 40 P2). */
+  gmailThreadId: string;
+  mailboxEmail: string;
+  /** Check 40 P2: what the customer attached, by kind (counts only). */
+  attachments: { images: number; pdfs: number; other: number };
 };
 
 /** Recent inbox threads for the owner's own mailboxes. Never crosses workspaces. */
@@ -58,14 +63,20 @@ export async function listInboxThreads(
       senderAddress: customerAddressSql(),
       lastIn: lastInSql(),
       lastOut: lastOutSql(),
+      gmailThreadId: threads.gmailThreadId,
+      mailboxEmail: mailboxes.email,
+      attImages: sql<number>`(select coalesce(sum(a.attachment_images), 0)::int from messages a where a.thread_id = ${threads.id} and a.direction = 'in' and not a.auto_reply)`,
+      attPdfs: sql<number>`(select coalesce(sum(a.attachment_pdfs), 0)::int from messages a where a.thread_id = ${threads.id} and a.direction = 'in' and not a.auto_reply)`,
+      attOther: sql<number>`(select coalesce(sum(a.attachment_other), 0)::int from messages a where a.thread_id = ${threads.id} and a.direction = 'in' and not a.auto_reply)`,
     })
     .from(threads)
     .innerJoin(mailboxes, eq(mailboxes.id, threads.mailboxId))
     .where(and(...where))
     .orderBy(desc(threads.needsOwner), desc(threads.lastMessageAt))
     .limit(limit);
-  return rows.map(({ lastIn, lastOut, ...r }) => ({
+  return rows.map(({ lastIn, lastOut, attImages, attPdfs, attOther, ...r }) => ({
     ...r,
+    attachments: { images: Number(attImages), pdfs: Number(attPdfs), other: Number(attOther) },
     replyState: replyState({
       lastIn: asDate(lastIn),
       lastOut: asDate(lastOut),
