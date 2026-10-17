@@ -17,6 +17,7 @@ import { AutopilotNotAllowedError, setAutopilot } from "@/server/autopilot";
 import { decideSuggestion } from "@/server/edit-learning";
 import { hitLimit } from "@/server/rate-limit";
 import { requireOwner } from "@/server/session";
+import { resumeTrialEmails, stopTrialEmails } from "@/server/trial-emails";
 
 export type FormState = { errors?: Record<string, string[]>; values?: Record<string, string> };
 
@@ -89,6 +90,14 @@ export async function saveDigestSettingsAction(formData: FormData) {
   });
   if (!parsed.success) redirect("/settings/morning-email?error=unknown");
   await saveDigestSettings(workspace.id, parsed.data);
+  redirect("/settings/morning-email?done=saved");
+}
+
+/** Trial emails on or off (2026-10-16). Off is the same flag as the emails' "Stop these emails". */
+export async function saveTrialEmailsAction(formData: FormData) {
+  const { workspace } = await requireOwner();
+  if (formData.get("trialEmails") === "on") await resumeTrialEmails(workspace.id);
+  else await stopTrialEmails(workspace.id, "settings");
   redirect("/settings/morning-email?done=saved");
 }
 

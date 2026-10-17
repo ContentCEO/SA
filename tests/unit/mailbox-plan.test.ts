@@ -6,15 +6,7 @@ import type Stripe from "stripe";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { setModelTransportForTests } from "@/ai/client";
 import type { Database } from "@/db";
-import {
-  activityLog,
-  drafts,
-  mailboxes,
-  messages,
-  rules,
-  threads,
-  workspaces,
-} from "@/db/schema";
+import { activityLog, drafts, mailboxes, messages, rules, threads, workspaces } from "@/db/schema";
 import { ensureUserAndWorkspace } from "@/server/accounts";
 import { sendAccessLostAlerts } from "@/server/alerts";
 import { unsortedSweepMailboxes } from "@/server/assistant-status";
@@ -218,9 +210,7 @@ describe("'Use this one instead': the owner picks which is on", () => {
     expect(await swapPlanMailbox(workspaceId, boxes[2]!, boxes[1]!, NOW)).toBe("choose");
     expect(await swapPlanMailbox(workspaceId, boxes[2]!, null, NOW)).toBe("choose");
     const other = await ensureUserAndWorkspace({ email: "someone@else.com" });
-    expect(await swapPlanMailbox(other.workspace.id, boxes[2]!, boxes[0]!, NOW)).toBe(
-      "not_found",
-    );
+    expect(await swapPlanMailbox(other.workspace.id, boxes[2]!, boxes[0]!, NOW)).toBe("not_found");
     expect(await pausedIds()).toEqual([boxes[1]!, boxes[2]!].sort());
   });
 
@@ -245,7 +235,11 @@ describe("'Use this one instead': the owner picks which is on", () => {
 // ---------------------------------------------------------------------------------------------
 // Every gate
 
-async function thread(mailboxId: string, g: string, over: Partial<typeof threads.$inferInsert> = {}) {
+async function thread(
+  mailboxId: string,
+  g: string,
+  over: Partial<typeof threads.$inferInsert> = {},
+) {
   const [t] = await database
     .insert(threads)
     .values({
@@ -312,16 +306,19 @@ describe("GUARDRAIL: a paused address — nothing read, sorted, drafted, sent, a
 
   it("sync, the poll and Gmail watch skip it before any Gmail call", async () => {
     const fake = new FakeMailbox();
-    expect(await incrementalSync(paused, { readerFor: () => fake.reader(), now: () => NOW })).toEqual(
-      { status: "skipped", reason: "not_active" },
-    );
+    expect(
+      await incrementalSync(paused, { readerFor: () => fake.reader(), now: () => NOW }),
+    ).toEqual({ status: "skipped", reason: "not_active" });
     expect(fake.calls).toBe(0);
     expect((await listSyncableMailboxes(NOW)).map((b) => b.id)).toEqual([boxes[0]]);
   });
 
   it("nothing is sorted (no AI) and the unsorted sweep leaves it out", async () => {
     const t = await thread(paused, "g-sort", { classifiedAt: null });
-    await database.update(messages).set({ sentAt: at(-1) }).where(eq(messages.threadId, t));
+    await database
+      .update(messages)
+      .set({ sentAt: at(-1) })
+      .where(eq(messages.threadId, t));
     const { transport, calls } = fakeTransport([]);
     setModelTransportForTests(transport);
     expect((await classifyPending(paused, { now: NOW })).classified).toBe(0);

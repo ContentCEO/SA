@@ -1,4 +1,5 @@
 import { relativeTime } from "@/lib/relative-time";
+import { TRIAL_NO_SEND_LINE, TRIAL_SIDE_DOOR_LINE } from "./trial-email-rules";
 
 /**
  * Round 2, "First week" review (FW): pure rules and wording for a new owner's first days.
@@ -152,14 +153,19 @@ export function inviteEmailCopy(o: {
       `${o.operatorFirstName} has let you into Squared Away. Sign in with Google using this email address.`,
       "Setting up takes about 10 minutes. Have these handy: the password for the Gmail you run the business from, and your price list if you have one.",
       "For your first three days it reads your email and writes drafts for you to check. It won't send anything to a customer during those days.",
+      // The trial's side door (Davi, 2026-10-16): the drafts are real Gmail drafts.
+      TRIAL_SIDE_DOOR_LINE,
     ],
     button: { label: "Sign in", url: o.signInUrl },
     footer: `Questions? Call or text ${o.operatorFirstName} at ${o.phone}.`,
   };
 }
 
-/** FW D4: once, when the first read and the voice learning are done and drafts are waiting. */
-export function firstDraftsEmailCopy(o: { queueUrl: string; drafts: number }) {
+/**
+ * FW D4: once, when the first read and the voice learning are done and drafts are waiting. During
+ * the trial it is also the trial's day-1 email (2026-10-16): it says how sending works then.
+ */
+export function firstDraftsEmailCopy(o: { queueUrl: string; drafts: number; trial?: boolean }) {
   return {
     subject: "Your first drafts are ready to check",
     serif: "all read,",
@@ -167,6 +173,7 @@ export function firstDraftsEmailCopy(o: { queueUrl: string; drafts: number }) {
     lines: [
       `Squared Away read your email and wrote ${n(o.drafts, "draft", "drafts")} in your own words.`,
       "Nothing has been sent. Each one waits for you to check it.",
+      ...(o.trial ? [`${TRIAL_NO_SEND_LINE} ${TRIAL_SIDE_DOOR_LINE}`] : []),
     ],
     button: { label: "Open my queue", url: o.queueUrl },
     footer: "We send this once, when your inbox is first read.",

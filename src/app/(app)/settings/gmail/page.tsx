@@ -94,7 +94,7 @@ export default async function GmailSettingsPage(props: PageProps<"/settings/gmai
                         <Button type="submit" className="w-full">
                           Use this one instead
                         </Button>
-                        <span className="text-sm text-muted-foreground break-all">
+                        <span className="text-sm break-all text-muted-foreground">
                           {onNow[0]!.email} is paused in its place.
                         </span>
                       </form>

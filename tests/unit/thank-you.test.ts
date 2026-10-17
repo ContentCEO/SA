@@ -37,7 +37,8 @@ const REVIEW_URL = "https://g.page/r/elm-electric/review";
 const DANA = "dana@customer.com";
 
 const thanksWithLink = `Hi Dana,\n\nThanks so much for the payment. If you have a minute, a short review would mean a lot:\n${REVIEW_URL}\n\nDavi`;
-const thanksPlain = "Hi Dana,\n\nGot your payment — thank you. It was good working with you.\n\nDavi";
+const thanksPlain =
+  "Hi Dana,\n\nGot your payment — thank you. It was good working with you.\n\nDavi";
 const reply = (body: string): ModelDraft => ({
   body,
   reason: "Owner asked.",

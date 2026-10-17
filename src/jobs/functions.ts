@@ -35,6 +35,7 @@ import { purgeExpiredNotes } from "@/server/seasonal-notes";
 import { learnVoice, workspacesDueForVoiceRefresh, workspacesNeedingVoice } from "@/server/voice";
 import { expireEvaluations, startPendingEvaluations } from "@/server/workspace-lifecycle";
 import { fitAllMailboxesToPlans } from "@/server/mailbox-plan";
+import { sendTrialEmails } from "@/server/trial-emails";
 import { runDraftMessagesCleanup } from "@/server/draft-message-cleanup";
 import {
   finishReplyToBackfill,
@@ -451,6 +452,9 @@ export const workspaceLifecycle = inngest.createFunction(
     await step.run("referral-credits", () => applyPendingReferralCredits());
     // Round 2 (FW D4): backstop for "your first drafts are ready" (once ever per account).
     await step.run("first-drafts-ready", () => sendFirstDraftsReady());
+    // 2026-10-16: the trial's day-2 and day-3 emails and the one a week after it ran out, each
+    // once ever, at the owner's morning hour or later in their zone (never at night).
+    await step.run("trial-emails", () => sendTrialEmails());
     return {
       started,
       expired,

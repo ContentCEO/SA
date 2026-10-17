@@ -18,6 +18,8 @@ import { appUrl } from "@/lib/app-url";
 import { brandEmail } from "@/lib/email-layout";
 import { sendEmail, type EmailSender } from "@/lib/email";
 import { pushConfigured, sendPush, type PushSender } from "@/lib/web-push";
+import { STOP_TRIAL_EMAILS_LABEL } from "./trial-email-rules";
+import { stopHeaders, stopLinkFor } from "./trial-email-links";
 import { CLASSIFY_LOOKBACK_DAYS } from "./classification";
 import {
   createDraftForThread,
@@ -379,23 +381,32 @@ export async function sendFirstDraftsReady(
     if (!jobsAllowed(r.workspace, now)) continue;
     const totals = await queueCounts(r.workspace.id, now);
     if (!totals.drafts) continue;
-    const c = firstDraftsEmailCopy({ queueUrl: appUrl("/queue"), drafts: totals.drafts });
+    // During the trial this is the trial's day-1 email (2026-10-16): it says how sending works
+    // then, carries the one-click stop link, and isn't emailed to someone who stopped them.
+    const trial = effectiveStatus(r.workspace, now) === "evaluating";
+    const stopLink = trial ? stopLinkFor(r.workspace.id) : null;
+    const emailIt = !trial || (!r.workspace.trialEmailsStoppedAt && !!stopLink);
+    const c = firstDraftsEmailCopy({ queueUrl: appUrl("/queue"), drafts: totals.drafts, trial });
     const { text, html } = brandEmail({
       serif: c.serif,
       heavy: c.heavy,
       lines: c.lines,
       button: c.button,
       footer: c.footer,
+      ...(stopLink ? { stopLink: { label: STOP_TRIAL_EMAILS_LABEL, url: stopLink } } : {}),
     });
     let emailed = false;
     try {
-      const outcome = await send({
-        to: r.ownerEmail,
-        subject: c.subject,
-        text,
-        html,
-        idempotencyKey: `first-drafts-${r.workspace.id}`,
-      });
+      const outcome = emailIt
+        ? await send({
+            to: r.ownerEmail,
+            subject: c.subject,
+            text,
+            html,
+            idempotencyKey: `first-drafts-${r.workspace.id}`,
+            ...(stopLink ? { headers: stopHeaders(stopLink) } : {}),
+          })
+        : "not_configured";
       emailed = outcome !== "not_configured";
     } catch (err) {
       // Tried again on the next run; the error's name only.
