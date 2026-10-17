@@ -3,12 +3,19 @@
  * Every email here is invented.
  */
 import { describe, expect, it } from "vitest";
-import { applyOwnerRules, codeOnlyClassification } from "@/ai/classify";
+import {
+  applyOwnerRules,
+  codeOnlyClassification,
+  LEGAL_REASON,
+  prepareBody,
+  splitQuoted,
+} from "@/ai/classify";
 import {
   CO_REASON,
   GAS_SMELL_REASON,
   mentionsCarbonMonoxide,
   mentionsGasSmell,
+  mentionsLegalThreat,
   mentionsWaterSmell,
   WATER_SMELL_REASON,
 } from "@/ai/guards";
@@ -188,5 +195,42 @@ describe("checks in code alone, after the AI limit (Check 39 P1)", () => {
     expect(
       codeOnlyClassification(email("hi"), { sticky: { injection: true } })?.extracted.injection,
     ).toBe(true);
+  });
+});
+
+describe("legal words in code, quoted text included (Check 22 P3)", () => {
+  it.each([
+    "This office represents the homeowner. This is a demand letter under Chapter 93A.",
+    "Our client intends to file a lien and pursue small claims.",
+    "I've talked to my lawyer.",
+    "We will sue if this isn't fixed.",
+    "We're putting a lien on the house.",
+    "I'm filing with the attorney general's consumer protection division.",
+    "Consider this a cease and desist.",
+  ])("legal: %s", (t) => expect(mentionsLegalThreat(t)).toBe(true));
+  it.each([
+    "Sue from the office will call you Tuesday.",
+    "The adjuster denied part of the claim.",
+    "Is the dispute over the color resolved?",
+    "The court street address is 14 Elm.",
+    "My daughter has power of attorney and will sign the contract.",
+    "Please sign the conditional lien waiver for draw 2.",
+  ])("not legal: %s", (t) => expect(mentionsLegalThreat(t)).toBe(false));
+
+  it("applyOwnerRules: a legal threat found in code → needs you, high, LEGAL_REASON", () => {
+    expect(rules({ legalThreat: true })).toMatchObject({
+      needsOwner: true,
+      priority: "high",
+      needsOwnerReason: LEGAL_REASON,
+    });
+  });
+
+  it("splitQuoted keeps the newest part and returns what quoting cut", () => {
+    const body =
+      "Please read the letter below.\r\n\r\n> Dear Mr. Ruiz,\r\n> demand letter\r\nOn Mon, Dana wrote:\r\nolder";
+    const { kept, removed } = splitQuoted(body);
+    expect(kept).toBe("Please read the letter below.");
+    expect(removed).toBe("> Dear Mr. Ruiz,\n> demand letter\nOn Mon, Dana wrote:\nolder");
+    expect(prepareBody(body)).toBe(kept);
   });
 });

@@ -2840,47 +2840,45 @@ export async function threadsToAutoDraft(mailboxId: string, limit = 10): Promise
   // an older real lead. Leave those out here. An unchecked Reply-To (NULL) stays in: a form
   // sent from no-reply@ often carries the customer's own address there.
   const newestInNoReply = sql`exists (select 1 from (select nr_m.reply_to_header, nr_m.from_address from messages nr_m where nr_m.thread_id = ${threads.id} and nr_m.direction = 'in' order by nr_m.sent_at desc limit 1) nr where nr.reply_to_header is not null and ${noReplySql(replyAddressSql("nr"))})`;
-  const rows = await db()
-    .select({ id: threads.id })
-    .from(threads)
-    .where(
+  // A gas smell or CO alarm (round 2 TW B4, Check 22 P4) still waiting for its fixed note.
+  const safetyWaiting = and(
+    sql`coalesce(${threads.extracted}->>'gas_smell' = 'true' or ${threads.extracted}->>'co_alarm' = 'true', false)`,
+    sql`not exists (select 1 from drafts d where d.thread_id = ${threads.id} and d.purpose = 'safety')`,
+  );
+  const due = and(
+    eq(threads.mailboxId, mailboxId),
+    eq(threads.inInbox, true),
+    // A safety note is written whatever the sort; createDraftForThread writes it once per
+    // thread, then the thread waits for the owner.
+    or(
+      and(eq(threads.needsOwner, false), inArray(threads.category, [...AUTO_DRAFT_CATEGORIES])),
       and(
-        eq(threads.mailboxId, mailboxId),
-        eq(threads.inInbox, true),
-        // A gas smell (round 2, TW B4) gets its one fixed safety note whatever its sort;
-        // createDraftForThread writes it once per thread, then the thread waits for the owner.
-        or(
-          and(eq(threads.needsOwner, false), inArray(threads.category, [...AUTO_DRAFT_CATEGORIES])),
-          and(
-            // Check 22 P4: a carbon monoxide alarm too.
-            sql`(${threads.extracted}->>'gas_smell' = 'true' or ${threads.extracted}->>'co_alarm' = 'true')`,
-            sql`not exists (select 1 from drafts d where d.thread_id = ${threads.id} and d.purpose = 'safety')`,
-            // Never on junk unless the owner has written on the conversation (the note itself
-            // re-checks the address, createDraftForThread).
-            sql`(${threads.category} is distinct from 'noise' or exists (select 1 from messages o where o.thread_id = ${threads.id} and o.direction = 'out'))`,
-          ),
-        ),
-        sql`${threads.classifiedAt} is not null and ${threads.classifiedAt} >= ${lastIn}`,
-        sql`(${lastOut} is null or ${lastOut} < ${lastIn})`,
-        sql`(${lastDraft} is null or ${lastDraft} < ${lastIn})`,
-        // "I called them" after the newest email (round 2, FW E11): nothing to draft.
-        sql`(${threads.handledOfflineAt} is null or ${threads.handledOfflineAt} < ${lastIn})`,
-        sql`not ${newestInNoReply}`,
-        // Ideas H3: the newest email was sorted under a "Never draft" rule.
-        sql`(${threads.extracted}->>'sender_rule') is distinct from 'no_draft'`,
+        safetyWaiting,
+        // Never on junk unless the owner has written on the conversation (the note itself
+        // re-checks the address, createDraftForThread).
+        sql`(${threads.category} is distinct from 'noise' or exists (select 1 from messages o where o.thread_id = ${threads.id} and o.direction = 'out'))`,
       ),
-    )
-    // Check 39 P1: a gas smell or CO alarm still waiting for its safety note goes first. The
-    // note needs no model, so it is written even after the day's AI limit stops the loop at the
-    // first reply that needs one.
-    .orderBy(
-      desc(
-        sql`coalesce(${threads.extracted}->>'gas_smell' = 'true' or ${threads.extracted}->>'co_alarm' = 'true', false) and not exists (select 1 from drafts d where d.thread_id = ${threads.id} and d.purpose = 'safety')`,
-      ),
-      desc(threads.lastMessageAt),
-    )
-    .limit(limit);
-  return rows.map((r) => r.id);
+    ),
+    sql`${threads.classifiedAt} is not null and ${threads.classifiedAt} >= ${lastIn}`,
+    sql`(${lastOut} is null or ${lastOut} < ${lastIn})`,
+    sql`(${lastDraft} is null or ${lastDraft} < ${lastIn})`,
+    // "I called them" after the newest email (round 2, FW E11): nothing to draft.
+    sql`(${threads.handledOfflineAt} is null or ${threads.handledOfflineAt} < ${lastIn})`,
+    sql`not ${newestInNoReply}`,
+    // Ideas H3: the newest email was sorted under a "Never draft" rule.
+    sql`(${threads.extracted}->>'sender_rule') is distinct from 'no_draft'`,
+  );
+  const pick = (where: ReturnType<typeof and>) =>
+    db()
+      .select({ id: threads.id })
+      .from(threads)
+      .where(where)
+      .orderBy(desc(threads.lastMessageAt))
+      .limit(limit);
+  // Check 39 P1: safety notes first. They need no model, so they are written even when the
+  // day's AI limit stops the draft loop at the first reply that needs one.
+  const [first, rest] = [await pick(and(due, safetyWaiting)), await pick(due)];
+  return [...new Set([...first, ...rest].map((r) => r.id))].slice(0, limit);
 }
 
 /** For the "squared away." moment: a draft this workspace just sent. */

@@ -50,6 +50,26 @@ Builder notes for `CLAUDE.md` (Decisions, Prompt versions, Waiting on Davi), `do
   text/push alerts fire. `threadsToAutoDraft` orders a gas / CO thread still without its safety
   note first, so the note (no model) is written before a model draft hits the limit.
 
+- **Quoted and forwarded text (Check 22 P3 + Check 20 P5):** `splitQuoted` (`src/ai/classify.ts`)
+  returns the newest part and what quoting cut; `prepareBody` is its `kept` part (unchanged).
+  `classifyEmail` runs the gas, CO, payment-change and new `mentionsLegalThreat`
+  (`src/ai/guards.ts`: attorney / lawyer / law office, lawsuit, suing / "will sue", small claims,
+  demand letter, cease and desist, 93A, attorney general, consumer protection, filing or placing
+  a lien, a lien on the house; never "Sue" the name, "denied", "dispute" or "court" alone, nor a
+  power of attorney) on the WHOLE email too (subject + raw body + the burst, CRLF normalised,
+  ≤20,000 chars). The attack check keeps to the newest part (quoted text is often the owner's own
+  words). A legal hit in code → needs you, high, `LEGAL_REASON`, `extracted.disputed` (so the
+  sticky complaint mark), and it survives the routine-paperwork drop. When the newest part is
+  under 300 characters and quoting cut something, the first 1,500 characters of the cut part go
+  to the model in a second untrusted `<email>` block labelled "Quoted or forwarded text (older,
+  may be from someone else)" (classify.v5). Never logged.
+- **Autopilot reads the whole newest customer email** (`blockers`): gas / CO / payment change /
+  legal words anywhere in it, quoted part included, stop the countdown ("Something legal is
+  mentioned in this conversation, so it waits for you." and the existing gas / payment lines); a
+  purged body (no text left) waits ("We can't read their email any more, so it waits for you.").
+- `threadsToAutoDraft` picks safety-note threads with a separate first query, then the usual
+  query, so the ordinary order (newest first) is exactly as before.
+
 ## Questions for Davi
 
 1. **Carbon monoxide safety note wording** (built, waiting on okay before merge to production):

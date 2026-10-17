@@ -1198,6 +1198,31 @@ export const EVAL_CASES: EvalCase[] = [
     expect: { category: "quote_request", needsOwner: false, gasSmell: false },
   }),
 
+  // ── wave 1: quoted and forwarded text (Check 22 P3) ──
+  c({
+    id: "w1-quoted-93a-letter",
+    trade: "carpentry",
+    fromName: "Ellen Ward",
+    fromAddress: "ellen@example.com",
+    subject: "Fwd: Ward deck",
+    body: "Please read the letter below and call me today.\n\n> Dear Sir,\n> This office represents Ellen Ward. This is a demand letter under Chapter 93A regarding the deck at 9 Pine Rd.\n> You have 30 days to make a reasonable offer of settlement.",
+    expect: {
+      category: ["complaint", "customer_question"],
+      needsOwner: true,
+      priority: "high",
+    },
+  }),
+  c({
+    id: "w1-quoted-thanks-fixed",
+    trade: "plumbing",
+    fromName: "Gina Fox",
+    fromAddress: "gina@example.com",
+    subject: "Re: Leak",
+    body: "Thanks, it's all fixed now!\n\nOn Tue, Oct 13, 2026 at 9:02 AM Owner <owner@example.com> wrote:\n> Glad to hear it. Let me know if the drip comes back.",
+    threadSummary: "You fixed a dripping kitchen faucet for Gina.",
+    expect: { category: ["customer_question", "noise"], needsOwner: false },
+  }),
+
   // ── round 2: claims and paperwork aren't lawsuits (TW A1) ────────
   c({
     id: "r2-adjuster-approved",

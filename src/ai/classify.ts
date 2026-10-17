@@ -21,6 +21,7 @@ import {
   looksMunicipal,
   mentionsCarbonMonoxide,
   mentionsGasSmell,
+  mentionsLegalThreat,
   mentionsRealLegal,
   mentionsWaterSmell,
   PAYMENT_CHANGE_REASON,
@@ -161,24 +162,48 @@ export type Classification = {
   unreadable: boolean;
 };
 
-/** Drop quoted replies ("On … wrote:", "> …") and signature-ish tails, then cap length. */
-export function prepareBody(body: string): string {
+/** Check 22 P3: the whole email the safety checks read, quoted part included. */
+export const MAX_FULL_TEXT_CHARS = 20_000;
+/** Check 22 P3: how much of the quoted part a short reply shows the model. */
+export const MAX_QUOTED_FOR_MODEL_CHARS = 1_500;
+/** Check 22 P3: a reply this short may be about "the letter below". */
+export const SHORT_REPLY_CHARS = 300;
+
+/**
+ * Split an email into the newest part and what quoting cut off ("On … wrote:", an Outlook
+ * "Original Message", "> " lines). The newest part is what the model sorts; the safety checks
+ * read both (Check 22 P3).
+ */
+export function splitQuoted(body: string): { kept: string; removed: string } {
   const lines = body.replace(/\r\n/g, "\n").split("\n");
   const out: string[] = [];
-  for (const line of lines) {
+  const removed: string[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]!;
     if (
       /^On .+wrote:\s*$/.test(line.trim()) ||
       /^-{2,}\s*Original Message\s*-{2,}/i.test(line.trim())
-    )
+    ) {
+      removed.push(...lines.slice(i));
       break;
-    if (line.trimStart().startsWith(">")) continue;
+    }
+    if (line.trimStart().startsWith(">")) {
+      removed.push(line);
+      continue;
+    }
     out.push(line);
   }
-  return out
-    .join("\n")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim()
-    .slice(0, MAX_CLASSIFY_BODY_CHARS);
+  const tidy = (x: string[]) =>
+    x
+      .join("\n")
+      .replace(/\n{3,}/g, "\n\n")
+      .trim();
+  return { kept: tidy(out), removed: tidy(removed) };
+}
+
+/** Drop quoted replies ("On … wrote:", "> …") and signature-ish tails, then cap length. */
+export function prepareBody(body: string): string {
+  return splitQuoted(body).kept.slice(0, MAX_CLASSIFY_BODY_CHARS);
 }
 
 /**
@@ -200,6 +225,8 @@ export function applyOwnerRules(
     coAlarm?: boolean;
     /** Asks to pay a new account (round 2, A11). */
     paymentChange?: boolean;
+    /** Check 22 P3: lawyers, liens, small claims found in code anywhere in the email. */
+    legalThreat?: boolean;
     /** The water smells like rotten eggs, nothing says gas (Check 36 P1). */
     waterSmell?: boolean;
     /** Leads package: the email came through a phone service or a lead website (code-decided). */
@@ -251,7 +278,7 @@ export function applyOwnerRules(
   const emergency = m.extracted.urgency === "emergency" && isLeadCategory(m.category);
   const reasons: [boolean, OwnerRuleKey, string][] = [
     [m.category === "complaint", "complaint", "Complaint — you'll want to handle this yourself."],
-    [m.signals.mentions_legal, "legal", LEGAL_REASON],
+    [m.signals.mentions_legal || !!ctx.legalThreat, "legal", LEGAL_REASON],
     [m.signals.mentions_refund_or_dispute, "dispute", DISPUTE_REASON],
     [ctx.senderIsVip, "vip", "From someone on your VIP list."],
     [ctx.senderNeedsMe === true, "sender_rule", SENDER_NEEDS_ME_REASON],
@@ -305,7 +332,7 @@ export function applyOwnerRules(
       needsOwnerReason:
         !fixed && m.needs_owner && m.needs_owner_reason ? m.needs_owner_reason : hit[2],
       priority:
-        m.category === "complaint" || m.signals.mentions_legal || emergency
+        m.category === "complaint" || m.signals.mentions_legal || ctx.legalThreat || emergency
           ? "high"
           : // Check 36 P1: smelly water is worth a call, not a 2am emergency.
             hit[1] === "water_smell"
@@ -358,27 +385,46 @@ export type ClassifyOpts = {
 
 /** The checks in code that never wait on the model, over the text the model would read. */
 function codeChecks(email: EmailInput, opts: Pick<ClassifyOpts, "alsoCheck" | "sticky">) {
-  const body = prepareBody(email.body);
+  const split = splitQuoted(email.body);
+  const body = split.kept.slice(0, MAX_CLASSIFY_BODY_CHARS);
   // A burst (review B4): earlier unsorted emails minutes before this one are read with it.
   const earlier = (email.earlier ?? [])
     .map((e) => ({ receivedAt: e.receivedAt, body: prepareBody(e.body) }))
     .filter((e) => e.body.length > 0);
   const allText = [email.subject ?? "", ...earlier.map((e) => e.body), body].join("\n");
   const checked = [allText, ...(opts.alsoCheck ?? []).map(prepareBody)].join("\n");
+  // Check 22 P3: the whole email, quoted and forwarded parts included ("please read the letter
+  // below"), for the safety checks only. The attack check keeps to the newest part: quoted
+  // text is often the owner's own words.
+  const fullText = [email.subject ?? "", ...(email.earlier ?? []).map((e) => e.body), email.body]
+    .join("\n")
+    .replace(/\r\n/g, "\n")
+    .slice(0, MAX_FULL_TEXT_CHARS);
+  // A short reply above a quote: the model sees the start of the quote, in its own block.
+  const quoted =
+    body.length < SHORT_REPLY_CHARS && split.removed
+      ? split.removed.slice(0, MAX_QUOTED_FOR_MODEL_CHARS)
+      : null;
   // Checked in code first: the model is the thing being attacked. Every email in the burst,
   // and every older unsorted one the drafter may read.
   const injectedText = injectionCheck(checked).flagged;
   const injection = injectedText || opts.sticky?.injection === true;
-  const gasInText = mentionsGasSmell(checked);
+  const gasInText = mentionsGasSmell(checked) || mentionsGasSmell(fullText);
   // Check 22 P4: a carbon monoxide alarm; Check 36 P1: rotten-egg WATER with no gas word.
-  const coInText = mentionsCarbonMonoxide(checked);
+  const coInText = mentionsCarbonMonoxide(checked) || mentionsCarbonMonoxide(fullText);
   const waterInText = !gasInText && mentionsWaterSmell(checked);
   const paymentChangeInText =
-    looksLikePaymentChange(checked) || opts.sticky?.paymentChange === true;
+    looksLikePaymentChange(checked) ||
+    looksLikePaymentChange(fullText) ||
+    opts.sticky?.paymentChange === true;
+  // Check 22 P3: lawyers, liens, small claims — anywhere in the email, in code.
+  const legalThreat = mentionsLegalThreat(checked) || mentionsLegalThreat(fullText);
   const municipalSender = looksMunicipal(email.fromAddress, email.fromName);
   return {
     body,
     earlier,
+    quoted,
+    legalThreat,
     allText,
     checked,
     injection,
@@ -459,6 +505,8 @@ export async function classifyEmail(
   const {
     body,
     earlier,
+    quoted,
+    legalThreat,
     allText,
     checked,
     gasInText,
@@ -477,7 +525,7 @@ export async function classifyEmail(
       { text: CLASSIFY_INSTRUCTIONS, cache: false },
       { text: businessBlock(business), cache: true },
     ],
-    user: emailBlock({ ...email, body, earlier }),
+    user: emailBlock({ ...email, body, earlier, quoted }),
     schema: classificationSchema,
     now: opts.now,
   };
@@ -499,9 +547,12 @@ export async function classifyEmail(
   // Round 2 TW A1: "the adjuster approved the claim" is paperwork, not a lawsuit. The legal mark
   // only drops when the model itself calls it routine AND no word of a real dispute or threat
   // is in the email; a refund or dispute signal still stands on its own.
+  // Check 22 P3: the code's own legal check (the whole email, quoted part included) always
+  // stands.
   const legal =
-    result.signals.mentions_legal &&
-    !(result.signals.routine_paperwork && !mentionsRealLegal(allText));
+    legalThreat ||
+    (result.signals.mentions_legal &&
+      !(result.signals.routine_paperwork && !mentionsRealLegal(allText)));
   const model: ModelClassification = {
     ...result,
     signals: { ...result.signals, mentions_legal: legal },
@@ -515,6 +566,7 @@ export async function classifyEmail(
     gasSmell,
     coAlarm,
     paymentChange,
+    legalThreat,
     waterSmell,
     channel: opts.channel ?? null,
     outsideArea:

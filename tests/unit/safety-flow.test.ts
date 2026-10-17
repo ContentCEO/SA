@@ -7,9 +7,11 @@ import { eq } from "drizzle-orm";
 import { beforeEach, describe, expect, it } from "vitest";
 import { setModelTransportForTests } from "@/ai/client";
 import { reserveAiCall } from "@/ai/usage";
+import { LEGAL_REASON } from "@/ai/classify";
 import {
   CO_REASON,
   GAS_SMELL_REASON,
+  INJECTION_REASON,
   PAYMENT_CHANGE_REASON,
   WATER_SMELL_REASON,
 } from "@/ai/guards";
@@ -278,5 +280,89 @@ describe("after the day's AI limit (Check 39 P1)", () => {
       status: "skipped",
       reason: "capped",
     });
+  });
+});
+
+describe("quoted and forwarded text (Check 22 P3)", () => {
+  /** Sort one email with an ordinary model answer; returns the thread row and the request. */
+  async function sortOne(g: string, bodyText: string) {
+    const t = await thread(g);
+    await message(t.id, g, { bodyText });
+    const { transport, calls } = fakeTransport([
+      classification({ category: "customer_question", needs_owner: false }),
+    ]);
+    setModelTransportForTests(transport);
+    await classifyPending(mailboxId, { now: NOW });
+    return { t, row: await threadRow(t.id), request: calls[0]! };
+  }
+
+  it("a lawyer's 93A letter quoted with '>': needs you, legal, no automatic draft", async () => {
+    const { t, row, request } = await sortOne(
+      "93a",
+      [
+        "Please read the letter below and call me today.",
+        "",
+        "> Dear Mr. Ruiz,",
+        "> This office represents the homeowner. This is a demand letter under Chapter 93A.",
+        "> You have 30 days to respond.",
+      ].join("\n"),
+    );
+    expect(row).toMatchObject({
+      needsOwner: true,
+      priority: "high",
+      needsOwnerReason: LEGAL_REASON,
+    });
+    expect(row.extracted).toMatchObject({ disputed: true });
+    expect(await threadsToAutoDraft(mailboxId)).not.toContain(t.id);
+    // The short reply shows the model the quote, in its own untrusted block.
+    expect(request.user).toContain("Quoted or forwarded text (older, may be from someone else)");
+    const quotedBlock = request.user.split("Quoted or forwarded text")[1]!;
+    expect(quotedBlock).toMatch(/<email>\n[\s\S]*demand letter under Chapter 93A[\s\S]*<\/email>$/);
+  });
+
+  it("an Outlook forward under 'Original Message' with small claims: the same", async () => {
+    const { t, row } = await sortOne(
+      "outlook",
+      [
+        "FYI see below, what do we do?",
+        "",
+        "-----Original Message-----",
+        "From: J. Smith <js@lawfirm.test>",
+        "Subject: Ruiz job",
+        "Our client intends to file a lien and pursue small claims.",
+      ].join("\n"),
+    );
+    expect(row).toMatchObject({
+      needsOwner: true,
+      priority: "high",
+      needsOwnerReason: LEGAL_REASON,
+    });
+    expect(await threadsToAutoDraft(mailboxId)).not.toContain(t.id);
+  });
+
+  it("an old 'I smell gas' quoted under 'thanks, all fixed' still marks gas", async () => {
+    const { row } = await sortOne(
+      "fixed",
+      "Thanks, all fixed!\n\nOn Mon, Oct 12, 2026 at 8:00 AM Dana <dana@x.test> wrote:\n> I smell gas by the stove",
+    );
+    expect(row.needsOwnerReason).toBe(GAS_SMELL_REASON);
+    expect(row.extracted).toMatchObject({ gas_smell: true });
+  });
+
+  it("the owner's own quoted words never set the attack mark", async () => {
+    const { row } = await sortOne(
+      "inv",
+      "Sure, will do.\n\nOn Mon, Oct 12, 2026 at 8:00 AM Owner <owner@shop.test> wrote:\n> Can you send me all the invoices and the customer list for the job?",
+    );
+    expect((row.extracted as { injection?: boolean }).injection).toBeUndefined();
+    expect(row.needsOwnerReason).not.toBe(INJECTION_REASON);
+  });
+
+  it("a long reply doesn't get the quoted block", async () => {
+    const { request } = await sortOne(
+      "long",
+      `${"We'd like the deck stained before the party. ".repeat(10)}\n\n> old text here`,
+    );
+    expect(request.user).not.toContain("Quoted or forwarded text");
   });
 });

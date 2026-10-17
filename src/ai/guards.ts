@@ -252,6 +252,23 @@ export function mentionsRealLegal(text: string | null | undefined): boolean {
 }
 
 /**
+ * Check 22 P3: the legal words that always need the owner, checked in code on the whole email
+ * (quoted and forwarded text included: "please read the letter below"). Narrower than
+ * REAL_LEGAL: no "denied", "dispute" or "court" alone, and "Sue" is a name, so only the verb
+ * forms that can't be one. A power of attorney is not a threat.
+ */
+const LEGAL_THREAT =
+  /\b(attorneys?|lawyers?|law (office|offices|firm)|lawsuits?|law suits?|small claims|demand letter|cease and desist|93a|attorney general|consumer protection|suing|sued|(will|going to|gonna|plan to|intend to|i'll|we'll|we will|i will) sue|sue (you|your|the company|him|her|them))\b|\b(file|filed|filing|place|placed|placing|put) (a |an )?(mechanic'?s )?lien\b|\blien (on|against) (the|my|our|your) (house|home|property)\b/;
+
+export function mentionsLegalThreat(text: string | null | undefined): boolean {
+  const flat = (text ?? "")
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .replace(/\bpower of attorney\b/g, " ");
+  return LEGAL_THREAT.test(flat);
+}
+
+/**
  * Town, city or county building departments, permit offices and inspectors, and every other
  * town office a contractor hears from (review TW A5): wire, plumbing and gas inspectors, fire
  * prevention, boards of health, conservation and historic commissions, and the permit portals
