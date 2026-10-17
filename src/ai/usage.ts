@@ -3,6 +3,8 @@ import { and, eq, isNull, sql } from "drizzle-orm";
 import { dailyAiCallCap } from "@/config/models";
 import { db } from "@/db";
 import { usage } from "@/db/schema";
+import type { EmailSender } from "@/lib/email";
+import { notifyAdminOnce, withTimeoutMs } from "@/server/admin-notify";
 
 export class AiCapReachedError extends Error {
   constructor(public readonly cap: number) {
@@ -52,6 +54,8 @@ export async function reserveAiCall(workspaceId: string, now: Date = new Date())
     if (flagged.length > 0) {
       // Picked up by monitoring (Sentry in Milestone 11) and shown in /admin.
       console.warn("ai_cap_80_percent", { workspaceId, calls, cap, period });
+      // Check 1 P4: and an email to Davi, once per account per day (the flag above is set once).
+      await notifyCapWarning(workspaceId, period, now);
     }
   }
 }
@@ -133,4 +137,40 @@ export async function bumpUsageCounter(
       target: [usage.workspaceId, usage.period],
       set: { [field]: sql`${column} + 1` },
     });
+}
+
+/**
+ * Check 1 P4: "An account used 80% of today's AI limit", content-free (no account named), with a
+ * link to /admin. Once per account per day; never fails or holds up the model call.
+ */
+export async function notifyCapWarning(
+  workspaceId: string,
+  period: string,
+  now: Date = new Date(),
+  deps: { send?: EmailSender } = {},
+): Promise<void> {
+  try {
+    await withTimeoutMs(
+      notifyAdminOnce(
+        `ai_cap_80:${workspaceId}:${period}`,
+        {
+          subject: "An account used 80% of today's AI limit",
+          serif: "heads up,",
+          heavy: "an account is busy.",
+          lines: [
+            "An account used 80% of today's AI limit. When it reaches the limit, its sorting and drafting wait until tomorrow (UTC).",
+            "See which one on the admin page (AI calls today).",
+          ],
+          path: "/admin",
+        },
+        { send: deps.send, now },
+      ),
+      5_000,
+    );
+  } catch (err) {
+    console.error("ai_cap_notice_failed", {
+      workspaceId,
+      error: err instanceof Error ? err.name : "unknown",
+    });
+  }
 }

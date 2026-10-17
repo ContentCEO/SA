@@ -181,6 +181,8 @@ sets it, in `.env.example`).
 | `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`                                               | No                       | Phone notifications (web push). Public key alone shows the switch; both are needed to send.                                                                                                                 | §6e.                                                                                   | Prod (private key sensitive)      |
 | `VAPID_SUBJECT`                                                                       | No (default `APP_URL`)   | Contact the push services can reach.                                                                                                                                                                        | `mailto:` address or https URL.                                                        | Prod                              |
 | `NEXT_PUBLIC_SENTRY_DSN`                                                              | No                       | Error alerts (scrubbed). Read at build time: redeploy after setting.                                                                                                                                        | §6b.                                                                                   | Prod                              |
+| `HEALTH_TOKEN`                                                                        | No                       | `/api/health/deep` (database + background jobs, for an uptime monitor). Without it the route is a 404 (§6g).                                                                                                | `openssl rand -hex 24`                                                                 | Prod (sensitive)                  |
+| `CRON_SECRET`                                                                         | No                       | Lets Vercel Cron call `/api/cron/jobs-check` (Vercel sends it as a Bearer token). Without it the route is a 404 (§6g).                                                                                      | `openssl rand -hex 24`                                                                 | Prod (sensitive)                  |
 | `FEATURE_CLOSING_QUESTION`                                                            | No (off when unset)      | Plan #26. **On** in Vercel since 2026-10-14 (Davi's okay); live from the next deploy.                                                                                                                       | `1` (§6d).                                                                             | Prod + Preview                    |
 | `FEATURE_REFERRALS`                                                                   | No (off)                 | Plan #47. **Ask Davi first**; does nothing while `REFERRAL_CREDIT_CENTS` is null.                                                                                                                           | `1` (§6d).                                                                             | Prod, only with Davi's okay       |
 | `RETENTION_BODY_DAYS`                                                                 | No (default 30)          | Days before email text is purged. The privacy policy and homepage promise 30: don't change it without changing them.                                                                                        | A number.                                                                              | Prod                              |
@@ -375,6 +377,32 @@ places show the phone number only and the legal pages leave out the email line.
 Set it in Vercel → sa → Environment Variables (Production and Preview) to the address Davi gives
 us, then redeploy. How to know it worked: the footer of https://<domain>/ and the contact block of
 `/privacy` show it.
+
+### 6g. Is everything running? (uptime monitor, optional)
+
+`/api/health` only says the site answers. `/api/health/deep` also checks the database and that
+the 15-minute safety job ran in the last 30 minutes (that job sorts mail that waited, sends alerts
+and the morning email's backstops). It answers `{"db":"ok","jobs":"ok","minutesSinceJobs":…}`
+with no ids, and **503** when the jobs are stale or the database is down. When the jobs are
+stale it also emails `ADMIN_EMAIL` "Background jobs look stopped", at most once an hour. This
+works even when Inngest itself is down.
+
+1. Make a token: `openssl rand -hex 24`. Add it in Vercel → sa → Settings → Environment Variables
+   as `HEALTH_TOKEN` (Production, sensitive), then redeploy.
+2. In a free uptime monitor (for example UptimeRobot or Better Stack), add an HTTP(s) monitor for
+   `https://<domain>/api/health/deep?token=<the token>` (or send it as the header
+   `x-health-token`), every 5 minutes, alerting on any status other than 200. Never paste the
+   token anywhere else.
+3. How to know it worked: the monitor shows "up"; a wrong token gives 404.
+
+Vercel Cron backstop: `/api/cron/jobs-check` runs the same check (and the same hourly email) when
+Vercel calls it with `CRON_SECRET`. It is **not scheduled yet**: Vercel's Hobby plan allows cron
+jobs once a day only, and a more frequent schedule can stop the deploy. On Vercel Pro, set
+`CRON_SECRET` (Production, sensitive) and add this to a `vercel.json` at the repo root:
+
+```json
+{ "crons": [{ "path": "/api/cron/jobs-check", "schedule": "*/30 * * * *" }] }
+```
 
 ## 7. Inviting an owner
 

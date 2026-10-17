@@ -29,6 +29,7 @@ import { purgeRateLimits } from "@/server/rate-limit";
 import { purgeEmailSentRecords } from "@/lib/email";
 import { sendAccessLostAlerts } from "@/server/alerts";
 import { purgeAdminNoticeMarkers } from "@/server/admin-notify";
+import { recordLifecycleRun } from "@/server/health-deep";
 import { captureQuoteAmounts, guessNoAnswers } from "@/server/quotes";
 import { sendLeadAlerts } from "@/server/sms-alerts";
 import { sendEmergencyAlerts } from "@/server/emergency-alerts";
@@ -503,6 +504,8 @@ export const workspaceLifecycle = inngest.createFunction(
     await step.run("trial-emails", () => sendTrialEmails());
     // Check 18 P1: a refused alert email fails the run only now, after every step has run, so
     // error alerts still hear about it once. Retries replay the finished steps.
+    // Check 1 P4: the deep health check reads this to tell whether the jobs are running.
+    await step.run("record-run", () => recordLifecycleRun());
     reportAlertFailures("access", alerts);
     return {
       started,

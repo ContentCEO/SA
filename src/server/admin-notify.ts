@@ -74,3 +74,22 @@ export async function purgeAdminNoticeMarkers(now: Date = new Date()) {
       ),
     );
 }
+
+/** Rejects with a TimeoutError after `ms`, so a slow email service never holds anything up. */
+export async function withTimeoutMs<T>(work: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      work,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => {
+          const err = new Error("Timed out.");
+          err.name = "TimeoutError";
+          reject(err);
+        }, ms);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}

@@ -57,3 +57,15 @@
   reply, tweak chips / Change it / Other ways to reply and the Inbox offers pass
   `aiMode: "interactive"`; a slow, down or missing model (`isTemporaryAiFailure`) redirects to
   `?error=ai_busy` "Writing is slow right now, so nothing changed. Try again in a moment."
+- **Check 1 P4 (deep health check):** `/api/health/deep` (`HEALTH_TOKEN` as `x-health-token` or
+  `?token=`, else 404): `select 1`, the newest active mailbox check, and
+  `app_settings` `jobs:workspace-lifecycle:last-run` (written by a new last step `record-run` of
+  the 15-minute job; before the first one, the newest mail check stands in). Answers
+  `{db, jobs: ok|stale, minutesSinceJobs, minutesSinceMailCheck}` (no ids); 503 when stale
+  (> 30 min) or the database is down, and then "Background jobs look stopped" to Davi at most once
+  per UTC hour (`notifyAdminOnce`, key `jobs_stopped:<hour>`). `/api/cron/jobs-check` does the
+  same for Vercel Cron (`Authorization: Bearer <CRON_SECRET>`, else 404) but is **not
+  scheduled**: no `vercel.json` was added (see Questions). `reserveAiCall` also emails "An
+  account used 80% of today's AI limit" once per account per UTC day (no account named; link
+  /admin; 5 s timeout, never fails the call). security-surface's route table has the new
+  "shared-secret" guard. SETUP.md §6g + two env rows; `.env.example` has both names.

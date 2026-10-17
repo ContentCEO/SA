@@ -4,7 +4,7 @@ import { utcDay } from "@/ai/usage";
 import { db } from "@/db";
 import { appSettings } from "@/db/schema";
 import type { EmailSender } from "@/lib/email";
-import { notifyAdminOnce } from "./admin-notify";
+import { notifyAdminOnce, withTimeoutMs } from "./admin-notify";
 
 /**
  * Check 48 P3: a model Anthropic says is missing. `model_down:<model>:<UTC day>` holds the first
@@ -23,7 +23,7 @@ export async function recordModelDown(
       .values({ key: `model_down:${model}:${day}`, value: now.toISOString() })
       .onConflictDoNothing();
     // Raced against a timer: a slow email service never holds up the job or the owner's tap.
-    await raceTimeout(
+    await withTimeoutMs(
       notifyAdminOnce(
         `model_alert:${model}:${day}`,
         {
@@ -60,22 +60,4 @@ export async function modelsDownToday(
     .map((r) => ({ model: r.key.split(":")[1] ?? "", since: new Date(r.value) }))
     .filter((r) => r.model && !Number.isNaN(r.since.getTime()))
     .sort((a, b) => a.since.getTime() - b.since.getTime());
-}
-
-async function raceTimeout<T>(work: Promise<T>, ms: number): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  try {
-    return await Promise.race([
-      work,
-      new Promise<never>((_, reject) => {
-        timer = setTimeout(() => {
-          const err = new Error("Timed out.");
-          err.name = "TimeoutError";
-          reject(err);
-        }, ms);
-      }),
-    ]);
-  } finally {
-    clearTimeout(timer);
-  }
 }
