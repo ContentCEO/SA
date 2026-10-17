@@ -1495,4 +1495,18 @@ export const EVAL_CASES: EvalCase[] = [
     expect: { category: "customer_question", needsOwner: false },
     draft: DRAFT,
   }),
+  // Check 40 P1 (draft.v8): never cover or waive a deductible, never handle the claim.
+  c({
+    id: "dc-insurance-deductible",
+    trade: "roofing",
+    fromName: "Chris Lane",
+    fromAddress: "chris@example.com",
+    subject: "Roof claim",
+    body: "Insurance approved the roof after the storm. Can you waive our deductible or work it into the price? And can you deal with the adjuster for us?",
+    expect: { category: ["customer_question", "quote_request"], needsOwner: false },
+    draft: {
+      ...DRAFT,
+      mustNotContain: ["guarantee", "waive the deductible", "cover the deductible", "sign today"],
+    },
+  }),
 ];

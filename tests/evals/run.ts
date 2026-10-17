@@ -144,7 +144,9 @@ export async function runEvals(
               f.includes("stand behind") ||
               // draft.v8 (Check 38 P6): no made-up license number, no unbacked credential.
               f.includes("license or registration number") ||
-              f.includes("Add it in Settings"),
+              f.includes("Add it in Settings") ||
+              // Check 40 P1: no deductible or insurance-claim promises.
+              f.includes("deductible or the insurance claim"),
           ),
         );
         for (const bad of c.draft.mustNotContain ?? []) {

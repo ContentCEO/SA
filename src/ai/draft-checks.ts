@@ -178,7 +178,9 @@ export type CheckHit =
   /** Check 36 P7 / 38 P6: a license or registration number the owner never saved. */
   | "license"
   /** Check 38 P6: "we're registered / licensed / lead-safe certified / insured", unbacked. */
-  | "credential";
+  | "credential"
+  /** Check 40 P1: covering a deductible or handling the homeowner's insurance claim. */
+  | "insurance";
 export type CheckResult = { flags: string[]; confidenceCap: number; hits: CheckHit[] };
 
 /**
@@ -193,6 +195,37 @@ export const REGENERATE_ON: CheckHit[] = [
   "terms",
   // Check 36 P7: a made-up license number gets one fresh attempt.
   "license",
+  // Check 40 P1: an insurance-job promise gets one fresh attempt.
+  "insurance",
+];
+
+/**
+ * Check 40 P1: insurance-job promises the owner may not be allowed to make. Waiving or eating a
+ * deductible is illegal for contractors in some states, and in Massachusetts only a licensed
+ * public adjuster may adjust a claim for the homeowner. Each counts only when the owner never
+ * wrote it themselves.
+ */
+const INSURANCE_PROMISES: [string, RegExp][] = [
+  [
+    "the deductible",
+    /\b(?:cover|waive|absorb|eat|take care of|pay(?: for)?|pick up|rebate|handle|knock off)\s+(?:the |your |that |this )?(?:\$[\d,.]+k?\s+)?deductibles?\b/i,
+  ],
+  [
+    "insurance will pay",
+    /\b(?:insurance|your insurer|the insurer|insurance company)\s+(?:will|should|is going to|'ll|is gonna)\s+(?:definitely\s+)?(?:cover|pay)\b/i,
+  ],
+  [
+    "dealing with the adjuster",
+    /\b(?:we'll|we will|we can|i'll|i will|i can|we)\s+(?:negotiate|fight|deal|argue|battle)\s+with\s+(?:your|the)\s+(?:adjuster|insurance|insurer)/i,
+  ],
+  [
+    "handling the claim",
+    /\b(?:we|we'll|we will|we can|i|i'll|i will|i can)\s+(?:handle|take care of|manage|file|run)\s+(?:the|your)\s+(?:whole\s+|entire\s+)?(?:insurance\s+)?claim\b/i,
+  ],
+  ["assignment of benefits", /\bassignment of benefits\b/i],
+  ["sign today", /\bsign (?:it |the [a-z]+ |our [a-z]+ (?:[a-z]+ )?)?today\b/i],
+  ["free roof", /\bfree roof\b/i],
+  ["no cost to you", /\bno cost to you\b|\b(?:nothing|anything) out of pocket\b/i],
 ];
 
 /**
@@ -458,6 +491,15 @@ export function checkDraft(draftBody: string, ctx: CheckContext): CheckResult {
     flags.push(`Says you're ${unbacked.join(" and ")}. Add it in Settings or take it out.`);
     cap = Math.min(cap, 0.5);
     hits.push("credential");
+  }
+
+  // Insurance-job promises (Check 40 P1): a flag, and one fresh attempt first.
+  if (INSURANCE_PROMISES.some(([, re]) => re.test(body) && !re.test(ownerText))) {
+    flags.push(
+      "Talks about the deductible or the insurance claim in a way you may not be allowed to promise. Check it.",
+    );
+    cap = Math.min(cap, 0.2);
+    hits.push("insurance");
   }
 
   // Never-promise list: flag when the key words of an item all show up in the draft.

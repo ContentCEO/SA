@@ -61,3 +61,11 @@ Notes for the integrator: what CLAUDE.md should say, by step. Files in this grou
 - **Prompt versions after wave 1 "Draft checks":** `draft.v8` (Check 38 P6 so far; later steps
   add to it). `draft.v8` re-exports draft.v7's reply schema / openings / first-contact task and
   draft.v6's conversation block; its `workspaceBlock` is v6's plus the licenses line.
+- **Insurance-job promises (Check 40 P1, wave 1):** `INSURANCE_PROMISES` in draft-checks.ts —
+  cover / waive / absorb / eat / take care of / pay the deductible, "insurance will cover",
+  negotiating or dealing with the adjuster, handling the homeowner's claim, assignment of
+  benefits, "sign … today", "free roof", "no cost to you" / "nothing out of pocket". Only when
+  the owner never wrote it. Hit `insurance`, cap 0.2, in `REGENERATE_ON` (one fresh attempt),
+  flag "Talks about the deductible or the insurance claim in a way you may not be allowed to
+  promise. Check it." Any flag already keeps a draft out of autopilot and Send together (tested).
+  `draft.v8` "Never invent" gains the deductible / claim / sign-today line.
