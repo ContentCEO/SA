@@ -1718,6 +1718,74 @@ default, CI too) and refuses a non-local `DATABASE_URL` or an `APP_URL` that isn
   phone-like addresses. `NeedsYouCard` takes the private note line and the Move it sheet (not on
   check-ins or read-only accounts); draft cards show the lead lines then the note. Quote speed
   (C8) reads the same request query as response time, so it leaves lead-channel threads out too.
+- **Davi's decisions package (2026-10-16, branch `decisions-build`):** migration 0035
+  `decisions` (additive): `mailboxes.plan_paused_at`, `workspaces.trial_emails_stopped_at` /
+  `trial_emails_sent` (text[]), partial unique index `drafts_one_thank_you_per_thread`. Prompt
+  `purpose.v2` (re-exports v1's three tasks unchanged, adds `thankYouTask`); eval cases added
+  (`tests/evals/purposes.ts` thank-you ×3, `cases.ts` i-paid-happy / i-paid-zelle).
+  - **Headline:** "Built for carpenters, plumbers, and electricians" (hero, both meta
+    descriptions, `opengraph-image.tsx`); `tests/unit/decisions-copy.test.ts` pins it.
+  - **Trial side door stays:** the drafts are real Gmail drafts, so an owner may send one from
+    Gmail during the trial; only Squared Away's own Send is off. One wording,
+    `TRIAL_NO_SEND_LINE` + `TRIAL_SIDE_DOOR_LINE` (`trial-email-rules.ts`), on the homepage FAQ
+    and promise, the connect explainer ("from Squared Away you can only send yourself practice
+    copies"), the Day N banner (last day / expired: "to send replies from Squared Away"), the
+    learning screen and /billing (trial only), the invite and first-drafts emails, the trial
+    emails, `docs/terms.md` and the privacy policy (same 2026-10-16 date: no re-agree; Davi's
+    call in LAUNCH.md). `sendingOffLabel(evaluating)` is now **"Send reply is off during your
+    three days"** and `sendingBlockedReason` adds the Gmail line. Push stays "ready to check".
+    `decisions-copy.test.ts` bans "nothing goes to a customer", "sending is off during",
+    "customer: you can only send yourself practice copies", "can't be sent"….
+  - **Trial emails** (`trial-emails.ts`, pure `trial-email-rules.ts`, links in
+    `trial-email-links.ts`): day 1 = the existing first-drafts email (during the trial it gains the
+    trial line and the stop link, and isn't emailed once stopped); `day2` from 24 h after the clock
+    started; `day3` on the end's local date ("Your trial ends today at 3:00 PM") or the day before
+    when the end is earlier than `digest_hour` + 2 h ("…tomorrow at 6:30 AM"); day 3 wins a tie
+    and day 2 never goes after it; `after` 7–14 days after an expiry with no payment at all
+    (`setup_paid_via`, `setup_paid_at` or a subscription). Window: `digest_hour` ≤ local hour < 20
+    in `business_profile.time_zone` (Eastern default). Step `trial-emails` in the 15-minute
+    lifecycle job, one email per account per run, marked in `trial_emails_sent` only after
+    Resend took it (`array_append … where not = any`); keys `trial-<ws>-day2|day3|after`;
+    no Resend → nothing sent or marked. Counts only (`trialCounts` + `queueCounts`). Every one
+    carries "Stop these emails" → `/api/emails/stop?w=<ws>&s=<HMAC-SHA256(AUTH_SECRET,
+"trial-emails:stop:"+ws)>` (constant-time; no secret → no link and no trial email) plus
+    `List-Unsubscribe` / `-Post` headers (`OutgoingEmail.headers`). GET → 303 `/emails/stopped`
+    (public, noindex; `?link=bad` changes nothing), POST (mail apps' one-click) → 200 / 400.
+    Route guard `signed-link` in the C3 table. Settings → Morning email: "Trial emails" switch
+    (`saveTrialEmailsAction`) only while `trialEmailsMatter` (evaluating / expired, unpaid).
+  - **Plan pause** (`mailbox-plan.ts`, pure `mailbox-plan-rules.ts`): `fitMailboxesToPlan`
+    (workspace row `FOR UPDATE`) keeps min(limit, connected) on — pauses the newest of those on,
+    turns the oldest paused back on — after `setWorkspacePlan`, Stripe's checkout and plan
+    changes (`fitMailboxesSafely`, never fails the webhook), a disconnect, and step
+    `fit-mailboxes-to-plans` (15-minute backstop). Pausing clears that mailbox's autopilot
+    countdowns; Activity `mailboxes_fit_plan {paused, resumed, limit}`. "Use this one instead"
+    (`swapPlanMailbox`, Settings → Your Gmail; "Paused: your plan covers N Gmail address(es)."):
+    one for one under the lock, or straight on when there's room; `choose` when no valid one to
+    pause. **On** = `mailboxOn` / SQL `mailboxRunning()` (status active AND not plan-paused) in
+    every gate that skipped a lost mailbox: sync, poll, Gmail push + watch, classify, unsorted
+    sweep, voice (oldest running mailbox), drafts (every trigger → `mailbox_paused`), reconcile,
+    reply-to backfill, draft cleanup, batch, follow-ups, leads at risk, not answered yet,
+    new-lead texts / pushes (`freshLeads`), access-lost emails, the reconnect banner, admin's
+    "jobs look stopped". `sendDraft` / `queueSend` / practice / revise / edit refuse with
+    `mailbox_paused` before any Gmail call (API 403 `MAILBOX_PAUSED_LINE`, `?error=paused`);
+    autopilot stands down with "This Gmail address is paused on your plan." The queue still shows
+    its drafts (`QueueItem.mailboxPaused`, read-only card). A static test fails on any new
+    status-only gate (`mailbox-plan.test.ts`).
+  - **Reset test payments:** Davi chose "let it be usable" — already as built (past_due →
+    `restored()`, jobs run, can't send without `setup_paid_via`); a test proves it end to end,
+    LAUNCH.md moved it to "Decided on 2026-10-16".
+  - **Lost reason "Other"** (`LOST_REASONS` + "another reason"; never the sentence's headline;
+    plain text column, older code just doesn't show it).
+  - **Say thanks** (Money's paid rows, replacing "Ask for a review" there; Inbox keeps its own):
+    owner purpose `thank_you`, stored as `thank_you` or `thank_you_review` (the review ask inside,
+    only when `reviewOfferReason` is null for that customer — the full review rules); both count in
+    `recentReviewAddresses` via `REVIEW_ASK_PURPOSES`, and `thank_you_review` is inserted under
+    `lockReviewAddress`. Base rule `thankYouOfferReason`: owner/auto paid mark (never not_owed),
+    no injection / municipal, not junk / supplier, not a robot / receipt sender, once per thread
+    (index; an expired one doesn't count; a discarded one does). A complaint or an unknown
+    customer still gets a plain thank-you. Same `checkTerms` as review requests (`review: {url:
+null}` flags any link on a plain one); reconcile expires it like a review note; never a job,
+    autopilot, batch, earning or `followup_count`.
 
 ## Milestones
 
@@ -1806,9 +1874,9 @@ default, CI too) and refuses a non-local `DATABASE_URL` or an `APP_URL` that isn
   the trades." / "It began as the tool for A&C Construction's own inbox." (no "builder", no
   pronouns). Davi may want other words (LAUNCH.md step 13). Separate from his photo and license
   line.
-- **Reset test payments and past_due (open):** as built, a past_due test account goes back to
-  setup_paid / active (jobs and AI resume, can't send); alternative: keep it read-only until it
-  pays (small code change). LAUNCH.md step 13.
+- **Terms re-agreement (2026-10-16 decisions package):** `docs/terms.md`'s trial paragraph now
+  names the Gmail side door; the date stayed 2026-10-16 (no re-agree). If Davi wants everyone to
+  agree to it, move both documents' date and `TERMS_VERSION` together (LAUNCH.md "Still open").
 - **Phone notifications (#36):** `VAPID_PUBLIC_KEY` + `VAPID_PRIVATE_KEY` (free) in Vercel
   Production, then redeploy. Off until then. The engineers can generate and add them if Davi says
   so.
@@ -1886,9 +1954,9 @@ default, CI too) and refuses a non-local `DATABASE_URL` or an `APP_URL` that isn
     (`purpose.v4`), D4's balance-only nudges and `classify.v5`'s `amount_paid`.
   - His calls (defaults built): what a VIP means (today: needs you, no automatic draft); whether
     away mode should pause autopilot, texts / phone alerts / the morning email (built: no);
-    remembered "not junk" / "always supplier" rules (cut); lost-reason words (Price / Timing /
-    Went with someone else; a fourth "Other"?); a plain thank-you note for owners with no review
-    link (D7); the privacy-policy lines added for these features (same 2026-10-16 version).
+    remembered "not junk" / "always supplier" rules (cut); the privacy-policy lines added for
+    these features (same 2026-10-16 version). Decided 2026-10-16: "Other" added; "Say thanks"
+    built (decisions package above).
 
 ## Launch blockers to remember
 
