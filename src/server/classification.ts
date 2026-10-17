@@ -13,6 +13,7 @@ import {
   threads,
   workspaces,
 } from "@/db/schema";
+import { mailboxOn } from "./mailbox-plan-rules";
 import { afterClassified } from "./auto-outcomes";
 import { unflagPendingNudge } from "./drafts";
 import { jobsAllowed } from "./lifecycle";
@@ -120,7 +121,8 @@ export async function classifyPending(
     .from(mailboxes)
     .innerJoin(workspaces, eq(workspaces.id, mailboxes.workspaceId))
     .where(eq(mailboxes.id, mailboxId));
-  if (!box || box.mailbox.status !== "active" || !jobsAllowed(box.workspace, now))
+  // Lost access or paused on the plan (2026-10-16): nothing is sorted, no AI spent.
+  if (!box || !mailboxOn(box.mailbox) || !jobsAllowed(box.workspace, now))
     return { classified: 0, superseded: 0, remaining: 0, capped: false };
 
   const since = new Date(now.getTime() - CLASSIFY_LOOKBACK_DAYS * 86_400_000);

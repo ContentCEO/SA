@@ -43,6 +43,8 @@ import {
 } from "@/ai/purpose";
 import { AiCapReachedError, bumpUsageCounter } from "@/ai/usage";
 import { featureOn } from "@/config/features";
+import { mailboxOn } from "./mailbox-plan-rules";
+import { mailboxRunning } from "./mailbox-plan";
 import { activeNotes } from "./seasonal-notes";
 import { db } from "@/db";
 import {
@@ -194,7 +196,10 @@ export type CreateOutcome =
         // A lead website's notice or a voicemail / text-message email: answered on the site
         // or from the owner's own phone, never by email (every trigger).
         | "lead_site"
-        | "phone_message";
+        | "phone_message"
+        // The plan covers fewer Gmail addresses and this one is paused (2026-10-16): no draft,
+        // no model call, whoever asked.
+        | "mailbox_paused";
     }
   | { status: "reconnect_needed" };
 
@@ -534,6 +539,7 @@ export async function createDraftForThread(
   }
   const { thread, mailbox, workspace } = row;
   if (!jobsAllowed(workspace, now)) return { status: "skipped", reason: "read_only" };
+  if (mailbox.planPausedAt) return { status: "skipped", reason: "mailbox_paused" };
   if (mailbox.status !== "active") return { status: "skipped", reason: "mailbox_inactive" };
   // A lead website's notice or a voicemail / text-message email (leads package): there is
   // nobody to email. Answered on the site or from the owner's own phone — every trigger,
@@ -1080,7 +1086,9 @@ export type SendOutcome =
   | { status: "text_address" }
   | { status: "already_sending" }
   | { status: "not_found" }
-  | { status: "reconnect_needed" };
+  | { status: "reconnect_needed" }
+  /** The plan covers fewer Gmail addresses and this one is paused (MAILBOX_PAUSED_LINE). */
+  | { status: "mailbox_paused" };
 
 /**
  * Send a pending draft — the only way anything leaves the owner's inbox.
@@ -1109,6 +1117,8 @@ export async function sendDraft(
     return opts.queued ? { status: "not_found" } : { status: "already_sending" };
   }
   if (!canSend(workspace, now)) throw new SendingBlockedError(effectiveStatus(workspace, now));
+  // Paused on the plan (2026-10-16): refused before any Gmail call, whoever pressed send.
+  if (mailbox.planPausedAt) return { status: "mailbox_paused" };
   if (mailbox.status !== "active") return { status: "reconnect_needed" };
   // A reply with a {{gap}} still in it never leaves (plan #2) — checked before any Gmail call.
   if (hasUnfilledGap(opts.editedBody ?? draft.body ?? "")) return { status: "gaps_unfilled" };
@@ -1314,6 +1324,7 @@ export async function queueSend(
   }
   if (opts.seenTo !== undefined && !sameAddress(opts.seenTo, draft.toAddress))
     return { status: "to_changed" };
+  if (mailbox.planPausedAt) return { status: "mailbox_paused" };
   if (mailbox.status !== "active") return { status: "reconnect_needed" };
   if (hasUnfilledGap(opts.editedBody ?? draft.body ?? "")) return { status: "gaps_unfilled" };
   if (isNoReplyAddress(draft.toAddress)) return { status: "no_reply_address" };
@@ -1548,7 +1559,7 @@ export async function batchCandidates(
     .where(
       and(
         eq(mailboxes.workspaceId, workspaceId),
-        eq(mailboxes.status, "active"),
+        mailboxRunning(),
         eq(drafts.status, "pending"),
         isNull(drafts.sendAfter),
       ),
@@ -1629,13 +1640,14 @@ export async function saveDraftEdit(
   draftId: string,
   body: string,
   opts: DraftDeps = {},
-): Promise<"saved" | "not_found" | "deleted_in_gmail" | "reconnect_needed"> {
+): Promise<"saved" | "not_found" | "deleted_in_gmail" | "reconnect_needed" | "mailbox_paused"> {
   const row = await loadOwnedDraft(workspaceId, draftId);
   if (!row || row.draft.status !== "pending" || !row.draft.gmailDraftId || row.draft.sendAfter)
     return "not_found";
   const { draft, mailbox, thread, workspace } = row;
   const now = opts.now?.() ?? new Date();
   if (!jobsAllowed(workspace, now)) throw new ReadOnlyError(effectiveStatus(workspace, now));
+  if (mailbox.planPausedAt) return "mailbox_paused";
   const writer = (opts.writerFor ?? defaultWriter)(mailbox);
   try {
     const remote = await writer.getDraft(draft.gmailDraftId!);
@@ -1675,6 +1687,7 @@ export type ReviseOutcome =
   | { status: "capped" }
   | { status: "deleted_in_gmail" }
   | { status: "reconnect_needed" }
+  | { status: "mailbox_paused" }
   | { status: "not_found" };
 
 /**
@@ -1696,6 +1709,7 @@ export async function reviseDraft(
   const { draft, mailbox, thread, workspace } = row;
   const now = opts.now?.() ?? new Date();
   if (!jobsAllowed(workspace, now)) throw new ReadOnlyError(effectiveStatus(workspace, now));
+  if (mailbox.planPausedAt) return { status: "mailbox_paused" };
   if (mailbox.status !== "active") return { status: "reconnect_needed" };
   if (draft.revisions >= MAX_REVISIONS_PER_DRAFT) return { status: "limit" };
 
@@ -2083,8 +2097,9 @@ export async function reconcileDrafts(mailboxId: string, opts: DraftDeps = {}) {
     .from(mailboxes)
     .innerJoin(workspaces, eq(workspaces.id, mailboxes.workspaceId))
     .where(eq(mailboxes.id, mailboxId));
-  // Read-only workspaces are left exactly as they are, here and in Gmail.
-  if (!box || box.mailbox.status !== "active" || !jobsAllowed(box.workspace, now))
+  // Read-only workspaces (and paused or lost mailboxes) are left exactly as they are, here and
+  // in Gmail.
+  if (!box || !mailboxOn(box.mailbox) || !jobsAllowed(box.workspace, now))
     return { checked: 0, closed: 0, expiredThreads: [] as string[] };
   const { mailbox } = box;
   const pending = await db()
@@ -2237,6 +2252,11 @@ export type QueueItem = {
   checkIn: boolean;
   /** G5: when the owner marked it fixed. */
   complaintFixedAt: Date | null;
+  /**
+   * 2026-10-16: its Gmail address is paused on the plan — shown, but nothing is sent, drafted
+   * or changed from it (MAILBOX_PAUSED_LINE).
+   */
+  mailboxPaused: boolean;
 };
 
 /** Plan #6: back from a snooze within the last day — pinned on top. */
@@ -2448,11 +2468,12 @@ export async function listQueue(
   if (shownNeeds.length === 0 && members.drafts.length === 0) return { needsYou: [], drafts: [] };
 
   const boxes = await db()
-    .select({ id: mailboxes.id, email: mailboxes.email })
+    .select({ id: mailboxes.id, email: mailboxes.email, planPausedAt: mailboxes.planPausedAt })
     .from(mailboxes)
     .where(eq(mailboxes.workspaceId, workspaceId));
   const boxIds = boxes.map((b) => b.id);
   const emailOf = new Map(boxes.map((b) => [b.id, b.email]));
+  const pausedBoxes = new Set(boxes.filter((b) => b.planPausedAt).map((b) => b.id));
 
   const needIds = shownNeeds.map((m) => m.threadId);
   const draftIds = members.drafts.map((m) => m.draftId);
@@ -2542,6 +2563,7 @@ export async function listQueue(
           lane: m.lane,
           checkIn: m.checkIn,
           complaintFixedAt: t.complaintFixedAt,
+          mailboxPaused: pausedBoxes.has(t.mailboxId),
         } satisfies QueueItem,
       ];
     }),
@@ -2580,6 +2602,7 @@ export async function listQueue(
           lane: false,
           checkIn: false,
           complaintFixedAt: thread.complaintFixedAt,
+          mailboxPaused: pausedBoxes.has(draft.mailboxId),
         } satisfies QueueItem,
       ];
     }),

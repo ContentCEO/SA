@@ -34,6 +34,7 @@ import { sendLeadAtRiskPushes } from "@/server/leads-at-risk";
 import { purgeExpiredNotes } from "@/server/seasonal-notes";
 import { learnVoice, workspacesDueForVoiceRefresh, workspacesNeedingVoice } from "@/server/voice";
 import { expireEvaluations, startPendingEvaluations } from "@/server/workspace-lifecycle";
+import { fitAllMailboxesToPlans } from "@/server/mailbox-plan";
 import { runDraftMessagesCleanup } from "@/server/draft-message-cleanup";
 import {
   finishReplyToBackfill,
@@ -397,6 +398,9 @@ export const workspaceLifecycle = inngest.createFunction(
   async ({ step }) => {
     const started = await step.run("start", () => startPendingEvaluations());
     const expired = await step.run("expire", () => expireEvaluations());
+    // 2026-10-16: Gmail addresses over the plan's limit are paused (and back on with room).
+    // Plan changes do this themselves; this catches one that didn't finish.
+    await step.run("fit-mailboxes-to-plans", () => fitAllMailboxesToPlans());
     // Autopilot drafts whose send event was lost: send (or stand down) now.
     const overdue = await step.run("autopilot-overdue", () => overdueAutopilotDrafts());
     if (overdue.length) {

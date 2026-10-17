@@ -2,6 +2,7 @@ import "server-only";
 import { and, desc, eq, gte, inArray, isNull, lte, notInArray, or, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { mailboxes, messages, threads } from "@/db/schema";
+import { mailboxRunning } from "./mailbox-plan";
 import { STALE_SYNC_MS } from "./mailbox-health";
 import {
   NOT_ANSWERED_AFTER_HOURS,
@@ -57,7 +58,7 @@ export async function notAnsweredYet(
     .where(
       and(
         eq(mailboxes.workspaceId, workspaceId),
-        eq(mailboxes.status, "active"),
+        mailboxRunning(),
         gte(mailboxes.lastSyncedAt, new Date(now.getTime() - STALE_SYNC_MS)),
         eq(threads.inInbox, true),
         inArray(threads.category, [...NOT_ANSWERED_CATEGORIES]),

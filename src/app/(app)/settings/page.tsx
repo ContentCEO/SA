@@ -38,7 +38,8 @@ export default async function SettingsPage(props: PageProps<"/settings">) {
   ]);
   const doneMsg = typeof params.done === "string" ? LIST_MESSAGES.done[params.done] : undefined;
   const errorMsg = typeof params.error === "string" ? LIST_MESSAGES.error[params.error] : undefined;
-  const lost = mailboxes.some((m) => m.status === "reconnect_needed");
+  const lost = mailboxes.some((m) => m.status === "reconnect_needed" && !m.planPausedAt);
+  const pausedOnPlan = mailboxes.filter((m) => m.planPausedAt).length;
   const autopilotOn = autopilot.categories.filter((c) => c.on).length;
 
   const items: MenuItem[] = [
@@ -48,7 +49,10 @@ export default async function SettingsPage(props: PageProps<"/settings">) {
       line: lost
         ? "Needs reconnecting"
         : mailboxes.length
-          ? mailboxes.map((m) => m.email).join(", ")
+          ? `${mailboxes
+              .filter((m) => !m.planPausedAt)
+              .map((m) => m.email)
+              .join(", ")}${pausedOnPlan ? ` · ${pausedOnPlan} paused on your plan` : ""}`
           : "Not connected yet",
       needsYou: lost,
     },

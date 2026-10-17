@@ -2,6 +2,7 @@ import "server-only";
 import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { mailboxes, threads } from "@/db/schema";
+import { mailboxOn } from "./mailbox-plan-rules";
 import { FOLLOWUP_CATEGORIES, followupSettings, MAX_FOLLOWUPS } from "./drafts";
 import { lastInSql, lastOutSql, answeredByPhoneSql } from "./thread-sql";
 import { isAway } from "./away";
@@ -32,10 +33,15 @@ export async function threadsToFollowUp(
   limit = 20,
 ): Promise<string[]> {
   const [box] = await db()
-    .select({ workspaceId: mailboxes.workspaceId })
+    .select({
+      workspaceId: mailboxes.workspaceId,
+      status: mailboxes.status,
+      planPausedAt: mailboxes.planPausedAt,
+    })
     .from(mailboxes)
     .where(eq(mailboxes.id, mailboxId));
-  if (!box) return [];
+  // Lost access or paused on the plan (2026-10-16): no nudges (createDraftForThread agrees).
+  if (!box || !mailboxOn(box)) return [];
   const settings = await followupSettings(box.workspaceId);
   if (!settings.enabled) return [];
   // Ideas E7: nudges pause while the owner is away (createDraftForThread checks it again).

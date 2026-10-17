@@ -15,6 +15,7 @@ import {
   users,
   workspaces,
 } from "@/db/schema";
+import { mailboxOn } from "./mailbox-plan-rules";
 import { normalizeEmail } from "./accounts";
 import { effectiveStatus, jobsAllowed } from "./lifecycle";
 import { referralsVisible } from "./referral-rules";
@@ -244,14 +245,16 @@ export async function systemHealth(now: Date = new Date()) {
   const rows = await db()
     .select({
       status: mailboxes.status,
+      planPausedAt: mailboxes.planPausedAt,
       lastSyncedAt: mailboxes.lastSyncedAt,
       backfillCompletedAt: mailboxes.backfillCompletedAt,
       workspace: { status: workspaces.status, evaluationEndsAt: workspaces.evaluationEndsAt },
     })
     .from(mailboxes)
     .innerJoin(workspaces, eq(workspaces.id, mailboxes.workspaceId));
+  // A plan-paused address isn't synced on purpose, so it never says "jobs look stopped".
   const working = rows.filter(
-    (r) => r.status === "active" && r.backfillCompletedAt && jobsAllowed(r.workspace, now),
+    (r) => mailboxOn(r) && r.backfillCompletedAt && jobsAllowed(r.workspace, now),
   );
   const newest = working.reduce<Date | null>(
     (a, r) => (r.lastSyncedAt && (!a || r.lastSyncedAt > a) ? r.lastSyncedAt : a),

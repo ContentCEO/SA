@@ -184,7 +184,7 @@ export const mailboxes = pgTable(
     /**
      * Davi, 2026-10-16: the plan covers fewer Gmail addresses than are connected, so this one is
      * paused — nothing is read, sorted, drafted, sent, alerted or learned from it; its data is
-     * kept. Null = on. Set and cleared only by `fitMailboxesToPlan` / `useMailboxInstead`
+     * kept. Null = on. Set and cleared only by `fitMailboxesToPlan` / `swapPlanMailbox`
      * (src/server/mailbox-plan.ts). A column, not a `status` value, so lost Google access and
      * a plan pause are told apart (a paused address can need reconnecting too).
      */

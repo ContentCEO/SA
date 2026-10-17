@@ -4,6 +4,7 @@ import { aiCallsToday, utcDay } from "@/ai/usage";
 import { dailyAiCallCap } from "@/config/models";
 import { db } from "@/db";
 import { businessProfiles, mailboxes, messages, threads, usage, workspaces } from "@/db/schema";
+import { mailboxRunning } from "./mailbox-plan";
 import { assistantNotice, UNSORTED_NOTICE_MS, UNSORTED_SWEEP_MS } from "./assistant-status-rules";
 import { CLASSIFY_LOOKBACK_DAYS } from "./classification";
 import { jobsAllowed } from "./lifecycle";
@@ -31,7 +32,7 @@ export async function unsortedSweepMailboxes(now: Date = new Date()): Promise<st
     .innerJoin(threads, eq(threads.id, messages.threadId))
     .innerJoin(mailboxes, eq(mailboxes.id, messages.mailboxId))
     .innerJoin(workspaces, eq(workspaces.id, mailboxes.workspaceId))
-    .where(and(unsortedWhere(now, UNSORTED_SWEEP_MS), eq(mailboxes.status, "active")));
+    .where(and(unsortedWhere(now, UNSORTED_SWEEP_MS), mailboxRunning()));
   const live = rows.filter((r) => jobsAllowed(r.workspace, now));
   if (!live.length) return [];
   const capped = new Set(
@@ -68,7 +69,7 @@ export async function assistantStatus(
       .where(
         and(
           eq(mailboxes.workspaceId, workspace.id),
-          eq(mailboxes.status, "active"),
+          mailboxRunning(),
           unsortedWhere(now, UNSORTED_NOTICE_MS),
         ),
       ),

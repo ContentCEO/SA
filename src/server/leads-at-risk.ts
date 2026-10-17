@@ -10,6 +10,7 @@ import {
 import { db } from "@/db";
 import { activityLog, businessProfiles, mailboxes, threads, workspaces } from "@/db/schema";
 import { pushConfigured, sendPush, type PushSender } from "@/lib/web-push";
+import { mailboxRunning } from "./mailbox-plan";
 import { businessMinutesBetween, inBusinessHours } from "./business-hours-rules";
 import { unalerted } from "./leads-at-risk-rules";
 import { jobsAllowed } from "./lifecycle";
@@ -100,7 +101,7 @@ export function leadsAtRiskQuery(workspaceId: string, now: Date) {
     .where(
       and(
         eq(mailboxes.workspaceId, workspaceId),
-        eq(mailboxes.status, "active"),
+        mailboxRunning(),
         gte(mailboxes.lastSyncedAt, new Date(now.getTime() - STALE_SYNC_MS)),
         or(
           eq(threads.category, "quote_request"),
