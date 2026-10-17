@@ -114,6 +114,11 @@ Davi runs several builder sessions at once. The build order for review prompts i
 
 - **pnpm** as package manager (lockfile committed, CI uses `--frozen-lockfile`).
 - **Next 16.3 / React 19.2 / Tailwind 4 / Zod 4** — latest stable at scaffold time.
+- **Next 16.3.8** (and `eslint-config-next` 16.3.8), 2026-10-17 (Check 26 P1): clears the six
+  `next` advisories for >=16.0.0 <16.3.8 in `pnpm audit --prod`. The only documented change between
+  16.3.6 and 16.3.8 is the custom cache handler key format, which we don't use. The `braces`,
+  `source-map-js` and MCP SDK advisories come through `shadcn` and `next`'s `postcss`; left for their
+  own prompt.
 - shadcn init installed a stray `cn` npm package; replaced with the standard clsx + tailwind-merge
   `cn` in `src/lib/utils.ts`.
 - No OS dark mode. The brand is a light paper surface with charcoal inversions; a system dark theme
