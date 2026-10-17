@@ -52,7 +52,7 @@ test("/start: a Growth client chooses; anyone else goes on to the queue", async 
   await page.goto("/start");
   await page.getByRole("link", { name: /My inbox/ }).click();
   await expect(page).toHaveURL(/\/queue$/);
-  await expect(page.getByRole("link", { name: "Connect Gmail" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Connect Gmail" }).first()).toBeVisible();
 
   // More has the Growth link back to the dashboard.
   await page.goto("/more");
@@ -202,7 +202,7 @@ test("admin: start Growth, post an update, enter a month, pause; the client sees
   await expect(card).toContainText("Not emailed yet");
 
   await card.getByText("Add numbers for a month", { exact: true }).click();
-  await card.getByLabel("Month").selectOption({ index: 0 });
+  await card.locator('select[name="month"]').selectOption({ index: 0 });
   await card.getByLabel("New leads").fill("12");
   await card.getByLabel("Money from jobs won ($)").fill("4,500");
   await card.getByRole("button", { name: "Save numbers" }).click();
@@ -256,7 +256,7 @@ test("admin: Invite to Growth and Remove on waitlist Growth requests", async ({
   await page.goto("/admin#waitlist");
 
   const a = page.getByRole("listitem", { name: `Waitlist: ${only}` });
-  await a.getByText("Invite to Growth", { exact: true }).click();
+  await a.locator("summary", { hasText: /^Invite to Growth$/ }).click();
   // The request's services come pre-ticked.
   await expect(a.getByLabel("Google ads")).toBeChecked();
   await expect(a.getByLabel("Website")).not.toBeChecked();
@@ -270,7 +270,7 @@ test("admin: Invite to Growth and Remove on waitlist Growth requests", async ({
 
   // Remove on a mixed row keeps the app sign-up.
   const b = page.getByRole("listitem", { name: `Waitlist: ${mixed}` });
-  await b.getByText("Remove Growth request", { exact: true }).click();
+  await b.locator("summary", { hasText: /^Remove Growth request$/ }).click();
   await expect(b).toContainText("Their app waitlist sign-up stays as it is.");
   await b.getByRole("button", { name: "Yes, remove the Growth request" }).click();
   await expect(page).toHaveURL(/done=wl_growth_request_block_removed#waitlist$/);
@@ -282,7 +282,7 @@ test("admin: Invite to Growth and Remove on waitlist Growth requests", async ({
 
   // Remove on a Growth-only row deletes it.
   const c = page.getByRole("listitem", { name: `Waitlist: ${only}` });
-  await c.getByText("Remove Growth request", { exact: true }).click();
+  await c.locator("summary", { hasText: /^Remove Growth request$/ }).click();
   await c.getByRole("button", { name: "Yes, delete this request" }).click();
   await expect(page).toHaveURL(/done=wl_growth_request_deleted#waitlist$/);
   expect(
