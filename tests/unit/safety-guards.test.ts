@@ -3,7 +3,7 @@
  * Every email here is invented.
  */
 import { describe, expect, it } from "vitest";
-import { applyOwnerRules } from "@/ai/classify";
+import { applyOwnerRules, codeOnlyClassification } from "@/ai/classify";
 import {
   CO_REASON,
   GAS_SMELL_REASON,
@@ -152,5 +152,41 @@ describe("autopilot keeps away from safety threads", () => {
   it("a carbon monoxide alarm always waits", () => {
     expect(guardrailReasons(OK)).toEqual([]);
     expect(guardrailReasons({ ...OK, coAlarm: true }).join()).toMatch(/carbon monoxide/);
+  });
+});
+
+describe("checks in code alone, after the AI limit (Check 39 P1)", () => {
+  const email = (body: string, subject = "Help") => ({
+    fromName: "Dana",
+    fromAddress: "dana@x.test",
+    subject,
+    receivedAt: new Date("2026-10-16T12:00:00Z"),
+    firstTimeSender: false,
+    threadSummary: null,
+    body,
+  });
+  it("a plain email waits for the model", () => {
+    expect(codeOnlyClassification(email("Can you quote a vanity?"))).toBeNull();
+    expect(codeOnlyClassification(email("The hot water smells like sulfur."))).toBeNull();
+  });
+  it("gas, CO, a new bank account or an attack is stored now", () => {
+    expect(codeOnlyClassification(email("I smell gas by the stove"))).toMatchObject({
+      needsOwner: true,
+      needsOwnerReason: GAS_SMELL_REASON,
+      priority: "high",
+      summary: "Email: Help",
+      unreadable: true,
+      extracted: { gas_smell: true, urgency: "emergency", owner_rule_hits: ["gas"] },
+    });
+    expect(codeOnlyClassification(email("Our CO alarm went off at 3am"))?.needsOwnerReason).toBe(
+      CO_REASON,
+    );
+    expect(
+      codeOnlyClassification(email("We changed our bank, please update your records."))?.extracted
+        .payment_change,
+    ).toBe(true);
+    expect(
+      codeOnlyClassification(email("hi"), { sticky: { injection: true } })?.extracted.injection,
+    ).toBe(true);
   });
 });

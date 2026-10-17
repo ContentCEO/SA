@@ -6,7 +6,13 @@ import { randomBytes } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { beforeEach, describe, expect, it } from "vitest";
 import { setModelTransportForTests } from "@/ai/client";
-import { CO_REASON, GAS_SMELL_REASON, WATER_SMELL_REASON } from "@/ai/guards";
+import { reserveAiCall } from "@/ai/usage";
+import {
+  CO_REASON,
+  GAS_SMELL_REASON,
+  PAYMENT_CHANGE_REASON,
+  WATER_SMELL_REASON,
+} from "@/ai/guards";
 import type { Database } from "@/db";
 import { drafts, messages, threads } from "@/db/schema";
 import { ensureUserAndWorkspace } from "@/server/accounts";
@@ -26,6 +32,7 @@ const NOW = new Date("2026-10-16T15:00:00Z");
 const minsAgo = (n: number) => new Date(NOW.getTime() - n * 60_000);
 let database: Database;
 let mailboxId: string;
+let workspaceId: string;
 let writer: FakeWriter;
 const deps = () => ({ writerFor: () => writer, now: () => NOW });
 
@@ -76,6 +83,7 @@ beforeEach(async () => {
   process.env.AI_DAILY_CALL_CAP = "100";
   database = await createTestDb();
   const { workspace } = await ensureUserAndWorkspace({ email: "owner@shop.test" });
+  workspaceId = workspace.id;
   mailboxId = (
     await saveConnectedMailbox(workspace, {
       email: "owner@shop.test",
@@ -185,5 +193,90 @@ describe("gas, CO and smelly water, sorted and drafted (Check 22 P4 + Check 36 P
     expect(r?.status).toBe("created");
     const [d] = await draftsOn(t.id);
     expect(d!.flags[0]).toBe(SAFETY_NOTE_FLAG);
+  });
+});
+
+describe("after the day's AI limit (Check 39 P1)", () => {
+  async function useUpTheLimit() {
+    process.env.AI_DAILY_CALL_CAP = "1";
+    await reserveAiCall(workspaceId, NOW);
+  }
+
+  it("a gas smell and a new bank account are still sorted in code; a plain email waits", async () => {
+    await useUpTheLimit();
+    const gas = await thread("gas", { lastMessageAt: minsAgo(40) });
+    await message(gas.id, "gas", {
+      bodyText: "There's a gas smell near the furnace in the basement. Please call.",
+      sentAt: minsAgo(40),
+    });
+    const bank = await thread("bank", { lastMessageAt: minsAgo(35) });
+    await message(bank.id, "bank", {
+      fromAddress: "ap@supply.test",
+      bodyText: "Please note our bank details have changed. Pay the new account below.",
+      sentAt: minsAgo(35),
+    });
+    const plain = await thread("plain");
+    await message(plain.id, "plain", { bodyText: "Can you quote a new vanity?" });
+    const { transport, calls } = fakeTransport([classification(), classification()]);
+    setModelTransportForTests(transport);
+
+    const r = await classifyPending(mailboxId, { now: NOW });
+    expect(r).toMatchObject({ capped: true, codeOnly: 2, classified: 2 });
+    expect(calls).toHaveLength(0);
+    expect(await threadRow(gas.id)).toMatchObject({
+      needsOwner: true,
+      priority: "high",
+      needsOwnerReason: GAS_SMELL_REASON,
+    });
+    expect((await threadRow(gas.id)).extracted).toMatchObject({
+      gas_smell: true,
+      urgency: "emergency",
+    });
+    expect(await threadRow(bank.id)).toMatchObject({
+      needsOwner: true,
+      priority: "high",
+      needsOwnerReason: PAYMENT_CHANGE_REASON,
+    });
+    const plainRow = await threadRow(plain.id);
+    expect(plainRow.classifiedAt).toBeNull();
+    const [plainMsg] = await database
+      .select()
+      .from(messages)
+      .where(eq(messages.threadId, plain.id));
+    expect(plainMsg!.classifiedAt).toBeNull();
+  });
+
+  it("the draft job writes the safety note first, with no model call", async () => {
+    // An ordinary lead sorted earlier, newer than the gas email, also waiting for a reply.
+    const lead = await thread("lead", { lastMessageAt: NOW });
+    await message(lead.id, "lead", { bodyText: "Quote for a vanity?", sentAt: minsAgo(5) });
+    setModelTransportForTests(fakeTransport([classification()]).transport);
+    await classifyPending(mailboxId, { now: NOW });
+
+    // That was the day's one call.
+    process.env.AI_DAILY_CALL_CAP = "1";
+    const gas = await thread("gas", { lastMessageAt: minsAgo(40) });
+    await message(gas.id, "gas", {
+      bodyText: "I smell gas by the stove.",
+      sentAt: minsAgo(40),
+    });
+    const { transport, calls } = fakeTransport([]);
+    setModelTransportForTests(transport);
+    await classifyPending(mailboxId, { now: NOW });
+
+    const due = await threadsToAutoDraft(mailboxId);
+    expect(due[0]).toBe(gas.id);
+    expect(due).toContain(lead.id);
+    expect(await createDraftForThread(gas.id, { trigger: "auto", ...deps() })).toMatchObject({
+      status: "created",
+    });
+    expect(calls).toHaveLength(0);
+    const [d] = await draftsOn(gas.id);
+    expect(d).toMatchObject({ purpose: "safety", status: "pending" });
+    // The ordinary reply waits for the reset.
+    expect(await createDraftForThread(lead.id, { trigger: "auto", ...deps() })).toEqual({
+      status: "skipped",
+      reason: "capped",
+    });
   });
 });

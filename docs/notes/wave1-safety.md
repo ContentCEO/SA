@@ -40,6 +40,16 @@ Builder notes for `CLAUDE.md` (Decisions, Prompt versions, Waiting on Davi), `do
   `threadsToAutoDraft` leaves junk out unless the owner wrote on the conversation), and never to a
   no-reply address (as before). The gas note's wording is unchanged.
 
+- **After the day's AI limit (Check 39 P1):** `classifyPending` no longer stops at the first
+  `AiCapReachedError`. That email and every later one in the batch go through
+  `codeOnlyClassification` (`src/ai/classify.ts`, pure; the same code checks and the same shape
+  as the no-model fallback): a gas smell, CO alarm, payment change or attack is stored through
+  the normal write (needs you, high for safety and payment, `classified_at` set, no model
+  category, no auto-marks); everything else stays unsorted for the model after the reset.
+  `ClassifyRunResult.codeOnly` counts them (they are in `classified` too), so the classify job's
+  text/push alerts fire. `threadsToAutoDraft` orders a gas / CO thread still without its safety
+  note first, so the note (no model) is written before a model draft hits the limit.
+
 ## Questions for Davi
 
 1. **Carbon monoxide safety note wording** (built, waiting on okay before merge to production):

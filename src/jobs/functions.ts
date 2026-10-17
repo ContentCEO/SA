@@ -178,6 +178,8 @@ export const classifyMailbox = inngest.createFunction(
       const r = await step.run(`batch-${round}`, () =>
         classifyPending(event.data.mailboxId, { limit: 10 }),
       );
+      // Check 39 P1: emails stored by the checks in code after the AI limit count too (they are
+      // in `classified`), so a gas smell on a capped day still alerts the owner.
       total += r.classified;
       if (r.capped || r.remaining === 0) {
         if (total > 0) await step.run("text-alerts", () => alertsForMailbox(event.data.mailboxId));

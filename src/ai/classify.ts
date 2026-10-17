@@ -341,28 +341,23 @@ const UNREADABLE: Omit<Classification, "summary"> = {
   unreadable: true,
 };
 
-/**
- * Classify one inbound email. Output is validated; on failure we retry once,
- * then flag it for the owner rather than guess.
- */
-export async function classifyEmail(
-  workspaceId: string,
-  business: BusinessContext,
-  email: EmailInput,
-  opts: {
-    senderIsVip: boolean;
-    senderNeedsMe?: boolean;
-    now?: Date;
-    /** Older unsorted emails on the thread: checked in code, never sent to the model (B3). */
-    alsoCheck?: string[];
-    /** Marks the thread already carries, kept whatever this email says (B3). */
-    sticky?: { injection?: boolean; paymentChange?: boolean };
-    /** Leads package: where the email came from, decided in code from the sender. */
-    channel?: { kind: ChannelKind; name: string } | null;
-    /** Leads package (B9): the owner's towns; empty = no check. */
-    serviceTowns?: readonly string[];
-  },
-): Promise<Classification> {
+/** What `classifyEmail` and `codeOnlyClassification` take besides the email itself. */
+export type ClassifyOpts = {
+  senderIsVip: boolean;
+  senderNeedsMe?: boolean;
+  now?: Date;
+  /** Older unsorted emails on the thread: checked in code, never sent to the model (B3). */
+  alsoCheck?: string[];
+  /** Marks the thread already carries, kept whatever this email says (B3). */
+  sticky?: { injection?: boolean; paymentChange?: boolean };
+  /** Leads package: where the email came from, decided in code from the sender. */
+  channel?: { kind: ChannelKind; name: string } | null;
+  /** Leads package (B9): the owner's towns; empty = no check. */
+  serviceTowns?: readonly string[];
+};
+
+/** The checks in code that never wait on the model, over the text the model would read. */
+function codeChecks(email: EmailInput, opts: Pick<ClassifyOpts, "alsoCheck" | "sticky">) {
   const body = prepareBody(email.body);
   // A burst (review B4): earlier unsorted emails minutes before this one are read with it.
   const earlier = (email.earlier ?? [])
@@ -373,15 +368,106 @@ export async function classifyEmail(
   // Checked in code first: the model is the thing being attacked. Every email in the burst,
   // and every older unsorted one the drafter may read.
   const injectedText = injectionCheck(checked).flagged;
-  const preCheck = { flagged: injectedText || opts.sticky?.injection === true };
+  const injection = injectedText || opts.sticky?.injection === true;
   const gasInText = mentionsGasSmell(checked);
   // Check 22 P4: a carbon monoxide alarm; Check 36 P1: rotten-egg WATER with no gas word.
   const coInText = mentionsCarbonMonoxide(checked);
   const waterInText = !gasInText && mentionsWaterSmell(checked);
-  const safetyInText = gasInText || coInText;
   const paymentChangeInText =
     looksLikePaymentChange(checked) || opts.sticky?.paymentChange === true;
   const municipalSender = looksMunicipal(email.fromAddress, email.fromName);
+  return {
+    body,
+    earlier,
+    allText,
+    checked,
+    injection,
+    gasInText,
+    coInText,
+    waterInText,
+    paymentChangeInText,
+    municipalSender,
+  };
+}
+
+/**
+ * Without a usable model answer: flag it for the owner rather than guess, with whatever the code
+ * checks found (an attack, a gas smell, a CO alarm, a new bank account).
+ */
+function codeFallback(email: EmailInput, c: ReturnType<typeof codeChecks>): Classification {
+  const safety = c.gasInText || c.coInText;
+  const hits: OwnerRuleKey[] = [
+    ...(c.injection ? (["injection"] as const) : []),
+    ...(c.gasInText ? (["gas"] as const) : []),
+    ...(c.coInText && !c.gasInText ? (["co_alarm"] as const) : []),
+    ...(c.paymentChangeInText ? (["payment_change"] as const) : []),
+  ];
+  return {
+    ...UNREADABLE,
+    ...(c.injection
+      ? { needsOwnerReason: INJECTION_REASON }
+      : c.gasInText
+        ? { needsOwnerReason: GAS_SMELL_REASON }
+        : c.coInText
+          ? { needsOwnerReason: CO_REASON }
+          : c.paymentChangeInText
+            ? { needsOwnerReason: PAYMENT_CHANGE_REASON }
+            : {}),
+    ...(safety || c.paymentChangeInText ? { priority: "high" as const } : {}),
+    extracted: {
+      ...UNREADABLE.extracted,
+      ...(safety ? { urgency: "emergency" as const } : {}),
+      ...(c.injection ? { injection: true } : {}),
+      ...(c.municipalSender ? { municipal: true } : {}),
+      ...(c.gasInText ? { gas_smell: true } : {}),
+      ...(c.coInText && !c.gasInText ? { co_alarm: true } : {}),
+      ...(c.waterInText ? { water_smell: true } : {}),
+      ...(c.paymentChangeInText ? { payment_change: true } : {}),
+      ...(hits.length ? { owner_rule_hits: hits } : {}),
+    },
+    summary: email.subject ? `Email: ${email.subject}` : "Email with no subject.",
+  };
+}
+
+/**
+ * Check 39 P1: the day's AI limit is used up, but the checks in code still work. Returns a
+ * classification only when one of them found something that can't wait for the reset — a gas
+ * smell, a carbon monoxide alarm, a new bank account, an attack — shaped like the no-model
+ * fallback (needs you, high for safety and payment changes). Null otherwise: the email waits
+ * for the model. Pure.
+ */
+export function codeOnlyClassification(
+  email: EmailInput,
+  opts: Pick<ClassifyOpts, "alsoCheck" | "sticky"> = {},
+): Classification | null {
+  const c = codeChecks(email, opts);
+  if (!(c.gasInText || c.coInText || c.paymentChangeInText || c.injection)) return null;
+  return codeFallback(email, c);
+}
+
+/**
+ * Classify one inbound email. Output is validated; on failure we retry once,
+ * then flag it for the owner rather than guess.
+ */
+export async function classifyEmail(
+  workspaceId: string,
+  business: BusinessContext,
+  email: EmailInput,
+  opts: ClassifyOpts,
+): Promise<Classification> {
+  const checks = codeChecks(email, opts);
+  const {
+    body,
+    earlier,
+    allText,
+    checked,
+    gasInText,
+    coInText,
+    waterInText,
+    paymentChangeInText,
+    municipalSender,
+  } = checks;
+  const preCheck = { flagged: checks.injection };
   const request = {
     workspaceId,
     role: "classify" as const,
@@ -398,32 +484,7 @@ export async function classifyEmail(
 
   let result = await callStructured(request);
   if (!result) result = await callStructured(request);
-  if (!result) {
-    return {
-      ...UNREADABLE,
-      ...(preCheck.flagged
-        ? { needsOwnerReason: INJECTION_REASON }
-        : gasInText
-          ? { needsOwnerReason: GAS_SMELL_REASON }
-          : coInText
-            ? { needsOwnerReason: CO_REASON }
-            : paymentChangeInText
-              ? { needsOwnerReason: PAYMENT_CHANGE_REASON }
-              : {}),
-      ...(safetyInText || paymentChangeInText ? { priority: "high" as const } : {}),
-      extracted: {
-        ...UNREADABLE.extracted,
-        ...(safetyInText ? { urgency: "emergency" as const } : {}),
-        ...(preCheck.flagged ? { injection: true } : {}),
-        ...(municipalSender ? { municipal: true } : {}),
-        ...(gasInText ? { gas_smell: true } : {}),
-        ...(coInText ? { co_alarm: true } : {}),
-        ...(waterInText ? { water_smell: true } : {}),
-        ...(paymentChangeInText ? { payment_change: true } : {}),
-      },
-      summary: email.subject ? `Email: ${email.subject}` : "Email with no subject.",
-    };
-  }
+  if (!result) return codeFallback(email, checks);
 
   const injection = preCheck.flagged || result.signals.tries_to_instruct_assistant;
   const municipal = municipalSender || result.signals.from_building_department;

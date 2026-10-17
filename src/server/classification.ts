@@ -1,7 +1,12 @@
 import "server-only";
 import { injectionCheck, looksMunicipal } from "@/ai/guards";
 import { and, count, desc, eq, gte, inArray, isNull, lt, sql } from "drizzle-orm";
-import { classifyEmail, DISPUTE_REASONS, type Classification } from "@/ai/classify";
+import {
+  classifyEmail,
+  codeOnlyClassification,
+  DISPUTE_REASONS,
+  type Classification,
+} from "@/ai/classify";
 import { AiCapReachedError } from "@/ai/usage";
 import { OTHER_JOB_KIND } from "@/config/job-kinds";
 import { db } from "@/db";
@@ -55,6 +60,11 @@ export type ClassifyRunResult = {
   superseded: number;
   remaining: number;
   capped: boolean;
+  /**
+   * Check 39 P1: emails stored by the checks in code alone after the day's AI limit was hit (a
+   * gas smell, a CO alarm, a new bank account, an attack). Also counted in `classified`.
+   */
+  codeOnly: number;
 };
 
 const NOISE: Omit<Classification, "summary"> = {
@@ -123,7 +133,7 @@ export async function classifyPending(
     .where(eq(mailboxes.id, mailboxId));
   // Lost access or paused on the plan (2026-10-16): nothing is sorted, no AI spent.
   if (!box || !mailboxOn(box.mailbox) || !jobsAllowed(box.workspace, now))
-    return { classified: 0, superseded: 0, remaining: 0, capped: false };
+    return { classified: 0, superseded: 0, remaining: 0, capped: false, codeOnly: 0 };
 
   const since = new Date(now.getTime() - CLASSIFY_LOOKBACK_DAYS * 86_400_000);
   const pending = await pendingFor(mailboxId, since);
@@ -157,6 +167,7 @@ export async function classifyPending(
 
   const batch = [...newestPerThread.values()].slice(0, limit);
   let classified = 0;
+  let codeOnly = 0;
   let capped = false;
   for (const m of batch) {
     let result: Classification;
@@ -182,6 +193,42 @@ export async function classifyPending(
       injection?: unknown;
       payment_change?: unknown;
     };
+    // The burst the model reads with it (B4), oldest first.
+    const earlier = older
+      .filter(
+        (o) =>
+          m.sentAt.getTime() - o.sentAt.getTime() <= BURST_WINDOW_MS &&
+          o.fromAddress === m.fromAddress,
+      )
+      .slice(0, BURST_MAX)
+      .reverse()
+      .map((o) => ({ receivedAt: o.sentAt, body: o.bodyText ?? o.snippet ?? "" }));
+    // Every older unsorted email is checked in code too, even outside the burst (B3): the
+    // drafter reads them.
+    const alsoCheck = older.map((o) => `${o.subject ?? ""}\n${o.bodyText ?? o.snippet ?? ""}`);
+    // A thread once caught trying to instruct us (or asking to pay a new account) keeps that
+    // mark: "any update?" doesn't clear it (B3).
+    const sticky = {
+      injection: prevMarks.injection === true,
+      paymentChange: prevMarks.payment_change === true,
+    };
+    // Check 39 P1: past the day's AI limit, only what the checks in code catch is stored now (a
+    // gas smell, a CO alarm, a new bank account, an attack), through the same write as any
+    // other result. Everything else stays unsorted for the model after the reset.
+    const codeOnlyResult = () =>
+      codeOnlyClassification(
+        {
+          fromName: m.fromName,
+          fromAddress: m.fromAddress,
+          subject: m.subject,
+          receivedAt: m.sentAt,
+          firstTimeSender: false,
+          threadSummary: null,
+          body: m.bodyText ?? m.snippet ?? "",
+          earlier,
+        },
+        { alsoCheck, sticky },
+      );
     // Where it came from, decided in code from the sender (leads package): a voicemail or
     // text-message email, a lead website, or null for a person writing directly.
     const channel = channelOf(m.fromAddress);
@@ -206,7 +253,12 @@ export async function classifyPending(
       prevMarks.payment_change !== true &&
       !injectionCheck(ruleText).flagged &&
       !junkShortcutBlocked(ruleText);
-    if (junkByRule) {
+    if (capped) {
+      const code = codeOnlyResult();
+      if (!code) continue;
+      result = code;
+      codeOnly++;
+    } else if (junkByRule) {
       // No model call: the owner said this sender is junk, and nothing in it says otherwise.
       result = {
         ...NOISE,
@@ -261,8 +313,9 @@ export async function classifyPending(
       const senderIsVip = [m.fromAddress, replyTo].some(
         (a) => !!a && business.vipSenders.includes(a.toLowerCase()),
       );
+      let fromModel: Classification | null = null;
       try {
-        result = await classifyEmail(
+        fromModel = await classifyEmail(
           box.workspace.id,
           business,
           {
@@ -273,53 +326,43 @@ export async function classifyPending(
             firstTimeSender,
             threadSummary: thread?.summary ?? null,
             body: m.bodyText ?? m.snippet ?? "",
-            // The burst the model reads with it (B4), oldest first.
-            earlier: older
-              .filter(
-                (o) =>
-                  m.sentAt.getTime() - o.sentAt.getTime() <= BURST_WINDOW_MS &&
-                  o.fromAddress === m.fromAddress,
-              )
-              .slice(0, BURST_MAX)
-              .reverse()
-              .map((o) => ({ receivedAt: o.sentAt, body: o.bodyText ?? o.snippet ?? "" })),
+            earlier,
           },
           {
             senderIsVip,
             senderNeedsMe: rule.caution === "needs_me",
             now,
-            // Every older unsorted email is checked in code too, even outside the burst (B3):
-            // the drafter reads them.
-            alsoCheck: older.map((o) => `${o.subject ?? ""}\n${o.bodyText ?? o.snippet ?? ""}`),
-            // A thread once caught trying to instruct us (or asking to pay a new account)
-            // keeps that mark: "any update?" doesn't clear it (B3).
-            sticky: {
-              injection: prevMarks.injection === true,
-              paymentChange: prevMarks.payment_change === true,
-            },
+            alsoCheck,
+            sticky,
             channel: channel ? { kind: channel.kind, name: channelName(channel.key) ?? "" } : null,
             serviceTowns: business.serviceTowns,
           },
         );
       } catch (err) {
-        if (err instanceof AiCapReachedError) {
-          capped = true;
-          break;
-        }
-        throw err;
+        if (!(err instanceof AiCapReachedError)) throw err;
+        // Check 39 P1: the limit was reached on this email. Don't stop the batch: this one and
+        // every later one still get the checks in code.
+        capped = true;
       }
-      viaModel = true;
-      // What the sorter itself said (ideas H4): a kind the owner chose never feeds automatic
-      // drafts or autopilot unless the sorter's own kind would have. Content-free.
-      result = {
-        ...result,
-        extracted: {
-          ...result.extracted,
-          model_category: result.category,
-          ...(rule.noDraft ? { sender_rule: "no_draft" as const } : {}),
-        },
-      };
-      if (result.extracted.accepts_quote) {
+      if (!fromModel) {
+        const code = codeOnlyResult();
+        if (!code) continue;
+        result = code;
+        codeOnly++;
+      } else {
+        viaModel = true;
+        // What the sorter itself said (ideas H4): a kind the owner chose never feeds automatic
+        // drafts or autopilot unless the sorter's own kind would have. Content-free.
+        result = {
+          ...fromModel,
+          extracted: {
+            ...fromModel.extracted,
+            model_category: fromModel.category,
+            ...(rule.noDraft ? { sender_rule: "no_draft" as const } : {}),
+          },
+        };
+      }
+      if (viaModel && result.extracted.accepts_quote) {
         const [ownerBefore] = await db()
           .select({ n: count() })
           .from(messages)
@@ -611,7 +654,7 @@ export async function classifyPending(
   }
 
   const remaining = Math.max(0, newestPerThread.size - classified);
-  return { classified, superseded, remaining: capped ? 0 : remaining, capped };
+  return { classified, superseded, remaining: capped ? 0 : remaining, capped, codeOnly };
 }
 
 /** Inbox action: the owner says a thread needs them. Scoped to their workspace. */

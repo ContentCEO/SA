@@ -2870,7 +2870,15 @@ export async function threadsToAutoDraft(mailboxId: string, limit = 10): Promise
         sql`(${threads.extracted}->>'sender_rule') is distinct from 'no_draft'`,
       ),
     )
-    .orderBy(desc(threads.lastMessageAt))
+    // Check 39 P1: a gas smell or CO alarm still waiting for its safety note goes first. The
+    // note needs no model, so it is written even after the day's AI limit stops the loop at the
+    // first reply that needs one.
+    .orderBy(
+      desc(
+        sql`coalesce(${threads.extracted}->>'gas_smell' = 'true' or ${threads.extracted}->>'co_alarm' = 'true', false) and not exists (select 1 from drafts d where d.thread_id = ${threads.id} and d.purpose = 'safety')`,
+      ),
+      desc(threads.lastMessageAt),
+    )
     .limit(limit);
   return rows.map((r) => r.id);
 }
