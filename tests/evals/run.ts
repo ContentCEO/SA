@@ -15,7 +15,7 @@ import {
   FIRST_CONTACT_TASK,
   replyDraftSchema,
   workspaceBlock,
-} from "@/ai/prompts/draft.v7";
+} from "@/ai/prompts/draft.v8";
 import { ACTIVE } from "@/ai/prompts/registry";
 import { usage } from "@/db/schema";
 import { ensureUserAndWorkspace } from "@/server/accounts";
@@ -139,7 +139,12 @@ export async function runEvals(
         problems.push(
           ...check.flags.filter(
             (f) =>
-              f.includes("never-promise") || f.includes("never-say") || f.includes("stand behind"),
+              f.includes("never-promise") ||
+              f.includes("never-say") ||
+              f.includes("stand behind") ||
+              // draft.v8 (Check 38 P6): no made-up license number, no unbacked credential.
+              f.includes("license or registration number") ||
+              f.includes("Add it in Settings"),
           ),
         );
         for (const bad of c.draft.mustNotContain ?? []) {

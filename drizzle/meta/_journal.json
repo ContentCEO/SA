@@ -274,6 +274,13 @@
       "when": 1792208657111,
       "tag": "0038_growth",
       "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "7",
+      "when": 1792258768564,
+      "tag": "0039_licenses",
+      "breakpoints": true
     }
   ]
 }

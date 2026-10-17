@@ -3,6 +3,7 @@
  * invent prices, dates or promises; these catch it when it does anyway. They
  * never rewrite the draft — they flag it for the owner and lower confidence.
  */
+import type { Licenses } from "@/config/licenses";
 import { withoutGaps } from "./gaps";
 import { allNumbers, moneyMentions, vagueMoney } from "./money-words";
 import { localDay } from "./prompts/draft.v6";
@@ -65,7 +66,23 @@ const SOFT_PROMISES: [string, RegExp][] = [
     "for free",
     /\b(?:for free|free of cost|won't cost you|will not cost you|we'll cover (?:it|the cost)|we will cover (?:it|the cost))\b/i,
   ],
-  ["licensed and insured", /\b(fully )?licensed and insured\b/i],
+  // "Licensed and insured" is a credential claim now (Check 38 P6, below): it passes once the
+  // owner saved a license and an insurance company.
+  // Check 23 P2 + Check 36 P7: claims an owner has to stand behind.
+  [
+    "no permit needed",
+    /\b(?:no|don't|do not|doesn't|does not|won't|will not)(?: even)? (?:need|needs|require|requires)(?: a| any)? permits?\b|\bno permits? (?:needed|required)\b|\bskip (?:the )?(?:permit|inspection)\b|\bwithout (?:a )?permit\b/i,
+  ],
+  ["up to code", /\b(?:up to|meets|passes|to) code\b|\bcode[- ]compliant\b/i],
+  [
+    "waived fee",
+    /\bwaive[sd]?\b|\bwaiving\b|\bknock (?:it )?off\b|\bwon't charge (?:you )?(?:for|the)\b/i,
+  ],
+  [
+    "price match",
+    /\b(?:match|beat) (?:their|that|the|his|her|your|any) (?:price|quote|number|bid)\b|\bprice[- ]match\b/i,
+  ],
+  ["fit you in", /\b(?:squeeze|fit|sneak) (?:you|it|them) in\b/i],
 ];
 
 /** Words that make a commitment the owner has to stand behind. */
@@ -123,6 +140,12 @@ export type CheckContext = {
    * said the way a draft would say it ("by check", not "let me check").
    */
   ownerWrote?: string;
+  /**
+   * Check 38 P6: the owner's saved registration and license numbers. A number the draft gives
+   * that isn't here (or in what the owner wrote) is flagged, and so is a claim of being
+   * registered, licensed, lead-safe certified or insured with nothing saved to back it.
+   */
+  licenses?: Licenses | null;
   /** Review requests only: the one link allowed, and nothing offered in return. */
   review?: { url: string | null };
   /**
@@ -151,14 +174,60 @@ export type CheckHit =
   /** Repeats an amount only the customer named (review A4): flagged, never rewritten. */
   | "customer_amount"
   /** A soft promise or an admission (review A3). */
-  | "soft_promise";
+  | "soft_promise"
+  /** Check 36 P7 / 38 P6: a license or registration number the owner never saved. */
+  | "license"
+  /** Check 38 P6: "we're registered / licensed / lead-safe certified / insured", unbacked. */
+  | "credential";
 export type CheckResult = { flags: string[]; confidenceCap: number; hits: CheckHit[] };
 
 /**
  * Hits worth one fresh attempt before flagging (plan #23, #43): an invented price
  * or date, something the owner explicitly banned, or payment terms they never set (A4).
  */
-export const REGENERATE_ON: CheckHit[] = ["money", "when", "never_promise", "never_say", "terms"];
+export const REGENERATE_ON: CheckHit[] = [
+  "money",
+  "when",
+  "never_promise",
+  "never_say",
+  "terms",
+  // Check 36 P7: a made-up license number gets one fresh attempt.
+  "license",
+];
+
+/**
+ * Check 36 P7 + 38 P6: a license or registration number — after HIC, CSL, CS-, MP-, JP-, MGF,
+ * LR-, "license", "lic.", "registration", "reg #" — with at least three digits.
+ */
+const LICENSE_NUMBER =
+  /\b(?:hic|csl|cs|mp|jp|mgf|lr|license|licence|lic|registration|reg)\b\.?(?:[\s,:#-]|\bnumber\b|\bno\b\.?|\bnum\b|\bis\b)*([a-z]{0,4}-?\s?\d{3,}[a-z0-9-]*)/gi;
+
+/** The digit runs (3+) a text holds, to compare license numbers however they're written. */
+const digitRuns = (t: string) => new Set([...t.matchAll(/\d{3,}/g)].map((m) => m[0]));
+
+/** Check 38 P6: credential claims, each with the saved field that backs it. */
+const CREDENTIALS: [string, RegExp, (l: Licenses) => boolean][] = [
+  [
+    "registered",
+    /\b(?:hic|home improvement)[- ](?:registered|registration)\b|\bregistered (?:hic|home improvement contractor|with the state|in the state|contractor)\b|\b(?:we're|we are|i'm|i am)(?: fully)? (?:state[- ])?registered\b|\bbonded (?:with|in) the state\b/i,
+    (l) => !!l.hic_number?.trim(),
+  ],
+  [
+    "licensed",
+    /\b(?:i|we) (?:hold|have) (?:a|an|the|my|our) (?:csl|construction supervisor|master|journeyman)|\blicensed (?:master|journeyman|plumber|electrician|contractor|gasfitter|builder)\b|\b(?:we're|we are|i'm|i am)(?: fully)? licensed\b|\blicensed and insured\b/i,
+    (l) => !!l.csl_number?.trim(),
+  ],
+  [
+    "lead-safe certified",
+    /\blead[- ]safe (?:certified|certification|renovat\w*|licensed?|contractor)\b|\b(?:epa )?rrp[- ]certified\b/i,
+    (l) => !!l.lead_safe_license?.trim(),
+  ],
+  [
+    "insured",
+    /\b(?:we're|we are|i'm|i am|fully|are) insured\b|\blicensed and insured\b|\bcertificate of insurance\b|\binsurance certificate\b/i,
+    (l) => !!l.insurance_carrier?.trim(),
+  ],
+];
 
 /** "50%", "12.5 %". */
 const PERCENT = PCT;
@@ -244,7 +313,6 @@ export function checkDraft(draftBody: string, ctx: CheckContext): CheckResult {
   const hits: CheckHit[] = [];
   let cap = 1;
   const lowerBody = body.toLowerCase();
-  const source = ctx.sourceText.toLowerCase();
 
   // Prices that appear nowhere in the conversation or the profile were made up. A bare number
   // ("is 1500") is only money when nothing else explains it, so it may also match any number
@@ -259,8 +327,11 @@ export function checkDraft(draftBody: string, ctx: CheckContext): CheckResult {
   ]);
   const ownerKnown = new Set([...money(ownerText), ...instructionNumbers]);
   const ownerAnyNumber = new Set([...allNumbers(ownerText), ...instructionNumbers]);
-  const strong = new Set(strongMoney(body));
-  const bodyAmounts = [...new Set(money(body))];
+  // A license number is not a price (Check 38 P6): the money finder never sees it.
+  const licenseHits = [...body.matchAll(LICENSE_NUMBER)];
+  const moneyBody = body.replace(LICENSE_NUMBER, " ");
+  const strong = new Set(strongMoney(moneyBody));
+  const bodyAmounts = [...new Set(money(moneyBody))];
   const invented = bodyAmounts.filter((a) =>
     strong.has(a) ? !known.has(a) : !known.has(a) && !anyNumberInSource.has(a),
   );
@@ -334,10 +405,12 @@ export function checkDraft(draftBody: string, ctx: CheckContext): CheckResult {
     if (!hits.includes("when")) hits.push("when");
   }
 
-  // Guarantee / warranty / promise language the customer and profile never used.
+  // Guarantee / warranty / promise language the owner never used (Check 23 P2): a customer's
+  // "Is that under warranty?" never makes it the owner's promise.
+  const ownerLower = ownerText.toLowerCase();
   const commitments = [
     ...new Set([...body.matchAll(COMMITMENT)].map((m) => m[0].toLowerCase())),
-  ].filter((w) => !source.includes(w));
+  ].filter((w) => !ownerLower.includes(w));
   if (commitments.length) {
     flags.push(`Says “${commitments.join("”, “")}” — make sure you stand behind that.`);
     cap = Math.min(cap, 0.4);
@@ -357,6 +430,34 @@ export function checkDraft(draftBody: string, ctx: CheckContext): CheckResult {
     flags.push(`Says “${soft.join("”, “")}” — make sure you stand behind that.`);
     cap = Math.min(cap, 0.5);
     hits.push("soft_promise");
+  }
+
+  // License and registration numbers the owner never saved or wrote (Check 36 P7, 38 P6).
+  const ownerRuns = digitRuns([ownerText, ctx.ownerInstruction ?? ""].join("\n"));
+  const unknownNumbers = licenseHits.filter((m) => {
+    const runs = [...digitRuns(m[1]!)];
+    return !runs.length || runs.some((r) => !ownerRuns.has(r));
+  });
+  if (unknownNumbers.length) {
+    flags.push("Mentions a license or registration number you haven't saved. Check it.");
+    cap = Math.min(cap, 0.3);
+    hits.push("license");
+  }
+  // "We're registered / licensed / lead-safe certified / insured" with nothing saved to back it
+  // (Check 38 P6). The owner's own words back it too.
+  const saved = ctx.licenses ?? {};
+  const ownerHasLicenseNumber = [...ownerText.matchAll(LICENSE_NUMBER)].length > 0;
+  const unbacked = CREDENTIALS.filter(
+    ([label, re, backed]) =>
+      re.test(body) &&
+      !backed(saved) &&
+      !re.test(ownerText) &&
+      !(label === "licensed" && ownerHasLicenseNumber),
+  ).map(([label]) => label);
+  if (unbacked.length) {
+    flags.push(`Says you're ${unbacked.join(" and ")}. Add it in Settings or take it out.`);
+    cap = Math.min(cap, 0.5);
+    hits.push("credential");
   }
 
   // Never-promise list: flag when the key words of an item all show up in the draft.

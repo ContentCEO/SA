@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { Button, buttonVariants } from "@/components/ui/button";
+import { hicExpiryLine, licenseFacts } from "@/config/licenses";
 import { cn } from "@/lib/utils";
 import { getBusinessProfile } from "@/server/profile";
 import { activeNotes, MAX_ACTIVE_NOTES, NOTE_MAX_CHARS, ownerToday } from "@/server/seasonal-notes";
@@ -25,11 +26,14 @@ export default async function BusinessSettingsPage(props: PageProps<"/settings/b
     ["Never promise", profile?.doNotPromise.length ? profile.doNotPromise.join(" · ") : null],
     ["Always send me", profile?.vipSenders.length ? profile.vipSenders.join(", ") : null],
     ["Review link", profile?.reviewUrl],
+    ["Licenses", licenseFacts(profile?.licenses)],
     [
       "Flag amounts over",
       profile ? `$${profile.amountThresholdDollars.toLocaleString("en-US")}` : null,
     ],
   ].filter((f): f is [string, string] => Boolean(f[1]));
+  // Check 38 P6: one line when the HIC registration runs out within 30 days. No email.
+  const hicLine = hicExpiryLine(profile?.licenses, today);
   const ownNotes = notes.filter((n) => !n.away);
   const awayNote = notes.find((n) => n.away);
 
@@ -55,6 +59,11 @@ export default async function BusinessSettingsPage(props: PageProps<"/settings/b
         ) : (
           <p className="text-muted-foreground">Not filled in yet. Drafts are better when it is.</p>
         )}
+        {hicLine ? (
+          <p role="status" className="sa-inverted rounded-lg px-4 py-3 font-semibold">
+            {hicLine}
+          </p>
+        ) : null}
         <Link
           href="/settings/profile"
           className={cn(buttonVariants({ variant: "outline" }), "w-full")}

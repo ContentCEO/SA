@@ -1,6 +1,7 @@
 import "server-only";
 import { eq } from "drizzle-orm";
 import { z } from "zod";
+import { LICENSE_FIELD_MAX, type Licenses } from "@/config/licenses";
 import { cleanExtraTrades, MAX_EXTRA_TRADES, TRADES } from "@/config/trades";
 import { db } from "@/db";
 import {
@@ -88,6 +89,18 @@ const reviewUrl = z
   )
   .optional();
 
+/** Check 38 P6: one short line each; '' clears it. Left out = leave the saved one as it is. */
+const licenseLine = z
+  .string()
+  .trim()
+  .max(LICENSE_FIELD_MAX, `Keep this under ${LICENSE_FIELD_MAX} characters.`)
+  .optional();
+const licenseDate = z
+  .string()
+  .trim()
+  .refine((v) => v === "" || /^\d{4}-\d{2}-\d{2}$/.test(v), "Pick the date it runs out.")
+  .optional();
+
 export const businessProfileInput = z.object({
   businessName: z.string().trim().min(1, "What's the business called?").max(120),
   trade: z.enum(TRADES, { message: "Pick your trade." }),
@@ -137,6 +150,12 @@ export const businessProfileInput = z.object({
   vipSenders: lines(50, 254).pipe(
     z.array(z.string().toLowerCase().email("Each VIP line should be one email address.")),
   ),
+  // Check 38 P6: "Licenses and registrations".
+  hicNumber: licenseLine,
+  hicExpiresOn: licenseDate,
+  cslNumber: licenseLine,
+  leadSafeLicense: licenseLine,
+  insuranceCarrier: licenseLine,
   amountThresholdDollars: z.coerce
     .number({ message: "Enter a dollar amount." })
     .int("Whole dollars, please.")
@@ -171,8 +190,35 @@ export async function saveBusinessProfile(
   data: z.output<typeof businessProfileInput>,
   now: Date = new Date(),
 ) {
-  const { businessName, trade, extraTrades, timeZone, ...rest } = data;
-  const profile = { ...rest, ...(timeZone ? { timeZone } : {}) };
+  const {
+    businessName,
+    trade,
+    extraTrades,
+    timeZone,
+    hicNumber,
+    hicExpiresOn,
+    cslNumber,
+    leadSafeLicense,
+    insuranceCarrier,
+    ...rest
+  } = data;
+  // Check 38 P6: a form that shows the license fields sends all of them; one that doesn't
+  // leaves the saved numbers alone.
+  const licenseInput = { hicNumber, hicExpiresOn, cslNumber, leadSafeLicense, insuranceCarrier };
+  const licenses: Licenses | undefined = Object.values(licenseInput).some((v) => v !== undefined)
+    ? Object.fromEntries(
+        (
+          [
+            ["hic_number", hicNumber],
+            ["hic_expires_on", hicExpiresOn],
+            ["csl_number", cslNumber],
+            ["lead_safe_license", leadSafeLicense],
+            ["insurance_carrier", insuranceCarrier],
+          ] as const
+        ).filter(([, v]) => v),
+      )
+    : undefined;
+  const profile = { ...rest, ...(timeZone ? { timeZone } : {}), ...(licenses ? { licenses } : {}) };
   await db()
     .update(workspaces)
     .set({

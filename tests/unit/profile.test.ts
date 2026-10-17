@@ -17,6 +17,7 @@ import {
   saveBusinessProfile,
 } from "@/server/profile";
 import { profileDefaults } from "@/server/profile-defaults";
+import { hicExpiryLine, licenseFacts } from "@/config/licenses";
 import { createTestDb } from "../support/db";
 import { classification, fakeTransport } from "../support/fake-model";
 
@@ -227,6 +228,79 @@ describe("profile drives classification", () => {
       businessProfileInput.parse({ ...valid, reviewUrl: "" }),
     );
     expect((await getBusinessProfile(workspace.id))!.reviewUrl).toBeNull();
+  });
+});
+
+describe("licenses and registrations (Check 38 P6)", () => {
+  let database: Database;
+  beforeEach(async () => {
+    database = await createTestDb();
+  });
+  it("saves the numbers, keeps them when a form doesn't carry them, clears an emptied line", async () => {
+    const { workspace } = await ensureUserAndWorkspace({ email: "owner@shop.com" });
+    const ws = async () =>
+      (await database.select().from(workspaces).where(eq(workspaces.id, workspace.id)))[0]!;
+    await saveBusinessProfile(
+      workspace.id,
+      businessProfileInput.parse({
+        ...valid,
+        hicNumber: " 198344 ",
+        hicExpiresOn: "2026-11-01",
+        cslNumber: "CS-104512",
+        leadSafeLicense: "",
+        insuranceCarrier: "Plymouth Rock",
+      }),
+    );
+    expect((await getBusinessProfile(workspace.id))!.licenses).toEqual({
+      hic_number: "198344",
+      hic_expires_on: "2026-11-01",
+      csl_number: "CS-104512",
+      insurance_carrier: "Plymouth Rock",
+    });
+    expect((await profileDefaults(await ws())).licenses.csl_number).toBe("CS-104512");
+    // A save without the fields leaves them alone.
+    await saveBusinessProfile(workspace.id, businessProfileInput.parse(valid));
+    expect((await getBusinessProfile(workspace.id))!.licenses.hic_number).toBe("198344");
+    // Emptied in the form: gone.
+    await saveBusinessProfile(
+      workspace.id,
+      businessProfileInput.parse({
+        ...valid,
+        hicNumber: "",
+        hicExpiresOn: "",
+        cslNumber: "CS-104512",
+        leadSafeLicense: "",
+        insuranceCarrier: "",
+      }),
+    );
+    expect((await getBusinessProfile(workspace.id))!.licenses).toEqual({ csl_number: "CS-104512" });
+  });
+
+  it("one line each, 40 characters at most, and a real date", () => {
+    const long = businessProfileInput.safeParse({ ...valid, hicNumber: "x".repeat(41) });
+    expect(long.error!.issues[0]!.message).toBe("Keep this under 40 characters.");
+    const date = businessProfileInput.safeParse({ ...valid, hicExpiresOn: "next year" });
+    expect(date.error!.issues[0]!.message).toBe("Pick the date it runs out.");
+  });
+
+  it("Settings shows one line when the HIC runs out within 30 days", () => {
+    const l = { hic_number: "198344", hic_expires_on: "2026-11-10" };
+    expect(hicExpiryLine(l, "2026-10-01")).toBeNull();
+    expect(hicExpiryLine(l, "2026-10-11")).toBe(
+      "Your HIC registration runs out in 30 days. Renew it with the state.",
+    );
+    expect(hicExpiryLine(l, "2026-11-09")).toBe(
+      "Your HIC registration runs out in 1 day. Renew it with the state.",
+    );
+    expect(hicExpiryLine(l, "2026-11-12")).toMatch(/has passed/);
+    expect(hicExpiryLine({}, "2026-11-12")).toBeNull();
+  });
+
+  it("the drafting block lists only the filled ones, and says so when there are none", () => {
+    expect(licenseFacts({ hic_number: "198344", lead_safe_license: " " })).toBe(
+      "Home improvement registration (HIC) number: 198344",
+    );
+    expect(licenseFacts({})).toBeNull();
   });
 });
 

@@ -2,6 +2,7 @@
 
 import { useActionState } from "react";
 import { TimeZoneInput } from "./time-zone-input";
+import { LICENSE_LABELS, type Licenses } from "@/config/licenses";
 import { MAX_EXTRA_TRADES, TRADE_OPTIONS } from "@/config/trades";
 import { saveBusinessProfileAction, type FormState } from "@/app/(app)/settings/profile-actions";
 import { Button } from "@/components/ui/button";
@@ -27,6 +28,8 @@ export type ProfileDefaults = {
   doNotPromise: string[];
   vipSenders: string[];
   amountThresholdDollars: number;
+  /** Check 38 P6: registration and license numbers. */
+  licenses: Licenses;
 };
 
 const trades = TRADE_OPTIONS;
@@ -47,6 +50,11 @@ const OPTIONAL_FIELDS = [
   "doNotPromise",
   "vipSenders",
   "amountThresholdDollars",
+  "hicNumber",
+  "hicExpiresOn",
+  "cslNumber",
+  "leadSafeLicense",
+  "insuranceCarrier",
 ] as const;
 
 export function BusinessProfileForm({
@@ -73,6 +81,7 @@ export function BusinessProfileForm({
   const formRef = useFocusFirstError(state.errors);
   const v = (k: keyof ProfileDefaults, fallback: string | number | null) =>
     state.values?.[k] ?? fallback;
+  const lv = (k: string, fallback: string | undefined) => state.values?.[k] ?? fallback ?? "";
   const joined = (list: string[]) => list.join("\n");
   const optionalNeedsFixing = OPTIONAL_FIELDS.some((k) => e[k]?.length);
 
@@ -199,6 +208,45 @@ export function BusinessProfileForm({
         error={e.vipSenders}
         rows={3}
       />
+      <fieldset className="flex flex-col gap-6">
+        <legend className="font-semibold">Licenses and registrations (optional)</legend>
+        <p className="-mt-4 text-sm text-muted-foreground">
+          Drafts quote only these, exactly as you type them, and never make up a number. Leave a
+          line empty if it doesn&apos;t apply.
+        </p>
+        <TextField
+          name="hicNumber"
+          label={LICENSE_LABELS.hic_number}
+          defaultValue={lv("hicNumber", defaults.licenses.hic_number)}
+          error={e.hicNumber}
+        />
+        <TextField
+          name="hicExpiresOn"
+          type="date"
+          label="HIC registration runs out on"
+          hint="We'll remind you here when it's 30 days away."
+          defaultValue={lv("hicExpiresOn", defaults.licenses.hic_expires_on)}
+          error={e.hicExpiresOn}
+        />
+        <TextField
+          name="cslNumber"
+          label={LICENSE_LABELS.csl_number}
+          defaultValue={lv("cslNumber", defaults.licenses.csl_number)}
+          error={e.cslNumber}
+        />
+        <TextField
+          name="leadSafeLicense"
+          label={LICENSE_LABELS.lead_safe_license}
+          defaultValue={lv("leadSafeLicense", defaults.licenses.lead_safe_license)}
+          error={e.leadSafeLicense}
+        />
+        <TextField
+          name="insuranceCarrier"
+          label={LICENSE_LABELS.insurance_carrier}
+          defaultValue={lv("insuranceCarrier", defaults.licenses.insurance_carrier)}
+          error={e.insuranceCarrier}
+        />
+      </fieldset>
       <TextField
         name="amountThresholdDollars"
         label="Send me anything that mentions more than"

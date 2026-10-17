@@ -376,3 +376,120 @@ describe("spoken prices and “for free” (Check 23 P1, Check 20 P11)", () => {
     ).toEqual([]);
   });
 });
+
+describe("claims an owner has to stand behind (Check 23 P2, Check 36 P7, Check 38 P6)", () => {
+  const customer = "Can you swap our water heater? Is that under warranty?";
+  const ctx = (owner = "", licenses = {}) => ({
+    sourceText: `${customer}\n${owner}`,
+    ownerSourceText: owner,
+    doNotPromise: [] as string[],
+    phrasesAvoided: [] as string[],
+    licenses,
+  });
+
+  it.each([
+    ["No permit needed for that one.", "no permit needed"],
+    ["No permit needed for a swap like this, so we can skip the inspection.", "no permit needed"],
+    ["You don't need a permit for this.", "no permit needed"],
+    ["From the photos it's all up to code.", "up to code"],
+    ["I'll waive the trip fee for you.", "waived fee"],
+    ["We'll match their price.", "price match"],
+    ["I can squeeze you in.", "fit you in"],
+  ])("“%s” is flagged as a soft promise", (body, label) => {
+    const r = checkDraft(body, ctx());
+    expect(r.hits).toContain("soft_promise");
+    expect(r.flags.join(" ")).toContain(`“${label}”`);
+    expect(REGENERATE_ON).not.toContain("soft_promise");
+  });
+
+  it("the owner's own words let the same claim pass", () => {
+    expect(
+      checkDraft("We pull permits for all water heater work, so we'll pull the permit.", ctx())
+        .hits,
+    ).toEqual([]);
+    expect(
+      checkDraft("Our work is always up to code.", ctx("Policies: all work up to code")).hits,
+    ).not.toContain("soft_promise");
+  });
+
+  it("warranty words: the customer asking never makes it the owner's promise", () => {
+    expect(checkDraft("That's covered under warranty, we'll swap it.", ctx()).hits).toContain(
+      "commitment",
+    );
+    expect(
+      checkDraft("That's covered under warranty, we'll swap it.", ctx("1-year warranty on labor"))
+        .hits,
+    ).not.toContain("commitment");
+  });
+
+  it.each([
+    "Our HIC number is 198344.",
+    "We're registered, HIC #198344.",
+    "I hold a construction supervisor license, CS-104512.",
+    "We're a lead-safe renovation contractor, license LR-004417.",
+    "My license is MP-31872, and here's the insurance certificate.",
+    "Sure. I'm a master plumber, license number 31872.",
+  ])("an unsaved number is a license flag, never a price: %s", (body) => {
+    const r = checkDraft(body, ctx());
+    expect(r.hits).toContain("license");
+    expect(r.hits).not.toContain("money");
+    expect(r.flags).toContain(
+      "Mentions a license or registration number you haven't saved. Check it.",
+    );
+    expect(r.confidenceCap).toBeLessThanOrEqual(0.3);
+    expect(REGENERATE_ON).toContain("license");
+  });
+
+  it("saved numbers pass, however they're written", () => {
+    const saved = {
+      hic_number: "198344",
+      csl_number: "CS-104512",
+      lead_safe_license: "LR-004417",
+      insurance_carrier: "Plymouth Rock",
+    };
+    const owner = "Registration and licenses: HIC 198344; CSL CS-104512; Lead-safe LR-004417";
+    for (const body of [
+      "Our HIC number is 198344.",
+      "We're registered, HIC #198344.",
+      "I hold a construction supervisor license, CS-104512.",
+      "We're a lead-safe renovation contractor, license LR-004417.",
+    ])
+      expect(checkDraft(body, ctx(owner, saved)).hits, body).toEqual([]);
+    // A number in the signature counts as the owner's.
+    expect(checkDraft("My license is MP-31872.", ctx("Thanks,\nRosa\nLic. MP-31872")).hits).toEqual(
+      [],
+    );
+  });
+
+  it("ordinary numbers don't trip it", () => {
+    for (const body of ["The bathroom is on the 2nd floor.", "Is that unit 3?"])
+      expect(checkDraft(body, ctx()).hits, body).not.toContain("license");
+  });
+
+  it("registered / licensed / lead-safe / insured claims need the matching field", () => {
+    const r = checkDraft("We're HIC registered and I hold a CSL.", ctx());
+    expect(r.hits).toContain("credential");
+    expect(r.flags).toContain(
+      "Says you're registered and licensed. Add it in Settings or take it out.",
+    );
+    const lead = checkDraft("Yes, we're lead-safe certified and we test every older house.", ctx());
+    expect(lead.flags).toContain(
+      "Says you're lead-safe certified. Add it in Settings or take it out.",
+    );
+    expect(checkDraft("We're fully licensed and insured.", ctx()).flags).toContain(
+      "Says you're licensed and insured. Add it in Settings or take it out.",
+    );
+    const saved = {
+      hic_number: "198344",
+      csl_number: "CS-104512",
+      lead_safe_license: "LR-004417",
+      insurance_carrier: "Plymouth Rock",
+    };
+    expect(
+      checkDraft(
+        "We're HIC registered, lead-safe certified, and fully licensed and insured.",
+        ctx("", saved),
+      ).hits,
+    ).toEqual([]);
+  });
+});

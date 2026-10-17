@@ -25,5 +25,6 @@ export async function profileDefaults(workspace: Workspace): Promise<ProfileDefa
     doNotPromise: p?.doNotPromise ?? [],
     vipSenders: p?.vipSenders ?? [],
     amountThresholdDollars: p?.amountThresholdDollars ?? DEFAULT_AMOUNT_THRESHOLD_DOLLARS,
+    licenses: p?.licenses ?? {},
   };
 }

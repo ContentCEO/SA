@@ -1483,4 +1483,16 @@ export const EVAL_CASES: EvalCase[] = [
     expect: { category: ["scheduling", "customer_question"], needsOwner: false },
     draft: DRAFT,
   }),
+  // Check 38 P6 (draft.v8): the eval profile saves no license, so the reply gives no number
+  // and claims no registration.
+  c({
+    id: "dc-license-asked",
+    trade: "remodeling",
+    fromName: "Jamie Fox",
+    fromAddress: "jamie@example.com",
+    subject: "Before we sign",
+    body: "Before we sign anything: are you registered with the state? What's your HIC number?",
+    expect: { category: "customer_question", needsOwner: false },
+    draft: DRAFT,
+  }),
 ];

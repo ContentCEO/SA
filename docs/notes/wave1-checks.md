@@ -35,3 +35,29 @@ Notes for the integrator: what CLAUDE.md should say, by step. Files in this grou
   "Gives a rough price (“low four figures”). Check you want to name a number." unless the owner
   wrote it. Soft promise "for free" (also free of cost / won't cost you / we'll cover it); an
   owner whose text offers free estimates may say "estimates are for free".
+- **Claims, licenses and credentials (Check 23 P2 + 38 P6 + 36 P7, wave 1, migration
+  `0039_licenses` on this branch — renumber at merge):** `business_profile.licenses` jsonb
+  (`src/config/licenses.ts`: `hic_number`, `hic_expires_on`, `csl_number`, `lead_safe_license`,
+  `insurance_carrier`; one line each, ≤40 characters). Settings → Your business → Edit business
+  profile has a "Licenses and registrations (optional)" group (also in setup's optional
+  section); a form without the fields leaves them alone, an emptied line clears it. Settings →
+  Your business lists them and shows one line when the HIC runs out within 30 days (no email).
+  **Never on the public site** (Davi: no license number published until confirmed). Drafting:
+  `draft.v8`'s business block adds "Registration and licenses (quote exactly; never add
+  others)" (so revise / follow-up / purpose prompts that share `workspaceBlock` see it too), and
+  "Never invent" says never give another number or claim an unsaved credential; the numbers are
+  owner text for the check. checkDraft: a number after HIC / CSL / CS- / MP- / JP- / MGF / LR- /
+  license / lic. / registration / reg # (3+ digits) whose digits aren't in the owner's text →
+  hit `license` ("Mentions a license or registration number you haven't saved. Check it.", cap
+  0.3, in `REGENERATE_ON`), and the money finder never reads it as a price; "we're registered /
+  licensed / lead-safe certified / insured" with the matching field empty and not in the
+  owner's own words → hit `credential` ("Says you're registered and licensed. Add it in
+  Settings or take it out.", cap 0.5, flag only). "Licensed" is also backed by a license
+  number in the owner's text (a plumber's MP- in the signature). The old "licensed and
+  insured" soft promise became these claims. Warranty / guarantee / promise words now compare
+  with the owner's text only (a customer's "is that under warranty?" no longer excuses it). New
+  soft promises: no permit needed (incl. "skip the inspection"), up to code, waived fee, price
+  match, fit you in.
+- **Prompt versions after wave 1 "Draft checks":** `draft.v8` (Check 38 P6 so far; later steps
+  add to it). `draft.v8` re-exports draft.v7's reply schema / openings / first-contact task and
+  draft.v6's conversation block; its `workspaceBlock` is v6's plus the licenses line.

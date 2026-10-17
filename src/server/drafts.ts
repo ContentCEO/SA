@@ -18,6 +18,7 @@ import {
 import { callStructured } from "@/ai/client";
 import { checkDraft, hasLink, REGENERATE_ON, type CheckResult } from "@/ai/draft-checks";
 import { asksWhenAvailable, spellDate } from "@/ai/when-words";
+import { licenseFacts } from "@/config/licenses";
 import { injectionCheck, looksLikePaymentChange } from "@/ai/guards";
 import {
   REVISE_INSTRUCTIONS,
@@ -39,7 +40,7 @@ import {
   type ModelDraft,
   type Opening,
   type WorkspaceContext,
-} from "@/ai/prompts/draft.v7";
+} from "@/ai/prompts/draft.v8";
 import {
   OPENING_TWEAKS,
   OPENING_TWEAKS_PROMPT_VERSION,
@@ -570,6 +571,8 @@ export async function workspaceContext(
     signature: profile?.signature ?? null,
     doNotPromise: profile?.doNotPromise ?? [],
     neverSay: profile?.neverSay ?? [],
+    // Check 38 P6: the saved registration and license numbers.
+    licenses: profile?.licenses ?? {},
     seasonalNotes: (await activeNotes(workspaceId, now)).map(({ text, endsOn }) => ({
       text,
       endsOn,
@@ -955,6 +958,8 @@ export async function createDraftForThread(
     ctx.paymentTerms,
     ctx.services,
     ctx.signature,
+    // Check 38 P6: the saved license numbers are the owner's own words.
+    licenseFacts(ctx.licenses),
     ...ctx.seasonalNotes.map((n) => n.text),
     // Check 23 P3: a seasonal note's last day, as a draft would write it ("November 27").
     ...ctx.seasonalNotes.map((n) => spellDate(n.endsOn)),
@@ -983,6 +988,7 @@ export async function createDraftForThread(
     doNotPromise: ctx.doNotPromise,
     phrasesAvoided: ctx.voice?.phrasesAvoided ?? [],
     neverSay: ctx.neverSay,
+    licenses: ctx.licenses,
     // Deposit and review notes: no percentage, way to pay or incentive the owner never set (A4).
     ...termsCheck(purpose, ctx, {
       wrote: withText.filter((x) => x.m.direction === "out").map((x) => x.text),
@@ -1913,6 +1919,8 @@ export async function reviseDraft(
     ctx.paymentTerms,
     ctx.services,
     ctx.signature,
+    // Check 38 P6: the saved license numbers are the owner's own words.
+    licenseFacts(ctx.licenses),
     ...ctx.seasonalNotes.map((n) => n.text),
     // Check 23 P3: a seasonal note's last day, as a draft would write it ("November 27").
     ...ctx.seasonalNotes.map((n) => spellDate(n.endsOn)),
@@ -1946,6 +1954,7 @@ export async function reviseDraft(
     doNotPromise: ctx.doNotPromise,
     phrasesAvoided: ctx.voice?.phrasesAvoided ?? [],
     neverSay: ctx.neverSay,
+    licenses: ctx.licenses,
     // A tweak on a deposit or review note keeps the terms check (A4): "friendlier" can't add
     // Venmo or "10% off". What the owner said, and a clean draft's text, are theirs.
     ...termsCheck(draft.purpose, ctx, {
