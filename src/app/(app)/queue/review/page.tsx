@@ -71,7 +71,14 @@ export default async function ReviewReadyPage(props: PageProps<"/queue/review">)
 
       {rows.length ? (
         sending ? (
-          <BatchForm draftIds={rows.map((r) => r.draftId)} categories={picked} />
+          <BatchForm
+            rows={rows.map((r) => ({
+              draftId: r.draftId,
+              seenHash: r.seenHash,
+              toAddress: r.toAddress,
+            }))}
+            categories={picked}
+          />
         ) : (
           <p role="note" className="sa-inverted rounded-lg p-3 font-semibold">
             {sendingBlockedReason(workspace)}

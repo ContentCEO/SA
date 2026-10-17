@@ -6,7 +6,7 @@ import { draftTag } from "@/config/categories";
 import { findGaps } from "@/ai/gaps";
 import { confidenceLabel } from "@/config/drafting";
 import { gmailThreadLink } from "@/lib/gmail-link";
-import { listQueue, sentDraftSummary, type QueueItem } from "@/server/drafts";
+import { bodyHash, listQueue, sentDraftSummary, type QueueItem } from "@/server/drafts";
 import {
   canPracticeSend,
   canSend,
@@ -76,7 +76,7 @@ const errors: Record<string, string> = {
   busy: "That's a lot in a short time, so we've paused it for a bit. Try again in a few minutes.",
   blocked: "Sending isn't switched on for your account, so nothing was sent.",
   changed:
-    "That draft was changed in Gmail. Here's the latest version — read it, then tap Send reply again.",
+    "That draft changed since you opened it, so nothing was sent. Here's the latest version. Read it, then tap Send reply again.",
   deleted: "That draft was deleted or sent from Gmail, so it's gone from here too.",
   to_changed:
     "Who that reply goes to changed since you opened it, so nothing was sent. Check the To line, then tap Send reply again.",
@@ -416,6 +416,7 @@ export default async function QueuePage(props: PageProps<"/queue">) {
               summary={i.summary}
               reason={i.reason ?? ""}
               body={i.body ?? ""}
+              seenHash={bodyHash(i.body ?? "")}
               flags={i.flags}
               label={confidenceLabel({
                 confidencePct: i.confidence,

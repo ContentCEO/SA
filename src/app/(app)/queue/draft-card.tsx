@@ -49,6 +49,8 @@ export type DraftCardProps = {
   summary?: string | null;
   reason: string;
   body: string;
+  /** Check 9 P1: the fingerprint of `body`, posted with Send reply so a changed draft waits. */
+  seenHash: string;
   flags: string[];
   /** Plan #8: Ready / Check the details / Check everything. */
   label: ConfidenceLabel;
@@ -290,6 +292,7 @@ export function DraftCard(p: DraftCardProps) {
       {editing ? (
         <form className="flex flex-col gap-3">
           <input type="hidden" name="draftId" value={p.draftId} />
+          <input type="hidden" name="seen" value={p.seenHash} />
           {p.toAddress ? <input type="hidden" name="seenTo" value={p.toAddress} /> : null}
           <ToLine address={p.toAddress} fromReplyTo={p.toFromReplyTo} />
           <label className="flex flex-col gap-1.5">
@@ -439,6 +442,7 @@ export function DraftCard(p: DraftCardProps) {
               ) : p.canSend ? (
                 <form action={sendDraftAction} onSubmit={okayOffline}>
                   <input type="hidden" name="draftId" value={p.draftId} />
+                  <input type="hidden" name="seen" value={p.seenHash} />
                   {p.toAddress ? <input type="hidden" name="seenTo" value={p.toAddress} /> : null}
                   {body !== p.body ? <input type="hidden" name="body" value={body} /> : null}
                   <Pending label="Send reply" busy="Sending…" size="lg" className="w-full" />

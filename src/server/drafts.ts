@@ -1418,6 +1418,12 @@ export async function queueSend(
      * as a draft changed in Gmail — never send what they haven't seen.
      */
     seenTo?: string;
+    /**
+     * Check 9 P1: the fingerprint (bodyHash) of the text the card showed when Send reply was
+     * tapped. If the draft's text changed since (taken from Gmail by a sync, changed on another
+     * device), nothing is queued: the owner reads the new text first.
+     */
+    seenHash?: string;
   } = {},
 ): Promise<QueueSendOutcome> {
   const now = opts.now?.() ?? new Date();
@@ -1436,6 +1442,8 @@ export async function queueSend(
   }
   if (opts.seenTo !== undefined && !sameAddress(opts.seenTo, draft.toAddress))
     return { status: "to_changed" };
+  if (opts.seenHash !== undefined && opts.seenHash !== bodyHash(draft.body ?? ""))
+    return { status: "changed_since_seen" };
   if (mailbox.planPausedAt) return { status: "mailbox_paused" };
   if (mailbox.status !== "active") return { status: "reconnect_needed" };
   if (hasUnfilledGap(opts.editedBody ?? draft.body ?? "")) return { status: "gaps_unfilled" };
@@ -1497,22 +1505,32 @@ export async function queueSend(
   const queued = await db()
     .update(drafts)
     .set({ body, sendAfter, sendClaimedAt: null, autoSendAt: null })
-    // Still going where it went when this tap was checked (a re-point may have moved it).
-    .where(and(stillWaiting, eq(drafts.toAddress, draft.toAddress)))
+    // Still going where it went when this tap was checked (a re-point may have moved it), and
+    // still the text that was checked (Check 9 P1: a sync may have taken Gmail's text since).
+    .where(
+      and(
+        stillWaiting,
+        eq(drafts.toAddress, draft.toAddress),
+        sql`${drafts.body} is not distinct from ${draft.body}`,
+      ),
+    )
     .returning({ id: drafts.id });
   // Two taps at once: only the first starts a window. Anything else that got there first
   // (the nudge closed on another device) means nothing is going out, and the owner is told so.
   if (!queued.length) {
     const [current] = await db()
-      .select({ to: drafts.toAddress, status: drafts.status, sendAfter: drafts.sendAfter })
+      .select({
+        to: drafts.toAddress,
+        body: drafts.body,
+        status: drafts.status,
+        sendAfter: drafts.sendAfter,
+      })
       .from(drafts)
       .where(eq(drafts.id, draft.id));
-    if (
-      current?.status === "pending" &&
-      current.sendAfter == null &&
-      !sameAddress(current.to, draft.toAddress)
-    )
-      return { status: "to_changed" };
+    if (current?.status === "pending" && current.sendAfter == null) {
+      if (!sameAddress(current.to, draft.toAddress)) return { status: "to_changed" };
+      if ((current.body ?? "") !== (draft.body ?? "")) return { status: "changed_since_seen" };
+    }
     return await whyNotQueued(draft.id);
   }
   await db()
@@ -1656,6 +1674,8 @@ export type BatchRow = {
   toAddress: string;
   category: string;
   firstLine: string;
+  /** Check 9 P1: the fingerprint of the text as the review page read it. */
+  seenHash: string;
 };
 
 /** Plan #5: drafts that may be sent together, freshly read and filtered by the rules. */
@@ -1714,6 +1734,7 @@ export async function batchCandidates(
       toAddress: draft.toAddress,
       category: thread.category!,
       firstLine: firstLine(draft.body ?? ""),
+      seenHash: bodyHash(draft.body ?? ""),
     });
   }
   return out;
@@ -1728,18 +1749,31 @@ export async function batchSend(
   workspaceId: string,
   draftIds: readonly string[],
   picked: readonly string[],
-  opts: DraftDeps & { device?: "phone" | "computer" } = {},
+  opts: DraftDeps & {
+    device?: "phone" | "computer";
+    /**
+     * Check 9 P1: per draft, the fingerprint of the text and the address the review page showed.
+     * When given, a draft with no entry, or one that changed since, is refused.
+     */
+    seen?: ReadonlyMap<string, { hash: string; to?: string }>;
+  } = {},
 ): Promise<{ queued: { draftId: string; sendAfter: Date }[]; refused: number }> {
   const allowed = new Set((await batchCandidates(workspaceId, picked)).map((r) => r.draftId));
   const queued: { draftId: string; sendAfter: Date }[] = [];
   let refused = 0;
   for (const id of new Set(draftIds)) {
-    if (!allowed.has(id)) {
+    const shown = opts.seen?.get(id);
+    if (!allowed.has(id) || (opts.seen && !shown)) {
       refused++;
       continue;
     }
     // A blocked account throws here, on the first one, before any Gmail call.
-    const r = await queueSend(workspaceId, id, { ...opts });
+    const { seen: _seen, ...rest } = opts;
+    void _seen;
+    const r = await queueSend(workspaceId, id, {
+      ...rest,
+      ...(shown ? { seenHash: shown.hash, seenTo: shown.to } : {}),
+    });
     if (r.status === "queued") queued.push({ draftId: id, sendAfter: r.sendAfter });
     else refused++;
   }

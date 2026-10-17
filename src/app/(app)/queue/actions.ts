@@ -27,6 +27,11 @@ import { requireOwner } from "@/server/session";
 
 const id = z.string().uuid();
 const body = z.string().trim().min(1, "The reply is empty.").max(20_000);
+/** Check 9 P1: the fingerprint (sha-256, hex) of the text a card or the review page showed. */
+const seenHash = (v: FormDataEntryValue | null) =>
+  typeof v === "string" && /^[0-9a-f]{64}$/.test(v) ? v : null;
+const address = (v: FormDataEntryValue | null) =>
+  typeof v === "string" && v.length <= 320 ? v : undefined;
 
 export async function sendDraftAction(formData: FormData) {
   const { workspace } = await requireOwner();
@@ -37,8 +42,11 @@ export async function sendDraftAction(formData: FormData) {
   if (editedBody && !editedBody.success) redirect("/queue?error=empty");
   if (!(await hitLimit("send", workspace.id)).allowed) redirect("/queue?error=busy");
   // The "To:" the card showed (H7). Missing (an old page) = not checked.
-  const shownTo = formData.get("seenTo");
-  const seenTo = typeof shownTo === "string" && shownTo.length <= 320 ? shownTo : undefined;
+  const seenTo = address(formData.get("seenTo"));
+  // Check 9 P1: the text the card showed. Every card sends it; without it we can't tell what
+  // the owner read, so nothing is queued and the queue shows the latest text.
+  const seen = seenHash(formData.get("seen"));
+  if (!seen) redirect("/queue?error=changed");
 
   let outcome;
   try {
@@ -46,6 +54,7 @@ export async function sendDraftAction(formData: FormData) {
       editedBody: editedBody?.data,
       device: await device(),
       seenTo,
+      seenHash: seen,
     });
   } catch (err) {
     if (err instanceof SendingBlockedError) redirect("/queue?error=blocked");
@@ -60,6 +69,7 @@ export async function sendDraftAction(formData: FormData) {
     case "already_sending":
       redirect(`/queue?sent=${draftId.data}`);
     case "changed_in_gmail":
+    case "changed_since_seen":
       redirect("/queue?error=changed");
     case "to_changed":
       redirect("/queue?error=to_changed");
@@ -139,9 +149,16 @@ export async function batchSendAction(formData: FormData) {
   for (let i = 0; i < ids.data.length; i++) {
     if (!(await hitLimit("send", workspace.id)).allowed) redirect("/queue?error=busy");
   }
+  // Check 9 P1: what the review page showed for each reply (its text's fingerprint and the
+  // address). A reply without one, or changed since, is refused and stays on the queue.
+  const seen = new Map<string, { hash: string; to?: string }>();
+  for (const d of ids.data) {
+    const hash = seenHash(formData.get(`seen:${d}`));
+    if (hash) seen.set(d, { hash, to: address(formData.get(`seenTo:${d}`)) });
+  }
   let r;
   try {
-    r = await batchSend(workspace.id, ids.data, picked, { device: await device() });
+    r = await batchSend(workspace.id, ids.data, picked, { device: await device(), seen });
   } catch (err) {
     if (err instanceof SendingBlockedError) redirect("/queue?error=blocked");
     throw err;
