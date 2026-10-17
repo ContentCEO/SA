@@ -427,7 +427,8 @@ export default async function QueuePage(props: PageProps<"/queue">) {
               otherWays={offersOtherWays({
                 opening: i.opening,
                 revisionsLeft: i.revisionsLeft,
-                readOnly,
+                // A plan-paused Gmail address: no rewrites either (reviseDraft refuses it too).
+                readOnly: readOnly || i.mailboxPaused,
               })}
               revisionsLeft={i.revisionsLeft}
               needsOwnerReason={i.needsOwnerReason}

@@ -1076,6 +1076,19 @@ Waiting on you from that review (nothing here is built or changed until you say 
   rule allows it (a review link on file, no complaint in 12 months, someone you've written to,
   none asked in 12 months…). It counts as that customer's review request. Owner tap only, once per
   conversation, and it waits for **Send reply** like every draft.
+- **Warm first replies: yes.** When someone you've never written to asks about a job, the draft
+  thanks them and asks only what's missing (or, if something is going wrong right now, asks for
+  the best number and the address). The card says what kind of first reply it is and offers
+  **Other ways to reply** (Ask a few questions / Offer to come take a look / Short and friendly).
+  Autopilot never sends a first reply to a new customer.
+- **Money in the morning email: yes.** "This month so far: $X in quotes you won · $Y in invoices
+  paid." and "Still owed to you: $Z on Money owed." — totals only, the same numbers as Activity.
+  Phone notifications and texts still carry no amounts.
+- **Emergencies, even at night: yes** (on by default, one switch in Settings → Notifications and
+  Text alerts). An email that sounds like an emergency reaches your phone right away, even
+  between 9pm and 7am: "An emergency email just came in." Once per conversation, at most 3 a
+  night and 6 a day. Texts need Twilio ([step 10](#10-optional-text-alerts-and-instant-gmail-notifications));
+  add the second sample message from `docs/SETUP.md` §6c to the A2P registration.
 
 ### Decided on 2026-10-15
 
@@ -1162,11 +1175,21 @@ Recorded here so nobody asks again.
 
 Nothing below is switched on or changed until you say so.
 
-- **Agreeing to the terms again (2026-10-16).** The terms' trial paragraph now says the drafts
-  can be sent from Gmail during the trial (it used to say only "sending to customers is switched
-  off"). It's a clarification of how the app already works, so the date stayed at 2026-10-16 and
-  nobody is asked to agree again. If you want everyone to agree to the new wording, the engineers
-  move the documents' date and `TERMS_VERSION` together.
+- **Agreeing to the terms again (2026-10-16, merged 2026-10-17).** The terms' trial paragraph
+  now says the drafts can be sent from Gmail during the trial (it used to say only "sending to
+  customers is switched off"), and the terms and privacy policy gained lines for the trial
+  emails, paused Gmail addresses on a lower plan, warm first replies, money totals in the
+  morning email, emergency alerts (voicemails included), alerts being a convenience you
+  shouldn't rely on alone, and the Growth dashboard as a separate service. All are
+  clarifications or new optional features, so the date stayed at 2026-10-16 and nobody is asked
+  to agree again. If you want everyone to agree to the new wording, the engineers move the
+  documents' date and `TERMS_VERSION` together.
+- **Emergency voicemails alert too (your lead engineer's call at the merge, 2026-10-17).** A
+  voicemail or text message your phone service emails you (Google Voice sends them from a
+  "no-reply" address) now reaches your phone at night when it sounds like an emergency. Other
+  "no-reply" senders (alarm companies, form robots without the customer's address) still never
+  alert. The alert goes only to your phone; the caller gets nothing from the app. Say if you'd
+  rather voicemails waited like other email.
 
 - **Your Neon plan** ([check it this week](#check-your-free-plans-now-this-week)): stay on Free
   (production may pause mid-month) or move to Launch (about $19–20 a month).

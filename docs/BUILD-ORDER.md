@@ -10,16 +10,21 @@ The rules for working side by side (branch names, the migration lane, shared fil
 
 ## Already built
 
-Three packages are being built in parallel by the integrator, outside this order. Don't redo them:
+Three packages were built in parallel outside this order and merged by the integrator on top of
+wave 0 on 2026-10-17 (migrations `0036_decisions`, `0037_replies`, `0038_growth`). Don't redo
+them:
 
 - **Decisions:** trial emails and their wording, paused mailboxes on a lower plan, the test-payment
   reset, the "Other" lost reason, and the paid-invoice thank-you (prompt `purpose.v2`).
-- **Replies:** warm first replies (prompt `draft.v7`), money totals in the morning email, and
-  emergency alerts at night.
-- **Growth client portal:** numbers Davi enters by hand only (nothing from anyone's inbox).
+- **Replies:** warm first replies (prompts `draft.v7` and `opening-tweaks.v1`), money totals in the
+  morning email, and emergency alerts at night (voicemails included).
+- **Growth client portal:** the pledge, the agreement draft, the More screen's Growth line, Remove
+  on a Growth request, and `/start`, `/my-growth` and `/admin/growth` — numbers Davi enters by hand
+  only (nothing from anyone's inbox).
 
-Because `draft.v7` and `purpose.v2` are taken, the next draft prompt from these review steps is
-`draft.v8` (see `docs/notes/` until the integrator folds the version plan in here).
+Because `draft.v7` and `purpose.v2` are taken, the review pages' "draft.v7" bundle is `draft.v8`
+here. The whole version plan (draft.v8 / v9, classify.v5, followup.v5, voice.v3, purpose.v3) is in
+`CLAUDE.md` under "Prompt versions".
 
 ## Before you start a step
 
@@ -89,18 +94,18 @@ Wave 4 (Polish and the last tidy-up; Weeks 7–13, then 49-P5 alone at the very 
 When a step's pull request merges, the integrator ticks it here (`- [x]`). Only the integrator
 edits this file after it is created.
 
-- [ ] Wave 0, Ground rules and safety nets, 1) C49 P4 + C50 P1
-- [ ] Wave 0, Ground rules and safety nets, 2) C26 P1
-- [ ] Wave 0, Ground rules and safety nets, 3) C30 P2
-- [ ] Wave 0, Ground rules and safety nets, 4) C31 P2
-- [ ] Wave 0, Ground rules and safety nets, 5) C50 P3 [M]
-- [ ] Wave 0, Ground rules and safety nets, 6) C50 P2
-- [ ] Wave 0, Ground rules and safety nets, 7) C31 P1
-- [ ] Wave 0, Ground rules and safety nets, 8) C05 P1 + C02 P5
-- [ ] Wave 0, Ground rules and safety nets, 9) C48 P7
-- [ ] Wave 0, Ground rules and safety nets, 10) C16 P11
-- [ ] Wave 0, Ground rules and safety nets, 11) C26 P2
-- [ ] Wave 0, Ground rules and safety nets, 12) C31 P3
-- [ ] Wave 0, Ground rules and safety nets, 13) C49 P1
+- [x] Wave 0, Ground rules and safety nets, 1) C49 P4 + C50 P1
+- [x] Wave 0, Ground rules and safety nets, 2) C26 P1
+- [x] Wave 0, Ground rules and safety nets, 3) C30 P2
+- [x] Wave 0, Ground rules and safety nets, 4) C31 P2
+- [x] Wave 0, Ground rules and safety nets, 5) C50 P3 [M]
+- [x] Wave 0, Ground rules and safety nets, 6) C50 P2
+- [x] Wave 0, Ground rules and safety nets, 7) C31 P1
+- [x] Wave 0, Ground rules and safety nets, 8) C05 P1 + C02 P5
+- [x] Wave 0, Ground rules and safety nets, 9) C48 P7
+- [x] Wave 0, Ground rules and safety nets, 10) C16 P11
+- [x] Wave 0, Ground rules and safety nets, 11) C26 P2
+- [x] Wave 0, Ground rules and safety nets, 12) C31 P3
+- [x] Wave 0, Ground rules and safety nets, 13) C49 P1
 
 Later steps are added to this list as their pull requests merge.

@@ -170,12 +170,16 @@ that copy.
 - To send a reply when you approve it, and, during your trial, a practice copy to your own address
   when you tap **Send it to yourself instead**.
 - To send you your morning summary, a monthly summary at the start of each month, an email if
-  Google stops letting us read your Gmail (plus one reminder two days later), and, if you turn them
-  on, text alerts and phone notifications. The morning summary lists the kinds of email waiting and how long they have waited, with links into the app, and this month's money so far as totals (quotes you won, invoices paid and what's still owed); the monthly summary has counts, your most common kinds of job and where requests came from; the Gmail alert names your own Gmail address; texts and notifications have counts only. None of them contain a customer's name or words.
+  Google stops letting us read your Gmail (plus one reminder two days later), during your trial a
+  short email on day 2 and on the last day and one a week after it ends (counts only, each with a
+  link to stop them), and, if you turn them on, text alerts and phone notifications. The morning summary lists the kinds of email waiting and how long they have waited, with links into the app, and this month's money so far as totals (quotes you won, invoices paid and what's still owed); the monthly summary has counts, your most common kinds of job and where requests came from; the Gmail alert names your own Gmail address; texts and notifications have counts only. None of them contain a customer's name or words.
 - If you leave **Emergencies, even at night** on, an email that sounds like an emergency (a leak,
   no heat, no power, a gas smell) reaches your phone right away by the texts and notifications
-  you turned on, even between 9pm and 7am. It says only "An emergency email just came in." —
-  once per conversation, at most 3 a night and 6 a day. You can switch it off in Settings.
+  you turned on, even between 9pm and 7am. That includes a voicemail or text message your phone
+  service emails you (such as Google Voice), even though it comes from a "no-reply" address. It
+  says only "An emergency email just came in." — once per conversation, at most 3 a night and 6 a
+  day — and it goes only to your own phone, never to the customer or caller. You can switch it off
+  in Settings.
 - To run your account: billing, support, keeping the service working and secure.
 
 We don't sell your information or your customers' information. We don't use it for advertising.

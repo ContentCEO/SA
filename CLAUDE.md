@@ -1750,7 +1750,8 @@ Davi runs several builder sessions at once. The build order for review prompts i
   quotes, money owed or activity). No Growth mention on /billing, read-only or expired screens, or
   in lifecycle, digest, monthly-summary, alert or text-message content. No app data is ever copied
   into a Growth lead. The one allowed line is `GrowthMention` (`src/components/app/growth-mention.tsx`,
-  no props, not placed yet: where it appears is Davi's call).
+  no props, copy `growthCopy.appMention`), placed on the More screen only and hidden there for
+  read-only or expired accounts (`jobsAllowed`).
 - **Growth code may not import inbox modules or tables (Check 2 P5):** no `@/mailbox`, `@/ai`,
   `@/jobs`, sync / classification / inbox / drafts / voice / quotes / customers / followups / digest,
   and no threads, messages, drafts, mailboxes, voice or business profile, usage or activity log
@@ -1767,6 +1768,27 @@ Davi runs several builder sessions at once. The build order for review prompts i
   pointed at production. See docs/LAUNCH.md step 2." (no values) and health answers 503
   `preview_uses_production`. Fingerprint lists ship empty (blocks nothing; see Waiting on Davi);
   `pnpm fingerprint [env file]` prints the hashes.
+- **Reserved columns (Check 50 P3, migration `0035_reserved_columns`):** added once so several
+  prompts don't fight over them; nothing reads or writes them yet. Check 38 P2, 44 P1, 45 P2 use
+  `business_profile.state`; Check 20 P4 and 21 P1 use `messages.auto_reply` and
+  `messages.ack_only`; Check 22 P10 and 41 P6 use `business_profile.crew_addresses` (max 30; not
+  `team_addresses`), validated by `crewAddressesSchema` (`src/server/profile.ts`: emails,
+  lowercased, de-duplicated). None of them adds a migration. `migrations-columns.test.ts` fails
+  when two migrations add the same table.column.
+- **Prompt versions (Check 50 P2, `src/ai/prompts/registry.ts`):** a new version is a new
+  `<kind>.v<N>.ts` file (constant `<KIND>_PROMPT_VERSION = "<kind>.v<N>"`) plus one line in
+  `ACTIVE`; `prompt-versions.test.ts` fails on two files with one version, a gap, an `ACTIVE`
+  that isn't the newest file, or code that records a version imported from an older file.
+  Active after the integration: classify.v4, draft.v7, followup.v4, voice.v2, revise.v2,
+  purpose.v2, edit-tone.v1, opening-tweaks.v1. Taken, so the review pages' names shift:
+  - **draft.v8** = the review's "draft.v7" bundle: Check 23 P11 + 43 P1 + 44 P1 (and 45 P2) + the
+    prompt parts of 40 P1 and 41 P1. Then the trade files of Check 36 P8, 37 P4 and 39 P6, in
+    draft.v8 or the next version (**draft.v9**).
+  - **classify.v5** = Check 12 P2 + 12 P3 + 22 P9 + 38 P5 + 45 P7, plus the classify parts of
+    21 P1, 21 P2, 22 P4, 37 P3 and 39 P5.
+  - **followup.v5** = Check 12 P7 + 21 P7. **voice.v3** = Check 24 P5 + 24 P9.
+  - Any later purpose prompt starts at **purpose.v3**; any change to the "Other ways to reply"
+    asks is **opening-tweaks.v2**.
 - **Davi's decisions package (2026-10-16, branch `decisions-build`):** migration 0036
   `decisions` (additive; 0035 on its branch): `mailboxes.plan_paused_at`, `workspaces.trial_emails_stopped_at` /
   `trial_emails_sent` (text[]), partial unique index `drafts_one_thank_you_per_thread`. Prompt
@@ -1884,9 +1906,11 @@ null}` flags any link on a plain one); reconcile expires it like a review note; 
     (never a name, invoice number or due date); push and texts still carry no amounts.
   - **Emergency alerts (B5 part 2)** (`emergency-alerts.ts`, rules in
     `emergency-alert-rules.ts`): candidates = `inEmergencyLane` exactly (a gas smell counts via
-    its urgency mark), needs_owner, in the inbox, mailbox `active`, never alerted, not snoozed,
-    not injection, the customer's newest non-side email under an hour old **and already sorted**,
-    its reply address not no-reply, unanswered (owner email / "I called them" / app send / undo
+    its urgency mark), needs_owner, in the inbox, mailbox on (`mailboxRunning()`: active and not
+    plan-paused), never alerted, not snoozed, not injection, the customer's newest non-side email
+    under an hour old **and already sorted**, its reply address not no-reply — **except** a
+    voicemail / text-message email (`phoneMessageSenderSql`, the SQL twin of `channelOf` kind
+    phone / phone_text; integration 2026-10-17) — unanswered (owner email / "I called them" / app send / undo
     window). One alert per run per owner covering every new emergency; caps 3 between 9pm and
     7am (from the night's 9pm, across midnight) and 6 per local day, counted from
     `emergency_alert_sent` rows; count + mark + Activity row in one transaction under
@@ -1952,12 +1976,39 @@ null}` flags any link on a plain one); reconcile expires it like a review note; 
   - **Pledge** `growthCopy.pledge` (GrowthChapter, so /growth and the homepage half; the dashboard
     too): names `GROWTH_OWNED` for every service (copy test), "We never take a percentage of
     your jobs or your business." The in-app mention is `GrowthMention` (no props, static
-    `growthCopy.inApp`), More screen only, hidden on read-only accounts; clients also get a
+    `growthCopy.appMention`), More screen only, hidden on read-only or expired accounts; clients also get a
     "Growth" row to `/my-growth` there.
   - Docs: `docs/growth-agreement.md` (draft, not legal advice, [To confirm] items), privacy-policy
-    Growth-client lines (same 2026-10-16 date; batch with the other packages' date move at merge),
+    Growth-client lines (same 2026-10-16 date, kept at the integration),
     LAUNCH.md step 13. **Referrals:** not built; a Growth credit would hook into `startGrowth` /
     `linkGrowthInvite` (the moment someone becomes a client).
+
+- **Integration (2026-10-17, branch `integrate-3` on `wave0`):** decisions, replies and
+  growth-portal merged with `--no-ff` in that order.
+  - **Migrations:** wave0 keeps `0035_reserved_columns`; the packages' 0035s were regenerated
+    with drizzle-kit on top of it as `0036_decisions` (when 1792207285776), `0037_replies`
+    (1792207482652) and `0038_growth` (1792208657111), SQL byte-identical to the originals.
+    Applied on a scratch database on top of main's journal: 39 rows, nothing skipped.
+  - **Emergency voicemails alert (lead engineer's decision):** an emergency-lane email from a
+    phone service (Google Voice's voice-noreply@google.com, an email-to-text gateway) alerts the
+    owner's phone even though its From is no-reply; every other no-reply sender still never
+    alerts. The alert goes only to the owner's own push endpoints and verified number; the
+    caller gets nothing (lead-channel threads are never drafted). Test in
+    `emergency-alerts.test.ts`, plus a parity test of `phoneMessageSenderSql` against `channelOf`.
+  - **Paused drafts aren't counted:** `QueueMember.paused` marks members on a plan-paused Gmail
+    address; `actionableQueue` / `countQueue` leave them out, so the morning email (replies,
+    nudges, needs-you), the badge, the phone's notification, the banner and the trial emails
+    never count what the owner can't act on. The queue screen still shows them, marked paused
+    (read-only card, no Send reply, no Other ways to reply).
+    The morning email's money totals hold no drafts (won quotes and invoices, the same as Money
+    and Activity), so the pause doesn't change them. Trial emails need a connected address the
+    plan covers (`notPlanPaused()`); emergency alerts use `mailboxRunning()`. Static checks in
+    `mailbox-plan.test.ts`.
+  - The Growth boundary test lists the portal's files with reasons, and server imports of the
+    portal modules are allow-listed (`accounts.ts` for `linkGrowthInvite`). `admin-no-content`
+    covers /admin/growth's readers. The terms and privacy policy took clarifications only (trial
+    emails, plan pause, emergency voicemails, alerts as a convenience, Growth as a separate
+    service); the date stays 2026-10-16 with `TERMS_VERSION` (re-agree is Davi's call, LAUNCH.md).
 
 ## Milestones
 

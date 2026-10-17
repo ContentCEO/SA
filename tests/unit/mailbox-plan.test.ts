@@ -418,6 +418,8 @@ describe("GUARDRAIL: a paused address — nothing read, sorted, drafted, sent, a
     const page = readFileSync("src/app/(app)/queue/page.tsx", "utf8");
     expect(page).toContain("canSend={sending && !i.mailboxPaused}");
     expect(page).toContain("i.mailboxPaused ? MAILBOX_PAUSED_LINE");
+    // Integration: "Other ways to reply" (replies package) is hidden on a paused address too.
+    expect(page).toContain("readOnly: readOnly || i.mailboxPaused,");
   });
 
   it("integration: the morning email's counts leave out a paused address; the queue still shows it", async () => {
