@@ -1719,6 +1719,56 @@ default, CI too) and refuses a non-local `DATABASE_URL` or an `APP_URL` that isn
   check-ins or read-only accounts); draft cards show the lead lines then the note. Quote speed
   (C8) reads the same request query as response time, so it leaves lead-channel threads out too.
 
+- **Growth client portal (2026-10-16, branch `growth-portal`):** migration `0035_growth`
+  (additive; renumbered at merge): `growth_clients` (one per workspace, cascade; status active |
+  paused | ended; `started_on` date; `services` text[] of `GROWTH_SERVICES` ids; `time_zone`,
+  set by Davi, Eastern default), `growth_updates` (title ≤80, body ≤2000, Davi's words;
+  `notified_at`), `growth_monthly` (unique client + 'YYYY-MM'; optional new_leads, calls,
+  jobs_won, money_won_cents, reviews_gained, ad_spend_cents; note ≤280), and on `invites`
+  `growth_invited_at` / `growth_services` / `growth_started_on`. Rules in
+  `src/server/growth-client-rules.ts` (pure), DB in `src/server/growth-clients.ts`.
+  - **Growth never uses inbox data (Davi's review, Check 5 P1 / Check 2 P5):** every dashboard
+    number is one Davi entered in `growth_monthly`, labelled "From your monthly check-in(s) with
+    Davi"; the money line is "Money from jobs you won since Growth started (as you told Davi)".
+    Growth files never import mailbox / ai / jobs / sync / inbox / drafts / voice / quotes /
+    customers / followups / digest code, nor the threads, messages, drafts, mailboxes,
+    voice/business profile, usage or activity tables (`growth-portal.test.ts`); the client's
+    months use `growth_clients.time_zone`, never `business_profile.time_zone`. /admin's Growth
+    card shows only what Davi entered. Nothing goes to the AI.
+  - **Sign-in lands on `/start`** (the sign-in action, `/signin` and `/` for a signed-in
+    owner): an active or paused client picks "My inbox · Squared Away" (/queue, which shows
+    Connect Gmail when none is connected) or "My Growth dashboard" (`/my-growth`; not `/g` —
+    robots' `Disallow: /g` would also block `/growth`). Everyone else is redirected to /queue.
+    Both are outside `(app)` (own header, no tab bar), in the proxy matcher and robots, behind
+    `requireOwner` (terms). `/my-growth` 404s for non-clients and ended clients (no
+    loading.tsx; in the C2 must-404 list).
+  - **Admin "Growth clients" card** (`admin/growth-admin.tsx`, actions in
+    `admin/growth-actions.ts`, all `requireAdmin` first; notices `growth_*` in the card, `wl_*`
+    in the waitlist card): Start Growth for this account (accounts listed as business name +
+    owner email; a client whose Growth ended can be started again), change services / start date
+    / time zone, pause / resume / end (confirm each), Post an update, Monthly numbers (one form per
+    month; emptying every box removes the month), Invite to Growth (no account yet).
+  - **Invite to Growth** (also on a waitlist card's Growth request, services pre-ticked from the
+    request): an invite row (sign-in gate) with the Growth fields; refused for an address with an
+    account. `ensureUserAndWorkspace` → `linkGrowthInvite` makes the client once and clears the
+    fields (never fails sign-in). No trial: the clock still starts only at Gmail connect. Email
+    "Your Squared Away Growth dashboard" once per invite (`growth-invite-email:<hmac>-<time>`).
+  - **Update email** "New update from Squared Away Growth": the title + a link only, Resend key
+    `growth-update-<workspace>-<update>`, `notified_at` set only after Resend took it; off without
+    Resend; "Email it to them" retries an unsent one.
+  - **Remove** on a waitlist card's Growth request (confirm step): a growth-only row is deleted; a
+    mixed row keeps the app sign-up and loses only the Growth block (`withoutGrowthBlocks`).
+    Decided on the row as it is at the tap. Log `growth_request_removed {result}`.
+  - **Pledge** `growthCopy.pledge` (GrowthChapter, so /growth and the homepage half; the dashboard
+    too): names `GROWTH_OWNED` for every service (copy test), "We never take a percentage of
+    your jobs or your business." The in-app mention is `GrowthMention` (no props, static
+    `growthCopy.inApp`), More screen only, hidden on read-only accounts; clients also get a
+    "Growth" row to `/my-growth` there.
+  - Docs: `docs/growth-agreement.md` (draft, not legal advice, [To confirm] items), privacy-policy
+    Growth-client lines (same 2026-10-16 date; batch with the other packages' date move at merge),
+    LAUNCH.md step 13. **Referrals:** not built; a Growth credit would hook into `startGrowth` /
+    `linkGrowthInvite` (the moment someone becomes a client).
+
 ## Milestones
 
 - [x] **0. Scaffold**
@@ -1869,11 +1919,11 @@ default, CI too) and refuses a non-local `DATABASE_URL` or an `APP_URL` that isn
   new owner is active voids the referral (the referrer's credit); repeat waitlist joins and plain invites
   carry no referral (docs/SETUP.md §6d).
 - **Growth:** confirmed 2026-10-14: all seven services are offered today and the ground rules
-  stand (no fake reviews, price before any work, Growth never touches the inbox). Still open: a
-  written agreement (no Growth terms of service yet), a Settings link to /growth for signed-in
-  owners, an admin Remove button (removing a waitlist entry or Growth request is done by hand in
-  the database for now; the policy says call, text or email us), and whether a Growth request may
-  ever carry a referral. No tracking pixels on /growth without a privacy-policy change and his
+  stand (no fake reviews, price before any work, Growth never touches the inbox). Built
+  2026-10-16: client portal, pledge, the More line, admin Remove. Still open: a lawyer's review
+  of `docs/growth-agreement.md` and its [To confirm] items, Growth prices (none anywhere until he
+  picks), whether ended clients should keep seeing their dashboard (today a 404), and whether a
+  Growth request may ever carry a referral. No tracking pixels on /growth without a privacy-policy change and his
   okay. Only the newest Growth request per email is kept and a growth-only row's phone becomes the
   newest number, so anyone who knows a lead's email can replace their number: check an
   unfamiliar number before calling.
