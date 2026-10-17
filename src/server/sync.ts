@@ -435,7 +435,6 @@ export async function applyLabelChanges(
     })
     .from(messages)
     .where(and(eq(messages.mailboxId, mailbox.id), inArray(messages.gmailMessageId, ids)));
-  const byGmailId = new Map(stored.map((r) => [r.gmailMessageId, r]));
 
   const labels = new Map(stored.map((r) => [r.gmailMessageId, new Set(r.labelIds)]));
   /** Messages we never stored whose last INBOX change was an add (Not spam on new mail). */
