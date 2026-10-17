@@ -12,8 +12,15 @@ import {
   monthCloseRate,
   monthMoney,
   monthSummary,
+  moneySoFar,
 } from "@/server/activity";
-import { groupByDay, moneyIsEmpty, tallyText } from "@/server/activity-rules";
+import {
+  groupByDay,
+  MONEY_SO_FAR_NOTE,
+  moneyIsEmpty,
+  moneySoFarLines,
+  tallyText,
+} from "@/server/activity-rules";
 import { weekScorecards } from "@/server/scorecard";
 import {
   asWrittenSentence,
@@ -36,13 +43,16 @@ export default async function ActivityPage() {
   const now = new Date();
   // One month for the whole screen, in the owner's own time zone.
   const timeZone = await workspaceTimeZone(workspace.id);
-  const [entries, month, close, weeks, money] = await Promise.all([
+  const [entries, month, close, weeks, money, soFar] = await Promise.all([
     listActivity(workspace.id),
     monthSummary(workspace.id, now, timeZone),
     monthCloseRate(workspace.id, now, timeZone),
     weekScorecards(workspace.id, now, timeZone),
     monthMoney(workspace.id, now, timeZone),
+    moneySoFar(workspace.id, now, timeZone),
   ]);
+  // Replies package: the morning email's money lines, word for word (totals only).
+  const soFarLines = moneySoFarLines(soFar);
   const days = groupByDay(entries, now, timeZone);
   const { thisWeek, lastWeek } = weeks;
   const decided = close.won + close.lost + close.noAnswer;
@@ -72,11 +82,18 @@ export default async function ActivityPage() {
         <h2 id="money" className="text-lg font-black">
           Won and paid in {monthName}
         </h2>
-        {moneyIsEmpty(money) ? (
-          <p className="text-lg">
-            Nothing won or paid yet this month. Mark quotes Won on Quotes, and invoices paid on
-            Money owed.
+        {soFarLines.map((line) => (
+          <p key={line} className="text-lg font-semibold">
+            {line}
           </p>
+        ))}
+        {moneyIsEmpty(money) ? (
+          soFar.won.count === 0 && soFar.paid.count === 0 ? (
+            <p className="text-lg">
+              Nothing won or paid yet this month. Mark quotes Won on Quotes, and invoices paid on
+              Money owed.
+            </p>
+          ) : null
         ) : (
           <dl className="flex flex-col gap-2">
             {[
@@ -90,10 +107,7 @@ export default async function ActivityPage() {
             ))}
           </dl>
         )}
-        <p className="text-sm text-ash">
-          From your own quotes and the invoices on Money owed. Won and paid can be our guess — check
-          Quotes and Money owed.
-        </p>
+        <p className="text-sm text-ash">{MONEY_SO_FAR_NOTE}</p>
       </section>
 
       <section

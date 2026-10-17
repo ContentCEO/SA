@@ -127,10 +127,7 @@ const alertsRows = () =>
     .select()
     .from(activityLog)
     .where(
-      and(
-        eq(activityLog.workspaceId, workspaceId),
-        eq(activityLog.action, "emergency_alert_sent"),
-      ),
+      and(eq(activityLog.workspaceId, workspaceId), eq(activityLog.action, "emergency_alert_sent")),
     );
 const alertedAt = async (id: string) =>
   (await database.select().from(threads).where(eq(threads.id, id)))[0]!.emergencyAlertedAt;
@@ -149,10 +146,7 @@ beforeEach(async () => {
       grantedScopes: [],
     })
   ).id;
-  await database
-    .update(workspaces)
-    .set({ status: "active" })
-    .where(eq(workspaces.id, workspaceId));
+  await database.update(workspaces).set({ status: "active" }).where(eq(workspaces.id, workspaceId));
   await profile({ timeZone: NY });
   await savePushSubscription(workspaceId, FCM);
   pushed = [];
@@ -211,11 +205,15 @@ describe("emergency alert rules (pure)", () => {
       }),
     ).toBe(false);
     expect(
-      emergencySummaryApplies({ newestEmergencyAlertAt: at, lastPushAt: null, now: plus(at, min(31)) }),
+      emergencySummaryApplies({
+        newestEmergencyAlertAt: at,
+        lastPushAt: null,
+        now: plus(at, min(31)),
+      }),
     ).toBe(false);
-    expect(emergencySummaryApplies({ newestEmergencyAlertAt: null, lastPushAt: null, now: at })).toBe(
-      false,
-    );
+    expect(
+      emergencySummaryApplies({ newestEmergencyAlertAt: null, lastPushAt: null, now: at }),
+    ).toBe(false);
   });
 });
 
@@ -355,7 +353,10 @@ describe("emergency alerts (B5 part 2)", () => {
       .where(eq(workspaces.id, workspaceId));
     await emergency(plus(TWO_AM_NY, -min(5)));
     expect((await run(TWO_AM_NY)).sent).toBe(0);
-    await database.update(workspaces).set({ status: "paused" }).where(eq(workspaces.id, workspaceId));
+    await database
+      .update(workspaces)
+      .set({ status: "paused" })
+      .where(eq(workspaces.id, workspaceId));
     expect((await run(TWO_AM_NY)).sent).toBe(0);
     expect(pushed).toEqual([]);
   });
@@ -366,10 +367,14 @@ describe("emergency alerts (B5 part 2)", () => {
     await emergency(plus(now, -min(5)), {}, { from: "noreply@alarms.example" });
     // A website form robot with the customer in Reply-To is a person: it would alert, but
     // a robot whose Reply-To is also a robot is not.
-    await emergency(plus(now, -min(5)), {}, {
-      from: "no-reply@forms.example",
-      replyTo: "donotreply@forms.example",
-    });
+    await emergency(
+      plus(now, -min(5)),
+      {},
+      {
+        from: "no-reply@forms.example",
+        replyTo: "donotreply@forms.example",
+      },
+    );
     await emergency(plus(now, -min(5)), { category: "supplier_vendor" });
     await emergency(plus(now, -min(5)), { category: "noise" });
     await emergency(plus(now, -min(5)), { inInbox: false });
@@ -391,10 +396,14 @@ describe("emergency alerts (B5 part 2)", () => {
   it("a gas smell counts (the gas rule marks it an emergency); a form lead with a real Reply-To counts", async () => {
     const now = TWO_AM_NY;
     const gas = await emergency(plus(now, -min(5)), {}, { extracted: { gas_smell: true } });
-    const form = await emergency(plus(now, -min(6)), {}, {
-      from: "no-reply@forms.example",
-      replyTo: "secret-dana@customer.example",
-    });
+    const form = await emergency(
+      plus(now, -min(6)),
+      {},
+      {
+        from: "no-reply@forms.example",
+        replyTo: "secret-dana@customer.example",
+      },
+    );
     const ids = (await emergencyCandidates(workspaceId, now)).map((c) => c.threadId);
     expect(ids).toEqual([gas.id, form.id]);
     expect((await run(now)).sent).toBe(1);
