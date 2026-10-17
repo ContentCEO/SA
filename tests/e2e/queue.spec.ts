@@ -556,7 +556,7 @@ test("a first reply to a new lead says so and offers other ways to reply (replie
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.goto(`/queue?t=${quote.t.id}#t-${quote.t.id}`);
   const card = page.getByRole("article", { name: "Draft reply to Priya" });
-  await expect(card).toContainText("First reply: asks 2 questions · they described the job");
+  await expect(card).toContainText("First reply: asks 1 question · they described the job");
   const others = card.getByRole("form", { name: "Other ways to reply" });
   for (const name of ["Ask a few questions", "Offer to come take a look", "Short and friendly"]) {
     const chip = others.getByRole("button", { name });
@@ -578,6 +578,6 @@ test("a first reply to a new lead says so and offers other ways to reply (replie
   // A read-only account sees the draft, never the chips.
   await setWorkspace(owner.workspaceId, { status: "evaluation_expired" });
   await page.reload();
-  await expect(card).toContainText("First reply: asks 2 questions");
+  await expect(card).toContainText("First reply: asks 1 question");
   await expect(card.getByRole("form", { name: "Other ways to reply" })).toHaveCount(0);
 });
