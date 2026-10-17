@@ -84,3 +84,31 @@
   (docs/SETUP.md §6g). It emails you 'Background jobs look stopped' at most once an hour, even
   when Inngest itself is down." And near the top: "/admin → Ready for paying owners lists what's
   left; tick the hand rows there as you finish them."
+
+## Fence tests changed on purpose (say so in the merge)
+
+- `tests/unit/data-paths.test.ts`: the client check now looks for `messages.create` (Check 29 P1
+  replaced `messages.parse` with `create` + our own parse; same single request, same data path).
+- `tests/unit/e2e-mode.test.ts`: the one `new Anthropic(...)` now spreads
+  `...anthropicClientOptions()` last after our `maxRetries` / `timeout` (e2e mode still wins).
+- `tests/unit/security-surface.test.ts`: two route rows with a new guard, "shared-secret".
+
+## Migrations and prompt versions
+
+- `0039_paused_from` (workspaces.paused_from) and `0040_fallback_calls` (usage.fallback_calls),
+  both additive. The integrator renumbers them.
+- No prompt changed (no new prompt versions; evals not needed, not run).
+
+## Questions for Davi
+
+1. Should pausing an account in /admin also pause its Stripe billing? Today Stripe keeps charging
+   a paused account; only Resume's destination changed. (Not built.)
+2. The 30-minute "jobs look stopped" check through Vercel Cron needs Vercel Pro (Hobby allows a
+   daily cron only, and a more frequent one can stop the deploy). Until then, a free uptime monitor
+   pointed at /api/health/deep (SETUP.md §6g) does the same job. Want the `vercel.json` added once
+   you're on Pro?
+3. Stand-in models (all off): sorting → Claude Haiku 5.5, drafting and voice → Claude Sonnet 5.5.
+   Turn one on (`fallbackApproved: true` in src/config/models.ts) only after `pnpm eval` passes on
+   it. Haiku 5.5 thinks by default; check the sorter's 1,024-token answer limit holds there.
+4. The missing-model email says "Sorting is stopped" (the wording asked for) even when it's the
+   drafting model; okay, or "Drafting is stopped" for that one?
