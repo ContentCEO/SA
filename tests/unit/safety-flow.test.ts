@@ -20,12 +20,15 @@ import { drafts, messages, threads } from "@/db/schema";
 import { ensureUserAndWorkspace } from "@/server/accounts";
 import { classifyPending } from "@/server/classification";
 import {
+  batchCandidates,
   CO_SAFETY_NOTE_FLAG,
   createDraftForThread,
   SAFETY_NOTE_FLAG,
   threadsToAutoDraft,
 } from "@/server/drafts";
 import { saveConnectedMailbox } from "@/server/mailboxes";
+import { EMERGENCY_REASON, recentEmergency } from "@/server/emergency-rules";
+import { freshLeads, leadCounts } from "@/server/sms-alerts";
 import { createTestDb } from "../support/db";
 import { classification, fakeTransport } from "../support/fake-model";
 import { FakeWriter } from "../support/fake-writer";
@@ -364,5 +367,78 @@ describe("quoted and forwarded text (Check 22 P3)", () => {
       `${"We'd like the deck stained before the party. ".repeat(10)}\n\n> old text here`,
     );
     expect(request.user).not.toContain("Quoted or forwarded text");
+  });
+});
+
+describe("the model's emergency counts in code (Check 36 P2)", () => {
+  const emergencyModel = (category: "customer_question" | "scheduling" = "customer_question") => {
+    const m = classification({ category, priority: "high" });
+    m.extracted = { ...m.extracted, urgency: "emergency" };
+    return m;
+  };
+
+  it("burst pipe: needs you, high, counted for the owner's alert, marked for 48 hours", async () => {
+    const t = await thread("pipe");
+    await message(t.id, "pipe", {
+      bodyText: "Sump pump failed in the storm and water is rising near the furnace!",
+      sentAt: minsAgo(10),
+    });
+    setModelTransportForTests(fakeTransport([emergencyModel()]).transport);
+    await classifyPending(mailboxId, { now: NOW });
+    const row = await threadRow(t.id);
+    expect(row).toMatchObject({
+      needsOwner: true,
+      priority: "high",
+      needsOwnerReason: EMERGENCY_REASON,
+    });
+    expect(row.extracted).toMatchObject({
+      emergency: true,
+      emergency_at: minsAgo(10).toISOString(),
+    });
+    expect(leadCounts(await freshLeads(workspaceId, null, NOW)).needsYou).toBe(1);
+  });
+
+  it("a later 'thanks' re-sort keeps the mark: batch send refuses its reply; gone after 48 hours", async () => {
+    const t = await thread("pipe2", { lastMessageAt: NOW });
+    await message(t.id, "e1", { bodyText: "No heat and kids at home!", sentAt: minsAgo(120) });
+    setModelTransportForTests(fakeTransport([emergencyModel()]).transport);
+    await classifyPending(mailboxId, { now: minsAgo(110) });
+
+    await message(t.id, "e2", { bodyText: "Thanks, see you at 9.", sentAt: minsAgo(30) });
+    setModelTransportForTests(
+      fakeTransport([classification({ category: "scheduling", confidence: 0.95 })]).transport,
+    );
+    await classifyPending(mailboxId, { now: NOW });
+    const row = await threadRow(t.id);
+    expect(row.needsOwner).toBe(false);
+    expect(row.extracted).toMatchObject({
+      emergency: true,
+      emergency_at: minsAgo(120).toISOString(),
+    });
+    expect(recentEmergency(row.extracted, NOW)).toBe(true);
+    expect(recentEmergency(row.extracted, new Date(NOW.getTime() + 47 * 3600_000))).toBe(false);
+
+    const [inbound] = await database
+      .select()
+      .from(messages)
+      .where(eq(messages.gmailMessageId, "e2"));
+    await database.insert(drafts).values({
+      threadId: t.id,
+      mailboxId,
+      gmailDraftId: "gd-1",
+      replyToMessageId: inbound!.id,
+      toAddress: "dana@x.test",
+      subject: "Re: Help",
+      body: "See you at 9.",
+      originalBody: "See you at 9.",
+      reason: "Confirming.",
+      flags: [],
+      confidence: 95,
+      createdAt: minsAgo(20),
+    });
+    expect(await batchCandidates(workspaceId, ["scheduling"], NOW)).toEqual([]);
+    // Two days on, the mark no longer holds the reply back.
+    const later = new Date(NOW.getTime() + 48 * 3600_000);
+    expect(await batchCandidates(workspaceId, ["scheduling"], later)).toHaveLength(1);
   });
 });

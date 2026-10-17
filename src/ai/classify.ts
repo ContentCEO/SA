@@ -74,6 +74,13 @@ export type Extracted = ModelClassification["extracted"] & {
    * gift cards). Never drafted by a job, never autopilot. Only ever present as `true`.
    */
   payment_change?: boolean;
+  /**
+   * Check 36 P2: this thread had an emergency (the model's urgency on a lead, a gas smell or a
+   * CO alarm), kept for 48 hours from `emergency_at` (ISO) across later sorts. Autopilot and
+   * batch send refuse the thread meanwhile. Only ever present as `true`.
+   */
+  emergency?: boolean;
+  emergency_at?: string;
   /** Round 2 TW B4: someone smells gas. Only ever present as `true`. */
   gas_smell?: boolean;
   /**

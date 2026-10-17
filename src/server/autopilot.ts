@@ -34,6 +34,7 @@ import { canSend, effectiveStatus, setupReallyPaid } from "./lifecycle";
 import { knownCustomer } from "./known-customer";
 import { isEmailToTextAddress, looksLikePhoneAddress } from "./channel-rules";
 import { complainedAddresses } from "./offers";
+import { recentEmergency } from "./emergency-rules";
 import { markReconnectNeeded } from "./sync";
 import { unsentDraftMessage } from "./thread-sql";
 
@@ -134,6 +135,8 @@ export type GuardrailInput = {
   gasSmell?: boolean;
   /** Check 22 P4: a carbon monoxide alarm went off. */
   coAlarm?: boolean;
+  /** Check 36 P2: an emergency on this conversation in the last 48 hours. */
+  recentEmergency?: boolean;
   /** Ideas H4: the owner chose this kind and the sorter said otherwise. */
   ownerMoved?: boolean;
   /** Leads package: a lead-site / voicemail / text-message thread. */
@@ -180,6 +183,10 @@ export function guardrailReasons(g: GuardrailInput): string[] {
   if (g.emailUnreadable) out.push("We can't read their email any more, so it waits for you.");
   if (g.gasSmell) out.push("Someone smells gas. Call them.");
   if (g.coAlarm) out.push("A carbon monoxide alarm went off. Call them.");
+  if (g.recentEmergency)
+    out.push(
+      "There was an emergency on this conversation in the last 2 days, so it waits for you.",
+    );
   if (g.ownerMoved) out.push("You chose this kind yourself, so it waits for you.");
   if (g.leadChannel) out.push("Lead-site and voicemail emails always wait for you.");
   if (g.textAddress) out.push("That address may turn into a text message, so it waits for you.");
@@ -408,6 +415,7 @@ async function blockers(row: NonNullable<Awaited<ReturnType<typeof loadForAutopi
     gasSmell: extracted.gas_smell === true || mentionsGasSmell(fullText),
     coAlarm: extracted.co_alarm === true || mentionsCarbonMonoxide(fullText),
     legalInEmail: mentionsRealLegal(fullText) || mentionsLegalThreat(fullText),
+    recentEmergency: recentEmergency(thread.extracted, now),
     emailUnreadable: fullBody === null,
     ownerMoved: thread.categoryManual != null && thread.categoryManual !== extracted.model_category,
     leadChannel: thread.leadChannel != null,

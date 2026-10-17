@@ -234,3 +234,15 @@ describe("legal words in code, quoted text included (Check 22 P3)", () => {
     expect(prepareBody(body)).toBe(kept);
   });
 });
+
+describe("emergencies (Check 36 P2)", () => {
+  it("gas still wins over the model's emergency; the emergency alone is needs-you, high", () => {
+    const m = classification({ category: "customer_question" });
+    m.extracted = { ...m.extracted, urgency: "emergency" };
+    expect(rules({}, m)).toMatchObject({ needsOwner: true, priority: "high" });
+    expect(rules({ gasSmell: true }, m).needsOwnerReason).toBe(GAS_SMELL_REASON);
+  });
+  it("autopilot refuses a thread with an emergency in the last 48 hours", () => {
+    expect(guardrailReasons({ ...OK, recentEmergency: true }).join()).toMatch(/emergency/);
+  });
+});

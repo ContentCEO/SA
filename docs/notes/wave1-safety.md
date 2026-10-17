@@ -70,6 +70,18 @@ Builder notes for `CLAUDE.md` (Decisions, Prompt versions, Waiting on Davi), `do
 - `threadsToAutoDraft` picks safety-note threads with a separate first query, then the usual
   query, so the ordinary order (newest first) is exactly as before.
 
+- **Emergencies (Check 36 P2), adapted:** the leads package already made the model's
+  `urgency: emergency` on a lead count in code (needs you, high, `EMERGENCY_REASON`, counted in
+  `freshLeads` / the emergency lane), so step 1 of the prompt was built. Added: a 48-hour sticky
+  mark — `extracted.emergency` + `emergency_at` (the emergency email's time), set when a sort hits
+  `emergency`, a gas smell or a CO alarm (never from an attack email) and carried across later
+  sorts while it is under 48 hours old (`recentEmergency`, `src/server/emergency-rules.ts`, pure).
+  Autopilot ("There was an emergency on this conversation in the last 2 days, so it waits for
+  you.") and batch send (`batchCandidates(…, now)`) refuse the thread meanwhile. **Not built:**
+  the prompt's one automatic draft on an emergency (with an "Emergency: call them first" flag):
+  CLAUDE.md's leads package says "emergencies are no longer auto-drafted", so that decision is
+  kept until Davi says otherwise (question 2 below).
+
 ## Questions for Davi
 
 1. **Carbon monoxide safety note wording** (built, waiting on okay before merge to production):
@@ -78,3 +90,8 @@ Builder notes for `CLAUDE.md` (Decisions, Prompt versions, Waiting on Davi), `do
    until the fire department says it's safe. / I'll call you as soon as I can." This follows the
    usual fire-safety advice (leave, call 911 from outside, stay out until the fire department
    clears it); please confirm against your local fire department's wording.
+2. **Should an emergency get one automatic reply draft?** Today (leads package) an emergency —
+   burst pipe, no heat, sewage backing up — goes to the top of Needs you with "Call now" and an
+   alert, and no reply is drafted until you tap "Draft a reply". The review asked for one draft
+   ("Emergency: call them first. This reply only covers what to do meanwhile.") waiting for your
+   Send reply. Kept as it is until you say yes.

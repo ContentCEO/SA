@@ -104,7 +104,7 @@ import { batchEligible, firstLine } from "./batch-rules";
 import { isInvoiceThread, paymentSaid } from "./money-rules";
 import { quoteStopsNudges } from "./quote-rules";
 import { BACK_ON_TOP_MS, isEmergency } from "./snooze-rules";
-import { inEmergencyLane } from "./emergency-rules";
+import { inEmergencyLane, recentEmergency } from "./emergency-rules";
 import { CHECKIN_AFTER_DAYS, CHECKIN_MAX_DAYS } from "./complaint-rules";
 import { headerPickIds, toNeedsYouItem } from "./digest-rules";
 import { answeredByPhone } from "./first-week-rules";
@@ -1714,6 +1714,7 @@ export type BatchRow = {
 export async function batchCandidates(
   workspaceId: string,
   picked: readonly string[],
+  now: Date = new Date(),
 ): Promise<BatchRow[]> {
   const rows = await db()
     .select({ draft: drafts, thread: threads })
@@ -1753,7 +1754,9 @@ export async function batchCandidates(
           extracted.municipal === true ||
           extracted.payment_change === true ||
           extracted.gas_smell === true ||
-          extracted.co_alarm === true,
+          extracted.co_alarm === true ||
+          // Check 36 P2: an emergency in the last 48 hours, whatever the thread is now.
+          recentEmergency(extracted, now),
         autopilotCounting: draft.autoSendAt !== null,
         acceptsQuote: extracted.accepts_quote === true,
         purpose: draft.purpose ?? null,
@@ -1784,7 +1787,9 @@ export async function batchSend(
   picked: readonly string[],
   opts: DraftDeps & { device?: "phone" | "computer" } = {},
 ): Promise<{ queued: { draftId: string; sendAfter: Date }[]; refused: number }> {
-  const allowed = new Set((await batchCandidates(workspaceId, picked)).map((r) => r.draftId));
+  const allowed = new Set(
+    (await batchCandidates(workspaceId, picked, opts.now?.() ?? new Date())).map((r) => r.draftId),
+  );
   const queued: { draftId: string; sendAfter: Date }[] = [];
   let refused = 0;
   for (const id of new Set(draftIds)) {

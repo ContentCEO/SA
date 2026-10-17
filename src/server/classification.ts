@@ -19,6 +19,7 @@ import {
   workspaces,
 } from "@/db/schema";
 import { mailboxOn } from "./mailbox-plan-rules";
+import { recentEmergency } from "./emergency-rules";
 import { afterClassified } from "./auto-outcomes";
 import { unflagPendingNudge } from "./drafts";
 import { jobsAllowed } from "./lifecycle";
@@ -485,8 +486,20 @@ export async function classifyPending(
       v === "owed_to_business" || v === "owed_by_business";
     const billDirection =
       !injection && isDir(dirNow) ? dirNow : isDir(dirBefore) ? dirBefore : null;
+    // Check 36 P2: an emergency marks the thread for 48 hours (from the emergency email), kept
+    // across later sorts so autopilot and batch send stay away. Never from an attack email.
+    const emergencyNow =
+      !injection &&
+      ((result.extracted.owner_rule_hits ?? []).includes("emergency") ||
+        result.extracted.gas_smell === true ||
+        result.extracted.co_alarm === true);
+    const prevEmergencyAt = recentEmergency(thread?.extracted, now)
+      ? (thread?.extracted as { emergency_at: string }).emergency_at
+      : null;
+    const emergencyAt = emergencyNow ? new Date(m.sentAt).toISOString() : prevEmergencyAt;
     const stored = {
       ...result.extracted,
+      ...(emergencyAt ? { emergency: true, emergency_at: emergencyAt } : {}),
       // The kind of job carries over like the invoice facts: "Go ahead, when can you start?"
       // doesn't say it again, and price memory needs it (plan #15).
       service_requested: said(result.extracted.service_requested) ?? prevService,
