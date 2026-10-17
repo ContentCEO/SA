@@ -137,5 +137,16 @@ edits this file after it is created.
 - [x] Wave 1, Homepage words, 5) C35 P4 + C35 P3
 - [x] Wave 1, Homepage words, 6) C35 P1
 - [x] Wave 1, Homepage words, 7) C06 P8 + C06 P9 + C06 P10 + C34 P5 + C42 P7
+- [x] Wave 1, Safety guards, 1) C22 P4 + C36 P1
+- [x] Wave 1, Safety guards, 2) C39 P1
+- [x] Wave 1, Safety guards, 3) C22 P3 + C20 P5
+- [x] Wave 1, Safety guards, 4) C36 P2
+- [x] Wave 1, Safety guards, 5) C37 P1
+- [x] Wave 1, Safety guards, 6) C22 P2
+- [x] Wave 1, Safety guards, 7) C48 P1 + C43 P2
+- [x] Wave 1, Safety guards, 8) C22 P1
+- [x] Wave 1, Safety guards, 9) C22 P5
+- [x] Wave 1, Safety guards, 10) C22 P11 + C36 P6 + C45 P4
+- [x] Wave 1, Safety guards, 11) C38 P3 + C22 P6 + C39 P2
 
 Later steps are added to this list as their pull requests merge.

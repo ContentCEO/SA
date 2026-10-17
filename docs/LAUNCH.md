@@ -1307,6 +1307,30 @@ Nothing below is switched on or changed until you say so.
   - The new FAQ "How is this different from Gmail's own AI, or from Jobber?" names both (none of
     their prices). Okay to name them?
   - Read the new homepage words on the preview before the merge to main.
+- **Wave 1: safety guards (merged 2026-10-17).**
+  - **Carbon monoxide safety note wording** (built; needs your okay before it reaches
+    production): "If your carbon monoxide alarm is going off, please don't wait on email. Get
+    everyone out of the house into fresh air right away, pets too, and call 911 from outside.
+    Don't go back in until the fire department says it's safe. / I'll call you as soon as I
+    can." It follows the usual fire-safety advice; please check it against your local fire
+    department's wording.
+  - **Electrical safety note wording** (built; needs your okay before it reaches production):
+    "If you see smoke or flames, get everyone out and call 911 from outside. If it's safe to
+    reach your panel, switch off the breaker for that area and don't use that outlet or switch
+    until we've looked at it. If wires are down outside, stay well away and call your electric
+    company. / I'll call you as soon as I can." (From the review, based on NFPA's electrical
+    safety tips.)
+  - **Should an emergency get one automatic reply draft?** Today an emergency (burst pipe, no
+    heat, sewage backing up) goes to the top of Needs you with "Call now" and an alert, and no
+    reply is drafted until you tap "Draft a reply". The review asked for one draft ("Emergency:
+    call them first. This reply only covers what to do meanwhile.") waiting for your Send reply.
+    Kept as it is until you say yes.
+  - **Remodeling amount suggestions:** setup offers $10,000 and $25,000 buttons for the "send me
+    anything over" amount when the trade is remodeling (the review's example numbers). Are those
+    the right two, and should any other trade get suggestions? The default stays $2,500.
+  - **Big supplier statements:** a supplier's monthly statement over your amount (say "Balance:
+    $3,420.17") goes to Needs you today. Keep that, or let supplier bills (money you owe) skip the
+    amount rule?
 - **Gmail draft check (counts only, for the engineers):** whether Gmail keeps a draft's id when
   it's sent. The app is safe either way. The query is in [step 1](#1-merge-the-launch-branch);
   run it **before merging**: after the merge it always reads 0.
