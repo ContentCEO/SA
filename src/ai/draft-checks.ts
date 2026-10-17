@@ -171,6 +171,11 @@ export type CheckContext = {
    * registered, licensed, lead-safe certified or insured with nothing saved to back it.
    */
   licenses?: Licenses | null;
+  /**
+   * Check 23 P6: names the draft may use without them being in `sourceText` — the customer's
+   * own name from the email's From line, the owner's.
+   */
+  knownNames?: string[];
   /** Check 38 P2: the owner's two-letter state; "MA" turns on the one-third deposit check. */
   state?: string | null;
   /** Review requests only: the one link allowed, and nothing offered in return. */
@@ -219,7 +224,9 @@ export type CheckHit =
    */
   | "payment_terms"
   /** Check 38 P2: asks a Massachusetts customer for more than a one-third deposit. Flag only. */
-  | "deposit_cap";
+  | "deposit_cap"
+  /** Check 23 P6: a phone number, link, email address or name nobody gave. */
+  | "contact";
 export type CheckResult = { flags: string[]; confidenceCap: number; hits: CheckHit[] };
 
 /**
@@ -238,7 +245,28 @@ export const REGENERATE_ON: CheckHit[] = [
   "insurance",
   // Check 41 P1: a safety or lead claim gets one fresh attempt.
   "safety",
+  // Check 23 P6: a made-up phone number, link or name gets one fresh attempt.
+  "contact",
 ];
+
+/** Check 23 P6: a US phone number (the pattern voice.ts scrubs), and an email address. */
+const PHONE = /(?:\+?1[\s.-]?)?\(?\b\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}\b/g;
+const EMAIL_ADDRESS = /[\w.+-]+@[\w-]+(?:\.[\w-]+)+/g;
+const phoneDigits = (p: string) => p.replace(/\D/g, "").replace(/^1(?=\d{10}$)/, "");
+/**
+ * Check 23 P6: a name the draft introduces — "my guy Pete", "our tech Luis", "the Hendersons",
+ * "for Marie last week". Narrow on purpose: greetings, sign-offs, towns, streets and brands
+ * ("for Mass Save", "for Eversource customers") aren't caught here.
+ */
+const NAMED =
+  /\b(?:[Mm]y guys?|[Oo]ur (?:tech|guy|plumber|electrician|crew lead|foreman|installer|helper|painter|roofer|carpenter))\s+([A-Z][a-z]{1,20})\b|\b[Tt]he ([A-Z][a-z]{2,20})s\b|\bfor ([A-Z][a-z]{1,20})\b(?=[,.!?]|\s+(?:last|on|in|over|down|up|a|the|and|at|back|just|too)\b)/g;
+/** Capitalised words after "for" / "the …s" that aren't people. */
+const NOT_A_NAME = new Set([
+  ...["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"],
+  ...["january", "february", "march", "april", "may", "june", "july", "august"],
+  ...["september", "october", "november", "december", "christmas", "thanksgiving", "easter"],
+  ...["god", "sure", "now", "free", "you", "your", "the", "a", "an", "us", "me", "it", "this"],
+]);
 
 const PEOPLE_AND_PETS =
   "kids?|children|child|baby|babies|newborns?|toddlers?|pets?|dogs?|cats?|family|people|humans?";
@@ -668,6 +696,50 @@ export function checkDraft(draftBody: string, ctx: CheckContext): CheckResult {
     );
     cap = Math.min(cap, 0.5);
     hits.push("rule_claim");
+  }
+
+  // Phone numbers, links, email addresses and names nobody gave (Check 23 P6).
+  const contact: string[] = [];
+  const sourcePhones = new Set([...ctx.sourceText.matchAll(PHONE)].map((m) => phoneDigits(m[0])));
+  const sourceRuns = ctx.sourceText.replace(/\D+/g, " ");
+  for (const m of body.matchAll(PHONE)) {
+    const digits = phoneDigits(m[0]);
+    if (!sourcePhones.has(digits) && !` ${sourceRuns} `.includes(` ${digits} `))
+      contact.push(
+        `Has the number ${m[0].trim()}, which isn't in your profile or this email. Check it.`,
+      );
+  }
+  const sourceUrls = [...ctx.sourceText.matchAll(URL)].map((m) => m[0]);
+  for (const u of new Set([...body.matchAll(URL)].map((m) => m[0]))) {
+    const allowed =
+      sourceUrls.some((s) => sameUrl(u, s)) ||
+      (ctx.review?.url ? sameUrl(u, ctx.review.url) : false);
+    // A review request's own link check below says it better.
+    if (!allowed && !ctx.review)
+      contact.push(
+        `Has the link ${u.replace(/[.,!?;:]+$/, "")}, which isn't in your profile or this email. Check it.`,
+      );
+  }
+  const sourceLower = ctx.sourceText.toLowerCase();
+  for (const a of new Set([...body.matchAll(EMAIL_ADDRESS)].map((m) => m[0].toLowerCase())))
+    if (!sourceLower.includes(a))
+      contact.push(`Has the address ${a}, which isn't in your profile or this email. Check it.`);
+  const knownNameText = (ctx.knownNames ?? []).join(" ").toLowerCase();
+  for (const m of body.matchAll(NAMED)) {
+    const name = (m[1] ?? m[2] ?? m[3])!;
+    const key = name.toLowerCase();
+    if (NOT_A_NAME.has(key)) continue;
+    if (
+      new RegExp(`\\b${key}`, "i").test(sourceLower) ||
+      new RegExp(`\\b${key}`).test(knownNameText)
+    )
+      continue;
+    contact.push(`Mentions “${name}”, who isn't in this email or your profile. Check it.`);
+  }
+  if (contact.length) {
+    flags.push(...[...new Set(contact)].slice(0, 2));
+    cap = Math.min(cap, 0.3);
+    hits.push("contact");
   }
 
   // Never-promise list: flag when the key words of an item all show up in the draft.

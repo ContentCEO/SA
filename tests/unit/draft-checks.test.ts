@@ -570,3 +570,58 @@ describe("light payment-terms check on every reply (Check 23 P5)", () => {
     ).toEqual([]);
   });
 });
+
+describe("phone numbers, links and names nobody gave (Check 23 P6)", () => {
+  const ctx = {
+    sourceText:
+      "Hi, the vanity drain at 12 Main St is slow.\nThanks,\nAlex Rivera\nRivera Plumbing · (508) 555-0199\nBook online: https://riveraplumbing.test/book",
+    ownerSourceText: "",
+    doNotPromise: [] as string[],
+    phrasesAvoided: [] as string[],
+    knownNames: ["Dana Ruiz"],
+  };
+  it.each([
+    ["Call me at 978-555-0142 anytime.", "Has the number 978-555-0142"],
+    [
+      "Book here: https://exampleplumbing.test/book",
+      "Has the link https://exampleplumbing.test/book",
+    ],
+    ["My guy Pete will handle it, he's great with old copper.", "Mentions “Pete”"],
+    ["We did the same vanity for the Hendersons on Elm, ran them $650.", "Mentions “Henderson”"],
+    ["Write to bookings@exampleplumbing.test.", "Has the address bookings@exampleplumbing.test"],
+  ])("%s", (body, flag) => {
+    const r = checkDraft(body, ctx);
+    expect(r.hits).toContain("contact");
+    expect(r.flags.join(" ")).toContain(flag);
+    expect(r.confidenceCap).toBeLessThanOrEqual(0.3);
+    expect(REGENERATE_ON).toContain("contact");
+  });
+  it("the owner's real number and link, the customer's name and the thread's street pass", () => {
+    for (const body of [
+      "Call me at 508-555-0199 anytime.",
+      "Call me at (508) 555-0199.",
+      "Book here: https://riveraplumbing.test/book",
+      "Hi Dana, I can stop by 12 Main St to take a look.",
+      "Thanks for Dana, I mean, thanks Dana.",
+      "Mass Save has a program for Eversource customers.",
+    ])
+      expect(checkDraft(body, ctx).hits, body).not.toContain("contact");
+  });
+  it("a contact flag keeps a draft from autopilot", () => {
+    const body = "Call me at 978-555-0142 anytime.";
+    const r = checkDraft(body, ctx);
+    expect(
+      guardrailReasons({
+        category: "scheduling",
+        needsOwner: false,
+        kind: "reply",
+        confidencePct: 95,
+        flags: r.flags,
+        amountsInEmail: [],
+        draftBody: body,
+        knownCustomer: true,
+        purpose: null,
+      }),
+    ).toContain("Has things to check before sending.");
+  });
+});

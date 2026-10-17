@@ -121,3 +121,13 @@ Notes for the integrator: what CLAUDE.md should say, by step. Files in this grou
   third: hit `deposit_cap`, "Massachusetts caps a deposit at one-third, or the cost of
   special-order materials if higher. Check this before sending.", cap 0.5, never rewritten.
   `SelectField` gained `emptyLabel` (an empty choice the owner can pick).
+- **Phone numbers, links and names nobody gave (Check 23 P6, wave 1):** checkDraft flags (hit
+  `contact`, cap 0.3, in `REGENERATE_ON` — one fresh attempt) a US phone number whose digits
+  aren't in `sourceText` ("Has the number 978-555-0142, which isn't in your profile or this
+  email. Check it."), any link or email address not in `sourceText` (a review request's own link
+  keeps its own check), and a name the draft introduces — "my guy Pete", "our tech Luis", "the
+  Hendersons", "for Marie last week" — found nowhere in the conversation, the profile or the
+  conversation's From names (`knownNames`, from drafts.ts) ("Mentions “Pete”, who isn't in this
+  email or your profile. Check it."). Narrow on purpose: greetings, towns, streets, days,
+  holidays and brands ("for Eversource customers") don't trip it. At most two contact lines per
+  draft. Any flag already keeps a draft from autopilot (tested).

@@ -1002,6 +1002,10 @@ export async function createDraftForThread(
     neverSay: ctx.neverSay,
     licenses: ctx.licenses,
     state: ctx.state,
+    // Check 23 P6: the names on the conversation's From lines may be used.
+    knownNames: withText
+      .flatMap(({ m }) => [m.fromName, customerReplyName(m)])
+      .filter((n): n is string => !!n),
     // Check 23 P5: every reply carries the owner's terms for the light payment-terms check
     // (deposit and review notes replace these with their own, stricter check below).
     termsSource: ownerTerms(ctx),
@@ -1976,6 +1980,10 @@ export async function reviseDraft(
     neverSay: ctx.neverSay,
     licenses: ctx.licenses,
     state: ctx.state,
+    // Check 23 P6: the names on the conversation's From lines may be used.
+    knownNames: withText
+      .flatMap(({ m }) => [m.fromName, customerReplyName(m)])
+      .filter((n): n is string => !!n),
     // Check 23 P5: the light payment-terms check on every reply; what the owner said and a
     // clean draft's text count as theirs.
     termsSource: [ownerTerms(ctx), spoken].filter(Boolean).join("\n"),
