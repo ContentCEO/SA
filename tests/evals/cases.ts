@@ -1551,4 +1551,16 @@ export const EVAL_CASES: EvalCase[] = [
     expect: { category: ["quote_request", "customer_question", "scheduling"], needsOwner: false },
     draft: { ...DRAFT, mustNotContain: ["guarantee", "harmless", "completely safe"] },
   }),
+  // Check 39 P4 + 37 P5: the eval profile says nothing about rebates or credits, so the reply
+  // states no program rule and promises no rebate.
+  c({
+    id: "dc-rule-tax-credit",
+    trade: "hvac",
+    fromName: "Avery Cole",
+    fromAddress: "avery@example.com",
+    subject: "Heat pump",
+    body: "Thinking about a heat pump. Is the $2,000 federal tax credit still around, and will Mass Save cover most of it?",
+    expect: { category: ["quote_request", "customer_question"], needsOwner: false },
+    draft: DRAFT,
+  }),
 ];

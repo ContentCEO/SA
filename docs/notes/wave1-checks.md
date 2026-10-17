@@ -79,3 +79,13 @@ Notes for the integrator: what CLAUDE.md should say, by step. Files in this grou
   Safety and lead claims are yours to make, not the assistant's. Check it before sending."
   `draft.v8` "Never invent" gains the safe / non-toxic / lead line. Eval cases: nursery paint,
   1924 colonial exterior, lawn treatment with dogs, mice bait with a toddler.
+- **Rule claims and rebate promises (Check 39 P4 + 37 P5, wave 1):** a draft sentence naming a
+  program or rule word (rebate, incentive, tax credit / credit — not "credit card" — HEAT Loan,
+  Mass Save, 0% loan, qualify, eligible, EPA, R-22, R-410A, R-454B, R-32, freon, refrigerant,
+  banned, phased out, legal / illegal, no longer made / allowed, code requires) that the owner's
+  own text (profile, price list, notes, instruction, their emails) never uses → hit
+  `rule_claim`, "Says something about a rebate, tax credit or refrigerant rule. Check it's still
+  true before sending.", cap 0.5, flag only (not in `REGENERATE_ON`, no extra model call). New
+  soft promise "a rebate or utility will pay" (Eversource / National Grid / Unitil / Mass Save /
+  the utility / rebates … covers / pays for / gives back / free / no cost; "you'll qualify for
+  the rebate").

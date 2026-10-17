@@ -83,6 +83,11 @@ const SOFT_PROMISES: [string, RegExp][] = [
     /\b(?:match|beat) (?:their|that|the|his|her|your|any) (?:price|quote|number|bid)\b|\bprice[- ]match\b/i,
   ],
   ["fit you in", /\b(?:squeeze|fit|sneak) (?:you|it|them) in\b/i],
+  // Check 37 P5: rebates belong to the utility; a draft can't promise they'll pay.
+  [
+    "a rebate or utility will pay",
+    /\b(?:eversource|national grid|unitil|mass ?save|the utility|your utility|rebates?|incentives?)\b.{0,50}\b(?:covers?|cover (?:the|all|most)|pays? for|will pay|gives? (?:you )?back|reimburses?|free|for nothing|no cost|won't cost)\b|\byou(?:'ll| will)(?: definitely| likely)? (?:get|qualify for|be eligible for) (?:a |the )?(?:rebate|incentive)\b/i,
+  ],
 ];
 
 /** Words that make a commitment the owner has to stand behind. */
@@ -182,7 +187,9 @@ export type CheckHit =
   /** Check 40 P1: covering a deductible or handling the homeowner's insurance claim. */
   | "insurance"
   /** Check 41 P1: lead-paint and "safe for kids and pets" claims. */
-  | "safety";
+  | "safety"
+  /** Check 39 P4: a rebate, tax-credit or refrigerant rule the owner never wrote. Flag only. */
+  | "rule_claim";
 export type CheckResult = { flags: string[]; confidenceCap: number; hits: CheckHit[] };
 
 /**
@@ -226,6 +233,43 @@ const SAFETY_CLAIMS: [string, RegExp][] = [
   ],
   ["pet and kid safe", /\b(?:pet|kid|child|family)[- ](?:safe|friendly)\b/i],
 ];
+/**
+ * Check 39 P4: program and rule words whose facts change every year (Mass Save amounts each
+ * January, the federal heat pump credit, EPA refrigerant rules). "Credit card" isn't one.
+ */
+const RULE_WORDS =
+  /\b(?:rebates?|incentives?|tax credits?|credits?(?! cards?)|heat loan|mass ?save|0% (?:loan|financing)|qualif(?:y|ies)|eligible|epa|r-?22|r-?410a|r-?454b|r-?32|freon|refrigerants?|banned|phased out|phase-?out|legal|illegal|no longer (?:made|allowed)|code requires|required by code)\b/gi;
+
+/** "Tax credits" → "credit", "R-410A" → "r410a": the word to look for in the owner's text. */
+const ruleKey = (w: string) =>
+  w
+    .toLowerCase()
+    .replace(/^tax /, "")
+    .replace(/^(r)-?(\d)/, "$1$2")
+    .replace(/-/g, " ")
+    .replace(/(rebate|incentive|credit|refrigerant)s$/, "$1")
+    .replace(/^qualifies$/, "qualify");
+
+/**
+ * Check 39 P4: a sentence states a rule when it names a program or rule word the owner never
+ * wrote (their profile, price list, notes, instruction or own emails).
+ */
+function ruleClaim(body: string, ownerText: string): boolean {
+  const owner = ` ${ownerText
+    .toLowerCase()
+    .replace(/\b(r)-?(\d)/g, "$1$2")
+    .replace(/[^a-z0-9%]+/g, " ")} `;
+  return body.split(/(?<=[.!?])\s+|\n+/).some((sentence) =>
+    [...sentence.matchAll(RULE_WORDS)].some((m) => {
+      const key = ruleKey(m[0]).replace(/[^a-z0-9% ]+/g, " ");
+      return (
+        !new RegExp(`\\s${key.replace(/[%]/g, "\\$&")}(?:s|es|ies)?\\s`).test(owner) &&
+        !(key === "qualify" && /\squalifies\s/.test(owner))
+      );
+    }),
+  );
+}
+
 /** Ways of taking old paint off that the lead rule bans on older homes (Check 41 P1). */
 const UNSAFE_PAINT_REMOVAL =
   /\b(?:power[- ]?sand\w*|sandblast\w*|torch\w*|burn (?:it |the paint |the old paint )?off|heat gun)\b/i;
@@ -564,6 +608,16 @@ export function checkDraft(draftBody: string, ctx: CheckContext): CheckResult {
     );
     cap = Math.min(cap, 0.3);
     hits.push("safety");
+  }
+
+  // A rebate, tax-credit or refrigerant rule the owner never wrote (Check 39 P4): flag only,
+  // never a rewrite or another model call.
+  if (ruleClaim(body, [ownerText, ctx.ownerInstruction ?? ""].join("\n"))) {
+    flags.push(
+      "Says something about a rebate, tax credit or refrigerant rule. Check it's still true before sending.",
+    );
+    cap = Math.min(cap, 0.5);
+    hits.push("rule_claim");
   }
 
   // Never-promise list: flag when the key words of an item all show up in the draft.

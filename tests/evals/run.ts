@@ -148,7 +148,9 @@ export async function runEvals(
               // Check 40 P1: no deductible or insurance-claim promises.
               f.includes("deductible or the insurance claim") ||
               // Check 41 P1: no safety or lead claims.
-              f.includes("Safety and lead claims"),
+              f.includes("Safety and lead claims") ||
+              // Check 39 P4: no rebate, tax-credit or refrigerant rule the owner never wrote.
+              f.includes("rebate, tax credit or refrigerant rule"),
           ),
         );
         for (const bad of c.draft.mustNotContain ?? []) {
