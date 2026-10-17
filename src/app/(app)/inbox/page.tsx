@@ -7,14 +7,15 @@ import { CATEGORIES } from "@/ai/prompts/classify.v4";
 import { categoryLabels, categoryTag, isCategory } from "@/config/categories";
 import { relativeTime } from "@/lib/relative-time";
 import { cn } from "@/lib/utils";
-import { listInboxThreads, type InboxFilter, type InboxRow } from "@/server/inbox";
+import { z } from "zod";
+import { inboxPage, type InboxCursor, type InboxFilter, type InboxRow } from "@/server/inbox";
 import { listMailboxes } from "@/server/mailboxes";
 import { isReadOnly } from "@/server/lifecycle";
 import { threadOffers, type ThreadOffers } from "@/server/offers";
 import { priceMemoryFor, type PriceMemoryItem } from "@/server/price-memory";
 import { getBusinessProfile } from "@/server/profile";
 import { requireOwner } from "@/server/session";
-import { isFoldableJunk, searchText, urgencyWord } from "@/server/inbox-rules";
+import { searchText, urgencyWord } from "@/server/inbox-rules";
 import { draftReplyAction } from "../queue/actions";
 import { channelKind, channelName, openSiteUrl } from "@/server/channel-rules";
 import { InboxSearch } from "./inbox-search";
@@ -51,6 +52,26 @@ function parseFilter(v: string | string[] | undefined): InboxFilter {
   if (v === "unsorted") return { kind: "unsorted" };
   if (isCategory(v)) return { kind: "category", category: v };
   return { kind: "all" };
+}
+
+/** Check 10 P2: ?before=<ISO time>&after_id=<thread uuid>; bad values are ignored. */
+function parseCursor(params: Record<string, string | string[] | undefined>): InboxCursor | null {
+  const id = z.string().uuid().safeParse(params.after_id);
+  if (!id.success) return null;
+  const before = z.string().datetime({ offset: true }).safeParse(params.before);
+  return { afterId: id.data, before: before.success ? new Date(before.data) : null };
+}
+
+/** The Inbox URL for a chip, optionally at an older page. Ids and times only. */
+function inboxHref(key: string, cursor?: InboxCursor | null) {
+  const q = new URLSearchParams();
+  if (key !== "all") q.set("c", key);
+  if (cursor) {
+    if (cursor.before) q.set("before", cursor.before.toISOString());
+    q.set("after_id", cursor.afterId);
+  }
+  const s = q.toString();
+  return s ? `/inbox?${s}` : "/inbox";
 }
 
 function filterKey(f: InboxFilter) {
@@ -135,11 +156,16 @@ export default async function InboxPage(props: PageProps<"/inbox">) {
   const readOnly = isReadOnly(workspace);
   const params = await props.searchParams;
   const filter = parseFilter(params.c);
-  const [rows, boxes] = await Promise.all([
-    listInboxThreads(workspace.id, filter),
+  const cursor = parseCursor(params);
+  const [page, boxes] = await Promise.all([
+    inboxPage(workspace.id, filter, { cursor }),
     listMailboxes(workspace.id),
   ]);
+  // Check 10 P2: the page's real rows, then the newest folded junk (All, first page only).
+  const junkIds = new Set(page.junk.rows.map((r) => r.id));
+  const rows = [...page.rows, ...page.junk.rows];
   const active = filterKey(filter);
+  const olderHref = page.next ? inboxHref(active, page.next) : null;
   // "Ask for a review" / the closing question, only where the server's rules allow (#29 #26).
   // Read-only accounts get none.
   const offers = await threadOffers(
@@ -162,9 +188,6 @@ export default async function InboxPage(props: PageProps<"/inbox">) {
   const own = boxes.map((b) => b.email);
   const doneMsg = typeof params.done === "string" ? INBOX_DONE[params.done] : undefined;
   const errorMsg = typeof params.error === "string" ? INBOX_ERRORS[params.error] : undefined;
-
-  // Junk folds into one line on "All" (outside review); the Junk chip lists it as usual.
-  const foldJunk = filter.kind === "all";
 
   function renderRow(row: InboxRow) {
     return (
@@ -300,7 +323,7 @@ export default async function InboxPage(props: PageProps<"/inbox">) {
         {chips.map((c) => (
           <Link
             key={c.key}
-            href={c.key === "all" ? "/inbox" : `/inbox?c=${c.key}`}
+            href={inboxHref(c.key)}
             aria-current={active === c.key ? "page" : undefined}
             className={cn(
               "inline-flex min-h-tap shrink-0 items-center rounded-full border px-4 text-sm font-semibold whitespace-nowrap",
@@ -312,6 +335,15 @@ export default async function InboxPage(props: PageProps<"/inbox">) {
         ))}
       </nav>
 
+      {cursor ? (
+        <Link
+          href={inboxHref(active)}
+          className="inline-flex min-h-tap items-center self-start font-semibold underline underline-offset-4"
+        >
+          Back to newest
+        </Link>
+      ) : null}
+
       {boxes.length === 0 ? (
         <p className="text-lg">
           Connect Gmail in{" "}
@@ -322,9 +354,11 @@ export default async function InboxPage(props: PageProps<"/inbox">) {
         </p>
       ) : rows.length === 0 ? (
         <p className="text-lg text-muted-foreground">
-          {filter.kind === "all"
-            ? "Nothing here yet. New email shows up within a few minutes."
-            : "Nothing in this group."}
+          {cursor
+            ? "No older emails."
+            : filter.kind === "all"
+              ? "Nothing here yet. New email shows up within a few minutes."
+              : "Nothing in this group."}
         </p>
       ) : (
         <InboxSearch
@@ -337,9 +371,11 @@ export default async function InboxPage(props: PageProps<"/inbox">) {
               summary: r.summary,
               categoryLabel: isCategory(r.category) ? categoryLabels[r.category] : null,
             }),
-            junk: foldJunk && isFoldableJunk(r),
+            junk: junkIds.has(r.id),
             node: renderRow(r),
           }))}
+          junkCount={page.junk.count}
+          olderHref={olderHref}
         />
       )}
     </>

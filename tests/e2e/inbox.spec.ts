@@ -204,6 +204,8 @@ test("inbox: a word per row, junk folded into one line, and a search that stays 
   // Search filters on the phone; nothing typed goes into the URL.
   await page.waitForLoadState("networkidle");
   const search = page.getByLabel("Search your inbox");
+  // Check 10 P2: the note says what a search looks through (3 emails + 2 junk).
+  await expect(page.getByText("Searching the 5 emails on this page.")).toBeVisible();
   await search.fill("water heater");
   await expect(page.locator("main li")).toHaveCount(1);
   await expect(row("Priya")).toBeVisible();
@@ -245,9 +247,9 @@ test("Check 10 P1: 'I called them' on an Inbox card turns it back to a normal ca
   await expect(page.getByText("Marked as answered by phone.")).toBeVisible();
   await expect(items.first()).not.toContainText("Dana");
   const dana = items.filter({ hasText: "Dana" });
-  await expect(dana).not.toContainText("Needs you");
-  await expect(dana).toContainText("Replied");
-  await expect(dana.locator("details")).not.toHaveClass(/sa-inverted/);
+  await expect(dana).not.toContainText("Complaint · Needs you");
+  await expect(dana).toContainText("Complaint · Replied");
+  await expect(dana.locator("details").first()).not.toHaveClass(/sa-inverted/);
 });
 
 test("Check 10 P3: a burst pipe from today says Emergency and comes first", async ({
@@ -287,4 +289,39 @@ test("Check 10 P3: a burst pipe from today says Emergency and comes first", asyn
   await expect(first).toContainText("Kevin");
   await expect(first).toContainText("Emergency · Question · Needs you");
   await expect(page.locator("main li").nth(1)).toContainText("Dana");
+});
+
+test("Check 10 P2: past the first 100, Show older emails pages on and Back to newest returns", async ({
+  page,
+  context,
+}) => {
+  const owner = await seedOwner({ mailbox: true, backfilled: true });
+  const now = Date.now();
+  await testDb.insert(schema.threads).values(
+    Array.from({ length: 103 }, (_, i) => ({
+      mailboxId: owner.mailboxId!,
+      gmailThreadId: `old-${i}-${owner.mailboxId}`,
+      inInbox: true,
+      category: "scheduling",
+      summary: `Visit number ${i + 1}.`,
+      lastMessageAt: new Date(now - i * 60_000),
+    })),
+  );
+  await signInAs(context, owner);
+  await page.goto("/inbox");
+  await expect(page.locator("main li")).toHaveCount(100);
+  await expect(page.getByText("Searching the 100 emails on this page.")).toBeVisible();
+  await page.waitForLoadState("networkidle");
+  await page.getByLabel("Search your inbox").fill("Visit number 103.");
+  await expect(page.getByText("No emails match that.")).toBeVisible();
+  await expect(page.getByRole("link", { name: "Show older emails" })).toBeVisible();
+  await page.getByLabel("Search your inbox").fill("");
+  await page.getByRole("link", { name: "Show older emails" }).click();
+  await expect(page).toHaveURL(/after_id=/);
+  await expect(page.locator("main li")).toHaveCount(3);
+  await expect(page.getByText("Visit number 103.")).toBeVisible();
+  await expect(page.getByRole("link", { name: "Show older emails" })).toHaveCount(0);
+  await page.getByRole("link", { name: "Back to newest" }).click();
+  await expect(page).toHaveURL(/\/inbox$/);
+  await expect(page.locator("main li")).toHaveCount(100);
 });

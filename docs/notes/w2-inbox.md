@@ -46,6 +46,16 @@ Base: cd15c59. One commit per step. Nothing here needs wave 1 unless marked "nee
   lead with "Emergency" (urgency) or "Urgent" (priority high) in font-black, on every card,
   black ones included. `listInboxThreads`' third argument is now `{ limit?, now? }`.
 
+- **Inbox paging (Check 10 P2):** `inboxPage()` (inbox.ts): keyset paging in the same order
+  (tier, time, id — row comparison), cursor in the URL as `?before=<ISO>&after_id=<uuid>`
+  (Zod-checked, bad values ignored). The anchor row is looked up inside the workspace (its tier and
+  exact stored time), so a cursor can't cross workspaces; a missing anchor falls back to the URL
+  time. On All the page is 100 non-junk rows; junk is a count plus the 50 newest (first page
+  only). "Show older emails" (full-width outline) when the page was full, "Back to newest" on
+  older pages, "Searching the N emails on this page." under the search box, and "Show older
+  emails" next to "No emails match that." The tier uses the 24-hour window at request time, so a
+  row crossing it between page loads can move pages (rare, harmless).
+
 ## Integration notes
 
 - `src/app/(app)/quotes/page.tsx`, `quotes/actions.ts`, `src/server/quotes.ts`,

@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import type { Database } from "@/db";
 import { messages, threads } from "@/db/schema";
 import { ensureUserAndWorkspace } from "@/server/accounts";
-import { listInboxThreads } from "@/server/inbox";
+import { inboxPage, listInboxThreads } from "@/server/inbox";
 import { compareInbox } from "@/server/inbox-rules";
 import { saveConnectedMailbox } from "@/server/mailboxes";
 import { createTestDb } from "../support/db";
@@ -119,5 +119,73 @@ describe("Inbox order (Check 10 P3)", () => {
       .map((r) => r.id);
     expect(ids).toEqual(byRule);
     expect(ids).toEqual(expect.arrayContaining([answeredPipe, oldPipe, plain]));
+  });
+});
+
+describe("Inbox paging (Check 10 P2)", () => {
+  async function bulk(box: string, count: number, o: { junk?: boolean; needs?: number } = {}) {
+    const values = Array.from({ length: count }, (_, i) => ({
+      mailboxId: box,
+      gmailThreadId: `${box}-${o.junk ? "j" : "r"}-${i}`,
+      inInbox: true,
+      category: o.junk ? "noise" : "customer_question",
+      needsOwner: i < (o.needs ?? 0),
+      // Pairs share a time, so the id tie-break is exercised.
+      lastMessageAt: ago(Math.floor(i / 2) + (o.junk ? 0.5 : 0)),
+      extracted: { urgency: "normal" },
+    }));
+    return (await database.insert(threads).values(values).returning({ id: threads.id })).map(
+      (r) => r.id,
+    );
+  }
+
+  it("230 threads with 80 junk: 100 real rows, then the rest, no repeats or gaps", async () => {
+    const real = await bulk(mailboxId, 150, { needs: 3 });
+    const junk = await bulk(mailboxId, 80, { junk: true });
+    const p1 = await inboxPage(workspaceId, { kind: "all" }, { now: NOW });
+    expect(p1.rows).toHaveLength(100);
+    expect(p1.rows.every((r) => r.category !== "noise")).toBe(true);
+    expect(p1.rows.slice(0, 3).every((r) => r.needsOwner)).toBe(true);
+    expect(p1.junk.count).toBe(80);
+    expect(p1.junk.rows).toHaveLength(50);
+    expect(p1.next).not.toBeNull();
+    const p2 = await inboxPage(workspaceId, { kind: "all" }, { now: NOW, cursor: p1.next });
+    expect(p2.rows).toHaveLength(50);
+    expect(p2.next).toBeNull();
+    expect(p2.junk).toEqual({ count: 0, rows: [] });
+    const seen = [...p1.rows, ...p2.rows].map((r) => r.id);
+    expect(new Set(seen).size).toBe(150);
+    expect(new Set(seen)).toEqual(new Set(real));
+    // The Junk chip pages junk the same way.
+    const j1 = await inboxPage(workspaceId, { kind: "category", category: "noise" }, { now: NOW });
+    expect(j1.rows).toHaveLength(80);
+    expect(new Set(j1.rows.map((r) => r.id))).toEqual(new Set(junk));
+  });
+
+  it("a cursor never crosses workspaces", async () => {
+    await bulk(mailboxId, 5);
+    const other = await ensureUserAndWorkspace({ email: "someone@else.com" });
+    const otherBox = (
+      await saveConnectedMailbox(other.workspace, {
+        email: "someone@else.com",
+        refreshToken: "rt",
+        grantedScopes: [],
+      })
+    ).id;
+    const theirs = await bulk(otherBox, 5);
+    // Our page with their thread as the anchor: only our rows, ever.
+    const p = await inboxPage(
+      workspaceId,
+      { kind: "all" },
+      { now: NOW, cursor: { afterId: theirs[0]!, before: null } },
+    );
+    expect(p.rows.every((r) => !theirs.includes(r.id))).toBe(true);
+    const all = await inboxPage(other.workspace.id, { kind: "all" }, { now: NOW, pageSize: 2 });
+    const next = await inboxPage(
+      other.workspace.id,
+      { kind: "all" },
+      { now: NOW, cursor: all.next },
+    );
+    expect(next.rows.every((r) => theirs.includes(r.id))).toBe(true);
   });
 });

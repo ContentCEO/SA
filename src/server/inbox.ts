@@ -1,5 +1,5 @@
 import "server-only";
-import { and, desc, eq, isNull, sql, type SQL } from "drizzle-orm";
+import { and, count, desc, eq, isNull, sql, type SQL } from "drizzle-orm";
 import type { Category } from "@/ai/prompts/classify.v4";
 import { db } from "@/db";
 import { mailboxes, threads } from "@/db/schema";
@@ -46,11 +46,20 @@ function tierSql(now: Date) {
   return sql<number>`((case when ${threads.extracted}->>'urgency' = 'emergency' and ${recent} and ${waiting} then 4 else 0 end) + (case when ${openNeedsOwnerSql()} then 2 else 0 end) + (case when ${threads.priority} = 'high' and ${recent} then 1 else 0 end))`;
 }
 
+/** Check 10 P2: where the next page starts — the last row shown (content-free, in the URL). */
+export type InboxCursor = { afterId: string; before: Date | null };
+
+/** Check 10 P2: rows shown on All apart from folded junk, and the junk itself. */
+type JunkPart = "all" | "no_junk" | "only_junk";
+
+const junkSql = () => sql`(${threads.category} = 'noise' and not ${openNeedsOwnerSql()})`;
+const timeKey = () => sql`coalesce(${threads.lastMessageAt}, '-infinity'::timestamptz)`;
+
 /** Recent inbox threads for the owner's own mailboxes. Never crosses workspaces. */
 export async function listInboxThreads(
   workspaceId: string,
   filter: InboxFilter,
-  opts: { limit?: number; now?: Date } = {},
+  opts: { limit?: number; now?: Date; cursor?: InboxCursor | null; junk?: JunkPart } = {},
 ): Promise<InboxRow[]> {
   const limit = opts.limit ?? 100;
   const now = opts.now ?? new Date();
@@ -59,6 +68,27 @@ export async function listInboxThreads(
   if (filter.kind === "needs_me") where.push(openNeedsOwnerSql());
   if (filter.kind === "unsorted") where.push(isNull(threads.category));
   if (filter.kind === "category") where.push(eq(threads.category, filter.category));
+  if (opts.junk === "no_junk") where.push(sql`not ${junkSql()}`);
+  if (opts.junk === "only_junk") where.push(junkSql());
+
+  // Check 10 P2: keyset paging in the same order. The anchor is the last row of the previous
+  // page, looked up in THIS workspace (an id from elsewhere finds nothing and falls back to
+  // the time in the URL), so a cursor never crosses workspaces.
+  if (opts.cursor) {
+    const [anchor] = await db()
+      .select({ tier: tierSql(now), at: sql<string>`${timeKey()}::text` })
+      .from(threads)
+      .innerJoin(mailboxes, eq(mailboxes.id, threads.mailboxId))
+      .where(and(eq(threads.id, opts.cursor.afterId), eq(mailboxes.workspaceId, workspaceId)));
+    const at = anchor
+      ? sql`${anchor.at}::timestamptz`
+      : opts.cursor.before
+        ? sql`${opts.cursor.before.toISOString()}::timestamptz`
+        : sql`'-infinity'::timestamptz`;
+    where.push(
+      sql`(${tierSql(now)}, ${timeKey()}, ${threads.id}) < (${anchor ? Number(anchor.tier) : 0}, ${at}, ${opts.cursor.afterId}::uuid)`,
+    );
+  }
 
   const rows = await db()
     .select({
@@ -85,11 +115,7 @@ export async function listInboxThreads(
     .where(and(...where))
     // Check 10 P3: emergencies today first, then needs you, then urgent today, then newest
     // (no time sorts last), then id so ties are stable.
-    .orderBy(
-      desc(tierSql(now)),
-      desc(sql`coalesce(${threads.lastMessageAt}, '-infinity'::timestamptz)`),
-      desc(threads.id),
-    )
+    .orderBy(desc(tierSql(now)), desc(timeKey()), desc(threads.id))
     .limit(limit);
   return rows.map(({ lastIn, lastOut, ...r }) => ({
     ...r,
@@ -100,4 +126,49 @@ export async function listInboxThreads(
       needsOwner: r.needsOwner,
     }),
   }));
+}
+
+export const INBOX_PAGE_SIZE = 100;
+export const INBOX_JUNK_SHOWN = 50;
+
+export type InboxPage = {
+  rows: InboxRow[];
+  /** On All: folded junk (count, and the newest few for the folded line). */
+  junk: { count: number; rows: InboxRow[] };
+  /** Where "Show older emails" goes; null on the last page. */
+  next: InboxCursor | null;
+};
+
+/**
+ * Check 10 P2: one page of the Inbox. On All, junk doesn't take real rows' places: the page is
+ * up to 100 non-junk rows, and junk is a count plus the 50 newest (first page only).
+ */
+export async function inboxPage(
+  workspaceId: string,
+  filter: InboxFilter,
+  opts: { now?: Date; cursor?: InboxCursor | null; pageSize?: number } = {},
+): Promise<InboxPage> {
+  const now = opts.now ?? new Date();
+  const size = opts.pageSize ?? INBOX_PAGE_SIZE;
+  const fold = filter.kind === "all";
+  const fetched = await listInboxThreads(workspaceId, filter, {
+    now,
+    cursor: opts.cursor,
+    limit: size + 1,
+    junk: fold ? "no_junk" : "all",
+  });
+  const rows = fetched.slice(0, size);
+  const last = rows.at(-1);
+  const next =
+    fetched.length > size && last ? { afterId: last.id, before: last.lastMessageAt } : null;
+  if (!fold || opts.cursor) return { rows, junk: { count: 0, rows: [] }, next };
+  const [junkRows, [counted]] = await Promise.all([
+    listInboxThreads(workspaceId, filter, { now, limit: INBOX_JUNK_SHOWN, junk: "only_junk" }),
+    db()
+      .select({ n: count() })
+      .from(threads)
+      .innerJoin(mailboxes, eq(mailboxes.id, threads.mailboxId))
+      .where(and(eq(mailboxes.workspaceId, workspaceId), eq(threads.inInbox, true), junkSql())),
+  ]);
+  return { rows, junk: { count: Number(counted?.n ?? 0), rows: junkRows }, next };
 }
