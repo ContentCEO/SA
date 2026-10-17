@@ -4,6 +4,8 @@
  * never rewrite the draft — they flag it for the owner and lower confidence.
  */
 import type { Licenses } from "@/config/licenses";
+import { MA_DEPOSIT_DRAFT_FLAG } from "@/config/ma-rules";
+import { overMaDepositCap } from "@/server/deposit-rules";
 import { withoutGaps } from "./gaps";
 import { allNumbers, moneyMentions, vagueMoney } from "./money-words";
 import { localDay } from "./prompts/draft.v6";
@@ -169,6 +171,8 @@ export type CheckContext = {
    * registered, licensed, lead-safe certified or insured with nothing saved to back it.
    */
   licenses?: Licenses | null;
+  /** Check 38 P2: the owner's two-letter state; "MA" turns on the one-third deposit check. */
+  state?: string | null;
   /** Review requests only: the one link allowed, and nothing offered in return. */
   review?: { url: string | null };
   /**
@@ -213,7 +217,9 @@ export type CheckHit =
    * works", "half down"). Its own hit, apart from the deposit / review "terms" check, so it
    * flags without a rewrite (it is not in REGENERATE_ON).
    */
-  | "payment_terms";
+  | "payment_terms"
+  /** Check 38 P2: asks a Massachusetts customer for more than a one-third deposit. Flag only. */
+  | "deposit_cap";
 export type CheckResult = { flags: string[]; confidenceCap: number; hits: CheckHit[] };
 
 /**
@@ -714,6 +720,14 @@ export function checkDraft(draftBody: string, ctx: CheckContext): CheckResult {
       cap = Math.min(cap, 0.5);
       hits.push("payment_terms");
     }
+  }
+
+  // Massachusetts' one-third deposit cap (Check 38 P2): on a deposit note or any draft that
+  // states a deposit share. Never rewritten.
+  if (overMaDepositCap(ctx.state, body)) {
+    flags.push(MA_DEPOSIT_DRAFT_FLAG);
+    cap = Math.min(cap, 0.5);
+    hits.push("deposit_cap");
   }
 
   if (ctx.checkTerms) {

@@ -574,8 +574,9 @@ export const businessProfiles = pgTable("business_profile", {
    */
   awayBackOn: text("away_back_on"),
   /**
-   * Check 50 P3 (reserved, not read or written yet): the owner's two-letter US state code.
-   * Check 38 P2, 44 P1 and 45 P2 use this column and add no migration.
+   * Check 50 P3: the owner's two-letter US state code. Written by the business profile form and
+   * read by the Massachusetts deposit rule since Check 38 P2; 44 P1 and 45 P2 use it too and
+   * add no migration.
    */
   state: text("state"),
   /**

@@ -59,7 +59,7 @@ async function setStatus(status: (typeof workspaces.$inferSelect)["status"]) {
     .where(eq(workspaces.id, workspaceId));
 }
 
-async function profile(over: { paymentTerms?: string; reviewUrl?: string } = {}) {
+async function profile(over: { paymentTerms?: string; reviewUrl?: string; state?: string } = {}) {
   await saveBusinessProfile(
     workspaceId,
     businessProfileInput.parse({
@@ -77,6 +77,7 @@ async function profile(over: { paymentTerms?: string; reviewUrl?: string } = {})
       doNotPromise: "",
       vipSenders: "",
       amountThresholdDollars: "2500",
+      ...(over.state !== undefined ? { state: over.state } : {}),
     }),
   );
 }
@@ -293,6 +294,33 @@ describe("deposit (#28)", () => {
     // The queue labels it.
     const q = await listQueue(workspaceId, NOW);
     expect(q.drafts[0]).toMatchObject({ draftId, purpose: "deposit", kind: "reply" });
+  });
+
+  it("Check 38 P2 (S4): an MA shop's half-down deposit note carries the one-third flag", async () => {
+    const terms = "Half down to get on the schedule, balance at completion.";
+    await profile({ paymentTerms: terms, state: "MA" });
+    const t = await acceptedQuote();
+    const { draftId } = await created(
+      t,
+      reply({ body: `Hi Dana,\n\nGreat, thanks for going ahead. ${terms}\n\nThanks, Davi` }),
+    );
+    const d = await draftRow(draftId);
+    expect(d.flags).toContain(
+      "Massachusetts caps a deposit at one-third, or the cost of special-order materials if higher. Check this before sending.",
+    );
+    expect(d.confidence).toBeLessThanOrEqual(50);
+  });
+
+  it("Check 38 P2: the same note outside Massachusetts, or at one-third, gets nothing new", async () => {
+    await profile({ paymentTerms: "One-third at signing, balance at completion.", state: "MA" });
+    const t = await acceptedQuote();
+    const { draftId } = await created(
+      t,
+      reply({
+        body: "Hi Dana,\n\nGreat, thanks for going ahead. One-third at signing, balance at completion.\n\nThanks, Davi",
+      }),
+    );
+    expect((await draftRow(draftId)).flags).toEqual([]);
   });
 
   it("works when the acceptance was re-sorted as scheduling (A5)", async () => {

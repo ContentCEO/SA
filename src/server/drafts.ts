@@ -422,6 +422,8 @@ type DraftContext = WorkspaceContext & {
   reviewUrl: string | null;
   /** The owner's time zone, for "Today is…" and each email's time (review A8). */
   timeZone: string | null;
+  /** Check 38 P2: the owner's two-letter state, for the Massachusetts deposit rule. */
+  state?: string | null;
 };
 
 /**
@@ -596,7 +598,12 @@ export async function workspaceContext(
           }
         : null,
   };
-  return { ...ctx, reviewUrl: profile?.reviewUrl ?? null, timeZone: profile?.timeZone ?? null };
+  return {
+    ...ctx,
+    reviewUrl: profile?.reviewUrl ?? null,
+    timeZone: profile?.timeZone ?? null,
+    state: profile?.state ?? null,
+  };
 }
 
 /**
@@ -994,6 +1001,7 @@ export async function createDraftForThread(
     phrasesAvoided: ctx.voice?.phrasesAvoided ?? [],
     neverSay: ctx.neverSay,
     licenses: ctx.licenses,
+    state: ctx.state,
     // Check 23 P5: every reply carries the owner's terms for the light payment-terms check
     // (deposit and review notes replace these with their own, stricter check below).
     termsSource: ownerTerms(ctx),
@@ -1967,6 +1975,7 @@ export async function reviseDraft(
     phrasesAvoided: ctx.voice?.phrasesAvoided ?? [],
     neverSay: ctx.neverSay,
     licenses: ctx.licenses,
+    state: ctx.state,
     // Check 23 P5: the light payment-terms check on every reply; what the owner said and a
     // clean draft's text count as theirs.
     termsSource: [ownerTerms(ctx), spoken].filter(Boolean).join("\n"),

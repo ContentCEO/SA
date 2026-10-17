@@ -18,6 +18,8 @@ import {
 } from "@/server/profile";
 import { profileDefaults } from "@/server/profile-defaults";
 import { hicExpiryLine, licenseFacts } from "@/config/licenses";
+import { MA_DEPOSIT_SETTINGS_LINE } from "@/config/ma-rules";
+import { depositTermsWarning } from "@/server/deposit-rules";
 import { createTestDb } from "../support/db";
 import { classification, fakeTransport } from "../support/fake-model";
 
@@ -301,6 +303,33 @@ describe("licenses and registrations (Check 38 P6)", () => {
       "Home improvement registration (HIC) number: 198344",
     );
     expect(licenseFacts({})).toBeNull();
+  });
+});
+
+describe("which state (Check 38 P2)", () => {
+  it("two letters from the list, '' clears it, left out leaves it", () => {
+    expect(businessProfileInput.parse({ ...valid, state: "MA" }).state).toBe("MA");
+    expect(businessProfileInput.parse({ ...valid, state: "" }).state).toBeNull();
+    expect(businessProfileInput.parse(valid).state).toBeUndefined();
+    expect(
+      businessProfileInput.safeParse({ ...valid, state: "Mass" }).error!.issues[0]!.message,
+    ).toBe("Pick your state from the list.");
+  });
+
+  it("an MA shop asking for half down still saves, and sees the warning", async () => {
+    await createTestDb();
+    const { workspace } = await ensureUserAndWorkspace({ email: "owner@shop.com" });
+    const terms = "Half down to get on the schedule, balance at completion.";
+    await saveBusinessProfile(
+      workspace.id,
+      businessProfileInput.parse({ ...valid, state: "MA", paymentTerms: terms }),
+    );
+    const p = (await getBusinessProfile(workspace.id))!;
+    expect(p).toMatchObject({ state: "MA", paymentTerms: terms });
+    expect(depositTermsWarning(p.state, p.paymentTerms)).toBe(MA_DEPOSIT_SETTINGS_LINE);
+    expect(depositTermsWarning("NH", p.paymentTerms)).toBeNull();
+    expect(depositTermsWarning("MA", "One-third at signing")).toBeNull();
+    expect(depositTermsWarning(null, p.paymentTerms)).toBeNull();
   });
 });
 

@@ -4,6 +4,8 @@ import { useActionState } from "react";
 import { TimeZoneInput } from "./time-zone-input";
 import { LICENSE_LABELS, type Licenses } from "@/config/licenses";
 import { MAX_EXTRA_TRADES, TRADE_OPTIONS } from "@/config/trades";
+import { US_STATES } from "@/config/us-states";
+import { depositTermsWarning } from "@/server/deposit-rules";
 import { saveBusinessProfileAction, type FormState } from "@/app/(app)/settings/profile-actions";
 import { Button } from "@/components/ui/button";
 import { useFocusFirstError } from "./use-focus-first-error";
@@ -30,9 +32,12 @@ export type ProfileDefaults = {
   amountThresholdDollars: number;
   /** Check 38 P6: registration and license numbers. */
   licenses: Licenses;
+  /** Check 38 P2: two-letter state code, or null. */
+  state: string | null;
 };
 
 const trades = TRADE_OPTIONS;
+const states = US_STATES.map(([value, label]) => ({ value, label }));
 const extraChoices = TRADE_OPTIONS.filter((t) => t.value !== "other");
 
 /** Everything the server doesn't require (round 2, FW: folded away during setup). */
@@ -50,6 +55,7 @@ const OPTIONAL_FIELDS = [
   "doNotPromise",
   "vipSenders",
   "amountThresholdDollars",
+  "state",
   "hicNumber",
   "hicExpiresOn",
   "cslNumber",
@@ -84,6 +90,11 @@ export function BusinessProfileForm({
   const lv = (k: string, fallback: string | undefined) => state.values?.[k] ?? fallback ?? "";
   const joined = (list: string[]) => list.join("\n");
   const optionalNeedsFixing = OPTIONAL_FIELDS.some((k) => e[k]?.length);
+  // Check 38 P2: a non-blocking line under "How do you get paid?" (the save still goes through).
+  const depositWarning = depositTermsWarning(
+    v("state", defaults.state) as string | null,
+    v("paymentTerms", defaults.paymentTerms) as string | null,
+  );
 
   const optionalFields = (
     <>
@@ -161,6 +172,15 @@ export function BusinessProfileForm({
         defaultValue={v("pricingNotes", defaults.pricingNotes) as string}
         error={e.pricingNotes}
       />
+      <SelectField
+        name="state"
+        label="Which state do you work in?"
+        hint="Some rules, like how big a deposit can be, depend on it."
+        options={states}
+        emptyLabel="Not set"
+        defaultValue={v("state", defaults.state) as string}
+        error={e.state}
+      />
       <TextArea
         name="paymentTerms"
         label="How do you get paid?"
@@ -169,6 +189,14 @@ export function BusinessProfileForm({
         error={e.paymentTerms}
         rows={2}
       />
+      {depositWarning ? (
+        <p
+          role="status"
+          className="-mt-4 rounded-lg border-2 border-charcoal px-4 py-3 font-semibold"
+        >
+          {depositWarning}
+        </p>
+      ) : null}
       <TextArea
         name="policies"
         label="Anything customers should know?"

@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { hicExpiryLine, licenseFacts } from "@/config/licenses";
+import { depositTermsWarning } from "@/server/deposit-rules";
 import { cn } from "@/lib/utils";
 import { getBusinessProfile } from "@/server/profile";
 import { activeNotes, MAX_ACTIVE_NOTES, NOTE_MAX_CHARS, ownerToday } from "@/server/seasonal-notes";
@@ -34,6 +35,8 @@ export default async function BusinessSettingsPage(props: PageProps<"/settings/b
   ].filter((f): f is [string, string] => Boolean(f[1]));
   // Check 38 P6: one line when the HIC registration runs out within 30 days. No email.
   const hicLine = hicExpiryLine(profile?.licenses, today);
+  // Check 38 P2: an MA shop whose payment terms ask for more than a one-third deposit.
+  const depositLine = depositTermsWarning(profile?.state, profile?.paymentTerms);
   const ownNotes = notes.filter((n) => !n.away);
   const awayNote = notes.find((n) => n.away);
 
@@ -59,6 +62,11 @@ export default async function BusinessSettingsPage(props: PageProps<"/settings/b
         ) : (
           <p className="text-muted-foreground">Not filled in yet. Drafts are better when it is.</p>
         )}
+        {depositLine ? (
+          <p role="status" className="sa-inverted rounded-lg px-4 py-3 font-semibold">
+            {depositLine}
+          </p>
+        ) : null}
         {hicLine ? (
           <p role="status" className="sa-inverted rounded-lg px-4 py-3 font-semibold">
             {hicLine}

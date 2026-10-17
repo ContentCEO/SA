@@ -3,6 +3,7 @@ import { eq } from "drizzle-orm";
 import { z } from "zod";
 import { LICENSE_FIELD_MAX, type Licenses } from "@/config/licenses";
 import { cleanExtraTrades, MAX_EXTRA_TRADES, TRADES } from "@/config/trades";
+import { US_STATE_CODES } from "@/config/us-states";
 import { db } from "@/db";
 import {
   activityLog,
@@ -150,6 +151,20 @@ export const businessProfileInput = z.object({
   vipSenders: lines(50, 254).pipe(
     z.array(z.string().toLowerCase().email("Each VIP line should be one email address.")),
   ),
+  /**
+   * Check 38 P2: "Which state do you work in?" — two letters, '' = not set. Left out = leave it.
+   * Massachusetts turns on the one-third deposit warning.
+   */
+  state: z
+    .string()
+    .trim()
+    .toUpperCase()
+    .refine(
+      (v) => v === "" || (US_STATE_CODES as readonly string[]).includes(v),
+      "Pick your state from the list.",
+    )
+    .transform((v) => (v === "" ? null : v))
+    .optional(),
   // Check 38 P6: "Licenses and registrations".
   hicNumber: licenseLine,
   hicExpiresOn: licenseDate,

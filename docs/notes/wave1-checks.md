@@ -106,3 +106,18 @@ Notes for the integrator: what CLAUDE.md should say, by step. Files in this grou
   `termsSource` (old callers unchanged). "Let me check" and "card" alone stay clean.
   (draft.v6's vocabulary line "T&M vs. fixed price, net 30" is Check 23 P11's, in the review's
   draft.v7 bundle — not done here.)
+- **Massachusetts deposit cap (Check 38 P2, wave 1; uses wave 0's `business_profile.state`, no
+  migration):** "Which state do you work in?" (two-letter select, "Not set" allowed; in setup's
+  optional section and Settings; **no** preselect from the browser's time zone — the owner
+  picks it). `src/server/deposit-rules.ts` (pure): `depositShare()` reads the largest share paid
+  before work ("50%", "40 percent down", "half down", "two-thirds up front", "a third at
+  signing", "60/40", "in full up front"; a share only counts in a deposit clause, so "70% on
+  completion" and "10% off" don't), `overMaDepositCap()` (> one-third, MA only; "33%" and
+  "one-third" are fine). Wording and numbers in `src/config/ma-rules.ts`. An MA shop whose
+  payment terms ask for more sees, under "How do you get paid?" and on Settings → Your
+  business, "In Massachusetts a deposit can't be more than one-third of the contract, unless
+  special-order materials cost more (c.142A §2). Check this line." (the save still goes
+  through). checkDraft flags any MA draft (deposit notes included) that states a share over a
+  third: hit `deposit_cap`, "Massachusetts caps a deposit at one-third, or the cost of
+  special-order materials if higher. Check this before sending.", cap 0.5, never rewritten.
+  `SelectField` gained `emptyLabel` (an empty choice the owner can pick).
