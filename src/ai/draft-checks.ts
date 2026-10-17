@@ -510,13 +510,26 @@ function staleRelativeDay(body: string, ctx: CheckContext): string | null {
   return null;
 }
 
+const curlyToStraight = (t: string) => t.replace(/[’‘]/g, "'").replace(/[“”]/g, '"');
+
+/**
+ * Check 23 P10: a phrase as whole words, any case: escaped, inner spaces matching any run of
+ * whitespace (a line break too), and no letter or digit right before or after — so "hun" is
+ * not in "hunt", while "no problem!" and "a.s.a.p." still work.
+ */
+export function phraseRegex(phrase: string): RegExp {
+  const escaped = curlyToStraight(phrase.trim())
+    .replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+    .replace(/\s+/g, "\\s+");
+  return new RegExp(`(?<![\\p{L}\\p{N}])${escaped}(?![\\p{L}\\p{N}])`, "iu");
+}
+
 export function checkDraft(draftBody: string, ctx: CheckContext): CheckResult {
   // Placeholders ({{price}}…) are gaps for the owner, not facts — check the words around them.
   const body = withoutGaps(draftBody);
   const flags: string[] = [];
   const hits: CheckHit[] = [];
   let cap = 1;
-  const lowerBody = body.toLowerCase();
 
   // Prices that appear nowhere in the conversation or the profile were made up. A bare number
   // ("is 1500") is only money when nothing else explains it, so it may also match any number
@@ -766,10 +779,12 @@ export function checkDraft(draftBody: string, ctx: CheckContext): CheckResult {
     }
   }
 
-  // The owner's never-say list: any listed phrase, anywhere, any case.
+  // The owner's never-say list: any listed phrase, anywhere, any case — as whole words (Check
+  // 23 P10: "hun" is not in "hunt", "sir" is not in "desire").
+  const phraseBody = curlyToStraight(body);
   for (const phrase of ctx.neverSay ?? []) {
-    const p = phrase.trim().toLowerCase();
-    if (p && lowerBody.includes(p)) {
+    const p = phrase.trim();
+    if (p && phraseRegex(p).test(phraseBody)) {
       flags.push(`Says “${phrase.trim()}”, which is on your never-say list.`);
       cap = Math.min(cap, 0.2);
       hits.push("never_say");
@@ -860,8 +875,8 @@ export function checkDraft(draftBody: string, ctx: CheckContext): CheckResult {
     }
   }
 
-  const avoided = [...FILLER, ...ctx.phrasesAvoided.map((p) => p.toLowerCase())].filter(
-    (p) => p && lowerBody.includes(p),
+  const avoided = [...FILLER, ...ctx.phrasesAvoided.map((p) => p.trim().toLowerCase())].filter(
+    (p) => p && phraseRegex(p).test(phraseBody),
   );
   if (avoided.length) {
     flags.push(`Uses “${avoided[0]}”, which doesn't sound like you.`);

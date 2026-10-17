@@ -142,3 +142,8 @@ Notes for the integrator: what CLAUDE.md should say, by step. Files in this grou
   `{{date}}`, `{{time}}`, `{{price}}`; Settings → Your voice shows them as "[name]" etc.
   (`showGaps`), never braces. Profiles learned with v2 keep "[name]"; the card handles those.
   No voice eval set exists, so none was extended.
+- **Whole-word phrases (Check 23 P10, wave 1):** `phraseRegex()` in draft-checks.ts (escaped,
+  inner spaces match any whitespace incl. a line break, no letter or digit either side, `iu`,
+  curly quotes read as straight) for the never-say list, the voice's avoided phrases and FILLER.
+  "hun" no longer flags "hunt", "sir" no longer flags "desire"; "Thanks hun!", "no problem!"
+  and "a.s.a.p." still do.

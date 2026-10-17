@@ -625,3 +625,34 @@ describe("phone numbers, links and names nobody gave (Check 23 P6)", () => {
     ).toContain("Has things to check before sending.");
   });
 });
+
+describe("never-say and avoided phrases as whole words (Check 23 P10)", () => {
+  const ctx = (neverSay: string[]) => ({
+    sourceText: "",
+    doNotPromise: [] as string[],
+    phrasesAvoided: ["circle back"],
+    neverSay,
+  });
+  it("no false alarms inside longer words", () => {
+    expect(
+      checkDraft("I'll hunt down the right flapper and let you know.", ctx(["hun"])).hits,
+    ).not.toContain("never_say");
+    expect(
+      checkDraft("If you desire one out back too, just say.", ctx(["sir"])).hits,
+    ).not.toContain("never_say");
+  });
+  it("real matches still flag, across a line break and with punctuation", () => {
+    expect(checkDraft("Thanks hun!", ctx(["hun"])).hits).toContain("never_say");
+    expect(
+      checkDraft("No problem\nat all, see you then.", ctx(["no problem at all"])).hits,
+    ).toContain("never_say");
+    expect(checkDraft("Sure, no problem! See you.", ctx(["no problem!"])).hits).toContain(
+      "never_say",
+    );
+    expect(checkDraft("I'll get it done a.s.a.p. for you", ctx(["a.s.a.p."])).hits).toContain(
+      "never_say",
+    );
+    expect(checkDraft("Let me circle back.", ctx([])).flags[0]).toContain("circle back");
+    expect(checkDraft("Don’t worry, sweetie.", ctx(["don't worry"])).hits).toContain("never_say");
+  });
+});
