@@ -94,3 +94,11 @@ For the integrator to fold into `CLAUDE.md` (Decisions), `docs/LAUNCH.md` and th
   refused with "its time words … may be out of date". **Wording differs from the spec** ("which
   now means Saturday" was wrong for a draft read days later): it says what "tomorrow" meant
   when written.
+- **Check 43 P9 (dispute caution; prompt `dispute-caution.v1`, new kind in the registry):** on a
+  thread with `extracted.disputed` or the needs-owner reason LEGAL_REASON / DISPUTE_REASON,
+  every draft (the owner's tap; jobs never draft these) and every quick change gets the fixed
+  flag first ("This is about a dispute or something legal. What you write can be used later.
+  Keep it short and factual; many owners call their lawyer or insurer first."), confidence
+  capped at 40 (never Ready), and the fixed task line appended to the conversation's task.
+  Stored prompt version `draft.v7+dispute-caution.v1` (or `revise.v2+…`). Eval cases
+  `d-lawyer-reply`, `d-refund-dispute` (field `disputeCaution`); evals not run.

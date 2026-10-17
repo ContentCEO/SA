@@ -44,7 +44,13 @@ import {
   OPENING_TWEAKS_PROMPT_VERSION,
   type OpeningTweak,
 } from "@/ai/prompts/opening-tweaks.v1";
-import { prepareBody } from "@/ai/classify";
+import { DISPUTE_REASONS, prepareBody } from "@/ai/classify";
+import {
+  DISPUTE_CAUTION_PROMPT_VERSION,
+  DISPUTE_CONFIDENCE_CAP,
+  DISPUTE_FLAG,
+  DISPUTE_TASK,
+} from "@/ai/prompts/dispute-caution.v1";
 import {
   FOLLOWUP_INSTRUCTIONS,
   FOLLOWUP_PROMPT_VERSION,
@@ -883,7 +889,23 @@ export async function createDraftForThread(
       before: now,
     }));
   const daysQuiet = Math.max(1, Math.round((now.getTime() - last.sentAt.getTime()) / 86_400_000));
+  // Check 43 P9: a reply about a dispute or something legal can become the record. Fixed words
+  // (not the model's) keep it short and factual, and a fixed flag means it never reads Ready.
+  const dispute = !safety && disputeThread(thread);
   const wsBlock = workspaceBlock(ctx);
+  const baseTask = followup
+    ? followupTask({ nudgeNumber, daysQuiet })
+    : purpose === "deposit"
+      ? depositTask({ paymentTerms: ctx.paymentTerms })
+      : purpose === "review_request"
+        ? reviewRequestTask({ reviewUrl: ctx.reviewUrl! })
+        : purpose === "closing_question"
+          ? closingQuestionTask({ daysQuiet })
+          : isThankYou(purpose)
+            ? thankYouTask({ reviewUrl: purpose === "thank_you_review" ? ctx.reviewUrl : null })
+            : firstContact
+              ? FIRST_CONTACT_TASK
+              : undefined;
   const convo = conversationBlock({
     now,
     timeZone: ctx.timeZone,
@@ -892,19 +914,7 @@ export async function createDraftForThread(
     summary: thread.summary,
     extracted: thread.extracted,
     ownerNote: opts.ownerNote,
-    task: followup
-      ? followupTask({ nudgeNumber, daysQuiet })
-      : purpose === "deposit"
-        ? depositTask({ paymentTerms: ctx.paymentTerms })
-        : purpose === "review_request"
-          ? reviewRequestTask({ reviewUrl: ctx.reviewUrl! })
-          : purpose === "closing_question"
-            ? closingQuestionTask({ daysQuiet })
-            : isThankYou(purpose)
-              ? thankYouTask({ reviewUrl: purpose === "thank_you_review" ? ctx.reviewUrl : null })
-              : firstContact
-                ? FIRST_CONTACT_TASK
-                : undefined,
+    task: dispute ? `${baseTask ?? DEFAULT_REPLY_TASK}\n\n${DISPUTE_TASK}` : baseTask,
     messages: withText.map(({ m, text }) => ({
       from:
         m.direction === "out"
@@ -948,13 +958,16 @@ export async function createDraftForThread(
       wrote: withText.filter((x) => x.m.direction === "out").map((x) => x.text),
     }),
   };
-  const promptVersion = safety
+  const basePromptVersion = safety
     ? SAFETY_NOTE_VERSION
     : followup
       ? FOLLOWUP_PROMPT_VERSION
       : purpose
         ? `${DRAFT_PROMPT_VERSION}+${PURPOSE_PROMPT_VERSION}`
         : DRAFT_PROMPT_VERSION;
+  const promptVersion = dispute
+    ? `${basePromptVersion}+${DISPUTE_CAUTION_PROMPT_VERSION}`
+    : basePromptVersion;
 
   let result: (ModelDraft & { opening?: Opening }) | null = null;
   if (safety) result = safetyNote(ctx);
@@ -995,10 +1008,16 @@ export async function createDraftForThread(
 
   // What the owner must sort before a purpose note can go (A6).
   const { body, flags: purposeFlags } = purposeGuards(purpose, result.body.trim(), ctx);
-  const { flags, confidence } = scoreDraft(result, checkDraft(body, checkContext), [
+  const scored = scoreDraft(result, checkDraft(body, checkContext), [
     ...(maybeText ? [MAYBE_TEXT_FLAG] : []),
     ...(safety ? [SAFETY_NOTE_FLAG, ...purposeFlags] : purposeFlags),
   ]);
+  // Check 43 P9: the fixed caution goes first (so the cut to six never drops it), and the
+  // card never says Ready on one of these.
+  const flags = dispute ? [DISPUTE_FLAG, ...scored.flags].slice(0, 6) : scored.flags;
+  const confidence = dispute
+    ? Math.min(scored.confidence, Math.round(DISPUTE_CONFIDENCE_CAP * 100))
+    : scored.confidence;
 
   const subject = replySubject(last.subject ?? thread.subject);
   const writer = (opts.writerFor ?? defaultWriter)(mailbox);
@@ -1214,6 +1233,17 @@ export type SendOutcome =
    * day (or hours ago). Nothing is sent until the owner confirms (`confirmedTiming`).
    */
   | ({ status: "timing_check" } & StaleTiming);
+
+/** Check 43 P9: a thread about a dispute or something legal (the mark, or the reason shown). */
+function disputeThread(t: { extracted: unknown; needsOwnerReason: string | null }) {
+  return (
+    (t.extracted as { disputed?: boolean } | null)?.disputed === true ||
+    (t.needsOwnerReason != null && DISPUTE_REASONS.includes(t.needsOwnerReason))
+  );
+}
+
+/** What the drafter is asked when no other task applies (draft.vN's own default words). */
+const DEFAULT_REPLY_TASK = "Write the owner's reply to the last CUSTOMER message.";
 
 /** Check 43 P7: the draft's time words that may be out of date now, in the owner's zone. */
 async function timingFor(workspaceId: string, body: string, createdAt: Date, now: Date) {
@@ -2135,6 +2165,7 @@ export async function reviseDraft(
   }
 
   const spoken = "spoken" in change ? change.spoken.trim().slice(0, 500) : null;
+  const dispute = disputeThread(thread);
   const ask =
     spoken ??
     (opening !== null
@@ -2208,7 +2239,10 @@ export async function reviseDraft(
     category: thread.category,
     summary: thread.summary,
     extracted: thread.extracted,
-    task: reviseTask(draft.body ?? "", ask, spoken !== null),
+    // Check 43 P9: a change on a dispute or legal thread keeps the same fixed caution.
+    task: dispute
+      ? `${reviseTask(draft.body ?? "", ask, spoken !== null)}\n\n${DISPUTE_TASK}`
+      : reviseTask(draft.body ?? "", ask, spoken !== null),
     messages: withText.map(({ m, text }) => ({
       from:
         m.direction === "out"
@@ -2222,10 +2256,11 @@ export async function reviseDraft(
   const request = {
     workspaceId: workspace.id,
     role: "draft" as const,
-    promptVersion:
+    promptVersion: `${
       opening !== null
         ? `${REVISE_PROMPT_VERSION}+${OPENING_TWEAKS_PROMPT_VERSION}`
-        : REVISE_PROMPT_VERSION,
+        : REVISE_PROMPT_VERSION
+    }${dispute ? `+${DISPUTE_CAUTION_PROMPT_VERSION}` : ""}`,
     maxTokens: 2048,
     effort: "medium" as const,
     system: [
@@ -2263,10 +2298,15 @@ export async function reviseDraft(
     ...(isNoReplyAddress(draft.toAddress) ? [NO_REPLY_FLAG] : []),
     ...((draft.flags ?? []).includes(REPOINTED_FLAG) ? [REPOINTED_FLAG] : []),
   ];
-  const { flags, confidence } = scoreDraft(result, checkDraft(body, checkContext), [
+  const scored = scoreDraft(result, checkDraft(body, checkContext), [
     ...addressFlags,
     ...purposeFlags,
   ]);
+  // Check 43 P9: a tweak never lifts the caution or its cap.
+  const flags = dispute ? [DISPUTE_FLAG, ...scored.flags].slice(0, 6) : scored.flags;
+  const confidence = dispute
+    ? Math.min(scored.confidence, Math.round(DISPUTE_CONFIDENCE_CAP * 100))
+    : scored.confidence;
 
   try {
     // Again after the model's few seconds: someone may have typed in Gmail meanwhile.

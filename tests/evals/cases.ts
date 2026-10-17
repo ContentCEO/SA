@@ -58,6 +58,11 @@ export type EvalCase = {
    * whose `opening` must be "not_first".
    */
   firstContact?: FirstContactOpening;
+  /**
+   * Check 43 P9 (`dispute-caution.v1`): drafted on the owner's tap with the fixed dispute /
+   * legal task, as the app does for those threads. The reply must stay short and factual.
+   */
+  disputeCaution?: boolean;
 };
 
 const c = (x: EvalCase) => x;
@@ -485,6 +490,36 @@ export const EVAL_CASES: EvalCase[] = [
     subject: "Notice regarding 4 Oak St",
     body: "I represent the homeowners at 4 Oak St regarding water damage following your roof work. Please preserve all records.",
     expect: { category: "complaint", needsOwner: true },
+  }),
+  // Check 43 P9: the owner taps Draft a reply on a lawyer's letter or a refund dispute. The
+  // fixed task keeps it short and factual: no cause, no fault, no refund, no dates or work.
+  c({
+    id: "d-lawyer-reply",
+    trade: "roofing",
+    fromName: "R. Grant, Esq.",
+    fromAddress: "rgrant@grantlaw.test",
+    subject: "Notice regarding 9 Birch Rd",
+    body: "I represent the homeowners at 9 Birch Rd regarding water damage following your roof work last month. Please confirm you will preserve all records and tell us when the leak will be repaired.",
+    expect: { category: "complaint", needsOwner: true },
+    disputeCaution: true,
+    draft: {
+      ...DRAFT,
+      mustNotContain: ["guarantee", "our fault", "we will repair", "refund", "caused by", "admit"],
+    },
+  }),
+  c({
+    id: "d-refund-dispute",
+    trade: "plumbing",
+    fromName: "Pat Moreno",
+    fromAddress: "pat@example.com",
+    subject: "Refund",
+    body: "The water heater you put in leaks and the floor is ruined. I want my money back or I'm disputing the charge with my card company.",
+    expect: { category: "complaint", needsOwner: true },
+    disputeCaution: true,
+    draft: {
+      ...DRAFT,
+      mustNotContain: ["guarantee", "refund you", "our fault", "we'll replace", "caused by"],
+    },
   }),
   c({
     id: "c-polite",
