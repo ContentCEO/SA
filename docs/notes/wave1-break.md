@@ -34,3 +34,17 @@
   status / 408 / 429 / ≥500, or APIConnectionError (timeouts included); only those are refunded,
   our own errors are not. maxTokens: drafts and rewrites 4096, voice 8192 (Sonnet thinks inside
   max_tokens). `data-paths.test.ts` now checks for `messages.create` (was `messages.parse`).
+- **Check 48 P3 (missing / overloaded model):** `ModelUnavailableError(role, model)` in
+  `src/ai/client.ts` for a 404 or a 400 saying the model isn't available: refunded, logged
+  `ai_model_unavailable {role, model, promptVersion}`, `recordModelDown` (`src/server/model-alerts.ts`)
+  writes `app_settings` `model_down:<model>:<UTC day>` (first time seen) and emails Davi once per
+  model per day through the new `notifyAdminOnce` (`src/server/admin-notify.ts`, marker
+  `admin_notice:<key>` written only after Resend took it; purged after 3 days in the daily purge
+  job). Jobs wrap model steps in `stopIfModelMissing` → `NonRetriableError` (classify, draft,
+  follow-ups, voice, voice ideas, found money); `captureEditSignals` keeps the counts without the
+  tone so the purge job still runs. Stand-ins in `modelFallbacks` (`src/config/models.ts`):
+  classify → `claude-haiku-5-5`, draft / voice → `claude-sonnet-5-5`, all
+  `fallbackApproved: false`; used only for a missing model or a 529 after the SDK retries, once
+  per call; migration `0040_fallback_calls` (`usage.fallback_calls`, additive) and
+  `fallbackUsed: true` on the `ai_call` line. /admin's System box: "Sorting stopped since <time>:
+  model not available (<model>)." and the heading "Sorting is stopped".

@@ -3,16 +3,23 @@ import Anthropic from "@anthropic-ai/sdk";
 import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { classifyEmail } from "@/ai/classify";
+import { NonRetriableError } from "inngest";
 import {
   callStructured,
+  isModelUnavailable,
   isProviderFault,
+  ModelUnavailableError,
   parseStructuredText,
+  setModelFallbacksForTests,
   setModelTransportForTests,
   type Transport,
 } from "@/ai/client";
+import { stopIfModelMissing } from "@/jobs/functions";
+import type { OutgoingEmail } from "@/lib/email";
+import { modelsDownToday, recordModelDown } from "@/server/model-alerts";
 import { estimateCostCentiCents } from "@/ai/cost";
 import { classificationSchema } from "@/ai/prompts/classify.v4";
-import { models } from "@/config/models";
+import { modelFallbacks, models } from "@/config/models";
 import type { Database } from "@/db";
 import { usage } from "@/db/schema";
 import { ensureUserAndWorkspace } from "@/server/accounts";
@@ -31,7 +38,10 @@ beforeEach(async () => {
   database = await createTestDb();
   workspaceId = (await ensureUserAndWorkspace({ email: "o@shop.com" })).workspace.id;
 });
-afterEach(() => setModelTransportForTests(undefined));
+afterEach(() => {
+  setModelTransportForTests(undefined);
+  setModelFallbacksForTests(undefined);
+});
 
 const req = () => ({
   workspaceId,
@@ -141,5 +151,139 @@ describe("a broken AI answer is counted, costed and retried (Check 29 P1)", () =
     expect(isProviderFault(new Anthropic.APIError(429, undefined, "slow", undefined))).toBe(true);
     expect(isProviderFault(new Anthropic.APIError(400, undefined, "bad", undefined))).toBe(false);
     expect(isProviderFault(new TypeError("x"))).toBe(false);
+  });
+});
+
+describe("a missing or overloaded model (Check 48 P3)", () => {
+  const notFound = () =>
+    new Anthropic.NotFoundError(404, undefined, "model: x not found", new Headers());
+  const overloaded = () => new Anthropic.APIError(529, undefined, "Overloaded", undefined);
+  const approved = {
+    classify: { model: modelFallbacks.classify.model, fallbackApproved: true },
+    draft: { model: modelFallbacks.draft.model, fallbackApproved: true },
+    voice: { model: modelFallbacks.voice.model, fallbackApproved: true },
+  };
+  let quiet: typeof console.error;
+  beforeEach(() => {
+    quiet = console.error;
+    console.error = () => {};
+  });
+  afterEach(() => {
+    console.error = quiet;
+  });
+
+  it("a 404 is refunded, thrown as ModelUnavailableError, never retried, and shows on /admin", async () => {
+    const seen: string[] = [];
+    setModelTransportForTests(async (r) => {
+      seen.push(r.model);
+      throw notFound();
+    });
+    const err = await callStructured(req()).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ModelUnavailableError);
+    expect((err as ModelUnavailableError).model).toBe(models.classify);
+    expect(seen).toEqual([models.classify]);
+    expect((await row())!.aiCalls).toBe(0);
+    expect((await modelsDownToday(NOW)).map((m) => m.model)).toEqual([models.classify]);
+    expect(await modelsDownToday(new Date(NOW.getTime() + 86_400_000))).toEqual([]);
+  });
+
+  it("a 400 that says the model isn't available counts as missing; other 400s don't", () => {
+    const bad = (m: string) => new Anthropic.BadRequestError(400, undefined, m, new Headers());
+    expect(isModelUnavailable(bad("model: claude-x is not available"))).toBe(true);
+    expect(isModelUnavailable(bad("max_tokens: too large"))).toBe(false);
+    expect(isModelUnavailable(notFound())).toBe(true);
+  });
+
+  it("a 529 with the stand-in approved: one call on the stand-in, recorded in usage", async () => {
+    setModelFallbacksForTests(approved);
+    const seen: string[] = [];
+    setModelTransportForTests(async (r) => {
+      seen.push(r.model);
+      if (r.model === models.classify) throw overloaded();
+      return { parsed: classification(), usage: USAGE, stopReason: "end_turn" };
+    });
+    const logs: unknown[][] = [];
+    const info = console.info;
+    console.info = (...a: unknown[]) => void logs.push(a);
+    try {
+      expect(await callStructured(req())).toMatchObject({ category: "quote_request" });
+    } finally {
+      console.info = info;
+    }
+    expect(seen).toEqual([models.classify, modelFallbacks.classify.model]);
+    const r = await row();
+    expect(r).toMatchObject({ aiCalls: 1, fallbackCalls: 1 });
+    expect(r!.estimatedCostCentiCents).toBe(
+      estimateCostCentiCents(modelFallbacks.classify.model, USAGE),
+    );
+    expect(logs.find((l) => l[0] === "ai_call")![1]).toMatchObject({ fallbackUsed: true });
+  });
+
+  it("at most one stand-in try per call; a missing stand-in is refunded too", async () => {
+    setModelFallbacksForTests(approved);
+    const seen: string[] = [];
+    setModelTransportForTests(async (r) => {
+      seen.push(r.model);
+      throw notFound();
+    });
+    await expect(callStructured(req())).rejects.toBeInstanceOf(ModelUnavailableError);
+    expect(seen).toEqual([models.classify, modelFallbacks.classify.model]);
+    expect((await row())!.aiCalls).toBe(0);
+  });
+
+  it("not approved (as shipped): no stand-in", async () => {
+    expect(Object.values(modelFallbacks).every((f) => !f.fallbackApproved)).toBe(true);
+    const seen: string[] = [];
+    setModelTransportForTests(async (r) => {
+      seen.push(r.model);
+      throw overloaded();
+    });
+    await expect(callStructured(req())).rejects.toBeInstanceOf(Anthropic.APIError);
+    expect(seen).toEqual([models.classify]);
+    expect((await row())!.aiCalls).toBe(0);
+    expect((await row())!.fallbackCalls).toBe(0);
+  });
+
+  it("Davi gets one content-free email per model per UTC day", async () => {
+    process.env.ADMIN_EMAIL = "davi@example.com";
+    process.env.APP_URL = "https://app.example";
+    const sent: OutgoingEmail[] = [];
+    const send = async (e: OutgoingEmail) => {
+      sent.push(e);
+      return "sent" as const;
+    };
+    try {
+      await recordModelDown("claude-x", NOW, { send });
+      await recordModelDown("claude-x", new Date(NOW.getTime() + 3_600_000), { send });
+      expect(sent).toHaveLength(1);
+      expect(sent[0]!.to).toBe("davi@example.com");
+      expect(sent[0]!.text).toContain("Sorting is stopped: claude-x is not available.");
+      await recordModelDown("claude-x", new Date(NOW.getTime() + 86_400_000), { send });
+      expect(sent).toHaveLength(2);
+      // A refused email is tried again on the next failure, and never throws.
+      await recordModelDown("claude-y", NOW, {
+        send: async () => {
+          throw new Error("Resend 403.");
+        },
+      });
+      await recordModelDown("claude-y", NOW, { send });
+      expect(sent).toHaveLength(3);
+    } finally {
+      delete process.env.ADMIN_EMAIL;
+    }
+  });
+
+  it("jobs turn it into NonRetriableError; other errors pass through", async () => {
+    await expect(
+      stopIfModelMissing(async () => {
+        throw new ModelUnavailableError("classify", "claude-x");
+      }),
+    ).rejects.toBeInstanceOf(NonRetriableError);
+    await expect(
+      stopIfModelMissing(async () => {
+        throw new Error("other");
+      }),
+    ).rejects.toThrow("other");
+    await expect(stopIfModelMissing(async () => 3)).resolves.toBe(3);
   });
 });

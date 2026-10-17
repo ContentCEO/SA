@@ -650,6 +650,8 @@ export const usage = pgTable(
     emailsSent: integer("emails_sent").notNull().default(0),
     /** Hundredths of a cent, so tiny Haiku calls don't round to zero. */
     estimatedCostCentiCents: integer("estimated_cost_centicents").notNull().default(0),
+    /** Check 48 P3: calls answered by the role's approved stand-in model (models.ts). */
+    fallbackCalls: integer("fallback_calls").notNull().default(0),
     capAlertedAt: timestamp("cap_alerted_at", { withTimezone: true }),
   },
   (t) => [uniqueIndex("usage_workspace_period_uq").on(t.workspaceId, t.period)],

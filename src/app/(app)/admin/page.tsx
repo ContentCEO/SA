@@ -17,6 +17,7 @@ import {
 } from "@/server/admin";
 import { requireAdmin } from "@/server/session";
 import { mailboxesLine, mailboxesStuck, systemTroubleLines } from "@/server/admin-mailbox-rules";
+import { modelsDownToday } from "@/server/model-alerts";
 import { isAdminEmail } from "@/server/admin";
 import { ADMIN_MOVES, canMakeMove, type AdminMove } from "@/server/lifecycle";
 import {
@@ -477,6 +478,7 @@ export default async function AdminPage(props: PageProps<"/admin">) {
     testPayments,
     termsBoxOff,
     growthClientCount,
+    modelsDown,
   ] = await Promise.all([
     adminOverview(now),
     countWorkspaces(),
@@ -489,6 +491,7 @@ export default async function AdminPage(props: PageProps<"/admin">) {
     // Database only: set by the last checkout that had to go without the terms box.
     termsBoxOffSince(),
     countGrowthClients(),
+    modelsDownToday(now),
   ]);
   const growthStates = await growthStateForEmails(waiting.map((w) => w.email));
   const today = adminToday(now);
@@ -516,7 +519,9 @@ export default async function AdminPage(props: PageProps<"/admin">) {
   const stripeReason = stripeReasonText(params.reason);
   // Check 16 P1: one stuck inbox inverts the box, even when the others are fine.
   const troubleLines = systemTroubleLines(system);
-  const systemInverted = system.jobsLookStopped || troubleLines.length > 0;
+  // Check 48 P3: a model Anthropic said was missing today. Model names and times only.
+  const systemInverted =
+    system.jobsLookStopped || troubleLines.length > 0 || modelsDown.length > 0;
 
   return (
     <>
@@ -544,9 +549,11 @@ export default async function AdminPage(props: PageProps<"/admin">) {
         <h2 id="system" className="text-lg font-black">
           {system.jobsLookStopped
             ? "Background jobs look stopped"
-            : troubleLines.length
-              ? "An inbox looks stuck"
-              : "System"}
+            : modelsDown.length
+              ? "Sorting is stopped"
+              : troubleLines.length
+                ? "An inbox looks stuck"
+                : "System"}
         </h2>
         <p>
           {system.workingMailboxes === 0
@@ -556,6 +563,11 @@ export default async function AdminPage(props: PageProps<"/admin">) {
             ? ` ${system.needReconnect} need${system.needReconnect === 1 ? "s" : ""} reconnecting.`
             : ""}
         </p>
+        {modelsDown.map((m) => (
+          <p key={m.model} className="font-semibold">
+            Sorting stopped since {et.format(m.since)}: model not available ({m.model}).
+          </p>
+        ))}
         {troubleLines.map((line) => (
           <p key={line} className="font-semibold">
             {line}

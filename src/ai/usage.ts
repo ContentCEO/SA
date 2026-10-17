@@ -88,9 +88,12 @@ export async function recordAiUsage(
     cacheReadTokens: number;
     cacheWriteTokens: number;
     costCentiCents: number;
+    /** Check 48 P3: 1 when the role's approved stand-in model answered. */
+    fallbackCalls?: number;
   },
   now: Date = new Date(),
 ): Promise<void> {
+  const fallbackCalls = u.fallbackCalls ?? 0;
   await db()
     .insert(usage)
     .values({
@@ -101,6 +104,7 @@ export async function recordAiUsage(
       cacheReadTokens: u.cacheReadTokens,
       cacheWriteTokens: u.cacheWriteTokens,
       estimatedCostCentiCents: u.costCentiCents,
+      fallbackCalls,
     })
     .onConflictDoUpdate({
       target: [usage.workspaceId, usage.period],
@@ -110,6 +114,7 @@ export async function recordAiUsage(
         cacheReadTokens: sql`${usage.cacheReadTokens} + ${u.cacheReadTokens}`,
         cacheWriteTokens: sql`${usage.cacheWriteTokens} + ${u.cacheWriteTokens}`,
         estimatedCostCentiCents: sql`${usage.estimatedCostCentiCents} + ${u.costCentiCents}`,
+        fallbackCalls: sql`${usage.fallbackCalls} + ${fallbackCalls}`,
       },
     });
 }

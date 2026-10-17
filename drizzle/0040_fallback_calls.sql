@@ -1,0 +1,1 @@
+ALTER TABLE "usage" ADD COLUMN "fallback_calls" integer DEFAULT 0 NOT NULL;

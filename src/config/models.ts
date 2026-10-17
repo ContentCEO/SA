@@ -12,12 +12,31 @@ export const models = {
 } as const;
 
 export type ModelRole = keyof typeof models;
-export type ModelId = (typeof models)[ModelRole];
 
-/** US dollars per million tokens. Cache writes bill at 1.25x input, reads at 0.1x. */
+/**
+ * Check 48 P3: an approved stand-in per role, used only when the role's model is missing (404 /
+ * "model not available") or still overloaded (529) after the SDK's retries, at most once per
+ * call. Anthropic models only, none of the 30-day-retention "Covered Models"
+ * (tests/unit/data-paths.test.ts). Each stays OFF (`fallbackApproved: false`) until Davi has run
+ * the prompt evals against it (`pnpm eval`) and switches it on here.
+ */
+export const modelFallbacks = {
+  classify: { model: "claude-haiku-5-5", fallbackApproved: false },
+  draft: { model: "claude-sonnet-5-5", fallbackApproved: false },
+  voice: { model: "claude-sonnet-5-5", fallbackApproved: false },
+} as const satisfies Record<ModelRole, { model: string; fallbackApproved: boolean }>;
+
+export type ModelId = (typeof models)[ModelRole] | (typeof modelFallbacks)[ModelRole]["model"];
+
+/**
+ * US dollars per million tokens. Cache writes bill at 1.25x input, reads at 0.1x.
+ * Haiku 5.5's price is for prompts up to 100K tokens (ours are far smaller).
+ */
 export const modelPricing: Record<ModelId, { inputPerMTok: number; outputPerMTok: number }> = {
   "claude-haiku-4-5-20251001": { inputPerMTok: 1, outputPerMTok: 5 },
   "claude-sonnet-5": { inputPerMTok: 2, outputPerMTok: 10 },
+  "claude-haiku-5-5": { inputPerMTok: 0.1, outputPerMTok: 0.5 },
+  "claude-sonnet-5-5": { inputPerMTok: 2, outputPerMTok: 10 },
 };
 
 /** Per-workspace daily ceiling on model calls, so a runaway loop can't run up the bill. */
