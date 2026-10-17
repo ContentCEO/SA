@@ -166,7 +166,8 @@ describe("model call time limits (Check 48 P4)", () => {
     // Our own bug is not dressed up as "try again".
     model.createDraftForThread.mockRejectedValueOnce(new Error("bug"));
     await expect(draftReplyAction(form({ threadId: id }))).rejects.toThrow("bug");
-    expect(readFileSync("src/app/(app)/queue/page.tsx", "utf8")).toContain(
+    // The Queue's notice words live in queue-messages.ts since the send-path merge (wave 1).
+    expect(readFileSync("src/app/(app)/queue/queue-messages.ts", "utf8")).toContain(
       'ai_busy: "Writing is slow right now, so nothing changed. Try again in a moment."',
     );
   });
