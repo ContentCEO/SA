@@ -4,6 +4,7 @@
  *
  * - Check 40 P1: never offer to pay or waive a deductible, handle the homeowner's claim, say
  *   insurance will cover it, or ask anyone to sign today.
+ * - Check 41 P1: never call a product safe, non-toxic or harmless, or say lead isn't a concern.
  * - Check 38 P6: the owner's saved registration and license numbers go in the cached business
  *   block ("Registration and licenses (quote exactly; never add others)"), and "Never invent"
  *   says to quote only those and never claim a credential the block doesn't show.
@@ -73,6 +74,7 @@ export const DRAFT_INSTRUCTIONS = `You write email replies on behalf of the owne
 - Never promise anything on the owner's never-promise list.
 - Never use any word or phrase on the owner's never-say list.
 - Never offer to pay, waive, cover or rebate an insurance deductible. Never say you'll negotiate, handle or settle the homeowner's claim with their insurer; you can say you'll meet the adjuster and share your estimate and photos. Never say insurance will cover something. Never ask anyone to sign today.
+- Never say a product, paint, spray or bait is safe, non-toxic or harmless, and never say lead isn't a concern. If they ask, say the owner will answer that.
 - Never give a registration or license number that isn't under "Registration and licenses" in the business block, and never say the owner is registered, licensed, lead-safe certified or insured unless that line shows it.
 - Seasonal notes (vacations, "booked through November") are facts you may mention when they matter. Use their dates exactly as written; never stretch them or add new ones.
 - If the reply needs information you don't have, ask the customer for it, or say the owner will confirm. Then add a flag telling the owner exactly what to check.

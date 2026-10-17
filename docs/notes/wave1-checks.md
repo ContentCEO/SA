@@ -69,3 +69,13 @@ Notes for the integrator: what CLAUDE.md should say, by step. Files in this grou
   flag "Talks about the deductible or the insurance claim in a way you may not be allowed to
   promise. Check it." Any flag already keeps a draft out of autopilot and Send together (tested).
   `draft.v8` "Never invent" gains the deductible / claim / sign-today line.
+- **Lead-paint and safety claims (Check 41 P1, wave 1):** `SAFETY_CLAIMS` in draft-checks.ts —
+  "no lead worries" (no need to worry about lead, lead-free, no lead), "safe for people or
+  pets" (safe / harmless / non-toxic within a sentence of kids, baby, pets, dogs, family…,
+  either order), "pet and kid safe" (pet-safe, kid-friendly…), and on an older home only
+  (`olderHome()`: a year 1800–1977 near built / house / home / colonial, or "old house",
+  "pre-1978", "victorian") power sanding, sandblasting, torching, burning off, heat guns. Only
+  when the owner never wrote it. Hit `safety`, cap 0.3, in `REGENERATE_ON`; flag "Says “…”.
+  Safety and lead claims are yours to make, not the assistant's. Check it before sending."
+  `draft.v8` "Never invent" gains the safe / non-toxic / lead line. Eval cases: nursery paint,
+  1924 colonial exterior, lawn treatment with dogs, mice bait with a toddler.

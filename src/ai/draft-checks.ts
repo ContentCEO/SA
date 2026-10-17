@@ -180,7 +180,9 @@ export type CheckHit =
   /** Check 38 P6: "we're registered / licensed / lead-safe certified / insured", unbacked. */
   | "credential"
   /** Check 40 P1: covering a deductible or handling the homeowner's insurance claim. */
-  | "insurance";
+  | "insurance"
+  /** Check 41 P1: lead-paint and "safe for kids and pets" claims. */
+  | "safety";
 export type CheckResult = { flags: string[]; confidenceCap: number; hits: CheckHit[] };
 
 /**
@@ -197,7 +199,52 @@ export const REGENERATE_ON: CheckHit[] = [
   "license",
   // Check 40 P1: an insurance-job promise gets one fresh attempt.
   "insurance",
+  // Check 41 P1: a safety or lead claim gets one fresh attempt.
+  "safety",
 ];
+
+const PEOPLE_AND_PETS =
+  "kids?|children|child|baby|babies|newborns?|toddlers?|pets?|dogs?|cats?|family|people|humans?";
+
+/**
+ * Check 41 P1: health and safety claims. On pre-1978 homes the federal lead rule bans open-flame
+ * burning and high-speed sanding without a HEPA shroud, and "safe", "harmless" or "non-toxic to
+ * people and pets" is the sentence a lawyer quotes back. Each counts only when the owner never
+ * wrote it; the customer asking "is it safe for the baby?" doesn't excuse the draft saying so.
+ */
+const SAFETY_CLAIMS: [string, RegExp][] = [
+  [
+    "no lead worries",
+    /\b(?:no need to worry about|don't worry about|do not worry about|nothing to worry about|no worries about) (?:the |any )?lead\b|\blead[- ]free\b|\bno lead\b/i,
+  ],
+  [
+    "safe for people or pets",
+    new RegExp(
+      `\\b(?:completely |totally |100% |perfectly |100 percent )?(?:safe|harmless|non-?toxic)\\b[^.!?]{0,40}\\b(?:${PEOPLE_AND_PETS})\\b|\\b(?:${PEOPLE_AND_PETS})\\b[^.!?]{0,40}\\b(?:safe|harmless|non-?toxic)\\b`,
+      "i",
+    ),
+  ],
+  ["pet and kid safe", /\b(?:pet|kid|child|family)[- ](?:safe|friendly)\b/i],
+];
+/** Ways of taking old paint off that the lead rule bans on older homes (Check 41 P1). */
+const UNSAFE_PAINT_REMOVAL =
+  /\b(?:power[- ]?sand\w*|sandblast\w*|torch\w*|burn (?:it |the paint |the old paint )?off|heat gun)\b/i;
+
+/**
+ * Check 41 P1: the conversation shows a home built before 1978 — a year from 1800 to 1977 near
+ * "built", "house", "home" or "colonial", or "old house", "pre-1978", "victorian".
+ */
+export function olderHome(text: string): boolean {
+  const t = text ?? "";
+  const year = "(?:18\\d\\d|19[0-6]\\d|197[0-7])";
+  const word = "(?:built|house|home|colonial|cape|farmhouse|bungalow)";
+  return (
+    new RegExp(
+      `\\b${word}\\b[^.!?\\n]{0,40}\\b${year}\\b|\\b${year}\\b[^.!?\\n]{0,40}\\b${word}\\b`,
+      "i",
+    ).test(t) || /\bold house\b|\bpre-?1978\b|\bvictorian\b/i.test(t)
+  );
+}
 
 /**
  * Check 40 P1: insurance-job promises the owner may not be allowed to make. Waiving or eating a
@@ -500,6 +547,23 @@ export function checkDraft(draftBody: string, ctx: CheckContext): CheckResult {
     );
     cap = Math.min(cap, 0.2);
     hits.push("insurance");
+  }
+
+  // Lead-paint and "safe for kids and pets" claims (Check 41 P1).
+  const safety = [
+    ...SAFETY_CLAIMS,
+    ...(olderHome(ctx.sourceText)
+      ? ([["dry-scraping or torching old paint", UNSAFE_PAINT_REMOVAL]] as [string, RegExp][])
+      : []),
+  ]
+    .filter(([, re]) => re.test(body) && !re.test(ownerText))
+    .map(([label]) => label);
+  if (safety.length) {
+    flags.push(
+      `Says “${safety.join("”, “")}”. Safety and lead claims are yours to make, not the assistant's. Check it before sending.`,
+    );
+    cap = Math.min(cap, 0.3);
+    hits.push("safety");
   }
 
   // Never-promise list: flag when the key words of an item all show up in the draft.

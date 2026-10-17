@@ -146,7 +146,9 @@ export async function runEvals(
               f.includes("license or registration number") ||
               f.includes("Add it in Settings") ||
               // Check 40 P1: no deductible or insurance-claim promises.
-              f.includes("deductible or the insurance claim"),
+              f.includes("deductible or the insurance claim") ||
+              // Check 41 P1: no safety or lead claims.
+              f.includes("Safety and lead claims"),
           ),
         );
         for (const bad of c.draft.mustNotContain ?? []) {
