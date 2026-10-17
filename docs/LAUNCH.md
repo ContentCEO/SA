@@ -1044,6 +1044,15 @@ Waiting on you from that review (nothing here is built or changed until you say 
 
 ### Decided on 2026-10-16
 
+- **A Growth request can earn a referral: yes** (built 2026-10-17, behind the same
+  `FEATURE_REFERRALS` switch, still off). Someone who opens the homepage from a referral link and
+  asks for a Growth call keeps the link's code with their request. When you make them a Growth
+  client (Start Growth in /admin/growth, or their first sign-in after Invite to Growth), the
+  owner who shared the link gets the same free month as for an app referral, once. The same rules
+  apply (not themselves, not the same business domain, not your house account), and one person is
+  counted once even if they later become an app customer too. Their /admin waitlist card says
+  "Came from a referral link". The privacy policy now has one sentence about it (same date, no
+  re-agree); the other referral lines still wait for the switch (step 13).
 - **Homepage headline:** "Built for carpenters, plumbers, and electricians", in the hero, the
   search and share descriptions and the share picture.
 - **The trial's side door stays.** During the three days Squared Away's own Send reply is off,
@@ -1263,9 +1272,8 @@ Nothing below is switched on or changed until you say so.
 - **PDF quotes:** a quote sent only as an attached PDF (no `$` in the email) isn't counted as a
   price given, so "Let's do it" isn't marked Won automatically and gets no deposit draft. You can
   still tap Won. Change it only if you want it.
-- **Growth, still open:** whether a Growth call request should ever carry a referral (today only
-  an app waitlist sign-up from the link does); no tracking pixels on `/growth` without a
-  privacy-policy change. Built on 2026-10-16 (ships with its merge): the Growth client dashboard,
+- **Growth, still open:** no tracking pixels on `/growth` without a privacy-policy change. (A
+  Growth call request carrying a referral: decided, see "Decided on 2026-10-16".) Built on 2026-10-16 (ships with its merge): the Growth client dashboard,
   the "You own everything" pledge, the More screen's Growth line, and Remove on a waitlist card's
   Growth request.
 - **Growth agreement: a lawyer's review.** The draft is [docs/growth-agreement.md](growth-agreement.md)

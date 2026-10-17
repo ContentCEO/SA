@@ -313,8 +313,13 @@ describe("privacy policy", () => {
     );
   });
 
-  it("says nothing about referrals while they are switched off", () => {
-    expect(policy).not.toMatch(/referr/i);
+  it("says nothing about referrals while they are switched off, but the Growth request's code", () => {
+    // Davi, 2026-10-16: a Growth request can carry a referral code (stored only while referrals
+    // are on). That one sentence is in now; the rest waits in docs/SETUP.md §6d step 3.
+    const GROWTH_REFERRAL_LINE =
+      "If you followed another Squared Away owner's referral link while we offer referrals, we keep that link's code with your request, so that owner can be thanked once if you become a Growth client.";
+    expect(policy.replace(/\s+/g, " ")).toContain(GROWTH_REFERRAL_LINE);
+    expect(policy.replace(/\s+/g, " ").replace(GROWTH_REFERRAL_LINE, "")).not.toMatch(/referr/i);
   });
 });
 

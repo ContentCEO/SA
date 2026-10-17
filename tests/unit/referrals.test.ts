@@ -694,9 +694,9 @@ describe("referral free month (switched on)", () => {
     );
     expect(await runReferralRewards(NOW)).toMatchObject({ settled: 0 });
     setDbForTests(database);
-    // Only the sweep's own lookup (unsettled accounts and its NOT EXISTS subquery): no owner
-    // lookups, no settlement attempt.
-    expect(counted).toEqual({ select: 2, transaction: 0 });
+    // Only the sweep's own lookups (unsettled accounts, then Growth clients with a code, each
+    // with its NOT EXISTS subquery): no owner lookups, no settlement attempt.
+    expect(counted).toEqual({ select: 4, transaction: 0 });
     expect(await rows()).toEqual(settled);
   });
 
@@ -796,11 +796,7 @@ describe("referral free month (switched on)", () => {
     return new Proxy(database, {
       get(target, prop, receiver) {
         // Only the settlement's own transaction (the webhook's status write has its own).
-        if (
-          prop === "transaction" &&
-          left > 0 &&
-          new Error().stack?.includes("creditReferralOnActive")
-        ) {
+        if (prop === "transaction" && left > 0 && new Error().stack?.includes("settleOnce")) {
           return () => {
             left--;
             // A message carrying ids and an address: none of it may reach the log.

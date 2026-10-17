@@ -359,7 +359,22 @@ describe("waitlist and Squared Away Growth requests in one table", () => {
       setReferralConfigForTests({ reward: "free_month_one_plan_up" });
     };
 
-    it("a Growth request stores no code; the app sign-up that upgrades it does, and the invite carries it", async () => {
+    it("a Growth request keeps its link's code (Davi, 2026-10-16); off, it keeps none", async () => {
+      await requestGrowthCall(growth("off@shop.com", { referralCode: code }));
+      on();
+      await requestGrowthCall(growth("mike@shop.com", { referralCode: code }));
+      // A later request with another code never replaces the first.
+      await requestGrowthCall(growth("mike@shop.com", { referralCode: "ZZZZZZZZZZZZ" }));
+      // ...and one without a code keeps it.
+      await requestGrowthCall(growth("mike@shop.com"));
+      const byEmail = Object.fromEntries(
+        (await database.select().from(waitlist)).map((r) => [r.email, r.referralCode]),
+      );
+      expect(byEmail).toEqual({ "off@shop.com": null, "mike@shop.com": code });
+      expect(growth("x@shop.com", { referralCode: "bad code" }).referralCode).toBeNull();
+    });
+
+    it("a Growth request with no code; the app sign-up that upgrades it stores one, and the invite carries it", async () => {
       on();
       const referrerId = await referrer();
       await requestGrowthCall(growth("mike@shop.com"));

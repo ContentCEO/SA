@@ -36,6 +36,9 @@ import {
   type GrowthStatus,
 } from "./growth-client-rules";
 import { describeWaitlistEntry, GROWTH_ONLY_TEAM_SIZE, withoutGrowthBlocks } from "./growth-note";
+// The one referral entry point Growth may use (growth-boundary.test.ts): settles a referral when
+// someone becomes a client. It reads no inbox data.
+import { creditGrowthReferralSafely } from "./referrals";
 import { localMonthName, usableTimeZone } from "./snooze-rules";
 
 /**
@@ -70,11 +73,23 @@ export async function portalClient(workspaceId: string): Promise<GrowthClient | 
  * At sign-in (ensureUserAndWorkspace): a pending "Invite to Growth" on this address makes the
  * account a Growth client, then the invite's Growth fields are cleared (used once). An account
  * that is already a client keeps its row as it is. Never touches the app's trial clock.
+ * Becoming a client settles a referral the person's waitlist row carries (plan #47, Davi
+ * 2026-10-16), once ever and never failing the sign-in.
  */
 export async function linkGrowthInvite(
   email: string,
   workspaceId: string,
   now: Date = new Date(),
+): Promise<"linked" | "none"> {
+  const linked = await linkInvite(email, workspaceId, now);
+  if (linked === "linked") await creditGrowthReferralSafely(workspaceId, now);
+  return linked;
+}
+
+async function linkInvite(
+  email: string,
+  workspaceId: string,
+  now: Date,
 ): Promise<"linked" | "none"> {
   const address = norm(email);
   return db().transaction(async (tx) => {
@@ -202,8 +217,27 @@ export async function sendGrowthInviteEmail(
 // ---------------------------------------------------------------------------------------------
 // Davi's moves on a client.
 
-/** "Start Growth for this account": a new client, or a client whose Growth had ended. */
-export async function startGrowth(input: {
+/**
+ * "Start Growth for this account": a new client, or a client whose Growth had ended. Becoming a
+ * client settles a referral the person's waitlist row carries (plan #47, Davi 2026-10-16), once
+ * ever (a restart finds it settled) and never failing Davi's move.
+ */
+export async function startGrowth(
+  input: {
+    workspaceId: string;
+    services: GrowthService[];
+    startedOn: string;
+    timeZone: string;
+  },
+  now: Date = new Date(),
+): Promise<"started" | "restarted" | "already" | "not_found"> {
+  const result = await start(input);
+  if (result === "started" || result === "restarted")
+    await creditGrowthReferralSafely(input.workspaceId, now);
+  return result;
+}
+
+async function start(input: {
   workspaceId: string;
   services: GrowthService[];
   startedOn: string;

@@ -1,5 +1,5 @@
 import "server-only";
-import { and, eq, exists, inArray, isNotNull, lte, sql } from "drizzle-orm";
+import { and, eq, exists, lte, sql } from "drizzle-orm";
 import { db, type Database } from "@/db";
 import { planHasAutopilot } from "@/config/pricing";
 import {
@@ -199,24 +199,6 @@ async function planFields(workspaceId: string, executor: Executor) {
     .from(workspaces)
     .where(eq(workspaces.id, workspaceId));
   return w;
-}
-
-/** Stop the autopilot countdowns on these inboxes: those replies wait for the owner's tap. */
-export async function clearMailboxCountdowns(
-  mailboxIds: string[],
-  executor: Pick<Database, "update">,
-) {
-  if (!mailboxIds.length) return;
-  await executor
-    .update(drafts)
-    .set({ autoSendAt: null })
-    .where(
-      and(
-        isNotNull(drafts.autoSendAt),
-        eq(drafts.status, "pending"),
-        inArray(drafts.mailboxId, mailboxIds),
-      ),
-    );
 }
 
 /**

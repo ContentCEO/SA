@@ -28,7 +28,7 @@ export async function requestGrowthCallAction(
   formData: FormData,
 ): Promise<GrowthState> {
   const raw: Record<string, string> = {};
-  for (const key of ["name", "phone", "email", "trade", "note", "website"]) {
+  for (const key of ["name", "phone", "email", "trade", "note", "ref", "website"]) {
     const v = formData.get(key);
     raw[key] = typeof v === "string" ? v : "";
   }
@@ -53,6 +53,7 @@ export async function requestGrowthCallAction(
     trade: raw.trade || null,
     services,
     note: raw.note || null,
+    referralCode: raw.ref || null,
   });
   if (!parsed.success) {
     return {

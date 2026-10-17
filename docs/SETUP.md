@@ -293,6 +293,12 @@ off (`src/config/features.ts`). The code default stays off: the env var is the s
   (`REFERRAL_REWARD` in `src/config/pricing.ts`); the switch is the only control. Self,
   same-business-domain and house-account referrals never count (gmail.com, yahoo.com, outlook.com,
   icloud.com and other public webmail are fine).
+  **A Growth request can earn it too** (Davi, 2026-10-16): a Growth call request sent from the
+  homepage with the referral link keeps the code on its waitlist row; when Davi makes that person
+  a Growth client (/admin/growth → Start Growth, or their first sign-in after Invite to Growth),
+  the referral is settled the same way, with the same reward and the same self / same-domain /
+  house rules. One person is only ever counted once: the app account and the Growth client share
+  the email fingerprint, whichever comes first.
   How it works: a one-time 100%-off coupon (`sa_ref_<id>`, "Referral thanks: this month is free")
   goes on the referrer's live subscription, so Stripe keeps billing their own plan and the next
   renewal's plan line is free; the app gives the plan above for exactly that line's period. It
@@ -317,8 +323,9 @@ off (`src/config/features.ts`). The code default stays off: the env var is the s
   referrer's free month back (Q6).
   Known gaps, by design until Davi decides otherwise: if the referrer deletes their account
   before the new owner is active, the referral is void (the link is cleared with the account).
-  Only a waitlist sign-up from the link counts: someone already on the waitlist who joins again
-  from a link keeps their first (code-less) entry, and an owner invited with the plain "Invite an
+  Only a waitlist sign-up or a Growth call request from the link counts (the /growth page itself
+  carries no code): someone already on the waitlist who joins again from a link keeps their first
+  (code-less) entry, and an owner invited with the plain "Invite an
   owner" form is never linked to anyone.
   **Don't rotate `AUTH_SECRET` once referrals have been given** (or know what it costs): the
   "once, ever" check matches a fingerprint salted with `AUTH_SECRET`. After a rotation, earlier
@@ -349,7 +356,9 @@ In order, all before the switch:
      above yours. Afterwards you go back to your own plan unless you choose to keep it at its
      normal price. During that free month, plan changes are made in the app; you can still update
      your card or cancel."
-   - **Privacy policy:** "If you were referred, we keep a scrambled one-way fingerprint of your
+   - **Privacy policy** (its Growth-request sentence, "If you followed another Squared Away
+     owner's referral link while we offer referrals, we keep that link's code with your request…",
+     is in the policy already and the test allows it): "If you were referred, we keep a scrambled one-way fingerprint of your
      email and the referral record after you delete your account, so a referral only counts
      once." and "If you earn a free month: which plan, the dates, and whether you chose to keep
      it." (Otherwise the policy's "Delete my account" section and the FAQ's "deletes your account

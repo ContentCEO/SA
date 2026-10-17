@@ -22,6 +22,11 @@ them:
   on a Growth request, and `/start`, `/my-growth` and `/admin/growth` — numbers Davi enters by hand
   only (nothing from anyone's inbox).
 
+The referral offer (plan #47 offer A, behind `FEATURE_REFERRALS`, off) was merged on top of
+those on branch `referral-offer-a` the same day (migrations `0039_referral_free_month` and
+`0040_referral_after_end_check`), with one plan pause for both (the decisions package's
+`plan_paused_at`) and Davi's 2026-10-16 rule that a Growth request can earn a referral.
+
 Because `draft.v7` and `purpose.v2` are taken, the review pages' "draft.v7" bundle is `draft.v8`
 here. The whole version plan (draft.v8 / v9, classify.v5, followup.v5, voice.v3, purpose.v3) is in
 `CLAUDE.md` under "Prompt versions".

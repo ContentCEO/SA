@@ -47,7 +47,9 @@ note, and where you came from, kept the same way as for the waitlist. We use it 
 you about Squared Away Growth. If you're already on the app
 waitlist, we add your request to that entry and keep everything you gave us before. Asking for a
 call doesn't sign you up for the app or let you sign in. The same scrambled IP address limit applies to
-this form.
+this form. If you followed another Squared Away owner's referral link while we offer referrals,
+we keep that link's code with your request, so that owner can be thanked once if you become a
+Growth client.
 
 **When you sign in with Google:** your name and email address. Sign-in asks Google only for "who you are" (`openid`, `email`, `profile`). It does not give us
 access to your email.

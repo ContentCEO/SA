@@ -96,7 +96,7 @@ export async function joinWaitlist(
         // now holds only what the app form was given (so a later Growth request can't leave an
         // old number behind here).
         phone: input.phone ?? null,
-        // A Growth request never carries a referral; the app sign-up that upgrades it may.
+        // The first code kept wins (a Growth request's, while referrals were on, or this one).
         referralCode: existing.referralCode ?? referralCode,
         note: [note, blocks].filter(Boolean).join("\n\n") || null,
         ...firstTouch(existing, source),

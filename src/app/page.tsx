@@ -387,7 +387,12 @@ export default async function HomePage(props: PageProps<"/">) {
         {/* Part 2, one-on-one Growth (charcoal). Its top edge is the switch boundary. */}
         <div className="sa-inverted" data-growth-chapter data-sa-half="growth">
           <GrowthChapterBar />
-          <GrowthChapter headingLevel="h2" standalone={false} openerId="growth" />
+          <GrowthChapter
+            headingLevel="h2"
+            standalone={false}
+            openerId="growth"
+            referralCode={referralCode}
+          />
         </div>
       </main>
 

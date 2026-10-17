@@ -19,6 +19,7 @@ import {
   scrubMarker,
   withGrowthBlock,
 } from "./growth-note";
+import { isReferralCode, referralsVisible } from "./referral-rules";
 import { firstTouch, NO_SOURCE, type SignupSource } from "./source-rules";
 
 const msg = growthCopy.errors;
@@ -73,6 +74,11 @@ export const growthInput = z.object({
     (v) => (typeof v === "string" ? oneLine(v) || null : (v ?? null)),
     z.string().max(500, msg.noteLong).nullable(),
   ),
+  /** Plan #47: the code from a referral link (?ref=). Anything malformed is dropped, not an error. */
+  referralCode: z
+    .unknown()
+    .optional()
+    .transform((v) => (isReferralCode(v) ? v : null)),
 });
 export type GrowthInput = z.output<typeof growthInput>;
 
@@ -80,6 +86,10 @@ export type GrowthInput = z.output<typeof growthInput>;
  * Store a request in the waitlist table. A new email gets a growth-only row; an existing entry
  * gets the request as its (single) Growth block, with blanks filled in. It NEVER changes the
  * name, team size, created or invited dates, and never invites anyone.
+ *
+ * Plan #47 (decided 2026-10-16): a referral link's code is kept on the row only while referrals
+ * are on, and an entry's first code is never replaced. It's settled (once ever) when the person
+ * becomes a Growth client (`creditGrowthReferral`).
  */
 export async function requestGrowthCall(
   input: GrowthInput,
@@ -87,6 +97,7 @@ export async function requestGrowthCall(
   source: SignupSource = NO_SOURCE,
 ) {
   const email = normalizeEmail(input.email);
+  const referralCode = referralsVisible() ? (input.referralCode ?? null) : null;
   const request = {
     at: localStamp(now),
     services: input.services.map(growthServiceLabel),
@@ -103,6 +114,7 @@ export async function requestGrowthCall(
         trade: input.trade,
         teamSize: GROWTH_ONLY_TEAM_SIZE,
         note: formatGrowthBlock(request),
+        referralCode,
         ...source,
       })
       .onConflictDoNothing()
@@ -124,6 +136,7 @@ export async function requestGrowthCall(
         // phone is only ever the one they gave the app form; the Growth number lives in the block,
         // so a replaced request leaves no old number behind (as the privacy policy says).
         phone: growthOnly ? input.phone : existing.phone,
+        referralCode: existing.referralCode ?? referralCode,
         note: withGrowthBlock(existing.note, {
           ...request,
           nameGiven: existing.name.toLowerCase() !== input.name.toLowerCase() ? input.name : null,

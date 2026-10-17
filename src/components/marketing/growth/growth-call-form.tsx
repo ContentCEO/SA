@@ -76,8 +76,11 @@ function Success({ phone }: { phone?: string }) {
   );
 }
 
-/** The call-request form for Squared Away Growth. Lives in an off-white `.sa-light` card. */
-export function GrowthCallForm() {
+/**
+ * The call-request form for Squared Away Growth. Lives in an off-white `.sa-light` card.
+ * `referralCode`: from a referral link (?ref=), only passed while referrals are switched on.
+ */
+export function GrowthCallForm({ referralCode }: { referralCode?: string } = {}) {
   const [state, action] = useActionState<GrowthState, FormData>(requestGrowthCallAction, {
     status: "idle",
   });
@@ -189,6 +192,9 @@ export function GrowthCallForm() {
           <input name="website" tabIndex={-1} autoComplete="off" />
         </label>
       </div>
+      {referralCode ? (
+        <input type="hidden" name="ref" defaultValue={v.ref ?? referralCode} />
+      ) : null}
       <SourceFields />
       <FormError errors={e.form} />
       <Submit />

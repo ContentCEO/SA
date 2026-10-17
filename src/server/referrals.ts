@@ -5,10 +5,12 @@ import { planAbove, pricing, type PlanId } from "@/config/pricing";
 import { db } from "@/db";
 import {
   activityLog,
+  growthClients,
   mailboxes,
   referralCredits,
   rules,
   users,
+  waitlist,
   workspaces,
   type ReferralAdminFlag,
   type ReferralCredit,
@@ -132,6 +134,70 @@ export async function creditReferralOnActive(
   if (!referred || !referrerId) return "skipped";
   if (effectiveStatus(referred.workspace, now) !== "active") return "skipped";
   if (referred.workspace.setupPaidVia !== "stripe") return "skipped";
+  return settleOnce({ workspaceId: referredWorkspaceId, email: referred.email }, referrerId, now);
+}
+
+/**
+ * The Growth door (Davi, 2026-10-16: "a Growth request can earn a referral"): someone who came
+ * through a referral link kept its code on their waitlist row (stored only while referrals are
+ * on, by the app form or the Growth call form). When Davi makes their account a Growth client
+ * (`startGrowth`, or the first sign-in after "Invite to Growth": `linkGrowthInvite`), the
+ * referral is settled under the same rules and the same fingerprint as the app door, so one
+ * person never pays twice. Becoming a client is the signal: Growth has no prices or billing in
+ * the app. Reads only the owner's email, the waitlist row's code, the client's status and
+ * referral rows — never inbox data.
+ */
+export async function creditGrowthReferral(
+  referredWorkspaceId: string,
+  now: Date = new Date(),
+): Promise<"earned" | "skipped"> {
+  const referred = await ownerOf(referredWorkspaceId);
+  if (!referred) return "skipped";
+  const [client] = await db()
+    .select({ status: growthClients.status })
+    .from(growthClients)
+    .where(eq(growthClients.workspaceId, referredWorkspaceId));
+  if (client?.status !== "active") return "skipped";
+  const [row] = await db()
+    .select({ code: waitlist.referralCode })
+    .from(waitlist)
+    .where(eq(waitlist.email, referred.email.trim().toLowerCase()));
+  // No code, an unknown one, or a referrer who deleted their account: nothing to settle.
+  const referrerId = await workspaceByReferralCode(row?.code);
+  if (!referrerId) return "skipped";
+  return settleOnce({ workspaceId: referredWorkspaceId, email: referred.email }, referrerId, now);
+}
+
+/** For Growth's hooks: settle, but never fail or undo Davi's move. The sweep tries again. */
+export async function creditGrowthReferralSafely(
+  referredWorkspaceId: string,
+  now: Date = new Date(),
+) {
+  try {
+    return await creditGrowthReferral(referredWorkspaceId, now);
+  } catch (err) {
+    console.error("referral_settle_failed", {
+      referredWorkspaceId,
+      error: err instanceof Error ? err.name : "unknown",
+    });
+    return "skipped" as const;
+  }
+}
+
+/**
+ * The one way a referral is settled, for both doors (an app account that goes active and paid
+ * through Stripe, or a referred Growth request whose person becomes a Growth client): once ever
+ * per referred email fingerprint, whichever door comes first. Self, same-business-domain and
+ * house-account referrers, or the switch being off at that moment, settle it as one `skipped`
+ * row; otherwise one `pending` free month (offer A) that the reward engine books on the
+ * referrer's subscription when they have one.
+ */
+async function settleOnce(
+  referred: { workspaceId: string; email: string },
+  referrerId: string,
+  now: Date,
+): Promise<"earned" | "skipped"> {
+  const referredWorkspaceId = referred.workspaceId;
   // The referrer's workspace is gone (deleted mid-check): the FK clears the link, nothing to do.
   const referrer = await ownerOf(referrerId);
   if (!referrer) return "skipped";
@@ -156,12 +222,17 @@ export async function creditReferralOnActive(
       .limit(1);
     if (settled) {
       // This email's referral was settled by an earlier (since deleted) workspace: it's used
-      // up. Drop the link so the sweep doesn't pick this workspace up every 15 minutes.
+      // up. Drop the links (the app's and a Growth request's) so neither sweep picks this
+      // workspace up every 15 minutes.
       if (settled.referredWorkspaceId !== referredWorkspaceId) {
         await tx
           .update(workspaces)
           .set({ referredByWorkspaceId: null })
           .where(eq(workspaces.id, referredWorkspaceId));
+        await tx
+          .update(waitlist)
+          .set({ referralCode: null })
+          .where(eq(waitlist.email, referred.email.trim().toLowerCase()));
       }
       return [];
     }
@@ -222,6 +293,39 @@ async function settleMissedReferrals(now: Date) {
   for (const w of unsettled) {
     try {
       if ((await creditReferralOnActive(w.id, now)) !== "skipped") result.settled++;
+    } catch (err) {
+      console.error("referral_settle_failed", {
+        referredWorkspaceId: w.id,
+        error: err instanceof Error ? err.name : "unknown",
+      });
+    }
+  }
+  // The Growth door: active Growth clients whose waitlist row carries a referral code and who
+  // have no referral row yet (a hook that failed, or a test-mode reward that Reset test
+  // payments deleted). Growth clients are made by hand, so this is a short list.
+  const growthUnsettled = await db()
+    .select({ id: workspaces.id })
+    .from(growthClients)
+    .innerJoin(workspaces, eq(workspaces.id, growthClients.workspaceId))
+    .innerJoin(users, eq(users.id, workspaces.ownerUserId))
+    .innerJoin(waitlist, eq(waitlist.email, sql`lower(${users.email})`))
+    .where(
+      and(
+        eq(growthClients.status, "active"),
+        isNotNull(waitlist.referralCode),
+        not(
+          exists(
+            db()
+              .select({ id: referralCredits.id })
+              .from(referralCredits)
+              .where(eq(referralCredits.referredWorkspaceId, workspaces.id)),
+          ),
+        ),
+      ),
+    );
+  for (const w of growthUnsettled) {
+    try {
+      if ((await creditGrowthReferral(w.id, now)) !== "skipped") result.settled++;
     } catch (err) {
       console.error("referral_settle_failed", {
         referredWorkspaceId: w.id,

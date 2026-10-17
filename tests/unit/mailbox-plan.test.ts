@@ -11,7 +11,7 @@ import { ensureUserAndWorkspace } from "@/server/accounts";
 import { sendAccessLostAlerts } from "@/server/alerts";
 import { unsortedSweepMailboxes } from "@/server/assistant-status";
 import { runAutopilotSend } from "@/server/autopilot";
-import { applySubscription } from "@/server/billing";
+import { applySubscription, setStripeForTests } from "@/server/billing";
 import { planLookupKey } from "@/server/billing-rules";
 import { classifyPending } from "@/server/classification";
 import {
@@ -40,6 +40,7 @@ import { freshLeads } from "@/server/sms-alerts";
 import { incrementalSync, listSyncableMailboxes } from "@/server/sync";
 import { learnVoice, workspacesNeedingVoice } from "@/server/voice";
 import { setWorkspacePlan } from "@/server/workspace-lifecycle";
+import { FakeStripe } from "../support/fake-stripe";
 import { createTestDb } from "../support/db";
 import { fakeTransport } from "../support/fake-model";
 import { FakeMailbox } from "../support/fake-mailbox";
@@ -149,10 +150,17 @@ describe("a lower plan pauses the extra Gmail addresses", () => {
         metadata: { workspaceId },
         items: { data: [{ price: { lookup_key: planLookupKey(plan) } }] },
       }) as unknown as Stripe.Subscription;
-    await applySubscription(sub("solo"), NOW);
-    expect(await pausedIds()).toEqual([boxes[1]!, boxes[2]!].sort());
-    await applySubscription(sub("company"), NOW);
-    expect(await pausedIds()).toEqual([]);
+    // Since the referral merge the webhook reads the live subscription first (plan #47 §1.9);
+    // a subscription the (fake) Stripe doesn't hold falls back to the event's own copy.
+    setStripeForTests(new FakeStripe({ now: NOW }).client);
+    try {
+      await applySubscription(sub("solo"), NOW);
+      expect(await pausedIds()).toEqual([boxes[1]!, boxes[2]!].sort());
+      await applySubscription(sub("company"), NOW);
+      expect(await pausedIds()).toEqual([]);
+    } finally {
+      setStripeForTests(undefined);
+    }
   });
 
   it("an autopilot countdown on a paused address stops", async () => {

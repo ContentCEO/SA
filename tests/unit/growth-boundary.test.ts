@@ -82,6 +82,22 @@ const MAY_IMPORT_GROWTH = new Set([
   "src/server/accounts.ts",
 ]);
 
+/**
+ * Referral code Growth's own files may import (plan #47, Davi 2026-10-16: "a Growth request can
+ * earn a referral"), name by name, each with why. Nothing else from the referral modules.
+ */
+const GROWTH_MAY_IMPORT_REFERRAL: Record<string, Record<string, string>> = {
+  "@/server/referrals": {
+    creditGrowthReferralSafely:
+      "settles a referral when Davi makes someone a client (startGrowth / linkGrowthInvite); " +
+      "reads the owner's email, the waitlist row's code, growth_clients and referral rows only",
+  },
+  "@/server/referral-rules": {
+    isReferralCode: "format check of a referral link's code on the Growth call form (pure)",
+    referralsVisible: "the code is kept only while referrals are switched on (pure)",
+  },
+};
+
 /** Inbox modules: anything that reads mail, drafts, the AI, jobs or the owner's numbers. */
 const INBOX_MODULES = [
   "@/mailbox",
@@ -279,6 +295,49 @@ describe("Growth never touches inbox data (Check 5 P1 + Check 2 P5)", () => {
       inboxTouches(f.file, f.text).map((why) => `${f.file} ${why}`),
     );
     expect(bad).toEqual([]);
+  });
+
+  it("Growth's own code imports only the listed referral names", () => {
+    const growthFiles = ALL.filter((f) => GROWTH_PATHS.some((p) => under(f.file, p)));
+    const bad = growthFiles.flatMap((f) =>
+      importsOf(f.file, f.text)
+        .filter((i) => /^@\/server\/referral/.test(i.module))
+        .flatMap((i) => {
+          const allowed = GROWTH_MAY_IMPORT_REFERRAL[i.module] ?? {};
+          return i.names
+            .filter((n) => !(n in allowed))
+            .map((n) => `${f.file} imports ${n} from ${i.module}`);
+        }),
+    );
+    expect(bad).toEqual([]);
+    // The hooks are really there (a referral settles when someone becomes a client).
+    const clients = ALL.find((f) => f.file === "src/server/growth-clients.ts")!.text;
+    expect(clients.match(/creditGrowthReferralSafely\(/g)?.length).toBe(2);
+  });
+
+  it("the Growth referral settle reads no inbox data", () => {
+    const text = ALL.find((f) => f.file === "src/server/referrals.ts")!.text;
+    const body = (name: string) => {
+      const at = text.indexOf(`export async function ${name}(`);
+      expect(at, name).toBeGreaterThan(0);
+      return text.slice(at, text.indexOf("\n}\n", at));
+    };
+    for (const name of ["creditGrowthReferral", "creditGrowthReferralSafely"]) {
+      expect(body(name)).not.toMatch(
+        /\b(threads|messages|drafts|mailboxes|businessProfile|voiceProfile|usage|rules)\b/,
+      );
+    }
+    // settleOnce (shared with the app door) writes the referral row and the referrer's own
+    // Activity line, and reads nothing from anyone's inbox.
+    const settle = text.slice(
+      text.indexOf("async function settleOnce("),
+      text.indexOf("\n}\n", text.indexOf("async function settleOnce(")),
+    );
+    expect(settle.length).toBeGreaterThan(100);
+    expect(settle).not.toMatch(
+      /\b(threads|messages|drafts|mailboxes|businessProfile|voiceProfile|usage)\b/,
+    );
+    expect(settle).not.toMatch(/\.select\(\)\s*\.from\(activityLog\)|from\(activityLog\)/);
   });
 
   it("server code outside the waitlist doesn't import Growth's modules", () => {

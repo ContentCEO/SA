@@ -218,7 +218,9 @@ function WaitlistEntry({
       </span>
       {facts.appNote ? <p className="text-muted-foreground">“{facts.appNote}”</p> : null}
       {describeSource(w) ? <span className="text-sm">Came from: {describeSource(w)}</span> : null}
-      {referrals && facts.app && w.referralCode ? (
+      {/* Plan #47: an app sign-up's code, or (since 2026-10-16) a Growth request's, which is
+          settled when Davi makes them a Growth client. */}
+      {referrals && w.referralCode ? (
         <span className="text-sm font-semibold">Came from a referral link</span>
       ) : null}
       {request ? (
