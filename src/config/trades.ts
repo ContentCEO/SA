@@ -48,3 +48,24 @@ export function cleanExtraTrades(values: readonly unknown[], main: Trade | null)
 
 /** For <select>s. */
 export const TRADE_OPTIONS = TRADES.map((value) => ({ value, label: tradeLabel[value] }));
+
+/**
+ * Check 38 P3: trades where almost every job email names a big number. For these, setup shows
+ * the "send me anything over" amount up front (not folded away), with suggested amounts. The
+ * stored default stays the same for everyone ($2,500, `DEFAULT_AMOUNT_THRESHOLD_DOLLARS`).
+ * The remodeling amounts are the review's examples, waiting on Davi's own numbers.
+ */
+export const AMOUNT_SUGGESTIONS: Partial<Record<Trade, readonly number[]>> = {
+  remodeling: [10_000, 25_000],
+};
+
+/** The trades on this shop (main + extra) that want the amount asked up front, if any. */
+export function amountSuggestionsFor(
+  trade: string | null | undefined,
+  extraTrades: readonly string[] = [],
+): readonly number[] | null {
+  for (const t of [trade, ...extraTrades]) {
+    if (isTrade(t) && AMOUNT_SUGGESTIONS[t]) return AMOUNT_SUGGESTIONS[t]!;
+  }
+  return null;
+}

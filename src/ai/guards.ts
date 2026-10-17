@@ -486,3 +486,32 @@ export function looksMunicipal(fromAddress: string | null, fromName: string | nu
   }
   return MUNICIPAL_NAME.test(name);
 }
+
+/**
+ * Check 39 P2: dollar figures that are a program's or a lender's, not the job's — "Mass Save
+ * gives up to $8,500", "the HEAT Loan covers up to $25,000 at 0%", "a $2,000 tax credit". Every
+ * "$" figure (with "k") whose own line has an incentive word within 40 characters. Whole
+ * dollars. Pure.
+ */
+const INCENTIVE_WORDS =
+  /\b(rebates?|incentives?|tax credits?|credit of|loans?|financing|financed|zero percent|per ton|a ton|grants?|mass save|heat loan|utility program)\b|\b0 ?%/;
+export function incentiveAmounts(text: string | null | undefined): number[] {
+  const out: number[] = [];
+  for (const line of (text ?? "").split(/\r?\n/)) {
+    const lower = line.toLowerCase();
+    for (const m of lower.matchAll(/\$\s?(\d[\d,]*(?:\.\d{1,2})?)\s*(k\b)?/g)) {
+      const at = m.index ?? 0;
+      // Same clause only: "a $2,000 rebate, but a $14,000 quote from another company" keeps
+      // the quote.
+      const before = lower
+        .slice(Math.max(0, at - 40), at)
+        .split(/[,.;:!?]|\bbut\b|\band\b/)
+        .pop();
+      const after = lower.slice(at, at + m[0].length + 40).split(/[,.;:!?](?!\d)|\bbut\b/)[0];
+      if (!INCENTIVE_WORDS.test(`${before ?? ""}${after ?? ""}`)) continue;
+      const n = Number(m[1]!.replace(/,/g, "")) * (m[2] ? 1000 : 1);
+      if (Number.isFinite(n) && n > 0) out.push(Math.round(n));
+    }
+  }
+  return out;
+}

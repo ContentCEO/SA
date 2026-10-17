@@ -22,7 +22,14 @@ import {
   mentionsWaterSmell,
   WATER_SMELL_REASON,
 } from "@/ai/guards";
-import { ASKS_IF_AI_REASON, asksIfAi, injectionCheck, looksLikePaymentChange } from "@/ai/guards";
+import {
+  ASKS_IF_AI_REASON,
+  asksIfAi,
+  incentiveAmounts,
+  injectionCheck,
+  looksLikePaymentChange,
+} from "@/ai/guards";
+import { amountSuggestionsFor } from "@/config/trades";
 import { checkDraft, HUMAN_CLAIM_FLAG } from "@/ai/draft-checks";
 import { guardrailReasons } from "@/server/autopilot";
 import { injectionClearable, injectionClearedRecently } from "@/server/injection-clear-rules";
@@ -486,4 +493,78 @@ describe("real legal words (Check 22 P11 + Check 36 P6 + Check 45 P4)", () => {
     "Vamos a llamar a un abogado si no lo arreglan.",
     "I disputed the charge with my bank.",
   ])("legal: %s", (t) => expect(mentionsRealLegal(t)).toBe(true));
+});
+
+describe("the money limit (Check 38 P3 + Check 22 P6 + Check 39 P2)", () => {
+  const withAmounts = (amounts: number[], over: Parameters<typeof classification>[0] = {}) => {
+    const m = classification({ category: "quote_request", ...over });
+    m.extracted = { ...m.extracted, dollar_amounts: amounts };
+    return m;
+  };
+
+  it.each([
+    ["Mass Save gives up to $8,500 for whole-home", [8500]],
+    ["the HEAT Loan covers up to $25,000 at 0%", [25000]],
+    ["a $2,000 rebate from the utility", [2000]],
+    ["a $500 incentive", [500]],
+    ["a federal tax credit of $2,000", [2000]],
+    ["$1,200 per ton", [1200]],
+    ["0% financing on $12k", [12000]],
+    ["a $5,000 grant", [5000]],
+    ["through the utility program you get $750", [750]],
+    ["Our budget is $18,000 for the heat pumps", []],
+    ["Last contract was $18,600", []],
+  ] as const)("incentiveAmounts: %s", (text, expected) => {
+    expect(incentiveAmounts(text)).toEqual(expected);
+  });
+
+  it("program money and the owner's own figures don't count; real job money does", () => {
+    expect(rules({ ignoreAmounts: [8500, 25000] }, withAmounts([8500, 25000])).needsOwner).toBe(
+      false,
+    );
+    expect(rules({ ignoreAmounts: [8500] }, withAmounts([8500, 14000])).needsOwnerReason).toBe(
+      "Mentions more than $2,500.",
+    );
+    expect(rules({ ignoreAmounts: [48500] }, withAmounts([48500])).needsOwner).toBe(false);
+  });
+
+  it("junk never needs the owner for an amount alone", () => {
+    expect(rules({}, withAmounts([3000], { category: "noise", priority: "low" }))).toMatchObject({
+      needsOwner: false,
+    });
+  });
+
+  it("a new customer's big job reads before the amount", () => {
+    const m = withAmounts([48000], {
+      signals: { ...classification().signals, large_request: true },
+    });
+    const r = rules({ firstTimeSender: true }, m);
+    expect(r.needsOwnerReason).toBe("New customer asking about a big job.");
+    expect(r.hits.slice(0, 2)).toEqual(["big_new_job", "amount"]);
+  });
+
+  it("remodeling asks the amount up front with suggestions; other trades don't", () => {
+    expect(amountSuggestionsFor("remodeling")).toEqual([10_000, 25_000]);
+    expect(amountSuggestionsFor("carpentry", ["remodeling"])).toEqual([10_000, 25_000]);
+    expect(amountSuggestionsFor("electrical", [])).toBeNull();
+    expect(amountSuggestionsFor(null)).toBeNull();
+  });
+
+  it("prepareBody cuts Outlook, Spanish and Portuguese quote headers", () => {
+    expect(
+      prepareBody(
+        "Sounds good, go ahead. When can you start?\n\nFrom: Mike <mike@shop.test>\nSent: Monday, October 12, 2026 9:00 AM\nTo: Dana\nSubject: Deck quote\n\nThe deck is $6,800.",
+      ),
+    ).toBe("Sounds good, go ahead. When can you start?");
+    expect(
+      prepareBody("Perfecto.\n\nEl lun, 12 oct 2026 a las 9:00, Mike escribió:\n> $6,800"),
+    ).toBe("Perfecto.");
+    expect(prepareBody("Ótimo.\n\nEm seg, 12 de out de 2026, Mike escreveu:\n> $6,800")).toBe(
+      "Ótimo.",
+    );
+    // A lead-site email that starts with labelled lines is the email itself.
+    expect(
+      prepareBody("From: Dana R.\nDate: Oct 12\nSubject: Water heater\nHow much for a 40 gallon?"),
+    ).toContain("How much for a 40 gallon?");
+  });
 });

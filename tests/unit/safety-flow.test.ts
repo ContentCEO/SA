@@ -777,3 +777,95 @@ describe("routine denials aren't legal threats (Check 22 P11 + Check 36 P6)", ()
     expect(await threadRow(u.id)).toMatchObject({ needsOwnerReason: LEGAL_REASON });
   });
 });
+
+describe("the money limit in the pipeline (Check 39 P2 + Check 38 P3 + Check 22 P6)", () => {
+  const quoteWith = (amounts: number[], over: Parameters<typeof classification>[0] = {}) => {
+    const m = classification({ category: "quote_request", confidence: 0.95, ...over });
+    m.extracted = { ...m.extracted, dollar_amounts: amounts };
+    return m;
+  };
+  async function sort(g: string, bodyText: string, model = quoteWith([])) {
+    const t = await thread(g);
+    await message(t.id, g, { bodyText });
+    const { transport, calls } = fakeTransport([model]);
+    setModelTransportForTests(transport);
+    await classifyPending(mailboxId, { now: NOW });
+    return { t, row: await threadRow(t.id), request: calls[0] };
+  }
+
+  it.each([
+    [
+      "We read Mass Save gives up to $8,500 for whole-home and the HEAT Loan covers up to $25,000 at 0%. Are you in the installer network? Can you give us a quote?",
+      [8500, 25000],
+      false,
+    ],
+    ["Income-eligible homes can get up to $16,000 through Mass Save. Quote?", [16000], false],
+    ["Our budget is $18,000 for the heat pumps.", [18000], true],
+    ["Last contract was $18,600. Can you bid this one?", [18600], true],
+    [
+      "We'd get a $2,000 rebate, but we already have a $14,000 quote from another company.",
+      [2000, 14000],
+      true,
+    ],
+  ] as const)("%s", async (body, amounts, needs) => {
+    const { row } = await sort(`m${amounts.join("-")}`, body, quoteWith([...amounts]));
+    expect(row.needsOwner).toBe(needs);
+  });
+
+  it("the customer repeating the owner's own contract total isn't new money (E20)", async () => {
+    const t = await thread("e20");
+    await message(t.id, "e20-out", {
+      direction: "out",
+      fromAddress: "owner@shop.test",
+      toAddresses: ["dana@x.test"],
+      bodyText: "Here's the contract for the kitchen: $48,500 all in.",
+      sentAt: minsAgo(60 * 24 * 20),
+    });
+    await message(t.id, "e20-in", {
+      bodyText:
+        "What's the plan for next week? The $48,500 contract said we'd be done before Thanksgiving.",
+    });
+    setModelTransportForTests(
+      fakeTransport([quoteWith([48500], { category: "scheduling" })]).transport,
+    );
+    await classifyPending(mailboxId, { now: NOW });
+    expect((await threadRow(t.id)).needsOwner).toBe(false);
+  });
+
+  it("junk with a big number: not needs-you (Local Services report, supplier promo)", async () => {
+    const lsa = await sort(
+      "lsa",
+      "Weekly report: you've spent $412 of your $3,000 monthly budget.",
+      quoteWith([412, 3000], { category: "noise", priority: "low" }),
+    );
+    expect(lsa.row.needsOwner).toBe(false);
+    const promo = await sort(
+      "promo",
+      "Spend $5,000 this quarter, get $250 back.",
+      quoteWith([5000, 250], { category: "noise", priority: "low" }),
+    );
+    expect(promo.row.needsOwner).toBe(false);
+  });
+
+  it("'go ahead' above an Outlook-quoted owner price: a simple yes, not needs-you", async () => {
+    const t = await thread("go");
+    await message(t.id, "go-out", {
+      direction: "out",
+      fromAddress: "owner@shop.test",
+      toAddresses: ["dana@x.test"],
+      bodyText: "The deck is $6,800.",
+      sentAt: minsAgo(60 * 24 * 2),
+    });
+    await message(t.id, "go-in", {
+      bodyText:
+        "Sounds good, go ahead. When can you start?\n\nFrom: Owner <owner@shop.test>\nSent: Monday, October 12, 2026 9:00 AM\nTo: Dana\nSubject: Deck quote\n\nThe deck is $6,800.",
+    });
+    const { transport, calls } = fakeTransport([quoteWith([6800], { category: "scheduling" })]);
+    setModelTransportForTests(transport);
+    await classifyPending(mailboxId, { now: NOW });
+    expect((await threadRow(t.id)).needsOwner).toBe(false);
+    // The newest part the model sorts holds no price; the quote is only in its own block.
+    const newest = calls[0]!.user.split("Quoted or forwarded text")[0]!;
+    expect(newest).not.toContain("$6,800");
+  });
+});

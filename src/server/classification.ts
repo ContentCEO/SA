@@ -12,9 +12,11 @@ import {
   classifyEmail,
   codeOnlyClassification,
   DISPUTE_REASONS,
+  prepareBody,
   type Classification,
 } from "@/ai/classify";
 import { AiCapReachedError } from "@/ai/usage";
+import { moneyMentions } from "@/ai/money-words";
 import { OTHER_JOB_KIND } from "@/config/job-kinds";
 import { db } from "@/db";
 import {
@@ -356,6 +358,24 @@ export async function classifyPending(
             )
         : [{ n: 1 }];
       const firstTimeSender = (prior?.n ?? 0) === 0 || (priorReply?.n ?? 0) === 0;
+      // Check 38 P3: amounts the owner already wrote on this conversation (their own words,
+      // quoted text cut; never an unsent draft or a forward to the crew). A customer repeating
+      // the contract total isn't new money. Never logged.
+      const ownerBodies = await db()
+        .select({ body: messages.bodyText })
+        .from(messages)
+        .where(
+          and(
+            eq(messages.threadId, m.threadId),
+            eq(messages.direction, "out"),
+            notDraftMessage(),
+            sql`not ${sideEmailSql("messages")}`,
+            lt(messages.sentAt, m.sentAt),
+          ),
+        );
+      const ownerAmounts = ownerBodies.flatMap((o) =>
+        o.body ? moneyMentions(prepareBody(o.body)).map((x) => Math.round(x.amount)) : [],
+      );
       // VIP by either address: both only add caution.
       const senderIsVip = [m.fromAddress, replyTo].some(
         (a) => !!a && business.vipSenders.includes(a.toLowerCase()),
@@ -383,6 +403,7 @@ export async function classifyPending(
             sticky,
             channel: channel ? { kind: channel.kind, name: channelName(channel.key) ?? "" } : null,
             serviceTowns: business.serviceTowns,
+            ownerAmounts,
             // Check 22 P5: a supplier's thread (its bills are owed by the business).
             supplierThread: prevMarks.bill_direction === "owed_by_business",
           },

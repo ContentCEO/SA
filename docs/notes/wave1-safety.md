@@ -171,6 +171,23 @@ Builder notes for `CLAUDE.md` (Decisions, Prompt versions, Waiting on Davi), `do
   words. Evals not run (`pnpm eval --no-drafts` needs `ANTHROPIC_API_KEY`), so needs-owner recall
   wasn't measured live.
 
+- **The money limit (Check 38 P3 + 22 P6 + 39 P2):** in `applyOwnerRules` the amount rule
+  never applies to junk (`noise`), ignores `incentiveAmounts` (a "$" figure with rebate,
+  incentive, tax credit, credit of, loan, financing, 0%, zero percent, per ton, grant, Mass
+  Save, HEAT Loan or utility program in the same clause within 40 characters; whole dollars) and
+  amounts the owner already wrote on the conversation (`ownerAmounts`: `moneyMentions` of the
+  owner's own non-draft, non-side emails, quoted text cut; never logged). "New customer asking
+  about a big job." now reads before "Mentions more than $X." (`owner_rule_hits` already holds the
+  content-free codes, so no `owner_codes`). `extracted.dollar_amounts` is stored as the model
+  gave it. `prepareBody` also cuts at an Outlook header block (From: then Sent:/Date: and
+  Subject: within four lines, only below something the sender wrote) and at Spanish "El …
+  escribió:" / Portuguese "Em … escreveu:". Setup asks a remodeler (main or extra trade) for the
+  amount up front with the hint "Most of your job emails mention big numbers…" and suggestion
+  buttons (`AMOUNT_SUGGESTIONS` in `src/config/trades.ts`; $10,000 / $25,000 are the review's
+  examples, question 4); other trades keep it folded. The stored default ($2,500) is unchanged.
+  The eval stand-in now lists every $ figure, and the unit test checks each case's needs-you
+  against the code; `v-statement` now expects needs-you (question 5).
+
 ## Privacy policy lines (for the integrator)
 
 - Under "What we store", with the other content-free marks: "Whether an email looked like a gas
@@ -196,3 +213,9 @@ Builder notes for `CLAUDE.md` (Decisions, Prompt versions, Waiting on Davi), `do
    your panel, switch off the breaker for that area and don't use that outlet or switch until
    we've looked at it. If wires are down outside, stay well away and call your electric company.
    / I'll call you as soon as I can." (From the review, based on NFPA's electrical safety tips.)
+4. **Remodeling amount suggestions:** setup now offers $10,000 and $25,000 buttons for the
+   "send me anything over" amount when the trade is remodeling (the review's example numbers).
+   Are those the right two, and should any other trade get suggestions? The default stays $2,500.
+5. **Big supplier statements:** a supplier's monthly statement over your amount limit (say
+   "Balance: $3,420.17") goes to Needs you today. Keep that, or let supplier bills (money you owe)
+   skip the amount rule? Kept as it is until you decide; the eval case now expects Needs you.

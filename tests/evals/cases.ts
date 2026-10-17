@@ -561,9 +561,11 @@ export const EVAL_CASES: EvalCase[] = [
     body: "Your October account statement is attached. Balance: $3,420.17.",
     // Round 2 (TW A2): a supplier's statement is a bill the owner pays — whatever it is sorted
     // as, it must never read as money owed TO the owner.
+    // Check 22 P6: the code sends a statement over the owner's amount limit to Needs you (kept
+    // until Davi decides whether big supplier statements should skip the amount rule).
     expect: {
-      category: ["supplier_vendor", "invoice_payment", "noise"],
-      needsOwner: false,
+      category: ["supplier_vendor", "invoice_payment"],
+      needsOwner: true,
       billOwedByBusiness: true,
     },
   }),
@@ -1486,6 +1488,35 @@ export const EVAL_CASES: EvalCase[] = [
       needsOwner: true,
       paymentChange: true,
     },
+  }),
+
+  // ── wave 1: the money limit (Check 39 P2 + Check 22 P6) ──
+  c({
+    id: "w1-heat-pump-rebates",
+    trade: "hvac",
+    fromName: "Jen Moss",
+    fromAddress: "jen.m@example.com",
+    subject: "Heat pump quote",
+    body: "We read Mass Save gives up to $8,500 for whole-home and the HEAT Loan covers up to $25,000 at 0%. Are you in the installer network? Can you give us a quote?",
+    expect: { category: "quote_request", needsOwner: false },
+  }),
+  c({
+    id: "w1-heat-pump-budget",
+    trade: "hvac",
+    fromName: "Raj Patel",
+    fromAddress: "raj@example.com",
+    subject: "Heat pumps",
+    body: "Our budget is $18,000 for the heat pumps. Can you come look this week?",
+    expect: { category: "quote_request", needsOwner: true },
+  }),
+  c({
+    id: "w1-lsa-report-noise",
+    trade: "plumbing",
+    fromName: "Local Services Ads",
+    fromAddress: "reports@ads.example.com",
+    subject: "Your weekly report",
+    body: "This week you've spent $412 of your $3,000 monthly budget. 4 new leads.",
+    expect: { category: "noise", needsOwner: false },
   }),
 
   // ── wave 1: quoted and forwarded text (Check 22 P3) ──

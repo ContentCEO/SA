@@ -28,6 +28,7 @@ import {
   mentionsLegalThreat,
   mentionsRealLegal,
   mentionsWaterSmell,
+  incentiveAmounts,
   PAYMENT_CHANGE_REASON,
   WATER_SMELL_REASON,
 } from "./guards";
@@ -213,6 +214,19 @@ export const MAX_QUOTED_FOR_MODEL_CHARS = 1_500;
 export const SHORT_REPLY_CHARS = 300;
 
 /**
+ * Check 22 P6: Outlook quotes the earlier email under a header block, not "On … wrote:":
+ * "From: …" followed within four lines by "Sent:" or "Date:", and "Subject:".
+ */
+function outlookHeaderAt(lines: string[], i: number): boolean {
+  if (!/^\*?From:\*?\s+\S/i.test(lines[i]!.trim())) return false;
+  const next = lines.slice(i + 1, i + 5).map((l) => l.trim());
+  return (
+    next.some((l) => /^\*?(Sent|Date):\*?\s/i.test(l)) &&
+    next.some((l) => /^\*?Subject:\*?\s?/i.test(l))
+  );
+}
+
+/**
  * Split an email into the newest part and what quoting cut off ("On … wrote:", an Outlook
  * "Original Message", "> " lines). The newest part is what the model sorts; the safety checks
  * read both (Check 22 P3).
@@ -225,7 +239,13 @@ export function splitQuoted(body: string): { kept: string; removed: string } {
     const line = lines[i]!;
     if (
       /^On .+wrote:\s*$/.test(line.trim()) ||
-      /^-{2,}\s*Original Message\s*-{2,}/i.test(line.trim())
+      /^-{2,}\s*Original Message\s*-{2,}/i.test(line.trim()) ||
+      // Check 22 P6: Spanish and Portuguese mail apps, and Outlook's header block.
+      /^El .+escribi[oó]:\s*$/i.test(line.trim()) ||
+      /^Em .+escreveu:\s*$/i.test(line.trim()) ||
+      // Only below something the sender wrote: a form or lead-site email that starts with
+      // labelled "From: / Date: / Subject:" lines is the email itself.
+      (out.some((l) => l.trim()) && outlookHeaderAt(lines, i))
     ) {
       removed.push(...lines.slice(i));
       break;
@@ -274,6 +294,12 @@ export function applyOwnerRules(
     legalThreat?: boolean;
     /** Check 48 P1: asks whether a person or an AI is answering. */
     asksIfAi?: boolean;
+    /**
+     * Check 39 P2 + Check 38 P3: amounts that never count toward the limit (whole dollars): a
+     * rebate's, a loan's or a tax credit's, and ones the owner already wrote on this
+     * conversation (a homeowner repeating the contract total isn't new money).
+     */
+    ignoreAmounts?: readonly number[];
     /** The water smells like rotten eggs, nothing says gas (Check 36 P1). */
     waterSmell?: boolean;
     /** Leads package: the email came through a phone service or a lead website (code-decided). */
@@ -326,7 +352,14 @@ export function applyOwnerRules(
       priority: m.priority === "low" ? "normal" : m.priority,
       hits: ["asks_if_ai"],
     };
-  const overThreshold = m.extracted.dollar_amounts.some((a) => a > ctx.amountThresholdDollars);
+  // Check 22 P6: junk never needs the owner for an amount alone. Check 39 P2 / 38 P3: program
+  // money and the owner's own figures don't count.
+  const ignore = new Set((ctx.ignoreAmounts ?? []).map((a) => Math.round(a)));
+  const overThreshold =
+    m.category !== "noise" &&
+    m.extracted.dollar_amounts.some(
+      (a) => a > ctx.amountThresholdDollars && !ignore.has(Math.round(a)),
+    );
   const confidence = Math.max(0, Math.min(1, m.confidence));
   // Leads package: a lead-site or phone email someone wrote with a job (a phone message about
   // anything but junk or a supplier); an emergency from someone with a job.
@@ -343,15 +376,16 @@ export function applyOwnerRules(
     [m.signals.mentions_refund_or_dispute, "dispute", DISPUTE_REASON],
     [ctx.senderIsVip, "vip", "From someone on your VIP list."],
     [ctx.senderNeedsMe === true, "sender_rule", SENDER_NEEDS_ME_REASON],
-    [
-      overThreshold,
-      "amount",
-      `Mentions more than $${ctx.amountThresholdDollars.toLocaleString("en-US")}.`,
-    ],
+    // Check 38 P3: a new customer's big job reads better than "Mentions more than $2,500".
     [
       ctx.firstTimeSender && m.signals.large_request,
       "big_new_job",
       "New customer asking about a big job.",
+    ],
+    [
+      overThreshold,
+      "amount",
+      `Mentions more than $${ctx.amountThresholdDollars.toLocaleString("en-US")}.`,
     ],
     [emergency, "emergency", EMERGENCY_REASON],
     [!!ctx.waterSmell, "water_smell", WATER_SMELL_REASON],
@@ -442,6 +476,8 @@ export type ClassifyOpts = {
   channel?: { kind: ChannelKind; name: string } | null;
   /** Leads package (B9): the owner's towns; empty = no check. */
   serviceTowns?: readonly string[];
+  /** Check 38 P3: dollar amounts the owner already wrote on this conversation. */
+  ownerAmounts?: readonly number[];
   /**
    * Check 22 P5: the thread is a supplier's (its stored bills are owed BY the business), so
    * "our bank details changed" counts even without an explicit ask.
@@ -670,6 +706,7 @@ export async function classifyEmail(
     paymentChange,
     legalThreat,
     asksIfAi: asksAi,
+    ignoreAmounts: [...incentiveAmounts(allText), ...(opts.ownerAmounts ?? [])],
     waterSmell,
     channel: opts.channel ?? null,
     outsideArea:

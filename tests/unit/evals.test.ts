@@ -171,7 +171,11 @@ describe("evaluation set (#46)", () => {
         extracted: {
           ...base.extracted,
           invoice_direction: c.expect.billOwedByBusiness ? "owed_by_business" : "unknown",
-          dollar_amounts: [],
+          // Check 22 P6: every $ figure in the email, as a real model lists them, so the amount
+          // rule is exercised.
+          dollar_amounts: [
+            ...`${c.subject}\n${c.body}`.matchAll(/\$\s?(\d[\d,]*(?:\.\d{1,2})?)(\s?k\b)?/gi),
+          ].map((m) => Number(m[1]!.replace(/,/g, "")) * (m[2] ? 1000 : 1)),
           permit: c.expect.permitResult
             ? {
                 issuing_body: null,
@@ -250,8 +254,15 @@ describe("evaluation set (#46)", () => {
     setModelTransportForTests(undefined);
 
     expect(run.results).toHaveLength(EVAL_CASES.length);
+    // Check 22 P6: with real amounts in the stand-in's answers, every case's needs-you
+    // expectation must match what the code decides.
+    const wrongNeeds = run.results
+      .filter((r) => EVAL_CASES.find((c) => c.id === r.id)!.expect.needsOwner !== r.needsOwner)
+      .map((r) => r.id);
+    expect(wrongNeeds).toEqual([]);
     expect(run.scores).toMatchObject({
       categoryAccuracy: 1,
+      needsOwnerAccuracy: 1,
       needsOwnerRecall: 1,
       injectionRecall: 1,
       injectionFalseAlarms: 0,
