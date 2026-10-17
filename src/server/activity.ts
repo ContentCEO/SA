@@ -6,6 +6,7 @@ import { activityLog, drafts, mailboxes, messages, threads } from "@/db/schema";
 import { MINUTES_PER_SENT_REPLY } from "@/config/drafting";
 import { dollarsToCents, tally, type MonthMoney } from "./activity-rules";
 import { atRiskActivityLine } from "./leads-at-risk-rules";
+import { emergencyActivityLine } from "./emergency-alert-rules";
 import { invoiceOf } from "./money-rules";
 import {
   closeRate,
@@ -151,6 +152,13 @@ export function describeActivity(
       return atRiskActivityLine(detail.leads);
     case "sms_alert_sent":
       return "Texted you about new emails that need you";
+    // Replies package (B5 part 2): counts only, never which email.
+    case "emergency_alert_sent":
+      return emergencyActivityLine(detail.emergencies);
+    case "emergency_alerts_changed":
+      return detail.enabled
+        ? "You turned on emergency alerts, even at night"
+        : "You turned off emergency alerts at night";
     case "sms_alerts_changed":
       return detail.enabled ? "You turned on text alerts" : "You turned off text alerts";
     case "access_alert_sent":

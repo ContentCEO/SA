@@ -62,13 +62,14 @@ export const SCREEN_MESSAGES = {
     done: { saved: "Saved." },
     error: { unknown: UNKNOWN },
   },
-  "/settings/notifications": { done: {}, error: {} },
+  "/settings/notifications": { done: { saved: "Saved." }, error: {} },
   "/settings/texts": {
     done: {
       sms_code: "Code sent. Type it in below.",
       sms_on: "Text alerts are on.",
       sms_off: "Text alerts are off.",
       sms_removed: "Number removed.",
+      saved: "Saved.",
     },
     error: {
       sms_phone: "That doesn't look like a US mobile number.",
