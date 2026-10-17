@@ -130,8 +130,7 @@ export async function StatusBanner() {
             </>
           ) : null}
           Everything here stays as it is, read-only: Squared Away reads, drafts and sends nothing
-          new. To send replies from Squared Away again, choose a plan — or talk to us first.{" "}
-          <Contact />
+          new. To send replies from Squared Away, choose a plan — or talk to us first. <Contact />
         </>,
         "Choose a plan",
       );

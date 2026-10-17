@@ -1786,6 +1786,8 @@ default, CI too) and refuses a non-local `DATABASE_URL` or an `APP_URL` that isn
     customer still gets a plain thank-you. Same `checkTerms` as review requests (`review: {url:
 null}` flags any link on a plain one); reconcile expires it like a review note; never a job,
     autopilot, batch, earning or `followup_count`.
+  - Privacy policy (same 2026-10-16 date): the trial emails in the Resend list, which trial emails
+    went and whether they were stopped, and which Gmail address a plan pause stopped.
 
 ## Milestones
 

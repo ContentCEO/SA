@@ -53,6 +53,13 @@ export default async function BillingPage(props: PageProps<"/billing">) {
   return (
     <>
       <Headline serif="your plan," heavy="plain and simple." />
+      {onTrial ? (
+        // The trial's side door (Davi, 2026-10-16), and what a plan changes.
+        <p className="text-lg">
+          {TRIAL_NO_SEND_LINE} {TRIAL_SIDE_DOOR_LINE} A plan turns on Send reply in Squared Away,
+          and every reply still waits for your okay.
+        </p>
+      ) : null}
       {errorMsg ? <Notice strong>{errorMsg}</Notice> : null}
 
       {waitingForStripe ? (
@@ -131,13 +138,7 @@ export default async function BillingPage(props: PageProps<"/billing">) {
             <h2 id="choose" className="text-xl font-black">
               Choose a plan
             </h2>
-            {onTrial ? (
-              // The trial's side door (Davi, 2026-10-16), and what a plan changes.
-              <p>
-                {TRIAL_NO_SEND_LINE} {TRIAL_SIDE_DOOR_LINE} A plan turns on Send reply here, and
-                every reply still waits for your okay.
-              </p>
-            ) : null}
+
             {terms.includeSetupFee ? (
               <p>
                 Every plan starts with a one-time{" "}

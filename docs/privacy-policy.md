@@ -120,14 +120,16 @@ on your browser). The notification we send through it is empty; your phone then 
 counts to show, so no counts, names or email content pass through the push service.
 
 **Payments:** card details are handled by Stripe and never reach us. We keep your Stripe customer
-and subscription IDs and your plan.
+and subscription IDs and your plan, and, when your plan covers fewer Gmail addresses than you've
+connected, which of them is paused (nothing in a paused one is read or deleted).
 
 **What happens in the app:** a record of actions (for example "draft created", "reply sent",
 "Gmail connected"), including for each reply you approved when you approved it and whether from a
 phone or a computer; daily counts of AI use and estimated cost; and, for replies you edited
 before sending, counts of what you changed (how many words, whether you changed the greeting or
-sign-off) and the change in tone, which we use to suggest updates to your writing style. These
-records hold IDs, counts and yes/no marks, not email text.
+sign-off) and the change in tone, which we use to suggest updates to your writing style; and
+which trial emails we sent you and whether you stopped them. These records hold IDs, counts and
+yes/no marks, not email text.
 
 **Cookies:** we use only the cookies needed to keep you signed in, to protect the Gmail connection
 step from forgery, and to remember for a few minutes that you ticked "I agree" while Google signs
@@ -223,8 +225,9 @@ We use these service providers. Each gets only what it needs:
   doesn't store it. Stripe saves that address, and the name you enter there, on its customer record
   of you.
 - **Resend** — delivers our emails to you (your invite with the sign-in link, a one-time "your
-  first drafts are ready" email, the morning summary, the monthly summary and the Gmail-access
-  alert and reminder), which never contain a customer's name or words; the email confirming you
+  first drafts are ready" email, during your trial a short email on day 2 and on the last day
+  and one a week after it ends unless you stop them, the morning summary, the monthly summary
+  and the Gmail-access alert and reminder), which never contain a customer's name or words; the email confirming you
   joined the waitlist; and four kinds of notice to us: when someone joins the waitlist or asks for
   a Growth call (each says only that a sign-up or request came in, with no name, number or email
   address), when someone pays (it names only the plan and whether the setup fee was included),

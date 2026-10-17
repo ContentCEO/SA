@@ -32,7 +32,6 @@ import { createTestDb } from "../support/db";
 // Eastern is UTC-4 in October 2026 (EDT), Pacific UTC-7 (PDT).
 const MON_3PM_ET = new Date("2026-10-12T19:00:00Z");
 const THU_3PM_ET = new Date("2026-10-15T19:00:00Z");
-const H = 3_600_000;
 
 const trial = (over: Partial<TrialEmailInput> = {}): TrialEmailInput => ({
   status: "evaluating",
