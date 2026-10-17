@@ -185,3 +185,27 @@ describe("homepage feature cards (Check 34 P2, Check 6 P5, Check 34 P3)", () => 
     expect(body).toContain("I called them");
   });
 });
+
+describe("plain words on the public pages (Check 6 P9, P10, Check 34 P5)", () => {
+  const home = () => readFileSync("src/app/page.tsx", "utf8").replace(/\s+/g, " ");
+
+  it("the app is added to the home screen; no app store is named", () => {
+    expect(home()).toContain("add it to your phone&apos;s home screen");
+    expect(home()).not.toMatch(/App Store|as an app on your phone/);
+    for (const f of files("src")) {
+      expect(readFileSync(f, "utf8"), f).not.toMatch(/\bApp Store\b|download the app/i);
+    }
+  });
+
+  it("one name for the join action, and no office jargon", () => {
+    expect(home()).not.toContain("Get on the list");
+    expect(home()).toContain("Join the waitlist");
+    expect(home()).not.toContain("onboard");
+  });
+
+  it("sign-in says what we keep from Google", () => {
+    const signin = readFileSync("src/app/signin/page.tsx", "utf8").replace(/\s+/g, " ");
+    expect(signin).toContain("From your Google sign-in we keep only your name and email address.");
+    expect(signin).not.toContain("only shares your name");
+  });
+});

@@ -42,7 +42,7 @@ export const waitlistInput = z.object({
     .email("That doesn't look like an email address."),
   phone: optional(40),
   trade: z.enum(tradeEnum.enumValues, { message: "Pick your trade." }),
-  teamSize: z.enum(TEAM_SIZES, { message: "Pick how many people work with you." }),
+  teamSize: z.enum(TEAM_SIZES, { message: "Pick how many people are in the business." }),
   note: optional(1000),
   /** Plan #47: the code from a referral link (?ref=). Anything malformed is dropped, not an error. */
   referralCode: z

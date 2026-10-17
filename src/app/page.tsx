@@ -114,9 +114,9 @@ export default async function HomePage(props: PageProps<"/">) {
             </Link>
             <Link
               href="#waitlist"
-              className="inline-flex min-h-tap items-center rounded-lg bg-charcoal px-4 font-semibold text-offwhite"
+              className="inline-flex min-h-tap items-center rounded-lg bg-charcoal px-3 font-semibold whitespace-nowrap text-offwhite"
             >
-              Get on the list
+              Join the waitlist
             </Link>
           </nav>
         </div>
@@ -151,7 +151,7 @@ export default async function HomePage(props: PageProps<"/">) {
                   </Link>
                 </div>
                 <p className="text-slate">
-                  Works with Gmail · On the web or as an app on your phone ·{" "}
+                  Works with Gmail · On the web, or add it to your phone&apos;s home screen ·{" "}
                   {capitalized(dayAdjective(pricing.evaluationDays))} trial on your real inbox.
                 </p>
                 <Link
@@ -259,7 +259,7 @@ export default async function HomePage(props: PageProps<"/">) {
               <div className="flex flex-col gap-4">
                 <Headline as="h2" serif="get on the list," heavy="we'll set you up." />
                 <p className="text-xl leading-relaxed">
-                  We onboard a few shops at a time and set each one up by hand, so it works properly
+                  We take on a few shops at a time and set each one up by hand, so it works properly
                   from the first morning.
                 </p>
                 <div className="flex flex-col gap-2">

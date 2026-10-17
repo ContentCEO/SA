@@ -27,10 +27,11 @@ test("home page: promise, pricing from config, and a way in", async ({ page }) =
     await expect(pricing.getByText(firstChargeLine(id, true), { exact: true })).toBeVisible();
   }
   await expect(pricing.getByText("Plus sales tax where it applies.")).toHaveCount(0);
-  await page
-    .getByRole("navigation", { name: "Site" })
-    .getByRole("link", { name: "Sign in" })
-    .click();
+  // Check 6 P9: one name for the join action.
+  const nav = page.getByRole("navigation", { name: "Site" });
+  await expect(nav.getByRole("link", { name: "Join the waitlist" })).toBeVisible();
+  await expect(nav.getByRole("link", { name: "Get on the list" })).toHaveCount(0);
+  await nav.getByRole("link", { name: "Sign in" }).click();
   await expect(page).toHaveURL(/\/signin$/);
 
   await page.goto("/");
@@ -54,6 +55,13 @@ test("home page: the queue picture shows Send reply, and the trade cards come fi
     level: 3,
   });
   await expect(cards.first()).toHaveText("Knows your trade");
+  // Check 6 P9: the header's join button stays on one line next to the wordmark and Sign in.
+  const join = page.getByRole("navigation", { name: "Site" }).getByRole("link", {
+    name: "Join the waitlist",
+  });
+  expect((await join.boundingBox())!.height).toBeLessThanOrEqual(48);
+  // Check 34 P5: it's added to the home screen, not found in an app store.
+  await expect(page.getByText(/add it to your phone's home screen/)).toBeVisible();
   const overflow = await page.evaluate(
     () => document.documentElement.scrollWidth > document.documentElement.clientWidth,
   );
@@ -79,7 +87,7 @@ test.describe("waitlist form", () => {
     await expect(form.getByLabel(/Business email/)).toHaveAttribute("autocomplete", "email");
     await expect(
       form.getByText(
-        "Gmail or Google Workspace today. On Outlook? Join anyway — it's on the list.",
+        "Gmail, or your own business address if it runs on Google. On Outlook? Join anyway, it's on the list.",
       ),
     ).toBeVisible();
     await expect(form.getByLabel(/^Phone/)).toHaveAttribute("inputmode", "tel");

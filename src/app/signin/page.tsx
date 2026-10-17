@@ -49,8 +49,8 @@ export default async function SignInPage(props: PageProps<"/signin">) {
           .
         </p>
         <p className="text-sm text-muted-foreground">
-          Signing in only shares your name and email address. Connecting Gmail is a separate step,
-          and we&apos;ll explain it first.
+          From your Google sign-in we keep only your name and email address. Connecting Gmail is a
+          separate step, and we&apos;ll explain it first.
         </p>
       </main>
       <SiteFooter growthLink />

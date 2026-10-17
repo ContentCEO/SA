@@ -2,13 +2,20 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { faqs, features, pricingPromise, promiseBand } from "@/components/marketing/home-copy";
+import {
+  faqs,
+  features,
+  pricingPromise,
+  promiseBand,
+  steps,
+} from "@/components/marketing/home-copy";
 import { PlanCards } from "@/components/marketing/plan-cards";
 import { UNDO_WINDOW_SECONDS } from "@/config/drafting";
 import { formatDollars, pricing } from "@/config/pricing";
 import { EARN_THRESHOLD, GRACE_MINUTES, MAX_FOLLOWUPS } from "@/config/rules";
 import { numberWord } from "@/lib/number-words";
 import { firstChargeLine, PLAN_IDS } from "@/server/billing-rules";
+import { planFeatureLines, SIGN_INS_PER_PLAN } from "@/server/plan-features";
 import { TRIAL_NO_SEND_LINE, TRIAL_SIDE_DOOR_LINE } from "@/server/trial-email-rules";
 
 /** The homepage's words, held to what the code does (wave 1, Homepage words). */
@@ -114,5 +121,57 @@ describe("rule numbers come from their constants (Check 35 P5)", () => {
 
   it("numberWord spells one to ten and leaves larger numbers as digits", () => {
     expect([1, 2, 10, 11, 14].map(numberWord)).toEqual(["one", "two", "ten", "11", "14"]);
+  });
+});
+
+describe("one sign-in per shop (Check 42 P7)", () => {
+  it("the FAQ says plans add inboxes, not logins, from the config", () => {
+    const a = faq("Can my office manager use it too?");
+    expect(a).toContain("Today each shop has one sign-in, yours.");
+    const more = Object.values(pricing.plans).filter((p) => p.mailboxLimit > 1);
+    for (const p of more) {
+      expect(a).toContain(p.name);
+      expect(a).toContain(String(p.mailboxLimit));
+    }
+    expect(a).toContain("not more logins");
+    expect(a).not.toContain('"');
+  });
+
+  it("every plan line says its inboxes and one sign-in", () => {
+    for (const id of PLAN_IDS) {
+      const n = pricing.plans[id].mailboxLimit;
+      expect(planFeatureLines(id)[0]).toBe(
+        `${n} Gmail inbox${n === 1 ? "" : "es"} · ${SIGN_INS_PER_PLAN} sign-in`,
+      );
+    }
+    expect(SIGN_INS_PER_PLAN).toBe(1);
+  });
+
+  it("no public copy sells team members, seats or users per plan while one owner is all there is", () => {
+    const schema = readFileSync("src/db/schema.ts", "utf8");
+    // One owner per workspace, and no members table yet.
+    expect(schema).toContain('uniqueIndex("workspaces_owner_uq")');
+    const hasMembers = /pgTable\(\s*"(workspace_)?members"/.test(schema);
+    if (hasMembers) return;
+    for (const f of [
+      "src/app/page.tsx",
+      "src/components/marketing/home-copy.ts",
+      "src/components/marketing/plan-cards.tsx",
+      "src/server/plan-features.ts",
+    ]) {
+      expect(flat(readFileSync(f, "utf8")), f).not.toMatch(
+        /team members?|\bseats?\b|users? per|per user|logins? for your (team|crew)/i,
+      );
+    }
+  });
+});
+
+describe("plain words (Check 6 P8)", () => {
+  it("step 2 names every category and says voice, not words", () => {
+    const body = steps.find((s) => s.n === "2")!.body;
+    expect(body).toContain(
+      "Every new email is sorted: quote, question, scheduling, invoice, supplier, complaint or junk.",
+    );
+    expect(body).toContain("Replies are drafted in your own voice and saved as real Gmail drafts.");
   });
 });

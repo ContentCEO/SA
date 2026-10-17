@@ -5,7 +5,8 @@ import { numberWord } from "@/lib/number-words";
 import { capitalized, daysPhrase } from "@/lib/trial-words";
 import { pricing } from "@/config/pricing";
 import { TRIAL_NO_SEND_LINE } from "@/server/trial-email-rules";
-import { autopilotPlanNames } from "@/server/plan-features";
+import { siteConfig } from "@/config/site";
+import { autopilotPlanNames, moreInboxesLine } from "@/server/plan-features";
 import { QUOTE_STAGES, stageLabel } from "@/server/quote-rules";
 
 /**
@@ -22,7 +23,8 @@ export const steps = [
   {
     n: "2",
     title: "It sorts and drafts",
-    body: "Every email is sorted — quote, question, scheduling, invoice, complaint, junk — and replies are written in your own words, as real Gmail drafts.",
+    // Check 6 P8: written by AI in the owner's style, so "voice", not "words".
+    body: "Every new email is sorted: quote, question, scheduling, invoice, supplier, complaint or junk. Replies are drafted in your own voice and saved as real Gmail drafts.",
   },
   {
     n: "3",
@@ -121,6 +123,11 @@ export const faqs = [
   {
     q: "Does it work with Outlook?",
     a: "Gmail only for now, including Google Workspace. Outlook is on the list — join the waitlist anyway.",
+  },
+  {
+    q: "Can my office manager use it too?",
+    // Check 42 P7: one sign-in per shop today (workspaces_owner_uq); plans add inboxes.
+    a: `Today each shop has one sign-in, yours. ${moreInboxesLine()}, not more logins. If someone in your office answers email, connect the office inbox, and call ${siteConfig.operator.split(" ")[0]} to talk through who taps Send.`,
   },
   {
     q: "What does the trial look like?",
