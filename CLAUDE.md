@@ -107,6 +107,8 @@ Davi runs several builder sessions at once. The build order for review prompts i
 - Never log tokens, email bodies, or customer personal details. Log prompt version, model,
   tokens, latency only.
 - Every gate (sending, plan limits, autopilot guardrails) is enforced server-side and has a test.
+- A new send path needs Davi's okay and a new allowlist row in `tests/unit/security-surface.test.ts`
+  ("Only two places can send mail": `sendDraft` in drafts.ts and `practiceSend` in practice.ts).
 - Business facts from `src/config/site.ts`; `SUPPORT_EMAIL` and `APP_URL` from env, never hardcoded.
 - Write tests with features. Guardrail tests are the product.
 

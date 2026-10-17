@@ -12,6 +12,7 @@ import {
   localFunctions,
   otherExports,
   parse,
+  parseText,
   rel,
   ROOT,
   sourceFiles,
@@ -1186,5 +1187,122 @@ describe("Secrets at rest (re-confirmed in the M11 audit)", () => {
     expect(src).toContain("const value = encryptSecret(endpoint.secret);");
     expect(src).toContain(".values({ key: WEBHOOK_SECRET_KEY, value })");
     expect(src).toContain("return row ? decryptSecret(row.value) : null;");
+  });
+});
+
+/**
+ * Check 31 P1: the core promise ("nothing leaves the inbox without the owner's okay") rests on
+ * the only two Gmail send calls: writer.sendDraft inside sendDraft (behind canSend) and
+ * writer.sendMessage inside practiceSend (to the owner only, checked by onlyToOwner). A third
+ * call fails here. A new send path needs Davi's okay and a new row in SEND_SITES.
+ */
+describe("Only two places can send mail", () => {
+  const SEND_METHODS = new Set(["sendDraft", "sendMessage"]);
+  /** file → enclosing function, with the reason it may send. */
+  const SEND_SITES: Array<{ site: string; why: string }> = [
+    {
+      site: "src/server/drafts.ts → sendDraft",
+      why: "the owner's tap (or earned autopilot), behind canSend and every send check",
+    },
+    {
+      site: "src/server/practice.ts → practiceSend",
+      why: "a practice copy to the owner's own address only, checked by onlyToOwner",
+    },
+  ];
+  /** Where the writer methods and their types are defined. */
+  const DEFINED_IN = (file: string) => file.startsWith("src/mailbox/");
+
+  /** The nearest named function around a node ("(top level)" if none). */
+  function enclosingName(n: ts.Node): string {
+    for (let p: ts.Node | undefined = n.parent; p; p = p.parent) {
+      if ((ts.isFunctionDeclaration(p) || ts.isMethodDeclaration(p)) && p.name) {
+        return p.name.getText();
+      }
+      if (
+        (ts.isArrowFunction(p) || ts.isFunctionExpression(p)) &&
+        ts.isVariableDeclaration(p.parent) &&
+        ts.isIdentifier(p.parent.name)
+      ) {
+        return p.parent.name.text;
+      }
+    }
+    return "(top level)";
+  }
+
+  /**
+   * Every use of a writer send method in a file: `x.sendDraft`, `x?.sendMessage`,
+   * `x["sendMessage"]`, and `const { sendMessage } = x` (called or not: a method passed along
+   * can be called anywhere).
+   */
+  function sendUses(sf: ts.SourceFile): string[] {
+    const out: string[] = [];
+    walk(sf, (n) => {
+      const hit =
+        (ts.isPropertyAccessExpression(n) && SEND_METHODS.has(n.name.text)) ||
+        (ts.isElementAccessExpression(n) &&
+          ts.isStringLiteralLike(n.argumentExpression) &&
+          SEND_METHODS.has(n.argumentExpression.text)) ||
+        (ts.isBindingElement(n) && SEND_METHODS.has((n.propertyName ?? n.name).getText()));
+      if (hit) out.push(enclosingName(n));
+    });
+    return out;
+  }
+
+  /** String literals naming a Gmail send endpoint. */
+  function sendEndpoints(sf: ts.SourceFile): string[] {
+    const out: string[] = [];
+    walk(sf, (n) => {
+      if (
+        (ts.isStringLiteralLike(n) || ts.isTemplateLiteralToken(n)) &&
+        /\/(messages|drafts)\/send/.test(n.text)
+      ) {
+        out.push(n.text);
+      }
+    });
+    return out;
+  }
+
+  it("finds exactly the two allowed send calls in src/", () => {
+    const found: string[] = [];
+    for (const f of ALL) {
+      const file = rel(f);
+      if (DEFINED_IN(file)) continue;
+      for (const fn of sendUses(parse(f))) found.push(`${file} → ${fn}`);
+    }
+    expect(found.sort()).toEqual(SEND_SITES.map((s) => s.site).sort());
+    for (const s of SEND_SITES) expect(s.why.length, s.site).toBeGreaterThan(10);
+  });
+
+  it("names Gmail's send endpoints only in the Gmail client", () => {
+    const found: string[] = [];
+    for (const f of ALL) {
+      const file = rel(f);
+      for (const text of sendEndpoints(parse(f))) found.push(`${file}: ${text}`);
+    }
+    expect(found.map((x) => x.split(":")[0]).every((f) => f === "src/mailbox/gmail/api.ts")).toBe(
+      true,
+    );
+    expect(found.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("self-test: catches the four call shapes, and the endpoint strings", () => {
+    const uses = (code: string) => sendUses(parseText("fixture.ts", code));
+    expect(uses("async function quickReply(obj) { await obj.sendMessage(x); }")).toEqual([
+      "quickReply",
+    ]);
+    expect(uses("const fire = async (w) => { await w.sendDraft(id); };")).toEqual(["fire"]);
+    expect(
+      uses("function nudge(writer) { const { sendMessage } = writer; return sendMessage(x); }"),
+    ).toEqual(["nudge"]);
+    expect(uses("async function maybe(writer) { await writer?.sendDraft(id); }")).toEqual([
+      "maybe",
+    ]);
+    expect(uses('async function odd(w) { await w["sendMessage"](x); }')).toEqual(["odd"]);
+    expect(uses("const s = { sendMessage: 1 }; send(s);")).toEqual([]);
+    expect(
+      sendEndpoints(
+        parseText("f.ts", 'fetch(base + "/messages/send"); fetch(`${b}/drafts/send`);'),
+      ),
+    ).toHaveLength(2);
   });
 });
