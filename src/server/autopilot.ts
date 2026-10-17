@@ -123,6 +123,12 @@ export type GuardrailInput = {
   leadChannel?: boolean;
   /** Leads package: the reply goes to an email-to-text gateway or a phone-number address. */
   textAddress?: boolean;
+  /**
+   * Replies package (draft.v7): a first reply to someone the owner never wrote to. Davi said
+   * no to any instant reply to a new lead, so it always waits for a tap — even when an old
+   * forward to that address makes them look known.
+   */
+  firstReply?: boolean;
 };
 
 /** Layer 3. Every reason this email must wait for the owner; empty = may go. */
@@ -155,6 +161,7 @@ export function guardrailReasons(g: GuardrailInput): string[] {
   if (g.ownerMoved) out.push("You chose this kind yourself, so it waits for you.");
   if (g.leadChannel) out.push("Lead-site and voicemail emails always wait for you.");
   if (g.textAddress) out.push("That address may turn into a text message, so it waits for you.");
+  if (g.firstReply) out.push("First replies to new customers always wait for you.");
   return out;
 }
 
@@ -369,6 +376,8 @@ async function blockers(row: NonNullable<Awaited<ReturnType<typeof loadForAutopi
     ownerMoved: thread.categoryManual != null && thread.categoryManual !== extracted.model_category,
     leadChannel: thread.leadChannel != null,
     textAddress: isEmailToTextAddress(draft.toAddress) || looksLikePhoneAddress(draft.toAddress),
+    // Any stored opening means the drafter was told it's a first contact (even "not_first").
+    firstReply: draft.opening != null,
   });
 }
 

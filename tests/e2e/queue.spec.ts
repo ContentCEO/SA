@@ -540,3 +540,44 @@ test("a typical draft's Send reply is on the first screen of its card (outside r
   await expect(card.getByRole("form", { name: "Quick changes" })).toBeVisible();
   await expect(card.getByLabel("Tell it what to change")).toBeVisible();
 });
+
+test("a first reply to a new lead says so and offers other ways to reply (replies package)", async ({
+  page,
+  context,
+}) => {
+  const owner = await seedOwner({ mailbox: true, backfilled: true });
+  const { quote, draft } = await seedQueue(owner.mailboxId!);
+  await testDb
+    .update(schema.drafts)
+    .set({ opening: "details", flags: [] })
+    .where(eq(schema.drafts.id, draft.id));
+  await setWorkspace(owner.workspaceId, { status: "active", setupPaidVia: "stripe" });
+  await signInAs(context, owner);
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.goto(`/queue?t=${quote.t.id}#t-${quote.t.id}`);
+  const card = page.getByRole("article", { name: "Draft reply to Priya" });
+  await expect(card).toContainText("First reply: asks 2 questions · they described the job");
+  const others = card.getByRole("form", { name: "Other ways to reply" });
+  for (const name of ["Ask a few questions", "Offer to come take a look", "Short and friendly"]) {
+    const chip = others.getByRole("button", { name });
+    await expect(chip).toBeVisible();
+    expect((await chip.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+  }
+  // Send reply still sits on the card's first screen, above the chips and the tab bar.
+  await settled(page);
+  const send = card.getByRole("button", { name: "Send reply" });
+  await expect(send).toBeInViewport({ ratio: 1 });
+  expect((await send.boundingBox())!.y).toBeLessThan(
+    (await others.getByRole("button", { name: "Ask a few questions" }).boundingBox())!.y,
+  );
+  const overflow = await page.evaluate(
+    () => document.documentElement.scrollWidth > document.documentElement.clientWidth,
+  );
+  expect(overflow).toBe(false);
+
+  // A read-only account sees the draft, never the chips.
+  await setWorkspace(owner.workspaceId, { status: "evaluation_expired" });
+  await page.reload();
+  await expect(card).toContainText("First reply: asks 2 questions");
+  await expect(card.getByRole("form", { name: "Other ways to reply" })).toHaveCount(0);
+});

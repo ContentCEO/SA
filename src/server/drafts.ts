@@ -796,22 +796,24 @@ export async function createDraftForThread(
   // Replies package (draft.v7): a first reply to someone the owner never wrote to — on any
   // thread, from any mailbox, a side email to the crew aside — opens warmly and takes a shape
   // from what they said. An ordinary reply about a job only; the gas safety note stays as is.
-  const firstContact = isFirstContact({
+  const contact = {
     followup,
     purpose,
     category: thread.category,
     gasSmell: marks.gas_smell === true,
     handledOffline: thread.handledOfflineAt != null,
-    ownerWroteBefore:
-      !followup && purpose === null
-        ? await ownerWroteBefore({
-            workspaceId: workspace.id,
-            threadId,
-            addresses: [to, customer.fromAddress],
-            before: now,
-          })
-        : true,
-  });
+  };
+  // The database is only asked when everything else already says "first contact". The
+  // customer is their reply address, as everywhere else (B1): a website form's robot From is
+  // shared by every lead, so an old reply to the robot never makes a new person "known".
+  const firstContact =
+    isFirstContact({ ...contact, ownerWroteBefore: false }) &&
+    !(await ownerWroteBefore({
+      workspaceId: workspace.id,
+      threadId,
+      addresses: [to],
+      before: now,
+    }));
   const daysQuiet = Math.max(1, Math.round((now.getTime() - last.sentAt.getTime()) / 86_400_000));
   const wsBlock = workspaceBlock(ctx);
   const convo = conversationBlock({

@@ -300,6 +300,22 @@ describe("first replies: drafting (stand-in model)", () => {
     expect(b.calls[0]!.user).not.toContain("FIRST CONTACT");
   });
 
+  it("an old reply to a website form's robot never makes the next form lead 'known'", async () => {
+    const robot = "no-reply@forms.example";
+    const old = await lead({}, robot);
+    await email(old.id, "out", hoursAgo(400), { to: [robot] });
+    const t = await lead({}, robot);
+    await database
+      .update(messages)
+      .set({ replyToHeader: { address: "new.person@customer.example" } })
+      .where(eq(messages.threadId, t.id));
+    const { transport, calls } = fakeTransport([reply(WARM)]);
+    setModelTransportForTests(transport);
+    await createDraftForThread(t.id, { trigger: "auto", ...deps() });
+    expect(calls[0]!.user).toContain(FIRST_CONTACT_TASK);
+    expect((await draftOf(t.id))!.toAddress).toBe("new.person@customer.example");
+  });
+
   it("a forward to the crew isn't writing to the customer: still a first contact", async () => {
     const t = await lead();
     await email(t.id, "out", hoursAgo(0.8), { to: ["mike@shop.com"], subject: "Fwd: Deck" });
@@ -403,7 +419,7 @@ describe("first replies: drafting (stand-in model)", () => {
   });
 
   describe("'Other ways to reply'", () => {
-    async function firstReply(opening = "details") {
+    async function firstReply(opening: ModelReplyDraft["opening"] = "details") {
       const t = await lead();
       setModelTransportForTests(fakeTransport([reply(WARM, { opening })]).transport);
       await createDraftForThread(t.id, { trigger: "auto", ...deps() });

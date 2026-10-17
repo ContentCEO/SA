@@ -38,7 +38,7 @@ export async function knownCustomer(
  * wrote" as `knownCustomer` (their own sent mail as synced; an unsent Gmail draft never
  * counts), widened to every mailbox and to a reply sent from the app that sync hasn't stored
  * yet, and narrowed by `sideEmailSql`: a forward to the crew isn't writing to the customer.
- * `addresses` are the customer's (the reply address and the sender); lowercased here.
+ * `addresses` are the customer's (their reply address); lowercased here.
  * False means a first contact.
  */
 export async function ownerWroteBefore(p: {

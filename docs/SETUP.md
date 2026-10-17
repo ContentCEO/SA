@@ -244,14 +244,18 @@ or query strings, user reduced to an id, email addresses masked. No tracing or s
 
 Owners can opt in to a text when a new quote request or an email that needs them arrives. Texts
 are counts plus a link only (no names, no email text), confirmed with a 6-digit code, quiet from
-9pm–7am in the owner's time zone, max one per 10 minutes and 10 a day. Costs: about $1.15/month
+9pm–7am in the owner's time zone, max one per 10 minutes and 10 a day. An emergency email (a leak,
+no heat, no power, a gas smell) is the one exception while the owner leaves "Emergencies, even at
+night" on (it's on by default): "An emergency email just came in." right away, night or day, once
+per conversation, at most 3 a night and 6 a day (phone notifications follow the same switch). Costs: about $1.15/month
 for the number plus about $0.01 per text, and a one-time US carrier (A2P 10DLC) registration.
 
 1. twilio.com → sign up → upgrade the account (add a card).
 2. Phone Numbers → Buy a number (local, SMS-capable).
 3. Messaging → Regulatory compliance → **A2P 10DLC**: register the brand (your business) and a
    campaign. Use case "Account notifications"; sample message
-   `Squared Away: 1 new quote request needs you. Open: https://…/queue`; opt-in = "the business
+   `Squared Away: 1 new quote request needs you. Open: https://…/queue` (and a second one,
+   `Squared Away: An emergency email just came in. Open: https://…/queue`); opt-in = "the business
    owner enters their own mobile number in Settings and confirms a texted code". Approval takes
    days; texts may be blocked by carriers until it's approved.
 4. Messaging → Services → Create → add the number to the service. Opt-out (STOP/HELP) handling is
