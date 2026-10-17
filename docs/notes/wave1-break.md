@@ -69,3 +69,18 @@
   account used 80% of today's AI limit" once per account per UTC day (no account named; link
   /admin; 5 s timeout, never fails the call). security-surface's route table has the new
   "shared-secret" guard. SETUP.md §6g + two env rows; `.env.example` has both names.
+- **Check 50 P6 ("Ready for paying owners" on /admin):** pure `launchChecks(env, facts)` in
+  `src/server/launch-ready.ts` (7 automatic rows from env names and safe facts: APP_URL not
+  *.vercel.app, EMAIL_FROM not resend.dev, SUPPORT_EMAIL set, Stripe key live / test / no key,
+  a webhook secret in env or stored by Connect Stripe, INNGEST_SIGNING_KEY set, VERCEL_ENV
+  production; 10 hand rows ticked by Davi). Ticks = `app_settings` `launch_tick:<key>` (ISO date)
+  via `tickLaunchAction` (requireAdmin; logs `launch_ticked {key}` only); `loadLaunchFacts` never
+  selects the webhook secret. Box (`src/app/(app)/admin/launch-ready.tsx`) sits under the System
+  box: "N of M done", Done / Not yet (inverted) / Check by hand (outlined), a 44px Done button on
+  un-ticked hand rows. No gate reads the ticks; there is no Undo (a mistaken tick is fixed by
+  deleting the app_settings row).
+- **docs/LAUNCH.md (intended text, for the integrator):** under "Check the background jobs after
+  the merge" add: "Optional but recommended: point a free uptime monitor at /api/health/deep
+  (docs/SETUP.md §6g). It emails you 'Background jobs look stopped' at most once an hour, even
+  when Inngest itself is down." And near the top: "/admin → Ready for paying owners lists what's
+  left; tick the hand rows there as you finish them."

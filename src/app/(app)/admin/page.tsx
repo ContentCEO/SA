@@ -29,7 +29,11 @@ import {
   testUserAddedAction,
   resetTestPaymentsAction,
   setPlanAction,
+  tickLaunchAction,
 } from "./actions";
+import { LaunchReady } from "./launch-ready";
+import { launchChecks } from "@/server/launch-ready";
+import { loadLaunchFacts } from "@/server/launch-ticks";
 import { PendingButton } from "@/components/app/pending-button";
 import {
   salesTaxStatus,
@@ -110,6 +114,7 @@ const done: Record<string, string> = {
   pause: "Account paused.",
   resume: "Account resumed.",
   plan: "Plan saved.",
+  launch_ticked: "Marked done.",
   stripe_test:
     "Stripe connected in TEST mode: prices, billing portal and payment notifications are set up. Use card 4242 4242 4242 4242 to try it.",
   stripe_live: "Stripe connected in LIVE mode. Real cards will be charged.",
@@ -479,6 +484,7 @@ export default async function AdminPage(props: PageProps<"/admin">) {
     termsBoxOff,
     growthClientCount,
     modelsDown,
+    launchFacts,
   ] = await Promise.all([
     adminOverview(now),
     countWorkspaces(),
@@ -492,6 +498,7 @@ export default async function AdminPage(props: PageProps<"/admin">) {
     termsBoxOffSince(),
     countGrowthClients(),
     modelsDownToday(now),
+    loadLaunchFacts(),
   ]);
   const growthStates = await growthStateForEmails(waiting.map((w) => w.email));
   const today = adminToday(now);
@@ -520,8 +527,7 @@ export default async function AdminPage(props: PageProps<"/admin">) {
   // Check 16 P1: one stuck inbox inverts the box, even when the others are fine.
   const troubleLines = systemTroubleLines(system);
   // Check 48 P3: a model Anthropic said was missing today. Model names and times only.
-  const systemInverted =
-    system.jobsLookStopped || troubleLines.length > 0 || modelsDown.length > 0;
+  const systemInverted = system.jobsLookStopped || troubleLines.length > 0 || modelsDown.length > 0;
 
   return (
     <>
@@ -580,6 +586,8 @@ export default async function AdminPage(props: PageProps<"/admin">) {
           </p>
         ) : null}
       </section>
+
+      <LaunchReady rows={launchChecks(process.env, launchFacts)} tickAction={tickLaunchAction} />
 
       <section aria-labelledby="accounts" className="flex flex-col gap-3">
         <h2 id="accounts" className="text-xl font-black">
