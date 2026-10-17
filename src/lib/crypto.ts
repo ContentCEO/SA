@@ -1,4 +1,5 @@
 import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
+import { assertPreviewSafe } from "@/config/environment-guard";
 
 /**
  * AES-256-GCM for secrets at rest (Gmail refresh tokens).
@@ -10,6 +11,8 @@ const IV_BYTES = 12;
 
 function loadKey(raw = process.env.TOKEN_ENCRYPTION_KEY): Buffer {
   if (!raw) throw new Error("TOKEN_ENCRYPTION_KEY is not set. See .env.example.");
+  // Check 26 P2: a preview holding production's key (or database) never decrypts anything.
+  assertPreviewSafe({ ...process.env, TOKEN_ENCRYPTION_KEY: raw });
   const key = Buffer.from(raw, "base64");
   if (key.length !== 32) throw new Error("TOKEN_ENCRYPTION_KEY must be 32 bytes, base64-encoded.");
   return key;

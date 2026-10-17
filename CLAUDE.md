@@ -1761,6 +1761,12 @@ Davi runs several builder sessions at once. The build order for review prompts i
   Files API until `ALLOWED_DATA_PATHS` (`src/config/models.ts`) turns one on with a policy update
   and a `TERMS_VERSION` bump; no "Covered Model" (30-day retention); `fetch` only to hosts tied to
   a privacy-policy line; no other AI SDK. `tests/unit/data-paths.test.ts` enforces it.
+- **Preview guard (Check 26 P2, 2026-10-17):** `previewGuard` (`src/config/environment-guard.ts`,
+  pure) runs in `db()`, `loadKey()` and `/api/health`: on `VERCEL_ENV=preview` a database host,
+  `TOKEN_ENCRYPTION_KEY` or `AUTH_SECRET` whose sha256 is production's throws "This preview is
+  pointed at production. See docs/LAUNCH.md step 2." (no values) and health answers 503
+  `preview_uses_production`. Fingerprint lists ship empty (blocks nothing; see Waiting on Davi);
+  `pnpm fingerprint [env file]` prints the hashes.
 
 ## Milestones
 
@@ -1783,6 +1789,11 @@ Davi runs several builder sessions at once. The build order for review prompts i
 
 ## Waiting on Davi
 
+- **Preview guard fingerprints (Check 26 P2):** `src/config/environment-guard.ts` ships with empty
+  `PRODUCTION_DB_HOST_SHA256` / `PRODUCTION_KEY_SHA256S`, so it blocks nothing yet. Either Davi
+  supplies production's fingerprints (`pnpm fingerprint <pulled env file>` prints hashes only;
+  `docs/LAUNCH.md` step 2, "The preview guard"), or this becomes moot once previews have their own
+  database and keys (LAUNCH.md step 2a–2e, the real fix). Never read the values to make them.
 - **Leads package (2026-10-16):** (1) **Privacy lines — merge blocker:** approve the new lines in
   `docs/privacy-policy.md` (lead source / done / fixed marks, towns, Call / Text reads the number
   without storing it, no drafts to lead sites / voicemails / email-to-text). The documents were

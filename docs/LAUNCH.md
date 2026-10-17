@@ -449,6 +449,31 @@ Also: Vercel → sa → Settings → Environment Variables → keep **"Automatic
 Environment Variables"** on. Preview addresses and the safety switch that keeps test mode off on
 every Vercel deploy depend on it.
 
+**The preview guard (code, Check 26 P2).** The app can refuse to run a preview that is pointed at
+production: on a preview, before it connects to the database or unlocks Gmail access, it compares
+a scrambled fingerprint (sha256) of the preview's database host, `TOKEN_ENCRYPTION_KEY` and
+`AUTH_SECRET` with production's. If one matches, the preview stops with "This preview is pointed at
+production. See docs/LAUNCH.md step 2." and its `/api/health` answers
+`{ ok: false, reason: "preview_uses_production" }`. Production, your computer and the tests are
+never blocked. The fingerprints live in `src/config/environment-guard.ts`
+(`PRODUCTION_DB_HOST_SHA256` and `PRODUCTION_KEY_SHA256S`); a fingerprint can't be turned back into
+the value, so it's safe in the code.
+
+- **To do (you, or the engineers with your okay):** the lists ship **empty**, so today the guard
+  blocks nothing. Either give the engineers production's fingerprints, or skip it: once 2a–2e are
+  done previews have their own database and keys, which is the real fix, and the guard is then
+  only a safety net. To make the fingerprints without showing anyone a value: on your computer, in
+  the project folder, pull production's settings into a file (`vercel env pull
+.env.production.local --environment=production`), run `pnpm fingerprint .env.production.local`,
+  send the engineers the three lines it prints (hashes only), then delete
+  `.env.production.local`.
+- **If production's database or keys change** (a new Neon host, or a new `TOKEN_ENCRYPTION_KEY` or
+  `AUTH_SECRET`): run `pnpm fingerprint` again the same way and have the engineers replace the old
+  hashes. The Neon password change in step 3 doesn't change the host, so it needs nothing.
+- Worked when: with the fingerprints in, a preview built with production's settings fails with the
+  message above and `/api/health` says `preview_uses_production`; after 2a–2e the preview starts
+  normally.
+
 ## 3. Change the passwords that were pasted in chat
 
 The Neon database password and the Google client secret were once pasted into a chat. Replace both.
