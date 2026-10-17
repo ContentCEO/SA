@@ -39,3 +39,22 @@
   `edited_and_sent` ones stay (the owner's edits are his words). The count is logged as
   `appSentSkipped` in `voice_learn`. Fewer than 5 left → not_enough_mail (a stored voice stays in
   use, P1).
+- **Voice scrub (Check 24 P4):** `src/server/scrub.ts` (pure) — named rules `SCRUB_RULES`
+  (email, email_spelled, phone (10/11 digits, any separators, inside wa.me / tel: links),
+  phone_local, price_dollar_sign, price_thousands, price_words_after (bucks / dollars / dólares /
+  reais / grand), price_rate (/hr, ea, /sq ft, per sq ft), price_spelled, po_box, street_route,
+  street (case-insensitive, more suffixes), street_romance_number_first / _name_first, unit,
+  us_zip_after_state, canadian_postal_code). Numbers after invoice / inv / # / serial / model /
+  part / permit (and order / ref / job / po) or glued to letters and a dash stay. The business's
+  own phone numbers and website hosts are read from `business_profile.signature` (there's no
+  separate phone/website column) and stay. `learnVoice` scrubs every stored field (summary,
+  greeting, sign-off, phrases used/avoided, examples). Owner-typed voice edits are not scrubbed
+  (the owner's own words).
+
+## For docs/privacy-policy.md (Check 24 P4)
+
+- The sentence "replaces any email addresses, phone numbers, prices and street addresses it
+  finds" is now backed by the rules above for all stored voice fields, not just examples.
+  Davi's call ("Your call" on the Check 24 page) whether to soften it to "replaces the email
+  addresses, phone numbers, prices and street addresses it recognizes" — pattern rules can't
+  catch every way people write an address (e.g. "the yellow house past the church").

@@ -115,6 +115,28 @@ describe("learning the owner's voice", () => {
     expect(v!.examples[1]).toBe("Sounds good — it'll be [price] for the panel swap at [address].");
   });
 
+  it("scrubs the sign-off, greeting, phrases and summary too (Check 24 P4)", async () => {
+    addSent(6);
+    setModelTransportForTests(
+      fakeTransport([
+        voice({
+          signoff_style: "Thanks, Mike 978-555-0100",
+          greeting_style: "Hi dana at example dot com",
+          phrases_used: ["it's about 1.2k", "see you at 45 maple st"],
+          phrases_avoided: ["call 555-0142"],
+          summary: "Quotes like twelve hundred and gives out dana@example.com.",
+        }),
+      ]).transport,
+    );
+    await learnVoice(workspaceId, deps());
+    const v = await row();
+    expect(v.signoffStyle).toBe("Thanks, Mike [phone]");
+    expect(v.greetingStyle).toBe("Hi [email]");
+    expect(v.phrasesUsed).toEqual(["it's about [price]", "see you at [address]"]);
+    expect(v.phrasesAvoided).toEqual(["call [phone]"]);
+    expect(v.summary).toBe("Quotes like [price] and gives out [email].");
+  });
+
   it("says so plainly when there isn't enough sent mail, without calling the model", async () => {
     addSent(3);
     const { transport, calls } = fakeTransport([]);

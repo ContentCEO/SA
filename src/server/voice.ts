@@ -12,6 +12,7 @@ import { db } from "@/db";
 import {
   activityLog,
   appSettings,
+  businessProfiles,
   drafts,
   mailboxes,
   users,
@@ -26,6 +27,7 @@ import { MailboxAuthError, type MailboxReader } from "@/mailbox/connector";
 import { createGmailReader } from "@/mailbox/gmail/api";
 import { mailboxRunning } from "./mailbox-plan";
 import { jobsAllowed } from "./lifecycle";
+import { scrubAllowFrom, scrubText, type ScrubAllow } from "./scrub";
 import { markReconnectNeeded } from "./sync";
 import { splitOwnWords, wordCount } from "./voice-text";
 import { MAX_VOICE_RESTARTS, voiceAttempt, voiceAttemptAt, type VoiceAttempt } from "./voice-rules";
@@ -53,17 +55,9 @@ export type VoiceOutcome =
   | "no_mailbox"
   | "read_only";
 
-/** Belt and braces on top of the prompt: examples must not carry customer details. */
-export function scrubExample(text: string): string {
-  return text
-    .replace(/[\w.+-]+@[\w-]+(\.[\w-]+)+/g, "[email]")
-    .replace(/\(?\b\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}\b/g, "[phone]")
-    .replace(/\$\s?\d[\d,]*(\.\d{2})?/g, "[price]")
-    .replace(
-      /\b\d{1,5}\s+[A-Z][a-z]+(\s[A-Z][a-z]+)*\s(St|Street|Ave|Avenue|Rd|Road|Dr|Drive|Ln|Lane|Ct|Court|Way|Blvd)\b/g,
-      "[address]",
-    )
-    .trim();
+/** Belt and braces on top of the prompt: stored voice text must not carry customer details. */
+export function scrubExample(text: string, allow?: ScrubAllow): string {
+  return scrubText(text, allow);
 }
 
 /** A voice is stored on the row (SQL twin of `hasVoiceContent`). */
@@ -275,17 +269,25 @@ async function learnFrom(
     return "failed";
   }
 
+  // Check 24 P4: every stored text field goes through the scrub; the business's own phone and
+  // website (from its signature) may stay.
+  const [business] = await db()
+    .select({ signature: businessProfiles.signature })
+    .from(businessProfiles)
+    .where(eq(businessProfiles.workspaceId, workspaceId));
+  const allow = scrubAllowFrom(business?.signature);
+  const clean = (t: string, max: number) => scrubText(t, allow).slice(0, max);
   const values = {
     status: "ready" as const,
     source: "learned" as const,
-    summary: result.summary.trim().slice(0, 600),
-    greetingStyle: result.greeting_style?.trim().slice(0, 100) || null,
-    signoffStyle: result.signoff_style?.trim().slice(0, 100) || null,
+    summary: clean(result.summary, 600),
+    greetingStyle: (result.greeting_style && clean(result.greeting_style, 100)) || null,
+    signoffStyle: (result.signoff_style && clean(result.signoff_style, 100)) || null,
     avgLengthWords: Math.max(10, Math.min(400, Math.round(result.avg_length_words))),
     formality: result.formality,
-    phrasesUsed: result.phrases_used.slice(0, 10).map((p) => p.trim().slice(0, 120)),
-    phrasesAvoided: result.phrases_avoided.slice(0, 10).map((p) => p.trim().slice(0, 120)),
-    examples: result.examples.slice(0, 5).map((e) => scrubExample(e).slice(0, 600)),
+    phrasesUsed: result.phrases_used.slice(0, 10).map((p) => clean(p, 120)),
+    phrasesAvoided: result.phrases_avoided.slice(0, 10).map((p) => clean(p, 120)),
+    examples: result.examples.slice(0, 5).map((e) => clean(e, 600)),
     learnedFromCount: bodies.length,
     learnedAt: now,
     updatedAt: now,
