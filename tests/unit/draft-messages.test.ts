@@ -529,12 +529,14 @@ describe("one-shot cleanup of drafts stored as owner mail", () => {
     expect(start).toBeGreaterThan(-1);
     const next = src.indexOf("inngest.createFunction(", start + head.length);
     const body = src.slice(start, next === -1 ? undefined : next);
-    const cleanup = body.indexOf(
-      'step.run("draft-messages-cleanup", () => runDraftMessagesCleanup())',
+    // Check 25 P4: the checks run inside four grouped steps (runChecks), in this order.
+    const cleanup = body.indexOf('"draft-messages-cleanup": () => runDraftMessagesCleanup()');
+    const m7 = body.indexOf('"m7-backfill": () => runM7Backfill()');
+    expect(m7).toBeGreaterThan(-1);
+    expect(cleanup).toBeGreaterThan(m7);
+    expect(cleanup).toBeLessThan(
+      body.indexOf('"lead-at-risk-pushes": () => sendLeadAtRiskPushes()'),
     );
-    expect(body.indexOf('step.run("m7-backfill"')).toBeGreaterThan(-1);
-    expect(cleanup).toBeGreaterThan(body.indexOf('step.run("m7-backfill"'));
-    expect(cleanup).toBeLessThan(body.indexOf('step.run("lead-at-risk-pushes"'));
   });
 });
 
