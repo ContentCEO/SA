@@ -101,7 +101,7 @@ test("Check 43 P4: an owner with a signature sees no 'No signature' line", async
     });
   await signInAs(context, owner);
   await page.goto("/queue");
-  const card = page.getByRole("article", { name: "Draft reply to Priya" });
+  const card = page.getByRole("article", { name: "Priya · draft reply" });
   await expect(card).toContainText("Asked for the address and panel age.");
   await expect(page.getByText("No signature.")).toHaveCount(0);
 });
