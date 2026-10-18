@@ -177,6 +177,26 @@ export function localDateKey(d: Date, timeZone = "America/New_York"): string {
   }
 }
 
+/** Check 17 P11: Davi's own house account — nothing is billed. */
+export const HOUSE_ACCOUNT_LINE = "Your own test account. Nothing is billed.";
+/** Check 17 P11: a Stripe-paid setup with no subscription on file (cleared or never attached). */
+export const NO_STRIPE_PLAN_LINE =
+  "There's no Stripe plan attached to this account. Call Davi to sort it out.";
+
+/**
+ * Check 17 P11: set up for real but nothing in Stripe to renew or change (Davi's house account, or
+ * a Stripe-paid setup whose subscription id was cleared). /billing hides the offer to buy and the
+ * "What happens next" box for these; checkoutTerms and the commercial flow are unchanged.
+ */
+export function setUpWithoutStripePlan(
+  w: Pick<W, "status" | "evaluationEndsAt" | "setupPaidVia" | "stripeSubscriptionId">,
+  now: Date = new Date(),
+): boolean {
+  const status = effectiveStatus(w, now);
+  if (!SENDING_ALLOWED.includes(status) || !setupReallyPaid(w)) return false;
+  return w.setupPaidVia === "house" || !w.stripeSubscriptionId;
+}
+
 /** Check 17 P3: what /billing says once the owner canceled and the plan runs out on a date. */
 export const planEndsLine = (date: string) =>
   `Your plan ends on ${date}. Nothing is deleted. Changed your mind? Manage billing keeps it going.`;
@@ -188,12 +208,18 @@ export const planEndsLine = (date: string) =>
  * no subscription to renew. Check 17 P3: a canceled plan still running says when it ends.
  */
 export function billingStatusLine(
-  w: Pick<W, "status" | "evaluationEndsAt" | "setupPaidVia"> & { planEndsAt?: Date | null },
+  w: Pick<W, "status" | "evaluationEndsAt" | "setupPaidVia"> & {
+    planEndsAt?: Date | null;
+    stripeSubscriptionId?: string | null;
+  },
   now: Date = new Date(),
   timeZone = "America/New_York",
 ): string | null {
   const status = effectiveStatus(w, now);
   if (SENDING_ALLOWED.includes(status) && !setupReallyPaid(w)) return SETUP_NOT_PAID_LINE;
+  // Check 17 P11: never "renews monthly" when there's nothing to renew.
+  if (SENDING_ALLOWED.includes(status) && w.setupPaidVia === "house") return HOUSE_ACCOUNT_LINE;
+  if (SENDING_ALLOWED.includes(status) && !w.stripeSubscriptionId) return NO_STRIPE_PLAN_LINE;
   if (SENDING_ALLOWED.includes(status) && w.planEndsAt) {
     return planEndsLine(shortDate(w.planEndsAt, timeZone));
   }

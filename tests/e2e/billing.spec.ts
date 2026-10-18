@@ -25,6 +25,9 @@ test("expired trial: the banner leads to plans, and /billing explains how to pay
   await expect(page).toHaveURL(/\/billing$/);
   await expect(page.getByText("Online payment isn't switched on yet")).toBeVisible();
   await expect(page.getByRole("button", { name: /^Choose / })).toHaveCount(0);
+  // Check 17 P11: the prices are readable even while online payment is off.
+  await expect(page.getByRole("listitem", { name: "Solo plan" })).toContainText("$99");
+  await expect(page.getByText("$499")).toBeVisible();
 });
 
 test("during the trial the clock links to plans", async ({ page, context }) => {
@@ -191,4 +194,23 @@ test("paid but no Stripe notice: the page stops waiting and says what happens ne
       return rows[0]?.value ?? null;
     })
     .toBe("cs_test_e2e");
+});
+
+test("Davi's house account: no plan cards and no 'renews monthly' (Check 17 P11)", async ({
+  page,
+  context,
+}) => {
+  const owner = await seedOwner({ mailbox: true, backfilled: true });
+  await setWorkspace(owner.workspaceId, {
+    status: "setup_paid",
+    plan: "crew",
+    setupPaidAt: new Date(),
+    setupPaidVia: "house",
+  });
+  await signInAs(context, owner);
+  await page.goto("/billing");
+  await expect(page.getByText("Your own test account. Nothing is billed.")).toBeVisible();
+  await expect(page.getByText("renews monthly")).toHaveCount(0);
+  await expect(page.getByRole("listitem", { name: /plan$/ })).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "What happens next" })).toHaveCount(0);
 });

@@ -44,6 +44,9 @@ import {
   SALES_TAX_ON_NOTE,
   SETUP_NOT_PAID_LINE,
   setupLookupKey,
+  setUpWithoutStripePlan,
+  HOUSE_ACCOUNT_LINE,
+  NO_STRIPE_PLAN_LINE,
   statusAfterCheckout,
   statusAfterSubscription,
   TERMS_BOX_OFF_LINE,
@@ -104,12 +107,37 @@ describe("billing rules", () => {
       expect(billingStatusLine(w(s, { setupPaidAt: NOW }), NOW)).toBe(SETUP_NOT_PAID_LINE);
       expect(SETUP_NOT_PAID_LINE).toBe("Sending turns on once your setup payment goes through.");
     }
-    expect(billingStatusLine(w("setup_paid", { setupPaidVia: "stripe" }), NOW)).toMatch(
-      /^Setup's paid and sending is on/,
+    expect(
+      billingStatusLine(
+        w("setup_paid", { setupPaidVia: "stripe", stripeSubscriptionId: "sub_1" }),
+        NOW,
+      ),
+    ).toMatch(/^Setup's paid and sending is on/);
+    // Check 17 P11: nothing to renew for Davi's own account, or with no Stripe plan on file.
+    expect(billingStatusLine(w("active", { setupPaidVia: "house" }), NOW)).toBe(HOUSE_ACCOUNT_LINE);
+    expect(HOUSE_ACCOUNT_LINE).toBe("Your own test account. Nothing is billed.");
+    expect(billingStatusLine(w("active", { setupPaidVia: "stripe" }), NOW)).toBe(
+      NO_STRIPE_PLAN_LINE,
     );
-    expect(billingStatusLine(w("active", { setupPaidVia: "house" }), NOW)).toBe(
-      "All set. Your plan renews monthly.",
+    expect(NO_STRIPE_PLAN_LINE).toBe(
+      "There's no Stripe plan attached to this account. Call Davi to sort it out.",
     );
+    expect(
+      billingStatusLine(
+        w("active", { setupPaidVia: "stripe", stripeSubscriptionId: "sub_1" }),
+        NOW,
+      ),
+    ).toBe("All set. Your plan renews monthly.");
+    expect(setUpWithoutStripePlan(w("active", { setupPaidVia: "house" }), NOW)).toBe(true);
+    expect(setUpWithoutStripePlan(w("setup_paid", { setupPaidVia: "stripe" }), NOW)).toBe(true);
+    // Never for an account that still owes the setup fee (it must be able to choose a plan).
+    expect(setUpWithoutStripePlan(w("active", { setupPaidAt: NOW }), NOW)).toBe(false);
+    expect(
+      setUpWithoutStripePlan(
+        w("active", { setupPaidVia: "stripe", stripeSubscriptionId: "s" }),
+        NOW,
+      ),
+    ).toBe(false);
     expect(billingStatusLine(w("past_due"), NOW)).toMatch(/payment didn't go through/);
     expect(billingStatusLine(w("evaluating"), NOW)).toBeNull();
     // The page uses the rule, and only mentions Stripe's page next to Manage billing.

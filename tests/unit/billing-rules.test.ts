@@ -49,6 +49,7 @@ describe("a canceled plan says when it ends (Check 17 P3)", () => {
     evaluationEndsAt: null,
     setupPaidVia: "stripe" as const,
     planEndsAt: null as Date | null,
+    stripeSubscriptionId: "sub_1" as string | null,
     ...over,
   });
 

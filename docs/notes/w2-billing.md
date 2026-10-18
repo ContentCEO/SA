@@ -88,3 +88,9 @@ For the integrator to fold into CLAUDE.md / docs/LAUNCH.md / docs/privacy-policy
   URL when it looks like one, else empty); `applyCheckoutCompleted` clears it. /admin Payments
   "An owner paid but no Stripe notice arrived (N)…" and the card "Paid, waiting on Stripe".
   success_url now ends `&session_id={CHECKOUT_SESSION_ID}` (never trusted for status).
+- **/billing without a Stripe plan (Check 17 P11):** `billingStatusLine` says "Your own test
+  account. Nothing is billed." for the house account and "There's no Stripe plan attached to this
+  account. Call Davi to sort it out." for a Stripe-paid setup with no subscription id
+  (`setUpWithoutStripePlan`); /billing then hides Choose a plan and What happens next (display
+  only — `checkoutTerms` unchanged). Without Stripe configured, /billing lists the setup fee and
+  the three plans (prices, inboxes) without buttons above "Online payment isn't switched on yet".

@@ -17,6 +17,7 @@ import {
   firstChargeLine,
   PLAN_IDS,
   setupCallSentence,
+  setUpWithoutStripePlan,
 } from "@/server/billing-rules";
 import { effectiveStatus, setupReallyPaid } from "@/server/lifecycle";
 import { phoneHref } from "@/lib/phone-href";
@@ -55,8 +56,11 @@ export default async function BillingPage(props: PageProps<"/billing">) {
   const referral = referralCredit();
   const shareLink = referral ? await referralLinkFor(workspace.id) : null;
   // Round 2 (FW): paid, setup call still to come — say what happens next.
+  // Check 17 P11: set up but nothing in Stripe (house account, or no subscription on file):
+  // no offer to buy and no "What happens next" (display only; checkoutTerms is unchanged).
+  const noStripePlan = setUpWithoutStripePlan(workspace);
   const awaitingSetupCall =
-    effectiveStatus(workspace) === "setup_paid" && setupReallyPaid(workspace);
+    effectiveStatus(workspace) === "setup_paid" && setupReallyPaid(workspace) && !noStripePlan;
   const davi = siteConfig.operator.split(" ")[0];
   const onTrial = effectiveStatus(workspace) === "evaluating";
 
@@ -149,12 +153,53 @@ export default async function BillingPage(props: PageProps<"/billing">) {
         </section>
       ) : null}
 
-      {terms.allowed ? (
+      {terms.allowed && !noStripePlan ? (
         !stripeConfigured() ? (
-          <Notice strong>
-            Online payment isn&apos;t switched on yet. Call {siteConfig.operator} at{" "}
-            {siteConfig.phone} to get set up.
-          </Notice>
+          <>
+            {/* Check 17 P11: prices are readable even while online payment is off. */}
+            <section aria-labelledby="prices" className="flex flex-col gap-3">
+              <h2 id="prices" className="text-xl font-black">
+                Plans
+              </h2>
+              {terms.includeSetupFee ? (
+                <p>
+                  Every plan starts with a one-time{" "}
+                  <span className="font-semibold">
+                    {pricing.setupFee.name.toLowerCase()} of{" "}
+                    {formatDollars(pricing.setupFee.amountCents)}
+                  </span>
+                  : a call with us to {setupCallSentence("before")}.
+                </p>
+              ) : null}
+              <ul className="flex flex-col gap-3">
+                {PLAN_IDS.map((id) => {
+                  const p = pricing.plans[id];
+                  return (
+                    <li
+                      key={id}
+                      aria-label={`${p.name} plan`}
+                      className="flex flex-col gap-1 rounded-xl border bg-card p-4"
+                    >
+                      <div className="flex items-baseline justify-between">
+                        <span className="text-xl font-black">{p.name}</span>
+                        <span>
+                          <span className="text-2xl font-black">
+                            {formatDollars(p.amountCents)}
+                          </span>
+                          <span className="text-muted-foreground"> / month</span>
+                        </span>
+                      </div>
+                      <p className="text-muted-foreground">{planFeatureLines(id).join(" · ")}</p>
+                    </li>
+                  );
+                })}
+              </ul>
+            </section>
+            <Notice strong>
+              Online payment isn&apos;t switched on yet. Call {siteConfig.operator} at{" "}
+              {siteConfig.phone} to get set up.
+            </Notice>
+          </>
         ) : (
           <section aria-labelledby="choose" className="flex flex-col gap-3">
             <h2 id="choose" className="text-xl font-black">
