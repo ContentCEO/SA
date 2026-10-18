@@ -6,7 +6,12 @@ import { cn } from "@/lib/utils";
  */
 export function Wordmark({ className }: { className?: string }) {
   return (
-    <span className={cn("inline-flex flex-col leading-none", className)} aria-label="Squared Away">
+    // role="img" (Check 32 P8): a plain span can't carry a name; an image can, inside a link or not.
+    <span
+      role="img"
+      className={cn("inline-flex flex-col leading-none", className)}
+      aria-label="Squared Away"
+    >
       <span className="sa-headline-serif text-lg" aria-hidden>
         squared
       </span>
