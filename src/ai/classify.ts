@@ -761,7 +761,9 @@ export async function classifyEmail(
   if (!result) return codeFallback(email, checks);
 
   const injection = preCheck.flagged || result.signals.tries_to_instruct_assistant;
-  const municipal = municipalSender || result.signals.from_building_department;
+  // Check 37 P3: the electric company is never "the town", whatever the model says (a light
+  // plant is a town department, but its job emails are the utility's).
+  const municipal = !utilitySender && (municipalSender || result.signals.from_building_department);
   // Check 36 P1: when the code read sulfur WATER, the model's gas signal only wins if the email
   // itself names gas or propane somewhere.
   const gasSmell =
