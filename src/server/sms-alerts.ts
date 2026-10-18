@@ -9,6 +9,7 @@ import { queueCardIds, queueMembership } from "./drafts";
 import { localParts } from "./snooze-rules";
 import { jobsAllowed } from "./lifecycle";
 import { hitLimit } from "./rate-limit";
+import { recordSmsDelivery } from "./sms-deliveries";
 
 /**
  * Text alerts to the owner's own phone (feature plan #50). Content-free like
@@ -122,6 +123,7 @@ export async function startPhoneVerification(
     smsAlertsEnabled: false,
     smsCodeHash: hash(code),
     smsCodeExpiresAt: new Date(now.getTime() + SMS.codeTtlMs),
+    smsStoppedReason: null,
   });
   // Check 19 P4: no code went out → nothing that says one did (no hash, no expiry, no number).
   const forget = () =>
@@ -148,6 +150,7 @@ export async function startPhoneVerification(
     await forget();
     throw new SmsError("not_configured", "Texting isn't set up yet.");
   }
+  await recordSmsDelivery(workspaceId, r, "code", now);
   return phone;
 }
 
@@ -173,6 +176,7 @@ export async function confirmPhone(workspaceId: string, code: string, now: Date 
     smsAlertsEnabled: true,
     smsCodeHash: null,
     smsCodeExpiresAt: null,
+    smsStoppedReason: null,
     // Start from now: no texts about mail that arrived before they signed up.
     smsAlertCursor: now,
   });
@@ -194,7 +198,7 @@ export async function setSmsAlerts(workspaceId: string, enabled: boolean, now = 
   if (enabled && !p?.verified) throw new SmsError("not_verified", "Confirm your number first.");
   await upsertProfile(workspaceId, {
     smsAlertsEnabled: enabled,
-    ...(enabled ? { smsAlertCursor: now } : {}),
+    ...(enabled ? { smsAlertCursor: now, smsStoppedReason: null } : {}),
   });
   await db().insert(activityLog).values({
     workspaceId,
@@ -346,13 +350,18 @@ export async function sendLeadAlerts(
         .where(eq(businessProfiles.workspaceId, w.id));
       return { sent, notConfigured: true };
     }
-    await db().insert(activityLog).values({
-      workspaceId: w.id,
-      actor: "squared_away",
-      action: "sms_alert_sent",
-      detail: counts,
-      createdAt: now,
-    });
+    // Check 19 P6: remembered by Twilio's message id; Activity says "Texted you" only once
+    // Twilio reports it delivered.
+    const deliveryId = await recordSmsDelivery(w.id, r, "alert", now);
+    await db()
+      .insert(activityLog)
+      .values({
+        workspaceId: w.id,
+        actor: "squared_away",
+        action: "sms_alert_sent",
+        detail: { ...counts, ...(deliveryId ? { deliveryId } : {}) },
+        createdAt: now,
+      });
     sent++;
   }
   return { sent, notConfigured: false };

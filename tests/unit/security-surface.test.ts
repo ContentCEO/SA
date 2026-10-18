@@ -266,12 +266,14 @@ describe("C3: every route handler is in the table with the guard it uses", () =>
     | "e2e-hook" // local e2e only: 404 unless e2e mode + ≥32-char secret (the e2e app is bound to loopback in playwright.config.ts)
     | "authjs" // Auth.js's own handlers
     | "signed-link" // a link we emailed: HMAC over the id with AUTH_SECRET, constant-time, first
+    | "twilio-signature" // Check 19 P6: X-Twilio-Signature over our callback URL, constant time, first
     | "shared-secret" // Check 1 P4: an env secret compared in constant time, first; else 404
     | "public"; // static, reads nothing private
   const ROUTES: Record<string, Guard> = {
     "src/app/api/badge/route.ts": "session",
     "src/app/api/push/summary/route.ts": "session",
     "src/app/api/push/subscription/route.ts": "session",
+    "src/app/api/twilio/status/route.ts": "twilio-signature",
     "src/app/api/drafts/[id]/send/route.ts": "session",
     "src/app/api/gmail/callback/route.ts": "session+state",
     "src/app/api/gmail/push/route.ts": "token",
@@ -377,6 +379,20 @@ describe("C3: every route handler is in the table with the guard it uses", () =>
             "await stopTrialEmails(",
             "await stopTrialEmails(",
           ]);
+          break;
+        }
+        case "twilio-signature": {
+          const hs = handlers(file);
+          expect(hs.map((h) => h.name)).toEqual(["POST"]);
+          // Nothing but reading the body happens before the signature check.
+          const body = src.slice(src.indexOf("export async function POST"));
+          const check = body.indexOf("twilioSignatureOk(");
+          expect(check).toBeGreaterThan(-1);
+          expect(body.slice(0, check).match(/await [a-zA-Z.]+\(/g)).toEqual([
+            "await request.text(",
+          ]);
+          expect(body.indexOf("status: 403")).toBeGreaterThan(check);
+          expect(readFileSync("src/lib/twilio-signature.ts", "utf8")).toContain("timingSafeEqual");
           break;
         }
         case "shared-secret": {

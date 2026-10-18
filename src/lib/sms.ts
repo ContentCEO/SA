@@ -1,4 +1,5 @@
 import "server-only";
+import { appUrl } from "./app-url";
 
 /** Twilio refused the text. Carries Twilio's HTTP status only — never the number or the words. */
 export class TwilioError extends Error {
@@ -9,7 +10,12 @@ export class TwilioError extends Error {
 }
 
 export type OutgoingSms = { to: string; body: string };
-export type SmsSender = (sms: OutgoingSms) => Promise<"sent" | "not_configured">;
+/** Check 19 P6: "sent" carries Twilio's message id, so its delivery report can be matched. */
+export type SmsSendResult = { status: "sent"; sid: string } | "not_configured";
+export type SmsSender = (sms: OutgoingSms) => Promise<SmsSendResult>;
+
+/** Where Twilio reports each text's delivery (Check 19 P6). Signed with the auth token. */
+export const twilioStatusUrl = () => appUrl("/api/twilio/status");
 
 /**
  * Texts to the owner's own phone, via Twilio's HTTP API (no SDK). Needs
@@ -23,7 +29,7 @@ export const sendSms: SmsSender = async ({ to, body }) => {
   const service = process.env.TWILIO_MESSAGING_SERVICE_SID;
   const from = process.env.TWILIO_FROM_NUMBER;
   if (!sid || !token || (!service && !from)) return "not_configured";
-  const form = new URLSearchParams({ To: to, Body: body });
+  const form = new URLSearchParams({ To: to, Body: body, StatusCallback: twilioStatusUrl() });
   if (service) form.set("MessagingServiceSid", service);
   else form.set("From", from!);
   const res = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${sid}/Messages.json`, {
@@ -35,7 +41,8 @@ export const sendSms: SmsSender = async ({ to, body }) => {
     body: form,
   });
   if (!res.ok) throw new TwilioError(res.status);
-  return "sent";
+  const json = (await res.json().catch(() => null)) as { sid?: unknown } | null;
+  return { status: "sent", sid: typeof json?.sid === "string" ? json.sid : "" };
 };
 
 export function smsConfigured() {

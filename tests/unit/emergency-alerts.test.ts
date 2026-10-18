@@ -63,7 +63,7 @@ const push = async (endpoint: string) => {
 };
 const sms = async (t: OutgoingSms) => {
   texts.push(t);
-  return "sent" as const;
+  return { status: "sent" as const, sid: `SM-e${texts.length}` };
 };
 
 /**

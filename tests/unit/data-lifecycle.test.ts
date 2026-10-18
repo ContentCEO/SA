@@ -21,6 +21,7 @@ import {
   ownerSenderRules,
   priceHistory,
   pushSubscriptions,
+  smsDeliveries,
   rateLimits,
   gmailUnits,
   jobRuns,
@@ -314,6 +315,10 @@ async function seedOwner(email: string, tag: string, extra: { referredBy?: strin
   await database
     .insert(pushSubscriptions)
     .values({ workspaceId: ws, endpoint: `https://fcm.googleapis.com/fcm/send/${tag}` });
+  // Check 19 P6: Twilio delivery reports go with the workspace.
+  await database
+    .insert(smsDeliveries)
+    .values({ workspaceId: ws, messageSid: `SM-${tag}`, kind: "alert" });
   // Ideas H3 / G7: sender rules go with the workspace; private notes with the mailbox too.
   await database
     .insert(ownerSenderRules)
@@ -515,6 +520,7 @@ describe("disconnect a Gmail address", () => {
       voiceSuggestions,
       seasonalNotes,
       pushSubscriptions,
+      smsDeliveries,
       rules,
       ownerSenderRules,
     ];

@@ -3,7 +3,7 @@ import { eq } from "drizzle-orm";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Database } from "@/db";
 import { businessProfiles, drafts, messages, threads, workspaces } from "@/db/schema";
-import { TwilioError, type OutgoingSms } from "@/lib/sms";
+import { sendSms, TwilioError, type OutgoingSms } from "@/lib/sms";
 import { SCREEN_MESSAGES } from "@/app/(app)/settings/messages";
 import { ensureUserAndWorkspace } from "@/server/accounts";
 import { saveConnectedMailbox } from "@/server/mailboxes";
@@ -29,9 +29,10 @@ let database: Database;
 let workspaceId: string;
 let mailboxId: string;
 let texts: OutgoingSms[];
+let sids = 0;
 const send = async (s: OutgoingSms) => {
   texts.push(s);
-  return "sent" as const;
+  return { status: "sent" as const, sid: `SM${++sids}` };
 };
 let g = 0;
 
@@ -259,5 +260,32 @@ describe("lead alerts", () => {
     const r = await sendLeadAlerts(later(2), { send: async () => "not_configured" });
     expect(r.notConfigured).toBe(true);
     expect((await sendLeadAlerts(later(3), { send })).sent).toBe(1);
+  });
+});
+
+describe("Check 19 P6: texts ask Twilio to report delivery", () => {
+  it("the form carries our signed StatusCallback, and the message id comes back", async () => {
+    process.env.TWILIO_ACCOUNT_SID = "AC1";
+    process.env.TWILIO_AUTH_TOKEN = "tok";
+    process.env.TWILIO_MESSAGING_SERVICE_SID = "MG1";
+    const fetchMock = vi.fn(
+      async () => new Response(JSON.stringify({ sid: "SMabc" }), { status: 201 }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      expect(await sendSms({ to: "+15085551234", body: "x" })).toEqual({
+        status: "sent",
+        sid: "SMabc",
+      });
+      const form = new URLSearchParams(
+        String((fetchMock.mock.calls[0] as unknown as [string, RequestInit])[1].body),
+      );
+      expect(form.get("StatusCallback")).toBe("https://app.example/api/twilio/status");
+    } finally {
+      vi.unstubAllGlobals();
+      delete process.env.TWILIO_ACCOUNT_SID;
+      delete process.env.TWILIO_AUTH_TOKEN;
+      delete process.env.TWILIO_MESSAGING_SERVICE_SID;
+    }
   });
 });

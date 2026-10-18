@@ -18,6 +18,7 @@ import { queueDeepLink } from "./leads-at-risk-rules";
 import { jobsAllowed } from "./lifecycle";
 import { mailboxRunning } from "./mailbox-plan";
 import { pushEndpointsByWorkspace, recordPushResult } from "./push-alerts";
+import { recordSmsDelivery } from "./sms-deliveries";
 import { usableTimeZone } from "./snooze-rules";
 import {
   answeredByPhoneSql,
@@ -254,9 +255,13 @@ export async function sendEmergencyAlerts(
       if (smsTo) {
         try {
           const url = appUrl(queueDeepLink(reserved.threadIds[0]!));
-          texted =
-            (await send({ to: smsTo, body: emergencySmsBody(reserved.threadIds.length, url) })) ===
-            "sent";
+          const r = await send({
+            to: smsTo,
+            body: emergencySmsBody(reserved.threadIds.length, url),
+          });
+          texted = r !== "not_configured";
+          // Check 19 P6: its delivery report is matched like any other text's.
+          if (texted) await recordSmsDelivery(w.id, r, "alert", now);
         } catch (err) {
           console.error("emergency_sms_failed", {
             workspaceId: w.id,

@@ -32,6 +32,7 @@ import { getMailboxWorkspace } from "@/server/mailboxes";
 import { purgeRateLimits } from "@/server/rate-limit";
 import { purgeGmailUnits } from "@/server/gmail-units";
 import { purgeJobRuns } from "@/server/job-runs";
+import { purgeSmsDeliveries } from "@/server/sms-deliveries";
 import { purgeEmailSentRecords } from "@/lib/email";
 import { purgeStaleDraftClaims } from "@/server/draft-claims";
 import { sendAccessLostAlerts } from "@/server/alerts";
@@ -742,6 +743,8 @@ export const purgeBodies = inngest.createFunction(
       await purgeRateLimits();
       await purgeGmailUnits();
       await purgeJobRuns();
+      // Check 19 P6: Twilio delivery reports older than 30 days.
+      await purgeSmsDeliveries();
     });
     await step.run("purge-expired-notes", () => purgeExpiredNotes());
     // Plan #45: tell Davi when an account's AI cost passes 40% of its plan.

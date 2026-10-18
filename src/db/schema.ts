@@ -723,6 +723,12 @@ export const businessProfiles = pgTable("business_profile", {
   pushLastSentAt: timestamp("push_last_sent_at", { withTimezone: true }),
   pushAlertCursor: timestamp("push_alert_cursor", { withTimezone: true }),
   smsLastSentAt: timestamp("sms_last_sent_at", { withTimezone: true }),
+  /**
+   * Check 19 P6: why texts switched themselves off — 'opted_out' (the owner replied STOP,
+   * Twilio 21610) or 'not_mobile' (30006, the number can't take texts). Cleared when the
+   * owner turns texts on again or starts a new number.
+   */
+  smsStoppedReason: text("sms_stopped_reason"),
   /** Plan #35: the owner's local month ('YYYY-MM') last summarized (sent, or skipped as empty). */
   monthlySummaryLastSentFor: text("monthly_summary_last_sent_for"),
   /**
@@ -990,6 +996,33 @@ export const pushSubscriptions = pgTable(
     firstFailedAt: timestamp("first_failed_at", { withTimezone: true }),
   },
   (t) => [uniqueIndex("push_subscriptions_endpoint_uq").on(t.endpoint)],
+);
+
+/**
+ * Check 19 P6: what Twilio said about each text we sent the owner (status callbacks). No body
+ * and no phone number: the message's id, which kind it was, its status and Twilio's error
+ * code. Purged after 30 days.
+ */
+export const smsDeliveries = pgTable(
+  "sms_deliveries",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    messageSid: text("message_sid").notNull(),
+    /** 'code' | 'alert'. */
+    kind: text("kind").notNull(),
+    /** Twilio's MessageStatus: queued, sent, delivered, undelivered, failed … */
+    status: text("status").notNull().default("queued"),
+    errorCode: integer("error_code"),
+    createdAt: createdAt(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("sms_deliveries_message_sid_uq").on(t.messageSid),
+    index("sms_deliveries_workspace_created_idx").on(t.workspaceId, t.createdAt),
+  ],
 );
 
 /** App-wide settings Davi's admin tools write (e.g. the Stripe webhook secret, encrypted). */
