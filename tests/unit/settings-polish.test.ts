@@ -6,6 +6,7 @@ import type { Database } from "@/db";
 import { seasonalNotes } from "@/db/schema";
 import { plainDate, untilLine } from "@/lib/plain-date";
 import { ensureUserAndWorkspace } from "@/server/accounts";
+import { AUTOPILOT_NEVER_LINES, AUTOPILOT_WHEN_LINES } from "@/server/autopilot-reasons";
 import { createTestDb } from "../support/db";
 
 /** Check 15 P9 + P11 + P12: Settings polish. */
@@ -109,8 +110,12 @@ describe("two explanations tidied (Check 15 P12)", () => {
   it("Autopilot's money wording matches what the code allows", () => {
     const src = screen("autopilot").replace(/\s+/g, " ");
     expect(src).not.toContain("anything about money");
-    expect(src).toContain(
-      "any reply that mentions a dollar amount or an invoice email that names one",
-    );
+    // Wave 2 merge B: the screen's rules now come from the guardrail codes (Check 20 P6), one
+    // line each, with the same meaning: no amount in the reply, and an invoice email only
+    // when it names none.
+    const lines = [...AUTOPILOT_WHEN_LINES, ...AUTOPILOT_NEVER_LINES].map((l) => l.text);
+    expect(lines).toContain("No price or amount anywhere in the reply.");
+    expect(lines.some((l) => /only when the email has no amount/.test(l))).toBe(true);
+    expect(src).toContain("AUTOPILOT_WHEN_LINES");
   });
 });
