@@ -57,18 +57,32 @@ export function quoteStage(q: QuoteFacts, now: Date, quietDays: number): QuoteSt
 }
 
 /**
- * A quote thread: sorted as a quote request, or it has ever had an outcome (the owner's
- * or our guess — even one since cleared). A customer's later email is often sorted as
- * scheduling or a question, which overwrites the category; once a thread has been a
- * decided quote it stays on Quotes, and can still be guessed / marked won. SQL twin:
- * `quoteThreadSql` in quotes.ts.
+ * A quote thread: sorted as a quote request, OR it carries the sticky `quoteRequestedAt` mark
+ * from classification, OR it has ever had an outcome (the owner's or our guess — even one
+ * since cleared). A customer's later email is often sorted as scheduling or a question, which
+ * overwrites the category; the quote stays on Quotes from the first request until it's
+ * decided (Check 11 P1). A thread now sorted as noise, or with `extracted.injection`, is left
+ * out unless the owner marked it. SQL twin: `quoteThreadSql` in thread-sql.ts — keep the two
+ * in step. Fields the caller doesn't have count as empty.
  */
 export function isQuoteThread(t: {
   category: string | null;
   quoteOutcome: string | null;
   quoteOutcomeSource: string | null;
+  quoteRequestedAt?: Date | string | null;
+  extracted?: unknown;
 }): boolean {
-  return t.category === "quote_request" || t.quoteOutcome != null || t.quoteOutcomeSource != null;
+  const ownerMarked =
+    t.quoteOutcomeSource === "owner" || (t.quoteOutcome != null && t.quoteOutcomeSource == null);
+  if (ownerMarked) return true;
+  const injection = (t.extracted as { injection?: unknown } | null | undefined)?.injection;
+  if (t.category === "noise" || injection === true) return false;
+  return (
+    t.category === "quote_request" ||
+    t.quoteRequestedAt != null ||
+    t.quoteOutcome != null ||
+    t.quoteOutcomeSource != null
+  );
 }
 
 /**

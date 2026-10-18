@@ -34,6 +34,7 @@ import {
   listQuotes,
   setQuoteOutcome,
 } from "@/server/quotes";
+import { quoteThreadSql } from "@/server/thread-sql";
 import { createTestDb } from "../support/db";
 import { classification, fakeTransport } from "../support/fake-model";
 import { FakeWriter } from "../support/fake-writer";
@@ -1028,6 +1029,102 @@ describe("win/loss auto-guess", () => {
         .map((t) => t.id)
         .sort(),
     ).toEqual([...due].sort());
+  });
+
+  describe("Check 11 P1: an open quote stays on Quotes however the next email is sorted", () => {
+    it.each(["scheduling", "customer_question"])(
+      "the customer's next email sorted as %s keeps it listed, counted and open",
+      async (category) => {
+        const t = await quoteGiven();
+        // "Could you do Thursday instead of Wednesday?"
+        await customerWrites(t, 1);
+        await classifyWith(classification({ category: category as "scheduling" }));
+        expect(await rowOf(t)).toMatchObject({ category, quoteOutcome: null });
+        const { quotes, totals } = await listQuotes(workspaceId, NOW);
+        expect(quotes.map((q) => q.threadId)).toEqual([t]);
+        expect(quotes[0]).toMatchObject({ stage: "waiting_on_you", amountCents: 240_000 });
+        expect(totals.requests).toBe(1);
+        expect((await listCustomers(workspaceId, NOW))[0]).toMatchObject({ openQuotes: 1 });
+      },
+    );
+
+    it("a thread re-sorted as noise is not listed", async () => {
+      const t = await quoteGiven();
+      await customerWrites(t, 1);
+      await classifyWith(classification({ category: "noise" }));
+      expect(await rowOf(t)).toMatchObject({ category: "noise" });
+      expect((await listQuotes(workspaceId, NOW)).quotes).toEqual([]);
+    });
+
+    it("a thread holding an email that tried to instruct us is not listed — unless the owner marked it", async () => {
+      const t = await quoteGiven({ quoteRequestedAt: daysAgo(5), extracted: { injection: true } });
+      expect((await listQuotes(workspaceId, NOW)).quotes).toEqual([]);
+      await setQuoteOutcome(workspaceId, t, "lost", undefined, NOW);
+      expect((await listQuotes(workspaceId, NOW)).quotes.map((q) => q.threadId)).toEqual([t]);
+    });
+
+    it("isQuoteThread and quoteThreadSql agree on every case", async () => {
+      const cases: {
+        category: string | null;
+        quoteOutcome: string | null;
+        quoteOutcomeSource: string | null;
+        quoteRequestedAt: Date | null;
+        extracted: Record<string, unknown> | null;
+      }[] = [];
+      for (const category of ["quote_request", "scheduling", "noise", null])
+        for (const [quoteOutcome, quoteOutcomeSource] of [
+          [null, null],
+          ["won", "auto"],
+          [null, "auto"],
+          ["lost", "owner"],
+          [null, "owner"],
+          ["won", null],
+        ] as const)
+          for (const quoteRequestedAt of [null, daysAgo(3)])
+            for (const extracted of [null, { injection: true }, { injection: false }])
+              cases.push({
+                category,
+                quoteOutcome,
+                quoteOutcomeSource,
+                quoteRequestedAt,
+                extracted,
+              });
+      const ids: string[] = [];
+      for (const c of cases) {
+        const [row] = await database
+          .insert(threads)
+          .values({
+            mailboxId,
+            gmailThreadId: `twin${++g}`,
+            ...c,
+            quoteOutcomeSource: c.quoteOutcomeSource as "owner" | "auto" | null,
+          })
+          .returning({ id: threads.id });
+        ids.push(row!.id);
+      }
+      const inSql = new Set(
+        (await database.select({ id: threads.id }).from(threads).where(quoteThreadSql())).map(
+          (r) => r.id,
+        ),
+      );
+      const disagree = cases.filter((c, i) => isQuoteThread(c) !== inSql.has(ids[i]!));
+      expect(disagree).toEqual([]);
+      // Spot checks of the rule itself.
+      const q = (c: Partial<(typeof cases)[number]>) =>
+        isQuoteThread({
+          category: null,
+          quoteOutcome: null,
+          quoteOutcomeSource: null,
+          quoteRequestedAt: null,
+          extracted: null,
+          ...c,
+        });
+      expect(q({ category: "scheduling", quoteRequestedAt: daysAgo(1) })).toBe(true);
+      expect(q({ category: "noise", quoteRequestedAt: daysAgo(1) })).toBe(false);
+      expect(q({ category: "quote_request", extracted: { injection: true } })).toBe(false);
+      expect(q({ category: "noise", quoteOutcome: "won", quoteOutcomeSource: "owner" })).toBe(true);
+      expect(q({ category: "noise", quoteOutcome: "won", quoteOutcomeSource: "auto" })).toBe(false);
+    });
   });
 
   describe("a nudge waiting in the queue when the quote is decided", () => {

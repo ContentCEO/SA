@@ -1,5 +1,5 @@
 import "server-only";
-import { eq, isNotNull, or, sql, type SQL } from "drizzle-orm";
+import { sql, type SQL } from "drizzle-orm";
 import { EMAIL_TO_TEXT_DOMAINS, PHONE_SERVICES } from "@/config/phone-services";
 import { messages, threads } from "@/db/schema";
 import { NO_REPLY_LOCAL_PATTERN, PUBLIC_WEBMAIL_DOMAINS } from "./sender-rules";
@@ -220,21 +220,26 @@ export const waitingReplySql = () =>
   sql`(select ${replyAddressSql("w")} from messages w where w.thread_id = ${outerThreadId()} and w.direction = 'in' and not ${sideEmailSql("w")} and w.sent_at > coalesce(${lastOutSql()}, '-infinity'::timestamptz) order by w.sent_at asc, w.id asc limit 1)`;
 
 /**
- * SQL twin of `isQuoteThread`: sorted as a quote request, or has ever had an outcome
- * (a cleared guess or an owner's reopen keeps its source), whatever its category now.
+ * SQL twin of `isQuoteThread` (quote-rules.ts) — keep the two in step. A quote thread: sorted
+ * as a quote request, OR carrying the sticky `quote_requested_at` mark (Check 11 P1: the
+ * customer's "Could you do Thursday?" re-sorts the thread as scheduling, and the quote must
+ * stay on Quotes), OR it has ever had an outcome (a cleared guess or an owner's reopen keeps
+ * its source), whatever its category now. A thread now sorted as noise, or holding an email
+ * that tried to instruct us (`extracted.injection`), is left out unless the owner marked it
+ * (`quote_outcome_source = 'owner'`, or an outcome from before the column, which is theirs).
  */
 export const quoteThreadSql = () =>
-  or(
-    eq(threads.category, "quote_request"),
-    isNotNull(threads.quoteOutcome),
-    isNotNull(threads.quoteOutcomeSource),
-  );
+  sql`((${threads.quoteOutcomeSource} = 'owner' or (${threads.quoteOutcome} is not null and ${threads.quoteOutcomeSource} is null))
+    or (${threads.category} is distinct from 'noise'
+      and coalesce(${threads.extracted}->>'injection', '') <> 'true'
+      and (${threads.category} = 'quote_request' or ${threads.quoteRequestedAt} is not null or ${threads.quoteOutcome} is not null or ${threads.quoteOutcomeSource} is not null)))`;
 
 /**
- * A quote request, even one later re-sorted (plan M8 A11): the sticky `quote_requested_at`
- * mark from classification, or the current quote-thread rule (older threads have no mark).
+ * A quote request, even one later re-sorted (plan M8 A11). Since Check 11 P1 this is the same
+ * rule as `quoteThreadSql` (which now holds the sticky mark), so Quotes and Activity count the
+ * same threads.
  */
-export const quoteRequestSql = () => or(isNotNull(threads.quoteRequestedAt), quoteThreadSql());
+export const quoteRequestSql = () => quoteThreadSql();
 
 /**
  * When a quote request was asked for, for the scorecard and the monthly summary: the sticky
