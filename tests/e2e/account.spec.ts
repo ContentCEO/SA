@@ -146,7 +146,7 @@ test("Delete my account asks for a fresh sign-in first (Check 26 P4)", async ({
   await page.getByLabel("Type DELETE to confirm").fill("DELETE");
   await page.getByRole("button", { name: "Yes, delete everything" }).click();
   await expect(page).toHaveURL(/\/signin\?next=%2Fsettings%2Faccount&reason=recent$/);
-  await expect(page.getByRole("alert")).toHaveText(
+  await expect(page.getByRole("alert").filter({ hasText: "sign in again" })).toHaveText(
     "For your safety, sign in again to delete your account.",
   );
   // Nothing was deleted.

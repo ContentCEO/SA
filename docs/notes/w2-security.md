@@ -128,3 +128,23 @@ For the integrator: what `CLAUDE.md`, `docs/LAUNCH.md` and the legal drafts shou
   Playwright reports to `github` and `playwright-results.json`; a "Flaky e2e tests" step
   (always) runs `scripts/flaky-report.mjs` into the job summary, listing each test that passed
   only on a retry with its file and project.
+
+## Questions for Davi
+
+1. **Sign-in length (Check 26 P3):** a sign-in now lasts 30 days from the last visit (Auth.js's
+   default; unchanged). Should it be 14 days instead? Shorter means a lost phone stops working
+   sooner, but owners sign in again more often.
+2. **One-time sign-in after this ships (Check 26 P3):** every sign-in made before this change
+   carries no session version, so every owner — you too — is asked to sign in with Google once
+   after it deploys. Fine, or should old sign-ins be let through until the owner taps "Sign out
+   of every phone and computer"? (Built: refused, the safer choice.)
+3. **Gmail push (Check 26 P10):** when you turn instant notifications on, follow SETUP.md §6a
+   (a service account and the signed setup), not the old `?token=` way.
+4. **Smoke runs (Check 31 P6):** add the repository variable `PRODUCTION_URL` =
+   `https://sa-dac3.vercel.app` (GitHub → Settings → Secrets and variables → Actions →
+   Variables). Without it the smoke run uses the deploy's own address, which asks for a Vercel
+   login and fails.
+5. **Dependabot (Check 26 P11):** turn on "Dependabot security updates" under GitHub →
+   Settings → Code security, so the weekly check opens pull requests.
+6. **CI on branches (Check 31 P8):** pushing to a `claude/…` branch no longer runs CI by itself;
+   it runs when a pull request is open (or from Actions → CI → Run workflow). Okay?
