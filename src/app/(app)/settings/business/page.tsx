@@ -1,16 +1,42 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { Button, buttonVariants } from "@/components/ui/button";
-import { hicExpiryLine, licenseFacts } from "@/config/licenses";
+import { hicExpiryLine } from "@/config/licenses";
 import { depositTermsWarning } from "@/server/deposit-rules";
 import { cn } from "@/lib/utils";
 import { getBusinessProfile } from "@/server/profile";
+import { describeProfileFacts, type ProfileFactRow } from "@/server/profile-facts";
 import { activeNotes, MAX_ACTIVE_NOTES, NOTE_MAX_CHARS, ownerToday } from "@/server/seasonal-notes";
 import { requireOwner } from "@/server/session";
 import { SettingsScreen } from "../screen";
 import { addSeasonalNoteAction, removeSeasonalNoteAction } from "../wording-actions";
 
 export const metadata: Metadata = { title: "Your business" };
+
+/** One fact: its name and a Change link on one line, the saved value (or what "not set" means). */
+function FactRow({ fact }: { fact: ProfileFactRow }) {
+  return (
+    <li className="flex flex-col gap-0.5 border-b py-2 last:border-b-0">
+      <div className="flex items-center justify-between gap-3">
+        <span className="font-semibold">{fact.label}</span>
+        <Link
+          href={`/settings/profile#${fact.field}`}
+          className="inline-flex min-h-tap items-center px-2 font-semibold underline underline-offset-4"
+        >
+          Change<span className="sr-only"> {fact.label.toLowerCase()}</span>
+        </Link>
+      </div>
+      <span
+        className={cn(
+          "line-clamp-4 break-words whitespace-pre-line",
+          fact.value ? "text-foreground" : "text-muted-foreground",
+        )}
+      >
+        {fact.value ?? fact.emptyNote}
+      </span>
+    </li>
+  );
+}
 
 export default async function BusinessSettingsPage(props: PageProps<"/settings/business">) {
   const { workspace } = await requireOwner();
@@ -20,19 +46,10 @@ export default async function BusinessSettingsPage(props: PageProps<"/settings/b
     activeNotes(workspace.id, now),
     ownerToday(workspace.id, now),
   ]);
-  const profileFacts = [
-    ["Business", workspace.businessName],
-    ["Work", profile?.services],
-    ["Area", profile?.serviceArea],
-    ["Never promise", profile?.doNotPromise.length ? profile.doNotPromise.join(" · ") : null],
-    ["Always send me", profile?.vipSenders.length ? profile.vipSenders.join(", ") : null],
-    ["Review link", profile?.reviewUrl],
-    ["Licenses", licenseFacts(profile?.licenses)],
-    [
-      "Flag amounts over",
-      profile ? `$${profile.amountThresholdDollars.toLocaleString("en-US")}` : null,
-    ],
-  ].filter((f): f is [string, string] => Boolean(f[1]));
+  // Check 15 P4: every saved fact, each with a Change link to its own box.
+  const facts = describeProfileFacts(profile, workspace);
+  const bookingOut = facts.find((f) => f.field === "leadTime")!;
+  const profileFacts = facts.filter((f) => f.field !== "leadTime");
   // Check 38 P6: one line when the HIC registration runs out within 30 days. No email.
   const hicLine = hicExpiryLine(profile?.licenses, today);
   // Check 38 P2: an MA shop whose payment terms ask for more than a one-third deposit.
@@ -46,38 +63,11 @@ export default async function BusinessSettingsPage(props: PageProps<"/settings/b
       heavy="your business."
       params={await props.searchParams}
     >
-      <section aria-labelledby="business" className="flex flex-col gap-3">
-        <h2 id="business" className="text-xl font-black">
-          Business profile
-        </h2>
-        {profileFacts.length ? (
-          <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 rounded-xl border bg-card p-4">
-            {profileFacts.map(([k, v]) => (
-              <div key={k} className="contents">
-                <dt className="font-semibold">{k}</dt>
-                <dd className="line-clamp-3 break-words text-muted-foreground">{v}</dd>
-              </div>
-            ))}
-          </dl>
-        ) : (
-          <p className="text-muted-foreground">Not filled in yet. Drafts are better when it is.</p>
-        )}
-        {depositLine ? (
-          <p role="status" className="sa-inverted rounded-lg px-4 py-3 font-semibold">
-            {depositLine}
-          </p>
-        ) : null}
-        {hicLine ? (
-          <p role="status" className="sa-inverted rounded-lg px-4 py-3 font-semibold">
-            {hicLine}
-          </p>
-        ) : null}
-        <Link
-          href="/settings/profile"
-          className={cn(buttonVariants({ variant: "outline" }), "w-full")}
-        >
-          Edit business profile
-        </Link>
+      {/* Check 15 P4: the two things that change most sit at the top. */}
+      <section aria-label="Booking out">
+        <ul className="flex flex-col rounded-xl border bg-card px-4 py-2">
+          <FactRow fact={bookingOut} />
+        </ul>
       </section>
 
       <section aria-labelledby="seasonal-notes-heading" className="flex flex-col gap-3">
@@ -145,6 +135,36 @@ export default async function BusinessSettingsPage(props: PageProps<"/settings/b
             </Button>
           </form>
         ) : null}
+      </section>
+
+      <section aria-labelledby="business" className="flex flex-col gap-3">
+        <h2 id="business" className="text-xl font-black">
+          Business profile
+        </h2>
+        {profile?.completedAt ? null : (
+          <p className="text-muted-foreground">Not filled in yet. Drafts are better when it is.</p>
+        )}
+        <ul className="flex flex-col rounded-xl border bg-card px-4 py-2">
+          {profileFacts.map((f) => (
+            <FactRow key={f.field} fact={f} />
+          ))}
+        </ul>
+        {depositLine ? (
+          <p role="status" className="sa-inverted rounded-lg px-4 py-3 font-semibold">
+            {depositLine}
+          </p>
+        ) : null}
+        {hicLine ? (
+          <p role="status" className="sa-inverted rounded-lg px-4 py-3 font-semibold">
+            {hicLine}
+          </p>
+        ) : null}
+        <Link
+          href="/settings/profile"
+          className={cn(buttonVariants({ variant: "outline" }), "w-full")}
+        >
+          Edit business profile
+        </Link>
       </section>
     </SettingsScreen>
   );

@@ -180,3 +180,34 @@ test("the two edit screens have a way back at the top and a Cancel (Check 15 P3)
     await expect(page).toHaveURL(lands);
   }
 });
+
+test("Your business shows the price list, and Change lands on its box (Check 15 P4)", async ({
+  page,
+  context,
+}) => {
+  const owner = await seedOwner({ mailbox: true, backfilled: true });
+  await testDb
+    .update(schema.workspaces)
+    .set({ businessName: "Ruiz Street Plumbing" })
+    .where(eq(schema.workspaces.id, owner.workspaceId));
+  await testDb.insert(schema.businessProfiles).values({
+    workspaceId: owner.workspaceId,
+    services: "Drains and water heaters.",
+    pricingNotes: "Service call $129.\nDrain clearing from $189.",
+    leadTime: "About two weeks out.",
+    completedAt: new Date(),
+  });
+  await signInAs(context, owner);
+
+  await page.goto("/settings");
+  await expect(page.getByRole("link", { name: /^Your business/ })).toContainText(
+    "Price list: 2 lines",
+  );
+  await page.goto("/settings/business");
+  await expect(page.getByText("Service call $129.", { exact: false })).toBeVisible();
+  await expect(page.getByText("About two weeks out.")).toBeVisible();
+  await expect(page.getByText("Not set. Drafts won't say when you work.")).toBeVisible();
+  await page.getByRole("link", { name: "Change price list" }).click();
+  await expect(page).toHaveURL(/\/settings\/profile#pricingNotes$/);
+  await expect(page.getByLabel("Your price list")).toBeFocused();
+});

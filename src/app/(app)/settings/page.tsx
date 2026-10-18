@@ -12,6 +12,7 @@ import { getBusinessProfile, getVoiceProfile } from "@/server/profile";
 import { requireOwner } from "@/server/session";
 import { formatUsPhone } from "@/server/sms-alerts";
 import { zoneShortName } from "@/server/time-zone-rules";
+import { priceListSummary } from "@/server/profile-facts";
 import { LegacySettingsAnchors } from "./legacy-anchors";
 import { LIST_MESSAGES } from "./messages";
 import { awayState } from "@/server/away";
@@ -60,7 +61,10 @@ export default async function SettingsPage(props: PageProps<"/settings">) {
     {
       href: "/settings/business",
       label: "Your business",
-      line: profile?.completedAt ? workspace.businessName : "Not filled in yet",
+      // Check 15 P4: the price list is the fact owners look for first.
+      line: profile?.completedAt
+        ? `${workspace.businessName} · ${priceListSummary(profile.pricingNotes)}`
+        : "Not filled in yet",
     },
     {
       href: "/settings/writing",

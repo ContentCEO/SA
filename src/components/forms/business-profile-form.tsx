@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useState, type FormEvent } from "react";
+import { useActionState, useEffect, useState, type FormEvent } from "react";
 import { TimeZoneInput } from "./time-zone-input";
 import { LICENSE_LABELS, type Licenses } from "@/config/licenses";
 import { amountSuggestionsFor, MAX_EXTRA_TRADES, TRADE_OPTIONS } from "@/config/trades";
@@ -93,6 +93,24 @@ export function BusinessProfileForm({
   const formRef = useFocusFirstError(state.errors);
   // Check 8 P1: what's typed survives no signal, a failed save or a reload (this tab only).
   useKeptForm(formRef, "business-profile", fingerprintOf(JSON.stringify(defaults)));
+  // Check 15 P4: "Change" on Your business lands on /settings/profile#<field>: scroll the box
+  // into view and put the cursor in it.
+  useEffect(() => {
+    const goTo = () => {
+      const name = decodeURIComponent(window.location.hash.slice(1));
+      if (!/^[A-Za-z]{1,40}$/.test(name)) return;
+      const el = formRef.current?.querySelector<HTMLElement>(
+        `[name="${name}"]:not([type="hidden"])`,
+      );
+      if (!el) return;
+      el.closest("details")?.setAttribute("open", "");
+      el.scrollIntoView({ block: "center" });
+      el.focus({ preventScroll: true });
+    };
+    goTo();
+    window.addEventListener("hashchange", goTo);
+    return () => window.removeEventListener("hashchange", goTo);
+  }, [formRef]);
   const v = (k: keyof ProfileDefaults, fallback: string | number | null) =>
     state.values?.[k] ?? fallback;
   const lv = (k: string, fallback: string | undefined) => state.values?.[k] ?? fallback ?? "";
