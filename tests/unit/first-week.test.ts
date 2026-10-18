@@ -400,6 +400,37 @@ describe("first week, with the database", () => {
     expect((await firstLookFor(w!, NOW)).show).toBe(false);
   });
 
+  it("found money counts every slipped quote, while one tap still drafts 10 (Check 14 P8)", async () => {
+    await database
+      .update(mailboxes)
+      .set({ backfillCompletedAt: ago(2 * HOUR) })
+      .where(eq(mailboxes.id, mailboxId));
+    const [w] = await database.select().from(workspaces).where(eq(workspaces.id, workspaceId));
+    const made: string[] = [];
+    for (let i = 0; i < 14; i++) made.push(await thread({ inAt: ago(DAY + i * HOUR) }));
+
+    const look = await firstLookFor(w!, NOW);
+    expect(look.counts.unansweredQuotes).toBe(14);
+    expect(foundMoneyLine(look.counts)).toBe(
+      "14 quote requests still have no answer. Draft the newest 10? You check each one before anything goes out.",
+    );
+    expect(firstLookLines(look.counts, 14)[1]).toContain("(14 with no answer or draft yet)");
+
+    const found = await claimFoundMoneyDrafts(w!, NOW);
+    expect(found!.replies).toHaveLength(10);
+    // The newest 10.
+    expect(found!.replies).toEqual(made.slice(0, 10));
+  });
+
+  it("found money under the cap: no 'newest' wording (Check 14 P8)", () => {
+    expect(foundMoneyLine({ unansweredQuotes: 3, quietQuotes: 0 })).toBe(
+      "3 quote requests still have no answer. Want drafts? You check each one before anything goes out.",
+    );
+    expect(foundMoneyLine({ unansweredQuotes: 12, quietQuotes: 2 })).toBe(
+      "12 quote requests still have no answer, and 2 quotes you sent never got a follow-up. Draft up to 10 of each, newest first? You check each one before anything goes out.",
+    );
+  });
+
   it("'your first drafts are ready': once, only after reading + voice, only with a draft waiting", async () => {
     const sent: OutgoingEmail[] = [];
     const send = async (e: OutgoingEmail): Promise<SendOutcome> => {
