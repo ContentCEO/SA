@@ -84,6 +84,7 @@ describe("insurance-job promises (Check 40 P1)", () => {
           autopilotCounting: false,
           acceptsQuote: false,
           purpose: null,
+          visitTime: false,
         },
         ["customer_question"],
       ),

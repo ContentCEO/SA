@@ -2,8 +2,13 @@ import Link from "next/link";
 import { Notice } from "@/components/app/notice";
 import { Headline } from "@/components/brand/headline";
 import { categoryLabels } from "@/config/categories";
-import { BATCH_CATEGORIES, isBatchCategory, type BatchCategory } from "@/server/batch-rules";
-import { batchCandidates } from "@/server/drafts";
+import {
+  BATCH_CATEGORIES,
+  isBatchCategory,
+  VISIT_TIME_HELD_LINE,
+  type BatchCategory,
+} from "@/server/batch-rules";
+import { batchReview } from "@/server/drafts";
 import { canSend, isReadOnly, sendingBlockedReason } from "@/server/lifecycle";
 import { requireOwner } from "@/server/session";
 import { cn } from "@/lib/utils";
@@ -19,7 +24,7 @@ export default async function ReviewReadyPage(props: PageProps<"/queue/review">)
   const params = await props.searchParams;
   const raw = params.cat === undefined ? [...BATCH_CATEGORIES] : [params.cat].flat();
   const picked = raw.filter(isBatchCategory);
-  const rows = await batchCandidates(workspace.id, picked);
+  const { rows, heldForVisitTime } = await batchReview(workspace.id, picked);
   const sending = canSend(workspace) && !isReadOnly(workspace);
 
   const toggle = (c: BatchCategory) => {
@@ -68,6 +73,8 @@ export default async function ReviewReadyPage(props: PageProps<"/queue/review">)
           ))}
         </ul>
       )}
+      {/* Check 41 P2: why some scheduling replies aren't here (a count reason, no names). */}
+      {heldForVisitTime ? <p className="font-semibold">{VISIT_TIME_HELD_LINE}</p> : null}
 
       {rows.length ? (
         sending ? (

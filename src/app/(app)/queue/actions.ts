@@ -14,6 +14,7 @@ import {
   createDraftForThread,
   bodyHash,
   discardDraft,
+  pendingDraftCreatedAt,
   pendingDraftText,
   queueSend,
   reviseDraft,
@@ -27,6 +28,8 @@ import { ReadOnlyError, SendingBlockedError } from "@/server/lifecycle";
 import { hitLimit } from "@/server/rate-limit";
 import { dismissChecklist } from "@/server/onboarding";
 import { requireOwner } from "@/server/session";
+import { setInvoicePaid } from "@/server/money";
+import { setQuoteOutcome } from "@/server/quotes";
 import { QUEUE_ERRORS } from "./queue-messages";
 
 const id = z.string().uuid();
@@ -38,6 +41,25 @@ const address = (v: FormDataEntryValue | null) =>
   typeof v === "string" && v.length <= 320 ? v : undefined;
 
 /**
+ * Check 9 P5: the card to land on after a tap — the card itself (a refusal, a save, a quick
+ * change) or the one after it (a send, a discard, a snooze), from the form's hidden
+ * `threadId` / `nextThreadId`. Only a uuid ever goes into the URL.
+ */
+const cardOf = (v: FormDataEntryValue | null) => {
+  const r = id.safeParse(v);
+  return r.success ? r.data : null;
+};
+const thisCard = (formData: FormData) => cardOf(formData.get("threadId"));
+/**
+ * The next card, or this card's own id when it was the only one: the URL then still changes
+ * (a redirect to the very URL the page is on, less its `#t-…`, isn't applied by the router),
+ * and with the card gone the notice simply shows at the top.
+ */
+const nextCard = (formData: FormData) => cardOf(formData.get("nextThreadId")) ?? thisCard(formData);
+/** `&t=<uuid>` for a `/queue?…` path (ScrollToThread scrolls there; the notice sits on it). */
+const at = (t: string | null) => (t ? `&t=${t}` : "");
+
+/**
  * What a Send reply tap came to: a place to go (sent, or the card is gone), or a refusal that
  * leaves the draft waiting — always with nothing sent. Shared by the card's Send reply and the
  * Edit box's (which shows a refusal inside the card instead of leaving it).
@@ -46,17 +68,21 @@ type SendTap =
   | { go: "sent" | "deleted" | "gone" | "unknown"; draftId: string }
   | { refused: string; changed?: boolean; at?: number };
 
-/** Where a tap that left the card goes: always one of our own paths. */
-function goAfterTap(r: { go: "sent" | "deleted" | "gone" | "unknown"; draftId: string }): never {
+/** Where a tap that left the card goes: always one of our own paths, at the next card. */
+function goAfterTap(
+  r: { go: "sent" | "deleted" | "gone" | "unknown"; draftId: string },
+  formData: FormData,
+): never {
+  const next = nextCard(formData);
   switch (r.go) {
     case "sent":
-      redirect(`/queue?sent=${r.draftId}`);
+      redirect(`/queue?sent=${r.draftId}${at(next)}`);
     case "deleted":
-      redirect("/queue?error=deleted");
+      redirect(`/queue?error=deleted${at(next)}`);
     case "gone":
-      redirect("/queue?error=gone");
+      redirect(`/queue?error=gone${at(next)}`);
     default:
-      redirect("/queue?error=unknown");
+      redirect(`/queue?error=unknown${at(thisCard(formData))}`);
   }
 }
 
@@ -131,13 +157,14 @@ async function sendTap(workspaceId: string, formData: FormData): Promise<SendTap
 export async function sendDraftAction(formData: FormData) {
   const { workspace } = await requireOwner();
   const r = await sendTap(workspace.id, formData);
-  if ("go" in r) goAfterTap(r);
+  if ("go" in r) goAfterTap(r, formData);
   if (r.refused === "answered") {
     // Only reached for a valid draft id (sendTap checked it).
     const d = id.parse(formData.get("draftId"));
     redirect(`/queue?error=answered&d=${d}&at=${r.at}`);
   }
-  redirect(`/queue?error=${r.refused}`);
+  // A refusal leaves the draft waiting: back to the same card, with the words on it.
+  redirect(`/queue?error=${r.refused}${at(thisCard(formData))}`);
 }
 
 /** For the proof-of-okay record (#41): phone or computer, from the browser's own description. */
@@ -152,19 +179,20 @@ export async function practiceSendAction(formData: FormData) {
   const draftId = id.safeParse(formData.get("draftId"));
   if (!draftId.success) redirect("/queue?error=unknown");
   const edited = formData.get("body");
-  if (!(await hitLimit("send", workspace.id)).allowed) redirect("/queue?error=busy");
+  const here = thisCard(formData);
+  if (!(await hitLimit("send", workspace.id)).allowed) redirect(`/queue?error=busy${at(here)}`);
   let r;
   try {
     r = await practiceSend(workspace.id, draftId.data, {
       editedBody: typeof edited === "string" ? edited : undefined,
     });
   } catch (err) {
-    if (err instanceof SendingBlockedError) redirect("/queue?error=blocked");
+    if (err instanceof SendingBlockedError) redirect(`/queue?error=blocked${at(here)}`);
     throw err;
   }
-  if (r.status === "sent") redirect(`/queue?done=practice&left=${r.left}`);
+  if (r.status === "sent") redirect(`/queue?done=practice&left=${r.left}${at(here)}`);
   redirect(
-    `/queue?error=${r.status === "limit" ? "practice_limit" : r.status === "reconnect_needed" ? "reconnect" : r.status === "mailbox_paused" ? "paused" : "unknown"}`,
+    `/queue?error=${r.status === "limit" ? "practice_limit" : r.status === "reconnect_needed" ? "reconnect" : r.status === "mailbox_paused" ? "paused" : "unknown"}${at(here)}`,
   );
 }
 
@@ -185,7 +213,11 @@ export async function snoozeAction(formData: FormData) {
   const choice = formData.get("choice");
   if (!threadId.success || !isSnoozeChoice(choice)) redirect("/queue?error=unknown");
   const r = await snoozeThread(workspace.id, threadId.data, choice);
-  redirect(r.status === "snoozed" ? "/queue?done=snoozed" : "/queue?error=snooze");
+  redirect(
+    r.status === "snoozed"
+      ? `/queue?done=snoozed${at(nextCard(formData))}`
+      : `/queue?error=snooze${at(threadId.data)}`,
+  );
 }
 
 /** Plan #5: "Send N replies" after the confirmation. The server re-checks every one. */
@@ -260,7 +292,7 @@ export async function editorAction(_prev: EditorState, formData: FormData): Prom
 
   if (formData.get("intent") === "send") {
     const r = await sendTap(workspace.id, formData);
-    if ("go" in r) goAfterTap(r);
+    if ("go" in r) goAfterTap(r, formData);
     if (r.refused === "answered") redirect(`/queue?error=answered&d=${draftId.data}&at=${r.at}`);
     if (r.changed) return changed(CHANGED_WHILE_EDITING_SEND);
     if (r.refused === "gaps") return keep(GAPS_IN_EDITOR);
@@ -283,7 +315,7 @@ export async function editorAction(_prev: EditorState, formData: FormData): Prom
   }
   switch (r) {
     case "saved":
-      redirect("/queue?done=saved");
+      redirect(`/queue?done=saved${at(thisCard(formData))}`);
     case "changed_in_gmail":
     case "changed_since_opened":
       return changed(CHANGED_WHILE_EDITING);
@@ -306,17 +338,32 @@ export async function discardDraftAction(formData: FormData) {
   const { workspace } = await requireOwner();
   const draftId = id.safeParse(formData.get("draftId"));
   if (!draftId.success) redirect("/queue?error=unknown");
-  if (!(await hitLimit("gmailWrite", workspace.id)).allowed) redirect("/queue?error=busy");
+  const here = thisCard(formData);
+  if (!(await hitLimit("gmailWrite", workspace.id)).allowed)
+    redirect(`/queue?error=busy${at(here)}`);
   let r;
   try {
     r = await discardDraft(workspace.id, draftId.data);
   } catch (err) {
-    if (err instanceof ReadOnlyError) redirect("/queue?error=readonly");
+    if (err instanceof ReadOnlyError) redirect(`/queue?error=readonly${at(here)}`);
     throw err;
   }
   // Check 9 P3: Gmail didn't answer — the draft is still there, nothing changed.
-  if (r === "gmail_busy" || r === "gmail_failed") redirect(`/queue?error=${r}_discard`);
-  redirect("/queue?done=discarded");
+  if (r === "gmail_busy" || r === "gmail_failed") redirect(`/queue?error=${r}_discard${at(here)}`);
+  redirect(`/queue?done=discarded${at(nextCard(formData))}`);
+}
+
+/**
+ * Check 9 P9: after "already a draft", the waiting draft's time — waiting up to 25 seconds for
+ * another run (the first tap) that is still writing it.
+ */
+async function waitForPendingDraft(workspaceId: string, threadId: string) {
+  for (let i = 0; i < 25; i++) {
+    const at = await pendingDraftCreatedAt(workspaceId, threadId);
+    if (at) return at;
+    await new Promise((r) => setTimeout(r, 1000));
+  }
+  return null;
 }
 
 /** "Draft a reply" — the owner asked, so this runs now rather than waiting for the background job. */
@@ -337,8 +384,18 @@ export async function draftReplyAction(formData: FormData) {
     if (isTemporaryAiFailure(err)) redirect("/queue?error=ai_busy");
     throw err;
   }
-  if (r.status === "created") redirect("/queue?done=drafted");
-  if (r.status === "reconnect_needed") redirect("/queue?error=reconnect");
+  // Check 9 P5: the new draft card carries the same thread id, so the owner lands on it.
+  if (r.status === "created") redirect(`/queue?done=drafted${at(threadId.data)}`);
+  // Check 9 P9: a second tap while the first was writing (or just after) isn't an error — the
+  // draft is there, or will be in a moment.
+  if (r.status === "skipped" && r.reason === "already_pending") {
+    const createdAt = await waitForPendingDraft(workspace.id, threadId.data);
+    // The other run stopped without a draft: plain "try again", never "it's below".
+    if (!createdAt) redirect(`/queue?error=draftfailed${at(threadId.data)}`);
+    if (Date.now() - createdAt.getTime() < 60_000)
+      redirect(`/queue?done=drafted${at(threadId.data)}`);
+  }
+  if (r.status === "reconnect_needed") redirect(`/queue?error=reconnect${at(threadId.data)}`);
   const reasons: Record<string, string> = {
     already_pending: "exists",
     owner_replied_last: "replied",
@@ -353,7 +410,7 @@ export async function draftReplyAction(formData: FormData) {
     phone_message: "phonemsg",
     mailbox_paused: "paused",
   };
-  redirect(`/queue?error=${reasons[r.reason] ?? "draftfailed"}`);
+  redirect(`/queue?error=${reasons[r.reason] ?? "draftfailed"}${at(threadId.data)}`);
 }
 
 /**
@@ -369,6 +426,7 @@ export async function reviseDraftAction(formData: FormData) {
   const spoken = z.string().trim().min(2).max(500).safeParse(formData.get("spoken"));
   if (!isTweak(tweak) && !isOpeningTweak(opening) && !spoken.success)
     redirect("/queue?error=unknown");
+  const cardBody = z.string().max(20_000).safeParse(formData.get("body"));
   if (!(await hitLimit("revise", workspace.id)).allowed) redirect("/queue?error=busy");
   let r;
   try {
@@ -378,7 +436,12 @@ export async function reviseDraftAction(formData: FormData) {
       isTweak(tweak) ? { tweak } : isOpeningTweak(opening) ? { opening } : { spoken: spoken.data! },
       // Check 42 P2: the text the card showed when the change was asked for. Check 48 P4: a tap
       // waits at most the interactive time limit.
-      { openedHash: seenHash(formData.get("seen")) ?? undefined, aiMode: "interactive" },
+      {
+        openedHash: seenHash(formData.get("seen")) ?? undefined,
+        aiMode: "interactive",
+        // Check 23 P8: the card's text with the owner's filled gaps (checked in reviseDraft).
+        currentBody: cardBody.success ? cardBody.data : undefined,
+      },
     );
   } catch (err) {
     if (err instanceof ReadOnlyError) redirect("/queue?error=readonly");
@@ -399,7 +462,12 @@ export async function reviseDraftAction(formData: FormData) {
     gmail_busy: "gmail_busy",
     gmail_failed: "gmail_failed",
   };
-  redirect(r.status === "revised" ? "/queue?done=revised" : `/queue?error=${errors[r.status]}`);
+  const here = thisCard(formData);
+  redirect(
+    r.status === "revised"
+      ? `/queue?done=revised${at(here)}`
+      : `/queue?error=${errors[r.status]}${at(here)}`,
+  );
 }
 
 /** "Hold it": autopilot stands down; the draft waits for the owner like any other. */
@@ -409,12 +477,45 @@ export async function holdAutopilotAction(formData: FormData) {
   if (!draftId.success) redirect("/queue?error=unknown");
   const r = await holdAutopilot(workspace.id, draftId.data);
   // Check 9 P2: "Held." only for a draft that did not go.
-  if (r.status === "held") redirect("/queue?done=held");
+  if (r.status === "held") redirect(`/queue?done=held${at(thisCard(formData))}`);
   if (r.status === "too_late")
     redirect(
       r.sent ? `/queue?error=autopilot_sent&d=${draftId.data}` : "/queue?error=autopilot_sending",
     );
   redirect("/queue?error=hold_gone");
+}
+
+/**
+ * Check 21 P8: on a nudge card, "They said no" (a quote) or "Already paid" (an invoice) — the
+ * same owner marks as Quotes' Lost and Money's Mark paid, which also close the waiting nudge
+ * here and in Gmail. Read-only accounts change nothing (the server functions re-check).
+ */
+async function closeNudge(formData: FormData, what: "lost" | "paid") {
+  const { workspace } = await requireOwner();
+  const threadId = id.safeParse(formData.get("threadId"));
+  if (!threadId.success) redirect("/queue?error=unknown");
+  const next = nextCard(formData);
+  let ok: boolean;
+  try {
+    ok =
+      what === "lost"
+        ? await setQuoteOutcome(workspace.id, threadId.data, "lost")
+        : await setInvoicePaid(workspace.id, threadId.data, true);
+  } catch (err) {
+    if (err instanceof ReadOnlyError) redirect(`/queue?error=readonly${at(threadId.data)}`);
+    throw err;
+  }
+  redirect(
+    ok
+      ? `/queue?done=${what === "lost" ? "marked_lost" : "marked_paid"}${at(next)}`
+      : `/queue?error=unknown${at(threadId.data)}`,
+  );
+}
+export async function nudgeSaidNoAction(formData: FormData) {
+  await closeNudge(formData, "lost");
+}
+export async function nudgeAlreadyPaidAction(formData: FormData) {
+  await closeNudge(formData, "paid");
 }
 
 /** Hide the getting-started list — allowed only once every step is done. */

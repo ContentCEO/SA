@@ -147,7 +147,7 @@ async function readSortAndDraft(
 
 async function draftCardOnQueue(page: Page) {
   await page.goto("/queue");
-  const card = page.getByRole("article", { name: /^Draft reply to Dana/ });
+  const card = page.getByRole("article", { name: /^Dana.* · draft reply$/ });
   await expect(card).toBeVisible();
   await expect(card).toContainText(FAKE_CLASSIFICATION.summary);
   await noHorizontalScroll(page);
@@ -233,6 +233,10 @@ test("a paid owner connects Gmail and a customer gets one threaded reply", async
     await expect(page).toHaveURL(new RegExp(`/queue\\?sent=${draft.id}`));
     await expect(page.getByText("reply on its way,")).toBeVisible();
     await expect(page.getByText(/Sending in \d+ seconds/)).toBeVisible();
+    // Check 32 P7: focus is on the result, and the next Tab is Undo.
+    await expect(page.getByTestId("sent-strip")).toBeFocused();
+    await page.keyboard.press("Tab");
+    await expect(page.getByRole("button", { name: "Undo" })).toBeFocused();
     await noHorizontalScroll(page);
     // Nothing goes early: the undo window is real.
     expect(await runHook(request, { step: "deliver", draftId: draft.id })).toMatchObject({

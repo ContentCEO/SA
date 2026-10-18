@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { checkDraft } from "@/ai/draft-checks";
-import { blanks, fillGap, findGaps, hasUnfilledGap, showGaps } from "@/ai/gaps";
+import { blanks, fillGap, filledGaps, findGaps, hasUnfilledGap, showGaps } from "@/ai/gaps";
 
 describe("[name]-style blanks are gaps (Check 23 P7)", () => {
   const body = "Hi [name], I can come at [time] for $___ if that works.";
@@ -47,5 +47,24 @@ describe("[name]-style blanks are gaps (Check 23 P7)", () => {
     expect(r.flags).toContain("Has a blank (“[name]”) to fill in.");
     expect(r.hits).toEqual(["blank"]);
     expect(r.confidenceCap).toBe(0.6);
+  });
+});
+
+describe("Check 23 P8: filledGaps", () => {
+  const saved = "Hi {{custom:their name}}, usually around {{price}}. See you at {{time}}.";
+  it("returns what was typed into the gaps, nothing else changed", () => {
+    expect(filledGaps(saved, "Hi Dana, usually around $650. See you at {{time}}.")).toEqual([
+      "Dana",
+      "$650",
+    ]);
+    expect(filledGaps(saved, saved)).toEqual([]);
+  });
+  it("refuses any other change", () => {
+    expect(filledGaps(saved, "Hi Dana, we guarantee around $650. See you at {{time}}.")).toBeNull();
+    expect(
+      filledGaps(saved, "Hi Dana, usually around $650. See you at 8am. P.S. free!"),
+    ).toBeNull();
+    expect(filledGaps("No gaps here.", "No gaps here!")).toBeNull();
+    expect(filledGaps(saved, "Hi {{price}}, usually around $650. See you at {{time}}.")).toBeNull();
   });
 });

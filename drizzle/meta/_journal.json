@@ -400,6 +400,13 @@
       "when": 1792301129203,
       "tag": "0056_mailbox_email_index",
       "breakpoints": true
+    },
+    {
+      "idx": 57,
+      "version": "7",
+      "when": 1792303568666,
+      "tag": "0057_onboarding_done",
+      "breakpoints": true
     }
   ]
 }

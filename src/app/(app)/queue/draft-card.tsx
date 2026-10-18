@@ -1,18 +1,28 @@
 "use client";
 
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useId, useRef, useState, useSyncExternalStore } from "react";
 import { useFormStatus } from "react-dom";
 import { Button } from "@/components/ui/button";
 import { fillGap, findGaps } from "@/ai/gaps";
 import type { ConfidenceLabel } from "@/config/drafting";
-import { BodyWithGaps, ConfidenceTag, PastPrices, WhyThis, type PastPrice } from "./draft-parts";
+import {
+  BodyWithGaps,
+  ConfidenceTag,
+  PastPrices,
+  WhyThis,
+  type GapOpen,
+  type PastPrice,
+} from "./draft-parts";
 import { OtherWaysToReply, SayAChange, TweakChips } from "./revise-controls";
 import { RemindMe, type SnoozeOption } from "./remind-me";
 import { CalledThem } from "./called-them";
 import { AutopilotCountdown } from "./autopilot-countdown";
 import { DraftEditor, keptEditKey } from "./draft-editor";
 import { SendButton } from "./send-button";
+import { CardTargets, closeOnEscape, QuestionLine, useFocusReturn } from "./focus";
+import { DiscardCountdown, SwipeLabel, SwipeTip } from "./swipe-parts";
 import { readKept } from "@/lib/kept-text";
+import { withoutCategoryPrefix } from "@/lib/card-words";
 import {
   addIntent,
   intentsServerSnapshot,
@@ -24,6 +34,8 @@ import {
 import {
   discardDraftAction,
   holdAutopilotAction,
+  nudgeAlreadyPaidAction,
+  nudgeSaidNoAction,
   practiceSendAction,
   sendDraftAction,
 } from "./actions";
@@ -31,6 +43,10 @@ import {
 export type DraftCardProps = {
   draftId: string;
   threadId: string;
+  /** Check 9 P5: the card after this one, where a send, discard or snooze lands. */
+  nextThreadId?: string | null;
+  /** Check 9 P5: the done / error notice for a tap on this card, shown at its top. */
+  notice?: React.ReactNode;
   /** Plan #6: the "Remind me" times allowed for this one right now. */
   remindOptions?: SnoozeOption[];
   customer: string;
@@ -67,9 +83,21 @@ export type DraftCardProps = {
   offlineEnabled?: boolean;
   /** Plan #9: mirror the swipes and the button order for a left thumb. */
   leftHanded?: boolean;
+  /**
+   * Check 21 P8: a nudge (follow-up) card — Discard says it ends the chasing, and one more row
+   * offers "They said no" (a quote) or "Already paid" (an invoice).
+   */
+  nudge?: "quote" | "invoice" | "other" | null;
+  /** Check 9 P14: the one-time swipe tip (first draft card only; touch phones only). */
+  swipeTip?: boolean;
   /** Quick tweaks / voice edits left (0 hides them). */
   revisionsLeft?: number;
   needsOwnerReason: string | null;
+  /**
+   * Check 9 P12: the card sits under "Right now", which already says it needs the owner — so
+   * "Needs you: …" shows only when there's no summary to say what it's about.
+   */
+  inRightNow?: boolean;
   canSend: boolean;
   /** Read-only account: show the draft, but no edit, discard or swipe. */
   readOnly?: boolean;
@@ -111,7 +139,8 @@ function Pending({
  */
 function ToLine({ address, fromReplyTo }: { address: string; fromReplyTo?: boolean }) {
   return (
-    <p className="text-sm break-all">
+    // Check 8 P9: 16px — read in the sun before Send reply.
+    <p className="text-base break-all">
       <span className="font-semibold">To:</span> {address}
       {fromReplyTo ? (
         <span className="block text-muted-foreground">the reply address in their email</span>
@@ -154,6 +183,14 @@ export function DraftCard(p: DraftCardProps) {
   // stays on the first screen of a card.
   const [changing, setChanging] = useState(false);
   const [confirmDiscard, setConfirmDiscard] = useState(false);
+  // Check 32 P1: closing a question (Keep it, Cancel, Escape) puts focus back on its opener.
+  const { opener: discardOpener, restore: restoreDiscardFocus } = useFocusReturn();
+  const { opener: editOpener, restore: restoreEditFocus } = useFocusReturn();
+  const discardTitle = useId();
+  const keepDraft = () => {
+    restoreDiscardFocus();
+    setConfirmDiscard(false);
+  };
   const [dx, setDx] = useState(0);
   const start = useRef<{ x: number; y: number } | null>(null);
   const buzzed = useRef(false);
@@ -194,12 +231,23 @@ export function DraftCard(p: DraftCardProps) {
   // The body as the owner sees it — gaps they fill in change it before sending.
   const [body, setBody] = useState(p.body);
   const gapsLeft = findGaps(body).length;
+  // Check 9 P11: the open gap's fill box lives here, so the "Fill in N gaps" button opens it.
+  const [openGap, setOpenGap] = useState<GapOpen>(null);
+  const bodyBox = useRef<HTMLDivElement>(null);
+  const openFirstGap = () => {
+    setOpenGap({ index: 0, body });
+    requestAnimationFrame(() =>
+      bodyBox.current?.querySelector("form")?.scrollIntoView({ block: "center" }),
+    );
+  };
   const priceGap = findGaps(body).findIndex((g) => g.kind === "price");
   // Only ever on the owner's tap, and only into a {{price}} gap.
   const usePrice = (value: string) => {
     if (priceGap >= 0) setBody(fillGap(body, priceGap, value));
   };
   const pastPrices = p.priceMemory ?? [];
+  // Check 23 P8: a quick change keeps the gaps filled on the card (sent only when changed).
+  const cardBody = body !== p.body ? body : undefined;
 
   const onPointerDown = (e: React.PointerEvent) => {
     if (editing || p.readOnly || e.pointerType === "mouse") return;
@@ -235,286 +283,355 @@ export function DraftCard(p: DraftCardProps) {
   };
 
   return (
-    <article
-      id={`t-${p.threadId}`}
-      aria-label={`Draft reply to ${p.customer}`}
-      className="flex touch-pan-y scroll-mt-4 scroll-mb-28 flex-col gap-3 rounded-xl border bg-card p-4 transition-transform motion-reduce:transition-none sm:scroll-mb-4"
-      style={{ transform: dx ? `translateX(${dx}px)` : undefined }}
-      onPointerDown={onPointerDown}
-      onPointerMove={onPointerMove}
-      onPointerUp={onPointerUp}
-      onPointerCancel={onPointerUp}
-    >
-      <header className="flex flex-col gap-1">
-        <div className="flex items-baseline justify-between gap-2">
-          <span className="text-lg font-black">{p.customer}</span>
-          <ConfidenceTag label={p.label} />
-        </div>
-        <ToLine address={p.toAddress} fromReplyTo={p.toFromReplyTo} />
-        <span className="text-sm font-semibold">{p.tag}</span>
-        {p.wrote ? <span className="text-sm">{p.wrote}</span> : null}
-        {(p.leadLines ?? []).map((line) => (
-          <p key={line} className="text-sm font-semibold">
-            {line}
-          </p>
-        ))}
-        {p.openingLine ? <p className="text-sm font-semibold">{p.openingLine}</p> : null}
-        {p.noteLine}
-        {p.summary ? <p className="font-semibold">{p.summary}</p> : null}
-        <p className={p.summary ? "text-muted-foreground" : undefined}>{p.reason}</p>
-      </header>
-
-      {p.needsOwnerReason ? <p className="font-semibold">Needs you: {p.needsOwnerReason}</p> : null}
-
-      {p.autoSendAt ? (
-        <form
-          action={holdAutopilotAction}
-          role="status"
-          className="sa-inverted flex flex-col gap-2 rounded-lg p-3"
-        >
-          <input type="hidden" name="draftId" value={p.draftId} />
-          <AutopilotCountdown sendAt={p.autoSendAt} clock={p.autoSendClock ?? ""} />
-          <Pending label="Hold it" busy="Holding…" className="w-full" />
-        </form>
-      ) : null}
-
-      {p.timingNote && !p.readOnly ? (
-        <div role="note" className="rounded-lg border-2 border-charcoal p-3">
-          <p className="font-black">{p.timingNote}</p>
-          <p className="text-sm">Read it again before it goes, or tap Edit to change it.</p>
-        </div>
-      ) : null}
-
-      {p.flags.length || p.label === "check_everything" ? (
-        <div className="rounded-lg border-2 border-charcoal p-3">
-          <p className="font-black">Check before sending</p>
-          <ul className="mt-1 flex list-disc flex-col gap-1 pl-5">
-            {p.label === "check_everything" ? (
-              <li>Not sure this one is right — read it closely.</li>
-            ) : null}
-            {p.flags.map((f) => (
-              <li key={f}>{f}</li>
-            ))}
-          </ul>
-        </div>
-      ) : null}
-
-      {editing ? (
-        <DraftEditor
-          draftId={p.draftId}
-          body={body}
-          kept={kept}
-          seenHash={p.seenHash}
-          toAddress={p.toAddress}
-          toLine={<ToLine address={p.toAddress} fromReplyTo={p.toFromReplyTo} />}
-          canSend={p.canSend}
-          confirmTiming={!!p.timingNote}
-          onCancel={() => {
-            setKept(null);
-            setEditing(false);
-          }}
-        />
-      ) : null}
-      {editing ? null : (
-        <>
-          <div className="rounded-lg border bg-paper p-3">
-            <BodyWithGaps
-              body={body}
-              onChange={setBody}
-              expanded={expanded}
-              readOnly={p.readOnly}
-              priceSuggestions={pastPrices}
-            />
-            <button
-              type="button"
-              className="mt-1 inline-flex min-h-tap items-center font-semibold underline underline-offset-4"
-              aria-expanded={expanded}
-              onClick={() => setExpanded((v) => !v)}
-            >
-              {expanded ? "Show less" : "Show full draft"}
-            </button>
+    // Check 9 P14: the strip behind the card says what a drag does.
+    <div className="relative">
+      <SwipeLabel dx={dx} toSend={toSend} />
+      <article
+        id={`t-${p.threadId}`}
+        aria-labelledby={`t-${p.threadId}-name`}
+        className="relative flex touch-pan-y scroll-mt-4 scroll-mb-28 flex-col gap-3 rounded-xl border bg-card p-4 transition-transform motion-reduce:transition-none sm:scroll-mb-4"
+        style={{ transform: dx ? `translateX(${dx}px)` : undefined }}
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={onPointerUp}
+        onPointerCancel={onPointerUp}
+      >
+        {p.notice}
+        <header className="flex flex-col gap-1">
+          {/* Check 32 P9 / P11: the customer's name is the card's heading, and wraps if long. */}
+          <div className="flex flex-wrap items-baseline justify-between gap-x-2">
+            <h3 id={`t-${p.threadId}-name`} className="min-w-0 text-lg font-black break-words">
+              {p.customer}
+              <span className="sr-only"> · draft reply</span>
+            </h3>
+            <ConfidenceTag label={p.label} />
           </div>
-
-          {pastPrices.length ? (
-            <PastPrices
-              prices={pastPrices}
-              canFill={priceGap >= 0 && !p.readOnly}
-              readOnly={p.readOnly}
-              onUse={usePrice}
-            />
+          <ToLine address={p.toAddress} fromReplyTo={p.toFromReplyTo} />
+          <span className="text-base font-semibold">{p.tag}</span>
+          {p.wrote ? <span className="text-base">{p.wrote}</span> : null}
+          {(p.leadLines ?? []).map((line) => (
+            <p key={line} className="text-sm font-semibold">
+              {line}
+            </p>
+          ))}
+          {p.openingLine ? <p className="text-sm font-semibold">{p.openingLine}</p> : null}
+          {p.noteLine}
+          {/* Check 9 P12: what the customer wants, once. The sorting reason is in Why this?,
+            and stands in here only when there's no summary. */}
+          {p.summary ? (
+            <p className="font-semibold">{p.summary}</p>
+          ) : p.reason ? (
+            <p>{withoutCategoryPrefix(p.reason)}</p>
           ) : null}
+        </header>
 
-          <WhyThis reason={p.reason} usedFacts={p.usedFacts} flags={p.flags} />
-          {p.readOnly ? null : p.moreActions}
+        {p.needsOwnerReason && !(p.summary && p.inRightNow) ? (
+          <p className="font-semibold">Needs you: {withoutCategoryPrefix(p.needsOwnerReason)}</p>
+        ) : null}
 
-          {discardIn !== null ? (
-            <form
-              ref={discardForm}
-              action={discardDraftAction}
-              role="status"
-              className="sa-inverted flex flex-col gap-2 rounded-lg p-3"
-            >
-              <input type="hidden" name="draftId" value={p.draftId} />
-              <p className="font-semibold">
-                {discardIn > 0
-                  ? `Discarding in ${discardIn}… It's removed from Gmail too.`
-                  : "Discarding…"}
-              </p>
-              {discardIn > 0 ? (
-                <Button type="button" className="w-full" onClick={() => setDiscardIn(null)}>
-                  Undo
-                </Button>
+        {p.autoSendAt ? (
+          <form
+            action={holdAutopilotAction}
+            role="status"
+            className="sa-inverted flex flex-col gap-2 rounded-lg p-3"
+          >
+            <input type="hidden" name="draftId" value={p.draftId} />
+            <CardTargets threadId={p.threadId} />
+            <AutopilotCountdown sendAt={p.autoSendAt} clock={p.autoSendClock ?? ""} />
+            <Pending label="Hold it" busy="Holding…" className="w-full" />
+          </form>
+        ) : null}
+
+        {p.timingNote && !p.readOnly ? (
+          <div role="note" className="rounded-lg border-2 border-charcoal p-3">
+            <p className="font-black">{p.timingNote}</p>
+            <p className="text-sm">Read it again before it goes, or tap Edit to change it.</p>
+          </div>
+        ) : null}
+
+        {p.flags.length || p.label === "check_everything" ? (
+          <div className="rounded-lg border-2 border-charcoal p-3">
+            <p className="font-black">Check before sending</p>
+            <ul className="mt-1 flex list-disc flex-col gap-1 pl-5">
+              {p.label === "check_everything" ? (
+                <li>Not sure this one is right — read it closely.</li>
               ) : null}
-            </form>
-          ) : confirmDiscard ? (
-            <form
-              action={discardDraftAction}
-              className="sa-inverted flex flex-col gap-2 rounded-lg p-3"
-            >
-              <input type="hidden" name="draftId" value={p.draftId} />
-              <p className="font-semibold">Discard this draft? It&apos;s removed from Gmail too.</p>
-              <Pending label="Discard draft" busy="Discarding…" className="w-full" />
-              <Button
-                type="button"
-                variant="ghost"
-                className="w-full"
-                onClick={() => setConfirmDiscard(false)}
+              {p.flags.map((f) => (
+                <li key={f}>{f}</li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
+
+        {editing ? (
+          <DraftEditor
+            draftId={p.draftId}
+            threadId={p.threadId}
+            nextThreadId={p.nextThreadId}
+            body={body}
+            kept={kept}
+            seenHash={p.seenHash}
+            toAddress={p.toAddress}
+            toLine={<ToLine address={p.toAddress} fromReplyTo={p.toFromReplyTo} />}
+            canSend={p.canSend}
+            confirmTiming={!!p.timingNote}
+            onCancel={() => {
+              restoreEditFocus();
+              setKept(null);
+              setEditing(false);
+            }}
+          />
+        ) : null}
+        {editing ? null : (
+          <>
+            <div ref={bodyBox} className="rounded-lg border bg-paper p-3">
+              <BodyWithGaps
+                body={body}
+                onChange={setBody}
+                openGap={openGap}
+                onOpenGap={setOpenGap}
+                expanded={expanded}
+                onToggle={() => setExpanded((v) => !v)}
+                // Check 9 P7: no Send reply ever sits under hidden text.
+                clamp={!(p.canSend && !p.readOnly)}
+                readOnly={p.readOnly}
+                priceSuggestions={pastPrices}
+              />
+            </div>
+
+            {pastPrices.length ? (
+              <PastPrices
+                prices={pastPrices}
+                canFill={priceGap >= 0 && !p.readOnly}
+                readOnly={p.readOnly}
+                onUse={usePrice}
+              />
+            ) : null}
+
+            <WhyThis reason={p.reason} usedFacts={p.usedFacts} flags={p.flags} />
+            {p.readOnly ? null : p.moreActions}
+
+            {discardIn !== null ? (
+              <form
+                ref={discardForm}
+                action={discardDraftAction}
+                className="sa-inverted flex flex-col gap-2 rounded-lg p-3"
               >
-                Keep it
-              </Button>
-            </form>
-          ) : (
-            <div ref={sendArea} className="grid grid-cols-1 gap-2">
-              {p.canSend && gapsLeft > 0 ? (
-                <div
-                  role="note"
-                  tabIndex={-1}
-                  className="flex min-h-12 items-center justify-center rounded-lg border-2 border-charcoal px-4 font-black"
-                >
-                  Fill in {gapsLeft} gap{gapsLeft === 1 ? "" : "s"} to send
-                </div>
-              ) : p.canSend && waitingForSignal ? (
-                <div role="note" tabIndex={-1} className="flex flex-col gap-2">
-                  <p className="font-black">Will send when you&apos;re back online.</p>
-                  <p className="text-sm text-muted-foreground">
-                    It&apos;s checked again first — if it changed, it waits for you.
-                  </p>
+                <input type="hidden" name="draftId" value={p.draftId} />
+                <CardTargets threadId={p.threadId} next={p.nextThreadId} />
+                <DiscardCountdown left={discardIn} />
+                {discardIn > 0 ? (
+                  <Button type="button" className="w-full" onClick={() => setDiscardIn(null)}>
+                    Undo
+                  </Button>
+                ) : null}
+              </form>
+            ) : confirmDiscard ? (
+              <form
+                action={discardDraftAction}
+                aria-labelledby={discardTitle}
+                onKeyDown={closeOnEscape(keepDraft)}
+                className="sa-inverted flex flex-col gap-2 rounded-lg p-3"
+              >
+                <input type="hidden" name="draftId" value={p.draftId} />
+                <CardTargets threadId={p.threadId} next={p.nextThreadId} />
+                <QuestionLine id={discardTitle} className="font-semibold">
+                  {p.nudge
+                    ? "Discard this nudge? It's removed from Gmail too, and we won't nudge them again on this one unless you write to them."
+                    : "Discard this draft? It's removed from Gmail too."}
+                </QuestionLine>
+                <Pending label="Discard draft" busy="Discarding…" className="w-full" />
+                <Button type="button" variant="ghost" className="w-full" onClick={keepDraft}>
+                  Keep it
+                </Button>
+              </form>
+            ) : (
+              <div ref={sendArea} className="grid grid-cols-1 gap-2">
+                {p.canSend && gapsLeft > 0 ? (
+                  // Check 9 P11: a real button — it opens the first blank to fill. The server
+                  // still refuses to send a reply with a gap in it.
                   <Button
                     type="button"
                     variant="outline"
-                    className="w-full"
-                    onClick={() => removeIntent(p.draftId)}
+                    size="lg"
+                    className="w-full border-2 border-charcoal font-black"
+                    onClick={openFirstGap}
                   >
-                    Don&apos;t send it
+                    Fill in {gapsLeft} gap{gapsLeft === 1 ? "" : "s"} to send
                   </Button>
-                </div>
-              ) : p.canSend ? (
-                <form
-                  action={sendDraftAction}
-                  onSubmit={okayOffline}
-                  // Check 8 P1: with offline okays on, the no-signal guard lets this one through
-                  // (it's kept on the phone); otherwise a tap with no signal is stopped first.
-                  data-offline-ok={p.offlineEnabled ? "" : undefined}
-                >
-                  <input type="hidden" name="draftId" value={p.draftId} />
-                  <input type="hidden" name="seen" value={p.seenHash} />
-                  {p.toAddress ? <input type="hidden" name="seenTo" value={p.toAddress} /> : null}
-                  {body !== p.body ? <input type="hidden" name="body" value={body} /> : null}
-                  {p.timingNote ? <input type="hidden" name="confirmedTiming" value="1" /> : null}
-                  <SendButton label={p.timingNote ? "Send reply anyway" : "Send reply"} />
-                </form>
-              ) : (
-                <>
-                  <div
-                    role="note"
-                    tabIndex={-1}
-                    className="sa-inverted flex min-h-12 flex-col justify-center rounded-lg px-4 py-2"
-                  >
-                    <span className="font-black">{p.sendingOffLabel}</span>
-                    <span className="text-sm text-ash">{p.sendingOffDetail}</span>
-                  </div>
-                  {p.practiceLeft != null && !p.readOnly ? (
-                    p.practiceLeft > 0 ? (
-                      <form action={practiceSendAction} className="flex flex-col gap-1">
-                        <input type="hidden" name="draftId" value={p.draftId} />
-                        {body !== p.body ? <input type="hidden" name="body" value={body} /> : null}
-                        <Pending
-                          label="Send it to yourself instead"
-                          busy="Sending to you…"
-                          variant="outline"
-                          className="w-full"
-                        />
-                        <span className="text-sm text-muted-foreground">
-                          A practice copy to your own inbox to see how it reads. Your customer gets
-                          nothing. {p.practiceLeft} left.
-                        </span>
-                      </form>
-                    ) : (
-                      <span className="text-sm text-muted-foreground">
-                        You&apos;ve used all your practice sends.
-                      </span>
-                    )
-                  ) : null}
-                </>
-              )}
-              {p.readOnly ? null : (
-                <div className={canChange ? "grid grid-cols-3 gap-2" : "grid grid-cols-2 gap-2"}>
-                  {/* Edit sits under the thumb: right by default, left if mirrored. Discard is
-                      on the far side; Change it, when there, in the middle. */}
-                  <Button
-                    type="button"
-                    variant="outline"
-                    className={p.leftHanded ? "order-1" : "order-3"}
-                    onClick={() => {
-                      setChanging(false);
-                      setEditing(true);
-                    }}
-                  >
-                    Edit
-                  </Button>
-                  {canChange ? (
+                ) : p.canSend && waitingForSignal ? (
+                  <div role="note" tabIndex={-1} className="flex flex-col gap-2">
+                    <p className="font-black">Will send when you&apos;re back online.</p>
+                    <p className="text-sm text-muted-foreground">
+                      It&apos;s checked again first — if it changed, it waits for you.
+                    </p>
                     <Button
                       type="button"
-                      variant={changing ? "default" : "outline"}
-                      aria-expanded={changing}
-                      aria-controls={`change-${p.draftId}`}
-                      className="order-2"
-                      onClick={() => setChanging((v) => !v)}
+                      variant="outline"
+                      className="w-full"
+                      onClick={() => removeIntent(p.draftId)}
                     >
-                      Change it
+                      Don&apos;t send it
                     </Button>
-                  ) : null}
-                  <Button
-                    type="button"
-                    variant="outline"
-                    className={p.leftHanded ? "order-3" : "order-1"}
-                    onClick={() => setConfirmDiscard(true)}
+                  </div>
+                ) : p.canSend ? (
+                  <form
+                    action={sendDraftAction}
+                    onSubmit={okayOffline}
+                    // Check 8 P1: with offline okays on, the no-signal guard lets this one through
+                    // (it's kept on the phone); otherwise a tap with no signal is stopped first.
+                    data-offline-ok={p.offlineEnabled ? "" : undefined}
                   >
-                    Discard
-                  </Button>
+                    <input type="hidden" name="draftId" value={p.draftId} />
+                    <CardTargets threadId={p.threadId} next={p.nextThreadId} />
+                    <input type="hidden" name="seen" value={p.seenHash} />
+                    {p.toAddress ? <input type="hidden" name="seenTo" value={p.toAddress} /> : null}
+                    {body !== p.body ? <input type="hidden" name="body" value={body} /> : null}
+                    {p.timingNote ? <input type="hidden" name="confirmedTiming" value="1" /> : null}
+                    <SendButton label={p.timingNote ? "Send reply anyway" : "Send reply"} />
+                  </form>
+                ) : (
+                  <>
+                    <div
+                      role="note"
+                      tabIndex={-1}
+                      className="sa-inverted flex min-h-12 flex-col justify-center rounded-lg px-4 py-2"
+                    >
+                      <span className="font-black">{p.sendingOffLabel}</span>
+                      <span className="text-sm text-ash">{p.sendingOffDetail}</span>
+                    </div>
+                    {p.practiceLeft != null && !p.readOnly ? (
+                      p.practiceLeft > 0 ? (
+                        <form action={practiceSendAction} className="flex flex-col gap-1">
+                          <input type="hidden" name="draftId" value={p.draftId} />
+                          <CardTargets threadId={p.threadId} />
+                          {body !== p.body ? (
+                            <input type="hidden" name="body" value={body} />
+                          ) : null}
+                          <Pending
+                            label="Send it to yourself instead"
+                            busy="Sending to you…"
+                            variant="outline"
+                            className="w-full"
+                          />
+                          <span className="text-sm text-muted-foreground">
+                            A practice copy to your own inbox to see how it reads. Your customer
+                            gets nothing. {p.practiceLeft} left.
+                          </span>
+                        </form>
+                      ) : (
+                        <span className="text-sm text-muted-foreground">
+                          You&apos;ve used all your practice sends.
+                        </span>
+                      )
+                    ) : null}
+                  </>
+                )}
+                {p.readOnly ? null : (
+                  <div className={canChange ? "grid grid-cols-3 gap-2" : "grid grid-cols-2 gap-2"}>
+                    {/* Edit sits under the thumb: right by default, left if mirrored. Discard is
+                      on the far side; Change it, when there, in the middle. */}
+                    <Button
+                      ref={editOpener}
+                      type="button"
+                      variant="outline"
+                      className={p.leftHanded ? "order-1" : "order-3"}
+                      onClick={() => {
+                        setChanging(false);
+                        setEditing(true);
+                      }}
+                    >
+                      Edit
+                    </Button>
+                    {canChange ? (
+                      <Button
+                        type="button"
+                        variant={changing ? "default" : "outline"}
+                        aria-expanded={changing}
+                        aria-controls={`change-${p.draftId}`}
+                        className="order-2"
+                        onClick={() => setChanging((v) => !v)}
+                      >
+                        Change it
+                      </Button>
+                    ) : null}
+                    <Button
+                      ref={discardOpener}
+                      type="button"
+                      variant="outline"
+                      className={p.leftHanded ? "order-3" : "order-1"}
+                      onClick={() => setConfirmDiscard(true)}
+                    >
+                      Discard
+                    </Button>
+                  </div>
+                )}
+                {canChange && p.otherWays ? (
+                  <OtherWaysToReply
+                    draftId={p.draftId}
+                    threadId={p.threadId}
+                    seenHash={p.seenHash}
+                    cardBody={cardBody}
+                  />
+                ) : null}
+                {canChange && changing ? (
+                  <div
+                    id={`change-${p.draftId}`}
+                    className="flex flex-col gap-3 rounded-lg border p-3"
+                  >
+                    <p className="text-sm text-muted-foreground">
+                      Each change writes a new version for you to read. Nothing is sent.
+                    </p>
+                    <TweakChips
+                      draftId={p.draftId}
+                      threadId={p.threadId}
+                      seenHash={p.seenHash}
+                      cardBody={cardBody}
+                    />
+                    <SayAChange
+                      draftId={p.draftId}
+                      threadId={p.threadId}
+                      seenHash={p.seenHash}
+                      cardBody={cardBody}
+                    />
+                  </div>
+                ) : null}
+                {p.readOnly || (p.nudge !== "quote" && p.nudge !== "invoice") ? null : (
+                  // Check 21 P8: close the matter from the nudge card.
+                  <form action={p.nudge === "quote" ? nudgeSaidNoAction : nudgeAlreadyPaidAction}>
+                    <CardTargets threadId={p.threadId} next={p.nextThreadId} />
+                    <Pending
+                      label={p.nudge === "quote" ? "They said no" : "Already paid"}
+                      busy="Saving…"
+                      variant="outline"
+                      className="w-full"
+                    />
+                  </form>
+                )}
+                {/* Check 9 P12: side by side; a question that opens takes the whole row. */}
+                <div className="grid grid-cols-2 gap-2 [&:has(>form)>*]:col-span-2 [&>*:only-child]:col-span-2">
+                  <RemindMe
+                    threadId={p.threadId}
+                    nextThreadId={p.nextThreadId}
+                    options={p.remindOptions ?? []}
+                    compact
+                  />
+                  {p.readOnly ? null : (
+                    <CalledThem
+                      threadId={p.threadId}
+                      nextThreadId={p.nextThreadId}
+                      hasDraft
+                      compact
+                    />
+                  )}
                 </div>
-              )}
-              {canChange && p.otherWays ? (
-                <OtherWaysToReply draftId={p.draftId} seenHash={p.seenHash} />
-              ) : null}
-              {canChange && changing ? (
-                <div
-                  id={`change-${p.draftId}`}
-                  className="flex flex-col gap-3 rounded-lg border p-3"
-                >
-                  <p className="text-sm text-muted-foreground">
-                    Each change writes a new version for you to read. Nothing is sent.
-                  </p>
-                  <TweakChips draftId={p.draftId} seenHash={p.seenHash} />
-                  <SayAChange draftId={p.draftId} seenHash={p.seenHash} />
-                </div>
-              ) : null}
-              <RemindMe threadId={p.threadId} options={p.remindOptions ?? []} />
-              {p.readOnly ? null : <CalledThem threadId={p.threadId} hasDraft />}
-            </div>
-          )}
-        </>
-      )}
-    </article>
+              </div>
+            )}
+          </>
+        )}
+        {/* Under the buttons, so it never pushes Send reply down. */}
+        {p.swipeTip && !p.readOnly ? <SwipeTip leftHanded={p.leftHanded} /> : null}
+      </article>
+    </div>
   );
 }

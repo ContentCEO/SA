@@ -706,6 +706,16 @@ export function phraseRegex(phrase: string): RegExp {
   return new RegExp(`(?<![\\p{L}\\p{N}])${escaped}(?![\\p{L}\\p{N}])`, "iu");
 }
 
+/**
+ * Check 41 P2: the draft names a day, date or time (DAYS, TIMES, DATES or a loose "when" like
+ * "tomorrow morning"), whoever wrote that day first. A scheduling reply that does is a visit
+ * confirmation — on a rain day exactly the one the owner may want to change — so it never goes
+ * in "Send together". Gaps are left out first. Pure.
+ */
+export function namesAVisitTime(body: string): boolean {
+  return whenTokens(withoutGaps(body)).length > 0;
+}
+
 export function checkDraft(draftBody: string, ctx: CheckContext): CheckResult {
   // Placeholders ({{price}}…) are gaps for the owner, not facts — check the words around them.
   const body = withoutGaps(draftBody);

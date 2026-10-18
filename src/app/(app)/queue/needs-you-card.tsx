@@ -1,12 +1,12 @@
 import type { ReactNode } from "react";
 import { ContactButtons } from "@/components/app/contact-buttons";
 import { PendingButton } from "@/components/app/pending-button";
-import { Button } from "@/components/ui/button";
 import { relativeTime } from "@/lib/relative-time";
 import type { QueueItem } from "@/server/drafts";
 import { playbookApplies } from "@/server/complaint-rules";
 import type { LeadCard } from "@/server/lead-cards";
 import { draftReplyAction } from "./actions";
+import { DraftReplyButton } from "./draft-reply-button";
 import { CalledThem } from "./called-them";
 import { injectionClearable } from "@/server/injection-clear-rules";
 import {
@@ -38,6 +38,8 @@ export function NeedsYouCard({
   timeZone,
   note,
   resort,
+  nextThreadId,
+  notice,
 }: {
   i: QueueItem;
   lead: LeadCard | undefined;
@@ -51,6 +53,10 @@ export function NeedsYouCard({
   note?: ReactNode;
   /** Ideas H4: the "Move it" sheet (never on a read-only account or a check-in). */
   resort?: ReactNode;
+  /** Check 9 P5: the card after this one, where a snooze or "I called them" lands. */
+  nextThreadId?: string | null;
+  /** Check 9 P5: the done / error notice for a tap on this card. */
+  notice?: ReactNode;
 }) {
   const channel = lead?.channel ?? null;
   const phoneLine = channel?.kind === "phone" || channel?.kind === "phone_text";
@@ -100,10 +106,15 @@ export function NeedsYouCard({
   return (
     <article
       id={`t-${i.threadId}`}
+      aria-labelledby={`t-${i.threadId}-name`}
       className="sa-inverted flex scroll-mt-4 scroll-mb-28 flex-col gap-2 rounded-xl p-4 sm:scroll-mb-4"
     >
-      <div className="flex items-baseline justify-between gap-3">
-        <span className="truncate text-lg font-black">{name}</span>
+      {notice}
+      {/* Check 32 P9 / P11: the customer's name is the card's heading, and wraps if long. */}
+      <div className="flex flex-wrap items-baseline justify-between gap-x-3">
+        <h3 id={`t-${i.threadId}-name`} className="min-w-0 text-lg font-black break-words">
+          {name}
+        </h3>
         <span className="shrink-0 text-sm text-ash">
           {i.lastMessageAt ? relativeTime(i.lastMessageAt) : ""}
         </span>
@@ -144,11 +155,11 @@ export function NeedsYouCard({
         ) : null}
         {contact}
         {canDraft ? (
-          <form action={draftReplyAction}>
+          <form action={draftReplyAction} className="flex flex-col gap-1">
             <input type="hidden" name="threadId" value={i.threadId} />
-            <Button type="submit" className="w-full">
-              {lead?.outsideTown ? "Draft a reply anyway" : "Draft a reply"}
-            </Button>
+            <DraftReplyButton
+              label={lead?.outsideTown ? "Draft a reply anyway" : "Draft a reply"}
+            />
           </form>
         ) : null}
         {!readOnly && lead?.outsideTown && !i.checkIn ? (
@@ -183,10 +194,16 @@ export function NeedsYouCard({
             </PendingButton>
           </form>
         ) : null}
-        <RemindMe threadId={i.threadId} options={remindOptions} inverted />
+        <RemindMe
+          threadId={i.threadId}
+          nextThreadId={nextThreadId}
+          options={remindOptions}
+          inverted
+        />
         {readOnly || i.checkIn || complaint ? null : phoneLine ? (
           <CalledThem
             threadId={i.threadId}
+            nextThreadId={nextThreadId}
             hasDraft={false}
             inverted
             label="Done — I called back"
@@ -195,13 +212,14 @@ export function NeedsYouCard({
         ) : site || i.lane ? (
           <CalledThem
             threadId={i.threadId}
+            nextThreadId={nextThreadId}
             hasDraft={false}
             inverted
             label="Done — I answered"
             confirm="Yes, done"
           />
         ) : (
-          <CalledThem threadId={i.threadId} hasDraft={false} inverted />
+          <CalledThem threadId={i.threadId} nextThreadId={nextThreadId} hasDraft={false} inverted />
         )}
         {readOnly || i.checkIn ? null : resort}
         <a href={gmailHref} target="_blank" rel="noreferrer" className={linkClass}>

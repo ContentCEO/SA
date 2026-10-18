@@ -21,6 +21,7 @@ import {
   checkDraft,
   claimsHuman,
   hasLink,
+  namesAVisitTime,
   REGENERATE_ON,
   type CheckResult,
 } from "@/ai/draft-checks";
@@ -35,7 +36,7 @@ import {
   type Tweak,
 } from "@/ai/prompts/revise.v2";
 import { MAX_REVISIONS_PER_DRAFT, UNDO_WINDOW_SECONDS } from "@/config/drafting";
-import { findGaps, hasUnfilledGap } from "@/ai/gaps";
+import { filledGaps, findGaps, hasUnfilledGap } from "@/ai/gaps";
 import {
   conversationBlock,
   DRAFT_INSTRUCTIONS,
@@ -123,6 +124,7 @@ import { isInvoiceThread, paymentSaid } from "./money-rules";
 import { quoteStopsNudges } from "./quote-rules";
 import { BACK_ON_TOP_MS, isEmergency } from "./snooze-rules";
 import { inEmergencyLane, recentEmergency } from "./emergency-rules";
+import { claimDrafting, releaseDrafting } from "./draft-claims";
 import { CHECKIN_AFTER_DAYS, CHECKIN_MAX_DAYS } from "./complaint-rules";
 import { headerPickIds, toNeedsYouItem } from "./digest-rules";
 import { answeredByPhone } from "./first-week-rules";
@@ -639,18 +641,53 @@ function purposeGuards(purpose: DraftPurpose | null, body: string, ctx: DraftCon
  * Flags and confidence (0–100) for a finished draft. Purpose flags go first, so the cut to six
  * can't drop them, and they cap confidence on their own (A6).
  */
-function scoreDraft(
+/**
+ * Check 23 P9: after the one retry, keep whichever attempt broke fewer of the owner's rules
+ * (REGENERATE_ON hits); on a tie, the retry. A worse retry never replaces a better first draft.
+ * Logs only which one was kept.
+ */
+function betterAttempt<T extends { body: string }>(
+  first: T,
+  firstChecks: CheckResult,
+  retry: T | null,
+  context: Parameters<typeof checkDraft>[1],
+): T {
+  if (!retry?.body.trim()) return first;
+  const hits = (c: CheckResult) => c.hits.filter((h) => REGENERATE_ON.includes(h)).length;
+  const kept =
+    hits(checkDraft(retry.body.trim(), context)) <= hits(firstChecks) ? "retry" : "first";
+  console.info("draft_retry_kept", { kept });
+  return kept === "retry" ? retry : first;
+}
+
+/** How many "Check before sending" lines a card shows. */
+export const MAX_CARD_FLAGS = 6;
+
+/**
+ * Check 23 P9: at most six lines, in the order given, de-duplicated. If anything is cut, the
+ * last line says how much ("And 2 more things to check."), so nothing is dropped silently.
+ */
+export function capFlags(all: string[]): string[] {
+  const flags = [...new Set(all.map((f) => f.trim()).filter(Boolean))];
+  if (flags.length <= MAX_CARD_FLAGS) return flags;
+  const kept = flags.slice(0, MAX_CARD_FLAGS - 1);
+  const more = flags.length - kept.length;
+  return [...kept, `And ${more} more ${more === 1 ? "thing" : "things"} to check.`];
+}
+
+/**
+ * The card's "Check before sending" lines and confidence. Check 23 P9: the fixed cautions and
+ * purpose flags first, then what the code's checks found (in checkDraft's order), then the
+ * model's own notes — so a code-found warning ("Mentions $1,545 — that price isn't in the
+ * email…") is never pushed out by the model's notes.
+ */
+export function scoreDraft(
   result: { flags: string[]; confidence: number },
   checks: CheckResult,
   purposeFlags: string[],
+  fixedFlags: string[] = [],
 ) {
-  const flags = [
-    ...new Set([
-      ...purposeFlags,
-      ...result.flags.map((f) => f.trim()).filter(Boolean),
-      ...checks.flags,
-    ]),
-  ].slice(0, 6);
+  const flags = capFlags([...fixedFlags, ...purposeFlags, ...checks.flags, ...result.flags]);
   const confidence = Math.round(
     Math.max(
       0,
@@ -736,18 +773,55 @@ export async function workspaceContext(
  * deposit draft is written, whatever the trigger, when the newest email accepts a quote
  * the owner gave; a review request or closing question only when the owner taps for one.
  */
+type CreateOpts = DraftDeps & {
+  /** auto: reply to new mail. owner: they asked. followup: nudge a quiet thread. */
+  trigger: "auto" | "owner" | "followup";
+  ownerNote?: string | null;
+  /** Required when the owner triggers it: the thread must belong to them. */
+  workspaceId?: string;
+  /** A special note only the owner's tap may ask for. */
+  purpose?: OwnerPurpose;
+};
+
 export async function createDraftForThread(
   threadId: string,
-  opts: DraftDeps & {
-    /** auto: reply to new mail. owner: they asked. followup: nudge a quiet thread. */
-    trigger: "auto" | "owner" | "followup";
-    ownerNote?: string | null;
-    /** Required when the owner triggers it: the thread must belong to them. */
-    workspaceId?: string;
-    /** A special note only the owner's tap may ask for. */
-    purpose?: OwnerPurpose;
-  } = { trigger: "auto" },
+  opts: CreateOpts = { trigger: "auto" },
 ): Promise<CreateOutcome> {
+  // Check 9 P9: one run per thread at a time — a second (a double tap, or a tap while the job
+  // writes the same one) stands down before any Gmail read or model call.
+  const claim = await claimDrafting(threadId, opts.now?.() ?? new Date());
+  if (!claim) return { status: "skipped", reason: "already_pending" };
+  try {
+    return await writeDraftForThread(threadId, opts);
+  } finally {
+    await releaseDrafting(threadId, claim);
+  }
+}
+
+/**
+ * Check 9 P9: when the thread's waiting draft was written (for "already a draft" right after
+ * a double tap), or null when none is waiting.
+ */
+export async function pendingDraftCreatedAt(
+  workspaceId: string,
+  threadId: string,
+): Promise<Date | null> {
+  const [r] = await db()
+    .select({ createdAt: drafts.createdAt })
+    .from(drafts)
+    .innerJoin(mailboxes, eq(mailboxes.id, drafts.mailboxId))
+    .where(
+      and(
+        eq(drafts.threadId, threadId),
+        eq(drafts.status, "pending"),
+        eq(mailboxes.workspaceId, workspaceId),
+      ),
+    )
+    .limit(1);
+  return r?.createdAt ?? null;
+}
+
+async function writeDraftForThread(threadId: string, opts: CreateOpts): Promise<CreateOutcome> {
   const now = opts.now?.() ?? new Date();
   const row = await loadThread(threadId);
   if (!row) return { status: "skipped", reason: "not_found" };
@@ -1248,7 +1322,7 @@ export async function createDraftForThread(
             ...request,
             user: `${convo}\n\nYour last attempt broke the owner's rules: ${first.flags.join(" ")} Write it again without that.`,
           });
-          if (retry?.body.trim()) result = retry;
+          result = betterAttempt(result, first, retry, checkContext);
         }
       }
     } catch (err) {
@@ -1259,17 +1333,22 @@ export async function createDraftForThread(
 
   // What the owner must sort before a purpose note can go (A6).
   const { body, flags: purposeFlags } = purposeGuards(purpose, result.body.trim(), ctx);
-  const scored = scoreDraft(result, checkDraft(body, checkContext), [
-    ...(maybeText ? [MAYBE_TEXT_FLAG] : []),
-    ...(safety && safetyKind ? [SAFETY_NOTES[safetyKind].flag, ...purposeFlags] : purposeFlags),
-  ]);
   // Check 43 P9: the fixed caution goes first (so the cut to six never drops it), and the
   // card never says Ready on one of these. Check 38 P1: a change order's reminder next.
   const fixedFlags = [
     ...(dispute ? [DISPUTE_FLAG] : []),
     ...(changeOrder && !followup && !safety ? [CHANGE_ORDER_FLAG] : []),
   ];
-  const flags = [...new Set([...fixedFlags, ...scored.flags])].slice(0, 6);
+  const scored = scoreDraft(
+    result,
+    checkDraft(body, checkContext),
+    [
+      ...(maybeText ? [MAYBE_TEXT_FLAG] : []),
+      ...(safety && safetyKind ? [SAFETY_NOTES[safetyKind].flag, ...purposeFlags] : purposeFlags),
+    ],
+    fixedFlags,
+  );
+  const flags = scored.flags;
   const confidence = dispute
     ? Math.min(scored.confidence, Math.round(DISPUTE_CONFIDENCE_CAP * 100))
     : scored.confidence;
@@ -2222,6 +2301,19 @@ export async function batchCandidates(
   picked: readonly string[],
   now: Date = new Date(),
 ): Promise<BatchRow[]> {
+  return (await batchReview(workspaceId, picked, now)).rows;
+}
+
+/**
+ * The batch rows, plus how many scheduling replies were left out only because they confirm a
+ * day or time (Check 41 P2: the review page says so in one line, count only).
+ */
+export async function batchReview(
+  workspaceId: string,
+  picked: readonly string[],
+  now: Date = new Date(),
+): Promise<{ rows: BatchRow[]; heldForVisitTime: number }> {
+  let heldForVisitTime = 0;
   const rows = await db()
     .select({ draft: drafts, thread: threads })
     .from(drafts)
@@ -2249,33 +2341,36 @@ export async function batchCandidates(
       electrical_hazard?: boolean;
       asks_if_ai?: boolean;
     };
-    const ok = batchEligible(
-      {
-        category: thread.category,
-        needsOwner: thread.needsOwner || thread.needsOwnerManual,
-        flags: draft.flags,
-        confidencePct: draft.confidence,
-        body: draft.body ?? "",
-        amountsInEmail: extracted.dollar_amounts ?? [],
-        untrusted:
-          extracted.injection === true ||
-          extracted.municipal === true ||
-          extracted.payment_change === true ||
-          extracted.gas_smell === true ||
-          extracted.co_alarm === true ||
-          extracted.electrical_hazard === true ||
-          // Check 48 P1: "is this a bot?", or a draft that says a person wrote it alone.
-          extracted.asks_if_ai === true ||
-          claimsHuman(draft.body ?? "") ||
-          // Check 36 P2: an emergency in the last 48 hours, whatever the thread is now.
-          recentEmergency(extracted, now),
-        autopilotCounting: draft.autoSendAt !== null,
-        acceptsQuote: extracted.accepts_quote === true,
-        purpose: draft.purpose ?? null,
-      },
-      picked,
-    );
-    if (!ok) continue;
+    const candidate = {
+      category: thread.category,
+      needsOwner: thread.needsOwner || thread.needsOwnerManual,
+      flags: draft.flags,
+      confidencePct: draft.confidence,
+      body: draft.body ?? "",
+      amountsInEmail: extracted.dollar_amounts ?? [],
+      untrusted:
+        extracted.injection === true ||
+        extracted.municipal === true ||
+        extracted.payment_change === true ||
+        extracted.gas_smell === true ||
+        extracted.co_alarm === true ||
+        extracted.electrical_hazard === true ||
+        // Check 48 P1: "is this a bot?", or a draft that says a person wrote it alone.
+        extracted.asks_if_ai === true ||
+        claimsHuman(draft.body ?? "") ||
+        // Check 36 P2: an emergency in the last 48 hours, whatever the thread is now.
+        recentEmergency(extracted, now),
+      autopilotCounting: draft.autoSendAt !== null,
+      acceptsQuote: extracted.accepts_quote === true,
+      purpose: draft.purpose ?? null,
+      visitTime: namesAVisitTime(draft.body ?? ""),
+    };
+    const ok = batchEligible(candidate, picked);
+    if (!ok) {
+      if (candidate.visitTime && batchEligible({ ...candidate, visitTime: false }, picked))
+        heldForVisitTime++;
+      continue;
+    }
     const who = await customerOf(thread.id);
     out.push({
       draftId: draft.id,
@@ -2286,7 +2381,7 @@ export async function batchCandidates(
       seenHash: bodyHash(draft.body ?? ""),
     });
   }
-  return out;
+  return { rows: out, heldForVisitTime };
 }
 
 /**
@@ -2439,6 +2534,12 @@ export async function reviseDraft(
   opts: DraftDeps & {
     /** Check 42 P2: bodyHash of the text the card showed when the change was asked for. */
     openedHash?: string;
+    /**
+     * Check 23 P8: the card's text with the gaps the owner filled in (a typed value or a tapped
+     * past price). Used only when it is the saved text with some gaps filled and nothing else
+     * changed; otherwise ignored, so a forged body can't slip text past the checks.
+     */
+    currentBody?: string;
   } = {},
 ): Promise<ReviseOutcome> {
   const row = await loadOwnedDraft(workspaceId, draftId);
@@ -2492,6 +2593,12 @@ export async function reviseDraft(
   }
 
   const spoken = "spoken" in change ? change.spoken.trim().slice(0, 500) : null;
+  // Check 23 P8: what the owner filled into the gaps on the card is kept, and is theirs.
+  const filled =
+    opts.currentBody !== undefined ? filledGaps(draft.body ?? "", opts.currentBody) : null;
+  const typedValues = filled ?? [];
+  const startText = filled?.length ? opts.currentBody! : (draft.body ?? "");
+  const ownerSaid = [spoken, ...typedValues].filter(Boolean).join("\n") || null;
   const dispute = disputeThread(thread);
   const ask =
     spoken ??
@@ -2533,8 +2640,10 @@ export async function reviseDraft(
     ...ctx.seasonalNotes.map((n) => n.text),
     // Check 23 P3: a seasonal note's last day, as a draft would write it ("November 27").
     ...ctx.seasonalNotes.map((n) => spellDate(n.endsOn)),
-    // What the owner said counts as a fact they gave us (plan #4).
+    // What the owner said counts as a fact they gave us (plan #4), and so do the values they
+    // typed into the gaps (Check 23 P8).
     spoken,
+    ...typedValues,
     // Facts already in a clean draft stay allowed. A flagged draft's text
     // doesn't count, so a tweak can never launder a flag away.
     (draft.flags ?? []).length === 0 ? draft.body : null,
@@ -2546,7 +2655,7 @@ export async function reviseDraft(
     ...whenContext(
       ctx,
       withText,
-      [spoken, (draft.flags ?? []).length === 0 ? draft.body : null],
+      [spoken, ...typedValues, (draft.flags ?? []).length === 0 ? draft.body : null],
       now,
       ("tweak" in change && change.tweak === "availability") ||
         asksWhenAvailable(lastInbound?.text ?? ""),
@@ -2559,7 +2668,7 @@ export async function reviseDraft(
       .filter(Boolean)
       .join("\n"),
     // Round 2 A5: "tell her Thursday works, 450" — every number the owner said is theirs.
-    ownerInstruction: spoken,
+    ownerInstruction: ownerSaid,
     doNotPromise: ctx.doNotPromise,
     phrasesAvoided: ctx.voice?.phrasesAvoided ?? [],
     neverSay: ctx.neverSay,
@@ -2601,8 +2710,8 @@ export async function reviseDraft(
     extracted: thread.extracted,
     // Check 43 P9: a change on a dispute or legal thread keeps the same fixed caution.
     task: dispute
-      ? `${reviseTask(draft.body ?? "", ask, spoken !== null)}\n\n${DISPUTE_TASK}`
-      : reviseTask(draft.body ?? "", ask, spoken !== null),
+      ? `${reviseTask(startText, ask, spoken !== null)}\n\n${DISPUTE_TASK}`
+      : reviseTask(startText, ask, spoken !== null),
     messages: withText.map(({ m, text }) => ({
       from:
         m.direction === "out"
@@ -2642,7 +2751,7 @@ export async function reviseDraft(
           ...request,
           user: `${convo}\n\nYour last attempt broke the owner's rules: ${first.flags.join(" ")} Write it again without that.`,
         });
-        if (retry?.body.trim()) result = retry;
+        result = betterAttempt(result, first, retry, checkContext);
       }
     }
   } catch (err) {
@@ -2659,16 +2768,18 @@ export async function reviseDraft(
     ...(isNoReplyAddress(draft.toAddress) ? [NO_REPLY_FLAG] : []),
     ...((draft.flags ?? []).includes(REPOINTED_FLAG) ? [REPOINTED_FLAG] : []),
   ];
-  const scored = scoreDraft(result, checkDraft(body, checkContext), [
-    ...addressFlags,
-    ...purposeFlags,
-  ]);
   // Check 43 P9: a tweak never lifts the caution or its cap (nor Check 38 P1's reminder).
   const fixedFlags = [
     ...(dispute ? [DISPUTE_FLAG] : []),
     ...((draft.flags ?? []).includes(CHANGE_ORDER_FLAG) ? [CHANGE_ORDER_FLAG] : []),
   ];
-  const flags = [...new Set([...fixedFlags, ...scored.flags])].slice(0, 6);
+  const scored = scoreDraft(
+    result,
+    checkDraft(body, checkContext),
+    [...addressFlags, ...purposeFlags],
+    fixedFlags,
+  );
+  const flags = scored.flags;
   const confidence = dispute
     ? Math.min(scored.confidence, Math.round(DISPUTE_CONFIDENCE_CAP * 100))
     : scored.confidence;
@@ -3171,7 +3282,7 @@ export type QueueMember = {
   emergency: boolean;
   backFromSnooze: boolean;
   lastMessageAt: Date | null;
-  /** Leads package (B5): in the emergency lane (needs-you only; sorted first). */
+  /** Leads package (B5): in the emergency lane (sorted first; Check 9 P6: drafts too). */
   lane: boolean;
   /** Leads package (G5): a check-in two days after "Mark fixed". */
   checkIn: boolean;
@@ -3186,7 +3297,16 @@ export type QueueMembership = {
   /** `waitingSince`: the customer's first email since the owner last wrote (plan M8 A14). */
   needsYou: (QueueMember & { waitingSince: Date | null })[];
   drafts: (QueueMember & { draftId: string; kind: "reply" | "followup" })[];
+  /**
+   * Check 9 P6: the emergencies, with or without a draft, in the order the "Right now" section
+   * shows them. A view onto the two lists above (every entry is also in one of them), so no
+   * count changes: counts read `needsYou` and `drafts` only.
+   */
+  now: { threadId: string; draftId: string | null }[];
 };
+
+/** Check 9 P6: an emergency for the queue's order — the lane, or high priority + needs you. */
+const isUrgent = (m: QueueMember) => !m.checkIn && (m.lane || m.emergency);
 
 /**
  * Who is on the queue, and nothing else (plan M8 A1): the same rules the queue screen uses —
@@ -3205,7 +3325,7 @@ export async function queueMembership(
     .from(mailboxes)
     .where(eq(mailboxes.workspaceId, workspaceId));
   const boxIds = boxes.map((b) => b.id);
-  if (boxIds.length === 0) return { needsYou: [], drafts: [] };
+  if (boxIds.length === 0) return { needsYou: [], drafts: [], now: [] };
   const pausedBoxes = new Set(boxes.filter((b) => b.planPausedAt).map((b) => b.id));
 
   const threadCols = {
@@ -3287,36 +3407,67 @@ export async function queueMembership(
     paused: pausedBoxes.has(t.mailboxId),
   });
   // A stable sort: newest first, with anything back from a snooze on top — and the emergency
-  // lane above everything (leads package, B5).
+  // lane above everything (leads package, B5), then any other emergency (Check 9 P6).
   const backFirst = <T extends QueueMember>(rows: T[]) =>
     [...rows].sort(
       (a, b) =>
-        Number(b.lane) - Number(a.lane) || Number(b.backFromSnooze) - Number(a.backFromSnooze),
+        Number(b.lane) - Number(a.lane) ||
+        Number(isUrgent(b)) - Number(isUrgent(a)) ||
+        Number(b.backFromSnooze) - Number(a.backFromSnooze),
     );
 
-  return {
-    needsYou: backFirst([
-      ...needs
-        .filter((t) => !snoozed(t))
-        .map((t) => ({
-          ...member(t),
-          lane: inEmergencyLane({
-            category: t.category,
-            extracted: { urgency: t.urgency, injection: t.injection === "true" },
-          }),
-          waitingSince: asDate(t.waitingSince),
-        })),
-      ...checkIns
-        .filter((t) => !snoozed(t))
-        // A check-in is never an emergency (no "tonight only" snooze, not first in the email).
-        .map((t) => ({ ...member(t), emergency: false, checkIn: true, waitingSince: null })),
-    ]),
-    drafts: backFirst(
-      pending
-        .filter((r) => !snoozed(r))
-        .map((r) => ({ ...member(r), draftId: r.draftId, kind: r.kind })),
-    ),
-  };
+  const needsYou = backFirst([
+    ...needs
+      .filter((t) => !snoozed(t))
+      .map((t) => ({
+        ...member(t),
+        lane: inEmergencyLane({
+          category: t.category,
+          extracted: { urgency: t.urgency, injection: t.injection === "true" },
+        }),
+        waitingSince: asDate(t.waitingSince),
+      })),
+    ...checkIns
+      .filter((t) => !snoozed(t))
+      // A check-in is never an emergency (no "tonight only" snooze, not first in the email).
+      .map((t) => ({ ...member(t), emergency: false, checkIn: true, waitingSince: null })),
+  ]);
+  const draftList = backFirst(
+    pending
+      .filter((r) => !snoozed(r))
+      .map((r) => ({
+        ...member(r),
+        // A draft on an emergency from someone with a job is an emergency too (Check 9 P6).
+        lane: inEmergencyLane({
+          category: r.category,
+          extracted: { urgency: r.urgency, injection: r.injection === "true" },
+        }),
+        draftId: r.draftId,
+        kind: r.kind,
+      })),
+  );
+  return { needsYou, drafts: draftList, now: rightNow(needsYou, draftList) };
+}
+
+/**
+ * Check 9 P6: "Right now" — every emergency, lane first, then newest first, drafts and
+ * needs-you together (a stable sort, so equal times keep needs-you before drafts).
+ */
+function rightNow(
+  needsYou: QueueMembership["needsYou"],
+  drafts: QueueMembership["drafts"],
+): QueueMembership["now"] {
+  const urgent = [
+    ...needsYou.filter(isUrgent).map((m) => ({ m, draftId: null as string | null })),
+    ...drafts.filter(isUrgent).map((m) => ({ m, draftId: m.draftId as string | null })),
+  ];
+  return urgent
+    .sort(
+      (a, b) =>
+        Number(b.m.lane) - Number(a.m.lane) ||
+        (b.m.lastMessageAt?.getTime() ?? 0) - (a.m.lastMessageAt?.getTime() ?? 0),
+    )
+    .map(({ m, draftId }) => ({ threadId: m.threadId, draftId }));
 }
 
 export type QueueTotals = { needsYou: number; replies: number; nudges: number; drafts: number };
@@ -3335,10 +3486,10 @@ export async function queueCounts(
  * the morning email, the badge, the phone's notification, the banner — uses this.
  */
 export function actionableQueue(q: QueueMembership): QueueMembership {
-  return {
-    needsYou: q.needsYou.filter((m) => !m.paused),
-    drafts: q.drafts.filter((m) => !m.paused),
-  };
+  const needsYou = q.needsYou.filter((m) => !m.paused);
+  const drafts = q.drafts.filter((m) => !m.paused);
+  const kept = new Set([...needsYou, ...drafts].map((m) => m.threadId));
+  return { needsYou, drafts, now: q.now.filter((n) => kept.has(n.threadId)) };
 }
 
 /** The totals of a membership already loaded (plan-paused addresses left out). */
@@ -3381,12 +3532,13 @@ export function queueCardIds(members: QueueMembership): Set<string> {
 export async function listQueue(
   workspaceId: string,
   now: Date = new Date(),
-): Promise<{ needsYou: QueueItem[]; drafts: QueueItem[] }> {
+): Promise<{ needsYou: QueueItem[]; drafts: QueueItem[]; now: QueueItem[] }> {
   // Membership (and order) come from the content-free rules, so the screen and every count
   // agree by construction; this only adds what the owner reads on the cards.
   const members = await queueMembership(workspaceId, now);
   const shownNeeds = shownNeedsYou(members);
-  if (shownNeeds.length === 0 && members.drafts.length === 0) return { needsYou: [], drafts: [] };
+  if (shownNeeds.length === 0 && members.drafts.length === 0)
+    return { needsYou: [], drafts: [], now: [] };
 
   const boxes = await db()
     .select({ id: mailboxes.id, email: mailboxes.email, planPausedAt: mailboxes.planPausedAt })
@@ -3449,91 +3601,93 @@ export async function listQueue(
   };
   const who = await senders([...needIds, ...members.drafts.map((m) => m.threadId)]);
 
-  return {
-    needsYou: shownNeeds.flatMap((m) => {
-      const t = threadById.get(m.threadId);
-      if (!t) return [];
-      return [
-        {
-          draftId: null,
-          draftCreatedAt: null,
-          kind: null,
-          purpose: null,
-          autoSendAt: null,
-          threadId: t.id,
-          customerName: who.get(t.id)?.name ?? null,
-          customerAddress: who.get(t.id)?.address ?? null,
-          toAddress: null,
-          replyRedirected: who.get(t.id)?.redirected ?? false,
-          category: t.category,
-          summary: t.summary,
-          needsOwnerReason: t.needsOwnerReason,
-          reason: null,
-          body: null,
-          flags: [],
-          confidence: null,
-          usedFacts: [],
-          opening: null,
-          revisionsLeft: 0,
-          emergency: m.emergency,
-          backFromSnooze: m.backFromSnooze,
-          gmailThreadId: t.gmailThreadId,
-          mailboxEmail: emailOf.get(t.mailboxId) ?? "",
-          lastMessageAt: t.lastMessageAt,
-          customerWroteAt: who.get(t.id)?.sentAt ?? null,
-          leadChannel: t.leadChannel,
-          extracted: t.extracted,
-          lane: m.lane,
-          checkIn: m.checkIn,
-          complaintFixedAt: t.complaintFixedAt,
-          mailboxPaused: pausedBoxes.has(t.mailboxId),
-          archivedInGmail: false,
-        } satisfies QueueItem,
-      ];
-    }),
-    drafts: members.drafts.flatMap((m) => {
-      const r = draftById.get(m.draftId);
-      if (!r) return [];
-      const { draft, thread } = r;
-      return [
-        {
-          draftId: draft.id,
-          draftCreatedAt: draft.createdAt,
-          kind: draft.kind,
-          purpose: draft.purpose ?? null,
-          autoSendAt: draft.autoSendAt,
-          threadId: thread.id,
-          customerName: who.get(thread.id)?.name ?? null,
-          customerAddress: who.get(thread.id)?.address ?? draft.toAddress,
-          toAddress: draft.toAddress,
-          replyRedirected: who.get(thread.id)?.redirected ?? false,
-          category: thread.category,
-          summary: thread.summary,
-          needsOwnerReason: thread.needsOwner ? thread.needsOwnerReason : null,
-          reason: draft.reason,
-          body: draft.body,
-          flags: draft.flags,
-          confidence: draft.confidence,
-          usedFacts: draft.usedFacts,
-          opening: draft.opening ?? null,
-          revisionsLeft: Math.max(0, MAX_REVISIONS_PER_DRAFT - draft.revisions),
-          emergency: m.emergency,
-          backFromSnooze: m.backFromSnooze,
-          gmailThreadId: thread.gmailThreadId,
-          mailboxEmail: emailOf.get(draft.mailboxId) ?? "",
-          lastMessageAt: thread.lastMessageAt,
-          customerWroteAt: who.get(thread.id)?.sentAt ?? null,
-          leadChannel: thread.leadChannel,
-          extracted: thread.extracted,
-          lane: false,
-          checkIn: false,
-          complaintFixedAt: thread.complaintFixedAt,
-          mailboxPaused: pausedBoxes.has(draft.mailboxId),
-          archivedInGmail: !thread.inInbox,
-        } satisfies QueueItem,
-      ];
-    }),
-  };
+  const needsYouItems: QueueItem[] = shownNeeds.flatMap((m) => {
+    const t = threadById.get(m.threadId);
+    if (!t) return [];
+    return [
+      {
+        draftId: null,
+        draftCreatedAt: null,
+        kind: null,
+        purpose: null,
+        autoSendAt: null,
+        threadId: t.id,
+        customerName: who.get(t.id)?.name ?? null,
+        customerAddress: who.get(t.id)?.address ?? null,
+        toAddress: null,
+        replyRedirected: who.get(t.id)?.redirected ?? false,
+        category: t.category,
+        summary: t.summary,
+        needsOwnerReason: t.needsOwnerReason,
+        reason: null,
+        body: null,
+        flags: [],
+        confidence: null,
+        usedFacts: [],
+        opening: null,
+        revisionsLeft: 0,
+        emergency: m.emergency,
+        backFromSnooze: m.backFromSnooze,
+        gmailThreadId: t.gmailThreadId,
+        mailboxEmail: emailOf.get(t.mailboxId) ?? "",
+        lastMessageAt: t.lastMessageAt,
+        customerWroteAt: who.get(t.id)?.sentAt ?? null,
+        leadChannel: t.leadChannel,
+        extracted: t.extracted,
+        lane: m.lane,
+        checkIn: m.checkIn,
+        complaintFixedAt: t.complaintFixedAt,
+        mailboxPaused: pausedBoxes.has(t.mailboxId),
+        archivedInGmail: false,
+      } satisfies QueueItem,
+    ];
+  });
+  const draftItems: QueueItem[] = members.drafts.flatMap((m) => {
+    const r = draftById.get(m.draftId);
+    if (!r) return [];
+    const { draft, thread } = r;
+    return [
+      {
+        draftId: draft.id,
+        draftCreatedAt: draft.createdAt,
+        kind: draft.kind,
+        purpose: draft.purpose ?? null,
+        autoSendAt: draft.autoSendAt,
+        threadId: thread.id,
+        customerName: who.get(thread.id)?.name ?? null,
+        customerAddress: who.get(thread.id)?.address ?? draft.toAddress,
+        toAddress: draft.toAddress,
+        replyRedirected: who.get(thread.id)?.redirected ?? false,
+        category: thread.category,
+        summary: thread.summary,
+        needsOwnerReason: thread.needsOwner ? thread.needsOwnerReason : null,
+        reason: draft.reason,
+        body: draft.body,
+        flags: draft.flags,
+        confidence: draft.confidence,
+        usedFacts: draft.usedFacts,
+        opening: draft.opening ?? null,
+        revisionsLeft: Math.max(0, MAX_REVISIONS_PER_DRAFT - draft.revisions),
+        emergency: m.emergency,
+        backFromSnooze: m.backFromSnooze,
+        gmailThreadId: thread.gmailThreadId,
+        mailboxEmail: emailOf.get(draft.mailboxId) ?? "",
+        lastMessageAt: thread.lastMessageAt,
+        customerWroteAt: who.get(thread.id)?.sentAt ?? null,
+        leadChannel: thread.leadChannel,
+        extracted: thread.extracted,
+        lane: m.lane,
+        checkIn: false,
+        complaintFixedAt: thread.complaintFixedAt,
+        mailboxPaused: pausedBoxes.has(draft.mailboxId),
+        archivedInGmail: !thread.inInbox,
+      } satisfies QueueItem,
+    ];
+  });
+  // Check 9 P6: the emergencies, from the membership's own order (cards that are shown only).
+  const byThread = new Map([...needsYouItems, ...draftItems].map((i) => [i.threadId, i]));
+  const nowItems = members.now.flatMap((n) => byThread.get(n.threadId) ?? []);
+  return { needsYou: needsYouItems, drafts: draftItems, now: nowItems };
 }
 
 /**

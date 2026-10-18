@@ -45,7 +45,7 @@ test("draft editor: Never say this adds the selected words", async ({ page, cont
   await seedQueue(owner.mailboxId!);
   await signInAs(context, owner);
   await page.goto("/queue");
-  const card = page.getByRole("article", { name: "Draft reply to Priya" });
+  const card = page.getByRole("article", { name: "Priya · draft reply" });
   await card.getByRole("button", { name: "Edit" }).click();
   await card.getByRole("button", { name: "Never say this" }).click();
   await expect(card.getByRole("status")).toContainText("Select the words first");

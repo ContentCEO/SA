@@ -23,7 +23,7 @@ test("during the three days: the clock is on every screen and sending is off", a
   const clock = page.getByRole("region", { name: "Your three days" });
   await expect(clock).toContainText("Day 1 of 3");
   await expect(clock).toContainText("2 days");
-  const card = page.getByRole("article", { name: "Draft reply to Priya" });
+  const card = page.getByRole("article", { name: "Priya · draft reply" });
   await expect(card.getByRole("note")).toContainText("Send reply is off during your three days");
   await expect(card.getByRole("button", { name: "Edit" })).toBeVisible();
 
@@ -49,7 +49,7 @@ test("after the three days: read-only, and it says why", async ({ page, context 
   await expect(page.getByText("Customer says the leak came back.")).toBeVisible();
   await expect(page.getByRole("button", { name: "Draft a reply" })).toHaveCount(0);
 
-  const card = page.getByRole("article", { name: "Draft reply to Priya" });
+  const card = page.getByRole("article", { name: "Priya · draft reply" });
   await expect(card).toContainText("Asked for the address and panel age.");
   await expect(card.getByRole("note")).toContainText("Sending turns on once you choose a plan");
   await expect(card.getByRole("button", { name: "Edit" })).toHaveCount(0);
@@ -201,7 +201,7 @@ test("during the three days, the only send on offer is a practice copy to yourse
   await seedQueue(owner.mailboxId!);
   await signInAs(context, owner);
   await page.goto("/queue");
-  const card = page.getByRole("article", { name: "Draft reply to Priya" });
+  const card = page.getByRole("article", { name: "Priya · draft reply" });
   await expect(card.getByRole("button", { name: "Send reply" })).toHaveCount(0);
   await expect(card.getByRole("button", { name: "Send it to yourself instead" })).toBeVisible();
   await expect(card).toContainText("Your customer gets nothing. 10 left.");

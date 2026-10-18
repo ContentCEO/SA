@@ -38,6 +38,7 @@ import { OnboardingChecklist } from "@/components/app/onboarding-checklist";
 import { checklistFor } from "@/server/onboarding";
 import { DraftCard } from "./draft-card";
 import { UndoSend } from "./undo-send";
+import { SentStrip } from "./sent-strip";
 import { LateSends } from "./late-sends";
 import { sendStoppedWhy } from "@/server/activity";
 import { OfflineQueue } from "./offline-queue";
@@ -81,7 +82,8 @@ function nextLine(
     return `I'll nudge ${name ?? "them"} on ${weekday.format(sent.nudgeOn)} if there's no reply.`;
   }
   if (sent.lastNudgeUsed) return "That was the last nudge. I won't chase this one again.";
-  return `I'll let you know when ${name ?? "they"} write${name ? "s" : ""} back.`;
+  // Check 9 P15: only what the code does — replies show up on the queue; alerts are opt-in.
+  return `When ${name ?? "they"} write${name ? "s" : ""} back, it shows up here.`;
 }
 const firstName = (name: string | null) => (name ? name.split(/[\s,]+/)[0] : null);
 const capitalize = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
@@ -208,9 +210,31 @@ export default async function QueuePage(props: PageProps<"/queue">) {
     ],
     { now, timeZone, businessName: workspace.businessName },
   );
-  // The lane comes from the queue's own membership, like the counts (B5).
-  const lane = queue.needsYou.filter((i) => i.lane);
-  const needsYou = queue.needsYou.filter((i) => !i.lane);
+  // Check 9 P6: every emergency, with a draft or not, comes first under "Right now" (the lane
+  // included, B5). The order comes from the queue's own membership, like the counts.
+  const rightNow = queue.now;
+  const urgentIds = new Set(rightNow.map((i) => i.threadId));
+  const needsYou = queue.needsYou.filter((i) => !urgentIds.has(i.threadId));
+  const drafts = queue.drafts.filter((i) => !urgentIds.has(i.threadId));
+  // Check 9 P5: the cards in page order. A send, discard or snooze lands on the next one (the
+  // one before when it was the last), and the notice for a tap sits on the card it landed on.
+  const cardOrder = [...rightNow, ...needsYou, ...drafts].map((i) => i.threadId);
+  const nextThreadId = (threadId: string) => {
+    const at = cardOrder.indexOf(threadId);
+    return cardOrder[at + 1] ?? cardOrder[at - 1] ?? null;
+  };
+  const landedOn =
+    typeof params.t === "string" && cardOrder.includes(params.t.toLowerCase())
+      ? params.t.toLowerCase()
+      : null;
+  const tapNotice =
+    doneMsg || errorMsg ? (
+      <>
+        {doneMsg ? <Notice>{doneMsg}</Notice> : null}
+        {errorMsg ? <Notice strong>{errorMsg}</Notice> : null}
+      </>
+    ) : null;
+  const noticeFor = (threadId: string) => (landedOn === threadId ? tapNotice : null);
   const needsYouProps = (i: QueueItem) => ({
     i,
     lead: leadCards.get(i.threadId),
@@ -228,6 +252,8 @@ export default async function QueuePage(props: PageProps<"/queue">) {
       </>
     ),
     resort: <ResortSheet threadId={i.threadId} current={i.category} back="queue" />,
+    nextThreadId: nextThreadId(i.threadId),
+    notice: noticeFor(i.threadId),
   });
   // Check 43 P7: "Written Friday. It says “tomorrow”, which meant Saturday. Check the timing."
   const timingNoteFor = (i: QueueItem) => {
@@ -244,23 +270,92 @@ export default async function QueuePage(props: PageProps<"/queue">) {
     ].filter((l): l is string => !!l);
   };
 
+  // Check 9 P14: the one-time swipe tip sits on the first draft card on the page.
+  const firstDraftId = [...rightNow, ...drafts].find((i) => i.draftId)?.draftId ?? null;
+  const draftCard = (i: QueueItem) => (
+    <DraftCard
+      // Remount when the text changes (e.g. edited in Gmail) so filled gaps reset to it.
+      key={`${i.draftId}:${i.body}`}
+      draftId={i.draftId!}
+      nextThreadId={nextThreadId(i.threadId)}
+      notice={noticeFor(i.threadId)}
+      customer={who(i)}
+      toAddress={i.toAddress ?? ""}
+      toFromReplyTo={i.replyRedirected && i.toAddress === i.customerAddress}
+      tag={`${i.backFromSnooze ? "Back from snooze · " : ""}${tag(i)}`}
+      wrote={wroteLine(i.customerWroteAt, now)}
+      leadLines={draftLeadLines(i)}
+      threadId={i.threadId}
+      leftHanded={device.leftHanded}
+      swipeTip={i.draftId === firstDraftId}
+      nudge={
+        i.kind !== "followup"
+          ? null
+          : i.category === "quote_request"
+            ? "quote"
+            : i.category === "invoice_payment"
+              ? "invoice"
+              : "other"
+      }
+      offlineEnabled={device.offline}
+      remindOptions={remindOptions(i)}
+      summary={i.summary}
+      reason={i.reason ?? ""}
+      body={i.body ?? ""}
+      seenHash={bodyHash(i.body ?? "")}
+      timingNote={timingNoteFor(i)}
+      flags={i.flags}
+      label={confidenceLabel({
+        confidencePct: i.confidence,
+        flags: i.flags.length,
+        gaps: findGaps(i.body ?? "").length,
+      })}
+      usedFacts={i.usedFacts}
+      openingLine={openingLine(i.opening, i.body)}
+      otherWays={offersOtherWays({
+        opening: i.opening,
+        revisionsLeft: i.revisionsLeft,
+        // A plan-paused Gmail address: no rewrites either (reviseDraft refuses it too).
+        readOnly: readOnly || i.mailboxPaused,
+      })}
+      revisionsLeft={i.revisionsLeft}
+      needsOwnerReason={i.needsOwnerReason}
+      inRightNow={urgentIds.has(i.threadId)}
+      canSend={sending && !i.mailboxPaused}
+      readOnly={readOnly || i.mailboxPaused}
+      autoSendAt={i.autoSendAt && autopilotOpen ? i.autoSendAt.toISOString() : null}
+      autoSendClock={i.autoSendAt && autopilotOpen ? clock.format(i.autoSendAt) : null}
+      sendingOffLabel={i.mailboxPaused ? MAILBOX_PAUSED_LINE : sendingOffLabel(workspace)}
+      sendingOffDetail={
+        i.mailboxPaused
+          ? "Your plan covers fewer Gmail addresses than you've connected. Pick which one is on in Settings → Your Gmail."
+          : sendingBlockedReason(workspace)
+      }
+      practiceLeft={i.mailboxPaused ? null : practiceLeft}
+      priceMemory={priceMemory.get(i.threadId)}
+      noteLine={
+        <>
+          {noteFor(i)}
+          {attachmentFor(i)}
+        </>
+      }
+      moreActions={<ResortSheet threadId={i.threadId} current={i.category} hasReply back="queue" />}
+    />
+  );
+
   return (
     <>
       {sentAll.length ? (
-        <section
-          aria-live="polite"
-          className="sa-inverted flex animate-in flex-col gap-3 rounded-xl p-6 duration-500 zoom-in-95 fade-in"
+        <SentStrip
+          serif={
+            sentAll.length > 1
+              ? `${sentAll.length} replies ${sendingIds.length ? "on their way" : "sent"},`
+              : sendingIds.length
+                ? "reply on its way,"
+                : "reply sent,"
+          }
+          heavy="squared away."
         >
-          <p className="flex flex-col">
-            <span className="sa-headline-serif text-3xl">
-              {sentAll.length > 1
-                ? `${sentAll.length} replies ${sendingIds.length ? "on their way" : "sent"},`
-                : sendingIds.length
-                  ? "reply on its way,"
-                  : "reply sent,"}
-            </span>{" "}
-            <span className="sa-headline-heavy text-4xl">squared away.</span>
-          </p>
           {sent ? <p className="text-ash">{nextLine(sent, timeZone)}</p> : null}
           {sent && !sent.sendingAt ? (
             <Link
@@ -279,7 +374,7 @@ export default async function QueuePage(props: PageProps<"/queue">) {
           {sendingIds.length && sendAt ? (
             <UndoSend key={sendingIds.join()} draftIds={sendingIds} sendAt={sendAt.toISOString()} />
           ) : null}
-        </section>
+        </SentStrip>
       ) : (
         <Headline serif="waiting on you," heavy="the queue." />
       )}
@@ -307,8 +402,8 @@ export default async function QueuePage(props: PageProps<"/queue">) {
           </Button>
         </form>
       ) : null}
-      {doneMsg ? <Notice>{doneMsg}</Notice> : null}
-      {errorMsg ? <Notice strong>{errorMsg}</Notice> : null}
+      {/* On the card the tap landed on when it's on the page (Check 9 P5), else up here. */}
+      {landedOn ? null : tapNotice}
       {params.error === "autopilot_sent" ? (
         <Notice strong>
           Too late, autopilot already sent it. See it on Activity.
@@ -375,14 +470,14 @@ export default async function QueuePage(props: PageProps<"/queue">) {
         <p className="text-2xl font-black">Nothing waiting on you.</p>
       ) : null}
 
-      {lane.length ? (
-        <section aria-labelledby="emergency" className="flex flex-col gap-3">
-          <h2 id="emergency" className="text-xl font-black">
-            Emergency
+      {rightNow.length ? (
+        <section aria-labelledby="right-now" className="flex flex-col gap-3">
+          <h2 id="right-now" className="text-xl font-black">
+            Right now
           </h2>
-          {lane.map((i) => (
-            <NeedsYouCard key={i.threadId} {...needsYouProps(i)} />
-          ))}
+          {rightNow.map((i) =>
+            i.draftId ? draftCard(i) : <NeedsYouCard key={i.threadId} {...needsYouProps(i)} />,
+          )}
         </section>
       ) : null}
 
@@ -418,7 +513,7 @@ export default async function QueuePage(props: PageProps<"/queue">) {
       {/* After what needs them now: the first week's look back (round 2, FW D1/D2). */}
       <FirstLookCard look={firstLook} readOnly={readOnly} />
 
-      {queue.drafts.length ? (
+      {drafts.length ? (
         <section aria-labelledby="drafts" className="flex flex-col gap-3">
           <h2 id="drafts" className="text-xl font-black">
             Replies ready for you
@@ -431,67 +526,11 @@ export default async function QueuePage(props: PageProps<"/queue">) {
               Review all {readyCount} ready
             </Link>
           ) : null}
-          {queue.drafts.map((i) => (
-            <DraftCard
-              // Remount when the text changes (e.g. edited in Gmail) so filled gaps reset to it.
-              key={`${i.draftId}:${i.body}`}
-              draftId={i.draftId!}
-              customer={who(i)}
-              toAddress={i.toAddress ?? ""}
-              toFromReplyTo={i.replyRedirected && i.toAddress === i.customerAddress}
-              tag={`${i.backFromSnooze ? "Back from snooze · " : ""}${tag(i)}`}
-              wrote={wroteLine(i.customerWroteAt, now)}
-              leadLines={draftLeadLines(i)}
-              threadId={i.threadId}
-              leftHanded={device.leftHanded}
-              offlineEnabled={device.offline}
-              remindOptions={remindOptions(i)}
-              summary={i.summary}
-              reason={i.reason ?? ""}
-              body={i.body ?? ""}
-              seenHash={bodyHash(i.body ?? "")}
-              timingNote={timingNoteFor(i)}
-              flags={i.flags}
-              label={confidenceLabel({
-                confidencePct: i.confidence,
-                flags: i.flags.length,
-                gaps: findGaps(i.body ?? "").length,
-              })}
-              usedFacts={i.usedFacts}
-              openingLine={openingLine(i.opening, i.body)}
-              otherWays={offersOtherWays({
-                opening: i.opening,
-                revisionsLeft: i.revisionsLeft,
-                // A plan-paused Gmail address: no rewrites either (reviseDraft refuses it too).
-                readOnly: readOnly || i.mailboxPaused,
-              })}
-              revisionsLeft={i.revisionsLeft}
-              needsOwnerReason={i.needsOwnerReason}
-              canSend={sending && !i.mailboxPaused}
-              readOnly={readOnly || i.mailboxPaused}
-              autoSendAt={i.autoSendAt && autopilotOpen ? i.autoSendAt.toISOString() : null}
-              autoSendClock={i.autoSendAt && autopilotOpen ? clock.format(i.autoSendAt) : null}
-              sendingOffLabel={i.mailboxPaused ? MAILBOX_PAUSED_LINE : sendingOffLabel(workspace)}
-              sendingOffDetail={
-                i.mailboxPaused
-                  ? "Your plan covers fewer Gmail addresses than you've connected. Pick which one is on in Settings → Your Gmail."
-                  : sendingBlockedReason(workspace)
-              }
-              practiceLeft={i.mailboxPaused ? null : practiceLeft}
-              priceMemory={priceMemory.get(i.threadId)}
-              noteLine={
-                <>
-                  {noteFor(i)}
-                  {attachmentFor(i)}
-                </>
-              }
-              moreActions={
-                <ResortSheet threadId={i.threadId} current={i.category} hasReply back="queue" />
-              }
-            />
-          ))}
+          {drafts.map(draftCard)}
         </section>
       ) : null}
+      {/* Room under the last card so the fixed "squared away." strip never covers it. */}
+      {sentAll.length ? <div aria-hidden className="h-56 shrink-0" /> : null}
     </>
   );
 }

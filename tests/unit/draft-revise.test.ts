@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { eq } from "drizzle-orm";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { setModelTransportForTests } from "@/ai/client";
 import type { ModelDraft } from "@/ai/prompts/draft.v6";
 import { isTweak, TWEAKS } from "@/ai/prompts/revise.v2";
@@ -125,6 +125,60 @@ describe("#3 quick tweaks and #4 voice edits", () => {
     const r = await reviseDraft(workspaceId, d.id, { tweak: "availability" }, deps());
     expect(r).toEqual({ status: "revised", flags: [] });
     expect(calls).toHaveLength(1);
+  });
+
+  it("Check 23 P8: a gap filled on the card survives a quick change, and its value is the owner's", async () => {
+    const d = await pendingDraft("Hi Dana, a deck repair like that is usually around {{price}}.");
+    expect(d.body).toContain("{{price}}");
+    const { transport, calls } = fakeTransport([draft("Hi Dana — usually around $650.")]);
+    setModelTransportForTests(transport);
+    const r = await reviseDraft(
+      workspaceId,
+      d.id,
+      { tweak: "shorter" },
+      {
+        ...deps(),
+        currentBody: "Hi Dana, a deck repair like that is usually around $650.",
+      },
+    );
+    expect(r).toEqual({ status: "revised", flags: [] });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.user).toContain("usually around $650.");
+    expect(calls[0]!.user).not.toContain("{{price}}");
+    const [after] = await database.select().from(drafts);
+    expect(after!.body).toBe("Hi Dana — usually around $650.");
+    expect(after!.flags.join(" ")).not.toContain("$650");
+  });
+
+  it("Check 23 P8: a card body that changes other words is ignored", async () => {
+    const d = await pendingDraft("Hi Dana, a deck repair like that is usually around {{price}}.");
+    const { transport, calls } = fakeTransport([draft("Hi Dana — usually around {{price}}.")]);
+    setModelTransportForTests(transport);
+    await reviseDraft(
+      workspaceId,
+      d.id,
+      { tweak: "shorter" },
+      { ...deps(), currentBody: "Hi Dana, we guarantee a deck repair is usually around $650." },
+    );
+    expect(calls[0]!.user).toContain("usually around {{price}}.");
+    expect(calls[0]!.user).not.toContain("guarantee");
+  });
+
+  it("Check 23 P9: a retry that adds an invented price never replaces the better first try", async () => {
+    const d = await pendingDraft();
+    const { transport, calls } = fakeTransport([
+      draft("Hi Dana, I can come look tomorrow. What's the address?"),
+      draft("Hi Dana, I can come look tomorrow, it's $950. What's the address?"),
+    ]);
+    setModelTransportForTests(transport);
+    const info = vi.spyOn(console, "info").mockImplementation(() => {});
+    await reviseDraft(workspaceId, d.id, { tweak: "warmer" }, deps());
+    expect(calls).toHaveLength(2);
+    const [after] = await database.select().from(drafts);
+    expect(after!.body).toBe("Hi Dana, I can come look tomorrow. What's the address?");
+    expect(after!.flags.join(" ")).not.toContain("$950");
+    expect(info).toHaveBeenCalledWith("draft_retry_kept", { kept: "first" });
+    info.mockRestore();
   });
 
   it("a tweak can't introduce a price: one retry, then a flag", async () => {

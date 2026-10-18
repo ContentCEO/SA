@@ -30,7 +30,16 @@ export type BatchCandidate = {
   acceptsQuote: boolean;
   /** Deposit details, review request or closing question: always one at a time (#26 #28 #29). */
   purpose: string | null;
+  /**
+   * Check 41 P2: the draft names a day, date or time (`namesAVisitTime`). A scheduling reply
+   * that does confirms a visit, so it goes one at a time.
+   */
+  visitTime: boolean;
 };
+
+/** Check 41 P2: the one line under the review list (a count reason, never names). */
+export const VISIT_TIME_HELD_LINE =
+  "Replies that confirm a day or time go one at a time, so you can check the weather and the schedule.";
 
 /**
  * Whether a draft may go out in a batch. Checked on the server against fresh
@@ -40,6 +49,7 @@ export function batchEligible(c: BatchCandidate, picked: readonly string[]): boo
   if (!isBatchCategory(c.category) || !picked.includes(c.category)) return false;
   if (c.needsOwner || c.untrusted || c.autopilotCounting || c.acceptsQuote) return false;
   if (c.purpose != null) return false;
+  if (c.category === "scheduling" && c.visitTime) return false;
   if (c.flags.length > 0 || hasUnfilledGap(c.body)) return false;
   if (c.category === "invoice_payment" && c.amountsInEmail.length > 0) return false;
   return confidenceLabel({ confidencePct: c.confidencePct, flags: 0, gaps: 0 }) === "ready";
