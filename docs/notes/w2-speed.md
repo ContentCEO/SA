@@ -48,3 +48,21 @@ Proposed CLAUDE.md Decisions line:
 "- Readers and forms keep values they don't recognize; new list values may arrive in the database
   before the code that knows them. (`SelectField` shows them as \"Current: …\"; `orStored` accepts
   the stored value back, nothing else.)"
+
+## Step 3: Check 30 P6 — prompt version on each conversation's facts (migration `0045_thread_prompt_version`)
+
+- `threads.classified_prompt_version` (text, nullable, additive), set to `ACTIVE.classify` on every
+  classification write of `extracted` (rule-only sorts too: they write that version's shape).
+  Null = written before the column.
+- `readExtracted(extracted, version?)` in `src/server/extracted.ts`: a Zod schema per classify
+  version (v1 job facts → v2 permit/invoice → v3 acceptance signals → v4+ bill direction /
+  payment said), every field loose (odd value = missing), unknown keys passed through, non-object
+  = null. `invoiceOf`, `isInvoiceThread`, `paymentSaid` (money-rules) and quotes' `decidedAt` /
+  `serviceOf` read through it. Other readers still cast by hand; move them as they're touched.
+- Signature note: the spec said `readExtracted(row)`; it takes `(extracted, version?)` so the pure
+  money rules can call it with the value they already have.
+
+Proposed CLAUDE.md Decisions line:
+"- **Extracted facts (2026-10-18, Check 30 P6):** `threads.classified_prompt_version` records the
+  classify version that wrote `extracted`; read `extracted` with `readExtracted`
+  (src/server/extracted.ts), not casts. A new classify version that adds keys adds its schema there."

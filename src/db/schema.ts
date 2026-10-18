@@ -259,6 +259,12 @@ export const threads = pgTable(
     summary: text("summary"),
     /** Structured facts pulled from the latest inbound message (service, address, dates, amounts). */
     extracted: jsonb("extracted").$type<Record<string, unknown>>(),
+    /**
+     * Check 30 P6: the classify prompt version that wrote `extracted` ("classify.v5"), set on
+     * every classification. Null = written before this column. Read with `readExtracted`
+     * (src/server/extracted.ts), which picks the shape by it.
+     */
+    classifiedPromptVersion: text("classified_prompt_version"),
     classifiedAt: timestamp("classified_at", { withTimezone: true }),
     awaitingReplySince: timestamp("awaiting_reply_since", { withTimezone: true }),
     followupCount: integer("followup_count").notNull().default(0),

@@ -4,6 +4,7 @@ import { prepareBody } from "@/ai/classify";
 import { db } from "@/db";
 import { activityLog, mailboxes, messages, priceHistory, threads, workspaces } from "@/db/schema";
 import { expirePendingNudge, flagPendingNudge, followupSettings, type DraftDeps } from "./drafts";
+import { readExtracted } from "./extracted";
 import { effectiveStatus, JOBS_ALLOWED, jobsAllowed, ReadOnlyError } from "./lifecycle";
 import {
   asDate,
@@ -126,7 +127,7 @@ export async function ownerGavePrice(
  * messages from then on (deposit details, the invoice) are never the quote.
  */
 function decidedAt(t: { extracted: unknown; quoteOutcomeAt: Date | null }): Date | null {
-  const raw = (t.extracted as { quote_accepted_at?: unknown } | null)?.quote_accepted_at;
+  const raw = readExtracted(t.extracted)?.quote_accepted_at;
   const accepted = typeof raw === "string" ? new Date(raw) : null;
   const times = [accepted, t.quoteOutcomeAt ? new Date(t.quoteOutcomeAt) : null].filter(
     (d): d is Date => d != null && Number.isFinite(d.getTime()),
@@ -522,7 +523,7 @@ export async function captureQuoteAmounts(workspaceId?: string): Promise<number>
 
 /** The kind of job sorting found, trimmed for price memory; null if there isn't one. */
 function serviceOf(extracted: unknown): string | null {
-  const s = (extracted as { service_requested?: unknown } | null)?.service_requested;
+  const s = readExtracted(extracted)?.service_requested;
   if (typeof s !== "string") return null;
   const t = s.trim().slice(0, 200);
   return t || null;

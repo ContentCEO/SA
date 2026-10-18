@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import { eq, sql } from "drizzle-orm";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { setModelTransportForTests } from "@/ai/client";
+import { ACTIVE } from "@/ai/prompts/registry";
 import type { Database } from "@/db";
 import { messages, threads, workspaces } from "@/db/schema";
 import { ensureUserAndWorkspace } from "@/server/accounts";
@@ -82,6 +83,8 @@ describe("classifyPending", () => {
       needsOwner: true,
       priority: "high",
       summary: "Leak came back.",
+      // Check 30 P6: the version that wrote `extracted`.
+      classifiedPromptVersion: ACTIVE.classify,
     });
     const pending = await database.select().from(messages).where(eq(messages.classifiedAt, NOW));
     expect(pending).toHaveLength(2);
@@ -113,7 +116,11 @@ describe("classifyPending", () => {
     await classifyPending(mailboxId, { now: NOW });
     expect(calls).toHaveLength(0);
     const [row] = await database.select().from(threads);
-    expect(row).toMatchObject({ category: "noise", needsOwner: false });
+    expect(row).toMatchObject({
+      category: "noise",
+      needsOwner: false,
+      classifiedPromptVersion: ACTIVE.classify,
+    });
   });
 
   it("tells the model when a sender is new", async () => {

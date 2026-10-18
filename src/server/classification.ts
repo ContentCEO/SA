@@ -16,6 +16,7 @@ import {
   type Classification,
 } from "@/ai/classify";
 import { AiCapReachedError } from "@/ai/usage";
+import { ACTIVE } from "@/ai/prompts/registry";
 import { moneyMentions } from "@/ai/money-words";
 import { OTHER_JOB_KIND } from "@/config/job-kinds";
 import { db } from "@/db";
@@ -654,6 +655,9 @@ export async function classifyPending(
         needsOwnerReason: sql`case when ${threads.needsOwnerManual} then ${threads.needsOwnerReason} else ${result.needsOwnerReason} end`,
         summary: result.summary,
         extracted: stored,
+        // Check 30 P6: which prompt version's shape `extracted` has (rule-only sorts too:
+        // they write this version's shape).
+        classifiedPromptVersion: ACTIVE.classify,
         classifiedAt: now,
         // Leads package: kept once set — a later email on the thread doesn't clear it.
         ...(channel ? { leadChannel: channel.key } : {}),
