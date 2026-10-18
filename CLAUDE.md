@@ -398,7 +398,8 @@ Davi runs several builder sessions at once. The build order for review prompts i
     noise excluded; links use an **opaque key** (their newest message id) so email addresses never
     appear in URLs or logs; search filters client-side for the same reason.
   - Admin health: per account last sorted / last draft / last morning email; a System box that
-    inverts to "Background jobs look stopped" when no working mailbox synced in 20 min.
+    inverts to "Background jobs look stopped" when no working mailbox synced in 25 min
+    (20 until wave 2 merge A).
   - Instant loading placeholders (`loading.tsx` → `ScreenSkeleton`) on queue, inbox, quotes,
     activity, settings only. **Never** on /admin or /customers/[key]: streaming turns `notFound()`
     into a 200, and those must 404 (e2e caught it).
@@ -2722,6 +2723,219 @@ null}` flags any link on a plain one); reconcile expires it like a review note; 
   `send_stopped` keeps the plan-pause line and otherwise uses wave 1's `sendStoppedWhy`; the
   status banner keeps wave 1's setup-call sentence with the free-month card under it.
   `FEATURE_REFERRALS` stays off.
+
+- **Wave 2 merge A (2026-10-18, branch `integrate-w2a`):** the Voice, Inbox, Sync and Gmail
+  connect, and Queue screen groups merged with `--no-ff`, in that order, on top of cc34707 (main
+  plus the referral offer). Migrations regenerated one at a time with drizzle-kit on the previous
+  snapshot (SQL byte-identical to each branch's; the voice branch's hand-edited 0040 snapshots
+  were dropped and `learned_from_mailbox_id` regenerated without a foreign key from the schema):
+  `0046_voice_attempts`, `0047_voice_learned_from`, `0048_voice_examples_stale`,
+  `0049_voice_retries`, `0050_needs_owner_since` (was `brown_dreadnoughts`; adds
+  `threads.needs_owner_since` and `quote_dismissed_at`), `0051_gmail_units`, `0052_resync_cursor`,
+  `0053_attachment_counts`, `0054_job_runs`, `0055_backfill_cursor`, `0056_mailbox_email_index`,
+  `0057_onboarding_done`. Prompt lines the groups couldn't write wait in
+  `docs/notes/prompt-versions-inbox.md` for the Prompt versions group (voice-examples.v1, the
+  classify reason wording, `acknowledgment_only`, the follow-up "look it over" line, the
+  `Attached:` line and photo rule). Reconciled with wave 1:
+  - The 15-minute `workspace-lifecycle` job is four `runChecks` steps (clock / backstops /
+    housekeeping / alerts, at most 4 `step.run`, one try/catch per check with a Sentry capture);
+    wave 1's `enforce-plan-autopilot` is in clock, `restartVoiceLearns` (not
+    `workspacesNeedingVoice`) in backstops, `runReferralRewards` and the voice clean-up in
+    housekeeping, Check 1 P4's `record-run` last in alerts. A failed check throws
+    `LifecycleChecksFailedError` at the end, then Check 18 P1's access-alert report
+    (`reportAlertFailures`). A failed check isn't retried within the run (its step is memoized); the next
+    15-minute run tries again.
+  - `deliverQueuedSend`: the Trash/Spam check (`threadGoneInGmail` → `left_inbox`) runs before
+    `sendDraft(…, { queued, confirmedTiming })`; wave 1's answered-elsewhere stand-down stays.
+    `reconcileDrafts`: an auto-reply never expires a draft, beside wave 1's Gmail-reply rule.
+    `runAutopilotSend`: wave 1's stale-timing note and sync's "left your inbox" both stand it
+    down; `blockers` reads the customer's subject, body and `auto_reply`. `threadsToAutoDraft`
+    keeps wave 1's safety-first shape plus the auto-reply / acknowledgement filters.
+  - Classification: wave 1's `codeFallback` (model failure and the AI-cap code path) now also
+    stores `extracted.unreadable`, so Inbox says "Couldn't sort"; the Inbox group's plain reasons
+    (`COMPLAINT_REASON` etc.) with wave 1's `legalThreat` check; `OLD_LEGAL_REASON` stays a
+    dispute reason. Wave 1's new safety reasons already had no dashes.
+  - Voice: `learnVoice` keeps `voice.v3` and 8192 max tokens around the scrub, accepted ideas and
+    stale samples; the reader is `serverMailboxClient` with `{ sentOnly, newerThanDays: 365 }`.
+  - Activity's `sendStoppedWhy` gains `archived_in_gmail` / `left_inbox`; Settings → Your Gmail
+    has the free-month limit and note with the first-read progress and `?add=1`; Inbox cards
+    carry Draft ready, attachments and the bounced line together; `CalledThem` takes both `back`
+    (Inbox, fixed `/inbox` redirects) and `compact`, and the Queue's next-card redirect; queue
+    draft cards keep the referral merge's `autopilotOpen` check and the attachment line.
+  - `resyncPage` also clears answered "Needs you" when a re-read finishes (Check 10 P1).
+  - Integrator decisions: `runVoiceIdeaCleanup` (`src/server/voice-idea-cleanup.ts`, housekeeping,
+    `app_settings` `cleanup:voice-idea-edited-v1`, tested): a voice marked `edited` with an idea
+    accepted after its newest `voice_learned` and no `voice_profile_edited` since goes back to
+    `learned`, so the weekly refresh runs again. /admin's "jobs look stopped" waits 25 minutes
+    (`JOBS_STALE_AFTER_MS`; push on, the poll leaves a quiet inbox for up to 15 minutes). Privacy
+    policy: the voice scrub "recognizes" (and covers the stored description, not only examples),
+    speech goes to "Google, Apple or Microsoft", "What you tell us" names license and registration
+    numbers, "What we store" names attachment counts. Legal date and `TERMS_VERSION` unchanged.
+- **Voice (wave 2, `w2-voice`):**
+  - **What's stored vs. how the last learn went (Check 24 P1 + Check 29 P2):**
+    `voice_profile.last_attempt` (learning | ready | not_enough_mail | failed | capped |
+    reconnect_needed) + `last_attempt_at` record every learn; `status` only becomes "ready" on
+    success, and a row that already holds a voice (summary, greeting, sign-off or examples) stays
+    "ready" whatever an attempt says (decided in SQL in `recordAttempt`). `workspaceContext` uses
+    the voice whenever the row has content (`hasVoiceContent`, `src/server/voice-rules.ts`).
+    Settings → Your voice: "The last update didn't finish (Oct 13). We're still using this voice."
+    Stuck = `last_attempt` (else legacy `status`) "learning" for 30+ minutes.
+    `voice_profile.restart_count`: the 15-minute backstop (`restartVoiceLearns`) counts restarts
+    of a stuck learn; at 2 it stops, records "failed" and emails ADMIN_EMAIL once per workspace
+    per day ("Voice learning failed twice for this account"; marker
+    `voice_failed_alert:<ws>:<day>`, purged daily by `purge-voice-alert-markers`). Reset on a
+    successful learn and on "Re-learn from my sent mail". An unexpected error after "learning"
+    records "failed" and rethrows.
+  - **Only the owner's own words (Check 24 P2):** `ownWords` / `splitOwnWords`
+    (`src/server/voice-text.ts`, pure) cut quoted replies (multi-language "On … wrote" headers,
+    also wrapped), forwards, Outlook blocks, ">" lines, phone/app footers and signature blocks.
+    Any email with one word left counts; a forward with under 5 own words is skipped.
+    `console.info("voice_learn", …)` logs the outcome and counts only (emails read, forwards and
+    app-sent replies skipped). Classification's `prepareBody` is unchanged.
+  - **Skips the app's own replies (Check 24 P3):** sent-folder ids matching
+    `drafts.sent_gmail_message_id` with status `sent` are dropped; `edited_and_sent` stay.
+  - **Scrub (Check 24 P4):** `src/server/scrub.ts` (pure) — named `SCRUB_RULES` (emails, spelled
+    emails, phones incl. wa.me / tel:, prices in many forms, PO boxes, streets incl. Spanish /
+    Portuguese order, units, ZIP after a state, Canadian postal codes). Invoice / permit / model
+    numbers stay; the business's own phone and website (read from `business_profile.signature`)
+    stay. Every stored field is scrubbed; owner-typed edits are not.
+  - **Voice inbox (Check 24 P6):** `voiceMailbox()` picks among running mailboxes the owner's
+    sign-in address, else the oldest by `created_at`. `voice_profile.learned_from_mailbox_id` (no
+    foreign key: the voice stays when that Gmail is disconnected) → "Learned from mike@shop.com".
+  - **Accepted ideas don't stop the weekly refresh (Check 24 P7):** `decideSuggestion` no longer
+    sets `source = edited`; `ideaChanges` (`edit-learning-rules.ts`) applies the change and
+    `learnVoice` re-applies every accepted idea oldest first after building its values.
+  - **Stale samples (Check 24 P8, adapted):** `voice_profile.examples_stale` is set when greeting,
+    sign-off, formality or length change (owner save or accepted idea) and by a learn whose
+    re-applied ideas moved length or formality; while stale, drafts get `examples: []` and
+    Settings hides the samples. Writing new ones (`voice-examples.v1` + job) waits for the Prompt
+    versions group (`docs/notes/prompt-versions-inbox.md`).
+  - **Failed first learn retried (Check 24 P12):** `voice_profile.retry_day` /
+    `retries_that_day`: the backstop restarts a failed / capped first learn (no stored voice) after
+    1 hour, at most 3 times a UTC day. A failed refresh of a stored voice waits for the weekly run.
+- **Inbox (wave 2, `w2-inbox`):**
+  - **Needs you lets go (Check 10 P1):** `threads.needs_owner_since`; one rule,
+    `openNeedsOwnerSql()` (`src/server/needs-owner.ts`): `needs_owner` and the owner hasn't written
+    since `needs_owner_since` (`lastOutSql`; older rows fall back to `classified_at`; an old manual mark with no time
+    never lets go). The sorter sets the time to the email's own time when the flag goes up, keeps
+    it while it stays up, nulls it when it goes down; "This one needs me" and Move it → complaint
+    set it to now. `clearAnsweredNeedsOwner(mailboxId)` runs once per `incrementalSync`, in
+    `finishBackfill` and when a re-read finishes: clears the flag, manual mark, reason and time
+    and logs `needs_owner_cleared {by: "gmail_reply"}`; a dispute / legal reason stays on the row.
+    `markAnsweredByPhone` clears it too (`{by: "phone"}`). Inbox: `CalledThem` (back="inbox") on
+    "Waiting on you" cards; "Take it off my list" → `takeOffListAction` (`{by: "owner"}`).
+  - **Quotes closed another way / Not a quote (Check 11 P8):** `threads.quote_dismissed_at`. "I
+    sent the price another way" → `markAnsweredByPhone(…, { via: "other", amountCents })` (typed
+    price into `quote_amount_cents`, never price memory). "Not a quote" (one confirmation) →
+    `quote_dismissed_at`; `quoteNotDismissedSql` keeps such threads out of quote rules unless an
+    outcome comes after it. "Not quotes (N)" with Put back. Follow-ups skip a dismissed quote.
+  - **Emergencies first (Check 10 P3):** tier order (`tierSql`, twin of `inboxTier` / `inboxRank`
+    / `compareInbox` in `inbox-rules.ts`): emergency in 24 h with the customer last (4) + open
+    needs-you (2) + priority high in 24 h (1), then newest, then id. "Emergency" / "Urgent" lead
+    the card in font-black.
+  - **Paging (Check 10 P2):** `inboxPage()` keyset paging (`?before=<ISO>&after_id=<uuid>`,
+    Zod-checked, anchor looked up inside the workspace); 100 non-junk rows per page; junk and
+    older unsorted mail folded (count + 50 newest, first page).
+  - **Draft ready / reason (Check 10 P4, P5):** `pendingDraftId` → " · Draft ready" and "See the
+    draft" (`/queue?t=<uuid>#t-<uuid>`); the needs-you reason under the tag line.
+  - **Open in Gmail and the customer (Check 10 P6):** "Open in Gmail" and "From <name>" →
+    `/customers/<opaque key>` (never for lead sites / phone services); no address in a URL.
+  - **Unsorted mail (Check 10 P7):** a model failure stores `extracted.unreadable` ("Couldn't
+    sort"); never-sorted mail older than `CLASSIFY_LOOKBACK_DAYS` folds into "N older emails, from
+    before Squared Away started sorting" with a "Not sorted" chip.
+  - **Search (Check 10 P8):** also the work, address, invoice and permit numbers; accents folded
+    (`foldForSearch`). **Chips (Check 10 P9):** wrap from `sm`, one scroll row with a fade on
+    phones; the tag says " · Needs me". **Plain reasons (Check 10 P10):** no dashes
+    (`COMPLAINT_REASON`, `LOW_CONFIDENCE_REASON`, `UNREADABLE_REASON`, `MODEL_FLAG_REASON`,
+    `INJECTION_REASON`, `LEGAL_REASON` "Mentions a lawyer, a lien or a claim.").
+- **Sync and Gmail connect (wave 2, `w2-sync`):**
+  - **Gmail quota (C25 P1):** per-mailbox unit budget in `gmail_units` (5,400 of Google's 6,000
+    units a minute; `src/mailbox/gmail/quota.ts`); every Gmail request reserves first; a spent
+    minute or Gmail's own retry time (`mailboxes.gmail_cool_until`) stops calls before any fetch
+    and `politely()` pauses. Inbox emails are read once (full); others as metadata.
+    `logGmailUnits` → `console.info("gmail_units", {job, mailboxId, gmailUnits})`. Purged daily.
+  - **Archive, Trash, Spam, Not spam (C25 P2):** `listHistory` asks for label changes and
+    deletions; `applyLabelChanges` keeps stored labels in step and recomputes `threads.in_inbox`.
+    Whole conversation in Trash / Spam / deleted → pending drafts expire ("You deleted this in
+    Gmail." / "You marked this as spam in Gmail."); nothing is deleted in the owner's Gmail.
+    Archive only → the draft stays with "You archived this in Gmail.", its autopilot countdown
+    cleared and a send in its undo window un-queued (`send_stopped` `archived_in_gmail`). A tap on
+    Send for an already-archived conversation still sends.
+  - **No Gmail (C47 P1):** `exchangeCode` calls `/profile`; `failedPrecondition` → revoke,
+    `NoGmailError`, `/connect?error=no_gmail`; nothing saved, no trial clock.
+  - **Expired history (C25 P3):** `mailboxes.resync_since` / `resync_page_token`: a fresh cursor
+    is stored at once and the gap (7–30 days) re-read one page per step; a gap over 30 days logs
+    `mail_gap` (dates only, hidden on Activity).
+  - **Automatic replies (C20 P4 + C21 P1):** only real automatic responses mark
+    `messages.auto_reply` (Auto-Submitted `auto-replied`, Precedence `auto_reply`, X-Autoreply /
+    X-Autorespond, out-of-office subjects, mailer-daemon / postmaster bounces; header values never
+    stored). They're set aside with no model call, never supersede the customer's own email,
+    never expire a draft, never get a reply; autopilot guardrail `autoReply`. Bounces set
+    `extracted.bounced` ("Your email to this customer bounced. Check the address."), no nudge.
+    Acknowledgements (`messages.ack_only`, inert until the prompt signal): `lastAnswerInSql`,
+    `ballInTheirCourtSql`, `quietSinceSql`; nudges count from the acknowledgement.
+  - **Attachments (C40 P2):** `messages.attachment_images` / `_pdfs` / `_other` (counts only, no
+    names); `AttachmentLine` "3 photos attached · open in Gmail" on Inbox and Queue cards.
+  - **Fewer executions (C25 P4):** `job_runs` (runs + steps per function per UTC day, middleware
+    `CountJobRuns`); /admin "Background work this month: N steps". `afterSync` sends a draft job
+    only with new mail or something pending. Lifecycle job grouped (above). `reply-to-backfill`
+    daily at 4:43 UTC, re-sending itself 15 minutes later while unfinished. With
+    `GMAIL_PUBSUB_TOPIC`, the watch covers INBOX + SENT and the poll skips a mailbox with a live
+    watch synced under 15 minutes ago (`pollDue`).
+  - **Big first read resumes (C25 P5):** `backfill_page_token` / `backfill_pages_done` /
+    `backfill_since`; at most 300 pages a run, the poll continues; a refused token restarts the
+    listing; a reconnect starts fresh. Sync uses `after:` windows only.
+  - **Plain "mail is behind" line (C25 P6):** `StaleMailLine` on every signed-in screen when an
+    active inbox's last check is over 30 minutes old; `mailboxHealth` and the learning screen show
+    first-read progress ("Reading your last 30 days: 1,250 emails so far, started 2:10 PM.").
+  - **One Gmail in one account (C25 P7):** `saveConnectedMailbox` refuses an address held by
+    another workspace (`MailboxInUseError`, `/connect?error=in_use`, activity
+    `mailbox_in_use_refused`); the new token is **not** revoked (a revoke could cut off the other
+    account). Plain index on `lower(mailboxes.email)`, not unique yet.
+  - **Right account on Connect another / Reconnect (C42 P3):** `/connect?reconnect=<id>` /
+    `?add=1`; `login_hint` or `prompt=consent select_account`; state cookie
+    `<state>~<mode>~<mailbox id>`; `already_connected` / `wrong_account` errors save nothing and
+    revoke nothing.
+  - **One provider switch (C47 P2):** `mailboxClientFor` (`src/mailbox/clients.ts`) is the only
+    `createGmailReader` caller outside src/mailbox/gmail; `serverMailboxClient` adds the unit
+    budget and saves a rotated refresh token (`saveRotatedRefreshToken`, encrypted, never logged).
+  - **Labels and search words in one place (C47 P4):** `MAIL_LABELS`;
+    `listMessages({ newerThanDays?, after?, inbox?, sentOnly?, pageToken?, maxResults? })`
+    replaces raw queries; a guard test bans Gmail query words and label names outside
+    src/mailbox/.
+  - **Test Gmail (C25 P8):** `tests/support/fake-mailbox.ts` keeps a typed history log, lists by
+    window, counts units per fake minute; vitest `hookTimeout` 30 s / `testTimeout` 60 s.
+- **Queue screen (wave 2, `w2-queue`):**
+  - **Focus (Check 32 P1):** a card button that turns into a question moves focus into it
+    (`QuestionLine`, `src/app/(app)/queue/focus.tsx`); Keep it / Never mind / Cancel / Escape put
+    focus back (`useFocusReturn`).
+  - **Keeping the owner's place (Check 9 P5):** forms carry `threadId` / `nextThreadId`
+    (`CardTargets`); redirects carry `&t=<uuid>` (same card for refusals and saves; the next card,
+    else the one before, else its own id, for send / discard / snooze / I called them / They said
+    no / Already paid); the notice renders on that card. URLs keep a literal `/queue` prefix.
+  - **After Send reply (Check 9 P5 + Check 32 P7):** `SentStrip` fixed above the tab bar, its
+    line the page's h1, focus once on mount; `UndoSend` speaks "You have 20 seconds to undo." then
+    "Time's up. Sending now."
+  - **Right now (Check 9 P6):** `queueMembership` returns `now` (emergencies with or without a
+    draft), a view onto needs-you / drafts, so counts are unchanged.
+  - **Whole reply above Send reply (Check 9 P7)**; **once per card (Check 9 P12):** header = tag and
+    summary, the reason in Why this?, `withoutCategoryPrefix` (`src/lib/card-words.ts`).
+  - **Draft a reply (Check 9 P9):** `DraftReplyButton` ("Writing a draft…");
+    `createDraftForThread` takes a 2-minute per-thread lease (`src/server/draft-claims.ts`,
+    `app_settings` `draft-claim:<threadId>`, purged daily) for every trigger.
+  - **Gaps (Check 9 P11 + Check 23 P8):** "Fill in N gaps to send" opens the first gap; quick
+    changes post the card's text, used only when `filledGaps(saved, current)` proves only gaps
+    changed.
+  - **Warnings order (Check 23 P9):** `scoreDraft` orders fixed cautions, purpose flags, check
+    flags, model notes; `capFlags` keeps 6 ("And N more things to check."); `betterAttempt` keeps
+    the retry with fewer REGENERATE_ON hits (`draft_retry_kept {kept}`).
+  - **Getting started (Check 9 P13):** `business_profile.onboarding_done_at`; a finished list is
+    one line and hides itself 3 days later.
+  - **Swipe (Check 9 P14)**, **Send together (Check 41 P2):** a scheduling draft that names a
+    visit time (`namesAVisitTime`) is never batch-eligible. **Nudge cards (Check 21 P8):** "They
+    said no" / "Already paid". **Headings (Check 32 P9/P11)**, **Edit (Check 8 P7/P9):** the tab
+    bar hides while a text field has focus. **Words (Check 9 P15 / Check 48 P5):** the Hold to
+    talk note names Google, Apple or Microsoft.
 
 ## Milestones
 

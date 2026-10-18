@@ -162,5 +162,52 @@ edits this file after it is created.
 - [x] Wave 1, When things break, 7) C48 P4
 - [x] Wave 1, When things break, 8) C01 P4
 - [x] Wave 1, When things break, 9) C50 P6
+- [x] Wave 2, Voice, 1) C24 P1 + C29 P2 [M]
+- [x] Wave 2, Voice, 2) C24 P2
+- [x] Wave 2, Voice, 3) C24 P3
+- [x] Wave 2, Voice, 4) C24 P4
+- [x] Wave 2, Voice, 5) C24 P6
+- [x] Wave 2, Voice, 6) C24 P7
+- [x] Wave 2, Voice, 7) C24 P8
+- [x] Wave 2, Voice, 8) C24 P12
+- [x] Wave 2, Inbox, 1) C10 P1 + C11 P8 [M]
+- [x] Wave 2, Inbox, 2) C10 P3
+- [x] Wave 2, Inbox, 3) C10 P2
+- [x] Wave 2, Inbox, 4) C10 P4 + C10 P5
+- [x] Wave 2, Inbox, 5) C10 P6
+- [x] Wave 2, Inbox, 6) C10 P7
+- [x] Wave 2, Inbox, 7) C10 P8
+- [x] Wave 2, Inbox, 8) C10 P9 + C10 P10
+- [x] Wave 2, Sync and Gmail connect, 1) C25 P1 [M]
+- [x] Wave 2, Sync and Gmail connect, 2) C25 P2
+- [x] Wave 2, Sync and Gmail connect, 3) C47 P1
+- [x] Wave 2, Sync and Gmail connect, 4) C25 P3 [M]
+- [x] Wave 2, Sync and Gmail connect, 5) C20 P4 + C21 P1
+- [x] Wave 2, Sync and Gmail connect, 6) C40 P2 [M]
+- [x] Wave 2, Sync and Gmail connect, 7) C25 P4
+- [x] Wave 2, Sync and Gmail connect, 8) C25 P5
+- [x] Wave 2, Sync and Gmail connect, 9) C25 P6
+- [x] Wave 2, Sync and Gmail connect, 10) C25 P7 [M]
+- [x] Wave 2, Sync and Gmail connect, 11) C42 P3
+- [x] Wave 2, Sync and Gmail connect, 12) C47 P2
+- [x] Wave 2, Sync and Gmail connect, 13) C47 P4
+- [x] Wave 2, Sync and Gmail connect, 14) C25 P8
+- [x] Wave 2, Queue screen, 1) C32 P1
+- [x] Wave 2, Queue screen, 2) C09 P5 + C32 P7
+- [x] Wave 2, Queue screen, 3) C09 P6
+- [x] Wave 2, Queue screen, 4) C09 P7 + C09 P12
+- [x] Wave 2, Queue screen, 5) C09 P9
+- [x] Wave 2, Queue screen, 6) C09 P11 + C23 P8
+- [x] Wave 2, Queue screen, 7) C23 P9
+- [x] Wave 2, Queue screen, 8) C09 P13 [M]
+- [x] Wave 2, Queue screen, 9) C09 P14
+- [x] Wave 2, Queue screen, 10) C41 P2
+- [x] Wave 2, Queue screen, 11) C21 P8
+- [x] Wave 2, Queue screen, 12) C32 P9 + C32 P11
+- [x] Wave 2, Queue screen, 13) C08 P7 + C08 P9
+- [x] Wave 2, Queue screen, 14) C09 P15 + C48 P5
+
+Queue screen 15) C09 P8 was not built (it waits for Davi's yes; `docs/LAUNCH.md` step 13). Voice 7) C24 P8's new prompt `voice-examples.v1` and the Inbox / Sync prompt lines wait for the Prompt
+versions group in `docs/notes/prompt-versions-inbox.md`.
 
 Later steps are added to this list as their pull requests merge.

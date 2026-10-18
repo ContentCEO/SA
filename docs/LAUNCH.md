@@ -79,6 +79,12 @@ with one shop.
 - What the numbers mean: this month's execution count against the 50,000 limit. At October's pace
   one shop uses about 40,000 a month, so a second shop would pass the limit. The paid plan's price
   is on the same page.
+- Measured after the sync changes (wave 2, 2026-10-18): the fixed work (the 5-minute mail check,
+  the 15-minute housekeeping job, the hourly morning-email check and the daily jobs) is about
+  43,000 executions a month on its own, and each quiet inbox adds about 17,300 more (busy inboxes
+  add more for sorting and drafting). So Inngest's free 50,000 isn't enough even for one shop: plan
+  on the paid plan before the first paying customer. /admin's System box now shows "Background
+  work this month: N steps" to compare with Inngest's own count.
 - Paste: nothing.
 - Worked when: you know this month's count and the plan, and either it's on a paid plan or you've
   chosen to stay on free knowing jobs stop at 50,000. Tell the engineers which.
@@ -971,6 +977,10 @@ morning emails all run as background jobs.
      `morning-digest`.
   2. The next day, `purge-expired-bodies` → Runs shows a **Completed** run.
   3. `/admin` → the first box is titled **System**, not "Background jobs look stopped".
+  4. After the wave 2 merge: `reply-to-backfill` now runs daily at 4:43 UTC (it used to run more
+     often). If its one-time fill-in wasn't finished before the deploy, its next run comes at the
+     first 4:43 UTC after the deploy, then every 15 minutes until it's done. Nothing to do; just
+     don't read a quiet `reply-to-backfill` before then as stopped.
 - Optional but recommended: point a free uptime monitor at /api/health/deep
   ([SETUP.md](SETUP.md) §6g). It emails you "Background jobs look stopped" at most once an hour,
   even when Inngest itself is down.
@@ -1228,7 +1238,8 @@ Nothing below is switched on or changed until you say so.
 - **Your Neon plan** ([check it this week](#check-your-free-plans-now-this-week)): stay on Free
   (production may pause mid-month) or move to Launch (about $19–20 a month).
 - **Your Inngest plan** ([check it this week](#inngest-background-jobs)): the free plan pauses
-  every job at 50,000 executions a month; one shop already uses about 40,000.
+  every job at 50,000 executions a month; the fixed work alone is about 43,000 a month and each
+  quiet inbox adds about 17,300, so one shop already needs the paid plan.
 - **Vercel Pro** ([check it this week](#vercel-hosting)): Hobby is for non-commercial use only;
   move to Pro (about $20 a month) before the first paying customer.
 - **Terms: the three [To confirm] items.** The wording in `docs/terms.md` stays as it is until
@@ -1380,6 +1391,46 @@ Nothing below is switched on or changed until you say so.
 - **Gmail draft check (counts only, for the engineers):** whether Gmail keeps a draft's id when
   it's sent. The app is safe either way. The query is in [step 1](#1-merge-the-launch-branch);
   run it **before merging**: after the merge it always reads 0.
+- **Wave 2 merge A (2026-10-18): questions from the Voice, Inbox, Sync and Queue changes.** Each
+  is built with the safe choice below; nothing changes until you say so.
+  - **How far back the sorter looks.** Mail from 15 to 30 days ago that was never sorted is now
+    folded on the Inbox as "from before Squared Away started sorting". Should the sorter look
+    back the full 30 days instead of 14 on the first day? (More AI calls that day.)
+  - **"I sent the price another way" and follow-ups.** A quote marked that way counts like "I
+    called them", so it gets no follow-up nudge. Should a price sent from QuickBooks or Jobber
+    still get the usual nudge after a few quiet days?
+  - **Refused Gmail connections aren't revoked at Google.** When a Gmail is already connected to
+    another Squared Away account, or the wrong Google account comes back on Reconnect / Connect
+    another Gmail, nothing is saved, but the new permission isn't revoked at Google, because a
+    revoke can also cut off the account already using that inbox. OK?
+  - **Archived conversations.** A draft whose conversation you archived in Gmail stays in the
+    Queue with "You archived this in Gmail." and can still be sent with a tap; archiving after
+    tapping Send stops that send. Trash and Spam remove the draft. Is that what you want?
+  - **Which machine mail counts as an automatic reply.** Only real automatic responses
+    (out-of-office, auto-responders, bounces) are set aside. Mail marked "auto-generated" or
+    "bulk" is still read, because lead sites, website forms and voicemail emails are sent that
+    way. OK?
+  - **One Gmail per account, made strict.** The app refuses a Gmail already connected to another
+    account; the database index behind it isn't unique yet. The engineers can make it unique
+    once this count on the shared database returns no rows:
+    `select lower(email), count(distinct workspace_id) from mailboxes group by 1 having count(distinct workspace_id) > 1;`
+  - **Review all ready (Check 9 P8, not built).** Show each reply's full text on Review all
+    ready, with a tick box per row? It changes plan #5 ("recipient + first line"). Waiting for a
+    yes.
+  - **Autopilot and visit times.** Send together now leaves out a scheduling reply that names a
+    day or time (one at a time). The same rule could apply to autopilot's scheduling replies. Not
+    changed; your call.
+  - **Draft a reply while a job is drafting.** A background drafting job now stands down while
+    your tap is writing the same conversation (and the other way round). Say if you'd rather jobs
+    always retry at once.
+  - **Sample replies after you change your voice.** Drafts stop using the old samples when you
+    change your greeting, sign-off, length or formality; writing new ones needs a small new AI
+    prompt that the Prompt versions step adds. Until then a voice you changed by hand has no
+    samples until you tap Re-learn.
+  - Decided at the merge (were questions): voices marked "edited" only because you said yes to an
+    idea are back on the weekly refresh (a one-off clean-up); the privacy policy says the voice
+    scrub replaces the details "it recognizes"; speech for Hold to talk goes to "Google, Apple or
+    Microsoft"; /admin's "jobs look stopped" now waits 25 minutes.
 
 ### Still needed from you
 
