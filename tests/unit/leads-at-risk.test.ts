@@ -28,6 +28,7 @@ import {
   queueDeepLink,
 } from "@/server/leads-at-risk-rules";
 import { saveConnectedMailbox } from "@/server/mailboxes";
+import { saveWorkHours, workHoursInput } from "@/server/profile";
 import { listQuotes } from "@/server/quotes";
 import { savePushSubscription } from "@/server/push-alerts";
 import { createTestDb } from "../support/db";
@@ -220,6 +221,31 @@ describe("#34 which leads are at risk", () => {
     // Fri 5pm → Mon 9am = 60 + 660 + 120 = 840 business minutes: at risk.
     await synced(MON_9_NY);
     expect(await ids(MON_9_NY)).toEqual([fri]);
+  });
+
+  it("a Mon–Fri shop: a Saturday request isn't at risk until Monday (Check 15 P8)", async () => {
+    await saveWorkHours(
+      workspaceId,
+      workHoursInput.parse({ days: ["1", "2", "3", "4", "5"], startHour: "7", endHour: "18" }),
+    );
+    const SAT_10_NY = new Date("2026-10-17T14:00:00Z");
+    const id = await lead(SAT_10_NY);
+    const MON_10_59_NY = new Date("2026-10-19T14:59:00Z");
+    const MON_11_01_NY = new Date("2026-10-19T15:01:00Z");
+    for (const now of [new Date("2026-10-17T21:00:00Z"), MON_9_NY, MON_10_59_NY]) {
+      await synced(now);
+      expect(await ids(now)).toEqual([]);
+    }
+    await synced(MON_11_01_NY);
+    expect(await ids(MON_11_01_NY)).toEqual([id]);
+    // The default schedule (before the owner edits) counts Saturday: at risk by 2pm Saturday.
+    await saveWorkHours(
+      workspaceId,
+      workHoursInput.parse({ days: ["1", "2", "3", "4", "5", "6"], startHour: "7", endHour: "18" }),
+    );
+    const SAT_14_01_NY = new Date("2026-10-17T18:01:00Z");
+    await synced(SAT_14_01_NY);
+    expect(await ids(SAT_14_01_NY)).toEqual([id]);
   });
 
   it("Sat 5pm → Mon 9am is 60 + 0 (Sunday) + 120 = 180 minutes: not yet", async () => {

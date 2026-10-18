@@ -20,7 +20,7 @@ import { listQueue, queueCounts } from "@/server/drafts";
 import { lastInSql, lastOutSql, waitingSinceSql } from "@/server/thread-sql";
 import { appUrl } from "@/lib/app-url";
 import { saveConnectedMailbox } from "@/server/mailboxes";
-import { digestSettingsInput, saveDigestSettings } from "@/server/profile";
+import { digestSettingsInput, saveDigestSettings, setOwnerTimeZone } from "@/server/profile";
 import { createTestDb } from "../support/db";
 
 // 11:30 UTC = 7:30am in New York (EDT), 4:30am in Los Angeles.
@@ -339,10 +339,8 @@ describe("in the database", () => {
     expect(sent).toHaveLength(0);
   });
 
-  it("an unknown time zone falls back to Eastern instead of failing", () => {
-    expect(digestSettingsInput.parse({ hour: "7", timeZone: "Mars/Base" }).timeZone).toBe(
-      "America/New_York",
-    );
+  it("an unknown time zone is refused (Check 15 P7: the saved one stays)", () => {
+    expect(digestSettingsInput.safeParse({ hour: "7", timeZone: "Mars/Base" }).success).toBe(false);
     expect(digestSettingsInput.safeParse({ hour: "3", timeZone: "UTC" }).success).toBe(false);
   });
 
@@ -906,8 +904,14 @@ describe("digest: needs-you header, queue agreement and Monday's last week (plan
       // Something waiting, so every morning here is worth an email anyway.
       await needsYou({ category: "complaint" }, [{ dir: "in", at: hoursAgo(2, MONDAY) }]);
     }
-    const setTz = (timeZone: string, hour: string) =>
-      saveDigestSettings(workspaceId, digestSettingsInput.parse({ enabled: "on", hour, timeZone }));
+    // Check 44 P5: the zone is saved apart from the morning email settings, as the owner's pick.
+    const setTz = async (timeZone: string, hour: string) => {
+      await saveDigestSettings(
+        workspaceId,
+        digestSettingsInput.parse({ enabled: "on", hour, timeZone }),
+      );
+      await setOwnerTimeZone(workspaceId, timeZone);
+    };
 
     it("the owner's Monday gets last week's counts below the rest — counts only", async () => {
       await lastWeekWork();

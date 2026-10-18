@@ -3,6 +3,7 @@ import Link from "next/link";
 import { Notice } from "@/components/app/notice";
 import { Headline } from "@/components/brand/headline";
 import { draftTag } from "@/config/categories";
+import { languageCardLine } from "@/ai/language";
 import { findGaps } from "@/ai/gaps";
 import { confidenceLabel } from "@/config/drafting";
 import { gmailThreadLink } from "@/lib/gmail-link";
@@ -304,6 +305,7 @@ export default async function QueuePage(props: PageProps<"/queue">) {
       body={i.body ?? ""}
       seenHash={bodyHash(i.body ?? "")}
       timingNote={timingNoteFor(i)}
+      languageLine={languageCardLine(i.customerLanguage, i.replyLanguage)}
       flags={i.flags}
       label={confidenceLabel({
         confidencePct: i.confidence,

@@ -74,6 +74,8 @@ export type DraftCardProps = {
    * “tomorrow”…"). Send reply becomes "Send reply anyway", which confirms it.
    */
   timingNote?: string | null;
+  /** Check 43 P8: "They wrote in Spanish. Reply in Spanish." (only when not English). */
+  languageLine?: string | null;
   flags: string[];
   /** Plan #8: Ready / Check the details / Check everything. */
   label: ConfidenceLabel;
@@ -348,6 +350,8 @@ export function DraftCard(p: DraftCardProps) {
             <p className="text-sm">Read it again before it goes, or tap Edit to change it.</p>
           </div>
         ) : null}
+
+        {p.languageLine ? <p className="font-semibold">{p.languageLine}</p> : null}
 
         {p.flags.length || p.label === "check_everything" ? (
           <div className="rounded-lg border-2 border-charcoal p-3">

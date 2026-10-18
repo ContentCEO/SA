@@ -27,12 +27,15 @@ export const SCREEN_MESSAGES = {
       profile: "Business profile saved.",
       note_added: "Note added. Drafts will use it until its last day.",
       note_removed: "Note removed.",
+      work_hours: "Working days saved. Alerts about waiting leads follow them.",
     },
     error: {
       note_invalid: "Write a short note and pick its last day.",
       note_past: "That date has already passed.",
       note_too_far: "Pick a date within the next year.",
       note_full: "You can have 5 notes at once. Remove one first.",
+      work_days: "Pick at least one day.",
+      work_hours: "Your day has to end after it starts.",
       unknown: UNKNOWN,
     },
   },
@@ -40,6 +43,10 @@ export const SCREEN_MESSAGES = {
     done: {
       voice: "Saved how you write.",
       never_say: "Never-say list saved.",
+      languages: "Saved. New drafts follow it.",
+      // Check 15 P5: {saved} and {skipped} are filled from the numbers in the address.
+      never_say_skipped:
+        "Saved {saved}. Skipped {skipped} (each needs 2 to 80 characters, up to 50 lines).",
       relearn: "Re-reading your sent mail. This takes a minute or two.",
       idea_yes: "Done. New drafts will be written that way.",
       idea_no: "Okay — nothing changed.",
@@ -63,8 +70,8 @@ export const SCREEN_MESSAGES = {
     error: { autopilot: "Autopilot can't be turned on for that yet." },
   },
   "/settings/morning-email": {
-    done: { saved: "Saved." },
-    error: { unknown: UNKNOWN },
+    done: { saved: "Saved.", zone: "Time zone saved." },
+    error: { unknown: UNKNOWN, zone: "That time zone didn't work. Pick one from the list." },
   },
   "/settings/notifications": { done: { saved: "Saved." }, error: {} },
   "/settings/texts": {

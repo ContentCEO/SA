@@ -25,6 +25,8 @@ import { TRADES, type Trade } from "../config/trades";
 import type { LostReason } from "../server/quote-rules";
 import type { ReplyToHeader } from "../server/reply-address-rules";
 
+export type TimeZoneSource = "default" | "browser" | "owner";
+
 export const tradeEnum = pgEnum("trade", TRADES);
 
 export const workspaceStatusEnum = pgEnum("workspace_status", [
@@ -584,6 +586,12 @@ export const drafts = pgTable(
      */
     opening: text("opening"),
     /**
+     * Check 43 P8: the language the customer's newest email was in ("en" | "es" | "pt", decided
+     * in code; null = couldn't tell) and the one this reply was written for. Codes only.
+     */
+    customerLanguage: text("customer_language"),
+    replyLanguage: text("reply_language"),
+    /**
      * Check 14 P1: how a sent draft left. app = the owner's tap here, autopilot = autopilot,
      * gmail = our draft sent from Gmail (same or edited text), own_words = closed because the
      * owner wrote their own reply in Gmail (status stays `sent` so caps hold, but it never counts
@@ -652,6 +660,25 @@ export const businessProfiles = pgTable("business_profile", {
   digestEnabled: boolean("digest_enabled").notNull().default(true),
   digestHour: integer("digest_hour").notNull().default(7),
   timeZone: text("time_zone").notNull().default("America/New_York"),
+  /**
+   * Check 45 P1 / 44 P5: where time_zone came from — 'default' (never set: the schema default),
+   * 'browser' (setup, or the first signed-in page load while still 'default') or 'owner' (picked
+   * on Settings → Morning email). A browser never replaces an 'owner' zone.
+   */
+  timeZoneSource: text("time_zone_source").$type<TimeZoneSource>().notNull().default("default"),
+  /**
+   * Check 15 P8: the hours the "a lead is waiting" alerts count (ISO weekdays, local hours,
+   * end exclusive; 24 = midnight). Defaults are the old fixed schedule (Mon–Sat 7am–6pm), so
+   * nothing changes until the owner edits. The free-text `hours` is what drafts say.
+   */
+  workDays: integer("work_days").array().notNull().default([1, 2, 3, 4, 5, 6]),
+  workStartHour: integer("work_start_hour").notNull().default(7),
+  workEndHour: integer("work_end_hour").notNull().default(18),
+  /**
+   * Check 43 P8: the languages the owner answers customers in. English always; "es" / "pt"
+   * only when switched on (the owner can read a reply in it before sending).
+   */
+  replyLanguages: text("reply_languages").array().notNull().default(["en"]),
   digestLastSentOn: text("digest_last_sent_on"),
   /** Text alerts to the owner's own phone (E.164, e.g. +15085551234). Off until they opt in. */
   alertPhone: text("alert_phone"),

@@ -8,6 +8,7 @@ import { NoSignalGuard } from "@/components/app/no-signal-guard";
 import { SiteFooter } from "@/components/app/site-footer";
 import { StaleMailLine } from "@/components/app/stale-mail-line";
 import { StatusBanner } from "@/components/app/status-banner";
+import { ZoneCaptureGate } from "@/components/app/zone-capture-gate";
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   const { sunlight } = await devicePrefs();
@@ -19,6 +20,9 @@ export default async function AppLayout({ children }: { children: React.ReactNod
       <AppHeader sunlight={sunlight} />
       <Suspense fallback={null}>
         <AppBadge />
+      </Suspense>
+      <Suspense fallback={null}>
+        <ZoneCaptureGate />
       </Suspense>
       <ReconnectBanner />
       <StatusBanner />

@@ -10,9 +10,16 @@ import {
   saveBusinessProfile,
   saveDigestSettings,
   saveFollowupSettings,
+  saveDetectedTimeZone,
+  replyLanguagesInput,
+  saveReplyLanguages,
   saveVoiceEdits,
+  saveWorkHours,
+  setOwnerTimeZone,
   voiceEditInput,
+  workHoursInput,
 } from "@/server/profile";
+import { isTimeZone } from "@/server/time-zone-rules";
 import { AutopilotNotAllowedError, setAutopilot } from "@/server/autopilot";
 import { decideSuggestion } from "@/server/edit-learning";
 import { hitLimit } from "@/server/rate-limit";
@@ -40,6 +47,8 @@ export async function saveBusinessProfileAction(
       .getAll("extraTrades")
       .map((v) => String(v))
       .join(",");
+  // Check 45 P1: only first-time setup sends the browser's zone; Settings saves never move it.
+  if (raw.returnTo !== "/welcome/learning") delete raw.timeZone;
   const parsed = businessProfileInput.safeParse(raw);
   if (!parsed.success)
     return {
@@ -89,11 +98,58 @@ export async function saveDigestSettingsAction(formData: FormData) {
   const parsed = digestSettingsInput.safeParse({
     enabled: formData.get("enabled") ?? undefined,
     hour: formData.get("hour"),
-    timeZone: formData.get("timeZone"),
+    timeZone: formData.get("timeZone") ?? undefined,
   });
   if (!parsed.success) redirect("/settings/morning-email?error=unknown");
   await saveDigestSettings(workspace.id, parsed.data);
+  // Check 44 P5 / 15 P7: the visible select; saved (as the owner's pick) only when changed.
+  if (parsed.data.timeZone) await setOwnerTimeZone(workspace.id, parsed.data.timeZone);
   redirect("/settings/morning-email?done=saved");
+}
+
+/** Check 15 P8: "Your working days (for alerts)" on Settings → Your business. */
+export async function saveWorkHoursAction(formData: FormData) {
+  const { workspace } = await requireOwner();
+  const parsed = workHoursInput.safeParse({
+    days: formData.getAll("days").map(String),
+    startHour: formData.get("startHour"),
+    endHour: formData.get("endHour"),
+  });
+  if (!parsed.success) {
+    const issue = parsed.error.issues[0];
+    if (issue?.path[0] === "days") redirect("/settings/business?error=work_days");
+    if (issue?.path[0] === "endHour") redirect("/settings/business?error=work_hours");
+    redirect("/settings/business?error=unknown");
+  }
+  await saveWorkHours(workspace.id, parsed.data);
+  redirect("/settings/business?done=work_hours");
+}
+
+/** Check 43 P8: the languages the owner answers customers in (Settings → Your voice). */
+export async function saveReplyLanguagesAction(formData: FormData) {
+  const { workspace } = await requireOwner();
+  const parsed = replyLanguagesInput.safeParse(formData.getAll("languages").map(String));
+  if (!parsed.success) redirect("/settings/writing?error=unknown");
+  await saveReplyLanguages(workspace.id, parsed.data);
+  redirect("/settings/writing?done=languages");
+}
+
+/** Check 44 P5: "Use Central time" — a deliberate tap to take this phone's zone. */
+export async function takePhoneZoneAction(formData: FormData) {
+  const { workspace } = await requireOwner();
+  const tz = formData.get("timeZone");
+  if (!isTimeZone(tz)) redirect("/settings/morning-email?error=zone");
+  await setOwnerTimeZone(workspace.id, tz);
+  redirect("/settings/morning-email?done=zone");
+}
+
+/**
+ * Check 45 P1: the browser's zone from the first signed-in page load (ZoneCapture). Saves only
+ * while the zone was never set; anything else (a bad zone, a browser or owner zone) is ignored.
+ */
+export async function saveDetectedTimeZoneAction(timeZone: unknown): Promise<void> {
+  const { workspace } = await requireOwner();
+  await saveDetectedTimeZone(workspace.id, timeZone);
 }
 
 /** Trial emails on or off (2026-10-16). Off is the same flag as the emails' "Stop these emails". */

@@ -171,15 +171,15 @@ test("settings: morning summary time and time zone are saved", async ({ page, co
   });
   await signInAs(context, owner);
 
+  // Check 45 P1: the first signed-in page saves this browser's zone (it was never set).
   await page.goto("/settings");
   await page.getByRole("link", { name: /^Morning email/ }).click();
   await expect(page).toHaveURL(/\/settings\/morning-email$/);
   const section = page.getByRole("main");
   await expect(section).toContainText("No customer names or email text go in it.");
-  // Plan #35: the monthly summary rides on the same switch, and Settings says so.
-  await expect(section).toContainText(
-    "On the 1st of each month you also get a short summary of the month (counts only).",
-  );
+  // Plan #35: the monthly summary rides on the same switch; Settings says so once, under it
+  // (Check 15 P12).
+  await expect(section).not.toContainText("On the 1st of each month you also get");
   const morning = section.getByRole("checkbox", { name: "Email me a summary each morning" });
   await expect(morning).toBeChecked();
   await expect(morning).toHaveAccessibleDescription("(and a short one on the 1st of each month)");

@@ -5,6 +5,7 @@ import { smsConfigured } from "@/lib/sms";
 import { getBusinessProfile } from "@/server/profile";
 import { requireOwner } from "@/server/session";
 import { formatUsPhone } from "@/server/sms-alerts";
+import { zoneTimeName } from "@/server/time-zone-rules";
 import { EmergencySwitch } from "../emergency-switch";
 import { SettingsScreen } from "../screen";
 import {
@@ -25,8 +26,9 @@ export default async function TextAlertSettingsPage(props: PageProps<"/settings/
     <SettingsScreen path="/settings/texts" heavy="text alerts." params={await props.searchParams}>
       <p className="text-muted-foreground">
         A text when a new quote request or an email that needs you comes in. Just the count and a
-        link — never a customer&apos;s name or words. Not between 9pm and 7am (except emergencies,
-        if you leave that on below), at most one every 10 minutes. Reply STOP any time.
+        link — never a customer&apos;s name or words. Not between 9pm and 7am{" "}
+        {zoneTimeName(profile?.timeZone)} (except emergencies, if you leave that on below), at most
+        one every 10 minutes. Reply STOP any time.
       </p>
       {profile?.alertPhoneVerifiedAt && profile.alertPhone ? (
         <div className="flex flex-col gap-3">

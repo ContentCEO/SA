@@ -7,7 +7,14 @@ import { listMailboxes } from "@/server/mailboxes";
 import { describeVoice, getBusinessProfile, getVoiceProfile } from "@/server/profile";
 import { requireOwner } from "@/server/session";
 import { hasVoiceContent, lastUpdateNote, voiceAttempt } from "@/server/voice-rules";
-import { decideVoiceIdeaAction, relearnVoiceAction } from "../profile-actions";
+import { AutoSaveForm } from "@/components/forms/auto-save-form";
+import { LANGUAGE_NAMES } from "@/ai/language";
+import { OPTIONAL_REPLY_LANGUAGES } from "@/server/profile";
+import {
+  decideVoiceIdeaAction,
+  relearnVoiceAction,
+  saveReplyLanguagesAction,
+} from "../profile-actions";
 import { SettingsScreen } from "../screen";
 import { saveNeverSayAction } from "../wording-actions";
 import { showGaps } from "@/ai/gaps";
@@ -59,7 +66,8 @@ export default async function WritingSettingsPage(props: PageProps<"/settings/wr
           ) : null}
           {stored && voice?.phrasesAvoided.length ? (
             <p className="text-muted-foreground">
-              Drafts will never say “{voice.phrasesAvoided.slice(0, 2).join("” or “")}”.
+              Drafts try not to say “{voice.phrasesAvoided.slice(0, 2).join("” or “")}” and flag it
+              if they do.
             </p>
           ) : null}
           {voice?.examples.length && !voice.examplesStale ? (
@@ -136,6 +144,37 @@ export default async function WritingSettingsPage(props: PageProps<"/settings/wr
         ) : null}
       </section>
 
+      {/* Check 43 P8: which languages a reply may be written in. */}
+      <section aria-labelledby="languages-heading" className="flex flex-col gap-3">
+        <h2 id="languages-heading" className="text-xl font-black">
+          Languages you answer customers in
+        </h2>
+        <p className="text-muted-foreground">
+          Turn one on only if you can read a reply in it before you send.
+        </p>
+        <AutoSaveForm action={saveReplyLanguagesAction} hideButton className="flex flex-col gap-1">
+          <label className="flex min-h-tap items-center gap-3">
+            <input type="checkbox" defaultChecked disabled className="size-6 shrink-0" />
+            <span className="font-semibold">English (always on)</span>
+          </label>
+          {OPTIONAL_REPLY_LANGUAGES.map((l) => (
+            <label key={l} className="flex min-h-tap items-center gap-3">
+              <input
+                type="checkbox"
+                name="languages"
+                value={l}
+                defaultChecked={(profile?.replyLanguages ?? []).includes(l)}
+                className="size-6 shrink-0"
+              />
+              <span className="font-semibold">{LANGUAGE_NAMES[l]}</span>
+            </label>
+          ))}
+          <Button type="submit" variant="outline" className="sa-autosave-button w-full">
+            Save languages
+          </Button>
+        </AutoSaveForm>
+      </section>
+
       <section aria-labelledby="never-say-heading" className="flex flex-col gap-3">
         <h2 id="never-say-heading" className="text-xl font-black">
           Never say this
@@ -158,6 +197,13 @@ export default async function WritingSettingsPage(props: PageProps<"/settings/wr
             Save never-say list
           </Button>
         </form>
+        <p className="text-muted-foreground">
+          To stop promises (like same-day service), use Things we should never promise in{" "}
+          <Link href="/settings/business" className="font-semibold underline underline-offset-4">
+            Your business
+          </Link>
+          .
+        </p>
       </section>
     </SettingsScreen>
   );
