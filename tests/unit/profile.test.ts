@@ -126,11 +126,7 @@ describe("plain words for every Settings form error (Check 15 P2)", () => {
   const zodWording = (m: string) =>
     /^(Too big|Too small|Invalid)/.test(m) || m.includes("expected");
   const bad: Array<
-    [
-      string,
-      { safeParse: (v: unknown) => { error?: { issues: { message: string }[] } } },
-      unknown,
-    ]
+    [string, { safeParse: (v: unknown) => { error?: { issues: { message: string }[] } } }, unknown]
   > = [
     ["business name too long", businessProfileInput, { ...valid, businessName: "x".repeat(121) }],
     ["business name missing", businessProfileInput, { ...valid, businessName: undefined }],

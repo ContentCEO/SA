@@ -39,6 +39,9 @@ export const SCREEN_MESSAGES = {
     done: {
       voice: "Saved how you write.",
       never_say: "Never-say list saved.",
+      // Check 15 P5: {saved} and {skipped} are filled from the numbers in the address.
+      never_say_skipped:
+        "Saved {saved}. Skipped {skipped} (each needs 2 to 80 characters, up to 50 lines).",
       relearn: "Re-reading your sent mail. This takes a minute or two.",
       idea_yes: "Done. New drafts will be written that way.",
       idea_no: "Okay — nothing changed.",

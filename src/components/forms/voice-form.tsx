@@ -73,8 +73,8 @@ export function VoiceForm({ defaults }: { defaults: VoiceDefaults }) {
       />
       <TextArea
         name="phrasesAvoided"
-        label="Things you'd never say"
-        hint="One per line. Drafts will steer clear."
+        label="Words that don't sound like you"
+        hint="Drafts avoid these and flag them. A re-learn can change this list. For words that must never appear, use Never say this on the Your voice screen."
         defaultValue={v("phrasesAvoided", defaults.phrasesAvoided.join("\n")) as string}
         error={e.phrasesAvoided}
         rows={4}

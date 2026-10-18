@@ -16,8 +16,10 @@ import { requireOwner } from "@/server/session";
 export async function saveNeverSayAction(formData: FormData) {
   const { workspace } = await requireOwner();
   const text = String(formData.get("neverSay") ?? "").slice(0, 10_000);
-  await saveNeverSay(workspace.id, text);
-  redirect("/settings/writing?done=never_say");
+  const { saved, skipped } = await saveNeverSay(workspace.id, text);
+  if (!skipped) redirect("/settings/writing?done=never_say");
+  // Check 15 P5: the counts go as their own numbers, never the text.
+  redirect("/settings/writing?done=never_say_skipped" + `&saved=${saved}&skipped=${skipped}`);
 }
 
 export type NeverSayResult = { ok: boolean; message: string };

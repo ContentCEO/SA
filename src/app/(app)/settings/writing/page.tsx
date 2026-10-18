@@ -47,7 +47,8 @@ export default async function WritingSettingsPage(props: PageProps<"/settings/wr
           ) : null}
           {voice?.status === "ready" && voice.phrasesAvoided.length ? (
             <p className="text-muted-foreground">
-              Drafts will never say “{voice.phrasesAvoided.slice(0, 2).join("” or “")}”.
+              Drafts try not to say “{voice.phrasesAvoided.slice(0, 2).join("” or “")}” and flag it
+              if they do.
             </p>
           ) : null}
           {voice?.examples.length ? (
@@ -146,6 +147,13 @@ export default async function WritingSettingsPage(props: PageProps<"/settings/wr
             Save never-say list
           </Button>
         </form>
+        <p className="text-muted-foreground">
+          To stop promises (like same-day service), use Things we should never promise in{" "}
+          <Link href="/settings/business" className="font-semibold underline underline-offset-4">
+            Your business
+          </Link>
+          .
+        </p>
       </section>
     </SettingsScreen>
   );

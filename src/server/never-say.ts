@@ -16,17 +16,31 @@ export class NeverSayError extends Error {
 
 /** Trim, drop blanks and too-long lines, de-dupe ignoring case, cap the count. */
 export function cleanNeverSay(lines: string[]): string[] {
+  return cleanNeverSayCounted(lines).list;
+}
+
+/**
+ * Check 15 P5: the same, counting the lines dropped for their length or past the 50th, so the
+ * owner is told. Blank lines and repeats aren't counted (nothing was lost).
+ */
+export function cleanNeverSayCounted(lines: string[]): { list: string[]; skipped: number } {
   const seen = new Set<string>();
   const out: string[] = [];
+  let skipped = 0;
   for (const raw of lines) {
     const p = raw.replace(/\s+/g, " ").trim();
-    if (p.length < NEVER_SAY_PHRASE.min || p.length > NEVER_SAY_PHRASE.max) continue;
+    if (!p) continue;
+    if (p.length < NEVER_SAY_PHRASE.min || p.length > NEVER_SAY_PHRASE.max) {
+      skipped++;
+      continue;
+    }
     const key = p.toLowerCase();
     if (seen.has(key)) continue;
     seen.add(key);
     out.push(p);
   }
-  return out.slice(0, NEVER_SAY_MAX);
+  skipped += Math.max(0, out.length - NEVER_SAY_MAX);
+  return { list: out.slice(0, NEVER_SAY_MAX), skipped };
 }
 
 async function current(workspaceId: string) {
@@ -52,11 +66,11 @@ async function save(workspaceId: string, list: string[]) {
     });
 }
 
-/** Replace the whole list (Settings textarea, one per line). */
+/** Replace the whole list (Settings textarea, one per line). Counts only come back. */
 export async function saveNeverSay(workspaceId: string, text: string) {
-  const list = cleanNeverSay(text.split("\n"));
+  const { list, skipped } = cleanNeverSayCounted(text.split("\n"));
   await save(workspaceId, list);
-  return list;
+  return { saved: list.length, skipped };
 }
 
 /** Add one phrase (from the draft editor: select words → Never say this). */

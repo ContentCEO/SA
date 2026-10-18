@@ -5,6 +5,22 @@ import { SCREEN_MESSAGES, type SettingsScreenPath } from "./messages";
 
 type Params = Record<string, string | string[] | undefined>;
 
+/**
+ * A notice's {name} counts, from the address (Check 15 P5). Only small whole numbers are used;
+ * anything else reads as a plain "Saved." so typed text can never show up here.
+ */
+export function fillCounts(message: string | undefined, params: Params): string | undefined {
+  if (!message || !message.includes("{")) return message;
+  let ok = true;
+  const filled = message.replace(/\{(\w+)\}/g, (_, k: string) => {
+    const v = params[k];
+    if (typeof v === "string" && /^\d{1,4}$/.test(v)) return v;
+    ok = false;
+    return "";
+  });
+  return ok ? filled : "Saved.";
+}
+
 /** One Settings screen: a way back to the list, its heading, and its own notices. */
 export function SettingsScreen({
   path,
@@ -21,7 +37,8 @@ export function SettingsScreen({
     done: Record<string, string>;
     error: Record<string, string>;
   };
-  const done = typeof params.done === "string" ? messages.done[params.done] : undefined;
+  const done =
+    typeof params.done === "string" ? fillCounts(messages.done[params.done], params) : undefined;
   const error = typeof params.error === "string" ? messages.error[params.error] : undefined;
   return (
     <>

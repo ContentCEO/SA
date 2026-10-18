@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { SCREEN_MESSAGES, LIST_MESSAGES } from "@/app/(app)/settings/messages";
 import { LEGACY_SETTINGS_IDS, legacySettingsScreen } from "@/app/(app)/settings/legacy-anchors";
+import { fillCounts } from "@/app/(app)/settings/screen";
 import { currentTab } from "@/config/nav";
 
 /** Outside review (I4): Settings is a list of short screens. */
@@ -113,6 +114,23 @@ describe("settings redirects", () => {
     );
     for (const f of [join(SETTINGS, "page.tsx"), join(SETTINGS, "texts", "page.tsx")])
       expect(readFileSync(f, "utf8")).not.toContain("Coming soon");
+  });
+
+  it("the never-say notice fills in counts only (Check 15 P5)", () => {
+    const msg = SCREEN_MESSAGES["/settings/writing"].done.never_say_skipped;
+    expect(fillCounts(msg, { saved: "3", skipped: "2" })).toBe(
+      "Saved 3. Skipped 2 (each needs 2 to 80 characters, up to 50 lines).",
+    );
+    // Anything that isn't a small number never reaches the screen.
+    expect(fillCounts(msg, { saved: "<b>hi</b>", skipped: "2" })).toBe("Saved.");
+    expect(fillCounts(msg, {})).toBe("Saved.");
+    expect(fillCounts("Saved.", {})).toBe("Saved.");
+  });
+
+  it("the voice screen doesn't promise phrasesAvoided are never said (Check 15 P5)", () => {
+    const src = readFileSync(join(SETTINGS, "writing", "page.tsx"), "utf8");
+    expect(src).not.toContain("Drafts will never say");
+    expect(src).toContain("Drafts try not to say");
   });
 
   it("Re-learn asks once before replacing the owner's edits", () => {

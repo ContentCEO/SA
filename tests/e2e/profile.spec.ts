@@ -68,7 +68,9 @@ test("settings shows the learned voice in plain words, and it can be corrected",
     page.getByText("You usually open with “Hey” and sign off “Thanks, Davi”.", { exact: false }),
   ).toBeVisible();
   await expect(
-    page.getByText("Drafts will never say “I hope this email finds you well”."),
+    page.getByText(
+      "Drafts try not to say “I hope this email finds you well” and flag it if they do.",
+    ),
   ).toBeVisible();
 
   await page.getByRole("link", { name: "Edit how I write" }).click();

@@ -307,7 +307,7 @@ export function BusinessProfileForm({
       <TextArea
         name="doNotPromise"
         label="Things we should never promise"
-        hint="One per line. Drafts will never say these. “Same-day service”, “A price over email”, “Weekend work”."
+        hint="One per line. If a draft seems to promise one, it's rewritten once, then flagged for you. “Same-day service”, “A price over email”, “Weekend work”."
         defaultValue={v("doNotPromise", joined(defaults.doNotPromise)) as string}
         error={e.doNotPromise}
         rows={4}
