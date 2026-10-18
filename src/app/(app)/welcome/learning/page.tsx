@@ -6,7 +6,6 @@ import { cn } from "@/lib/utils";
 import { listMailboxes } from "@/server/mailboxes";
 import { describeVoice, getVoiceProfile } from "@/server/profile";
 import { requireOwner } from "@/server/session";
-import { syncSummary } from "@/server/sync";
 import { CLASSIFY_LOOKBACK_DAYS } from "@/server/classification";
 import { firstLookCounts } from "@/server/first-week";
 import { firstLookLines } from "@/server/first-week-rules";
@@ -35,7 +34,6 @@ export default async function WelcomeLearningPage() {
   const { workspace } = await requireOwner();
   const [box] = await listMailboxes(workspace.id);
   const voice = await getVoiceProfile(workspace.id);
-  const read = box?.backfillCompletedAt ? (await syncSummary(box.id)).messageCount : 0;
   const voiceDone =
     voice?.status === "ready" || voice?.status === "not_enough_mail" || voice?.status === "failed";
   const allDone = Boolean(box?.backfillCompletedAt) && voiceDone;
@@ -61,7 +59,9 @@ export default async function WelcomeLearningPage() {
       <ul className="flex flex-col gap-3" aria-live="polite">
         <Step done={Boolean(box?.backfillCompletedAt)}>
           {box?.backfillCompletedAt
-            ? `Read ${read.toLocaleString("en-US")} emails from the last 30 days.`
+            ? // Check 14 P2: no number here. "Your last 30 days" below carries the only count,
+              // so the screen can't show two different read figures.
+              "Read your last 30 days of email."
             : "Reading the last 30 days of email…"}
         </Step>
         <Step done={voiceDone}>
