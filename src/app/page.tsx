@@ -87,7 +87,8 @@ export default async function HomePage(props: PageProps<"/">) {
   return (
     <div className="flex flex-1 flex-col">
       <ForgetOffline />
-      <header className="sticky top-0 z-10 border-b border-stone/60 bg-paper px-4">
+      {/* data-site-header: GrowthSwitch makes it inert while the Growth bar covers it. */}
+      <header data-site-header className="sticky top-0 z-10 border-b border-stone/60 bg-paper px-4">
         <div className="mx-auto flex w-full max-w-5xl items-center justify-between py-2">
           <Link
             href="/"

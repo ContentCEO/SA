@@ -40,12 +40,7 @@ function Success({ phone }: { phone?: string }) {
     el.focus({ preventScroll: true });
   }, []);
   return (
-    <div
-      ref={ref}
-      role="status"
-      tabIndex={-1}
-      className="flex scroll-mt-24 flex-col gap-3 outline-none"
-    >
+    <div ref={ref} role="status" tabIndex={-1} className="flex flex-col gap-3 outline-none">
       <p className="flex flex-col">
         <span className="sa-headline-serif text-3xl">{s.serif}</span>{" "}
         <span className="sa-headline-heavy text-4xl">{s.heavy}</span>

@@ -158,6 +158,21 @@ html:not(:has([data-tabbar])) body {
   color: var(--sa-charcoal);
 }
 
+/*
+ * Public pages' sticky bars (Check 32 P3): the homepage header and /growth's header are a 44px
+ * row plus 8px padding top and bottom and a 1px border; the homepage's Growth bar, which covers
+ * the header in the Growth part, is a 56px row plus the same padding (73px). One height for all
+ * three, in rem so it grows with a bigger text setting. Focus scrolled into view stops 12px
+ * below it instead of under it (WCAG 2.2 2.4.11).
+ */
+:root {
+  --sa-sticky-top: calc(3.5rem + 1rem + 1px);
+}
+html:has([data-site-header]),
+html:has([data-growth-page]) {
+  scroll-padding-top: calc(var(--sa-sticky-top) + 12px);
+}
+
 /* /growth is charcoal edge to edge: no paper flash on overscroll. */
 html:has([data-growth-page]) {
   background-color: var(--sa-charcoal);
@@ -227,6 +242,29 @@ html:has([data-growth-page]) {
   --sa-ash: var(--sa-k-ash);
   --sa-slate: var(--sa-k-slate);
   --sa-graphite: var(--sa-k-graphite);
+}
+
+/*
+ * Focus on an element that is itself inverted (a chosen chip, a gap chip, the next step, Sunlight
+ * when on) sitting on paper: the global ring is var(--ring), which .sa-inverted makes off-white,
+ * so it vanished on paper (1.07:1). Check 32 P4: a charcoal ring outside (shows on paper) and an
+ * off-white ring inside (shows against the element itself, so also on a charcoal panel).
+ * Brand constants only; Sunlight uses its own; on the homepage's charcoal Growth page the outside
+ * ring would be charcoal on charcoal, so there the two swap.
+ */
+.sa-inverted:is(a, button, summary, [tabindex]):focus-visible {
+  outline: 2px solid var(--sa-k-charcoal);
+  outline-offset: 2px;
+  box-shadow: inset 0 0 0 2px var(--sa-k-offwhite);
+}
+:root:has([data-contrast="high"]) .sa-inverted:is(a, button, summary, [tabindex]):focus-visible {
+  outline-color: var(--sa-k-hc-charcoal);
+  box-shadow: inset 0 0 0 2px var(--sa-k-hc-offwhite);
+}
+:root[data-sa-theme="growth"] .sa-inverted:is(a, button, summary, [tabindex]):focus-visible,
+[data-growth-page] .sa-inverted:is(a, button, summary, [tabindex]):focus-visible {
+  outline-color: var(--sa-k-offwhite);
+  box-shadow: inset 0 0 0 2px var(--sa-k-charcoal);
 }
 
 /*
