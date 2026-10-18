@@ -25,6 +25,14 @@
     card shows "No signature. Customers won't see your phone number." + "Add a signature"
     (`/settings/profile#signature`). Read live from the profile, no table; shown on every visit
     (not once a day: no table to remember it). "Show full draft" already removes the clamp.
+  - **Form-lead subject (Check 43 P5):** when the reply goes to a Reply-To that isn't the sender
+    (a website form), `formReplySubject` (mime.ts) turns a robot subject (form submission, new
+    entry, new lead/message/inquiry/request from, contact form, website form/inquiry, request a
+    quote) into "Your request to <business>" ("Your request" with no name); other subjects keep
+    "Re: …". Threading headers unchanged. Nudges on those threads go through the same code
+    (a nudge after "Your request to X" reads "Re: Your request to X"). Every draft card shows
+    "Subject: …" above the reply. The Reply-To backfill's re-pointed old drafts keep their
+    stored subject (not changed here).
   - Known gaps: `workspaceMailboxEmails` (the "self" list for Reply-To picking and
     `answeredSince`'s "only to yourself" rule) doesn't include send-as aliases.
 

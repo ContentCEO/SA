@@ -41,6 +41,8 @@ test("queue: needs-you first, then drafts; sending is off until setup, and it sa
   await expect(card.getByRole("note")).toContainText("Sending isn't on yet");
   // Check 43 P3: who the customer sees as the sender, above To.
   await expect(card).toContainText("From:");
+  // Check 43 P5: the subject the customer will see, above the reply.
+  await expect(card).toContainText("Subject: Re: Panel");
   // Check 43 P4: no signature saved → one line under the first draft, linking to the field.
   await expect(card).toContainText("No signature. Customers won't see your phone number.");
   await expect(card.getByRole("link", { name: "Add a signature" })).toHaveAttribute(

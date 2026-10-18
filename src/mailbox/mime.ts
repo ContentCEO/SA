@@ -40,6 +40,28 @@ export function replySubject(subject: string | null | undefined): string {
   return /^re:/i.test(s) ? s : `Re: ${s}`;
 }
 
+/**
+ * Check 43 P5: subjects website form robots write (Squarespace, Wix, WPForms, Contact Form 7,
+ * Jobber, Housecall Pro…). A homeowner never wrote them, so "Re: <that>" reads like spam.
+ */
+const FORM_ROBOT_SUBJECT =
+  /form submission|new submission|new (form )?entry|new (lead|message|inquiry|enquiry|request) from|contact form|website (form|inquiry|enquiry)|request a quote/i;
+
+/**
+ * Check 43 P5: the subject of a reply that goes to a form lead's Reply-To address. A robot's
+ * subject becomes "Your request to <business>" ("Your request" with no name); anything a person
+ * could have written keeps "Re: <subject>".
+ */
+export function formReplySubject(
+  original: string | null | undefined,
+  businessName: string | null | undefined,
+): string {
+  const s = clean(original ?? "");
+  if (!FORM_ROBOT_SUBJECT.test(s)) return replySubject(s);
+  const name = clean(businessName ?? "").replace(/\s+/g, " ");
+  return name ? `Your request to ${name}` : "Your request";
+}
+
 export function buildReplyMime(m: ReplyMime): string {
   const headers = [
     `From: ${formatAddress(m.fromName, m.from)}`,

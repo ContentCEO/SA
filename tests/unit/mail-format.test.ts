@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { setModelTransportForTests } from "@/ai/client";
 import type { ModelDraft } from "@/ai/prompts/draft.v5";
 import type { Database } from "@/db";
-import { businessProfiles, drafts, mailboxes, messages, threads } from "@/db/schema";
+import { businessProfiles, drafts, mailboxes, messages, threads, workspaces } from "@/db/schema";
 import { ensureUserAndWorkspace } from "@/server/accounts";
 import { createDraftForThread, listQueue, saveDraftEdit } from "@/server/drafts";
 import { refreshSendAs } from "@/server/from-line";
@@ -174,5 +174,32 @@ describe("Check 42 P4: reply from the address the customer wrote to", () => {
     const { draft, raw } = await draftFor(t.id);
     expect(header(raw, "From")).toBe('"Michael Rossi" <mike@rossi.com>');
     expect(draft.fromAddress).toBeNull();
+  });
+});
+
+describe("Check 43 P5: a form lead's reply subject", () => {
+  it("a Reply-To lead gets 'Your request to <shop>', with the threading kept", async () => {
+    await database
+      .update(workspaces)
+      .set({ businessName: "Rossi Plumbing" })
+      .where(eq(workspaces.id, workspaceId));
+    const t = await seedThread({
+      subject: "Form Submission - Request a quote",
+      replyTo: "dana.home@example.com",
+    });
+    const { draft, raw } = await draftFor(t.id);
+    expect(draft.toAddress).toBe("dana.home@example.com");
+    expect(draft.subject).toBe("Your request to Rossi Plumbing");
+    expect(header(raw, "Subject")).toBe("Your request to Rossi Plumbing");
+    expect(header(raw, "In-Reply-To")).toBe("<gt1-m1@mail.x.com>");
+    const q = await listQueue(workspaceId, NOW);
+    expect(q.drafts[0]!.subject).toBe("Your request to Rossi Plumbing");
+  });
+
+  it("an ordinary email keeps Re:", async () => {
+    const t = await seedThread({ subject: "Form Submission - Request a quote" });
+    const { raw } = await draftFor(t.id);
+    // Written by the customer themselves (no Reply-To): their subject, as they wrote it.
+    expect(header(raw, "Subject")).toBe("Re: Form Submission - Request a quote");
   });
 });

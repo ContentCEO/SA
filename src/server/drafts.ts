@@ -110,7 +110,13 @@ import { createGmailReader } from "@/mailbox/gmail/api";
 import { gmailThreadLink } from "@/lib/gmail-link";
 import { staleTiming, type StaleTiming } from "./draft-timing";
 import { workspaceTimeZone } from "./snooze";
-import { buildReplyMime, replySubject, sameText, toGmailRaw } from "@/mailbox/mime";
+import {
+  buildReplyMime,
+  formReplySubject,
+  replySubject,
+  sameText,
+  toGmailRaw,
+} from "@/mailbox/mime";
 import { senderNameFor } from "./from-line";
 import { pickFromAddress } from "./from-line-rules";
 import {
@@ -153,6 +159,7 @@ import {
   customerReplyAddress,
   customerReplyName,
   NO_REPLY_FLAG,
+  replyRedirected,
   REPOINTED_FLAG,
   type ReplyToHeader,
 } from "./reply-address-rules";
@@ -1236,7 +1243,12 @@ export async function createDraftForThread(
     ? Math.min(scored.confidence, Math.round(DISPUTE_CONFIDENCE_CAP * 100))
     : scored.confidence;
 
-  const subject = replySubject(last.subject ?? thread.subject);
+  // Check 43 P5: a website form lead answered at its Reply-To never saw the form robot's
+  // subject; "Re: Form Submission - Request a quote" reads like spam to them.
+  const subject =
+    replyRedirected(customer) && to !== (customer.fromAddress ?? "").trim().toLowerCase()
+      ? formReplySubject(last.subject ?? thread.subject, workspace.businessName)
+      : replySubject(last.subject ?? thread.subject);
   // Check 42 P4: answer from the address the customer wrote to (a verified send-as alias).
   const fromAddress = pickFromAddress({
     mailboxEmail: mailbox.email,
@@ -3080,6 +3092,8 @@ export type QueueItem = {
   toAddress: string | null;
   /** Check 42 P4: the send-as alias this reply goes out from; null = the connected address. */
   fromAddress: string | null;
+  /** Check 43 P5: the draft's subject, shown in small type on the card. Null on needs-you items. */
+  subject: string | null;
   /** The customer's email gave a Reply-To (a website form): the reply goes there, not to From. */
   replyRedirected: boolean;
   category: string | null;
@@ -3427,6 +3441,7 @@ export async function listQueue(
           customerAddress: who.get(t.id)?.address ?? null,
           toAddress: null,
           fromAddress: null,
+          subject: null,
           replyRedirected: who.get(t.id)?.redirected ?? false,
           category: t.category,
           summary: t.summary,
@@ -3469,6 +3484,7 @@ export async function listQueue(
           customerAddress: who.get(thread.id)?.address ?? draft.toAddress,
           toAddress: draft.toAddress,
           fromAddress: draft.fromAddress,
+          subject: draft.subject,
           replyRedirected: who.get(thread.id)?.redirected ?? false,
           category: thread.category,
           summary: thread.summary,

@@ -3,6 +3,7 @@ import {
   buildReplyMime,
   encodeHeader,
   formatAddress,
+  formReplySubject,
   replySubject,
   sameText,
   toGmailRaw,
@@ -168,5 +169,35 @@ describe("Check 43 P4: the 'No signature' line", () => {
     expect(noSignatureLine(null)).toBe("No signature. Customers won't see your phone number.");
     expect(noSignatureLine("  \n ")).toBe(NO_SIGNATURE_LINE);
     expect(noSignatureLine("Mike\n978-555-0142")).toBeNull();
+  });
+});
+
+describe("Check 43 P5: contact-form replies get a subject the homeowner recognises", () => {
+  const shop = "Rossi Plumbing";
+  it.each([
+    ["Squarespace", "Form Submission - Request a quote"],
+    ["Squarespace (new form)", "Form Submission - New Form"],
+    ["Wix", "New Form Submission: Contact Us"],
+    ["Wix inbox", "You have a new message from Website Inquiry"],
+    ["WPForms", "New Entry: Contact Form"],
+    ["Contact Form 7", 'Rossi Plumbing "Contact form"'],
+    ["Jobber", "New request from Dana Ruiz"],
+    ["Housecall Pro", "New lead from your website"],
+    ["Generic", "New inquiry from rossiplumbing.com"],
+  ])("%s: %s", (_tool, subject) => {
+    expect(formReplySubject(subject, shop)).toBe("Your request to Rossi Plumbing");
+    expect(formReplySubject(subject, null)).toBe("Your request");
+  });
+  it("keeps an ordinary subject as Re:", () => {
+    expect(formReplySubject("Leaky faucet in the kitchen", shop)).toBe(
+      "Re: Leaky faucet in the kitchen",
+    );
+    expect(formReplySubject("Re: Deck stain", shop)).toBe("Re: Deck stain");
+    expect(formReplySubject(null, shop)).toBe("Re: your email");
+  });
+  it("can't carry a line break into the header", () => {
+    expect(formReplySubject("Form Submission", "Rossi\r\nBcc: x@y.com")).toBe(
+      "Your request to Rossi Bcc: x@y.com",
+    );
   });
 });

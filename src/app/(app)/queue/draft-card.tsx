@@ -44,6 +44,8 @@ export type DraftCardProps = {
   fromName?: string | null;
   /** Check 42 P4: the send-as alias it goes out from, only when not the connected address. */
   fromAddress?: string | null;
+  /** Check 43 P5: the subject the customer sees ("Your request to Rossi Plumbing"). */
+  subject?: string | null;
   /** Check 43 P4: "No signature…" under the reply (the queue's first card, signature empty). */
   noSignatureLine?: string | null;
   tag: string;
@@ -355,6 +357,11 @@ export function DraftCard(p: DraftCardProps) {
       {editing ? null : (
         <>
           <div className="rounded-lg border bg-paper p-3">
+            {p.subject ? (
+              <p className="mb-1 text-sm break-words text-muted-foreground">
+                <span className="font-semibold">Subject:</span> {p.subject}
+              </p>
+            ) : null}
             <BodyWithGaps
               body={body}
               onChange={setBody}

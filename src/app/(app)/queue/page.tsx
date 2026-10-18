@@ -422,6 +422,7 @@ export default async function QueuePage(props: PageProps<"/queue">) {
               customer={who(i)}
               toAddress={i.toAddress ?? ""}
               fromName={fromName}
+              subject={i.subject}
               noSignatureLine={index === 0 && !readOnly ? signatureLine : null}
               fromAddress={
                 i.fromAddress && i.fromAddress !== i.mailboxEmail.toLowerCase()
