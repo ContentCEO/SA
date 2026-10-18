@@ -7,7 +7,13 @@ import { localParts, usableTimeZone } from "./snooze-rules";
 import { mailboxOn } from "./mailbox-plan-rules";
 import { mailboxRunning } from "./mailbox-plan";
 import { FOLLOWUP_CATEGORIES, followupSettings, MAX_FOLLOWUPS } from "./drafts";
-import { lastInSql, lastOutSql, answeredByPhoneSql } from "./thread-sql";
+import {
+  answeredByPhoneSql,
+  lastInSql,
+  lastOutSql,
+  notDraftSql,
+  replyAddressSql,
+} from "./thread-sql";
 import { isAway } from "./away";
 import { FOLLOWUP_MAX_AGE_DAYS, FOLLOWUP_SCAN_LOCAL_HOUR, quietCutoff } from "./followup-rules";
 
@@ -34,6 +40,21 @@ export function amountOnlyNeedsOwnerSql() {
 }
 
 export { FOLLOWUP_MAX_AGE_DAYS };
+
+/**
+ * Check 21 P4: the first To address of the owner's newest email on the thread (lowercased), for
+ * a fresh invoice email nobody has replied to yet. Compared in SQL only, never selected.
+ */
+const freshInvoiceToSql = () =>
+  sql`(select lower(trim(o.to_addresses->>0)) from messages o where o.thread_id = ${threads.id} and o.direction = 'out' and ${notDraftSql("o")} order by o.sent_at desc limit 1)`;
+
+/**
+ * Check 21 P4: that address has written to this business before (any thread, any of the
+ * workspace's mailboxes, by its reply address), before the invoice went out. Never a stranger
+ * or a typo. Never NULL.
+ */
+export const freshInvoiceToKnownSql = () =>
+  sql`exists (select 1 from messages i join mailboxes mb on mb.id = i.mailbox_id where mb.workspace_id = (select m2.workspace_id from mailboxes m2 where m2.id = ${threads.mailboxId}) and i.direction = 'in' and ${notDraftSql("i")} and ${replyAddressSql("i")} = ${freshInvoiceToSql()} and i.sent_at < ${lastOutSql()})`;
 
 /**
  * Threads due a nudge, for the daily scan:
@@ -97,14 +118,17 @@ export async function threadsToFollowUp(
         eq(threads.mailboxId, mailboxId),
         // SQL twin of `needsOwnerBlocksNudge` (Check 12 P1): a big invoice is still chased.
         sql`(${threads.needsOwner} = false or ${amountOnlyNeedsOwnerSql()})`,
-        // SQL twin of `quoteStopsNudges`.
-        sql`(${threads.quoteOutcome} is null or (${threads.quoteOutcome} = 'won' and ${threads.category} = 'invoice_payment'))`,
+        // SQL twin of `quoteStopsNudges` (Check 21 P4: any invoice thread, `isInvoiceThread`).
+        sql`(${threads.quoteOutcome} is null or (${threads.quoteOutcome} = 'won' and ${invoiceThread}))`,
         isNull(threads.invoicePaidAt),
-        inArray(threads.category, [...FOLLOWUP_CATEGORIES]),
+        // Check 21 P4: a quote or invoice by category, or any invoice thread (an invoice the
+        // owner emailed on a conversation last sorted as scheduling).
+        sql`(${inArray(threads.category, [...FOLLOWUP_CATEGORIES])} or ${invoiceThread})`,
         // Never chase a bill the owner owes (round 2, TW A2).
         sql`(${threads.extracted}->>'bill_direction') is distinct from 'owed_by_business'`,
-        sql`${lastIn} is not null`,
-        sql`${lastOut} > ${lastIn}`,
+        // Someone to nudge: the customer wrote on it and the owner wrote last — or (Check 21 P4)
+        // a fresh invoice email whose To address has written to this mailbox before.
+        sql`((${lastIn} is not null and ${lastOut} > ${lastIn}) or (${lastIn} is null and ${threads.ownerInvoiceAt} is not null and ${freshInvoiceToKnownSql()}))`,
         sql`${lastOut} < ${quietSince}::timestamptz`,
         // Check 21 P2: a customer who asked us to wait ("after the holidays") isn't nudged
         // before then, and the 21-day window counts from that date when it's later.

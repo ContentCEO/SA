@@ -3,6 +3,7 @@
  * already sorted, plus the owner's one-tap Won / Lost / No answer and our
  * guesses (plan #30), which the owner can always change.
  */
+import { isInvoiceThread } from "./money-rules";
 
 /** How a quote ended. Set by the owner, or guessed by us (`quote_outcome_source = 'auto'`). */
 export const QUOTE_OUTCOMES = ["won", "lost", "no_answer"] as const;
@@ -80,9 +81,13 @@ export function isQuoteThread(t: {
 export function quoteStopsNudges(t: {
   quoteOutcome: string | null;
   category: string | null;
+  extracted: unknown;
 }): boolean {
   if (t.quoteOutcome == null) return false;
-  return !(t.quoteOutcome === "won" && t.category === "invoice_payment");
+  // Check 21 P4: the job's invoice is chased whatever the customer's last email was sorted as
+  // (`isInvoiceThread`: sorted invoice_payment, or the sticky `invoice_thread` mark, which an
+  // invoice the owner emailed also sets).
+  return !(t.quoteOutcome === "won" && isInvoiceThread(t));
 }
 
 /** Two nudges sent, then this many quiet days → we guess "no answer". */

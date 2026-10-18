@@ -90,3 +90,37 @@ Eval cases to add (tests/evals/cases.ts), each after an owner's priced reply:
   America/New_York)" → "hourly cron `followup-scan` (:11); each owner's scan runs once a day at
   4am their time (Check 21 P3); due on the owner's calendar day (`nudgeDueDate`)". The M7 sent
   screen sentence ("I'll nudge Dana on Thursday…") becomes the new wording above.
+
+## Step 4 — Check 21 P4: invoices the owner sends are chased
+
+- Migration `0045_owner_invoice_at` (additive): `threads.owner_invoice_at timestamptz`.
+- `looksLikeOwnerInvoice` (`src/server/owner-invoice-rules.ts`, pure, no model, nothing logged):
+  subject or the first 2,000 chars of the owner's own words (quoted reply cut) name an invoice
+  number ("Invoice 1043", "INV-2207", "invoice #12"), or say "invoice" with a dollar amount;
+  never a forward subject. Run in sync's `ingest` (so also for app sends via
+  `recordSentMessage`) on outbound rows: sets `extracted.invoice_thread = true` and
+  `owner_invoice_at = greatest(…)`. A fresh email that lives only in Sent has no body fetched
+  (bodies are read for inbox threads only), so it's matched on its subject (and Gmail's snippet
+  is not used for the rule).
+- Scan, drafter re-check and `sentDraftSummary`: category in quote/invoice **or**
+  `isInvoiceThread`. `quoteStopsNudges` now takes `extracted` and uses `isInvoiceThread`; its SQL
+  twin in followups.ts uses the same `invoiceThread` expression (kept twins).
+- Fresh invoice thread (no customer email): chased when the owner's email's first To address has
+  written to this business before (any thread, any workspace mailbox, by reply address, before
+  the invoice; `freshInvoiceToKnownSql` / `freshInvoiceAddress`); the nudge goes to that address.
+  A never-seen address gets nothing.
+- Money screen rows for owner-sent invoices: left to Check 12 A1 (Quotes and Money group); the
+  Money list still needs invoice facts with an amount.
+
+### For the Prompt versions group (followup.v5, Check 12 P7 not landed here)
+
+`followupTask` needs an invoice flag (`followupTask({ nudgeNumber, daysQuiet, invoice })`; the
+drafter would pass `isInvoiceThread(thread)`), with these task lines for invoice threads:
+
+- nudge 1: "The customer hasn't paid or replied for ${daysQuiet} days since the owner sent the
+  invoice. Write the owner's first, friendly reminder about the invoice. Don't add a deadline,
+  late fee or discount the owner didn't write."
+- nudge 2: "The invoice is still unpaid, ${daysQuiet} days after the last reminder. Write the
+  owner's second and final reminder: polite and clear that payment is still due. Don't offer an
+  easy out or suggest it's fine not to pay."
+  Until then the second invoice reminder still uses followup.v4's "give the customer an easy out".

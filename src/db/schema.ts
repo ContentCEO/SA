@@ -287,6 +287,13 @@ export const threads = pgTable(
      */
     nudgeAfter: timestamp("nudge_after", { withTimezone: true }),
     /**
+     * Check 21 P4: the newest email the owner sent that reads as an invoice (owner-invoice-rules,
+     * found in code at sync). With `extracted.invoice_thread`, it makes the thread chased like an
+     * invoice even when the customer's last email was sorted as scheduling, and lets a fresh
+     * invoice email with no customer reply on it be chased.
+     */
+    ownerInvoiceAt: timestamp("owner_invoice_at", { withTimezone: true }),
+    /**
      * Leads package (B2 / B3): where the lead came from, decided in code from the sender
      * (`channelOf`, src/server/channel-rules.ts): a phone service key ("google_voice"),
      * "phone_text" (an email-to-text gateway) or a lead-site key ("thumbtack"). Null = a direct

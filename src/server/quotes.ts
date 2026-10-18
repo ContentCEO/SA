@@ -233,6 +233,7 @@ async function ownedThread(workspaceId: string, threadId: string) {
       id: threads.id,
       outcome: threads.quoteOutcome,
       category: threads.category,
+      extracted: threads.extracted,
       workspace: workspaces,
     })
     .from(threads)
@@ -284,7 +285,10 @@ export async function setQuoteOutcome(
   // A decided quote is never chased, so a nudge still waiting in the queue goes too
   // (here and in Gmail). The mark stands even if Gmail can't be reached right now.
   // A won job's invoice is still chased (quoteStopsNudges), so its nudge stays.
-  if (outcome && quoteStopsNudges({ quoteOutcome: outcome, category: t.category })) {
+  if (
+    outcome &&
+    quoteStopsNudges({ quoteOutcome: outcome, category: t.category, extracted: t.extracted })
+  ) {
     try {
       await expirePendingNudge(threadId, quoteDecidedNote(outcome), { ...opts, now: () => now });
     } catch (err) {
@@ -323,7 +327,11 @@ export async function autoSetQuoteOutcome(
         opts.extra,
       ),
     )
-    .returning({ mailboxId: threads.mailboxId, category: threads.category });
+    .returning({
+      mailboxId: threads.mailboxId,
+      category: threads.category,
+      extracted: threads.extracted,
+    });
   if (!row) return false;
   const [box] = await db()
     .select({ workspaceId: mailboxes.workspaceId })
@@ -342,7 +350,9 @@ export async function autoSetQuoteOutcome(
   }
   // A guess never deletes a waiting nudge; it asks the owner to check it (unless the
   // nudge is for a won job's invoice, which is still chased).
-  if (quoteStopsNudges({ quoteOutcome: outcome, category: row.category })) {
+  if (
+    quoteStopsNudges({ quoteOutcome: outcome, category: row.category, extracted: row.extracted })
+  ) {
     await flagPendingNudge(threadId, opts.flag ?? QUOTE_GUESS_FLAG);
   }
   return true;

@@ -195,7 +195,15 @@ describe("quote acceptance context (A5)", () => {
 
   it("lost / no answer stop every nudge; won stops quote nudges but not the job's invoice", () => {
     const stops = (quoteOutcome: string | null, category: string) =>
-      quoteStopsNudges({ quoteOutcome, category });
+      quoteStopsNudges({ quoteOutcome, category, extracted: null });
+    // Check 21 P4: a won job's invoice on a thread last sorted as scheduling is still chased.
+    expect(
+      quoteStopsNudges({
+        quoteOutcome: "won",
+        category: "scheduling",
+        extracted: { invoice_thread: true },
+      }),
+    ).toBe(false);
     expect(stops(null, "quote_request")).toBe(false);
     expect(stops("won", "quote_request")).toBe(true);
     expect(stops("lost", "quote_request")).toBe(true);

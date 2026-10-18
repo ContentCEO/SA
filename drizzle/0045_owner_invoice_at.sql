@@ -1,0 +1,1 @@
+ALTER TABLE "threads" ADD COLUMN "owner_invoice_at" timestamp with time zone;

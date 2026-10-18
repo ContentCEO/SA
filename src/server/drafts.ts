@@ -495,6 +495,35 @@ async function depositAlreadyOn(threadId: string): Promise<boolean> {
   return !!row;
 }
 
+/**
+ * Check 21 P4: where a nudge on a fresh invoice email goes — the first To address of the owner's
+ * email, only when that address has written to this business before it (any thread, any of the
+ * workspace's mailboxes, by reply address). Null otherwise. Never logged.
+ */
+async function freshInvoiceAddress(
+  workspaceId: string,
+  last: { direction: string; toAddresses: string[]; sentAt: Date },
+): Promise<string | null> {
+  if (last.direction !== "out") return null;
+  const to = (last.toAddresses[0] ?? "").trim().toLowerCase();
+  if (!to) return null;
+  const [known] = await db()
+    .select({ id: messages.id })
+    .from(messages)
+    .innerJoin(mailboxes, eq(mailboxes.id, messages.mailboxId))
+    .where(
+      and(
+        eq(mailboxes.workspaceId, workspaceId),
+        eq(messages.direction, "in"),
+        notDraftMessage(),
+        sql`${messageReplyAddress()} = ${to}`,
+        lt(messages.sentAt, last.sentAt),
+      ),
+    )
+    .limit(1);
+  return known ? to : null;
+}
+
 export async function followupSettings(workspaceId: string) {
   const [p] = await db()
     .select({
@@ -887,7 +916,10 @@ export async function createDraftForThread(
       thread.invoicePaidAt != null ||
       // Nor a bill the owner has to pay: a supplier's statement is never chased (TW A2).
       marks.bill_direction === "owed_by_business" ||
-      !FOLLOWUP_CATEGORIES.includes(thread.category as (typeof FOLLOWUP_CATEGORIES)[number]) ||
+      // Check 21 P4: a quote or invoice by category, or any invoice thread (an invoice the
+      // owner emailed on a conversation last sorted as scheduling).
+      (!FOLLOWUP_CATEGORIES.includes(thread.category as (typeof FOLLOWUP_CATEGORIES)[number]) &&
+        !isInvoiceThread(thread)) ||
       // Nor a thread where a deposit, review request or closing question went out (A3) —
       // a deposit only while it's a quote — or whose customer just said they paid.
       (await nudgeBlocked(thread))
@@ -974,12 +1006,18 @@ export async function createDraftForThread(
             .limit(1)
         )[0]
       : last;
-  if (!customer) return { status: "skipped", reason: "no_text" };
+  // Check 21 P4: a fresh invoice email nobody has answered yet goes to its To address, and only
+  // when that address has written to this business before (never a stranger or a typo).
+  const freshTo =
+    !customer && followup && thread.ownerInvoiceAt != null
+      ? await freshInvoiceAddress(workspace.id, last)
+      : null;
+  if (!customer && !freshTo) return { status: "skipped", reason: "no_text" };
   // Where the reply goes (review B1): a website form's Reply-To, read at sync. A row stored
   // before sync read it is read now, before the model is asked anything — never guessed: if
   // Gmail can't say, there is no draft (a reply to the form robot reads "Reply sent." and
   // reaches nobody).
-  if (customer.replyToHeader === null) {
+  if (customer && customer.replyToHeader === null) {
     let read: ReplyToHeader;
     try {
       const reader = replyReader(mailbox, opts);
@@ -1004,7 +1042,7 @@ export async function createDraftForThread(
     customer.replyToHeader = read;
     for (const m of recent) if (m.id === customer.id) m.replyToHeader = read;
   }
-  const to = customerReplyAddress(customer);
+  const to = customer ? customerReplyAddress(customer) : freshTo;
   if (!to) return { status: "skipped", reason: "no_text" };
   // An email-to-text gateway (a form whose Reply-To is 5085551234@vtext.com, a Google Voice
   // text): a reply would text the customer, and Squared Away never texts customers. Not even
@@ -1361,6 +1399,7 @@ export async function createDraftForThread(
       .select({
         quoteOutcome: threads.quoteOutcome,
         category: threads.category,
+        extracted: threads.extracted,
         invoicePaidAt: threads.invoicePaidAt,
       })
       .from(threads)
@@ -3617,7 +3656,9 @@ export async function sentDraftSummary(
     !needsOwnerBlocksNudge(row.thread) &&
     !quoteStopsNudges(row.thread) &&
     row.thread.invoicePaidAt == null &&
-    FOLLOWUP_CATEGORIES.includes(row.thread.category as (typeof FOLLOWUP_CATEGORIES)[number]) &&
+    // Check 21 P4: the same "quote or invoice" rule as the scan.
+    (FOLLOWUP_CATEGORIES.includes(row.thread.category as (typeof FOLLOWUP_CATEGORIES)[number]) ||
+      isInvoiceThread(row.thread)) &&
     !(await nudgeBlocked(row.thread));
   const sentNudges = chased ? await countSentFollowups(row.thread.id) : 0;
   const decidedAt = row.draft.decidedAt ?? sendingAt ?? new Date();

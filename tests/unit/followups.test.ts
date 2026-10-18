@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { eq } from "drizzle-orm";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { setModelTransportForTests } from "@/ai/client";
 import type { ModelDraft } from "@/ai/prompts/draft.v5";
 import type { Database } from "@/db";
@@ -879,5 +879,104 @@ describe("nudges by the owner's calendar day, ready by 5am (Check 21 P3)", () =>
     expect(nudges.filter((d) => d.kind === "followup")).toHaveLength(1);
     const counts = await digestCounts(workspaceId, at("2026-10-26", "07:03", tz), tz);
     expect(counts.nudgesReady).toBe(1);
+  });
+});
+
+describe("invoices the owner sends are chased (Check 21 P4)", () => {
+  const won = async (threadId: string) =>
+    database
+      .update(threads)
+      .set({ quoteOutcome: "won", quoteOutcomeSource: "owner", ownerInvoiceAt: daysAgo(4) })
+      .where(eq(threads.id, threadId));
+
+  it("a won quote, then the owner's invoice on a conversation sorted scheduling → reminder", async () => {
+    const t = await quietThread({ category: "scheduling", extracted: { invoice_thread: true } });
+    await won(t);
+    expect(await threadsToFollowUp(mailboxId, NOW)).toEqual([t]);
+    setModelTransportForTests(fakeTransport([nudge()]).transport);
+    expect(await createDraftForThread(t, { trigger: "followup", ...deps() })).toMatchObject({
+      status: "created",
+    });
+  });
+
+  it("the same with the conversation still sorted as a quote request → reminder", async () => {
+    const t = await quietThread({ category: "quote_request", extracted: { invoice_thread: true } });
+    await won(t);
+    expect(await threadsToFollowUp(mailboxId, NOW)).toEqual([t]);
+  });
+
+  async function freshInvoice(to: string) {
+    const id = `f${++g}`;
+    const [t] = await database
+      .insert(threads)
+      .values({
+        mailboxId,
+        gmailThreadId: id,
+        inInbox: false,
+        subject: "Invoice 1043",
+        extracted: { invoice_thread: true },
+        ownerInvoiceAt: daysAgo(4),
+        lastMessageAt: daysAgo(4),
+      })
+      .returning();
+    await database.insert(messages).values({
+      threadId: t!.id,
+      mailboxId,
+      gmailMessageId: `${id}-out`,
+      rfc822MessageId: `<${id}-out@shop.com>`,
+      direction: "out",
+      fromAddress: "owner@shop.com",
+      toAddresses: [to],
+      subject: "Invoice 1043",
+      snippet: "Invoice 1043 for the deck, $2,100. Thanks, Davi",
+      sentAt: daysAgo(4),
+    });
+    return t!.id;
+  }
+
+  it("a fresh invoice email to an address that wrote before → reminder to that address; a stranger → none", async () => {
+    await quietThread({ category: "customer_question", customerWroteAfter: true }); // Dana wrote
+    const known = await freshInvoice("Dana@Customer.com");
+    const stranger = await freshInvoice("typo@custmer.com");
+    expect(await threadsToFollowUp(mailboxId, NOW)).toEqual([known]);
+    const logs: unknown[] = [];
+    const spies = (["log", "info", "warn", "error"] as const).map((k) =>
+      vi.spyOn(console, k).mockImplementation((...a: unknown[]) => void logs.push(a)),
+    );
+    setModelTransportForTests(fakeTransport([nudge(), nudge()]).transport);
+    expect(await createDraftForThread(known, { trigger: "followup", ...deps() })).toMatchObject({
+      status: "created",
+    });
+    expect(await createDraftForThread(stranger, { trigger: "followup", ...deps() })).toEqual({
+      status: "skipped",
+      reason: "no_text",
+    });
+    for (const s of spies) s.mockRestore();
+    expect(JSON.stringify(logs)).not.toMatch(/1043|2,100|dana@|typo@/i);
+    const [d] = await database.select().from(drafts).where(eq(drafts.threadId, known));
+    expect(d).toMatchObject({
+      kind: "followup",
+      toAddress: "dana@customer.com",
+      status: "pending",
+    });
+  });
+
+  it("a bill the owner owes is never chased, and a paid mark still stops it", async () => {
+    const owed = await quietThread({
+      category: "invoice_payment",
+      extracted: { invoice_thread: true, bill_direction: "owed_by_business" },
+    });
+    const paid = await quietThread({ category: "scheduling", extracted: { invoice_thread: true } });
+    await database
+      .update(threads)
+      .set({ invoicePaidAt: daysAgo(1), invoicePaidSource: "owner" })
+      .where(eq(threads.id, paid));
+    expect(await threadsToFollowUp(mailboxId, NOW)).toEqual([]);
+    setModelTransportForTests(fakeTransport([nudge(), nudge()]).transport);
+    for (const t of [owed, paid])
+      expect(await createDraftForThread(t, { trigger: "followup", ...deps() })).toEqual({
+        status: "skipped",
+        reason: "followup_not_allowed",
+      });
   });
 });
