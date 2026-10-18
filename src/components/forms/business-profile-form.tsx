@@ -35,6 +35,10 @@ export type ProfileDefaults = {
   paymentTerms: string | null;
   policies: string | null;
   signature: string | null;
+  /** Check 43 P3: the name in the From line, as saved (null = not set). */
+  fromName: string | null;
+  /** What the From line says while `fromName` is empty (the Google name, else the business). */
+  fromNameFallback: string | null;
   reviewUrl: string | null;
   doNotPromise: string[];
   vipSenders: string[];
@@ -62,6 +66,7 @@ const OPTIONAL_FIELDS = [
   "paymentTerms",
   "policies",
   "signature",
+  "fromName",
   "reviewUrl",
   "doNotPromise",
   "vipSenders",
@@ -303,7 +308,17 @@ export function BusinessProfileForm({
         defaultValue={v("policies", defaults.policies) as string}
         error={e.policies}
       />
-      <div className="flex flex-col gap-1.5">
+      <TextField
+        name="fromName"
+        label="Name customers see on your emails"
+        hint={`Usually your name, or your name and the shop: Mike Rossi, Rossi Plumbing.${
+          defaults.fromNameFallback ? ` Left empty, they see “${defaults.fromNameFallback}”.` : ""
+        }`}
+        autoComplete="name"
+        defaultValue={v("fromName", defaults.fromName) as string}
+        error={e.fromName}
+      />
+      <div id="signature" className="flex scroll-mt-4 flex-col gap-1.5">
         <TextArea
           name="signature"
           label="What goes under your name?"
@@ -312,6 +327,11 @@ export function BusinessProfileForm({
           error={e.signature}
           rows={3}
         />
+        {/* Check 43 P4: Gmail's own signature is only added in Gmail's web app. */}
+        <p className="text-sm">
+          Your Gmail signature isn&apos;t added to replies sent from Squared Away. Type the lines
+          you want customers to see, like your phone number.
+        </p>
         <Link
           href="/settings/voice"
           className="inline-flex min-h-tap items-center self-start text-sm font-semibold underline underline-offset-4"

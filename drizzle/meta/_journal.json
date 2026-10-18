@@ -470,6 +470,20 @@
       "when": 1792322899878,
       "tag": "0066_autopilot_skip",
       "breakpoints": true
+    },
+    {
+      "idx": 67,
+      "version": "7",
+      "when": 1792338457597,
+      "tag": "0067_from_name",
+      "breakpoints": true
+    },
+    {
+      "idx": 68,
+      "version": "7",
+      "when": 1792338460426,
+      "tag": "0068_send_as",
+      "breakpoints": true
     }
   ]
 }

@@ -114,7 +114,15 @@ import { gmailThreadLink } from "@/lib/gmail-link";
 import { staleTiming, type StaleTiming } from "./draft-timing";
 import { workspaceTimeZone } from "./snooze";
 import { serverMailboxClient } from "./mailbox-client";
-import { buildReplyMime, replySubject, sameText, toGmailRaw } from "@/mailbox/mime";
+import {
+  buildReplyMime,
+  formReplySubject,
+  replySubject,
+  sameText,
+  toGmailRaw,
+} from "@/mailbox/mime";
+import { senderNameFor } from "./from-line";
+import { pickFromAddress } from "./from-line-rules";
 import {
   canSend,
   effectiveStatus,
@@ -162,6 +170,7 @@ import {
   customerReplyAddress,
   customerReplyName,
   NO_REPLY_FLAG,
+  replyRedirected,
   REPOINTED_FLAG,
   type ReplyToHeader,
 } from "./reply-address-rules";
@@ -1494,7 +1503,19 @@ async function writeDraftForThread(threadId: string, opts: CreateOpts): Promise<
     ? Math.min(scored.confidence, Math.round(DISPUTE_CONFIDENCE_CAP * 100))
     : scored.confidence;
 
-  const subject = replySubject(last.subject ?? thread.subject);
+  // Check 43 P5: a website form lead answered at its Reply-To never saw the form robot's
+  // subject; "Re: Form Submission - Request a quote" reads like spam to them.
+  const subject =
+    replyRedirected(customer) && to !== (customer.fromAddress ?? "").trim().toLowerCase()
+      ? formReplySubject(last.subject ?? thread.subject, workspace.businessName)
+      : replySubject(last.subject ?? thread.subject);
+  // Check 42 P4: answer from the address the customer wrote to (a verified send-as alias).
+  const fromAddress = pickFromAddress({
+    mailboxEmail: mailbox.email,
+    sendAs: mailbox.sendAs,
+    to: customer.toAddresses,
+    cc: customer.ccAddresses,
+  });
   const writer = (opts.writerFor ?? defaultWriter)(mailbox);
 
   let created: { draftId: string; messageId: string };
@@ -1503,7 +1524,8 @@ async function writeDraftForThread(threadId: string, opts: CreateOpts): Promise<
       threadId: thread.gmailThreadId,
       raw: toGmailRaw(
         buildReplyMime({
-          from: mailbox.email,
+          from: fromAddress,
+          fromName: await senderNameFor(workspace.id),
           to,
           subject,
           inReplyTo: last.rfc822MessageId,
@@ -1533,6 +1555,8 @@ async function writeDraftForThread(threadId: string, opts: CreateOpts): Promise<
         gmailDraftId: created.draftId,
         gmailMessageId: created.messageId,
         toAddress: to,
+        // Null when it's the connected address, as on every draft before Check 42 P4.
+        fromAddress: fromAddress === mailbox.email ? null : fromAddress,
         subject,
         body,
         originalBody: body,
@@ -1665,16 +1689,31 @@ export function mimeFor(
   mailbox: Mailbox,
   body: string,
   replyTo: { rfc822MessageId: string | null; references: string | null } | undefined,
+  /** Check 43 P3: the name in the From line (`senderNameFor`); null = the bare address. */
+  fromName: string | null,
 ) {
   return toGmailRaw(
     buildReplyMime({
-      from: mailbox.email,
+      // Check 42 P4: the same address the draft was written from.
+      from: d.fromAddress ?? mailbox.email,
+      fromName,
       to: d.toAddress,
       subject: d.subject,
       inReplyTo: replyTo?.rfc822MessageId,
       references: replyTo?.references,
       body,
     }),
+  );
+}
+
+/** A stored draft's Gmail message, rebuilt with new text: threading and From name read live. */
+export async function draftRaw(d: Draft, mailbox: Mailbox, body: string) {
+  return mimeFor(
+    d,
+    mailbox,
+    body,
+    await replyToHeaders(d),
+    await senderNameFor(mailbox.workspaceId),
   );
 }
 
@@ -1881,7 +1920,7 @@ export async function sendDraft(
       body = opts.editedBody.trim();
       await writer.updateDraft(draft.gmailDraftId!, {
         threadId: thread.gmailThreadId,
-        raw: mimeFor(draft, mailbox, body, await replyToHeaders(draft)),
+        raw: await draftRaw(draft, mailbox, body),
       });
     }
 
@@ -2134,7 +2173,7 @@ export async function queueSend(
       body = opts.editedBody.trim();
       await writer.updateDraft(draft.gmailDraftId!, {
         threadId: thread.gmailThreadId,
-        raw: mimeFor(draft, mailbox, body, await replyToHeaders(draft)),
+        raw: await draftRaw(draft, mailbox, body),
       });
     }
   } catch (err) {
@@ -2631,7 +2670,7 @@ export async function saveDraftEdit(
     }
     await writer.updateDraft(draft.gmailDraftId!, {
       threadId: thread.gmailThreadId,
-      raw: mimeFor(draft, mailbox, body.trim(), await replyToHeaders(draft)),
+      raw: await draftRaw(draft, mailbox, body.trim()),
     });
     // The owner touched it, so it waits for their tap — autopilot stands down.
     await db()
@@ -2936,7 +2975,7 @@ export async function reviseDraft(
     if (moved) return moved;
     await writer.updateDraft(draft.gmailDraftId!, {
       threadId: thread.gmailThreadId,
-      raw: mimeFor(draft, mailbox, body, await replyToHeaders(draft)),
+      raw: await draftRaw(draft, mailbox, body),
     });
   } catch (err) {
     if (err instanceof MailboxAuthError) {
@@ -3377,6 +3416,10 @@ export type QueueItem = {
   customerKey: string | null;
   /** The address this draft goes to (H7: shown on every card). Null on needs-you items. */
   toAddress: string | null;
+  /** Check 42 P4: the send-as alias this reply goes out from; null = the connected address. */
+  fromAddress: string | null;
+  /** Check 43 P5: the draft's subject, shown in small type on the card. Null on needs-you items. */
+  subject: string | null;
   /** The customer's email gave a Reply-To (a website form): the reply goes there, not to From. */
   replyRedirected: boolean;
   category: string | null;
@@ -3834,6 +3877,8 @@ export async function listQueue(
         customerAddress: who.get(t.id)?.address ?? null,
         customerKey: keys.get(t.id) ?? null,
         toAddress: null,
+        fromAddress: null,
+        subject: null,
         replyRedirected: who.get(t.id)?.redirected ?? false,
         category: t.category,
         summary: t.summary,
@@ -3881,6 +3926,8 @@ export async function listQueue(
         customerAddress: who.get(thread.id)?.address ?? draft.toAddress,
         customerKey: keys.get(thread.id) ?? null,
         toAddress: draft.toAddress,
+        fromAddress: draft.fromAddress,
+        subject: draft.subject,
         replyRedirected: who.get(thread.id)?.redirected ?? false,
         category: thread.category,
         summary: thread.summary,

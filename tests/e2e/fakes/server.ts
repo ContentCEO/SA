@@ -76,6 +76,8 @@ export const GMAIL_METHOD_SCOPES: Readonly<Record<string, readonly string[]>> = 
     "gmail.drafts.send": s(addonsCompose, "gmail.compose", "gmail.modify"),
     "gmail.messages.send": s(addonsCompose, "gmail.compose", "gmail.modify", "gmail.send"),
     "gmail.watch": s("gmail.metadata", "gmail.modify", "gmail.readonly"),
+    // Check 42 P4: users.settings.sendAs.list (gmail.readonly is enough: no new consent).
+    "gmail.settings.sendAs.list": s("gmail.modify", "gmail.readonly", "gmail.settings.basic"),
   };
 })();
 const GMAIL_PREFIX = "/google/gmail/v1/users/me";
@@ -202,9 +204,12 @@ function parseJson(text: string): Record<string, unknown> {
 
 /** RFC 2047 =?UTF-8?B?…?= words, as src/mailbox/mime.ts writes them. */
 function decodeWords(value: string): string {
-  return value.replace(/=\?UTF-8\?B\?([^?]*)\?=/gi, (_, b64: string) =>
-    Buffer.from(b64, "base64").toString("utf8"),
-  );
+  // Whitespace (and folding) between two encoded words is not part of the text (RFC 2047 §6.2).
+  return value
+    .replace(/\?=\s+=\?/g, "?==?")
+    .replace(/=\?UTF-8\?B\?([^?]*)\?=/gi, (_, b64: string) =>
+      Buffer.from(b64, "base64").toString("utf8"),
+    );
 }
 
 /** A raw message (base64url RFC 2822, as the app builds it) → headers and plain-text body. */
@@ -222,9 +227,25 @@ export function parseRaw(raw: string): {
     if (i <= 0) continue;
     headers.push({ name: line.slice(0, i).trim(), value: decodeWords(line.slice(i + 1).trim()) });
   }
-  const encoding = header(headers, "Content-Transfer-Encoding")?.toLowerCase();
-  const body =
-    encoding === "base64" ? Buffer.from(rest.replace(/\s+/g, ""), "base64").toString("utf8") : rest;
+  const decode = (encoding: string | undefined, text: string) =>
+    encoding?.toLowerCase() === "base64"
+      ? Buffer.from(text.replace(/\s+/g, ""), "base64").toString("utf8")
+      : text;
+  // Check 43 P6: replies are multipart/alternative; Gmail reads the text/plain part.
+  const boundary = header(headers, "Content-Type")?.match(/boundary="?([^";]+)"?/i)?.[1];
+  let body = decode(header(headers, "Content-Transfer-Encoding"), rest);
+  if (boundary) {
+    body = "";
+    for (const chunk of rest.split(`--${boundary}`)) {
+      const at = chunk.indexOf("\r\n\r\n");
+      if (at === -1) continue;
+      const partHead = chunk.slice(0, at);
+      if (!/content-type:\s*text\/plain/i.test(partHead)) continue;
+      const enc = partHead.match(/content-transfer-encoding:\s*(\S+)/i)?.[1];
+      body = decode(enc, chunk.slice(at + 4));
+      break;
+    }
+  }
   return { headers, body: body.replace(/\r\n/g, "\n") };
 }
 
@@ -684,6 +705,12 @@ export function createFakes() {
       addMessage(s, sent);
       return sendJson(res, 200, { ...ref(sent), labelIds: sent.labelIds });
     }
+    if (routeName === "gmail.settings.sendAs.list") {
+      at();
+      return sendJson(res, 200, {
+        sendAs: [{ sendAsEmail: s.ownerEmail, isPrimary: true, verificationStatus: "accepted" }],
+      });
+    }
     if (routeName === "gmail.watch") {
       at();
       return sendJson(res, 200, {
@@ -812,6 +839,8 @@ function gmailRouteName(method: string, seg: string[]): string {
   if (method === "PUT" && a === "drafts" && b && !c) return "gmail.drafts.update";
   if (method === "DELETE" && a === "drafts" && b && !c) return "gmail.drafts.delete";
   if (method === "POST" && a === "watch" && !b) return "gmail.watch";
+  if (method === "GET" && a === "settings" && b === "sendAs" && !c)
+    return "gmail.settings.sendAs.list";
   return "unknown";
 }
 

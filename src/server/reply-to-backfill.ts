@@ -14,7 +14,7 @@ import {
 import { MailboxAuthError, type MailboxReader, type MailboxWriter } from "@/mailbox/connector";
 import { sameText } from "@/mailbox/mime";
 import { mailboxOn } from "./mailbox-plan-rules";
-import { defaultWriter, mimeFor, replyToHeaders } from "./drafts";
+import { defaultWriter, draftRaw } from "./drafts";
 import { jobsAllowed } from "./lifecycle";
 import { storeReplyTo, workspaceMailboxEmails } from "./reply-address";
 import {
@@ -299,12 +299,7 @@ async function repointDrafts(mailbox: Mailbox, now: Date, deps: ReplyToBackfillD
     try {
       updated = await writer.updateDraft(draft.gmailDraftId, {
         threadId: thread.gmailThreadId,
-        raw: mimeFor(
-          { ...draft, toAddress: newTo },
-          mailbox,
-          remote.bodyText,
-          await replyToHeaders(draft),
-        ),
+        raw: await draftRaw({ ...draft, toAddress: newTo }, mailbox, remote.bodyText),
       });
     } catch (err) {
       // Gmail still has the old To: put the row back so the card shows what Gmail would send

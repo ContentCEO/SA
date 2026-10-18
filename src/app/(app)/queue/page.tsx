@@ -31,6 +31,8 @@ import { listMailboxes } from "@/server/mailboxes";
 import { getBusinessProfile } from "@/server/profile";
 import { priceMemoryFor } from "@/server/price-memory";
 import { requireOwner } from "@/server/session";
+import { senderNameFor } from "@/server/from-line";
+import { noSignatureLine } from "@/server/from-line-rules";
 import { MAILBOX_PAUSED_LINE } from "@/server/mailbox-plan-rules";
 import { ARCHIVED_LINE } from "@/server/sync";
 import { attachmentsForThreads } from "@/server/attachments";
@@ -130,9 +132,12 @@ export default async function QueuePage(props: PageProps<"/queue">) {
   const doneMsg = typeof params.done === "string" ? done[params.done] : undefined;
   const errorMsg = typeof params.error === "string" ? errors[params.error] : undefined;
   const sending = canSend(workspace);
-  const timeZone = usableTimeZone(
-    (await getBusinessProfile(workspace.id))?.timeZone ?? "America/New_York",
-  );
+  // Check 43 P3: the name the customer sees in the From line, shown on every card.
+  const fromName = await senderNameFor(workspace.id);
+  const profile = await getBusinessProfile(workspace.id);
+  const timeZone = usableTimeZone(profile?.timeZone ?? "America/New_York");
+  // Check 43 P4: no signature → one muted line under the first draft (none on read-only).
+  const signatureLine = noSignatureLine(profile?.signature);
   const clock = new Intl.DateTimeFormat("en-US", { hour: "numeric", minute: "2-digit", timeZone });
   const readOnly = isReadOnly(workspace);
   // Check 42 P1: "This was already answered from Gmail at 2:14pm. Nothing was sent."
@@ -313,6 +318,12 @@ export default async function QueuePage(props: PageProps<"/queue">) {
       customer={who(i)}
       customerKey={i.customerKey}
       toAddress={i.toAddress ?? ""}
+      fromName={fromName}
+      subject={i.subject}
+      noSignatureLine={i.draftId === firstDraftId && !readOnly ? signatureLine : null}
+      fromAddress={
+        i.fromAddress && i.fromAddress !== i.mailboxEmail.toLowerCase() ? i.fromAddress : null
+      }
       toFromReplyTo={i.replyRedirected && i.toAddress === i.customerAddress}
       tag={`${i.backFromSnooze ? "Back from snooze · " : ""}${tag(i)}`}
       wrote={wroteLine(i.customerWroteAt, now)}

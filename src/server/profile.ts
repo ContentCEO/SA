@@ -1,5 +1,6 @@
 import "server-only";
 import { and, eq, ne, sql } from "drizzle-orm";
+import { FROM_NAME_MAX } from "./from-line-rules";
 import { z } from "zod";
 import { LICENSE_FIELD_MAX, type Licenses } from "@/config/licenses";
 import { cleanExtraTrades, MAX_EXTRA_TRADES, TRADES } from "@/config/trades";
@@ -226,6 +227,8 @@ export const businessProfileInput = z.object({
   paymentTerms: longText(1000),
   policies: longText(),
   signature: longText(500),
+  /** Check 43 P3: "Name customers see on your emails". Left out = leave it as it is. */
+  fromName: longText(FROM_NAME_MAX).optional(),
   reviewUrl,
   doNotPromise: lines(30),
   vipSenders,

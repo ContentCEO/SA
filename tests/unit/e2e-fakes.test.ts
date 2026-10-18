@@ -329,6 +329,7 @@ describe("the fake server", () => {
         "gmail.drafts.send",
         "gmail.messages.send",
         "gmail.watch",
+        "gmail.settings.sendAs.list",
       ].sort(),
     );
     for (const [route, accepted] of Object.entries(GMAIL_METHOD_SCOPES))
@@ -347,7 +348,14 @@ describe("the fake server", () => {
     const compose = GMAIL_SCOPES.compose;
     expect(GMAIL_METHOD_SCOPES["gmail.drafts.send"]).toContain(compose);
     expect(GMAIL_METHOD_SCOPES["gmail.messages.send"]).toContain(compose);
-    for (const read of ["messages.list", "messages.get", "history", "threads.get", "watch"])
+    for (const read of [
+      "messages.list",
+      "messages.get",
+      "history",
+      "threads.get",
+      "watch",
+      "settings.sendAs.list",
+    ])
       expect(GMAIL_METHOD_SCOPES[`gmail.${read}`], read).toContain(GMAIL_SCOPES.readonly);
   });
 

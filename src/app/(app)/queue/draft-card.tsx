@@ -3,7 +3,9 @@
 import { useEffect, useId, useRef, useState, useSyncExternalStore } from "react";
 import { CustomerName } from "@/components/app/customer-name";
 import { useFormStatus } from "react-dom";
+import Link from "next/link";
 import { Button } from "@/components/ui/button";
+import { SIGNATURE_FIELD_HREF } from "@/server/from-line-rules";
 import { fillGap, findGaps } from "@/ai/gaps";
 import type { ConfidenceLabel } from "@/config/drafting";
 import {
@@ -57,6 +59,14 @@ export type DraftCardProps = {
   toAddress: string;
   /** The customer's email named this address to reply to (a website form's Reply-To). */
   toFromReplyTo?: boolean;
+  /** Check 43 P3: the name the customer sees in the From line ("Mike Rossi"). */
+  fromName?: string | null;
+  /** Check 42 P4: the send-as alias it goes out from, only when not the connected address. */
+  fromAddress?: string | null;
+  /** Check 43 P5: the subject the customer sees ("Your request to Rossi Plumbing"). */
+  subject?: string | null;
+  /** Check 43 P4: "No signature…" under the reply (the queue's first card, signature empty). */
+  noSignatureLine?: string | null;
   tag: string;
   /** Round 2 (FW E9): when the customer wrote ("Wrote 9 days ago"), on every card. */
   wrote?: string | null;
@@ -144,10 +154,27 @@ function Pending({
  * H7: who the reply goes to, as visible text (never an aria-label: Sentry's ui.* scrub isn't
  * relied on), so the owner can catch a wrong address before tapping Send reply.
  */
-function ToLine({ address, fromReplyTo }: { address: string; fromReplyTo?: boolean }) {
+function ToLine({
+  address,
+  fromReplyTo,
+  fromName,
+  fromAddress,
+}: {
+  address: string;
+  fromReplyTo?: boolean;
+  fromName?: string | null;
+  fromAddress?: string | null;
+}) {
+  const from = [fromName, fromAddress].filter(Boolean).join(" · ");
   return (
     // Check 8 P9: 16px — read in the sun before Send reply.
     <p className="text-base break-all">
+      {/* Check 43 P3: what the customer will see as the sender. */}
+      {from ? (
+        <span className="block">
+          <span className="font-semibold">From:</span> {from}
+        </span>
+      ) : null}
       <span className="font-semibold">To:</span> {address}
       {fromReplyTo ? (
         <span className="block text-muted-foreground">the reply address in their email</span>
@@ -314,7 +341,12 @@ export function DraftCard(p: DraftCardProps) {
             </h3>
             <ConfidenceTag label={p.label} />
           </div>
-          <ToLine address={p.toAddress} fromReplyTo={p.toFromReplyTo} />
+          <ToLine
+              address={p.toAddress}
+              fromReplyTo={p.toFromReplyTo}
+              fromName={p.fromName}
+              fromAddress={p.fromAddress}
+            />
           <span className="text-base font-semibold">{p.tag}</span>
           {p.wrote ? <span className="text-base">{p.wrote}</span> : null}
           {(p.leadLines ?? []).map((line) => (
@@ -384,7 +416,12 @@ export function DraftCard(p: DraftCardProps) {
             kept={kept}
             seenHash={p.seenHash}
             toAddress={p.toAddress}
-            toLine={<ToLine address={p.toAddress} fromReplyTo={p.toFromReplyTo} />}
+            toLine={<ToLine
+              address={p.toAddress}
+              fromReplyTo={p.toFromReplyTo}
+              fromName={p.fromName}
+              fromAddress={p.fromAddress}
+            />}
             canSend={p.canSend}
             confirmTiming={!!p.timingNote}
             onCancel={() => {
@@ -397,6 +434,11 @@ export function DraftCard(p: DraftCardProps) {
         {editing ? null : (
           <>
             <div ref={bodyBox} className="rounded-lg border bg-paper p-3">
+              {p.subject ? (
+                <p className="mb-1 text-sm break-words text-muted-foreground">
+                  <span className="font-semibold">Subject:</span> {p.subject}
+                </p>
+              ) : null}
               <BodyWithGaps
                 body={body}
                 onChange={setBody}
@@ -639,6 +681,18 @@ export function DraftCard(p: DraftCardProps) {
                 </div>
               </div>
             )}
+            {/* Check 43 P4: under the reply and its buttons, so Send reply stays on the first screen. */}
+            {p.noSignatureLine ? (
+              <p className="flex flex-wrap items-center gap-x-2 text-sm text-muted-foreground">
+                <span>{p.noSignatureLine}</span>
+                <Link
+                  href={SIGNATURE_FIELD_HREF}
+                  className="inline-flex min-h-tap items-center font-semibold text-foreground underline underline-offset-4"
+                >
+                  Add a signature
+                </Link>
+              </p>
+            ) : null}
           </>
         )}
         {/* Under the buttons, so it never pushes Send reply down. */}

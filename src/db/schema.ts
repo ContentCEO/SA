@@ -218,6 +218,15 @@ export const mailboxes = pgTable(
     accessAlertsSent: integer("access_alerts_sent").notNull().default(0),
     /** Last sync problem as a short code (access_lost / rate_limited / sync_failed) — never text. */
     lastSyncErrorCode: text("last_sync_error_code"),
+    /**
+     * Check 42 P4: Gmail's "send mail as" addresses (office@, info@), lowercased, verified or the
+     * primary only. Addresses only, refreshed at connect and daily; never logged. Empty = not read
+     * yet (replies go from `email`).
+     */
+    sendAs: text("send_as")
+      .array()
+      .notNull()
+      .default(sql`'{}'::text[]`),
     lastSyncErrorAt: timestamp("last_sync_error_at", { withTimezone: true }),
     /**
      * Unused since the referral merge (2026-10-17). Plan #47's branch paused over-plan inboxes
@@ -552,6 +561,11 @@ export const drafts = pgTable(
     gmailDraftId: text("gmail_draft_id"),
     gmailMessageId: text("gmail_message_id"),
     toAddress: text("to_address").notNull(),
+    /**
+     * Check 42 P4: the address this reply goes out from (a send-as alias the customer wrote to),
+     * kept so every rewrite and the send use the same one. Null (older drafts) = the mailbox's.
+     */
+    fromAddress: text("from_address"),
     subject: text("subject").notNull(),
     /** Current text (after any owner edits). Purged with other bodies after the retention window. */
     body: text("body"),
@@ -649,6 +663,11 @@ export const businessProfiles = pgTable("business_profile", {
   paymentTerms: text("payment_terms"),
   policies: text("policies"),
   signature: text("signature"),
+  /**
+   * Check 43 P3: "Name customers see on your emails" (max 80), put in the From line of every
+   * reply. Empty = the owner's Google account name, else the business name (`senderNameFor`).
+   */
+  fromName: text("from_name"),
   /** Plan #29: where happy customers leave a review (https only). Added to a draft only on a tap. */
   reviewUrl: text("review_url"),
   doNotPromise: jsonb("do_not_promise").$type<string[]>().notNull().default([]),

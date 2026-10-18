@@ -170,6 +170,11 @@ export interface MailboxReader {
   /** Throws HistoryExpiredError when the cursor is too old to resume from. */
   listHistory(opts: { startHistoryId: string; pageToken?: string }): Promise<HistoryPage>;
   watch(topicName: string): Promise<{ historyId: string; expiration: number }>;
+  /**
+   * Check 42 P4: the "send mail as" addresses Gmail would accept as From (verified, or the
+   * primary), lowercased. Optional: a reader without it means "only the connected address".
+   */
+  listSendAs?(): Promise<string[]>;
 }
 
 /** The owner revoked access or the refresh token is dead. Stop everything for this mailbox. */

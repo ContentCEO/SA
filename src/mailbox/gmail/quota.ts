@@ -17,6 +17,8 @@ export const GMAIL_UNITS = {
   "drafts.send": 100,
   "messages.send": 100,
   "threads.get": 40,
+  // Check 42 P4: users.settings.sendAs.list (addresses only), read at connect and daily.
+  "settings.sendAs.list": 1,
   watch: 100,
 } as const;
 
