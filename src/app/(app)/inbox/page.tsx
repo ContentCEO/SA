@@ -165,10 +165,11 @@ export default async function InboxPage(props: PageProps<"/inbox">) {
           className={cn("group rounded-xl border", row.needsOwner ? "sa-inverted" : "bg-card")}
         >
           <summary className="flex min-h-tap cursor-pointer list-none flex-col gap-1 p-4">
-            <div className="flex items-baseline justify-between gap-3">
-              <span className="truncate text-base font-black">
+            {/* Check 32 P9 / P11: each row's name is a heading, and wraps if long. */}
+            <div className="flex flex-wrap items-baseline justify-between gap-x-3">
+              <h2 className="min-w-0 text-base font-black break-words">
                 {row.senderName || row.senderAddress || "Unknown sender"}
-              </span>
+              </h2>
               <span
                 className={cn(
                   "shrink-0 text-sm",

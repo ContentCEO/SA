@@ -30,7 +30,7 @@ for (const hand of ["right", "left"] as const) {
     const open = hand === "right" ? 140 : -140;
 
     await page.goto("/queue");
-    const card = page.getByRole("article", { name: "Draft reply to Priya" });
+    const card = page.getByRole("article", { name: "Priya · draft reply" });
     await expect(card.getByRole("button", { name: "Show full draft" })).toBeVisible();
 
     await swipe(card, open);
@@ -112,7 +112,7 @@ test("offline okay (opt-in): held until back online, then refused if the draft c
   await context.addCookies([{ name: "sa_offline", value: "on", url: baseURL! }]);
 
   await page.goto("/queue");
-  const card = page.getByRole("article", { name: "Draft reply to Priya" });
+  const card = page.getByRole("article", { name: "Priya · draft reply" });
   await expect(card.getByRole("button", { name: "Send reply" })).toBeVisible();
 
   await context.setOffline(true);
@@ -155,7 +155,7 @@ test("dragging shows what letting go does; the swipe tip shows once (Check 9 P14
   await seedQueue(owner.mailboxId!);
   await signInAs(context, owner);
   await page.goto("/queue");
-  const card = page.getByRole("article", { name: "Draft reply to Priya" });
+  const card = page.getByRole("article", { name: "Priya · draft reply" });
   const tip = page.getByTestId("swipe-tip");
   await expect(tip).toContainText("Swipe right to open, left to discard. A swipe never sends.");
 

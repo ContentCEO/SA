@@ -147,7 +147,7 @@ async function readSortAndDraft(
 
 async function draftCardOnQueue(page: Page) {
   await page.goto("/queue");
-  const card = page.getByRole("article", { name: /^Draft reply to Dana/ });
+  const card = page.getByRole("article", { name: /^Dana.* · draft reply$/ });
   await expect(card).toBeVisible();
   await expect(card).toContainText(FAKE_CLASSIFICATION.summary);
   await noHorizontalScroll(page);

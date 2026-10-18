@@ -34,14 +34,14 @@ test("every draft card says how old the email is, and 'I called them' clears it"
   await signInAs(context, owner);
 
   await page.goto("/queue");
-  const card = page.getByRole("article", { name: "Draft reply to Priya" });
+  const card = page.getByRole("article", { name: "Priya · draft reply" });
   await expect(card).toContainText("Wrote 9 days ago");
   await card.getByRole("button", { name: "I called them" }).click();
   await expect(card).toContainText("Answered by phone?");
   await card.getByRole("button", { name: "Yes, I called them" }).click();
   await expect(page).toHaveURL(/done=called/);
   await expect(page.getByText("Marked as answered by phone.")).toBeVisible();
-  await expect(page.getByRole("article", { name: "Draft reply to Priya" })).toHaveCount(0);
+  await expect(page.getByRole("article", { name: "Priya · draft reply" })).toHaveCount(0);
   const [t] = await testDb.select().from(schema.threads).where(eq(schema.threads.id, quote.t.id));
   expect(t!.handledOfflineAt).not.toBeNull();
 

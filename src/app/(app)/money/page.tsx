@@ -51,8 +51,8 @@ function OwedCard({ r, readOnly }: { r: MoneyRow; readOnly: boolean }) {
         pastDue ? "sa-inverted" : "border bg-card",
       )}
     >
-      <div className="flex items-baseline justify-between gap-3">
-        <span id={nameId} className="min-w-0 truncate text-lg font-black">
+      <div className="flex flex-wrap items-baseline justify-between gap-x-3">
+        <span id={nameId} className="min-w-0 text-lg font-black break-words">
           {nameOf(r)}
         </span>
         {r.amountCents ? (
@@ -122,8 +122,8 @@ function SettledRow({
   const nameId = `${kind}-${r.threadId}`;
   return (
     <li aria-labelledby={nameId} className="flex flex-col gap-2 px-4 py-3">
-      <div className="flex items-baseline justify-between gap-3">
-        <span id={nameId} className="min-w-0 truncate font-semibold">
+      <div className="flex flex-wrap items-baseline justify-between gap-x-3">
+        <span id={nameId} className="min-w-0 font-semibold break-words">
           {nameOf(r)}
         </span>
         <span className="shrink-0 font-black">

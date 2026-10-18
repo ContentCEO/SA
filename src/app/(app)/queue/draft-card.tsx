@@ -287,7 +287,7 @@ export function DraftCard(p: DraftCardProps) {
       <SwipeLabel dx={dx} toSend={toSend} />
       <article
         id={`t-${p.threadId}`}
-        aria-label={`Draft reply to ${p.customer}`}
+        aria-labelledby={`t-${p.threadId}-name`}
         className="relative flex touch-pan-y scroll-mt-4 scroll-mb-28 flex-col gap-3 rounded-xl border bg-card p-4 transition-transform motion-reduce:transition-none sm:scroll-mb-4"
         style={{ transform: dx ? `translateX(${dx}px)` : undefined }}
         onPointerDown={onPointerDown}
@@ -297,8 +297,12 @@ export function DraftCard(p: DraftCardProps) {
       >
         {p.notice}
         <header className="flex flex-col gap-1">
-          <div className="flex items-baseline justify-between gap-2">
-            <span className="text-lg font-black">{p.customer}</span>
+          {/* Check 32 P9 / P11: the customer's name is the card's heading, and wraps if long. */}
+          <div className="flex flex-wrap items-baseline justify-between gap-x-2">
+            <h3 id={`t-${p.threadId}-name`} className="min-w-0 text-lg font-black break-words">
+              {p.customer}
+              <span className="sr-only"> · draft reply</span>
+            </h3>
             <ConfidenceTag label={p.label} />
           </div>
           <ToLine address={p.toAddress} fromReplyTo={p.toFromReplyTo} />

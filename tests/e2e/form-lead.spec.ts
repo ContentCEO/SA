@@ -98,7 +98,7 @@ test("a website form lead is answered at the customer's own address, not the for
     for (const c of metadata) expect(c.metadataHeaders).toContain("Reply-To");
   });
 
-  const card = page.getByRole("article", { name: /^Draft reply to Dana Ruiz/ });
+  const card = page.getByRole("article", { name: /^Dana Ruiz.* · draft reply$/ });
   await test.step("The card names Dana and says the reply goes to her own address", async () => {
     await page.goto("/queue");
     await expect(card).toBeVisible();

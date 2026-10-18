@@ -22,11 +22,14 @@ export function NotAnsweredCard({
 }) {
   const noun = isCategory(row.category) ? categoryTag[row.category] : "Email";
   return (
-    <article className="flex flex-col gap-2 rounded-xl border-2 border-charcoal p-4">
-      <div className="flex items-baseline justify-between gap-3">
-        <span className="truncate text-lg font-black">
+    <article
+      aria-labelledby={`na-${row.threadId}-name`}
+      className="flex flex-col gap-2 rounded-xl border-2 border-charcoal p-4"
+    >
+      <div className="flex flex-wrap items-baseline justify-between gap-x-3">
+        <h3 id={`na-${row.threadId}-name`} className="min-w-0 text-lg font-black break-words">
           {row.customerName || row.customerAddress || "Unknown sender"}
-        </span>
+        </h3>
         <span className="shrink-0 text-sm font-semibold">
           {waitingWords(row.waitingSince, now)}
         </span>

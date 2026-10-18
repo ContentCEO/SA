@@ -195,7 +195,7 @@ test("a review request waits in the Queue, labelled, with the owner's link", asy
   await signInAs(context, owner);
 
   await page.goto("/queue");
-  const card = page.getByRole("article", { name: "Draft reply to Dana Ruiz" });
+  const card = page.getByRole("article", { name: "Dana Ruiz · draft reply" });
   await expect(card).toContainText("Review request");
   await card.getByRole("button", { name: "Show full draft" }).click();
   await expect(card).toContainText(REVIEW_URL);

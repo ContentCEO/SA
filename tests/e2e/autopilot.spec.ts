@@ -91,7 +91,7 @@ test("queue: an autopilot reply says when it sends, and Hold it stops it", async
   await signInAs(context, owner);
 
   await page.goto("/queue");
-  const card = page.getByRole("article", { name: "Draft reply to Priya" });
+  const card = page.getByRole("article", { name: "Priya · draft reply" });
   await expect(card.getByRole("status")).toContainText(/Autopilot sends this at \d{1,2}:\d{2}/);
   await card.getByRole("button", { name: "Hold it" }).click();
   await expect(page.getByText("Held. It won't send until you tap Send reply.")).toBeVisible();
@@ -113,7 +113,7 @@ test("queue: the autopilot countdown moves on its own and refreshes at zero (Che
   await signInAs(context, owner);
   await page.clock.install();
   await page.goto("/queue");
-  const card = page.getByRole("article", { name: "Draft reply to Priya" });
+  const card = page.getByRole("article", { name: "Priya · draft reply" });
   await expect(card.getByText(/^Sends in [78] min$/)).toBeVisible();
   // The clock time is there once for screen readers, not on every tick.
   await expect(card.getByRole("status")).toContainText(/Autopilot sends this at \d{1,2}:\d{2}/);

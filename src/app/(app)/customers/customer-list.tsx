@@ -43,7 +43,7 @@ export function CustomerList({ items }: { items: CustomerListItem[] }) {
         {shown.map((c) => (
           <li key={c.key}>
             <Link href={`/customers/${c.key}`} className="flex min-h-tap flex-col gap-0.5 p-4">
-              <span className="truncate text-lg font-black">{c.name}</span>
+              <span className="min-w-0 text-lg font-black break-words">{c.name}</span>
               <span className="text-muted-foreground">{c.line}</span>
               {c.facts.length ? <span className="font-semibold">{c.facts.join(" · ")}</span> : null}
             </Link>

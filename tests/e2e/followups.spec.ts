@@ -75,7 +75,7 @@ test("queue: a nudge is labelled as a follow-up", async ({ page, context }) => {
   await signInAs(context, owner);
 
   await page.goto("/queue");
-  const card = page.getByRole("article", { name: "Draft reply to Priya" });
+  const card = page.getByRole("article", { name: "Priya · draft reply" });
   await expect(card).toContainText("Follow-up · Quote request");
   await expect(card).toContainText("Gentle nudge.");
 });
@@ -92,7 +92,7 @@ test("queue: a nudge's Discard says it ends the chasing, and it offers They said
     .where(eq(schema.drafts.id, draft.id));
   await signInAs(context, owner);
   await page.goto("/queue");
-  const card = page.getByRole("article", { name: "Draft reply to Priya" });
+  const card = page.getByRole("article", { name: "Priya · draft reply" });
   const saidNo = card.getByRole("button", { name: "They said no" });
   await expect(saidNo).toBeVisible();
   expect((await saidNo.boundingBox())!.height).toBeGreaterThanOrEqual(44);

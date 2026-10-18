@@ -79,6 +79,7 @@ describe("Check 9 P12: a card says what the customer wants once", () => {
     expect(text(header(html))).toMatchInlineSnapshot(`
       [
         "Priya",
+        "· draft reply",
         "Ready",
         "To:",
         "priya@x.com",

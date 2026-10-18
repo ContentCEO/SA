@@ -78,8 +78,8 @@ function QuoteCard({
         q.stage === "waiting_on_you" ? "sa-inverted" : "border bg-card",
       )}
     >
-      <div className="flex items-baseline justify-between gap-3">
-        <span className="truncate text-lg font-black">{name}</span>
+      <div className="flex flex-wrap items-baseline justify-between gap-x-3">
+        <span className="min-w-0 text-lg font-black break-words">{name}</span>
         <span className="shrink-0 text-sm opacity-80">
           {q.lastMessageAt ? relativeTime(q.lastMessageAt) : ""}
         </span>

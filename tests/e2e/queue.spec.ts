@@ -32,7 +32,7 @@ test("queue: needs-you first, then drafts; sending is off until setup, and it sa
   await expect(page.getByText("Customer says the leak came back.")).toBeVisible();
   await expect(page.getByRole("button", { name: "Draft a reply" })).toBeVisible();
 
-  const card = page.getByRole("article", { name: "Draft reply to Priya" });
+  const card = page.getByRole("article", { name: "Priya · draft reply" });
   await expect(card).toContainText("Asked for the address and panel age.");
   await expect(card).toContainText("Panel upgrade quote."); // what they want, at a glance
   await expect(card).toContainText("Check you can do Tuesday morning.");
@@ -163,7 +163,7 @@ test("a link from the morning summary lands on its card (plan #31)", async ({ pa
   // Draft cards carry the same anchor, and a hash change on the page moves to it. From the top,
   // with the hash set quietly and the event sent by hand, so the browser's own jump to the
   // fragment can't stand in for ScrollToThread.
-  const draftCard = page.getByRole("article", { name: "Draft reply to Priya" });
+  const draftCard = page.getByRole("article", { name: "Priya · draft reply" });
   await expect(draftCard).toHaveAttribute("id", `t-${quote.t.id}`);
   await page.evaluate((id) => {
     window.scrollTo(0, 0);
@@ -219,7 +219,7 @@ test("a refresh that keeps the link doesn't pull the owner back to the card", as
   // A summary link lands on the card…
   await page.goto(`/queue#t-${quote.t.id}`);
   const needsYou = page.getByRole("heading", { name: "Needs you" });
-  await expect(page.getByRole("article", { name: "Draft reply to Priya" })).toBeVisible();
+  await expect(page.getByRole("article", { name: "Priya · draft reply" })).toBeVisible();
   await settled(page);
   await expect(needsYou).not.toBeInViewport();
 
@@ -249,7 +249,7 @@ test("a 'not on your queue' notice goes away after the next queue action", async
   // An unrelated queue action redirects to /queue?done=…, which keeps client state.
   await page.goto(gone);
   await expect(notice).toBeVisible();
-  const card = page.getByRole("article", { name: "Draft reply to Priya" });
+  const card = page.getByRole("article", { name: "Priya · draft reply" });
   await card.getByRole("button", { name: "Remind me later" }).click();
   await card.getByRole("button", { name: "After this job (3 hours)" }).click();
   await expect(page.getByText("Snoozed.")).toBeVisible();
@@ -333,10 +333,10 @@ test("undo send: the window shows a countdown, and Undo puts the reply back", as
   await expect(page.getByText("reply on its way,")).toBeVisible();
   await expect(page.getByText(/Sending in \d+ seconds/)).toBeVisible();
   // While it's going, it's not in the queue to tap again.
-  await expect(page.getByRole("article", { name: "Draft reply to Priya" })).toHaveCount(0);
+  await expect(page.getByRole("article", { name: "Priya · draft reply" })).toHaveCount(0);
   await page.getByRole("button", { name: "Undo" }).click();
   await expect(page.getByText("Stopped. Nothing was sent")).toBeVisible();
-  await expect(page.getByRole("article", { name: "Draft reply to Priya" })).toBeVisible();
+  await expect(page.getByRole("article", { name: "Priya · draft reply" })).toBeVisible();
 });
 
 test("remind me later: the conversation leaves the queue until then", async ({ page, context }) => {
@@ -344,11 +344,11 @@ test("remind me later: the conversation leaves the queue until then", async ({ p
   await seedQueue(owner.mailboxId!);
   await signInAs(context, owner);
   await page.goto("/queue");
-  const card = page.getByRole("article", { name: "Draft reply to Priya" });
+  const card = page.getByRole("article", { name: "Priya · draft reply" });
   await card.getByRole("button", { name: "Remind me later" }).click();
   await card.getByRole("button", { name: "After this job (3 hours)" }).click();
   await expect(page.getByText("Snoozed.")).toBeVisible();
-  await expect(page.getByRole("article", { name: "Draft reply to Priya" })).toHaveCount(0);
+  await expect(page.getByRole("article", { name: "Priya · draft reply" })).toHaveCount(0);
 });
 
 test("review all ready: lists who and how it starts, then asks once before sending", async ({
@@ -470,7 +470,7 @@ test("price memory: past prices for similar jobs, and a tap fills only the price
   await signInAs(context, owner);
 
   await page.goto("/queue");
-  const card = page.getByRole("article", { name: "Draft reply to Priya" });
+  const card = page.getByRole("article", { name: "Priya · draft reply" });
   const memory = card.getByRole("region", { name: "Last 2 similar quotes:" });
   await expect(memory).toBeVisible();
   await expect(memory).toContainText("Only you see these.");
@@ -540,7 +540,7 @@ test("a [name]-style blank is a gap: a chip, never Ready, Send reply only once f
   await signInAs(context, owner);
 
   await page.goto("/queue");
-  const card = page.getByRole("article", { name: "Draft reply to Priya" });
+  const card = page.getByRole("article", { name: "Priya · draft reply" });
   await expect(card.getByRole("button", { name: "Fill in their name" })).toBeVisible();
   await expect(card.getByRole("button", { name: "Fill in 1 gap to send" })).toBeVisible();
   await expect(card.getByRole("button", { name: "Send reply" })).toHaveCount(0);
@@ -563,7 +563,7 @@ test("a typical draft's Send reply is on the first screen of its card (outside r
   await signInAs(context, owner);
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.goto(`/queue?t=${quote.t.id}#t-${quote.t.id}`);
-  const card = page.getByRole("article", { name: "Draft reply to Priya" });
+  const card = page.getByRole("article", { name: "Priya · draft reply" });
   await expect(card).toBeVisible();
   await settled(page);
   const send = card.getByRole("button", { name: "Send reply" });
@@ -601,7 +601,7 @@ test("a first reply to a new lead says so and offers other ways to reply (replie
   await signInAs(context, owner);
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.goto(`/queue?t=${quote.t.id}#t-${quote.t.id}`);
-  const card = page.getByRole("article", { name: "Draft reply to Priya" });
+  const card = page.getByRole("article", { name: "Priya · draft reply" });
   await expect(card).toContainText("First reply: asks 1 question · they described the job");
   const others = card.getByRole("form", { name: "Other ways to reply" });
   for (const name of ["Ask a few questions", "Offer to come take a look", "Short and friendly"]) {

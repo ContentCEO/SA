@@ -31,7 +31,7 @@ test("an old draft that says 'tomorrow' asks once more: Send reply anyway or Edi
     .where(eq(schema.drafts.id, draft.id));
   await signInAs(context, owner);
   await page.goto("/queue");
-  const card = page.getByRole("article", { name: "Draft reply to Priya" });
+  const card = page.getByRole("article", { name: "Priya · draft reply" });
   await expect(card.getByRole("note").filter({ hasText: "Check the timing." })).toContainText(
     /Written \w+day\. It says “tomorrow”, which meant \w+day\. Check the timing\./,
   );
@@ -82,7 +82,7 @@ test("a stopped send says why, and a late one waits on top with Stop it (Check 9
     page.getByText("Didn't send. It was changed in Gmail, so it's back below to check."),
   ).toBeVisible();
   await expect(page.getByText("reply sent,")).toHaveCount(0);
-  await expect(page.getByRole("article", { name: "Draft reply to Priya" })).toBeVisible();
+  await expect(page.getByRole("article", { name: "Priya · draft reply" })).toBeVisible();
 
   // Tapped again, and the job's event was lost: two minutes past the window, nobody holds it.
   await testDb
