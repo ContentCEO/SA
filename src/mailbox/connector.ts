@@ -242,6 +242,13 @@ export interface MailboxWriter {
    * reply in Gmail. Only ids — never stored, never logged.
    */
   threadDraftMessageIds(threadId: string): Promise<string[]>;
+  /**
+   * Check 20 P2: every message in a thread with its labels, in Gmail's order (oldest first),
+   * [] when the thread is gone. The same one call as `threadDraftMessageIds` (ids and labels
+   * only: no headers, snippet or text). Autopilot uses it just before sending to see the
+   * owner's own drafts AND mail that hasn't synced yet. Never stored, never logged.
+   */
+  threadMessageLabels(threadId: string): Promise<{ id: string; labelIds: string[] }[]>;
   sendDraft(draftId: string): Promise<{ messageId: string; threadId: string }>;
   /**
    * Send a brand-new message (not a draft, not in any thread). Used only for

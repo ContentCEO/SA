@@ -5,6 +5,7 @@ import { autopilotState, EARN_THRESHOLD, GRACE_MINUTES } from "@/server/autopilo
 import { planHasAutopilot } from "@/config/pricing";
 import { getBusinessProfile } from "@/server/profile";
 import { autopilotFreeMonthLine, freeMonthRunning } from "@/server/referral-rules";
+import { AUTOPILOT_NEVER_LINES, AUTOPILOT_WHEN_LINES } from "@/server/autopilot-reasons";
 import { requireOwner } from "@/server/session";
 import { setAutopilotAction } from "../profile-actions";
 import { SettingsScreen } from "../screen";
@@ -36,12 +37,25 @@ export default async function AutopilotSettingsPage(props: PageProps<"/settings/
         </h2>
         <p className="text-muted-foreground">
           Lets Squared Away send replies on its own for the kinds of email you choose. Off until you
-          turn it on. Even then, it never sends complaints, any reply that mentions a dollar amount
-          or an invoice email that names one, anything flagged for you, follow-ups, replies to
-          people you haven&apos;t written to before, or replies that go to a different address than
-          the email came from (as a website form&apos;s do) — and each one waits {GRACE_MINUTES}{" "}
-          minutes in your queue so you can hold it.
+          turn it on.
         </p>
+        {/* Check 20 P6: one rule per line, from the same codes the guardrails use. */}
+        <div className="flex flex-col gap-1">
+          <p className="font-semibold">It sends on its own only when all of these are true:</p>
+          <ul className="flex list-disc flex-col gap-1 pl-5">
+            {AUTOPILOT_WHEN_LINES.map((l) => (
+              <li key={l.text}>{l.text}</li>
+            ))}
+          </ul>
+        </div>
+        <div className="flex flex-col gap-1">
+          <p className="font-semibold">It never sends:</p>
+          <ul className="flex list-disc flex-col gap-1 pl-5">
+            {AUTOPILOT_NEVER_LINES.map((l) => (
+              <li key={l.text}>{l.text}</li>
+            ))}
+          </ul>
+        </div>
         {autopilotNote && !autopilot.lockedReason ? (
           <p className="font-semibold">{autopilotNote}</p>
         ) : null}

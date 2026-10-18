@@ -59,6 +59,20 @@ test("unlocked: each kind of email shows its progress; earned ones can be turned
   await expect(section).toContainText(
     "Unlocks after 10 replies you sent without changing them (0 so far)",
   );
+  // Check 20 P6: one rule per line, true to the code.
+  await expect(
+    section.getByText("It sends on its own only when all of these are true:"),
+  ).toBeVisible();
+  await expect(
+    section.getByRole("listitem").filter({ hasText: "No price or amount anywhere in the reply." }),
+  ).toBeVisible();
+  await expect(section).toContainText(
+    'For Invoices & payments: only when the email has no amount, like "Did you get my check?"',
+  );
+  await expect(section).toContainText("At most 20 in any 24 hours.");
+  await expect(section).toContainText("Each one waits 10 minutes in your queue with Hold it.");
+  await expect(section).toContainText("The email and the reply are in English.");
+  await expect(section).not.toContainText("anything about money");
 
   const row = section.getByRole("listitem").filter({ hasText: "Scheduling" });
   await row.getByText("Turn on").click();

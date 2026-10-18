@@ -2,8 +2,10 @@ import { randomUUID } from "node:crypto";
 import Link from "next/link";
 import { Notice } from "@/components/app/notice";
 import { Headline } from "@/components/brand/headline";
-import { draftTag } from "@/config/categories";
+import { categoryLabels, draftTag, isCategory } from "@/config/categories";
 import { languageCardLine } from "@/ai/language";
+import { autopilotOnKinds } from "@/server/autopilot";
+import { autopilotWaitLine } from "@/server/autopilot-reasons";
 import { findGaps } from "@/ai/gaps";
 import { confidenceLabel } from "@/config/drafting";
 import { gmailThreadLink } from "@/lib/gmail-link";
@@ -171,13 +173,14 @@ export default async function QueuePage(props: PageProps<"/queue">) {
   // Ideas G7: private notes. Drafts are keyed on where the reply goes; needs-you items on the
   // customer's newest email. Never in queue counts (those come from queueMembership).
   const allThreadIds = [...queue.needsYou, ...queue.drafts].map((i) => i.threadId);
-  const [threadNotes, draftNotes, away] = await Promise.all([
+  const [threadNotes, draftNotes, away, autopilotOn] = await Promise.all([
     notesForThreads(workspace.id, allThreadIds),
     notesForAddresses(
       workspace.id,
       queue.drafts.map((i) => i.toAddress),
     ),
     awayState(workspace.id, now),
+    autopilotOnKinds(workspace, now),
   ]);
   // Check 40 P2: what the customer attached, by kind (the files stay in Gmail).
   const attachments = await attachmentsForThreads(
@@ -186,6 +189,11 @@ export default async function QueuePage(props: PageProps<"/queue">) {
   const attachmentFor = (i: QueueItem) => (
     <AttachmentLine counts={attachments.get(i.threadId)} gmail={i} />
   );
+  // Check 20 P7: a reply in a kind with autopilot on that waits says why (codes, never text).
+  const autopilotWait = (i: QueueItem) =>
+    !i.autoSendAt && i.category && isCategory(i.category) && autopilotOn.has(i.category)
+      ? autopilotWaitLine(categoryLabels[i.category], i.autopilotSkip)
+      : null;
   // A phone that keeps a copy of the queue (offline okays) never holds a note's text.
   // Check 21 P5: "Also about your quote from Nov 2" — answer both in one go. Content-free link.
   const alsoQuoteLine = (i: QueueItem) =>
@@ -329,6 +337,7 @@ export default async function QueuePage(props: PageProps<"/queue">) {
       seenHash={bodyHash(i.body ?? "")}
       timingNote={timingNoteFor(i)}
       languageLine={languageCardLine(i.customerLanguage, i.replyLanguage)}
+      autopilotWait={autopilotWait(i)}
       flags={i.flags}
       label={confidenceLabel({
         confidencePct: i.confidence,

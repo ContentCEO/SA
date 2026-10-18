@@ -28,6 +28,8 @@ import {
   overdueAutopilotDrafts,
   runAutopilotSend,
   setAutopilot,
+  newPersonCopied,
+  unsyncedMessageIds,
   type GuardrailInput,
 } from "@/server/autopilot";
 import {
@@ -38,6 +40,7 @@ import {
   threadsToAutoDraft,
 } from "@/server/drafts";
 import { saveConnectedMailbox } from "@/server/mailboxes";
+import { isAutopilotReasonCode } from "@/server/autopilot-reasons";
 import {
   autopilotPlanEffects,
   enforcePlanAutopilot,
@@ -56,6 +59,34 @@ const cleanDraft = (over: Partial<ModelDraft> = {}): ModelDraft => ({
   confidence: 0.95,
   used_facts: [],
   ...over,
+});
+
+describe("unsyncedMessageIds (Check 20 P2)", () => {
+  const m = (id: string, ...labelIds: string[]) => ({ id, labelIds });
+  it("counts ids after the newest stored one, never drafts", () => {
+    const known = new Set(["a", "b"]);
+    expect(unsyncedMessageIds([m("a"), m("b"), m("c", "INBOX")], known)).toEqual(["c"]);
+    expect(unsyncedMessageIds([m("a"), m("b"), m("d", "DRAFT")], known)).toEqual([]);
+    expect(unsyncedMessageIds([m("a"), m("b"), m("s", "DRAFT", "SENT")], known)).toEqual(["s"]);
+    expect(unsyncedMessageIds([m("old"), m("a"), m("b")], known)).toEqual([]);
+    expect(unsyncedMessageIds([m("x"), m("y")], known)).toEqual(["x", "y"]);
+    expect(unsyncedMessageIds([], known)).toEqual([]);
+  });
+});
+
+describe("newPersonCopied (Check 20 P8)", () => {
+  const earlier = [{ from: "dana@customer.com", to: ["owner@shop.com"], cc: ["rob@customer.com"] }];
+  it("only someone never seen on the thread counts", () => {
+    const own = ["owner@shop.com"];
+    expect(newPersonCopied({ to: ["owner@shop.com"], cc: ["new@x.com"] }, earlier, own)).toBe(true);
+    expect(
+      newPersonCopied({ to: ["owner@shop.com"], cc: ["ROB@customer.com"] }, earlier, own),
+    ).toBe(false);
+    expect(newPersonCopied({ to: ["owner@shop.com"], cc: [] }, earlier, own)).toBe(false);
+    expect(
+      newPersonCopied({ to: ["crew@shop.com"], cc: [] }, [], ["owner@shop.com", "crew@shop.com"]),
+    ).toBe(false);
+  });
 });
 
 describe("account lock (layer 1)", () => {
@@ -130,6 +161,15 @@ describe("per-email guardrails (layer 3)", () => {
         "Deposit, review and closing notes always wait for you.",
       );
     }
+  });
+  it("Check 20 P3: a Spanish or Portuguese email or draft waits, English is unchanged", () => {
+    const line = "Not in English, so it waits for you.";
+    expect(guardrailReasons({ ...ok, otherLanguage: true })).toEqual([line]);
+    expect(guardrailReasons({ ...ok, draftBody: "Perfecto, nos vemos mañana a las 8." })).toContain(
+      line,
+    );
+    expect(guardrailReasons({ ...ok, draftBody: "Obrigado! Até amanhã." })).toContain(line);
+    expect(guardrailReasons({ ...ok, draftBody: "Thanks José, got it." })).toEqual([]);
   });
   it("an invoice question with no amount is allowed", () => {
     expect(guardrailReasons({ ...ok, category: "invoice_payment" })).toEqual([]);
@@ -484,6 +524,50 @@ describe("in the database", () => {
       });
     });
 
+    it("Check 20 P2: mail Gmail has but sync hasn't stored yet stands it down, in the same one call", async () => {
+      const t = await conversation();
+      const draftId = await drafted(t);
+      await considerAutopilot(draftId, NOW);
+      const [thread] = await database.select().from(threads).where(eq(threads.id, t));
+      // Gmail lists what we stored, then the customer's "Actually, hold off" we haven't synced.
+      writer.threadMail.set(thread!.gmailThreadId, [
+        { id: `${thread!.gmailThreadId}-earlier`, labelIds: ["SENT"] },
+        { id: `${thread!.gmailThreadId}-in`, labelIds: ["INBOX"] },
+        { id: "not-synced-yet", labelIds: ["INBOX", "UNREAD"] },
+      ]);
+      writer.calls = [];
+      const r = await runAutopilotSend(draftId, deps(later(GRACE_MINUTES)));
+      expect(r).toEqual({
+        status: "stood_down",
+        reasons: ["There's newer mail in this conversation."],
+        syncMailboxId: mailboxId,
+      });
+      expect(writer.sent).toHaveLength(0);
+      expect(writer.calls).toEqual(["getDraft", "threadMessageLabels"]);
+      const [d] = await database.select().from(drafts).where(eq(drafts.id, draftId));
+      expect(d).toMatchObject({ status: "pending", autoSendAt: null, autoSendClaimedAt: null });
+      const [log] = await database
+        .select()
+        .from(activityLog)
+        .where(eq(activityLog.action, "autopilot_stood_down"));
+      expect(JSON.stringify(log!.detail)).not.toMatch(/not-synced-yet|hold off/);
+    });
+
+    it("Check 20 P2: only ids we already have (and older mail the backfill never read) still send", async () => {
+      const t = await conversation();
+      const draftId = await drafted(t);
+      await considerAutopilot(draftId, NOW);
+      const [thread] = await database.select().from(threads).where(eq(threads.id, t));
+      writer.threadMail.set(thread!.gmailThreadId, [
+        { id: "older-than-the-backfill", labelIds: ["INBOX"] },
+        { id: `${thread!.gmailThreadId}-earlier`, labelIds: ["SENT"] },
+        { id: `${thread!.gmailThreadId}-in`, labelIds: ["INBOX"] },
+      ]);
+      expect(await runAutopilotSend(draftId, deps(later(GRACE_MINUTES)))).toEqual({
+        status: "sent",
+      });
+    });
+
     it("asks Gmail about other drafts only when sending is allowed (no Google call when blocked)", async () => {
       const draftId = await drafted(await conversation());
       await considerAutopilot(draftId, NOW);
@@ -752,6 +836,141 @@ describe("in the database", () => {
       }
       const draftId = await drafted(await conversation());
       expect(await considerAutopilot(draftId, NOW)).toBeNull();
+    });
+
+    it("Check 20 P13: two inboxes drafting at once at 19 end with exactly 20 countdowns", async () => {
+      for (let i = 0; i < DAILY_AUTOPILOT_CAP - 1; i++) {
+        await database.insert(activityLog).values({
+          workspaceId,
+          actor: "squared_away",
+          action: "autopilot_scheduled",
+          createdAt: later(-60),
+        });
+      }
+      const first = await drafted(await conversation());
+      const main = mailboxId;
+      const [ws0] = await database.select().from(workspaces).where(eq(workspaces.id, workspaceId));
+      mailboxId = (
+        await saveConnectedMailbox(ws0!, {
+          email: "crew@shop.com",
+          refreshToken: "rt",
+          grantedScopes: [],
+        })
+      ).id;
+      const second = await drafted(await conversation());
+      mailboxId = main;
+      const results = await Promise.all([
+        considerAutopilot(first, NOW),
+        considerAutopilot(second, NOW),
+      ]);
+      expect(results.filter(Boolean)).toHaveLength(1);
+      const started = await database
+        .select()
+        .from(activityLog)
+        .where(eq(activityLog.action, "autopilot_scheduled"));
+      expect(started).toHaveLength(DAILY_AUTOPILOT_CAP);
+      const counting = (await database.select().from(drafts)).filter((d) => d.autoSendAt);
+      expect(counting).toHaveLength(1);
+    });
+
+    it("Check 20 P3: a Spanish email never gets a countdown, even with an English draft", async () => {
+      const t = await conversation();
+      await database
+        .update(messages)
+        .set({ bodyText: "Hola, ¿puede venir el jueves por la mañana? Gracias." })
+        .where(and(eq(messages.threadId, t), eq(messages.direction, "in")));
+      expect(await considerAutopilot(await drafted(t), NOW)).toBeNull();
+      // The same conversation in English starts one.
+      expect(await considerAutopilot(await drafted(await conversation()), NOW)).toEqual(
+        later(GRACE_MINUTES),
+      );
+    });
+
+    describe("Check 20 P8: someone new on the conversation", () => {
+      const copy = (t: string, cc: string[], to: string[] = ["owner@shop.com"]) =>
+        database
+          .update(messages)
+          .set({ ccAddresses: cc, toAddresses: to })
+          .where(and(eq(messages.threadId, t), eq(messages.direction, "in")));
+
+      it("a new address on Cc stops the countdown, and a later run re-checks it", async () => {
+        const t = await conversation();
+        await copy(t, ["rob@customer.com"]);
+        expect(await considerAutopilot(await drafted(t), NOW)).toBeNull();
+
+        const t2 = await conversation();
+        const draftId = await drafted(t2);
+        expect(await considerAutopilot(draftId, NOW)).toEqual(later(GRACE_MINUTES));
+        await copy(t2, ["adjuster@insurer.com"]);
+        const r = await runAutopilotSend(draftId, deps(later(GRACE_MINUTES)));
+        expect(r.status === "stood_down" && r.reasons).toContain(
+          "Someone new is on this conversation, so it waits for you.",
+        );
+        expect(writer.sent).toHaveLength(0);
+      });
+
+      it("a Cc already on the thread, or the owner's own address, doesn't", async () => {
+        const t = await conversation();
+        // Rob was copied on the owner's earlier email.
+        await database
+          .update(messages)
+          .set({ ccAddresses: ["Rob@Customer.com"] })
+          .where(and(eq(messages.threadId, t), eq(messages.direction, "out")));
+        await copy(t, ["rob@customer.com", "OWNER@shop.com"]);
+        expect(await considerAutopilot(await drafted(t), NOW)).toEqual(later(GRACE_MINUTES));
+      });
+    });
+
+    it("Check 20 P7: a refused draft in a switched-on kind keeps why, as codes only", async () => {
+      const t = await conversation({ known: false, from: "sam@newcustomer.com" });
+      const draftId = await drafted(t);
+      expect(await considerAutopilot(draftId, NOW)).toBeNull();
+      const [d] = await database.select().from(drafts).where(eq(drafts.id, draftId));
+      expect(d!.autopilotSkip).toContain("not_known");
+      const [log] = await database
+        .select()
+        .from(activityLog)
+        .where(eq(activityLog.action, "autopilot_skipped"));
+      expect(log!.detail).toEqual({ draftId, codes: d!.autopilotSkip });
+      for (const c of d!.autopilotSkip!) expect(isAutopilotReasonCode(c)).toBe(true);
+      expect(JSON.stringify(log!.detail)).not.toMatch(/sam|Thursday|@/i);
+
+      // A kind that's switched off records nothing.
+      const off = await drafted(
+        await conversation({ category: "customer_question", known: false }),
+      );
+      expect(await considerAutopilot(off, NOW)).toBeNull();
+      const [o] = await database.select().from(drafts).where(eq(drafts.id, off));
+      expect(o!.autopilotSkip).toBeNull();
+    });
+
+    it("Check 20 P7: a stood-down run stores and logs its codes", async () => {
+      const t = await conversation();
+      const draftId = await drafted(t);
+      await considerAutopilot(draftId, NOW);
+      const [thread] = await database.select().from(threads).where(eq(threads.id, t));
+      await writer.createDraft({ threadId: thread!.gmailThreadId, raw: "" });
+      await runAutopilotSend(draftId, deps(later(GRACE_MINUTES)));
+      const [d] = await database.select().from(drafts).where(eq(drafts.id, draftId));
+      expect(d!.autopilotSkip).toEqual(["writing_in_gmail"]);
+      const [log] = await database
+        .select()
+        .from(activityLog)
+        .where(eq(activityLog.action, "autopilot_stood_down"));
+      expect(log!.detail).toEqual({ draftId, reasonCount: 1, codes: ["writing_in_gmail"] });
+    });
+
+    it("Check 20 P13: a draft already counting down takes no second slot", async () => {
+      const draftId = await drafted(await conversation());
+      expect(await considerAutopilot(draftId, NOW)).toEqual(later(GRACE_MINUTES));
+      await database.update(drafts).set({ autoSendAt: null }).where(eq(drafts.id, draftId));
+      await database.update(drafts).set({ status: "discarded" }).where(eq(drafts.id, draftId));
+      expect(await considerAutopilot(draftId, NOW)).toBeNull();
+      const started = await database
+        .select()
+        .from(activityLog)
+        .where(eq(activityLog.action, "autopilot_scheduled"));
+      expect(started).toHaveLength(1);
     });
 
     it("lost send events are picked up by the backstop", async () => {

@@ -463,6 +463,13 @@
       "when": 1792322274283,
       "tag": "0065_big_quote_days",
       "breakpoints": true
+    },
+    {
+      "idx": 66,
+      "version": "7",
+      "when": 1792322899878,
+      "tag": "0066_autopilot_skip",
+      "breakpoints": true
     }
   ]
 }

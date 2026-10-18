@@ -582,6 +582,11 @@ export const drafts = pgTable(
      */
     autoSendClaimedAt: timestamp("auto_send_claimed_at", { withTimezone: true }),
     /**
+     * Check 20 P7: why autopilot didn't start or finish a countdown on this reply, as
+     * content-free codes (`src/server/autopilot-reasons.ts`). Null = never refused.
+     */
+    autopilotSkip: jsonb("autopilot_skip").$type<string[]>(),
+    /**
      * Plan #7 undo send: the owner tapped Send reply; it goes at this time unless
      * they tap Undo. The draft stays `pending` meanwhile (so it still holds the
      * thread's one live slot) but is out of the queue. Null = not sending.

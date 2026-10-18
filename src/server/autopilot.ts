@@ -11,6 +11,8 @@ import {
   mentionsRealLegal,
 } from "@/ai/guards";
 import { mentionsMoney } from "@/ai/money-words";
+import { looksNonEnglish } from "@/ai/language";
+import { prepareBody } from "@/ai/classify";
 import {
   and,
   count,
@@ -26,7 +28,13 @@ import {
   sql,
 } from "drizzle-orm";
 import { planHasAutopilot } from "@/config/pricing";
-import { EARN_THRESHOLD, GRACE_MINUTES } from "@/config/rules";
+import {
+  DAILY_AUTOPILOT_CAP,
+  EARN_THRESHOLD,
+  GRACE_MINUTES,
+  MIN_CONFIDENCE_PCT,
+} from "@/config/rules";
+import { GUARDRAIL_LINES, type AutopilotReasonCode, type GuardrailCode } from "./autopilot-reasons";
 import { autopilotPlanNames } from "./plan-features";
 import { db } from "@/db";
 import {
@@ -57,7 +65,7 @@ import { complainedAddresses } from "./offers";
 import { effectivePlan } from "./referral-rules";
 import { recentEmergency } from "./emergency-rules";
 import { injectionClearedRecently } from "./injection-clear-rules";
-import { markReconnectNeeded } from "./sync";
+import { isUnsentDraft, markReconnectNeeded } from "./sync";
 import { staleTiming, timingNote } from "./draft-timing";
 import { workspaceTimeZone } from "./snooze";
 import { unsentDraftMessage } from "./thread-sql";
@@ -82,9 +90,7 @@ export { knownCustomer };
  * sending.
  */
 export const AUTOPILOT_CATEGORIES = AUTO_DRAFT_CATEGORIES;
-export { EARN_THRESHOLD, GRACE_MINUTES };
-export const MIN_CONFIDENCE_PCT = 85;
-export const DAILY_AUTOPILOT_CAP = 20;
+export { DAILY_AUTOPILOT_CAP, EARN_THRESHOLD, GRACE_MINUTES, MIN_CONFIDENCE_PCT };
 
 type Category = (typeof AUTOPILOT_CATEGORIES)[number];
 export function isAutopilotCategory(c: unknown): c is Category {
@@ -189,56 +195,86 @@ export type GuardrailInput = {
   firstReply?: boolean;
   /** Check 20 P4: the newest email in the conversation is an automatic reply (or a bounce). */
   autoReply?: boolean;
+  /**
+   * Check 20 P3: the draft or the customer's newest email looks Spanish or Portuguese. Every
+   * code check here reads English only, so it waits.
+   */
+  otherLanguage?: boolean;
+  /**
+   * Check 20 P8: the customer's newest email has someone on To or Cc who was never on this
+   * conversation before (a husband, a property manager, an adjuster, a lawyer). The draft
+   * only answers the customer, so the owner looks first.
+   */
+  newPersonCopied?: boolean;
 };
 
-/** Layer 3. Every reason this email must wait for the owner; empty = may go. */
-export function guardrailReasons(g: GuardrailInput): string[] {
-  const out: string[] = [];
-  if (!isAutopilotCategory(g.category))
-    out.push("Complaints and other emails always wait for you.");
-  if (g.needsOwner) out.push("Flagged as needing you.");
-  if (g.kind !== "reply") out.push("Follow-ups always wait for you.");
-  if ((g.confidencePct ?? 0) < MIN_CONFIDENCE_PCT) out.push("Not confident enough to send alone.");
-  if (g.flags.length) out.push("Has things to check before sending.");
-  if (g.category === "invoice_payment" && g.amountsInEmail.length)
-    out.push("Payments with an amount always wait for you.");
+/**
+ * Check 20 P8: anyone on the newest email's To or Cc, other than the shop's own Gmail
+ * addresses, who never appeared (as sender, To or Cc) on an earlier email of the thread.
+ * Pure; addresses compared lower-cased.
+ */
+export function newPersonCopied(
+  newest: { to: readonly string[]; cc: readonly string[] },
+  earlier: readonly { from: string | null; to: readonly string[]; cc: readonly string[] }[],
+  own: readonly string[],
+): boolean {
+  const norm = (a: string) => a.trim().toLowerCase();
+  const seen = new Set(own.map(norm));
+  for (const m of earlier) {
+    if (m.from) seen.add(norm(m.from));
+    for (const a of [...m.to, ...m.cc]) seen.add(norm(a));
+  }
+  return [...newest.to, ...newest.cc].some((a) => norm(a) !== "" && !seen.has(norm(a)));
+}
+
+/**
+ * Layer 3. Every reason this email must wait for the owner, as content-free codes (Check 20
+ * P7); empty = may go.
+ */
+export function guardrailCodes(g: GuardrailInput): GuardrailCode[] {
+  const out: GuardrailCode[] = [];
+  if (!isAutopilotCategory(g.category)) out.push("other_kind");
+  if (g.needsOwner) out.push("needs_owner");
+  if (g.kind !== "reply") out.push("followup");
+  if ((g.confidencePct ?? 0) < MIN_CONFIDENCE_PCT) out.push("low_confidence");
+  if (g.flags.length) out.push("flags");
+  if (g.category === "invoice_payment" && g.amountsInEmail.length) out.push("invoice_amount");
   // Any way of naming a price: "$450", "450 dollars", "1.2k", "twelve hundred" (review A1).
-  if (mentionsMoney(g.draftBody)) out.push("Mentions money, so it waits for you.");
-  if (hasUnfilledGap(g.draftBody)) out.push("Has gaps for you to fill in.");
-  if (!g.knownCustomer) out.push("You haven't written to this person before.");
-  if (g.untrusted) out.push("This email tried to give instructions to the assistant.");
-  if (g.municipal) out.push("Building departments always wait for you.");
-  if (g.crew) out.push("Emails to your crew always wait for you.");
-  if (g.acceptsQuote) out.push("Quote acceptances always wait for you.");
+  if (mentionsMoney(g.draftBody)) out.push("money");
+  if (hasUnfilledGap(g.draftBody)) out.push("gaps");
+  if (!g.knownCustomer) out.push("not_known");
+  if (g.untrusted) out.push("untrusted");
+  if (g.municipal) out.push("municipal");
+  if (g.crew) out.push("crew");
+  if (g.acceptsQuote) out.push("accepts_quote");
   // Thank-you notes (2026-10-16) are purpose notes too, so this line covers them.
-  if (g.purpose != null) out.push("Deposit, review and closing notes always wait for you.");
-  if (g.maybeAnswered) out.push("You might already have answered this in Gmail.");
-  if (g.redirected)
-    out.push("This reply goes to a different address than the sender's, so it waits for you.");
-  if (g.replyToUnchecked) out.push("We couldn't check where this reply goes, so it waits for you.");
-  if (g.complainedRecently)
-    out.push("This customer complained in the last 12 months, so it waits for you.");
-  if (g.paymentChange) out.push("Asks to pay a new account, so it waits for you.");
-  if (g.legalInEmail)
-    out.push("Something legal is mentioned in this conversation, so it waits for you.");
-  if (g.emailUnreadable) out.push("We can't read their email any more, so it waits for you.");
-  if (g.gasSmell) out.push("Someone smells gas. Call them.");
-  if (g.coAlarm) out.push("A carbon monoxide alarm went off. Call them.");
-  if (g.asksIfAi || claimsHuman(g.draftBody))
-    out.push("Asks if a person is answering, so it waits for you.");
-  if (g.injectionCleared)
-    out.push("You said an email here was normal after we flagged it, so it waits for you.");
-  if (g.electricalHazard) out.push("Sounds like an electrical fire risk. Call them.");
-  if (g.recentEmergency)
-    out.push(
-      "There was an emergency on this conversation in the last 2 days, so it waits for you.",
-    );
-  if (g.ownerMoved) out.push("You chose this kind yourself, so it waits for you.");
-  if (g.leadChannel) out.push("Lead-site and voicemail emails always wait for you.");
-  if (g.textAddress) out.push("That address may turn into a text message, so it waits for you.");
-  if (g.firstReply) out.push("First replies to new customers always wait for you.");
-  if (g.autoReply) out.push("That was an automatic reply, so it waits for you.");
+  if (g.purpose != null) out.push("purpose");
+  if (g.maybeAnswered) out.push("maybe_answered");
+  if (g.redirected) out.push("redirected");
+  if (g.replyToUnchecked) out.push("reply_to_unchecked");
+  if (g.complainedRecently) out.push("complained");
+  if (g.paymentChange) out.push("payment_change");
+  if (g.legalInEmail) out.push("legal");
+  if (g.emailUnreadable) out.push("unreadable");
+  if (g.gasSmell) out.push("gas");
+  if (g.coAlarm) out.push("co_alarm");
+  if (g.asksIfAi || claimsHuman(g.draftBody)) out.push("asks_if_ai");
+  if (g.injectionCleared) out.push("injection_cleared");
+  if (g.electricalHazard) out.push("electrical");
+  if (g.recentEmergency) out.push("recent_emergency");
+  if (g.ownerMoved) out.push("owner_moved");
+  if (g.leadChannel) out.push("lead_channel");
+  if (g.textAddress) out.push("text_address");
+  if (g.firstReply) out.push("first_reply");
+  if (g.autoReply) out.push("auto_reply");
+  if (g.otherLanguage || looksNonEnglish(g.draftBody)) out.push("other_language");
+  if (g.newPersonCopied) out.push("new_person");
   return out;
+}
+
+/** The same, in plain sentences. */
+export function guardrailReasons(g: GuardrailInput): string[] {
+  return guardrailCodes(g).map((c) => GUARDRAIL_LINES[c]);
 }
 
 /** Layer 2's evidence: replies in each category the owner sent exactly as drafted. */
@@ -268,6 +304,19 @@ export async function earnedCounts(workspaceId: string): Promise<Map<string, num
 async function modes(workspaceId: string) {
   const rows = await db().select().from(rules).where(eq(rules.workspaceId, workspaceId));
   return new Map(rows.map((r) => [r.category, r.mode]));
+}
+
+/**
+ * Check 20 P7: the kinds the owner has autopilot on for right now (empty while the account
+ * can't use it), so the queue card only explains a wait where autopilot is really on.
+ */
+export async function autopilotOnKinds(
+  workspace: AutopilotWorkspace & Pick<Workspace, "id">,
+  now: Date = new Date(),
+): Promise<Set<string>> {
+  if (accountLockReason(workspace, now)) return new Set();
+  const mode = await modes(workspace.id);
+  return new Set([...mode].filter(([, m]) => m === "autopilot").map(([c]) => c));
 }
 
 export type AutopilotState = {
@@ -358,9 +407,18 @@ async function loadForAutopilot(draftId: string) {
   return row;
 }
 
-async function sentByAutopilotToday(workspaceId: string, now: Date) {
+/**
+ * The daily cap's count: countdowns started (held ones included) in the last 24 hours, not
+ * sends and not the owner's calendar day — a rolling window can't let 20 go just before
+ * midnight and 20 more just after.
+ */
+async function countdownsStartedLast24h(
+  q: Pick<ReturnType<typeof db>, "select">,
+  workspaceId: string,
+  now: Date,
+) {
   const since = new Date(now.getTime() - 86_400_000);
-  const [row] = await db()
+  const [row] = await q
     .select({ n: count() })
     .from(activityLog)
     .where(
@@ -385,16 +443,34 @@ export async function customerComplainedRecently(
   return (await complainedAddresses(workspaceId, now)).has(address.trim().toLowerCase());
 }
 
-/** Every reason this draft can't go on its own right now (all three layers + the daily cap). */
-async function blockers(row: NonNullable<Awaited<ReturnType<typeof loadForAutopilot>>>, now: Date) {
+/** A reason autopilot won't send: a content-free code (stored, logged) and its sentence. */
+export type AutopilotReason = { code: AutopilotReasonCode; line: string };
+const reason = (code: AutopilotReasonCode, line?: string): AutopilotReason => ({
+  code,
+  line: line ?? (code in GUARDRAIL_LINES ? GUARDRAIL_LINES[code as GuardrailCode] : ""),
+});
+
+/**
+ * Every reason this draft can't go on its own right now (all three layers). `switchedOn`
+ * says whether the owner has autopilot on for this kind (and the account allows it).
+ */
+async function blockers(
+  row: NonNullable<Awaited<ReturnType<typeof loadForAutopilot>>>,
+  now: Date,
+): Promise<{ switchedOn: boolean; reasons: AutopilotReason[] }> {
   const { draft, thread, mailbox, workspace } = row;
   const locked = accountLockReason(workspace, now);
-  if (locked) return [locked];
+  if (locked) return { switchedOn: false, reasons: [reason("account_locked", locked)] };
+  const mode = (await modes(workspace.id)).get(thread.category ?? "");
+  if (mode !== "autopilot")
+    return {
+      switchedOn: false,
+      reasons: [reason("autopilot_off", "Autopilot is off for this kind of email.")],
+    };
   // The plan covers fewer Gmail addresses and this one is paused (2026-10-16): nothing from it
   // goes on its own (sendDraft refuses it too).
-  if (mailbox.planPausedAt) return [MAILBOX_PAUSED_LINE];
-  const mode = (await modes(workspace.id)).get(thread.category ?? "");
-  if (mode !== "autopilot") return ["Autopilot is off for this kind of email."];
+  if (mailbox.planPausedAt)
+    return { switchedOn: true, reasons: [reason("mailbox_paused", MAILBOX_PAUSED_LINE)] };
   const [customer] = await db()
     .select({
       address: messages.fromAddress,
@@ -403,11 +479,40 @@ async function blockers(row: NonNullable<Awaited<ReturnType<typeof loadForAutopi
       subject: messages.subject,
       bodyText: messages.bodyText,
       autoReply: messages.autoReply,
+      id: messages.id,
+      to: messages.toAddresses,
+      cc: messages.ccAddresses,
     })
     .from(messages)
     .where(and(eq(messages.threadId, thread.id), eq(messages.direction, "in")))
     .orderBy(desc(messages.sentAt))
     .limit(1);
+  // Check 20 P8: who was on the conversation before the customer's newest email.
+  const copiedSomeoneNew = customer
+    ? newPersonCopied(
+        customer,
+        await db()
+          .select({
+            from: messages.fromAddress,
+            to: messages.toAddresses,
+            cc: messages.ccAddresses,
+          })
+          .from(messages)
+          .where(
+            and(
+              eq(messages.threadId, thread.id),
+              lte(messages.sentAt, customer.sentAt),
+              sql`${messages.id} <> ${customer.id}`,
+            ),
+          ),
+        (
+          await db()
+            .select({ email: mailboxes.email })
+            .from(mailboxes)
+            .where(eq(mailboxes.workspaceId, workspace.id))
+        ).map((m) => m.email),
+      )
+    : false;
   const maybeAnswered = customer
     ? (
         await db()
@@ -440,7 +545,7 @@ async function blockers(row: NonNullable<Awaited<ReturnType<typeof loadForAutopi
   // can't be checked, so it waits.
   const fullBody = customer?.bodyText ?? null;
   const fullText = fullBody === null ? "" : `${customer?.subject ?? ""}\n${fullBody}`;
-  return guardrailReasons({
+  const codes = guardrailCodes({
     category: thread.category,
     needsOwner: thread.needsOwner || thread.needsOwnerManual,
     kind: draft.kind,
@@ -478,7 +583,12 @@ async function blockers(row: NonNullable<Awaited<ReturnType<typeof loadForAutopi
     // Any stored opening means the drafter was told it's a first contact (even "not_first").
     firstReply: draft.opening != null,
     autoReply: customer?.autoReply === true,
+    // Check 20 P3: the newest part of their email (quoted text cut, as the sorter reads it).
+    otherLanguage:
+      fullBody !== null && looksNonEnglish(`${customer?.subject ?? ""}\n${prepareBody(fullBody)}`),
+    newPersonCopied: copiedSomeoneNew,
   });
+  return { switchedOn: true, reasons: codes.map((c) => reason(c)) };
 }
 
 /**
@@ -491,32 +601,99 @@ export async function considerAutopilot(
 ): Promise<Date | null> {
   const row = await loadForAutopilot(draftId);
   if (!row || row.draft.status !== "pending" || row.draft.autoSendAt) return null;
-  if ((await blockers(row, now)).length) return null;
-  if ((await sentByAutopilotToday(row.workspace.id, now)) >= DAILY_AUTOPILOT_CAP) return null;
+  const { switchedOn, reasons } = await blockers(row, now);
+  if (reasons.length) {
+    // Check 20 P7: the owner switched this kind on, so say why this one waits.
+    if (switchedOn)
+      await recordSkip(
+        row,
+        reasons.map((r) => r.code),
+      );
+    return null;
+  }
 
+  // Check 20 P13: the cap check, the countdown and its autopilot_scheduled row (what the cap
+  // counts) happen in one transaction under a per-workspace lock, so two inboxes drafting at
+  // once can't both read 19 and both start one. A draft that is no longer pending (or already
+  // counting down) writes no row, so it takes no slot.
   const at = new Date(now.getTime() + GRACE_MINUTES * 60_000);
-  const [set] = await db()
-    .update(drafts)
-    .set({ autoSendAt: at })
-    .where(and(eq(drafts.id, draftId), eq(drafts.status, "pending")))
-    .returning({ id: drafts.id });
-  if (!set) return null;
-  await db()
-    .insert(activityLog)
-    .values({
+  const started = await db().transaction(async (tx) => {
+    await tx.execute(
+      sql`select pg_advisory_xact_lock(hashtext(${`autopilot-cap:${row.workspace.id}`}))`,
+    );
+    if ((await countdownsStartedLast24h(tx, row.workspace.id, now)) >= DAILY_AUTOPILOT_CAP)
+      return "cap" as const;
+    const [set] = await tx
+      .update(drafts)
+      .set({ autoSendAt: at, autopilotSkip: null })
+      .where(and(eq(drafts.id, draftId), eq(drafts.status, "pending"), isNull(drafts.autoSendAt)))
+      .returning({ id: drafts.id });
+    if (!set) return "gone" as const;
+    await tx.insert(activityLog).values({
       workspaceId: row.workspace.id,
       actor: "squared_away",
       action: "autopilot_scheduled",
       threadId: row.thread.id,
       detail: { draftId, sendAt: at.toISOString() },
     });
-  return at;
+    return "started" as const;
+  });
+  if (started === "cap") await recordSkip(row, ["daily_cap"]);
+  return started === "started" ? at : null;
+}
+
+/**
+ * Check 20 P7: a reply in a switched-on kind that won't go on its own — the codes go on the
+ * draft (the queue card says why) and in Activity. Codes only, never email text.
+ */
+async function recordSkip(
+  row: NonNullable<Awaited<ReturnType<typeof loadForAutopilot>>>,
+  codes: AutopilotReasonCode[],
+) {
+  const [set] = await db()
+    .update(drafts)
+    .set({ autopilotSkip: codes })
+    .where(and(eq(drafts.id, row.draft.id), eq(drafts.status, "pending")))
+    .returning({ id: drafts.id });
+  if (!set) return;
+  await db()
+    .insert(activityLog)
+    .values({
+      workspaceId: row.workspace.id,
+      actor: "squared_away",
+      action: "autopilot_skipped",
+      threadId: row.thread.id,
+      detail: { draftId: row.draft.id, codes },
+    });
+}
+
+export const NEWER_MAIL_LINE = "There's newer mail in this conversation.";
+/** Check 25 P2: the conversation was archived, deleted or marked spam in Gmail. */
+export const LEFT_INBOX_LINE = "This conversation left your inbox in Gmail.";
+
+/**
+ * Check 20 P2: ids Gmail lists on the thread (oldest first) after the newest one we have
+ * stored, that we don't have: mail that hasn't synced yet. Drafts don't count (sync never
+ * stores them). Unknown ids before a stored one are older mail the 30-day backfill never read.
+ * If we hold none of them we can't tell, so every one counts. Pure; ids only.
+ */
+export function unsyncedMessageIds(
+  listed: readonly { id: string; labelIds: readonly string[] }[],
+  known: ReadonlySet<string>,
+): string[] {
+  const mail = listed.filter((m) => !isUnsentDraft(m.labelIds));
+  let last = -1;
+  mail.forEach((m, i) => {
+    if (known.has(m.id)) last = i;
+  });
+  return mail.slice(last + 1).map((m) => m.id);
 }
 
 export type AutopilotSendResult =
   | { status: "sent" }
   | { status: "not_due" }
-  | { status: "stood_down"; reasons: string[] }
+  /** `syncMailboxId`: Gmail has mail we haven't synced; the job asks for a sync (Check 20 P2). */
+  | { status: "stood_down"; reasons: string[]; syncMailboxId?: string }
   | { status: "gone" }
   | { status: "failed"; outcome: SendOutcome["status"] };
 
@@ -575,30 +752,41 @@ export async function runAutopilotSend(
     now,
     await workspaceTimeZone(row.workspace.id),
   );
-  const reasons = [
-    ...(await blockers(row, now)),
-    ...(newer.length ? ["There's newer mail in this conversation."] : []),
-    ...(timing ? [timingNote(timing)] : []),
+  const reasons: AutopilotReason[] = [
+    ...(await blockers(row, now)).reasons,
+    ...(newer.length ? [reason("newer_mail", NEWER_MAIL_LINE)] : []),
+    ...(timing ? [reason("stale_timing", timingNote(timing))] : []),
     // Check 25 P2: archived, deleted or marked spam in Gmail during the hold.
-    ...(row.thread.inInbox ? [] : ["This conversation left your inbox in Gmail."]),
+    ...(row.thread.inInbox ? [] : [reason("left_inbox", LEFT_INBOX_LINE)]),
   ];
   // Layer 1 already needs what the send gate needs. If they ever differ, stand down here rather
   // than let sendDraft refuse: a refusal throws, and the backstop would retry it forever.
   if (!reasons.length && !canSend(row.workspace, now)) {
-    reasons.push("Sending isn't switched on for this account.");
+    reasons.push(reason("cant_send", "Sending isn't switched on for this account."));
   }
   // The owner may be writing their own reply in Gmail right now: sync doesn't store drafts,
   // so only Gmail can say. Asked only when sending is otherwise allowed — a blocked account
   // or a lost mailbox gets no Google call (sendDraft refuses those before any).
+  // Check 20 P2: the same one call lists every message, so mail that landed after the last
+  // sync ("Actually, hold off") stops the send too, and a sync is asked for.
+  let unsynced = false;
   if (!reasons.length && canSend(row.workspace, now) && mailboxOn(row.mailbox)) {
     const writer = (opts.writerFor ?? defaultWriter)(row.mailbox);
     try {
       const own = row.draft.gmailDraftId ? await writer.getDraft(row.draft.gmailDraftId) : null;
       const ours = new Set([own?.messageId, row.draft.gmailMessageId].filter(Boolean));
-      const others = (await writer.threadDraftMessageIds(row.thread.gmailThreadId)).filter(
-        (id) => !ours.has(id),
-      );
-      if (others.length) reasons.push("You're writing a reply in Gmail.");
+      const listed = await writer.threadMessageLabels(row.thread.gmailThreadId);
+      const others = listed.filter((m) => isUnsentDraft(m.labelIds) && !ours.has(m.id));
+      if (others.length)
+        reasons.push(reason("writing_in_gmail", "You're writing a reply in Gmail."));
+      const stored = await db()
+        .select({ id: messages.gmailMessageId })
+        .from(messages)
+        .where(eq(messages.threadId, row.thread.id));
+      if (unsyncedMessageIds(listed, new Set(stored.map((s) => s.id))).length) {
+        unsynced = true;
+        reasons.push(reason("newer_mail", NEWER_MAIL_LINE));
+      }
     } catch (err) {
       await release();
       if (err instanceof MailboxAuthError) {
@@ -609,9 +797,11 @@ export async function runAutopilotSend(
     }
   }
   if (reasons.length) {
+    // Check 20 P7: the codes (content-free) go on the draft and in the log.
+    const codes = [...new Set(reasons.map((r) => r.code))];
     await db()
       .update(drafts)
-      .set({ autoSendAt: null, autoSendClaimedAt: null })
+      .set({ autoSendAt: null, autoSendClaimedAt: null, autopilotSkip: codes })
       .where(eq(drafts.id, draftId));
     await db()
       .insert(activityLog)
@@ -620,9 +810,12 @@ export async function runAutopilotSend(
         actor: "squared_away",
         action: "autopilot_stood_down",
         threadId: row.thread.id,
-        detail: { draftId, reasonCount: reasons.length },
+        detail: { draftId, reasonCount: reasons.length, codes },
       });
-    return { status: "stood_down", reasons };
+    const lines = reasons.map((r) => r.line);
+    return unsynced
+      ? { status: "stood_down", reasons: lines, syncMailboxId: row.mailbox.id }
+      : { status: "stood_down", reasons: lines };
   }
 
   let outcome;
