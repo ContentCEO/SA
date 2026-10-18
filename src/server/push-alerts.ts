@@ -6,7 +6,15 @@ import { isPushEndpoint } from "@/lib/push-endpoint";
 import { pushConfigured, sendPush, type PushResult, type PushSender } from "@/lib/web-push";
 import { jobsAllowed } from "./lifecycle";
 import { atRiskPushPart } from "./leads-at-risk-rules";
-import { freshLeads, inQuietHours, leadCounts, SMS } from "./sms-alerts";
+import {
+  arrivedBeforeToday,
+  freshLeads,
+  inQuietHours,
+  leadCounts,
+  secondsUntilQuiet,
+  SMS,
+} from "./sms-alerts";
+import { atLocalHour, usableTimeZone } from "./snooze-rules";
 
 /**
  * Plan #36: a phone notification when new quote requests or emails that need
@@ -39,11 +47,18 @@ export function pushSummaryText(c: {
   atRisk?: number;
   /** Check 19 P1: fresh quote requests with no card on the queue yet (no draft). */
   newQuotes?: number;
+  /** Check 19 P7: the oldest of those came in before the owner's midnight. */
+  waiting?: boolean;
   canSend?: boolean;
 }): string {
+  const q = c.newQuotes ?? 0;
   const parts = [
     c.atRisk ? atRiskPushPart(c.atRisk) : null,
-    c.newQuotes ? `${c.newQuotes} new quote request${c.newQuotes === 1 ? "" : "s"}` : null,
+    q
+      ? c.waiting
+        ? `${q} quote request${q === 1 ? " is" : "s are"} waiting on you`
+        : `${q} new quote request${q === 1 ? "" : "s"}`
+      : null,
     c.needsYou
       ? `${c.needsYou} email${c.needsYou === 1 ? "" : "s"} need${c.needsYou === 1 ? "s" : ""} you`
       : null,
@@ -63,16 +78,29 @@ export async function newQuotesWithoutCard(
   workspaceId: string,
   onQueue: ReadonlySet<string>,
   now: Date,
-): Promise<string[]> {
+  exclude: ReadonlySet<string> = new Set(),
+): Promise<{ count: number; waiting: boolean }> {
   const [p] = await db()
-    .select({ cursor: businessProfiles.pushAlertCursor })
+    .select({ cursor: businessProfiles.pushAlertCursor, timeZone: businessProfiles.timeZone })
     .from(businessProfiles)
     .where(eq(businessProfiles.workspaceId, workspaceId));
   const from = new Date((p?.cursor ?? now).getTime() - 24 * 60 * 60 * 1000);
-  const fresh = await freshLeads(workspaceId, from, now);
-  return fresh
-    .filter((t) => !t.needsOwner && t.category === "quote_request" && !onQueue.has(t.threadId))
-    .map((t) => t.threadId);
+  const fresh = (await freshLeads(workspaceId, from, now)).filter(
+    (t) =>
+      !t.needsOwner &&
+      t.category === "quote_request" &&
+      !onQueue.has(t.threadId) &&
+      !exclude.has(t.threadId),
+  );
+  return {
+    count: fresh.length,
+    // Check 19 P7: "waiting on you" when the oldest came in before the owner's midnight.
+    waiting: arrivedBeforeToday(
+      fresh.map((t) => t.lastMessageAt),
+      now,
+      p?.timeZone ?? "America/New_York",
+    ),
+  };
 }
 
 /**
@@ -223,6 +251,8 @@ export async function sendPushAlerts(
       if (inQuietHours(now, p?.timeZone ?? "America/New_York")) continue;
       const last = p?.pushLastSentAt ?? null;
       if (last && now.getTime() - last.getTime() < SMS.minGapMs) continue;
+      const tz = usableTimeZone(p?.timeZone);
+      // Check 19 P7: ten a local day, counted from the owner's midnight.
       const [today] = await db()
         .select({ n: count() })
         .from(activityLog)
@@ -230,7 +260,7 @@ export async function sendPushAlerts(
           and(
             eq(activityLog.workspaceId, w.id),
             eq(activityLog.action, "push_alert_sent"),
-            gte(activityLog.createdAt, new Date(now.getTime() - 24 * 60 * 60 * 1000)),
+            gte(activityLog.createdAt, atLocalHour(now, tz, 0, 0)),
           ),
         );
       if ((today?.n ?? 0) >= SMS.dailyCap) continue;
@@ -246,7 +276,8 @@ export async function sendPushAlerts(
       let delivered = 0;
       for (const endpoint of byWorkspace.get(w.id) ?? []) {
         try {
-          const r = await push(endpoint);
+          // Check 19 P8: the push service drops it rather than buzz after 9pm.
+          const r = await push(endpoint, { ttlSec: secondsUntilQuiet(now, tz) });
           await recordPushResult(w.id, endpoint, r, now);
           if (r === "sent") delivered++;
         } catch (err) {

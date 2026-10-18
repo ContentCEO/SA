@@ -710,6 +710,8 @@ export const businessProfiles = pgTable("business_profile", {
   /** sha256 of the 6-digit code + its expiry; cleared once used. */
   smsCodeHash: text("sms_code_hash"),
   smsCodeExpiresAt: timestamp("sms_code_expires_at", { withTimezone: true }),
+  /** Check 19 P9: wrong guesses at the current code; the fifth throws the code away. */
+  smsCodeTries: integer("sms_code_tries").notNull().default(0),
   smsAlertsEnabled: boolean("sms_alerts_enabled").notNull().default(false),
   /** Newest classification already covered by a text, and when the last text went out. */
   smsAlertCursor: timestamp("sms_alert_cursor", { withTimezone: true }),

@@ -16,6 +16,8 @@ import {
   setSmsAlerts,
   SMS,
   SmsError,
+  LAST_TEXT_OF_DAY,
+  secondsUntilQuiet,
   startPhoneVerification,
   textsStep,
 } from "@/server/sms-alerts";
@@ -170,6 +172,32 @@ describe("confirming the number", () => {
     );
   });
 
+  it("Check 19 P9: five wrong guesses throw the code away; a new code works", async () => {
+    await startPhoneVerification(workspaceId, "508-555-1234", { send, now: NOW });
+    const code = texts.at(-1)!.body.match(/\d{6}/)![0];
+    const wrong = code === "000000" ? "111111" : "000000";
+    for (let i = 0; i < 4; i++)
+      await expect(confirmPhone(workspaceId, wrong, NOW)).rejects.toMatchObject({
+        message: "That code didn't match, or it expired.",
+      });
+    await expect(confirmPhone(workspaceId, wrong, NOW)).rejects.toMatchObject({
+      code: "code",
+      message: "That code didn't match. Send a new one.",
+    });
+    await expect(confirmPhone(workspaceId, code, NOW)).rejects.toBeInstanceOf(SmsError);
+    let [p] = await database.select().from(businessProfiles);
+    expect(p!.smsAlertsEnabled).toBe(false);
+    expect(p!.smsCodeHash).toBeNull();
+
+    await startPhoneVerification(workspaceId, "508-555-1234", { send, now: NOW });
+    [p] = await database.select().from(businessProfiles);
+    expect(p!.smsCodeTries).toBe(0);
+    const fresh = texts.at(-1)!.body.match(/\d{6}/)![0];
+    await confirmPhone(workspaceId, fresh, NOW);
+    [p] = await database.select().from(businessProfiles);
+    expect(p!.smsAlertsEnabled).toBe(true);
+  });
+
   it("can't be switched on without a confirmed number", async () => {
     await expect(setSmsAlerts(workspaceId, true)).rejects.toBeInstanceOf(SmsError);
   });
@@ -254,6 +282,52 @@ describe("lead alerts", () => {
     expect((await sendLeadAlerts(later(600), { send })).sent).toBe(0);
   });
 
+  it("Check 19 P7: ten a local day — the tenth says so, the next morning starts fresh and says 'waiting'", async () => {
+    await verify();
+    for (let i = 0; i < SMS.dailyCap + 3; i++) {
+      await lead({ classifiedAt: later(1 + i * 11) });
+      await sendLeadAlerts(later(2 + i * 11), { send });
+    }
+    expect(texts).toHaveLength(SMS.dailyCap);
+    expect(texts.at(-1)!.body.endsWith(LAST_TEXT_OF_DAY)).toBe(true);
+    expect(texts.at(-2)!.body).not.toContain("last text");
+    // 7:05am Eastern the next day: under 24 hours since the first text, but a new local day.
+    const morning = new Date("2026-10-11T11:05:00Z");
+    expect((await sendLeadAlerts(morning, { send })).sent).toBe(1);
+    // The leads it counts came in yesterday afternoon: they are waiting, not new.
+    expect(texts.at(-1)!.body).toBe(
+      "Squared Away: 3 quote requests are waiting on you. Open: https://app.example/quotes",
+    );
+  });
+
+  it("Check 19 P7: the wording", () => {
+    expect(leadAlertBody({ quotes: 45, needsYou: 0 }, "u", { waiting: true })).toBe(
+      "Squared Away: 45 quote requests are waiting on you. Open: u",
+    );
+    expect(leadAlertBody({ quotes: 0, needsYou: 1 }, "u", { waiting: true })).toBe(
+      "Squared Away: 1 email is waiting on you. Open: u",
+    );
+    expect(leadAlertBody({ quotes: 1, needsYou: 0 }, "u", { lastToday: true })).toBe(
+      "Squared Away: 1 new quote request needs you. Open: u That's today's last text; the rest wait in the app.",
+    );
+  });
+
+  it("Check 19 P8: a text may wait for delivery only until the owner's 9pm", async () => {
+    await verify();
+    await lead({ classifiedAt: later(1) });
+    const seen: OutgoingSms[] = [];
+    await sendLeadAlerts(later(2), {
+      send: async (t) => {
+        seen.push(t);
+        return { status: "sent" as const, sid: "SMv" };
+      },
+    });
+    // 2:02pm Eastern: 6h58m until 9pm, so the 4-hour most.
+    expect(seen[0]!.validitySec).toBe(14_400);
+    expect(secondsUntilQuiet(new Date("2026-10-11T00:55:00Z"), "America/New_York")).toBe(300);
+    expect(secondsUntilQuiet(new Date("2026-10-11T00:59:30Z"), "America/New_York")).toBe(60);
+  });
+
   it("loses nothing while texting isn't set up", async () => {
     await verify();
     await lead({ classifiedAt: later(1) });
@@ -281,6 +355,13 @@ describe("Check 19 P6: texts ask Twilio to report delivery", () => {
         String((fetchMock.mock.calls[0] as unknown as [string, RequestInit])[1].body),
       );
       expect(form.get("StatusCallback")).toBe("https://app.example/api/twilio/status");
+      // Check 19 P8: no validity asked → none sent; asked → ValidityPeriod (service only).
+      expect(form.get("ValidityPeriod")).toBeNull();
+      await sendSms({ to: "+15085551234", body: "x", validitySec: 300 });
+      const second = new URLSearchParams(
+        String((fetchMock.mock.calls[1] as unknown as [string, RequestInit])[1].body),
+      );
+      expect(second.get("ValidityPeriod")).toBe("300");
     } finally {
       vi.unstubAllGlobals();
       delete process.env.TWILIO_ACCOUNT_SID;

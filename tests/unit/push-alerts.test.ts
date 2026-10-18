@@ -112,6 +112,13 @@ describe("#36 phone notifications", () => {
     expect(pushSummaryText({ replies: 0, needsYou: 0 })).toBe("Your queue is up to date.");
   });
 
+  it("Check 19 P7: quote requests from before midnight are 'waiting on you'", () => {
+    expect(pushSummaryText({ replies: 0, needsYou: 0, newQuotes: 45, waiting: true })).toBe(
+      "45 quote requests are waiting on you",
+    );
+    expect(pushSummaryText({ replies: 0, needsYou: 0, newQuotes: 1 })).toBe("1 new quote request");
+  });
+
   it("leads at risk come first, as a count (plan #34)", () => {
     expect(pushSummaryText({ replies: 1, needsYou: 0, atRisk: 2, canSend: true })).toBe(
       "2 quote requests have waited over 4 hours · 1 reply ready to send",
@@ -328,6 +335,39 @@ describe("#36 phone notifications", () => {
         vi.fn(async () => new Response(null, { status: 403 })),
       );
       expect(await sendPush(FCM)).toBe("failed");
+    });
+
+    it("Check 19 P8: the push may wait only until the owner's 9pm", async () => {
+      const k = vapidKeys();
+      process.env.VAPID_PUBLIC_KEY = k.pub;
+      process.env.VAPID_PRIVATE_KEY = k.priv;
+      const fetchMock = vi.fn(async () => new Response(null, { status: 201 }));
+      vi.stubGlobal("fetch", fetchMock);
+      const ttl = (i: number) =>
+        (fetchMock.mock.calls[i] as unknown as [string, RequestInit])[1].headers as Record<
+          string,
+          string
+        >;
+      await lead(new Date(NOON_NY.getTime() - 60_000));
+      expect(await sendPushAlerts(NOON_NY)).toEqual({ sent: 1 });
+      expect(ttl(0).TTL).toBe("14400");
+      const fiveToNine = new Date("2026-10-11T00:55:00Z"); // 8:55pm Eastern
+      await lead(new Date(fiveToNine.getTime() - 60_000));
+      expect(await sendPushAlerts(fiveToNine)).toEqual({ sent: 1 });
+      expect(ttl(1).TTL).toBe("300");
+    });
+
+    it("Check 19 P7: ten buzzes a local day, counted from the owner's midnight", async () => {
+      const step = 11 * 60_000;
+      let t = NOON_NY.getTime();
+      for (let i = 0; i < 12; i++, t += step) {
+        await lead(new Date(t - 60_000));
+        await sendPushAlerts(new Date(t), { push });
+      }
+      expect(pushed).toHaveLength(10);
+      // 7:05am Eastern the next day: under 24 hours since the first, but a new day.
+      const morning = new Date("2026-10-11T11:05:00Z");
+      expect(await sendPushAlerts(morning, { push })).toEqual({ sent: 1 });
     });
 
     it("refuses an endpoint that isn't a push service", async () => {

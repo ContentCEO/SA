@@ -61,10 +61,13 @@ export async function GET() {
   // Check 19 P1: a fresh quote request with no reply drafted yet isn't on the queue: name it
   // (as a count) and, when nothing else has a card to open, send the tap to Quotes. A lead
   // already counted as at risk isn't counted twice.
-  const atRiskIds = new Set(atRisk.map((l) => l.threadId));
-  const newQuotes = (await newQuotesWithoutCard(workspace.id, onQueue, now)).filter(
-    (id) => !atRiskIds.has(id),
-  ).length;
+  const quotes = await newQuotesWithoutCard(
+    workspace.id,
+    onQueue,
+    now,
+    new Set(atRisk.map((l) => l.threadId)),
+  );
+  const newQuotes = quotes.count;
   const leadUrl = notificationUrl({
     atRisk: atRisk.map((l) => l.threadId),
     needsYou: headerPicks(q.needsYou.map(toNeedsYouItem)).map((i) => i.threadId),
@@ -87,6 +90,7 @@ export async function GET() {
             needsYou: counts.needsYou,
             atRisk: atRisk.length,
             newQuotes,
+            waiting: quotes.waiting,
             canSend: canSend(workspace, now),
           }),
       url,

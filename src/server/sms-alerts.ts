@@ -6,7 +6,7 @@ import { activityLog, businessProfiles, mailboxes, threads, workspaces } from "@
 import { appUrl } from "@/lib/app-url";
 import { sendSms, TwilioError, type SmsSender } from "@/lib/sms";
 import { queueCardIds, queueMembership } from "./drafts";
-import { localParts } from "./snooze-rules";
+import { atLocalHour, localParts, usableTimeZone } from "./snooze-rules";
 import { jobsAllowed } from "./lifecycle";
 import { hitLimit } from "./rate-limit";
 import { recordSmsDelivery } from "./sms-deliveries";
@@ -19,6 +19,8 @@ import { recordSmsDelivery } from "./sms-deliveries";
  */
 export const SMS = {
   codeTtlMs: 10 * 60 * 1000,
+  /** Check 19 P9: wrong guesses one code allows before it is thrown away. */
+  codeMaxTries: 5,
   minGapMs: 10 * 60 * 1000,
   dailyCap: 10,
   /** Local hours when texts may go out: 7am up to 9pm. */
@@ -73,15 +75,52 @@ export function inQuietHours(now: Date, timeZone: string): boolean {
   return hour >= SMS.quietStartHour || hour < SMS.quietEndHour;
 }
 
-export function leadAlertBody(c: { quotes: number; needsYou: number }, url: string): string {
+/** Check 19 P7: the sentence added to the day's tenth (last) text. */
+export const LAST_TEXT_OF_DAY = " That's today's last text; the rest wait in the app.";
+
+/**
+ * The text: counts and a link. Check 19 P7: when the oldest lead counted came in before the
+ * owner's local midnight (held overnight, or past yesterday's cap) it says "waiting on you"
+ * instead of "new"; the day's last text says so.
+ */
+export function leadAlertBody(
+  c: { quotes: number; needsYou: number },
+  url: string,
+  o: { waiting?: boolean; lastToday?: boolean } = {},
+): string {
   const total = c.quotes + c.needsYou;
+  const fresh = o.waiting ? "" : "new ";
   const what =
     c.needsYou === 0
-      ? `${c.quotes} new quote request${c.quotes === 1 ? "" : "s"}`
+      ? `${c.quotes} ${fresh}quote request${c.quotes === 1 ? "" : "s"}`
       : c.quotes === 0
-        ? `${c.needsYou} new email${c.needsYou === 1 ? "" : "s"}`
-        : `${total} new emails (${c.quotes} quote request${c.quotes === 1 ? "" : "s"})`;
-  return `Squared Away: ${what} need${total === 1 ? "s" : ""} you. Open: ${url}`;
+        ? `${c.needsYou} ${fresh}email${c.needsYou === 1 ? "" : "s"}`
+        : `${total} ${fresh}emails (${c.quotes} quote request${c.quotes === 1 ? "" : "s"})`;
+  const verb = o.waiting
+    ? `${total === 1 ? "is" : "are"} waiting on you`
+    : `need${total === 1 ? "s" : ""} you`;
+  return `Squared Away: ${what} ${verb}. Open: ${url}${o.lastToday ? LAST_TEXT_OF_DAY : ""}`;
+}
+
+/** Check 19 P7: true when the oldest of these arrived before the owner's local midnight. */
+export function arrivedBeforeToday(
+  arrivals: (Date | null | undefined)[],
+  now: Date,
+  timeZone: string,
+): boolean {
+  const midnight = atLocalHour(now, usableTimeZone(timeZone), 0, 0);
+  return arrivals.some((a) => !!a && a < midnight);
+}
+
+/**
+ * Check 19 P8: how long a push or text may wait to be delivered — until the owner's 9pm (when
+ * quiet hours start), at most 4 hours, never under a minute. Nothing sent before 9pm buzzes
+ * after it.
+ */
+export function secondsUntilQuiet(now: Date, timeZone: string, max = 4 * 60 * 60): number {
+  const nine = atLocalHour(now, usableTimeZone(timeZone), 0, SMS.quietStartHour);
+  const left = Math.floor((nine.getTime() - now.getTime()) / 1000);
+  return Math.max(60, Math.min(max, left > 0 ? left : max));
 }
 
 export class SmsError extends Error {
@@ -123,6 +162,7 @@ export async function startPhoneVerification(
     smsAlertsEnabled: false,
     smsCodeHash: hash(code),
     smsCodeExpiresAt: new Date(now.getTime() + SMS.codeTtlMs),
+    smsCodeTries: 0,
     smsStoppedReason: null,
   });
   // Check 19 P4: no code went out → nothing that says one did (no hash, no expiry, no number).
@@ -165,21 +205,56 @@ export async function confirmPhone(workspaceId: string, code: string, now: Date 
     .where(eq(businessProfiles.workspaceId, workspaceId));
   const typed = Buffer.from(hash(code.replace(/\D/g, "")));
   const stored = Buffer.from(p?.smsCodeHash ?? "");
-  const ok =
-    !!p?.smsCodeExpiresAt &&
+  const live =
+    !!p?.smsCodeHash &&
+    !!p.smsCodeExpiresAt &&
     p.smsCodeExpiresAt > now &&
-    typed.length === stored.length &&
-    timingSafeEqual(typed, stored);
-  if (!ok) throw new SmsError("code", "That code didn't match, or it expired.");
-  await upsertProfile(workspaceId, {
-    alertPhoneVerifiedAt: now,
-    smsAlertsEnabled: true,
-    smsCodeHash: null,
-    smsCodeExpiresAt: null,
-    smsStoppedReason: null,
-    // Start from now: no texts about mail that arrived before they signed up.
-    smsAlertCursor: now,
-  });
+    p.smsCodeTries < SMS.codeMaxTries;
+  const match = typed.length === stored.length && timingSafeEqual(typed, stored);
+  if (!live) throw new SmsError("code", "That code didn't match, or it expired.");
+  // Only the code that was read, and only while it has guesses left (two taps at once can't
+  // both get past the fifth wrong one).
+  const thisCode = and(
+    eq(businessProfiles.workspaceId, workspaceId),
+    eq(businessProfiles.smsCodeHash, p.smsCodeHash!),
+    lt(businessProfiles.smsCodeTries, SMS.codeMaxTries),
+  );
+  if (!match) {
+    // Check 19 P9: the fifth wrong guess throws the code away.
+    const [r] = await db()
+      .update(businessProfiles)
+      .set({ smsCodeTries: sql`${businessProfiles.smsCodeTries} + 1` })
+      .where(thisCode)
+      .returning({ tries: businessProfiles.smsCodeTries });
+    if (r && r.tries >= SMS.codeMaxTries) {
+      await db()
+        .update(businessProfiles)
+        .set({ smsCodeHash: null, smsCodeExpiresAt: null })
+        .where(
+          and(
+            eq(businessProfiles.workspaceId, workspaceId),
+            eq(businessProfiles.smsCodeHash, p.smsCodeHash!),
+          ),
+        );
+      throw new SmsError("code", "That code didn't match. Send a new one.");
+    }
+    throw new SmsError("code", "That code didn't match, or it expired.");
+  }
+  const used = await db()
+    .update(businessProfiles)
+    .set({
+      alertPhoneVerifiedAt: now,
+      smsAlertsEnabled: true,
+      smsCodeHash: null,
+      smsCodeExpiresAt: null,
+      smsCodeTries: 0,
+      smsStoppedReason: null,
+      // Start from now: no texts about mail that arrived before they signed up.
+      smsAlertCursor: now,
+    })
+    .where(thisCode)
+    .returning({ id: businessProfiles.workspaceId });
+  if (!used.length) throw new SmsError("code", "That code didn't match. Send a new one.");
   await db()
     .insert(activityLog)
     .values({
@@ -229,6 +304,7 @@ export async function freshLeads(workspaceId: string, cursor: Date | null, now: 
   return db()
     .select({
       threadId: threads.id,
+      lastMessageAt: threads.lastMessageAt,
       category: threads.category,
       needsOwner: threads.needsOwner,
       classifiedAt: threads.classifiedAt,
@@ -303,7 +379,8 @@ export async function sendLeadAlerts(
     if (inQuietHours(now, p.timeZone)) continue;
     if (p.smsLastSentAt && now.getTime() - p.smsLastSentAt.getTime() < SMS.minGapMs) continue;
 
-    const dayStart = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+    // Check 19 P7: ten a local day, counted from the owner's midnight (as the at-risk pushes).
+    const dayStart = atLocalHour(now, usableTimeZone(p.timeZone), 0, 0);
     const [today] = await db()
       .select({ n: count() })
       .from(activityLog)
@@ -341,7 +418,20 @@ export async function sendLeadAlerts(
       .returning({ id: businessProfiles.workspaceId });
     if (!claimed.length) continue;
 
-    const r = await send({ to: p.alertPhone!, body: leadAlertBody(counts, url) });
+    const body = leadAlertBody(counts, url, {
+      waiting: arrivedBeforeToday(
+        fresh.map((f) => f.lastMessageAt),
+        now,
+        p.timeZone,
+      ),
+      lastToday: (today?.n ?? 0) + 1 >= SMS.dailyCap,
+    });
+    const r = await send({
+      to: p.alertPhone!,
+      body,
+      // Check 19 P8: Twilio drops it rather than deliver it after 9pm.
+      validitySec: secondsUntilQuiet(now, p.timeZone),
+    });
     if (r === "not_configured") {
       // Give the slot back so nothing is lost once texting is set up.
       await db()
