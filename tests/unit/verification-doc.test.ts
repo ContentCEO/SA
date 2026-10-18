@@ -228,7 +228,8 @@ describe("the demo video script matches the end-to-end journey", () => {
     // True of the code: the button's label, and autopilot never sends a purpose note.
     const buttons = readFileSync("src/components/app/offer-buttons.tsx", "utf8");
     expect(buttons).toContain("Want to ask if they went another way?");
-    const autopilot = readFileSync("src/server/autopilot.ts", "utf8");
+    // Check 20 P7: autopilot's sentences live next to their codes.
+    const autopilot = readFileSync("src/server/autopilot-reasons.ts", "utf8");
     expect(autopilot).toContain("Deposit, review and closing notes always wait for you.");
   });
 
