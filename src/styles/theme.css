@@ -98,6 +98,12 @@
   --font-weight-medium: 600;
   --font-weight-semibold: 700;
   --font-weight-bold: 800;
+  /* Check 7 P2: the weights above need the range face (layout.tsx's interTightRange); the
+     normal faces only draw 400 / 600 / 900. Utilities inline var(--font-inter-tight) (@theme
+     inline), so that variable is pointed at the range face too. */
+  --font-sans: var(--font-inter-tight-range), ui-sans-serif, system-ui, sans-serif;
+  --font-heading: var(--font-inter-tight-range), ui-sans-serif, system-ui, sans-serif;
+  --font-inter-tight: var(--font-inter-tight-range);
   font-size: 112.5%;
   font-weight: 500;
 }

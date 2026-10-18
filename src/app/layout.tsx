@@ -12,10 +12,12 @@ import { appUrl } from "@/lib/app-url";
  * unreachable. The files are byte-for-byte the latin ones that loader served, declared the way
  * Google's CSS declared them, so pages render exactly as before. Inter Tight is one variable
  * file, but Google declared it as three single-weight faces (400, 600, 900): the browser renders
- * the nearest of those (500 → 400, 700 and 800 → 900). A "100 900" range would honour every
- * weight and visibly change bold text and sunlight mode — a design change, not a build fix.
- * next/font values must be literals, so the latin unicode-range is written out twice. The CSS
- * family names are the variable names below (Turbopack ignores a font-family declaration).
+ * the nearest of those (500 → 400, 700 and 800 → 900). Normal mode keeps exactly that look.
+ * Sunlight mode (Check 7 P2) asks for 500 / 600 / 700 / 800, which those three faces can't draw
+ * (body text stayed 400 and every semibold label jumped to 900), so a second family from the
+ * same file declares the whole "100 900" range; only theme.css's sunlight block uses it.
+ * next/font values must be literals, so the latin unicode-range is written out each time. The
+ * CSS family names are the variable names below (Turbopack ignores a font-family declaration).
  */
 const interTight = localFont({
   src: [
@@ -24,6 +26,21 @@ const interTight = localFont({
     { path: "./_fonts/InterTight-latin.woff2", weight: "900", style: "normal" },
   ],
   variable: "--font-inter-tight",
+  display: "swap",
+  adjustFontFallback: "Arial",
+  declarations: [
+    {
+      prop: "unicode-range",
+      value:
+        "U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD",
+    },
+  ],
+});
+
+/** Sunlight mode only (theme.css): the same variable file, every weight from 100 to 900. */
+const interTightRange = localFont({
+  src: [{ path: "./_fonts/InterTight-latin.woff2", weight: "100 900", style: "normal" }],
+  variable: "--font-inter-tight-range",
   display: "swap",
   adjustFontFallback: "Arial",
   declarations: [
@@ -75,7 +92,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html
       lang="en"
-      className={`${interTight.variable} ${instrumentSerif.variable} h-full antialiased`}
+      className={`${interTight.variable} ${interTightRange.variable} ${instrumentSerif.variable} h-full antialiased`}
     >
       <body className="flex min-h-full flex-col">
         {/* Check 32 P12: the crash page's help line reads SUPPORT_EMAIL from here. */}

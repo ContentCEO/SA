@@ -215,3 +215,40 @@ test("money owed at 375px: every control is a 44px target and nothing spills, in
     }
   }
 });
+
+/** Check 7 P2: sunlight's heavier weights really render (they need the 100–900 face). */
+test("sunlight: 500 is heavier than 400, and semibold is lighter than black", async ({
+  page,
+  context,
+}, info) => {
+  test.skip(info.project.name !== "mobile", "phone check");
+  const owner = await seedOwner({ mailbox: true, backfilled: true });
+  await seedQueue(owner.mailboxId!);
+  await signInAs(context, owner);
+  await context.addCookies([
+    { name: "sa_contrast", value: "high", domain: "localhost", path: "/" },
+  ]);
+  await page.goto("/queue");
+  await expect(page.locator('[data-contrast="high"]')).toHaveCount(1);
+  await page.evaluate(() => document.fonts.ready);
+  const widths = await page.evaluate(async () => {
+    const app = document.getElementById("sa-app")!;
+    const span = (style: string, cls = "") => {
+      const s = document.createElement("span");
+      s.textContent = "Question · Needs you · Waiting on you";
+      s.setAttribute("style", `position:absolute;white-space:nowrap;font-size:40px;${style}`);
+      s.className = cls;
+      app.append(s);
+      return s;
+    };
+    const w400 = span("font-weight:400");
+    const w500 = span("font-weight:500");
+    const semibold = span("", "font-semibold");
+    const black = span("", "font-black");
+    await document.fonts.ready;
+    const w = (el: HTMLElement) => el.getBoundingClientRect().width;
+    return { w400: w(w400), w500: w(w500), semibold: w(semibold), black: w(black) };
+  });
+  expect(widths.w500).toBeGreaterThan(widths.w400 + 1);
+  expect(widths.black).toBeGreaterThan(widths.semibold + 1);
+});
