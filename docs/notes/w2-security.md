@@ -31,3 +31,14 @@ For the integrator: what `CLAUDE.md`, `docs/LAUNCH.md` and the legal drafts shou
   matches; the server is the gate. Google can't be made to ask for a password again (its OIDC
   has no `prompt=login`), so a browser still signed in to Google goes straight through: the
   check proves the Google account is at hand, not a password.
+- **No row values in query errors (Check 26 P5):** `src/db/safe-errors.ts` wraps Drizzle's
+  `PgPreparedQuery.prototype.queryWithCache` once (installed when `@/db` loads; every query,
+  postgres.js and PGlite, inside transactions too) and rethrows any DrizzleQueryError as
+  `SafeQueryError`: message = "Failed query: <first SQL line>" plus " (code 23505)" when the
+  driver gave a code; `.code` kept (so `isUniqueViolation` still works); params, cause and the
+  original stack dropped. Inngest middleware `ScrubErrors` (`src/jobs/client.ts`,
+  `wrapFunctionHandler` + `wrapStepHandler`) runs `scrubText` (now exported from
+  `src/lib/sentry.ts`) over the error's message, stack and causes and deletes a `params` field,
+  in place, so NonRetriableError / RetryAfterError still behave. The waitlist and Growth catches
+  stay. The unit-test date guard now fails with code `SA_DATE_BOUND_INTO_SQL` (its message is a
+  dropped cause now).

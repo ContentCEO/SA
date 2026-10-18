@@ -1,6 +1,7 @@
 import * as Sentry from "@sentry/nextjs";
 import { eventType, Inngest, Middleware, staticSchema } from "inngest";
 import { countJobRun } from "@/server/job-runs";
+import { scrubText } from "@/lib/sentry";
 
 /**
  * A job that has used up its retries goes to Sentry (scrubbed; a no-op without
@@ -12,6 +13,44 @@ class ReportFinalFailures extends Middleware.BaseMiddleware {
     if (!isFinalAttempt) return;
     Sentry.captureException(error, { tags: { job: fn.id() } });
     await Sentry.flush(2000); // serverless: send before the function freezes
+  }
+}
+
+/**
+ * Check 26 P5: Inngest keeps a failed step's or run's error message (and stack) in its run
+ * history. Before it's sent, scrub them the way Sentry's events are (`scrubText`: a failed
+ * query's "params: …" dropped, email addresses masked). The error object itself is kept, so
+ * NonRetriableError / RetryAfterError still work.
+ */
+export function scrubJobError(err: unknown): unknown {
+  const seen = new Set<unknown>();
+  let e: unknown = err;
+  while (e instanceof Error && !seen.has(e)) {
+    seen.add(e);
+    e.message = scrubText(e.message) ?? "";
+    if (e.stack) e.stack = scrubText(e.stack);
+    // DrizzleQueryError keeps its bound values on the error too.
+    if ("params" in e) delete (e as { params?: unknown }).params;
+    e = e.cause;
+  }
+  return err;
+}
+
+class ScrubErrors extends Middleware.BaseMiddleware {
+  readonly id = "scrub-errors";
+  async wrapFunctionHandler({ next }: Middleware.WrapFunctionHandlerArgs) {
+    try {
+      return await next();
+    } catch (err) {
+      throw scrubJobError(err);
+    }
+  }
+  async wrapStepHandler({ next }: Middleware.WrapStepHandlerArgs) {
+    try {
+      return await next();
+    } catch (err) {
+      throw scrubJobError(err);
+    }
   }
 }
 
@@ -34,7 +73,7 @@ class CountJobRuns extends Middleware.BaseMiddleware {
 
 export const inngest = new Inngest({
   id: "squared-away",
-  middleware: [ReportFinalFailures, CountJobRuns],
+  middleware: [ScrubErrors, ReportFinalFailures, CountJobRuns],
 });
 
 /** A mailbox was connected or reconnected: run (or re-run) the 30-day backfill. */

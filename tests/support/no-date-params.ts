@@ -7,12 +7,19 @@ import type { Database } from "@/db";
  * without this a `${new Date()}` in raw SQL passes every unit test and fails live. Drizzle's
  * column encoders turn Dates into ISO strings first, so only raw-SQL Dates trip it.
  */
+/** The error code a Date bound into raw SQL fails with (in "Failed query: … (code …)"). */
+export const DATE_BOUND_CODE = "SA_DATE_BOUND_INTO_SQL";
+
 export function refuseDateParams(database: Database): void {
   const client = (database as unknown as { $client: PGlite }).$client;
   const check = (params: unknown) => {
     if (Array.isArray(params) && params.some((p) => p instanceof Date))
-      throw new TypeError(
-        "A Date was bound into SQL: postgres.js can't send one (use toISOString()::timestamptz)",
+      // The code survives Check 26 P5's SafeQueryError (which drops the cause's message).
+      throw Object.assign(
+        new TypeError(
+          "A Date was bound into SQL: postgres.js can't send one (use toISOString()::timestamptz)",
+        ),
+        { code: DATE_BOUND_CODE },
       );
   };
   const guard = <T extends Pick<PGlite, "query">>(target: T) => {
