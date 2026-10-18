@@ -1,17 +1,20 @@
+import { pricing } from "@/config/pricing";
+import { dayAdjective } from "@/lib/trial-words";
+
 /**
- * A still of the real Queue during the three-day trial, drawn in HTML (not a
- * screenshot) so it stays crisp and on-brand. Wording matches the app: the
- * StatusBanner clock and the card's sending-off note (sendingOffLabel /
- * sendingBlockedReason in src/server/lifecycle.ts). Decorative: screen readers
- * get one plain sentence instead.
+ * A still of the real Queue, drawn in HTML (not a screenshot) so it stays crisp and on-brand.
+ * Check 6 P4: it shows the main action, Send reply, laid out as the real draft card lays it out
+ * (Send reply across the card, Edit and Discard under it). The trial rule is said once, in the
+ * caption under the phone. Decorative: screen readers get one plain sentence instead.
  */
 export function QueuePreview() {
+  const trial = dayAdjective(pricing.evaluationDays);
   return (
     <figure className="relative mx-auto w-full max-w-sm">
       <figcaption className="sr-only">
-        A phone showing the Squared Away queue on day 1 of the three-day trial: a quote request from
-        Dana with a drafted reply, and a note that Squared Away won&apos;t send anything to a
-        customer during the three days.
+        An example of the Squared Away queue: a quote request from Dana with a drafted reply and a
+        Send reply button. During the {trial} trial, Squared Away won&apos;t send anything to a
+        customer.
       </figcaption>
       <div
         aria-hidden
@@ -23,14 +26,6 @@ export function QueuePreview() {
             <span className="sa-headline-heavy text-base">away.</span>
           </span>
           <span className="text-xs font-semibold">Queue · Inbox · Quotes · Money</span>
-        </div>
-
-        <div className="mb-3 flex flex-col rounded-xl border-2 border-charcoal px-3 py-2 text-sm">
-          <span className="font-black">Day 1 of 3 · 2 days left</span>
-          <span className="text-xs">
-            Squared Away is reading and drafting, but it won&apos;t send anything to a customer
-            during your three days. Your drafts are in your Gmail Drafts folder too.
-          </span>
         </div>
 
         <div className="flex flex-col gap-2 rounded-xl border bg-card p-3 text-sm">
@@ -46,11 +41,8 @@ export function QueuePreview() {
             <br />
             <span className="text-slate">Thanks, Mike</span>
           </div>
-          <div className="sa-inverted mt-1 flex flex-col justify-center rounded-lg px-3 py-2">
-            <span className="font-black">Send reply is off during your three days</span>
-            <span className="text-xs text-ash">
-              Read the drafts and see if they sound like you.
-            </span>
+          <div className="mt-1 flex h-10 items-center justify-center rounded-lg bg-charcoal font-semibold text-offwhite">
+            Send reply
           </div>
           <div className="grid grid-cols-2 gap-2">
             <div className="flex h-9 items-center justify-center rounded-lg border font-semibold">
@@ -71,6 +63,10 @@ export function QueuePreview() {
           <p>Wants to move Thursday&apos;s visit. Draft asks which day suits her.</p>
         </div>
       </div>
+      {/* The figcaption above says this for screen readers. */}
+      <p aria-hidden className="mt-4 text-center text-slate">
+        Example. During your {trial} trial it drafts like this, but won&apos;t send to a customer.
+      </p>
     </figure>
   );
 }

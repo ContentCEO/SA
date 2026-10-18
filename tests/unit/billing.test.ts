@@ -37,6 +37,8 @@ import {
 import {
   billingStatusLine,
   checkoutTerms,
+  firstChargeLine,
+  PLAN_IDS,
   planFromLookupKey,
   planLookupKey,
   SALES_TAX_LINES,
@@ -50,6 +52,8 @@ import {
   downgradePausesLine,
 } from "@/server/billing-rules";
 import { canSend, jobsAllowed } from "@/server/lifecycle";
+import { applyAdminMove } from "@/server/workspace-lifecycle";
+import { describeActivity } from "@/server/activity";
 import { isTermsUrlMissingError } from "@/server/stripe-error-rules";
 import { createTestDb } from "../support/db";
 import { FakeStripe, stripeErrors, type Call } from "../support/fake-stripe";
@@ -558,10 +562,20 @@ describe("sales tax (Stripe Tax, Davi 2026-10-14)", () => {
     expect(calls).toHaveLength(0);
   });
 
-  it("owners see the tax note next to the prices (homepage and /billing); admin shows the line", () => {
+  it("owners see sales tax once per plan card (homepage and /billing); admin shows the line", () => {
     expect(SALES_TAX_NOTE).toBe("Plus sales tax where it applies.");
+    // Check 35 P2: each card's first-payment line says it, so no second note under the list.
+    for (const id of PLAN_IDS)
+      for (const setup of [true, false])
+        expect(firstChargeLine(id, setup)).toContain("plus sales tax where it applies");
+    expect(readFileSync("src/components/marketing/plan-cards.tsx", "utf8")).toContain(
+      "{firstChargeLine(id, true)}",
+    );
+    expect(readFileSync("src/app/(app)/billing/page.tsx", "utf8")).toContain(
+      "{firstChargeLine(id, terms.includeSetupFee)}",
+    );
     for (const f of ["src/app/page.tsx", "src/app/(app)/billing/page.tsx"]) {
-      expect(readFileSync(f, "utf8"), f).toContain("{SALES_TAX_NOTE}");
+      expect(readFileSync(f, "utf8"), f).not.toContain("{SALES_TAX_NOTE}");
     }
     const admin = readFileSync("src/app/(app)/admin/page.tsx", "utf8");
     expect(admin).toContain("{salesTax ? <p>{SALES_TAX_LINES[salesTax]}</p> : null}");
@@ -619,6 +633,106 @@ describe("webhook-driven status", () => {
     expect(ended.status).toBe("canceled");
     expect(ended.stripeSubscriptionId).toBeNull();
     expect(checkoutTerms(ended, NOW)).toEqual({ allowed: true, includeSetupFee: false });
+  });
+});
+
+describe("pause and resume never switch a failed or canceled plan back on (Check 17 P1)", () => {
+  const LATER = new Date(NOW.getTime() + 60_000);
+  async function paidAndActive() {
+    await applyCheckoutCompleted(paidSession(), NOW);
+    await applyAdminMove(workspace.id, "mark_setup_call_done", NOW);
+    expect((await reload()).status).toBe("active");
+  }
+
+  it("past_due -> pause -> resume = past_due, can't send", async () => {
+    await applyCheckoutCompleted(paidSession(), NOW);
+    await applySubscription(subscription("past_due"), NOW);
+    await applyAdminMove(workspace.id, "pause", NOW);
+    expect(await reload()).toMatchObject({ status: "paused", pausedFrom: "past_due" });
+    expect(await applyAdminMove(workspace.id, "resume", LATER)).toBe("past_due");
+    const after = await reload();
+    expect(after.pausedFrom).toBeNull();
+    expect(canSend(after, LATER)).toBe(false);
+  });
+
+  it("active -> pause -> subscription deleted -> still paused -> resume = canceled", async () => {
+    await paidAndActive();
+    await applyAdminMove(workspace.id, "pause", NOW);
+    await applySubscription(subscription("canceled"), NOW);
+    const paused = await reload();
+    expect(paused).toMatchObject({
+      status: "paused",
+      pausedFrom: "canceled",
+      stripeSubscriptionId: null,
+    });
+    const log = (await database.select().from(activityLog)).filter(
+      (l) => l.action === "subscription_changed",
+    );
+    expect(log.at(-1)!.detail).toMatchObject({
+      to: "paused",
+      pausedFrom: { before: "active", after: "canceled" },
+    });
+    expect(describeActivity("subscription_changed", log.at(-1)!.detail, null)).toBe(
+      "Your plan ended while your account was paused — nothing was deleted",
+    );
+    expect(await applyAdminMove(workspace.id, "resume", LATER)).toBe("canceled");
+    const after = await reload();
+    expect(canSend(after, LATER)).toBe(false);
+    expect(checkoutTerms(after, LATER)).toEqual({ allowed: true, includeSetupFee: false });
+  });
+
+  it("paused -> past_due webhook -> active webhook -> resume = active", async () => {
+    await paidAndActive();
+    await applyAdminMove(workspace.id, "pause", NOW);
+    await applySubscription(subscription("past_due"), NOW);
+    expect(await reload()).toMatchObject({ status: "paused", pausedFrom: "past_due" });
+    await applySubscription(subscription("active"), NOW);
+    expect(await reload()).toMatchObject({ status: "paused", pausedFrom: "active" });
+    expect(await applyAdminMove(workspace.id, "resume", LATER)).toBe("active");
+    expect(canSend(await reload(), LATER)).toBe(true);
+  });
+
+  it("a row paused before paused_from existed (Stripe-paid, no subscription) resumes to canceled", async () => {
+    await database
+      .update(workspaces)
+      .set({
+        status: "paused",
+        pausedFrom: null,
+        setupPaidVia: "stripe",
+        setupPaidAt: NOW,
+        setupCallCompletedAt: NOW,
+        stripeSubscriptionId: null,
+      })
+      .where(eq(workspaces.id, workspace.id));
+    expect(await applyAdminMove(workspace.id, "resume", LATER)).toBe("canceled");
+    expect(canSend(await reload(), LATER)).toBe(false);
+  });
+
+  it("a paid checkout landing while paused keeps it paused and is kept for Resume", async () => {
+    await applyAdminMove(workspace.id, "pause", NOW);
+    expect((await reload()).pausedFrom).toBe("evaluating");
+    await applyCheckoutCompleted(paidSession(), NOW);
+    expect(await reload()).toMatchObject({ status: "paused", pausedFrom: "setup_paid" });
+    expect(await applyAdminMove(workspace.id, "resume", LATER)).toBe("setup_paid");
+    expect(canSend(await reload(), LATER)).toBe(true);
+  });
+
+  it("Davi's house account paused and resumed is active and can send", async () => {
+    process.env.ADMIN_EMAIL = "owner@shop.com";
+    try {
+      await database
+        .update(workspaces)
+        .set({ status: "active", setupPaidVia: null, setupCallCompletedAt: NOW })
+        .where(eq(workspaces.id, workspace.id));
+      await applyAdminMove(workspace.id, "house_account", NOW);
+      await applyAdminMove(workspace.id, "pause", NOW);
+      expect(await applyAdminMove(workspace.id, "resume", LATER)).toBe("active");
+      const after = await reload();
+      expect(after.setupPaidVia).toBe("house");
+      expect(canSend(after, LATER)).toBe(true);
+    } finally {
+      delete process.env.ADMIN_EMAIL;
+    }
   });
 });
 

@@ -44,7 +44,7 @@ vi.mock("@/server/drafts", async (importOriginal) => ({
   discardDraft: writes.discardDraft,
 }));
 
-const { saveDraftEditAction, discardDraftAction } = await import("@/app/(app)/queue/actions");
+const { editorAction, discardDraftAction } = await import("@/app/(app)/queue/actions");
 
 const DRAFT_ID = "00000000-0000-4000-8000-000000000001";
 const form = (fields: Record<string, string>) => {
@@ -92,7 +92,12 @@ describe("M11 C8: Gmail-writing taps are rate limited (through the actions)", ()
     vi.useRealTimers();
   });
 
-  const save = () => saveDraftEditAction(form({ draftId: DRAFT_ID, body: "Hi Dana, Tuesday?" }));
+  // Save changes runs through the Edit box's action (Check 42 P2), which answers in the card.
+  const save = () =>
+    editorAction(
+      { message: null, latest: null, typed: null },
+      form({ draftId: DRAFT_ID, body: "Hi Dana, Tuesday?" }),
+    );
   const discard = () => discardDraftAction(form({ draftId: DRAFT_ID }));
 
   it("under the limit, both taps reach Gmail (the test's own control)", async () => {
@@ -108,7 +113,8 @@ describe("M11 C8: Gmail-writing taps are rate limited (through the actions)", ()
     await database
       .insert(rateLimits)
       .values({ key: `gmailWrite:${workspaceId}`, windowStart, count: max });
-    expect(await whereTo(save)).toBe("/queue?error=busy");
+    // The Edit box keeps the typed text and says so in the card; nothing reached Gmail.
+    expect(await save()).toMatchObject({ message: expect.stringContaining("Nothing was saved") });
     expect(await whereTo(discard)).toBe("/queue?error=busy");
     expect(writes.saveDraftEdit).not.toHaveBeenCalled();
     expect(writes.discardDraft).not.toHaveBeenCalled();

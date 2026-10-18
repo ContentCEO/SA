@@ -30,7 +30,7 @@ import {
   stripeKeyMode,
 } from "./billing-rules";
 import { paymentNoticeCopy } from "./first-week-rules";
-import { setupReallyPaid } from "./lifecycle";
+import { resumeTarget, setupReallyPaid } from "./lifecycle";
 import { fitMailboxesToPlan } from "./mailbox-plan";
 import { freeMonthRunning, portalSchedulesDowngrades } from "./referral-rules";
 import { creditReferralSafely, reconcileReferralSafely } from "./referrals";
@@ -650,7 +650,14 @@ export async function applyCheckoutCompleted(
   if (!w) return "unknown_workspace";
   const plan = isPlanId(session.metadata?.plan) ? session.metadata.plan : w.plan;
   const includesSetup = session.metadata?.includesSetup === "1";
-  const to = statusAfterCheckout(w, now);
+  // Check 17 P1: a paused account isn't moved by Stripe; the payment is kept in paused_from,
+  // where Resume takes it back to.
+  const paused = w.status === "paused";
+  const settled = statusAfterCheckout(
+    paused ? { ...w, status: w.pausedFrom ?? resumeTarget(w, now) } : w,
+    now,
+  );
+  const to = paused ? w.status : settled;
   // The plan's effects land with the plan, whichever event Stripe delivers first: a canceled
   // Crew owner who comes back on Solo has the extra inboxes paused here, because once the plan
   // reads Solo the subscription event no longer sees a move down (Q2).
@@ -659,6 +666,7 @@ export async function applyCheckoutCompleted(
       .update(workspaces)
       .set({
         status: to,
+        ...(paused ? { pausedFrom: settled } : {}),
         plan,
         stripeCustomerId:
           typeof session.customer === "string" ? session.customer : w.stripeCustomerId,
@@ -717,14 +725,24 @@ export async function applyLiveSubscription(
   sub: Stripe.Subscription,
   now: Date = new Date(),
 ) {
-  const to = statusAfterSubscription(w, sub.status, now);
   const plan = planFromLookupKey(sub.items.data[0]?.price?.lookup_key) ?? w.plan;
   const ended = sub.status === "canceled" || sub.status === "incomplete_expired";
+  // Check 17 P1: a paused account stays paused, but what Stripe says is kept in paused_from,
+  // so Resume takes it to where the payment stands now (never back to "active" after a
+  // canceled or failed subscription).
+  const paused = w.status === "paused";
+  const settled = statusAfterSubscription(
+    paused ? { ...w, status: w.pausedFrom ?? resumeTarget(w, now) } : w,
+    sub.status,
+    now,
+  );
+  const to = paused ? w.status : settled;
   await db().transaction(async (tx) => {
     await tx
       .update(workspaces)
       .set({
         status: to,
+        ...(paused ? { pausedFrom: settled } : {}),
         plan,
         stripeSubscriptionId: ended ? null : sub.id,
         stripeCancelAt: cancelAtOf(sub),
@@ -735,7 +753,17 @@ export async function applyLiveSubscription(
     // on (decisions 2026-10-16; plan #47's Q2), for the plan that counts (`effectivePlan`).
     await fitMailboxesToPlan(w.id, now, tx);
   });
-  if (to !== w.status || plan !== w.plan) {
+  if (paused) {
+    if (settled !== w.pausedFrom || plan !== w.plan) {
+      await log(w.id, "subscription_changed", {
+        stripeStatus: sub.status,
+        from: w.status,
+        to: w.status,
+        pausedFrom: { before: w.pausedFrom, after: settled },
+        plan,
+      });
+    }
+  } else if (to !== w.status || plan !== w.plan) {
     await log(w.id, "subscription_changed", { stripeStatus: sub.status, from: w.status, to, plan });
   }
   return to;

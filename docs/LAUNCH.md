@@ -9,6 +9,9 @@ here is yours to do or decide: merging, deploying and every other switch. Engine
 in [SETUP.md](SETUP.md); this page links to it where a step needs more. Every outside account
 (its plan, the limit that bites and whose login holds it) is listed in [VENDORS.md](VENDORS.md).
 
+`/admin` → **Ready for paying owners** lists what's left; tick the hand rows there as you finish
+them.
+
 Contents:
 
 - [Check your free plans now (this week)](#check-your-free-plans-now-this-week)
@@ -968,6 +971,9 @@ morning emails all run as background jobs.
      `morning-digest`.
   2. The next day, `purge-expired-bodies` → Runs shows a **Completed** run.
   3. `/admin` → the first box is titled **System**, not "Background jobs look stopped".
+- Optional but recommended: point a free uptime monitor at /api/health/deep
+  ([SETUP.md](SETUP.md) §6g). It emails you "Background jobs look stopped" at most once an hour,
+  even when Inngest itself is down.
 
 ## 12. Smoke test after each production deploy
 
@@ -1291,6 +1297,86 @@ Nothing below is switched on or changed until you say so.
   under Invite an owner). Signing in never starts an app trial. After each monthly check-in,
   open **Monthly numbers** and fill in what they told you; use **Post an update** for news
   (they get one email with the title and a link). Their dashboard shows only what you enter.
+- **Wave 1: send path (merged 2026-10-17).** Each was built the safe way; say if you want it
+  different:
+  - A forward of a lead to your crew doesn't count as "someone answered from Gmail", so it
+    doesn't set the app's reply aside.
+  - An old draft that says "tomorrow" shows "Written Friday. It says “tomorrow”, which meant
+    Saturday. Check the timing." (what the word meant when it was written, not "which now
+    means").
+  - A quote marked Won before outcome times were kept doesn't count as "won before" a later
+    yes, so that yes can still get a deposit note. Or treat every Won as earlier?
+  - If you delete the app's draft and send nearly the same words from Gmail (Gmail adds your
+    signature, say), it counts as your own words, not as the app's draft sent, so time saved
+    stays on the low side.
+- **Wave 1: draft checks (merged 2026-10-17).**
+  - **The Massachusetts deposit wording is legal text** and needs your okay. Settings: "In
+    Massachusetts a deposit can't be more than one-third of the contract, unless special-order
+    materials cost more (c.142A §2). Check this line." On a draft: "Massachusetts caps a deposit
+    at one-third, or the cost of special-order materials if higher. Check this before sending."
+  - Should setup pick Massachusetts for you when your phone is on Eastern time? Built: no, you
+    pick your state.
+  - A price-list price written without its "from", or used for a different job, is flagged but
+    not rewritten. Should it also get one automatic rewrite, like an invented price?
+  - First replies to a new lead keep "Thanks for reaching out" (your warm-first-replies
+    decision); every other draft now flags it as filler. Okay?
+  - "We're licensed" is accepted when you've saved a CSL number or a license number appears in
+    your own text (like "Lic. MP-31872" in a signature). Plumbers and electricians have no field
+    of their own yet. Want one ("Trade license number")?
+- **Wave 1: homepage words (merged 2026-10-17).**
+  - The office-manager FAQ and "1 sign-in" on the plan cards need your okay on the exact words.
+    FAQ: "Today each shop has one sign-in, yours. Crew and Company add more Gmail inboxes (3 or
+    10), not more logins. If someone in your office answers email, connect the office inbox, and
+    call Davi to talk through who taps Send." Plan cards and /billing: "1 Gmail inbox · 1
+    sign-in" / "3 Gmail inboxes · 1 sign-in" / "10 Gmail inboxes · 1 sign-in".
+  - The "Buzzes you when it matters" card is left off until phone notifications are on (the
+    VAPID keys, [step 9](#9-phone-notifications-vapid-keys)). Add it back then?
+  - The homepage still says "morning summary", but until the Resend domain is verified
+    ([step 6](#6-morning-emails-from-your-own-domain-resend)) it only reaches the Resend
+    account's own address. Keep it, or take it off until then?
+  - The Autopilot card was dropped to keep nine cards (autopilot is described three other times
+    on the page). Fine, or swap it back in for another card?
+  - The new FAQ "How is this different from Gmail's own AI, or from Jobber?" names both (none of
+    their prices). Okay to name them?
+  - Read the new homepage words on the preview before the merge to main.
+- **Wave 1: safety guards (merged 2026-10-17).**
+  - **Carbon monoxide safety note wording** (built; needs your okay before it reaches
+    production): "If your carbon monoxide alarm is going off, please don't wait on email. Get
+    everyone out of the house into fresh air right away, pets too, and call 911 from outside.
+    Don't go back in until the fire department says it's safe. / I'll call you as soon as I
+    can." It follows the usual fire-safety advice; please check it against your local fire
+    department's wording.
+  - **Electrical safety note wording** (built; needs your okay before it reaches production):
+    "If you see smoke or flames, get everyone out and call 911 from outside. If it's safe to
+    reach your panel, switch off the breaker for that area and don't use that outlet or switch
+    until we've looked at it. If wires are down outside, stay well away and call your electric
+    company. / I'll call you as soon as I can." (From the review, based on NFPA's electrical
+    safety tips.)
+  - **Should an emergency get one automatic reply draft?** Today an emergency (burst pipe, no
+    heat, sewage backing up) goes to the top of Needs you with "Call now" and an alert, and no
+    reply is drafted until you tap "Draft a reply". The review asked for one draft ("Emergency:
+    call them first. This reply only covers what to do meanwhile.") waiting for your Send reply.
+    Kept as it is until you say yes.
+  - **Remodeling amount suggestions:** setup offers $10,000 and $25,000 buttons for the "send me
+    anything over" amount when the trade is remodeling (the review's example numbers). Are those
+    the right two, and should any other trade get suggestions? The default stays $2,500.
+  - **Big supplier statements:** a supplier's monthly statement over your amount (say "Balance:
+    $3,420.17") goes to Needs you today. Keep that, or let supplier bills (money you owe) skip the
+    amount rule?
+- **Wave 1: when things break (merged 2026-10-17).**
+  - Should pausing an account in `/admin` also pause its Stripe billing? Today Stripe keeps
+    charging a paused account; only where Resume goes back to changed. (Not built.)
+  - The 30-minute "jobs look stopped" check through Vercel Cron needs Vercel Pro (Hobby allows
+    a daily cron only, and a more frequent one can stop the deploy). Until then a free uptime
+    monitor pointed at /api/health/deep ([SETUP.md](SETUP.md) §6g) does the same job. Want the
+    `vercel.json` added once you're on Pro?
+  - Stand-in models (all off): sorting → Claude Haiku 5.5, drafting and voice → Claude Sonnet
+    5.5. Turn one on (`fallbackApproved: true` in `src/config/models.ts`) only after
+    `pnpm eval` passes on it. Haiku 5.5 thinks by default; check the sorter's 1,024-token answer
+    limit holds there.
+  - Done at the merge (was a question): the missing-model email and the `/admin` System box now
+    name the part that stopped: "Sorting is stopped", "Drafting is stopped" or "Voice learning
+    is stopped".
 - **Gmail draft check (counts only, for the engineers):** whether Gmail keeps a draft's id when
   it's sent. The app is safe either way. The query is in [step 1](#1-merge-the-launch-branch);
   run it **before merging**: after the merge it always reads 0.

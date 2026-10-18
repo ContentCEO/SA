@@ -39,7 +39,9 @@ export function UndoSend({ draftIds, sendAt }: { draftIds: string[]; sendAt: str
     let tries = 0;
     const poll = setInterval(() => {
       router.refresh();
-      if (++tries >= 10) clearInterval(poll);
+      // Check 9 P10: long enough (90 s) that a late send turns into "Still sending…" with
+      // Stop it, which then checks every 10 s on its own.
+      if (++tries >= 30) clearInterval(poll);
     }, 3000);
     return () => clearInterval(poll);
   }, [left, router]);

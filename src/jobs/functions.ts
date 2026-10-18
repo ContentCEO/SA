@@ -1,5 +1,6 @@
 import { cron, NonRetriableError, RetryAfterError } from "inngest";
 import { MailboxRateLimitError } from "@/mailbox/connector";
+import { ModelUnavailableError } from "@/ai/client";
 import {
   backfillPage,
   beginBackfill,
@@ -27,6 +28,8 @@ import { getMailboxWorkspace } from "@/server/mailboxes";
 import { purgeRateLimits } from "@/server/rate-limit";
 import { purgeEmailSentRecords } from "@/lib/email";
 import { sendAccessLostAlerts } from "@/server/alerts";
+import { purgeAdminNoticeMarkers } from "@/server/admin-notify";
+import { recordLifecycleRun } from "@/server/health-deep";
 import { captureQuoteAmounts, guessNoAnswers } from "@/server/quotes";
 import { sendLeadAlerts } from "@/server/sms-alerts";
 import { sendEmergencyAlerts } from "@/server/emergency-alerts";
@@ -90,6 +93,22 @@ export async function politely<T>(fn: () => Promise<T>): Promise<T> {
       // Wait as long as Gmail asked (plus a minute), and never less than two minutes.
       const at = Math.max(Date.now() + 120_000, (err.retryAt?.getTime() ?? 0) + 60_000);
       throw new RetryAfterError("Gmail asked us to slow down.", new Date(at), { cause: err });
+    }
+    throw err;
+  }
+}
+
+/**
+ * Check 48 P3: a model Anthropic says is missing won't come back on a retry a few seconds later.
+ * Stop retrying this run (the call was refunded and Davi was told); the mail stays unsorted and
+ * the 15-minute sweep picks it up once the model answers again.
+ */
+export async function stopIfModelMissing<T>(fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn();
+  } catch (err) {
+    if (err instanceof ModelUnavailableError) {
+      throw new NonRetriableError("The AI model isn't available.", { cause: err });
     }
     throw err;
   }
@@ -180,8 +199,10 @@ export const classifyMailbox = inngest.createFunction(
     let total = 0;
     for (let round = 0; round < 50; round++) {
       const r = await step.run(`batch-${round}`, () =>
-        classifyPending(event.data.mailboxId, { limit: 10 }),
+        stopIfModelMissing(() => classifyPending(event.data.mailboxId, { limit: 10 })),
       );
+      // Check 39 P1: emails stored by the checks in code after the AI limit count too (they are
+      // in `classified`), so a gas smell on a capped day still alerts the owner.
       total += r.classified;
       if (r.capped || r.remaining === 0) {
         if (total > 0) await step.run("text-alerts", () => alertsForMailbox(event.data.mailboxId));
@@ -219,7 +240,9 @@ export const draftMailbox = inngest.createFunction(
     let created = 0;
     for (const threadId of due) {
       const r = await step.run(`draft-${threadId}`, () =>
-        politely(() => createDraftForThread(threadId, { trigger: "auto" })),
+        stopIfModelMissing(() =>
+          politely(() => createDraftForThread(threadId, { trigger: "auto" })),
+        ),
       );
       if (r.status === "created") {
         created++;
@@ -265,7 +288,9 @@ export const followupScan = inngest.createFunction(
       const due = await step.run(`due-${box.id}`, () => threadsToFollowUp(box.id));
       for (const threadId of due) {
         const r = await step.run(`nudge-${threadId}`, () =>
-          politely(() => createDraftForThread(threadId, { trigger: "followup" })),
+          stopIfModelMissing(() =>
+            politely(() => createDraftForThread(threadId, { trigger: "followup" })),
+          ),
         );
         if (r.status === "created") created++;
         if (r.status === "reconnect_needed" || (r.status === "skipped" && r.reason === "capped"))
@@ -312,6 +337,18 @@ export function reportSummaryFailures(
   }
 }
 
+/** Thrown when some alert emails were refused. Counts only — no ids, addresses or messages. */
+export class AlertFailuresError extends Error {
+  override readonly name = "AlertFailuresError";
+}
+
+/** Check 18 P1: fails a job run at its very end when any alert email failed. */
+export function reportAlertFailures(kind: "access" | "cost", result: { failed: number }): void {
+  if (result.failed > 0) {
+    throw new AlertFailuresError(`Alert emails failed: ${result.failed} ${kind}.`);
+  }
+}
+
 /**
  * Autopilot's grace window: wait until the send time (the owner can hold or
  * edit it meanwhile), then check everything again and send only if it all
@@ -352,7 +389,9 @@ export const learnVoiceFn = inngest.createFunction(
   },
   async ({ event, step }) =>
     step.run("learn", () =>
-      politely(() => learnVoice(event.data.workspaceId, { force: event.data.force ?? false })),
+      stopIfModelMissing(() =>
+        politely(() => learnVoice(event.data.workspaceId, { force: event.data.force ?? false })),
+      ),
     ),
 );
 
@@ -376,7 +415,9 @@ export const voiceIdeas = inngest.createFunction(
   { id: "voice-ideas", triggers: [cron("37 8 * * 1")] },
   async ({ step }) => {
     await step.run("capture", () => captureEditSignals());
-    return { created: await step.run("propose", () => proposeVoiceUpdates()) };
+    return {
+      created: await step.run("propose", () => stopIfModelMissing(() => proposeVoiceUpdates())),
+    };
   },
 );
 
@@ -470,6 +511,11 @@ export const workspaceLifecycle = inngest.createFunction(
     // 2026-10-16: the trial's day-2 and day-3 emails and the one a week after it ran out, each
     // once ever, at the owner's morning hour or later in their zone (never at night).
     await step.run("trial-emails", () => sendTrialEmails());
+    // Check 18 P1: a refused alert email fails the run only now, after every step has run, so
+    // error alerts still hear about it once. Retries replay the finished steps.
+    // Check 1 P4: the deep health check reads this to tell whether the jobs are running.
+    await step.run("record-run", () => recordLifecycleRun());
+    reportAlertFailures("access", alerts);
     return {
       started,
       expired,
@@ -528,7 +574,7 @@ export const foundMoneyDrafts = inngest.createFunction(
     let created = 0;
     for (const j of jobs) {
       const r = await step.run(`draft-${j.kind}-${j.id}`, () =>
-        politely(() => draftFoundMoneyThread(workspaceId, j.id, j.kind)),
+        stopIfModelMissing(() => politely(() => draftFoundMoneyThread(workspaceId, j.id, j.kind))),
       );
       if (r.status === "created") created++;
       if (r.status === "reconnect_needed" || (r.status === "skipped" && r.reason === "capped"))
@@ -556,9 +602,12 @@ export const purgeBodies = inngest.createFunction(
     await step.run("purge-rate-limits", () => purgeRateLimits());
     await step.run("purge-expired-notes", () => purgeExpiredNotes());
     // Plan #45: tell Davi when an account's AI cost passes 40% of its plan.
-    await step.run("cost-alerts", () => sendCostAlerts());
+    const costAlerts = await step.run("cost-alerts", () => sendCostAlerts());
     await step.run("purge-cost-markers", () => purgeCostAlertMarkers());
     await step.run("purge-email-sent-records", () => purgeEmailSentRecords());
+    await step.run("purge-admin-notices", () => purgeAdminNoticeMarkers());
+    // Check 18 P1: as in the lifecycle job, fail only after every step has run.
+    reportAlertFailures("cost", costAlerts);
     return { purged };
   },
 );

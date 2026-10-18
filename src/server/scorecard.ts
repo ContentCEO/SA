@@ -58,6 +58,8 @@ export function scorecardQueries(workspaceId: string, start: Date, end: Date, no
       and(
         eq(mailboxes.workspaceId, workspaceId),
         inArray(drafts.status, ["sent", "edited_and_sent"]),
+        // Check 14 P1: the owner's own Gmail reply isn't a drafted reply sent.
+        sql`${drafts.sentVia} is distinct from 'own_words'`,
         gte(drafts.decidedAt, start),
         lt(drafts.decidedAt, end),
       ),

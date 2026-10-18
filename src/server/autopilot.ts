@@ -1,8 +1,32 @@
 import "server-only";
+import { claimsHuman } from "@/ai/draft-checks";
 import { hasUnfilledGap } from "@/ai/gaps";
+import {
+  looksLikePaymentChange,
+  mentionsCarbonMonoxide,
+  mentionsElectricalHazard,
+  mentionsGasSmell,
+  mentionsLegalThreat,
+  mentionsRealLegal,
+} from "@/ai/guards";
 import { mentionsMoney } from "@/ai/money-words";
-import { and, count, desc, eq, gte, inArray, isNotNull, isNull, lte, sql } from "drizzle-orm";
+import {
+  and,
+  count,
+  desc,
+  eq,
+  gte,
+  inArray,
+  isNotNull,
+  isNull,
+  lt,
+  lte,
+  or,
+  sql,
+} from "drizzle-orm";
 import { planHasAutopilot } from "@/config/pricing";
+import { EARN_THRESHOLD, GRACE_MINUTES } from "@/config/rules";
+import { autopilotPlanNames } from "./plan-features";
 import { db } from "@/db";
 import {
   activityLog,
@@ -18,6 +42,8 @@ import { MailboxAuthError } from "@/mailbox/connector";
 import { MAILBOX_PAUSED_LINE, mailboxOn } from "./mailbox-plan-rules";
 import {
   AUTO_DRAFT_CATEGORIES,
+  AUTOPILOT_CLAIM_LEASE_MS,
+  autopilotSending,
   defaultWriter,
   sendDraft,
   type DraftDeps,
@@ -28,7 +54,11 @@ import { knownCustomer } from "./known-customer";
 import { isEmailToTextAddress, looksLikePhoneAddress } from "./channel-rules";
 import { complainedAddresses } from "./offers";
 import { effectivePlan } from "./referral-rules";
+import { recentEmergency } from "./emergency-rules";
+import { injectionClearedRecently } from "./injection-clear-rules";
 import { markReconnectNeeded } from "./sync";
+import { staleTiming, timingNote } from "./draft-timing";
+import { workspaceTimeZone } from "./snooze";
 import { unsentDraftMessage } from "./thread-sql";
 
 export { knownCustomer };
@@ -51,9 +81,8 @@ export { knownCustomer };
  * sending.
  */
 export const AUTOPILOT_CATEGORIES = AUTO_DRAFT_CATEGORIES;
-export const EARN_THRESHOLD = 10;
+export { EARN_THRESHOLD, GRACE_MINUTES };
 export const MIN_CONFIDENCE_PCT = 85;
-export const GRACE_MINUTES = 10;
 export const DAILY_AUTOPILOT_CAP = 20;
 
 type Category = (typeof AUTOPILOT_CATEGORIES)[number];
@@ -70,7 +99,7 @@ export type AutopilotWorkspace = Pick<
 /** Layer 1. Returns why not, in plain words, or null when unlocked. */
 export function accountLockReason(w: AutopilotWorkspace, now: Date = new Date()): string | null {
   if (!planHasAutopilot(effectivePlan(w, now))) {
-    return "Autopilot comes with the Crew and Company plans.";
+    return `Autopilot comes with the ${autopilotPlanNames()} plans.`;
   }
   if (effectiveStatus(w, now) !== "active") {
     return "Autopilot opens up once your setup call is done.";
@@ -121,8 +150,28 @@ export type GuardrailInput = {
   complainedRecently?: boolean;
   /** Round 2 A11: the email asks to pay a new or different account. */
   paymentChange?: boolean;
+  /**
+   * Check 20 P5: a lawyer, a lien or small claims anywhere in the customer's newest email,
+   * quoted part included (the sorter only reads the newest part).
+   */
+  legalInEmail?: boolean;
+  /** Check 20 P5: the customer's newest email has no text left to check (purged). */
+  emailUnreadable?: boolean;
   /** Round 2 TW B4: someone smells gas. */
   gasSmell?: boolean;
+  /** Check 22 P4: a carbon monoxide alarm went off. */
+  coAlarm?: boolean;
+  /** Check 37 P1: electrical fire signs. */
+  electricalHazard?: boolean;
+  /**
+   * Check 48 P1: the customer asked whether a person is answering, or the draft says a person
+   * wrote it with no help.
+   */
+  asksIfAi?: boolean;
+  /** Check 22 P2: the owner cleared an attack mark on this thread in the last 30 days. */
+  injectionCleared?: boolean;
+  /** Check 36 P2: an emergency on this conversation in the last 48 hours. */
+  recentEmergency?: boolean;
   /** Ideas H4: the owner chose this kind and the sorter said otherwise. */
   ownerMoved?: boolean;
   /** Leads package: a lead-site / voicemail / text-message thread. */
@@ -164,7 +213,20 @@ export function guardrailReasons(g: GuardrailInput): string[] {
   if (g.complainedRecently)
     out.push("This customer complained in the last 12 months, so it waits for you.");
   if (g.paymentChange) out.push("Asks to pay a new account, so it waits for you.");
+  if (g.legalInEmail)
+    out.push("Something legal is mentioned in this conversation, so it waits for you.");
+  if (g.emailUnreadable) out.push("We can't read their email any more, so it waits for you.");
   if (g.gasSmell) out.push("Someone smells gas. Call them.");
+  if (g.coAlarm) out.push("A carbon monoxide alarm went off. Call them.");
+  if (g.asksIfAi || claimsHuman(g.draftBody))
+    out.push("Asks if a person is answering, so it waits for you.");
+  if (g.injectionCleared)
+    out.push("You said an email here was normal after we flagged it, so it waits for you.");
+  if (g.electricalHazard) out.push("Sounds like an electrical fire risk. Call them.");
+  if (g.recentEmergency)
+    out.push(
+      "There was an emergency on this conversation in the last 2 days, so it waits for you.",
+    );
   if (g.ownerMoved) out.push("You chose this kind yourself, so it waits for you.");
   if (g.leadChannel) out.push("Lead-site and voicemail emails always wait for you.");
   if (g.textAddress) out.push("That address may turn into a text message, so it waits for you.");
@@ -331,6 +393,8 @@ async function blockers(row: NonNullable<Awaited<ReturnType<typeof loadForAutopi
       address: messages.fromAddress,
       replyToHeader: messages.replyToHeader,
       sentAt: messages.sentAt,
+      subject: messages.subject,
+      bodyText: messages.bodyText,
     })
     .from(messages)
     .where(and(eq(messages.threadId, thread.id), eq(messages.direction, "in")))
@@ -358,9 +422,16 @@ async function blockers(row: NonNullable<Awaited<ReturnType<typeof loadForAutopi
     accepts_quote?: boolean;
     payment_change?: boolean;
     gas_smell?: boolean;
+    co_alarm?: boolean;
+    electrical_hazard?: boolean;
     model_category?: string;
   };
   const complainedRecently = await customerComplainedRecently(workspace.id, draft.toAddress, now);
+  // Check 20 P5: the WHOLE newest customer email, quoted part included ("Fine, Thursday at 10"
+  // above "> If the leak isn't fixed I'm calling our lawyer"). Never logged. A purged body
+  // can't be checked, so it waits.
+  const fullBody = customer?.bodyText ?? null;
+  const fullText = fullBody === null ? "" : `${customer?.subject ?? ""}\n${fullBody}`;
   return guardrailReasons({
     category: thread.category,
     needsOwner: thread.needsOwner || thread.needsOwnerManual,
@@ -381,8 +452,15 @@ async function blockers(row: NonNullable<Awaited<ReturnType<typeof loadForAutopi
       draft.toAddress.trim().toLowerCase() !== (customer.address ?? "").trim().toLowerCase(),
     replyToUnchecked: !customer || customer.replyToHeader === null,
     complainedRecently,
-    paymentChange: extracted.payment_change === true,
-    gasSmell: extracted.gas_smell === true,
+    paymentChange: extracted.payment_change === true || looksLikePaymentChange(fullText),
+    gasSmell: extracted.gas_smell === true || mentionsGasSmell(fullText),
+    coAlarm: extracted.co_alarm === true || mentionsCarbonMonoxide(fullText),
+    electricalHazard: extracted.electrical_hazard === true || mentionsElectricalHazard(fullText),
+    legalInEmail: mentionsRealLegal(fullText) || mentionsLegalThreat(fullText),
+    recentEmergency: recentEmergency(thread.extracted, now),
+    injectionCleared: injectionClearedRecently(thread.extracted, now),
+    asksIfAi: (extracted as { asks_if_ai?: unknown }).asks_if_ai === true,
+    emailUnreadable: fullBody === null,
     ownerMoved: thread.categoryManual != null && thread.categoryManual !== extracted.model_category,
     leadChannel: thread.leadChannel != null,
     textAddress: isEmailToTextAddress(draft.toAddress) || looksLikePhoneAddress(draft.toAddress),
@@ -446,6 +524,28 @@ export async function runAutopilotSend(
   if (!row.draft.autoSendAt) return { status: "stood_down", reasons: ["Held or edited by you."] };
   if (row.draft.autoSendAt > now) return { status: "not_due" };
 
+  // Check 9 P2: claim it before any Gmail call. Only one run ever holds it, and once it does,
+  // Hold it is too late (and says so) instead of saying "Held." while the reply goes out.
+  const [claimed] = await db()
+    .update(drafts)
+    .set({ autoSendClaimedAt: now })
+    .where(
+      and(
+        eq(drafts.id, draftId),
+        eq(drafts.status, "pending"),
+        isNotNull(drafts.autoSendAt),
+        lte(drafts.autoSendAt, now),
+        or(
+          isNull(drafts.autoSendClaimedAt),
+          lt(drafts.autoSendClaimedAt, new Date(now.getTime() - AUTOPILOT_CLAIM_LEASE_MS)),
+        ),
+      ),
+    )
+    .returning({ id: drafts.id });
+  if (!claimed) return { status: "not_due" };
+  const release = () =>
+    db().update(drafts).set({ autoSendClaimedAt: null }).where(eq(drafts.id, draftId));
+
   const newer = await db()
     .select({ id: messages.id })
     .from(messages)
@@ -456,9 +556,17 @@ export async function runAutopilotSend(
       ),
     )
     .limit(1);
+  // Check 43 P7: an old "tomorrow" or "in a few minutes" waits for the owner, always.
+  const timing = staleTiming(
+    row.draft.body ?? "",
+    row.draft.createdAt,
+    now,
+    await workspaceTimeZone(row.workspace.id),
+  );
   const reasons = [
     ...(await blockers(row, now)),
     ...(newer.length ? ["There's newer mail in this conversation."] : []),
+    ...(timing ? [timingNote(timing)] : []),
   ];
   // Layer 1 already needs what the send gate needs. If they ever differ, stand down here rather
   // than let sendDraft refuse: a refusal throws, and the backstop would retry it forever.
@@ -478,6 +586,7 @@ export async function runAutopilotSend(
       );
       if (others.length) reasons.push("You're writing a reply in Gmail.");
     } catch (err) {
+      await release();
       if (err instanceof MailboxAuthError) {
         await markReconnectNeeded(row.mailbox);
         return { status: "failed", outcome: "reconnect_needed" };
@@ -486,7 +595,10 @@ export async function runAutopilotSend(
     }
   }
   if (reasons.length) {
-    await db().update(drafts).set({ autoSendAt: null }).where(eq(drafts.id, draftId));
+    await db()
+      .update(drafts)
+      .set({ autoSendAt: null, autoSendClaimedAt: null })
+      .where(eq(drafts.id, draftId));
     await db()
       .insert(activityLog)
       .values({
@@ -499,14 +611,37 @@ export async function runAutopilotSend(
     return { status: "stood_down", reasons };
   }
 
-  const outcome = await sendDraft(row.workspace.id, draftId, { ...opts, by: "autopilot" });
-  return outcome.status === "sent"
-    ? { status: "sent" }
-    : { status: "failed", outcome: outcome.status };
+  let outcome;
+  try {
+    outcome = await sendDraft(row.workspace.id, draftId, { ...opts, by: "autopilot" });
+  } catch (err) {
+    // Not sent (a sent draft is no longer pending, so this touches nothing then): let a retry
+    // or the backstop claim it again.
+    await release();
+    throw err;
+  }
+  if (outcome.status === "sent") return { status: "sent" };
+  await release();
+  return { status: "failed", outcome: outcome.status };
 }
 
-/** The owner's "Hold it": the draft stays, and waits for their tap like any other. */
-export async function holdAutopilot(workspaceId: string, draftId: string): Promise<boolean> {
+/**
+ * The owner's "Hold it" (Check 9 P2): held only while no autopilot run has claimed it, so
+ * "Held." is only ever said of a draft that did not go. Too late once a run holds it (or it
+ * went); not found otherwise.
+ */
+export type HoldResult =
+  { status: "held" } | { status: "too_late"; sent: boolean } | { status: "not_found" };
+
+export async function holdAutopilot(
+  workspaceId: string,
+  draftId: string,
+  now: Date = new Date(),
+): Promise<HoldResult> {
+  const owned = inArray(
+    drafts.mailboxId,
+    db().select({ id: mailboxes.id }).from(mailboxes).where(eq(mailboxes.workspaceId, workspaceId)),
+  );
   const held = await db()
     .update(drafts)
     .set({ autoSendAt: null })
@@ -515,25 +650,38 @@ export async function holdAutopilot(workspaceId: string, draftId: string): Promi
         eq(drafts.id, draftId),
         eq(drafts.status, "pending"),
         isNotNull(drafts.autoSendAt),
-        inArray(
-          drafts.mailboxId,
-          db()
-            .select({ id: mailboxes.id })
-            .from(mailboxes)
-            .where(eq(mailboxes.workspaceId, workspaceId)),
+        or(
+          isNull(drafts.autoSendClaimedAt),
+          lt(drafts.autoSendClaimedAt, new Date(now.getTime() - AUTOPILOT_CLAIM_LEASE_MS)),
         ),
+        owned,
       ),
     )
     .returning({ threadId: drafts.threadId });
-  if (!held.length) return false;
-  await db().insert(activityLog).values({
-    workspaceId,
-    actor: "owner",
-    action: "autopilot_held",
-    threadId: held[0]!.threadId,
-    detail: { draftId },
-  });
-  return true;
+  if (held.length) {
+    await db().insert(activityLog).values({
+      workspaceId,
+      actor: "owner",
+      action: "autopilot_held",
+      threadId: held[0]!.threadId,
+      detail: { draftId },
+    });
+    return { status: "held" };
+  }
+  const [d] = await db()
+    .select({
+      status: drafts.status,
+      autoSendAt: drafts.autoSendAt,
+      autoSendClaimedAt: drafts.autoSendClaimedAt,
+    })
+    .from(drafts)
+    .where(and(eq(drafts.id, draftId), owned));
+  if (!d) return { status: "not_found" };
+  if (d.status === "sent" || d.status === "edited_and_sent")
+    return { status: "too_late", sent: true };
+  if (d.status === "pending" && autopilotSending(d, now))
+    return { status: "too_late", sent: false };
+  return { status: "not_found" };
 }
 
 /** Backstop for lost events: drafts whose window ended a while ago and are still waiting. */

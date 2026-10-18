@@ -84,10 +84,13 @@ describe("features read the plan that counts", () => {
     expect(indexing).toEqual([
       "src/app/(app)/admin/costs/page.tsx",
       "src/app/(app)/billing/page.tsx",
+      // Wave 1 (Check 35 P4): the plan cards' lines, by catalog plan id — never a workspace's plan.
+      "src/components/marketing/plan-cards.tsx",
       "src/config/pricing.ts",
       "src/server/admin-cost-rules.ts",
       "src/server/billing-rules.ts",
       "src/server/billing.ts",
+      "src/server/plan-features.ts",
       "src/server/referral-rules.ts",
       "src/server/referrals.ts",
     ]);

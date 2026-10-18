@@ -404,7 +404,7 @@ test.describe("homepage: the way into Squared Away Growth", () => {
       document.getElementById("waitlist")!.scrollIntoView({ block: "start" });
       return document.querySelector('[data-sa-half="growth"]')!.getBoundingClientRect().top;
     });
-    // A screen tall enough that, after "Get on the list", Growth's top sits at 96% of it: inside
+    // A screen tall enough that, after "Join the waitlist", Growth's top sits at 96% of it: inside
     // the band (85–100%), below the middle line (92.5%), so the app side is right.
     const width = page.viewportSize()!.width;
     await page.setViewportSize({ width, height: Math.round(gap / 0.96) });
@@ -414,7 +414,7 @@ test.describe("homepage: the way into Squared Away Growth", () => {
     await expectGrowth(page);
     await page
       .getByRole("navigation", { name: "Site" })
-      .getByRole("link", { name: "Get on the list" })
+      .getByRole("link", { name: "Join the waitlist" })
       .click();
     await expect(page.getByRole("region", { name: "Join the waitlist" })).toBeInViewport();
     const at = await page.evaluate(

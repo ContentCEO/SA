@@ -1,3 +1,4 @@
+import { dayWord } from "@/lib/trial-words";
 import { Notice } from "@/components/app/notice";
 import { Headline } from "@/components/brand/headline";
 import { Button } from "@/components/ui/button";
@@ -16,15 +17,13 @@ const errors: Record<string, string> = {
   failed: "Something went wrong on the way back from Google. Nothing was saved. Try again.",
 };
 
-const words = ["zero", "one", "two", "three", "four", "five"];
-
 export default async function ConnectPage(props: PageProps<"/connect">) {
   const { workspace } = await requireOwner();
   // Round 2 (FW): setup's honest step count starts here (2: your shop, 3: reading your email).
   const firstConnect = (await listMailboxes(workspace.id)).length === 0;
   const { error } = await props.searchParams;
   const message = typeof error === "string" ? errors[error] : undefined;
-  const days = words[pricing.evaluationDays] ?? String(pricing.evaluationDays);
+  const days = dayWord(pricing.evaluationDays);
 
   return (
     <>

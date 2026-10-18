@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { classifyEmail } from "@/ai/classify";
 import { setModelTransportForTests } from "@/ai/client";
 import { INJECTION_REASON, injectionCheck, looksMunicipal } from "@/ai/guards";
-import { emailBlock } from "@/ai/prompts/classify.v4";
+import { emailBlock } from "@/ai/prompts/classify.v5";
 import { conversationBlock } from "@/ai/prompts/draft.v6";
 import { untrusted } from "@/ai/prompts/untrusted";
 import { ensureUserAndWorkspace } from "@/server/accounts";

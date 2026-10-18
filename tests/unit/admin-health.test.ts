@@ -5,6 +5,7 @@ import type { Database } from "@/db";
 import { mailboxes, workspaces } from "@/db/schema";
 import { ensureUserAndWorkspace } from "@/server/accounts";
 import { adminOverview, JOBS_STALE_AFTER_MS, systemHealth } from "@/server/admin";
+import { mailboxesLine, mailboxesStuck, systemTroubleLines } from "@/server/admin-mailbox-rules";
 import { saveConnectedMailbox } from "@/server/mailboxes";
 import { createTestDb } from "../support/db";
 
@@ -66,5 +67,101 @@ describe("admin health", () => {
     await mailbox(NOW);
     const [row] = await adminOverview(NOW);
     expect(row!.health).toEqual({ lastSortedAt: null, lastDraftAt: null, lastDigestAt: null });
+  });
+
+  describe("Check 16 P1: one stuck inbox shows even when others are fine", () => {
+    const ago = (ms: number) => new Date(NOW.getTime() - ms);
+    async function shop(
+      email: string,
+      set: Partial<typeof mailboxes.$inferInsert>,
+      status: "active" | "canceled" = "active",
+    ) {
+      const { workspace } = await ensureUserAndWorkspace({ email });
+      await database.update(workspaces).set({ status }).where(eq(workspaces.id, workspace.id));
+      const mb = await saveConnectedMailbox(workspace, {
+        email,
+        refreshToken: "rt",
+        grantedScopes: [],
+      });
+      await database.update(mailboxes).set(set).where(eq(mailboxes.id, mb.id));
+      return workspace.id;
+    }
+
+    it("a 6-hour-old sync_failed inbox is stale while another is fresh", async () => {
+      await shop("a@shop-a.com", {
+        backfillCompletedAt: ago(86_400_000),
+        lastSyncedAt: ago(120_000),
+      });
+      const b = await shop("b@shop-b.com", {
+        backfillCompletedAt: ago(86_400_000),
+        lastSyncedAt: ago(6 * 3_600_000),
+        lastSyncErrorCode: "sync_failed",
+        lastSyncErrorAt: ago(60_000),
+      });
+      const h = await systemHealth(NOW);
+      expect(h).toMatchObject({ jobsLookStopped: false, staleMailboxes: 1, stuckFirstReads: 0 });
+      expect(systemTroubleLines(h)).toEqual(["1 inbox hasn't been checked for over 30 minutes."]);
+
+      const row = (await adminOverview(NOW)).find((r) => r.workspaceId === b)!;
+      expect(row.mailboxes).toMatchObject({
+        stale: 1,
+        stuckFirstRead: 0,
+        errorCode: "sync_failed",
+      });
+      expect(mailboxesStuck(row.mailboxes)).toBe(true);
+      const line = mailboxesLine(row.mailboxes, NOW);
+      expect(line).toBe("1, not checked for 6 hours, checks failing");
+      expect(line).not.toContain("healthy");
+    });
+
+    it("a first read older than 2 hours is stuck; a younger one isn't", async () => {
+      await shop("old@shop.com", { createdAt: ago(3 * 3_600_000) });
+      await shop("new@shop.com", { createdAt: ago(30 * 60_000) });
+      const h = await systemHealth(NOW);
+      expect(h).toMatchObject({ stuckFirstReads: 1, staleMailboxes: 0, workingMailboxes: 0 });
+      expect(systemTroubleLines(h)).toEqual(["1 inbox is still on its first read after 2 hours."]);
+      const rows = await adminOverview(NOW);
+      expect(rows.map((r) => mailboxesLine(r.mailboxes, NOW)).sort()).toEqual([
+        "1, healthy",
+        "1, still on first read",
+      ]);
+    });
+
+    it("a read-only account's stale inbox (and its old error code) isn't counted", async () => {
+      const ws = await shop(
+        "gone@shop.com",
+        {
+          backfillCompletedAt: ago(86_400_000),
+          lastSyncedAt: ago(6 * 3_600_000),
+          lastSyncErrorCode: "sync_failed",
+        },
+        "canceled",
+      );
+      expect(await systemHealth(NOW)).toMatchObject({ staleMailboxes: 0, stuckFirstReads: 0 });
+      const row = (await adminOverview(NOW)).find((r) => r.workspaceId === ws)!;
+      expect(row.mailboxes).toMatchObject({ stale: 0, errorCode: null });
+      expect(mailboxesStuck(row.mailboxes)).toBe(false);
+    });
+
+    it("plain phrases for each case; healthy only when nothing applies", () => {
+      const base = {
+        total: 2,
+        needReconnect: 0,
+        stale: 0,
+        oldestStaleSyncAt: null,
+        stuckFirstRead: 0,
+        errorCode: null,
+      };
+      expect(mailboxesLine(base, NOW)).toBe("2, healthy");
+      expect(mailboxesLine({ ...base, errorCode: "rate_limited" }, NOW)).toBe(
+        "2, Gmail asked us to slow down",
+      );
+      expect(mailboxesLine({ ...base, needReconnect: 1 }, NOW)).toBe("2, 1 need reconnect");
+      expect(mailboxesLine({ ...base, stale: 1 }, NOW)).toBe("2, never checked");
+      expect(mailboxesLine({ ...base, total: 0 }, NOW)).toBe("None connected");
+      expect(systemTroubleLines({ staleMailboxes: 2, stuckFirstReads: 0 })).toEqual([
+        "2 inboxes haven't been checked for over 30 minutes.",
+      ]);
+    });
   });
 });

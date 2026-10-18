@@ -1,15 +1,22 @@
 import Link from "next/link";
 import { auth } from "@/auth";
 import { siteConfig } from "@/config/site";
+import { daysPhrase } from "@/lib/trial-words";
+import { TrialClock } from "./trial-clock";
 import { getWorkspaceForUser } from "@/server/accounts";
 import type { Workspace } from "@/db/schema";
+import { setupCallSentence } from "@/server/billing-rules";
 import { queueCounts } from "@/server/drafts";
 import { trialCounts } from "@/server/first-week";
 import { isLastDay, trialSoFarLine, waitingLine } from "@/server/first-week-rules";
-import { effectiveStatus, evaluationClock, setupReallyPaid, timeLeft } from "@/server/lifecycle";
+import {
+  effectiveStatus,
+  evaluationClock,
+  setupReallyPaid,
+  trialLengthDays,
+} from "@/server/lifecycle";
 import { freeMonthBanner, freeMonthRunning } from "@/server/referral-rules";
 import { freeMonthView, viewChanges } from "@/server/referrals";
-import { TRIAL_SIDE_DOOR_LINE } from "@/server/trial-email-rules";
 
 function Contact() {
   const support = process.env.SUPPORT_EMAIL;
@@ -81,49 +88,9 @@ export async function StatusBanner() {
   if (status === "evaluating") {
     const clock = evaluationClock(workspace, now);
     if (!clock) return null;
-    // Round 2 (FW F2): the last day asks plainly, with what the three days did and a real button.
-    if (isLastDay(clock.msLeft)) {
-      const soFar = trialSoFarLine(await trialCounts(workspace));
-      return (
-        <section
-          aria-label="Your three days"
-          className="sa-inverted flex flex-col gap-2 rounded-xl p-4"
-        >
-          <p className="text-lg font-black">Your three days end in {timeLeft(clock.msLeft)}.</p>
-          {soFar ? <p>{soFar}</p> : null}
-          <p className="text-ash">
-            Choose a plan to keep it going and to send replies from Squared Away. Every reply still
-            waits for your okay. Until then, your drafts are in your Gmail Drafts folder too.
-          </p>
-          <Link
-            href="/billing"
-            className="inline-flex min-h-tap items-center justify-center rounded-lg bg-primary px-4 font-semibold text-primary-foreground"
-          >
-            Choose a plan
-          </Link>
-        </section>
-      );
-    }
-    return (
-      <section
-        aria-label="Your three days"
-        className="flex flex-col gap-1 rounded-xl border-2 border-charcoal p-4"
-      >
-        <p className="text-lg font-black">
-          Day {clock.day} of {clock.of} · {timeLeft(clock.msLeft)} left
-        </p>
-        <p>
-          Squared Away is reading and drafting, but it won&apos;t send anything to a customer during
-          your three days. {TRIAL_SIDE_DOOR_LINE}
-        </p>
-        <Link
-          href="/billing"
-          className="inline-flex min-h-tap items-center font-semibold underline underline-offset-4"
-        >
-          See plans
-        </Link>
-      </section>
-    );
+    // Round 2 (FW F2): the last day asks plainly, with what the trial did and a real button.
+    const soFar = isLastDay(clock.msLeft) ? trialSoFarLine(await trialCounts(workspace)) : null;
+    return <TrialClock clock={clock} soFar={soFar} />;
   }
 
   const inverted = (title: string, body: React.ReactNode, action?: string) => (
@@ -158,7 +125,7 @@ export async function StatusBanner() {
       // Round 2 (FW E7/F6): what's waiting for them, counts only.
       const waiting = waitingLine(await queueCounts(workspace.id, now));
       return inverted(
-        "Your three days are up.",
+        `Your ${daysPhrase(trialLengthDays(workspace))} are up.`,
         <>
           {waiting ? (
             <>
@@ -179,8 +146,8 @@ export async function StatusBanner() {
           {inverted(
             "Setup's paid. Sending is on.",
             <>
-              Every reply still waits for your okay. We&apos;ll call to go through your pricing,
-              scheduling and never-promise list. <Contact />
+              Every reply still waits for your okay. On your setup call,{" "}
+              {siteConfig.operator.split(" ")[0]} {setupCallSentence("after")}. <Contact />
             </>,
           )}
           <FreeMonthCard workspace={workspace} now={now} />

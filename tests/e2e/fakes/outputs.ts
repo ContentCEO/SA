@@ -9,7 +9,7 @@
  * the fake can tell which test a model call belongs to.
  */
 
-/** Classification (classify.v4): a plain quote request that auto-drafts. */
+/** Classification (classify.v5): a plain quote request that auto-drafts. */
 export const FAKE_CLASSIFICATION = {
   category: "quote_request",
   priority: "normal",
@@ -28,6 +28,7 @@ export const FAKE_CLASSIFICATION = {
     routine_paperwork: false,
     payment_change_request: false,
     smells_gas: false,
+    co_alarm: false,
   },
   extracted: {
     service_requested: "water heater replacement",

@@ -4,6 +4,7 @@
  * autopilot's complaint memory, AI-limit refunds and the unsorted-mail sweep.
  */
 import { randomBytes } from "node:crypto";
+import Anthropic from "@anthropic-ai/sdk";
 import { eq } from "drizzle-orm";
 import { beforeEach, describe, expect, it } from "vitest";
 import { callStructured, setModelTransportForTests, type Transport } from "@/ai/client";
@@ -307,11 +308,18 @@ describe("AI limit refunds (D5) and the unsorted sweep (D4)", () => {
     0;
 
   it("an outage doesn't use up the day; a cap refusal doesn't push the count past the cap", async () => {
-    const down: Transport = async () => {
-      throw new Error("overloaded");
+    // Check 29 P1: real provider faults (an SDK error class, not a plain Error) are refunded.
+    const overloaded: Transport = async () => {
+      throw new Anthropic.APIError(529, undefined, "overloaded", undefined);
     };
-    setModelTransportForTests(down);
-    await expect(callStructured(req())).rejects.toThrow("overloaded");
+    setModelTransportForTests(overloaded);
+    await expect(callStructured(req())).rejects.toBeInstanceOf(Anthropic.APIError);
+    expect(await calls()).toBe(0);
+    const offline: Transport = async () => {
+      throw new Anthropic.APIConnectionError({ message: "no connection" });
+    };
+    setModelTransportForTests(offline);
+    await expect(callStructured(req())).rejects.toBeInstanceOf(Anthropic.APIConnectionError);
     expect(await calls()).toBe(0);
 
     process.env.AI_DAILY_CALL_CAP = "1";

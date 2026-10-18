@@ -7,8 +7,8 @@ import { referralCredits, workspaces } from "@/db/schema";
 import { ensureUserAndWorkspace } from "@/server/accounts";
 import { createTestDb } from "../support/db";
 
-/** Plan #47 offer A: one additive migration (0039; written as 0028, renumbered at each merge). Previews and production share one database. */
-const TAG = "0039_referral_free_month";
+/** Plan #47 offer A: one additive migration (0044; written as 0028, renumbered at each merge). Previews and production share one database. */
+const TAG = "0044_referral_free_month";
 
 const statements = readFileSync(join("drizzle", `${TAG}.sql`), "utf8")
   .split("--> statement-breakpoint")
@@ -82,24 +82,24 @@ describe(`migration ${TAG} (referral free month)`, () => {
     );
   });
 
-  it("comes right after the Growth portal's migration, later than every earlier one", () => {
+  it("comes right after wave 1's last migration, later than every earlier one", () => {
     const journal = JSON.parse(readFileSync("drizzle/meta/_journal.json", "utf8")) as {
       entries: { tag: string; when: number }[];
     };
     const i = journal.entries.findIndex((e) => e.tag === TAG);
-    expect(journal.entries[i - 1]!.tag).toBe("0038_growth");
+    expect(journal.entries[i - 1]!.tag).toBe("0043_fallback_calls");
     // Drizzle's migrator runs only migrations newer than the last one applied (by `when`), and
-    // 0032–0038 may already be on the shared database: 0039 must be later than all.
+    // 0032–0043 may already be on the shared database: 0044 must be later than all.
     for (const e of journal.entries.slice(0, i))
       expect(journal.entries[i]!.when, e.tag).toBeGreaterThan(e.when);
-    // Then 0040, the follow-up marker, and nothing else yet.
+    // Then 0045, the follow-up marker, and nothing else yet.
     expect(journal.entries.slice(i + 1).map((e) => e.tag)).toEqual([AFTER_END_TAG]);
     expect(journal.entries[i + 1]!.when).toBeGreaterThan(journal.entries[i]!.when);
   });
 });
 
-/** The Stripe follow-up after a free month ends is retried until it goes through (0040). */
-const AFTER_END_TAG = "0040_referral_after_end_check";
+/** The Stripe follow-up after a free month ends is retried until it goes through (0045). */
+const AFTER_END_TAG = "0045_referral_after_end_check";
 
 describe(`migration ${AFTER_END_TAG}`, () => {
   it("adds one nullable column and nothing else", () => {

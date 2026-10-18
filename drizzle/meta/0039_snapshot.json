@@ -1,5 +1,5 @@
 {
-  "id": "5c202e09-da71-4778-9f77-ee007f111906",
+  "id": "a9ef39d5-e349-43ce-9850-0c9eb1965866",
   "prevId": "311e280a-3f7d-4c71-9555-dea0177f7e68",
   "version": "7",
   "dialect": "postgresql",
@@ -683,6 +683,12 @@
         },
         "opening": {
           "name": "opening",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "sent_via": {
+          "name": "sent_via",
           "type": "text",
           "primaryKey": false,
           "notNull": false
@@ -1458,12 +1464,6 @@
           "primaryKey": false,
           "notNull": false
         },
-        "paused_reason": {
-          "name": "paused_reason",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
         "plan_paused_at": {
           "name": "plan_paused_at",
           "type": "timestamp with time zone",
@@ -2175,148 +2175,6 @@
           "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": false
-        },
-        "reward": {
-          "name": "reward",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'balance_credit'"
-        },
-        "stripe_mode": {
-          "name": "stripe_mode",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "skip_reason": {
-          "name": "skip_reason",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "stripe_subscription_id": {
-          "name": "stripe_subscription_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "stripe_coupon_id": {
-          "name": "stripe_coupon_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "stripe_discount_id": {
-          "name": "stripe_discount_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "stripe_invoice_id": {
-          "name": "stripe_invoice_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "attached_at": {
-          "name": "attached_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "invoice_final_at": {
-          "name": "invoice_final_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "claimed_at": {
-          "name": "claimed_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "plan_change_seq": {
-          "name": "plan_change_seq",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "default": 0
-        },
-        "paid_plan": {
-          "name": "paid_plan",
-          "type": "plan",
-          "typeSchema": "public",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "paid_price_id": {
-          "name": "paid_price_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "paid_price_cents": {
-          "name": "paid_price_cents",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "free_plan": {
-          "name": "free_plan",
-          "type": "plan",
-          "typeSchema": "public",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "starts_at": {
-          "name": "starts_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "ends_at": {
-          "name": "ends_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "kept_at": {
-          "name": "kept_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "kept_price_cents": {
-          "name": "kept_price_cents",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "ended_at": {
-          "name": "ended_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "billing_mode": {
-          "name": "billing_mode",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "admin_flag": {
-          "name": "admin_flag",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "flagged_at": {
-          "name": "flagged_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
         }
       },
       "indexes": {
@@ -2352,38 +2210,6 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "referral_credits_one_scheduled_uq": {
-          "name": "referral_credits_one_scheduled_uq",
-          "columns": [
-            {
-              "expression": "beneficiary_workspace_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
-          "where": "status = 'scheduled'",
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "referral_credits_one_running_uq": {
-          "name": "referral_credits_one_running_uq",
-          "columns": [
-            {
-              "expression": "beneficiary_workspace_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
-          "where": "status = 'running'",
           "concurrently": false,
           "method": "btree",
           "with": {}
@@ -3545,25 +3371,6 @@
         "referred_by_workspace_id": {
           "name": "referred_by_workspace_id",
           "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "free_plan": {
-          "name": "free_plan",
-          "type": "plan",
-          "typeSchema": "public",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "free_plan_until": {
-          "name": "free_plan_until",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "stripe_cancel_at": {
-          "name": "stripe_cancel_at",
-          "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": false
         },

@@ -7,7 +7,7 @@ import {
   VOICE_INSTRUCTIONS,
   VOICE_PROMPT_VERSION,
   voiceSchema,
-} from "@/ai/prompts/voice.v2";
+} from "@/ai/prompts/voice.v3";
 import { AiCapReachedError } from "@/ai/usage";
 import { db } from "@/db";
 import { activityLog, mailboxes, voiceProfiles, workspaces, type Mailbox } from "@/db/schema";
@@ -144,7 +144,7 @@ export async function learnVoice(
       workspaceId,
       role: "voice" as const,
       promptVersion: VOICE_PROMPT_VERSION,
-      maxTokens: 4096,
+      maxTokens: 8192,
       system: [{ text: VOICE_INSTRUCTIONS, cache: false }],
       user: sentMailBlock(bodies),
       schema: voiceSchema,

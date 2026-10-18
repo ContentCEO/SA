@@ -7,6 +7,7 @@ import { sum } from "drizzle-orm";
 import { classifyEmail } from "@/ai/classify";
 import { callStructured } from "@/ai/client";
 import { checkDraft } from "@/ai/draft-checks";
+import { asksWhenAvailable } from "@/ai/when-words";
 import {
   conversationBlock,
   DRAFT_INSTRUCTIONS,
@@ -14,7 +15,8 @@ import {
   FIRST_CONTACT_TASK,
   replyDraftSchema,
   workspaceBlock,
-} from "@/ai/prompts/draft.v7";
+} from "@/ai/prompts/draft.v8";
+import { DISPUTE_TASK } from "@/ai/prompts/dispute-caution.v1";
 import { ACTIVE } from "@/ai/prompts/registry";
 import { usage } from "@/db/schema";
 import { ensureUserAndWorkspace } from "@/server/accounts";
@@ -87,6 +89,8 @@ export async function runEvals(
       jobDone: r.extracted.job_done === true,
       paymentChange: r.extracted.payment_change === true,
       gasSmell: r.extracted.gas_smell === true,
+      coAlarm: r.extracted.co_alarm === true,
+      electricalHazard: r.extracted.electrical_hazard === true,
       onMoneyOwed:
         r.category === "invoice_payment" && r.extracted.invoice_direction !== "owed_by_business",
       disputed: r.extracted.disputed === true,
@@ -111,7 +115,12 @@ export async function runEvals(
           summary: r.summary,
           extracted: r.extracted,
           // draft.v7: a first contact gets the task line the app sends (replies package).
-          task: c.firstContact ? FIRST_CONTACT_TASK : undefined,
+          task: c.firstContact
+            ? FIRST_CONTACT_TASK
+            : c.disputeCaution
+              ? // Check 43 P9: the fixed task the app adds on dispute / legal threads.
+                `Write the owner's reply to the last CUSTOMER message.\n\n${DISPUTE_TASK}`
+              : undefined,
           messages: [{ from: c.fromName, direction: "in", sentAt: email.receivedAt, body: c.body }],
         }),
         schema: replyDraftSchema,
@@ -121,6 +130,14 @@ export async function runEvals(
       else {
         const check = checkDraft(draft.body, {
           sourceText: [c.body, workspaceBlock(ctx)].join("\n"),
+          // Check 20 P1 / 23 P3: days and times come from the conversation; the hours' days
+          // only when the customer asked when the owner is open, as in the app.
+          whenSourceText: c.body,
+          hoursText: PROFILE.hours,
+          leadTimeText: PROFILE.leadTime,
+          allowHours: asksWhenAvailable(c.body),
+          // Check 23 P5: the light payment-terms check runs on every reply, as in the app.
+          termsSource: PROFILE.paymentTerms,
           doNotPromise: PROFILE.doNotPromise,
           neverSay: PROFILE.neverSay,
           phrasesAvoided: [],
@@ -132,7 +149,18 @@ export async function runEvals(
         problems.push(
           ...check.flags.filter(
             (f) =>
-              f.includes("never-promise") || f.includes("never-say") || f.includes("stand behind"),
+              f.includes("never-promise") ||
+              f.includes("never-say") ||
+              f.includes("stand behind") ||
+              // draft.v8 (Check 38 P6): no made-up license number, no unbacked credential.
+              f.includes("license or registration number") ||
+              f.includes("Add it in Settings") ||
+              // Check 40 P1: no deductible or insurance-claim promises.
+              f.includes("deductible or the insurance claim") ||
+              // Check 41 P1: no safety or lead claims.
+              f.includes("Safety and lead claims") ||
+              // Check 39 P4: no rebate, tax-credit or refrigerant rule the owner never wrote.
+              f.includes("rebate, tax credit or refrigerant rule"),
           ),
         );
         for (const bad of c.draft.mustNotContain ?? []) {

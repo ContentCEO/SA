@@ -8,7 +8,13 @@ import { playbookApplies } from "@/server/complaint-rules";
 import type { LeadCard } from "@/server/lead-cards";
 import { draftReplyAction } from "./actions";
 import { CalledThem } from "./called-them";
-import { addTownAction, closeCheckinAction, markFixedAction } from "./leads-actions";
+import { injectionClearable } from "@/server/injection-clear-rules";
+import {
+  addTownAction,
+  clearInjectionAction,
+  closeCheckinAction,
+  markFixedAction,
+} from "./leads-actions";
 import { RemindMe, type SnoozeOption } from "./remind-me";
 
 const linkClass =
@@ -158,6 +164,14 @@ export function NeedsYouCard({
             <input type="hidden" name="threadId" value={i.threadId} />
             <PendingButton pending="Saving…" className="w-full">
               All good
+            </PendingButton>
+          </form>
+        ) : null}
+        {!readOnly && !i.checkIn && injectionClearable(i.extracted) ? (
+          <form action={clearInjectionAction}>
+            <input type="hidden" name="threadId" value={i.threadId} />
+            <PendingButton pending="Saving…" className="w-full">
+              This is a normal email
             </PendingButton>
           </form>
         ) : null}

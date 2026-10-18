@@ -278,15 +278,50 @@
     {
       "idx": 39,
       "version": "7",
-      "when": 1792211897302,
-      "tag": "0039_referral_free_month",
+      "when": 1792258162358,
+      "tag": "0039_send_path_sent_via",
       "breakpoints": true
     },
     {
       "idx": 40,
       "version": "7",
-      "when": 1792211898937,
-      "tag": "0040_referral_after_end_check",
+      "when": 1792258870232,
+      "tag": "0040_send_path_autopilot_claim",
+      "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "7",
+      "when": 1792271229521,
+      "tag": "0041_licenses",
+      "breakpoints": true
+    },
+    {
+      "idx": 42,
+      "version": "7",
+      "when": 1792276181035,
+      "tag": "0042_paused_from",
+      "breakpoints": true
+    },
+    {
+      "idx": 43,
+      "version": "7",
+      "when": 1792276182158,
+      "tag": "0043_fallback_calls",
+      "breakpoints": true
+    },
+    {
+      "idx": 44,
+      "version": "7",
+      "when": 1792287535388,
+      "tag": "0044_referral_free_month",
+      "breakpoints": true
+    },
+    {
+      "idx": 45,
+      "version": "7",
+      "when": 1792287541302,
+      "tag": "0045_referral_after_end_check",
       "breakpoints": true
     }
   ]

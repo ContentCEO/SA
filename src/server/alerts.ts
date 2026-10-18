@@ -64,32 +64,45 @@ export async function sendAccessLostAlerts(
     );
 
   let sent = 0;
+  let failed = 0;
   for (const r of rows) {
     if (!jobsAllowed(r.workspace, now)) continue;
     const n = r.mailbox.accessAlertsSent;
-    const email = accessLostEmail(r.mailbox.email, n > 0);
-    const outcome = await send({
-      to: r.ownerEmail,
-      ...email,
-      idempotencyKey: `access-lost-${r.mailbox.id}-${(r.mailbox.accessLostAt ?? now).getTime()}-${n}`,
-    });
-    if (outcome === "not_configured") return { sent, notConfigured: true };
-    // "already_sent": an earlier try with this key got through (sendEmail holds our own record
-    // of its 2xx) but this count didn't save. The owner has the email, so it counts as sent.
-    // The reminder clock runs from the first alert.
-    await db()
-      .update(mailboxes)
-      .set({ accessAlertsSent: n + 1, ...(n === 0 ? { accessLostAt: now } : {}) })
-      .where(and(eq(mailboxes.id, r.mailbox.id), eq(mailboxes.accessAlertsSent, n)));
-    await db()
-      .insert(activityLog)
-      .values({
-        workspaceId: r.workspace.id,
-        actor: "squared_away",
-        action: "access_alert_sent",
-        detail: { mailboxId: r.mailbox.id, reminder: n > 0 },
+    // Check 18 P1: one owner's refused email (a Resend 403 while EMAIL_FROM is
+    // onboarding@resend.dev, a bad address) never stops the others or the rest of the
+    // 15-minute job. Nothing is marked, so the next run tries this owner again. Ids and the
+    // error's name only.
+    try {
+      const email = accessLostEmail(r.mailbox.email, n > 0);
+      const outcome = await send({
+        to: r.ownerEmail,
+        ...email,
+        idempotencyKey: `access-lost-${r.mailbox.id}-${(r.mailbox.accessLostAt ?? now).getTime()}-${n}`,
       });
-    sent++;
+      if (outcome === "not_configured") return { sent, failed, notConfigured: true };
+      // "already_sent": an earlier try with this key got through (sendEmail holds our own record
+      // of its 2xx) but this count didn't save. The owner has the email, so it counts as sent.
+      // The reminder clock runs from the first alert.
+      await db()
+        .update(mailboxes)
+        .set({ accessAlertsSent: n + 1, ...(n === 0 ? { accessLostAt: now } : {}) })
+        .where(and(eq(mailboxes.id, r.mailbox.id), eq(mailboxes.accessAlertsSent, n)));
+      await db()
+        .insert(activityLog)
+        .values({
+          workspaceId: r.workspace.id,
+          actor: "squared_away",
+          action: "access_alert_sent",
+          detail: { mailboxId: r.mailbox.id, reminder: n > 0 },
+        });
+      sent++;
+    } catch (err) {
+      failed++;
+      console.error("access_alert_failed", {
+        mailboxId: r.mailbox.id,
+        error: err instanceof Error ? err.name : "unknown",
+      });
+    }
   }
-  return { sent, notConfigured: false };
+  return { sent, failed, notConfigured: false };
 }

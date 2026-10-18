@@ -19,6 +19,7 @@ import {
   uuid,
 } from "drizzle-orm/pg-core";
 import type { GrowthService } from "../config/growth";
+import type { Licenses } from "../config/licenses";
 import { TRADES, type Trade } from "../config/trades";
 import type { LostReason } from "../server/quote-rules";
 import type { ReplyToHeader } from "../server/reply-address-rules";
@@ -130,6 +131,12 @@ export const workspaces = pgTable(
      */
     extraTrades: text("extra_trades").array().$type<Trade[]>().notNull().default([]),
     status: workspaceStatusEnum("status").notNull().default("invited"),
+    /**
+     * Check 17 P1: where a paused account stood when Davi paused it (its effective status then),
+     * kept up to date by Stripe webhooks while it's paused, and where Resume takes it back to.
+     * Null when not paused (or paused before this column existed: see `resumeTarget`).
+     */
+    pausedFrom: workspaceStatusEnum("paused_from"),
     evaluationStartedAt: timestamp("evaluation_started_at", { withTimezone: true }),
     evaluationEndsAt: timestamp("evaluation_ends_at", { withTimezone: true }),
     setupPaidAt: timestamp("setup_paid_at", { withTimezone: true }),
@@ -213,7 +220,7 @@ export const mailboxes = pgTable(
      * Unused since the referral merge (2026-10-17). Plan #47's branch paused over-plan inboxes
      * with `status = 'paused'` + this reason; the decisions package's `plan_paused_at` (below)
      * does the same job everywhere, so the referral code now uses that. The column stays only
-     * because its migration (0039) is kept byte-identical; nothing reads or writes it.
+     * because its migration (0044) is kept byte-identical; nothing reads or writes it.
      */
     pausedReason: text("paused_reason").$type<MailboxPausedReason>(),
     /**
@@ -496,6 +503,12 @@ export const drafts = pgTable(
     /** Autopilot: when this draft will send unless the owner holds it. Null = waits for a tap. */
     autoSendAt: timestamp("auto_send_at", { withTimezone: true }),
     /**
+     * Check 9 P2: the autopilot run that is sending this right now (set atomically before any
+     * Gmail call; cleared when it stands down). While set, Hold it is too late. A claim older
+     * than AUTOPILOT_CLAIM_LEASE_MS belongs to a run that died and may be retaken.
+     */
+    autoSendClaimedAt: timestamp("auto_send_claimed_at", { withTimezone: true }),
+    /**
      * Plan #7 undo send: the owner tapped Send reply; it goes at this time unless
      * they tap Undo. The draft stays `pending` meanwhile (so it still holds the
      * thread's one live slot) but is out of the queue. Null = not sending.
@@ -512,6 +525,14 @@ export const drafts = pgTable(
      * every draft written before draft.v7).
      */
     opening: text("opening"),
+    /**
+     * Check 14 P1: how a sent draft left. app = the owner's tap here, autopilot = autopilot,
+     * gmail = our draft sent from Gmail (same or edited text), own_words = closed because the
+     * owner wrote their own reply in Gmail (status stays `sent` so caps hold, but it never counts
+     * as a drafted reply sent or as time saved). Null = sent before this column (counted as
+     * before).
+     */
+    sentVia: text("sent_via").$type<"app" | "autopilot" | "gmail" | "own_words">(),
   },
   (t) => [
     index("drafts_mailbox_status_idx").on(t.mailboxId, t.status),
@@ -597,8 +618,9 @@ export const businessProfiles = pgTable("business_profile", {
    */
   awayBackOn: text("away_back_on"),
   /**
-   * Check 50 P3 (reserved, not read or written yet): the owner's two-letter US state code.
-   * Check 38 P2, 44 P1 and 45 P2 use this column and add no migration.
+   * Check 50 P3: the owner's two-letter US state code. Written by the business profile form and
+   * read by the Massachusetts deposit rule since Check 38 P2; 44 P1 and 45 P2 use it too and
+   * add no migration.
    */
   state: text("state"),
   /**
@@ -610,6 +632,11 @@ export const businessProfiles = pgTable("business_profile", {
     .array()
     .notNull()
     .default(sql`'{}'::text[]`),
+  /**
+   * Check 38 P6: registration and license numbers as the owner typed them (src/config/licenses.ts).
+   * Drafts quote only these; the draft check flags any other number or unbacked claim.
+   */
+  licenses: jsonb("licenses").$type<Licenses>().notNull().default({}),
   completedAt: timestamp("completed_at", { withTimezone: true }),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
@@ -668,6 +695,8 @@ export const usage = pgTable(
     emailsSent: integer("emails_sent").notNull().default(0),
     /** Hundredths of a cent, so tiny Haiku calls don't round to zero. */
     estimatedCostCentiCents: integer("estimated_cost_centicents").notNull().default(0),
+    /** Check 48 P3: calls answered by the role's approved stand-in model (models.ts). */
+    fallbackCalls: integer("fallback_calls").notNull().default(0),
     capAlertedAt: timestamp("cap_alerted_at", { withTimezone: true }),
   },
   (t) => [uniqueIndex("usage_workspace_period_uq").on(t.workspaceId, t.period)],
@@ -986,7 +1015,7 @@ export const referralCredits = pgTable(
     endedAt: timestamp("ended_at", { withTimezone: true }),
     /**
      * When the Stripe follow-up after `done` (strip our coupon if it stayed on, sweep or flag
-     * charges for free days) fully went through. Null on a done row = the sweep tries again (0040).
+     * charges for free days) fully went through. Null on a done row = the sweep tries again (0045).
      */
     afterEndCheckedAt: timestamp("after_end_checked_at", { withTimezone: true }),
     /** The subscription's billing mode (`flexible` / `classic`), for /admin. */

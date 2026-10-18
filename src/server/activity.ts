@@ -1,5 +1,7 @@
 import "server-only";
 import { and, count, desc, eq, gte, inArray, isNotNull, lt, sql } from "drizzle-orm";
+import { pricing } from "@/config/pricing";
+import { daysPhrase } from "@/lib/trial-words";
 import { categoryLabels, categoryTag, isCategory } from "@/config/categories";
 import { db } from "@/db";
 import { activityLog, drafts, mailboxes, messages, threads } from "@/db/schema";
@@ -72,6 +74,12 @@ export function describeActivity(
       }`;
     case "reply_sent_from_gmail":
       return `You sent the draft${to} from Gmail`;
+    // Check 14 P1: our draft was deleted and the owner wrote their own reply in Gmail.
+    case "owner_wrote_own_reply":
+      return `You answered ${name ?? "them"} yourself in Gmail`;
+    // Check 42 P1: the customer was answered from Gmail during the undo window.
+    case "send_stood_down":
+      return `Didn't send the reply${to}: someone had already answered from Gmail`;
     case "draft_discarded":
       return `You discarded the draft${to}`;
     // Review B1: website-form leads now go to the customer's own address.
@@ -97,15 +105,7 @@ export function describeActivity(
       // "back in your queue" would suggest Send works again: say what stopped it instead.
       if (detail.why === "mailbox_paused")
         return `Didn't send the reply${to} — that Gmail address is paused on your plan. It's still in its Gmail drafts`;
-      return `Didn't send the reply${to} — ${
-        detail.why === "changed_in_gmail"
-          ? "it was changed in Gmail"
-          : detail.why === "blocked"
-            ? "sending was switched off"
-            : detail.why === "reconnect_needed"
-              ? "Gmail needs reconnecting"
-              : "something changed"
-      }. It's back in your queue`;
+      return `Didn't send the reply${to} — ${sendStoppedWhy(detail.why)}. It's back in your queue`;
     case "snoozed":
       return `You put off the conversation${name ? ` with ${name}` : ""} till later`;
     case "draft_expired":
@@ -218,7 +218,14 @@ export function describeActivity(
       return detail.includesSetup
         ? "Payment received — setup paid and sending switched on"
         : "Payment received — your plan is back on";
-    case "subscription_changed":
+    case "subscription_changed": {
+      // Check 17 P1: while paused, Stripe's news is kept for when the account is resumed.
+      const held = (detail.pausedFrom as { after?: unknown } | undefined)?.after;
+      if (detail.to === "paused" && (held === "past_due" || held === "canceled")) {
+        return held === "past_due"
+          ? "A payment didn't go through while your account was paused"
+          : "Your plan ended while your account was paused — nothing was deleted";
+      }
       return detail.to === "past_due"
         ? "A payment didn't go through — paused until your card is updated"
         : detail.to === "canceled"
@@ -226,6 +233,7 @@ export function describeActivity(
           : detail.from === "past_due" || detail.from === "canceled"
             ? "Payment sorted — switched back on"
             : "Your plan was updated";
+    }
     case "digest_sent":
       return "Sent your morning summary";
     case "monthly_summary_sent":
@@ -239,9 +247,10 @@ export function describeActivity(
         ? "Your test payment was cleared — the setup fee is still due"
         : null;
     case "evaluation_started":
-      return "Your three days started";
+      return `Your ${daysPhrase(pricing.evaluationDays)} started`;
     case "evaluation_expired":
-      return "Your three days ended";
+      // The trial may have been extended, so not "three days".
+      return "Your trial ended";
     case "workspace_status_changed":
       return detail.to === "setup_paid"
         ? "Setup paid — sending switched on"
@@ -250,7 +259,7 @@ export function describeActivity(
           : detail.to === "paused"
             ? "Your account was paused"
             : detail.to === "evaluating"
-              ? "Your three days were extended"
+              ? `Your trial was extended by ${daysPhrase(pricing.evaluationDays)}`
               : "Your account status changed";
     default:
       return null;
@@ -274,6 +283,22 @@ export type ActivityEntry = {
   recordId: string | null;
 };
 const SENT_ACTIONS = new Set(["reply_sent", "reply_sent_from_gmail", "reply_went_to_form"]);
+
+/**
+ * Why a send was stopped after its undo window, in a few plain words (Activity, and the Queue's
+ * "Didn't send" box, Check 9 P10).
+ */
+export function sendStoppedWhy(why: unknown): string {
+  return why === "changed_in_gmail"
+    ? "it was changed in Gmail"
+    : why === "blocked"
+      ? "sending was switched off"
+      : why === "reconnect_needed"
+        ? "Gmail needs reconnecting"
+        : why === "answered_elsewhere"
+          ? "someone had already answered from Gmail"
+          : "something changed";
+}
 
 export async function listActivity(workspaceId: string, limit = 100): Promise<ActivityEntry[]> {
   const rows = await db()
@@ -370,6 +395,8 @@ export async function monthSummary(
       and(
         inArray(drafts.mailboxId, boxes),
         inArray(drafts.status, ["sent", "edited_and_sent"]),
+        // Check 14 P1: the owner's own Gmail reply is theirs, not a drafted reply sent.
+        sql`${drafts.sentVia} is distinct from 'own_words'`,
         gte(drafts.decidedAt, start),
       ),
     );
@@ -460,6 +487,7 @@ export async function monthMoney(
           where ${drafts.threadId} = ${threads.id}
             and ${drafts.kind} = 'followup'
             and ${drafts.status} in ('sent', 'edited_and_sent')
+            and ${drafts.sentVia} is distinct from 'own_words'
             and ${drafts.decidedAt} < ${threads.invoicePaidAt}
         )`,
       ),

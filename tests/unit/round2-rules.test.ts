@@ -12,7 +12,7 @@ import {
   mentionsGasSmell,
   mentionsRealLegal,
 } from "@/ai/guards";
-import { mentionsMoney, moneyMentions } from "@/ai/money-words";
+import { mentionsMoney, moneyMentions, vagueMoney } from "@/ai/money-words";
 import { conversationBlock, workspaceBlock, type WorkspaceContext } from "@/ai/prompts/draft.v6";
 import { emailBlock } from "@/ai/prompts/classify.v4";
 import { cleanExtraTrades } from "@/config/trades";
@@ -143,6 +143,50 @@ describe("money however it's written (A1)", () => {
   ])("no money in: %s", (text) => {
     expect(moneyMentions(text)).toEqual([]);
   });
+
+  // Check 23 P1 + Check 20 P11: spoken prices, k-ranges, other currencies.
+  it.each([
+    ["ballpark 3-4k depending on access", [3000, 4000]],
+    ["3k to 4k", [3000, 4000]],
+    ["it's fourteen fifty for the swap", [1450]],
+    ["it's twelve-fifty for the swap", [1250]],
+    ["the unit runs nineteen ninety-nine", [1999]],
+    ["eleven hundred fifty installed", [1150]],
+    ["El costo es 450 dólares", [450]],
+    ["Fica em 1.500 reais", [1500]],
+    ["R$ 1.500,00 com instalação", [1500]],
+    ["ninety-five bucks", [95]],
+    ["a hundred and a quarter", [125]],
+    ["one fifty to come out", [150]],
+    ["two-fifty for the visit", [250]],
+    ["a buck fifty", [150]],
+    ["€450", [450]],
+    ["£450", [450]],
+    ["mil quinientos", [1500]],
+  ])("finds %s", (text, want) => {
+    expect([...new Set(moneyMentions(text).map((m) => m.amount))].sort()).toEqual([...want].sort());
+    expect(mentionsMoney(text)).toBe(true);
+  });
+  it.each(["usually low four figures", "mid five figures", "a few bucks", "couple hundred bucks"])(
+    "vague money still counts: %s",
+    (text) => {
+      expect(vagueMoney(text).length).toBe(1);
+      expect(mentionsMoney(text)).toBe(true);
+    },
+  );
+  it.each([
+    "10k BTU",
+    "model 3-4K",
+    "call at 9:30",
+    "the 2024-2025 season",
+    "twenty twenty vision",
+    "it's nine thirty",
+    "feel free to call",
+    "two-family house",
+    "the 4:50 delivery",
+  ])("still not money: %s", (text) => {
+    expect(mentionsMoney(text)).toBe(false);
+  });
 });
 
 describe("draft checks the review ran (A1–A5, A7)", () => {
@@ -221,8 +265,29 @@ describe("draft checks the review ran (A1–A5, A7)", () => {
       purpose: null,
     };
     expect(guardrailReasons({ ...ok, draftBody: "Thursday works." })).toEqual([]);
-    for (const body of ["It's 450 dollars.", "About 1.2k.", "Around twelve hundred."])
+    for (const body of [
+      "It's 450 dollars.",
+      "About 1.2k.",
+      "Around twelve hundred.",
+      // Check 23 P1 + Check 20 P11.
+      "Ballpark 3-4k depending on access.",
+      "It's fourteen fifty for the swap.",
+      "Usually low four figures.",
+      "El costo es 450 dólares.",
+      "Ninety-five bucks.",
+      "A hundred and a quarter.",
+      "One fifty to come out.",
+      "Two-fifty for the visit.",
+      "A buck fifty.",
+      "€450 for the part.",
+      "Mil quinientos.",
+    ])
       expect(guardrailReasons({ ...ok, draftBody: body }).join()).toMatch(/money/);
+    for (const body of ["Feel free to call.", "It's a two-family house.", "The 4:50 delivery."])
+      expect(guardrailReasons({ ...ok, draftBody: body })).toEqual([]);
+    expect(guardrailReasons({ ...ok, draftBody: "Ballpark 3-4k." })).toContain(
+      "Mentions money, so it waits for you.",
+    );
     expect(guardrailReasons({ ...ok, draftBody: "Ok", complainedRecently: true }).join()).toMatch(
       /complained/,
     );

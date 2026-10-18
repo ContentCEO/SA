@@ -87,7 +87,7 @@ export function WaitlistForm({ referralCode }: { referralCode?: string } = {}) {
         autoComplete="email"
         required
         label="Business email"
-        hint="Gmail or Google Workspace today. On Outlook? Join anyway — it's on the list."
+        hint="Gmail, or your own business address if it runs on Google. On Outlook? Join anyway, it's on the list."
         defaultValue={v.email}
         error={e.email}
       />

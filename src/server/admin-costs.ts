@@ -85,41 +85,55 @@ export async function costRows(now: Date = new Date()): Promise<CostRow[]> {
 export async function sendCostAlerts(
   now: Date = new Date(),
   deps: { send?: EmailSender } = {},
-): Promise<{ sent: number }> {
+): Promise<{ sent: number; failed: number }> {
   const to = process.env.ADMIN_EMAIL;
-  if (!to) return { sent: 0 };
+  if (!to) return { sent: 0, failed: 0 };
   const send = deps.send ?? sendEmail;
   const month = utcDay(now).slice(0, 7);
   let sent = 0;
+  let failed = 0;
   for (const r of (await costRows(now)).filter((x) => x.alert)) {
     const key = `cost_alert:${r.workspaceId}:${month}`;
-    const [seen] = await db().select().from(appSettings).where(eq(appSettings.key, key));
-    if (seen) continue;
-    const share = Math.round((r.costShare ?? 0) * 100);
-    const text = [
-      `${r.label}: AI cost this month is ${formatDollars(r.costCents)}, ${share}% of their ${formatDollars(r.revenueCents)} plan (alert line: ${Math.round(COST_ALERT_SHARE * 100)}%).`,
-      `Margin so far: ${formatDollars(r.marginCents)}. Busiest day: ${r.busiestDayCalls} of ${r.cap} calls.`,
-      `See ${appUrl("/admin/costs")}`,
-    ].join("\n\n");
-    const result = await send({
-      to,
-      subject: `AI cost alert: ${r.label} at ${share}% of plan`,
-      text,
-      html: text
-        .split("\n\n")
-        .map(
-          (p) =>
-            `<p>${p.replace(/[<>&]/g, (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;" })[c]!)}</p>`,
-        )
-        .join(""),
-      idempotencyKey: `cost-${r.workspaceId}-${month}`,
-    });
-    // "already_sent": an earlier try this month got through but its marker didn't save.
-    if (result === "not_configured") return { sent };
-    await db().insert(appSettings).values({ key, value: now.toISOString() }).onConflictDoNothing();
-    sent++;
+    // Check 18 P1: one refused email never stops the next account's alert or the purge steps
+    // after this one. Nothing is marked, so tomorrow's run tries again. Ids and error names only.
+    try {
+      const [seen] = await db().select().from(appSettings).where(eq(appSettings.key, key));
+      if (seen) continue;
+      const share = Math.round((r.costShare ?? 0) * 100);
+      const text = [
+        `${r.label}: AI cost this month is ${formatDollars(r.costCents)}, ${share}% of their ${formatDollars(r.revenueCents)} plan (alert line: ${Math.round(COST_ALERT_SHARE * 100)}%).`,
+        `Margin so far: ${formatDollars(r.marginCents)}. Busiest day: ${r.busiestDayCalls} of ${r.cap} calls.`,
+        `See ${appUrl("/admin/costs")}`,
+      ].join("\n\n");
+      const result = await send({
+        to,
+        subject: `AI cost alert: ${r.label} at ${share}% of plan`,
+        text,
+        html: text
+          .split("\n\n")
+          .map(
+            (p) =>
+              `<p>${p.replace(/[<>&]/g, (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;" })[c]!)}</p>`,
+          )
+          .join(""),
+        idempotencyKey: `cost-${r.workspaceId}-${month}`,
+      });
+      // "already_sent": an earlier try this month got through but its marker didn't save.
+      if (result === "not_configured") return { sent, failed };
+      await db()
+        .insert(appSettings)
+        .values({ key, value: now.toISOString() })
+        .onConflictDoNothing();
+      sent++;
+    } catch (err) {
+      failed++;
+      console.error("cost_alert_failed", {
+        workspaceId: r.workspaceId,
+        error: err instanceof Error ? err.name : "unknown",
+      });
+    }
   }
-  return { sent };
+  return { sent, failed };
 }
 
 /** Old alert markers aren't needed once their month is over. */

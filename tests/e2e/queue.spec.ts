@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { expect, type Page, test } from "@playwright/test";
 import { eq } from "drizzle-orm";
 import * as schema from "../../src/db/schema";
@@ -515,12 +516,47 @@ test("price memory: past prices for similar jobs, and a tap fills only the price
   expect(overflow).toBe(false);
 });
 
+test("a [name]-style blank is a gap: a chip, never Ready, Send reply only once filled (Check 23 P7)", async ({
+  page,
+  context,
+}) => {
+  const owner = await seedOwner({ mailbox: true, backfilled: true });
+  await setWorkspace(owner.workspaceId, {
+    status: "setup_paid",
+    setupPaidAt: new Date(),
+    setupPaidVia: "stripe",
+  });
+  const { draft } = await seedQueue(owner.mailboxId!);
+  await testDb
+    .update(schema.drafts)
+    .set({
+      body: "Hi [name],\n\nHappy to take a look. What's the address?\n\nThanks, Davi",
+      flags: ["Has a blank (“[name]”) to fill in."],
+      confidence: 60,
+    })
+    .where(eq(schema.drafts.id, draft.id));
+  await signInAs(context, owner);
+
+  await page.goto("/queue");
+  const card = page.getByRole("article", { name: "Draft reply to Priya" });
+  await expect(card.getByRole("button", { name: "Fill in their name" })).toBeVisible();
+  await expect(card.getByRole("note")).toContainText("Fill in 1 gap to send");
+  await expect(card.getByRole("button", { name: "Send reply" })).toHaveCount(0);
+  await expect(card).not.toContainText("Ready");
+
+  await card.getByRole("button", { name: "Fill in their name" }).click();
+  await card.getByLabel("What should “their name” say?").fill("Priya");
+  await card.getByRole("button", { name: "Fill in", exact: true }).click();
+  await expect(card).toContainText("Hi Priya,");
+  await expect(card.getByRole("button", { name: "Send reply" })).toBeEnabled();
+});
+
 test("a typical draft's Send reply is on the first screen of its card (outside review)", async ({
   page,
   context,
 }) => {
   const owner = await seedOwner({ mailbox: true, backfilled: true });
-  const { quote } = await seedQueue(owner.mailboxId!);
+  const { quote, draft } = await seedQueue(owner.mailboxId!);
   await setWorkspace(owner.workspaceId, { status: "active", setupPaidVia: "stripe" });
   await signInAs(context, owner);
   await page.emulateMedia({ reducedMotion: "reduce" });
@@ -530,6 +566,14 @@ test("a typical draft's Send reply is on the first screen of its card (outside r
   await settled(page);
   const send = card.getByRole("button", { name: "Send reply" });
   await expect(send).toBeInViewport({ ratio: 1 });
+  // Check 9 P1: Send reply posts the fingerprint of the text on the card, so a draft that
+  // changes after the page rendered is refused instead of sent.
+  const seen = card.locator('form:has(button:text("Send reply")) input[name="seen"]');
+  await expect(seen).toHaveValue(
+    createHash("sha256")
+      .update(draft.body ?? "")
+      .digest("hex"),
+  );
   const tabBar = page.locator('nav[aria-label="Main"].fixed');
   if (await tabBar.isVisible()) {
     const box = (await send.boundingBox())!;

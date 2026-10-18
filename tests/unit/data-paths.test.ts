@@ -8,7 +8,7 @@ import { parseText, rel, sourceFiles, ts, walk } from "../support/source-ast";
  * Check 48 P7: where email text may go. The privacy policy ("Where your information goes") says
  * email text goes to one outside service, Anthropic, for the task at hand, and that "Anthropic may
  * keep it for a limited time under its own policies". Today every model call is one
- * `messages.parse` in src/ai/client.ts. This walks src/ and fails on anything that would quietly
+ * `messages.create` in src/ai/client.ts. This walks src/ and fails on anything that would quietly
  * break that promise:
  *  - Anthropic's Message Batches API or Files API (both store data for longer), unless
  *    ALLOWED_DATA_PATHS in src/config/models.ts turns it on with a policy update;
@@ -162,7 +162,8 @@ describe("email text goes only where the privacy policy says (Check 48 P7)", () 
       ).toBe(true);
     }
     // The model call is a plain messages request.
-    expect(SRC_FILES.find((f) => f.file === ANTHROPIC_CLIENT)!.text).toContain("messages.parse");
+    // (Check 29 P1: messages.create, parsed in our code, instead of messages.parse.)
+    expect(SRC_FILES.find((f) => f.file === ANTHROPIC_CLIENT)!.text).toContain("messages.create");
   });
 
   it("each allow-list entry names its privacy-policy line, and those lines exist", () => {

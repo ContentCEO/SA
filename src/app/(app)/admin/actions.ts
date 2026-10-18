@@ -11,6 +11,8 @@ import { requireAdmin } from "@/server/session";
 import { stripeErrorReason } from "@/server/stripe-error-rules";
 import { checkTestPayments, resetTestPayments, StripeNotLiveError } from "@/server/test-payments";
 import { isAdminMove } from "@/server/lifecycle";
+import { isHandKey } from "@/server/launch-ready";
+import { tickLaunchItem } from "@/server/launch-ticks";
 import {
   applyAdminMove,
   MoveNotAllowedError,
@@ -18,6 +20,19 @@ import {
 } from "@/server/workspace-lifecycle";
 
 const id = z.string().uuid();
+
+/**
+ * Check 50 P6: Davi's Done on a "Ready for paying owners" hand row. Admin only; writes only the
+ * tick date in app_settings (no gate reads it). Logs the key, nothing else.
+ */
+export async function tickLaunchAction(formData: FormData) {
+  await requireAdmin();
+  const key = formData.get("key");
+  if (!isHandKey(key)) redirect("/admin?error=unknown");
+  await tickLaunchItem(key);
+  console.info("launch_ticked", { key });
+  redirect("/admin?done=launch_ticked#launch");
+}
 
 /** Davi's manual status moves. Re-checks admin on every call, not just the page. */
 export async function adminMoveAction(formData: FormData) {

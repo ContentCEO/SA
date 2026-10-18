@@ -6,7 +6,14 @@ import { draftTag } from "@/config/categories";
 import { findGaps } from "@/ai/gaps";
 import { confidenceLabel } from "@/config/drafting";
 import { gmailThreadLink } from "@/lib/gmail-link";
-import { listQueue, sentDraftSummary, type QueueItem } from "@/server/drafts";
+import {
+  bodyHash,
+  draftGmailLink,
+  lateSends,
+  listQueue,
+  sentDraftSummary,
+  type QueueItem,
+} from "@/server/drafts";
 import { accountLockReason } from "@/server/autopilot";
 import {
   canPracticeSend,
@@ -27,6 +34,8 @@ import { OnboardingChecklist } from "@/components/app/onboarding-checklist";
 import { checklistFor } from "@/server/onboarding";
 import { DraftCard } from "./draft-card";
 import { UndoSend } from "./undo-send";
+import { LateSends } from "./late-sends";
+import { sendStoppedWhy } from "@/server/activity";
 import { OfflineQueue } from "./offline-queue";
 import { devicePrefs } from "@/lib/device-prefs";
 import { ScrollToThread } from "./scroll-to-thread";
@@ -41,7 +50,8 @@ import { leadCardsFor } from "@/server/lead-cards";
 import { notAnsweredRows } from "@/server/never-answered";
 import { NotAnsweredCard } from "./not-answered-card";
 import { FirstLookCard } from "./first-look";
-import { CONTROL_DONE, CONTROL_ERRORS } from "@/config/control-messages";
+import { QUEUE_DONE as done, QUEUE_ERRORS as errors } from "./queue-messages";
+import { staleTiming, timingNote } from "@/server/draft-timing";
 import { NoteLine } from "@/components/app/note-line";
 import { ResortSheet } from "@/components/app/sender-sheets";
 import { notesForAddresses, notesForThreads } from "@/server/customer-notes";
@@ -49,74 +59,6 @@ import { awayState } from "@/server/away";
 import { awayUntilShort } from "@/server/away-rules";
 import { offersOtherWays, openingLine } from "@/server/first-contact-rules";
 import { turnAwayOffAction } from "../settings/away-actions";
-
-const done: Record<string, string> = {
-  ...CONTROL_DONE,
-  away_off: "Welcome back. Away mode is off.",
-  discarded: "Draft discarded.",
-  saved: "Changes saved. It's updated in Gmail too.",
-  drafted: "Reply drafted. It's below, and in your Gmail drafts.",
-  revised: "Draft changed. Read it below — it's updated in Gmail too.",
-  practice:
-    "Practice copy sent to your own inbox — your customer got nothing. The draft is still below.",
-  undone: "Stopped. Nothing was sent — it's back below.",
-  snoozed: "Snoozed. It'll come back to the top of the queue.",
-  held: "Held. It won't send until you tap Send reply.",
-  called:
-    "Marked as answered by phone. No draft and no nudge for that one unless they write again.",
-  done: "Marked done. It'll come back if they write again.",
-  fixed: "Marked fixed. I'll remind you to check in with them in 2 days.",
-  checkin_closed: "Good. That one's closed.",
-  town_added: "Town added to your list. Draft a reply when you're ready.",
-  found_money:
-    "Writing those drafts now. They show up below in a minute or two, and each one waits for you.",
-};
-const errors: Record<string, string> = {
-  ...CONTROL_ERRORS,
-  gaps: "Fill in every gap before sending (anything like {{price}} or [price]) — nothing was sent.",
-  busy: "That's a lot in a short time, so we've paused it for a bit. Try again in a few minutes.",
-  blocked: "Sending isn't switched on for your account, so nothing was sent.",
-  changed:
-    "That draft was changed in Gmail. Here's the latest version — read it, then tap Send reply again.",
-  deleted: "That draft was deleted or sent from Gmail, so it's gone from here too.",
-  to_changed:
-    "Who that reply goes to changed since you opened it, so nothing was sent. Check the To line, then tap Send reply again.",
-  reconnect: "Google access was lost. Reconnect Gmail in Settings and try again.",
-  empty: "The reply was empty, so nothing was sent.",
-  exists: "There's already a draft for that one — it's below.",
-  replied: "You've already replied to that one.",
-  notext: "There's no email text left to reply to (older than 30 days).",
-  capped: "Today's drafting limit is used up. It resets tomorrow.",
-  revisions: "That draft has been changed as many times as it can be. Edit it by hand instead.",
-  practice_limit: "That's all 10 practice sends. The real thing turns on once setup is paid.",
-  toolate: "Too late to undo — that reply has already gone.",
-  gone: "That draft isn't waiting any more, so nothing was sent.",
-  snooze: "That can't be put off that long — it looks urgent. Pick an earlier time.",
-  draftfailed: "Couldn't write a draft for that one. Try again in a minute.",
-  gmail_busy: "Gmail asked us to slow down. Try again in a minute.",
-  reply_to_unread: "We couldn't check who this goes to. Try again in a minute.",
-  no_reply_address:
-    "That one would go to a no-reply address — answer them on the platform or by phone.",
-  textaddr:
-    "That address turns email into a text message, and Squared Away never texts customers. Use Text from my phone instead.",
-  leadsite: "That one came through a lead website — answer them on the website.",
-  phonemsg: "That's a voicemail or text message — call or text them back from your phone.",
-  readonly:
-    "Your account is read-only right now, so nothing was changed. The note at the top says why.",
-  // Deposit / review / closing notes (plan #26 #28 #29).
-  purpose_not_allowed: "That one isn't ready for that kind of note.",
-  not_eligible: "That one isn't ready for that kind of note.",
-  feature_off: "That isn't switched on for your account yet.",
-  already_asked: "You've already asked them once.",
-  thanked: "You've already written them a thank-you for that one.",
-  no_review_link: "Add your review link in Settings → Business profile first.",
-  review_recent: "You asked them for a review in the last 12 months.",
-  complaint: "Not for a complaint — reply to that one yourself.",
-  has_draft: "Send or discard the reply first.",
-  paused:
-    "That Gmail address is paused on your plan, so nothing was sent or written. Pick which one is on in Settings → Your Gmail.",
-  unknown: "That didn't work. Refresh and try again.",
-};
 
 const who = (i: QueueItem) => i.customerName || i.customerAddress || "Unknown sender";
 const tag = (i: QueueItem) => draftTag(i);
@@ -138,6 +80,7 @@ function nextLine(
   return `I'll let you know when ${name ?? "they"} write${name ? "s" : ""} back.`;
 }
 const firstName = (name: string | null) => (name ? name.split(/[\s,]+/)[0] : null);
+const capitalize = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
 const gmailLink = (i: QueueItem) => gmailThreadLink(i);
 
@@ -156,9 +99,13 @@ export default async function QueuePage(props: PageProps<"/queue">) {
   const sentIds = (Array.isArray(params.sent) ? params.sent : params.sent ? [params.sent] : [])
     .filter((s) => /^[0-9a-f-]{36}$/i.test(s))
     .slice(0, 50);
-  const sentAll = (await Promise.all(sentIds.map((d) => sentDraftSummary(workspace.id, d)))).filter(
-    (s) => s !== null,
-  );
+  const summaries = (
+    await Promise.all(sentIds.map((d) => sentDraftSummary(workspace.id, d)))
+  ).filter((s) => s !== null);
+  // Check 9 P10: a tap that was stopped says so; a late one waits on top with Stop it.
+  const stopped = summaries.filter((s) => s.stopped);
+  const sentAll = summaries.filter((s) => !s.stopped && !s.late);
+  const late = await lateSends(workspace.id);
   const sent = sentAll.length === 1 ? sentAll[0]! : null;
   const sendingIds = sentAll.filter((s) => s.sendingAt).map((s) => s.draftId);
   const sendAt = sentAll
@@ -174,6 +121,18 @@ export default async function QueuePage(props: PageProps<"/queue">) {
   );
   const clock = new Intl.DateTimeFormat("en-US", { hour: "numeric", minute: "2-digit", timeZone });
   const readOnly = isReadOnly(workspace);
+  // Check 42 P1: "This was already answered from Gmail at 2:14pm. Nothing was sent."
+  const answeredAt = params.error === "answered" ? Number(params.at) : NaN;
+  const answered =
+    params.error === "answered"
+      ? {
+          at: Number.isFinite(answeredAt) && answeredAt > 0 ? new Date(answeredAt) : null,
+          href:
+            typeof params.d === "string" && /^[0-9a-f-]{36}$/i.test(params.d)
+              ? await draftGmailLink(workspace.id, params.d)
+              : null,
+        }
+      : null;
   const firstLook = await firstLookFor(workspace);
   const empty = queue.needsYou.length === 0 && queue.drafts.length === 0;
   const now = new Date();
@@ -254,6 +213,11 @@ export default async function QueuePage(props: PageProps<"/queue">) {
     note: noteFor(i),
     resort: <ResortSheet threadId={i.threadId} current={i.category} back="queue" />,
   });
+  // Check 43 P7: "Written Friday. It says “tomorrow”, which meant Saturday. Check the timing."
+  const timingNoteFor = (i: QueueItem) => {
+    const t = i.draftCreatedAt ? staleTiming(i.body ?? "", i.draftCreatedAt, now, timeZone) : null;
+    return t ? timingNote(t) : null;
+  };
   const draftLeadLines = (i: QueueItem) => {
     const lc = leadCards.get(i.threadId);
     return [
@@ -302,6 +266,15 @@ export default async function QueuePage(props: PageProps<"/queue">) {
         <Headline serif="waiting on you," heavy="the queue." />
       )}
 
+      {stopped.map((s) => (
+        <Notice key={s.draftId} strong>
+          {s.stopped!.why === "answered_elsewhere"
+            ? `Didn't send. Someone had already answered ${firstName(s.toName) ?? "them"} from Gmail, so this reply was set aside.`
+            : `Didn't send. ${capitalize(sendStoppedWhy(s.stopped!.why))}, so it's back below to check.`}
+        </Notice>
+      ))}
+      <LateSends items={late} />
+
       {away.on && away.backOn ? (
         <form
           action={turnAwayOffAction}
@@ -318,6 +291,44 @@ export default async function QueuePage(props: PageProps<"/queue">) {
       ) : null}
       {doneMsg ? <Notice>{doneMsg}</Notice> : null}
       {errorMsg ? <Notice strong>{errorMsg}</Notice> : null}
+      {params.error === "autopilot_sent" ? (
+        <Notice strong>
+          Too late, autopilot already sent it. See it on Activity.
+          {typeof params.d === "string" && /^[0-9a-f-]{36}$/i.test(params.d) ? (
+            <>
+              {" "}
+              <Link
+                href={`/record/${params.d}`}
+                className="inline-flex min-h-tap items-center underline underline-offset-4"
+              >
+                See record
+              </Link>
+            </>
+          ) : null}
+        </Notice>
+      ) : null}
+      {answered ? (
+        <Notice strong>
+          This was already answered from Gmail
+          {answered.at
+            ? ` at ${clock.format(answered.at).replace(/\s?([AP])M$/, (_, m: string) => `${m.toLowerCase()}m`)}`
+            : ""}
+          . Nothing was sent.
+          {answered.href ? (
+            <>
+              {" "}
+              <a
+                href={answered.href}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex min-h-tap items-center underline underline-offset-4"
+              >
+                Open the conversation in Gmail
+              </a>
+            </>
+          ) : null}
+        </Notice>
+      ) : null}
 
       <OfflineQueue enabled={device.offline} />
       {/* A fresh key per server render: a later navigation or action remounts it, so a
@@ -420,6 +431,8 @@ export default async function QueuePage(props: PageProps<"/queue">) {
               summary={i.summary}
               reason={i.reason ?? ""}
               body={i.body ?? ""}
+              seenHash={bodyHash(i.body ?? "")}
+              timingNote={timingNoteFor(i)}
               flags={i.flags}
               label={confidenceLabel({
                 confidencePct: i.confidence,
@@ -438,7 +451,8 @@ export default async function QueuePage(props: PageProps<"/queue">) {
               needsOwnerReason={i.needsOwnerReason}
               canSend={sending && !i.mailboxPaused}
               readOnly={readOnly || i.mailboxPaused}
-              autoSendAt={i.autoSendAt && autopilotOpen ? clock.format(i.autoSendAt) : null}
+              autoSendAt={i.autoSendAt && autopilotOpen ? i.autoSendAt.toISOString() : null}
+              autoSendClock={i.autoSendAt && autopilotOpen ? clock.format(i.autoSendAt) : null}
               sendingOffLabel={i.mailboxPaused ? MAILBOX_PAUSED_LINE : sendingOffLabel(workspace)}
               sendingOffDetail={
                 i.mailboxPaused

@@ -111,6 +111,9 @@ Settings removes all of our access, that one included.
 - For a first reply to someone you've never written to, which kind of first reply the draft is
   (a short label like "urgent" or "asked about price", not text from the email), and when we let
   your phone know about an emergency email.
+- Whether an email looked like a gas smell, a carbon monoxide alarm, an electrical fire sign,
+  sulfur-smelling water or an emergency (and when), why an email was marked as trying to instruct
+  the assistant (a short code, not the text), and whether you said it was a normal email.
 
 **What you tell us:** your business details (business name, trade, services, service area, hours,
 price list, payment terms, policies, things you never promise, words you never use, short

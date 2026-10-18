@@ -1,6 +1,6 @@
 import "server-only";
 import { and, desc, eq, gte, isNotNull, isNull, or } from "drizzle-orm";
-import { callStructured } from "@/ai/client";
+import { callStructured, ModelUnavailableError } from "@/ai/client";
 import {
   EDIT_TONE_INSTRUCTIONS,
   EDIT_TONE_PROMPT_VERSION,
@@ -53,25 +53,30 @@ export async function captureEditSignals(now: Date = new Date(), limit = 50): Pr
     )
     .limit(limit);
   let stored = 0;
+  // Check 48 P3: a missing model must not stop the daily purge job this runs in. The counts are
+  // still kept (they must be taken before the text is purged); only the tone is left out.
+  let modelMissing = false;
   for (const { draft, workspace } of rows) {
     if (!jobsAllowed(workspace, now)) continue;
     const shape = editShape(draft.originalBody!, draft.body!);
     let toneShift: ToneShift | null = null;
-    try {
-      const r = await callStructured({
-        workspaceId: workspace.id,
-        role: "classify",
-        promptVersion: EDIT_TONE_PROMPT_VERSION,
-        maxTokens: 64,
-        system: [{ text: EDIT_TONE_INSTRUCTIONS, cache: false }],
-        user: editToneTask(draft.originalBody!, draft.body!),
-        schema: editToneSchema,
-        now,
-      });
-      toneShift = r?.tone_shift ?? null;
-    } catch (err) {
-      if (!(err instanceof AiCapReachedError)) throw err;
-    }
+    if (!modelMissing)
+      try {
+        const r = await callStructured({
+          workspaceId: workspace.id,
+          role: "classify",
+          promptVersion: EDIT_TONE_PROMPT_VERSION,
+          maxTokens: 64,
+          system: [{ text: EDIT_TONE_INSTRUCTIONS, cache: false }],
+          user: editToneTask(draft.originalBody!, draft.body!),
+          schema: editToneSchema,
+          now,
+        });
+        toneShift = r?.tone_shift ?? null;
+      } catch (err) {
+        if (err instanceof ModelUnavailableError) modelMissing = true;
+        else if (!(err instanceof AiCapReachedError)) throw err;
+      }
     await db()
       .insert(editSignals)
       .values({ draftId: draft.id, workspaceId: workspace.id, ...shape, toneShift })
