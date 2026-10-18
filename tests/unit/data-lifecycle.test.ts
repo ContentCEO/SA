@@ -22,6 +22,8 @@ import {
   priceHistory,
   pushSubscriptions,
   rateLimits,
+  gmailUnits,
+  jobRuns,
   referralCredits,
   rules,
   seasonalNotes,
@@ -77,6 +79,8 @@ const KEPT: Record<string, string> = {
     "global settings and markers; deleteAccount deletes the workspace's cost-alert and sent-email markers. Left: the per-mailbox done markers `cleanup:draft-messages-v1:<mailbox id>` and `backfill:reply-to-v1:<mailbox id>` (content-free uuids, never read once the mailbox is gone)",
   rate_limits: "counters keyed by workspace or hashed IP; purged daily after 2 days",
   stripe_events: "Stripe event ids and types only, for webhook idempotency",
+  job_runs:
+    "background job run and step counts per job name and day (Check 25 P4); no workspace, no content; purged after about four months",
   referral_credits:
     "salted email fingerprint with the workspace ids cleared (SET NULL), so a referral is paid once",
 };
@@ -339,6 +343,9 @@ async function seedOwner(email: string, tag: string, extra: { referredBy?: strin
   ]);
   await database.insert(rateLimits).values({ key: `send:${ws}`, windowStart: NOW, count: 1 });
   await database.insert(stripeEvents).values({ id: `evt_${tag}`, type: "invoice.paid" });
+  // Check 25 P1 / P4: Gmail unit minutes (go with the mailbox) and job counts (global).
+  await database.insert(gmailUnits).values({ mailboxId: a.mailboxId, minute: NOW, units: 20 });
+  await database.insert(jobRuns).values({ functionId: `${tag}-job`, day: "2026-10-12", runs: 1 });
   return { userId: user.id, workspaceId: ws, a, b };
 }
 
@@ -405,7 +412,13 @@ describe("delete my account", () => {
     expect(canceled).toEqual(["sub_owner"]);
 
     const after = await snapshot();
-    const kept = new Set(["waitlist", "rate_limits", "stripe_events", "referral_credits"]);
+    const kept = new Set([
+      "waitlist",
+      "rate_limits",
+      "stripe_events",
+      "referral_credits",
+      "job_runs",
+    ]);
     for (const name of Object.keys(after)) {
       if (kept.has(name)) continue;
       // The owner's rows are all gone (invites and the cost-alert / sent-email markers too),

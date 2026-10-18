@@ -13,6 +13,7 @@ import {
   jsonb,
   pgEnum,
   pgTable,
+  primaryKey,
   text,
   timestamp,
   uniqueIndex,
@@ -231,11 +232,33 @@ export const mailboxes = pgTable(
      * a plan pause are told apart (a paused address can need reconnecting too).
      */
     planPausedAt: timestamp("plan_paused_at", { withTimezone: true }),
+    /**
+     * Check 25 P1: Gmail itself said "slow down until …". Every Gmail call for this inbox stops
+     * before any fetch until then, so all its jobs wait together.
+     */
+    gmailCoolUntil: timestamp("gmail_cool_until", { withTimezone: true }),
+    /**
+     * Check 25 P3: Gmail's history expired, so the gap is re-read from this time, one page per
+     * step. Null = no re-read under way. `resync_page_token` is where the next page starts.
+     */
+    resyncSince: timestamp("resync_since", { withTimezone: true }),
+    resyncPageToken: text("resync_page_token"),
+    /**
+     * Check 25 P5: a first read that stopped part-way (a run cap, a failure) resumes here —
+     * the next page's token, pages stored so far, and the fixed window start (`after:`).
+     * Cleared when the read finishes and on a reconnect (which starts a fresh read).
+     */
+    backfillPageToken: text("backfill_page_token"),
+    backfillPagesDone: integer("backfill_pages_done").notNull().default(0),
+    backfillSince: timestamp("backfill_since", { withTimezone: true }),
     createdAt: createdAt(),
   },
   (t) => [
     uniqueIndex("mailboxes_workspace_email_uq").on(t.workspaceId, sql`lower(${t.email})`),
     index("mailboxes_workspace_idx").on(t.workspaceId),
+    // Check 25 P7: one Gmail in one account (checked in saveConnectedMailbox). Not unique yet:
+    // production may already hold a duplicate; check before making it unique.
+    index("mailboxes_email_lower_idx").on(sql`lower(${t.email})`),
   ],
 );
 
@@ -415,6 +438,13 @@ export const messages = pgTable(
      * needs no answer. Check 21 P1 uses this column and adds no migration.
      */
     ackOnly: boolean("ack_only").notNull().default(false),
+    /**
+     * Check 40 P2: how many photos / PDFs / other files came with the email (full reads only).
+     * Counts only: no file name or content is ever stored.
+     */
+    attachmentImages: integer("attachment_images").notNull().default(0),
+    attachmentPdfs: integer("attachment_pdfs").notNull().default(0),
+    attachmentOther: integer("attachment_other").notNull().default(0),
     createdAt: createdAt(),
   },
   (t) => [
@@ -900,6 +930,38 @@ export const rateLimits = pgTable("rate_limits", {
   windowStart: timestamp("window_start", { withTimezone: true }).notNull(),
   count: integer("count").notNull(),
 });
+
+/**
+ * Check 25 P1: Gmail quota units used per mailbox per minute (Google allows 6,000 a minute per
+ * user; we stop at 5,400). One atomic upsert per request, shared by every job for the inbox.
+ * Counts only. Purged daily.
+ */
+export const gmailUnits = pgTable(
+  "gmail_units",
+  {
+    mailboxId: uuid("mailbox_id")
+      .notNull()
+      .references(() => mailboxes.id, { onDelete: "cascade" }),
+    minute: timestamp("minute", { withTimezone: true }).notNull(),
+    units: integer("units").notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.mailboxId, t.minute] })],
+);
+
+/**
+ * Check 25 P4: background job runs and steps per function per UTC day (Inngest bills both).
+ * Counts only, from an Inngest middleware; /admin shows the month's total.
+ */
+export const jobRuns = pgTable(
+  "job_runs",
+  {
+    functionId: text("function_id").notNull(),
+    day: date("day").notNull(),
+    runs: integer("runs").notNull().default(0),
+    steps: integer("steps").notNull().default(0),
+  },
+  (t) => [primaryKey({ columns: [t.functionId, t.day] })],
+);
 
 export const stripeEvents = pgTable("stripe_events", {
   id: text("id").primaryKey(),

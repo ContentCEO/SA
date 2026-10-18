@@ -220,6 +220,8 @@ describe("C15: every Sentry path is scrubbed", () => {
     "src/instrumentation.ts": "server init (sentryOptions) + captureRequestError",
     "src/instrumentation-client.ts": "browser init (sentryOptions), loaded only with a DSN",
     "src/jobs/client.ts": "Inngest ReportFinalFailures: captureException + flush",
+    "src/jobs/functions.ts":
+      "workspace-lifecycle runChecks (Check 25 P4): captureException per failed check, tags = job + check name only",
     "src/lib/sentry.ts": "sentryOptions / scrubEvent (type import only)",
   };
   /** Sentry calls that go through the client set up by init — so through beforeSend. */

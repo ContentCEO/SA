@@ -591,6 +591,9 @@ export default async function AdminPage(props: PageProps<"/admin">) {
             {line}
           </p>
         ))}
+        <p>
+          Background work this month: {system.jobExecutionsThisMonth.toLocaleString("en-US")} steps.
+        </p>
         {system.jobsLookStopped ? (
           <p>
             Mail is normally checked every 5 minutes. Open the Inngest dashboard (Vercel → sa →

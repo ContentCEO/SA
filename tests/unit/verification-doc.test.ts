@@ -1,5 +1,6 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { pricing } from "@/config/pricing";
+import { MAIL_LABELS } from "@/mailbox/connector";
 import { describe, expect, it } from "vitest";
 import { UNDO_WINDOW_SECONDS } from "@/config/drafting";
 import { modelPricing, models } from "@/config/models";
@@ -406,9 +407,15 @@ describe("the verification answer is true of the code", () => {
   it("Promotions and Social mail: the body is read (it's in the inbox) but never sent to the AI", () => {
     expect(text).toContain("its body **is** read within the 30 days");
     expect(text).toContain("**without** being sent to the AI");
-    expect(readFileSync("src/server/sync.ts", "utf8")).toContain('m.labelIds.includes("INBOX")');
+    // Check 47 P4: the label names live in MAIL_LABELS (src/mailbox/connector.ts).
+    expect(MAIL_LABELS).toMatchObject({
+      inbox: "INBOX",
+      promotions: "CATEGORY_PROMOTIONS",
+      social: "CATEGORY_SOCIAL",
+    });
+    expect(readFileSync("src/server/sync.ts", "utf8")).toContain("m.labelIds.includes(MAIL_INBOX)");
     const classification = readFileSync("src/server/classification.ts", "utf8");
-    expect(classification).toContain('"CATEGORY_PROMOTIONS", "CATEGORY_SOCIAL"');
+    expect(classification).toContain("[MAIL_LABELS.promotions, MAIL_LABELS.social]");
   });
 
   it("the numbers it quotes are the code's", () => {

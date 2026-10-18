@@ -358,6 +358,48 @@
       "when": 1792299510562,
       "tag": "0050_needs_owner_since",
       "breakpoints": true
+    },
+    {
+      "idx": 51,
+      "version": "7",
+      "when": 1792301118973,
+      "tag": "0051_gmail_units",
+      "breakpoints": true
+    },
+    {
+      "idx": 52,
+      "version": "7",
+      "when": 1792301121103,
+      "tag": "0052_resync_cursor",
+      "breakpoints": true
+    },
+    {
+      "idx": 53,
+      "version": "7",
+      "when": 1792301123181,
+      "tag": "0053_attachment_counts",
+      "breakpoints": true
+    },
+    {
+      "idx": 54,
+      "version": "7",
+      "when": 1792301125693,
+      "tag": "0054_job_runs",
+      "breakpoints": true
+    },
+    {
+      "idx": 55,
+      "version": "7",
+      "when": 1792301127535,
+      "tag": "0055_backfill_cursor",
+      "breakpoints": true
+    },
+    {
+      "idx": 56,
+      "version": "7",
+      "when": 1792301129203,
+      "tag": "0056_mailbox_email_index",
+      "breakpoints": true
     }
   ]
 }

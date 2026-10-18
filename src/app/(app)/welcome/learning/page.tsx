@@ -35,7 +35,8 @@ export default async function WelcomeLearningPage() {
   const { workspace } = await requireOwner();
   const [box] = await listMailboxes(workspace.id);
   const voice = await getVoiceProfile(workspace.id);
-  const read = box?.backfillCompletedAt ? (await syncSummary(box.id)).messageCount : 0;
+  // Check 25 P6: the running count while the first read is going, not only once it's done.
+  const read = box ? (await syncSummary(box.id)).messageCount : 0;
   const voiceDone =
     voice?.status === "ready" || voice?.status === "not_enough_mail" || voice?.status === "failed";
   const allDone = Boolean(box?.backfillCompletedAt) && voiceDone;
@@ -54,7 +55,7 @@ export default async function WelcomeLearningPage() {
       {!allDone ? <AutoRefresh /> : null}
       <p className="text-sm font-semibold">Step 3 of 3</p>
       <Headline
-        serif={allDone ? "all set," : "a few minutes,"}
+        serif={allDone ? "all set," : "this can take a while,"}
         heavy={allDone ? "here's how you write." : "reading your email."}
       />
 
@@ -62,7 +63,9 @@ export default async function WelcomeLearningPage() {
         <Step done={Boolean(box?.backfillCompletedAt)}>
           {box?.backfillCompletedAt
             ? `Read ${read.toLocaleString("en-US")} emails from the last 30 days.`
-            : "Reading the last 30 days of email…"}
+            : read > 0
+              ? `Reading the last 30 days of email: ${read.toLocaleString("en-US")} so far…`
+              : "Reading the last 30 days of email…"}
         </Step>
         <Step done={voiceDone}>
           {voice?.status === "ready"

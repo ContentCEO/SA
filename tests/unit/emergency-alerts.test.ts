@@ -586,6 +586,7 @@ describe("emergency alerts (B5 part 2)", () => {
     const src = readFileSync("src/jobs/functions.ts", "utf8");
     const after = src.slice(src.indexOf("async function alertsForMailbox"));
     expect(after.indexOf("sendEmergencyAlerts(")).toBeLessThan(after.indexOf("sendPushAlerts("));
-    expect(src).toContain('step.run("emergency-alerts", () => sendEmergencyAlerts())');
+    // Check 25 P4: a check inside the lifecycle job's grouped "alerts" step.
+    expect(src).toContain('"emergency-alerts": () => sendEmergencyAlerts()');
   });
 });

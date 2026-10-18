@@ -6,7 +6,13 @@ import { relativeTime } from "@/lib/relative-time";
 import { cn } from "@/lib/utils";
 import { mailboxHealth } from "@/server/mailbox-health";
 import { planPausedLine } from "@/server/mailbox-plan-rules";
-import { listMailboxes, mailboxLimit, type MailboxSummary } from "@/server/mailboxes";
+import {
+  firstReadProgress,
+  listMailboxes,
+  mailboxLimit,
+  type MailboxSummary,
+} from "@/server/mailboxes";
+import { getBusinessProfile } from "@/server/profile";
 import { requireOwner } from "@/server/session";
 import { BACKFILL_DAYS, syncSummary } from "@/server/sync";
 import { mailboxLimitFor } from "@/config/pricing";
@@ -16,7 +22,6 @@ import {
   freeMonthRunning,
   pausedInboxCopy,
 } from "@/server/referral-rules";
-import { getBusinessProfile } from "@/server/profile";
 import { disconnectMailboxAction, swapMailboxAction } from "../actions";
 import { SettingsScreen } from "../screen";
 
@@ -34,7 +39,7 @@ function syncLine(m: MailboxSummary, messageCount: number): string {
   }
   if (m.status === "paused") return "Paused. Nothing is being read or drafted.";
   if (!m.backfillCompletedAt) {
-    return `Reading your last ${BACKFILL_DAYS} days of email. This can take a few minutes.`;
+    return `Reading your last ${BACKFILL_DAYS} days of email. This can take a while.`;
   }
   const checked = m.lastSyncedAt ? `, checked ${relativeTime(m.lastSyncedAt)}` : "";
   return `${messageCount.toLocaleString("en-US")} emails from the last ${BACKFILL_DAYS} days${checked}.`;
@@ -52,6 +57,25 @@ export default async function GmailSettingsPage(props: PageProps<"/settings/gmai
   // Plan #47: the plan that counts (a free month's while it runs) decides the limit.
   const planNow = effectivePlan(workspace, now);
   const limit = mailboxLimit(workspace, now);
+  // Check 25 P6: a first read in progress shows how far it got and when it started.
+  const timeZone = (await getBusinessProfile(workspace.id))?.timeZone ?? "America/New_York";
+  const firstReads = new Map(
+    await Promise.all(
+      mailboxes
+        .filter((m) => !m.backfillCompletedAt)
+        .map(
+          async (m) =>
+            [
+              m.id,
+              await firstReadProgress(
+                { ...m, workspaceId: workspace.id },
+                counts.get(m.id) ?? 0,
+                timeZone,
+              ),
+            ] as const,
+        ),
+    ),
+  );
   const canAddMore = mailboxes.length < limit;
   // A lower plan pauses the Gmail addresses it doesn't cover (2026-10-16); the owner picks.
   const onNow = mailboxes.filter((m) => !m.planPausedAt);
@@ -163,7 +187,12 @@ export default async function GmailSettingsPage(props: PageProps<"/settings/gmai
                   </li>
                 );
               }
-              const health = mailboxHealth(m, now, Boolean(process.env.GMAIL_PUBSUB_TOPIC));
+              const health = mailboxHealth(
+                m,
+                now,
+                Boolean(process.env.GMAIL_PUBSUB_TOPIC),
+                firstReads.get(m.id),
+              );
               const needsYou = health.needsReconnect;
               return (
                 <li
@@ -191,7 +220,10 @@ export default async function GmailSettingsPage(props: PageProps<"/settings/gmai
                     ))}
                   </dl>
                   {needsYou ? (
-                    <Link href="/connect" className={cn(buttonVariants({ size: "lg" }), "w-full")}>
+                    <Link
+                      href={`/connect?reconnect=${m.id}`}
+                      className={cn(buttonVariants({ size: "lg" }), "w-full")}
+                    >
                       Reconnect Gmail
                     </Link>
                   ) : null}
@@ -209,7 +241,7 @@ export default async function GmailSettingsPage(props: PageProps<"/settings/gmai
         {mailboxes.length > 0 && canAddMore ? (
           <div className="flex flex-col gap-1">
             <Link
-              href="/connect"
+              href="/connect?add=1"
               className="inline-flex min-h-tap items-center font-semibold underline underline-offset-4"
             >
               Connect another Gmail

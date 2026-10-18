@@ -1,3 +1,5 @@
+import type { mailboxProviderEnum } from "@/db/schema";
+
 /**
  * Mailbox connector interface. Only Gmail is implemented; Outlook would be a
  * second implementation of this, not a rewrite. Sync and send methods are
@@ -9,12 +11,24 @@ export type ConnectResult = {
   grantedScopes: string[];
 };
 
+/** Every provider the schema knows (`mailboxes.provider`). */
+export type MailboxProvider = (typeof mailboxProviderEnum.enumValues)[number];
+
 export interface MailboxConnector {
-  readonly provider: "gmail";
+  readonly provider: MailboxProvider;
   /** Scopes we must have. Missing any of them means we refuse the connection. */
   readonly requiredScopes: readonly string[];
   /** URL to send the owner to for consent. `state` is our CSRF token. */
-  authorizationUrl(opts: { state: string; redirectUri: string; loginHint?: string }): string;
+  authorizationUrl(opts: {
+    state: string;
+    redirectUri: string;
+    loginHint?: string;
+    /**
+     * Check 42 P3: Google's `prompt`. Default "consent" (a refresh token every time);
+     * "consent select_account" shows Google's account chooser (adding another inbox).
+     */
+    prompt?: "consent" | "consent select_account";
+  }): string;
   /** Exchange the callback code for a long-lived credential. */
   exchangeCode(opts: { code: string; redirectUri: string }): Promise<ConnectResult>;
   /** Revoke our access at the provider. Must not throw if already revoked. */
@@ -28,10 +42,38 @@ export class MissingScopesError extends Error {
   }
 }
 
+/**
+ * Check 47 P1: the Google account has no Gmail (Gmail answers "Mail service not enabled"): a
+ * Google account made for Business Profile or Ads while the email lives on Outlook, or a
+ * Workspace with Gmail turned off. Nothing is saved and the token is revoked.
+ */
+export class NoGmailError extends Error {
+  constructor() {
+    super("This Google account has no Gmail.");
+    this.name = "NoGmailError";
+  }
+}
+
+/**
+ * Check 47 P4: the label names shared code reads. They are Gmail's own, and every provider's
+ * reader maps its folders onto exactly these (an Outlook reader puts "INBOX" on inbox mail,
+ * "SENT" on sent mail, …). Stored `messages.label_ids` hold these values.
+ */
+export const MAIL_LABELS = {
+  inbox: "INBOX",
+  sent: "SENT",
+  draft: "DRAFT",
+  trash: "TRASH",
+  spam: "SPAM",
+  promotions: "CATEGORY_PROMOTIONS",
+  social: "CATEGORY_SOCIAL",
+} as const;
+
 /** A message as the sync engine sees it, independent of provider. */
 export type MailMessage = {
   providerMessageId: string;
   providerThreadId: string;
+  /** The message's labels, as the names in MAIL_LABELS (plus any the provider adds). */
   labelIds: string[];
   snippet: string;
   /** Epoch millis when the provider received/sent it. */
@@ -52,15 +94,44 @@ export type MailMessage = {
      * only the first may be stored as "no Reply-To".
      */
     replyToRead?: boolean;
+    /**
+     * Check 20 P4 / 21 P1: machine-written mail (RFC 3834). Read only to set
+     * `messages.auto_reply`; never stored or logged. Undefined = not present (or not asked).
+     */
+    autoSubmitted?: string;
+    xAutoreply?: string;
+    xAutorespond?: string;
+    precedence?: string;
+    autoResponseSuppress?: string;
   };
   /** Only present when fetched with bodies. */
   bodyText?: string;
+  /**
+   * Check 40 P2: attachments by kind (full reads only). Counts only — never names or content.
+   */
+  attachments?: { images: number; pdfs: number; other: number };
 };
 
-export type MessageRef = { id: string; threadId: string };
+export type MessageRef = {
+  id: string;
+  threadId: string;
+  /**
+   * Labels, when the listing already said (history's messagesAdded, or an `in:inbox` listing).
+   * Only a hint for how to read the message (Check 25 P1); what's stored comes from the read.
+   */
+  labelIds?: string[];
+};
+
+/** A label change history reported on one message (Check 25 P2). */
+export type LabelChange = { id: string; threadId: string; added: string[]; removed: string[] };
 
 export type HistoryPage = {
+  /** New messages, plus messages that gained SENT (a sent draft may keep its id). */
   added: MessageRef[];
+  /** Every label added or removed, in history order (archive, Trash, Spam, Not spam…). */
+  labelChanges: LabelChange[];
+  /** Messages deleted for good in Gmail. */
+  deleted: MessageRef[];
   nextPageToken?: string;
   /** Newest cursor seen; store it once the page is processed. */
   historyId: string;
@@ -72,7 +143,19 @@ export type HistoryPage = {
  */
 export interface MailboxReader {
   getProfile(): Promise<{ emailAddress: string; historyId: string }>;
-  listMessages(opts: { query: string; pageToken?: string; maxResults?: number }): Promise<{
+  /**
+   * Check 47 P4: a listing by window, never a provider's own search words. `after` (a fixed
+   * start) wins over `newerThanDays`; `inbox` true = inbox only, false = everything but the
+   * inbox; `sentOnly` = the owner's sent mail. Spam and Trash are never listed.
+   */
+  listMessages(opts: {
+    newerThanDays?: number;
+    after?: Date;
+    inbox?: boolean;
+    sentOnly?: boolean;
+    pageToken?: string;
+    maxResults?: number;
+  }): Promise<{
     messages: MessageRef[];
     nextPageToken?: string;
   }>;
@@ -109,6 +192,14 @@ export class MailboxRateLimitError extends Error {
   ) {
     super(message);
     this.name = "MailboxRateLimitError";
+  }
+}
+
+/** Check 25 P5: Gmail refused a saved listing page token (400): start the listing over. */
+export class InvalidPageTokenError extends Error {
+  constructor() {
+    super("Gmail no longer accepts that page token.");
+    this.name = "InvalidPageTokenError";
   }
 }
 

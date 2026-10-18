@@ -21,7 +21,7 @@ export async function ReconnectBanner() {
         or drafted until you reconnect.
       </p>
       <Link
-        href="/connect"
+        href={broken.length === 1 ? `/connect?reconnect=${broken[0]!.id}` : "/connect"}
         className="inline-flex min-h-tap items-center justify-center rounded-lg bg-primary px-4 font-semibold text-primary-foreground"
       >
         Reconnect Gmail

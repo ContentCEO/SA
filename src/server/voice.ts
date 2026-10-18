@@ -20,11 +20,11 @@ import {
   workspaces,
   type Mailbox,
 } from "@/db/schema";
-import { decryptSecret } from "@/lib/crypto";
 import { sendEmail, type EmailSender } from "@/lib/email";
 import { appUrl } from "@/lib/app-url";
 import { MailboxAuthError, type MailboxReader } from "@/mailbox/connector";
-import { createGmailReader } from "@/mailbox/gmail/api";
+import { logGmailUnits } from "./gmail-units";
+import { serverMailboxClient } from "./mailbox-client";
 import { mailboxRunning } from "./mailbox-plan";
 import { jobsAllowed } from "./lifecycle";
 import { acceptedIdeas } from "./edit-learning";
@@ -213,15 +213,13 @@ async function learnFrom(
   now: Date,
   stats: LearnStats,
 ): Promise<VoiceOutcome> {
-  const reader = (
-    opts.readerFor ??
-    ((m) => createGmailReader({ refreshToken: decryptSecret(m.encryptedRefreshToken) }))
-  )(mailbox);
+  const reader = (opts.readerFor ?? ((m) => serverMailboxClient(m)))(mailbox);
 
   let bodies: string[];
   try {
     const list = await reader.listMessages({
-      query: "in:sent newer_than:365d",
+      sentOnly: true,
+      newerThanDays: 365,
       maxResults: MAX_SENT_EMAILS,
     });
     // Check 24 P3: replies the app sent exactly as drafted (by the owner's tap or autopilot) are
@@ -259,6 +257,7 @@ async function learnFrom(
       total += b.length;
     }
     stats.emailsRead = bodies.length;
+    logGmailUnits("voice", mailbox.id, reader);
   } catch (err) {
     if (err instanceof MailboxAuthError) {
       await markReconnectNeeded(mailbox);

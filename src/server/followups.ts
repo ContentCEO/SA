@@ -4,7 +4,14 @@ import { db } from "@/db";
 import { mailboxes, threads } from "@/db/schema";
 import { mailboxOn } from "./mailbox-plan-rules";
 import { FOLLOWUP_CATEGORIES, followupSettings, MAX_FOLLOWUPS } from "./drafts";
-import { lastInSql, lastOutSql, answeredByPhoneSql, quoteNotDismissedSql } from "./thread-sql";
+import {
+  answeredByPhoneSql,
+  ballInTheirCourtSql,
+  lastInSql,
+  lastOutSql,
+  quietSinceSql,
+  quoteNotDismissedSql,
+} from "./thread-sql";
 import { isAway } from "./away";
 
 /** Don't chase anything the owner last wrote about more than this long ago. */
@@ -21,7 +28,10 @@ export const FOLLOWUP_MAX_AGE_DAYS = 21;
  *   accepted, was thanked, or was already asked once — a deposit only while it's a quote:
  *   once the thread is about an invoice, the won job's invoice is still chased;
  * - the customer's newest email didn't say they paid (`payment_said`);
- * - the owner wrote last, at least `days` ago (and not ages ago);
+ * - the owner wrote last, or the customer only acknowledged it since ("Thanks, we'll look it
+ *   over", Check 21 P1; an automatic reply or bounce never counts), and the quiet started at
+ *   least `days` ago (and not ages ago) — from the acknowledgement when there is one;
+ * - the owner's email didn't bounce (`extracted.bounced`);
  * - the customer has written at least once (someone to nudge);
  * - fewer than two nudges sent, ever;
  * - no draft of any kind since the owner's last message — so a nudge the
@@ -53,6 +63,7 @@ export async function threadsToFollowUp(
   // forwarded to the crew was never quoted, so it gets no "following up on my quote" nudge.
   const lastIn = lastInSql();
   const lastOut = lastOutSql();
+  const quietFrom = quietSinceSql();
   const lastDraft = sql`(select max(d.created_at) from drafts d where d.thread_id = ${threads.id})`;
   const sentNudges = sql`(select count(*) from drafts d where d.thread_id = ${threads.id} and d.kind = 'followup' and d.status in ('sent', 'edited_and_sent'))`;
   const pending = sql`exists (select 1 from drafts d where d.thread_id = ${threads.id} and d.status = 'pending')`;
@@ -78,9 +89,10 @@ export async function threadsToFollowUp(
         // Never chase a bill the owner owes (round 2, TW A2).
         sql`(${threads.extracted}->>'bill_direction') is distinct from 'owed_by_business'`,
         sql`${lastIn} is not null`,
-        sql`${lastOut} > ${lastIn}`,
-        sql`${lastOut} <= ${quietSince}::timestamptz`,
-        sql`${lastOut} >= ${notBefore}::timestamptz`,
+        sql`${ballInTheirCourtSql()}`,
+        sql`${quietFrom} <= ${quietSince}::timestamptz`,
+        sql`${quietFrom} >= ${notBefore}::timestamptz`,
+        sql`(${threads.extracted}->>'bounced') is distinct from 'true'`,
         sql`${sentNudges} < ${MAX_FOLLOWUPS}`,
         sql`(${lastDraft} is null or ${lastDraft} < ${lastOut})`,
         sql`not ${pending}`,

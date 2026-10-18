@@ -445,6 +445,23 @@ describe("in the database", () => {
       expect(writer.sent).toHaveLength(0);
     });
 
+    it("GUARDRAIL: a conversation that left the inbox in Gmail stands it down (Check 25 P2)", async () => {
+      const t = await conversation();
+      const draftId = await drafted(t);
+      await considerAutopilot(draftId, NOW);
+      // Archived or trashed in Gmail during the hold, after the countdown was set.
+      await database.update(threads).set({ inInbox: false }).where(eq(threads.id, t));
+      await database
+        .update(drafts)
+        .set({ autoSendAt: later(10) })
+        .where(eq(drafts.id, draftId));
+      expect(await runAutopilotSend(draftId, deps(later(30)))).toMatchObject({
+        status: "stood_down",
+        reasons: expect.arrayContaining(["This conversation left your inbox in Gmail."]),
+      });
+      expect(writer.sent).toHaveLength(0);
+    });
+
     it("GUARDRAIL: the owner writing their own reply in Gmail stands it down", async () => {
       const t = await conversation();
       const draftId = await drafted(t);

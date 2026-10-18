@@ -1,4 +1,5 @@
 import "server-only";
+import { MAIL_LABELS } from "@/mailbox/connector";
 import {
   injectionCheck,
   looksLikePaymentChange,
@@ -63,7 +64,7 @@ export const DEFAULT_AMOUNT_THRESHOLD_DOLLARS = 2_500;
 export const BURST_WINDOW_MS = 30 * 60_000;
 export const BURST_MAX = 4;
 /** Gmail tabs that are never a customer. Skipping the model call here saves real money. */
-const NOISE_LABELS = ["CATEGORY_PROMOTIONS", "CATEGORY_SOCIAL"];
+const NOISE_LABELS: string[] = [MAIL_LABELS.promotions, MAIL_LABELS.social];
 
 /** A lead site's subject that is a lead, not its marketing (Check 22 P1). */
 const LEAD_SUBJECT =
@@ -142,6 +143,7 @@ async function pendingFor(mailboxId: string, since: Date) {
       snippet: messages.snippet,
       labelIds: messages.labelIds,
       sentAt: messages.sentAt,
+      autoReply: messages.autoReply,
     })
     .from(messages)
     .innerJoin(threads, eq(threads.id, messages.threadId))
@@ -179,7 +181,44 @@ export async function classifyPending(
     return { classified: 0, superseded: 0, remaining: 0, capped: false, codeOnly: 0 };
 
   const since = new Date(now.getTime() - CLASSIFY_LOOKBACK_DAYS * 86_400_000);
-  const pending = await pendingFor(mailboxId, since);
+  const all = await pendingFor(mailboxId, since);
+  // Check 20 P4 / 21 P1: an automatic reply or bounce is sorted as nothing, with no model call,
+  // and never takes the place of the customer's own newest email: it is set aside here, so
+  // that email is still the one sorted (and drafted for, and chased). A conversation with
+  // nothing else in it is noise.
+  const autoReplies = all.filter((m) => m.autoReply);
+  const pending = all.filter((m) => !m.autoReply);
+  if (autoReplies.length) {
+    await db()
+      .update(messages)
+      .set({ classifiedAt: now })
+      .where(
+        inArray(
+          messages.id,
+          autoReplies.map((m) => m.id),
+        ),
+      );
+    await db()
+      .update(threads)
+      .set({
+        category: sql`coalesce(${threads.categoryManual}, 'noise')`,
+        priority: "low",
+        summary: "Automatic reply.",
+        classifiedAt: now,
+      })
+      .where(
+        and(
+          inArray(threads.id, [
+            ...new Set(
+              autoReplies
+                .map((m) => m.threadId)
+                .filter((t) => !pending.some((p) => p.threadId === t)),
+            ),
+          ]),
+          isNull(threads.category),
+        ),
+      );
+  }
 
   const newestPerThread = new Map<string, (typeof pending)[number]>();
   // The older unsorted emails of each thread, newest first. Marked superseded only once their
@@ -713,6 +752,11 @@ export async function classifyPending(
       .update(messages)
       .set({ classifiedAt: now })
       .where(inArray(messages.id, [m.id, ...older.map((o) => o.id)]));
+    // Check 21 P1: a bare "thanks, we'll look it over" leaves the ball in the customer's court
+    // (follow-ups keep going; no reply is drafted for it). Stored on the email that was read.
+    if (result.extracted.acknowledgment_only === true && !injection) {
+      await db().update(messages).set({ ackOnly: true }).where(eq(messages.id, m.id));
+    }
     superseded += older.length;
     classified++;
 

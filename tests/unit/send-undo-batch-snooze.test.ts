@@ -172,6 +172,22 @@ describe("plan M5 sending: undo (#7), batch (#5), snooze (#6)", () => {
       expect(await undoSend(workspaceId, draft.id)).toBe(false);
     });
 
+    it("a conversation trashed in Gmail during the window never sends (Check 25 P2)", async () => {
+      const { thread, draft } = await seed();
+      await queueSend(workspaceId, draft.id, deps());
+      await database
+        .update(messages)
+        .set({ labelIds: ["TRASH"] })
+        .where(eq(messages.threadId, thread.id));
+      await database.update(threads).set({ inInbox: false }).where(eq(threads.id, thread.id));
+      expect(await deliverQueuedSend(draft.id, deps(later(21)))).toEqual({
+        status: "stopped",
+        why: "left_inbox",
+      });
+      expect(writer.sent).toEqual([]);
+      expect((await row(draft.id)).sendAfter).toBeNull();
+    });
+
     it("tapping Send twice starts one window, and a direct send can't jump it", async () => {
       const { draft } = await seed();
       await queueSend(workspaceId, draft.id, deps());

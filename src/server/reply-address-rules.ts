@@ -11,7 +11,7 @@
  * departments, the lead-source label. "Who we answer" (this) is what drafts, customer
  * grouping, known-customer checks and no-reply exclusions use.
  */
-import { parseAddressList } from "@/mailbox/gmail/parse";
+import { parseAddressList } from "@/mailbox/address";
 import { leadPlatformOf } from "./monthly-rules";
 import { isNoReplyAddress, PUBLIC_WEBMAIL_DOMAINS } from "./sender-rules";
 

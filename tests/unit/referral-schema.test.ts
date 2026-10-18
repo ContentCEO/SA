@@ -92,8 +92,8 @@ describe(`migration ${TAG} (referral free month)`, () => {
     // 0032–0043 may already be on the shared database: 0044 must be later than all.
     for (const e of journal.entries.slice(0, i))
       expect(journal.entries[i]!.when, e.tag).toBeGreaterThan(e.when);
-    // Then 0045, the follow-up marker, and nothing else yet.
-    expect(journal.entries.slice(i + 1).map((e) => e.tag)).toEqual([AFTER_END_TAG]);
+    // Then 0045, the follow-up marker (wave 2's migrations follow it, from 0046).
+    expect(journal.entries[i + 1]!.tag).toBe(AFTER_END_TAG);
     expect(journal.entries[i + 1]!.when).toBeGreaterThan(journal.entries[i]!.when);
   });
 });

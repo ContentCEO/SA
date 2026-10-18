@@ -8,11 +8,13 @@ import { markAnsweredByPhone } from "./first-week";
 import { effectiveStatus, JOBS_ALLOWED, jobsAllowed, ReadOnlyError } from "./lifecycle";
 import {
   asDate,
+  ballInTheirCourtSql,
   customerAddressSql,
   customerNameSql,
   lastInSql,
   lastOutSql,
   notDraftMessage,
+  quietSinceSql,
   quoteNotDismissedSql,
   quoteThreadSql,
 } from "./thread-sql";
@@ -371,6 +373,10 @@ export async function guessNoAnswers(
   const pageSize = opts.pageSize ?? 500;
   const lastIn = lastInSql();
   const lastOut = lastOutSql();
+  // Check 21 P1: a "thanks, we'll look it over" leaves the ball in their court, and the quiet
+  // counts from it; an automatic reply never counts at all.
+  const ballInTheirCourt = ballInTheirCourtSql();
+  const quietFrom = quietSinceSql();
   const sentNudges = sql<number>`(select count(*) from drafts d where d.thread_id = ${threads.id} and d.kind = 'followup' and d.status in ('sent', 'edited_and_sent'))`;
   const ago = (days: number) => new Date(now.getTime() - days * DAY_MS).toISOString();
   const inScope = and(
@@ -405,7 +411,7 @@ export async function guessNoAnswers(
         workspace: workspaces,
         source: threads.quoteOutcomeSource,
         lastIn,
-        lastOut,
+        quietFrom,
         sentNudges,
       })
       .from(threads)
@@ -421,9 +427,9 @@ export async function guessNoAnswers(
           isNull(threads.quoteOutcome),
           sql`${threads.quoteOutcomeSource} is distinct from 'owner'`,
           sql`${lastIn} is not null`,
-          sql`${lastOut} > ${lastIn}`,
+          sql`${ballInTheirCourt}`,
           // Pre-filter on the two bars of `guessNoAnswer` (which still decides below).
-          sql`(${lastOut} <= ${ago(NO_ANSWER_WITHOUT_NUDGES_DAYS)}::timestamptz or (${lastOut} <= ${ago(NO_ANSWER_AFTER_NUDGES_DAYS)}::timestamptz and ${sentNudges} >= 2))`,
+          sql`(${quietFrom} <= ${ago(NO_ANSWER_WITHOUT_NUDGES_DAYS)}::timestamptz or (${quietFrom} <= ${ago(NO_ANSWER_AFTER_NUDGES_DAYS)}::timestamptz and ${sentNudges} >= 2))`,
         ),
       )
       .orderBy(threads.id)
@@ -431,10 +437,18 @@ export async function guessNoAnswers(
 
     for (const r of rows) {
       if (!jobsAllowed(r.workspace, now) || !canAutoSet(null, r.source)) continue;
-      const lastOutboundAt = asDate(r.lastOut);
+      // The quiet's start stands in for the owner's last email; the SQL already checked the
+      // customer's newest email needing an answer came before it.
+      const lastOutboundAt = asDate(r.quietFrom);
       const nudges = Number(r.sentNudges);
+      const lastIn = asDate(r.lastIn);
       const why = guessNoAnswer(
-        { lastInboundAt: asDate(r.lastIn), lastOutboundAt, sentNudges: nudges },
+        {
+          lastInboundAt:
+            lastIn && lastOutboundAt && lastIn >= lastOutboundAt ? new Date(0) : lastIn,
+          lastOutboundAt,
+          sentNudges: nudges,
+        },
         now,
       );
       if (!why || !lastOutboundAt) continue;
@@ -444,8 +458,8 @@ export async function guessNoAnswers(
         why,
         extra: and(
           isNull(threads.quoteOutcome),
-          sql`${lastOut} > ${lastIn}`,
-          sql`${lastOut} <= ${ago(noAnswerAfterDays(nudges))}::timestamptz`,
+          sql`${ballInTheirCourt}`,
+          sql`${quietFrom} <= ${ago(noAnswerAfterDays(nudges))}::timestamptz`,
         ),
       });
       if (ok) set++;

@@ -1,5 +1,6 @@
 import * as Sentry from "@sentry/nextjs";
 import { eventType, Inngest, Middleware, staticSchema } from "inngest";
+import { countJobRun } from "@/server/job-runs";
 
 /**
  * A job that has used up its retries goes to Sentry (scrubbed; a no-op without
@@ -14,7 +15,27 @@ class ReportFinalFailures extends Middleware.BaseMiddleware {
   }
 }
 
-export const inngest = new Inngest({ id: "squared-away", middleware: [ReportFinalFailures] });
+/**
+ * Check 25 P4: count runs and executed steps per job and day (counts only), so /admin can
+ * show the month's background work against Inngest's plan. Memoized steps aren't counted.
+ */
+class CountJobRuns extends Middleware.BaseMiddleware {
+  readonly id = "count-job-runs";
+  async onRunStart({ fn }: Middleware.OnRunStartArgs) {
+    await countJobRun(fn.id(), "run");
+  }
+  async onStepComplete({ fn }: Middleware.OnStepCompleteArgs) {
+    await countJobRun(fn.id(), "step");
+  }
+  async onStepError({ fn }: Middleware.OnStepErrorArgs) {
+    await countJobRun(fn.id(), "step");
+  }
+}
+
+export const inngest = new Inngest({
+  id: "squared-away",
+  middleware: [ReportFinalFailures, CountJobRuns],
+});
 
 /** A mailbox was connected or reconnected: run (or re-run) the 30-day backfill. */
 export const mailboxConnected = eventType("mailbox/connected", {
@@ -54,6 +75,14 @@ export const voiceLearnRequested = eventType("voice/learn.requested", {
 /** Round 2 (FW D2): the owner tapped "Draft them" on found money. Ids worked out by the server. */
 export const foundMoneyDraftsRequested = eventType("first-week/found-money.requested", {
   schema: staticSchema<{ workspaceId: string; replies: string[]; nudges: string[] }>(),
+});
+
+/**
+ * Check 25 P4: the Reply-To backfill isn't finished; run it again (sent with a `ts` 15 minutes
+ * ahead). Once finished it only wakes on its daily cron.
+ */
+export const replyToBackfillContinue = eventType("reply-to-backfill/continue", {
+  schema: staticSchema<{ run: number }>(),
 });
 
 /**

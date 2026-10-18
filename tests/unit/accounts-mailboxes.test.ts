@@ -6,6 +6,7 @@ import { activityLog, drafts, invites, mailboxes, threads, workspaces } from "@/
 import type { MailboxConnector } from "@/mailbox/connector";
 import { ensureUserAndWorkspace, isAllowedToSignIn } from "@/server/accounts";
 import {
+  MailboxInUseError,
   MailboxLimitError,
   disconnectMailbox,
   listMailboxes,
@@ -101,6 +102,46 @@ describe("mailboxes", () => {
     await expect(saveConnectedMailbox(crew, connect("d@x.com"))).rejects.toBeInstanceOf(
       MailboxLimitError,
     );
+  });
+
+  it("GUARDRAIL: a Gmail live in another account is refused, nothing saved (Check 25 P7)", async () => {
+    const a = await ensureUserAndWorkspace({ email: "owner@shop.com" });
+    const b = await ensureUserAndWorkspace({ email: "spouse@shop.com" });
+    await database.insert(invites).values({ email: "spouse@shop.com" }).onConflictDoNothing();
+    await saveConnectedMailbox(a.workspace, connect("owner@shop.com"));
+    for (const status of ["active", "reconnect_needed", "paused"] as const) {
+      await database.update(mailboxes).set({ status });
+      await expect(
+        saveConnectedMailbox(b.workspace, connect("Owner@Shop.com", "rt-other")),
+      ).rejects.toBeInstanceOf(MailboxInUseError);
+    }
+    expect(await listMailboxes(b.workspace.id)).toEqual([]);
+    const [w] = await database.select().from(workspaces).where(eq(workspaces.id, b.workspace.id));
+    expect(w!.status).toBe("invited"); // no trial clock for a refused connect
+    const refused = await database
+      .select()
+      .from(activityLog)
+      .where(eq(activityLog.action, "mailbox_in_use_refused"));
+    expect(refused.map((r) => [r.workspaceId, r.detail])).toEqual([
+      [b.workspace.id, {}],
+      [b.workspace.id, {}],
+      [b.workspace.id, {}],
+    ]);
+    // The first account's mailbox and token are untouched.
+    const [box] = await database.select().from(mailboxes);
+    expect(box!.workspaceId).toBe(a.workspace.id);
+    expect(decryptSecret(box!.encryptedRefreshToken)).toBe("rt-owner@shop.com");
+  });
+
+  it("reconnecting in the same account still works, and after a disconnect the other account can connect", async () => {
+    const a = await ensureUserAndWorkspace({ email: "owner@shop.com" });
+    const b = await ensureUserAndWorkspace({ email: "spouse@shop.com" });
+    const first = await saveConnectedMailbox(a.workspace, connect("owner@shop.com"));
+    const again = await saveConnectedMailbox(a.workspace, connect("owner@shop.com", "rt-new"));
+    expect(again.id).toBe(first.id);
+    await disconnectMailbox(a.workspace.id, first.id, fakeConnector());
+    const moved = await saveConnectedMailbox(b.workspace, connect("owner@shop.com", "rt-b"));
+    expect((await listMailboxes(b.workspace.id)).map((m) => m.id)).toEqual([moved.id]);
   });
 
   it("disconnect revokes at Google, deletes the mailbox, and logs it", async () => {

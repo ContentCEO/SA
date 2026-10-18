@@ -48,6 +48,8 @@ export type InboxRow = {
   replyState: ReplyState | null;
   /** Check 10 P7: never sorted and from before the sorter's look-back: it never will be. */
   olderUnsorted: boolean;
+  /** Check 40 P2: what the customer attached, by kind (counts only). */
+  attachments: { images: number; pdfs: number; other: number };
 };
 
 /**
@@ -144,6 +146,9 @@ export async function listInboxThreads(
       pendingDraftId: sql<
         string | null
       >`(select d.id from drafts d where d.thread_id = ${threads.id} and d.status = 'pending' and d.send_after is null and d.send_claimed_at is null order by d.created_at desc limit 1)`,
+      attImages: sql<number>`(select coalesce(sum(a.attachment_images), 0)::int from messages a where a.thread_id = ${threads.id} and a.direction = 'in' and not a.auto_reply)`,
+      attPdfs: sql<number>`(select coalesce(sum(a.attachment_pdfs), 0)::int from messages a where a.thread_id = ${threads.id} and a.direction = 'in' and not a.auto_reply)`,
+      attOther: sql<number>`(select coalesce(sum(a.attachment_other), 0)::int from messages a where a.thread_id = ${threads.id} and a.direction = 'in' and not a.auto_reply)`,
     })
     .from(threads)
     .innerJoin(mailboxes, eq(mailboxes.id, threads.mailboxId))
@@ -152,8 +157,9 @@ export async function listInboxThreads(
     // (no time sorts last), then id so ties are stable.
     .orderBy(desc(tierSql(now)), desc(timeKey()), desc(threads.id))
     .limit(limit);
-  return rows.map(({ lastIn, lastOut, ...r }) => ({
+  return rows.map(({ lastIn, lastOut, attImages, attPdfs, attOther, ...r }) => ({
     ...r,
+    attachments: { images: Number(attImages), pdfs: Number(attPdfs), other: Number(attOther) },
     replyState: replyState({
       lastIn: asDate(lastIn),
       lastOut: asDate(lastOut),

@@ -12,7 +12,7 @@ import {
   threadsToAutoDraft,
 } from "@/server/drafts";
 import { jobsAllowed } from "@/server/lifecycle";
-import { incrementalSync, runBackfill } from "@/server/sync";
+import { runBackfill, runIncrementalSync } from "@/server/sync";
 import { learnVoice } from "@/server/voice";
 
 /**
@@ -72,7 +72,7 @@ export async function runHookStep(input: HookStep): Promise<HookResult> {
       return { ok: r.status === "ok", ...r };
     }
     case "sync": {
-      const r = await incrementalSync(input.mailboxId);
+      const r = await runIncrementalSync(input.mailboxId);
       return { ok: r.status === "ok", ...r };
     }
     case "voice": {

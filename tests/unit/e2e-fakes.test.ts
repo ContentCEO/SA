@@ -12,7 +12,7 @@ import { editToneSchema } from "@/ai/prompts/edit-tone.v1";
 import { voiceSchema } from "@/ai/prompts/voice.v2";
 import { anthropicClientOptions } from "@/config/e2e";
 import { models } from "@/config/models";
-import { MailboxAuthError, MissingScopesError } from "@/mailbox/connector";
+import { MailboxAuthError, MissingScopesError, NoGmailError } from "@/mailbox/connector";
 import { createGmailReader } from "@/mailbox/gmail/api";
 import { createGmailConnector } from "@/mailbox/gmail/connector";
 import { ALL_CONNECT_SCOPES, GMAIL_SCOPES } from "@/mailbox/gmail/scopes";
@@ -157,11 +157,17 @@ describe("the fake server", () => {
   const scenarioId = "7b0e5c9d-2f1a-4c3b-8d6e-0a1b2c3d4e5f";
   const ownerEmail = "owner-fake@example.com";
 
-  const register = async (id: string, email: string, grant: FakeGrant = {}) => {
+  const register = async (
+    id: string,
+    email: string,
+    grant: FakeGrant = {},
+    noGmail = false,
+    chooser = false,
+  ) => {
     const res = await fetch(`${url}/__scenarios`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ id, ownerEmail: email, grant }),
+      body: JSON.stringify({ id, ownerEmail: email, grant, noGmail, chooser }),
     });
     expect(res.status).toBe(201);
   };
@@ -292,6 +298,18 @@ describe("the fake server", () => {
     const page = await (await fetch(`${url}/o/oauth2/v2/auth?${good}`)).text();
     expect(page).toContain(`code=e2e-${scenarioId}`);
     expect(page).toContain("state=s1");
+
+    // Check 42 P3: "Connect another Gmail" sends no hint and asks for Google's account chooser;
+    // the fake picks the scenario registered to be picked there.
+    const chooser = new URLSearchParams(base);
+    chooser.set("prompt", "consent select_account");
+    expect((await fetch(`${url}/o/oauth2/v2/auth?${chooser}`)).status).toBe(400);
+    const officeId = "7c9e1a3b-5d7f-4a9b-8c1d-2e3f4a5b6c7d";
+    await register(officeId, "office@example.com", {}, false, true);
+    const picked = await (await fetch(`${url}/o/oauth2/v2/auth?${chooser}`)).text();
+    expect(picked).toContain(`code=e2e-${officeId}`);
+    // A plain consent with no hint is still refused.
+    expect((await fetch(`${url}/o/oauth2/v2/auth?${base}`)).status).toBe(400);
   });
 
   it("asks for exactly the app's scopes, and those two cover every Gmail call the app makes", () => {
@@ -348,10 +366,10 @@ describe("the fake server", () => {
 
     const profile = await gmail.getProfile();
     expect(profile.emailAddress).toBe(ownerEmail);
-    const listed = await gmail.listMessages({ query: "newer_than:30d", maxResults: 4 });
+    const listed = await gmail.listMessages({ newerThanDays: 30, maxResults: 4 });
     expect(listed.messages).toHaveLength(4);
     expect(listed.nextPageToken).toBeTruthy();
-    const sentOnly = await gmail.listMessages({ query: "in:sent newer_than:365d" });
+    const sentOnly = await gmail.listMessages({ sentOnly: true, newerThanDays: 365 });
     expect(sentOnly.messages).toHaveLength(5);
     const incoming = await gmail.getMessage(customer.gmailMessageId, { withBody: true });
     expect(incoming?.bodyText).toContain(`Ref ${ref}`);
@@ -431,7 +449,7 @@ describe("the fake server", () => {
     expect(granted).toContain("https://www.googleapis.com/auth/gmail.send");
     expect(granted).not.toContain(GMAIL_SCOPES.compose);
     const a = createGmailReader({ refreshToken: `rt-${sendOnly}`, maxRetries: 0 });
-    expect((await a.listMessages({ query: "newer_than:30d" })).messages.length).toBeGreaterThan(0);
+    expect((await a.listMessages({ newerThanDays: 30 })).messages.length).toBeGreaterThan(0);
     const customer = fakeCustomer(refFor(sendOnly));
     await expect(
       a.createDraft({ threadId: customer.gmailThreadId, raw: ownRaw("send-only@example.com") }),
@@ -445,9 +463,7 @@ describe("the fake server", () => {
     await register(noRead, "no-read@example.com", { untick: [GMAIL_SCOPES.readonly] });
     expect(await tokenScopes(noRead, "no-read@example.com")).not.toContain(GMAIL_SCOPES.readonly);
     const b = createGmailReader({ refreshToken: `rt-${noRead}`, maxRetries: 0 });
-    await expect(b.listMessages({ query: "newer_than:30d" })).rejects.toBeInstanceOf(
-      MailboxAuthError,
-    );
+    await expect(b.listMessages({ newerThanDays: 30 })).rejects.toBeInstanceOf(MailboxAuthError);
     const other = fakeCustomer(refFor(noRead));
     const draft = await b.createDraft({
       threadId: other.gmailThreadId,
@@ -500,6 +516,23 @@ describe("the fake server", () => {
       raw: ownRaw("older@example.com"),
     });
     expect((await c.sendDraft(draft.draftId)).threadId).toBe(customer.gmailThreadId);
+  });
+
+  it("a Google account without Gmail: the profile answers failedPrecondition and connect refuses it (Check 47 P1)", async () => {
+    e2eEnv();
+    const id = "6a8c0e2f-5b7d-4e9f-8a1b-4c5d6e7f8091";
+    await register(id, "nogmail@example.com", {}, true);
+    await consent("nogmail@example.com");
+    const err = await createGmailConnector()
+      .exchangeCode({ code: `e2e-${id}`, redirectUri })
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(NoGmailError);
+    expect((await recorded(id)).map((c) => c.route)).toEqual([
+      "consent",
+      "token",
+      "gmail.profile",
+      "revoke",
+    ]);
   });
 
   it("a refresh token it never issued gets what real Google tells a dummy client", async () => {

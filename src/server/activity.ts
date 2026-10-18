@@ -297,7 +297,11 @@ export function sendStoppedWhy(why: unknown): string {
         ? "Gmail needs reconnecting"
         : why === "answered_elsewhere"
           ? "someone had already answered from Gmail"
-          : "something changed";
+          : why === "archived_in_gmail"
+            ? "you archived the conversation in Gmail"
+            : why === "left_inbox"
+              ? "the conversation left your inbox in Gmail"
+              : "something changed";
 }
 
 export async function listActivity(workspaceId: string, limit = 100): Promise<ActivityEntry[]> {

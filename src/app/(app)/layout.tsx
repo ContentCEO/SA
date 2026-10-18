@@ -6,6 +6,7 @@ import { devicePrefs } from "@/lib/device-prefs";
 import { ReconnectBanner } from "@/components/app/reconnect-banner";
 import { NoSignalGuard } from "@/components/app/no-signal-guard";
 import { SiteFooter } from "@/components/app/site-footer";
+import { StaleMailLine } from "@/components/app/stale-mail-line";
 import { StatusBanner } from "@/components/app/status-banner";
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
@@ -21,6 +22,9 @@ export default async function AppLayout({ children }: { children: React.ReactNod
       </Suspense>
       <ReconnectBanner />
       <StatusBanner />
+      <Suspense fallback={null}>
+        <StaleMailLine />
+      </Suspense>
       <Suspense fallback={null}>
         <AssistantBanner />
       </Suspense>
