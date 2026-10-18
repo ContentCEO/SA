@@ -1,0 +1,1 @@
+ALTER TABLE "voice_profile" ADD COLUMN "learned_from_mailbox_id" uuid;

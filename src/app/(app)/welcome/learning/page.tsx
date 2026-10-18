@@ -70,7 +70,7 @@ export default async function WelcomeLearningPage() {
             : voice?.status === "not_enough_mail"
               ? "Not enough sent mail to learn from yet — drafts will keep it short and plain until there is."
               : voice?.status === "failed"
-                ? "Couldn't learn your style this time. We'll try again, and you can set it by hand in Settings."
+                ? "Couldn't learn your style this time. We'll try again within the hour, and you can set it by hand in Settings."
                 : "Reading your sent mail to learn how you write…"}
         </Step>
       </ul>

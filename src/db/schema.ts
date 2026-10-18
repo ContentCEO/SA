@@ -672,6 +672,26 @@ export const voiceProfiles = pgTable("voice_profile", {
   learnedFromCount: integer("learned_from_count").notNull().default(0),
   learnedAt: timestamp("learned_at", { withTimezone: true }),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  /**
+   * Check 24 P1: how the newest learn went (learning | ready | not_enough_mail | failed | capped |
+   * reconnect_needed), apart from `status`, which stays "ready" while a voice is stored.
+   */
+  lastAttempt: text("last_attempt"),
+  lastAttemptAt: timestamp("last_attempt_at", { withTimezone: true }),
+  /** Check 29 P2: times the 15-minute backstop restarted a learn stuck at "learning". */
+  restartCount: integer("restart_count").notNull().default(0),
+  /** Check 24 P6: the inbox the stored voice was learned from ("Learned from mike@…"). */
+  // No foreign key on purpose: the voice belongs to the account and stays when that Gmail is
+  // disconnected (verification-doc / data-lifecycle tests); the screen just stops naming it.
+  learnedFromMailboxId: uuid("learned_from_mailbox_id"),
+  /**
+   * Check 24 P8: greeting, sign-off, formality or length changed since the sample replies were
+   * written, so drafts get no samples until new ones are written.
+   */
+  examplesStale: boolean("examples_stale").notNull().default(false),
+  /** Check 24 P12: the UTC day of the backstop's retries of a failed first learn, and how many. */
+  retryDay: text("retry_day"),
+  retriesThatDay: integer("retries_that_day").notNull().default(0),
 });
 
 /**

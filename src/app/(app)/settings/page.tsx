@@ -10,6 +10,7 @@ import { autopilotState } from "@/server/autopilot";
 import { listMailboxes } from "@/server/mailboxes";
 import { getBusinessProfile, getVoiceProfile } from "@/server/profile";
 import { requireOwner } from "@/server/session";
+import { voiceListLine } from "@/server/voice-rules";
 import { formatUsPhone } from "@/server/sms-alerts";
 import { LegacySettingsAnchors } from "./legacy-anchors";
 import { LIST_MESSAGES } from "./messages";
@@ -64,14 +65,7 @@ export default async function SettingsPage(props: PageProps<"/settings">) {
     {
       href: "/settings/writing",
       label: "Your voice",
-      line:
-        voice?.status === "ready"
-          ? voice.source === "edited"
-            ? "Learned, with your changes"
-            : "Learned from your sent mail"
-          : voice?.status === "learning"
-            ? "Learning from your sent mail…"
-            : "Not learned yet",
+      line: voiceListLine(voice),
     },
     {
       href: "/settings/follow-ups",

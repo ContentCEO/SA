@@ -3,7 +3,7 @@ import { eq } from "drizzle-orm";
 import { beforeEach, describe, expect, it } from "vitest";
 import { setModelTransportForTests } from "@/ai/client";
 import type { Database } from "@/db";
-import { messages, threads, workspaces } from "@/db/schema";
+import { messages, threads, voiceProfiles, workspaces } from "@/db/schema";
 import { ensureUserAndWorkspace } from "@/server/accounts";
 import { classifyPending } from "@/server/classification";
 import { saveConnectedMailbox } from "@/server/mailboxes";
@@ -15,7 +15,10 @@ import {
   MAX_CREW_ADDRESSES,
   REVIEW_URL_MESSAGE,
   saveBusinessProfile,
+  saveVoiceEdits,
+  voiceEditInput,
 } from "@/server/profile";
+import { workspaceContext } from "@/server/drafts";
 import { profileDefaults } from "@/server/profile-defaults";
 import { hicExpiryLine, licenseFacts } from "@/config/licenses";
 import { MA_DEPOSIT_SETTINGS_LINE } from "@/config/ma-rules";
@@ -346,5 +349,51 @@ describe("crew addresses rule (Check 50 P3, not in a form yet)", () => {
     const many = Array.from({ length: MAX_CREW_ADDRESSES + 1 }, (_, i) => `c${i}@shop.com`);
     expect(crewAddressesSchema.safeParse(many.join("\n")).success).toBe(false);
     expect(crewAddressesSchema.safeParse(many.slice(1).join("\n")).success).toBe(true);
+  });
+});
+
+describe("sample replies go stale when the owner changes the voice (Check 24 P8)", () => {
+  let database: Database;
+  beforeEach(async () => {
+    database = await createTestDb();
+  });
+
+  it("an edit to formality empties the samples drafts get; saving the same values doesn't", async () => {
+    const { workspace } = await ensureUserAndWorkspace({ email: "owner@shop.com" });
+    await database.insert(voiceProfiles).values({
+      workspaceId: workspace.id,
+      status: "ready",
+      greetingStyle: "Hey",
+      signoffStyle: "Thanks, Sam",
+      formality: "casual",
+      avgLengthWords: 40,
+      examples: ["Hey [name], sure thing. Thanks, Sam"],
+    });
+    const form = (formality: string) =>
+      voiceEditInput.parse({
+        greetingStyle: "Hey",
+        signoffStyle: "Thanks, Sam",
+        formality,
+        avgLengthWords: "40",
+        phrasesUsed: "",
+        phrasesAvoided: "",
+        summary: "",
+      });
+    const ctx = () => workspaceContext(workspace.id, { businessName: "Shop", trade: "carpentry" });
+
+    await saveVoiceEdits(workspace.id, form("casual"));
+    let [v] = await database.select().from(voiceProfiles);
+    expect(v!.examplesStale).toBe(false);
+    expect((await ctx()).voice?.examples).toHaveLength(1);
+
+    await saveVoiceEdits(workspace.id, form("formal"));
+    [v] = await database.select().from(voiceProfiles);
+    expect(v!.examplesStale).toBe(true);
+    expect((await ctx()).voice).toMatchObject({ formality: "formal", examples: [] });
+
+    // Changing it back doesn't make the old samples fresh again (they stay unused until rewritten).
+    await saveVoiceEdits(workspace.id, form("casual"));
+    [v] = await database.select().from(voiceProfiles);
+    expect(v!.examplesStale).toBe(true);
   });
 });

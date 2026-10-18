@@ -323,6 +323,34 @@
       "when": 1792287541302,
       "tag": "0045_referral_after_end_check",
       "breakpoints": true
+    },
+    {
+      "idx": 46,
+      "version": "7",
+      "when": 1792299104031,
+      "tag": "0046_voice_attempts",
+      "breakpoints": true
+    },
+    {
+      "idx": 47,
+      "version": "7",
+      "when": 1792299106119,
+      "tag": "0047_voice_learned_from",
+      "breakpoints": true
+    },
+    {
+      "idx": 48,
+      "version": "7",
+      "when": 1792299108122,
+      "tag": "0048_voice_examples_stale",
+      "breakpoints": true
+    },
+    {
+      "idx": 49,
+      "version": "7",
+      "when": 1792299109989,
+      "tag": "0049_voice_retries",
+      "breakpoints": true
     }
   ]
 }

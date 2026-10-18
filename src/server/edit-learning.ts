@@ -1,5 +1,5 @@
 import "server-only";
-import { and, desc, eq, gte, isNotNull, isNull, or } from "drizzle-orm";
+import { and, asc, desc, eq, gte, isNotNull, isNull, or } from "drizzle-orm";
 import { callStructured, ModelUnavailableError } from "@/ai/client";
 import {
   EDIT_TONE_INSTRUCTIONS,
@@ -19,7 +19,13 @@ import {
   voiceSuggestions,
   workspaces,
 } from "@/db/schema";
-import { editShape, proposeSuggestions, type EditSignal } from "./edit-learning-rules";
+import {
+  editShape,
+  ideaChanges,
+  proposeSuggestions,
+  type AcceptedIdea,
+  type EditSignal,
+} from "./edit-learning-rules";
 import { jobsAllowed } from "./lifecycle";
 
 const DAY = 86_400_000;
@@ -148,15 +154,11 @@ export async function openSuggestions(workspaceId: string) {
     .orderBy(desc(voiceSuggestions.createdAt));
 }
 
-const SUMMARY_ADDS: Record<string, string> = {
-  skip_opener: "Gets straight to the point — no warm-up sentence.",
-  warmer: "Warm and friendly.",
-};
-
 /**
- * The owner's yes or no. Only a yes changes the voice profile (and marks it
- * edited, so the weekly re-learn leaves it alone). Greeting and sign-off ideas
- * change nothing by themselves: the owner types theirs in Settings.
+ * The owner's yes or no. Only a yes changes the voice profile. It doesn't mark the voice edited
+ * (Check 24 P7): the weekly re-learn keeps running and re-applies every accepted idea
+ * (`acceptedIdeas` + `ideaChanges`). Greeting and sign-off ideas change nothing by themselves:
+ * the owner types theirs in Settings.
  */
 export async function decideSuggestion(
   workspaceId: string,
@@ -192,14 +194,22 @@ export async function decideSuggestion(
     .from(voiceProfiles)
     .where(eq(voiceProfiles.workspaceId, workspaceId));
   if (!v) return "accepted";
-  const change: Partial<typeof voiceProfiles.$inferInsert> = { source: "edited", updatedAt: now };
-  if ((s.kind === "shorter" || s.kind === "longer") && s.targetWords)
-    change.avgLengthWords = s.targetWords;
-  if (s.kind === "more_formal") change.formality = "formal";
-  if (s.kind === "more_casual") change.formality = "casual";
-  const add = SUMMARY_ADDS[s.kind];
-  if (add && !(v.summary ?? "").includes(add))
-    change.summary = [v.summary?.trim(), add].filter(Boolean).join(" ");
+  const shaped = ideaChanges(v, [{ kind: s.kind, targetWords: s.targetWords }]);
+  const change: Partial<typeof voiceProfiles.$inferInsert> = { ...shaped, updatedAt: now };
+  // Check 24 P8: samples written the old way would contradict the new length or formality.
+  if (shaped.formality !== v.formality || shaped.avgLengthWords !== v.avgLengthWords)
+    change.examplesStale = true;
   await db().update(voiceProfiles).set(change).where(eq(voiceProfiles.workspaceId, workspaceId));
   return "accepted";
+}
+
+/** Every idea the owner said yes to, oldest first (Check 24 P7: re-applied after a re-learn). */
+export async function acceptedIdeas(workspaceId: string): Promise<AcceptedIdea[]> {
+  return db()
+    .select({ kind: voiceSuggestions.kind, targetWords: voiceSuggestions.targetWords })
+    .from(voiceSuggestions)
+    .where(
+      and(eq(voiceSuggestions.workspaceId, workspaceId), eq(voiceSuggestions.status, "accepted")),
+    )
+    .orderBy(asc(voiceSuggestions.decidedAt), asc(voiceSuggestions.createdAt));
 }
