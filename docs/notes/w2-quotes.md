@@ -46,3 +46,10 @@ For the integrator to fold into CLAUDE.md (Decisions) and the other shared files
   or never-answered threads leave the pool. Called with no workspace (the daily purge job) it
   pages through every match by `threads.id` (500 a page); the Quotes screen's per-workspace call
   keeps one newest-first page.
+- **Check 11 P5 (30-day totals by date):** `quoteTotals` (quotes.ts) in SQL, not capped by the
+  list: "Asked for" = quote threads by `requestAtSql` (Activity's date); "Priced" = amounts whose
+  price went out in the window (`quote_amount_at`, else the owner's last email), any stage, never
+  a typed amount on a quote that isn't won; "Won" and the win rate = outcomes by
+  `quote_outcome_at`, exactly `closeRateBetween`'s rows. Labels "Asked for / Priced / Won" with
+  "Last 30 days. Won counts the day you marked it (or we guessed it). Amounts come from the price
+  in your reply, or what you type." The filter chips say "All time" above them.

@@ -14,6 +14,7 @@ import {
   notDraftMessage,
   notDraftSql,
   quoteThreadSql,
+  requestAtSql,
 } from "./thread-sql";
 import {
   canAutoSet,
@@ -195,25 +196,74 @@ export async function listQuotes(workspaceId: string, now: Date = new Date()) {
     startedAt: asDate(r.firstAt) ?? r.startedAt,
   }));
 
-  // Last 30 days, by when the request came in.
-  const recent = quotes.filter((q) => now.getTime() - q.startedAt.getTime() <= WINDOW_MS);
-  const sum = (qs: QuoteRow[]) => qs.reduce((t, q) => t + (q.amountCents ?? 0), 0);
-  const quoted = recent.filter((q) => q.stage !== "waiting_on_you");
-  const won = recent.filter((q) => q.stage === "won");
-  const totals = {
-    requests: recent.length,
-    quotedCount: quoted.length,
-    quotedCents: sum(quoted),
-    wonCount: won.length,
-    wonCents: sum(won),
-    // "No answer" counts as decided: a quote nobody answered wasn't won.
-    winRatePct: closeRate({
-      won: won.length,
-      lost: recent.filter((q) => q.stage === "lost").length,
-      noAnswer: recent.filter((q) => q.stage === "no_answer").length,
-    }),
-  };
+  const totals = await quoteTotals(workspaceId, now);
   return { quotes, totals, quietDays: days };
+}
+
+export type QuoteTotals = {
+  /** Quote requests asked for in the window (`requestAtSql`, the date Activity uses). */
+  requests: number;
+  /** Quotes whose price went out in the window, whatever their stage ("Priced"). */
+  quotedCount: number;
+  quotedCents: number;
+  /** Marked or guessed won in the window, by `quote_outcome_at` (as `closeRateBetween`). */
+  wonCount: number;
+  wonCents: number;
+  /** Won out of everything decided in the window (no answer counts as decided). */
+  winRatePct: number | null;
+};
+
+/**
+ * Check 11 P5: Quotes' "Last 30 days" box, each number by the date its own thing happened —
+ * a request by when it was asked for, a price by when it went out (`quote_amount_at`: the
+ * owner email it came from, or when they typed it; older rows fall back to the owner's last
+ * email), a win and the win rate by when the quote was decided, the same rule as Activity's
+ * `closeRateBetween` (so only rolling 30 days vs calendar month differs). A typed amount on a
+ * quote that isn't won is never "priced". Not capped by the list's 300 rows.
+ */
+export async function quoteTotals(workspaceId: string, now: Date): Promise<QuoteTotals> {
+  const since = new Date(now.getTime() - WINDOW_MS).toISOString();
+  const until = now.toISOString();
+  const inWindow = (expr: SQL) =>
+    sql`(${expr} >= ${since}::timestamptz and ${expr} <= ${until}::timestamptz)`;
+  const pricedAt = sql`coalesce(${threads.quoteAmountAt}, ${lastOutSql()})`;
+  const priced = sql`(${threads.quoteAmountCents} is not null and (${threads.quoteAmountFrom} is distinct from 'owner' or ${threads.quoteOutcome} = 'won') and ${inWindow(pricedAt)})`;
+  const [quoteRow] = await db()
+    .select({
+      requests: sql<number>`count(*) filter (where ${inWindow(requestAtSql())})::int`,
+      quotedCount: sql<number>`count(*) filter (where ${priced})::int`,
+      quotedCents: sql<number>`coalesce(sum(${threads.quoteAmountCents}) filter (where ${priced}), 0)::bigint`,
+    })
+    .from(threads)
+    .innerJoin(mailboxes, eq(mailboxes.id, threads.mailboxId))
+    .where(and(eq(mailboxes.workspaceId, workspaceId), quoteThreadSql()));
+  // Decided quotes: exactly `closeRateBetween`'s rows (any thread with an outcome).
+  const decided = await db()
+    .select({
+      outcome: threads.quoteOutcome,
+      n: sql<number>`count(*)::int`,
+      cents: sql<number>`coalesce(sum(${threads.quoteAmountCents}), 0)::bigint`,
+    })
+    .from(threads)
+    .innerJoin(mailboxes, eq(mailboxes.id, threads.mailboxId))
+    .where(
+      and(
+        eq(mailboxes.workspaceId, workspaceId),
+        isNotNull(threads.quoteOutcome),
+        inWindow(sql`${threads.quoteOutcomeAt}`),
+      ),
+    )
+    .groupBy(threads.quoteOutcome);
+  const n = (o: QuoteOutcome) => Number(decided.find((r) => r.outcome === o)?.n ?? 0);
+  return {
+    requests: Number(quoteRow?.requests ?? 0),
+    quotedCount: Number(quoteRow?.quotedCount ?? 0),
+    quotedCents: Number(quoteRow?.quotedCents ?? 0),
+    wonCount: n("won"),
+    wonCents: Number(decided.find((r) => r.outcome === "won")?.cents ?? 0),
+    // "No answer" counts as decided: a quote nobody answered wasn't won.
+    winRatePct: closeRate({ won: n("won"), lost: n("lost"), noAnswer: n("no_answer") }),
+  };
 }
 
 async function ownedThread(workspaceId: string, threadId: string) {

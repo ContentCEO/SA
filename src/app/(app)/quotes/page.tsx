@@ -238,8 +238,8 @@ export default async function QuotesPage(props: PageProps<"/quotes">) {
         </h2>
         <dl className="grid grid-cols-3 gap-3">
           {[
-            ["Requests", String(totals.requests)],
-            ["Quoted", formatCents(totals.quotedCents)],
+            ["Asked for", String(totals.requests)],
+            ["Priced", formatCents(totals.quotedCents)],
             ["Won", formatCents(totals.wonCents)],
           ].map(([label, value]) => (
             <div key={label} className="flex flex-col">
@@ -250,9 +250,10 @@ export default async function QuotesPage(props: PageProps<"/quotes">) {
         </dl>
         <p className="text-muted-foreground">
           {totals.winRatePct !== null
-            ? `You won ${totals.winRatePct}% of the quotes that ended (won, lost or no answer). `
+            ? `You won ${totals.winRatePct}% of the quotes that ended in the last 30 days (won, lost or no answer). `
             : "Tap Mark how it ended on a quote to track your win rate. "}
-          Amounts come from the price in your reply, or what you type.
+          Last 30 days. Won counts the day you marked it (or we guessed it). Amounts come from the
+          price in your reply, or what you type.
         </p>
       </section>
 
@@ -278,6 +279,8 @@ export default async function QuotesPage(props: PageProps<"/quotes">) {
         </section>
       ) : null}
 
+      {/* Check 11 P5: the chips count every quote, not just the last 30 days. */}
+      <p className="text-sm font-semibold text-muted-foreground">All time</p>
       <nav aria-label="Quote filter" className="-mx-1 flex gap-1 overflow-x-auto pb-1">
         {FILTERS.map(([key, label]) => (
           <Link

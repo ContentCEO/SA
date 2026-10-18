@@ -17,6 +17,7 @@ import { ensureUserAndWorkspace } from "@/server/accounts";
 import { classifyPending } from "@/server/classification";
 import { threadsToFollowUp } from "@/server/followups";
 import { afterClassified } from "@/server/auto-outcomes";
+import { closeRateBetween } from "@/server/activity";
 import { flagPendingNudge } from "@/server/drafts";
 import { customerByKey, customerDetail, listCustomers } from "@/server/customers";
 import { ReadOnlyError } from "@/server/lifecycle";
@@ -574,6 +575,67 @@ describe("quote tracker", () => {
       expect(await capturePage(undefined, 500, null)).toEqual([]);
       expect(await capturePage(workspaceId, 500, null)).toEqual([]);
     });
+  });
+
+  it("Check 11 P5: the 30-day totals count each thing by the day it happened", async () => {
+    // Asked for 40 days ago, priced 39 days ago, won today: counts in Won (not in Asked for).
+    const old = await convo({
+      from: "old@x.com",
+      name: "Old",
+      category: "quote_request",
+      inAgo: 40,
+      outAgo: 39,
+      reply: "That's $2,100.",
+    });
+    // Priced, then the customer answered: still priced.
+    const haggle = await convo({
+      from: "hag@x.com",
+      name: "Hag",
+      category: "quote_request",
+      inAgo: 6,
+      outAgo: 5,
+      reply: "That's $3,200.",
+    });
+    await database.insert(messages).values({
+      threadId: haggle,
+      mailboxId,
+      gmailMessageId: `hag${++g}`,
+      direction: "in",
+      fromAddress: "hag@x.com",
+      bodyText: "Can you do $2,800?",
+      sentAt: daysAgo(4),
+    });
+    // A site visit, no price: asked for, not priced.
+    await convo({
+      from: "visit@x.com",
+      name: "Visit",
+      category: "quote_request",
+      inAgo: 3,
+      outAgo: 2,
+      reply: "I can come take a look Tuesday at 10.",
+    });
+    // Lost with an amount typed: never priced.
+    const lost = await convo({
+      from: "lost@x.com",
+      name: "Lost",
+      category: "quote_request",
+      inAgo: 8,
+      outAgo: 7,
+      reply: "Sure, I'll think about it.",
+    });
+    await setQuoteOutcome(workspaceId, old, "won", undefined, NOW);
+    await setQuoteOutcome(workspaceId, lost, "lost", 50_000, NOW);
+    const { totals } = await listQuotes(workspaceId, NOW);
+    expect(totals).toMatchObject({
+      requests: 3,
+      quotedCount: 1,
+      quotedCents: 320_000,
+      wonCount: 1,
+      wonCents: 210_000,
+      winRatePct: 50,
+    });
+    const activity = await closeRateBetween(workspaceId, new Date(NOW.getTime() - 30 * DAY), null);
+    expect(activity).toMatchObject({ won: totals.wonCount, ratePct: totals.winRatePct });
   });
 
   it("an unsent Gmail draft is neither the owner's answer nor a price (stage, amount)", async () => {
