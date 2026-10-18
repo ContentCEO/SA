@@ -80,3 +80,11 @@ For the integrator to fold into CLAUDE.md / docs/LAUNCH.md / docs/privacy-policy
 
 - Under "How long we keep it": "If you get a refund or open a card dispute, we keep its amount and
   dates (no card details) after you delete your account, like Stripe's own payment records."
+- **Waiting on Stripe (Check 17 P9):** `PaymentWaiting` (replaces the unused `RefreshUntil`)
+  refreshes 10 × 3s (3 × 300ms in e2e mode), then says "Stripe has your payment, but our side
+  hasn't caught up yet…" with the phone link and calls `reportStripeWaitingAction` once
+  (requireOwner, `hitLimit("billing")`, only while checkout is still allowed). That writes
+  `app_settings` `stripe-ws:waiting:<workspace>` (value = the `cs_…` session id from the success
+  URL when it looks like one, else empty); `applyCheckoutCompleted` clears it. /admin Payments
+  "An owner paid but no Stripe notice arrived (N)…" and the card "Paid, waiting on Stripe".
+  success_url now ends `&session_id={CHECKOUT_SESSION_ID}` (never trusted for status).

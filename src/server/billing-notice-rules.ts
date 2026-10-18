@@ -99,3 +99,14 @@ export function checkoutNoticeFrom(
     ? latestAction
     : null;
 }
+
+/** Check 17 P9: what the waiting page says once its refreshes run out. */
+export const stripeGiveUpLine = (operatorFirstName: string) =>
+  `Stripe has your payment, but our side hasn't caught up yet. You don't need to pay again. ${operatorFirstName} has been told and will sort it out today.`;
+
+/** Check 17 P9: /admin Payments while any owner paid but no Stripe notice arrived. */
+export const stripeWaitingLine = (n: number) =>
+  `An owner paid but no Stripe notice arrived (${n}). Check Stripe → Developers → Webhooks.`;
+
+/** Check 17 P9: on that account's /admin card. */
+export const PAID_WAITING_LINE = "Paid, waiting on Stripe";

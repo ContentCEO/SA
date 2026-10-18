@@ -352,7 +352,8 @@ export async function createCheckout(workspace: Workspace, plan: PlanId): Promis
     subscription_data: { metadata: { workspaceId: workspace.id } },
     allow_promotion_codes: true,
     ...tax,
-    success_url: appUrl("/billing?done=paid"),
+    // Check 17 P9: Stripe fills in the session id, only so a "waiting" record can name it.
+    success_url: `${appUrl("/billing?done=paid")}&session_id={CHECKOUT_SESSION_ID}`,
     cancel_url: appUrl("/billing?error=canceled"),
   };
   let session: Stripe.Checkout.Session;
@@ -504,6 +505,30 @@ async function getSetting(key: string) {
 export const workspaceBillingKeyPattern = (workspaceId: string) => `stripe-ws:%:${workspaceId}`;
 const openCheckoutKey = (workspaceId: string) => `stripe-ws:open-checkout:${workspaceId}`;
 const secondSubKey = (workspaceId: string) => `stripe-ws:second-sub:${workspaceId}`;
+const waitingKey = (workspaceId: string) => `stripe-ws:waiting:${workspaceId}`;
+
+/**
+ * Check 17 P9: the owner came back from Stripe's page, the refreshes ran out and no notice had
+ * arrived. Recorded for /admin (with the checkout session id when it looks like one, for Davi to
+ * look up in Stripe); never trusted to change anything. Cleared when the checkout's notice lands.
+ */
+export async function noteStripeWaiting(
+  workspaceId: string,
+  sessionId: string | null,
+  now: Date = new Date(),
+) {
+  const id = sessionId && /^cs_[A-Za-z0-9_]{1,200}$/.test(sessionId) ? sessionId : "";
+  await setSetting(waitingKey(workspaceId), id, now);
+}
+
+/** For /admin: the workspaces whose owner paid but no Stripe notice arrived. */
+export async function stripeWaitingWorkspaces(): Promise<Set<string>> {
+  const rows = await db()
+    .select({ key: appSettings.key })
+    .from(appSettings)
+    .where(sql`${appSettings.key} like 'stripe-ws:waiting:%'`);
+  return new Set(rows.map((r) => r.key.slice(r.key.lastIndexOf(":") + 1)));
+}
 
 /** Closes the workspace's earlier open checkout. Already complete or expired is fine. */
 async function expireOpenCheckout(workspaceId: string) {
@@ -784,6 +809,10 @@ export async function applyCheckoutCompleted(
   await db()
     .delete(appSettings)
     .where(and(eq(appSettings.key, openCheckoutKey(w.id)), eq(appSettings.value, session.id)));
+  // Check 17 P9: Stripe's notice arrived; the owner isn't waiting on us any more.
+  await db()
+    .delete(appSettings)
+    .where(eq(appSettings.key, waitingKey(w.id)));
   const newSub = typeof session.subscription === "string" ? session.subscription : null;
   // Check 17 P4: a second paid checkout while the stored subscription is still live keeps the
   // stored one (and its plan) and flags both for Davi, instead of losing track of the first.

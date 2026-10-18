@@ -20,7 +20,7 @@ import { STALE_SYNC_MS } from "./mailbox-health";
 import { normalizeEmail } from "./accounts";
 import { effectiveStatus, jobsAllowed } from "./lifecycle";
 import { referralsVisible } from "./referral-rules";
-import { workspacesWithTwoPlans } from "./billing";
+import { stripeWaitingWorkspaces, workspacesWithTwoPlans } from "./billing";
 import { CHECKOUT_NOTICE_ACTIONS } from "./billing-notice-rules";
 import { moneyEventsFor } from "./stripe-money";
 import type { MoneyEventRow } from "./stripe-money-rules";
@@ -49,6 +49,8 @@ export type AdminRow = {
   checkoutNeedsReview: boolean;
   /** Check 17 P8: refunds and card disputes recorded from Stripe (amounts and dates only). */
   moneyEvents: MoneyEventRow[];
+  /** Check 17 P9: the owner paid, but no Stripe notice arrived. */
+  waitingOnStripe: boolean;
   mailboxes: {
     total: number;
     needReconnect: number;
@@ -245,6 +247,7 @@ export async function adminOverview(now: Date = new Date()): Promise<AdminRow[]>
 
   const twoPlans = await workspacesWithTwoPlans(ids);
   const money = await moneyEventsFor(ids);
+  const waitingOnStripe = await stripeWaitingWorkspaces();
   const notices = await db()
     .select({
       workspaceId: activityLog.workspaceId,
@@ -288,6 +291,7 @@ export async function adminOverview(now: Date = new Date()): Promise<AdminRow[]>
     twoLivePlans: twoPlans.has(w.id),
     checkoutNeedsReview: reviews.has(w.id),
     moneyEvents: money.get(w.id) ?? [],
+    waitingOnStripe: waitingOnStripe.has(w.id),
     createdAt: w.createdAt,
     mailboxes: {
       total: b.get(w.id)?.total ?? 0,

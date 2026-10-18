@@ -52,11 +52,16 @@ import {
   stripeConnectedAt,
   stripeMode,
   stripeOrphans,
+  stripeWaitingWorkspaces,
   termsBoxOffSince,
 } from "@/server/billing";
 import { SALES_TAX_LINES, SALES_TAX_ON_NOTE, TERMS_BOX_OFF_LINE } from "@/server/billing-rules";
 import { stripeReasonText } from "@/server/stripe-error-rules";
-import { CHECKOUT_REVIEW_LINE } from "@/server/billing-notice-rules";
+import {
+  CHECKOUT_REVIEW_LINE,
+  PAID_WAITING_LINE,
+  stripeWaitingLine,
+} from "@/server/billing-notice-rules";
 import { moneyLines, openDisputesLine } from "@/server/stripe-money-rules";
 import { openDisputeCount } from "@/server/stripe-money";
 import { lastTestPaymentsResult } from "@/server/test-payments";
@@ -361,6 +366,11 @@ function WorkspaceCard({ w, now }: { w: AdminRow; now: Date }) {
       {stuck ? (
         <p className="sa-inverted self-start rounded-md px-2 py-1 text-sm font-black">Stuck</p>
       ) : null}
+      {w.waitingOnStripe ? (
+        <p className="sa-inverted self-start rounded-md px-2 py-1 font-black">
+          {PAID_WAITING_LINE}
+        </p>
+      ) : null}
       {w.checkoutNeedsReview ? (
         <p className="sa-inverted self-start rounded-md px-2 py-1 font-black">
           {CHECKOUT_REVIEW_LINE}
@@ -530,6 +540,7 @@ export default async function AdminPage(props: PageProps<"/admin">) {
     launchFacts,
     orphans,
     openDisputes,
+    waitingStripe,
   ] = await Promise.all([
     adminOverview(now),
     countWorkspaces(),
@@ -546,6 +557,7 @@ export default async function AdminPage(props: PageProps<"/admin">) {
     loadLaunchFacts(),
     stripeOrphans(),
     openDisputeCount(),
+    stripeWaitingWorkspaces(),
   ]);
   const growthStates = await growthStateForEmails(waiting.map((w) => w.email));
   const today = adminToday(now);
@@ -659,6 +671,11 @@ export default async function AdminPage(props: PageProps<"/admin">) {
             {stripeError}
             {stripeReason ? ` ${stripeReason}` : null}
           </Notice>
+        ) : null}
+        {waitingStripe.size > 0 ? (
+          <p className="sa-inverted rounded-xl p-4 font-black">
+            {stripeWaitingLine(waitingStripe.size)}
+          </p>
         ) : null}
         {openDisputesLine(openDisputes) ? (
           <p className="sa-inverted rounded-xl p-4 font-black">{openDisputesLine(openDisputes)}</p>

@@ -1,7 +1,8 @@
 import type { Metadata } from "next";
 import { CopyLink } from "@/components/app/copy-link";
 import { Notice } from "@/components/app/notice";
-import { RefreshUntil } from "@/components/app/refresh-until";
+import { PaymentWaiting } from "@/components/app/payment-waiting";
+import { e2eMode } from "@/config/e2e";
 import { Headline } from "@/components/brand/headline";
 import { Button } from "@/components/ui/button";
 import { formatDollars, pricing, type PlanId } from "@/config/pricing";
@@ -9,7 +10,7 @@ import { siteConfig } from "@/config/site";
 import { FEATURED_PLAN, planFeatureLines } from "@/server/plan-features";
 import { cn } from "@/lib/utils";
 import { checkoutNotice, stripeConfigured } from "@/server/billing";
-import { checkoutNoticeLine } from "@/server/billing-notice-rules";
+import { checkoutNoticeLine, stripeGiveUpLine } from "@/server/billing-notice-rules";
 import {
   billingStatusLine,
   checkoutTerms,
@@ -24,7 +25,7 @@ import { referralLinkFor } from "@/server/referrals";
 import { requireOwner } from "@/server/session";
 import { workspaceTimeZone } from "@/server/snooze";
 import { TRIAL_NO_SEND_LINE, TRIAL_SIDE_DOOR_LINE } from "@/server/trial-email-rules";
-import { openPortalAction, startCheckoutAction } from "./actions";
+import { openPortalAction, reportStripeWaitingAction, startCheckoutAction } from "./actions";
 
 export const metadata: Metadata = { title: "Plan & billing" };
 
@@ -78,9 +79,16 @@ export default async function BillingPage(props: PageProps<"/billing">) {
       ) : null}
       {waitingForStripe ? (
         <section role="status" className="sa-inverted flex flex-col gap-2 rounded-xl p-4">
-          <RefreshUntil />
-          <p className="text-lg font-black">Payment received — finishing up.</p>
-          <p className="text-ash">This takes a few seconds. The page updates by itself.</p>
+          <PaymentWaiting
+            {...(e2eMode() ? { everyMs: 300, times: 3 } : {})}
+            giveUpText={stripeGiveUpLine(davi ?? siteConfig.operator)}
+            phone={siteConfig.phone}
+            phoneHref={phoneHref("tel", siteConfig.phone)}
+            onGiveUp={reportStripeWaitingAction.bind(
+              null,
+              typeof params.session_id === "string" ? params.session_id : null,
+            )}
+          />
         </section>
       ) : paidJustNow ? (
         <Notice>Payment received. Thank you — you&apos;re all set.</Notice>

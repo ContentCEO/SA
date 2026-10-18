@@ -22,6 +22,8 @@ import {
   applyCheckoutCompleted,
   applySubscription,
   checkoutNotice,
+  noteStripeWaiting,
+  stripeWaitingWorkspaces,
   CheckoutNotAllowedError,
   connectStripe,
   createCheckout,
@@ -50,7 +52,13 @@ import { canSend, jobsAllowed } from "@/server/lifecycle";
 import { applyAdminMove } from "@/server/workspace-lifecycle";
 import { describeActivity } from "@/server/activity";
 import { isTermsUrlMissingError } from "@/server/stripe-error-rules";
-import { CHECKOUT_REVIEW_LINE, checkoutNoticeLine } from "@/server/billing-notice-rules";
+import {
+  CHECKOUT_REVIEW_LINE,
+  checkoutNoticeLine,
+  PAID_WAITING_LINE,
+  stripeGiveUpLine,
+  stripeWaitingLine,
+} from "@/server/billing-notice-rules";
 import { createTestDb } from "../support/db";
 
 const NOW = new Date("2026-10-10T14:00:00Z");
@@ -327,7 +335,9 @@ describe("checkout", () => {
     const params = create.args[0] as Stripe.Checkout.SessionCreateParams;
     expect(params.line_items).toHaveLength(2);
     expect(params.metadata).toMatchObject({ workspaceId: workspace.id, plan: "crew" });
-    expect(params.success_url).toBe("https://app.example/billing?done=paid");
+    expect(params.success_url).toBe(
+      "https://app.example/billing?done=paid&session_id={CHECKOUT_SESSION_ID}",
+    );
     expect((await reload()).stripeCustomerId).toBe("cus_1");
   });
 
@@ -1250,5 +1260,41 @@ describe("a plan change in Stripe applies the plan rules (Check 17 P6)", () => {
     await applySubscription(subscription("active", "crew"), NOW);
     expect((await database.select().from(rules))[0]!.mode).toBe("autopilot");
     expect((await draftRow(d)).autoSendAt).not.toBeNull();
+  });
+});
+
+describe("no owner is left looking at 'finishing up' forever (Check 17 P9)", () => {
+  it("the waiting record holds only a session-shaped id, shows on /admin, and the notice clears it", async () => {
+    await noteStripeWaiting(workspace.id, "cs_test_abc123", NOW);
+    expect(await stripeWaitingWorkspaces()).toEqual(new Set([workspace.id]));
+    const key = `stripe-ws:waiting:${workspace.id}`;
+    const [row] = await database.select().from(appSettings).where(eq(appSettings.key, key));
+    expect(row!.value).toBe("cs_test_abc123");
+    // Anything else in the URL is not kept.
+    await noteStripeWaiting(workspace.id, "javascript:alert(1)", NOW);
+    const [again] = await database.select().from(appSettings).where(eq(appSettings.key, key));
+    expect(again!.value).toBe("");
+    // GUARDRAIL: the record never changes the account.
+    expect((await reload()).status).toBe("evaluating");
+    expect(canSend(await reload(), NOW)).toBe(false);
+
+    await applyCheckoutCompleted(paidSession(), NOW);
+    expect(await stripeWaitingWorkspaces()).toEqual(new Set());
+  });
+
+  it("the give-up words, and the page wiring", () => {
+    expect(stripeGiveUpLine("Davi")).toBe(
+      "Stripe has your payment, but our side hasn't caught up yet. You don't need to pay again. Davi has been told and will sort it out today.",
+    );
+    expect(stripeWaitingLine(2)).toBe(
+      "An owner paid but no Stripe notice arrived (2). Check Stripe → Developers → Webhooks.",
+    );
+    expect(PAID_WAITING_LINE).toBe("Paid, waiting on Stripe");
+    const page = readFileSync("src/app/(app)/billing/page.tsx", "utf8");
+    expect(page).toContain("<PaymentWaiting");
+    expect(page).toContain("onGiveUp={reportStripeWaitingAction.bind(");
+    const actions = readFileSync("src/app/(app)/billing/actions.ts", "utf8");
+    const fn = actions.slice(actions.indexOf("export async function reportStripeWaitingAction"));
+    expect(fn).toContain('hitLimit("billing", workspace.id)');
   });
 });

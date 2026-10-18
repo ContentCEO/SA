@@ -160,3 +160,35 @@ test("a canceled plan still running shows its end date, not 'renews monthly' (Ch
   await page.goto("/queue");
   await expect(page.getByRole("status").filter({ hasText: /Your plan ends on/ })).toBeVisible();
 });
+
+test("paid but no Stripe notice: the page stops waiting and says what happens next (Check 17 P9)", async ({
+  page,
+  context,
+}) => {
+  const owner = await seedOwner({ mailbox: true, backfilled: true });
+  await setWorkspace(owner.workspaceId, {
+    status: "evaluating",
+    evaluationStartedAt: new Date(),
+    evaluationEndsAt: new Date(Date.now() + 2 * DAY),
+  });
+  await signInAs(context, owner);
+  await page.goto("/billing?done=paid&session_id=cs_test_e2e");
+  await expect(page.getByText("Payment received — finishing up.")).toBeVisible();
+  // e2e mode refreshes 3 times, 300ms apart, then gives up.
+  await expect(
+    page.getByText(/Stripe has your payment, but our side hasn't caught up yet/),
+  ).toBeVisible({
+    timeout: 15_000,
+  });
+  await expect(page.getByRole("link", { name: /\d{3}-\d{3}-\d{4}/ }).first()).toBeVisible();
+  // Davi sees it on /admin (recorded by the page's server action).
+  await expect
+    .poll(async () => {
+      const rows = await testDb
+        .select()
+        .from(schema.appSettings)
+        .where(eq(schema.appSettings.key, `stripe-ws:waiting:${owner.workspaceId}`));
+      return rows[0]?.value ?? null;
+    })
+    .toBe("cs_test_e2e");
+});
