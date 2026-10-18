@@ -12,6 +12,7 @@ import {
   lastInSql,
   lastOutSql,
   notDraftMessage,
+  notDraftSql,
   quoteThreadSql,
 } from "./thread-sql";
 import {
@@ -482,33 +483,68 @@ export async function guessNoAnswers(
  * amount the owner types when marking a quote Won does not (it may be the final
  * bill, not the quote) — see `backfillPriceMemory`. Content-free: no amounts in logs.
  */
-export async function captureQuoteAmounts(workspaceId?: string): Promise<number> {
-  const open = await db()
-    .select({
-      id: threads.id,
-      workspaceId: mailboxes.workspaceId,
-      extracted: threads.extracted,
-      quoteOutcomeAt: threads.quoteOutcomeAt,
-      amountCents: threads.quoteAmountCents,
-      amountNote: threads.quoteAmountNote,
-      amountAt: threads.quoteAmountAt,
-    })
-    .from(threads)
-    .innerJoin(mailboxes, eq(mailboxes.id, threads.mailboxId))
-    .where(
-      and(
-        workspaceId ? eq(mailboxes.workspaceId, workspaceId) : undefined,
-        quoteThreadSql(),
-        or(
-          isNull(threads.quoteAmountCents),
-          // Check 11 P3: an open quote's amount read from a reply may be corrected.
-          and(eq(threads.quoteAmountFrom, "reply"), isNull(threads.quoteOutcome)),
+export async function captureQuoteAmounts(
+  workspaceId?: string,
+  opts: { pageSize?: number } = {},
+): Promise<number> {
+  const pageSize = opts.pageSize ?? 500;
+  let captured = 0;
+  // Check 11 P4: the daily run before the purge (no workspace) pages through EVERY match by
+  // id, so figure-less quotes can never crowd out an old one whose text is about to go. The
+  // Quotes screen's own call keeps one newest-first page (fast).
+  let after: string | null = null;
+  for (;;) {
+    const page = await capturePage(workspaceId, pageSize, after);
+    captured += await captureFrom(page);
+    if (workspaceId || page.length < pageSize) break;
+    after = page[page.length - 1]!.id;
+  }
+  await backfillPriceMemory(workspaceId);
+  return captured;
+}
+
+/** One page of quote threads whose amount may still be read from the owner's reply (exported for tests). */
+export async function capturePage(
+  workspaceId: string | undefined,
+  pageSize: number,
+  after: string | null,
+) {
+  return (
+    db()
+      .select({
+        id: threads.id,
+        workspaceId: mailboxes.workspaceId,
+        extracted: threads.extracted,
+        quoteOutcomeAt: threads.quoteOutcomeAt,
+        amountCents: threads.quoteAmountCents,
+        amountNote: threads.quoteAmountNote,
+        amountAt: threads.quoteAmountAt,
+      })
+      .from(threads)
+      .innerJoin(mailboxes, eq(mailboxes.id, threads.mailboxId))
+      .where(
+        and(
+          workspaceId ? eq(mailboxes.workspaceId, workspaceId) : undefined,
+          quoteThreadSql(),
+          or(
+            isNull(threads.quoteAmountCents),
+            // Check 11 P3: an open quote's amount read from a reply may be corrected.
+            and(eq(threads.quoteAmountFrom, "reply"), isNull(threads.quoteOutcome)),
+          ),
+          // Check 11 P4: only while an owner email still has its text — a purged thread (or
+          // one never answered) drops out of the pool for good.
+          sql`exists (select 1 from messages o where o.thread_id = ${threads.id} and o.direction = 'out' and ${notDraftSql("o")} and o.body_text is not null)`,
+          after ? sql`${threads.id} > ${after}::uuid` : undefined,
         ),
-      ),
-    )
-    // Newest first, so quotes with no figure in them can't crowd out today's.
-    .orderBy(desc(threads.lastMessageAt))
-    .limit(500);
+      )
+      // Per workspace: newest first, so quotes with no figure can't crowd out today's. The
+      // daily run pages by id instead (see captureQuoteAmounts).
+      .orderBy(...(workspaceId ? [desc(threads.lastMessageAt)] : [threads.id]))
+      .limit(pageSize)
+  );
+}
+
+async function captureFrom(open: Awaited<ReturnType<typeof capturePage>>): Promise<number> {
   let captured = 0;
   if (open.length) {
     const info = new Map(open.map((t) => [t.id, t]));
@@ -575,7 +611,6 @@ export async function captureQuoteAmounts(workspaceId?: string): Promise<number>
         });
     }
   }
-  await backfillPriceMemory(workspaceId);
   return captured;
 }
 

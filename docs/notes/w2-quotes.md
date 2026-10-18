@@ -41,3 +41,8 @@ For the integrator to fold into CLAUDE.md (Decisions) and the other shared files
   `backfillPriceMemory` also skips `quote_amount_from = 'owner'`.
 - Migration (step 3): `threads.quote_amount_from text`, `threads.quote_amount_at timestamptz`
   (additive, one file).
+- **Check 11 P4 (daily capture reaches old quotes):** `captureQuoteAmounts` only selects quote
+  threads that still have an owner email (out, not an unsent draft) with `body_text`, so purged
+  or never-answered threads leave the pool. Called with no workspace (the daily purge job) it
+  pages through every match by `threads.id` (500 a page); the Quotes screen's per-workspace call
+  keeps one newest-first page.

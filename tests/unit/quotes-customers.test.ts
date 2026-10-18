@@ -39,6 +39,7 @@ import {
 import {
   autoSetQuoteOutcome,
   captureQuoteAmounts,
+  capturePage,
   guessNoAnswers,
   listQuotes,
   setQuoteOutcome,
@@ -517,6 +518,61 @@ describe("quote tracker", () => {
       await captureQuoteAmounts(workspaceId);
       expect((await row(t)).quoteAmountCents).toBe(260_000);
       expect((await memory(t))!.amountCents).toBe(260_000);
+    });
+  });
+
+  describe("Check 11 P4: the daily capture reaches every quote before its text is purged", () => {
+    it("an old priced quote is captured behind 500 newer figure-less ones, once", async () => {
+      const old = await convo({
+        from: "dana@x.com",
+        name: "Dana",
+        category: "quote_request",
+        inAgo: 28,
+        outAgo: 27,
+        reply: "That's $6,400 for the repipe.",
+      });
+      const many = await database
+        .insert(threads)
+        .values(
+          Array.from({ length: 500 }, (_, i) => ({
+            mailboxId,
+            gmailThreadId: `bulk${i}`,
+            category: "quote_request",
+            lastMessageAt: daysAgo(1),
+          })),
+        )
+        .returning({ id: threads.id });
+      await database.insert(messages).values(
+        many.map((t, i) => ({
+          threadId: t.id,
+          mailboxId,
+          gmailMessageId: `bulk${i}-out`,
+          direction: "out" as const,
+          fromAddress: "owner@shop.com",
+          bodyText: "I'll come take a look.",
+          sentAt: daysAgo(1),
+        })),
+      );
+      expect(await captureQuoteAmounts()).toBe(1);
+      expect((await database.select().from(threads).where(eq(threads.id, old)))[0]).toMatchObject({
+        quoteAmountCents: 640_000,
+      });
+      expect(await captureQuoteAmounts()).toBe(0);
+    });
+
+    it("a purged thread with no figure drops out of the pool", async () => {
+      const t = await convo({
+        from: "dana@x.com",
+        name: "Dana",
+        category: "quote_request",
+        inAgo: 40,
+        outAgo: 39,
+        reply: "I'll come take a look.",
+      });
+      expect((await capturePage(undefined, 500, null)).map((r) => r.id)).toEqual([t]);
+      await database.update(messages).set({ bodyText: null }).where(eq(messages.threadId, t));
+      expect(await capturePage(undefined, 500, null)).toEqual([]);
+      expect(await capturePage(workspaceId, 500, null)).toEqual([]);
     });
   });
 
