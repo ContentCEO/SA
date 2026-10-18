@@ -105,7 +105,7 @@ export function cardNotice(
     pause: `Paused ${name}.`,
     resume: `Resumed ${name}.`,
     mark_setup_call_done: `Marked ${name} active.`,
-    house_account: `${name} can send now (marked as your own test account).`,
+    house_account: "Your account can send now (marked as your own test account).",
     extend_evaluation: `Added ${EVALUATION_DAYS} days for ${name}.${
       row.evaluationEndsAt ? ` Trial now ends ${cardTime.format(row.evaluationEndsAt)}.` : ""
     }`,

@@ -27,7 +27,7 @@ test("expired trial: the banner leads to plans, and /billing explains how to pay
   await expect(page.getByRole("button", { name: /^Choose / })).toHaveCount(0);
   // Check 17 P11: the prices are readable even while online payment is off.
   await expect(page.getByRole("listitem", { name: "Solo plan" })).toContainText("$99");
-  await expect(page.getByText("$499")).toBeVisible();
+  await expect(page.getByText("setup of $499")).toBeVisible();
 });
 
 test("during the trial the clock links to plans", async ({ page, context }) => {
@@ -156,7 +156,9 @@ test("a canceled plan still running shows its end date, not 'renews monthly' (Ch
   await signInAs(context, owner);
   await page.goto("/billing");
   await expect(
-    page.getByText(/^Your plan ends on [A-Z][a-z]{2} \d{1,2}\. Nothing is deleted\./),
+    page.getByText(
+      /^Your plan ends on [A-Z][a-z]{2} \d{1,2}\. Nothing is deleted\. Changed your mind\?/,
+    ),
   ).toBeVisible();
   await expect(page.getByText("renews monthly")).toHaveCount(0);
   // The last week: a quiet reminder on every screen.

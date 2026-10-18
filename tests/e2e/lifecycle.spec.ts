@@ -342,8 +342,10 @@ test("admin: find a shop by name, and reach older accounts page by page (Check 1
   await expect(page.getByText(/^Showing 1 to 50 of \d+\.$/)).toBeVisible();
   for (let i = 0; i < 40; i++) {
     if (await page.getByRole("article", { name: old.email }).count()) break;
-    await page.getByRole("link", { name: "Show older accounts" }).click();
-    await page.waitForURL(/[?&]page=\d+/);
+    const older = page.getByRole("link", { name: "Show older accounts" });
+    const href = await older.getAttribute("href");
+    expect(href).toMatch(/[?&]page=\d+/);
+    await page.goto(href!);
   }
   await expect(page.getByRole("article", { name: old.email })).toBeVisible();
   await expect(page.getByRole("link", { name: "Show newer accounts" })).toBeVisible();

@@ -391,9 +391,9 @@ function WorkspaceCard({
           {CHECKOUT_REVIEW_LINE}
         </p>
       ) : null}
-      {moneyLines(w.moneyEvents).map((l) => (
+      {moneyLines(w.moneyEvents).map((l, i) => (
         <p
-          key={l.text}
+          key={i}
           className={
             l.strong ? "sa-inverted self-start rounded-md px-2 py-1 font-black" : "font-semibold"
           }

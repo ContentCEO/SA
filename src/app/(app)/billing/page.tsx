@@ -190,6 +190,7 @@ export default async function BillingPage(props: PageProps<"/billing">) {
                         </span>
                       </div>
                       <p className="text-muted-foreground">{planFeatureLines(id).join(" · ")}</p>
+                      <p className="text-sm">{firstChargeLine(id, terms.includeSetupFee)}</p>
                     </li>
                   );
                 })}

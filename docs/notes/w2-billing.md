@@ -107,7 +107,7 @@ For the integrator to fold into CLAUDE.md / docs/LAUNCH.md / docs/privacy-policy
   `/admin?done=<move>&w=<uuid>#acct-<uuid>` (errors likewise); `cardNotice` (admin-rules.ts)
   validates `w` and shows the notice inside that card with the business name or owner email
   ("Paused Ruiz Street Plumbing."). Only the uuid is in the URL. Davi's folded card opens when the
-  notice is for it. A card not on the loaded page shows nothing (no top notice either).
+  notice is for it. A card not on the loaded page gets the old top-of-page notice instead.
 - **Take back an invite (Check 16 P7):** `removeInvite(email)` deletes an invite only while it was
   never accepted and no user has that email (lower-case), and sets the waitlist entry's
   `invited_at` back to null. "Take back this invite" (one confirmation) on "Not yet" rows. The
