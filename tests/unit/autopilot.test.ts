@@ -788,6 +788,54 @@ describe("in the database", () => {
       expect(await considerAutopilot(draftId, NOW)).toBeNull();
     });
 
+    it("Check 20 P13: two inboxes drafting at once at 19 end with exactly 20 countdowns", async () => {
+      for (let i = 0; i < DAILY_AUTOPILOT_CAP - 1; i++) {
+        await database.insert(activityLog).values({
+          workspaceId,
+          actor: "squared_away",
+          action: "autopilot_scheduled",
+          createdAt: later(-60),
+        });
+      }
+      const first = await drafted(await conversation());
+      const main = mailboxId;
+      const [ws0] = await database.select().from(workspaces).where(eq(workspaces.id, workspaceId));
+      mailboxId = (
+        await saveConnectedMailbox(ws0!, {
+          email: "crew@shop.com",
+          refreshToken: "rt",
+          grantedScopes: [],
+        })
+      ).id;
+      const second = await drafted(await conversation());
+      mailboxId = main;
+      const results = await Promise.all([
+        considerAutopilot(first, NOW),
+        considerAutopilot(second, NOW),
+      ]);
+      expect(results.filter(Boolean)).toHaveLength(1);
+      const started = await database
+        .select()
+        .from(activityLog)
+        .where(eq(activityLog.action, "autopilot_scheduled"));
+      expect(started).toHaveLength(DAILY_AUTOPILOT_CAP);
+      const counting = (await database.select().from(drafts)).filter((d) => d.autoSendAt);
+      expect(counting).toHaveLength(1);
+    });
+
+    it("Check 20 P13: a draft already counting down takes no second slot", async () => {
+      const draftId = await drafted(await conversation());
+      expect(await considerAutopilot(draftId, NOW)).toEqual(later(GRACE_MINUTES));
+      await database.update(drafts).set({ autoSendAt: null }).where(eq(drafts.id, draftId));
+      await database.update(drafts).set({ status: "discarded" }).where(eq(drafts.id, draftId));
+      expect(await considerAutopilot(draftId, NOW)).toBeNull();
+      const started = await database
+        .select()
+        .from(activityLog)
+        .where(eq(activityLog.action, "autopilot_scheduled"));
+      expect(started).toHaveLength(1);
+    });
+
     it("lost send events are picked up by the backstop", async () => {
       const draftId = await drafted(await conversation());
       await considerAutopilot(draftId, NOW);

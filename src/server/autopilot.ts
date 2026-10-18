@@ -346,9 +346,18 @@ async function loadForAutopilot(draftId: string) {
   return row;
 }
 
-async function sentByAutopilotToday(workspaceId: string, now: Date) {
+/**
+ * The daily cap's count: countdowns started (held ones included) in the last 24 hours, not
+ * sends and not the owner's calendar day — a rolling window can't let 20 go just before
+ * midnight and 20 more just after.
+ */
+async function countdownsStartedLast24h(
+  q: Pick<ReturnType<typeof db>, "select">,
+  workspaceId: string,
+  now: Date,
+) {
   const since = new Date(now.getTime() - 86_400_000);
-  const [row] = await db()
+  const [row] = await q
     .select({ n: count() })
     .from(activityLog)
     .where(
@@ -475,25 +484,34 @@ export async function considerAutopilot(
   const row = await loadForAutopilot(draftId);
   if (!row || row.draft.status !== "pending" || row.draft.autoSendAt) return null;
   if ((await blockers(row, now)).length) return null;
-  if ((await sentByAutopilotToday(row.workspace.id, now)) >= DAILY_AUTOPILOT_CAP) return null;
 
+  // Check 20 P13: the cap check, the countdown and its autopilot_scheduled row (what the cap
+  // counts) happen in one transaction under a per-workspace lock, so two inboxes drafting at
+  // once can't both read 19 and both start one. A draft that is no longer pending (or already
+  // counting down) writes no row, so it takes no slot.
   const at = new Date(now.getTime() + GRACE_MINUTES * 60_000);
-  const [set] = await db()
-    .update(drafts)
-    .set({ autoSendAt: at })
-    .where(and(eq(drafts.id, draftId), eq(drafts.status, "pending")))
-    .returning({ id: drafts.id });
-  if (!set) return null;
-  await db()
-    .insert(activityLog)
-    .values({
+  const started = await db().transaction(async (tx) => {
+    await tx.execute(
+      sql`select pg_advisory_xact_lock(hashtext(${`autopilot-cap:${row.workspace.id}`}))`,
+    );
+    if ((await countdownsStartedLast24h(tx, row.workspace.id, now)) >= DAILY_AUTOPILOT_CAP)
+      return false;
+    const [set] = await tx
+      .update(drafts)
+      .set({ autoSendAt: at })
+      .where(and(eq(drafts.id, draftId), eq(drafts.status, "pending"), isNull(drafts.autoSendAt)))
+      .returning({ id: drafts.id });
+    if (!set) return false;
+    await tx.insert(activityLog).values({
       workspaceId: row.workspace.id,
       actor: "squared_away",
       action: "autopilot_scheduled",
       threadId: row.thread.id,
       detail: { draftId, sendAt: at.toISOString() },
     });
-  return at;
+    return true;
+  });
+  return started ? at : null;
 }
 
 export const NEWER_MAIL_LINE = "There's newer mail in this conversation.";
