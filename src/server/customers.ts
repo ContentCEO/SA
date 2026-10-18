@@ -2,16 +2,17 @@ import "server-only";
 import { and, desc, eq, inArray, max, ne, or, isNull, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { mailboxes, messages, threads } from "@/db/schema";
-import { isDecidedStage } from "./quote-rules";
 import { looksMunicipal } from "@/ai/guards";
 import {
   crewSql,
+  crewThreadSql,
+  customerAddressSql,
+  quoteThreadSql,
   messageReplyAddress,
   messageReplyName,
   customerRobotSql,
   sideEmailSql,
 } from "./thread-sql";
-import { listQuotes, type QuoteRow } from "./quotes";
 
 /**
  * Check 13 P1: who someone is to the business. Customers are the default list; the other three
@@ -54,6 +55,41 @@ export type CustomerRow = {
 const asDate = (v: unknown) => (v ? new Date(v as string | Date) : null);
 const notNoise = or(isNull(threads.category), ne(threads.category, "noise"));
 
+/** Check 13 P3: the most rows Customers reads (a hard ceiling; only the count is logged). */
+export const CUSTOMERS_CEILING = 10_000;
+
+/**
+ * Check 13 P3: quote facts per customer (the thread's reply address, as Quotes names them),
+ * read-only: open quotes (a quote thread with no outcome) and won amounts. Never runs Quotes'
+ * own amount capture or no-answer guesses, and has no cap on how many quotes it reads.
+ */
+async function quoteFactsByAddress(workspaceId: string) {
+  const rows = await db()
+    .select({
+      address: customerAddressSql(),
+      outcome: threads.quoteOutcome,
+      amountCents: threads.quoteAmountCents,
+    })
+    .from(threads)
+    .innerJoin(mailboxes, eq(mailboxes.id, threads.mailboxId))
+    .where(
+      and(
+        eq(mailboxes.workspaceId, workspaceId),
+        quoteThreadSql(),
+        sql`not ${crewThreadSql(workspaceId)}`,
+      ),
+    );
+  const out = new Map<string, { open: number; wonCents: number }>();
+  for (const r of rows) {
+    if (!r.address) continue;
+    const f = out.get(r.address) ?? { open: 0, wonCents: 0 };
+    if (r.outcome == null) f.open++;
+    else if (r.outcome === "won") f.wonCents += r.amountCents ?? 0;
+    out.set(r.address, f);
+  }
+  return out;
+}
+
 /**
  * The inbound emails Customers is built from (Check 13 P2: one rule for the list and for the
  * customer page, so a key that isn't on the list is a 404). Needs messages, threads and
@@ -83,6 +119,7 @@ function listedMessage(workspaceId: string) {
  * are two customers, not one "form-submission@…".
  */
 export async function listCustomers(workspaceId: string, now: Date = new Date()) {
+  void now; // kept for callers; nothing here depends on the clock any more (Check 13 P3)
   const addr = messageReplyAddress();
   const rows = await db()
     .select({
@@ -107,25 +144,25 @@ export async function listCustomers(workspaceId: string, now: Date = new Date())
     .where(listedMessage(workspaceId))
     .groupBy(addr)
     .orderBy(desc(max(threads.lastMessageAt)))
-    .limit(500);
-
-  const { quotes } = await listQuotes(workspaceId, now);
-  const byCustomer = new Map<string, QuoteRow[]>();
-  for (const q of quotes) {
-    if (!q.customerAddress) continue;
-    byCustomer.set(q.customerAddress, [...(byCustomer.get(q.customerAddress) ?? []), q]);
+    // Check 13 P3: everyone, so search finds every customer; a hard ceiling only.
+    .limit(CUSTOMERS_CEILING + 1);
+  if (rows.length > CUSTOMERS_CEILING) {
+    console.warn("customers_ceiling_hit", { workspaceId, count: rows.length });
+    rows.length = CUSTOMERS_CEILING;
   }
 
+  const facts = await quoteFactsByAddress(workspaceId);
+
   return rows.map<CustomerRow>((r) => {
-    const qs = byCustomer.get(r.address) ?? [];
+    const q = facts.get(r.address);
     return {
       key: r.key,
       address: r.address,
       name: r.name,
       conversations: Number(r.conversations),
       lastContactAt: asDate(r.lastContactAt),
-      openQuotes: qs.filter((q) => !isDecidedStage(q.stage)).length,
-      wonCents: qs.filter((q) => q.stage === "won").reduce((t, q) => t + (q.amountCents ?? 0), 0),
+      openQuotes: q?.open ?? 0,
+      wonCents: q?.wonCents ?? 0,
       kind: customerKind({
         municipal:
           !!r.municipalMark ||

@@ -281,7 +281,11 @@ describe("quote acceptance context (A5)", () => {
     ).toBe(true);
     // The owner marked it lost / no answer, or reopened it.
     expect(
-      keepQuoteAccepted({ ...accepted, quoteOutcome: "lost", quoteOutcomeSource: "owner" }),
+      keepQuoteAccepted({
+        ...accepted,
+        quoteOutcome: "lost",
+        quoteOutcomeSource: "owner" as const,
+      }),
     ).toBe(false);
     expect(
       keepQuoteAccepted({ ...accepted, quoteOutcome: "no_answer", quoteOutcomeSource: "owner" }),
@@ -464,6 +468,8 @@ describe("customer list", () => {
     });
     await convo({ from: "ads@spam.com", name: "Ads", category: "noise", inAgo: 1 });
     await setQuoteOutcome(workspaceId, q, "won", undefined, NOW);
+    // The amount is captured by Quotes or the daily job; Customers only reads it (Check 13 P3).
+    await captureQuoteAmounts(workspaceId);
 
     const list = await listCustomers(workspaceId, NOW);
     expect(list.map((c) => c.address)).toEqual(["dana@x.com", "rep@supply.com"]);
@@ -573,6 +579,77 @@ describe("customer list", () => {
       .insert(businessProfiles)
       .values({ workspaceId, crewAddresses: ["rosa.helper@gmail.com"] });
     expect((await listCustomers(workspaceId, NOW))[0]!.kind).toBe("crew");
+  });
+
+  it("returns every customer and reads quote facts without writing (Check 13 P3)", async () => {
+    const N = 1200;
+    const ts = await database
+      .insert(threads)
+      .values(
+        Array.from({ length: N }, (_, i) => ({
+          mailboxId,
+          gmailThreadId: `bulk-${i}`,
+          inInbox: true,
+          subject: "Job",
+          // The first 302 are quotes: the oldest is won, the next 300 are newer, one is open.
+          category: i < 302 ? "quote_request" : "customer_question",
+          lastMessageAt: new Date(NOW.getTime() - (i < 302 ? 302 - i : i) * 60_000),
+          ...(i === 0
+            ? {
+                quoteOutcome: "won",
+                quoteOutcomeSource: "owner" as const,
+                quoteAmountCents: 210_000,
+              }
+            : {}),
+          ...(i > 0 && i < 302
+            ? { quoteOutcome: "lost", quoteOutcomeSource: "owner" as const }
+            : {}),
+        })),
+      )
+      .returning({ id: threads.id });
+    await database.insert(messages).values(
+      ts.map((t, i) => ({
+        threadId: t.id,
+        mailboxId,
+        gmailMessageId: `bulk-${i}-in`,
+        direction: "in" as const,
+        fromAddress: `c${i}@x.com`,
+        fromName: `Customer ${i}`,
+        bodyText: "Hi",
+        sentAt: new Date(NOW.getTime() - (i < 302 ? 302 - i : i) * 60_000 - 1000),
+      })),
+    );
+    // An old quiet quote Quotes would guess "no answer" for: Customers must not.
+    const quiet = await convo({
+      from: "kim@x.com",
+      name: "Kim",
+      category: "quote_request",
+      inAgo: 26,
+      outAgo: 25,
+      reply: "$3,100",
+    });
+    const snapshot = async () => ({
+      threads: JSON.stringify(
+        await database
+          .select({
+            id: threads.id,
+            o: threads.quoteOutcome,
+            a: threads.quoteAmountCents,
+            s: threads.quoteOutcomeSource,
+          })
+          .from(threads)
+          .orderBy(threads.id),
+      ),
+      activity: (await database.select({ id: activityLog.id }).from(activityLog)).length,
+    });
+    const before = await snapshot();
+    const list = await listCustomers(workspaceId, NOW);
+    expect(await snapshot()).toEqual(before);
+    expect(list).toHaveLength(N + 1);
+    expect(list.find((c) => c.address === "c0@x.com")).toMatchObject({ wonCents: 210_000 });
+    expect(list.find((c) => c.address === "kim@x.com")).toMatchObject({ openQuotes: 1 });
+    const [q] = await database.select().from(threads).where(eq(threads.id, quiet));
+    expect(q!.quoteOutcome).toBeNull();
   });
 
   it("never shows another workspace's customers", async () => {
@@ -844,7 +921,10 @@ describe("win/loss auto-guess", () => {
       await setQuoteOutcome(workspaceId, t, "lost", undefined, daysAgo(2));
       await customerWrites(t, 1);
       await classifyWith(accepting({ category: "scheduling" }));
-      expect(await rowOf(t)).toMatchObject({ quoteOutcome: "lost", quoteOutcomeSource: "owner" });
+      expect(await rowOf(t)).toMatchObject({
+        quoteOutcome: "lost",
+        quoteOutcomeSource: "owner" as const,
+      });
       expect(await guesses()).toEqual([]);
       await sqlGuardRefuses(t);
     });
@@ -950,7 +1030,8 @@ describe("win/loss auto-guess", () => {
     expect(await guessNoAnswers(NOW, workspaceId)).toBe(0);
     await listQuotes(workspaceId, NOW);
     expect((await rowOf(accepted)).quoteOutcome).toBeNull();
-    expect((await rowOf(quiet)).quoteOutcome).toBeNull();
+    const [q] = await database.select().from(threads).where(eq(threads.id, quiet));
+    expect(q!.quoteOutcome).toBeNull();
     expect(await guesses()).toEqual([]);
   });
 
@@ -1181,7 +1262,10 @@ describe("win/loss auto-guess", () => {
         throw new MailboxAuthError();
       };
       await setQuoteOutcome(workspaceId, t, "lost", undefined, NOW, { writerFor: () => writer });
-      expect(await rowOf(t)).toMatchObject({ quoteOutcome: "lost", quoteOutcomeSource: "owner" });
+      expect(await rowOf(t)).toMatchObject({
+        quoteOutcome: "lost",
+        quoteOutcomeSource: "owner" as const,
+      });
       expect((await draftOf(d.id)).status).toBe("expired");
       const [box] = await database.select().from(mailboxes).where(eq(mailboxes.id, mailboxId));
       expect(box!.status).toBe("reconnect_needed");

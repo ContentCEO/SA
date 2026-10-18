@@ -245,6 +245,48 @@ test("customers: suppliers and towns are kept apart under their own links", asyn
   await expect(page.getByRole("link", { name: /Priya Shah/ })).toHaveCount(0);
 });
 
+test("customers: 50 at a time, and search finds everyone (Check 13 P3)", async ({
+  page,
+  context,
+}) => {
+  const owner = await seedOwner({ mailbox: true, backfilled: true });
+  const ts = await testDb
+    .insert(schema.threads)
+    .values(
+      Array.from({ length: 60 }, (_, i) => ({
+        mailboxId: owner.mailboxId!,
+        gmailThreadId: `many-${randomUUID().slice(0, 8)}-${i}`,
+        inInbox: true,
+        category: "customer_question",
+        lastMessageAt: new Date(Date.now() - (i + 1) * 60_000),
+      })),
+    )
+    .returning({ id: schema.threads.id });
+  await testDb.insert(schema.messages).values(
+    ts.map((t, i) => ({
+      threadId: t.id,
+      mailboxId: owner.mailboxId!,
+      gmailMessageId: `many-${t.id}`,
+      direction: "in" as const,
+      fromAddress: `person${i + 1}@customer.com`,
+      fromName: `Person Number${String(i + 1).padStart(2, "0")}`,
+      bodyText: "Hi",
+      sentAt: new Date(Date.now() - (i + 1) * 60_000),
+    })),
+  );
+  await signInAs(context, owner);
+  await page.goto("/customers");
+  await expect(page.getByText("60 customers")).toBeVisible();
+  await expect(page.getByRole("link", { name: /Number01/ })).toBeVisible();
+  await expect(page.getByRole("link", { name: /Number55/ })).toHaveCount(0);
+  await page.getByLabel("Find a customer").fill("number55");
+  await expect(page.getByRole("link", { name: /Number55/ })).toBeVisible();
+  await page.getByLabel("Find a customer").fill("");
+  await expect(page.getByRole("link", { name: /Number55/ })).toHaveCount(0);
+  await page.getByRole("button", { name: "Show 50 more" }).click();
+  await expect(page.getByRole("link", { name: /Number55/ })).toBeVisible();
+});
+
 test("a junk email's id is not a customer page (Check 13 P2)", async ({ page, context }) => {
   const owner = await seedOwner({ mailbox: true, backfilled: true });
   const gid = `j-${randomUUID().slice(0, 8)}`;

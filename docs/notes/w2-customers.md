@@ -83,3 +83,13 @@ First time this sender has emailed the business: ${e.firstTimeSender === "unknow
 
 Eval case to add with it (tests/evals/cases.ts): a second Thumbtack lead for a home addition from
 the same `leads@thumbtack.com` address, `large_request`, expected needs-you with the big-job reason.
+
+## Step 3: Check 13 P3 (every customer findable)
+
+- **Customers reads everyone (Check 13 P3):** no 500 cap (`CUSTOMERS_CEILING` 10,000; only
+  `customers_ceiling_hit { workspaceId, count }` is logged past it). The page sends compact items
+  and draws 50 at a time ("Show 50 more", 44px); search still filters the full list on the phone.
+  "N customers" under the heading. Quote facts come from one read-only query
+  (`quoteFactsByAddress`: open = quote thread with no outcome, won = sum of `quote_amount_cents`),
+  so the Customers page never runs `captureQuoteAmounts` / `guessNoAnswers` and has no 300-quote
+  cap. A won amount shows once Quotes or the daily job has captured it.

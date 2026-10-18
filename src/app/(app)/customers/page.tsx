@@ -24,10 +24,17 @@ export default async function CustomersPage(props: PageProps<"/customers">) {
   const group = GROUPS.find((g) => g === rawGroup) ?? "customers";
   const now = new Date();
   const customers = await listCustomers(workspace.id, now);
+  // Check 13 P3: how many customers there are, so the owner knows the size of the list.
+  const count = customers.filter((c) => c.kind === "customer").length;
 
   return (
     <>
       <Headline serif="who you work for," heavy="customers." />
+      {customers.length ? (
+        <p className="font-semibold">
+          {count} customer{count === 1 ? "" : "s"}
+        </p>
+      ) : null}
       <p className="text-muted-foreground">
         People who&apos;ve emailed you about work. Suppliers, towns and your crew are kept apart.
       </p>

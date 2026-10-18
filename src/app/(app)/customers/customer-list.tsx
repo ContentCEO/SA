@@ -21,6 +21,9 @@ const OTHER_GROUPS: { group: Exclude<CustomerGroup, "customers">; label: string 
   { group: "crew", label: "Your crew and subs" },
 ];
 
+/** Check 13 P3: rows drawn at a time; search still filters everyone. */
+const PAGE = 50;
+
 /** Filters on the phone, so names never go into a URL or a server log. */
 export function CustomerList({
   items,
@@ -30,6 +33,7 @@ export function CustomerList({
   group?: CustomerGroup;
 }) {
   const [q, setQ] = useState("");
+  const [limit, setLimit] = useState(PAGE);
   const input = useRef<HTMLInputElement>(null);
   // Uncontrolled, and read once on load: anything typed before the page finished
   // loading (slow signal) still filters.
@@ -84,7 +88,7 @@ export function CustomerList({
         <h2 className="text-xl font-black">{OTHER_GROUPS.find((g) => g.group === group)?.label}</h2>
       ) : null}
       <ul className="flex flex-col divide-y divide-stone rounded-xl border bg-card">
-        {shown.map((c) => (
+        {shown.slice(0, limit).map((c) => (
           <li key={c.key}>
             <Link href={`/customers/${c.key}`} className="flex min-h-tap flex-col gap-0.5 p-4">
               <span className="truncate text-lg font-black">{c.name}</span>
@@ -97,6 +101,15 @@ export function CustomerList({
           <li className="p-4">{q.trim() ? "No one matches that." : "No one here yet."}</li>
         ) : null}
       </ul>
+      {shown.length > limit ? (
+        <button
+          type="button"
+          onClick={() => setLimit((n) => n + PAGE)}
+          className="min-h-tap rounded-lg border border-input bg-paper px-4 font-semibold"
+        >
+          Show {PAGE} more
+        </button>
+      ) : null}
     </div>
   );
 }
