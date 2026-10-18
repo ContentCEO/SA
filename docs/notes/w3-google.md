@@ -151,3 +151,27 @@ it("Check 28 P2: brand verification is in 0b, before the video", () => {
   expect(step0d).toContain("Branding is published (0b)");
 });
 ```
+
+## Step 4: Check 28 P3 + Check 1 P7 (App emails step 6, folded in here as the plan asked)
+
+One env, `GOOGLE_APP_STATE` (`src/config/google-app.ts`; `testing` / `unverified` / `verified`,
+default `testing`), drives both the connect screen's Google-warning line and the reason line in the
+"Squared Away lost access to your Gmail" email (`src/server/alerts.ts`). Today's default is right,
+so it is live on merge; Davi changes the value as the app moves through Google's process.
+**Integration note:** if the App emails group also changed `alerts.ts`'s footer for Check 1 P7,
+keep this version (one env, as the plan's conflict 12 says) and drop theirs.
+
+**LAUNCH.md 0c.** Add a bullet after "Where:":
+
+```
+- Then tell the app: Vercel → sa → Settings → Environment Variables → `GOOGLE_APP_STATE`
+  (Production only) = `unverified` → Save → Redeploy. The Connect Gmail screen then says "Tap
+  Advanced, then the link that starts with Go to" instead of "Tap Continue", which is what Google
+  shows once the app is published. When Google approves the app (0g done), set it to `verified`
+  and redeploy: the warning line disappears. Preview stays unset.
+```
+
+**CLAUDE.md** (Decisions): `GOOGLE_APP_STATE` (Production only; testing / unverified / verified,
+default testing) is the one switch for what Google's consent screen shows; the connect screen's
+warning line and the access-lost email's reason read it (`src/config/google-app.ts`). Never add a
+second env for the same fact.

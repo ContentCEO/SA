@@ -5,6 +5,7 @@ import { Notice } from "@/components/app/notice";
 import { Headline } from "@/components/brand/headline";
 import { Button } from "@/components/ui/button";
 import { bodyRetentionDays } from "@/config/retention";
+import { googleAppState, googleWarningLine } from "@/config/google-app";
 import { pricing } from "@/config/pricing";
 import { siteConfig } from "@/config/site";
 import { listMailboxes } from "@/server/mailboxes";
@@ -56,6 +57,7 @@ export default async function ConnectPage(props: PageProps<"/connect">) {
         ? `You picked ${picked ? picked.email : "a different Google account"} but this card is for ${card.email}. Try again and pick ${card.email}.`
         : noticeText(errors, error);
   const days = dayWord(pricing.evaluationDays);
+  const googleWarning = googleWarningLine(googleAppState(), siteConfig.name);
 
   return (
     <>
@@ -112,11 +114,9 @@ export default async function ConnectPage(props: PageProps<"/connect">) {
           reply goes out, and it still goes out only when you tap <strong>Send reply</strong> (or by
           autopilot, if you switch it on for a kind of email).
         </p>
-        <p className="text-muted-foreground">
-          While we&apos;re in early access, Google may also say the app isn&apos;t verified yet —
-          that&apos;s expected. Tap <strong>Advanced</strong>, then{" "}
-          <strong>Go to Squared Away</strong>.
-        </p>
+        {/* Check 28 P3: what Google's own screen shows depends on where the app is in Google's
+            process (GOOGLE_APP_STATE); nothing once verified. */}
+        {googleWarning ? <p className="text-muted-foreground">{googleWarning}</p> : null}
         <p className="text-muted-foreground">
           You can disconnect any time in Settings. That also removes our access at Google.
         </p>

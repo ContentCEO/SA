@@ -247,7 +247,12 @@ option B, the separate demo account after its test-card payment):
    verified this app" screen: that is expected in the verification video. With the app In
    production (launch checklist step 0c), tap **Advanced**, then the "Go to … (unsafe)" link.
    (Only while the app is still in Testing does a test user see a **Continue** button there
-   instead.) Then, on the permissions screen, pause here. Show the app name and the two Gmail
+   instead.) The explainer screen in step 3 says the same thing in the app's words, from
+   `GOOGLE_APP_STATE` (`src/config/google-app.ts`): in Testing, "Google will show a screen saying
+   it hasn't verified Squared Away yet. That's expected while we're in early access. Tap
+   Continue."; once published but not yet verified, "Tap Advanced, then the link that starts with
+   Go to."; and nothing at all once Google has verified the app. Set the value before filming so
+   the screen and the video agree. Then, on the permissions screen, pause here. Show the app name and the two Gmail
    permissions, in Google's words "View your email messages and settings" (`gmail.readonly`) and
    "Manage drafts and send emails" (`gmail.compose`), and click into the address bar so the
    `client_id=` in the URL is readable. Tap Allow (Continue).
