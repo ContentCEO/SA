@@ -73,7 +73,7 @@ All additive. No prompt files changed.
     mentions "your phone"). The browser's own Install button still wins.
   - **Manifest (C46 P4):** `screenshots` (3 × 1080x1920, form_factor narrow) from
     `scripts/app-shots.mjs` (invented e2e seed data only; run against the local e2e app with
-    `pnpm exec tsx scripts/app-shots.mjs`), `lang: "en-US"`, `dir: "ltr"`. id/start_url/scope/icons
+    `pnpm exec tsx scripts/app-shots.mjs [path to a Chromium]`), `lang: "en-US"`, `dir: "ltr"`. id/start_url/scope/icons
     unchanged. pwa.spec asks Chrome's `Page.getInstallabilityErrors` in a persistent profile.
   - `security-surface.test.ts` has two new routes: `/api/push/subscription` (session) and
     `/api/twilio/status` (new guard kind `twilio-signature`).

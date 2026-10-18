@@ -6,7 +6,7 @@
  * Needs the local e2e app running (the same servers `pnpm test:e2e` starts, with a local
  * DATABASE_URL in .env.local), then:
  *
- *   pnpm exec tsx scripts/app-shots.mjs
+ *   pnpm exec tsx scripts/app-shots.mjs [path to a Chromium]
  *
  * 1080x1920 PNGs: a 360x640 phone at 3x (web.dev's Richer Install UI sizes).
  */
@@ -19,10 +19,7 @@ const { seedOwner, seedQueue, setWorkspace, signInAs, testDb } =
   await import("../tests/e2e/support.ts");
 
 // The local app: APP_URL from .env.local (e2e requires it to be the origin Playwright drives).
-const baseURL =
-  process.env.PLAYWRIGHT_BASE_URL ??
-  process.env.APP_URL ??
-  `http://localhost:${process.env.PORT ?? 3100}`;
+const baseURL = process.env.APP_URL ?? "http://localhost:3100";
 const out = "public/app-shots";
 
 const schema = await import("../src/db/schema.ts");
@@ -96,11 +93,9 @@ await testDb
   })
   .onConflictDoNothing();
 
-const browser = await chromium.launch(
-  process.env.PLAYWRIGHT_CHROMIUM_PATH
-    ? { executablePath: process.env.PLAYWRIGHT_CHROMIUM_PATH }
-    : {},
-);
+// An optional Chromium to use (a sandbox's preinstalled one): the first argument.
+const executablePath = process.argv[2];
+const browser = await chromium.launch(executablePath ? { executablePath } : {});
 try {
   const context = await browser.newContext({
     baseURL,
