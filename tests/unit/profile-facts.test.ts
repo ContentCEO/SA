@@ -14,6 +14,7 @@ const ORDER = [
   "Signature",
   "Never promise",
   "People who always need you",
+  "Your crew",
   "Send me anything over",
 ];
 
@@ -41,6 +42,7 @@ describe("describeProfileFacts", () => {
         signature: "Ruiz Street Plumbing",
         doNotPromise: ["Same-day service", "Weekend work"],
         vipSenders: ["boss@gc.com"],
+        crewAddresses: ["mike@ruizplumbing.com", "joe@ruizplumbing.com"],
         amountThresholdDollars: 2500,
         reviewUrl: "https://g.page/r/abc/review",
         licenses: { hic_number: "123456" },
@@ -60,6 +62,8 @@ describe("describeProfileFacts", () => {
       value: "$2,500",
       field: "amountThresholdDollars",
     });
+    // Wave 2 merge B: the crew list, as a count only (Check 22 P10).
+    expect(by["Your crew"]).toMatchObject({ value: "2 addresses", field: "crewAddresses" });
     expect(by["State"]!.value).toBe("Massachusetts");
     expect(by["Licenses"]!.value).toContain("123456");
     for (const r of rows) expect(r.value, r.label).not.toBeNull();

@@ -124,7 +124,7 @@ import {
 } from "./lifecycle";
 import { batchEligible, firstLine } from "./batch-rules";
 import { isInvoiceThread, paymentSaid } from "./money-rules";
-import { isServiceCall, quoteStopsNudges } from "./quote-rules";
+import { isQuoteThread, isServiceCall, quoteStopsNudges } from "./quote-rules";
 import { BACK_ON_TOP_MS, isEmergency, usableTimeZone } from "./snooze-rules";
 import { inEmergencyLane, recentEmergency } from "./emergency-rules";
 import { claimDrafting, releaseDrafting } from "./draft-claims";
@@ -4061,6 +4061,12 @@ export async function sentDraftSummary(
     // Check 21 P4: the same "quote or invoice" rule as the scan.
     (FOLLOWUP_CATEGORIES.includes(row.thread.category as (typeof FOLLOWUP_CATEGORIES)[number]) ||
       isInvoiceThread(row.thread)) &&
+    // The scan's other stops, so the screen never promises a nudge that won't come: the
+    // owner's "Not a quote" (Check 11 P8), a bounce (Check 21 P1) and the crew (Check 22 P10).
+    !(row.thread.category === "quote_request" && !isQuoteThread(row.thread)) &&
+    (row.thread.extracted as { bounced?: unknown } | null)?.bounced !== true &&
+    (row.thread.extracted as { crew?: unknown } | null)?.crew !== true &&
+    !(await isCrewFor(workspaceId, row.draft.toAddress)) &&
     !(await nudgeBlocked(row.thread));
   const sentNudges = chased ? await countSentFollowups(row.thread.id) : 0;
   const decidedAt = row.draft.decidedAt ?? sendingAt ?? new Date();

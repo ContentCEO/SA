@@ -298,9 +298,14 @@ describe("Quotes closed another way, and Not a quote (Check 11 P8)", () => {
     const opts = { writerFor: () => new FakeWriter(), now: () => NOW };
     expect(await markQuoteSentAnotherWay(workspaceId, a, 145_000, opts)).toBe("marked");
     expect(await markQuoteSentAnotherWay(workspaceId, b, null, opts)).toBe("marked");
-    // (Check 11 P6 "Replied" isn't built here: both read Quoted.)
+    // Both read Quoted: the owner says a price went out, so never Check 11 P6's "Replied, no
+    // price yet" (wave 2 merge B).
     expect(await stageOf(a)).toMatchObject({ stage: "talking", amountCents: 145_000 });
     expect(await stageOf(b)).toMatchObject({ stage: "talking", amountCents: null });
+    // A typed price is the owner's (Check 11 P3): never replaced by a price read from mail.
+    expect(await row(a)).toMatchObject({ quoteAmountFrom: "owner", quoteAmountNote: null });
+    expect((await row(a)).quoteAmountAt).toEqual(NOW);
+    expect(await row(b)).toMatchObject({ quoteAmountFrom: null, quoteAmountCents: null });
     const logs = await database
       .select()
       .from(activityLog)

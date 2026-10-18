@@ -1734,6 +1734,28 @@ describe("Check 12 P8: a reminder from the Money card", () => {
     expect(by[theyWrote]).toMatchObject({ customerWroteLast: true, canDraftReminder: false });
   });
 
+  it("a big invoice that needs you only for its size can be reminded; one with a dispute can't (Check 12 P1)", async () => {
+    const big = await invoiceThread({ from: "big@customer.com", invoice: { amount: 9_000 } });
+    const disputed = await invoiceThread({ from: "d@customer.com", invoice: { amount: 9_000 } });
+    for (const [id, extra] of [
+      [big, { owner_rule_hits: ["amount"] }],
+      [disputed, { owner_rule_hits: ["amount"], disputed: true }],
+    ] as const) {
+      await database
+        .update(threads)
+        .set({
+          needsOwner: true,
+          extracted: sql`coalesce(${threads.extracted}, '{}'::jsonb) || ${JSON.stringify(extra)}::jsonb`,
+        })
+        .where(eq(threads.id, id));
+    }
+    const by = Object.fromEntries(
+      (await listMoney(workspaceId, NOW)).owed.map((r) => [r.threadId, r]),
+    );
+    expect(by[big]).toMatchObject({ canDraftReminder: true });
+    expect(by[disputed]).toMatchObject({ canDraftReminder: false });
+  });
+
   it("drafts a pending reminder (no send), scoped to the workspace, refused when read-only or paid", async () => {
     const t = await invoiceThread({ invoice: { amount: 300 } });
     const writer = new FakeWriter();

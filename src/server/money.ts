@@ -2,7 +2,11 @@ import "server-only";
 import { and, desc, eq, gte, inArray, isNotNull, isNull, or, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { prepareBody } from "@/ai/classify";
-import { amountOnlyNeedsOwner, FOLLOWUP_MAX_AGE_DAYS } from "./followup-rules";
+import {
+  amountOnlyNeedsOwner,
+  FOLLOWUP_MAX_AGE_DAYS,
+  needsOwnerBlocksNudge,
+} from "./followup-rules";
 import {
   activityLog,
   businessProfiles,
@@ -39,6 +43,7 @@ import {
   billOwedByOwner,
   dueLabel,
   invoiceOf,
+  isInvoiceThread,
   isOwed,
   isReceiptSender,
   NOT_OWED_NOTE,
@@ -83,7 +88,8 @@ export type MoneyRow = {
   /**
    * Check 12 P8: "Draft a reminder" can work: the owner wrote last, nothing is waiting, a nudge
    * is left (of two, ever) and the thread is one nudges are written for (an invoice thread that
-   * doesn't need the owner). The drafter re-checks all of it.
+   * doesn't need the owner, or needs them only for its size, Check 12 P1). The drafter re-checks
+   * all of it.
    */
   canDraftReminder: boolean;
 };
@@ -259,8 +265,11 @@ function toRow(
       !customerWroteLast(r) &&
       r.lastOut != null &&
       r.followupCount < MAX_FOLLOWUPS &&
-      !r.needsOwner &&
-      (FOLLOWUP_CATEGORIES as readonly string[]).includes(r.category ?? ""),
+      // Check 12 P1: the same "needs you" rule as the follow-up scan (a big invoice that needs
+      // you only for its size is still chased, so it can be reminded too).
+      !needsOwnerBlocksNudge(r) &&
+      ((FOLLOWUP_CATEGORIES as readonly string[]).includes(r.category ?? "") ||
+        isInvoiceThread({ category: r.category, extracted: r.extracted })),
   };
 }
 

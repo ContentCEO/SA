@@ -2984,7 +2984,11 @@ null}` flags any link on a plain one); reconcile expires it like a review note; 
     owner's (`quote_amount_from = 'owner'`, `quote_amount_at` = the tap): never replaced by a
     price read from mail, never in price memory, and — like any typed amount — not in "Priced"
     unless the quote is won. That tap without a price reads "Quoted", not "Replied, no price yet"
-    (`answered_by_phone` with `via: "other"`). Inbox cards say "Your crew" in place of the kind.
+    (`answered_by_phone` with `via: "other"`). Inbox cards say "Your crew" in place of the kind. The
+    sent screen's nudge promise (`sentDraftSummary`) also stops for "Not a quote", a bounce and
+    the crew (mark or a crew To), like the scan; Money's "Draft a reminder" uses the scan's
+    needs-you rule (`needsOwnerBlocksNudge`, so a big invoice can be reminded) and any invoice
+    thread.
 - **Quotes and Money (wave 2, `w2-quotes`):**
   - **One quote rule (Check 11 P1):** `quoteThreadSql` / `isQuoteThread` are twins (144-case twin
     test); `quoteRequestSql` is the same rule, so Quotes, Customers, follow-ups, the scorecard,
