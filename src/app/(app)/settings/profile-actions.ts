@@ -12,8 +12,10 @@ import {
   saveFollowupSettings,
   saveDetectedTimeZone,
   saveVoiceEdits,
+  saveWorkHours,
   setOwnerTimeZone,
   voiceEditInput,
+  workHoursInput,
 } from "@/server/profile";
 import { isTimeZone } from "@/server/time-zone-rules";
 import { AutopilotNotAllowedError, setAutopilot } from "@/server/autopilot";
@@ -98,6 +100,24 @@ export async function saveDigestSettingsAction(formData: FormData) {
   // Check 44 P5 / 15 P7: the visible select; saved (as the owner's pick) only when changed.
   if (parsed.data.timeZone) await setOwnerTimeZone(workspace.id, parsed.data.timeZone);
   redirect("/settings/morning-email?done=saved");
+}
+
+/** Check 15 P8: "Your working days (for alerts)" on Settings → Your business. */
+export async function saveWorkHoursAction(formData: FormData) {
+  const { workspace } = await requireOwner();
+  const parsed = workHoursInput.safeParse({
+    days: formData.getAll("days").map(String),
+    startHour: formData.get("startHour"),
+    endHour: formData.get("endHour"),
+  });
+  if (!parsed.success) {
+    const issue = parsed.error.issues[0];
+    if (issue?.path[0] === "days") redirect("/settings/business?error=work_days");
+    if (issue?.path[0] === "endHour") redirect("/settings/business?error=work_hours");
+    redirect("/settings/business?error=unknown");
+  }
+  await saveWorkHours(workspace.id, parsed.data);
+  redirect("/settings/business?done=work_hours");
 }
 
 /** Check 44 P5: "Use Central time" — a deliberate tap to take this phone's zone. */

@@ -573,6 +573,14 @@ export const businessProfiles = pgTable("business_profile", {
    * on Settings → Morning email). A browser never replaces an 'owner' zone.
    */
   timeZoneSource: text("time_zone_source").$type<TimeZoneSource>().notNull().default("default"),
+  /**
+   * Check 15 P8: the hours the "a lead is waiting" alerts count (ISO weekdays, local hours,
+   * end exclusive; 24 = midnight). Defaults are the old fixed schedule (Mon–Sat 7am–6pm), so
+   * nothing changes until the owner edits. The free-text `hours` is what drafts say.
+   */
+  workDays: integer("work_days").array().notNull().default([1, 2, 3, 4, 5, 6]),
+  workStartHour: integer("work_start_hour").notNull().default(7),
+  workEndHour: integer("work_end_hour").notNull().default(18),
   digestLastSentOn: text("digest_last_sent_on"),
   /** Text alerts to the owner's own phone (E.164, e.g. +15085551234). Off until they opt in. */
   alertPhone: text("alert_phone"),

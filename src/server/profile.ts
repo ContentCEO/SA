@@ -381,6 +381,61 @@ export async function saveFollowupSettings(
     });
 }
 
+export const WORK_DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] as const;
+
+/**
+ * Check 15 P8: "Your working days (for alerts)": ticked ISO weekdays (1 = Monday), and the
+ * local hour the day starts and ends (end exclusive, 24 = midnight).
+ */
+export const workHoursInput = z
+  .object({
+    days: z
+      .array(z.coerce.number({ message: "Pick your days from the list." }).int().min(1).max(7), {
+        message: "Pick your days from the list.",
+      })
+      .min(1, "Pick at least one day.")
+      .transform((d) => [...new Set(d)].sort((a, b) => a - b)),
+    startHour: z.coerce
+      .number({ message: "Pick when your day starts." })
+      .int("Pick when your day starts.")
+      .min(0, "Pick when your day starts.")
+      .max(23, "Pick when your day starts."),
+    endHour: z.coerce
+      .number({ message: "Pick when your day ends." })
+      .int("Pick when your day ends.")
+      .min(1, "Pick when your day ends.")
+      .max(24, "Pick when your day ends."),
+  })
+  .refine((v) => v.startHour < v.endHour, {
+    message: "Your day has to end after it starts.",
+    path: ["endHour"],
+  });
+
+export async function saveWorkHours(
+  workspaceId: string,
+  data: z.output<typeof workHoursInput>,
+  now: Date = new Date(),
+) {
+  const set = {
+    workDays: data.days,
+    workStartHour: data.startHour,
+    workEndHour: data.endHour,
+    updatedAt: now,
+  };
+  await db()
+    .insert(businessProfiles)
+    .values({ workspaceId, ...set })
+    .onConflictDoUpdate({ target: businessProfiles.workspaceId, set });
+  await db()
+    .insert(activityLog)
+    .values({
+      workspaceId,
+      actor: "owner",
+      action: "work_hours_saved",
+      detail: { days: data.days.length },
+    });
+}
+
 export const DIGEST_HOURS = [5, 6, 7, 8, 9] as const;
 
 export const digestSettingsInput = z.object({
