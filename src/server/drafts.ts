@@ -21,6 +21,7 @@ import {
   checkDraft,
   claimsHuman,
   hasLink,
+  namesAVisitTime,
   REGENERATE_ON,
   type CheckResult,
 } from "@/ai/draft-checks";
@@ -2238,6 +2239,19 @@ export async function batchCandidates(
   picked: readonly string[],
   now: Date = new Date(),
 ): Promise<BatchRow[]> {
+  return (await batchReview(workspaceId, picked, now)).rows;
+}
+
+/**
+ * The batch rows, plus how many scheduling replies were left out only because they confirm a
+ * day or time (Check 41 P2: the review page says so in one line, count only).
+ */
+export async function batchReview(
+  workspaceId: string,
+  picked: readonly string[],
+  now: Date = new Date(),
+): Promise<{ rows: BatchRow[]; heldForVisitTime: number }> {
+  let heldForVisitTime = 0;
   const rows = await db()
     .select({ draft: drafts, thread: threads })
     .from(drafts)
@@ -2265,33 +2279,36 @@ export async function batchCandidates(
       electrical_hazard?: boolean;
       asks_if_ai?: boolean;
     };
-    const ok = batchEligible(
-      {
-        category: thread.category,
-        needsOwner: thread.needsOwner || thread.needsOwnerManual,
-        flags: draft.flags,
-        confidencePct: draft.confidence,
-        body: draft.body ?? "",
-        amountsInEmail: extracted.dollar_amounts ?? [],
-        untrusted:
-          extracted.injection === true ||
-          extracted.municipal === true ||
-          extracted.payment_change === true ||
-          extracted.gas_smell === true ||
-          extracted.co_alarm === true ||
-          extracted.electrical_hazard === true ||
-          // Check 48 P1: "is this a bot?", or a draft that says a person wrote it alone.
-          extracted.asks_if_ai === true ||
-          claimsHuman(draft.body ?? "") ||
-          // Check 36 P2: an emergency in the last 48 hours, whatever the thread is now.
-          recentEmergency(extracted, now),
-        autopilotCounting: draft.autoSendAt !== null,
-        acceptsQuote: extracted.accepts_quote === true,
-        purpose: draft.purpose ?? null,
-      },
-      picked,
-    );
-    if (!ok) continue;
+    const candidate = {
+      category: thread.category,
+      needsOwner: thread.needsOwner || thread.needsOwnerManual,
+      flags: draft.flags,
+      confidencePct: draft.confidence,
+      body: draft.body ?? "",
+      amountsInEmail: extracted.dollar_amounts ?? [],
+      untrusted:
+        extracted.injection === true ||
+        extracted.municipal === true ||
+        extracted.payment_change === true ||
+        extracted.gas_smell === true ||
+        extracted.co_alarm === true ||
+        extracted.electrical_hazard === true ||
+        // Check 48 P1: "is this a bot?", or a draft that says a person wrote it alone.
+        extracted.asks_if_ai === true ||
+        claimsHuman(draft.body ?? "") ||
+        // Check 36 P2: an emergency in the last 48 hours, whatever the thread is now.
+        recentEmergency(extracted, now),
+      autopilotCounting: draft.autoSendAt !== null,
+      acceptsQuote: extracted.accepts_quote === true,
+      purpose: draft.purpose ?? null,
+      visitTime: namesAVisitTime(draft.body ?? ""),
+    };
+    const ok = batchEligible(candidate, picked);
+    if (!ok) {
+      if (candidate.visitTime && batchEligible({ ...candidate, visitTime: false }, picked))
+        heldForVisitTime++;
+      continue;
+    }
     const who = await customerOf(thread.id);
     out.push({
       draftId: draft.id,
@@ -2302,7 +2319,7 @@ export async function batchCandidates(
       seenHash: bodyHash(draft.body ?? ""),
     });
   }
-  return out;
+  return { rows: out, heldForVisitTime };
 }
 
 /**

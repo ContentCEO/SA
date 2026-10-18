@@ -393,7 +393,8 @@ test("review all ready: lists who and how it starts, then asks once before sendi
     gmailDraftId: "fake-draft-2",
     toAddress: "omar@x.com",
     subject: "Re: Time",
-    body: "Hi Omar,\nTuesday works — see you then.\nSam",
+    // Check 41 P2: no day named (a reply that confirms a visit day goes one at a time).
+    body: "Hi Omar,\nGot it — thanks for the update.\nSam",
     originalBody: "same",
     reason: "Confirms the time.",
     confidence: 95,
@@ -406,7 +407,7 @@ test("review all ready: lists who and how it starts, then asks once before sendi
   const list = page.getByRole("list", { name: "Replies to send" });
   await expect(list.getByRole("listitem")).toHaveCount(2);
   await expect(list).toContainText("To Omar");
-  await expect(list).toContainText("Tuesday works — see you then.");
+  await expect(list).toContainText("Got it — thanks for the update.");
   await expect(list).toContainText("What's the address, and how old is the current panel?");
 
   // Untick Scheduling → only the quote is left.
