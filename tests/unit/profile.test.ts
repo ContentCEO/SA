@@ -11,6 +11,9 @@ import {
   AMOUNT_BLANK_MESSAGE,
   AMOUNT_MESSAGE,
   businessProfileInput,
+  digestSettingsInput,
+  followupSettingsInput,
+  voiceEditInput,
   crewAddressesSchema,
   describeVoice,
   getBusinessProfile,
@@ -61,7 +64,7 @@ describe("business profile form", () => {
     const msgs = r.error!.issues.map((i) => i.message);
     expect(msgs).toContain("What's the business called?");
     expect(msgs).toContain("Tell us what work you do.");
-    expect(msgs).toContain("Each VIP line should be one email address.");
+    expect(msgs).toContain("This line isn't an email address: “not an email”.");
   });
 
   it("rejects a non-number threshold", () => {
@@ -107,6 +110,106 @@ describe("the money box (Check 15 P1)", () => {
     expect(amountIssues("20000000")).toEqual([
       "That's more than we can check. Try a smaller amount.",
     ]);
+  });
+});
+
+describe("plain words for every Settings form error (Check 15 P2)", () => {
+  const voiceValid = {
+    greetingStyle: "Hey",
+    signoffStyle: "Thanks, Mike",
+    formality: "casual",
+    avgLengthWords: "60",
+    phrasesUsed: "",
+    phrasesAvoided: "",
+    summary: "",
+  };
+  const zodWording = (m: string) =>
+    /^(Too big|Too small|Invalid)/.test(m) || m.includes("expected");
+  const bad: Array<
+    [
+      string,
+      { safeParse: (v: unknown) => { error?: { issues: { message: string }[] } } },
+      unknown,
+    ]
+  > = [
+    ["business name too long", businessProfileInput, { ...valid, businessName: "x".repeat(121) }],
+    ["business name missing", businessProfileInput, { ...valid, businessName: undefined }],
+    ["services too long", businessProfileInput, { ...valid, services: "x".repeat(2001) }],
+    ["services empty", businessProfileInput, { ...valid, services: "" }],
+    ["wrong trade", businessProfileInput, { ...valid, trade: "astronaut" }],
+    ["wrong extra trade", businessProfileInput, { ...valid, extraTrades: "astronaut" }],
+    [
+      "too many extra trades",
+      businessProfileInput,
+      { ...valid, extraTrades: "plumbing,hvac,roofing" },
+    ],
+    ["long area", businessProfileInput, { ...valid, serviceArea: "x".repeat(2001) }],
+    ["long hours", businessProfileInput, { ...valid, hours: "x".repeat(501) }],
+    ["long promise line", businessProfileInput, { ...valid, doNotPromise: "x".repeat(201) }],
+    ["wrong state", businessProfileInput, { ...valid, state: "ZZ" }],
+    ["long license", businessProfileInput, { ...valid, hicNumber: "x".repeat(200) }],
+    ["bad license date", businessProfileInput, { ...valid, hicExpiresOn: "soon" }],
+    ["NaN amount", businessProfileInput, { ...valid, amountThresholdDollars: "abc" }],
+    ["decimal amount", businessProfileInput, { ...valid, amountThresholdDollars: "1.5" }],
+    ["huge amount", businessProfileInput, { ...valid, amountThresholdDollars: "99999999" }],
+    ["greeting too long", voiceEditInput, { ...voiceValid, greetingStyle: "x".repeat(120) }],
+    ["sign-off too long", voiceEditInput, { ...voiceValid, signoffStyle: "x".repeat(120) }],
+    ["blank word count", voiceEditInput, { ...voiceValid, avgLengthWords: "" }],
+    ["NaN word count", voiceEditInput, { ...voiceValid, avgLengthWords: "abc" }],
+    ["decimal word count", voiceEditInput, { ...voiceValid, avgLengthWords: "60.5" }],
+    ["small word count", voiceEditInput, { ...voiceValid, avgLengthWords: "5" }],
+    ["big word count", voiceEditInput, { ...voiceValid, avgLengthWords: "500" }],
+    ["wrong formality", voiceEditInput, { ...voiceValid, formality: "shouty" }],
+    ["summary too long", voiceEditInput, { ...voiceValid, summary: "x".repeat(601) }],
+    ["long phrase", voiceEditInput, { ...voiceValid, phrasesUsed: "x".repeat(121) }],
+    ["wrong follow-up days", followupSettingsInput, { days: "6" }],
+    ["NaN follow-up days", followupSettingsInput, { days: "abc" }],
+    ["wrong follow-up switch", followupSettingsInput, { enabled: "yes", days: "3" }],
+    ["wrong digest hour", digestSettingsInput, { hour: "3" }],
+    ["NaN digest hour", digestSettingsInput, { hour: "abc" }],
+    ["wrong digest switch", digestSettingsInput, { enabled: "yes", hour: "7" }],
+    ["wrong time zone", digestSettingsInput, { hour: "7", timeZone: "Mars/Base" }],
+    ["crew line", crewAddressesSchema, "not an email"],
+  ];
+
+  it.each(bad)("%s: refused in plain words", (_name, schema, input) => {
+    const r = schema.safeParse(input);
+    expect(r.error, _name).toBeDefined();
+    for (const { message } of r.error!.issues) expect(zodWording(message), message).toBe(false);
+  });
+
+  it("the voice form's messages", () => {
+    const msg = (input: Record<string, unknown>) =>
+      voiceEditInput.safeParse({ ...voiceValid, ...input }).error!.issues[0]!.message;
+    expect(msg({ greetingStyle: "x".repeat(120) })).toBe("Keep this under 100 characters.");
+    expect(msg({ avgLengthWords: "" })).toBe("Type a number of words, like 60.");
+    expect(msg({ avgLengthWords: "abc" })).toBe("Type a number of words, like 60.");
+    expect(msg({ avgLengthWords: "60.5" })).toBe("A whole number, like 60.");
+    expect(msg({ avgLengthWords: "5" })).toBe("At least 10 words.");
+    expect(msg({ avgLengthWords: "500" })).toBe("Up to 400 words.");
+    expect(msg({ formality: "shouty" })).toBe("Pick how formal you are.");
+    expect(msg({ summary: "x".repeat(601) })).toBe("Keep this under 600 characters.");
+    expect(
+      businessProfileInput.safeParse({ ...valid, businessName: "x".repeat(121) }).error!.issues[0]!
+        .message,
+    ).toBe("Keep the name under 120 characters.");
+  });
+
+  it("“People who always need you” takes addresses pasted from Gmail", () => {
+    const vip = (vipSenders: string) =>
+      businessProfileInput.parse({ ...valid, vipSenders }).vipSenders;
+    expect(vip("Sue Smith <sue@example.com>")).toEqual(["sue@example.com"]);
+    expect(vip("a@x.com, b@y.com")).toEqual(["a@x.com", "b@y.com"]);
+    expect(vip("a@x.com; B@Y.com\nSmith, Sue <Sue@Example.com>")).toEqual([
+      "a@x.com",
+      "b@y.com",
+      "sue@example.com",
+    ]);
+    const r = businessProfileInput.safeParse({ ...valid, vipSenders: "ok@x.com\nSue Smith" });
+    expect(r.error!.issues.map((i) => i.message)).toEqual([
+      "This line isn't an email address: “Sue Smith”.",
+    ]);
+    for (const i of r.error!.issues) expect(i.message).not.toMatch(/VIP/);
   });
 });
 

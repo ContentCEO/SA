@@ -25,6 +25,11 @@ export function VoiceForm({ defaults }: { defaults: VoiceDefaults }) {
 
   return (
     <form ref={formRef} action={action} className="flex flex-col gap-6" noValidate>
+      {state.errors ? (
+        <p role="alert" className="sa-inverted rounded-lg px-4 py-3 font-semibold">
+          A couple of things need fixing below.
+        </p>
+      ) : null}
       <TextField
         name="greetingStyle"
         label="How do you usually open?"

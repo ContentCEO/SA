@@ -27,7 +27,7 @@ const longText = (max = 2000) =>
 /** One item per line, trimmed, blanks dropped, de-duplicated. */
 const lines = (maxItems: number, maxLen = 200) =>
   z
-    .string()
+    .string({ message: "Type one per line." })
     .transform((v) => [
       ...new Set(
         v
@@ -103,6 +103,45 @@ const licenseDate = z
   .refine((v) => v === "" || /^\d{4}-\d{2}-\d{2}$/.test(v), "Pick the date it runs out.")
   .optional();
 
+/** What a VIP line looks like in an error: trimmed, one line, short. Never logged. */
+function shownLine(text: string) {
+  const one = text.replace(/[\u0000-\u001f\u007f]/g, " ").trim();
+  return one.length > 60 ? `${one.slice(0, 59)}…` : one;
+}
+
+const emailAddress = z.email();
+export const MAX_VIP_SENDERS = 50;
+
+/**
+ * Check 15 P2: "People who always need you", one address per line — or pasted the way Gmail
+ * copies them: "Sue Smith <sue@example.com>", or several on a line split by commas or
+ * semicolons. Lowercased and de-duplicated. A line that still isn't an address is named.
+ */
+export const vipSenders = z
+  .string({ message: "Type one email address per line." })
+  .transform((v, ctx) => {
+    const out: string[] = [];
+    for (const line of v.split("\n")) {
+      if (!line.trim()) continue;
+      const bracketed = [...line.matchAll(/<([^<>]*)>/g)].map((m) => m[1]!);
+      const parts = bracketed.length ? bracketed : line.split(/[,;]/);
+      for (const part of parts) {
+        const addr = part.trim().toLowerCase();
+        if (!addr) continue;
+        if (addr.length > 254 || !emailAddress.safeParse(addr).success) {
+          ctx.addIssue({
+            code: "custom",
+            message: `This line isn't an email address: “${shownLine(bracketed.length ? line : part)}”.`,
+          });
+          continue;
+        }
+        out.push(addr);
+      }
+    }
+    return [...new Set(out)];
+  })
+  .pipe(z.array(z.string()).max(MAX_VIP_SENDERS, `Up to ${MAX_VIP_SENDERS} addresses.`));
+
 export const AMOUNT_BLANK_MESSAGE =
   "Type a dollar amount, like 2,500. Leaving it blank would send you every email with a price in it.";
 export const AMOUNT_MESSAGE = "Type a dollar amount, like 2,500.";
@@ -134,7 +173,11 @@ export const amountThresholdDollars = z.unknown().transform((v, ctx) => {
 });
 
 export const businessProfileInput = z.object({
-  businessName: z.string().trim().min(1, "What's the business called?").max(120),
+  businessName: z
+    .string({ message: "What's the business called?" })
+    .trim()
+    .min(1, "What's the business called?")
+    .max(120, "Keep the name under 120 characters."),
   trade: z.enum(TRADES, { message: "Pick your trade." }),
   /**
    * Round 2 (TW A4): up to two more trades, as the form's ticked boxes joined by commas.
@@ -154,7 +197,11 @@ export const businessProfileInput = z.object({
         .max(MAX_EXTRA_TRADES, "Pick up to two more trades."),
     )
     .optional(),
-  services: z.string().trim().min(1, "Tell us what work you do.").max(2000),
+  services: z
+    .string({ message: "Tell us what work you do." })
+    .trim()
+    .min(1, "Tell us what work you do.")
+    .max(2000, "Keep this under 2,000 characters."),
   serviceArea: longText(),
   /**
    * Leads package (B9): "Towns you work in", one per line, de-duplicated by town name. Left out
@@ -179,9 +226,7 @@ export const businessProfileInput = z.object({
   signature: longText(500),
   reviewUrl,
   doNotPromise: lines(30),
-  vipSenders: lines(50, 254).pipe(
-    z.array(z.string().toLowerCase().email("Each VIP line should be one email address.")),
-  ),
+  vipSenders,
   /**
    * Check 38 P2: "Which state do you work in?" — two letters, '' = not set. Left out = leave it.
    * Massachusetts turns on the one-third deposit warning.
@@ -305,12 +350,14 @@ export const FOLLOWUP_DAY_CHOICES = [2, 3, 4, 5, 7] as const;
 
 export const followupSettingsInput = z.object({
   enabled: z
-    .literal("on")
+    .literal("on", { message: "Tick the box or leave it empty." })
     .optional()
     .transform((v) => v === "on"),
-  days: z.coerce.number().refine((n) => (FOLLOWUP_DAY_CHOICES as readonly number[]).includes(n), {
-    message: "Pick how many days to wait.",
-  }),
+  days: z.coerce
+    .number({ message: "Pick how many days to wait." })
+    .refine((n) => (FOLLOWUP_DAY_CHOICES as readonly number[]).includes(n), {
+      message: "Pick how many days to wait.",
+    }),
 });
 
 /** Follow-up settings live on the business profile row; create it if needed. */
@@ -338,17 +385,21 @@ export const DIGEST_HOURS = [5, 6, 7, 8, 9] as const;
 
 export const digestSettingsInput = z.object({
   enabled: z
-    .literal("on")
+    .literal("on", { message: "Tick the box or leave it empty." })
     .optional()
     .transform((v) => v === "on"),
   hour: z.coerce
-    .number()
+    .number({ message: "Pick a time." })
     .refine((n) => (DIGEST_HOURS as readonly number[]).includes(n), { message: "Pick a time." }),
   /**
    * Check 44 P5 / 15 P7: the visible "Your time zone" select. Left out = keep the saved zone
    * (a browser's zone is never posted from this screen any more).
    */
-  timeZone: z.string().trim().refine(isTimeZone, "Pick your time zone.").optional(),
+  timeZone: z
+    .string({ message: "Pick your time zone." })
+    .trim()
+    .refine(isTimeZone, "Pick your time zone.")
+    .optional(),
 });
 
 export async function saveDigestSettings(
@@ -451,13 +502,32 @@ export async function getVoiceProfile(workspaceId: string): Promise<VoiceProfile
 }
 
 export const voiceEditInput = z.object({
-  greetingStyle: z.string().trim().min(1, "How do you usually open?").max(100),
-  signoffStyle: z.string().trim().min(1, "How do you usually sign off?").max(100),
-  formality: z.enum(["casual", "neutral", "formal"]),
-  avgLengthWords: z.coerce.number().int().min(10).max(400),
+  greetingStyle: z
+    .string({ message: "How do you usually open?" })
+    .trim()
+    .min(1, "How do you usually open?")
+    .max(100, "Keep this under 100 characters."),
+  signoffStyle: z
+    .string({ message: "How do you usually sign off?" })
+    .trim()
+    .min(1, "How do you usually sign off?")
+    .max(100, "Keep this under 100 characters."),
+  formality: z.enum(["casual", "neutral", "formal"], { message: "Pick how formal you are." }),
+  // Check 15 P2: a blank box is "type a number", not "at least 10".
+  avgLengthWords: z.preprocess(
+    (v) => (typeof v === "string" && v.trim() === "" ? undefined : v),
+    z.coerce
+      .number({ message: "Type a number of words, like 60." })
+      .int("A whole number, like 60.")
+      .min(10, "At least 10 words.")
+      .max(400, "Up to 400 words."),
+  ),
   phrasesUsed: lines(20, 120),
   phrasesAvoided: lines(20, 120),
-  summary: z.string().trim().max(600),
+  summary: z
+    .string({ message: "Keep this under 600 characters." })
+    .trim()
+    .max(600, "Keep this under 600 characters."),
 });
 
 /** The owner corrected the learned voice. Weekly re-learning won't overwrite this. */
