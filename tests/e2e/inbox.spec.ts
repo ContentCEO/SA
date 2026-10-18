@@ -17,7 +17,7 @@ async function seedThreads(mailboxId: string) {
       category: "complaint",
       summary: "Dana says the breaker keeps tripping since the panel swap.",
       needsOwner: true,
-      reason: "Complaint — you'll want to handle this yourself.",
+      reason: "A complaint. You'll want to answer this one yourself.",
       from: "Dana",
     },
     {
@@ -68,7 +68,7 @@ test("inbox shows sorted mail, needs-me first, and filters by category", async (
   const items = page.locator("main li");
   await expect(items).toHaveCount(3);
   await expect(items.first()).toContainText("Dana");
-  await expect(items.first()).toContainText("Needs you");
+  await expect(items.first()).toContainText("Needs me");
 
   await page.getByRole("link", { name: "Scheduling" }).click();
   await expect(page).toHaveURL(/c=scheduling/);
@@ -238,7 +238,7 @@ test("Check 10 P1: 'I called them' on an Inbox card turns it back to a normal ca
   await page.goto("/inbox");
   const items = page.locator("main li");
   await expect(items.first()).toContainText("Dana");
-  await expect(items.first()).toContainText("Needs you");
+  await expect(items.first()).toContainText("Needs me");
 
   await page.locator("main li").filter({ hasText: "Dana" }).locator("summary").first().click();
   await items.first().getByRole("button", { name: "I called them" }).click();
@@ -247,7 +247,7 @@ test("Check 10 P1: 'I called them' on an Inbox card turns it back to a normal ca
   await expect(page.getByText("Marked as answered by phone.")).toBeVisible();
   await expect(items.first()).not.toContainText("Dana");
   const dana = items.filter({ hasText: "Dana" });
-  await expect(dana).not.toContainText("Complaint · Needs you");
+  await expect(dana).not.toContainText("Complaint · Needs me");
   await expect(dana).toContainText("Complaint · Replied");
   await expect(dana.locator("details").first()).not.toHaveClass(/sa-inverted/);
 });
@@ -287,7 +287,7 @@ test("Check 10 P3: a burst pipe from today says Emergency and comes first", asyn
   await page.goto("/inbox");
   const first = page.locator("main li").first();
   await expect(first).toContainText("Kevin");
-  await expect(first).toContainText("Emergency · Question · Needs you");
+  await expect(first).toContainText("Emergency · Question · Needs me");
   await expect(page.locator("main li").nth(1)).toContainText("Dana");
 });
 
@@ -359,10 +359,12 @@ test("Check 10 P4 + P5: Draft ready goes to the draft; the reason shows on a clo
     row("Dana")
       .locator("summary")
       .first()
-      .getByText("Complaint — you'll want to handle this yourself."),
+      .getByText("A complaint. You'll want to answer this one yourself."),
   ).toBeVisible();
   await expect(row("Marco").locator("summary").first()).toHaveText(/Marco/);
-  await expect(row("Marco").locator("summary").first()).not.toContainText("handle this yourself");
+  await expect(row("Marco").locator("summary").first()).not.toContainText(
+    "answer this one yourself",
+  );
 
   // P4: Priya's card says a draft is ready and links to it.
   await expect(row("Priya")).toContainText("Waiting on you · Draft ready");
@@ -451,4 +453,36 @@ test("Check 10 P7: older unsorted mail folds into one line; the Not sorted chip 
   await expect(page).toHaveURL(/c=unsorted/);
   await expect(page.locator("main li")).toHaveCount(2);
   await expect(row("Oldfield")).toBeVisible();
+});
+
+test("Check 10 P9: chips wrap on a computer; on a phone the active chip is in view", async ({
+  page,
+  context,
+}) => {
+  const owner = await seedOwner({ mailbox: true, backfilled: true });
+  await seedThreads(owner.mailboxId!);
+  await signInAs(context, owner);
+  const nav = page.getByRole("navigation", { name: "Filter" });
+
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.goto("/inbox");
+  const box = (await nav.boundingBox())!;
+  for (const chip of await nav.getByRole("link").all()) {
+    const b = (await chip.boundingBox())!;
+    expect(b.x).toBeGreaterThanOrEqual(box.x - 1);
+    expect(b.x + b.width).toBeLessThanOrEqual(box.x + box.width + 1);
+  }
+  expect(await nav.evaluate((n) => n.scrollWidth <= n.clientWidth)).toBe(true);
+
+  await page.setViewportSize({ width: 375, height: 812 });
+  await page.goto("/inbox?c=complaint");
+  const active = nav.getByRole("link", { name: "Complaints" });
+  await expect(active).toHaveAttribute("aria-current", "page");
+  await expect(async () => {
+    const n = (await nav.boundingBox())!;
+    const a = (await active.boundingBox())!;
+    expect(a.x).toBeGreaterThanOrEqual(n.x);
+    expect(a.x + a.width).toBeLessThanOrEqual(n.x + n.width);
+  }).toPass();
+  await expect(page.locator("main li").first()).toContainText("Complaint · Needs me");
 });

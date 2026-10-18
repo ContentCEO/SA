@@ -308,7 +308,7 @@ describe("classification stores where a lead came from", () => {
     const [v] = await database.select().from(threads).where(eq(threads.id, vm.id));
     expect(v!.leadChannel).toBe("google_voice");
     expect(v!.needsOwner).toBe(true);
-    expect(v!.needsOwnerReason).toBe("Voicemail — call them back.");
+    expect(v!.needsOwnerReason).toBe("Voicemail. Call them back.");
     expect((v!.extracted as { owner_rule_hits?: string[] }).owner_rule_hits).toContain("phone");
     const [s] = await database.select().from(threads).where(eq(threads.id, site.id));
     expect(s!.category).toBe("noise");
@@ -328,7 +328,7 @@ describe("classification stores where a lead came from", () => {
     );
     await classifyPending(mailboxId, { now: NOW });
     const [r] = await database.select().from(threads).where(eq(threads.id, t.id));
-    expect(r!.needsOwnerReason).toBe("Came through Thumbtack — answer them there.");
+    expect(r!.needsOwnerReason).toBe("Came through Thumbtack. Answer them there.");
     expect((r!.extracted as { owner_rule_hits?: string[] }).owner_rule_hits).toEqual([
       "site",
       "model",

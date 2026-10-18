@@ -86,6 +86,27 @@ Base: cd15c59. One commit per step. Nothing here needs wave 1 unless marked "nee
   stripped, lowercased) is applied to the row text and the query; every word must still match.
   Search stays on the phone.
 
+- **Chips and words (Check 10 P9):** `inbox/chip-row.tsx`: from `sm` up the chips wrap (no
+  sideways scroll); on phones one scroll row with a right-edge fade (`from-background`, theme
+  token) and the active chip centred in the row on load (only the row scrolls). The card tag
+  says " · Needs me" (matches the chip and "This one needs me"); the Queue keeps "Needs you".
+- **Plain reasons (Check 10 P10):** new wording, no dashes: `COMPLAINT_REASON` "A complaint.
+  You'll want to answer this one yourself.", `LOW_CONFIDENCE_REASON` "Not sure what this one is.
+  Have a look.", `UNREADABLE_REASON` "Couldn't sort this one. Have a look.", `MODEL_FLAG_REASON`
+  "The assistant thinks you should see this one.", `INJECTION_REASON` "Careful: this email has
+  hidden instructions aimed at our AI. We won't write a reply. Check who sent it before you click
+  anything.", `LEGAL_REASON` "Mentions a lawyer, a lien or a claim." Also de-dashed: voicemail /
+  text / lead-site reasons and `EMERGENCY_REASON`. `DISPUTE_REASONS` keeps `OLD_LEGAL_REASON`
+  ("Mentions something legal.") so stored rows still count as disputes. Gas and payment-change
+  reasons unchanged. classify.v4 is untouched.
+
+## For the Prompt versions group (not written here)
+
+- classify.v6 (Check 10 P10): the needs_owner_reason example "Mentions a $14,000 remodel — you'll
+  want to price this yourself." becomes "Mentions a $14,000 remodel. You'll want to price this
+  yourself." and add the line: "Write needs_owner_reason in one or two short sentences with no
+  dashes." (model reasons still show on Inbox cards). Extend tests/evals/cases.ts accordingly.
+
 ## Integration notes
 
 - `src/app/(app)/quotes/page.tsx`, `quotes/actions.ts`, `src/server/quotes.ts`,
@@ -93,6 +114,11 @@ Base: cd15c59. One commit per step. Nothing here needs wave 1 unless marked "nee
 - `src/server/followups.ts` gained one WHERE line (Follow-ups group).
 - `src/server/first-week.ts` `markAnsweredByPhone` gained an optional 4th argument.
 - `src/app/(app)/queue/called-them.tsx` gained an optional `back` prop (Queue screen group).
+- `src/ai/classify.ts` (reason constants, `extracted.unreadable`), `src/ai/guards.ts`
+  (`INJECTION_REASON` text only) and `src/server/emergency-rules.ts` (`EMERGENCY_REASON` text):
+  wave 1 Safety guards also edits these; the changes are string constants, easy to re-apply.
+- `listInboxThreads(ws, filter, opts)` — the third argument changed from `limit` to an options
+  object; new `inboxPage()` is what the screen uses.
 
 ## Questions for Davi
 

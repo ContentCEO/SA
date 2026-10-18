@@ -119,13 +119,22 @@ export type OwnerRuleKey = (typeof OWNER_RULE_KEYS)[number];
 const FIXED_TEXT_HITS: readonly OwnerRuleKey[] = ["emergency", "phone", "site", "outside_area"];
 
 /** The needs-owner reasons a dispute or legal threat gets (when the model gave none). */
-export const LEGAL_REASON = "Mentions something legal.";
+export const LEGAL_REASON = "Mentions a lawyer, a lien or a claim.";
 export const DISPUTE_REASON = "Asks for money back or disputes a charge.";
+/** Check 10 P10: the legal reason's wording before 2026-10-17, still on stored rows. */
+export const OLD_LEGAL_REASON = "Mentions something legal.";
 /**
  * Threads sorted before `extracted.disputed` existed only kept the reason: one of these
- * still showing marks a dispute (treated as a complaint for review requests).
+ * still showing marks a dispute (treated as a complaint for review requests). Older wordings
+ * stay listed so rows stored with them are still recognised (Check 10 P10).
  */
-export const DISPUTE_REASONS: readonly string[] = [LEGAL_REASON, DISPUTE_REASON];
+export const DISPUTE_REASONS: readonly string[] = [LEGAL_REASON, DISPUTE_REASON, OLD_LEGAL_REASON];
+
+/** Check 10 P10: plain, kind reasons with no dashes. */
+export const COMPLAINT_REASON = "A complaint. You'll want to answer this one yourself.";
+export const LOW_CONFIDENCE_REASON = "Not sure what this one is. Have a look.";
+export const UNREADABLE_REASON = "Couldn't sort this one. Have a look.";
+export const MODEL_FLAG_REASON = "The assistant thinks you should see this one.";
 
 /** Below this, the owner looks. */
 export const CONFIDENCE_THRESHOLD = 0.6;
@@ -222,7 +231,7 @@ export function applyOwnerRules(
       : m.category !== "noise" && m.category !== "supplier_vendor");
   const emergency = m.extracted.urgency === "emergency" && isLeadCategory(m.category);
   const reasons: [boolean, OwnerRuleKey, string][] = [
-    [m.category === "complaint", "complaint", "Complaint — you'll want to handle this yourself."],
+    [m.category === "complaint", "complaint", COMPLAINT_REASON],
     [m.signals.mentions_legal, "legal", LEGAL_REASON],
     [m.signals.mentions_refund_or_dispute, "dispute", DISPUTE_REASON],
     [ctx.senderIsVip, "vip", "From someone on your VIP list."],
@@ -242,20 +251,16 @@ export function applyOwnerRules(
       channelLead && channel?.kind !== "site",
       "phone",
       channel?.kind === "phone_text"
-        ? "Text message — text them back from your phone."
-        : "Voicemail — call them back.",
+        ? "Text message. Text them back from your phone."
+        : "Voicemail. Call them back.",
     ],
     [
       channelLead && channel?.kind === "site",
       "site",
-      `Came through ${channel?.name ?? "a lead website"} — answer them there.`,
+      `Came through ${channel?.name ?? "a lead website"}. Answer them there.`,
     ],
     [!!ctx.outsideArea && m.category === "quote_request", "outside_area", OUTSIDE_AREA_REASON],
-    [
-      confidence < CONFIDENCE_THRESHOLD,
-      "low_confidence",
-      "Not sure what this one is — take a look.",
-    ],
+    [confidence < CONFIDENCE_THRESHOLD, "low_confidence", LOW_CONFIDENCE_REASON],
   ];
   const matched = reasons.filter(([when]) => when);
   const hit = matched[0];
@@ -282,7 +287,7 @@ export function applyOwnerRules(
   }
   return {
     needsOwner: m.needs_owner,
-    needsOwnerReason: m.needs_owner ? (m.needs_owner_reason ?? "Take a look at this one.") : null,
+    needsOwnerReason: m.needs_owner ? (m.needs_owner_reason ?? MODEL_FLAG_REASON) : null,
     priority: m.priority,
     hits,
   };
@@ -292,7 +297,7 @@ const UNREADABLE: Omit<Classification, "summary"> = {
   category: "customer_question",
   priority: "normal",
   needsOwner: true,
-  needsOwnerReason: "Couldn't sort this one automatically — take a look.",
+  needsOwnerReason: UNREADABLE_REASON,
   confidence: 0,
   extracted: {
     service_requested: null,

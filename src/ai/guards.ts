@@ -69,7 +69,9 @@ export function injectionCheck(text: string | null | undefined): InjectionCheck 
   return { flagged: reasons.length > 0, reasons };
 }
 
-export const INJECTION_REASON = "This email tries to give instructions to the assistant.";
+/** Check 10 P10: says it's a warning and what to do. */
+export const INJECTION_REASON =
+  "Careful: this email has hidden instructions aimed at our AI. We won't write a reply. Check who sent it before you click anything.";
 
 /**
  * Payment-change fraud (review A11): "our bank details changed", "wire it to this new

@@ -5,7 +5,7 @@
  */
 import { isLeadCategory } from "@/config/categories";
 
-export const EMERGENCY_REASON = "Sounds like an emergency — call them if you can.";
+export const EMERGENCY_REASON = "Sounds like an emergency. Call them if you can.";
 
 export function inEmergencyLane(t: { category: string | null; extracted: unknown }): boolean {
   const x = (t.extracted ?? {}) as { urgency?: unknown; injection?: unknown };

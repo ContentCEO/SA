@@ -19,6 +19,7 @@ import { requireOwner } from "@/server/session";
 import { kindWord, searchText, urgencyWord } from "@/server/inbox-rules";
 import { draftReplyAction } from "../queue/actions";
 import { channelKind, channelName, openSiteUrl } from "@/server/channel-rules";
+import { ChipRow } from "./chip-row";
 import { InboxSearch } from "./inbox-search";
 import { markNeedsOwnerAction, takeOffListAction } from "./actions";
 import { CalledThem } from "../queue/called-them";
@@ -235,7 +236,8 @@ export default async function InboxPage(props: PageProps<"/inbox">) {
               {/* Check 10 P3: by weight only, first, on every card. */}
               {urgencyWord(row) ? <span className="font-black">{urgencyWord(row)} · </span> : null}
               {kindWord(row, categoryTag, row.olderUnsorted)}
-              {row.needsOwner ? " · Needs you" : ""}
+              {/* Check 10 P9: the same words as the chip and "This one needs me". */}
+              {row.needsOwner ? " · Needs me" : ""}
               {row.replyState ? ` · ${row.replyState}` : ""}
               {row.pendingDraftId ? " · Draft ready" : ""}
             </span>
@@ -383,7 +385,7 @@ export default async function InboxPage(props: PageProps<"/inbox">) {
       {doneMsg ? <Notice>{doneMsg}</Notice> : null}
       {errorMsg ? <Notice strong>{errorMsg}</Notice> : null}
 
-      <nav aria-label="Filter" className="-mx-4 flex gap-2 overflow-x-auto px-4 pb-1">
+      <ChipRow>
         {chips
           .filter((c) => c.key !== "unsorted" || page.hasUnsorted || active === "unsorted")
           .map((c) => (
@@ -399,7 +401,7 @@ export default async function InboxPage(props: PageProps<"/inbox">) {
               {c.label}
             </Link>
           ))}
-      </nav>
+      </ChipRow>
 
       {cursor ? (
         <Link
