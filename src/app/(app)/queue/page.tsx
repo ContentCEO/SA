@@ -194,12 +194,15 @@ export default async function QueuePage(props: PageProps<"/queue">) {
     ],
     { now, timeZone, businessName: workspace.businessName },
   );
-  // The lane comes from the queue's own membership, like the counts (B5).
-  const lane = queue.needsYou.filter((i) => i.lane);
-  const needsYou = queue.needsYou.filter((i) => !i.lane);
+  // Check 9 P6: every emergency, with a draft or not, comes first under "Right now" (the lane
+  // included, B5). The order comes from the queue's own membership, like the counts.
+  const rightNow = queue.now;
+  const urgentIds = new Set(rightNow.map((i) => i.threadId));
+  const needsYou = queue.needsYou.filter((i) => !urgentIds.has(i.threadId));
+  const drafts = queue.drafts.filter((i) => !urgentIds.has(i.threadId));
   // Check 9 P5: the cards in page order. A send, discard or snooze lands on the next one (the
   // one before when it was the last), and the notice for a tap sits on the card it landed on.
-  const cardOrder = [...lane, ...needsYou, ...queue.drafts].map((i) => i.threadId);
+  const cardOrder = [...rightNow, ...needsYou, ...drafts].map((i) => i.threadId);
   const nextThreadId = (threadId: string) => {
     const at = cardOrder.indexOf(threadId);
     return cardOrder[at + 1] ?? cardOrder[at - 1] ?? null;
@@ -243,6 +246,61 @@ export default async function QueuePage(props: PageProps<"/queue">) {
       lc?.outsideTown ? `${lc.outsideTown} isn't one of your towns.` : null,
     ].filter((l): l is string => !!l);
   };
+
+  const draftCard = (i: QueueItem) => (
+    <DraftCard
+      // Remount when the text changes (e.g. edited in Gmail) so filled gaps reset to it.
+      key={`${i.draftId}:${i.body}`}
+      draftId={i.draftId!}
+      nextThreadId={nextThreadId(i.threadId)}
+      notice={noticeFor(i.threadId)}
+      customer={who(i)}
+      toAddress={i.toAddress ?? ""}
+      toFromReplyTo={i.replyRedirected && i.toAddress === i.customerAddress}
+      tag={`${i.backFromSnooze ? "Back from snooze · " : ""}${tag(i)}`}
+      wrote={wroteLine(i.customerWroteAt, now)}
+      leadLines={draftLeadLines(i)}
+      threadId={i.threadId}
+      leftHanded={device.leftHanded}
+      offlineEnabled={device.offline}
+      remindOptions={remindOptions(i)}
+      summary={i.summary}
+      reason={i.reason ?? ""}
+      body={i.body ?? ""}
+      seenHash={bodyHash(i.body ?? "")}
+      timingNote={timingNoteFor(i)}
+      flags={i.flags}
+      label={confidenceLabel({
+        confidencePct: i.confidence,
+        flags: i.flags.length,
+        gaps: findGaps(i.body ?? "").length,
+      })}
+      usedFacts={i.usedFacts}
+      openingLine={openingLine(i.opening, i.body)}
+      otherWays={offersOtherWays({
+        opening: i.opening,
+        revisionsLeft: i.revisionsLeft,
+        // A plan-paused Gmail address: no rewrites either (reviseDraft refuses it too).
+        readOnly: readOnly || i.mailboxPaused,
+      })}
+      revisionsLeft={i.revisionsLeft}
+      needsOwnerReason={i.needsOwnerReason}
+      canSend={sending && !i.mailboxPaused}
+      readOnly={readOnly || i.mailboxPaused}
+      autoSendAt={i.autoSendAt ? i.autoSendAt.toISOString() : null}
+      autoSendClock={i.autoSendAt ? clock.format(i.autoSendAt) : null}
+      sendingOffLabel={i.mailboxPaused ? MAILBOX_PAUSED_LINE : sendingOffLabel(workspace)}
+      sendingOffDetail={
+        i.mailboxPaused
+          ? "Your plan covers fewer Gmail addresses than you've connected. Pick which one is on in Settings → Your Gmail."
+          : sendingBlockedReason(workspace)
+      }
+      practiceLeft={i.mailboxPaused ? null : practiceLeft}
+      priceMemory={priceMemory.get(i.threadId)}
+      noteLine={noteFor(i)}
+      moreActions={<ResortSheet threadId={i.threadId} current={i.category} hasReply back="queue" />}
+    />
+  );
 
   return (
     <>
@@ -371,14 +429,14 @@ export default async function QueuePage(props: PageProps<"/queue">) {
         <p className="text-2xl font-black">Nothing waiting on you.</p>
       ) : null}
 
-      {lane.length ? (
-        <section aria-labelledby="emergency" className="flex flex-col gap-3">
-          <h2 id="emergency" className="text-xl font-black">
-            Emergency
+      {rightNow.length ? (
+        <section aria-labelledby="right-now" className="flex flex-col gap-3">
+          <h2 id="right-now" className="text-xl font-black">
+            Right now
           </h2>
-          {lane.map((i) => (
-            <NeedsYouCard key={i.threadId} {...needsYouProps(i)} />
-          ))}
+          {rightNow.map((i) =>
+            i.draftId ? draftCard(i) : <NeedsYouCard key={i.threadId} {...needsYouProps(i)} />,
+          )}
         </section>
       ) : null}
 
@@ -414,7 +472,7 @@ export default async function QueuePage(props: PageProps<"/queue">) {
       {/* After what needs them now: the first week's look back (round 2, FW D1/D2). */}
       <FirstLookCard look={firstLook} readOnly={readOnly} />
 
-      {queue.drafts.length ? (
+      {drafts.length ? (
         <section aria-labelledby="drafts" className="flex flex-col gap-3">
           <h2 id="drafts" className="text-xl font-black">
             Replies ready for you
@@ -427,62 +485,7 @@ export default async function QueuePage(props: PageProps<"/queue">) {
               Review all {readyCount} ready
             </Link>
           ) : null}
-          {queue.drafts.map((i) => (
-            <DraftCard
-              // Remount when the text changes (e.g. edited in Gmail) so filled gaps reset to it.
-              key={`${i.draftId}:${i.body}`}
-              draftId={i.draftId!}
-              nextThreadId={nextThreadId(i.threadId)}
-              notice={noticeFor(i.threadId)}
-              customer={who(i)}
-              toAddress={i.toAddress ?? ""}
-              toFromReplyTo={i.replyRedirected && i.toAddress === i.customerAddress}
-              tag={`${i.backFromSnooze ? "Back from snooze · " : ""}${tag(i)}`}
-              wrote={wroteLine(i.customerWroteAt, now)}
-              leadLines={draftLeadLines(i)}
-              threadId={i.threadId}
-              leftHanded={device.leftHanded}
-              offlineEnabled={device.offline}
-              remindOptions={remindOptions(i)}
-              summary={i.summary}
-              reason={i.reason ?? ""}
-              body={i.body ?? ""}
-              seenHash={bodyHash(i.body ?? "")}
-              timingNote={timingNoteFor(i)}
-              flags={i.flags}
-              label={confidenceLabel({
-                confidencePct: i.confidence,
-                flags: i.flags.length,
-                gaps: findGaps(i.body ?? "").length,
-              })}
-              usedFacts={i.usedFacts}
-              openingLine={openingLine(i.opening, i.body)}
-              otherWays={offersOtherWays({
-                opening: i.opening,
-                revisionsLeft: i.revisionsLeft,
-                // A plan-paused Gmail address: no rewrites either (reviseDraft refuses it too).
-                readOnly: readOnly || i.mailboxPaused,
-              })}
-              revisionsLeft={i.revisionsLeft}
-              needsOwnerReason={i.needsOwnerReason}
-              canSend={sending && !i.mailboxPaused}
-              readOnly={readOnly || i.mailboxPaused}
-              autoSendAt={i.autoSendAt ? i.autoSendAt.toISOString() : null}
-              autoSendClock={i.autoSendAt ? clock.format(i.autoSendAt) : null}
-              sendingOffLabel={i.mailboxPaused ? MAILBOX_PAUSED_LINE : sendingOffLabel(workspace)}
-              sendingOffDetail={
-                i.mailboxPaused
-                  ? "Your plan covers fewer Gmail addresses than you've connected. Pick which one is on in Settings → Your Gmail."
-                  : sendingBlockedReason(workspace)
-              }
-              practiceLeft={i.mailboxPaused ? null : practiceLeft}
-              priceMemory={priceMemory.get(i.threadId)}
-              noteLine={noteFor(i)}
-              moreActions={
-                <ResortSheet threadId={i.threadId} current={i.category} hasReply back="queue" />
-              }
-            />
-          ))}
+          {drafts.map(draftCard)}
         </section>
       ) : null}
       {/* Room under the last card so the fixed "squared away." strip never covers it. */}

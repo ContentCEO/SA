@@ -3104,7 +3104,7 @@ export type QueueMember = {
   emergency: boolean;
   backFromSnooze: boolean;
   lastMessageAt: Date | null;
-  /** Leads package (B5): in the emergency lane (needs-you only; sorted first). */
+  /** Leads package (B5): in the emergency lane (sorted first; Check 9 P6: drafts too). */
   lane: boolean;
   /** Leads package (G5): a check-in two days after "Mark fixed". */
   checkIn: boolean;
@@ -3119,7 +3119,16 @@ export type QueueMembership = {
   /** `waitingSince`: the customer's first email since the owner last wrote (plan M8 A14). */
   needsYou: (QueueMember & { waitingSince: Date | null })[];
   drafts: (QueueMember & { draftId: string; kind: "reply" | "followup" })[];
+  /**
+   * Check 9 P6: the emergencies, with or without a draft, in the order the "Right now" section
+   * shows them. A view onto the two lists above (every entry is also in one of them), so no
+   * count changes: counts read `needsYou` and `drafts` only.
+   */
+  now: { threadId: string; draftId: string | null }[];
 };
+
+/** Check 9 P6: an emergency for the queue's order — the lane, or high priority + needs you. */
+const isUrgent = (m: QueueMember) => !m.checkIn && (m.lane || m.emergency);
 
 /**
  * Who is on the queue, and nothing else (plan M8 A1): the same rules the queue screen uses —
@@ -3138,7 +3147,7 @@ export async function queueMembership(
     .from(mailboxes)
     .where(eq(mailboxes.workspaceId, workspaceId));
   const boxIds = boxes.map((b) => b.id);
-  if (boxIds.length === 0) return { needsYou: [], drafts: [] };
+  if (boxIds.length === 0) return { needsYou: [], drafts: [], now: [] };
   const pausedBoxes = new Set(boxes.filter((b) => b.planPausedAt).map((b) => b.id));
 
   const threadCols = {
@@ -3220,36 +3229,67 @@ export async function queueMembership(
     paused: pausedBoxes.has(t.mailboxId),
   });
   // A stable sort: newest first, with anything back from a snooze on top — and the emergency
-  // lane above everything (leads package, B5).
+  // lane above everything (leads package, B5), then any other emergency (Check 9 P6).
   const backFirst = <T extends QueueMember>(rows: T[]) =>
     [...rows].sort(
       (a, b) =>
-        Number(b.lane) - Number(a.lane) || Number(b.backFromSnooze) - Number(a.backFromSnooze),
+        Number(b.lane) - Number(a.lane) ||
+        Number(isUrgent(b)) - Number(isUrgent(a)) ||
+        Number(b.backFromSnooze) - Number(a.backFromSnooze),
     );
 
-  return {
-    needsYou: backFirst([
-      ...needs
-        .filter((t) => !snoozed(t))
-        .map((t) => ({
-          ...member(t),
-          lane: inEmergencyLane({
-            category: t.category,
-            extracted: { urgency: t.urgency, injection: t.injection === "true" },
-          }),
-          waitingSince: asDate(t.waitingSince),
-        })),
-      ...checkIns
-        .filter((t) => !snoozed(t))
-        // A check-in is never an emergency (no "tonight only" snooze, not first in the email).
-        .map((t) => ({ ...member(t), emergency: false, checkIn: true, waitingSince: null })),
-    ]),
-    drafts: backFirst(
-      pending
-        .filter((r) => !snoozed(r))
-        .map((r) => ({ ...member(r), draftId: r.draftId, kind: r.kind })),
-    ),
-  };
+  const needsYou = backFirst([
+    ...needs
+      .filter((t) => !snoozed(t))
+      .map((t) => ({
+        ...member(t),
+        lane: inEmergencyLane({
+          category: t.category,
+          extracted: { urgency: t.urgency, injection: t.injection === "true" },
+        }),
+        waitingSince: asDate(t.waitingSince),
+      })),
+    ...checkIns
+      .filter((t) => !snoozed(t))
+      // A check-in is never an emergency (no "tonight only" snooze, not first in the email).
+      .map((t) => ({ ...member(t), emergency: false, checkIn: true, waitingSince: null })),
+  ]);
+  const draftList = backFirst(
+    pending
+      .filter((r) => !snoozed(r))
+      .map((r) => ({
+        ...member(r),
+        // A draft on an emergency from someone with a job is an emergency too (Check 9 P6).
+        lane: inEmergencyLane({
+          category: r.category,
+          extracted: { urgency: r.urgency, injection: r.injection === "true" },
+        }),
+        draftId: r.draftId,
+        kind: r.kind,
+      })),
+  );
+  return { needsYou, drafts: draftList, now: rightNow(needsYou, draftList) };
+}
+
+/**
+ * Check 9 P6: "Right now" — every emergency, lane first, then newest first, drafts and
+ * needs-you together (a stable sort, so equal times keep needs-you before drafts).
+ */
+function rightNow(
+  needsYou: QueueMembership["needsYou"],
+  drafts: QueueMembership["drafts"],
+): QueueMembership["now"] {
+  const urgent = [
+    ...needsYou.filter(isUrgent).map((m) => ({ m, draftId: null as string | null })),
+    ...drafts.filter(isUrgent).map((m) => ({ m, draftId: m.draftId as string | null })),
+  ];
+  return urgent
+    .sort(
+      (a, b) =>
+        Number(b.m.lane) - Number(a.m.lane) ||
+        (b.m.lastMessageAt?.getTime() ?? 0) - (a.m.lastMessageAt?.getTime() ?? 0),
+    )
+    .map(({ m, draftId }) => ({ threadId: m.threadId, draftId }));
 }
 
 export type QueueTotals = { needsYou: number; replies: number; nudges: number; drafts: number };
@@ -3268,10 +3308,10 @@ export async function queueCounts(
  * the morning email, the badge, the phone's notification, the banner — uses this.
  */
 export function actionableQueue(q: QueueMembership): QueueMembership {
-  return {
-    needsYou: q.needsYou.filter((m) => !m.paused),
-    drafts: q.drafts.filter((m) => !m.paused),
-  };
+  const needsYou = q.needsYou.filter((m) => !m.paused);
+  const drafts = q.drafts.filter((m) => !m.paused);
+  const kept = new Set([...needsYou, ...drafts].map((m) => m.threadId));
+  return { needsYou, drafts, now: q.now.filter((n) => kept.has(n.threadId)) };
 }
 
 /** The totals of a membership already loaded (plan-paused addresses left out). */
@@ -3314,12 +3354,13 @@ export function queueCardIds(members: QueueMembership): Set<string> {
 export async function listQueue(
   workspaceId: string,
   now: Date = new Date(),
-): Promise<{ needsYou: QueueItem[]; drafts: QueueItem[] }> {
+): Promise<{ needsYou: QueueItem[]; drafts: QueueItem[]; now: QueueItem[] }> {
   // Membership (and order) come from the content-free rules, so the screen and every count
   // agree by construction; this only adds what the owner reads on the cards.
   const members = await queueMembership(workspaceId, now);
   const shownNeeds = shownNeedsYou(members);
-  if (shownNeeds.length === 0 && members.drafts.length === 0) return { needsYou: [], drafts: [] };
+  if (shownNeeds.length === 0 && members.drafts.length === 0)
+    return { needsYou: [], drafts: [], now: [] };
 
   const boxes = await db()
     .select({ id: mailboxes.id, email: mailboxes.email, planPausedAt: mailboxes.planPausedAt })
@@ -3382,89 +3423,91 @@ export async function listQueue(
   };
   const who = await senders([...needIds, ...members.drafts.map((m) => m.threadId)]);
 
-  return {
-    needsYou: shownNeeds.flatMap((m) => {
-      const t = threadById.get(m.threadId);
-      if (!t) return [];
-      return [
-        {
-          draftId: null,
-          draftCreatedAt: null,
-          kind: null,
-          purpose: null,
-          autoSendAt: null,
-          threadId: t.id,
-          customerName: who.get(t.id)?.name ?? null,
-          customerAddress: who.get(t.id)?.address ?? null,
-          toAddress: null,
-          replyRedirected: who.get(t.id)?.redirected ?? false,
-          category: t.category,
-          summary: t.summary,
-          needsOwnerReason: t.needsOwnerReason,
-          reason: null,
-          body: null,
-          flags: [],
-          confidence: null,
-          usedFacts: [],
-          opening: null,
-          revisionsLeft: 0,
-          emergency: m.emergency,
-          backFromSnooze: m.backFromSnooze,
-          gmailThreadId: t.gmailThreadId,
-          mailboxEmail: emailOf.get(t.mailboxId) ?? "",
-          lastMessageAt: t.lastMessageAt,
-          customerWroteAt: who.get(t.id)?.sentAt ?? null,
-          leadChannel: t.leadChannel,
-          extracted: t.extracted,
-          lane: m.lane,
-          checkIn: m.checkIn,
-          complaintFixedAt: t.complaintFixedAt,
-          mailboxPaused: pausedBoxes.has(t.mailboxId),
-        } satisfies QueueItem,
-      ];
-    }),
-    drafts: members.drafts.flatMap((m) => {
-      const r = draftById.get(m.draftId);
-      if (!r) return [];
-      const { draft, thread } = r;
-      return [
-        {
-          draftId: draft.id,
-          draftCreatedAt: draft.createdAt,
-          kind: draft.kind,
-          purpose: draft.purpose ?? null,
-          autoSendAt: draft.autoSendAt,
-          threadId: thread.id,
-          customerName: who.get(thread.id)?.name ?? null,
-          customerAddress: who.get(thread.id)?.address ?? draft.toAddress,
-          toAddress: draft.toAddress,
-          replyRedirected: who.get(thread.id)?.redirected ?? false,
-          category: thread.category,
-          summary: thread.summary,
-          needsOwnerReason: thread.needsOwner ? thread.needsOwnerReason : null,
-          reason: draft.reason,
-          body: draft.body,
-          flags: draft.flags,
-          confidence: draft.confidence,
-          usedFacts: draft.usedFacts,
-          opening: draft.opening ?? null,
-          revisionsLeft: Math.max(0, MAX_REVISIONS_PER_DRAFT - draft.revisions),
-          emergency: m.emergency,
-          backFromSnooze: m.backFromSnooze,
-          gmailThreadId: thread.gmailThreadId,
-          mailboxEmail: emailOf.get(draft.mailboxId) ?? "",
-          lastMessageAt: thread.lastMessageAt,
-          customerWroteAt: who.get(thread.id)?.sentAt ?? null,
-          leadChannel: thread.leadChannel,
-          extracted: thread.extracted,
-          lane: false,
-          checkIn: false,
-          complaintFixedAt: thread.complaintFixedAt,
-          mailboxPaused: pausedBoxes.has(draft.mailboxId),
-        } satisfies QueueItem,
-      ];
-    }),
-  };
+  const needsYouItems: QueueItem[] = shownNeeds.flatMap((m) => {
+    const t = threadById.get(m.threadId);
+    if (!t) return [];
+    return [
+      {
+        draftId: null,
+        draftCreatedAt: null,
+        kind: null,
+        purpose: null,
+        autoSendAt: null,
+        threadId: t.id,
+        customerName: who.get(t.id)?.name ?? null,
+        customerAddress: who.get(t.id)?.address ?? null,
+        toAddress: null,
+        replyRedirected: who.get(t.id)?.redirected ?? false,
+        category: t.category,
+        summary: t.summary,
+        needsOwnerReason: t.needsOwnerReason,
+        reason: null,
+        body: null,
+        flags: [],
+        confidence: null,
+        usedFacts: [],
+        opening: null,
+        revisionsLeft: 0,
+        emergency: m.emergency,
+        backFromSnooze: m.backFromSnooze,
+        gmailThreadId: t.gmailThreadId,
+        mailboxEmail: emailOf.get(t.mailboxId) ?? "",
+        lastMessageAt: t.lastMessageAt,
+        customerWroteAt: who.get(t.id)?.sentAt ?? null,
+        leadChannel: t.leadChannel,
+        extracted: t.extracted,
+        lane: m.lane,
+        checkIn: m.checkIn,
+        complaintFixedAt: t.complaintFixedAt,
+        mailboxPaused: pausedBoxes.has(t.mailboxId),
+      } satisfies QueueItem,
+    ];
+  });
+  const draftItems: QueueItem[] = members.drafts.flatMap((m) => {
+    const r = draftById.get(m.draftId);
+    if (!r) return [];
+    const { draft, thread } = r;
+    return [
+      {
+        draftId: draft.id,
+        draftCreatedAt: draft.createdAt,
+        kind: draft.kind,
+        purpose: draft.purpose ?? null,
+        autoSendAt: draft.autoSendAt,
+        threadId: thread.id,
+        customerName: who.get(thread.id)?.name ?? null,
+        customerAddress: who.get(thread.id)?.address ?? draft.toAddress,
+        toAddress: draft.toAddress,
+        replyRedirected: who.get(thread.id)?.redirected ?? false,
+        category: thread.category,
+        summary: thread.summary,
+        needsOwnerReason: thread.needsOwner ? thread.needsOwnerReason : null,
+        reason: draft.reason,
+        body: draft.body,
+        flags: draft.flags,
+        confidence: draft.confidence,
+        usedFacts: draft.usedFacts,
+        opening: draft.opening ?? null,
+        revisionsLeft: Math.max(0, MAX_REVISIONS_PER_DRAFT - draft.revisions),
+        emergency: m.emergency,
+        backFromSnooze: m.backFromSnooze,
+        gmailThreadId: thread.gmailThreadId,
+        mailboxEmail: emailOf.get(draft.mailboxId) ?? "",
+        lastMessageAt: thread.lastMessageAt,
+        customerWroteAt: who.get(thread.id)?.sentAt ?? null,
+        leadChannel: thread.leadChannel,
+        extracted: thread.extracted,
+        lane: m.lane,
+        checkIn: false,
+        complaintFixedAt: thread.complaintFixedAt,
+        mailboxPaused: pausedBoxes.has(draft.mailboxId),
+      } satisfies QueueItem,
+    ];
+  });
+  // Check 9 P6: the emergencies, from the membership's own order (cards that are shown only).
+  const byThread = new Map([...needsYouItems, ...draftItems].map((i) => [i.threadId, i]));
+  const nowItems = members.now.flatMap((n) => byThread.get(n.threadId) ?? []);
+  return { needsYou: needsYouItems, drafts: draftItems, now: nowItems };
 }
 
 /**

@@ -97,7 +97,7 @@ test("emergency first with Call now; a Thumbtack lead opens Thumbtack; Done clea
   await signInAs(context, owner);
   await page.goto("/queue");
 
-  const lane = page.getByRole("region", { name: "Emergency" });
+  const lane = page.getByRole("region", { name: "Right now" });
   const sosCard = lane.locator(`#t-${sos.id}`);
   await expect(sosCard).toContainText("Emergency · Question");
   const call = sosCard.getByRole("link", { name: "Call Dana now" });

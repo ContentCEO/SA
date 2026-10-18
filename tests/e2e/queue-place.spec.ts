@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { eq } from "drizzle-orm";
 import * as schema from "../../src/db/schema";
-import { seedOwner, setWorkspace, signInAs, testDb } from "./support";
+import { seedOwner, seedQueue, setWorkspace, signInAs, testDb } from "./support";
 
 /** Check 9 P5 + Check 32 P7: a card action keeps the owner's place; a send keeps Undo in view. */
 
@@ -126,4 +126,34 @@ test("after a send the result has the h1, takes focus, and Undo is in view and t
     () => document.documentElement.scrollWidth > document.documentElement.clientWidth,
   );
   expect(overflow).toBe(false);
+});
+
+test("an emergency with a draft is the first card on the page, under Right now (Check 9 P6)", async ({
+  page,
+  context,
+}) => {
+  const owner = await seedOwner({ mailbox: true, backfilled: true });
+  await seedQueue(owner.mailboxId!);
+  const cards = await seedDrafts(owner.mailboxId!);
+  const pipe = cards.at(-1)!;
+  await testDb
+    .update(schema.threads)
+    .set({
+      needsOwner: true,
+      priority: "high",
+      needsOwnerReason: "Emergency: water is coming through the basement ceiling.",
+      lastMessageAt: new Date(Date.now() - 12 * 60_000),
+    })
+    .where(eq(schema.threads.id, pipe.threadId));
+  await signInAs(context, owner);
+  await page.goto("/queue");
+  const first = page.locator("article[id^=t-]").first();
+  await expect(first).toHaveAttribute("id", `t-${pipe.threadId}`);
+  const rightNow = page.getByRole("region", { name: "Right now" });
+  await expect(rightNow.locator(`article#t-${pipe.threadId}`)).toBeVisible();
+  // Shown once, not again under Replies ready.
+  await expect(page.locator(`article#t-${pipe.threadId}`)).toHaveCount(1);
+  const box = await rightNow.boundingBox();
+  const needs = await page.getByRole("region", { name: "Needs you" }).boundingBox();
+  expect(box!.y).toBeLessThan(needs!.y);
 });
