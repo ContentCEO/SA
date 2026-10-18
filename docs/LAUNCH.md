@@ -921,9 +921,10 @@ mode and test mode are set up separately. In this order:
   Choose a plan, pay with your own card. With sales tax on, Stripe's page asks for a billing
   address and, for an address in a state you registered, shows the tax on top.
 - Worked when: the billing page moves past "Payment received — finishing up.", and `/admin` shows
-  that account as setup paid with "Yes, through Stripe". Refunding it in Stripe → Payments is up to you; a refund
-  doesn't move the account back, so cancel its subscription in Stripe too (the account then shows
-  as canceled).
+  that account as setup paid with "Yes, through Stripe". Refunding it in Stripe → Payments is up to you. A refund or card dispute shows on
+  the account's /admin card (and disputes in Payments, plus an email). Nothing moves the account
+  on its own: decide in Stripe and /admin what a refund means (here, cancel its subscription in
+  Stripe too; the account then shows as canceled).
 
 ## 8. Error alerts (Sentry, optional)
 
@@ -981,6 +982,11 @@ morning emails all run as background jobs.
      often). If its one-time fill-in wasn't finished before the deploy, its next run comes at the
      first 4:43 UTC after the deploy, then every 15 minutes until it's done. Nothing to do; just
      don't read a quiet `reply-to-backfill` before then as stopped.
+  5. After the wave 2 merge with the billing changes (merge C): `/admin` → Payments → **Connect
+     Stripe again**, once, so Stripe also tells the app about bank payments that clear or fail
+     later (`checkout.session.async_payment_succeeded` / `_failed`), refunds (`charge.refunded`)
+     and card disputes (`charge.dispute.created` / `.closed`). Worked when: Stripe → Developers →
+     Webhooks → the endpoint ending `/api/stripe/webhook` lists those five events too.
 - Optional but recommended: point a free uptime monitor at /api/health/deep
   ([SETUP.md](SETUP.md) §6g). It emails you "Background jobs look stopped" at most once an hour,
   even when Inngest itself is down.
@@ -1485,6 +1491,54 @@ Nothing below is switched on or changed until you say so.
     from Review all ready or autopilot's own sends), and a line like "10 sent as drafted, 3
     edited, 2 discarded in the last 60 days"?
   - **A line on autopilot's replies** saying your email assistant wrote and sent them?
+
+- **Wave 2 merge C (2026-10-18): questions from the Mail format, Town and utility lists, Numbers
+  and Billing changes.** Each is built with the safe choice below; nothing changes until you say
+  so.
+  - **"No signature" reminder.** While your signature box is empty, the first draft on the Queue
+    says "No signature. Customers won't see your phone number." on every visit. Fine, or once a
+    day?
+  - **Website-form replies' subject** reads "Your request to <business name>" instead of
+    "Re: Form Submission…". Those words, or e.g. "Your quote request"?
+  - **Check three things live** (not possible from the engineers' side): a reply to a customer
+    who wrote to a Gmail "send mail as" alias (office@…) goes out from that alias; a reply with a
+    one-line-per-item signature keeps its lines in classic Outlook for Windows; and the From line
+    ("Mike Rossi <you@…>") reads right in Gmail web, Gmail on a phone and Apple Mail.
+  - **A town office's name from a Gmail address** is no longer treated as the town: it gets a
+    "Careful: Says it's a town office but writes from a personal address." line and is drafted
+    like any other email. Should jobs also skip drafting those?
+  - **Every town email now goes under Needs you**, passed inspections included, so text and phone
+    alerts for "needs you" fire for them too. Keep passed inspections out of alerts?
+  - **Sender addresses to confirm.** Can a pilot shop forward one real notice from PermitEyes, MGO
+    Connect, Eversource, National Grid and Unitil? Those domains are in the code from public
+    pages only. Before any other town domain is added, it's checked on the town's own staff
+    directory.
+  - **The send record's wording.** It no longer says "Nothing leaves your inbox without your okay
+    — this is the proof"; it names the Google sign-in and says anyone using that sign-in can okay
+    replies. Fine as worded?
+  - **Morning email's "In the last day"** counts the 24 hours before the email (the word
+    "Yesterday" is gone). Or count your local calendar day and keep "Yesterday"?
+  - **Pausing and Stripe.** Pausing an account only changes our status; Stripe keeps charging,
+    and the screens now say so. Should Pause also pause the Stripe subscription's collection?
+  - **What a refund means.** A refund or card dispute is shown (and disputes emailed to you) but
+    changes nothing. If you refund the $499 setup, should sending turn off and the next checkout
+    charge setup again?
+  - **Checkouts with nothing charged** (a 100% promotion code) leave sending off and flag the
+    account on /admin; only a real Stripe payment or your own house account turns sending on.
+    Want an /admin button for those, or no full-discount codes?
+  - **Inbox limit after a downgrade.** Not built separately: your 2026-10-16 decision already
+    pauses the extra Gmail addresses on a lower plan. Still what you want?
+  - **Stripe Tax's fee.** The AI costs page counts Stripe's card (2.9% + 30¢) and Billing (0.7%)
+    fees; `taxPercent` is empty. What rate does your Stripe Tax plan charge, if any?
+  - **Two live Stripe plans.** When /admin says "Two live Stripe plans: cancel one in Stripe", do
+    you also refund the second setup fee? Nothing is refunded automatically.
+  - **Growth calls to return** on /admin's Needs you box count Growth requests from the last 7
+    days until a "called" mark exists (Check 16 P4).
+  - Decided at the merge (were differences between the branches): a plan "set to end" is stored
+    once (`stripe_cancel_at`, the referral offer's column) and read by both the free-month lines
+    and the new "Your plan ends on …" lines; a subscription Stripe no longer has counts as
+    canceled; a plan change from Stripe or /admin turns autopilot off by the plan that counts, so
+    a running free month on Crew keeps it.
 
 ### Still needed from you
 

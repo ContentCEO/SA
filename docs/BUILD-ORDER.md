@@ -250,6 +250,38 @@ edits this file after it is created.
 - [x] Wave 2, Autopilot rules, 4) C20 P8
 - [x] Wave 2, Autopilot rules, 5) C20 P7 [M]
 - [x] Wave 2, Autopilot rules, 6) C20 P6
+- [x] Wave 2, Mail format, 1) C43 P3 [M]
+- [x] Wave 2, Mail format, 2) C42 P4 [M]
+- [x] Wave 2, Mail format, 3) C43 P4
+- [x] Wave 2, Mail format, 4) C43 P5
+- [x] Wave 2, Mail format, 5) C43 P6
+- [x] Wave 2, Mail format, 6) C43 P10
+- [x] Wave 2, Town, utility and job-kind lists, 1) C22 P8 + C36 P5 + C37 P6 + C40 P7 + C44 P4 + C45 P3
+- [x] Wave 2, Town, utility and job-kind lists, 2) C37 P3
+- [x] Wave 2, Town, utility and job-kind lists, 3) C36 P4 + C37 P2
+- [x] Wave 2, Town, utility and job-kind lists, 4) C36 P9 + C37 P7 + C38 P8 + C39 P7 + C40 P5 + C41 P8
+- [x] Wave 2, Numbers and Activity, 1) C14 P2
+- [x] Wave 2, Numbers and Activity, 2) C14 P3 + C14 P4
+- [x] Wave 2, Numbers and Activity, 3) C14 P5
+- [x] Wave 2, Numbers and Activity, 4) C14 P6 + C14 P7
+- [x] Wave 2, Numbers and Activity, 5) C14 P8
+- [x] Wave 2, Numbers and Activity, 6) C14 P9 + C14 P10 + C14 P11
+- [x] Wave 2, Numbers and Activity, 7) C42 P5
+- [x] Wave 2, Billing and admin, 1) C17 P2
+- [x] Wave 2, Billing and admin, 2) C17 P3 [M]
+- [x] Wave 2, Billing and admin, 3) C17 P4
+- [x] Wave 2, Billing and admin, 4) C17 P5 + C01 P3
+- [x] Wave 2, Billing and admin, 5) C17 P6
+- [x] Wave 2, Billing and admin, 6) C17 P7
+- [x] Wave 2, Billing and admin, 7) C17 P8 [M]
+- [x] Wave 2, Billing and admin, 8) C17 P9
+- [x] Wave 2, Billing and admin, 9) C17 P11
+- [x] Wave 2, Billing and admin, 10) C16 P3
+- [x] Wave 2, Billing and admin, 11) C16 P5
+- [x] Wave 2, Billing and admin, 12) C16 P6 + C16 P7
+- [x] Wave 2, Billing and admin, 13) C16 P8
+- [x] Wave 2, Billing and admin, 14) C16 P9 + C16 P10 + C29 P8
+- [x] Wave 2, Billing and admin, 15) C05 P5
 
 Queue screen 15) C09 P8 was not built (it waits for Davi's yes; `docs/LAUNCH.md` step 13). Voice 7) C24 P8's new prompt `voice-examples.v1` and the Inbox / Sync prompt lines wait for the Prompt
 versions group in `docs/notes/prompt-versions-inbox.md`.
@@ -257,5 +289,10 @@ versions group in `docs/notes/prompt-versions-inbox.md`.
 Autopilot rules 7) C20 P9, 8) C20 P10 [M] and 9) C48 P6 were not built (they wait for Davi's yes;
 `docs/LAUNCH.md` step 13). The classify.v6, followup.v5 and reply-language lines from the
 Follow-ups, Customers and Settings groups wait in `docs/notes/prompt-versions-inbox.md`.
+
+Billing and admin 5) C17 P6 was built without its item 3 (over-limit lines): Davi's 2026-10-16
+decision already pauses the extra Gmail addresses on a lower plan. The Town, utility and job-kind
+lists group's classify.v6 lines (Check 36 P5, Check 37 P3) wait in
+`docs/notes/prompt-versions-inbox.md`.
 
 Later steps are added to this list as their pull requests merge.

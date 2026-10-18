@@ -157,3 +157,21 @@ Spanish; use short, plain sentences)`. `createDraftForThread` already computes `
 - Voice (optional, Check 24 P11): with a ready voice and a null greeting / sign-off, the voice
   block prints "Usual greeting: not given"; it could say "none — they jump straight in" /
   "none — they don't sign off".
+
+## From `w2-lists` (Check 36 P5): classify.v6 water and sewer offices, backflow notices
+
+- Add "water and sewer departments, water districts and their backflow or cross-connection
+  programs" to the town list (the building-department signal), and "backflow test due notices"
+  to the never-noise paperwork list (customer_question, or scheduling when it sets a date). The
+  code's `readMunicipal` (`src/ai/guards.ts`) already recognises those office names.
+- Eval case: "Annual backflow test due by Nov 30" from a water district's .gov address, expected
+  `municipal: true`, needs you, never noise.
+
+## From `w2-lists` (Check 37 P3): classify.v6 electric-company paperwork
+
+- Add "electric company work requests, cut-and-reconnect appointments, meter sets, planned
+  outages for a job, interconnection approvals" to the never-noise paperwork line. The code
+  (`looksLikeUtility`) already keeps those from junk and from job drafting; the prompt line keeps
+  the model's category right for an electric company we don't list.
+- Eval case: a meter-set appointment from a town light plant ("Light Department"), expected not
+  noise (scheduling, with the date), needs you with the electric-company reason.

@@ -97,6 +97,9 @@ Settings removes all of our access, that one included.
   **Re-learn from my sent mail**, and again automatically if a read stops part-way. Those sent
   emails are used only for that and are never stored.
 - How many photos or files an email had (never the files or their names).
+- Your Gmail "send mail as" addresses (like office@ or info@ on your account), so a reply goes
+  out from the address your customer wrote to. Read with the Gmail access you already gave; we
+  don't read their settings or signatures.
 - Prices you quoted (the amount, the kind of job and the date), kept as your price memory. Only
   you see them, and they are never sent to the AI.
 - Which invoices are marked paid (or "not owed to me"), a marker on conversations that were ever
@@ -332,6 +335,8 @@ In plain words:
 - **Growth call requests** are kept until you ask us to remove them (call, text or email us). If
   you send another request from the same email address, the newest one replaces the one before;
   the name and trade from your first entry stay on it.
+- If you get a refund or open a card dispute, we keep its amount and dates (no card details)
+  after you delete your account, like Stripe's own payment records.
 - If your trial ends or a payment fails, we stop reading your mailbox and stop using the AI, but
   we don't delete your data for that reason alone.
 
@@ -343,8 +348,10 @@ In plain words:
   any style suggestions waiting for you, your business details, your activity history and your AI
   usage counts stay until you delete your account.
 - **Delete my account** (Settings): deletes your account and everything in it from Squared Away,
-  after one confirmation. Stripe keeps its own payment records. First it cancels your subscription
-  straight away (not at the end of the paid period) and removes our access at Google. It also
+  after one confirmation. Stripe keeps its own payment records, and we keep the amount and dates
+  of any refund or card dispute (no card details, no link to you). First it cancels your
+  subscription straight away (not at the end of the paid period), and any other plan Stripe still
+  has for you, and removes our access at Google. It also
   removes your invite, so coming back needs a new one. Stripe also keeps its customer record of
   you (your email address and your business name, or your name if no business name is set; if you
   paid while sales tax was on, also the billing address you entered on Stripe's checkout page, and

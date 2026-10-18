@@ -3146,6 +3146,348 @@ big)`; the hourly job runs `captureQuoteAmounts` first.
   - **Not built (Davi's yes needed):** 20 P9 (no day or time), 20 P10 (earn only from replies sent
     one at a time; would add "batch" to `drafts.sent_via`), 48 P6 (assistant note).
 
+- **Wave 2 merge C (2026-10-18, branch `integrate-w2c`):** the Mail format, Town / utility /
+  job-kind lists, Numbers and Activity, and Billing and admin groups merged with `--no-ff`, in
+  that order, on top of 05bb296 (merge B). Migrations regenerated one at a time with drizzle-kit
+  on the previous snapshot (SQL byte-identical to each branch's): `0067_from_name`,
+  `0068_send_as`, `0069_stripe_money_events`. Prompt lines the Lists group couldn't write wait in
+  `docs/notes/prompt-versions-inbox.md` (classify.v6: water and sewer offices / backflow notices,
+  Check 36 P5; electric-company paperwork, Check 37 P3). Reconciled with merges A and B:
+  - **One "plan set to end" column.** The Billing group's `workspaces.plan_ends_at` (Check 17
+    P3) was the referral offer's `stripe_cancel_at` under another name (same rule: `cancel_at`,
+    else the first item's period end with `cancel_at_period_end`; null once ended). Its
+    migration was dropped; `billingStatusLine` ("Your plan ends on Nov 16…"), the banner's
+    last-7-days line and `plan_cancel_scheduled` read `stripeCancelAt`, and `cancelAtOf`
+    (billing-rules.ts) is the only rule (`planEndsAtFrom` removed).
+  - **The webhook** keeps the referral offer's shape — a fresh read with `discounts` expanded,
+    then `applyLiveSubscription` (status, plan, `stripe_cancel_at` and the plan effects in one
+    transaction: `applyPlanChange` → `autopilotPlanEffects` by `effectivePlan`, and
+    `fitMailboxesToPlan`), then `reconcileReferralSafely` and `creditReferralSafely` — with the
+    Billing group's checks in front (orphans, stale and second subscriptions, the second one
+    adopted when the stored plan ends) and its notices after (`notifyBillingChange` for past
+    due / recovered / canceled, never paused or house). A subscription Stripe no longer has
+    (`resource_missing`) counts as **canceled** (Check 17 P4; the referral offer used the
+    event's copy). `applyCheckoutCompleted` keeps the Billing group's paid / unpaid /
+    no_payment_required split and second-checkout rule, and the referral offer's single
+    transaction (status, plan, setup paid, plan effects, inbox fit).
+  - **`applyPlanChange(workspaceId, from, to, by, now, executor)`** (workspace-lifecycle.ts) is
+    now `autopilotPlanEffects` plus one `plan_changed { by, from, to }` row when the plan moved;
+    called after the plan is written (inside the transaction on the Stripe paths). A running
+    free month on a plan with autopilot keeps it. `setWorkspacePlan` keeps the Billing group's
+    Stripe guard (`PlanSetByStripeError`, conditional update) and calls it.
+  - **/admin** keeps the Growth admin page link, wave 1's launch checklist and stuck-inbox box,
+    batch A's background-work line, the referral offer's plan label (`planLabel`, free month
+    included), free-month lines and portal lines, beside the Billing group's Needs you box, find
+    and paging, card notices, support page and payment lines. The 25-minute "jobs look stopped"
+    threshold (merge A) stands. The AI costs page shows "· free month" with /admin's status
+    labels.
+  - **/billing and the banner** keep the free-month section, Keep / Go back and the downgrade
+    line beside `PaymentWaiting`, the checkout notices and "Update card"; Choose a plan hides
+    for `setUpWithoutStripePlan`. The setup_paid / active banner shows the free-month card and
+    then the plan-ending line.
+  - **Activity:** `DESCRIBED_ACTIONS` (the SQL filter) also lists every action batches A and B,
+    the referral offer and Billing log (referral lines are answered first by
+    `referralActivityLine`, so the Numbers group's own `mailbox_plan_swap` /
+    `mailboxes_fit_plan` cases were dropped). New plain lines: `needs_owner_cleared`,
+    `quote_dismissed` / `quote_restored`, `mail_gap`, `mailbox_in_use_refused`,
+    `reply_languages_saved`, `work_hours_saved`. `second_subscription` is hidden on purpose
+    (an /admin signal). The guard test also reads billing.ts's `log(id, "action")` helper.
+  - **Autopilot:** the electric company is a guardrail code, `utility` ("The electric company
+    always waits for you.", one Settings line "Emails from the electric company."); town emails
+    already had `municipal`, and since they now always need the owner they also hit
+    `needs_owner`.
+  - **Queue cards** (the shared `draftCard`) show the From line (name · alias), the subject,
+    the permit card and town caution under Needs you, and the "No signature" line on the page's
+    first draft card (the same card as the swipe tip), beside batch A/B's lines.
+  - **Gmail units:** `listSendAs` is charged as `settings.sendAs.list` (1 unit) in `GMAIL_UNITS`.
+  - **Tests:** `FakeStripe` (tests/support) gained `subscriptions.list` and
+    `checkout.sessions.expire`; tests that call `applySubscription` put the subscription in the
+    fake first (`fake.subscriptions.set`). admin-no-content also runs `accountsNeedingYou`,
+    `countWorkspaces`, `moneyEventsFor`, `openDisputeCount` and the Stripe markers, and scans
+    admin-rules.ts and stripe-money-rules.ts.
+- **Mail format (wave 2, `w2-mail`; Checks 43 P3 P4 P5 P6 P10, 42 P4):** every outgoing reply is built in `src/mailbox/mime.ts`; headers
+  stay CR/LF-safe and threaded (In-Reply-To / References unchanged).
+  - **From name (Check 43 P3):** `business_profile.from_name` (max 80, Settings → Your business
+    "Name customers see on your emails"). Empty → the owner's Google name (`users.name`), else the
+    business name (`pickSenderName` in `src/server/from-line-rules.ts`, read live by
+    `senderNameFor` in `src/server/from-line.ts`). `formatAddress`: ASCII name → `"Name" <email>`
+    (quotes and backslashes escaped), anything else → RFC 2047 word. Every rewrite of a stored
+    draft goes through `draftRaw()` (drafts.ts), so an edit, a revise, a send with edits and the
+    Reply-To backfill all carry the current name. The card shows "From: Mike Rossi" above To.
+  - **Send-as (Check 42 P4):** `listSendAs()` (gmail.readonly, field mask: address + status
+    only) → `mailboxes.send_as` (verified aliases and the primary, lowercased, max 50), read
+    in the backfill job's first step (every connect and reconnect) and daily in
+    `renew-gmail-watches` (`refreshAllSendAs`). Best effort: a failure keeps the stored list and
+    is logged by error name only. `pickFromAddress` (from-line-rules.ts): the first send-as
+    address in the customer's newest email's To, then Cc; else the connected address. Stored on
+    `drafts.from_address` (null = connected address), used by every rewrite (`mimeFor`). The
+    card says "From: Name · office@…" only when it differs. Practice sends stay from the
+    connected address (they go to the owner).
+  - **Signature (Check 43 P4):** the form says Gmail's own signature isn't added (Google adds it
+    only in Gmail's web app). With `business_profile.signature` empty, the queue's first draft
+    card shows "No signature. Customers won't see your phone number." + "Add a signature"
+    (`/settings/profile#signature`). Read live from the profile, no table; shown on every visit
+    (not once a day: no table to remember it). "Show full draft" already removes the clamp.
+  - **Form-lead subject (Check 43 P5):** when the reply goes to a Reply-To that isn't the sender
+    (a website form), `formReplySubject` (mime.ts) turns a robot subject (form submission, new
+    entry, new lead/message/inquiry/request from, contact form, website form/inquiry, request a
+    quote) into "Your request to <business>" ("Your request" with no name); other subjects keep
+    "Re: …". Threading headers unchanged. Nudges on those threads go through the same code
+    (a nudge after "Your request to X" reads "Re: Your request to X"). Every draft card shows
+    "Subject: …" above the reply. The Reply-To backfill's re-pointed old drafts keep their
+    stored subject (not changed here).
+  - **HTML part (Check 43 P6):** `buildReplyMime` writes multipart/alternative: the text/plain
+    part exactly as before plus a text/html part made by `textToHtml` (every character escaped,
+    line breaks → `<br>`, blank lines → `<p>`, one `<div dir="auto" style="font-family:inherit">`;
+    no links, images, colours or tracking). Random boundary checked against both parts; both
+    base64 UTF-8. Gmail's parser (`extractBodyText`) prefers text/plain, so `sameText` checks
+    are unchanged. `FakeWriter.bodyOf` reads the text/plain part (`partOf` for either) and the
+    e2e fake's `parseRaw` reads multipart. Not verified in classic Outlook.
+  - **Header folding (Check 43 P10):** `encodeHeader` splits non-ASCII text into encoded
+    words of at most 42 UTF-8 bytes (68 characters, under RFC 2047's 75; "Subject: " + a word
+    fits a 78-character line), never inside a character, folded with CRLF + space (the input is
+    CR/LF-stripped first, so folding is the only line break). `replySubject` collapses a leading
+    run of reply prefixes (Re, RE, Res, RES, Re[2], Re(2)) into one "Re: "; forward prefixes
+    (Fwd, FW, RV, Enc) stay after it. "RE: x" is now "Re: x". The e2e Gmail fake joins adjacent
+    encoded words (RFC 2047 §6.2).
+  - Known gaps: `workspaceMailboxEmails` (the "self" list for Reply-To picking and
+    `answeredSince`'s "only to yourself" rule) doesn't include send-as aliases.
+- **Town, utility and job-kind lists (wave 2, `w2-lists`; Checks 22 P8, 36 P4 P5 P9, 37 P2 P3 P6 P7, 38 P8, 39 P7, 40 P5 P7, 41 P8, 44 P4, 45 P3):**
+  - **Town check narrowed and widened (Check 22 P8, 36 P5, 37 P6, 40 P7, 44 P4, 45 P3):**
+    `readMunicipal(fromAddress, fromName, subject?)` in `src/ai/guards.ts` (`looksMunicipal` is its
+    boolean, with an optional third `subject` argument). Domain rules unchanged (.gov, <town>.<st>.us,
+    townof…), plus an exact list of town .org/.com domains in `src/config/municipal-domains.ts`
+    (littletonma.org, sherbornma.org; each with its source; no broad patterns). A name-only match no
+    longer counts when the name (with the town-office words taken out) has a company word (inc, llc,
+    co., corp, company, group, services, ltd, pllc, "& sons"); words private companies share
+    ("building inspections", "public works", street/dumpster/right-of-way permits) count only with
+    town/city/county or DPW in the name. A name-only match from public webmail (gmail.com etc.) is
+    **not** the town: it stores `extracted.municipal_name_only = true` and the Inbox row shows
+    "Careful: Says it's a town office but writes from a personal address." Names added: water and
+    sewer offices, water districts, cross-connection / backflow programs, DPW, Sun Belt / West Coast
+    building office names. Permit portals also count on a notice subject (permit, inspection, record,
+    application, license) unless it reads like marketing (webinar, demo, newsletter…). Portals added:
+    `mgoconnect.org`, `permiteyes.us`.
+  - The round 2 TW A5 tests that used `x@gmail.com` with a town name now use `x@example.org`
+    (Check 22 P8 makes the gmail ones a caution); a gmail row checks the caution.
+  - `looksLikeUtility(from, name)` (`src/ai/guards.ts`): eversource.com, nationalgrid.com,
+    nationalgridus.com, unitil.com (and subdomains); a big utility's NAME counts only from those
+    domains; a light plant's name ("Light Department", "Light Plant", "Electric Light",
+    "Light & Power", "Municipal Light") from any domain but public webmail. Checked before the town
+    check, so a light plant on .gov is the electric company. Stored as `extracted.utility`: skips
+    the Promotions shortcut, never junk (noise → scheduling with a date, else customer_question),
+    never drafted by a job (`skipped: utility`; the owner's tap still drafts), autopilot refuses
+    ("The electric company always waits for you."), batch send treats it as untrusted. With a date:
+    needs you, "From the electric company about a job date. Check it with your crew and the
+    customer." (owner-rule key `utility`, fixed text).
+  - `looksLikeUtilityScam(text, from, name)`: a big utility's name from another domain
+    that wants payment, or anyone threatening a shutoff within hours/today and naming a gift card,
+    prepaid card, Green Dot, MoneyPak, Vanilla, Reloadit, Bitcoin/crypto, Zelle, Cash App or Venmo.
+    Sets `payment_change` (so every payment-change stop applies) and `utility_scam` (sticky for the
+    thread), needs you, high: "Says it's from the electric company and wants payment now. Don't pay
+    from this email; call the number on your bill." Owner-rule keys `utility_scam` + `payment_change`.
+    Also caught past the AI limit (code-only result).
+  - Known edge: rule (b) has no sender check, so a customer writing "we'll shut off the power today,
+    I'll pay you by Venmo" is flagged as a scam (needs you, no job draft). Safe direction.
+  - every town email (code or the model's signal) that isn't junk needs the owner, with a
+    fixed line from its permit facts only (`municipalReason` in `src/ai/classify.ts`): "From the
+    town: inspection failed, N things to fix." / "… inspection scheduled." / "… inspection passed."
+    (priority normal) / "From the town." Owner-rule key `municipal` (fixed text: the model's words
+    never ride along). Injection, gas, CO, electrical, payment change and the utility scam still win.
+    Only the owner's tap drafts to the town, as before. The owner rules now read the kind the
+    email ends up with (a town or utility email the model called junk is re-sorted first).
+  - permit facts carry across emails on a thread (`carryPermitFacts`,
+    `src/server/permit-rules.ts`): same permit (number, or same issuing body when a number is
+    missing) keeps the fix list until it passes; new corrections replace it; a different permit
+    replaces everything; an attack email never changes it. Retention purge unchanged.
+  - The permit card (and the town caution) shows on the Queue's Needs-you card and draft cards; the
+    folded Inbox row says "Permit E-26-0412 · 3 things to fix". The Failed badge now uses
+    `bg-primary text-primary-foreground` so it stays inverted on a charcoal card too.
+  - Eval cases with `municipal: true` now expect `needsOwner: true`.
+  - new fixed labels in `src/config/job-kinds.ts` (only new threads; stored labels are
+    never rewritten): plumbing Frozen pipes / Sump and ejector pumps / Backflow tests / Boilers and
+    heating / Wells and water treatment / Valves and tanks / Home sale repairs (before Leaks);
+    electrical Solar and batteries (first) / Smoke and CO detectors, and EV chargers lost the bare
+    "charger" and "tesla" (added "wall connector", "tesla charger", "wall charger", "ev", "electric
+    car", "electric vehicle", "charging"); remodeling Callbacks and touch-ups (first), Basements and
+    Additions before Kitchens and Bathrooms, mudroom under Additions; hvac reordered (Water heaters,
+    Maintenance and tune-ups, AC and heat pumps, Furnaces and boilers + heat/heater/oil
+    burner/baseboard, Ductwork, Thermostats, Air quality and humidity, Commercial service, Repairs;
+    "cleaning" dropped from tune-ups); roofing Metal roofs / Ice dams / Roof snow removal / Siding /
+    Ventilation / Roof certifications in the review's order; landscaping Fences, Cleanups before
+    Lawn care, Lawn treatments (fertilizer moved there), overseed/dethatch/core aeration under Lawn
+    care; painting Power washing (before Exterior) and Floors.
+  - Adapted: "wall charger" added to EV chargers so the existing monthly-summary case "Tesla wall
+    charger" stays an EV job after "charger" and "tesla" left; "t&p" is stored as "t p" (keywords
+    are stored normalized; a test enforces it), "touch-up" is covered by "touch up".
+  - Known overlap: carpentry also has "Fences and gates"; landscaping's new kind is "Fences" as
+    the review asked. A shop with both trades files a fence under its main trade's label.
+- **Numbers and Activity (wave 2, `w2-numbers`; Check 14 P2–P11 + Check 42 P5):**
+  - Learning screen: once read, the step says "Read your last 30 days of email." with no number;
+    the "Your last 30 days" section (`firstLookCounts().counts.read`) is the only final count.
+    While reading it keeps Check 25 P6's running "… so far" count.
+  - Time saved: one rule sentence, `timeSavedRule()` in `scorecard-rules.ts` ("Our estimate: 3
+    minutes for each drafted reply or follow-up that went out, from the app, from Gmail or by
+    autopilot."), said once per box on Activity and once in the Monday email.
+    `timeSavedPhrase(0)` = "none yet"; `timeSavedLine(0)` = "Time saved: none, as nothing went
+    out." `scorecardLines(..., { rule: false })` drops the rule where the box already says it.
+  - Autopilot sends are kept apart: `autopilotSentSql()` (`scorecard.ts`) = `sent_via =
+'autopilot'`, or for rows from before `sent_via`, a `reply_sent` row with `autopilot: true`.
+    `ScorecardNumbers.repliesSent` / `followupsSent` are the owner's own (app or Gmail);
+    `autopilotSent` is separate; minutes = 3 × all three. `MonthSummary.autopilotSent`; Activity's
+    "Replies you sent" = sent − follow-ups − autopilot, plus an "Autopilot sent" tile when > 0.
+    The subquery spells `"drafts"."id"` on purpose: Drizzle leaves a column unqualified in a
+    select list, which inside the subquery meant the activity row's own id.
+  - "Quotes out" is now "Quote requests answered" (tile and counts line); the field is still
+    `quotesOut`. The response sentence names its own group ("Of this week's quote requests: none
+    answered yet. 1 is still waiting.").
+  - Response time shown to owners is the median (`medianMinutes`, `response.typicalMinutes`);
+    `avgMinutes` stays in the data. "Your typical first answer to this week's quote requests: 20
+    min, the middle of 3 (last week: 1 h)."; one answered: "1 of this week's quote requests
+    answered, in 2 h 10 min." Footnote: "Clock time, nights and weekends included."
+  - Activity log: `DESCRIBED_ACTIONS` / `HIDDEN_ON_PURPOSE` (`send_approved`,
+    `checklist_dismissed`, `quote_lost_reason`) next to `describeActivity`. `listActivityPage`
+    filters on the described list in SQL before the limit (and drops a `test_payment_reset` that
+    didn't clear the setup payment), pages by `(date_trunc('milliseconds', created_at), id)`
+    with `?before=<iso>_<uuid>` (zod-checked in `activity-rules.ts`), 100 per page, "Show
+    older" link. Heading "What happened, newest first". `listActivity` keeps its old return
+    shape for callers. Guard test `tests/unit/activity-list.test.ts`: every literal `action:
+"x"` (or either side of a ternary) under `src/` must be described or hidden on purpose.
+  - New Activity lines: answered_by_phone, found_money_drafts_requested,
+    first_drafts_ready_sent, seasonal_note_added, never_say_saved, plus nine the guard found
+    (complaint_fixed, complaint_checkin_closed, owner_cleared_injection, sender_rule_removed,
+    service_town_added, trial_email_sent, trial_emails_stopped, mailbox_plan_swap,
+    mailboxes_fit_plan). Content-free.
+  - Found money counts are the true totals (`foundMoneyCounts`, same where-clause, no limit);
+    one tap still drafts at most 10 of each kind. Over the cap: "Draft the newest 10?" (one
+    kind) / "Draft up to 10 of each, newest first?" (both).
+  - Activity during the trial (`!canSend` and status invited / evaluating / evaluation_expired):
+    one "Your three days so far" box (sorted, drafts written, drafts you changed, practice
+    copies) from `trialActivityCounts` (`first-week.ts`), no time-saved figure; week and month
+    boxes only once sending can be on.
+  - `firstNameOf` (`src/lib/first-name.ts`): Activity, the queue and the customer page. Null for
+    addresses, business words, > 4 words; "Last, First" → First; drops Mr/Mrs/Ms/Miss/Dr.
+  - Labels: "Conversations sorted", "Drafts written", trial banner "sorted N conversations",
+    morning email "In the last day: N conversations sorted, M replies and follow-ups sent." (the
+    24 hours before the email, kept as before; the word "Yesterday" is gone).
+  - Send record (Check 42 P5): "Who okayed it" = "Your sign-in (email)" / "Sent from Gmail,
+    outside the app" / autopilot as before; closing line "This is the record of the tap made
+    while signed in as …. Anyone who uses this sign-in can okay replies." Reconcile's note and
+    Activity's `reply_sent_from_gmail` say "sent from Gmail, outside the app". Settings → Account
+    shows "Signed in as … (Google)" from the session.
+- **Billing and admin (wave 2, `w2-billing`; Checks 17 P2–P11, 16 P3–P10, 1 P3, 29 P8, 5 P5):**
+  - **Pause and Stripe (Check 17 P2):** pausing never touches Stripe. Davi's pause explanation says
+    "Their Stripe plan keeps charging…" when the account has a subscription; a paused card shows
+    "Still billed in Stripe"; the owner's paused banner adds "Your plan's billing hasn't changed."
+    (followed by the usual "Call Davi at …", so the spec's second sentence is folded into it).
+  - **Plan end date (Check 17 P3):** `applySubscription` stores `stripe_cancel_at` (merge C: the
+    branch's `plan_ends_at` folded into the referral offer's column) from `cancel_at`, else the
+    first item's `current_period_end` when `cancel_at_period_end`; cleared when undone or ended.
+    /billing says "Your plan ends on Nov 16…" (owner's zone); activity `plan_cancel_scheduled`
+    `{ endsOn: "YYYY-MM-DD" }`; a quiet (not inverted) banner line in the last 7 days. Past-due
+    owners see the portal button as "Update card".
+  - **Webhook order (Check 17 P4):** every subscription event is re-read with
+    `subscriptions.retrieve` (resource_missing = canceled). An event about a subscription other than
+    the stored one: ended → ignored (`stripe_event_stale`, no ids); live while the stored one is live
+    → nothing changes, `app_settings` `stripe-ws:second-sub:<workspace>` + one content-free
+    `second_subscription` activity row, /admin card "Two live Stripe plans: cancel one in Stripe".
+    When the stored plan ends while a second is live, the second one is adopted. A second paid
+    checkout keeps the stored subscription and plan. `createCheckout` expires the workspace's
+    previous open session (`stripe-ws:open-checkout:<workspace>`), creates the customer with
+    `idempotencyKey: customer-<workspace>` and stores it only while still null. Live plans or paid
+    checkouts with no account here are counted in `app_settings` `stripe_orphans` (/admin Payments:
+    "A Stripe plan has no account here. Check Stripe." + "I checked Stripe" to clear). Delete my
+    account cancels every live subscription of the customer (`liveSubscriptionIds`), still "if any
+    cancel fails, nothing is deleted", and deletes the `stripe-ws:%:<workspace>` keys.
+  - **Checkouts that didn't simply pay (Check 17 P5):** `payment_status` "unpaid" → ids stored,
+    nothing that turns sending on, activity `payment_pending`; `async_payment_succeeded` → the normal
+    paid path; `async_payment_failed` → `payment_failed_bank` and an unpaid stored subscription is
+    let go so the owner can choose a plan again; "no_payment_required" → `checkout_needs_review`
+    (never sets setupPaidVia), /admin card line, /billing "We've got your sign-up…". The newest of
+    those actions and `payment_received` decides the /billing line (`checkoutNotice`).
+  - **Billing notices (Check 1 P3):** `notifyBillingChange` emails Davi (content-free, plan name +
+    kind, once per Stripe event via `billing-notice:<event id>`, Resend key `billing-<event id>`)
+    for past due / recovered / canceled moves the webhook makes; never paused or house accounts.
+    The owner gets one "You're set up" email after a paid checkout that included setup
+    (`setup-confirmation:<session id>`), plan name only.
+  - **Plan changes (Check 17 P6):** `applyPlanChange(workspaceId, from, to, by)` in
+    workspace-lifecycle.ts holds the side effects (rules → draft and countdowns cleared when the new
+    plan lacks autopilot; `plan_changed { by, from, to }`). Called by `setWorkspacePlan` ("admin") and
+    by the webhook ("stripe") on a subscription's plan change and on a paid checkout's plan. Item 3
+    (over-limit lines, no automatic pausing) was **not built**: Davi's 2026-10-16 decision already
+    pauses the extra Gmail addresses on a lower plan (`fitMailboxesToPlan`, called from both paths),
+    so an account is never left over its limit.
+  - **Plan picker (Check 17 P7):** a card with a Stripe subscription shows "Plan is set by their
+    Stripe subscription…" instead of the picker; `setWorkspacePlan` refuses
+    (`PlanSetByStripeError`, conditional update on `stripe_subscription_id is null`) and the action
+    redirects `?error=plan_stripe`. The Plan stat shows the plan's name.
+  - **Refunds and disputes (Check 17 P8):** migration `0045_stripe_money_events` (id + kind primary
+    key, `workspace_id` SET NULL, amount, includes_setup, evidence_due_by, outcome). Webhook events
+    `charge.refunded` (refunds read with `refunds.list`; includes_setup = the charge's invoice has
+    the setup lookup key's price, via `invoicePayments.list` + `invoices.listLineItems`, best
+    effort), `charge.dispute.created` / `.closed`. Nothing changes status or setupPaidVia. /admin
+    card lines ("Refunded $499 (setup) on Oct 20", "Card dispute open: answer by Oct 30" inverted
+    until closed), Payments counts open disputes, owner activity `refund_recorded` ("Refunded $499
+    to your card"), Davi emailed once per dispute (`dispute-<id>`; business name, amount, date,
+    Stripe dashboard link).
+  - After it ships, Davi taps **Connect Stripe again** once (docs/LAUNCH.md step 11) so the
+    endpoint gets the delayed-payment, refund and dispute events. Refund and dispute rows outlive
+    a deleted account (privacy policy, "How long we keep it").
+  - **Waiting on Stripe (Check 17 P9):** `PaymentWaiting` (replaces the unused `RefreshUntil`)
+    refreshes 10 × 3s (3 × 300ms in e2e mode), then says "Stripe has your payment, but our side
+    hasn't caught up yet…" with the phone link and calls `reportStripeWaitingAction` once
+    (requireOwner, `hitLimit("billing")`, only while checkout is still allowed). That writes
+    `app_settings` `stripe-ws:waiting:<workspace>` (value = the `cs_…` session id from the success
+    URL when it looks like one, else empty); `applyCheckoutCompleted` clears it. /admin Payments
+    "An owner paid but no Stripe notice arrived (N)…" and the card "Paid, waiting on Stripe".
+    success_url now ends `&session_id={CHECKOUT_SESSION_ID}` (never trusted for status).
+  - **/billing without a Stripe plan (Check 17 P11):** `billingStatusLine` says "Your own test
+    account. Nothing is billed." for the house account and "There's no Stripe plan attached to this
+    account. Call Davi to sort it out." for a Stripe-paid setup with no subscription id
+    (`setUpWithoutStripePlan`); /billing then hides Choose a plan and What happens next (display
+    only — `checkoutTerms` unchanged). Without Stripe configured, /billing lists the setup fee and
+    the three plans (prices, inboxes) without buttons above "Online payment isn't switched on yet".
+  - **/admin layout (Check 16 P3):** a "Needs you" box right under the headline (`needsYou` in
+    admin-rules.ts: Growth calls from the last 7 days — no "called" mark exists yet —, new app
+    sign-ups to invite, stuck inboxes from the P1 counts, payments failed, trials ending within 24
+    hours; counts only, 44px links). The waitlist section now sits above Accounts; Davi's own card is
+    a folded `<details>` line "Your test account: … · status"; every card has `id="acct-<id>"`.
+  - **Find and paging (Check 16 P5):** `adminOverview(now, { q, page })` (ilike on business name or
+    owner email, `%`/`_`/`\` literal, 50 per page, Davi's card pinned on page 1 only); GET find form
+    (`?q=`), "Show older/newer accounts" (`?page=`), "Showing 51 to 100 of 134."; invites page with
+    `?ipage=`. q is never logged.
+  - **Card notices (Check 16 P6):** moves and plan saves redirect to
+    `/admin?done=<move>&w=<uuid>#acct-<uuid>` (errors likewise); `cardNotice` (admin-rules.ts)
+    validates `w` and shows the notice inside that card with the business name or owner email
+    ("Paused Ruiz Street Plumbing."). Only the uuid is in the URL. Davi's folded card opens when the
+    notice is for it. A card not on the loaded page gets the old top-of-page notice instead.
+  - **Take back an invite (Check 16 P7):** `removeInvite(email)` deletes an invite only while it was
+    never accepted and no user has that email (lower-case), and sets the waitlist entry's
+    `invited_at` back to null. "Take back this invite" (one confirmation) on "Not yet" rows. The
+    manual button is now "Invite and email them". Nothing is logged.
+  - **Support page (Check 16 P8):** `/admin/accounts/[id]` (no loading.tsx; requireAdmin first;
+    non-uuid or unknown id → 404). `supportView` returns the account's AdminRow, the owner's Gmail
+    lines per inbox ("Inbox 1", never the address) from `mailboxHealth`, and the last 50
+    activity rows with only `action`, `actor`, `created_at` and the detail keys move/from/to/plan/
+    kind/autopilot/stripeStatus/code/by (picked in SQL with `jsonb_build_object`). Sentences come
+    from `supportSentence` (no first-name lookup). The card's name links there. `statusLabel` moved
+    to admin-rules.ts.
+  - **Invite list (Check 16 P9):** `listInvites` returns `gmailConnected` (a workspace owned by that
+    email has any mailbox row). The test-user reminder and "I added them" hide for connected owners
+    ("Google test user: confirmed (Gmail connected)") and for Davi's own address; the Audience link
+    is a 44px target; each row says "Invited Oct 12".
+  - **AI costs (Check 16 P10 + Check 29 P8):** `planRevenueCents` is 0 for the house account (so no
+    cost alert for it); `costRows` uses `effectiveStatus` and the page shows /admin's status labels
+    and "Your test account". New `src/config/fees.ts` (`STRIPE_FEES`: 2.9% + 30¢ card, 0.7% Billing,
+    `taxPercent: null` until Davi confirms Stripe Tax's rate; checked 2026-10-18 against
+    stripe.com/pricing; not pricing). `costLine` adds `feesCents` and `marginAfterFeesCents`
+    ($99 → 386¢, $199 → 746¢, $299 → 1106¢); `marginCents` and the alert rule are unchanged. Rows
+    read "plan $199 · after Stripe $191.54 · AI $8.40 · keeps $183.14".
+  - **Growth card for an app owner (Check 5 P5):** a Growth-only waitlist row now says "Also uses
+    the app." (inviteState has_account) or "Invited to the app, not signed in yet." (invited),
+    from `growthCopy.admin.growthOnlyLine(inviteState)`; nothing beyond account/invite existence by
+    email is read.
+
 ## Milestones
 
 - [x] **0. Scaffold**
@@ -3167,6 +3509,9 @@ big)`; the hourly job runs `captureQuoteAmounts` first.
 
 ## Waiting on Davi
 
+- **Wave 2 merge C questions** (mail format, town and utility lists, numbers, billing and
+  admin): docs/LAUNCH.md step 13 "Still open", with three live checks (send-as alias, Outlook
+  line breaks, the From line) and the sender domains to confirm from real notices.
 - **Inngest plan (Check 49 P1):** the free plan pauses every job at 50,000 executions a month (21,029
   from Oct 1 to 16 with one shop). `docs/LAUNCH.md` "Check your free plans now", Inngest item.
 - **Vercel Pro (Check 49 P1):** the team is on Hobby, which is non-commercial only; Pro (about $20 a
