@@ -78,3 +78,24 @@
   folded Inbox row says "Permit E-26-0412 · 3 things to fix". The Failed badge now uses
   `bg-primary text-primary-foreground` so it stays inverted on a charcoal card too.
 - Eval cases with `municipal: true` now expect `needsOwner: true`.
+
+## Step 4 (Check 36 P9, 37 P7, 38 P8, 39 P7, 40 P5, 41 P8): job kinds
+
+- Decision: new fixed labels in `src/config/job-kinds.ts` (only new threads; stored labels are
+  never rewritten): plumbing Frozen pipes / Sump and ejector pumps / Backflow tests / Boilers and
+  heating / Wells and water treatment / Valves and tanks / Home sale repairs (before Leaks);
+  electrical Solar and batteries (first) / Smoke and CO detectors, and EV chargers lost the bare
+  "charger" and "tesla" (added "wall connector", "tesla charger", "wall charger", "ev", "electric
+  car", "electric vehicle", "charging"); remodeling Callbacks and touch-ups (first), Basements and
+  Additions before Kitchens and Bathrooms, mudroom under Additions; hvac reordered (Water heaters,
+  Maintenance and tune-ups, AC and heat pumps, Furnaces and boilers + heat/heater/oil
+  burner/baseboard, Ductwork, Thermostats, Air quality and humidity, Commercial service, Repairs;
+  "cleaning" dropped from tune-ups); roofing Metal roofs / Ice dams / Roof snow removal / Siding /
+  Ventilation / Roof certifications in the review's order; landscaping Fences, Cleanups before
+  Lawn care, Lawn treatments (fertilizer moved there), overseed/dethatch/core aeration under Lawn
+  care; painting Power washing (before Exterior) and Floors.
+- Adapted: "wall charger" added to EV chargers so the existing monthly-summary case "Tesla wall
+  charger" stays an EV job after "charger" and "tesla" left; "t&p" is stored as "t p" (keywords
+  are stored normalized; a test enforces it), "touch-up" is covered by "touch up".
+- Known overlap: carpentry also has "Fences and gates"; landscaping's new kind is "Fences" as
+  the review asked. A shop with both trades files a fence under its main trade's label.
