@@ -63,7 +63,10 @@ describe("the /admin plan picker never disagrees with Stripe (Check 17 P7)", () 
         stripeSubscriptionId: "sub_1",
       })
       .where(eq(workspaces.id, workspaceId));
-    expect(await whereTo(() => setPlanAction(form("company")))).toBe("/admin?error=plan_stripe");
+    // Check 16 P6: back to that card (only its uuid in the URL).
+    expect(await whereTo(() => setPlanAction(form("company")))).toBe(
+      `/admin?error=plan_stripe&w=${workspaceId}#acct-${workspaceId}`,
+    );
     expect(await plan()).toBe("solo");
   });
 
