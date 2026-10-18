@@ -124,3 +124,17 @@ drafter would pass `isInvoiceThread(thread)`), with these task lines for invoice
   owner's second and final reminder: polite and clear that payment is still due. Don't offer an
   easy out or suggest it's fine not to pay."
   Until then the second invoice reminder still uses followup.v4's "give the customer an easy out".
+
+## Step 5 — Check 21 P5: no nudge when the customer answered in a separate email
+
+- Scan: `not exists` an inbound message on ANY other conversation of the workspace (not a side
+  email, not an unsent draft, `auto_reply = false` — the wave 0 column; the Sync group's auto-reply
+  step fills it) whose reply address equals the quote thread's customer address
+  (`customerAddressSql`), sent after the owner's last message. Addresses compared in SQL only.
+- Drafter: `customerWroteElsewhere` re-checks it for `trigger: "followup"` → skipped
+  `customer_wrote_elsewhere`.
+- Queue: the newer email's card (needs-you or reply draft) gets "Also about your quote from
+  Nov 2", a link to the old conversation in Gmail (`QueueItem.alsoQuote`, open quote threads with
+  the same customer address the owner answered before the newer email).
+- Documented limit: a different person's own address (a spouse) can't be matched; "I called
+  them" or Discard covers it.

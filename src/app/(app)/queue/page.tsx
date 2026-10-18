@@ -169,6 +169,22 @@ export default async function QueuePage(props: PageProps<"/queue">) {
     awayState(workspace.id, now),
   ]);
   // A phone that keeps a copy of the queue (offline okays) never holds a note's text.
+  // Check 21 P5: "Also about your quote from Nov 2" — answer both in one go. Content-free link.
+  const alsoQuoteLine = (i: QueueItem) =>
+    i.alsoQuote ? (
+      <a
+        href={gmailThreadLink(i.alsoQuote)}
+        target="_blank"
+        rel="noreferrer"
+        className="inline-flex min-h-tap items-center text-sm font-semibold underline underline-offset-4"
+      >
+        {`Also about your quote from ${i.alsoQuote.quotedAt.toLocaleDateString("en-US", {
+          month: "short",
+          day: "numeric",
+          timeZone,
+        })}`}
+      </a>
+    ) : null;
   const noteFor = (i: QueueItem) => (
     <NoteLine
       note={
@@ -211,7 +227,12 @@ export default async function QueuePage(props: PageProps<"/queue">) {
     remindOptions: remindOptions(i),
     gmailHref: gmailLink(i),
     timeZone,
-    note: noteFor(i),
+    note: (
+      <>
+        {alsoQuoteLine(i)}
+        {noteFor(i)}
+      </>
+    ),
     resort: <ResortSheet threadId={i.threadId} current={i.category} back="queue" />,
   });
   // Check 43 P7: "Written Friday. It says “tomorrow”, which meant Saturday. Check the timing."
@@ -462,7 +483,12 @@ export default async function QueuePage(props: PageProps<"/queue">) {
               }
               practiceLeft={i.mailboxPaused ? null : practiceLeft}
               priceMemory={priceMemory.get(i.threadId)}
-              noteLine={noteFor(i)}
+              noteLine={
+                <>
+                  {alsoQuoteLine(i)}
+                  {noteFor(i)}
+                </>
+              }
               moreActions={
                 <ResortSheet threadId={i.threadId} current={i.category} hasReply back="queue" />
               }

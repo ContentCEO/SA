@@ -8,6 +8,7 @@ import { activityLog, businessProfiles, drafts, messages, threads, workspaces } 
 import { ensureUserAndWorkspace } from "@/server/accounts";
 import {
   createDraftForThread,
+  listQueue,
   reconcileDrafts,
   sendDraft,
   sentDraftSummary,
@@ -978,5 +979,79 @@ describe("invoices the owner sends are chased (Check 21 P4)", () => {
         status: "skipped",
         reason: "followup_not_allowed",
       });
+  });
+});
+
+describe("the customer answered in a separate email (Check 21 P5)", () => {
+  /** A new conversation from `from` (and optional Reply-To), `daysAgoAt` days ago. */
+  async function newThread(
+    from: string,
+    daysAgoAt: number,
+    replyTo?: string,
+    over: Partial<typeof threads.$inferInsert> = {},
+  ) {
+    const id = `n${++g}`;
+    const [t] = await database
+      .insert(threads)
+      .values({
+        mailboxId,
+        gmailThreadId: id,
+        inInbox: true,
+        subject: "Water heater",
+        category: "scheduling",
+        classifiedAt: daysAgo(daysAgoAt),
+        lastMessageAt: daysAgo(daysAgoAt),
+        ...over,
+      })
+      .returning();
+    await database.insert(messages).values({
+      threadId: t!.id,
+      mailboxId,
+      gmailMessageId: `${id}-in`,
+      direction: "in",
+      fromAddress: from,
+      replyToHeader: replyTo ? { address: replyTo, name: "Dana Ruiz" } : {},
+      subject: "Water heater",
+      bodyText: "About the water heater, yes please. When can you come?",
+      sentAt: daysAgo(daysAgoAt),
+    });
+    return t!.id;
+  }
+
+  it("a new email from the same address after the quote → no nudge; one from before → nudge", async () => {
+    const quote = await quietThread({ ownerRepliedDaysAgo: 4 });
+    await newThread("dana@customer.com", 6); // before the owner's quote went out
+    expect(await threadsToFollowUp(mailboxId, NOW)).toEqual([quote]);
+    await newThread("Dana@Customer.com", 2); // after it
+    expect(await threadsToFollowUp(mailboxId, NOW)).toEqual([]);
+    setModelTransportForTests(fakeTransport([nudge()]).transport);
+    expect(await createDraftForThread(quote, { trigger: "followup", ...deps() })).toEqual({
+      status: "skipped",
+      reason: "customer_wrote_elsewhere",
+    });
+  });
+
+  it("a different address (a spouse's own) can't be matched: nudged as usual", async () => {
+    const quote = await quietThread({ ownerRepliedDaysAgo: 4 });
+    await newThread("sam@customer.com", 2);
+    expect(await threadsToFollowUp(mailboxId, NOW)).toEqual([quote]);
+  });
+
+  it("a website-form customer is matched by the Reply-To address", async () => {
+    const quote = await quietThread({ ownerRepliedDaysAgo: 4 });
+    expect(await threadsToFollowUp(mailboxId, NOW)).toEqual([quote]);
+    await newThread("noreply@forms.example.com", 2, "dana@customer.com");
+    expect(await threadsToFollowUp(mailboxId, NOW)).toEqual([]);
+  });
+
+  it("the newer email's queue card says it's also about the quote", async () => {
+    await quietThread({ ownerRepliedDaysAgo: 4 });
+    const newer = await newThread("dana@customer.com", 2, undefined, {
+      needsOwner: true,
+      needsOwnerReason: "Take a look.",
+    });
+    const q = await listQueue(workspaceId, NOW);
+    const card = q.needsYou.find((i) => i.threadId === newer);
+    expect(card?.alsoQuote).toMatchObject({ quotedAt: daysAgo(4) });
   });
 });

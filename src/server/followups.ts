@@ -9,10 +9,12 @@ import { mailboxRunning } from "./mailbox-plan";
 import { FOLLOWUP_CATEGORIES, followupSettings, MAX_FOLLOWUPS } from "./drafts";
 import {
   answeredByPhoneSql,
+  customerAddressSql,
   lastInSql,
   lastOutSql,
   notDraftSql,
   replyAddressSql,
+  sideEmailSql,
 } from "./thread-sql";
 import { isAway } from "./away";
 import { FOLLOWUP_MAX_AGE_DAYS, FOLLOWUP_SCAN_LOCAL_HOUR, quietCutoff } from "./followup-rules";
@@ -109,6 +111,12 @@ export async function threadsToFollowUp(
   const invoiceThread = sql`(${threads.category} is not distinct from 'invoice_payment' or (${threads.extracted}->>'invoice_thread') is not distinct from 'true')`;
   const purposeSent = sql`exists (select 1 from drafts d where d.thread_id = ${threads.id} and d.purpose is not null and not (d.purpose = 'deposit' and ${invoiceThread}) and d.status in ('sent', 'edited_and_sent'))`;
   const saidPaid = sql`coalesce(${threads.extracted}->>'payment_said', '') = 'paid'`;
+  // Check 21 P5: the customer answered in a NEW email (new subject, same address) after the
+  // owner's last message: the old conversation only looks quiet. SQL twin of
+  // `customerWroteElsewhere` (drafts.ts). Compared in SQL only; no address is selected. A
+  // spouse writing from their own address can't be matched — that's the owner's "I called
+  // them" or Discard.
+  const wroteElsewhere = sql`exists (select 1 from messages e join mailboxes eb on eb.id = e.mailbox_id where eb.workspace_id = ${box.workspaceId} and e.thread_id <> ${threads.id} and e.direction = 'in' and ${notDraftSql("e")} and e.auto_reply = false and not ${sideEmailSql("e")} and ${replyAddressSql("e")} = ${customerAddressSql()} and e.sent_at > ${lastOut})`;
 
   const rows = await db()
     .select({ id: threads.id })
@@ -139,6 +147,7 @@ export async function threadsToFollowUp(
         sql`not ${pending}`,
         sql`not ${purposeSent}`,
         sql`not ${saidPaid}`,
+        sql`not ${wroteElsewhere}`,
         // "I called them" (round 2, FW E11): the call answered it, so no nudge.
         sql`not ${answeredByPhoneSql()}`,
         // Ideas H3: sorted under the owner's "Never draft" rule.

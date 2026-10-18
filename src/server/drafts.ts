@@ -129,6 +129,10 @@ import { headerPickIds, toNeedsYouItem } from "./digest-rules";
 import { answeredByPhone } from "./first-week-rules";
 import {
   asDate,
+  customerAddressSql,
+  lastInSql,
+  lastOutSql,
+  quoteThreadSql,
   messageReplyAddress,
   messageReplyName,
   noReplySql,
@@ -212,6 +216,7 @@ export type CreateOutcome =
         | "read_only"
         | "followup_not_allowed"
         | "wait_requested"
+        | "customer_wrote_elsewhere"
         | "customer_replied"
         | "followup_cap"
         | "untrusted"
@@ -522,6 +527,38 @@ async function freshInvoiceAddress(
     )
     .limit(1);
   return known ? to : null;
+}
+
+/**
+ * Check 21 P5: the customer (by reply address) wrote to this business on ANOTHER conversation
+ * after `after` (the owner's last message here): not a side email, an unsent draft or an
+ * auto-reply. A spouse's own address can't be matched; that stays the owner's "I called them"
+ * or Discard. SQL twin in followups.ts (`threadsToFollowUp`). Never logged.
+ */
+async function customerWroteElsewhere(
+  workspaceId: string,
+  threadId: string,
+  address: string,
+  after: Date,
+): Promise<boolean> {
+  const [row] = await db()
+    .select({ id: messages.id })
+    .from(messages)
+    .innerJoin(mailboxes, eq(mailboxes.id, messages.mailboxId))
+    .where(
+      and(
+        eq(mailboxes.workspaceId, workspaceId),
+        ne(messages.threadId, threadId),
+        eq(messages.direction, "in"),
+        eq(messages.autoReply, false),
+        notDraftMessage(),
+        sql`not ${sideEmailSql("messages")}`,
+        sql`${messageReplyAddress()} = ${address.trim().toLowerCase()}`,
+        gt(messages.sentAt, after),
+      ),
+    )
+    .limit(1);
+  return !!row;
 }
 
 export async function followupSettings(workspaceId: string) {
@@ -1044,6 +1081,10 @@ export async function createDraftForThread(
   }
   const to = customer ? customerReplyAddress(customer) : freshTo;
   if (!to) return { status: "skipped", reason: "no_text" };
+  // Check 21 P5: the drafter re-checks what the scan picked — the customer already answered in
+  // a separate email after the owner's last message, so the quote isn't quiet.
+  if (followup && (await customerWroteElsewhere(workspace.id, threadId, to, last.sentAt)))
+    return { status: "skipped", reason: "customer_wrote_elsewhere" };
   // An email-to-text gateway (a form whose Reply-To is 5085551234@vtext.com, a Google Voice
   // text): a reply would text the customer, and Squared Away never texts customers. Not even
   // on the owner's tap — the card offers "Text from my phone" instead (leads package).
@@ -3140,6 +3181,12 @@ export type QueueItem = {
   /** G5: when the owner marked it fixed. */
   complaintFixedAt: Date | null;
   /**
+   * Check 21 P5: this email came from someone with an open quote on another conversation that
+   * the owner answered before it ("Also about your quote from Nov 2"), so both get one answer.
+   * Linked by that conversation's Gmail thread; content-free.
+   */
+  alsoQuote: { gmailThreadId: string; mailboxEmail: string; quotedAt: Date } | null;
+  /**
    * 2026-10-16: its Gmail address is paused on the plan — shown, but nothing is sent, drafted
    * or changed from it (MAILBOX_PAUSED_LINE).
    */
@@ -3436,6 +3483,52 @@ export async function listQueue(
   };
   const who = await senders([...needIds, ...members.drafts.map((m) => m.threadId)]);
 
+  // Check 21 P5: open quotes on OTHER conversations with the same customer, that the owner
+  // answered before this email came in. Newest such quote per address.
+  const itemThreads = new Set([...needIds, ...members.drafts.map((m) => m.threadId)]);
+  const addresses = [
+    ...new Set([...who.values()].map((w) => w.address).filter((a): a is string => !!a)),
+  ];
+  const openQuotes = addresses.length
+    ? await db()
+        .select({
+          id: threads.id,
+          gmailThreadId: threads.gmailThreadId,
+          mailboxId: threads.mailboxId,
+          address: customerAddressSql(),
+          lastIn: lastInSql(),
+          lastOut: lastOutSql(),
+        })
+        .from(threads)
+        .where(
+          and(
+            inArray(threads.mailboxId, boxIds),
+            isNull(threads.quoteOutcome),
+            quoteThreadSql(),
+            sql`${customerAddressSql()} in (${sql.join(
+              addresses.map((a) => sql`${a}`),
+              sql`, `,
+            )})`,
+          ),
+        )
+    : [];
+  const alsoQuoteFor = (threadId: string): QueueItem["alsoQuote"] => {
+    const w = who.get(threadId);
+    if (!w?.address || !w.sentAt) return null;
+    const best = openQuotes
+      .filter((q) => q.id !== threadId && !itemThreads.has(q.id) && q.address === w.address)
+      .map((q) => ({ q, out: asDate(q.lastOut), inn: asDate(q.lastIn) }))
+      .filter((x) => x.out && x.out < w.sentAt! && (!x.inn || x.inn < x.out))
+      .sort((a, b) => b.out!.getTime() - a.out!.getTime())[0];
+    return best
+      ? {
+          gmailThreadId: best.q.gmailThreadId,
+          mailboxEmail: emailOf.get(best.q.mailboxId) ?? "",
+          quotedAt: best.out!,
+        }
+      : null;
+  };
+
   return {
     needsYou: shownNeeds.flatMap((m) => {
       const t = threadById.get(m.threadId);
@@ -3473,6 +3566,7 @@ export async function listQueue(
           lane: m.lane,
           checkIn: m.checkIn,
           complaintFixedAt: t.complaintFixedAt,
+          alsoQuote: alsoQuoteFor(t.id),
           mailboxPaused: pausedBoxes.has(t.mailboxId),
         } satisfies QueueItem,
       ];
@@ -3514,6 +3608,7 @@ export async function listQueue(
           lane: false,
           checkIn: false,
           complaintFixedAt: thread.complaintFixedAt,
+          alsoQuote: draft.kind === "followup" ? null : alsoQuoteFor(thread.id),
           mailboxPaused: pausedBoxes.has(draft.mailboxId),
         } satisfies QueueItem,
       ];
