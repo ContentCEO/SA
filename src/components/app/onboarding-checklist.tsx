@@ -12,6 +12,24 @@ export function OnboardingChecklist({
   dismissAction: () => Promise<void>;
 }) {
   if (!list.show) return null;
+  // Check 9 P13: a finished list takes one line (it hides itself after 3 days).
+  if (list.allDone) {
+    return (
+      <section
+        aria-labelledby="getting-started"
+        className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1"
+      >
+        <h2 id="getting-started" className="font-black">
+          You&apos;re all set up.
+        </h2>
+        <form action={dismissAction}>
+          <Button type="submit" variant="outline" size="sm">
+            Hide
+          </Button>
+        </form>
+      </section>
+    );
+  }
   const next = list.steps.find((s) => !s.done)?.key;
   return (
     <section

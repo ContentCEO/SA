@@ -1,0 +1,1 @@
+ALTER TABLE "business_profile" ADD COLUMN "onboarding_done_at" timestamp with time zone;

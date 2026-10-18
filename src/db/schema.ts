@@ -549,6 +549,11 @@ export const businessProfiles = pgTable("business_profile", {
   neverSay: jsonb("never_say").$type<string[]>().notNull().default([]),
   /** The owner hid the getting-started checklist (only offered once every step is done). */
   onboardingDismissedAt: timestamp("onboarding_dismissed_at", { withTimezone: true }),
+  /**
+   * Check 9 P13: when every getting-started step was first all done (cleared if a step
+   * un-does). The finished list folds to one line, and hides itself 3 days after this.
+   */
+  onboardingDoneAt: timestamp("onboarding_done_at", { withTimezone: true }),
   /** Round 2 (FW D1/D2): the owner hid the "your last 30 days" card on the queue. */
   firstLookHiddenAt: timestamp("first_look_hidden_at", { withTimezone: true }),
   /**
