@@ -12,6 +12,8 @@ export const isQuoteOutcome = (v: unknown): v is QuoteOutcome =>
 
 export const QUOTE_STAGES = [
   "waiting_on_you",
+  // Check 11 P6: the owner answered without a price (a site visit, "I called them").
+  "replied",
   "talking",
   "quiet",
   "won",
@@ -22,6 +24,7 @@ export type QuoteStage = (typeof QUOTE_STAGES)[number];
 
 export const stageLabel: Record<QuoteStage, string> = {
   waiting_on_you: "Waiting on you",
+  replied: "Replied, no price yet",
   talking: "Quoted",
   quiet: "Gone quiet",
   won: "Won",
@@ -38,13 +41,20 @@ export type QuoteFacts = {
   outcome: string | null;
   lastInboundAt: Date | null;
   lastOutboundAt: Date | null;
+  /**
+   * Check 11 P6: the owner gave a price — the quote's amount is known, or an owner email (not a
+   * purpose note, not a draft) has a dollar figure (`ownerQuotedCents`).
+   */
+  priced: boolean;
 };
 
 /**
  * Where a quote stands:
  *  - an outcome (won / lost / no answer — the owner's, or our guess) wins;
  *  - the customer wrote last (or the owner never replied) → waiting on you;
- *  - the owner wrote last, more than `quietDays` ago → gone quiet;
+ *  - the owner wrote last without a price (a site visit, "I called them") → replied, no price
+ *    yet — it never goes quiet (Check 11 P6);
+ *  - the owner wrote last with a price, more than `quietDays` ago → gone quiet;
  *  - otherwise → quoted / talking.
  */
 export function quoteStage(q: QuoteFacts, now: Date, quietDays: number): QuoteStage {
@@ -52,6 +62,7 @@ export function quoteStage(q: QuoteFacts, now: Date, quietDays: number): QuoteSt
   if (!q.lastOutboundAt || (q.lastInboundAt && q.lastInboundAt > q.lastOutboundAt)) {
     return "waiting_on_you";
   }
+  if (!q.priced) return "replied";
   const quietMs = quietDays * 24 * 60 * 60 * 1000;
   return now.getTime() - q.lastOutboundAt.getTime() >= quietMs ? "quiet" : "talking";
 }
@@ -109,14 +120,21 @@ export const NO_ANSWER_WITHOUT_NUDGES_DAYS = 21;
 const NUDGES_BEFORE_NO_ANSWER = 2;
 
 /**
- * Our "no answer" guess for an open quote: the customer wrote at least once,
- * the owner wrote last, and it's been quiet since — a week after two nudges,
- * or three weeks however many were sent. Returns why, or null for no guess.
+ * Our "no answer" guess for an open quote: the owner gave a price (Check 11 P6: a site visit
+ * nobody answered isn't a lost quote), the customer wrote at least once, the owner wrote last,
+ * and it's been quiet since — a week after two nudges, or three weeks however many were sent.
+ * Returns why, or null for no guess.
  */
 export function guessNoAnswer(
-  f: { lastInboundAt: Date | null; lastOutboundAt: Date | null; sentNudges: number },
+  f: {
+    lastInboundAt: Date | null;
+    lastOutboundAt: Date | null;
+    sentNudges: number;
+    priced: boolean;
+  },
   now: Date,
 ): "two_nudges" | "three_weeks" | null {
+  if (!f.priced) return null;
   if (!f.lastInboundAt || !f.lastOutboundAt || f.lastOutboundAt <= f.lastInboundAt) return null;
   const quietDays = (now.getTime() - f.lastOutboundAt.getTime()) / 86_400_000;
   if (f.sentNudges >= NUDGES_BEFORE_NO_ANSWER && quietDays >= NO_ANSWER_AFTER_NUDGES_DAYS)

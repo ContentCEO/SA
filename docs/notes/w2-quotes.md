@@ -53,3 +53,12 @@ For the integrator to fold into CLAUDE.md (Decisions) and the other shared files
   `quote_outcome_at`, exactly `closeRateBetween`'s rows. Labels "Asked for / Priced / Won" with
   "Last 30 days. Won counts the day you marked it (or we guessed it). Amounts come from the price
   in your reply, or what you type." The filter chips say "All time" above them.
+- **Check 11 P6 (a site visit isn't a quote):** `QuoteFacts.priced` (amount known, or an owner
+  email — not a purpose note, not a draft — with a dollar figure via `ownerQuotedCents`). Owner
+  wrote last without a price → new stage `replied`, "Replied, no price yet", in Open; it never
+  goes quiet. `guessNoAnswer` needs `priced`; `guessNoAnswers` pre-filters in SQL (an amount, or
+  an owner email containing "$") and decides with `ownerQuotedCents`. Existing guesses are left
+  alone. "I called them" with no price reads "Replied, no price yet". The /quotes help is now a
+  list, one line per stage. The homepage's stage list (home-copy.ts `stageWords`) switches to
+  semicolons because the new label has a comma: "waiting on you; replied, no price yet; quoted;
+  gone quiet; won; lost; or no answer" (public-site copy; Homepage words group may want to look).

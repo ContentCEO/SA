@@ -175,6 +175,12 @@ export async function listQuotes(workspaceId: string, now: Date = new Date()) {
     .orderBy(desc(threads.lastMessageAt))
     .limit(300);
 
+  // Check 11 P6: priced = an amount is known, or an owner email holds a dollar figure. Only
+  // read for open quotes the owner answered last that have no amount yet.
+  const needPrice = rows
+    .filter((r) => r.outcome == null && r.amountCents == null && r.lastOut != null)
+    .map((r) => r.threadId);
+  const pricedByText = await ownerQuotedCents(needPrice, () => null);
   const quotes: QuoteRow[] = rows.map((r) => ({
     threadId: r.threadId,
     gmailThreadId: r.gmailThreadId,
@@ -184,7 +190,12 @@ export async function listQuotes(workspaceId: string, now: Date = new Date()) {
     summary: r.summary,
     subject: r.subject,
     stage: quoteStage(
-      { outcome: r.outcome, lastInboundAt: asDate(r.lastIn), lastOutboundAt: asDate(r.lastOut) },
+      {
+        outcome: r.outcome,
+        lastInboundAt: asDate(r.lastIn),
+        lastOutboundAt: asDate(r.lastOut),
+        priced: r.amountCents != null || pricedByText.has(r.threadId),
+      },
       now,
       days,
     ),
@@ -468,6 +479,7 @@ export async function guessNoAnswers(
         threadId: threads.id,
         workspace: workspaces,
         source: threads.quoteOutcomeSource,
+        amountCents: threads.quoteAmountCents,
         lastIn,
         lastOut,
         sentNudges,
@@ -486,6 +498,9 @@ export async function guessNoAnswers(
           sql`${threads.quoteOutcomeSource} is distinct from 'owner'`,
           sql`${lastIn} is not null`,
           sql`${lastOut} > ${lastIn}`,
+          // Check 11 P6: only a priced quote — an amount, or an owner email with a "$" figure
+          // in it (`ownerQuotedCents` decides below).
+          sql`(${threads.quoteAmountCents} is not null or exists (select 1 from messages pm where pm.thread_id = ${threads.id} and pm.direction = 'out' and ${notDraftSql("pm")} and pm.body_text like '%$%'))`,
           // Pre-filter on the two bars of `guessNoAnswer` (which still decides below).
           sql`(${lastOut} <= ${ago(NO_ANSWER_WITHOUT_NUDGES_DAYS)}::timestamptz or (${lastOut} <= ${ago(NO_ANSWER_AFTER_NUDGES_DAYS)}::timestamptz and ${sentNudges} >= 2))`,
         ),
@@ -493,12 +508,21 @@ export async function guessNoAnswers(
       .orderBy(threads.id)
       .limit(pageSize);
 
+    const pricedByText = await ownerQuotedCents(
+      rows.filter((r) => r.amountCents == null).map((r) => r.threadId),
+      () => null,
+    );
     for (const r of rows) {
       if (!jobsAllowed(r.workspace, now) || !canAutoSet(null, r.source)) continue;
       const lastOutboundAt = asDate(r.lastOut);
       const nudges = Number(r.sentNudges);
       const why = guessNoAnswer(
-        { lastInboundAt: asDate(r.lastIn), lastOutboundAt, sentNudges: nudges },
+        {
+          lastInboundAt: asDate(r.lastIn),
+          lastOutboundAt,
+          sentNudges: nudges,
+          priced: r.amountCents != null || pricedByText.has(r.threadId),
+        },
         now,
       );
       if (!why || !lastOutboundAt) continue;

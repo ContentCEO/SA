@@ -33,10 +33,12 @@ export const steps = [
   },
 ];
 
-/** "waiting on you, quoted, gone quiet, won, lost or no answer", as the Quotes screen names them. */
+/** "waiting on you; replied, no price yet; quoted; gone quiet; won; lost; or no answer", as the Quotes screen names them. */
 function stageWords(): string {
   const words = QUOTE_STAGES.map((s) => stageLabel[s].toLowerCase());
-  return `${words.slice(0, -1).join(", ")} or ${words[words.length - 1]}`;
+  // "replied, no price yet" has its own comma, so the list then uses semicolons.
+  const sep = words.some((w) => w.includes(",")) ? "; " : ", ";
+  return `${words.slice(0, -1).join(sep)}${sep === "; " ? "; or " : " or "}${words[words.length - 1]}`;
 }
 
 /**

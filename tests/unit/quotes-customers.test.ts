@@ -36,6 +36,7 @@ import {
   quoteAccepted,
   quoteStage,
   readOwnerAmount,
+  stageLabel,
 } from "@/server/quote-rules";
 import {
   autoSetQuoteOutcome,
@@ -59,6 +60,7 @@ describe("quote rules", () => {
     outcome: null,
     lastInboundAt: daysAgo(5),
     lastOutboundAt: null,
+    priced: true,
     ...o,
   });
   it("works out where each quote stands", () => {
@@ -77,11 +79,37 @@ describe("quote rules", () => {
     expect(quoteStage(f({ outcome: "maybe" }), NOW, 3)).toBe("waiting_on_you");
   });
 
+  it("Check 11 P6: no price given → 'Replied, no price yet', which never goes quiet", () => {
+    const unpriced = (o: Partial<Parameters<typeof quoteStage>[0]>) => f({ priced: false, ...o });
+    expect(quoteStage(unpriced({ lastOutboundAt: daysAgo(1) }), NOW, 3)).toBe("replied");
+    expect(
+      quoteStage(unpriced({ lastOutboundAt: daysAgo(30), lastInboundAt: daysAgo(31) }), NOW, 3),
+    ).toBe("replied");
+    // The customer wrote last, or it's decided: the price doesn't matter.
+    expect(quoteStage(unpriced({}), NOW, 3)).toBe("waiting_on_you");
+    expect(
+      quoteStage(unpriced({ lastOutboundAt: daysAgo(4), lastInboundAt: daysAgo(1) }), NOW, 3),
+    ).toBe("waiting_on_you");
+    expect(quoteStage(unpriced({ outcome: "won" }), NOW, 3)).toBe("won");
+    // Priced: Quoted, then Gone quiet.
+    expect(quoteStage(f({ lastOutboundAt: daysAgo(1) }), NOW, 3)).toBe("talking");
+    expect(quoteStage(f({ lastOutboundAt: daysAgo(4) }), NOW, 3)).toBe("quiet");
+    expect(stageLabel.replied).toBe("Replied, no price yet");
+    // Never a no-answer guess without a price.
+    expect(
+      guessNoAnswer(
+        { lastInboundAt: daysAgo(30), lastOutboundAt: daysAgo(25), sentNudges: 2, priced: false },
+        NOW,
+      ),
+    ).toBeNull();
+  });
+
   it("guesses no answer a week after two nudges, or after three quiet weeks", () => {
     const q = (outAgo: number, sentNudges: number, inAgo = outAgo + 2) => ({
       lastInboundAt: daysAgo(inAgo),
       lastOutboundAt: daysAgo(outAgo),
       sentNudges,
+      priced: true,
     });
     expect(guessNoAnswer(q(7, 2), NOW)).toBe("two_nudges");
     expect(guessNoAnswer(q(6, 2), NOW)).toBeNull();
@@ -93,11 +121,17 @@ describe("quote rules", () => {
     expect(guessNoAnswer(q(30, 2, 1), NOW)).toBeNull();
     // The customer never wrote → nobody to have answered.
     expect(
-      guessNoAnswer({ lastInboundAt: null, lastOutboundAt: daysAgo(30), sentNudges: 2 }, NOW),
+      guessNoAnswer(
+        { lastInboundAt: null, lastOutboundAt: daysAgo(30), sentNudges: 2, priced: true },
+        NOW,
+      ),
     ).toBeNull();
     // The owner never wrote → no quote was given.
     expect(
-      guessNoAnswer({ lastInboundAt: daysAgo(30), lastOutboundAt: null, sentNudges: 0 }, NOW),
+      guessNoAnswer(
+        { lastInboundAt: daysAgo(30), lastOutboundAt: null, sentNudges: 0, priced: true },
+        NOW,
+      ),
     ).toBeNull();
   });
 
@@ -638,6 +672,43 @@ describe("quote tracker", () => {
     expect(activity).toMatchObject({ won: totals.wonCount, ratePct: totals.winRatePct });
   });
 
+  describe("Check 11 P6: a site visit is not a quote", () => {
+    it("a reply with no price reads 'Replied, no price yet' and is never guessed no answer", async () => {
+      const visit = await convo({
+        from: "v@x.com",
+        name: "Visit",
+        category: "quote_request",
+        inAgo: 23,
+        outAgo: 22,
+        reply: "I can come take a look Tuesday at 10.",
+      });
+      const priced = await convo({
+        from: "p@x.com",
+        name: "Priced",
+        category: "quote_request",
+        inAgo: 23,
+        outAgo: 22,
+        reply: "That's $1,800 for the job.",
+      });
+      expect(await guessNoAnswers(NOW)).toBe(1);
+      const by = Object.fromEntries(
+        (await listQuotes(workspaceId, NOW)).quotes.map((q) => [q.threadId, q]),
+      );
+      expect(by[visit]).toMatchObject({ stage: "replied", outcomeGuessed: false });
+      expect(by[priced]).toMatchObject({ stage: "no_answer", outcomeGuessed: true });
+      expect((await listQuotes(workspaceId, NOW)).totals.winRatePct).toBe(0);
+    });
+
+    it("'I called them' with no price gives 'Replied, no price yet'", async () => {
+      const t = await convo({ from: "c@x.com", name: "Call", category: "quote_request", inAgo: 5 });
+      await database
+        .update(threads)
+        .set({ handledOfflineAt: daysAgo(4) })
+        .where(eq(threads.id, t));
+      expect((await listQuotes(workspaceId, NOW)).quotes[0]).toMatchObject({ stage: "replied" });
+    });
+  });
+
   it("an unsent Gmail draft is neither the owner's answer nor a price (stage, amount)", async () => {
     const t = await convo({
       from: "dana@x.com",
@@ -677,14 +748,16 @@ describe("quote tracker", () => {
       category: "quote_request",
       inAgo: 10,
       outAgo: 9,
+      reply: "$800 for the job.",
     });
-    // Answered 25 days ago, never heard back: listQuotes guesses no answer.
+    // Priced 25 days ago, never heard back: listQuotes guesses no answer.
     const quiet = await convo({
       from: "kim@z.com",
       name: "Kim",
       category: "quote_request",
       inAgo: 26,
       outAgo: 25,
+      reply: "That's $1,900.",
     });
     await setQuoteOutcome(workspaceId, won, "won", undefined, NOW);
     const { quotes, totals } = await listQuotes(workspaceId, NOW);

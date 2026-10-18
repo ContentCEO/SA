@@ -35,7 +35,7 @@ const FILTERS = [
   ["no_answer", "No answer"],
 ] as const;
 type Filter = (typeof FILTERS)[number][0];
-const OPEN: QuoteStage[] = ["waiting_on_you", "talking", "quiet"];
+const OPEN: QuoteStage[] = ["waiting_on_you", "replied", "talking", "quiet"];
 
 const done: Record<string, string> = {
   won: "Marked won. Nice one.",
@@ -316,12 +316,22 @@ export default async function QuotesPage(props: PageProps<"/quotes">) {
             : "No quote requests yet. When a customer asks for a price, it shows up here by itself."}
         </p>
       )}
-      <p className="text-sm text-muted-foreground">
-        &ldquo;Gone quiet&rdquo; means you replied {quietDays}+ days ago and haven&apos;t heard
-        back. &ldquo;No answer&rdquo; can be our guess: a week after two follow-ups, or three quiet
-        weeks. &ldquo;Won&rdquo; can be our guess too, when the customer says go ahead. Change
-        either with one tap.
-      </p>
+      {/* Check 11 P6 / P9: every stage on the screen, one short line each. */}
+      <ul
+        aria-label="What the stages mean"
+        className="flex flex-col gap-1 text-sm text-muted-foreground"
+      >
+        <li>Waiting on you: the customer wrote last.</li>
+        <li>Replied, no price yet: you answered but didn&apos;t give a price (a visit, a call).</li>
+        <li>Quoted: you sent a price.</li>
+        <li>Gone quiet: you sent a price {quietDays}+ days ago and haven&apos;t heard back.</li>
+        <li>
+          No answer: can be our guess, a week after two follow-ups or three quiet weeks after your
+          price.
+        </li>
+        <li>Won: can be our guess too, when the customer says go ahead.</li>
+        <li>Lost: you marked it lost. Change any of these with one tap.</li>
+      </ul>
     </>
   );
 }
