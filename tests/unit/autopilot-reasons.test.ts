@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  AUTOPILOT_NEVER_LINES,
+  AUTOPILOT_WHEN_LINES,
   autopilotWaitLine,
   GUARDRAIL_CODES,
   GUARDRAIL_LINES,
@@ -62,5 +64,34 @@ describe("autopilot reason codes (Check 20 P7)", () => {
     );
     expect(autopilotWaitLine("Scheduling", null)).toBeNull();
     expect(autopilotWaitLine("Scheduling", ["junk"])).toBeNull();
+  });
+});
+
+describe("Settings → Autopilot lines (Check 20 P6)", () => {
+  const lines = [...AUTOPILOT_WHEN_LINES, ...AUTOPILOT_NEVER_LINES];
+  it("every guardrail has exactly one Settings line (add a line with every new rule)", () => {
+    for (const c of GUARDRAIL_CODES) {
+      expect(
+        lines.filter((l) => l.codes.includes(c)).map((l) => l.text),
+        c,
+      ).toHaveLength(1);
+    }
+  });
+  it("every run reason a stand-down can give is explained too", () => {
+    for (const c of RUN_CODES)
+      expect(
+        lines.some((l) => l.codes.includes(c)),
+        c,
+      ).toBe(true);
+  });
+  it("says the money rule truthfully, with the cap and the window", () => {
+    const text = lines.map((l) => l.text).join("\n");
+    expect(text).not.toMatch(/anything about money/i);
+    expect(text).toContain("No price or amount anywhere in the reply.");
+    expect(text).toContain(
+      'For Invoices & payments: only when the email has no amount, like "Did you get my check?"',
+    );
+    expect(text).toContain("At most 20 in any 24 hours.");
+    expect(text).toContain("Each one waits 10 minutes in your queue with Hold it.");
   });
 });

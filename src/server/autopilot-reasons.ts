@@ -3,7 +3,13 @@
  * stored (drafts.autopilot_skip) and logged (autopilot_skipped / autopilot_stood_down):
  * they are fixed words chosen here, never email text. Pure: no database, no server-only.
  */
-import { DAILY_AUTOPILOT_CAP, MIN_CONFIDENCE_PCT } from "@/config/rules";
+import { categoryLabels } from "@/config/categories";
+import {
+  DAILY_AUTOPILOT_CAP,
+  EARN_THRESHOLD,
+  GRACE_MINUTES,
+  MIN_CONFIDENCE_PCT,
+} from "@/config/rules";
 
 /** Per-email guardrails (layer 3), in the order guardrailReasons checks them. */
 export const GUARDRAIL_CODES = [
@@ -157,3 +163,86 @@ export function autopilotWaitLine(kindLabel: string, raw: unknown): string | nul
   if (!first) return null;
   return `Autopilot is on for ${kindLabel.toLowerCase()}, but this one waits: ${REASON_PHRASES[first]}.`;
 }
+
+/**
+ * Check 20 P6: Settings → Autopilot, one rule per line, generated from the same codes the
+ * guardrails use so the screen can't drift from the code. Every GuardrailCode must appear in
+ * exactly one line (tested); run codes appear where the owner would expect them.
+ */
+export type SettingsLine = { text: string; codes: readonly AutopilotReasonCode[] };
+
+/** "It sends on its own only when all of these are true:" */
+export const AUTOPILOT_WHEN_LINES: readonly SettingsLine[] = [
+  {
+    text: `You turned it on for that kind of email, after ${EARN_THRESHOLD} replies you sent without changing them.`,
+    codes: ["autopilot_off", "account_locked", "mailbox_paused", "cant_send"],
+  },
+  { text: "You've written to this person before.", codes: ["not_known"] },
+  {
+    text: "It goes to the address the email came from.",
+    codes: ["redirected", "reply_to_unchecked"],
+  },
+  { text: `It's at least ${MIN_CONFIDENCE_PCT}% sure of the reply.`, codes: ["low_confidence"] },
+  { text: "Nothing to check and no gaps to fill in.", codes: ["flags", "gaps"] },
+  { text: "No price or amount anywhere in the reply.", codes: ["money"] },
+  {
+    text: `For ${categoryLabels.invoice_payment}: only when the email has no amount, like "Did you get my check?"`,
+    codes: ["invoice_amount"],
+  },
+  { text: "The email and the reply are in English.", codes: ["other_language"] },
+  { text: "Nobody new is on the conversation.", codes: ["new_person"] },
+  {
+    text: "No newer mail came in, and you're not writing a reply in Gmail.",
+    codes: ["newer_mail", "writing_in_gmail", "maybe_answered"],
+  },
+  { text: "Its day and time words still make sense when it goes.", codes: ["stale_timing"] },
+  { text: `At most ${DAILY_AUTOPILOT_CAP} in any 24 hours.`, codes: ["daily_cap"] },
+  {
+    text: `Each one waits ${GRACE_MINUTES} minutes in your queue with Hold it.`,
+    codes: [],
+  },
+];
+
+/** "It never sends:" */
+export const AUTOPILOT_NEVER_LINES: readonly SettingsLine[] = [
+  { text: "Complaints or junk.", codes: ["other_kind"] },
+  { text: "Anything flagged as needing you.", codes: ["needs_owner"] },
+  { text: "Follow-ups.", codes: ["followup"] },
+  { text: "First replies to new customers.", codes: ["first_reply"] },
+  { text: "Replies to someone accepting a quote.", codes: ["accepts_quote"] },
+  { text: "Deposit, review, thank-you or closing notes.", codes: ["purpose"] },
+  {
+    text: "Replies to anyone who complained in the last 12 months.",
+    codes: ["complained"],
+  },
+  { text: "Emails asking to pay a new account.", codes: ["payment_change"] },
+  {
+    text: "Anything with a lawyer, a lien or small claims in the conversation.",
+    codes: ["legal"],
+  },
+  {
+    text: "A gas smell, a carbon monoxide alarm or an electrical fire risk.",
+    codes: ["gas", "co_alarm", "electrical"],
+  },
+  {
+    text: "Anything on a conversation with an emergency in the last 2 days.",
+    codes: ["recent_emergency"],
+  },
+  { text: "Emails from building departments.", codes: ["municipal"] },
+  { text: "Emails that try to give the assistant instructions.", codes: ["untrusted"] },
+  {
+    text: "Anything on a conversation you said was normal after we flagged it, for 30 days.",
+    codes: ["injection_cleared"],
+  },
+  {
+    text: "Replies when someone asks if a person is answering.",
+    codes: ["asks_if_ai"],
+  },
+  { text: "Emails you moved to a different kind yourself.", codes: ["owner_moved"] },
+  { text: "Lead-site, voicemail or text-message emails.", codes: ["lead_channel"] },
+  {
+    text: "Replies to an address that may turn into a text message.",
+    codes: ["text_address"],
+  },
+  { text: "Replies to an email we can no longer read.", codes: ["unreadable"] },
+];

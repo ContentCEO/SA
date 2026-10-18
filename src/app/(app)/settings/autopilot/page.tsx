@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Button } from "@/components/ui/button";
 import { categoryLabels } from "@/config/categories";
 import { autopilotState, EARN_THRESHOLD, GRACE_MINUTES } from "@/server/autopilot";
+import { AUTOPILOT_NEVER_LINES, AUTOPILOT_WHEN_LINES } from "@/server/autopilot-reasons";
 import { requireOwner } from "@/server/session";
 import { setAutopilotAction } from "../profile-actions";
 import { SettingsScreen } from "../screen";
@@ -19,11 +20,25 @@ export default async function AutopilotSettingsPage(props: PageProps<"/settings/
         </h2>
         <p className="text-muted-foreground">
           Lets Squared Away send replies on its own for the kinds of email you choose. Off until you
-          turn it on. Even then, it never sends complaints, anything about money, anything flagged
-          for you, follow-ups, replies to people you haven&apos;t written to before, or replies that
-          go to a different address than the email came from (as a website form&apos;s do) — and
-          each one waits {GRACE_MINUTES} minutes in your queue so you can hold it.
+          turn it on.
         </p>
+        {/* Check 20 P6: one rule per line, from the same codes the guardrails use. */}
+        <div className="flex flex-col gap-1">
+          <p className="font-semibold">It sends on its own only when all of these are true:</p>
+          <ul className="flex list-disc flex-col gap-1 pl-5">
+            {AUTOPILOT_WHEN_LINES.map((l) => (
+              <li key={l.text}>{l.text}</li>
+            ))}
+          </ul>
+        </div>
+        <div className="flex flex-col gap-1">
+          <p className="font-semibold">It never sends:</p>
+          <ul className="flex list-disc flex-col gap-1 pl-5">
+            {AUTOPILOT_NEVER_LINES.map((l) => (
+              <li key={l.text}>{l.text}</li>
+            ))}
+          </ul>
+        </div>
         {autopilot.lockedReason ? (
           <p className="sa-inverted rounded-lg px-4 py-3 font-semibold">{autopilot.lockedReason}</p>
         ) : (
