@@ -27,10 +27,14 @@ export function scrubJobError(err: unknown): unknown {
   let e: unknown = err;
   while (e instanceof Error && !seen.has(e)) {
     seen.add(e);
-    e.message = scrubText(e.message) ?? "";
-    if (e.stack) e.stack = scrubText(e.stack);
-    // DrizzleQueryError keeps its bound values on the error too.
-    if ("params" in e) delete (e as { params?: unknown }).params;
+    try {
+      e.message = scrubText(e.message) ?? "";
+      if (e.stack) e.stack = scrubText(e.stack);
+      // DrizzleQueryError keeps its bound values on the error too.
+      if ("params" in e) delete (e as { params?: unknown }).params;
+    } catch {
+      // A read-only message (a getter, a frozen error): leave it; Sentry's scrub still runs.
+    }
     e = e.cause;
   }
   return err;

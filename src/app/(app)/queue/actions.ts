@@ -25,7 +25,7 @@ import { isSnoozeChoice } from "@/server/snooze-rules";
 import { practiceSend } from "@/server/practice";
 import { snoozeThread } from "@/server/snooze";
 import { ReadOnlyError, SendingBlockedError } from "@/server/lifecycle";
-import { DRAFT_LIMIT_ERROR, draftLimitUntil } from "@/server/draft-limit-rules";
+import { draftLimitUntil } from "@/server/draft-limit-rules";
 import { hitLimit } from "@/server/rate-limit";
 import { dismissChecklist } from "@/server/onboarding";
 import { requireOwner } from "@/server/session";
@@ -404,7 +404,7 @@ export async function draftReplyAction(formData: FormData) {
   }
   if (r.status === "reconnect_needed") redirect(`/queue?error=reconnect${at(threadId.data)}`);
   if (r.reason === "rate_limited")
-    redirect(`/queue?error=${DRAFT_LIMIT_ERROR}&until=${draftLimitUntil(tap.retryAfterSec)}`);
+    redirect(`/queue?error=draft_limit&until=${draftLimitUntil(tap.retryAfterSec)}`);
   const reasons: Record<string, string> = {
     already_pending: "exists",
     owner_replied_last: "replied",

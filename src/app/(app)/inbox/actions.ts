@@ -6,7 +6,7 @@ import { z } from "zod";
 import { markNeedsOwner } from "@/server/classification";
 import { isTemporaryAiFailure } from "@/ai/client";
 import { createDraftForThread, type OwnerPurpose } from "@/server/drafts";
-import { DRAFT_LIMIT_ERROR, draftLimitUntil } from "@/server/draft-limit-rules";
+import { draftLimitUntil } from "@/server/draft-limit-rules";
 import { hitLimit } from "@/server/rate-limit";
 import { requireOwner } from "@/server/session";
 import { isCategory } from "@/config/categories";
@@ -103,7 +103,7 @@ async function askFor(purpose: OwnerPurpose, formData: FormData): Promise<never>
   if (r.status === "reconnect_needed") redirect("/queue?error=reconnect");
   if (purpose === "thank_you" && r.reason === "already_asked") redirect("/queue?error=thanked");
   if (r.reason === "rate_limited")
-    redirect(`/queue?error=${DRAFT_LIMIT_ERROR}&until=${draftLimitUntil(tap.retryAfterSec)}`);
+    redirect(`/queue?error=draft_limit&until=${draftLimitUntil(tap.retryAfterSec)}`);
   redirect(`/queue?error=${OFFER_ERRORS[r.reason] ?? "draftfailed"}`);
 }
 

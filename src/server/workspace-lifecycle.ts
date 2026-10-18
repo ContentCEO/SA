@@ -12,7 +12,7 @@ import {
   type Workspace,
 } from "@/db/schema";
 import { isAdminEmail } from "./admin";
-import { signOutEverywhere } from "./accounts";
+import { signOutEverywhere } from "./sign-out-everywhere";
 import {
   canMakeMove,
   effectiveStatus,

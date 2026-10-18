@@ -5,7 +5,7 @@ import { z } from "zod";
 import { enqueue, foundMoneyDraftsRequested } from "@/jobs/client";
 import { claimFoundMoneyDrafts, hideFirstLook, markAnsweredByPhone } from "@/server/first-week";
 import { ReadOnlyError } from "@/server/lifecycle";
-import { DRAFT_LIMIT_ERROR, draftLimitUntil } from "@/server/draft-limit-rules";
+import { draftLimitUntil } from "@/server/draft-limit-rules";
 import { hitLimit } from "@/server/rate-limit";
 import { requireOwner } from "@/server/session";
 
@@ -47,7 +47,7 @@ export async function foundMoneyDraftsAction() {
   // Check 40 P3: one tap starts a batch of drafts, so it counts here, before the job is queued.
   const limit = await hitLimit("draft", workspace.id);
   if (!limit.allowed)
-    redirect(`/queue?error=${DRAFT_LIMIT_ERROR}&until=${draftLimitUntil(limit.retryAfterSec)}`);
+    redirect(`/queue?error=draft_limit&until=${draftLimitUntil(limit.retryAfterSec)}`);
   let found;
   try {
     found = await claimFoundMoneyDrafts(workspace);

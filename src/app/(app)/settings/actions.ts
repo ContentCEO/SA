@@ -7,7 +7,7 @@ import { z } from "zod";
 import { signOut } from "@/auth";
 import { createGmailConnector } from "@/mailbox/gmail/connector";
 import { deleteAccount, SubscriptionCancelError } from "@/server/account-deletion";
-import { signOutEverywhere } from "@/server/accounts";
+import { signOutEverywhere } from "@/server/sign-out-everywhere";
 import { disconnectMailbox } from "@/server/mailboxes";
 import { hitLimit } from "@/server/rate-limit";
 import { deleteConfirmed, DELETE_RECENT_SIGN_IN_MINUTES } from "@/server/account-deletion-rules";
