@@ -2,7 +2,13 @@ import { randomBytes } from "node:crypto";
 import { beforeEach, describe, expect, it } from "vitest";
 import { classifyEmail } from "@/ai/classify";
 import { setModelTransportForTests } from "@/ai/client";
-import { INJECTION_REASON, injectionCheck, looksMunicipal } from "@/ai/guards";
+import {
+  INJECTION_REASON,
+  injectionCheck,
+  looksMunicipal,
+  MUNICIPAL_NAME_ONLY_CAUTION,
+  readMunicipal,
+} from "@/ai/guards";
 import { emailBlock } from "@/ai/prompts/classify.v5";
 import { conversationBlock } from "@/ai/prompts/draft.v6";
 import { untrusted } from "@/ai/prompts/untrusted";
@@ -88,7 +94,8 @@ describe("building departments (#17)", () => {
     ["inspections@westfordma.gov", null],
     ["permits@ci.lowell.ma.us", null],
     ["clerk@townofacton.org", null],
-    ["jsmith@gmail.com", "Town of Acton Building Department"],
+    // Check 22 P8: a name alone counts from an ordinary domain; from gmail.com it's a caution.
+    ["jsmith@acton-example.org", "Town of Acton Building Department"],
     ["noreply@x.com", "Inspectional Services"],
   ])("recognises %s / %s", (addr, name) => {
     expect(looksMunicipal(addr, name)).toBe(true);
@@ -99,6 +106,138 @@ describe("building departments (#17)", () => {
     ["news@govdeals.com", "GovDeals"],
   ])("not %s", (addr, name) => {
     expect(looksMunicipal(addr, name)).toBe(false);
+  });
+});
+
+describe("Check 22 P8: companies named like town offices", () => {
+  it.each([
+    ["info@pvbi-example.com", "Pioneer Valley Building Inspections"],
+    ["sales@nefp-example.com", "Northeast Fire Prevention Co."],
+    ["office@example.com", "Example Development Services LLC"],
+    ["office@example.com", "Smith Plumbing Inspector & Sons"],
+  ])("not the town: %s / %s", (addr, name) => {
+    expect(looksMunicipal(addr, name)).toBe(false);
+  });
+  it.each([
+    ["wires@example.org", "Inspector of Wires"],
+    ["health@example.org", "Board of Health"],
+    ["no-reply@opengov.com", "City of Lowell via OpenGov"],
+    ["building@town.acton.ma.us", "Town of Acton Building Dept"],
+  ])("the town: %s / %s", (addr, name) => {
+    expect(looksMunicipal(addr, name)).toBe(true);
+  });
+  it("a town office name from a personal address is a caution, not the town", () => {
+    expect(readMunicipal("actonbuilding@gmail.com", "Acton Building Dept")).toEqual({
+      municipal: false,
+      nameOnlyWebmail: true,
+    });
+    expect(MUNICIPAL_NAME_ONLY_CAUTION).toMatch(/personal address/);
+    // A real town domain is never a caution.
+    expect(readMunicipal("b@acton.ma.us", "Acton Building Dept").nameOnlyWebmail).toBe(false);
+  });
+});
+
+describe("Check 36 P5: water and sewer offices", () => {
+  it.each([
+    ["crossconnection@examplewaterdistrict.org", "Example Water District Cross Connection Program"],
+    ["water@examplewaterdept.org", "Town Water Department"],
+    ["backflow@exampletown.org", "DPW Water Division"],
+    ["dpw@exampletown.com", "Department of Public Works"],
+    ["billing@examplewater.com", "Water & Sewer Commission"],
+  ])("the town: %s / %s", (addr, name) => {
+    expect(looksMunicipal(addr, name)).toBe(true);
+  });
+  it.each([
+    ["sales@abcwater-example.com", "ABC Water Heaters"],
+    ["office@exampleplumbing.com", "Example Plumbing & Drain"],
+    ["info@examplebackflow.com", "Example Backflow Testing LLC"],
+  ])("not the town: %s / %s", (addr, name) => {
+    expect(looksMunicipal(addr, name)).toBe(false);
+  });
+});
+
+describe("Check 37 P6: permit portals by subject", () => {
+  it.each([
+    ["notifications@opengov.com", "OpenGov Notifications"],
+    ["notifications@permiteyes.us", "PermitEyes"],
+  ])("%s with an inspection subject is the town", (addr, name) => {
+    expect(looksMunicipal(addr, name, "Inspection scheduled: Electrical Final")).toBe(true);
+    expect(looksMunicipal(addr, name)).toBe(false);
+  });
+  it.each([
+    ["marketing@opengov.com", "OpenGov Events Team"],
+    ["hello@permiteyes.us", "The PermitEyes Team"],
+  ])("%s marketing is not the town", (addr, name) => {
+    expect(looksMunicipal(addr, name, "Join our webinar")).toBe(false);
+    expect(looksMunicipal(addr, name, "Join our webinar: faster permit reviews")).toBe(false);
+  });
+});
+
+describe("Check 40 P7: public works and dumpster permits", () => {
+  it.each([
+    ["dpw@exampletown.org", "DPW Street Opening Permits"],
+    ["notices@permits-example.com", "Dumpster Permit - City of Lowell"],
+    ["notices@example.org", "Street Occupancy Permit - Town of Dracut"],
+    ["row@example.org", "City Right of Way Permits"],
+  ])("the town: %s / %s", (addr, name) => {
+    expect(looksMunicipal(addr, name)).toBe(true);
+  });
+  it.each([
+    ["sales@example.com", "Public Works Supply Co."],
+    ["sales@example.com", "Public Works Supply"],
+    ["sales@example.com", "City Roofing Supply"],
+    ["sales@example.com", "Dumpster Permit Express"],
+  ])("not the town: %s / %s", (addr, name) => {
+    expect(looksMunicipal(addr, name)).toBe(false);
+  });
+});
+
+describe("Check 44 P4: towns on .org addresses", () => {
+  it.each([
+    ["jsmith@littletonma.org", "Jane Smith"],
+    ["jmarsette@sherbornma.org", "J. Marsette"],
+    ["buildings@littletonma.org", null],
+  ])("the town: %s", (addr, name) => {
+    expect(looksMunicipal(addr, name)).toBe(true);
+  });
+  it.each([
+    ["jsmith@littletonmarketing.org", "Jane Smith"],
+    ["jsmith@pizzama.com", "Jane Smith"],
+    ["jsmith@notlittletonma.org", "Jane Smith"],
+  ])("not the town: %s", (addr, name) => {
+    expect(looksMunicipal(addr, name)).toBe(false);
+  });
+});
+
+describe("Check 45 P3: Sun Belt and West Coast building offices", () => {
+  it.each([
+    "Department of Building and Safety",
+    "Building and Safety",
+    "Development Services Department",
+    "Development Services",
+    "Building Services Division",
+    "Building Safety Division",
+    "Permits and Inspections",
+    "Planning & Development Department",
+    "Planning and Development Services",
+    "Community Development Department",
+    "Code Compliance",
+    "Building & Zoning",
+    "Permitting Services",
+  ])("the town: %s", (name) => {
+    expect(looksMunicipal("notices@county-example.org", name)).toBe(true);
+  });
+  it("MGO Connect sending for a city", () => {
+    expect(looksMunicipal("noreply@mgoconnect.org", "City of Irving via MGO")).toBe(true);
+  });
+  it.each([
+    "Safety Glass Supply",
+    "Development Team at Acme Software",
+    "Code Academy",
+    "Community Bank",
+    "Planning Your Kitchen newsletter",
+  ])("not the town: %s", (name) => {
+    expect(looksMunicipal("notices@county-example.org", name)).toBe(false);
   });
 });
 
@@ -158,6 +297,18 @@ describe("classifyEmail with guards", () => {
     expect(r.category).not.toBe("noise");
     expect(r.priority).not.toBe("low");
     expect(r.extracted.municipal).toBe(true);
+  });
+
+  it("Check 22 P8: a town name from gmail.com is stored as a caution, not the town", async () => {
+    setModelTransportForTests(fakeTransport([classification()]).transport);
+    const r = await classifyEmail(
+      workspaceId,
+      business,
+      email({ fromAddress: "actonbuilding@gmail.com", fromName: "Acton Building Dept" }),
+      { senderIsVip: false },
+    );
+    expect(r.extracted.municipal).toBeUndefined();
+    expect(r.extracted.municipal_name_only).toBe(true);
   });
 
   const permit = (

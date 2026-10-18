@@ -1,6 +1,8 @@
 /**
  * Checks in code that don't trust the model (feature plan #17, #42; review round 2). Pure.
  */
+import { MUNICIPAL_EMAIL_DOMAINS } from "@/config/municipal-domains";
+import { PUBLIC_WEBMAIL_DOMAINS } from "@/server/sender-rules";
 
 /**
  * Check 48 P1 + Check 43 P2: phrases that only ADDRESS the assistant ("Dear AI assistant:",
@@ -457,12 +459,83 @@ export function mentionsLegalThreat(text: string | null | undefined): boolean {
 /**
  * Town, city or county building departments, permit offices and inspectors, and every other
  * town office a contractor hears from (review TW A5): wire, plumbing and gas inspectors, fire
- * prevention, boards of health, conservation and historic commissions, and the permit portals
- * that send on a town's behalf. The model's signal is the main source; this catches the
- * obvious senders.
+ * prevention, boards of health, conservation and historic commissions, water and sewer offices
+ * (Check 36 P5), public works (Check 40 P7), Sun Belt and West Coast building office names
+ * (Check 45 P3), and the permit portals that send on a town's behalf. The model's signal is the
+ * main source; this catches the obvious senders.
+ *
+ * Every phrase is a whole-phrase match on the sender's display name (lower-cased).
  */
-const MUNICIPAL_NAME =
-  /\b(building (dept|department|division|inspector|inspectors|inspections?|official|commissioner)|permit(ting)? (office|center|dept|department|desk|portal)|code enforcement|inspectional services|(inspector|inspection) of (wires|wiring|buildings)|wir(e|ing) inspector|electrical inspector|plumbing (and|&) gas inspector|plumbing inspector|gas inspector|fire prevention|fire marshal|board of health|health (dept|department)|conservation (commission|agent|office)|historic(al)? (district )?commission|zoning (board|office|enforcement|administrator)|planning (board|department|office))\b|^(town|city|county|village|borough|township) of [a-z .'-]+$|\b(town|city|county|village|borough|township) of [a-z.'-]+( [a-z.'-]+)? (via|permits?|building|inspections?)\b/;
+const MUNICIPAL_PHRASES = [
+  "building (dept|department|division|inspector|inspectors|official|commissioner)",
+  "permit(ting)? (office|center|dept|department|desk|portal)",
+  "code enforcement",
+  "inspectional services",
+  "(inspector|inspection) of (wires|wiring|buildings)",
+  "wir(e|ing) inspector",
+  "electrical inspector",
+  "plumbing (and|&) gas inspector",
+  "plumbing inspector",
+  "gas inspector",
+  "fire prevention",
+  "fire marshal",
+  "board of health",
+  "health (dept|department)",
+  "conservation (commission|agent|office)",
+  "historic(al)? (district )?commission",
+  "zoning (board|office|enforcement|administrator)",
+  "planning (board|department|office)",
+  // Check 36 P5: the water side of town hall (backflow test notices, shutoffs, sewer permits).
+  "water (department|dept|division|district|commission|board|works)",
+  "(department|dept) of public works",
+  "dpw",
+  "public works (department|dept|division)",
+  "sewer (department|dept|division|commission)",
+  "water (and|&) sewer",
+  "cross[- ]connection( control)?( program)?",
+  "backflow (program|prevention program|office)",
+  // Check 45 P3: building office names used in the South and West.
+  "building (and|&) safety",
+  "building safety (division|department)",
+  "building services (division|department)",
+  "development services( department| center)?",
+  "permits? (and|&) inspections",
+  "planning (and|&) development( department| services)?",
+  "community development (department|dept)",
+  "code compliance",
+  "building (and|&) zoning",
+  "permitting services",
+];
+const TOWN_WORDS = "town|city|county|village|borough|township";
+/** "Town of Acton", "City of Lowell via OpenGov", "Dumpster Permit - City of Lowell" (Check 40 P7). */
+const MUNICIPAL_SHAPES = [
+  `^(${TOWN_WORDS}) of [a-z .'-]+$`,
+  `\\b(${TOWN_WORDS}) of [a-z.'-]+( [a-z.'-]+)? (via|permits?|building|inspections?)\\b`,
+  `\\s[-–—|:]\\s*(${TOWN_WORDS}) of [a-z.'-]+( [a-z.'-]+)?$`,
+];
+const MUNICIPAL_NAME = new RegExp(
+  [`\\b(${MUNICIPAL_PHRASES.join("|")})\\b`, ...MUNICIPAL_SHAPES].join("|"),
+);
+const MUNICIPAL_NAME_ALL = new RegExp(MUNICIPAL_NAME.source, "g");
+
+/**
+ * Words a private company also uses ("Pioneer Valley Building Inspections", "Public Works
+ * Supply", "Dumpster Permit Express"): they count only next to "town", "city" or "county", or
+ * with "DPW" / "Department of Public Works" (Check 22 P8, Check 40 P7).
+ */
+const TOWN_TIED = new RegExp(
+  `\\b(building inspections?|public works|street (opening|obstruction|occupancy) permits?|dumpster permits?|right[- ]of[- ]way permits?)\\b`,
+);
+const TOWN_TIED_ALL = new RegExp(TOWN_TIED.source, "g");
+const TOWN_WORD = new RegExp(`\\b(${TOWN_WORDS})\\b|\\bdpw\\b|\\bdepartment of public works\\b`);
+
+/**
+ * Check 22 P8: a company merely named like a town office ("Northeast Fire Prevention Co.",
+ * "Example Development Services LLC"). Looked for in the name with the town-office words taken
+ * out, so "Inspectional Services" and "Development Services" still count.
+ */
+const COMPANY_WORDS =
+  /\b(inc|llc|l\.l\.c|corp|corporation|company|group|services|ltd|pllc)\b|\bco\.|\bco$|&\s*sons\s*$/;
 
 /** Portals that email permit and inspection notices for a town (OpenGov, ViewPoint…). */
 const PERMIT_PORTAL_DOMAINS = [
@@ -473,24 +546,78 @@ const PERMIT_PORTAL_DOMAINS = [
   "accela.com",
   "govpilot.com",
   "cloudpermit.com",
+  // Check 45 P3: MGO Connect (MyGovernmentOnline), the portal Irving, Georgetown and Amarillo TX
+  // use. Named in the review; not yet seen in a pilot shop's mail.
+  "mgoconnect.org",
+  // Check 37 P6: PermitEyes (Full Circle Technologies), used by Ludlow, Pittsfield, Deerfield
+  // and other Massachusetts towns. From the review's probe; not yet confirmed from a real
+  // notification header (docs/notes/w2-lists.md).
+  "permiteyes.us",
 ];
+/** Check 37 P6: what a portal's own notice is about. */
+const PORTAL_NOTICE = /\b(permits?|inspections?|records?|applications?|licen[cs]es?)\b/;
+/** A portal vendor selling to towns, not writing for one. */
+const PORTAL_MARKETING =
+  /\b(webinar|demo|newsletter|product (update|news)|free trial|conference|ebook|e-book|case study|register now|join us|join our)\b/;
 
-export function looksMunicipal(fromAddress: string | null, fromName: string | null): boolean {
-  const domain = (fromAddress ?? "").toLowerCase().split("@")[1] ?? "";
+/** Check 22 P8: shown on the card when only the name says town office, from a personal address. */
+export const MUNICIPAL_NAME_ONLY_CAUTION =
+  "Says it's a town office but writes from a personal address.";
+
+export type MunicipalRead = {
+  /** The hard rule: never junk, never drafted by a job. */
+  municipal: boolean;
+  /** Check 22 P8: only the name says town office, from gmail.com and the like (a caution). */
+  nameOnlyWebmail: boolean;
+};
+
+function nameSaysTown(name: string): boolean {
+  const hard = MUNICIPAL_NAME.test(name);
+  const tied = TOWN_TIED.test(name) && TOWN_WORD.test(name);
+  if (!hard && !tied) return false;
+  const rest = name.replace(MUNICIPAL_NAME_ALL, " ").replace(TOWN_TIED_ALL, " ");
+  return !COMPANY_WORDS.test(rest);
+}
+
+const onDomain = (domain: string, list: readonly string[]) =>
+  list.some((d) => domain === d || domain.endsWith(`.${d}`));
+
+export function readMunicipal(
+  fromAddress: string | null,
+  fromName: string | null,
+  subject?: string | null,
+): MunicipalRead {
+  const domain = (fromAddress ?? "").toLowerCase().trim().split("@")[1] ?? "";
   const name = (fromName ?? "").toLowerCase().replace(/\s+/g, " ").trim();
-  if (domain.endsWith(".gov")) return true;
+  const yes = { municipal: true, nameOnlyWebmail: false };
+  const no = { municipal: false, nameOnlyWebmail: false };
+  if (domain.endsWith(".gov")) return yes;
   // Older US local-government domains: ci.lowell.ma.us, town.acton.ma.us, co.dane.wi.us,
   // and the plain <town>.<state>.us ones (dracut.ma.us).
-  if (/(^|\.)(ci|co|town|city|county|twp|vil)\.[a-z-]+\.[a-z]{2}\.us$/.test(domain)) return true;
-  if (/(^|\.)[a-z-]+\.[a-z]{2}\.us$/.test(domain)) return true;
-  if (/^(townof|cityof|countyof|villageof)[a-z-]+\./.test(domain)) return true;
-  // A permit portal sending as the town: "City of Lowell via OpenGov".
-  if (PERMIT_PORTAL_DOMAINS.some((d) => domain === d || domain.endsWith(`.${d}`))) {
-    return /\b(town|city|county|village|borough|township|permits?|building|inspections?)\b/.test(
-      name,
-    );
+  if (/(^|\.)(ci|co|town|city|county|twp|vil)\.[a-z-]+\.[a-z]{2}\.us$/.test(domain)) return yes;
+  if (/(^|\.)[a-z-]+\.[a-z]{2}\.us$/.test(domain)) return yes;
+  if (/^(townof|cityof|countyof|villageof)[a-z-]+\./.test(domain)) return yes;
+  // Check 44 P4: towns that write from .org / .com addresses, exact list only.
+  if (onDomain(domain, MUNICIPAL_EMAIL_DOMAINS)) return yes;
+  // A permit portal sending as the town: "City of Lowell via OpenGov", or (Check 37 P6) its own
+  // notice about a permit or an inspection. The vendor's marketing isn't the town.
+  if (onDomain(domain, PERMIT_PORTAL_DOMAINS)) {
+    if (new RegExp(`\\b(${TOWN_WORDS}|permits?|building|inspections?)\\b`).test(name)) return yes;
+    const about = `${name} ${(subject ?? "").toLowerCase().replace(/\s+/g, " ")}`;
+    return PORTAL_NOTICE.test(about) && !PORTAL_MARKETING.test(about) ? yes : no;
   }
-  return MUNICIPAL_NAME.test(name);
+  if (!nameSaysTown(name)) return no;
+  // Check 22 P8: anyone can call a Gmail account "Building Dept".
+  if (PUBLIC_WEBMAIL_DOMAINS.has(domain)) return { municipal: false, nameOnlyWebmail: true };
+  return yes;
+}
+
+export function looksMunicipal(
+  fromAddress: string | null,
+  fromName: string | null,
+  subject?: string | null,
+): boolean {
+  return readMunicipal(fromAddress, fromName, subject).municipal;
 }
 
 /**

@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { Headline } from "@/components/brand/headline";
 import { OfferButtons } from "@/components/app/offer-buttons";
-import { PermitCard } from "@/components/app/permit-card";
+import { PermitCard, TownCaution } from "@/components/app/permit-card";
 import { Button } from "@/components/ui/button";
 import { CATEGORIES } from "@/ai/prompts/classify.v4";
 import { categoryLabels, categoryTag, isCategory } from "@/config/categories";
@@ -194,6 +194,7 @@ export default async function InboxPage(props: PageProps<"/inbox">) {
             {row.needsOwner && row.needsOwnerReason ? (
               <p className="font-semibold">Why: {row.needsOwnerReason}</p>
             ) : null}
+            <TownCaution extracted={row.extracted} />
             <PermitCard
               permit={
                 (row.extracted as { permit?: Parameters<typeof PermitCard>[0]["permit"] })?.permit

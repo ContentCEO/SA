@@ -296,7 +296,7 @@ export async function classifyPending(
       // (say, everyone at google.com) never quietly junks a caller.
       channel?.kind !== "phone" &&
       channel?.kind !== "phone_text" &&
-      !looksMunicipal(m.fromAddress, m.fromName) &&
+      !looksMunicipal(m.fromAddress, m.fromName, m.subject) &&
       prevMarks.injection !== true &&
       prevMarks.payment_change !== true &&
       !injectionCheck(ruleText).flagged &&
@@ -320,7 +320,7 @@ export async function classifyPending(
       channel?.kind !== "phone" &&
       channel?.kind !== "phone_text" &&
       // A building department landing in Promotions still gets read.
-      !looksMunicipal(m.fromAddress, m.fromName) &&
+      !looksMunicipal(m.fromAddress, m.fromName, m.subject) &&
       // A thread already marked keeps its mark (B3): it is never quietly turned into junk.
       prevMarks.injection !== true &&
       prevMarks.payment_change !== true &&

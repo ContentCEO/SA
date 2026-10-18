@@ -21,7 +21,7 @@ import {
   INJECTION_REASON,
   injectionCheck,
   looksLikePaymentChange,
-  looksMunicipal,
+  readMunicipal,
   mentionsCarbonMonoxide,
   mentionsElectricalHazard,
   mentionsGasSmell,
@@ -49,6 +49,11 @@ import type { ChannelKind } from "@/server/channel-rules";
  */
 export type Extracted = ModelClassification["extracted"] & {
   municipal?: boolean;
+  /**
+   * Check 22 P8: only the sender's name says town office, and it writes from gmail.com or the
+   * like. Not the town for the hard rule; the card shows a caution. Only ever present as `true`.
+   */
+  municipal_name_only?: boolean;
   injection?: boolean;
   accepts_quote?: boolean;
   job_done?: boolean;
@@ -538,7 +543,9 @@ function codeChecks(email: EmailInput, opts: Pick<ClassifyOpts, "alsoCheck" | "s
   const asksAi = asksIfAi(checked) || opts.sticky?.asksIfAi === true;
   // Check 22 P3: lawyers, liens, small claims — anywhere in the email, in code.
   const legalThreat = mentionsLegalThreat(checked) || mentionsLegalThreat(fullText);
-  const municipalSender = looksMunicipal(email.fromAddress, email.fromName);
+  const municipalRead = readMunicipal(email.fromAddress, email.fromName, email.subject);
+  const municipalSender = municipalRead.municipal;
+  const municipalNameOnly = municipalRead.nameOnlyWebmail;
   return {
     body,
     earlier,
@@ -556,6 +563,7 @@ function codeChecks(email: EmailInput, opts: Pick<ClassifyOpts, "alsoCheck" | "s
     waterInText,
     paymentChangeInText,
     municipalSender,
+    municipalNameOnly,
   };
 }
 
@@ -593,6 +601,7 @@ function codeFallback(email: EmailInput, c: ReturnType<typeof codeChecks>): Clas
       ...(safety ? { urgency: "emergency" as const } : {}),
       ...(c.injection ? { injection: true, injection_reasons: c.injectionReasons } : {}),
       ...(c.municipalSender ? { municipal: true } : {}),
+      ...(c.municipalNameOnly ? { municipal_name_only: true } : {}),
       ...(c.gasInText ? { gas_smell: true } : {}),
       ...(co ? { co_alarm: true } : {}),
       ...(electrical ? { electrical_hazard: true } : {}),
@@ -648,6 +657,7 @@ export async function classifyEmail(
     waterInText,
     paymentChangeInText,
     municipalSender,
+    municipalNameOnly,
   } = checks;
   const preCheck = { flagged: checks.injection };
   const request = {
@@ -764,6 +774,7 @@ export async function classifyEmail(
           }
         : {}),
       ...(municipal ? { municipal: true } : {}),
+      ...(municipalNameOnly ? { municipal_name_only: true } : {}),
       ...(gasSmell ? { gas_smell: true } : {}),
       ...(coAlarm ? { co_alarm: true } : {}),
       ...(electricalHazard ? { electrical_hazard: true } : {}),

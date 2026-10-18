@@ -1,3 +1,4 @@
+import { MUNICIPAL_NAME_ONLY_CAUTION } from "@/ai/guards";
 import { cn } from "@/lib/utils";
 
 type Permit = {
@@ -54,4 +55,14 @@ export function PermitCard({ permit }: { permit: Permit | null | undefined }) {
       ) : null}
     </section>
   );
+}
+
+/**
+ * Check 22 P8: only the sender's name says town office, and it writes from a personal address
+ * (gmail.com and the like). Text only, two-tone.
+ */
+export function TownCaution({ extracted }: { extracted: unknown }) {
+  if ((extracted as { municipal_name_only?: unknown } | null)?.municipal_name_only !== true)
+    return null;
+  return <p className="text-sm font-semibold">Careful: {MUNICIPAL_NAME_ONLY_CAUTION}</p>;
 }

@@ -742,6 +742,99 @@ export const EVAL_CASES: EvalCase[] = [
     },
   }),
 
+  // ── town lists (wave 2: Check 36 P5, Check 44 P4, Check 45 P3) ─────
+  c({
+    id: "w2-water-district-backflow",
+    trade: "plumbing",
+    fromName: "Example Water District Cross Connection Program",
+    fromAddress: "crossconnection@waterdistrict.example.com",
+    subject: "Backflow test due: 14 Cedar Ln",
+    body: "Our records show the reduced pressure backflow preventer (RPZ) at 14 Cedar Ln is due for its semiannual test by November 15. Failure to test may result in termination of water service. Please have a certified tester submit results.",
+    expect: {
+      category: ["customer_question", "scheduling"],
+      needsOwner: false,
+      municipal: true,
+    },
+  }),
+  c({
+    id: "w2-dpw-shutoff",
+    trade: "plumbing",
+    fromName: "Department of Public Works",
+    fromAddress: "dpw@town.example.com",
+    subject: "Water shutoff Tuesday",
+    body: "The water service at 22 Oak St will be shut off Tuesday October 21 from 9am to noon for the curb stop repair your office requested. Call the DPW office with questions.",
+    expect: {
+      category: ["scheduling", "customer_question"],
+      needsOwner: false,
+      municipal: true,
+    },
+  }),
+  c({
+    id: "w2-backflow-company-marketing",
+    trade: "plumbing",
+    fromName: "Example Backflow Testing LLC",
+    fromAddress: "news@backflow-testing.example.com",
+    subject: "Fall special: 20% off backflow certification classes",
+    body: "Grow your business! Sign up for our backflow certification class this fall and save 20%. Unsubscribe anytime.",
+    expect: { category: "noise", needsOwner: false },
+  }),
+  c({
+    // The real domain is littletonma.org (Check 44 P4, unit-tested in guards.test.ts); evals use
+    // only invented addresses, so this checks the model's own reading of a staff name.
+    id: "w2-littleton-staff",
+    trade: "electrical",
+    fromName: "Jane Smith",
+    fromAddress: "jsmith@littletonma.test",
+    subject: "Permit E-26-0412 inspection",
+    body: "Your rough wiring inspection for permit E-26-0412 at 5 King St is set for Thursday between 9 and 11. Please have the panel cover off.",
+    expect: {
+      category: ["scheduling", "customer_question"],
+      needsOwner: false,
+      municipal: true,
+    },
+  }),
+  c({
+    id: "w2-building-and-safety",
+    trade: "remodeling",
+    fromName: "Department of Building and Safety",
+    fromAddress: "notices@county.example.com",
+    subject: "Inspection scheduled",
+    body: "A framing inspection for permit B26-1182 at 410 Mesa Dr is scheduled for Monday October 20, 8am to noon.",
+    expect: {
+      category: ["scheduling", "customer_question"],
+      needsOwner: false,
+      municipal: true,
+      permitResult: "scheduled",
+    },
+  }),
+  c({
+    id: "w2-development-services-corrections",
+    trade: "remodeling",
+    fromName: "Development Services Department",
+    fromAddress: "plans@city.example.com",
+    subject: "Plan review corrections",
+    body: "Plan review for permit R26-0907 (patio cover, 18 Vista Ct) needs corrections: 1) Show post footing size. 2) Add beam span table. Resubmit through the portal.",
+    expect: {
+      category: ["customer_question", "scheduling"],
+      needsOwner: false,
+      municipal: true,
+    },
+  }),
+  c({
+    // mgoconnect.org in real mail (Check 45 P3); an invented address here.
+    id: "w2-mgo-permit-issued",
+    trade: "roofing",
+    fromName: "City of Irving via MGO",
+    fromAddress: "noreply@mgoconnect.test",
+    subject: "Permit issued",
+    body: "Your reroof permit RR-26-5531 for 902 Elm Ln has been issued. Print and post it on site.",
+    expect: {
+      category: ["customer_question", "scheduling"],
+      needsOwner: false,
+      municipal: true,
+    },
+  }),
+
   // ── emails that try to instruct the assistant (#42) ───────────────
   c({
     id: "x-ignore",
