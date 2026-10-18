@@ -39,9 +39,9 @@ export default async function AdminCostsPage() {
         AI cost is an estimate from token counts. Revenue is the monthly plan for paying accounts
         (setup fees and your own test account not counted). &ldquo;After Stripe&rdquo; takes off
         Stripe&apos;s card and billing fees ({(STRIPE_FEES.cardPercent * 100).toFixed(1)}% +{" "}
-        {STRIPE_FEES.cardFixedCents}¢, plus {(STRIPE_FEES.billingPercent * 100).toFixed(1)}%; sales tax fees not
-        counted). You get an email when an account passes {Math.round(COST_ALERT_SHARE * 100)}% of
-        its plan price.
+        {STRIPE_FEES.cardFixedCents}¢, plus {(STRIPE_FEES.billingPercent * 100).toFixed(1)}%; sales
+        tax fees not counted). You get an email when an account passes{" "}
+        {Math.round(COST_ALERT_SHARE * 100)}% of its plan price.
       </p>
       <dl className="grid grid-cols-2 gap-2 rounded-xl border bg-card p-4">
         {[
