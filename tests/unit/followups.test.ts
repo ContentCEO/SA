@@ -43,6 +43,9 @@ async function quietThread(
   opts: {
     category?: string;
     needsOwner?: boolean;
+    needsOwnerManual?: boolean;
+    extracted?: Record<string, unknown>;
+    complainedAt?: Date;
     ownerRepliedDaysAgo?: number;
     customerWroteAfter?: boolean;
   } = {},
@@ -58,6 +61,9 @@ async function quietThread(
       subject: "Panel upgrade",
       category: opts.category ?? "quote_request",
       needsOwner: opts.needsOwner ?? false,
+      needsOwnerManual: opts.needsOwnerManual ?? false,
+      ...(opts.extracted ? { extracted: opts.extracted } : {}),
+      ...(opts.complainedAt ? { complainedAt: opts.complainedAt } : {}),
       summary: "Dana wants a panel upgrade quote.",
       classifiedAt: daysAgo(replied + 1),
       lastMessageAt: daysAgo(replied),
@@ -310,6 +316,77 @@ describe("which threads get a nudge", () => {
   it("rejects a wait that isn't one of the choices", () => {
     expect(followupSettingsInput.safeParse({ enabled: "on", days: "1" }).success).toBe(false);
     expect(followupSettingsInput.safeParse({ days: "30" }).success).toBe(false);
+  });
+});
+
+describe("big invoices are chased too (Check 12 P1)", () => {
+  const bigInvoice = (over: Record<string, unknown> = {}) => ({
+    category: "invoice_payment",
+    needsOwner: true,
+    extracted: {
+      invoice: { invoice_number: "1043", amount: 5000, due_date: null, status: "unpaid" },
+      invoice_thread: true,
+      dollar_amounts: [5000],
+      owner_rule_hits: ["amount", "model"],
+      owner_code: "amount",
+      ...over,
+    },
+  });
+
+  it("an unpaid $5,000 invoice that needs you only for its size is picked and drafted", async () => {
+    const t = await quietThread(bigInvoice());
+    expect(await threadsToFollowUp(mailboxId, NOW)).toEqual([t]);
+    setModelTransportForTests(fakeTransport([nudge()]).transport);
+    const r = await createDraftForThread(t, { trigger: "followup", ...deps() });
+    expect(r.status).toBe("created");
+    const [d] = await database.select().from(drafts).where(eq(drafts.threadId, t));
+    // A draft that waits for the owner's tap, never a send.
+    expect(d).toMatchObject({ kind: "followup", status: "pending" });
+    expect(writer.sent).toHaveLength(0);
+  });
+
+  it("not when the owner marked it, or with a dispute or a complaint", async () => {
+    const manual = await quietThread({ ...bigInvoice(), needsOwnerManual: true });
+    const dispute = await quietThread(
+      bigInvoice({ owner_rule_hits: ["dispute", "amount"], disputed: true }),
+    );
+    const complained = await quietThread({ ...bigInvoice(), complainedAt: daysAgo(30) });
+    const other = await quietThread(bigInvoice({ owner_rule_hits: ["amount", "vip"] }));
+    expect(await threadsToFollowUp(mailboxId, NOW)).toEqual([]);
+    setModelTransportForTests(fakeTransport([nudge(), nudge(), nudge(), nudge()]).transport);
+    for (const t of [manual, dispute, complained, other]) {
+      expect(await createDraftForThread(t, { trigger: "followup", ...deps() })).toEqual({
+        status: "skipped",
+        reason: "followup_not_allowed",
+      });
+    }
+  });
+
+  it("the sent screen promises the next nudge on a big invoice, as the scan will do", async () => {
+    await database
+      .update(workspaces)
+      .set({ status: "active", setupPaidVia: "stripe" })
+      .where(eq(workspaces.id, workspaceId));
+    const t = await quietThread(bigInvoice());
+    setModelTransportForTests(fakeTransport([nudge()]).transport);
+    const r = await createDraftForThread(t, { trigger: "followup", ...deps() });
+    if (r.status !== "created") throw new Error("expected a draft");
+    await sendDraft(workspaceId, r.draftId, deps());
+    const summary = await sentDraftSummary(workspaceId, r.draftId);
+    expect(summary!.nudgeOn).not.toBeNull();
+  });
+
+  it("a $5,000 quote request still waits on the owner", async () => {
+    const t = await quietThread({
+      category: "quote_request",
+      needsOwner: true,
+      extracted: { dollar_amounts: [5000], owner_rule_hits: ["amount"], owner_code: "amount" },
+    });
+    expect(await threadsToFollowUp(mailboxId, NOW)).toEqual([]);
+    setModelTransportForTests(fakeTransport([nudge()]).transport);
+    expect(await createDraftForThread(t, { trigger: "followup", ...deps() })).toMatchObject({
+      status: "skipped",
+    });
   });
 });
 

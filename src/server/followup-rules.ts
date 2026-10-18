@@ -1,0 +1,52 @@
+/**
+ * Pure follow-up rules (no database), shared by the scan (followups.ts), the drafter's re-check
+ * and the sent screen (drafts.ts) and the Money card (money-rules.ts). SQL twins live next to
+ * the scan's query.
+ */
+
+/** Don't chase anything the owner last wrote about more than this long ago. */
+export const FOLLOWUP_MAX_AGE_DAYS = 21;
+
+/**
+ * Check 12 P1: the owner rules that may stand alone on an invoice and still let us chase it. The
+ * amount rule ("Mentions more than $2,500.") is about deciding a price, which an invoice already
+ * did. "model" rides along because the classifier is told to flag big amounts too.
+ */
+const AMOUNT_ONLY_HITS: readonly string[] = ["amount", "model"];
+
+type NeedsOwnerFacts = {
+  needsOwner: boolean;
+  needsOwnerManual?: boolean | null;
+  category: string | null;
+  extracted: unknown;
+  complainedAt?: Date | null;
+};
+
+/**
+ * Check 12 P1: an invoice thread that needs the owner ONLY because it mentions more than the
+ * money limit. The bigger the invoice, the more it should be chased, so this one still gets a
+ * nudge (a draft, waiting for the owner's tap like every other). Never when the owner marked it
+ * "This one needs me", nor with any complaint, dispute, legal, attack, payment-change or
+ * "is this a bot" mark. Quotes keep the old rule: a big quote waits on the owner.
+ */
+export function amountOnlyNeedsOwner(t: NeedsOwnerFacts): boolean {
+  if (!t.needsOwner || t.needsOwnerManual) return false;
+  if (t.category !== "invoice_payment") return false;
+  if (t.complainedAt != null) return false;
+  const x = (t.extracted ?? {}) as {
+    owner_rule_hits?: unknown;
+    disputed?: unknown;
+    injection?: unknown;
+    payment_change?: unknown;
+    asks_if_ai?: unknown;
+  };
+  if (x.disputed === true || x.injection === true) return false;
+  if (x.payment_change === true || x.asks_if_ai === true) return false;
+  const hits = Array.isArray(x.owner_rule_hits) ? (x.owner_rule_hits as unknown[]) : [];
+  return hits.includes("amount") && hits.every((h) => AMOUNT_ONLY_HITS.includes(String(h)));
+}
+
+/** Check 12 P1: "needs you" stops a nudge, unless it's only an invoice's size. */
+export function needsOwnerBlocksNudge(t: NeedsOwnerFacts): boolean {
+  return (t.needsOwner || t.needsOwnerManual === true) && !amountOnlyNeedsOwner(t);
+}

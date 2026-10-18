@@ -85,6 +85,7 @@ describe("needs_owner rules are enforced in code", () => {
       needsOwnerReason: null,
       priority: "normal",
       hits: [],
+      needsOwnerCode: null,
     });
     expect(applyOwnerRules(classification({ category: "noise", priority: "normal" }), ctx)).toEqual(
       {
@@ -92,8 +93,56 @@ describe("needs_owner rules are enforced in code", () => {
         needsOwnerReason: null,
         priority: "low",
         hits: [],
+        needsOwnerCode: null,
       },
     );
+  });
+});
+
+describe("needsOwnerCode (Check 12 P1)", () => {
+  const sig = (over: Partial<ReturnType<typeof classification>["signals"]>) => ({
+    signals: { ...classification().signals, ...over },
+  });
+  it.each([
+    ["complaint", classification({ category: "complaint" }), ctx],
+    ["legal", classification(sig({ mentions_legal: true })), ctx],
+    ["dispute", classification(sig({ mentions_refund_or_dispute: true })), ctx],
+    ["vip", classification(), { ...ctx, senderIsVip: true }],
+    ["sender_rule", classification(), { ...ctx, senderNeedsMe: true }],
+    [
+      "big_new_job",
+      classification(sig({ large_request: true })),
+      { ...ctx, firstTimeSender: true },
+    ],
+    [
+      "amount",
+      classification({ extracted: { ...classification().extracted, dollar_amounts: [5000] } }),
+      ctx,
+    ],
+    ["low_confidence", classification({ confidence: 0.3 }), ctx],
+    ["injection", classification(), { ...ctx, injection: true }],
+    ["gas", classification(), { ...ctx, gasSmell: true }],
+    ["co_alarm", classification(), { ...ctx, coAlarm: true }],
+    ["electrical", classification(), { ...ctx, electricalHazard: true }],
+    ["payment_change", classification(), { ...ctx, paymentChange: true }],
+    ["asks_if_ai", classification(), { ...ctx, asksIfAi: true }],
+    ["model", classification({ needs_owner: true, needs_owner_reason: "Take a look." }), ctx],
+  ] as const)("%s", (code, m, c) => {
+    expect(applyOwnerRules(m, c).needsOwnerCode).toBe(code);
+  });
+  it("the shown reason's code, even with the model's flag alongside", () => {
+    const m = classification({
+      needs_owner: true,
+      needs_owner_reason: "Big invoice.",
+      extracted: { ...classification().extracted, dollar_amounts: [5000] },
+    });
+    expect(applyOwnerRules(m, ctx)).toMatchObject({
+      needsOwnerCode: "amount",
+      hits: ["amount", "model"],
+    });
+  });
+  it("null when it doesn't need the owner", () => {
+    expect(applyOwnerRules(classification(), ctx).needsOwnerCode).toBeNull();
   });
 });
 

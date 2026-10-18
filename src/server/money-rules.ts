@@ -431,3 +431,29 @@ export const PAID_GUESS_FLAG = "We think this was paid — check before sending.
 /** The note on a waiting nudge closed because the owner marked the invoice paid (or not owed). */
 export const PAID_NOTE = "Marked paid, so this nudge was dropped.";
 export const NOT_OWED_NOTE = "You said this isn't owed to you, so this nudge was dropped.";
+
+/**
+ * Check 12 P1: what the Money owed card says about chasing, in one honest line. "Nudges used:
+ * 0 of 2" read as "a nudge is coming" even when none ever would. `needsYou` is "manual" for
+ * the owner's own "This one needs me", "other" for any other needs-you reason that stops a nudge
+ * (a dispute, say; an invoice that needs the owner only for its size is still chased).
+ */
+export type ChaseFacts = {
+  followupsOn: boolean;
+  nudgesUsed: number;
+  needsYou: "manual" | "other" | null;
+  /** The customer wrote last: the owner owes them an answer, so we don't nudge. */
+  waitingOnOwner: boolean;
+  /** The owner last wrote longer ago than nudges are ever drafted for. */
+  quietTooLong: boolean;
+};
+
+export function chaseLine(row: ChaseFacts, maxNudges = 2): string {
+  if (!row.followupsOn) return "Not chased: follow-ups are off in Settings";
+  if (row.nudgesUsed >= maxNudges) return "Both reminders used. Chasing is up to you now.";
+  if (row.needsYou === "manual") return "Not chased: you marked this one as needing you";
+  if (row.needsYou === "other") return "Not chased: this one needs you first";
+  if (row.waitingOnOwner) return "Not chased while they're waiting on your reply";
+  if (row.quietTooLong) return "Not chased: it's been quiet too long. Chasing is up to you now.";
+  return `We'll draft a reminder if they go quiet (${Math.max(0, row.nudgesUsed)} of ${maxNudges} used)`;
+}

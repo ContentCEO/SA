@@ -1,5 +1,6 @@
 import "server-only";
 import { MAX_FOLLOWUPS } from "@/config/rules";
+import { needsOwnerBlocksNudge } from "./followup-rules";
 import { createHash } from "node:crypto";
 import {
   and,
@@ -867,7 +868,8 @@ export async function createDraftForThread(
   if (followup) {
     // Checked here, where the draft is made, whatever selected the thread.
     if (
-      thread.needsOwner ||
+      // Check 12 P1: "needs you" stops it, unless it's only an invoice's size.
+      needsOwnerBlocksNudge(thread) ||
       // A decided quote (lost / no answer, any source; won, unless it's now the job's
       // invoice) is never chased.
       quoteStopsNudges(thread) ||
@@ -3597,7 +3599,8 @@ export async function sentDraftSummary(
     settings.enabled &&
     // A deposit, review request or closing question is never followed by a nudge (A3).
     row.draft.purpose == null &&
-    !row.thread.needsOwner &&
+    // Check 12 P1: the same "needs you" rule as the scan.
+    !needsOwnerBlocksNudge(row.thread) &&
     !quoteStopsNudges(row.thread) &&
     row.thread.invoicePaidAt == null &&
     FOLLOWUP_CATEGORIES.includes(row.thread.category as (typeof FOLLOWUP_CATEGORIES)[number]) &&

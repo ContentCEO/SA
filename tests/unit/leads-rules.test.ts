@@ -282,6 +282,7 @@ describe("owner rules (leads package)", () => {
       needsOwnerReason: EMERGENCY_REASON,
       priority: "high",
       hits: ["emergency", "model"],
+      needsOwnerCode: "emergency",
     });
   });
   it("noise or a supplier marked emergency doesn't count", () => {

@@ -4,7 +4,9 @@ import { db } from "@/db";
 import { activityLog, businessProfiles, mailboxes, threads, workspaces } from "@/db/schema";
 import { expirePendingNudge, flagPendingNudge, unflagPendingNudge, type DraftDeps } from "./drafts";
 import { effectiveStatus, jobsAllowed, ReadOnlyError } from "./lifecycle";
-import { customerAddressSql, customerNameSql } from "./thread-sql";
+import { customerAddressSql, customerNameSql, lastInSql, lastOutSql } from "./thread-sql";
+import { MAX_FOLLOWUPS } from "@/config/rules";
+import { amountOnlyNeedsOwner, FOLLOWUP_MAX_AGE_DAYS } from "./followup-rules";
 import {
   dueLabel,
   invoiceOf,
@@ -17,6 +19,7 @@ import {
   promoteEarlierOpen,
   sortOwed,
   toCents,
+  type ChaseFacts,
   type InvoiceFacts,
 } from "./money-rules";
 
@@ -34,6 +37,8 @@ export type MoneyRow = {
   due: { daysPastDue: number | null; text: string };
   /** Follow-up nudges sent on the thread (threads.followup_count), out of two. */
   nudgesUsed: number;
+  /** Check 12 P1: the facts behind the card's one chasing line (`chaseLine`). */
+  chase: ChaseFacts;
   paidAt: Date | null;
   paidSource: "owner" | "auto" | "not_owed" | null;
   lastMessageAt: Date | null;
@@ -99,6 +104,13 @@ async function moneyThreads(
       paidSource: threads.invoicePaidSource,
       followupCount: threads.followupCount,
       lastMessageAt: threads.lastMessageAt,
+      // Check 12 P1: for the card's chasing line (content-free).
+      category: threads.category,
+      needsOwner: threads.needsOwner,
+      needsOwnerManual: threads.needsOwnerManual,
+      complainedAt: threads.complainedAt,
+      lastIn: lastInSql(),
+      lastOut: lastOutSql(),
       // As a reply addresses them (a form's Reply-To, else From); the sender is for the
       // receipt check (a receipt's Reply-To is the merchant).
       customerName: customerNameSql(),
@@ -141,8 +153,11 @@ function toRow(
   r: Awaited<ReturnType<typeof moneyThreads>>[number],
   now: Date,
   timeZone: string,
+  followupsOn = true,
 ): MoneyRow {
   const invoice: InvoiceFacts | null = r.invoice;
+  const lastIn = asDate(r.lastIn);
+  const lastOut = asDate(r.lastOut);
   return {
     threadId: r.threadId,
     gmailThreadId: r.gmailThreadId,
@@ -158,6 +173,17 @@ function toRow(
     // A due date with no year is read around when the email was written, not today.
     due: dueLabel(invoice?.due_date ?? null, now, timeZone, asDate(r.lastMessageAt)),
     nudgesUsed: r.followupCount,
+    chase: {
+      followupsOn,
+      nudgesUsed: Math.min(r.followupCount, MAX_FOLLOWUPS),
+      needsYou: r.needsOwnerManual
+        ? "manual"
+        : r.needsOwner && !amountOnlyNeedsOwner(r)
+          ? "other"
+          : null,
+      waitingOnOwner: !!lastIn && (!lastOut || lastIn.getTime() > lastOut.getTime()),
+      quietTooLong: !!lastOut && now.getTime() - lastOut.getTime() > FOLLOWUP_MAX_AGE_DAYS * DAY_MS,
+    },
     paidAt: asDate(r.paidAt),
     paidSource: r.paidSource ?? null,
     lastMessageAt: asDate(r.lastMessageAt),
@@ -209,16 +235,20 @@ export async function listMoney(
   totalOwedCents: number;
 }> {
   const [profile] = await db()
-    .select({ timeZone: businessProfiles.timeZone })
+    .select({
+      timeZone: businessProfiles.timeZone,
+      followupsOn: businessProfiles.followupsEnabled,
+    })
     .from(businessProfiles)
     .where(eq(businessProfiles.workspaceId, workspaceId));
   const tz = profile?.timeZone ?? "America/New_York";
+  const followupsOn = profile?.followupsOn ?? true;
   const rows = await moneyThreads(workspaceId, now);
 
   const owedRows = rows.filter((r) =>
     isOwed({ invoice: r.invoice, paidAt: asDate(r.paidAt), paidSource: r.paidSource }),
   );
-  const owed = sortOwed(owedRows.map((r) => toRow(r, now, tz)));
+  const owed = sortOwed(owedRows.map((r) => toRow(r, now, tz, followupsOn)));
   const paidRecently = rows
     .filter(
       (r) =>

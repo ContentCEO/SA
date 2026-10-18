@@ -89,7 +89,8 @@ test("money owed: from Quotes, mark paid, undo, and hide one that isn't owed", a
   await expect(dana).toContainText("$1,200");
   await expect(dana).toContainText(/\d+ days past due/);
   await expect(dana).toContainText("Invoice INV-1042");
-  await expect(dana).toContainText("Nudges used: 0 of 2");
+  // Check 12 P1: one honest line about chasing instead of "Nudges used: 0 of 2".
+  await expect(dana).toContainText("We'll draft a reminder if they go quiet (0 of 2 used)");
   await expect(page.getByRole("article", { name: "Sam Lee" })).toContainText("Not due yet");
 
   await dana.getByRole("button", { name: "Mark paid" }).click();

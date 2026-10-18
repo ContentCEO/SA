@@ -10,6 +10,7 @@ import { cn } from "@/lib/utils";
 import { MAX_FOLLOWUPS } from "@/server/drafts";
 import { isReadOnly } from "@/server/lifecycle";
 import { listMoney, type MoneyRow } from "@/server/money";
+import { chaseLine } from "@/server/money-rules";
 import { threadOffers, type ThreadOffers } from "@/server/offers";
 import { formatCents } from "@/server/quote-rules";
 import { requireOwner } from "@/server/session";
@@ -74,8 +75,8 @@ function OwedCard({ r, readOnly }: { r: MoneyRow; readOnly: boolean }) {
           )}) may still be open. It's counted in the total.`}
         </p>
       ))}
-      <p className="text-sm opacity-80">
-        Nudges used: {Math.min(r.nudgesUsed, MAX_FOLLOWUPS)} of {MAX_FOLLOWUPS}
+      <p className="text-sm opacity-80" data-testid="chase-line">
+        {chaseLine(r.chase, MAX_FOLLOWUPS)}
       </p>
       {readOnly ? null : (
         <div className="flex flex-col gap-2">

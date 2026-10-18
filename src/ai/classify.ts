@@ -151,6 +151,11 @@ export type Extracted = ModelClassification["extracted"] & {
    * (`OWNER_RULE_KEYS`). Cards read these, never the reason text.
    */
   owner_rule_hits?: string[];
+  /**
+   * Check 12 P1: why the thread needs the owner, content-free (`needsOwnerCode`). Absent when it
+   * doesn't, and on rows sorted before it existed.
+   */
+  owner_code?: string;
 };
 
 /** The owner-rule keys, in display order (leads package §1g). */
@@ -281,38 +286,56 @@ export function prepareBody(body: string): string {
  */
 export function applyOwnerRules(
   m: ModelClassification,
-  ctx: {
-    firstTimeSender: boolean;
-    senderIsVip: boolean;
-    /** Ideas H3: a company-wide "Always needs me" rule matched the sender or reply address. */
-    senderNeedsMe?: boolean;
-    amountThresholdDollars: number;
-    injection?: boolean;
-    /** Someone smells gas (round 2, TW B4): top priority, whatever the model said. */
-    gasSmell?: boolean;
-    /** A carbon monoxide alarm went off (Check 22 P4): like gas, its own reason. */
-    coAlarm?: boolean;
-    /** Electrical fire signs (Check 37 P1): like gas, its own reason. */
-    electricalHazard?: boolean;
-    /** Asks to pay a new account (round 2, A11). */
-    paymentChange?: boolean;
-    /** Check 22 P3: lawyers, liens, small claims found in code anywhere in the email. */
-    legalThreat?: boolean;
-    /** Check 48 P1: asks whether a person or an AI is answering. */
-    asksIfAi?: boolean;
-    /**
-     * Check 39 P2 + Check 38 P3: amounts that never count toward the limit (whole dollars): a
-     * rebate's, a loan's or a tax credit's, and ones the owner already wrote on this
-     * conversation (a homeowner repeating the contract total isn't new money).
-     */
-    ignoreAmounts?: readonly number[];
-    /** The water smells like rotten eggs, nothing says gas (Check 36 P1). */
-    waterSmell?: boolean;
-    /** Leads package: the email came through a phone service or a lead website (code-decided). */
-    channel?: { kind: ChannelKind; name: string } | null;
-    /** Leads package (B9): a quote request from a town that isn't on the owner's list. */
-    outsideArea?: boolean;
-  },
+  ctx: OwnerRuleContext,
+): Pick<Classification, "needsOwner" | "needsOwnerReason" | "priority"> & {
+  hits: OwnerRuleKey[];
+  /**
+   * Check 12 P1: WHY the thread needs the owner, as a content-free code: the rule whose reason is
+   * shown, else "model" (the model's own call). Null when it doesn't need the owner. Stored as
+   * `extracted.owner_code`; the follow-up scan reads it with `owner_rule_hits`.
+   */
+  needsOwnerCode: OwnerRuleKey | null;
+} {
+  const r = ownerRules(m, ctx);
+  return { ...r, needsOwnerCode: r.needsOwner ? (r.hits[0] ?? "model") : null };
+}
+
+type OwnerRuleContext = {
+  firstTimeSender: boolean;
+  senderIsVip: boolean;
+  /** Ideas H3: a company-wide "Always needs me" rule matched the sender or reply address. */
+  senderNeedsMe?: boolean;
+  amountThresholdDollars: number;
+  injection?: boolean;
+  /** Someone smells gas (round 2, TW B4): top priority, whatever the model said. */
+  gasSmell?: boolean;
+  /** A carbon monoxide alarm went off (Check 22 P4): like gas, its own reason. */
+  coAlarm?: boolean;
+  /** Electrical fire signs (Check 37 P1): like gas, its own reason. */
+  electricalHazard?: boolean;
+  /** Asks to pay a new account (round 2, A11). */
+  paymentChange?: boolean;
+  /** Check 22 P3: lawyers, liens, small claims found in code anywhere in the email. */
+  legalThreat?: boolean;
+  /** Check 48 P1: asks whether a person or an AI is answering. */
+  asksIfAi?: boolean;
+  /**
+   * Check 39 P2 + Check 38 P3: amounts that never count toward the limit (whole dollars): a
+   * rebate's, a loan's or a tax credit's, and ones the owner already wrote on this
+   * conversation (a homeowner repeating the contract total isn't new money).
+   */
+  ignoreAmounts?: readonly number[];
+  /** The water smells like rotten eggs, nothing says gas (Check 36 P1). */
+  waterSmell?: boolean;
+  /** Leads package: the email came through a phone service or a lead website (code-decided). */
+  channel?: { kind: ChannelKind; name: string } | null;
+  /** Leads package (B9): a quote request from a town that isn't on the owner's list. */
+  outsideArea?: boolean;
+};
+
+function ownerRules(
+  m: ModelClassification,
+  ctx: OwnerRuleContext,
 ): Pick<Classification, "needsOwner" | "needsOwnerReason" | "priority"> & { hits: OwnerRuleKey[] } {
   // Never let the model's own words explain away an email that tried to instruct it.
   if (ctx.injection) {
@@ -600,6 +623,8 @@ function codeFallback(email: EmailInput, c: ReturnType<typeof codeChecks>): Clas
       ...(c.paymentChangeInText ? { payment_change: true } : {}),
       ...(c.asksAi ? { asks_if_ai: true } : {}),
       ...(hits.length ? { owner_rule_hits: hits } : {}),
+      // Check 12 P1: unreadable always needs the owner; the first code check, else the model's.
+      owner_code: hits[0] ?? "model",
     },
     summary: email.subject ? `Email: ${email.subject}` : "Email with no subject.",
   };
@@ -722,7 +747,7 @@ export async function classifyEmail(
         towns: opts.serviceTowns ?? [],
       }) !== null,
   };
-  const { hits, ...rules } = applyOwnerRules(model, ownerCtx);
+  const { hits, needsOwnerCode, ...rules } = applyOwnerRules(model, ownerCtx);
   // Check 22 P2: what the rules say with the attack mark left out, kept so the owner's "This is
   // a normal email" can put the card right without another model call.
   const withoutInjection = injection
@@ -776,6 +801,7 @@ export async function classifyEmail(
       ...(result.signals.routine_paperwork ? { routine_paperwork: true } : {}),
       ...(result.signals.mentions_refund_or_dispute || legal ? { disputed: true } : {}),
       owner_rule_hits: hits,
+      ...(needsOwnerCode ? { owner_code: needsOwnerCode } : {}),
     },
     unreadable: false,
   };

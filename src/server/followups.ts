@@ -6,13 +6,36 @@ import { mailboxOn } from "./mailbox-plan-rules";
 import { FOLLOWUP_CATEGORIES, followupSettings, MAX_FOLLOWUPS } from "./drafts";
 import { lastInSql, lastOutSql, answeredByPhoneSql } from "./thread-sql";
 import { isAway } from "./away";
+import { FOLLOWUP_MAX_AGE_DAYS } from "./followup-rules";
 
-/** Don't chase anything the owner last wrote about more than this long ago. */
-export const FOLLOWUP_MAX_AGE_DAYS = 21;
+/**
+ * SQL twin of `amountOnlyNeedsOwner` (followup-rules.ts): an invoice thread whose only owner
+ * rules are the money limit (and the model's own flag), with no manual, complaint, dispute,
+ * attack, payment-change or "is this a bot" mark. Never NULL.
+ */
+export function amountOnlyNeedsOwnerSql() {
+  const x = threads.extracted;
+  return sql`(${threads.needsOwnerManual} = false
+    and ${threads.category} is not distinct from 'invoice_payment'
+    and ${threads.complainedAt} is null
+    and coalesce(${x}->>'disputed', '') <> 'true'
+    and coalesce(${x}->>'injection', '') <> 'true'
+    and coalesce(${x}->>'payment_change', '') <> 'true'
+    and coalesce(${x}->>'asks_if_ai', '') <> 'true'
+    and jsonb_typeof(${x}->'owner_rule_hits') = 'array'
+    and (${x}->'owner_rule_hits') @> '["amount"]'::jsonb
+    and not exists (
+      select 1 from jsonb_array_elements_text(${x}->'owner_rule_hits') h(v)
+      where h.v not in ('amount', 'model')
+    ))`;
+}
+
+export { FOLLOWUP_MAX_AGE_DAYS };
 
 /**
  * Threads due a nudge, for the daily scan:
- * - a quote or invoice thread that isn't flagged for the owner;
+ * - a quote or invoice thread that isn't flagged for the owner (an invoice flagged only for
+ *   its size is still chased, Check 12 P1);
  * - not a decided quote: lost / no answer (the owner's or our guess) stops every nudge,
  *   won stops the quote nudges but a won job's invoice is still chased (quoteStopsNudges);
  * - not a paid invoice: marked paid (the owner's mark or our guess) or "not owed to me"
@@ -68,7 +91,8 @@ export async function threadsToFollowUp(
     .where(
       and(
         eq(threads.mailboxId, mailboxId),
-        eq(threads.needsOwner, false),
+        // SQL twin of `needsOwnerBlocksNudge` (Check 12 P1): a big invoice is still chased.
+        sql`(${threads.needsOwner} = false or ${amountOnlyNeedsOwnerSql()})`,
         // SQL twin of `quoteStopsNudges`.
         sql`(${threads.quoteOutcome} is null or (${threads.quoteOutcome} = 'won' and ${threads.category} = 'invoice_payment'))`,
         isNull(threads.invoicePaidAt),
