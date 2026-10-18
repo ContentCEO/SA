@@ -17,11 +17,43 @@ export type ReplyMime = {
 
 const clean = (v: string) => v.replace(/[\r\n]+/g, " ").trim();
 
-/** RFC 2047 encoded-word for non-ASCII header text. */
+/**
+ * Check 43 P10: the most UTF-8 bytes in one encoded word. 42 bytes → 56 base64 characters →
+ * a 68-character word (RFC 2047's limit is 75), so even "Subject: " + the first word stays
+ * within a 78-character line.
+ */
+const ENCODED_WORD_BYTES = 42;
+
+/**
+ * RFC 2047 encoded words for non-ASCII header text. Long text becomes several words, split
+ * between characters (never inside one: an emoji's 4 bytes stay together), folded onto new
+ * lines with CRLF + space. Header text is CR/LF-stripped first, so the folding is the only
+ * line break and can never start a new header.
+ */
 export function encodeHeader(value: string): string {
   const v = clean(value);
-  return /^[\x20-\x7e]*$/.test(v) ? v : `=?UTF-8?B?${Buffer.from(v, "utf8").toString("base64")}?=`;
+  if (/^[\x20-\x7e]*$/.test(v)) return v;
+  const words: string[] = [];
+  let chunk: Buffer[] = [];
+  let size = 0;
+  const flush = () => {
+    if (!chunk.length) return;
+    words.push(`=?UTF-8?B?${Buffer.concat(chunk).toString("base64")}?=`);
+    chunk = [];
+    size = 0;
+  };
+  for (const ch of v) {
+    const bytes = Buffer.from(ch, "utf8");
+    if (size + bytes.length > ENCODED_WORD_BYTES) flush();
+    chunk.push(bytes);
+    size += bytes.length;
+  }
+  flush();
+  return words.join("\r\n ");
 }
+
+/** Check 43 P10: a leading run of reply prefixes (Re:, RE:, Res:, RES:, Re[2]:, Re(2):). */
+const REPLY_PREFIXES = /^(?:\s*res?\s*(?:\[\d+\]|\(\d+\))?\s*:)+\s*/i;
 
 /**
  * Check 43 P3: an address with its display name. No name → the address; a plain ASCII name →
@@ -36,10 +68,13 @@ export function formatAddress(name: string | null | undefined, email: string): s
   return `${encodeHeader(n)} <${address}>`;
 }
 
+/**
+ * "Re: <subject>" once. Check 43 P10: any leading run of reply prefixes (a Brazilian Outlook's
+ * "RES:", "RE: Re[2]:") counts as one; forward prefixes (Fwd, FW, RV, Enc) stay after the Re:.
+ */
 export function replySubject(subject: string | null | undefined): string {
-  const s = clean(subject ?? "");
-  if (!s) return "Re: your email";
-  return /^re:/i.test(s) ? s : `Re: ${s}`;
+  const s = clean(subject ?? "").replace(REPLY_PREFIXES, "");
+  return s ? `Re: ${s}` : "Re: your email";
 }
 
 /**

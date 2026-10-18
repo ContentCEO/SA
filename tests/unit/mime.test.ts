@@ -63,7 +63,7 @@ describe("reply MIME", () => {
   it("encodes non-ASCII subjects and adds Re: once", () => {
     expect(encodeHeader("Café")).toMatch(/^=\?UTF-8\?B\?/);
     expect(replySubject("Panel upgrade")).toBe("Re: Panel upgrade");
-    expect(replySubject("RE: Panel upgrade")).toBe("RE: Panel upgrade");
+    expect(replySubject("RE: Panel upgrade")).toBe("Re: Panel upgrade");
     expect(replySubject(null)).toBe("Re: your email");
   });
 
@@ -277,5 +277,64 @@ describe("Check 43 P6: a matching HTML part so Outlook can't squash signatures",
     const read = extractBodyText({ mimeType: "multipart/alternative", parts });
     expect(sameText(read, text)).toBe(true);
     expect(read).not.toContain("<p>");
+  });
+});
+
+describe("Check 43 P10: long encoded subjects fold; foreign reply prefixes collapse", () => {
+  const long = "Re: Presupuesto para pintar la cocina y el baño, ¿cuándo pueden venir a ver? 🙏";
+
+  it("splits a long subject into words ≤ 75 chars that decode back, lines ≤ 78", () => {
+    const mime = buildReplyMime({ from: "a@b.c", to: "d@e.f", subject: long, body: "x" });
+    const head = mime.split("\r\n\r\n")[0]!;
+    for (const line of head.split("\r\n")) expect(line.length).toBeLessThanOrEqual(78);
+    const words = encodeHeader(long).match(/=\?UTF-8\?B\?[^?]*\?=/g)!;
+    expect(words.length).toBeGreaterThan(1);
+    for (const w of words) expect(w.length).toBeLessThanOrEqual(75);
+    const subject = head.match(/^Subject: (.*(?:\r\n[ \t].*)*)/m)![1]!;
+    expect(decodeWords(subject)).toBe(long);
+    // Folding is the only line break, and every continuation line starts with a space.
+    expect(
+      subject
+        .split("\r\n")
+        .slice(1)
+        .every((l) => l.startsWith(" ")),
+    ).toBe(true);
+  });
+
+  it("never cuts a character in half (emoji are 4 bytes)", () => {
+    const s = "🙏".repeat(40) + "é".repeat(30);
+    for (const w of encodeHeader(s).split("\r\n ")) {
+      const b64 = w.match(/^=\?UTF-8\?B\?([^?]*)\?=$/)![1]!;
+      const text = Buffer.from(b64, "base64").toString("utf8");
+      expect(text).not.toContain("�");
+      expect(Buffer.from(text, "utf8").toString("base64")).toBe(b64);
+    }
+    expect(decodeWords(encodeHeader(s))).toBe(s);
+  });
+
+  it("can't be used to inject a header through a long subject", () => {
+    const evil = buildReplyMime({
+      from: "a@b.c",
+      to: "d@e.f",
+      subject: `${"ñ".repeat(60)}\r\nBcc: x@evil.com`,
+      body: "x",
+    });
+    expect(evil.split("\r\n\r\n")[0]).not.toMatch(/^Bcc:/m);
+  });
+
+  it("treats a run of reply prefixes as one Re:", () => {
+    expect(replySubject("RES: Orçamento")).toBe("Re: Orçamento");
+    expect(replySubject("Re: RES: Orçamento")).toBe("Re: Orçamento");
+    expect(replySubject("re[2]: RE: Res(3): Deck")).toBe("Re: Deck");
+    expect(replySubject("Re: Fwd: Deck")).toBe("Re: Fwd: Deck");
+    expect(replySubject("FW: Deck")).toBe("Re: FW: Deck");
+    expect(replySubject("RV: Enc: Deck")).toBe("Re: RV: Enc: Deck");
+    expect(replySubject("Resume: deck plans")).toBe("Re: Resume: deck plans");
+    expect(replySubject("Re:")).toBe("Re: your email");
+  });
+
+  it("leaves plain ASCII subjects alone", () => {
+    expect(encodeHeader("Re: Panel upgrade at 12 Elm St")).toBe("Re: Panel upgrade at 12 Elm St");
+    expect(encodeHeader("x".repeat(120))).toBe("x".repeat(120));
   });
 });

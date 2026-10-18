@@ -40,6 +40,13 @@
     base64 UTF-8. Gmail's parser (`extractBodyText`) prefers text/plain, so `sameText` checks
     are unchanged. `FakeWriter.bodyOf` reads the text/plain part (`partOf` for either) and the
     e2e fake's `parseRaw` reads multipart. Not verified in classic Outlook.
+  - **Header folding (Check 43 P10):** `encodeHeader` splits non-ASCII text into encoded
+    words of at most 42 UTF-8 bytes (68 characters, under RFC 2047's 75; "Subject: " + a word
+    fits a 78-character line), never inside a character, folded with CRLF + space (the input is
+    CR/LF-stripped first, so folding is the only line break). `replySubject` collapses a leading
+    run of reply prefixes (Re, RE, Res, RES, Re[2], Re(2)) into one "Re: "; forward prefixes
+    (Fwd, FW, RV, Enc) stay after it. "RE: x" is now "Re: x". The e2e Gmail fake joins adjacent
+    encoded words (RFC 2047 §6.2).
   - Known gaps: `workspaceMailboxEmails` (the "self" list for Reply-To picking and
     `answeredSince`'s "only to yourself" rule) doesn't include send-as aliases.
 

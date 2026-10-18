@@ -197,9 +197,12 @@ function parseJson(text: string): Record<string, unknown> {
 
 /** RFC 2047 =?UTF-8?B?…?= words, as src/mailbox/mime.ts writes them. */
 function decodeWords(value: string): string {
-  return value.replace(/=\?UTF-8\?B\?([^?]*)\?=/gi, (_, b64: string) =>
-    Buffer.from(b64, "base64").toString("utf8"),
-  );
+  // Whitespace (and folding) between two encoded words is not part of the text (RFC 2047 §6.2).
+  return value
+    .replace(/\?=\s+=\?/g, "?==?")
+    .replace(/=\?UTF-8\?B\?([^?]*)\?=/gi, (_, b64: string) =>
+      Buffer.from(b64, "base64").toString("utf8"),
+    );
 }
 
 /** A raw message (base64url RFC 2822, as the app builds it) → headers and plain-text body. */
