@@ -34,6 +34,8 @@ import {
 import {
   discardDraftAction,
   holdAutopilotAction,
+  nudgeAlreadyPaidAction,
+  nudgeSaidNoAction,
   practiceSendAction,
   sendDraftAction,
 } from "./actions";
@@ -81,6 +83,11 @@ export type DraftCardProps = {
   offlineEnabled?: boolean;
   /** Plan #9: mirror the swipes and the button order for a left thumb. */
   leftHanded?: boolean;
+  /**
+   * Check 21 P8: a nudge (follow-up) card — Discard says it ends the chasing, and one more row
+   * offers "They said no" (a quote) or "Already paid" (an invoice).
+   */
+  nudge?: "quote" | "invoice" | "other" | null;
   /** Check 9 P14: the one-time swipe tip (first draft card only; touch phones only). */
   swipeTip?: boolean;
   /** Quick tweaks / voice edits left (0 hides them). */
@@ -424,7 +431,9 @@ export function DraftCard(p: DraftCardProps) {
                 <input type="hidden" name="draftId" value={p.draftId} />
                 <CardTargets threadId={p.threadId} next={p.nextThreadId} />
                 <QuestionLine id={discardTitle} className="font-semibold">
-                  Discard this draft? It&apos;s removed from Gmail too.
+                  {p.nudge
+                    ? "Discard this nudge? It's removed from Gmail too, and we won't nudge them again on this one unless you write to them."
+                    : "Discard this draft? It's removed from Gmail too."}
                 </QuestionLine>
                 <Pending label="Discard draft" busy="Discarding…" className="w-full" />
                 <Button type="button" variant="ghost" className="w-full" onClick={keepDraft}>
@@ -582,6 +591,18 @@ export function DraftCard(p: DraftCardProps) {
                     />
                   </div>
                 ) : null}
+                {p.readOnly || (p.nudge !== "quote" && p.nudge !== "invoice") ? null : (
+                  // Check 21 P8: close the matter from the nudge card.
+                  <form action={p.nudge === "quote" ? nudgeSaidNoAction : nudgeAlreadyPaidAction}>
+                    <CardTargets threadId={p.threadId} next={p.nextThreadId} />
+                    <Pending
+                      label={p.nudge === "quote" ? "They said no" : "Already paid"}
+                      busy="Saving…"
+                      variant="outline"
+                      className="w-full"
+                    />
+                  </form>
+                )}
                 {/* Check 9 P12: side by side; a question that opens takes the whole row. */}
                 <div className="grid grid-cols-2 gap-2 [&:has(>form)>*]:col-span-2 [&>*:only-child]:col-span-2">
                   <RemindMe

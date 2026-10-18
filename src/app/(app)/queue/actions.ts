@@ -28,6 +28,8 @@ import { ReadOnlyError, SendingBlockedError } from "@/server/lifecycle";
 import { hitLimit } from "@/server/rate-limit";
 import { dismissChecklist } from "@/server/onboarding";
 import { requireOwner } from "@/server/session";
+import { setInvoicePaid } from "@/server/money";
+import { setQuoteOutcome } from "@/server/quotes";
 import { QUEUE_ERRORS } from "./queue-messages";
 
 const id = z.string().uuid();
@@ -481,6 +483,39 @@ export async function holdAutopilotAction(formData: FormData) {
       r.sent ? `/queue?error=autopilot_sent&d=${draftId.data}` : "/queue?error=autopilot_sending",
     );
   redirect("/queue?error=hold_gone");
+}
+
+/**
+ * Check 21 P8: on a nudge card, "They said no" (a quote) or "Already paid" (an invoice) — the
+ * same owner marks as Quotes' Lost and Money's Mark paid, which also close the waiting nudge
+ * here and in Gmail. Read-only accounts change nothing (the server functions re-check).
+ */
+async function closeNudge(formData: FormData, what: "lost" | "paid") {
+  const { workspace } = await requireOwner();
+  const threadId = id.safeParse(formData.get("threadId"));
+  if (!threadId.success) redirect("/queue?error=unknown");
+  const next = nextCard(formData);
+  let ok: boolean;
+  try {
+    ok =
+      what === "lost"
+        ? await setQuoteOutcome(workspace.id, threadId.data, "lost")
+        : await setInvoicePaid(workspace.id, threadId.data, true);
+  } catch (err) {
+    if (err instanceof ReadOnlyError) redirect(`/queue?error=readonly${at(threadId.data)}`);
+    throw err;
+  }
+  redirect(
+    ok
+      ? `/queue?done=${what === "lost" ? "marked_lost" : "marked_paid"}${at(next)}`
+      : `/queue?error=unknown${at(threadId.data)}`,
+  );
+}
+export async function nudgeSaidNoAction(formData: FormData) {
+  await closeNudge(formData, "lost");
+}
+export async function nudgeAlreadyPaidAction(formData: FormData) {
+  await closeNudge(formData, "paid");
 }
 
 /** Hide the getting-started list — allowed only once every step is done. */

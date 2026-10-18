@@ -265,6 +265,15 @@ export default async function QueuePage(props: PageProps<"/queue">) {
       threadId={i.threadId}
       leftHanded={device.leftHanded}
       swipeTip={i.draftId === firstDraftId}
+      nudge={
+        i.kind !== "followup"
+          ? null
+          : i.category === "quote_request"
+            ? "quote"
+            : i.category === "invoice_payment"
+              ? "invoice"
+              : "other"
+      }
       offlineEnabled={device.offline}
       remindOptions={remindOptions(i)}
       summary={i.summary}

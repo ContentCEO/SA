@@ -5,6 +5,9 @@ export const QUEUE_DONE: Record<string, string> = {
   ...CONTROL_DONE,
   away_off: "Welcome back. Away mode is off.",
   discarded: "Draft discarded.",
+  // Check 21 P8: from a nudge card.
+  marked_lost: "Marked lost.",
+  marked_paid: "Marked paid.",
   saved: "Changes saved. It's updated in Gmail too.",
   drafted: "Reply drafted. It's below, and in your Gmail drafts.",
   revised: "Draft changed. Read it below — it's updated in Gmail too.",

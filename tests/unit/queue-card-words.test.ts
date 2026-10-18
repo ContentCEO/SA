@@ -13,6 +13,8 @@ vi.mock("@/app/(app)/queue/actions", () => {
     snoozeAction: noop,
     editorAction: noop,
     reviseDraftAction: noop,
+    nudgeSaidNoAction: noop,
+    nudgeAlreadyPaidAction: noop,
   };
 });
 vi.mock("@/app/(app)/queue/first-week-actions", () => ({ answeredByPhoneAction: async () => {} }));

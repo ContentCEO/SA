@@ -79,3 +79,26 @@ test("queue: a nudge is labelled as a follow-up", async ({ page, context }) => {
   await expect(card).toContainText("Follow-up · Quote request");
   await expect(card).toContainText("Gentle nudge.");
 });
+
+test("queue: a nudge's Discard says it ends the chasing, and it offers They said no (Check 21 P8)", async ({
+  page,
+  context,
+}) => {
+  const owner = await seedOwner({ mailbox: true, backfilled: true });
+  const { draft } = await seedQueue(owner.mailboxId!);
+  await testDb
+    .update(schema.drafts)
+    .set({ kind: "followup", reason: "No reply in 3 days to your panel quote." })
+    .where(eq(schema.drafts.id, draft.id));
+  await signInAs(context, owner);
+  await page.goto("/queue");
+  const card = page.getByRole("article", { name: "Draft reply to Priya" });
+  const saidNo = card.getByRole("button", { name: "They said no" });
+  await expect(saidNo).toBeVisible();
+  expect((await saidNo.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+  await expect(card.getByRole("button", { name: "Already paid" })).toHaveCount(0);
+  await card.getByRole("button", { name: "Discard", exact: true }).click();
+  await expect(card).toContainText(
+    "Discard this nudge? It's removed from Gmail too, and we won't nudge them again on this one unless you write to them.",
+  );
+});
