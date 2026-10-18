@@ -6,7 +6,7 @@ import type { ModelDraft } from "@/ai/prompts/draft.v5";
 import type { Database } from "@/db";
 import { businessProfiles, drafts, mailboxes, messages, threads, workspaces } from "@/db/schema";
 import { ensureUserAndWorkspace } from "@/server/accounts";
-import { createDraftForThread, listQueue, saveDraftEdit } from "@/server/drafts";
+import { createDraftForThread, listQueue, saveDraftEdit, sendDraft } from "@/server/drafts";
 import { refreshSendAs } from "@/server/from-line";
 import { saveConnectedMailbox } from "@/server/mailboxes";
 import { createTestDb } from "../support/db";
@@ -201,5 +201,26 @@ describe("Check 43 P5: a form lead's reply subject", () => {
     const { raw } = await draftFor(t.id);
     // Written by the customer themselves (no Reply-To): their subject, as they wrote it.
     expect(header(raw, "Subject")).toBe("Re: Form Submission - Request a quote");
+  });
+});
+
+describe("Check 43 P6: multipart drafts and the 'changed in Gmail' check", () => {
+  it("an unedited multipart draft sends; an edit in Gmail is still seen", async () => {
+    await database
+      .update(workspaces)
+      .set({ status: "active", setupPaidVia: "stripe" })
+      .where(eq(workspaces.id, workspaceId));
+    const t = await seedThread();
+    const { draft, raw } = await draftFor(t.id);
+    expect(FakeWriter.headersOf(raw)).toContain("multipart/alternative");
+    expect(FakeWriter.partOf(raw, "text/html")).toContain("What&#39;s the address?");
+    expect(await sendDraft(workspaceId, draft.id, deps())).toMatchObject({ status: "sent" });
+
+    const t2 = await seedThread({ g: "gt2" });
+    const second = await draftFor(t2.id);
+    writer.editInGmail(second.draft.gmailDraftId!, "Changed in Gmail");
+    expect(await sendDraft(workspaceId, second.draft.id, deps())).toEqual({
+      status: "changed_in_gmail",
+    });
   });
 });

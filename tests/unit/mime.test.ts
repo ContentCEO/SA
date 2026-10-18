@@ -6,8 +6,10 @@ import {
   formReplySubject,
   replySubject,
   sameText,
+  textToHtml,
   toGmailRaw,
 } from "@/mailbox/mime";
+import { extractBodyText } from "@/mailbox/gmail/parse";
 import {
   NO_SIGNATURE_LINE,
   noSignatureLine,
@@ -199,5 +201,81 @@ describe("Check 43 P5: contact-form replies get a subject the homeowner recognis
     expect(formReplySubject("Form Submission", "Rossi\r\nBcc: x@y.com")).toBe(
       "Your request to Rossi Bcc: x@y.com",
     );
+  });
+});
+
+describe("Check 43 P6: a matching HTML part so Outlook can't squash signatures", () => {
+  const text =
+    'Hi Dana,\n\nI can come Monday,\nTuesday or Friday.\n\nPrices < $500 & "José" 🙏 it\'s fine: https://x.com/a?b=1&c=2\n\nMike Rossi\nRossi Plumbing & Heating\n978-555-0142';
+  const mime = buildReplyMime({
+    from: "mike@x.com",
+    to: "dana@y.com",
+    subject: "Re: Hi",
+    inReplyTo: "<a@b>",
+    body: text,
+  });
+  const raw = toGmailRaw(mime);
+  /** The HTML part back to text: paragraphs → blank lines, <br> → newlines, entities decoded. */
+  const htmlBack = (html: string) =>
+    html
+      .replace(/^<div dir="auto" style="font-family:inherit">|<\/div>$/g, "")
+      .replace(/<\/p><p>/g, "\n\n")
+      .replace(/<\/?p>/g, "")
+      .replace(/<br>/g, "\n")
+      .replace(/&lt;/g, "<")
+      .replace(/&gt;/g, ">")
+      .replace(/&quot;/g, '"')
+      .replace(/&#39;/g, "'")
+      .replace(/&amp;/g, "&");
+
+  it("is multipart/alternative: the plain text as today, and the same text as HTML", () => {
+    expect(mime).toMatch(/^Content-Type: multipart\/alternative; boundary="[^"]+"$/m);
+    expect(FakeWriter.bodyOf(raw)).toBe(text);
+    const html = FakeWriter.partOf(raw, "text/html");
+    expect(html.startsWith('<div dir="auto" style="font-family:inherit"><p>Hi Dana,</p>')).toBe(
+      true,
+    );
+    expect(html).toContain("<p>I can come Monday,<br>Tuesday or Friday.</p>");
+    expect(htmlBack(html)).toBe(text);
+  });
+
+  it("escapes every character and adds no links, images or colours", () => {
+    const html = FakeWriter.partOf(raw, "text/html");
+    expect(html).toContain("Prices &lt; $500 &amp; &quot;José&quot; 🙏 it&#39;s fine");
+    expect(html).not.toMatch(/<(a|img|span|font|style|script)\b/i);
+    expect(html).not.toMatch(/color|href|src=/i);
+    expect(textToHtml("<script>alert(1)</script>")).toBe(
+      '<div dir="auto" style="font-family:inherit"><p>&lt;script&gt;alert(1)&lt;/script&gt;</p></div>',
+    );
+  });
+
+  it("uses a boundary found in neither part, and both parts are base64 UTF-8", () => {
+    const boundary = mime.match(/boundary="([^"]+)"/)![1]!;
+    const body = mime.slice(mime.indexOf("\r\n\r\n") + 4);
+    expect(body.split(`--${boundary}`)).toHaveLength(4); // preamble, 2 parts, closing
+    expect(body.trimEnd().endsWith(`--${boundary}--`)).toBe(true);
+    expect(body.match(/Content-Transfer-Encoding: base64/g)).toHaveLength(2);
+    expect(body.match(/charset="UTF-8"/g)).toHaveLength(2);
+    expect(mime).toContain("In-Reply-To: <a@b>");
+  });
+
+  it("Gmail's parser still reads the plain text, so sameText compares what the owner saw", () => {
+    // Our MIME as Gmail's API would hand it back (users.drafts.get, format=full).
+    const boundary = mime.match(/boundary="([^"]+)"/)![1]!;
+    const body = mime.slice(mime.indexOf("\r\n\r\n") + 4);
+    const parts = body
+      .split(`--${boundary}`)
+      .slice(1, -1)
+      .map((chunk) => {
+        const at = chunk.indexOf("\r\n\r\n");
+        const type = chunk.slice(0, at).match(/Content-Type: ([^;]+)/)![1]!;
+        const data = Buffer.from(chunk.slice(at + 4).replace(/\s+/g, ""), "base64").toString(
+          "base64url",
+        );
+        return { mimeType: type, body: { data } };
+      });
+    const read = extractBodyText({ mimeType: "multipart/alternative", parts });
+    expect(sameText(read, text)).toBe(true);
+    expect(read).not.toContain("<p>");
   });
 });

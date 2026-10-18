@@ -10,10 +10,30 @@ export class FakeWriter implements MailboxWriter {
   calls: string[] = [];
   private n = 0;
 
+  /**
+   * The plain text, as Gmail's parser reads it (text/plain first): our multipart/alternative
+   * replies (Check 43 P6) and single-part bodies (old drafts, edits made "in Gmail") alike.
+   */
   static bodyOf(raw: string): string {
+    return FakeWriter.partOf(raw, "text/plain");
+  }
+  /** One part's decoded text (text/plain or text/html); a single-part body is its own part. */
+  static partOf(raw: string, type: "text/plain" | "text/html"): string {
     const mime = Buffer.from(raw, "base64url").toString("utf8");
-    const [, b64 = ""] = mime.split("\r\n\r\n");
-    return Buffer.from(b64.replace(/\r\n/g, ""), "base64").toString("utf8").replace(/\r\n/g, "\n");
+    const split = mime.indexOf("\r\n\r\n");
+    const head = split === -1 ? mime : mime.slice(0, split);
+    const rest = split === -1 ? "" : mime.slice(split + 4);
+    const decode = (b64: string) =>
+      Buffer.from(b64.replace(/\s+/g, ""), "base64").toString("utf8").replace(/\r\n/g, "\n");
+    const boundary = head.match(/boundary="([^"]+)"/i)?.[1];
+    if (!boundary) return type === "text/plain" ? decode(rest) : "";
+    for (const chunk of rest.split(`--${boundary}`)) {
+      const at = chunk.indexOf("\r\n\r\n");
+      if (at === -1) continue;
+      if (new RegExp(`content-type:\\s*${type}`, "i").test(chunk.slice(0, at)))
+        return decode(chunk.slice(at + 4));
+    }
+    return "";
   }
   static headersOf(raw: string): string {
     return Buffer.from(raw, "base64url").toString("utf8").split("\r\n\r\n")[0]!;
@@ -47,8 +67,15 @@ export class FakeWriter implements MailboxWriter {
   /** Simulate the owner editing the draft in Gmail. */
   editInGmail(draftId: string, body: string) {
     const d = this.drafts.get(draftId)!;
-    const mime = Buffer.from(d.raw, "base64url").toString("utf8").split("\r\n\r\n")[0]!;
-    d.raw = Buffer.from(`${mime}\r\n\r\n${Buffer.from(body).toString("base64")}`).toString(
+    // Gmail saves the owner's edit as its own message: kept headers, a new single text part.
+    const head = Buffer.from(d.raw, "base64url")
+      .toString("utf8")
+      .split("\r\n\r\n")[0]!
+      .split("\r\n")
+      .filter((l) => !/^content-(type|transfer-encoding):/i.test(l))
+      .concat('Content-Type: text/plain; charset="UTF-8"', "Content-Transfer-Encoding: base64")
+      .join("\r\n");
+    d.raw = Buffer.from(`${head}\r\n\r\n${Buffer.from(body).toString("base64")}`).toString(
       "base64url",
     );
   }

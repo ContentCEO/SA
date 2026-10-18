@@ -1,3 +1,5 @@
+import { randomBytes } from "node:crypto";
+
 /**
  * Build an RFC 2822 reply. Header values are stripped of CR/LF so text from an
  * email (a subject, an address) can never inject extra headers.
@@ -62,14 +64,53 @@ export function formReplySubject(
   return name ? `Your request to ${name}` : "Your request";
 }
 
+/** Check 43 P6: HTML-escape every character that means something in HTML. */
+const escapeHtml = (v: string) =>
+  v
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+
+/**
+ * Check 43 P6: the reply's text as HTML, made mechanically so classic Outlook ("Remove extra
+ * line breaks in plain text messages") can't join a signature into one line. Escaped text,
+ * each line break a <br>, blank lines a paragraph break, in one plain <div>. No links, images,
+ * colours or tracking: URLs stay text (mail apps link them). Never logged.
+ */
+export function textToHtml(text: string): string {
+  const paragraphs = text
+    .replace(/\r\n?/g, "\n")
+    .split(/\n[ \t]*\n+/)
+    .map((p) => p.replace(/^\n+|\n+$/g, ""))
+    .filter((p) => p.length > 0)
+    .map((p) => `<p>${p.split("\n").map(escapeHtml).join("<br>")}</p>`);
+  return `<div dir="auto" style="font-family:inherit">${paragraphs.join("")}</div>`;
+}
+
+const base64Lines = (v: string) =>
+  Buffer.from(v, "utf8").toString("base64").replace(/.{76}/g, "$&\r\n");
+
+/** A MIME boundary that appears in neither part (base64 can't hold "_" or ".", but check). */
+function boundaryFor(parts: string[]): string {
+  for (;;) {
+    const b = `=_sa_${randomBytes(12).toString("hex")}`;
+    if (!parts.some((p) => p.includes(b))) return b;
+  }
+}
+
 export function buildReplyMime(m: ReplyMime): string {
+  const plain = base64Lines(m.body.replace(/\r?\n/g, "\r\n"));
+  const html = base64Lines(textToHtml(m.body));
+  const boundary = boundaryFor([plain, html]);
   const headers = [
     `From: ${formatAddress(m.fromName, m.from)}`,
     `To: ${clean(m.to)}`,
     `Subject: ${encodeHeader(m.subject)}`,
     "MIME-Version: 1.0",
-    'Content-Type: text/plain; charset="UTF-8"',
-    "Content-Transfer-Encoding: base64",
+    // Check 43 P6: the plain text exactly as before, plus the same text as HTML.
+    `Content-Type: multipart/alternative; boundary="${boundary}"`,
   ];
   const inReplyTo = m.inReplyTo ? clean(m.inReplyTo) : null;
   if (inReplyTo) {
@@ -77,10 +118,22 @@ export function buildReplyMime(m: ReplyMime): string {
     const refs = [m.references ? clean(m.references) : "", inReplyTo].filter(Boolean).join(" ");
     headers.push(`References: ${refs}`);
   }
-  const body = Buffer.from(m.body.replace(/\r?\n/g, "\r\n"), "utf8")
-    .toString("base64")
-    .replace(/.{76}/g, "$&\r\n");
-  return `${headers.join("\r\n")}\r\n\r\n${body}`;
+  const part = (type: string, body: string) =>
+    [
+      `--${boundary}`,
+      `Content-Type: ${type}; charset="UTF-8"`,
+      "Content-Transfer-Encoding: base64",
+      "",
+      body,
+    ].join("\r\n");
+  return [
+    headers.join("\r\n"),
+    "",
+    part("text/plain", plain),
+    part("text/html", html),
+    `--${boundary}--`,
+    "",
+  ].join("\r\n");
 }
 
 /** Gmail wants the whole message base64url-encoded. */

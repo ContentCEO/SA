@@ -33,6 +33,13 @@
     (a nudge after "Your request to X" reads "Re: Your request to X"). Every draft card shows
     "Subject: …" above the reply. The Reply-To backfill's re-pointed old drafts keep their
     stored subject (not changed here).
+  - **HTML part (Check 43 P6):** `buildReplyMime` writes multipart/alternative: the text/plain
+    part exactly as before plus a text/html part made by `textToHtml` (every character escaped,
+    line breaks → `<br>`, blank lines → `<p>`, one `<div dir="auto" style="font-family:inherit">`;
+    no links, images, colours or tracking). Random boundary checked against both parts; both
+    base64 UTF-8. Gmail's parser (`extractBodyText`) prefers text/plain, so `sameText` checks
+    are unchanged. `FakeWriter.bodyOf` reads the text/plain part (`partOf` for either) and the
+    e2e fake's `parseRaw` reads multipart. Not verified in classic Outlook.
   - Known gaps: `workspaceMailboxEmails` (the "self" list for Reply-To picking and
     `answeredSince`'s "only to yourself" rule) doesn't include send-as aliases.
 
@@ -46,6 +53,8 @@
 
 - Check 42 P4 is not verified live: on an account with a verified "send mail as" alias, have a
   customer address write to the alias and check the reply goes out from it.
+- Check 43 P6 is not verified live: open a reply with a one-line-per-item signature in classic
+  Outlook for Windows and check the lines stay separate (and Gmail / Apple Mail look as before).
 - Check 43 P3 is not verified live: send one reply from the preview to a second address and
   look at the From line in Gmail web, Gmail on a phone and Apple Mail.
 

@@ -217,9 +217,25 @@ export function parseRaw(raw: string): {
     if (i <= 0) continue;
     headers.push({ name: line.slice(0, i).trim(), value: decodeWords(line.slice(i + 1).trim()) });
   }
-  const encoding = header(headers, "Content-Transfer-Encoding")?.toLowerCase();
-  const body =
-    encoding === "base64" ? Buffer.from(rest.replace(/\s+/g, ""), "base64").toString("utf8") : rest;
+  const decode = (encoding: string | undefined, text: string) =>
+    encoding?.toLowerCase() === "base64"
+      ? Buffer.from(text.replace(/\s+/g, ""), "base64").toString("utf8")
+      : text;
+  // Check 43 P6: replies are multipart/alternative; Gmail reads the text/plain part.
+  const boundary = header(headers, "Content-Type")?.match(/boundary="?([^";]+)"?/i)?.[1];
+  let body = decode(header(headers, "Content-Transfer-Encoding"), rest);
+  if (boundary) {
+    body = "";
+    for (const chunk of rest.split(`--${boundary}`)) {
+      const at = chunk.indexOf("\r\n\r\n");
+      if (at === -1) continue;
+      const partHead = chunk.slice(0, at);
+      if (!/content-type:\s*text\/plain/i.test(partHead)) continue;
+      const enc = partHead.match(/content-transfer-encoding:\s*(\S+)/i)?.[1];
+      body = decode(enc, chunk.slice(at + 4));
+      break;
+    }
+  }
   return { headers, body: body.replace(/\r\n/g, "\n") };
 }
 
