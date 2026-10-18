@@ -13,6 +13,8 @@ import { checkTestPayments, resetTestPayments, StripeNotLiveError } from "@/serv
 import { isAdminMove } from "@/server/lifecycle";
 import { isHandKey } from "@/server/launch-ready";
 import { tickLaunchItem } from "@/server/launch-ticks";
+import { sendAdminTestEmail } from "@/server/email-health";
+import { hitLimit } from "@/server/rate-limit";
 import {
   applyAdminMove,
   MoveNotAllowedError,
@@ -33,6 +35,29 @@ export async function tickLaunchAction(formData: FormData) {
   await tickLaunchItem(key);
   console.info("launch_ticked", { key });
   redirect("/admin?done=launch_ticked#launch");
+}
+
+/**
+ * Check 18 P2: "Send me a test email" on the Email box. Admin only, five an hour; the email goes
+ * to ADMIN_EMAIL from env. Only a fixed result code and a three-digit status travel in the URL.
+ */
+export async function sendTestEmailAction() {
+  await requireAdmin();
+  const limit = await hitLimit("emailTest", "admin");
+  if (!limit.allowed) redirect("/admin?error=email_test_limit#email");
+  let r: Awaited<ReturnType<typeof sendAdminTestEmail>>;
+  try {
+    r = await sendAdminTestEmail();
+  } catch (err) {
+    console.error("admin_test_email_failed", {
+      error: err instanceof Error ? err.name : "unknown",
+    });
+    redirect("/admin?error=unknown#email");
+  }
+  if (r.result === "refused") redirect(`/admin?error=email_test_refused&status=${r.status}#email`);
+  redirect(
+    `/admin?done=${r.result === "sent" ? "email_test_sent" : "email_test_not_set_up"}#email`,
+  );
 }
 
 /** Davi's manual status moves. Re-checks admin on every call, not just the page. */

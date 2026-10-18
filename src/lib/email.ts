@@ -1,7 +1,97 @@
 import "server-only";
-import { and, eq, like, lt } from "drizzle-orm";
+import { and, eq, like, lt, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { appSettings } from "@/db/schema";
+
+/**
+ * Check 18 P2: a refusal from Resend, with the HTTP status and nothing else. The message
+ * never carries Resend's own text (it can echo the address), and callers log `status` as a
+ * number beside the error's name, so a 403 from the test sender can be told from a 5xx.
+ */
+export class ResendError extends Error {
+  readonly status: number;
+  constructor(status: number) {
+    super(`Resend ${status}.`);
+    this.name = "ResendError";
+    this.status = status;
+  }
+}
+
+/** What a sender's catch block logs: the error's name, plus the Resend status when there is one. */
+export function emailErrorFields(err: unknown): { error: string; status?: number } {
+  if (err instanceof ResendError) return { error: err.name, status: err.status };
+  return { error: err instanceof Error ? err.name : "unknown" };
+}
+
+/** Content-free tally of refusals per UTC day: `email-refused:<YYYY-MM-DD>` → {"403": 3}. */
+export const REFUSED_TALLY_PREFIX = "email-refused:";
+/** Kept two weeks, then the daily purge drops it. */
+export const REFUSED_TALLY_KEEP_DAYS = 14;
+
+const utcDay = (d: Date) => d.toISOString().slice(0, 10);
+
+/** One more refusal with this status today. Never throws (the refusal itself is what matters). */
+async function tallyRefusal(status: number, now: Date = new Date()) {
+  const key = REFUSED_TALLY_PREFIX + utcDay(now);
+  const field = String(status);
+  try {
+    await db()
+      .insert(appSettings)
+      .values({ key, value: JSON.stringify({ [field]: 1 }) })
+      .onConflictDoUpdate({
+        target: appSettings.key,
+        set: {
+          value: sql`(coalesce(${appSettings.value}::jsonb, '{}'::jsonb) || jsonb_build_object(${field}::text, coalesce((${appSettings.value}::jsonb ->> ${field})::int, 0) + 1))::text`,
+          updatedAt: now,
+        },
+      });
+  } catch (err) {
+    console.error("email_refused_tally_failed", {
+      error: err instanceof Error ? err.name : "unknown",
+    });
+  }
+}
+
+export type RefusedTally = { total: number; byStatus: Record<string, number> };
+
+/** Refusals over the last `days` UTC days (today included), by status. Counts only. */
+export async function refusedTally(days = 7, now: Date = new Date()): Promise<RefusedTally> {
+  const since = REFUSED_TALLY_PREFIX + utcDay(new Date(now.getTime() - (days - 1) * 86_400_000));
+  const rows = await db()
+    .select({ key: appSettings.key, value: appSettings.value })
+    .from(appSettings)
+    .where(
+      and(like(appSettings.key, `${REFUSED_TALLY_PREFIX}%`), sql`${appSettings.key} >= ${since}`),
+    );
+  const byStatus: Record<string, number> = {};
+  let total = 0;
+  for (const r of rows) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(r.value);
+    } catch {
+      continue;
+    }
+    if (!parsed || typeof parsed !== "object") continue;
+    for (const [status, n] of Object.entries(parsed as Record<string, unknown>)) {
+      if (typeof n !== "number" || !/^\d{3}$/.test(status)) continue;
+      byStatus[status] = (byStatus[status] ?? 0) + n;
+      total += n;
+    }
+  }
+  return { total, byStatus };
+}
+
+/** Daily: drop refusal tallies older than two weeks. */
+export async function purgeEmailRefusedTallies(now: Date = new Date()) {
+  const keep =
+    REFUSED_TALLY_PREFIX + utcDay(new Date(now.getTime() - REFUSED_TALLY_KEEP_DAYS * 86_400_000));
+  await db()
+    .delete(appSettings)
+    .where(
+      and(like(appSettings.key, `${REFUSED_TALLY_PREFIX}%`), sql`${appSettings.key} < ${keep}`),
+    );
+}
 
 export type OutgoingEmail = {
   to: string;
@@ -125,7 +215,10 @@ export const sendEmail: EmailSender = async (email) => {
   ) {
     return "already_sent";
   }
-  if (!res.ok) throw new Error(`Resend ${res.status}.`);
+  if (!res.ok) {
+    await tallyRefusal(res.status);
+    throw new ResendError(res.status);
+  }
   await recordSent(email.idempotencyKey);
   return "sent";
 };

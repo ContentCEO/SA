@@ -4,7 +4,7 @@ import { db } from "@/db";
 import { activityLog, mailboxes, users, workspaces } from "@/db/schema";
 import { appUrl } from "@/lib/app-url";
 import { brandEmail } from "@/lib/email-layout";
-import { sendEmail, type EmailSender } from "@/lib/email";
+import { sendEmail, type EmailSender, emailErrorFields } from "@/lib/email";
 import { jobsAllowed } from "./lifecycle";
 
 /** A second reminder if Gmail is still disconnected this long after the first alert. */
@@ -100,7 +100,7 @@ export async function sendAccessLostAlerts(
       failed++;
       console.error("access_alert_failed", {
         mailboxId: r.mailbox.id,
-        error: err instanceof Error ? err.name : "unknown",
+        ...emailErrorFields(err),
       });
     }
   }

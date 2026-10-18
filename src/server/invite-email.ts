@@ -6,7 +6,7 @@ import { db } from "@/db";
 import { appSettings, invites } from "@/db/schema";
 import { appUrl } from "@/lib/app-url";
 import { brandEmail } from "@/lib/email-layout";
-import { sendEmail, type EmailSender } from "@/lib/email";
+import { sendEmail, type EmailSender, emailErrorFields } from "@/lib/email";
 import { normalizeEmail } from "./accounts";
 import { inviteEmailCopy } from "./first-week-rules";
 
@@ -66,7 +66,7 @@ export async function sendInviteEmail(
       .onConflictDoNothing();
     return "sent";
   } catch (err) {
-    console.error("invite_email_failed", { error: err instanceof Error ? err.name : "unknown" });
+    console.error("invite_email_failed", emailErrorFields(err));
     return "failed";
   }
 }

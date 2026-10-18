@@ -40,6 +40,8 @@ export const LIMITS = {
   poll: { max: 300, windowSec: 10 * 60 },
   /** Owner taps that write to Gmail (save an edit, discard a draft), per workspace (M11 C8). */
   gmailWrite: { max: 120, windowSec: 10 * 60 },
+  /** Davi's "Send me a test email" on /admin (Check 18 P2). */
+  emailTest: { max: 5, windowSec: 60 * 60 },
 } as const;
 /** purgeRateLimits deletes windows older than 2 days, so no window may be longer than a day. */
 export const MAX_WINDOW_SEC = 24 * 60 * 60;

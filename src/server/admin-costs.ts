@@ -5,7 +5,7 @@ import { formatDollars, type PlanId } from "@/config/pricing";
 import { db } from "@/db";
 import { appSettings, usage, users, workspaces, type Workspace } from "@/db/schema";
 import { effectiveStatus } from "./lifecycle";
-import { sendEmail, type EmailSender } from "@/lib/email";
+import { sendEmail, type EmailSender, emailErrorFields } from "@/lib/email";
 import { appUrl } from "@/lib/app-url";
 import { COST_ALERT_SHARE, costAlertDue, costLine } from "./admin-cost-rules";
 import { freeMonthRunning } from "./referral-rules";
@@ -144,7 +144,7 @@ export async function sendCostAlerts(
       failed++;
       console.error("cost_alert_failed", {
         workspaceId: r.workspaceId,
-        error: err instanceof Error ? err.name : "unknown",
+        ...emailErrorFields(err),
       });
     }
   }

@@ -47,10 +47,14 @@ import {
   removeInviteAction,
   testUserAddedAction,
   resetTestPaymentsAction,
+  sendTestEmailAction,
   setPlanAction,
   tickLaunchAction,
 } from "./actions";
 import { LaunchReady } from "./launch-ready";
+import { EmailHealthBox } from "./email-health";
+import { emailHealthBox } from "@/server/email-health";
+import { TEST_EMAIL_DONE, testEmailErrorText } from "@/server/email-health-rules";
 import { launchChecks } from "@/server/launch-ready";
 import { loadLaunchFacts } from "@/server/launch-ticks";
 import { PendingButton } from "@/components/app/pending-button";
@@ -597,6 +601,7 @@ export default async function AdminPage(props: PageProps<"/admin">) {
     waitingStripe,
     accountCounts,
     inviteTotal,
+    emailBox,
   ] = await Promise.all([
     adminOverview(now, { q, page }),
     countWorkspaces(q),
@@ -618,6 +623,8 @@ export default async function AdminPage(props: PageProps<"/admin">) {
     stripeWaitingWorkspaces(),
     accountsNeedingYou(now),
     countInvites(),
+    // Check 18 P2: the sender's state (env) and the week's refusal count (a tally, no addresses).
+    emailHealthBox(now),
   ]);
   const growthStates = await growthStateForEmails(waiting.map((w) => w.email));
   // Check 16 P3: Growth requests from the last 7 days (no "called" mark exists yet: Check 16 P4).
@@ -641,11 +648,20 @@ export default async function AdminPage(props: PageProps<"/admin">) {
   const waitlistError = noticeText(WAITLIST_GROWTH_ERRORS, code(params.error, "wl_"));
   // Payment messages show inside the Payments section (the page scrolls there), not at the top.
   const isStripe = (k: unknown) => typeof k === "string" && k.startsWith("stripe");
+  // Check 18 P2: the test email's result shows in the Email box.
+  const isEmailTest = (k: unknown) => typeof k === "string" && k.startsWith("email_test");
+  const emailDone = noticeText(TEST_EMAIL_DONE, isEmailTest(params.done) ? params.done : undefined);
+  const emailError = testEmailErrorText(params.error, params.status);
   // Check 16 P6: a move's notice shows inside the card it changed, naming it (not at the top).
   const onCard = cardNotice(params, rows, pricing.plans);
-  const doneMsg = !onCard && !isStripe(params.done) ? noticeText(done, params.done) : undefined;
+  const doneMsg =
+    !onCard && !isStripe(params.done) && !isEmailTest(params.done)
+      ? noticeText(done, params.done)
+      : undefined;
   const errorMsg =
-    !onCard && !isStripe(params.error) ? noticeText(errors, params.error) : undefined;
+    !onCard && !isStripe(params.error) && !isEmailTest(params.error)
+      ? noticeText(errors, params.error)
+      : undefined;
   const stripeDone =
     params.done === "stripe_test_reset"
       ? testPayments && testPayments.reset !== null
@@ -747,6 +763,14 @@ export default async function AdminPage(props: PageProps<"/admin">) {
           </p>
         ) : null}
       </section>
+
+      <EmailHealthBox
+        health={emailBox.health}
+        refused={emailBox.refused}
+        done={emailDone}
+        error={emailError}
+        sendTestAction={sendTestEmailAction}
+      />
 
       <LaunchReady rows={launchChecks(process.env, launchFacts)} tickAction={tickLaunchAction} />
 

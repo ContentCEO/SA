@@ -14,7 +14,7 @@ import {
   workspaces,
 } from "@/db/schema";
 import { appUrl } from "@/lib/app-url";
-import { sendEmail, type EmailSender } from "@/lib/email";
+import { sendEmail, type EmailSender, emailErrorFields } from "@/lib/email";
 import { closeRateBetween } from "./activity";
 import { jobsAllowed } from "./lifecycle";
 import {
@@ -292,7 +292,7 @@ export async function sendMonthlySummaries(
       run.failed++;
       console.error("monthly_summary_failed", {
         workspaceId: r.workspace.id,
-        error: err instanceof Error ? err.name : "unknown",
+        ...emailErrorFields(err),
       });
     }
   }
