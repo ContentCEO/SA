@@ -112,3 +112,10 @@ For the integrator to fold into CLAUDE.md / docs/LAUNCH.md / docs/privacy-policy
   never accepted and no user has that email (lower-case), and sets the waitlist entry's
   `invited_at` back to null. "Take back this invite" (one confirmation) on "Not yet" rows. The
   manual button is now "Invite and email them". Nothing is logged.
+- **Support page (Check 16 P8):** `/admin/accounts/[id]` (no loading.tsx; requireAdmin first;
+  non-uuid or unknown id → 404). `supportView` returns the account's AdminRow, the owner's Gmail
+  lines per inbox ("Inbox 1", never the address) from `mailboxHealth`, and the last 50
+  activity rows with only `action`, `actor`, `created_at` and the detail keys move/from/to/plan/
+  kind/autopilot/stripeStatus/code/by (picked in SQL with `jsonb_build_object`). Sentences come
+  from `supportSentence` (no first-name lookup). The card's name links there. `statusLabel` moved
+  to admin-rules.ts.

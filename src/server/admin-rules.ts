@@ -124,3 +124,111 @@ export function cardNotice(
   }
   return null;
 }
+
+/**
+ * Check 16 P8: one activity row on the support page, in plain words. Only the action, who did
+ * it, when, and a few fixed detail keys (statuses, plans, codes) — never a customer's name.
+ */
+export type SupportActivity = {
+  action: string;
+  actor: "owner" | "squared_away";
+  createdAt: Date;
+  detail: {
+    move?: unknown;
+    from?: unknown;
+    to?: unknown;
+    plan?: unknown;
+    kind?: unknown;
+    autopilot?: unknown;
+    stripeStatus?: unknown;
+    code?: unknown;
+    by?: unknown;
+  };
+};
+
+/** The detail keys the support page may read (never thread ids or anything from an email). */
+export const SUPPORT_DETAIL_KEYS = [
+  "move",
+  "from",
+  "to",
+  "plan",
+  "kind",
+  "autopilot",
+  "stripeStatus",
+  "code",
+  "by",
+] as const;
+
+const ACTION_WORDS: Record<string, string> = {
+  reply_sent: "Reply sent",
+  workspace_status_changed: "Status changed",
+  subscription_changed: "Stripe plan changed",
+  plan_changed: "Plan changed",
+  payment_received: "Payment received",
+  digest_sent: "Morning email sent",
+  mailbox_access_lost: "Gmail access lost",
+  mailbox_connected: "Gmail connected",
+  mailbox_reconnected: "Gmail reconnected",
+  mailbox_disconnected: "Gmail disconnected",
+  evaluation_started: "Trial started",
+  evaluation_expired: "Trial ended",
+  draft_created: "Draft written",
+  draft_discarded: "Draft discarded",
+};
+
+const words = (v: unknown) =>
+  typeof v === "string" ? v.replace(/_/g, " ") : typeof v === "number" ? String(v) : null;
+const capital = (s: string) => (s ? s[0]!.toUpperCase() + s.slice(1) : s);
+
+const supportTime = new Intl.DateTimeFormat("en-US", {
+  timeZone: "America/New_York",
+  month: "short",
+  day: "numeric",
+  hour: "numeric",
+  minute: "2-digit",
+});
+
+export function supportSentence(a: SupportActivity): string {
+  const base = ACTION_WORDS[a.action] ?? capital(words(a.action) ?? "Something happened");
+  const by =
+    a.detail.by === "admin"
+      ? "by you"
+      : a.detail.by === "stripe"
+        ? "by Stripe"
+        : a.actor === "owner"
+          ? "by owner"
+          : a.detail.autopilot === true
+            ? "by autopilot"
+            : "by Squared Away";
+  const from = words(a.detail.from);
+  const to = words(a.detail.to);
+  const extra = [
+    from && to ? `${from} -> ${to}` : to ? `to ${to}` : null,
+    !to && words(a.detail.plan) ? `plan ${words(a.detail.plan)}` : null,
+    words(a.detail.stripeStatus) ? `Stripe says ${words(a.detail.stripeStatus)}` : null,
+    words(a.detail.code) ? `code ${words(a.detail.code)}` : null,
+  ].filter(Boolean);
+  return `${base} ${by}${extra.length ? `: ${extra.join(", ")}` : ""} · ${supportTime.format(a.createdAt)}`;
+}
+
+/** /admin's status names, shared with the support page and /admin/costs (Check 16 P8, P10). */
+export const statusLabel: Record<
+  | "invited"
+  | "evaluating"
+  | "evaluation_expired"
+  | "setup_paid"
+  | "active"
+  | "past_due"
+  | "canceled"
+  | "paused",
+  string
+> = {
+  invited: "Invited",
+  evaluating: "Evaluating",
+  evaluation_expired: "Evaluation over",
+  setup_paid: "Setup paid",
+  active: "Active",
+  past_due: "Past due",
+  canceled: "Canceled",
+  paused: "Paused",
+};

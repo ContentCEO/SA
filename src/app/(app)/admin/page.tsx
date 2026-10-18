@@ -26,6 +26,7 @@ import { isAdminEmail } from "@/server/admin";
 import { ADMIN_MOVES, canMakeMove, type AdminMove } from "@/server/lifecycle";
 import {
   cardNotice,
+  statusLabel,
   needsYou,
   NOTHING_NEEDS_YOU,
   ORPHAN_PLAN_LINE,
@@ -93,17 +94,6 @@ import {
 } from "./growth-admin";
 
 export const metadata: Metadata = { title: "Admin", robots: { index: false } };
-
-const statusLabel: Record<AdminRow["status"], string> = {
-  invited: "Invited",
-  evaluating: "Evaluating",
-  evaluation_expired: "Evaluation over",
-  setup_paid: "Setup paid",
-  active: "Active",
-  past_due: "Past due",
-  canceled: "Canceled",
-  paused: "Paused",
-};
 
 const moves: Record<AdminMove, { label: string; explain: string; confirm: string }> = {
   extend_evaluation: {
@@ -414,7 +404,13 @@ function WorkspaceCard({
       ) : null}
       <header className="flex flex-wrap items-baseline justify-between gap-2">
         <div className="flex min-w-0 flex-col">
-          <span className="truncate text-lg font-black">{w.businessName || w.ownerEmail}</span>
+          {/* Check 16 P8: the support page for this account (content-free). */}
+          <Link
+            href={`/admin/accounts/${w.workspaceId}`}
+            className="inline-flex min-h-tap items-center truncate text-lg font-black underline underline-offset-4"
+          >
+            {w.businessName || w.ownerEmail}
+          </Link>
           {w.businessName ? <span className="truncate text-sm">{w.ownerEmail}</span> : null}
         </div>
         <span

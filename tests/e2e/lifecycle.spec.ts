@@ -400,3 +400,38 @@ test("admin: take back an unused invite; a signed-in owner's has no take-back (C
   const mine = page.getByRole("listitem").filter({ hasText: signedIn.email });
   if (await mine.count()) await expect(mine.getByText("Take back this invite")).toHaveCount(0);
 });
+
+test("admin: the support page shows what the owner sees and what happened, admin only (Check 16 P8)", async ({
+  page,
+  context,
+}) => {
+  const owner = await seedOwner({ mailbox: true, backfilled: true });
+  await seedQueue(owner.mailboxId!);
+  await setWorkspace(owner.workspaceId, { status: "active", businessName: "Support Shop" });
+  await testDb.insert(schema.activityLog).values({
+    workspaceId: owner.workspaceId,
+    actor: "owner",
+    action: "reply_sent",
+    detail: {},
+  });
+  await signInAs(context, owner);
+  expect((await page.goto(`/admin/accounts/${owner.workspaceId}`))?.status()).toBe(404);
+
+  const admin = await seedAdmin();
+  await context.clearCookies();
+  await signInAs(context, admin);
+  expect((await page.goto("/admin/accounts/not-a-uuid"))?.status()).toBe(404);
+  await page.goto("/admin");
+  await page
+    .getByRole("article", { name: owner.email })
+    .getByRole("link", { name: "Support Shop" })
+    .click();
+  await expect(page).toHaveURL(new RegExp(`/admin/accounts/${owner.workspaceId}$`));
+  await expect(page.getByRole("region", { name: "They see" })).toContainText("Google access");
+  await expect(page.getByRole("region", { name: "What happened" })).toContainText(
+    "Reply sent by owner",
+  );
+  for (const secret of ["Priya", "Dana", "leak came back", "panel age"]) {
+    await expect(page.locator("main")).not.toContainText(secret);
+  }
+});

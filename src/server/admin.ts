@@ -31,7 +31,8 @@ import {
   workspaces,
 } from "@/db/schema";
 import { mailboxOn } from "./mailbox-plan-rules";
-import { STALE_SYNC_MS } from "./mailbox-health";
+import { mailboxHealth, STALE_SYNC_MS } from "./mailbox-health";
+import { SUPPORT_DETAIL_KEYS, type SupportActivity } from "./admin-rules";
 import { normalizeEmail } from "./accounts";
 import { effectiveStatus, jobsAllowed } from "./lifecycle";
 import { referralsVisible } from "./referral-rules";
@@ -131,10 +132,10 @@ export async function countWorkspaces(q?: string | null): Promise<number> {
  */
 export async function adminOverview(
   now: Date = new Date(),
-  opts: { q?: string | null; page?: number } = {},
+  opts: { q?: string | null; page?: number; id?: string } = {},
 ): Promise<AdminRow[]> {
   const page = opts.page && opts.page > 1 ? Math.floor(opts.page) : 1;
-  const search = accountSearch(opts.q);
+  const search = opts.id ? eq(workspaces.id, opts.id) : accountSearch(opts.q);
   const monthStart = `${utcDay(now).slice(0, 7)}-01`;
   const today = utcDay(now);
   const weekAgo = new Date(now.getTime() - 7 * 86_400_000);
@@ -164,7 +165,7 @@ export async function adminOverview(
   // Davi's own account is shown first on page 1, however many newer accounts there are.
   const adminEmail = process.env.ADMIN_EMAIL ? normalizeEmail(process.env.ADMIN_EMAIL) : null;
   const own =
-    adminEmail && page === 1
+    adminEmail && page === 1 && !opts.id
       ? await db()
           .select(columns)
           .from(workspaces)
@@ -386,6 +387,50 @@ export async function accountsNeedingYou(now: Date = new Date()) {
     })
     .from(workspaces);
   return { paymentsFailed: row?.pastDue ?? 0, trialsEndingSoon: row?.trialsEnding ?? 0 };
+}
+
+/**
+ * Check 16 P8: the support page for one account — its admin row, the Gmail lines the owner sees,
+ * and the last 50 activity rows with only fixed detail keys. Never a thread id, never a join to
+ * threads, messages or drafts, never a mailbox address. Null for an unknown id.
+ */
+export async function supportView(workspaceId: string, now: Date = new Date()) {
+  const [row] = await adminOverview(now, { id: workspaceId });
+  if (!row) return null;
+  const boxes = await db()
+    .select({
+      status: mailboxes.status,
+      backfillCompletedAt: mailboxes.backfillCompletedAt,
+      lastSyncedAt: mailboxes.lastSyncedAt,
+      watchExpiresAt: mailboxes.watchExpiresAt,
+      lastSyncErrorCode: mailboxes.lastSyncErrorCode,
+      planPausedAt: mailboxes.planPausedAt,
+    })
+    .from(mailboxes)
+    .where(eq(mailboxes.workspaceId, workspaceId))
+    .orderBy(mailboxes.createdAt);
+  const push = Boolean(process.env.GMAIL_PUBSUB_TOPIC);
+  const gmail = boxes.map((m, i) => ({
+    label: `Inbox ${i + 1}`,
+    lines: m.planPausedAt
+      ? [{ label: "Plan", text: "Paused: their plan covers fewer inboxes.", problem: false }]
+      : mailboxHealth(m, now, push).lines,
+  }));
+  const picked = sql<SupportActivity["detail"]>`jsonb_strip_nulls(jsonb_build_object(${sql.raw(
+    SUPPORT_DETAIL_KEYS.map((k) => `'${k}', ${activityLog.detail.name}->'${k}'`).join(", "),
+  )}))`;
+  const activity = await db()
+    .select({
+      action: activityLog.action,
+      actor: activityLog.actor,
+      createdAt: activityLog.createdAt,
+      detail: picked,
+    })
+    .from(activityLog)
+    .where(eq(activityLog.workspaceId, workspaceId))
+    .orderBy(desc(activityLog.createdAt), desc(activityLog.id))
+    .limit(50);
+  return { row, gmail, activity: activity as SupportActivity[] };
 }
 
 /** The 5-minute poll syncs every working mailbox; much older than that means jobs stopped. */

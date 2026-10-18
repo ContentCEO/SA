@@ -4,7 +4,10 @@ import { join } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
 import { drafts, messages, priceHistory, threads, usage } from "@/db/schema";
 import { ensureUserAndWorkspace } from "@/server/accounts";
-import { adminOverview, listInvites, systemHealth } from "@/server/admin";
+import { db } from "@/db";
+import { activityLog } from "@/db/schema";
+import { adminOverview, listInvites, supportView, systemHealth } from "@/server/admin";
+import { supportSentence } from "@/server/admin-rules";
 import { costRows } from "@/server/admin-costs";
 import {
   countGrowthClients,
@@ -106,6 +109,32 @@ describe("admin readers return no email content (Check 16 P11)", () => {
     const rows = await adminOverview(NOW);
     expect(rows).toHaveLength(1);
     expect(JSON.stringify(rows)).not.toMatch(LEAK);
+  });
+
+  it("supportView (Check 16 P8): Gmail lines and the timeline carry no content", async () => {
+    const [w] = await adminOverview(NOW);
+    // An activity row whose detail holds content-like keys: only the fixed keys come back.
+    await db()
+      .insert(activityLog)
+      .values({
+        workspaceId: w!.workspaceId,
+        actor: "owner",
+        action: "reply_sent",
+        detail: {
+          to: "active",
+          customer: "SECRET Zelda",
+          subject: "SECRET-SUBJECT",
+          email: "secret-customer@x.com",
+          by: "admin",
+        },
+      });
+    const view = await supportView(w!.workspaceId, NOW);
+    expect(view).not.toBeNull();
+    expect(view!.gmail).toHaveLength(1);
+    expect(view!.activity.length).toBeGreaterThan(0);
+    expect(JSON.stringify(view)).not.toMatch(LEAK);
+    expect(JSON.stringify(view!.activity.map(supportSentence))).not.toMatch(LEAK);
+    expect(await supportView("00000000-0000-4000-8000-000000000000", NOW)).toBeNull();
   });
 
   it("systemHealth", async () => {

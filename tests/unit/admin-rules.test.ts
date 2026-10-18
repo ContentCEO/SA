@@ -6,6 +6,7 @@ import {
   PAUSE_EXPLAIN_BILLED,
   pauseExplanation,
   STILL_BILLED_LINE,
+  supportSentence,
 } from "@/server/admin-rules";
 import { PAUSED_STILL_BILLED_LINE } from "@/server/billing-rules";
 
@@ -59,5 +60,25 @@ describe("the Needs you box (Check 16 P3)", () => {
       const one = needsYou({ ...zero, [key]: 1 });
       expect(one.map((l) => l.key)).toEqual([key]);
     }
+  });
+});
+
+describe("the support page's timeline (Check 16 P8)", () => {
+  const at = new Date("2026-10-14T13:42:00Z");
+  it("plain sentences with who and when; unknown actions in plain words", () => {
+    expect(
+      supportSentence({ action: "reply_sent", actor: "owner", createdAt: at, detail: {} }),
+    ).toBe("Reply sent by owner · Oct 14, 9:42 AM");
+    expect(
+      supportSentence({
+        action: "workspace_status_changed",
+        actor: "squared_away",
+        createdAt: at,
+        detail: { by: "admin", move: "mark_setup_call_done", from: "setup_paid", to: "active" },
+      }),
+    ).toBe("Status changed by you: setup paid -> active · Oct 14, 9:42 AM");
+    expect(
+      supportSentence({ action: "voice_idea_ignored", actor: "owner", createdAt: at, detail: {} }),
+    ).toBe("Voice idea ignored by owner · Oct 14, 9:42 AM");
   });
 });
