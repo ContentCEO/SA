@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { expect, test } from "@playwright/test";
 import { eq } from "drizzle-orm";
 import * as schema from "../../src/db/schema";
@@ -107,10 +108,15 @@ test("admin: sees health with no email content, and can turn sending on", async 
     .set({ setupPaidVia: null })
     .where(eq(schema.workspaces.ownerUserId, admin.userId));
   await page.reload();
+  // Check 16 P3: Davi's own card starts folded to one line.
+  await page.getByText(/^Your test account:/).click();
   const mine = page.getByRole("article", { name: admin.email });
   await mine.getByText("Use as my own test account").click();
   await mine.getByRole("button", { name: "Yes, this is my account" }).click();
   await expect(page.getByText("Your account can send now")).toBeVisible();
+  if (!(await page.getByRole("article", { name: admin.email }).isVisible())) {
+    await page.getByText(/^Your test account:/).click();
+  }
   await expect(page.getByRole("article", { name: admin.email })).toContainText(
     "Your own test account",
   );
@@ -171,7 +177,7 @@ test("admin: invite an owner", async ({ page, context }) => {
   await page.goto("/admin");
   await page.getByLabel("Their Gmail address").fill(email);
   await page.getByLabel("Trade").selectOption("electrical");
-  await page.getByRole("button", { name: "Add to invite list" }).click();
+  await page.getByRole("button", { name: "Invite and email them" }).click();
   await page.waitForURL(/done=invited/);
   await expect(page.getByText("Invited. They can sign in now")).toBeVisible();
   await expect(page.getByText(email)).toBeVisible();
@@ -219,4 +225,234 @@ test("AI costs: admin only", async ({ page, context }) => {
   await page.getByRole("link", { name: "AI costs and margins this month" }).click();
   await expect(page.getByRole("heading", { name: /AI costs/ })).toBeVisible();
   await expect(page.getByRole("list", { name: "Accounts by margin" })).toBeVisible();
+});
+
+test("paused with a Stripe plan: the owner is told billing hasn't changed, and Davi sees it (Check 17 P2)", async ({
+  page,
+  context,
+}) => {
+  const owner = await seedOwner({ mailbox: true, backfilled: true });
+  await setWorkspace(owner.workspaceId, {
+    status: "paused",
+    pausedFrom: "active",
+    plan: "crew",
+    businessName: "Billed While Paused",
+    setupPaidAt: new Date(),
+    setupPaidVia: "stripe",
+    stripeCustomerId: "cus_e2e_paused",
+    stripeSubscriptionId: "sub_e2e_paused",
+  });
+  await signInAs(context, owner);
+  await page.goto("/queue");
+  const banner = page.getByRole("status").filter({ hasText: "Your account is paused." });
+  await expect(banner).toContainText("Your plan's billing hasn't changed.");
+
+  const admin = await seedAdmin();
+  await context.clearCookies();
+  await signInAs(context, admin);
+  await page.goto("/admin");
+  const card = page.getByRole("article", { name: owner.email });
+  await expect(card).toContainText("Still billed in Stripe");
+  await expect(card).not.toContainText("sub_e2e_paused");
+  // Check 17 P7: the plan follows Stripe; no picker, and the plan's name reads properly.
+  await expect(card.getByRole("button", { name: "Save plan" })).toHaveCount(0);
+  await expect(card).toContainText("Plan is set by their Stripe subscription.");
+  await expect(card).toContainText("Crew");
+});
+
+test("pausing a paying account warns that Stripe keeps charging (Check 17 P2)", async ({
+  page,
+  context,
+}) => {
+  const owner = await seedOwner({ mailbox: true, backfilled: true });
+  await setWorkspace(owner.workspaceId, {
+    status: "active",
+    plan: "solo",
+    setupPaidAt: new Date(),
+    setupPaidVia: "stripe",
+    stripeSubscriptionId: "sub_e2e_pausing",
+  });
+  const admin = await seedAdmin();
+  await signInAs(context, admin);
+  await page.goto("/admin");
+  const card = page.getByRole("article", { name: owner.email });
+  await card.getByText("Pause account").click();
+  await expect(card).toContainText("Their Stripe plan keeps charging.");
+});
+
+test("admin: Needs you comes first, the waitlist sits above Accounts, Davi's card is folded (Check 16 P3)", async ({
+  page,
+  context,
+}) => {
+  const owner = await seedOwner({ mailbox: true, backfilled: true });
+  await setWorkspace(owner.workspaceId, { status: "past_due", plan: "solo" });
+  const admin = await seedAdmin();
+  await signInAs(context, admin);
+  await page.goto("/admin");
+  const top = async (name: RegExp) =>
+    (await page.getByRole("heading", { name }).first().boundingBox())!.y;
+  const needs = await top(/^Needs you$/);
+  const waitlist = await top(/waitlist/i);
+  const accounts = await top(/^Accounts \(/);
+  expect(needs).toBeLessThan(accounts);
+  expect(waitlist).toBeLessThan(accounts);
+  await expect(page.getByRole("region", { name: "Needs you" })).toContainText(
+    /Payments failed: \d+/,
+  );
+  await expect(page.getByRole("region", { name: "Needs you" })).not.toContainText(owner.email);
+  // Davi's own card: one line, folded.
+  await expect(page.getByText(/^Your test account:/)).toBeVisible();
+  await expect(page.getByRole("article", { name: admin.email })).toBeHidden();
+  await expect(page.locator(`#acct-${owner.workspaceId}`)).toBeVisible();
+});
+
+test("admin: find a shop by name, and reach older accounts page by page (Check 16 P5)", async ({
+  page,
+  context,
+}) => {
+  const tag = randomUUID().slice(0, 8);
+  const found = await seedOwner();
+  await setWorkspace(found.workspaceId, { businessName: `Findme Roofing ${tag}` });
+  const old = await seedOwner();
+  await setWorkspace(old.workspaceId, {
+    businessName: `Oldest Shop ${tag}`,
+    createdAt: new Date("2020-01-01T12:00:00Z"),
+  });
+  // More than one page of accounts newer than it, all dated in the past so other tests' fresh
+  // owners stay on page 1.
+  const us = await testDb
+    .insert(schema.users)
+    .values(Array.from({ length: 51 }, (_, i) => ({ email: `filler-${tag}-${i}@example.com` })))
+    .returning({ id: schema.users.id });
+  await testDb
+    .insert(schema.workspaces)
+    .values(us.map((u) => ({ ownerUserId: u.id, createdAt: new Date("2021-01-01T12:00:00Z") })));
+
+  const admin = await seedAdmin();
+  await signInAs(context, admin);
+  await page.goto("/admin");
+  await page.getByLabel("Find a shop (name or email)").fill(`findme roofing ${tag}`);
+  await page.getByRole("button", { name: "Find" }).click();
+  await page.waitForURL(/[?&]q=/);
+  await expect(page.locator("article")).toHaveCount(1);
+  await expect(page.getByRole("article", { name: found.email })).toBeVisible();
+  await page.getByRole("link", { name: "Clear" }).click();
+
+  await page.goto("/admin");
+  await expect(page.getByText(/^Showing 1 to 50 of \d+\.$/)).toBeVisible();
+  for (let i = 0; i < 40; i++) {
+    if (await page.getByRole("article", { name: old.email }).count()) break;
+    const older = page.getByRole("link", { name: "Show older accounts" });
+    const href = await older.getAttribute("href");
+    expect(href).toMatch(/[?&]page=\d+/);
+    await page.goto(href!);
+  }
+  await expect(page.getByRole("article", { name: old.email })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Show newer accounts" })).toBeVisible();
+});
+
+test("admin: a move lands back on its card with the shop's name (Check 16 P6)", async ({
+  page,
+  context,
+}) => {
+  const first = await seedOwner({ mailbox: true, backfilled: true });
+  await setWorkspace(first.workspaceId, { status: "active", businessName: "First Shop" });
+  const second = await seedOwner({ mailbox: true, backfilled: true });
+  await setWorkspace(second.workspaceId, {
+    status: "active",
+    businessName: `Ruiz Street ${randomUUID().slice(0, 6)}`,
+  });
+  const admin = await seedAdmin();
+  await signInAs(context, admin);
+  await page.goto("/admin");
+  const card = page.getByRole("article", { name: second.email });
+  await card.getByText("Pause account").click();
+  await card.getByRole("button", { name: "Yes, pause" }).click();
+  await page.waitForURL(new RegExp(`#acct-${second.workspaceId}$`));
+  expect(page.url()).toContain(`w=${second.workspaceId}`);
+  expect(page.url()).not.toContain("Ruiz");
+  const after = page.getByRole("article", { name: second.email });
+  await expect(after.getByRole("status")).toContainText(/^Paused Ruiz Street/);
+  await expect(page.getByRole("article", { name: first.email }).getByRole("status")).toHaveCount(0);
+});
+
+test("admin: take back an unused invite; a signed-in owner's has no take-back (Check 16 P7)", async ({
+  page,
+  context,
+}) => {
+  const signedIn = await seedOwner();
+  await testDb
+    .update(schema.invites)
+    .set({ acceptedAt: new Date() })
+    .where(eq(schema.invites.email, signedIn.email));
+  const admin = await seedAdmin();
+  await signInAs(context, admin);
+  const email = `typo-${randomUUID().slice(0, 8)}@example.com`;
+  await page.goto("/admin");
+  await page.getByLabel("Their Gmail address").fill(email);
+  await page.getByRole("button", { name: "Invite and email them" }).click();
+  await page.waitForURL(/done=invited/);
+  const row = page.getByRole("listitem").filter({ hasText: email });
+  await row.getByText("Take back this invite").click();
+  await row.getByRole("button", { name: "Yes, take back the invite" }).click();
+  await page.waitForURL(/done=invite_removed/);
+  await expect(page.getByRole("listitem").filter({ hasText: email })).toHaveCount(0);
+  const [gone] = await testDb.select().from(schema.invites).where(eq(schema.invites.email, email));
+  expect(gone).toBeUndefined();
+  const mine = page.getByRole("listitem").filter({ hasText: signedIn.email });
+  if (await mine.count()) await expect(mine.getByText("Take back this invite")).toHaveCount(0);
+});
+
+test("admin: the support page shows what the owner sees and what happened, admin only (Check 16 P8)", async ({
+  page,
+  context,
+}) => {
+  const owner = await seedOwner({ mailbox: true, backfilled: true });
+  await seedQueue(owner.mailboxId!);
+  await setWorkspace(owner.workspaceId, { status: "active", businessName: "Support Shop" });
+  await testDb.insert(schema.activityLog).values({
+    workspaceId: owner.workspaceId,
+    actor: "owner",
+    action: "reply_sent",
+    detail: {},
+  });
+  await signInAs(context, owner);
+  expect((await page.goto(`/admin/accounts/${owner.workspaceId}`))?.status()).toBe(404);
+
+  const admin = await seedAdmin();
+  await context.clearCookies();
+  await signInAs(context, admin);
+  expect((await page.goto("/admin/accounts/not-a-uuid"))?.status()).toBe(404);
+  await page.goto("/admin");
+  await page
+    .getByRole("article", { name: owner.email })
+    .getByRole("link", { name: "Support Shop" })
+    .click();
+  await expect(page).toHaveURL(new RegExp(`/admin/accounts/${owner.workspaceId}$`));
+  await expect(page.getByRole("region", { name: "They see" })).toContainText("Google access");
+  await expect(page.getByRole("region", { name: "What happened" })).toContainText(
+    "Reply sent by owner",
+  );
+  for (const secret of ["Priya", "Dana", "leak came back", "panel age"]) {
+    await expect(page.locator("main")).not.toContainText(secret);
+  }
+});
+
+test("admin: the Google test-user reminder only for invites that may still be blocked (Check 16 P9)", async ({
+  page,
+  context,
+}) => {
+  const connected = await seedOwner({ mailbox: true, backfilled: true });
+  const waiting = await seedOwner();
+  const admin = await seedAdmin();
+  await signInAs(context, admin);
+  await page.goto("/admin");
+  const connectedRow = page.getByRole("listitem").filter({ hasText: connected.email });
+  const waitingRow = page.getByRole("listitem").filter({ hasText: waiting.email });
+  await expect(connectedRow.getByRole("button", { name: "I added them" })).toHaveCount(0);
+  await expect(connectedRow).toContainText("Google test user: confirmed (Gmail connected)");
+  await expect(waitingRow.getByRole("button", { name: "I added them" })).toBeVisible();
+  await expect(waitingRow).toContainText(/Invited [A-Z][a-z]{2} \d{1,2}/);
+  const link = waitingRow.getByRole("link", { name: "Google Cloud → Audience" });
+  expect((await link.boundingBox())!.height).toBeGreaterThanOrEqual(44);
 });

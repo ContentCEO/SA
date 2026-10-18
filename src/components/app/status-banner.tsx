@@ -5,7 +5,13 @@ import { daysPhrase } from "@/lib/trial-words";
 import { TrialClock } from "./trial-clock";
 import { getWorkspaceForUser } from "@/server/accounts";
 import type { Workspace } from "@/db/schema";
-import { setupCallSentence } from "@/server/billing-rules";
+import {
+  PAUSED_STILL_BILLED_LINE,
+  planEndingSoon,
+  setupCallSentence,
+  shortDate,
+} from "@/server/billing-rules";
+import { workspaceTimeZone } from "@/server/snooze";
 import { queueCounts } from "@/server/drafts";
 import { trialCounts } from "@/server/first-week";
 import { isLastDay, trialSoFarLine, waitingLine } from "@/server/first-week-rules";
@@ -120,6 +126,23 @@ export async function StatusBanner() {
       "Choose a plan",
     );
   }
+  // Check 17 P3: the owner canceled in Stripe's page; in the last week, a quiet reminder.
+  const ending =
+    (status === "setup_paid" || status === "active") &&
+    workspace.stripeCancelAt &&
+    planEndingSoon(workspace.stripeCancelAt, now) ? (
+      <p role="status" className="rounded-xl border-2 border-charcoal p-4">
+        Your plan ends on{" "}
+        {shortDate(workspace.stripeCancelAt, await workspaceTimeZone(workspace.id))}. Nothing is
+        deleted.{" "}
+        <Link
+          href="/billing"
+          className="inline-flex min-h-tap items-center font-semibold underline underline-offset-4"
+        >
+          Plan &amp; billing
+        </Link>
+      </p>
+    ) : null;
   switch (status) {
     case "evaluation_expired": {
       // Round 2 (FW E7/F6): what's waiting for them, counts only.
@@ -151,10 +174,16 @@ export async function StatusBanner() {
             </>,
           )}
           <FreeMonthCard workspace={workspace} now={now} />
+          {ending}
         </div>
       );
     case "active":
-      return <FreeMonthCard workspace={workspace} now={now} />;
+      return (
+        <>
+          <FreeMonthCard workspace={workspace} now={now} />
+          {ending}
+        </>
+      );
     case "past_due":
       return inverted(
         "There's a problem with your payment.",
@@ -167,7 +196,11 @@ export async function StatusBanner() {
       return inverted(
         "Your account is paused.",
         <>
-          Nothing new is read, drafted or sent, and nothing is deleted. <Contact />
+          Nothing new is read, drafted or sent, and nothing is deleted.{" "}
+          {workspace.stripeSubscriptionId ? (
+            <>{PAUSED_STILL_BILLED_LINE} Questions about it? </>
+          ) : null}
+          <Contact />
         </>,
       );
     case "canceled":

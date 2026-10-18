@@ -22,6 +22,9 @@ import { ensureUserAndWorkspace } from "@/server/accounts";
 import {
   applyCheckoutCompleted,
   applySubscription,
+  checkoutNotice,
+  noteStripeWaiting,
+  stripeWaitingWorkspaces,
   CheckoutNotAllowedError,
   connectStripe,
   createCheckout,
@@ -46,6 +49,9 @@ import {
   SALES_TAX_ON_NOTE,
   SETUP_NOT_PAID_LINE,
   setupLookupKey,
+  setUpWithoutStripePlan,
+  HOUSE_ACCOUNT_LINE,
+  NO_STRIPE_PLAN_LINE,
   statusAfterCheckout,
   statusAfterSubscription,
   TERMS_BOX_OFF_LINE,
@@ -55,6 +61,13 @@ import { canSend, jobsAllowed } from "@/server/lifecycle";
 import { applyAdminMove } from "@/server/workspace-lifecycle";
 import { describeActivity } from "@/server/activity";
 import { isTermsUrlMissingError } from "@/server/stripe-error-rules";
+import {
+  CHECKOUT_REVIEW_LINE,
+  checkoutNoticeLine,
+  PAID_WAITING_LINE,
+  stripeGiveUpLine,
+  stripeWaitingLine,
+} from "@/server/billing-notice-rules";
 import { createTestDb } from "../support/db";
 import { FakeStripe, stripeErrors, type Call } from "../support/fake-stripe";
 
@@ -101,17 +114,42 @@ describe("billing rules", () => {
       expect(billingStatusLine(w(s, { setupPaidAt: NOW }), NOW)).toBe(SETUP_NOT_PAID_LINE);
       expect(SETUP_NOT_PAID_LINE).toBe("Sending turns on once your setup payment goes through.");
     }
-    expect(billingStatusLine(w("setup_paid", { setupPaidVia: "stripe" }), NOW)).toMatch(
-      /^Setup's paid and sending is on/,
+    expect(
+      billingStatusLine(
+        w("setup_paid", { setupPaidVia: "stripe", stripeSubscriptionId: "sub_1" }),
+        NOW,
+      ),
+    ).toMatch(/^Setup's paid and sending is on/);
+    // Check 17 P11: nothing to renew for Davi's own account, or with no Stripe plan on file.
+    expect(billingStatusLine(w("active", { setupPaidVia: "house" }), NOW)).toBe(HOUSE_ACCOUNT_LINE);
+    expect(HOUSE_ACCOUNT_LINE).toBe("Your own test account. Nothing is billed.");
+    expect(billingStatusLine(w("active", { setupPaidVia: "stripe" }), NOW)).toBe(
+      NO_STRIPE_PLAN_LINE,
     );
-    expect(billingStatusLine(w("active", { setupPaidVia: "house" }), NOW)).toBe(
-      "All set. Your plan renews monthly.",
+    expect(NO_STRIPE_PLAN_LINE).toBe(
+      "There's no Stripe plan attached to this account. Call Davi to sort it out.",
     );
+    expect(
+      billingStatusLine(
+        w("active", { setupPaidVia: "stripe", stripeSubscriptionId: "sub_1" }),
+        NOW,
+      ),
+    ).toBe("All set. Your plan renews monthly.");
+    expect(setUpWithoutStripePlan(w("active", { setupPaidVia: "house" }), NOW)).toBe(true);
+    expect(setUpWithoutStripePlan(w("setup_paid", { setupPaidVia: "stripe" }), NOW)).toBe(true);
+    // Never for an account that still owes the setup fee (it must be able to choose a plan).
+    expect(setUpWithoutStripePlan(w("active", { setupPaidAt: NOW }), NOW)).toBe(false);
+    expect(
+      setUpWithoutStripePlan(
+        w("active", { setupPaidVia: "stripe", stripeSubscriptionId: "s" }),
+        NOW,
+      ),
+    ).toBe(false);
     expect(billingStatusLine(w("past_due"), NOW)).toMatch(/payment didn't go through/);
     expect(billingStatusLine(w("evaluating"), NOW)).toBeNull();
     // The page uses the rule, and only mentions Stripe's page next to Manage billing.
     const page = readFileSync("src/app/(app)/billing/page.tsx", "utf8");
-    expect(page).toContain("const statusLine = billingStatusLine(workspace);");
+    expect(page).toContain("const statusLine = billingStatusLine(\n    workspace,");
     const portal = page.slice(page.indexOf("{workspace.stripeCustomerId ? ("));
     expect(portal.indexOf("Stripe&apos;s secure")).toBeGreaterThan(-1);
     expect(portal.indexOf("Stripe&apos;s secure")).toBeLessThan(portal.indexOf(") : null}"));
@@ -202,13 +240,22 @@ const paidSession = (over: Partial<Stripe.Checkout.Session> = {}) =>
     ...over,
   }) as unknown as Stripe.Checkout.Session;
 
-const subscription = (status: string, plan: "solo" | "crew" | "company" = "crew") =>
-  ({
-    id: "sub_1",
+/**
+ * A subscription event's payload. It is also what the fake Stripe holds now (the latest truth),
+ * unless a test changes `fake.subscriptions` afterwards to play a late or stale event.
+ */
+const subscription = (status: string, plan: "solo" | "crew" | "company" = "crew", id = "sub_1") => {
+  const sub = {
+    id,
     status,
+    customer: "cus_1",
     metadata: { workspaceId: workspace.id },
+    discounts: [],
     items: { data: [{ price: { lookup_key: planLookupKey(plan) } }] },
-  }) as unknown as Stripe.Subscription;
+  } as unknown as Stripe.Subscription;
+  fake.subscriptions.set(id, sub as never);
+  return sub;
+};
 
 describe("checkout", () => {
   it("includes the setup fee on the first payment and tags the workspace", async () => {
@@ -218,7 +265,9 @@ describe("checkout", () => {
     const params = create.args[0] as Stripe.Checkout.SessionCreateParams;
     expect(params.line_items).toHaveLength(2);
     expect(params.metadata).toMatchObject({ workspaceId: workspace.id, plan: "crew" });
-    expect(params.success_url).toBe("https://app.example/billing?done=paid");
+    expect(params.success_url).toBe(
+      "https://app.example/billing?done=paid&session_id={CHECKOUT_SESSION_ID}",
+    );
     expect((await reload()).stripeCustomerId).toBe("cus_1");
   });
 
@@ -610,9 +659,9 @@ describe("webhook-driven status", () => {
     expect(logs.map((l) => l.action)).toContain("payment_received");
   });
 
-  it("an unpaid checkout changes nothing", async () => {
+  it("an unpaid checkout turns nothing on", async () => {
     expect(await applyCheckoutCompleted(paidSession({ payment_status: "unpaid" }), NOW)).toBe(
-      "ignored",
+      "pending",
     );
     expect((await reload()).status).toBe("evaluating");
   });
@@ -776,10 +825,12 @@ describe("webhook endpoint", () => {
   });
 
   it("forgets an event that failed so Stripe's retry is processed", async () => {
-    const body = event("evt_2", "customer.subscription.updated", {
-      ...subscription("past_due"),
-      items: null, // malformed → throws inside the handler
-    });
+    const body = event("evt_2", "customer.subscription.updated", subscription("past_due"));
+    // Stripe can't be asked what the subscription says now → throws inside the handler.
+    fake.failNext(
+      "subscriptions.retrieve",
+      new Stripe.errors.StripeConnectionError({ message: "socket" }),
+    );
     await expect(handleStripeWebhook(body, "good")).rejects.toThrow();
     expect(await database.select().from(stripeEvents)).toHaveLength(0);
   });
@@ -923,7 +974,7 @@ describe("plan #47 §1.9: the webhook reads the live subscription", () => {
     expect(read?.args).toEqual(["sub_1", { expand: ["discounts"] }]);
   });
 
-  it("a subscription Stripe no longer has falls back to the event's own copy", async () => {
+  it("a subscription Stripe no longer has counts as canceled (Check 17 P4)", async () => {
     fake.subscriptions.delete("sub_1");
     await applySubscription(snapshot("crew", "canceled"), NOW);
     const after = await reload();
@@ -1290,5 +1341,343 @@ describe("plan #47 Q2: Plan & billing says what moving down pauses, before the t
     expect(page).toContain(
       '{downgradeLine ? <p className="text-sm font-semibold">{downgradeLine}</p> : null}',
     );
+  });
+});
+
+describe("canceling in Stripe's page shows the end date (Check 17 P3)", () => {
+  const ENDS = new Date("2026-11-16T15:00:00Z");
+  const canceling = (over: Record<string, unknown>) => {
+    const sub = { ...subscription("active"), ...over } as unknown as Stripe.Subscription;
+    fake.subscriptions.set(sub.id, sub as never);
+    return sub;
+  };
+
+  it("cancel_at sets stripe_cancel_at once, logs the date only, and undoing clears it", async () => {
+    await applyCheckoutCompleted(paidSession(), NOW);
+    await applySubscription(canceling({ cancel_at: ENDS.getTime() / 1000 }), NOW);
+    expect((await reload()).stripeCancelAt?.toISOString()).toBe(ENDS.toISOString());
+    // A repeat of the same news logs nothing new.
+    await applySubscription(canceling({ cancel_at: ENDS.getTime() / 1000 }), NOW);
+    const logs = (await database.select().from(activityLog)).filter(
+      (l) => l.action === "plan_cancel_scheduled",
+    );
+    expect(logs).toHaveLength(1);
+    expect(logs[0]!.detail).toEqual({ endsOn: "2026-11-16" });
+    expect(describeActivity("plan_cancel_scheduled", logs[0]!.detail, null)).toBe(
+      "You canceled your plan. It stays on until Nov 16.",
+    );
+    expect(billingStatusLine(await reload(), NOW)).toMatch(/^Your plan ends on Nov 16\./);
+
+    await applySubscription(canceling({ cancel_at: null, cancel_at_period_end: false }), NOW);
+    const undone = await reload();
+    expect(undone.stripeCancelAt).toBeNull();
+    expect(undone.status).toBe("setup_paid");
+  });
+
+  it("cancel_at_period_end reads the first item's period end; the end clears it", async () => {
+    await applyCheckoutCompleted(paidSession(), NOW);
+    await applySubscription(
+      canceling({
+        cancel_at_period_end: true,
+        items: {
+          data: [
+            {
+              price: { lookup_key: planLookupKey("crew") },
+              current_period_end: ENDS.getTime() / 1000,
+            },
+          ],
+        },
+      }),
+      NOW,
+    );
+    expect((await reload()).stripeCancelAt?.toISOString()).toBe(ENDS.toISOString());
+    await applySubscription(subscription("canceled"), NOW);
+    const ended = await reload();
+    expect(ended.stripeCancelAt).toBeNull();
+    expect(ended.status).toBe("canceled");
+  });
+});
+
+describe("every finished checkout leads somewhere (Check 17 P5)", () => {
+  const actions = async () => (await database.select().from(activityLog)).map((l) => l.action);
+
+  it("paid: sending on, payment_received, no owner notice on /billing", async () => {
+    expect(await applyCheckoutCompleted(paidSession(), NOW)).toBe("applied");
+    expect(canSend(await reload(), NOW)).toBe(true);
+    expect(await checkoutNotice(workspace.id)).toBeNull();
+  });
+
+  it("unpaid (a bank debit still clearing): nothing turns sending on; /billing says it's on its way", async () => {
+    expect(await applyCheckoutCompleted(paidSession({ payment_status: "unpaid" }), NOW)).toBe(
+      "pending",
+    );
+    const after = await reload();
+    expect(after).toMatchObject({ status: "evaluating", setupPaidVia: null, plan: null });
+    expect(after.stripeSubscriptionId).toBe("sub_1");
+    expect(canSend(after, NOW)).toBe(false);
+    expect(await actions()).toContain("payment_pending");
+    expect(await checkoutNotice(workspace.id)).toBe("payment_pending");
+    expect(checkoutNoticeLine("payment_pending", "Davi")).toBe(
+      "Your bank payment is on its way. Sending turns on when it clears, usually in a few business days.",
+    );
+
+    // It clears: async_payment_succeeded arrives as "paid" and goes the normal way.
+    const body = JSON.stringify({
+      id: "evt_async_ok",
+      type: "checkout.session.async_payment_succeeded",
+      data: { object: paidSession() },
+    });
+    expect((await handleStripeWebhook(body, "good")).status).toBe(200);
+    expect(canSend(await reload(), NOW)).toBe(true);
+    expect(await checkoutNotice(workspace.id)).toBeNull();
+  });
+
+  it("async payment failed: logged, the unpaid subscription is let go, /billing says try again", async () => {
+    await applyCheckoutCompleted(paidSession({ payment_status: "unpaid" }), NOW);
+    subscription("incomplete_expired");
+    const body = JSON.stringify({
+      id: "evt_async_fail",
+      type: "checkout.session.async_payment_failed",
+      data: { object: paidSession({ payment_status: "unpaid" }) },
+    });
+    expect((await handleStripeWebhook(body, "good")).status).toBe(200);
+    const after = await reload();
+    expect(after.stripeSubscriptionId).toBeNull();
+    expect(after.setupPaidVia).toBeNull();
+    expect(canSend(after, NOW)).toBe(false);
+    expect(checkoutTerms(after, NOW).allowed).toBe(true);
+    expect(await actions()).toContain("payment_failed_bank");
+    expect(await checkoutNotice(workspace.id)).toBe("payment_failed_bank");
+    expect(checkoutNoticeLine("payment_failed_bank", "Davi")).toBe(
+      "Your bank payment didn't go through. Choose a plan to try again.",
+    );
+  });
+
+  it("GUARDRAIL: no_payment_required never turns sending on; Davi decides in Stripe", async () => {
+    expect(
+      await applyCheckoutCompleted(paidSession({ payment_status: "no_payment_required" }), NOW),
+    ).toBe("needs_review");
+    const after = await reload();
+    expect(after.setupPaidVia).toBeNull();
+    expect(after.setupPaidAt).toBeNull();
+    expect(after.status).toBe("evaluating");
+    expect(canSend(after, NOW)).toBe(false);
+    expect(canSend({ ...after, status: "setup_paid" }, NOW)).toBe(false);
+    expect(await actions()).toContain("checkout_needs_review");
+    expect(await checkoutNotice(workspace.id)).toBe("checkout_needs_review");
+    expect(checkoutNoticeLine("checkout_needs_review", "Davi")).toBe(
+      "We've got your sign-up. Davi will be in touch to switch sending on.",
+    );
+    expect(CHECKOUT_REVIEW_LINE).toBe(
+      "Checkout finished with nothing charged (a full discount?). Decide in Stripe.",
+    );
+  });
+
+  it("owner sentences for the new actions", () => {
+    expect(describeActivity("payment_pending", {}, null)).toMatch(/bank payment is on its way/);
+    expect(describeActivity("payment_failed_bank", {}, null)).toMatch(/didn't go through/);
+    expect(describeActivity("checkout_needs_review", {}, null)).toMatch(/in touch/);
+    expect(describeActivity("second_subscription", {}, null)).toBeNull();
+  });
+
+  it("Connect Stripe asks for the delayed-payment events too", async () => {
+    await connectStripe();
+    const create = calls.find((c) => c.method === "webhookEndpoints.create")!;
+    expect((create.args[0] as { enabled_events: string[] }).enabled_events).toEqual(
+      expect.arrayContaining([
+        "checkout.session.async_payment_succeeded",
+        "checkout.session.async_payment_failed",
+      ]),
+    );
+  });
+});
+
+describe("Davi hears about billing changes; the owner gets one confirmation (Check 1 P3)", () => {
+  const sent: Array<{ to: string; subject: string; text: string; idempotencyKey: string }> = [];
+  const send = async (e: { to: string; subject: string; text: string; idempotencyKey: string }) => {
+    sent.push(e);
+    return "sent" as const;
+  };
+  beforeEach(() => {
+    sent.length = 0;
+    vi.stubEnv("ADMIN_EMAIL", "davi@example.com");
+  });
+  afterEach(() => vi.unstubAllEnvs());
+
+  it("each kind sends one content-free notice; a replayed event sends none", async () => {
+    await applyCheckoutCompleted(paidSession(), NOW, { send });
+    sent.length = 0;
+    await applySubscription(subscription("past_due"), NOW, { eventId: "evt_pd", send });
+    await applySubscription(subscription("past_due"), NOW, { eventId: "evt_pd", send });
+    await applySubscription(subscription("active"), NOW, { eventId: "evt_ok", send });
+    await applySubscription(subscription("canceled"), NOW, { eventId: "evt_end", send });
+    expect(sent.map((e) => e.subject)).toEqual([
+      "A payment didn't go through",
+      "A failed payment is sorted",
+      "A plan was canceled",
+    ]);
+    for (const e of sent) {
+      expect(e.to).toBe("davi@example.com");
+      expect(e.text).toContain("Crew");
+      expect(e.text).not.toMatch(/owner@shop\.com|cus_|sub_|\$/);
+    }
+    expect(sent.map((e) => e.idempotencyKey)).toEqual([
+      "billing-evt_pd",
+      "billing-evt_ok",
+      "billing-evt_end",
+    ]);
+  });
+
+  it("never for a paused account or Davi's house account", async () => {
+    await database
+      .update(workspaces)
+      .set({ status: "active", setupPaidVia: "house", stripeSubscriptionId: "sub_1" })
+      .where(eq(workspaces.id, workspace.id));
+    await applySubscription(subscription("past_due"), NOW, { eventId: "evt_h", send });
+    await database
+      .update(workspaces)
+      .set({ status: "paused", pausedFrom: "active", setupPaidVia: "stripe" })
+      .where(eq(workspaces.id, workspace.id));
+    await applySubscription(subscription("canceled"), NOW, { eventId: "evt_p", send });
+    expect(sent).toHaveLength(0);
+  });
+
+  it("the owner's 'You're set up' email goes once per checkout, plan name only", async () => {
+    await applyCheckoutCompleted(paidSession(), NOW, { send });
+    await applyCheckoutCompleted(paidSession(), NOW, { send });
+    const owner = sent.filter((e) => e.to === "owner@shop.com");
+    expect(owner).toHaveLength(1);
+    expect(owner[0]!.subject).toBe("You're set up");
+    expect(owner[0]!.text).toContain("Crew");
+    expect(owner[0]!.text).not.toMatch(/\$\d/);
+    // No setup in the checkout (a re-subscribe): no "You're set up".
+    sent.length = 0;
+    await applyCheckoutCompleted(
+      paidSession({
+        id: "cs_9",
+        metadata: { workspaceId: workspace.id, plan: "crew", includesSetup: "0" },
+      }),
+      NOW,
+      { send },
+    );
+    expect(sent.filter((e) => e.to === "owner@shop.com")).toHaveLength(0);
+  });
+
+  it("a failed Resend still answers Stripe 200 and logs no content", async () => {
+    vi.stubEnv("RESEND_API_KEY", "re_test");
+    vi.stubEnv("EMAIL_FROM", "Squared Away <x@example.com>");
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response("", { status: 500 }));
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+    await applyCheckoutCompleted(paidSession(), NOW, { send });
+    const body = JSON.stringify({
+      id: "evt_pd_fail",
+      type: "customer.subscription.updated",
+      data: { object: subscription("past_due") },
+    });
+    expect((await handleStripeWebhook(body, "good")).status).toBe(200);
+    expect((await reload()).status).toBe("past_due");
+    expect(fetchSpy).toHaveBeenCalled();
+    expect(logged).toHaveBeenCalledWith("billing_notice_failed", { error: "Error" });
+  });
+});
+
+describe("a plan change in Stripe applies the plan rules (Check 17 P6)", () => {
+  async function autopilotSetup() {
+    const mailboxId = (
+      await saveConnectedMailbox(await reload(), {
+        email: "owner@shop.com",
+        refreshToken: "rt",
+        grantedScopes: [],
+      })
+    ).id;
+    const [t] = await database
+      .insert(threads)
+      .values({ mailboxId, gmailThreadId: "g1", category: "scheduling", lastMessageAt: NOW })
+      .returning();
+    const [d] = await database
+      .insert(drafts)
+      .values({
+        threadId: t!.id,
+        mailboxId,
+        kind: "reply",
+        gmailDraftId: "gd1",
+        toAddress: "dana@example.com",
+        subject: "Re: visit",
+        body: "Tuesday works.",
+        originalBody: "Tuesday works.",
+        status: "pending",
+        reason: "r",
+        flags: [],
+        confidence: 95,
+        promptVersion: "draft.v1",
+        autoSendAt: new Date(NOW.getTime() + 600_000),
+      })
+      .returning();
+    await database
+      .insert(rules)
+      .values({ workspaceId: workspace.id, category: "scheduling", mode: "autopilot" });
+    return d!.id;
+  }
+  const draftRow = async (id: string) =>
+    (await database.select().from(drafts).where(eq(drafts.id, id)))[0]!;
+
+  it("Crew → Solo in Stripe's page: rules back to draft, countdowns cleared, logged by stripe", async () => {
+    await applyCheckoutCompleted(paidSession(), NOW);
+    const d = await autopilotSetup();
+    await applySubscription(subscription("active", "solo"), NOW);
+    expect((await reload()).plan).toBe("solo");
+    expect((await database.select().from(rules))[0]!.mode).toBe("draft");
+    expect((await draftRow(d)).autoSendAt).toBeNull();
+    const changed = (await database.select().from(activityLog)).filter(
+      (l) => l.action === "plan_changed",
+    );
+    expect(changed.at(-1)!.detail).toEqual({ by: "stripe", from: "crew", to: "solo" });
+  });
+
+  it("Solo → Crew leaves rules and countdowns alone", async () => {
+    await applyCheckoutCompleted(paidSession(), NOW);
+    await applySubscription(subscription("active", "solo"), NOW);
+    const d = await autopilotSetup();
+    await applySubscription(subscription("active", "crew"), NOW);
+    expect((await database.select().from(rules))[0]!.mode).toBe("autopilot");
+    expect((await draftRow(d)).autoSendAt).not.toBeNull();
+  });
+});
+
+describe("no owner is left looking at 'finishing up' forever (Check 17 P9)", () => {
+  it("the waiting record holds only a session-shaped id, shows on /admin, and the notice clears it", async () => {
+    await noteStripeWaiting(workspace.id, "cs_test_abc123", NOW);
+    expect(await stripeWaitingWorkspaces()).toEqual(new Set([workspace.id]));
+    const key = `stripe-ws:waiting:${workspace.id}`;
+    const [row] = await database.select().from(appSettings).where(eq(appSettings.key, key));
+    expect(row!.value).toBe("cs_test_abc123");
+    // Anything else in the URL is not kept.
+    await noteStripeWaiting(workspace.id, "javascript:alert(1)", NOW);
+    const [again] = await database.select().from(appSettings).where(eq(appSettings.key, key));
+    expect(again!.value).toBe("");
+    // GUARDRAIL: the record never changes the account.
+    expect((await reload()).status).toBe("evaluating");
+    expect(canSend(await reload(), NOW)).toBe(false);
+
+    await applyCheckoutCompleted(paidSession(), NOW);
+    expect(await stripeWaitingWorkspaces()).toEqual(new Set());
+  });
+
+  it("the give-up words, and the page wiring", () => {
+    expect(stripeGiveUpLine("Davi")).toBe(
+      "Stripe has your payment, but our side hasn't caught up yet. You don't need to pay again. Davi has been told and will sort it out today.",
+    );
+    expect(stripeWaitingLine(2)).toBe(
+      "An owner paid but no Stripe notice arrived (2). Check Stripe → Developers → Webhooks.",
+    );
+    expect(PAID_WAITING_LINE).toBe("Paid, waiting on Stripe");
+    const page = readFileSync("src/app/(app)/billing/page.tsx", "utf8");
+    expect(page).toContain("<PaymentWaiting");
+    expect(page).toContain("onGiveUp={reportStripeWaitingAction.bind(");
+    const actions = readFileSync("src/app/(app)/billing/actions.ts", "utf8");
+    const fn = actions.slice(actions.indexOf("export async function reportStripeWaitingAction"));
+    expect(fn).toContain('hitLimit("billing", workspace.id)');
   });
 });

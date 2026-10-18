@@ -1,5 +1,5 @@
 import "server-only";
-import { and, eq, exists, lte, sql } from "drizzle-orm";
+import { and, eq, exists, isNull, lte, sql } from "drizzle-orm";
 import { db, type Database } from "@/db";
 import { planHasAutopilot } from "@/config/pricing";
 import {
@@ -272,6 +272,40 @@ export async function enforcePlanAutopilot(now: Date = new Date()): Promise<numb
 }
 
 /**
+ * Check 17 P6: what a plan change does, wherever it comes from (/admin or Stripe's billing
+ * page). Call it after the new plan is written (in the same transaction when there is one):
+ * the plan effects are `autopilotPlanEffects` (plan #47: the plan that counts decides, so a
+ * running free month keeps autopilot), and one content-free `plan_changed` row says who
+ * changed it when the plan moved. The Gmail limit is fitted separately (`fitMailboxesToPlan`).
+ */
+export async function applyPlanChange(
+  workspaceId: string,
+  from: Workspace["plan"],
+  to: Workspace["plan"],
+  by: "admin" | "stripe",
+  now: Date = new Date(),
+  executor: Executor = db(),
+) {
+  await autopilotPlanEffects(workspaceId, now, executor);
+  if (from === to) return;
+  await executor.insert(activityLog).values({
+    workspaceId,
+    actor: "squared_away",
+    action: "plan_changed",
+    detail: { by, from, to },
+    createdAt: now,
+  });
+}
+
+/** Check 17 P7: the account has a Stripe subscription, so Stripe decides its plan. */
+export class PlanSetByStripeError extends Error {
+  constructor() {
+    super("This account's plan is set by its Stripe subscription.");
+    this.name = "PlanSetByStripeError";
+  }
+}
+
+/**
  * Davi sets the plan by hand until Stripe does (Milestone 10). The plan
  * decides mailbox limits and whether autopilot can be unlocked. Dropping to a
  * plan without autopilot switches it off and stops anything counting down
@@ -285,16 +319,16 @@ export async function setWorkspacePlan(
 ) {
   const [w] = await db().select().from(workspaces).where(eq(workspaces.id, workspaceId));
   if (!w) throw new Error("Workspace not found.");
-  await db().update(workspaces).set({ plan }).where(eq(workspaces.id, workspaceId));
-  await autopilotPlanEffects(workspaceId, now);
-  await db()
-    .insert(activityLog)
-    .values({
-      workspaceId,
-      actor: "squared_away",
-      action: "plan_changed",
-      detail: { by: "admin", from: w.plan, to: plan },
-    });
+  // Check 17 P7: never a plan that disagrees with what Stripe charges (and that its next
+  // subscription event would quietly put back). The update re-checks it too.
+  if (w.stripeSubscriptionId) throw new PlanSetByStripeError();
+  const [row] = await db()
+    .update(workspaces)
+    .set({ plan })
+    .where(and(eq(workspaces.id, workspaceId), isNull(workspaces.stripeSubscriptionId)))
+    .returning({ id: workspaces.id });
+  if (!row) throw new PlanSetByStripeError();
+  await applyPlanChange(workspaceId, w.plan, plan, "admin", now);
   // A plan covering fewer Gmail addresses pauses the extra ones; a bigger one turns them back
   // on (Davi, 2026-10-16).
   await fitMailboxesToPlan(workspaceId, now);

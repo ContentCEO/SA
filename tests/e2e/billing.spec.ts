@@ -25,6 +25,9 @@ test("expired trial: the banner leads to plans, and /billing explains how to pay
   await expect(page).toHaveURL(/\/billing$/);
   await expect(page.getByText("Online payment isn't switched on yet")).toBeVisible();
   await expect(page.getByRole("button", { name: /^Choose / })).toHaveCount(0);
+  // Check 17 P11: the prices are readable even while online payment is off.
+  await expect(page.getByRole("listitem", { name: "Solo plan" })).toContainText("$99");
+  await expect(page.getByText("setup of $499")).toBeVisible();
 });
 
 test("during the trial the clock links to plans", async ({ page, context }) => {
@@ -83,6 +86,10 @@ test("past due: the banner says update payment", async ({ page, context }) => {
     "href",
     "/billing",
   );
+  // Check 17 P3: the portal button names what they came for.
+  await page.goto("/billing");
+  await expect(page.getByRole("button", { name: "Update card" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Manage billing" })).toHaveCount(0);
 });
 
 test("the Stripe webhook refuses unsigned requests", async ({ request }) => {
@@ -129,4 +136,83 @@ test("marked paid without a real payment: sending stays off and it says how to f
   // No Stripe customer, so no Manage billing and no sentence about Stripe's page.
   await expect(page.getByRole("button", { name: "Manage billing" })).toHaveCount(0);
   await expect(page.getByText(/Stripe.s secure page/)).toHaveCount(0);
+});
+
+test("a canceled plan still running shows its end date, not 'renews monthly' (Check 17 P3)", async ({
+  page,
+  context,
+}) => {
+  const owner = await seedOwner({ mailbox: true, backfilled: true });
+  await setWorkspace(owner.workspaceId, {
+    status: "active",
+    plan: "solo",
+    setupPaidAt: new Date(),
+    setupPaidVia: "stripe",
+    setupCallCompletedAt: new Date(),
+    stripeCustomerId: "cus_e2e_ending",
+    stripeSubscriptionId: "sub_e2e_ending",
+    stripeCancelAt: new Date(Date.now() + 3 * DAY),
+  });
+  await signInAs(context, owner);
+  await page.goto("/billing");
+  await expect(
+    page.getByText(
+      /^Your plan ends on [A-Z][a-z]{2} \d{1,2}\. Nothing is deleted\. Changed your mind\?/,
+    ),
+  ).toBeVisible();
+  await expect(page.getByText("renews monthly")).toHaveCount(0);
+  // The last week: a quiet reminder on every screen.
+  await page.goto("/queue");
+  await expect(page.getByRole("status").filter({ hasText: /Your plan ends on/ })).toBeVisible();
+});
+
+test("paid but no Stripe notice: the page stops waiting and says what happens next (Check 17 P9)", async ({
+  page,
+  context,
+}) => {
+  const owner = await seedOwner({ mailbox: true, backfilled: true });
+  await setWorkspace(owner.workspaceId, {
+    status: "evaluating",
+    evaluationStartedAt: new Date(),
+    evaluationEndsAt: new Date(Date.now() + 2 * DAY),
+  });
+  await signInAs(context, owner);
+  await page.goto("/billing?done=paid&session_id=cs_test_e2e");
+  await expect(page.getByText("Payment received — finishing up.")).toBeVisible();
+  // e2e mode refreshes 3 times, 300ms apart, then gives up.
+  await expect(
+    page.getByText(/Stripe has your payment, but our side hasn't caught up yet/),
+  ).toBeVisible({
+    timeout: 15_000,
+  });
+  await expect(page.getByRole("link", { name: /\d{3}-\d{3}-\d{4}/ }).first()).toBeVisible();
+  // Davi sees it on /admin (recorded by the page's server action).
+  await expect
+    .poll(async () => {
+      const rows = await testDb
+        .select()
+        .from(schema.appSettings)
+        .where(eq(schema.appSettings.key, `stripe-ws:waiting:${owner.workspaceId}`));
+      return rows[0]?.value ?? null;
+    })
+    .toBe("cs_test_e2e");
+});
+
+test("Davi's house account: no plan cards and no 'renews monthly' (Check 17 P11)", async ({
+  page,
+  context,
+}) => {
+  const owner = await seedOwner({ mailbox: true, backfilled: true });
+  await setWorkspace(owner.workspaceId, {
+    status: "setup_paid",
+    plan: "crew",
+    setupPaidAt: new Date(),
+    setupPaidVia: "house",
+  });
+  await signInAs(context, owner);
+  await page.goto("/billing");
+  await expect(page.getByText("Your own test account. Nothing is billed.")).toBeVisible();
+  await expect(page.getByText("renews monthly")).toHaveCount(0);
+  await expect(page.getByRole("listitem", { name: /plan$/ })).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "What happens next" })).toHaveCount(0);
 });

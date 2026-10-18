@@ -155,3 +155,15 @@ describe("Squared Away Growth copy", () => {
     expect(home).toContain("{growthCopy.header.link}");
   });
 });
+
+describe("Check 5 P5: a Growth card for an existing app owner says they use the app", () => {
+  it("picks the line from inviteState only", () => {
+    const a = growthCopy.admin;
+    expect(a.growthOnlyLine("has_account")).toBe("Also uses the app.");
+    expect(a.growthOnlyLine("invited")).toBe("Invited to the app, not signed in yet.");
+    expect(a.growthOnlyLine("not_invited")).toBe(a.growthOnly);
+    expect(a.growthOnlyLine("invite_gone")).toBe(a.growthOnly);
+    expect(a.growthOnlyLine("has_account")).toBe(a.growthOnlyHasAccount);
+    expect(a.growthOnlyLine("invited")).toBe(a.growthOnlyInvited);
+  });
+});

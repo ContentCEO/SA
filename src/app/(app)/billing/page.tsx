@@ -2,14 +2,16 @@ import type { Metadata } from "next";
 import { ConfirmChange } from "@/components/app/confirm-change";
 import { CopyLink } from "@/components/app/copy-link";
 import { Notice } from "@/components/app/notice";
-import { RefreshUntil } from "@/components/app/refresh-until";
+import { PaymentWaiting } from "@/components/app/payment-waiting";
+import { e2eMode } from "@/config/e2e";
 import { Headline } from "@/components/brand/headline";
 import { Button } from "@/components/ui/button";
 import { formatDollars, planRank, pricing, type PlanId } from "@/config/pricing";
 import { siteConfig } from "@/config/site";
 import { FEATURED_PLAN, planFeatureLines } from "@/server/plan-features";
 import { cn } from "@/lib/utils";
-import { stripeConfigured } from "@/server/billing";
+import { checkoutNotice, stripeConfigured } from "@/server/billing";
+import { checkoutNoticeLine, stripeGiveUpLine } from "@/server/billing-notice-rules";
 import {
   billingStatusLine,
   checkoutTerms,
@@ -17,6 +19,7 @@ import {
   firstChargeLine,
   PLAN_IDS,
   setupCallSentence,
+  setUpWithoutStripePlan,
 } from "@/server/billing-rules";
 import {
   billedPlanFreeLine,
@@ -40,8 +43,15 @@ import { phoneHref } from "@/lib/phone-href";
 import { listMailboxes } from "@/server/mailboxes";
 import { freeMonthView, referralLinkFor, viewChanges } from "@/server/referrals";
 import { requireOwner } from "@/server/session";
+import { workspaceTimeZone } from "@/server/snooze";
 import { TRIAL_NO_SEND_LINE, TRIAL_SIDE_DOOR_LINE } from "@/server/trial-email-rules";
-import { goBackAction, keepFreePlanAction, openPortalAction, startCheckoutAction } from "./actions";
+import {
+  goBackAction,
+  keepFreePlanAction,
+  openPortalAction,
+  reportStripeWaitingAction,
+  startCheckoutAction,
+} from "./actions";
 
 export const metadata: Metadata = { title: "Plan & billing" };
 
@@ -65,9 +75,15 @@ export default async function BillingPage(props: PageProps<"/billing">) {
   const { workspace } = await requireOwner();
   const now = new Date();
   const params = await props.searchParams;
-  const statusLine = billingStatusLine(workspace);
+  const statusLine = billingStatusLine(
+    workspace,
+    new Date(),
+    workspace.stripeCancelAt ? await workspaceTimeZone(workspace.id) : undefined,
+  );
   const terms = checkoutTerms(workspace);
-  const paidJustNow = params.done === "paid";
+  // Check 17 P5: a checkout that finished without a plain payment says what happens next.
+  const notice = await checkoutNotice(workspace.id);
+  const paidJustNow = params.done === "paid" && !notice;
   const waitingForStripe = paidJustNow && terms.allowed;
   const current = workspace.plan ? pricing.plans[workspace.plan as PlanId] : null;
   // Plan #47: the share card only while referrals are switched on — hidden entirely otherwise.
@@ -137,8 +153,11 @@ export default async function BillingPage(props: PageProps<"/billing">) {
         ? errors[params.error]
         : undefined;
   // Round 2 (FW): paid, setup call still to come — say what happens next.
+  // Check 17 P11: set up but nothing in Stripe (house account, or no subscription on file):
+  // no offer to buy and no "What happens next" (display only; checkoutTerms is unchanged).
+  const noStripePlan = setUpWithoutStripePlan(workspace);
   const awaitingSetupCall =
-    effectiveStatus(workspace) === "setup_paid" && setupReallyPaid(workspace);
+    effectiveStatus(workspace) === "setup_paid" && setupReallyPaid(workspace) && !noStripePlan;
   const davi = siteConfig.operator.split(" ")[0];
   const onTrial = effectiveStatus(workspace) === "evaluating";
 
@@ -155,11 +174,23 @@ export default async function BillingPage(props: PageProps<"/billing">) {
       ) : null}
       {errorMsg ? <Notice strong>{errorMsg}</Notice> : null}
 
+      {notice ? (
+        <Notice strong={notice === "payment_failed_bank"}>
+          {checkoutNoticeLine(notice, siteConfig.operator.split(" ")[0]!)}
+        </Notice>
+      ) : null}
       {waitingForStripe ? (
         <section role="status" className="sa-inverted flex flex-col gap-2 rounded-xl p-4">
-          <RefreshUntil />
-          <p className="text-lg font-black">Payment received — finishing up.</p>
-          <p className="text-ash">This takes a few seconds. The page updates by itself.</p>
+          <PaymentWaiting
+            {...(e2eMode() ? { everyMs: 300, times: 3 } : {})}
+            giveUpText={stripeGiveUpLine(davi ?? siteConfig.operator)}
+            phone={siteConfig.phone}
+            phoneHref={phoneHref("tel", siteConfig.phone)}
+            onGiveUp={reportStripeWaitingAction.bind(
+              null,
+              typeof params.session_id === "string" ? params.session_id : null,
+            )}
+          />
         </section>
       ) : paidJustNow ? (
         <Notice>Payment received. Thank you — you&apos;re all set.</Notice>
@@ -209,7 +240,8 @@ export default async function BillingPage(props: PageProps<"/billing">) {
             <>
               <form action={openPortalAction}>
                 <Button type="submit" variant="outline" className="w-full">
-                  Manage billing
+                  {/* Check 17 P3: name the action a past-due owner came for. */}
+                  {effectiveStatus(workspace) === "past_due" ? "Update card" : "Manage billing"}
                 </Button>
               </form>
               {running ? (
@@ -320,12 +352,54 @@ export default async function BillingPage(props: PageProps<"/billing">) {
         </section>
       ) : null}
 
-      {terms.allowed ? (
+      {terms.allowed && !noStripePlan ? (
         !stripeConfigured() ? (
-          <Notice strong>
-            Online payment isn&apos;t switched on yet. Call {siteConfig.operator} at{" "}
-            {siteConfig.phone} to get set up.
-          </Notice>
+          <>
+            {/* Check 17 P11: prices are readable even while online payment is off. */}
+            <section aria-labelledby="prices" className="flex flex-col gap-3">
+              <h2 id="prices" className="text-xl font-black">
+                Plans
+              </h2>
+              {terms.includeSetupFee ? (
+                <p>
+                  Every plan starts with a one-time{" "}
+                  <span className="font-semibold">
+                    {pricing.setupFee.name.toLowerCase()} of{" "}
+                    {formatDollars(pricing.setupFee.amountCents)}
+                  </span>
+                  : a call with us to {setupCallSentence("before")}.
+                </p>
+              ) : null}
+              <ul className="flex flex-col gap-3">
+                {PLAN_IDS.map((id) => {
+                  const p = pricing.plans[id];
+                  return (
+                    <li
+                      key={id}
+                      aria-label={`${p.name} plan`}
+                      className="flex flex-col gap-1 rounded-xl border bg-card p-4"
+                    >
+                      <div className="flex items-baseline justify-between">
+                        <span className="text-xl font-black">{p.name}</span>
+                        <span>
+                          <span className="text-2xl font-black">
+                            {formatDollars(p.amountCents)}
+                          </span>
+                          <span className="text-muted-foreground"> / month</span>
+                        </span>
+                      </div>
+                      <p className="text-muted-foreground">{planFeatureLines(id).join(" · ")}</p>
+                      <p className="text-sm">{firstChargeLine(id, terms.includeSetupFee)}</p>
+                    </li>
+                  );
+                })}
+              </ul>
+            </section>
+            <Notice strong>
+              Online payment isn&apos;t switched on yet. Call {siteConfig.operator} at{" "}
+              {siteConfig.phone} to get set up.
+            </Notice>
+          </>
         ) : (
           <section aria-labelledby="choose" className="flex flex-col gap-3">
             <h2 id="choose" className="text-xl font-black">

@@ -344,11 +344,11 @@ export function DraftCard(p: DraftCardProps) {
             <ConfidenceTag label={p.label} />
           </div>
           <ToLine
-              address={p.toAddress}
-              fromReplyTo={p.toFromReplyTo}
-              fromName={p.fromName}
-              fromAddress={p.fromAddress}
-            />
+            address={p.toAddress}
+            fromReplyTo={p.toFromReplyTo}
+            fromName={p.fromName}
+            fromAddress={p.fromAddress}
+          />
           <span className="text-base font-semibold">{p.tag}</span>
           {p.wrote ? <span className="text-base">{p.wrote}</span> : null}
           {(p.leadLines ?? []).map((line) => (
@@ -419,12 +419,14 @@ export function DraftCard(p: DraftCardProps) {
             kept={kept}
             seenHash={p.seenHash}
             toAddress={p.toAddress}
-            toLine={<ToLine
-              address={p.toAddress}
-              fromReplyTo={p.toFromReplyTo}
-              fromName={p.fromName}
-              fromAddress={p.fromAddress}
-            />}
+            toLine={
+              <ToLine
+                address={p.toAddress}
+                fromReplyTo={p.toFromReplyTo}
+                fromName={p.fromName}
+                fromAddress={p.fromAddress}
+              />
+            }
             canSend={p.canSend}
             confirmTiming={!!p.timingNote}
             onCancel={() => {

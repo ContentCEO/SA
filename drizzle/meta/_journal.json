@@ -484,6 +484,13 @@
       "when": 1792338460426,
       "tag": "0068_send_as",
       "breakpoints": true
+    },
+    {
+      "idx": 69,
+      "version": "7",
+      "when": 1792342330156,
+      "tag": "0069_stripe_money_events",
+      "breakpoints": true
     }
   ]
 }

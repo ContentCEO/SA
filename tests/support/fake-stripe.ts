@@ -674,6 +674,12 @@ export class FakeStripe {
             },
             true,
           ),
+          // Check 17 P4: an earlier open checkout is closed before a new one.
+          expire: call(
+            "checkout.sessions.expire",
+            (id: string) => ({ id, object: "checkout.session", status: "expired" }),
+            true,
+          ),
         },
       },
       billingPortal: {
@@ -764,6 +770,12 @@ export class FakeStripe {
       subscriptions: {
         retrieve: call("subscriptions.retrieve", (id: string, p?: { expand?: string[] }) =>
           this.view(this.sub(id), p?.expand),
+        ),
+        // Check 17 P4: Delete my account cancels every live subscription of the customer.
+        list: listCall("subscriptions.list", (p?: { customer?: string }) =>
+          [...this.subscriptions.values()]
+            .filter((x) => !p?.customer || x.customer === p.customer)
+            .map((x) => this.view(x)),
         ),
         update: call(
           "subscriptions.update",

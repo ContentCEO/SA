@@ -4,7 +4,7 @@ import { db } from "@/db";
 import { appSettings, invites, mailboxes, referralCredits, users, workspaces } from "@/db/schema";
 import { decryptSecret } from "@/lib/crypto";
 import type { MailboxConnector } from "@/mailbox/connector";
-import { cancelSubscriptionNow } from "./billing";
+import { cancelSubscriptionNow, liveSubscriptionIds, workspaceBillingKeyPattern } from "./billing";
 
 export class SubscriptionCancelError extends Error {
   constructor() {
@@ -38,11 +38,17 @@ export async function deleteAccount(userId: string, connector: MailboxConnector)
     .from(workspaces)
     .where(eq(workspaces.ownerUserId, userId));
 
+  // Check 17 P4: every live subscription of the customer, not just the stored one (a second
+  // paid checkout would keep charging). If any cancel fails, nothing is deleted.
   let subscriptionCanceled = false;
-  if (workspace?.stripeSubscriptionId) {
+  if (workspace?.stripeSubscriptionId || workspace?.stripeCustomerId) {
     try {
-      await cancelSubscriptionNow(workspace.stripeSubscriptionId);
-      subscriptionCanceled = true;
+      const ids = await liveSubscriptionIds(
+        workspace.stripeCustomerId,
+        workspace.stripeSubscriptionId,
+      );
+      for (const id of ids) await cancelSubscriptionNow(id);
+      subscriptionCanceled = ids.length > 0;
     } catch {
       throw new SubscriptionCancelError();
     }
@@ -86,6 +92,8 @@ export async function deleteAccount(userId: string, connector: MailboxConnector)
       await tx.delete(appSettings).where(
         or(
           like(appSettings.key, `cost_alert:${workspace.id}:%`),
+          // Billing markers (open checkout, second plan, waiting on Stripe).
+          like(appSettings.key, workspaceBillingKeyPattern(workspace.id)),
           // Resend sent-records ("email-sent:digest-<workspace>-<date>",
           // "email-sent:access-lost-<mailbox>-…"); uuids hold no LIKE wildcards.
           ...ids.map((id) => like(appSettings.key, `email-sent:%-${id}-%`)),

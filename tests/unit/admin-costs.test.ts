@@ -27,8 +27,50 @@ describe("#45 admin costs", () => {
       costCents: 2_500,
       revenueCents: 19_900,
       marginCents: 17_400,
+      feesCents: 746,
+      marginAfterFeesCents: 19_900 - 746 - 2_500,
       costShare: 2_500 / 19_900,
     });
+  });
+
+  it("Check 29 P8: Stripe's fees per monthly charge (2.9% + 30¢ + 0.7%, rounded to the cent)", () => {
+    // $99 → 287.1 + 30 + 69.3 = 386.4 → 386; $199 → 746.4 → 746; $299 → 1106.4 → 1106.
+    for (const [plan, fees] of [
+      ["solo", 386],
+      ["crew", 746],
+      ["company", 1_106],
+    ] as const) {
+      const line = costLine({ status: "active", plan, costCentiCents: 84_000 });
+      expect(line.feesCents, plan).toBe(fees);
+      expect(line.marginAfterFeesCents).toBe(line.revenueCents - fees - 840);
+      expect(line.marginCents).toBe(line.revenueCents - 840);
+    }
+    // $199 leaves $191.54 before AI.
+    expect(19_900 - costLine({ status: "active", plan: "crew", costCentiCents: 0 }).feesCents).toBe(
+      19_154,
+    );
+    // Trials and canceled accounts: no fees.
+    for (const status of ["evaluating", "canceled", "evaluation_expired"]) {
+      expect(costLine({ status, plan: "crew", costCentiCents: 84_000 }).feesCents).toBe(0);
+    }
+    // The alert fires exactly as before (against the plan price, not after fees).
+    expect(costAlertDue({ status: "active", plan: "solo", costCentiCents: 396_000 })).toBe(false);
+    expect(costAlertDue({ status: "active", plan: "solo", costCentiCents: 396_100 })).toBe(true);
+  });
+
+  it("Check 16 P10: Davi's house account pays nothing and never alerts", () => {
+    expect(planRevenueCents({ status: "active", plan: "crew", setupPaidVia: "house" })).toBe(0);
+    expect(
+      costAlertDue({
+        status: "active",
+        plan: "crew",
+        costCentiCents: 9_999_999,
+        setupPaidVia: "house",
+      }),
+    ).toBe(false);
+    expect(planRevenueCents({ status: "active", plan: "crew", setupPaidVia: "stripe" })).toBe(
+      19_900,
+    );
   });
 
   describe("in the database", () => {
@@ -94,6 +136,33 @@ describe("#45 admin costs", () => {
       const row = rows.find((r) => r.workspaceId === dear)!;
       expect(row).toMatchObject({ freeMonth: true, revenueCents: 9_900 });
       expect(rows.find((r) => r.workspaceId === cheap)!.freeMonth).toBe(false);
+    });
+
+    it("Check 16 P10: a house account on Crew earns nothing; an expired trial says so", async () => {
+      const house = (await ensureUserAndWorkspace({ email: "davi@example.com" })).workspace.id;
+      const trial = (await ensureUserAndWorkspace({ email: "trial@shop.com" })).workspace.id;
+      await database
+        .update(workspaces)
+        .set({ status: "active", plan: "crew", setupPaidVia: "house" })
+        .where(eq(workspaces.id, house));
+      await database
+        .update(workspaces)
+        .set({ status: "evaluating", evaluationEndsAt: new Date(NOW.getTime() - 86_400_000) })
+        .where(eq(workspaces.id, trial));
+      await database.insert(usage).values({
+        workspaceId: house,
+        period: "2026-10-04",
+        aiCalls: 900,
+        estimatedCostCentiCents: 9_000_000,
+      });
+      const rows = await costRows(NOW);
+      const h = rows.find((r) => r.workspaceId === house)!;
+      expect(h).toMatchObject({ revenueCents: 0, feesCents: 0, alert: false, house: true });
+      expect(rows.find((r) => r.workspaceId === trial)!.status).toBe("evaluation_expired");
+      const revenue = rows.reduce((t, r) => t + r.revenueCents, 0);
+      expect(revenue).toBe(9_900 + 19_900);
+      expect(await sendCostAlerts(NOW, { send })).toEqual({ sent: 1, failed: 0 });
+      expect(sent[0]!.subject).toContain("Dear Plumbing");
     });
 
     it("emails Davi once per account per month", async () => {

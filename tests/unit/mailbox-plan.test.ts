@@ -150,13 +150,19 @@ describe("a lower plan pauses the extra Gmail addresses", () => {
         metadata: { workspaceId },
         items: { data: [{ price: { lookup_key: planLookupKey(plan) } }] },
       }) as unknown as Stripe.Subscription;
-    // Since the referral merge the webhook reads the live subscription first (plan #47 §1.9);
-    // a subscription the (fake) Stripe doesn't hold falls back to the event's own copy.
-    setStripeForTests(new FakeStripe({ now: NOW }).client);
+    // Check 17 P4 / plan #47 §1.9: the webhook reads the subscription fresh, so the (fake)
+    // Stripe holds the latest payload.
+    const fake = new FakeStripe({ now: NOW });
+    const hold = (plan: "solo" | "crew" | "company") => {
+      const s = { ...sub(plan), discounts: [] } as unknown as Stripe.Subscription;
+      fake.subscriptions.set(s.id, s as never);
+      return s;
+    };
+    setStripeForTests(fake.client);
     try {
-      await applySubscription(sub("solo"), NOW);
+      await applySubscription(hold("solo"), NOW);
       expect(await pausedIds()).toEqual([boxes[1]!, boxes[2]!].sort());
-      await applySubscription(sub("company"), NOW);
+      await applySubscription(hold("company"), NOW);
       expect(await pausedIds()).toEqual([]);
     } finally {
       setStripeForTests(undefined);

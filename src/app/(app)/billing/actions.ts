@@ -2,8 +2,14 @@
 
 import { redirect } from "next/navigation";
 import { z } from "zod";
-import { CheckoutNotAllowedError, createCheckout, createPortal } from "@/server/billing";
+import {
+  CheckoutNotAllowedError,
+  createCheckout,
+  createPortal,
+  noteStripeWaiting,
+} from "@/server/billing";
 import type { PlanId } from "@/config/pricing";
+import { checkoutTerms } from "@/server/billing-rules";
 import { isPlanId } from "@/server/billing-rules";
 import { hitLimit } from "@/server/rate-limit";
 import { goBackToPaidPlan, keepFreePlan, type PlanChangeOutcome } from "@/server/referrals";
@@ -82,4 +88,15 @@ export async function goBackAction(formData: FormData) {
   if (!input.success) redirect("/billing?error=not_offered#free-month");
   if (!(await hitLimit("billing", workspace.id)).allowed) redirect("/billing?error=busy");
   planChangeRedirect(await goBackToPaidPlan(workspace.id, input.data));
+}
+
+/**
+ * Check 17 P9: the waiting page ran out of refreshes. Records it for /admin (rate-limited);
+ * only while the account still has no plan from Stripe. Changes nothing else.
+ */
+export async function reportStripeWaitingAction(sessionId: string | null) {
+  const { workspace } = await requireOwner();
+  if (!checkoutTerms(workspace).allowed) return;
+  if (!(await hitLimit("billing", workspace.id)).allowed) return;
+  await noteStripeWaiting(workspace.id, typeof sessionId === "string" ? sessionId : null);
 }

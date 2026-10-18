@@ -63,15 +63,17 @@ const SECRET = "whsec_test";
 
 let fake: FakeStripe;
 
-/** Stripe calls other than the account-deletion cancel (which isn't about referrals). */
 /**
- * Stripe calls made for referrals. Not counted: the account deletion's cancel, and the webhook's
+ * Stripe calls made for referrals. Not counted: the account deletion's list and cancel, and the webhook's
  * own fresh read of the subscription it was told about (§1.9: every subscription event, with
  * referrals on or off).
  */
 const stripeCalls = () =>
   fake.calls.filter(
-    (c) => c.method !== "subscriptions.cancel" && c.method !== "subscriptions.retrieve",
+    (c) =>
+      c.method !== "subscriptions.cancel" &&
+      c.method !== "subscriptions.list" &&
+      c.method !== "subscriptions.retrieve",
   ).length;
 
 // --- Database helpers -----------------------------------------------------------------------
@@ -161,13 +163,19 @@ const paidSession = (workspaceId: string, over: Record<string, unknown> = {}) =>
     ...over,
   }) as unknown as Stripe.Checkout.Session;
 
-const subscription = (workspaceId: string, status: string) =>
-  ({
+/** What Stripe holds now for each subscription (the latest payload a test built). */
+const subscription = (workspaceId: string, status: string) => {
+  const sub = {
     id: "sub_new",
     status,
     metadata: { workspaceId },
+    discounts: [],
     items: { data: [{ price: { lookup_key: planLookupKey("solo") } }] },
-  }) as unknown as Stripe.Subscription;
+  } as unknown as Stripe.Subscription;
+  // Check 17 P4: the webhook reads it fresh, so the (fake) Stripe holds it.
+  fake.subscriptions.set(sub.id, sub as never);
+  return sub;
+};
 
 /** The full happy path: pay (setup_paid, nothing earned yet), then the setup call (→ active). */
 async function payAndFinishSetup(referredId: string) {

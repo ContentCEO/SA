@@ -1,6 +1,8 @@
 import "server-only";
 import { and, count, desc, eq, gte, inArray, isNotNull, lt, sql } from "drizzle-orm";
 import { pricing } from "@/config/pricing";
+import { siteConfig } from "@/config/site";
+import { refundSentence } from "./stripe-money-rules";
 import { daysPhrase } from "@/lib/trial-words";
 import { categoryLabels, categoryTag, isCategory } from "@/config/categories";
 import { db } from "@/db";
@@ -311,6 +313,23 @@ export function describeActivity(
             ? "Payment sorted — switched back on"
             : "Your plan was updated";
     }
+    case "plan_cancel_scheduled": {
+      // Check 17 P3: the owner's own local date, stored as YYYY-MM-DD (nothing else).
+      const label = typeof detail.endsOn === "string" ? shortDate(detail.endsOn) : null;
+      return label
+        ? `You canceled your plan. It stays on until ${label}.`
+        : "You canceled your plan";
+    }
+    case "refund_recorded":
+      // Check 17 P8: what the owner got back (disputes get no sentence on purpose).
+      return refundSentence(detail.amountCents);
+    // Check 17 P5: checkouts that didn't simply pay.
+    case "payment_pending":
+      return "Your bank payment is on its way — sending turns on when it clears";
+    case "payment_failed_bank":
+      return "Your bank payment didn't go through";
+    case "checkout_needs_review":
+      return `We got your sign-up — ${siteConfig.operator.split(" ")[0]} will be in touch to switch sending on`;
     case "digest_sent":
       return "Sent your morning summary";
     case "monthly_summary_sent":
@@ -411,6 +430,12 @@ export const DESCRIBED_ACTIONS = [
   "referral_keep_undone",
   "referral_free_month_ended",
   "referral_reward_returned",
+  // Billing and admin (wave 2, Check 17 P3 P5 P8).
+  "plan_cancel_scheduled",
+  "refund_recorded",
+  "payment_pending",
+  "payment_failed_bank",
+  "checkout_needs_review",
   "marked_needs_owner",
   "mailbox_connected",
   "mailbox_reconnected",
@@ -455,6 +480,8 @@ export const HIDDEN_ON_PURPOSE = [
   "send_approved",
   "checklist_dismissed",
   "quote_lost_reason",
+  // Check 17 P4: two live Stripe plans is Davi's to sort in Stripe (shown on /admin).
+  "second_subscription",
 ] as const;
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];

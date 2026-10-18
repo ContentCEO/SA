@@ -148,7 +148,11 @@ test("admin: set an owner's plan by hand", async ({ page, context }) => {
   const card = page.getByRole("article", { name: owner.email });
   await card.getByLabel("Plan").selectOption("crew");
   await card.getByRole("button", { name: "Save plan" }).click();
-  await expect(page.getByText("Plan saved.")).toBeVisible();
+  // Check 16 P6: the notice lands on the card it changed, naming it.
+  await page.waitForURL(new RegExp(`#acct-${owner.workspaceId}$`));
+  await expect(
+    page.getByRole("article", { name: owner.email }).getByText(/^Plan saved for .+: Crew\.$/),
+  ).toBeVisible();
   const [w] = await testDb
     .select()
     .from(schema.workspaces)

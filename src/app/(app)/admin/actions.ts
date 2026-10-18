@@ -3,10 +3,10 @@
 import { redirect } from "next/navigation";
 import { z } from "zod";
 import { planEnum, tradeEnum } from "@/db/schema";
-import { inviteOwner, markTestUserAdded } from "@/server/admin";
+import { inviteOwner, markTestUserAdded, removeInvite } from "@/server/admin";
 import { sendInviteEmail } from "@/server/invite-email";
 import { inviteFromWaitlist } from "@/server/waitlist";
-import { connectStripe } from "@/server/billing";
+import { clearStripeOrphans, connectStripe } from "@/server/billing";
 import { requireAdmin } from "@/server/session";
 import { stripeErrorReason } from "@/server/stripe-error-rules";
 import { checkTestPayments, resetTestPayments, StripeNotLiveError } from "@/server/test-payments";
@@ -16,6 +16,7 @@ import { tickLaunchItem } from "@/server/launch-ticks";
 import {
   applyAdminMove,
   MoveNotAllowedError,
+  PlanSetByStripeError,
   setWorkspacePlan,
 } from "@/server/workspace-lifecycle";
 
@@ -40,13 +41,15 @@ export async function adminMoveAction(formData: FormData) {
   const workspaceId = id.safeParse(formData.get("workspaceId"));
   const move = formData.get("move");
   if (!workspaceId.success || !isAdminMove(move)) redirect("/admin?error=unknown");
+  // Check 16 P6: back to the card that changed (only its uuid travels in the URL).
+  const card = `w=${workspaceId.data}#acct-${workspaceId.data}`;
   try {
     await applyAdminMove(workspaceId.data, move);
   } catch (err) {
-    if (err instanceof MoveNotAllowedError) redirect("/admin?error=move");
+    if (err instanceof MoveNotAllowedError) redirect(`/admin?error=move&${card}`);
     throw err;
   }
-  redirect(`/admin?done=${move}`);
+  redirect(`/admin?done=${move}&${card}`);
 }
 
 const invite = z.object({
@@ -70,6 +73,19 @@ export async function inviteAction(formData: FormData) {
   redirect(`/admin?done=${emailed === "sent" ? "invited_emailed" : "invited"}#invite`);
 }
 
+/**
+ * Check 16 P7: take back an invite nobody has used yet. Refused once they've signed in. Logs
+ * nothing (the address is the only detail there is).
+ */
+export async function removeInviteAction(formData: FormData) {
+  await requireAdmin();
+  const email = z.string().trim().toLowerCase().email().safeParse(formData.get("email"));
+  if (!email.success) redirect("/admin?error=unknown#invite");
+  const r = await removeInvite(email.data);
+  if (r === "already_signed_in") redirect("/admin?error=invite_used#invite");
+  redirect(`/admin?done=${r === "removed" ? "invite_removed" : "invite_gone"}#invite`);
+}
+
 /** Round 2 (FW A4): "Added as a Google test user" on an invite. */
 export async function testUserAddedAction(formData: FormData) {
   await requireAdmin();
@@ -86,8 +102,14 @@ export async function setPlanAction(formData: FormData) {
   const workspaceId = id.safeParse(formData.get("workspaceId"));
   const chosen = plan.safeParse(formData.get("plan") || null);
   if (!workspaceId.success || !chosen.success) redirect("/admin?error=unknown");
-  await setWorkspacePlan(workspaceId.data, chosen.data);
-  redirect("/admin?done=plan");
+  const card = `w=${workspaceId.data}#acct-${workspaceId.data}`;
+  try {
+    await setWorkspacePlan(workspaceId.data, chosen.data);
+  } catch (err) {
+    if (err instanceof PlanSetByStripeError) redirect(`/admin?error=plan_stripe&${card}`);
+    throw err;
+  }
+  redirect(`/admin?done=plan&${card}`);
 }
 
 export async function inviteFromWaitlistAction(formData: FormData) {
@@ -154,4 +176,11 @@ export async function resetTestPaymentsAction() {
     redirect("/admin?error=stripe_test_payments#stripe");
   }
   redirect("/admin?done=stripe_test_reset#stripe");
+}
+
+/** Check 17 P4: Davi looked in Stripe for the plan with no account here. */
+export async function clearStripeOrphansAction() {
+  await requireAdmin();
+  await clearStripeOrphans();
+  redirect("/admin?done=stripe_orphans_cleared#stripe");
 }

@@ -24,6 +24,7 @@ const DETAIL: Record<string, Record<string, unknown>> = {
   // Plan #47's line (referralActivityLine) says nothing when nothing moved.
   mailboxes_fit_plan: { paused: 1 },
   autopilot_skipped: { codes: ["money"] },
+  refund_recorded: { amountCents: 49_900 },
 };
 
 describe("DESCRIBED_ACTIONS (Check 14 P6)", () => {
@@ -67,6 +68,8 @@ function loggedActions(): Set<string> {
           /\baction: (?:"([a-z_]+)"|[^,\n}?("]+\?\s*"([a-z_]+)"\s*:\s*"([a-z_]+)")/g,
         ))
           for (const lit of m.slice(1)) if (lit) out.add(lit);
+        // billing.ts's own `log(workspaceId, "x", …)` helper (integrator, wave 2 merge C).
+        for (const m of src.matchAll(/\blog\([\w.]+, "([a-z_]+)"/g)) out.add(m[1]!);
       }
     }
   };

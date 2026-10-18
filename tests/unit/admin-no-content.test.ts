@@ -4,7 +4,19 @@ import { join } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
 import { drafts, messages, priceHistory, threads, usage } from "@/db/schema";
 import { ensureUserAndWorkspace } from "@/server/accounts";
-import { adminOverview, listInvites, systemHealth } from "@/server/admin";
+import { db } from "@/db";
+import { activityLog } from "@/db/schema";
+import {
+  accountsNeedingYou,
+  adminOverview,
+  countWorkspaces,
+  listInvites,
+  supportView,
+  systemHealth,
+} from "@/server/admin";
+import { stripeOrphans, stripeWaitingWorkspaces, workspacesWithTwoPlans } from "@/server/billing";
+import { moneyEventsFor, openDisputeCount } from "@/server/stripe-money";
+import { supportSentence } from "@/server/admin-rules";
 import { costRows } from "@/server/admin-costs";
 import {
   countGrowthClients,
@@ -108,6 +120,50 @@ describe("admin readers return no email content (Check 16 P11)", () => {
     expect(JSON.stringify(rows)).not.toMatch(LEAK);
   });
 
+  it("supportView (Check 16 P8): Gmail lines and the timeline carry no content", async () => {
+    const [w] = await adminOverview(NOW);
+    // An activity row whose detail holds content-like keys: only the fixed keys come back.
+    await db()
+      .insert(activityLog)
+      .values({
+        workspaceId: w!.workspaceId,
+        actor: "owner",
+        action: "reply_sent",
+        detail: {
+          to: "active",
+          customer: "SECRET Zelda",
+          subject: "SECRET-SUBJECT",
+          email: "secret-customer@x.com",
+          by: "admin",
+        },
+      });
+    const view = await supportView(w!.workspaceId, NOW);
+    expect(view).not.toBeNull();
+    expect(view!.gmail).toHaveLength(1);
+    expect(view!.activity.length).toBeGreaterThan(0);
+    expect(JSON.stringify(view)).not.toMatch(LEAK);
+    expect(JSON.stringify(view!.activity.map(supportSentence))).not.toMatch(LEAK);
+    expect(await supportView("00000000-0000-4000-8000-000000000000", NOW)).toBeNull();
+  });
+
+  it("the other /admin readers (wave 2 merge C): counts, payments and Stripe markers", async () => {
+    const [w] = await adminOverview(NOW);
+    const ids = [w!.workspaceId];
+    const out = {
+      needing: await accountsNeedingYou(NOW),
+      count: await countWorkspaces(),
+      found: await countWorkspaces("owner"),
+      page: await adminOverview(NOW, { q: "owner", page: 1 }),
+      money: [...(await moneyEventsFor(ids)).entries()],
+      disputes: await openDisputeCount(),
+      orphans: await stripeOrphans(),
+      waiting: [...(await stripeWaitingWorkspaces())],
+      twoPlans: [...(await workspacesWithTwoPlans(ids))],
+    };
+    expect(out.count).toBe(1);
+    expect(JSON.stringify(out)).not.toMatch(LEAK);
+  });
+
   it("systemHealth", async () => {
     expect(JSON.stringify(await systemHealth(NOW))).not.toMatch(LEAK);
   });
@@ -169,6 +225,11 @@ function adminFiles(): string[] {
     "src/server/admin.ts",
     "src/server/admin-costs.ts",
     "src/server/growth-client-rules.ts",
+    // Wave 2 merge C: the Needs you box and the support page's sentences, and the refund and
+    // dispute rows (stripe-money.ts's readers run against the SECRET workspace above; the file
+    // also writes Davi's dispute email, whose own subject line would trip this scan).
+    "src/server/admin-rules.ts",
+    "src/server/stripe-money-rules.ts",
   ];
   const walkDir = (dir: string) => {
     for (const name of readdirSync(dir)) {

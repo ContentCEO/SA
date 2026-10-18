@@ -9,8 +9,11 @@ import { tradeEnum } from "@/db/schema";
 import { relativeTime } from "@/lib/relative-time";
 import {
   ADMIN_PAGE_SIZE,
+  accountsNeedingYou,
   adminOverview,
+  countInvites,
   countWorkspaces,
+  pageNumber,
   listInvites,
   systemHealth,
   type AdminRow,
@@ -22,11 +25,25 @@ import { modelsDownToday } from "@/server/model-alerts";
 import { isAdminEmail } from "@/server/admin";
 import { ADMIN_MOVES, canMakeMove, type AdminMove } from "@/server/lifecycle";
 import {
+  cardNotice,
+  statusLabel,
+  needsYou,
+  NOTHING_NEEDS_YOU,
+  ORPHAN_PLAN_LINE,
+  PAUSE_EXPLAIN,
+  PLAN_SET_BY_STRIPE_LINE,
+  pauseExplanation,
+  STILL_BILLED_LINE,
+  TWO_PLANS_LINE,
+} from "@/server/admin-rules";
+import {
   adminMoveAction,
   checkTestPaymentsAction,
+  clearStripeOrphansAction,
   connectStripeAction,
   inviteAction,
   inviteFromWaitlistAction,
+  removeInviteAction,
   testUserAddedAction,
   resetTestPaymentsAction,
   setPlanAction,
@@ -42,10 +59,19 @@ import {
   stripeConfigured,
   stripeConnectedAt,
   stripeMode,
+  stripeOrphans,
+  stripeWaitingWorkspaces,
   termsBoxOffSince,
 } from "@/server/billing";
 import { SALES_TAX_LINES, SALES_TAX_ON_NOTE, TERMS_BOX_OFF_LINE } from "@/server/billing-rules";
 import { stripeReasonText } from "@/server/stripe-error-rules";
+import {
+  CHECKOUT_REVIEW_LINE,
+  PAID_WAITING_LINE,
+  stripeWaitingLine,
+} from "@/server/billing-notice-rules";
+import { moneyLines, openDisputesLine } from "@/server/stripe-money-rules";
+import { openDisputeCount } from "@/server/stripe-money";
 import { lastTestPaymentsResult } from "@/server/test-payments";
 import {
   PAST_DUE_RESET_NOTE,
@@ -61,7 +87,7 @@ import {
   PORTAL_UNKNOWN_LINE,
   referralsVisible,
 } from "@/server/referral-rules";
-import { describeWaitlistEntry, formatStamp } from "@/server/growth-note";
+import { describeWaitlistEntry, formatStamp, localStamp } from "@/server/growth-note";
 import { growthCopy } from "@/components/marketing/growth/growth-copy";
 import { phoneHref } from "@/lib/phone-href";
 import { pricing } from "@/config/pricing";
@@ -74,17 +100,6 @@ import {
 } from "./growth-admin";
 
 export const metadata: Metadata = { title: "Admin", robots: { index: false } };
-
-const statusLabel: Record<AdminRow["status"], string> = {
-  invited: "Invited",
-  evaluating: "Evaluating",
-  evaluation_expired: "Evaluation over",
-  setup_paid: "Setup paid",
-  active: "Active",
-  past_due: "Past due",
-  canceled: "Canceled",
-  paused: "Paused",
-};
 
 const moves: Record<AdminMove, { label: string; explain: string; confirm: string }> = {
   extend_evaluation: {
@@ -105,7 +120,7 @@ const moves: Record<AdminMove, { label: string; explain: string; confirm: string
   },
   pause: {
     label: "Pause account",
-    explain: "Stops reading, drafting and sending. Nothing is deleted.",
+    explain: PAUSE_EXPLAIN,
     confirm: "Yes, pause",
   },
   resume: {
@@ -127,12 +142,15 @@ const done: Record<string, string> = {
     "Stripe connected in TEST mode: prices, billing portal and payment notifications are set up. Use card 4242 4242 4242 4242 to try it.",
   stripe_live: "Stripe connected in LIVE mode. Real cards will be charged.",
   stripe_test_check: "Test payments checked.",
+  stripe_orphans_cleared: "Cleared. It comes back if Stripe sends another one.",
   invited:
     "Invited. They can sign in now. The invite email didn't go out (email isn't set up, or it failed), so tell them yourself. Add them as a Google test user too.",
   invited_emailed:
     "Invited, and emailed them the sign-in link. Add them as a Google test user too (see the list under Invite an owner).",
   test_user: "Marked as a Google test user.",
   already_invited: "That address was already invited.",
+  invite_removed: "Invite taken back. That address can't sign in now.",
+  invite_gone: "That invite was already gone.",
 };
 /** Where Google Cloud lists an app's test users (Google Auth Platform → Audience). */
 const GOOGLE_AUDIENCE_URL = "https://console.cloud.google.com/auth/audience";
@@ -141,8 +159,11 @@ const errors: Record<string, string> = {
   stripe: "Couldn't connect Stripe.",
   stripe_test_mode: TEST_PAYMENTS_TEST_MODE,
   stripe_test_payments: "Couldn't check test payments. Try again in a minute.",
+  plan_stripe:
+    "That account pays through Stripe, so its plan follows the subscription. Change it in Stripe.",
   move: "That change isn't allowed from the account's current status. Refresh and look again.",
   invite: "That doesn't look like an email address.",
+  invite_used: "They've already signed in, so that invite can't be taken back.",
   growth_only: growthCopy.admin.growthOnlyError,
   unknown: "That didn't work. Refresh and try again.",
 };
@@ -154,6 +175,11 @@ const et = new Intl.DateTimeFormat("en-US", {
   hour: "numeric",
   minute: "2-digit",
   timeZoneName: "short",
+});
+const inviteDay = new Intl.DateTimeFormat("en-US", {
+  timeZone: "America/New_York",
+  month: "short",
+  day: "numeric",
 });
 const dollars = (cents: number) => `$${(cents / 100).toFixed(2)}`;
 
@@ -252,7 +278,7 @@ function WaitlistEntry({
         </div>
       ) : null}
       {!facts.app ? (
-        <span className="font-semibold">{ga.growthOnly}</span>
+        <span className="font-semibold">{ga.growthOnlyLine(w.inviteState)}</span>
       ) : w.inviteState === "invited" ? (
         <span className="font-semibold">
           Invited {relativeTime(w.inviteAt ?? w.invitedAt ?? w.createdAt, now)}
@@ -335,7 +361,16 @@ function Stat({ label, value }: { label: string; value: React.ReactNode }) {
   );
 }
 
-function WorkspaceCard({ w, now }: { w: AdminRow; now: Date }) {
+function WorkspaceCard({
+  w,
+  now,
+  notice,
+}: {
+  w: AdminRow;
+  now: Date;
+  /** Check 16 P6: the notice for a move Davi just made on this card. */
+  notice?: { text: string; strong: boolean } | null;
+}) {
   const own = isAdminEmail(w.ownerEmail);
   const allowed = (Object.keys(ADMIN_MOVES) as AdminMove[]).filter(
     (m) =>
@@ -347,15 +382,48 @@ function WorkspaceCard({ w, now }: { w: AdminRow; now: Date }) {
   const stuck = mailboxesStuck(w.mailboxes);
   return (
     <article
+      id={`acct-${w.workspaceId}`}
       aria-label={w.ownerEmail}
       className="flex flex-col gap-3 rounded-xl border bg-card p-4"
     >
       {stuck ? (
         <p className="sa-inverted self-start rounded-md px-2 py-1 text-sm font-black">Stuck</p>
       ) : null}
+      {w.waitingOnStripe ? (
+        <p className="sa-inverted self-start rounded-md px-2 py-1 font-black">
+          {PAID_WAITING_LINE}
+        </p>
+      ) : null}
+      {w.checkoutNeedsReview ? (
+        <p className="sa-inverted self-start rounded-md px-2 py-1 font-black">
+          {CHECKOUT_REVIEW_LINE}
+        </p>
+      ) : null}
+      {moneyLines(w.moneyEvents).map((l, i) => (
+        <p
+          key={i}
+          className={
+            l.strong ? "sa-inverted self-start rounded-md px-2 py-1 font-black" : "font-semibold"
+          }
+        >
+          {l.text}
+        </p>
+      ))}
+      {w.twoLivePlans ? (
+        <p className="sa-inverted self-start rounded-md px-2 py-1 font-black">{TWO_PLANS_LINE}</p>
+      ) : null}
+      {w.status === "paused" && w.hasSubscription ? (
+        <p className="font-black">{STILL_BILLED_LINE}</p>
+      ) : null}
       <header className="flex flex-wrap items-baseline justify-between gap-2">
         <div className="flex min-w-0 flex-col">
-          <span className="truncate text-lg font-black">{w.businessName || w.ownerEmail}</span>
+          {/* Check 16 P8: the support page for this account (content-free). */}
+          <Link
+            href={`/admin/accounts/${w.workspaceId}`}
+            className="inline-flex min-h-tap items-center truncate text-lg font-black underline underline-offset-4"
+          >
+            {w.businessName || w.ownerEmail}
+          </Link>
           {w.businessName ? <span className="truncate text-sm">{w.ownerEmail}</span> : null}
         </div>
         <span
@@ -368,6 +436,7 @@ function WorkspaceCard({ w, now }: { w: AdminRow; now: Date }) {
           {statusLabel[w.status]}
         </span>
       </header>
+      {notice ? <Notice strong={notice.strong}>{notice.text}</Notice> : null}
       <dl className="grid grid-cols-2 gap-x-4 gap-y-2">
         <Stat label="Trade" value={isTrade(w.trade) ? tradeLabel[w.trade] : "—"} />
         <Stat label="Plan" value={w.planLabel} />
@@ -427,29 +496,33 @@ function WorkspaceCard({ w, now }: { w: AdminRow; now: Date }) {
           />
         ) : null}
       </dl>
-      <form action={setPlanAction} className="flex gap-2">
-        <input type="hidden" name="workspaceId" value={w.workspaceId} />
-        <label className="flex flex-1 flex-col gap-1">
-          <span className="sr-only">Plan</span>
-          <select
-            name="plan"
-            aria-label="Plan"
-            defaultValue={w.plan ?? ""}
-            className="min-h-tap w-full rounded-lg border border-input bg-paper px-3 text-base"
-          >
-            <option value="">No plan yet</option>
-            {Object.entries(pricing.plans).map(([id, p]) => (
-              <option key={id} value={id}>
-                {p.name}
-                {p.autopilot ? " (autopilot)" : ""}
-              </option>
-            ))}
-          </select>
-        </label>
-        <Button type="submit" variant="outline">
-          Save plan
-        </Button>
-      </form>
+      {w.hasSubscription ? (
+        <p className="text-sm">{PLAN_SET_BY_STRIPE_LINE}</p>
+      ) : (
+        <form action={setPlanAction} className="flex gap-2">
+          <input type="hidden" name="workspaceId" value={w.workspaceId} />
+          <label className="flex flex-1 flex-col gap-1">
+            <span className="sr-only">Plan</span>
+            <select
+              name="plan"
+              aria-label="Plan"
+              defaultValue={w.plan ?? ""}
+              className="min-h-tap w-full rounded-lg border border-input bg-paper px-3 text-base"
+            >
+              <option value="">No plan yet</option>
+              {Object.entries(pricing.plans).map(([id, p]) => (
+                <option key={id} value={id}>
+                  {p.name}
+                  {p.autopilot ? " (autopilot)" : ""}
+                </option>
+              ))}
+            </select>
+          </label>
+          <Button type="submit" variant="outline">
+            Save plan
+          </Button>
+        </form>
+      )}
       {allowed.length ? (
         <div className="flex flex-col gap-2">
           {allowed.map((m) => (
@@ -460,7 +533,7 @@ function WorkspaceCard({ w, now }: { w: AdminRow; now: Date }) {
               <form action={adminMoveAction} className="flex flex-col gap-2 px-4 pb-4">
                 <input type="hidden" name="workspaceId" value={w.workspaceId} />
                 <input type="hidden" name="move" value={m} />
-                <p>{moves[m].explain}</p>
+                <p>{m === "pause" ? pauseExplanation(w.hasSubscription) : moves[m].explain}</p>
                 <Button type="submit" className="w-full">
                   {moves[m].confirm}
                 </Button>
@@ -478,6 +551,22 @@ export default async function AdminPage(props: PageProps<"/admin">) {
   const params = await props.searchParams;
   const now = new Date();
   const referrals = referralsVisible();
+  // Check 16 P5: find a shop and page through every account (and invite). q is never logged.
+  const q = typeof params.q === "string" ? params.q.trim().slice(0, 200) : "";
+  const page = pageNumber(params.page);
+  const invitePage = pageNumber(params.ipage);
+  const hrefWith = (over: Record<string, string | number | null>) => {
+    const sp = new URLSearchParams();
+    const merged: Record<string, string | number | null> = {
+      q: q || null,
+      page: page > 1 ? page : null,
+      ipage: invitePage > 1 ? invitePage : null,
+      ...over,
+    };
+    for (const [k, v] of Object.entries(merged)) if (v !== null && v !== "") sp.set(k, String(v));
+    const qs = sp.toString();
+    return qs ? `/admin?${qs}` : "/admin";
+  };
   // Test payments can only be told apart with the live key. The counts come from the last check
   // (database only): a plain page load asks Stripe nothing new.
   const live = stripeConfigured() && stripeMode() === "live";
@@ -495,10 +584,15 @@ export default async function AdminPage(props: PageProps<"/admin">) {
     growthClientCount,
     modelsDown,
     launchFacts,
+    orphans,
+    openDisputes,
+    waitingStripe,
+    accountCounts,
+    inviteTotal,
   ] = await Promise.all([
-    adminOverview(now),
-    countWorkspaces(),
-    listInvites(),
+    adminOverview(now, { q, page }),
+    countWorkspaces(q),
+    listInvites({ page: invitePage }),
     listWaitlist(),
     stripeConnectedAt(),
     systemHealth(now),
@@ -511,8 +605,26 @@ export default async function AdminPage(props: PageProps<"/admin">) {
     countGrowthClients(),
     modelsDownToday(now),
     loadLaunchFacts(),
+    stripeOrphans(),
+    openDisputeCount(),
+    stripeWaitingWorkspaces(),
+    accountsNeedingYou(now),
+    countInvites(),
   ]);
   const growthStates = await growthStateForEmails(waiting.map((w) => w.email));
+  // Check 16 P3: Growth requests from the last 7 days (no "called" mark exists yet: Check 16 P4).
+  const weekAgo = localStamp(new Date(now.getTime() - 7 * 86_400_000));
+  const needs = needsYou({
+    growthCalls: waiting.filter((w) => {
+      const at = describeWaitlistEntry(w).growth[0]?.at;
+      return Boolean(at && at >= weekAgo);
+    }).length,
+    newSignups: waiting.filter(
+      (w) => describeWaitlistEntry(w).app && w.inviteState === "not_invited",
+    ).length,
+    stuckInboxes: system.staleMailboxes + system.stuckFirstReads,
+    ...accountCounts,
+  });
   const today = adminToday(now);
   // Waitlist Growth notices show in the waitlist section (the page scrolls there).
   const code = (v: unknown, prefix: string) =>
@@ -521,10 +633,16 @@ export default async function AdminPage(props: PageProps<"/admin">) {
   const waitlistError = WAITLIST_GROWTH_ERRORS[code(params.error, "wl_") ?? ""];
   // Payment messages show inside the Payments section (the page scrolls there), not at the top.
   const isStripe = (k: unknown) => typeof k === "string" && k.startsWith("stripe");
+  // Check 16 P6: a move's notice shows inside the card it changed, naming it (not at the top).
+  const onCard = cardNotice(params, rows, pricing.plans);
   const doneMsg =
-    typeof params.done === "string" && !isStripe(params.done) ? done[params.done] : undefined;
+    !onCard && typeof params.done === "string" && !isStripe(params.done)
+      ? done[params.done]
+      : undefined;
   const errorMsg =
-    typeof params.error === "string" && !isStripe(params.error) ? errors[params.error] : undefined;
+    !onCard && typeof params.error === "string" && !isStripe(params.error)
+      ? errors[params.error]
+      : undefined;
   const stripeDone =
     params.done === "stripe_test_reset"
       ? testPayments && testPayments.reset !== null
@@ -544,6 +662,31 @@ export default async function AdminPage(props: PageProps<"/admin">) {
   return (
     <>
       <Headline serif="behind the counter," heavy="admin." />
+      {/* Check 16 P3: what needs Davi, first thing on a phone. Counts only, never names. */}
+      <section
+        aria-labelledby="needs-you"
+        className="flex flex-col gap-1 rounded-xl border-2 border-charcoal p-4"
+      >
+        <h2 id="needs-you" className="text-lg font-black">
+          Needs you
+        </h2>
+        {needs.length === 0 ? (
+          <p>{NOTHING_NEEDS_YOU}</p>
+        ) : (
+          <ul className="flex flex-col">
+            {needs.map((l) => (
+              <li key={l.key}>
+                <a
+                  href={l.href}
+                  className="flex min-h-tap items-center font-semibold underline underline-offset-4"
+                >
+                  {l.text}
+                </a>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
       <Link
         href="/admin/costs"
         className="inline-flex min-h-tap items-center font-semibold underline underline-offset-4"
@@ -604,17 +747,115 @@ export default async function AdminPage(props: PageProps<"/admin">) {
 
       <LaunchReady rows={launchChecks(process.env, launchFacts)} tickAction={tickLaunchAction} />
 
+      <section id="waitlist" aria-labelledby="waitlist-heading" className="flex flex-col gap-3">
+        <h2 id="waitlist-heading" className="text-xl font-black">
+          {ga.heading(waiting.length)}
+        </h2>
+        {waitlistDone ? <Notice>{waitlistDone}</Notice> : null}
+        {waitlistError ? <Notice strong>{waitlistError}</Notice> : null}
+        {waiting.length === 0 ? (
+          <p>{ga.empty}</p>
+        ) : (
+          <ul className="flex flex-col gap-3">
+            {waiting.map((w) => (
+              <WaitlistEntry
+                key={w.email}
+                w={w}
+                now={now}
+                referrals={referrals}
+                growth={growthStates.get(w.email.toLowerCase())}
+                today={today}
+              />
+            ))}
+          </ul>
+        )}
+      </section>
+
       <section aria-labelledby="accounts" className="flex flex-col gap-3">
         <h2 id="accounts" className="text-xl font-black">
           Accounts ({total})
         </h2>
-        {total > rows.length ? (
-          <p className="text-muted-foreground">Showing the newest {ADMIN_PAGE_SIZE}.</p>
+        <form method="get" action="/admin" role="search" className="flex flex-col gap-2">
+          <label className="flex flex-col gap-1.5">
+            <span className="font-semibold">Find a shop (name or email)</span>
+            <input
+              name="q"
+              type="search"
+              defaultValue={q}
+              maxLength={200}
+              autoComplete="off"
+              className="min-h-tap rounded-lg border border-input bg-paper px-3 text-base"
+            />
+          </label>
+          <div className="flex items-center gap-4">
+            <Button type="submit" variant="outline">
+              Find
+            </Button>
+            {q ? (
+              <Link
+                href="/admin#accounts"
+                className="inline-flex min-h-tap items-center font-semibold underline underline-offset-4"
+              >
+                Clear
+              </Link>
+            ) : null}
+          </div>
+        </form>
+        {rows.length === 0 ? (
+          <p>{q ? "No shop matches that." : "No one has signed in yet."}</p>
         ) : null}
-        {rows.length === 0 ? <p>No one has signed in yet.</p> : null}
-        {rows.map((w) => (
-          <WorkspaceCard key={w.workspaceId} w={w} now={now} />
-        ))}
+        {rows.map((w) =>
+          isAdminEmail(w.ownerEmail) ? (
+            // Check 16 P3: Davi's own test account folds to one line; its moves still work.
+            <details
+              key={w.workspaceId}
+              className="rounded-xl border"
+              open={onCard?.workspaceId === w.workspaceId}
+            >
+              <summary className="flex min-h-tap cursor-pointer items-center px-4 font-semibold">
+                Your test account: {w.businessName || w.ownerEmail} · {statusLabel[w.status]}
+              </summary>
+              <div className="p-2">
+                <WorkspaceCard
+                  w={w}
+                  now={now}
+                  notice={onCard?.workspaceId === w.workspaceId ? onCard : null}
+                />
+              </div>
+            </details>
+          ) : (
+            <WorkspaceCard
+              key={w.workspaceId}
+              w={w}
+              now={now}
+              notice={onCard?.workspaceId === w.workspaceId ? onCard : null}
+            />
+          ),
+        )}
+        {total > ADMIN_PAGE_SIZE ? (
+          <nav aria-label="More accounts" className="flex flex-col gap-1">
+            <p className="text-muted-foreground">
+              Showing {Math.min((page - 1) * ADMIN_PAGE_SIZE + 1, total)} to{" "}
+              {Math.min(page * ADMIN_PAGE_SIZE, total)} of {total}.
+            </p>
+            {page * ADMIN_PAGE_SIZE < total ? (
+              <Link
+                href={`${hrefWith({ page: page + 1 })}#accounts`}
+                className="inline-flex min-h-tap items-center font-semibold underline underline-offset-4"
+              >
+                Show older accounts
+              </Link>
+            ) : null}
+            {page > 1 ? (
+              <Link
+                href={`${hrefWith({ page: page - 1 > 1 ? page - 1 : null })}#accounts`}
+                className="inline-flex min-h-tap items-center font-semibold underline underline-offset-4"
+              >
+                Show newer accounts
+              </Link>
+            ) : null}
+          </nav>
+        ) : null}
       </section>
 
       <section id="stripe" aria-labelledby="stripe-heading" className="flex flex-col gap-3">
@@ -627,6 +868,30 @@ export default async function AdminPage(props: PageProps<"/admin">) {
             {stripeError}
             {stripeReason ? ` ${stripeReason}` : null}
           </Notice>
+        ) : null}
+        {waitingStripe.size > 0 ? (
+          <p className="sa-inverted rounded-xl p-4 font-black">
+            {stripeWaitingLine(waitingStripe.size)}
+          </p>
+        ) : null}
+        {openDisputesLine(openDisputes) ? (
+          <p className="sa-inverted rounded-xl p-4 font-black">{openDisputesLine(openDisputes)}</p>
+        ) : null}
+        {orphans && orphans.count > 0 ? (
+          <form
+            action={clearStripeOrphansAction}
+            className="sa-inverted flex flex-col gap-2 rounded-xl p-4"
+          >
+            <p className="font-black">{ORPHAN_PLAN_LINE}</p>
+            <p>
+              {orphans.count === 1 ? "Once" : `${orphans.count} times`}, last{" "}
+              {et.format(orphans.at)}. Look in Stripe → Customers for a plan whose account was
+              deleted or never matched.
+            </p>
+            <Button type="submit" variant="outline" className="w-full">
+              I checked Stripe
+            </Button>
+          </form>
         ) : null}
         {stripeConfigured() ? (
           <>
@@ -665,30 +930,6 @@ export default async function AdminPage(props: PageProps<"/admin">) {
           </>
         ) : (
           <p>Add STRIPE_SECRET_KEY to the sa project in Vercel first.</p>
-        )}
-      </section>
-
-      <section id="waitlist" aria-labelledby="waitlist-heading" className="flex flex-col gap-3">
-        <h2 id="waitlist-heading" className="text-xl font-black">
-          {ga.heading(waiting.length)}
-        </h2>
-        {waitlistDone ? <Notice>{waitlistDone}</Notice> : null}
-        {waitlistError ? <Notice strong>{waitlistError}</Notice> : null}
-        {waiting.length === 0 ? (
-          <p>{ga.empty}</p>
-        ) : (
-          <ul className="flex flex-col gap-3">
-            {waiting.map((w) => (
-              <WaitlistEntry
-                key={w.email}
-                w={w}
-                now={now}
-                referrals={referrals}
-                growth={growthStates.get(w.email.toLowerCase())}
-                today={today}
-              />
-            ))}
-          </ul>
         )}
       </section>
 
@@ -743,7 +984,7 @@ export default async function AdminPage(props: PageProps<"/admin">) {
             />
           </label>
           <Button type="submit" className="w-full">
-            Add to invite list
+            Invite and email them
           </Button>
           <p className="text-sm text-muted-foreground">
             This lets them sign in and emails them the sign-in link, with what to have ready. Until
@@ -757,11 +998,34 @@ export default async function AdminPage(props: PageProps<"/admin">) {
                 <span className="flex items-baseline justify-between gap-3">
                   <span className="truncate">{i.email}</span>
                   <span className="shrink-0 text-sm text-muted-foreground">
-                    {i.acceptedAt ? "Signed in" : "Not yet"}
+                    {i.acceptedAt ? "Signed in" : "Not yet"} · Invited{" "}
+                    {inviteDay.format(i.invitedAt)}
                   </span>
                 </span>
+                {!i.acceptedAt ? (
+                  // Check 16 P7: a typo or a mistaken invite can be taken back before it's used.
+                  <details className="rounded-lg border">
+                    <summary className="flex min-h-tap cursor-pointer items-center px-4 font-semibold">
+                      Take back this invite
+                    </summary>
+                    <form action={removeInviteAction} className="flex flex-col gap-2 px-4 pb-4">
+                      <input type="hidden" name="email" value={i.email} />
+                      <p>
+                        They won&apos;t be able to sign in. The email we sent them stops working.
+                      </p>
+                      <Button type="submit" className="w-full">
+                        Yes, take back the invite
+                      </Button>
+                    </form>
+                  </details>
+                ) : null}
                 {/* Round 2 (FW A4): until Google approves the app, only test users get in. */}
-                {i.testUserAddedAt ? (
+                {i.gmailConnected ? (
+                  // Check 16 P9: connecting Gmail proves Google let them in as a test user.
+                  <span className="text-sm text-muted-foreground">
+                    Google test user: confirmed (Gmail connected)
+                  </span>
+                ) : isAdminEmail(i.email) ? null : i.testUserAddedAt ? (
                   <span className="text-sm text-muted-foreground">Google test user: added</span>
                 ) : (
                   <form action={testUserAddedAction} className="flex flex-col gap-1">
@@ -772,7 +1036,7 @@ export default async function AdminPage(props: PageProps<"/admin">) {
                         href={GOOGLE_AUDIENCE_URL}
                         target="_blank"
                         rel="noreferrer"
-                        className="font-semibold underline underline-offset-4"
+                        className="inline-flex min-h-tap items-center font-semibold underline underline-offset-4"
                       >
                         Google Cloud → Audience
                       </a>
@@ -786,6 +1050,30 @@ export default async function AdminPage(props: PageProps<"/admin">) {
               </li>
             ))}
           </ul>
+        ) : null}
+        {inviteTotal > ADMIN_PAGE_SIZE ? (
+          <nav aria-label="More invites" className="flex flex-col gap-1">
+            <p className="text-muted-foreground">
+              Showing {Math.min((invitePage - 1) * ADMIN_PAGE_SIZE + 1, inviteTotal)} to{" "}
+              {Math.min(invitePage * ADMIN_PAGE_SIZE, inviteTotal)} of {inviteTotal} invites.
+            </p>
+            {invitePage * ADMIN_PAGE_SIZE < inviteTotal ? (
+              <Link
+                href={`${hrefWith({ ipage: invitePage + 1 })}#invite`}
+                className="inline-flex min-h-tap items-center font-semibold underline underline-offset-4"
+              >
+                Show older invites
+              </Link>
+            ) : null}
+            {invitePage > 1 ? (
+              <Link
+                href={`${hrefWith({ ipage: invitePage - 1 > 1 ? invitePage - 1 : null })}#invite`}
+                className="inline-flex min-h-tap items-center font-semibold underline underline-offset-4"
+              >
+                Show newer invites
+              </Link>
+            ) : null}
+          </nav>
         ) : null}
       </section>
     </>

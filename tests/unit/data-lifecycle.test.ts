@@ -28,6 +28,7 @@ import {
   rules,
   seasonalNotes,
   stripeEvents,
+  stripeMoneyEvents,
   threads,
   usage,
   voiceProfiles,
@@ -81,6 +82,8 @@ const KEPT: Record<string, string> = {
   stripe_events: "Stripe event ids and types only, for webhook idempotency",
   job_runs:
     "background job run and step counts per job name and day (Check 25 P4); no workspace, no content; purged after about four months",
+  stripe_money_events:
+    "refund and dispute amounts and dates from Stripe (no card details), workspace id cleared (SET NULL), like Stripe's own payment records",
   referral_credits:
     "salted email fingerprint with the workspace ids cleared (SET NULL), so a referral is paid once",
 };
@@ -95,6 +98,8 @@ const SET_NULL: Record<string, string> = {
     "an invite outlives the referrer's account; the invitee still signs in, unlinked",
   "referral_credits.referred_workspace_id":
     "the credit record outlives the referred account so the same email is never paid twice",
+  "stripe_money_events.workspace_id":
+    "a refund or dispute record outlives the account, like Stripe's own payment records",
   "referral_credits.beneficiary_workspace_id":
     "the credit record outlives the referrer's account (it was already paid or is skipped)",
 };
@@ -338,6 +343,7 @@ async function seedOwner(email: string, tag: string, extra: { referredBy?: strin
     .values({ growthClientId: gc!.id, month: "2026-10", newLeads: 3 });
   await database.insert(appSettings).values([
     { key: `cost_alert:${ws}:2026-10`, value: "1" },
+    { key: `stripe-ws:open-checkout:${ws}`, value: `cs_${tag}` },
     { key: `email-sent:digest-${ws}-2026-10-12`, value: NOW.toISOString() },
     { key: `email-sent:access-lost-${a.mailboxId}-1-1`, value: NOW.toISOString() },
   ]);
@@ -346,6 +352,9 @@ async function seedOwner(email: string, tag: string, extra: { referredBy?: strin
   // Check 25 P1 / P4: Gmail unit minutes (go with the mailbox) and job counts (global).
   await database.insert(gmailUnits).values({ mailboxId: a.mailboxId, minute: NOW, units: 20 });
   await database.insert(jobRuns).values({ functionId: `${tag}-job`, day: "2026-10-12", runs: 1 });
+  await database
+    .insert(stripeMoneyEvents)
+    .values({ id: `re_${tag}`, workspaceId: ws, kind: "refund", amountCents: 49_900 });
   return { userId: user.id, workspaceId: ws, a, b };
 }
 
@@ -418,6 +427,7 @@ describe("delete my account", () => {
       "stripe_events",
       "referral_credits",
       "job_runs",
+      "stripe_money_events",
     ]);
     for (const name of Object.keys(after)) {
       if (kept.has(name)) continue;
@@ -450,6 +460,13 @@ describe("delete my account", () => {
       stripeDiscountId: null,
       paidPriceId: null,
     });
+    // Check 17 P8: the owner's refund record stays, with no workspace id.
+    const money = await database
+      .select()
+      .from(stripeMoneyEvents)
+      .where(eq(stripeMoneyEvents.id, "re_owner"));
+    expect(money).toHaveLength(1);
+    expect(money[0]!.workspaceId).toBeNull();
   });
 
   it("a deleted owner's waitlist entry offers Invite again, and inviting lets them back in", async () => {
