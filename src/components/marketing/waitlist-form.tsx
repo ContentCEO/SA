@@ -1,6 +1,7 @@
 "use client";
 
-import { useActionState, useLayoutEffect, useRef } from "react";
+import { useSearchParams } from "next/navigation";
+import { Suspense, useActionState, useLayoutEffect, useRef } from "react";
 import { useFormStatus } from "react-dom";
 import { joinWaitlistAction, type WaitlistState } from "@/app/waitlist-actions";
 import { SelectField, TextArea, TextField } from "@/components/forms/field";
@@ -9,6 +10,7 @@ import { useFocusFirstError } from "@/components/forms/use-focus-first-error";
 import { Button } from "@/components/ui/button";
 import { siteConfig } from "@/config/site";
 import { TRADE_OPTIONS } from "@/config/trades";
+import { isReferralCode } from "@/lib/referral-code";
 import { SourceFields } from "./source-fields";
 
 const trades = TRADE_OPTIONS.map((t) =>
@@ -59,8 +61,19 @@ function Joined() {
   );
 }
 
-/** `referralCode`: from a referral link (?ref=), only passed while referrals are switched on. */
-export function WaitlistForm({ referralCode }: { referralCode?: string } = {}) {
+/**
+ * Plan #47 / Check 29 P3: a referral link's code (?ref=), read here in the browser so the
+ * homepage can be prerendered. Only rendered while referrals are switched on; the server action
+ * checks the code again (and the switch) before keeping it.
+ */
+function ReferralField({ kept }: { kept?: string }) {
+  const code = useSearchParams().get("ref");
+  const value = kept ?? code;
+  return isReferralCode(value) ? <input type="hidden" name="ref" defaultValue={value} /> : null;
+}
+
+/** `referrals`: referral links are switched on (decided by the server page). */
+export function WaitlistForm({ referrals = false }: { referrals?: boolean } = {}) {
   const [state, action] = useActionState<WaitlistState, FormData>(joinWaitlistAction, {
     status: "idle",
   });
@@ -126,8 +139,11 @@ export function WaitlistForm({ referralCode }: { referralCode?: string } = {}) {
         error={e.note}
         rows={3}
       />
-      {referralCode ? (
-        <input type="hidden" name="ref" defaultValue={v.ref ?? referralCode} />
+      {referrals ? (
+        // useSearchParams needs a Suspense boundary on a prerendered page.
+        <Suspense fallback={null}>
+          <ReferralField kept={v.ref} />
+        </Suspense>
       ) : null}
       {/* Left empty by people; bots fill it in. */}
       <div aria-hidden className="absolute -left-[9999px] h-0 w-0 overflow-hidden">

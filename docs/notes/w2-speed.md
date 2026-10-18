@@ -29,10 +29,10 @@ For the integrator to fold into CLAUDE.md (Decisions) and the other shared docs.
 
 Proposed CLAUDE.md Decisions line:
 "- **Indexes (2026-10-18, Check 30 P1/P4, Check 29 P6):** every foreign key leads an index
-  (`tests/unit/fk-indexes.test.ts`; allow-list with reasons). Index migrations are plain
-  `CREATE INDEX IF NOT EXISTS` (drizzle runs migrations in one transaction, so no CONCURRENTLY);
-  check table sizes first and pre-build big ones by hand with CONCURRENTLY. The reply-address
-  expression lives once in `replyAddressExpr` (schema.ts) so the planner matches its index."
+(`tests/unit/fk-indexes.test.ts`; allow-list with reasons). Index migrations are plain
+`CREATE INDEX IF NOT EXISTS` (drizzle runs migrations in one transaction, so no CONCURRENTLY);
+check table sizes first and pre-build big ones by hand with CONCURRENTLY. The reply-address
+expression lives once in `replyAddressExpr` (schema.ts) so the planner matches its index."
 
 ## Step 2: Check 30 P3 — forms keep values they don't recognize
 
@@ -46,8 +46,8 @@ Proposed CLAUDE.md Decisions line:
 
 **CLAUDE.md, add to Conventions (exact text):**
 "- Readers and forms keep values they don't recognize; new list values may arrive in the database
-  before the code that knows them. (`SelectField` shows them as \"Current: …\"; `orStored` accepts
-  the stored value back, nothing else.)"
+before the code that knows them. (`SelectField` shows them as \"Current: …\"; `orStored` accepts
+the stored value back, nothing else.)"
 
 ## Step 3: Check 30 P6 — prompt version on each conversation's facts (migration `0045_thread_prompt_version`)
 
@@ -64,8 +64,8 @@ Proposed CLAUDE.md Decisions line:
 
 Proposed CLAUDE.md Decisions line:
 "- **Extracted facts (2026-10-18, Check 30 P6):** `threads.classified_prompt_version` records the
-  classify version that wrote `extracted`; read `extracted` with `readExtracted`
-  (src/server/extracted.ts), not casts. A new classify version that adds keys adds its schema there."
+classify version that wrote `extracted`; read `extracted` with `readExtracted`
+(src/server/extracted.ts), not casts. A new classify version that adds keys adds its schema there."
 
 ## Step 4: Check 29 P7 — read each thing once per screen; no writes on Quotes / Customers
 
@@ -85,8 +85,8 @@ Proposed CLAUDE.md Decisions line:
 
 Proposed CLAUDE.md Decisions line:
 "- **Screens read, jobs write (2026-10-18, Check 29 P7):** opening a screen never writes; quote
-  amounts and no-answer guesses are refreshed by the draft job after every sync
-  (`quoteUpkeepForMailbox`) and the daily jobs. Shared per-request reads use React `cache()`."
+amounts and no-answer guesses are refreshed by the draft job after every sync
+(`quoteUpkeepForMailbox`) and the daily jobs. Shared per-request reads use React `cache()`."
 
 ## Step 5: Check 29 P4 + Check 29 P5 — the daily AI limit (no migration)
 
@@ -117,6 +117,27 @@ same advice ("Leave unset").
 
 Proposed CLAUDE.md Decisions line:
 "- **AI limit (2026-10-18, Check 29 P4/P5):** a shop's daily limit is `AI_DAILY_CALL_CAP` (500)
-  per running inbox, at least one, up to `AI_DAILY_CALL_CAP_MAX` (3000) (`dailyAiCallCap`). Sorting
-  may use 80% of it (`SORT_SHARE`, `reserveAiCall(..., "sort")`); drafts and voice keep the rest.
-  Prices and plan inbox limits unchanged."
+per running inbox, at least one, up to `AI_DAILY_CALL_CAP_MAX` (3000) (`dailyAiCallCap`). Sorting
+may use 80% of it (`SORT_SHARE`, `reserveAiCall(..., "sort")`); drafts and voice keep the rest.
+Prices and plan inbox limits unchanged."
+
+## Step 6: Check 29 P3 — the homepage from the CDN
+
+- `src/app/page.tsx` reads no session and no search params (a plain, non-async page), so "/" is
+  prerendered (`.next/prerender-manifest.json` lists it; e2e checks).
+- Signed-in redirect moved to the proxy: "/" is in `src/proxy.ts`'s matcher; on a GET/HEAD with an
+  Auth.js session cookie (`authjs.session-token` / `__Secure-…`, chunks `.0` …) it redirects to
+  **/start** (the spec said /queue; the tip already sends signed-in owners to /start, which forwards
+  to /queue unless they're a Growth client). Rule in `src/lib/home-redirect.ts`. No path header on
+  "/"; other paths unchanged. A waitlist POST to "/" is never redirected.
+- A stale cookie (deleted account, rotated secret) lands on /signin (tested); Sign out clears the
+  cookie and "/" shows the homepage again (tested). A visitor holding an unreadable cookie can't see
+  "/" until they sign in or the cookie expires — the price of not reading the cookie at the CDN.
+- Referral codes: the waitlist form reads `?ref=` in the browser (`ReferralField`, `useSearchParams`
+  inside `Suspense`), only when the server page passed `referrals` (= `referralsVisible()` at build
+  time; switching referrals on needs a redeploy anyway). The server action still validates the code
+  and the switch. `isReferralCode` moved to `src/lib/referral-code.ts` (re-exported by
+  referral-rules) so the browser doesn't load the server's rules.
+- Not checked live: "x-vercel-cache: HIT" needs a deploy (no pushes from this branch).
+
+Privacy policy: nothing new (no new data, no new host).
