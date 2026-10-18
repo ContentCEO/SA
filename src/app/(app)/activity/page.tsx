@@ -1,3 +1,4 @@
+import { ArrowRight } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { Headline } from "@/components/brand/headline";
@@ -74,11 +75,16 @@ export default async function ActivityPage() {
         href="/money"
         className={cn(buttonVariants({ variant: "outline" }), "min-h-tap self-start")}
       >
-        Money owed →
+        Money owed
+        <ArrowRight aria-hidden className="size-4" />
       </Link>
 
       {/* Outside review K1: what was won and paid leads; time saved stays underneath. */}
-      <section aria-labelledby="money" className="sa-inverted flex flex-col gap-3 rounded-xl p-4">
+      {/* Check 7 P5: good news isn't drawn like something that needs you (no inversion). */}
+      <section
+        aria-labelledby="money"
+        className="flex flex-col gap-3 rounded-xl border-2 border-charcoal bg-card p-4"
+      >
         <h2 id="money" className="text-lg font-black">
           Won and paid in {monthName}
         </h2>
@@ -101,13 +107,13 @@ export default async function ActivityPage() {
               ["Invoices paid after a follow-up", tallyText(money.paidAfterNudge)],
             ].map(([label, value]) => (
               <div key={label} className="flex flex-col">
-                <dt className="text-sm text-ash">{label}</dt>
+                <dt className="text-sm text-muted-foreground">{label}</dt>
                 <dd className="text-2xl font-black">{value}</dd>
               </div>
             ))}
           </dl>
         )}
-        <p className="text-sm text-ash">{MONEY_SO_FAR_NOTE}</p>
+        <p className="text-sm text-muted-foreground">{MONEY_SO_FAR_NOTE}</p>
       </section>
 
       <section

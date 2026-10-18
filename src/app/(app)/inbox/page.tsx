@@ -176,12 +176,7 @@ export default async function InboxPage(props: PageProps<"/inbox">) {
               <span className="truncate text-base font-black">
                 {row.senderName || row.senderAddress || "Unknown sender"}
               </span>
-              <span
-                className={cn(
-                  "shrink-0 text-sm",
-                  row.needsOwner ? "text-ash" : "text-muted-foreground",
-                )}
-              >
+              <span className="shrink-0 text-sm text-muted-foreground">
                 {row.lastMessageAt ? relativeTime(row.lastMessageAt) : ""}
               </span>
             </div>

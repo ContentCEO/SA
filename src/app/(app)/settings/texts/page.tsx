@@ -45,7 +45,7 @@ export default async function TextAlertSettingsPage(props: PageProps<"/settings/
             </Button>
           </form>
           <form action={removeSmsPhoneAction}>
-            <Button type="submit" variant="ghost" className="w-full">
+            <Button type="submit" variant="outline" className="w-full">
               Remove my number
             </Button>
           </form>

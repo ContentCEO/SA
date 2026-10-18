@@ -63,7 +63,9 @@
 }
 
 /* Inverted surface: charcoal panel. Used for the "squared away." moment,
-   status that needs attention, and the evaluation banner. */
+   status that needs attention, and the evaluation banner. In the app it means exactly these
+   (Check 7 P5): needs you now, status banners, confirm steps, the selected item in a control,
+   and the empty-queue moment. Summaries, suggestions and good news get a border-2 edge. */
 .sa-inverted {
   --background: var(--sa-charcoal);
   --foreground: var(--sa-offwhite);

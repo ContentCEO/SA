@@ -151,7 +151,7 @@ export default async function GmailSettingsPage(props: PageProps<"/settings/gmai
                   <dl aria-label={`Health of ${m.email}`} className="flex flex-col gap-1.5">
                     {health.lines.map((l) => (
                       <div key={l.label} className="flex flex-col">
-                        <dt className="text-sm opacity-80">{l.label}</dt>
+                        <dt className="text-sm text-muted-foreground">{l.label}</dt>
                         <dd className={l.problem ? "font-black" : undefined}>{l.text}</dd>
                       </div>
                     ))}

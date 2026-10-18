@@ -1,3 +1,4 @@
+import { ArrowRight } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { Notice } from "@/components/app/notice";
@@ -84,7 +85,7 @@ function QuoteCard({
     >
       <div className="flex items-baseline justify-between gap-3">
         <span className="truncate text-lg font-black">{name}</span>
-        <span className="shrink-0 text-sm opacity-80">
+        <span className="shrink-0 text-sm text-muted-foreground">
           {q.lastMessageAt ? relativeTime(q.lastMessageAt) : ""}
         </span>
       </div>
@@ -97,7 +98,7 @@ function QuoteCard({
           <span className="text-lg font-black">{formatCents(q.amountCents)}</span>
         ) : null}
       </div>
-      {q.summary ? <p className="opacity-80">{q.summary}</p> : null}
+      {q.summary ? <p className="text-muted-foreground">{q.summary}</p> : null}
       {readOnly ? null : (
         // Plan #26: only on a quote that went quiet after both nudges (the server decides).
         <OfferButtons
@@ -141,7 +142,7 @@ function QuoteCard({
               </Button>
             ))}
           </div>
-          <Button type="submit" name="outcome" value="reopen" variant="ghost" className="w-full">
+          <Button type="submit" name="outcome" value="reopen" variant="outline" className="w-full">
             Reopen
           </Button>
         </form>
@@ -159,7 +160,7 @@ function QuoteCard({
                 name="amount"
                 inputMode="decimal"
                 placeholder={q.amountCents ? String(q.amountCents / 100) : "e.g. 1450"}
-                className="min-h-tap rounded-lg border bg-background px-3 text-base text-foreground"
+                className="min-h-tap rounded-lg border border-input bg-paper px-3 text-base text-foreground"
               />
             </label>
             <div className="grid grid-cols-2 gap-2">
@@ -226,7 +227,8 @@ export default async function QuotesPage(props: PageProps<"/quotes">) {
         href="/money"
         className={cn(buttonVariants({ variant: "outline" }), "min-h-tap self-start")}
       >
-        Money owed →
+        Money owed
+        <ArrowRight aria-hidden className="size-4" />
       </Link>
       {doneMsg ? <Notice>{doneMsg}</Notice> : null}
       {errorMsg ? <Notice strong>{errorMsg}</Notice> : null}

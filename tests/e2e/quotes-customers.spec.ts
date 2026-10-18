@@ -84,7 +84,18 @@ test("quotes: stages, amounts, and one-tap Won", async ({ page, context }) => {
   await expect(sam).toContainText("$1,200");
 
   await sam.getByText("Mark how it ended").click();
-  await sam.getByLabel("Job amount (optional)").fill("1350");
+  // Check 1 P5: the amount box has the slate field edge, like every other field.
+  const amount = sam.getByLabel("Job amount (optional)");
+  const slate = await page.evaluate(() =>
+    getComputedStyle(document.documentElement).getPropertyValue("--sa-k-slate").trim(),
+  );
+  expect(slate).toBe("#5e5d59");
+  await expect(amount).toHaveCSS("border-top-color", "rgb(94, 93, 89)");
+  await test.info().attach("quotes-won-form-375", {
+    body: await sam.screenshot(),
+    contentType: "image/png",
+  });
+  await amount.fill("1350");
   await sam.getByRole("button", { name: "Mark won" }).click();
   await expect(page.getByRole("status").filter({ hasText: "Marked won" })).toBeVisible();
   await expect(page.getByRole("article", { name: "Quote for Sam Lee" })).toHaveCount(0);
@@ -195,6 +206,8 @@ test("customers: list, search on the phone, and one customer's emails", async ({
   // The URL carries an opaque key, never the email address.
   expect(page.url()).not.toContain("tom@");
   expect(page.url()).toMatch(/\/customers\/[0-9a-f-]{36}$/);
+  // Check 7 P11: the back link is an icon and words, named just "All customers".
+  await expect(page.getByRole("link", { name: "All customers", exact: true })).toBeVisible();
 });
 
 test("another owner's customer link is a 404", async ({ page, context }) => {
@@ -205,4 +218,35 @@ test("another owner's customer link is a 404", async ({ page, context }) => {
   await signInAs(context, b);
   const res = await page.goto(`/customers/${m!.id}`);
   expect(res?.status()).toBe(404);
+});
+
+/** Check 7 P9: sunlight shows a quote's time in full ink, not see-through grey. */
+test("sunlight: a quote's time is full ink", async ({ page, context }) => {
+  const owner = await seedOwner({ mailbox: true, backfilled: true });
+  await quote(owner.mailboxId!, {
+    name: "Sam Lee",
+    from: "sam@customer.com",
+    inAgo: 9,
+    outAgo: 8,
+    reply: "Hi Sam, the vanity install is $1,200.",
+    summary: "Sam wants a vanity installed.",
+  });
+  await signInAs(context, owner);
+  await context.addCookies([
+    { name: "sa_contrast", value: "high", domain: "localhost", path: "/" },
+  ]);
+  await page.goto("/quotes");
+  const sam = page.getByRole("article", { name: "Quote for Sam Lee" });
+  await expect(sam).toBeVisible();
+  const colours = await sam.evaluate((card) => {
+    const time = Array.from(card.querySelectorAll("span")).find((s) =>
+      /ago|yesterday|today/i.test(s.textContent ?? ""),
+    )!;
+    const t = getComputedStyle(time);
+    return { time: t.color, opacity: t.opacity, card: getComputedStyle(card).color };
+  });
+  // Sunlight's ink (#111111) on this light card, at full strength.
+  expect(colours.time).toBe("rgb(17, 17, 17)");
+  expect(colours.card).toBe("rgb(17, 17, 17)");
+  expect(colours.opacity).toBe("1");
 });

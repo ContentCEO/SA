@@ -93,10 +93,10 @@ export default async function WelcomeLearningPage() {
       ) : null}
 
       {voice?.status === "ready" ? (
-        <section className="sa-inverted flex flex-col gap-3 rounded-xl p-5">
+        <section className="flex flex-col gap-3 rounded-xl border-2 border-charcoal bg-card p-5">
           <p className="text-lg">{describeVoice(voice)}</p>
           {voice.phrasesUsed.length ? (
-            <p className="text-ash">
+            <p className="text-muted-foreground">
               You say things like “{voice.phrasesUsed.slice(0, 3).join("”, “")}”.
             </p>
           ) : null}
