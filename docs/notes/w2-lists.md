@@ -33,3 +33,30 @@
 - Check 36 P5: add "water and sewer departments, water districts and their backflow or
   cross-connection programs" to the town list, and "backflow test due notices" to the never-noise
   paperwork list (customer_question, or scheduling when it sets a date).
+
+## Step 2 (Check 37 P3): the electric company
+
+- Decision: `looksLikeUtility(from, name)` (`src/ai/guards.ts`): eversource.com, nationalgrid.com,
+  nationalgridus.com, unitil.com (and subdomains); a big utility's NAME counts only from those
+  domains; a light plant's name ("Light Department", "Light Plant", "Electric Light",
+  "Light & Power", "Municipal Light") from any domain but public webmail. Checked before the town
+  check, so a light plant on .gov is the electric company. Stored as `extracted.utility`: skips
+  the Promotions shortcut, never junk (noise → scheduling with a date, else customer_question),
+  never drafted by a job (`skipped: utility`; the owner's tap still drafts), autopilot refuses
+  ("The electric company always waits for you."), batch send treats it as untrusted. With a date:
+  needs you, "From the electric company about a job date. Check it with your crew and the
+  customer." (owner-rule key `utility`, fixed text).
+- Decision: `looksLikeUtilityScam(text, from, name)`: a big utility's name from another domain
+  that wants payment, or anyone threatening a shutoff within hours/today and naming a gift card,
+  prepaid card, Green Dot, MoneyPak, Vanilla, Reloadit, Bitcoin/crypto, Zelle, Cash App or Venmo.
+  Sets `payment_change` (so every payment-change stop applies) and `utility_scam` (sticky for the
+  thread), needs you, high: "Says it's from the electric company and wants payment now. Don't pay
+  from this email; call the number on your bill." Owner-rule keys `utility_scam` + `payment_change`.
+  Also caught past the AI limit (code-only result).
+- Davi to-do: confirm the four utility domains from real emails (Eversource, National Grid,
+  Unitil notices a pilot shop received). Until then they're the companies' public web domains.
+- Known edge: rule (b) has no sender check, so a customer writing "we'll shut off the power today,
+  I'll pay you by Venmo" is flagged as a scam (needs you, no job draft). Safe direction.
+- Prompt versions group (next classify version): add "electric company work requests,
+  cut-and-reconnect appointments, meter sets, planned outages for a job, interconnection
+  approvals" to the never-noise paperwork line.

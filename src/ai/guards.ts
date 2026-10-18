@@ -621,6 +621,73 @@ export function looksMunicipal(
 }
 
 /**
+ * Check 37 P3: the electric company. Work requests, cut-and-reconnect appointments, meter sets
+ * and planned outages for a job are never junk and never answered by a job. Checked before
+ * `looksMunicipal`: a town light plant writing from a .gov address is the electric company, not
+ * the building office.
+ *
+ * Domains are the utilities' own (verify each against a real email; docs/notes/w2-lists.md).
+ * A big utility's NAME only counts from one of these domains (anyone can call themselves
+ * "Eversource"); a light plant's name counts from any domain but public webmail.
+ */
+const UTILITY_DOMAINS = ["eversource.com", "nationalgrid.com", "nationalgridus.com", "unitil.com"];
+const UTILITY_BRAND = /\b(eversource|national ?grid|unitil)\b/;
+const LIGHT_PLANT =
+  /\b(light (department|dept|plant|board)|electric light|light (&|and) power|municipal light|municipal electric)\b/;
+
+function senderParts(fromAddress: string | null, fromName: string | null) {
+  return {
+    domain: (fromAddress ?? "").toLowerCase().trim().split("@")[1] ?? "",
+    name: (fromName ?? "").toLowerCase().replace(/\s+/g, " ").trim(),
+  };
+}
+
+export function looksLikeUtility(fromAddress: string | null, fromName: string | null): boolean {
+  const { domain, name } = senderParts(fromAddress, fromName);
+  if (onDomain(domain, UTILITY_DOMAINS)) return true;
+  return LIGHT_PLANT.test(name) && !!domain && !PUBLIC_WEBMAIL_DOMAINS.has(domain);
+}
+
+/** Wants money now: "pay now", "payment today", "to avoid disconnection", "past due". */
+const PAY_DEMAND =
+  /\b(pay|payment|paid|remit)\b.{0,40}\b(now|today|immediately|right away|within|to avoid|or (your )?(power|service|electricity))\b|\b(past due|overdue|final notice|amount due|balance due)\b/;
+const DISCONNECT = /\b(disconnect(ed|ion|ing)?|shut ?off|shut(ting)? off|cut off)\b/g;
+const SOON = /\b(hours?|today|immediately|now)\b/;
+const SCAM_PAYMENT =
+  /\b(gift ?cards?|prepaid|green ?dot|moneypak|vanilla|reloadit|bitcoin|btc|crypto(currency)?|zelle|cash ?app|venmo)\b/;
+
+/**
+ * Check 37 P3: a fake disconnect demand. (a) The name says a big utility but the address isn't
+ * one of its domains, and the email wants payment; or (b) anyone threatening a shutoff within
+ * hours or today (within 60 characters) and naming a scammer's way to pay (gift card, Zelle,
+ * Bitcoin…). Eversource warns that imposters threaten shutoffs and demand immediate payment
+ * this way, and that real disconnections come with written notice.
+ */
+export function looksLikeUtilityScam(
+  text: string | null | undefined,
+  fromAddress: string | null,
+  fromName: string | null,
+): boolean {
+  const flat = flatten(text);
+  const { domain, name } = senderParts(fromAddress, fromName);
+  if (UTILITY_BRAND.test(name) && !onDomain(domain, UTILITY_DOMAINS) && PAY_DEMAND.test(flat))
+    return true;
+  if (!SCAM_PAYMENT.test(flat)) return false;
+  for (const m of flat.matchAll(DISCONNECT)) {
+    const at = m.index ?? 0;
+    const near = flat.slice(Math.max(0, at - 60), at + m[0].length + 60);
+    if (SOON.test(near)) return true;
+  }
+  return false;
+}
+
+export const UTILITY_SCAM_REASON =
+  "Says it's from the electric company and wants payment now. Don't pay from this email; call the number on your bill.";
+/** Check 37 P3: a utility email that carries a date. */
+export const UTILITY_DATE_REASON =
+  "From the electric company about a job date. Check it with your crew and the customer.";
+
+/**
  * Check 39 P2: dollar figures that are a program's or a lender's, not the job's — "Mass Save
  * gives up to $8,500", "the HEAT Loan covers up to $25,000 at 0%", "a $2,000 tax credit". Every
  * "$" figure (with "k") whose own line has an incentive word within 40 characters. Whole

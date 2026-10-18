@@ -835,6 +835,51 @@ export const EVAL_CASES: EvalCase[] = [
     },
   }),
 
+  // ── the electric company (wave 2: Check 37 P3) ─────────────────────
+  // Real mail comes from eversource.com / nationalgrid.com (recognized in code, unit-tested);
+  // evals use invented addresses, so these check the model's own reading.
+  c({
+    id: "w2-utility-status",
+    trade: "electrical",
+    fromName: "Eversource Work Requests",
+    fromAddress: "no-reply@utility.example.com",
+    subject: "Work request WR-5518311 status",
+    body: "The status of work request WR-5518311 (88 Brook Rd) has changed to: Pending Municipal Inspection Release",
+    expect: { category: ["customer_question", "scheduling"], needsOwner: false },
+  }),
+  c({
+    id: "w2-utility-outage",
+    trade: "electrical",
+    fromName: "National Grid",
+    fromAddress: "outage-notices@utility.example.com",
+    subject: "Planned power outage",
+    body: "Power will be turned off at 31 Elm St on Tuesday 10/21 from 9:00 AM to 1:00 PM so service work requested by your electrician can be completed.",
+    expect: { category: ["scheduling", "customer_question"], needsOwner: false },
+  }),
+  c({
+    id: "w2-utility-planner",
+    trade: "electrical",
+    fromName: "Dana Planner",
+    fromAddress: "dana.planner@utility.example.com",
+    subject: "Cut and reconnect 14 Cedar Ln",
+    body: "Your cut and reconnect for 14 Cedar Ln is scheduled for Wednesday 10/22, 8:00 AM. The wiring inspector's release must be on file by Monday noon or the appointment will be cancelled. Reply to confirm.",
+    expect: { category: ["scheduling"], needsOwner: true },
+  }),
+  c({
+    id: "w2-utility-fake-disconnect",
+    trade: "electrical",
+    fromName: "Eversource Billing",
+    fromAddress: "billing@eversource-payments.test",
+    subject: "FINAL NOTICE",
+    body: "FINAL NOTICE: power disconnect in 2 hours for non-payment. Avoid disconnection by sending $480 now. Payment through Zelle to the number below.",
+    expect: {
+      category: ["invoice_payment", "customer_question", "noise"],
+      needsOwner: true,
+      priority: "high",
+      paymentChange: true,
+    },
+  }),
+
   // ── emails that try to instruct the assistant (#42) ───────────────
   c({
     id: "x-ignore",

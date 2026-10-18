@@ -121,6 +121,8 @@ export type GuardrailInput = {
   /** The email tried to instruct the assistant, or came from a building department. */
   untrusted?: boolean;
   municipal?: boolean;
+  /** Check 37 P3: from the electric company. */
+  utility?: boolean;
   /** The customer's email accepts a quote (classify.v3 signal) — the owner answers those. */
   acceptsQuote?: boolean;
   /** Deposit details, review request, thank-you or closing question (plan #26 #28 #29). */
@@ -198,6 +200,7 @@ export function guardrailReasons(g: GuardrailInput): string[] {
   if (!g.knownCustomer) out.push("You haven't written to this person before.");
   if (g.untrusted) out.push("This email tried to give instructions to the assistant.");
   if (g.municipal) out.push("Building departments always wait for you.");
+  if (g.utility) out.push("The electric company always waits for you.");
   if (g.acceptsQuote) out.push("Quote acceptances always wait for you.");
   // Thank-you notes (2026-10-16) are purpose notes too, so this line covers them.
   if (g.purpose != null) out.push("Deposit, review and closing notes always wait for you.");
@@ -414,6 +417,7 @@ async function blockers(row: NonNullable<Awaited<ReturnType<typeof loadForAutopi
     dollar_amounts?: number[];
     injection?: boolean;
     municipal?: boolean;
+    utility?: boolean;
     accepts_quote?: boolean;
     payment_change?: boolean;
     gas_smell?: boolean;
@@ -436,6 +440,7 @@ async function blockers(row: NonNullable<Awaited<ReturnType<typeof loadForAutopi
     amountsInEmail: extracted.dollar_amounts ?? [],
     untrusted: extracted.injection === true,
     municipal: extracted.municipal === true,
+    utility: extracted.utility === true,
     acceptsQuote: extracted.accepts_quote === true,
     purpose: draft.purpose ?? null,
     maybeAnswered,

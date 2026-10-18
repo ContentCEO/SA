@@ -21,6 +21,8 @@ import {
   INJECTION_REASON,
   injectionCheck,
   looksLikePaymentChange,
+  looksLikeUtility,
+  looksLikeUtilityScam,
   readMunicipal,
   mentionsCarbonMonoxide,
   mentionsElectricalHazard,
@@ -30,6 +32,8 @@ import {
   mentionsWaterSmell,
   incentiveAmounts,
   PAYMENT_CHANGE_REASON,
+  UTILITY_DATE_REASON,
+  UTILITY_SCAM_REASON,
   WATER_SMELL_REASON,
 } from "./guards";
 import { isLeadCategory } from "@/config/categories";
@@ -54,6 +58,16 @@ export type Extracted = ModelClassification["extracted"] & {
    * like. Not the town for the hard rule; the card shows a caution. Only ever present as `true`.
    */
   municipal_name_only?: boolean;
+  /**
+   * Check 37 P3: from the electric company (Eversource, National Grid, Unitil, a town light
+   * plant). Never junk, never drafted by a job, never autopilot. Only ever present as `true`.
+   */
+  utility?: boolean;
+  /**
+   * Check 37 P3: a fake disconnect demand (`looksLikeUtilityScam`). Set with `payment_change`,
+   * so every payment-change stop applies; sticky for the thread. Only ever present as `true`.
+   */
+  utility_scam?: boolean;
   injection?: boolean;
   accepts_quote?: boolean;
   job_done?: boolean;
@@ -164,6 +178,7 @@ export const OWNER_RULE_KEYS = [
   "gas",
   "co_alarm",
   "electrical",
+  "utility_scam",
   "payment_change",
   "asks_if_ai",
   "complaint",
@@ -174,6 +189,7 @@ export const OWNER_RULE_KEYS = [
   "amount",
   "big_new_job",
   "emergency",
+  "utility",
   "water_smell",
   "phone",
   "site",
@@ -185,6 +201,7 @@ export type OwnerRuleKey = (typeof OWNER_RULE_KEYS)[number];
 /** Hits whose fixed text always wins over the model's own reason (no town or name rides along). */
 const FIXED_TEXT_HITS: readonly OwnerRuleKey[] = [
   "emergency",
+  "utility",
   "water_smell",
   "phone",
   "site",
@@ -301,6 +318,10 @@ export function applyOwnerRules(
     electricalHazard?: boolean;
     /** Asks to pay a new account (round 2, A11). */
     paymentChange?: boolean;
+    /** Check 37 P3: a fake electric-company disconnect demand. Like a payment change. */
+    utilityScam?: boolean;
+    /** Check 37 P3: from the electric company and the email carries a date. */
+    utilityDate?: boolean;
     /** Check 22 P3: lawyers, liens, small claims found in code anywhere in the email. */
     legalThreat?: boolean;
     /** Check 48 P1: asks whether a person or an AI is answering. */
@@ -348,6 +369,13 @@ export function applyOwnerRules(
       needsOwnerReason: ELECTRICAL_HAZARD_REASON,
       priority: "high",
       hits: ["electrical"],
+    };
+  if (ctx.utilityScam)
+    return {
+      needsOwner: true,
+      needsOwnerReason: UTILITY_SCAM_REASON,
+      priority: "high",
+      hits: ["utility_scam", "payment_change"],
     };
   if (ctx.paymentChange)
     return {
@@ -399,6 +427,7 @@ export function applyOwnerRules(
       `Mentions more than $${ctx.amountThresholdDollars.toLocaleString("en-US")}.`,
     ],
     [emergency, "emergency", EMERGENCY_REASON],
+    [!!ctx.utilityDate && m.category !== "noise", "utility", UTILITY_DATE_REASON],
     [!!ctx.waterSmell, "water_smell", WATER_SMELL_REASON],
     [
       channelLead && channel?.kind !== "site",
@@ -482,7 +511,13 @@ export type ClassifyOpts = {
   /** Older unsorted emails on the thread: checked in code, never sent to the model (B3). */
   alsoCheck?: string[];
   /** Marks the thread already carries, kept whatever this email says (B3). */
-  sticky?: { injection?: boolean; paymentChange?: boolean; asksIfAi?: boolean };
+  sticky?: {
+    injection?: boolean;
+    paymentChange?: boolean;
+    asksIfAi?: boolean;
+    /** Check 37 P3: the thread already had a fake disconnect demand. */
+    utilityScam?: boolean;
+  };
   /** Leads package: where the email came from, decided in code from the sender. */
   channel?: { kind: ChannelKind; name: string } | null;
   /** Leads package (B9): the owner's towns; empty = no check. */
@@ -543,8 +578,14 @@ function codeChecks(email: EmailInput, opts: Pick<ClassifyOpts, "alsoCheck" | "s
   const asksAi = asksIfAi(checked) || opts.sticky?.asksIfAi === true;
   // Check 22 P3: lawyers, liens, small claims — anywhere in the email, in code.
   const legalThreat = mentionsLegalThreat(checked) || mentionsLegalThreat(fullText);
+  // Check 37 P3: the electric company first (a light plant on .gov isn't the building office).
+  const utilitySender = looksLikeUtility(email.fromAddress, email.fromName);
+  const utilityScam =
+    looksLikeUtilityScam(checked, email.fromAddress, email.fromName) ||
+    looksLikeUtilityScam(fullText, email.fromAddress, email.fromName) ||
+    opts.sticky?.utilityScam === true;
   const municipalRead = readMunicipal(email.fromAddress, email.fromName, email.subject);
-  const municipalSender = municipalRead.municipal;
+  const municipalSender = !utilitySender && municipalRead.municipal;
   const municipalNameOnly = municipalRead.nameOnlyWebmail;
   return {
     body,
@@ -564,6 +605,8 @@ function codeChecks(email: EmailInput, opts: Pick<ClassifyOpts, "alsoCheck" | "s
     paymentChangeInText,
     municipalSender,
     municipalNameOnly,
+    utilitySender,
+    utilityScam,
   };
 }
 
@@ -580,7 +623,8 @@ function codeFallback(email: EmailInput, c: ReturnType<typeof codeChecks>): Clas
     ...(c.gasInText ? (["gas"] as const) : []),
     ...(co ? (["co_alarm"] as const) : []),
     ...(electrical ? (["electrical"] as const) : []),
-    ...(c.paymentChangeInText ? (["payment_change"] as const) : []),
+    ...(c.utilityScam ? (["utility_scam"] as const) : []),
+    ...(c.paymentChangeInText || c.utilityScam ? (["payment_change"] as const) : []),
   ];
   return {
     ...UNREADABLE,
@@ -592,10 +636,12 @@ function codeFallback(email: EmailInput, c: ReturnType<typeof codeChecks>): Clas
           ? { needsOwnerReason: CO_REASON }
           : electrical
             ? { needsOwnerReason: ELECTRICAL_HAZARD_REASON }
-            : c.paymentChangeInText
-              ? { needsOwnerReason: PAYMENT_CHANGE_REASON }
-              : {}),
-    ...(safety || c.paymentChangeInText ? { priority: "high" as const } : {}),
+            : c.utilityScam
+              ? { needsOwnerReason: UTILITY_SCAM_REASON }
+              : c.paymentChangeInText
+                ? { needsOwnerReason: PAYMENT_CHANGE_REASON }
+                : {}),
+    ...(safety || c.paymentChangeInText || c.utilityScam ? { priority: "high" as const } : {}),
     extracted: {
       ...UNREADABLE.extracted,
       ...(safety ? { urgency: "emergency" as const } : {}),
@@ -606,7 +652,9 @@ function codeFallback(email: EmailInput, c: ReturnType<typeof codeChecks>): Clas
       ...(co ? { co_alarm: true } : {}),
       ...(electrical ? { electrical_hazard: true } : {}),
       ...(c.waterInText ? { water_smell: true } : {}),
-      ...(c.paymentChangeInText ? { payment_change: true } : {}),
+      ...(c.paymentChangeInText || c.utilityScam ? { payment_change: true } : {}),
+      ...(c.utilityScam ? { utility_scam: true } : {}),
+      ...(c.utilitySender ? { utility: true } : {}),
       ...(c.asksAi ? { asks_if_ai: true } : {}),
       ...(hits.length ? { owner_rule_hits: hits } : {}),
     },
@@ -626,7 +674,14 @@ export function codeOnlyClassification(
   opts: Pick<ClassifyOpts, "alsoCheck" | "sticky"> = {},
 ): Classification | null {
   const c = codeChecks(email, opts);
-  if (!(c.gasInText || c.coInText || c.electricalInText || c.paymentChangeInText || c.injection))
+  if (!(
+    c.gasInText ||
+    c.coInText ||
+    c.electricalInText ||
+    c.paymentChangeInText ||
+    c.utilityScam ||
+    c.injection
+  ))
     return null;
   return codeFallback(email, c);
 }
@@ -658,6 +713,8 @@ export async function classifyEmail(
     paymentChangeInText,
     municipalSender,
     municipalNameOnly,
+    utilitySender,
+    utilityScam,
   } = checks;
   const preCheck = { flagged: checks.injection };
   const request = {
@@ -706,8 +763,23 @@ export async function classifyEmail(
     legalThreat ||
     (result.signals.mentions_legal &&
       !(result.signals.routine_paperwork && !mentionsRealLegal(allText)));
+  // Building departments are never noise. Check 37 P3: nor is the electric company (scheduling
+  // when it names a date).
+  const category: Category =
+    municipal && result.category === "noise"
+      ? result.extracted.permit?.result === "scheduled"
+        ? "scheduling"
+        : "customer_question"
+      : utilitySender && result.category === "noise"
+        ? result.extracted.dates.length > 0
+          ? "scheduling"
+          : "customer_question"
+        : result.category;
+  // The owner rules read the kind the email ends up with (Check 37 P3: a utility's job date
+  // the model called junk still needs the owner).
   const model: ModelClassification = {
     ...result,
+    category,
     signals: { ...result.signals, mentions_legal: legal },
   };
   const ownerCtx = {
@@ -720,6 +792,8 @@ export async function classifyEmail(
     coAlarm,
     electricalHazard,
     paymentChange,
+    utilityScam,
+    utilityDate: utilitySender && result.extracted.dates.length > 0,
     legalThreat,
     asksIfAi: asksAi,
     ignoreAmounts: [...incentiveAmounts(allText), ...(opts.ownerAmounts ?? [])],
@@ -738,17 +812,12 @@ export async function classifyEmail(
   const withoutInjection = injection
     ? applyOwnerRules(model, { ...ownerCtx, injection: false })
     : null;
-  // Building departments are never noise.
-  const category: Category =
-    municipal && result.category === "noise"
-      ? result.extracted.permit?.result === "scheduled"
-        ? "scheduling"
-        : "customer_question"
-      : result.category;
   return {
     category,
     ...rules,
-    ...(municipal && rules.priority === "low" ? { priority: "normal" as const } : {}),
+    ...((municipal || utilitySender) && rules.priority === "low"
+      ? { priority: "normal" as const }
+      : {}),
     summary: result.summary.trim().slice(0, 300),
     confidence: Math.max(0, Math.min(1, result.confidence)),
     extracted: {
@@ -779,7 +848,9 @@ export async function classifyEmail(
       ...(coAlarm ? { co_alarm: true } : {}),
       ...(electricalHazard ? { electrical_hazard: true } : {}),
       ...(waterSmell ? { water_smell: true } : {}),
-      ...(paymentChange ? { payment_change: true } : {}),
+      ...(paymentChange || utilityScam ? { payment_change: true } : {}),
+      ...(utilityScam ? { utility_scam: true } : {}),
+      ...(utilitySender ? { utility: true } : {}),
       ...(asksAi ? { asks_if_ai: true } : {}),
       // Signals only — they never change needs_owner (applyOwnerRules ignores them).
       ...(result.signals.accepts_quote ? { accepts_quote: true } : {}),

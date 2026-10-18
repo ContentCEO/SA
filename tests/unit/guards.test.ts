@@ -5,6 +5,8 @@ import { setModelTransportForTests } from "@/ai/client";
 import {
   INJECTION_REASON,
   injectionCheck,
+  looksLikeUtility,
+  looksLikeUtilityScam,
   looksMunicipal,
   MUNICIPAL_NAME_ONLY_CAUTION,
   readMunicipal,
@@ -15,6 +17,7 @@ import { untrusted } from "@/ai/prompts/untrusted";
 import { ensureUserAndWorkspace } from "@/server/accounts";
 import { guardrailReasons } from "@/server/autopilot";
 import { createTestDb } from "../support/db";
+import { UTILITY_EMAILS } from "../support/utility-emails";
 import { classification, fakeTransport } from "../support/fake-model";
 
 /** Invented emails that try to instruct the assistant. */
@@ -238,6 +241,44 @@ describe("Check 45 P3: Sun Belt and West Coast building offices", () => {
     "Planning Your Kitchen newsletter",
   ])("not the town: %s", (name) => {
     expect(looksMunicipal("notices@county-example.org", name)).toBe(false);
+  });
+});
+
+describe("Check 37 P3: the electric company", () => {
+  it.each(["status", "outage", "planner"] as const)("%s is the electric company", (k) => {
+    const e = UTILITY_EMAILS[k];
+    expect(looksLikeUtility(e.fromAddress, e.fromName)).toBe(true);
+    expect(looksLikeUtilityScam(e.body, e.fromAddress, e.fromName)).toBe(false);
+  });
+  it("the fake disconnect demand is a scam, and not the electric company", () => {
+    const e = UTILITY_EMAILS.fake;
+    expect(looksLikeUtility(e.fromAddress, e.fromName)).toBe(false);
+    expect(looksLikeUtilityScam(e.body, e.fromAddress, e.fromName)).toBe(true);
+    // Any sender: a shutoff within hours and a gift card.
+    expect(
+      looksLikeUtilityScam(
+        "Your electricity will be shut off today unless you pay with a prepaid card.",
+        "x@example.com",
+        "Billing Dept",
+      ),
+    ).toBe(true);
+  });
+  it("a real bill notice and a customer's panel job are not scams", () => {
+    expect(
+      looksLikeUtilityScam(
+        "Your Eversource bill is ready. Amount due: $182.40, due 11/12. Pay online at your account.",
+        "billing@eversource.com",
+        "Eversource",
+      ),
+    ).toBe(false);
+    expect(
+      looksLikeUtilityScam("we'll disconnect the old panel today", "dana@gmail.com", "Dana"),
+    ).toBe(false);
+  });
+  it("a town light plant on .gov is the electric company, and a light plant name on gmail isn't", () => {
+    expect(looksLikeUtility("service@concordma.gov", "Concord Municipal Light Plant")).toBe(true);
+    expect(looksLikeUtility("x@gmail.com", "Municipal Light Plant")).toBe(false);
+    expect(looksLikeUtility("x@gmail.com", "Eversource")).toBe(false);
   });
 });
 

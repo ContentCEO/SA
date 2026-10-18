@@ -2,6 +2,7 @@ import "server-only";
 import {
   injectionCheck,
   looksLikePaymentChange,
+  looksLikeUtility,
   looksMunicipal,
   mentionsCarbonMonoxide,
   mentionsElectricalHazard,
@@ -238,6 +239,7 @@ export async function classifyPending(
       payment_change?: unknown;
       asks_if_ai?: unknown;
       bill_direction?: unknown;
+      utility_scam?: unknown;
     };
     // The burst the model reads with it (B4), oldest first.
     const earlier = older
@@ -259,6 +261,8 @@ export async function classifyPending(
       paymentChange: prevMarks.payment_change === true,
       // Check 48 P1: "is this a bot?" stays the owner's to answer for the whole thread.
       asksIfAi: prevMarks.asks_if_ai === true,
+      // Check 37 P3: a fake disconnect demand keeps its own line for the whole thread.
+      utilityScam: prevMarks.utility_scam === true,
     };
     // Check 39 P1: past the day's AI limit, only what the checks in code catch is stored now (a
     // gas smell, a CO alarm, a new bank account, an attack), through the same write as any
@@ -319,8 +323,10 @@ export async function classifyPending(
       // websites keep the shortcut (their marketing would eat the daily AI limit).
       channel?.kind !== "phone" &&
       channel?.kind !== "phone_text" &&
-      // A building department landing in Promotions still gets read.
+      // A building department landing in Promotions still gets read, and so does the electric
+      // company (Check 37 P3).
       !looksMunicipal(m.fromAddress, m.fromName, m.subject) &&
+      !looksLikeUtility(m.fromAddress, m.fromName) &&
       // A thread already marked keeps its mark (B3): it is never quietly turned into junk.
       prevMarks.injection !== true &&
       prevMarks.payment_change !== true &&
