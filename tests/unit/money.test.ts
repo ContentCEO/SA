@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
-import { and, eq } from "drizzle-orm";
-import { beforeEach, describe, expect, it } from "vitest";
+import { and, eq, sql } from "drizzle-orm";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { setModelTransportForTests } from "@/ai/client";
 import type { Database } from "@/db";
 import { activityLog, drafts, mailboxes, messages, threads, workspaces } from "@/db/schema";
@@ -19,8 +19,15 @@ import {
 import { threadsToFollowUp } from "@/server/followups";
 import { ReadOnlyError } from "@/server/lifecycle";
 import { saveConnectedMailbox } from "@/server/mailboxes";
-import { autoMarkInvoicePaid, listMoney, setInvoiceNotOwed, setInvoicePaid } from "@/server/money";
 import {
+  autoMarkInvoicePaid,
+  draftInvoiceReminder,
+  listMoney,
+  setInvoiceNotOwed,
+  setInvoicePaid,
+} from "@/server/money";
+import {
+  billOwedByOwner,
   carryInvoiceFacts,
   clearsAutoPaid,
   dueLabel,
@@ -40,6 +47,11 @@ import {
 } from "@/server/money-rules";
 import { pushSummaryText } from "@/server/push-alerts";
 import { leadAlertBody } from "@/server/sms-alerts";
+import {
+  billOwedByOwnerSql,
+  senderHasSupplierThreadSql,
+  senderMarkedNotOwedSql,
+} from "@/server/thread-sql";
 import { createTestDb } from "../support/db";
 import { classification, fakeTransport } from "../support/fake-model";
 import { FakeWriter } from "../support/fake-writer";
@@ -58,14 +70,27 @@ const inv = (o: Partial<InvoiceFacts> = {}): InvoiceFacts => ({
 describe("money rules", () => {
   it("reads the due date from the owner's own calendar day", () => {
     const tz = "America/New_York";
-    expect(dueLabel(null, NOW, tz)).toEqual({ daysPastDue: null, text: "No due date" });
-    // Never a guess: words that aren't a date are no due date.
-    for (const vague of ["net 30", "upon receipt", "end of month", "Friday", "2026", "Feb 31"]) {
+    expect(dueLabel(null, NOW, tz)).toMatchObject({ daysPastDue: null, text: "No due date" });
+    // Never a guess: words that aren't a date are no due date. (Net terms are read since
+    // Check 12 P6 — see "reads net terms".)
+    for (const vague of [
+      "end of month",
+      "Friday",
+      "2026",
+      "Feb 31",
+      "within 10 days of completion",
+    ]) {
       expect(dueLabel(vague, NOW, tz)).toEqual({ daysPastDue: null, text: "No due date" });
     }
-    expect(dueLabel("2026-10-20", NOW, tz)).toEqual({ daysPastDue: -10, text: "Not due yet" });
-    expect(dueLabel("2026-10-10", NOW, tz)).toEqual({ daysPastDue: 0, text: "Due today" });
-    expect(dueLabel("2026-10-07", NOW, tz)).toEqual({ daysPastDue: 3, text: "3 days past due" });
+    expect(dueLabel("2026-10-20", NOW, tz)).toMatchObject({
+      daysPastDue: -10,
+      text: "Not due yet",
+    });
+    expect(dueLabel("2026-10-10", NOW, tz)).toMatchObject({ daysPastDue: 0, text: "Due today" });
+    expect(dueLabel("2026-10-07", NOW, tz)).toMatchObject({
+      daysPastDue: 3,
+      text: "3 days past due",
+    });
     expect(dueLabel("2026-10-09", NOW, tz).text).toBe("1 day past due");
     // Written out, with and without a year (no year = this year, not 2001).
     expect(dueLabel("October 7, 2026", NOW, tz).text).toBe("3 days past due");
@@ -82,16 +107,47 @@ describe("money rules", () => {
     expect(dueLabel("2026-10-10", lateEvening, "Not/AZone").text).toBe("Due today");
   });
 
+  it("reads net terms (Check 12 P6): never past due early, and shows the due day", () => {
+    const tz = "America/New_York";
+    const oct16 = new Date("2026-10-16T15:00:00Z");
+    const oct1 = new Date("2026-10-01T15:00:00Z");
+    const oct10 = new Date("2026-10-10T15:00:00Z");
+    expect(dueLabel("Net 30 from 10/01/2026", oct16, tz, oct1)).toEqual({
+      daysPastDue: -15,
+      text: "Not due yet",
+      day: "Due Oct 31",
+    });
+    expect(dueLabel("net 30", oct16, tz, oct1)).toMatchObject({
+      text: "Not due yet",
+      day: "Due Oct 31",
+    });
+    expect(dueLabel("Net30", oct16, tz, oct1).day).toBe("Due Oct 31");
+    expect(dueLabel("due upon receipt", oct16, tz, oct10)).toEqual({
+      daysPastDue: 6,
+      text: "6 days past due",
+      day: "Was due Oct 10",
+    });
+    expect(dueLabel("within 10 days", oct16, tz, oct10).day).toBe("Due Oct 20");
+    expect(dueLabel("15 days from the invoice date", oct16, tz, oct10).day).toBe("Due Oct 25");
+    expect(dueLabel("within 10 days of completion", oct16, tz, oct1)).toEqual({
+      daysPastDue: null,
+      text: "No due date",
+    });
+    expect(dueLabel("Due Nov 15 (net 30)", oct16, tz, oct1).day).toBe("Due Nov 15");
+    // A plain date still shows its day.
+    expect(dueLabel("Oct 7", NOW, tz).day).toBe("Was due Oct 7");
+  });
+
   it("puts a date with no year in the year that makes sense around New Year", () => {
     const tz = "America/New_York";
     // Seen in late December, "Jan 5" is next month — not 349 days late.
     const dec20 = new Date("2026-12-20T15:00:00Z");
-    expect(dueLabel("Jan 5", dec20, tz)).toEqual({ daysPastDue: -16, text: "Not due yet" });
+    expect(dueLabel("Jan 5", dec20, tz)).toMatchObject({ daysPastDue: -16, text: "Not due yet" });
     expect(dueLabel("1/5", dec20, tz).text).toBe("Not due yet");
     expect(dueLabel("Dec 18", dec20, tz).text).toBe("2 days past due");
     // Seen early January, "Dec 28" was last month — 6 days late, not next December.
     const jan3 = new Date("2027-01-03T15:00:00Z");
-    expect(dueLabel("Dec 28", jan3, tz)).toEqual({ daysPastDue: 6, text: "6 days past due" });
+    expect(dueLabel("Dec 28", jan3, tz)).toMatchObject({ daysPastDue: 6, text: "6 days past due" });
     expect(dueLabel("12/28", jan3, tz).text).toBe("6 days past due");
     expect(dueLabel("Jan 10", jan3, tz).text).toBe("Not due yet");
     // A long-overdue one stays in the past; a year that's written is always taken as written.
@@ -104,7 +160,7 @@ describe("money rules", () => {
     // Invoiced Nov 2025, "due Dec 5", still unpaid in Oct 2026: about ten months late —
     // not "Not due yet" for this coming December.
     const written = new Date("2025-11-10T15:00:00Z");
-    expect(dueLabel("Dec 5", NOW, tz, written)).toEqual({
+    expect(dueLabel("Dec 5", NOW, tz, written)).toMatchObject({
       daysPastDue: 309,
       text: "309 days past due",
     });
@@ -128,7 +184,8 @@ describe("money rules", () => {
     expect(o(inv({ status: "paid" }))).toBe(false);
     expect(o(inv({ status: "unknown" }))).toBe(false);
     expect(o(inv({ status: "paid" }), null, "owner")).toBe(true); // the owner undid a paid mark
-    expect(o(inv({ amount: null }))).toBe(false);
+    // Check 12 P5: an unpaid invoice with no amount is owed too ("Amount not stated").
+    expect(o(inv({ amount: null }))).toBe(true);
     // The owner put back a row whose email never said how much: it's owed, amount unknown.
     expect(o(inv({ amount: null }), null, "owner")).toBe(true);
     expect(o(null, null, "owner")).toBe(true);
@@ -316,7 +373,8 @@ describe("money rules", () => {
     expect(holdsOwedInvoice(carried)).toBe(true);
     expect(isOwed({ invoice: carried, paidAt: null, paidSource: null })).toBe(true);
     expect(isOwed({ invoice: carried, paidAt: NOW, paidSource: "auto" })).toBe(false);
-    expect(holdsOwedInvoice(inv({ amount: null }))).toBe(false);
+    // Check 12 P5: an unpaid invoice with no amount is owed ("Amount not stated").
+    expect(holdsOwedInvoice(inv({ amount: null }))).toBe(true);
     expect(holdsOwedInvoice(inv({ status: "paid" }))).toBe(false);
     expect(holdsOwedInvoice(null)).toBe(false);
   });
@@ -564,9 +622,14 @@ describe("money owed list", () => {
       invoice: { amount: 300, due_date: "2026-10-05", status: "partly_paid" },
     });
     await database.update(threads).set({ followupCount: 1 }).where(eq(threads.id, late));
-    // Not on the list: paid per the email, no amount, noise, a supplier's bill, a quote.
+    // Check 12 P5: no amount (and none in the owner's email) is listed last, out of the total.
+    const noAmount = await invoiceThread({
+      from: "b@c.com",
+      invoice: { amount: null },
+      outAgo: null,
+    });
+    // Not on the list: paid per the email, noise, a supplier's bill, a quote.
     await invoiceThread({ from: "a@c.com", invoice: { status: "paid" } });
-    await invoiceThread({ from: "b@c.com", invoice: { amount: null } });
     await invoiceThread({ from: "c@c.com", category: "noise" });
     // The supplier's bill looks owed in every other way (an invoice thread, an unpaid amount):
     // only its category keeps it off.
@@ -593,7 +656,7 @@ describe("money owed list", () => {
     await invoiceThread({ box: otherBox.id, from: "z@c.com", invoice: { amount: 9999 } });
 
     const money = await listMoney(workspaceId, NOW);
-    expect(money.owed.map((r) => r.threadId)).toEqual([late, partly, soon]);
+    expect(money.owed.map((r) => r.threadId)).toEqual([late, partly, soon, noAmount]);
     expect(money.owed[0]).toMatchObject({
       customerName: "Dana Ruiz",
       customerAddress: "dana@customer.com",
@@ -1499,7 +1562,10 @@ describe("auto paid", () => {
 
   it("an invoice waiting with no amount ('Got it, will pay Friday'), then 'Paid it': our paid guess", async () => {
     const t = await invoiceThread({ invoice: { invoice_number: "1043", amount: null } });
-    expect((await listMoney(workspaceId, NOW)).owed).toEqual([]);
+    // Check 12 P5: it's owed, with the amount from the owner's own invoice email.
+    expect((await listMoney(workspaceId, NOW)).owed).toMatchObject([
+      { threadId: t, amountCents: 120_000, amountFromYourEmail: true },
+    ]);
     await writes(t);
     await classifyWith(paidSays({}));
     expect((await rowOf(t)).invoicePaidSource).toBe("auto");
@@ -1541,6 +1607,280 @@ describe("auto paid", () => {
       },
     ]);
     expect(money.totalOwedCents).toBe(50_000);
+  });
+});
+
+describe("Check 12 P5: invoices with no amount yet", () => {
+  beforeEach(setupDb, DB_HOOK_TIMEOUT);
+  const ownerSends = (threadId: string, bodyText: string, ago = 3) =>
+    database.insert(messages).values({
+      threadId,
+      mailboxId,
+      gmailMessageId: `os${++g}`,
+      direction: "out",
+      fromAddress: "owner@shop.com",
+      toAddresses: ["dana@customer.com"],
+      bodyText,
+      sentAt: daysAgo(ago),
+    });
+
+  it("'Got your invoice, I'll pay Friday' is owed, with no amount and out of the total", async () => {
+    const t = await invoiceThread({ invoice: { amount: null }, outAgo: null });
+    const other = await invoiceThread({ from: "sam@customer.com", invoice: { amount: 300 } });
+    const { owed, totalOwedCents } = await listMoney(workspaceId, NOW);
+    expect(owed.map((r) => r.threadId).sort()).toEqual([t, other].sort());
+    expect(owed.find((r) => r.threadId === t)).toMatchObject({
+      amountCents: null,
+      amountFromYourEmail: false,
+    });
+    expect(totalOwedCents).toBe(30_000);
+  });
+
+  it("takes the amount from the owner's own invoice email, labelled — never from quoted customer text", async () => {
+    const spies = (["log", "info", "warn", "error"] as const).map((k) =>
+      vi.spyOn(console, k).mockImplementation(() => {}),
+    );
+    const t = await invoiceThread({ invoice: { amount: null }, outAgo: null });
+    await ownerSends(t, "Hi Dana, invoice 1043 attached: $1,850 for the panel work. Thanks!");
+    const quoted = await invoiceThread({
+      from: "kim@customer.com",
+      invoice: { amount: null },
+      outAgo: null,
+    });
+    await ownerSends(
+      quoted,
+      "Thanks Kim!\n\nOn Mon, Oct 5, 2026, Kim wrote:\n> I'll send the $900 Friday",
+    );
+    const { owed, totalOwedCents } = await listMoney(workspaceId, NOW);
+    expect(owed.find((r) => r.threadId === t)).toMatchObject({
+      amountCents: 185_000,
+      amountFromYourEmail: true,
+    });
+    expect(owed.find((r) => r.threadId === quoted)).toMatchObject({ amountCents: null });
+    expect(totalOwedCents).toBe(185_000);
+    // Idempotent, and it never writes over an amount.
+    const { captureInvoiceAmounts } = await import("@/server/money");
+    expect(await captureInvoiceAmounts()).toBe(0);
+    for (const spy of spies) {
+      const said = JSON.stringify(spy.mock.calls);
+      expect(said).not.toMatch(/1,?850|Dana|Kim|900/);
+      spy.mockRestore();
+    }
+  });
+
+  it("an inbound email never supplies the amount", async () => {
+    const t = await invoiceThread({ invoice: { amount: null }, outAgo: null });
+    await writes(t); // the customer's own words, with no figure the owner wrote
+    await database
+      .update(messages)
+      .set({ bodyText: "I'll pay the $2,000 Friday." })
+      .where(and(eq(messages.threadId, t), eq(messages.direction, "in")));
+    expect((await listMoney(workspaceId, NOW)).owed[0]).toMatchObject({ amountCents: null });
+  });
+});
+
+describe("Check 12 P8: a reminder from the Money card", () => {
+  beforeEach(setupDb, DB_HOOK_TIMEOUT);
+  const reminder = {
+    body: "Hi Dana,\n\nJust a reminder about the invoice. Thanks, Davi",
+    reason: "Invoice unpaid. Gentle reminder.",
+    flags: [],
+    confidence: 0.9,
+    used_facts: [],
+  };
+
+  it("each row says whether a reply is waiting, who wrote last, and whether a reminder can be drafted", async () => {
+    const waiting = await invoiceThread({ invoice: { amount: 640 } });
+    const d = await pendingNudge(waiting);
+    const quiet = await invoiceThread({ from: "sam@customer.com", invoice: { amount: 300 } });
+    const theyWrote = await invoiceThread({
+      from: "kim@customer.com",
+      invoice: { amount: 200 },
+      inAgo: 1,
+      outAgo: 3,
+    });
+    const by = Object.fromEntries(
+      (await listMoney(workspaceId, NOW)).owed.map((r) => [r.threadId, r]),
+    );
+    expect(by[waiting]).toMatchObject({ pendingDraftId: d.id, canDraftReminder: false });
+    expect(by[quiet]).toMatchObject({
+      pendingDraftId: null,
+      customerWroteLast: false,
+      canDraftReminder: true,
+    });
+    expect(by[theyWrote]).toMatchObject({ customerWroteLast: true, canDraftReminder: false });
+  });
+
+  it("drafts a pending reminder (no send), scoped to the workspace, refused when read-only or paid", async () => {
+    const t = await invoiceThread({ invoice: { amount: 300 } });
+    const writer = new FakeWriter();
+    const fake = fakeTransport([reminder]);
+    setModelTransportForTests(fake.transport);
+    const { workspace: other } = await ensureUserAndWorkspace({ email: "other@shop.com" });
+    expect(await draftInvoiceReminder(other.id, t, NOW, { writerFor: () => writer })).toBe(
+      "not_found",
+    );
+    expect(await draftInvoiceReminder(workspaceId, t, NOW, { writerFor: () => writer })).toBe(
+      "created",
+    );
+    const [row] = await database.select().from(drafts).where(eq(drafts.threadId, t));
+    expect(row).toMatchObject({ kind: "followup", status: "pending" });
+    expect(writer.calls).toEqual(["createDraft"]);
+    // A second tap: one is already waiting.
+    expect(await draftInvoiceReminder(workspaceId, t, NOW, { writerFor: () => writer })).toBe(
+      "already_pending",
+    );
+    // Paid → not owed any more.
+    const paid = await invoiceThread({ from: "p@customer.com", invoice: { amount: 50 } });
+    await setInvoicePaid(workspaceId, paid, true, NOW, { writerFor: () => writer });
+    expect(await draftInvoiceReminder(workspaceId, paid, NOW, { writerFor: () => writer })).toBe(
+      "not_owed",
+    );
+    await database
+      .update(workspaces)
+      .set({ status: "evaluation_expired" })
+      .where(eq(workspaces.id, workspaceId));
+    await expect(
+      draftInvoiceReminder(workspaceId, t, NOW, { writerFor: () => writer }),
+    ).rejects.toBeInstanceOf(ReadOnlyError);
+    expect(fake.calls).toHaveLength(1);
+  });
+});
+
+describe("Check 12 P4: bills the owner owes stay off Money owed", () => {
+  beforeEach(setupDb, DB_HOOK_TIMEOUT);
+
+  it("the rule: owed_by_business, or unclear and from a supplier / a 'Not owed to me' sender", () => {
+    const b = (o: Partial<Parameters<typeof billOwedByOwner>[0]>) =>
+      billOwedByOwner({
+        direction: undefined,
+        ownerMarked: false,
+        senderHasSupplierThread: false,
+        senderMarkedNotOwed: false,
+        ...o,
+      });
+    expect(b({ direction: "owed_by_business" })).toBe(true);
+    expect(b({})).toBe(false);
+    expect(b({ direction: "unknown", senderHasSupplierThread: true })).toBe(true);
+    expect(b({ senderMarkedNotOwed: true })).toBe(true);
+    // A clear "owed to you", or the owner's own mark on this thread, wins.
+    expect(b({ direction: "owed_to_business", senderHasSupplierThread: true })).toBe(false);
+    expect(b({ ownerMarked: true, senderHasSupplierThread: true })).toBe(false);
+    expect(b({ ownerMarked: true, direction: "owed_by_business" })).toBe(true);
+  });
+
+  it("an unknown-direction bill from a supplier's domain is not owed to you, and never nudged", async () => {
+    // The supply house has a thread sorted supplier_vendor (an order confirmation).
+    await invoiceThread({
+      from: "orders@northside-supply.test",
+      name: "Northside",
+      category: "supplier_vendor",
+      invoice: null,
+    });
+    const bill = await invoiceThread({
+      from: "billing@northside-supply.test",
+      name: "Northside Billing",
+      invoice: { amount: 1240, invoice_number: "55120", due_date: "2026-11-01" },
+      inAgo: 9,
+      outAgo: 8,
+    });
+    const customer = await invoiceThread({ invoice: { amount: 900 }, inAgo: 9, outAgo: 8 });
+    const { owed, totalOwedCents } = await listMoney(workspaceId, NOW);
+    expect(owed.map((r) => r.threadId)).toEqual([customer]);
+    expect(totalOwedCents).toBe(90_000);
+    const chased = await threadsToFollowUp(mailboxId, NOW);
+    expect(chased).toContain(customer);
+    expect(chased).not.toContain(bill);
+    // The owner's "Put back" on it wins.
+    await setInvoicePaid(workspaceId, bill, false, NOW);
+    expect((await listMoney(workspaceId, NOW)).owed.map((r) => r.threadId)).toContain(bill);
+  });
+
+  it("'Not owed to me' on one bill keeps that sender's later bills off the list", async () => {
+    const first = await invoiceThread({ from: "ap@sub-electric.test", invoice: { amount: 500 } });
+    await setInvoiceNotOwed(workspaceId, first, NOW);
+    const second = await invoiceThread({ from: "ap@sub-electric.test", invoice: { amount: 700 } });
+    expect((await listMoney(workspaceId, NOW)).owed.map((r) => r.threadId)).not.toContain(second);
+    // On public webmail only the same address counts, never the whole domain.
+    const gm = await invoiceThread({ from: "plumbsupply@gmail.com", invoice: { amount: 100 } });
+    await setInvoiceNotOwed(workspaceId, gm, NOW);
+    const customer = await invoiceThread({ from: "dana@gmail.com", invoice: { amount: 300 } });
+    expect((await listMoney(workspaceId, NOW)).owed.map((r) => r.threadId)).toContain(customer);
+  });
+
+  it("a QuickBooks receipt for the owner's own supplier bill 1037 marks nothing", async () => {
+    const t = await invoiceThread({ invoice: { amount: 412, invoice_number: "1037" } });
+    await receiptThread("payments@intuit.com");
+    await classifyWith(
+      paidSays(
+        { invoice_number: "1037", amount: 412 },
+        {
+          extracted: {
+            ...classification().extracted,
+            service_requested: null,
+            invoice: inv({ invoice_number: "1037", amount: 412, status: "paid" }),
+            invoice_direction: "owed_by_business",
+          },
+        },
+      ),
+    );
+    expect((await rowOf(t)).invoicePaidAt).toBeNull();
+    expect(await paidLogs()).toEqual([]);
+  });
+
+  it("a receipt without an amount marks nothing, even with a matching number", async () => {
+    const t = await invoiceThread({ invoice: { amount: 1200, invoice_number: "INV-0042" } });
+    await receiptThread("receipts@stripe.com");
+    await classifyWith(paidSays({ invoice_number: "#42", amount: null }));
+    expect((await rowOf(t)).invoicePaidAt).toBeNull();
+    expect(await paidLogs()).toEqual([]);
+  });
+
+  it("the SQL twin agrees with billOwedByOwner", async () => {
+    await invoiceThread({ from: "orders@supply.test", category: "supplier_vendor", invoice: null });
+    const cases = [
+      { from: "a@supply.test", dir: "unknown", src: null },
+      { from: "b@supply.test", dir: "owed_to_business", src: null },
+      { from: "c@supply.test", dir: undefined, src: "owner" },
+      { from: "d@other.test", dir: "owed_by_business", src: null },
+      { from: "e@other.test", dir: undefined, src: null },
+    ] as const;
+    const ids: string[] = [];
+    for (const c of cases) {
+      const id = await invoiceThread({ from: c.from, invoice: { amount: 10 } });
+      await database
+        .update(threads)
+        .set({
+          extracted: c.dir ? { bill_direction: c.dir } : {},
+          invoicePaidSource: c.src,
+          invoicePaidAt: null,
+        })
+        .where(eq(threads.id, id));
+      ids.push(id);
+    }
+    const rows = await database
+      .select({
+        id: threads.id,
+        sql: sql<boolean>`${billOwedByOwnerSql()}`,
+        supplier: sql<boolean>`${senderHasSupplierThreadSql()}`,
+        notOwed: sql<boolean>`${senderMarkedNotOwedSql()}`,
+      })
+      .from(threads);
+    const by = new Map(rows.map((r) => [r.id, r]));
+    const got = cases.map((c, i) => {
+      const r = by.get(ids[i]!)!;
+      return [
+        r.sql,
+        billOwedByOwner({
+          direction: c.dir,
+          ownerMarked: c.src === "owner",
+          senderHasSupplierThread: r.supplier,
+          senderMarkedNotOwed: r.notOwed,
+        }),
+      ];
+    });
+    expect(got.map(([a, b]) => a === b)).toEqual(cases.map(() => true));
+    expect(got.map(([a]) => a)).toEqual([true, false, false, true, false]);
   });
 });
 

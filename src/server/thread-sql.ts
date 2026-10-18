@@ -1,6 +1,6 @@
 import "server-only";
 import { MAIL_LABELS } from "@/mailbox/connector";
-import { and, eq, isNotNull, or, sql, type SQL } from "drizzle-orm";
+import { sql, type SQL } from "drizzle-orm";
 import { EMAIL_TO_TEXT_DOMAINS, PHONE_SERVICES } from "@/config/phone-services";
 import { messages, threads } from "@/db/schema";
 import { NO_REPLY_LOCAL_PATTERN, PUBLIC_WEBMAIL_DOMAINS } from "./sender-rules";
@@ -254,19 +254,21 @@ export const waitingReplySql = () =>
   sql`(select ${replyAddressSql("w")} from messages w where w.thread_id = ${outerThreadId()} and w.direction = 'in' and not w.auto_reply and not ${sideEmailSql("w")} and w.sent_at > coalesce(${lastOutSql()}, '-infinity'::timestamptz) order by w.sent_at asc, w.id asc limit 1)`;
 
 /**
- * SQL twin of `isQuoteThread`: sorted as a quote request, or has ever had an outcome
- * (a cleared guess or an owner's reopen keeps its source), whatever its category now —
- * unless the owner said "Not a quote" (Check 11 P8) and hasn't marked an outcome since.
+ * SQL twin of `isQuoteThread` (quote-rules.ts) — keep the two in step. A quote thread: sorted
+ * as a quote request, OR carrying the sticky `quote_requested_at` mark (Check 11 P1: the
+ * customer's "Could you do Thursday?" re-sorts the thread as scheduling, and the quote must
+ * stay on Quotes), OR it has ever had an outcome (a cleared guess or an owner's reopen keeps
+ * its source), whatever its category now — unless the owner said "Not a quote" (Check 11 P8)
+ * and hasn't marked an outcome since. A thread now sorted as noise, or holding an email
+ * that tried to instruct us (`extracted.injection`), is left out unless the owner marked it
+ * (`quote_outcome_source = 'owner'`, or an outcome from before the column, which is theirs).
  */
 export const quoteThreadSql = () =>
-  and(
-    or(
-      eq(threads.category, "quote_request"),
-      isNotNull(threads.quoteOutcome),
-      isNotNull(threads.quoteOutcomeSource),
-    ),
-    quoteNotDismissedSql(),
-  )!;
+  sql`(((${threads.quoteOutcomeSource} = 'owner' or (${threads.quoteOutcome} is not null and ${threads.quoteOutcomeSource} is null))
+    or (${threads.category} is distinct from 'noise'
+      and coalesce(${threads.extracted}->>'injection', '') <> 'true'
+      and (${threads.category} = 'quote_request' or ${threads.quoteRequestedAt} is not null or ${threads.quoteOutcome} is not null or ${threads.quoteOutcomeSource} is not null)))
+    and ${quoteNotDismissedSql()})`;
 
 /**
  * Check 11 P8: not "Not a quote", or the owner marked an outcome after saying so. Never NULL
@@ -276,11 +278,11 @@ export const quoteNotDismissedSql = () =>
   sql`(${threads.quoteDismissedAt} is null or coalesce(${threads.quoteOutcomeSource} = 'owner' and ${threads.quoteOutcomeAt} > ${threads.quoteDismissedAt}, false))`;
 
 /**
- * A quote request, even one later re-sorted (plan M8 A11): the sticky `quote_requested_at`
- * mark from classification, or the current quote-thread rule (older threads have no mark).
+ * A quote request, even one later re-sorted (plan M8 A11). Since Check 11 P1 this is the same
+ * rule as `quoteThreadSql` (which now holds the sticky mark), so Quotes and Activity count the
+ * same threads.
  */
-export const quoteRequestSql = () =>
-  and(or(isNotNull(threads.quoteRequestedAt), quoteThreadSql()), quoteNotDismissedSql())!;
+export const quoteRequestSql = () => quoteThreadSql();
 
 /**
  * When a quote request was asked for, for the scorecard and the monthly summary: the sticky
@@ -303,6 +305,53 @@ export const requestSenderSql = () =>
 /** Where a reply to the requester goes (`replyAddressSql`; WHERE clauses only). */
 export const requestReplySql = () =>
   sql`(select ${replyAddressSql("m")} from messages m where m.thread_id = ${outerThreadId()} and m.direction = 'in' and m.sent_at >= coalesce(${threads.quoteRequestedAt}, '-infinity'::timestamptz) order by m.sent_at asc, m.id asc limit 1)`;
+
+/**
+ * Check 12 P4: who an address is, for "the same sender" — its domain ("@supply.com"), or the
+ * whole address on public webmail (one gmail.com supplier says nothing about the rest).
+ */
+const senderKeySql = (addr: SQL) =>
+  sql`(case when ${domainOf(addr)} in (${WEBMAIL_SQL}) then ${addr} else '@' || ${domainOf(addr)} end)`;
+
+/** The outer thread's newest inbound sender, normalized (WHERE clauses only). */
+const newestSenderSql = () =>
+  sql`(select ${norm("bs_m.from_address")} from messages bs_m where bs_m.thread_id = ${outerThreadId()} and bs_m.direction = 'in' order by bs_m.sent_at desc limit 1)`;
+
+/**
+ * Another thread in the same workspace whose inbound mail comes from the same sender as the
+ * outer thread's newest email and matches `cond` (on alias `bs_t`). Content-free: addresses
+ * are only compared inside the database, never selected.
+ */
+const sameSenderThreadSql = (cond: SQL, byDomain: boolean) =>
+  sql`(${newestSenderSql()} like '%@%' and exists (select 1 from threads bs_t join messages bs_i on bs_i.thread_id = bs_t.id
+    where bs_t.mailbox_id in (select bs_x.id from mailboxes bs_x where bs_x.workspace_id = (select bs_w.workspace_id from mailboxes bs_w where bs_w.id = ${threads.mailboxId}))
+      and bs_t.id <> ${outerThreadId()} and bs_i.direction = 'in' and ${cond}
+      and ${
+        byDomain
+          ? sql`${senderKeySql(norm("bs_i.from_address"))} = ${senderKeySql(newestSenderSql())}`
+          : sql`${norm("bs_i.from_address")} = ${newestSenderSql()}`
+      }))`;
+
+/** Check 12 P4: the sender's business (domain) has another thread sorted supplier_vendor. */
+export const senderHasSupplierThreadSql = () =>
+  sameSenderThreadSql(sql`bs_t.category = 'supplier_vendor'`, true);
+/**
+ * Check 12 P4: the owner tapped "Not owed to me" on another thread from this exact address.
+ * Not the whole domain (safe default): a property manager's office or a company with several
+ * contacts shares one, and one hidden duplicate must not hide every colleague's invoice.
+ */
+export const senderMarkedNotOwedSql = () =>
+  sameSenderThreadSql(sql`bs_t.invoice_paid_source = 'not_owed'`, false);
+
+/**
+ * SQL twin of `billOwedByOwner` (money-rules.ts) — keep the two in step: a bill the business
+ * owes. Never NULL, so `not (...)` is safe.
+ */
+export const billOwedByOwnerSql = () =>
+  sql`coalesce((${threads.extracted}->>'bill_direction') = 'owed_by_business'
+    or ((${threads.extracted}->>'bill_direction') is distinct from 'owed_to_business'
+      and ${threads.invoicePaidSource} is distinct from 'owner'
+      and (${senderHasSupplierThreadSql()} or ${senderMarkedNotOwedSql()})), false)`;
 
 /**
  * SQL twin of `isNoReplyAddress` for an address expression: the local part before the last

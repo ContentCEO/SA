@@ -38,6 +38,7 @@ import { sendAccessLostAlerts } from "@/server/alerts";
 import { purgeAdminNoticeMarkers } from "@/server/admin-notify";
 import { recordLifecycleRun } from "@/server/health-deep";
 import { captureQuoteAmounts, guessNoAnswers } from "@/server/quotes";
+import { captureInvoiceAmounts } from "@/server/money";
 import { sendLeadAlerts } from "@/server/sms-alerts";
 import { sendEmergencyAlerts } from "@/server/emergency-alerts";
 import { sendPushAlerts } from "@/server/push-alerts";
@@ -696,6 +697,8 @@ export const purgeBodies = inngest.createFunction(
   async ({ step }) => {
     // Keep each quote's amount before the owner's reply text is purged.
     await step.run("capture-quote-amounts", () => captureQuoteAmounts());
+    // Check 12 P5: and each invoice's amount from the owner's own invoice email.
+    await step.run("capture-invoice-amounts", () => captureInvoiceAmounts());
     // And what each edit did (counts only), for "ideas from your edits" (plan #21).
     await step.run("capture-edit-signals", () => captureEditSignals());
     const purged = await step.run("purge", () => purgeExpiredBodies());

@@ -407,6 +407,20 @@
       "when": 1792303568666,
       "tag": "0057_onboarding_done",
       "breakpoints": true
+    },
+    {
+      "idx": 58,
+      "version": "7",
+      "when": 1792319939643,
+      "tag": "0058_quote_amount_note",
+      "breakpoints": true
+    },
+    {
+      "idx": 59,
+      "version": "7",
+      "when": 1792319941540,
+      "tag": "0059_quote_amount_from",
+      "breakpoints": true
     }
   ]
 }

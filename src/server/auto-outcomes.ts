@@ -81,7 +81,12 @@ export async function afterClassified(input: {
     // amount alone (A2, A12). A receipt sorted as supplier/vendor is for the owner's own
     // purchase, never a customer paying them.
     if (result.category === "supplier_vendor") return;
+    // Check 12 P4: a receipt for a bill the owner paid (a supplier's bill 1037) is never a
+    // customer paying the owner's invoice 1037 — QuickBooks numbers everyone's from 1001.
+    if (result.extracted.invoice_direction === "owed_by_business") return;
     if (!normalizeInvoiceNumber(invoice.invoice_number)) return;
+    // …and without an amount on the receipt, a number alone never marks anything.
+    if (!(invoice.amount && invoice.amount > 0)) return;
     const open = await openInvoices(input.workspaceId, threadId, now);
     const match = matchReceipt(invoice, open);
     if (match) {

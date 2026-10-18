@@ -10,6 +10,7 @@ import { cn } from "@/lib/utils";
 import { isReadOnly } from "@/server/lifecycle";
 import { threadOffers, type ThreadOffers } from "@/server/offers";
 import {
+  decidedLabel,
   formatCents,
   isDecidedStage,
   QUOTE_OUTCOMES,
@@ -20,6 +21,7 @@ import {
 import { listDismissedQuotes, listQuotes, type QuoteRow } from "@/server/quotes";
 import { requireOwner } from "@/server/session";
 import {
+  changeAmountAction,
   dismissQuoteAction,
   lostReasonAction,
   markQuoteAction,
@@ -34,18 +36,21 @@ export const metadata: Metadata = { title: "Quotes" };
 const FILTERS = [
   ["open", "Open"],
   ["waiting_on_you", "Waiting on you"],
+  // Check 11 P9: the Quoted stage gets its own chip.
+  ["talking", "Quoted"],
   ["quiet", "Gone quiet"],
   ["won", "Won"],
   ["lost", "Lost"],
   ["no_answer", "No answer"],
 ] as const;
 type Filter = (typeof FILTERS)[number][0];
-const OPEN: QuoteStage[] = ["waiting_on_you", "talking", "quiet"];
+const OPEN: QuoteStage[] = ["waiting_on_you", "replied", "talking", "quiet"];
 
 const done: Record<string, string> = {
   won: "Marked won. Nice one.",
   lost: "Marked lost. Why? One tap on the card, optional.",
   lost_reason: "Got it.",
+  amount: "Amount saved.",
   no_answer: "Marked no answer.",
   reopen: "Reopened.",
   sent_other: "Got it. It counts as answered, and it comes back if they write again.",
@@ -65,16 +70,35 @@ const markLabel: Record<QuoteOutcome, string> = {
   no_answer: "Mark no answer",
 };
 
+/** "What you'll charge (optional)", prefilled with the amount we found (or the one saved). */
+function AmountField({ id, cents }: { id: string; cents: number | null }) {
+  return (
+    <label htmlFor={id} className="flex flex-col gap-1 text-sm font-semibold">
+      What you&apos;ll charge (optional)
+      <input
+        id={id}
+        name="amount"
+        inputMode="decimal"
+        defaultValue={cents ? String(cents / 100) : ""}
+        placeholder="e.g. 1450"
+        className="min-h-tap rounded-lg border bg-background px-3 text-base text-foreground"
+      />
+    </label>
+  );
+}
+
 function QuoteCard({
   q,
   filter,
   readOnly,
   offers,
+  timeZone,
 }: {
   q: QuoteRow;
   filter: Filter;
   readOnly: boolean;
   offers: ThreadOffers | undefined;
+  timeZone: string;
 }) {
   const name = q.customerName ?? q.customerAddress ?? "Someone";
   const decided = isDecidedStage(q.stage);
@@ -89,16 +113,23 @@ function QuoteCard({
       <div className="flex flex-wrap items-baseline justify-between gap-x-3">
         <span className="min-w-0 text-lg font-black break-words">{name}</span>
         <span className="shrink-0 text-sm opacity-80">
-          {q.lastMessageAt ? relativeTime(q.lastMessageAt) : ""}
+          {q.lastMessageAt ? `Last email ${relativeTime(q.lastMessageAt)}` : ""}
         </span>
       </div>
       <div className="flex items-baseline justify-between gap-3">
         <span className="text-sm font-semibold">
-          {stageLabel[q.stage]}
+          {/* Check 11 P7: a decided card says when — "Won Oct 14". */}
+          {isDecidedStage(q.stage)
+            ? decidedLabel(q.stage, q.outcomeAt, timeZone)
+            : stageLabel[q.stage]}
           {q.outcomeGuessed ? <span className="font-normal"> (our guess)</span> : null}
         </span>
         {q.amountCents ? (
-          <span className="text-lg font-black">{formatCents(q.amountCents)}</span>
+          <span className="flex items-baseline gap-2">
+            {/* Check 11 P2: our pick among several figures in the reply. */}
+            {q.amountUnsure ? <span className="text-sm font-semibold">Check amount</span> : null}
+            <span className="text-lg font-black">{formatCents(q.amountCents)}</span>
+          </span>
         ) : null}
       </div>
       {q.summary ? <p className="opacity-80">{q.summary}</p> : null}
@@ -135,55 +166,66 @@ function QuoteCard({
       ) : null}
       {readOnly ? null : decided ? (
         // One tap to change it — our guess or the owner's own mark.
-        <form action={markQuoteAction} className="flex flex-col gap-2">
-          <input type="hidden" name="threadId" value={q.threadId} />
-          <input type="hidden" name="stage" value={filter} />
-          <div className="grid grid-cols-2 gap-2">
-            {QUOTE_OUTCOMES.filter((o) => o !== q.stage).map((o) => (
-              <Button key={o} type="submit" name="outcome" value={o} variant="outline">
-                {markLabel[o]}
-              </Button>
-            ))}
-          </div>
-          <Button type="submit" name="outcome" value="reopen" variant="ghost" className="w-full">
-            Reopen
-          </Button>
-        </form>
+        <>
+          {q.stage === "won" ? (
+            // Check 11 P7: fix a won amount without reopening the quote.
+            <details className="rounded-lg border">
+              <summary className="flex min-h-tap cursor-pointer list-none items-center px-3 font-semibold underline underline-offset-4">
+                Change amount
+              </summary>
+              <form action={changeAmountAction} className="flex flex-col gap-2 px-3 pb-3">
+                <input type="hidden" name="threadId" value={q.threadId} />
+                <input type="hidden" name="stage" value={filter} />
+                <AmountField id={`amount-${q.threadId}`} cents={q.amountCents} />
+                <Button type="submit">Save amount</Button>
+              </form>
+            </details>
+          ) : null}
+          <form action={markQuoteAction} className="flex flex-col gap-2">
+            <input type="hidden" name="threadId" value={q.threadId} />
+            <input type="hidden" name="stage" value={filter} />
+            <div className="grid grid-cols-2 gap-2">
+              {QUOTE_OUTCOMES.filter((o) => o !== q.stage).map((o) => (
+                <Button key={o} type="submit" name="outcome" value={o} variant="outline">
+                  {markLabel[o]}
+                </Button>
+              ))}
+            </div>
+            <Button type="submit" name="outcome" value="reopen" variant="ghost" className="w-full">
+              Reopen
+            </Button>
+          </form>
+        </>
       ) : (
         <details className="group">
           <summary className="inline-flex min-h-tap w-full cursor-pointer list-none items-center justify-center rounded-lg border font-semibold">
             Mark how it ended
           </summary>
-          <form action={markQuoteAction} className="mt-3 flex flex-col gap-2">
-            <input type="hidden" name="threadId" value={q.threadId} />
-            <input type="hidden" name="stage" value={filter} />
-            <label className="flex flex-col gap-1 text-sm font-semibold">
-              Job amount (optional)
-              <input
-                name="amount"
-                inputMode="decimal"
-                placeholder={q.amountCents ? String(q.amountCents / 100) : "e.g. 1450"}
-                className="min-h-tap rounded-lg border bg-background px-3 text-base text-foreground"
-              />
-            </label>
-            <div className="grid grid-cols-2 gap-2">
-              <Button type="submit" name="outcome" value="won">
+          <div className="mt-3 flex flex-col gap-2">
+            {/* Check 11 P7: only Won asks for a dollar figure. */}
+            <details className="rounded-lg border">
+              <summary className="inline-flex min-h-tap w-full cursor-pointer list-none items-center justify-center rounded-lg bg-primary font-semibold text-primary-foreground">
                 Mark won
-              </Button>
+              </summary>
+              <form action={markQuoteAction} className="flex flex-col gap-2 p-3">
+                <input type="hidden" name="threadId" value={q.threadId} />
+                <input type="hidden" name="stage" value={filter} />
+                <input type="hidden" name="outcome" value="won" />
+                <AmountField id={`won-${q.threadId}`} cents={q.amountCents} />
+                <Button type="submit">Save as won</Button>
+              </form>
+            </details>
+            <form action={markQuoteAction} className="grid grid-cols-2 gap-2">
+              <input type="hidden" name="threadId" value={q.threadId} />
+              <input type="hidden" name="stage" value={filter} />
               <Button type="submit" name="outcome" value="lost" variant="outline">
                 Mark lost
               </Button>
-              <Button
-                type="submit"
-                name="outcome"
-                value="no_answer"
-                variant="outline"
-                className="col-span-2"
-              >
-                No answer
+              <Button type="submit" name="outcome" value="no_answer" variant="outline">
+                Mark no answer
               </Button>
-            </div>
-          </form>
+            </form>
+          </div>
         </details>
       )}
       {!readOnly && q.stage === "waiting_on_you" ? (
@@ -243,7 +285,7 @@ export default async function QuotesPage(props: PageProps<"/quotes">) {
   const filter: Filter = FILTERS.some(([k]) => k === params.stage)
     ? (params.stage as Filter)
     : "open";
-  const [{ quotes, totals, quietDays }, leadPay, dismissed] = await Promise.all([
+  const [{ quotes, totals, quietDays, timeZone }, leadPay, dismissed] = await Promise.all([
     listQuotes(workspace.id),
     leadSourcePay(workspace.id),
     listDismissedQuotes(workspace.id),
@@ -282,9 +324,10 @@ export default async function QuotesPage(props: PageProps<"/quotes">) {
         </h2>
         <dl className="grid grid-cols-3 gap-3">
           {[
-            ["Requests", String(totals.requests)],
-            ["Quoted", formatCents(totals.quotedCents)],
-            ["Won", formatCents(totals.wonCents)],
+            ["Asked for", String(totals.requests)],
+            // Check 11 P9: "None yet", never a big "$0" that reads as a fact.
+            ["Priced", totals.quotedCents ? formatCents(totals.quotedCents) : "None yet"],
+            ["Won", totals.wonCents ? formatCents(totals.wonCents) : "None yet"],
           ].map(([label, value]) => (
             <div key={label} className="flex flex-col">
               <dt className="text-sm text-muted-foreground">{label}</dt>
@@ -294,9 +337,10 @@ export default async function QuotesPage(props: PageProps<"/quotes">) {
         </dl>
         <p className="text-muted-foreground">
           {totals.winRatePct !== null
-            ? `You won ${totals.winRatePct}% of the quotes that ended (won, lost or no answer). `
+            ? `You won ${totals.winRatePct}% of the quotes that ended in the last 30 days (won, lost or no answer). `
             : "Tap Mark how it ended on a quote to track your win rate. "}
-          Amounts come from the price in your reply, or what you type.
+          Last 30 days. Won counts the day you marked it (or we guessed it). Amounts come from the
+          price in your reply, or what you type.
         </p>
       </section>
 
@@ -315,14 +359,16 @@ export default async function QuotesPage(props: PageProps<"/quotes">) {
             ))}
           </ul>
           <p className="text-sm text-muted-foreground">
-            Won amounts are the largest price in your own reply, or the amount you typed when you
-            marked it won. Quotes you sent only as a PDF count once you type the amount on Won. Won
-            can be our guess for email leads — check Quotes.
+            Won amounts are the price in your own reply, or the amount you typed when you marked it
+            won. Quotes you sent only as a PDF count once you type the amount on Won. Won can be our
+            guess for email leads — check Quotes.
           </p>
         </section>
       ) : null}
 
-      <nav aria-label="Quote filter" className="-mx-1 flex gap-1 overflow-x-auto pb-1">
+      {/* Check 11 P5: the chips count every quote, not just the last 30 days. */}
+      <p className="text-sm font-semibold text-muted-foreground">All time</p>
+      <nav aria-label="Quote filter" className="flex flex-wrap gap-2">
         {FILTERS.map(([key, label]) => (
           <Link
             key={key}
@@ -347,6 +393,7 @@ export default async function QuotesPage(props: PageProps<"/quotes">) {
               filter={filter}
               readOnly={readOnly}
               offers={offers.get(q.threadId)}
+              timeZone={timeZone}
             />
           ))}
         </div>
@@ -384,12 +431,22 @@ export default async function QuotesPage(props: PageProps<"/quotes">) {
           </ul>
         </details>
       ) : null}
-      <p className="text-sm text-muted-foreground">
-        &ldquo;Gone quiet&rdquo; means you replied {quietDays}+ days ago and haven&apos;t heard
-        back. &ldquo;No answer&rdquo; can be our guess: a week after two follow-ups, or three quiet
-        weeks. &ldquo;Won&rdquo; can be our guess too, when the customer says go ahead. Change
-        either with one tap.
-      </p>
+      {/* Check 11 P6 / P9: every stage on the screen, one short line each. */}
+      <ul
+        aria-label="What the stages mean"
+        className="flex flex-col gap-1 text-sm text-muted-foreground"
+      >
+        <li>Waiting on you: the customer wrote last.</li>
+        <li>Replied, no price yet: you answered but didn&apos;t give a price (a visit, a call).</li>
+        <li>Quoted: you sent a price.</li>
+        <li>Gone quiet: you sent a price {quietDays}+ days ago and haven&apos;t heard back.</li>
+        <li>
+          No answer: can be our guess, a week after two follow-ups or three quiet weeks after your
+          price.
+        </li>
+        <li>Won: can be our guess too, when the customer says go ahead.</li>
+        <li>Lost: you marked it lost. Change any of these with one tap.</li>
+      </ul>
     </>
   );
 }

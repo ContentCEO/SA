@@ -472,7 +472,8 @@ describe("#34 which leads are at risk", () => {
       `Re: ${FWD}`,
     );
     const { quotes } = await listQuotes(workspaceId, TUE_13_01_NY);
-    expect(quotes.find((q) => q.threadId === t)?.stage).toBe("talking");
+    // Check 11 P6: the owner answered (with no price in this test's text), not the customer.
+    expect(quotes.find((q) => q.threadId === t)?.stage).toBe("replied");
   });
 
   /** Any email on the thread, with explicit To / Cc and subject (addresses as sync stores them). */

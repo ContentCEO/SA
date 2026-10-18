@@ -42,8 +42,14 @@ export const INVOICE_STATUSES = ["unpaid", "paid", "partly_paid", "unknown"] as 
 export type InvoiceStatus = (typeof INVOICE_STATUSES)[number];
 export type InvoiceFacts = {
   invoice_number: string | null;
-  /** In dollars, as the sorter read it. */
+  /** In dollars, as the sorter read it (or from the owner's own invoice email: `amount_source`). */
   amount: number | null;
+  /**
+   * Check 12 P5: "your_email" when the amount was read from the owner's own sent email on the
+   * thread (`captureInvoiceAmounts`) because the customer's email gave none. The card says
+   * "From your email". Absent when the sorter read it from the email itself.
+   */
+  amount_source?: "your_email";
   /** As written in the email. */
   due_date: string | null;
   status: InvoiceStatus;
@@ -75,6 +81,9 @@ export function invoiceOf(extracted: unknown): InvoiceFacts | null {
   return {
     invoice_number: str(r.invoice_number),
     amount,
+    ...(amount !== null && r.amount_source === "your_email"
+      ? { amount_source: "your_email" as const }
+      : {}),
     due_date: str(r.due_date),
     status: (INVOICE_STATUSES as readonly unknown[]).includes(r.status)
       ? (r.status as InvoiceStatus)
@@ -98,13 +107,36 @@ export function isInvoiceThread(t: { category: string | null; extracted: unknown
   );
 }
 
+/**
+ * Check 12 P4: a bill the BUSINESS owes (a supplier's or a subcontractor's invoice), never
+ * money owed to the owner — kept off Money owed and never chased. True when the sorter said
+ * `owed_by_business`; or when it said nothing clear (unknown, or a thread sorted before
+ * classify.v4 with no direction stored) and the sender is someone the business buys from —
+ * another thread from the same business (the same domain, or the same address on public
+ * webmail) is sorted supplier_vendor, or the owner tapped "Not owed to me" on another thread
+ * from this exact address. An owner's
+ * own mark on this thread (paid, or put back) always wins. SQL twin: `billOwedByOwnerSql`
+ * (thread-sql.ts) — keep the two in step.
+ */
+export function billOwedByOwner(f: {
+  direction: unknown;
+  ownerMarked: boolean;
+  senderHasSupplierThread: boolean;
+  senderMarkedNotOwed: boolean;
+}): boolean {
+  if (f.direction === "owed_by_business") return true;
+  if (f.direction === "owed_to_business" || f.ownerMarked) return false;
+  return f.senderHasSupplierThread || f.senderMarkedNotOwed;
+}
+
 /** Dollars → cents (never a fraction of a cent). */
 export const toCents = (dollars: number) => Math.round(dollars * 100);
 
 /**
  * Still owed: nobody has marked it paid (or hidden it), and either the owner put it back on
  * the list ("Undo" / "Put back") — which beats whatever the email said, amount or not — or
- * there's an amount and the email says unpaid / partly paid.
+ * the email says unpaid / partly paid (Check 12 P5: with or without an amount — "Got your
+ * invoice, I'll pay Friday" is owed, "Amount not stated", left out of the total).
  */
 export function isOwed(f: {
   invoice: InvoiceFacts | null;
@@ -118,14 +150,14 @@ export function isOwed(f: {
 
 /**
  * The invoice facts themselves say money is owed, whatever the marks: the current invoice
- * has an amount and is unpaid / partly paid, or an earlier invoice on the thread is still
+ * is unpaid / partly paid (Check 12 P5: an amount isn't needed — the row then reads "Amount
+ * not stated" and adds nothing to the total), or an earlier invoice on the thread is still
  * open (`earlier_open` only ever holds entries with an amount). "Got #42 for phase 2" with
  * no amount, while #41's $500 is open, still owes the $500.
  */
 export function holdsOwedInvoice(invoice: InvoiceFacts | null): boolean {
   if (!invoice) return false;
   if ((invoice.earlier_open ?? []).some((e) => (e.amount ?? 0) > 0)) return true;
-  if (!(invoice.amount && invoice.amount > 0)) return false;
   return invoice.status === "unpaid" || invoice.status === "partly_paid";
 }
 
@@ -219,14 +251,8 @@ function yearlessDay(month: number, day: number, anchor: number, anchorYear: num
   return null;
 }
 
-/**
- * The due date as a calendar date. Only clear dates count ("2026-11-03", "Nov 3",
- * "3 November 2026", "11/3/2026"); a date with no year is placed in the year nearest the
- * day the email was written (`yearlessDay`). Anything else ("net 30", "upon receipt") is
- * no due date — never a guess.
- */
-function dueDay(dueDate: string, anchor: number, anchorYear: number): number | null {
-  const text = dueDate.trim();
+/** A clear date in the text ("2026-11-03", "Nov 3", "3 November 2026", "11/3/2026"), or null. */
+function dateIn(text: string, anchor: number, anchorYear: number): number | null {
   const iso = /^(\d{4})-(\d{2})-(\d{2})/.exec(text);
   if (iso) return ymdDay(Number(iso[1]), Number(iso[2]), Number(iso[3]));
   const on = (y: string | undefined, month: number, day: number) =>
@@ -242,18 +268,78 @@ function dueDay(dueDate: string, anchor: number, anchorYear: number): number | n
   return null;
 }
 
+/** "due Nov 15" / "by 11/15": a date right after "due" or "by" is the due day itself. */
+function statesDueDate(text: string): boolean {
+  const at = /\b(?:due|by)\s+(?:on\s+)?/i.exec(text);
+  if (!at) return false;
+  const rest = text.slice(at.index + at[0].length);
+  return [/^\d{4}-\d{2}-\d{2}/, MONTH_DAY, DAY_MONTH, SLASHED].some(
+    (re) => re.exec(rest)?.index === 0,
+  );
+}
+
+/** Check 12 P6: payment terms — "net 30", "within 10 days", "15 days from/after …". */
+const TERMS = [
+  /\bnet\s*(\d{1,3})\b/i,
+  /\bwithin\s+(\d{1,3})\s+days?\b/i,
+  /\b(\d{1,3})\s+days?\s+(?=from|after)/i,
+];
+/** "… of / from / after <something>" that is a day we can know: the invoice, the receipt, today. */
+const KNOWN_START =
+  /^\s*(?:of|from|after)\s+(?:the\s+|this\s+|our\s+|my\s+)?(?:invoice|receipt|bill|billing|today|date)/i;
+const UNKNOWN_START = /^\s*(?:of|from|after)\s+\S/i;
+const ON_RECEIPT = /\b(?:due\s+)?(?:up)?on\s+receipt\b|\bdue\s+(?:immediately|now)\b/i;
+
+/**
+ * The due date as a calendar date. Check 12 P6: payment terms first — "Net 30 from 10/01/2026"
+ * is that date + 30; plain "net 30" / "within 10 days" is the day the email was written
+ * (`anchor`) + N; "upon receipt" is the day it was written. Terms counted from something we
+ * can't know ("within 10 days of completion") give no due date. Then clear dates
+ * ("2026-11-03", "Nov 3", "3 November 2026", "11/3/2026"); a date with no year is placed in
+ * the year nearest the day the email was written (`yearlessDay`). Anything else ("end of
+ * month", "Friday") is no due date — never a guess.
+ */
+function dueDay(dueDate: string, anchor: number, anchorYear: number): number | null {
+  const text = dueDate.trim();
+  for (const re of TERMS) {
+    const m = re.exec(text);
+    if (!m) continue;
+    const days = Number(m[1]);
+    if (!Number.isFinite(days) || days > 365) return null;
+    const written = dateIn(text, anchor, anchorYear);
+    // "Due Nov 15 (net 30)": the date already is the due day.
+    if (written !== null) return statesDueDate(text) ? written : written + days;
+    const rest = text.slice(m.index + m[0].length);
+    if (UNKNOWN_START.test(rest) && !KNOWN_START.test(rest)) return null;
+    return anchor + days;
+  }
+  if (ON_RECEIPT.test(text)) return dateIn(text, anchor, anchorYear) ?? anchor;
+  return dateIn(text, anchor, anchorYear);
+}
+
+/** "Oct 31" for a day number (a calendar date, already in the owner's zone). */
+function dayWords(day: number): string {
+  return new Intl.DateTimeFormat("en-US", {
+    timeZone: "UTC",
+    month: "short",
+    day: "numeric",
+  }).format(new Date(day * DAY_MS));
+}
+
 /**
  * How the due date reads to the owner, from their own calendar day: "No due date",
- * "Not due yet", "Due today" or "12 days past due". `daysPastDue` is negative before the
- * due date and null without one. `writtenAt` is when the email was written (the thread's
- * last message); a due date with no year is read around that day, not around today.
+ * "Not due yet", "Due today" or "12 days past due", plus the day itself (Check 12 P6):
+ * "Due Oct 31" / "Was due Oct 10" (null without one, and on the day itself). `daysPastDue`
+ * is negative before the due date and null without one. `writtenAt` is when the email was
+ * written (the thread's last message); a due date with no year, and net terms with no date,
+ * are read from that day, not from today.
  */
 export function dueLabel(
   dueDate: string | null,
   now: Date,
   timeZone: string,
   writtenAt: Date | null = null,
-): { daysPastDue: number | null; text: string } {
+): { daysPastDue: number | null; text: string; day?: string | null } {
   if (!dueDate) return { daysPastDue: null, text: "No due date" };
   const today = localDate(now, timeZone);
   const todayN = dayNumber(today);
@@ -264,9 +350,13 @@ export function dueLabel(
   const due = dueDay(dueDate, writtenN, Number(written.slice(0, 4)));
   if (due === null) return { daysPastDue: null, text: "No due date" };
   const late = todayN - due;
-  if (late < 0) return { daysPastDue: late, text: "Not due yet" };
-  if (late === 0) return { daysPastDue: 0, text: "Due today" };
-  return { daysPastDue: late, text: `${late} day${late === 1 ? "" : "s"} past due` };
+  if (late < 0) return { daysPastDue: late, text: "Not due yet", day: `Due ${dayWords(due)}` };
+  if (late === 0) return { daysPastDue: 0, text: "Due today", day: null };
+  return {
+    daysPastDue: late,
+    text: `${late} day${late === 1 ? "" : "s"} past due`,
+    day: `Was due ${dayWords(due)}`,
+  };
 }
 
 /**
@@ -410,6 +500,10 @@ export function carryInvoiceFacts(
   return promoteEarlierOpen({
     invoice_number: next.invoice_number ?? prev.invoice_number,
     amount: next.amount ?? prev.amount,
+    // Check 12 P5: an amount read from the owner's email keeps its label while it's kept.
+    ...(next.amount == null && prev.amount != null && prev.amount_source
+      ? { amount_source: prev.amount_source }
+      : {}),
     due_date: next.due_date ?? prev.due_date,
     // "Can you resend invoice 42?" doesn't say whether it's paid: the earlier word stands.
     status: next.status === "unknown" ? prev.status : next.status,

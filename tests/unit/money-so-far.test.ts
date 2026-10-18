@@ -162,15 +162,24 @@ describe("money so far: the numbers", () => {
       invoicePaidAt: new Date("2026-09-20T15:00:00Z"),
       invoicePaidSource: "owner",
     });
-    await invoice(7000, {
-      invoicePaidAt: new Date("2026-10-06T15:00:00Z"),
-      invoicePaidSource: "not_owed",
-    });
-    await invoice(7000, {
-      category: "supplier_vendor",
-      invoicePaidAt: new Date("2026-10-06T15:00:00Z"),
-      invoicePaidSource: "owner",
-    });
+    // (From the supplier's own address: since Check 12 P4 a supplier thread or a "Not owed to
+    // me" tap keeps that sender's unclear bills off Money owed, so they can't share the
+    // customers' sender here.)
+    const supplier = "SECRET-bills@supply.example";
+    await invoice(
+      7000,
+      { invoicePaidAt: new Date("2026-10-06T15:00:00Z"), invoicePaidSource: "not_owed" },
+      supplier,
+    );
+    await invoice(
+      7000,
+      {
+        category: "supplier_vendor",
+        invoicePaidAt: new Date("2026-10-06T15:00:00Z"),
+        invoicePaidSource: "owner",
+      },
+      supplier,
+    );
     await invoice(
       7000,
       { invoicePaidAt: new Date("2026-10-06T15:00:00Z"), invoicePaidSource: "auto" },
@@ -185,7 +194,7 @@ describe("money so far: the numbers", () => {
     // Still owed now (sent whenever): $500 and $250.
     await invoice(500);
     await invoice(250);
-    await invoice(9000, { category: "supplier_vendor" });
+    await invoice(9000, { category: "supplier_vendor" }, supplier);
 
     const m = await moneySoFar(workspaceId, NOW);
     expect(m.won).toEqual({ count: 3, cents: 500_000, withoutAmount: 1 });

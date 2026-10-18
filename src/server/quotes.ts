@@ -1,10 +1,11 @@
 import "server-only";
-import { and, desc, eq, inArray, isNotNull, isNull, sql, type SQL } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, isNull, or, sql, type SQL } from "drizzle-orm";
 import { prepareBody } from "@/ai/classify";
 import { db } from "@/db";
 import { activityLog, mailboxes, messages, priceHistory, threads, workspaces } from "@/db/schema";
 import { expirePendingNudge, flagPendingNudge, followupSettings, type DraftDeps } from "./drafts";
 import { markAnsweredByPhone } from "./first-week";
+import { workspaceTimeZone } from "./snooze";
 import { effectiveStatus, JOBS_ALLOWED, jobsAllowed, ReadOnlyError } from "./lifecycle";
 import {
   asDate,
@@ -14,12 +15,13 @@ import {
   lastInSql,
   lastOutSql,
   notDraftMessage,
+  notDraftSql,
   quietSinceSql,
   quoteNotDismissedSql,
   quoteThreadSql,
+  requestAtSql,
 } from "./thread-sql";
 import {
-  amountFromOwnerText,
   canAutoSet,
   closeRate,
   guessNoAnswer,
@@ -30,6 +32,7 @@ import {
   quoteDecidedNote,
   quoteStage,
   quoteStopsNudges,
+  readOwnerAmount,
   shownLostReason,
   type LostReason,
   type QuoteOutcome,
@@ -50,6 +53,10 @@ export type QuoteRow = {
   /** Ideas C5: why it was lost, only while it is lost. */
   lostReason: LostReason | null;
   amountCents: number | null;
+  /** Check 11 P2: the amount is our pick among several figures — the card says "Check amount". */
+  amountUnsure: boolean;
+  /** When it was decided (the owner's mark or our guess); null while open. */
+  outcomeAt: Date | null;
   lastMessageAt: Date | null;
   startedAt: Date;
 };
@@ -76,15 +83,18 @@ const workspaceJobsAllowedSql = (now: Date) =>
 const notPurposeNote = () =>
   sql`not exists (select 1 from drafts d where d.thread_id = ${messages.threadId} and d.purpose is not null and d.sent_gmail_message_id = ${messages.gmailMessageId})`;
 
+type OwnerQuote = { cents: number; sentAt: Date; note: "total" | "picked" };
+
 /**
  * The quote's price as written by the owner: the newest owner message with a dollar figure
- * that isn't a purpose note, sent before `before` (null = any time). Quoted text is stripped.
+ * that isn't a purpose note, sent before `before` (null = any time). Quoted text, signatures
+ * and non-price figures are left out (`readOwnerAmount`, Check 11 P2 + Check 39 P3).
  */
 async function ownerQuotedCents(
   threadIds: string[],
   before: (threadId: string) => Date | null,
-): Promise<Map<string, { cents: number; sentAt: Date }>> {
-  const out = new Map<string, { cents: number; sentAt: Date }>();
+): Promise<Map<string, OwnerQuote>> {
+  const out = new Map<string, OwnerQuote>();
   if (threadIds.length === 0) return out;
   const outbound = await db()
     .select({ threadId: messages.threadId, body: messages.bodyText, sentAt: messages.sentAt })
@@ -104,8 +114,8 @@ async function ownerQuotedCents(
     if (out.has(m.threadId)) continue; // newest reply with a figure wins
     const cutoff = before(m.threadId);
     if (cutoff && new Date(m.sentAt).getTime() >= cutoff.getTime()) continue;
-    const cents = amountFromOwnerText(prepareBody(m.body ?? ""));
-    if (cents) out.set(m.threadId, { cents, sentAt: new Date(m.sentAt) });
+    const read = readOwnerAmount(prepareBody(m.body ?? ""));
+    if (read) out.set(m.threadId, { ...read, sentAt: new Date(m.sentAt) });
   }
   return out;
 }
@@ -152,8 +162,10 @@ export async function listQuotes(workspaceId: string, now: Date = new Date()) {
       subject: threads.subject,
       outcome: threads.quoteOutcome,
       outcomeSource: threads.quoteOutcomeSource,
+      outcomeAt: threads.quoteOutcomeAt,
       lostReason: threads.quoteLostReason,
       amountCents: threads.quoteAmountCents,
+      amountNote: threads.quoteAmountNote,
       lastMessageAt: threads.lastMessageAt,
       startedAt: threads.createdAt,
       // The same "who wrote last" as leads at risk: a lead forwarded to the crew is still
@@ -171,6 +183,28 @@ export async function listQuotes(workspaceId: string, now: Date = new Date()) {
     .orderBy(desc(threads.lastMessageAt))
     .limit(300);
 
+  // Check 11 P6: priced = an amount is known, or an owner email holds a dollar figure. Only
+  // read for open quotes the owner answered last that have no amount yet.
+  const needPrice = rows
+    .filter((r) => r.outcome == null && r.amountCents == null && r.lastOut != null)
+    .map((r) => r.threadId);
+  const pricedByText = await ownerQuotedCents(needPrice, () => null);
+  // Check 11 P8 + P6: "I sent the price another way" with no amount typed is still a price
+  // given (estimate software emailed it), so it reads Quoted, not "Replied, no price yet".
+  const sentOtherWay = needPrice.length
+    ? await db()
+        .selectDistinct({ threadId: activityLog.threadId })
+        .from(activityLog)
+        .where(
+          and(
+            eq(activityLog.workspaceId, workspaceId),
+            eq(activityLog.action, "answered_by_phone"),
+            inArray(activityLog.threadId, needPrice),
+            sql`${activityLog.detail}->>'via' = 'other'`,
+          ),
+        )
+    : [];
+  const pricedElsewhere = new Set(sentOtherWay.map((r) => r.threadId));
   const quotes: QuoteRow[] = rows.map((r) => ({
     threadId: r.threadId,
     gmailThreadId: r.gmailThreadId,
@@ -180,36 +214,98 @@ export async function listQuotes(workspaceId: string, now: Date = new Date()) {
     summary: r.summary,
     subject: r.subject,
     stage: quoteStage(
-      { outcome: r.outcome, lastInboundAt: asDate(r.lastIn), lastOutboundAt: asDate(r.lastOut) },
+      {
+        outcome: r.outcome,
+        lastInboundAt: asDate(r.lastIn),
+        lastOutboundAt: asDate(r.lastOut),
+        priced:
+          r.amountCents != null ||
+          pricedByText.has(r.threadId) ||
+          pricedElsewhere.has(r.threadId),
+      },
       now,
       days,
     ),
     outcomeGuessed: r.outcome != null && r.outcomeSource === "auto",
     lostReason: shownLostReason(r.outcome, r.lostReason),
     amountCents: r.amountCents,
+    amountUnsure: r.amountCents != null && r.amountNote === "picked",
+    outcomeAt: r.outcome ? asDate(r.outcomeAt) : null,
     lastMessageAt: asDate(r.lastMessageAt),
     startedAt: asDate(r.firstAt) ?? r.startedAt,
   }));
 
-  // Last 30 days, by when the request came in.
-  const recent = quotes.filter((q) => now.getTime() - q.startedAt.getTime() <= WINDOW_MS);
-  const sum = (qs: QuoteRow[]) => qs.reduce((t, q) => t + (q.amountCents ?? 0), 0);
-  const quoted = recent.filter((q) => q.stage !== "waiting_on_you");
-  const won = recent.filter((q) => q.stage === "won");
-  const totals = {
-    requests: recent.length,
-    quotedCount: quoted.length,
-    quotedCents: sum(quoted),
-    wonCount: won.length,
-    wonCents: sum(won),
+  const [totals, timeZone] = await Promise.all([
+    quoteTotals(workspaceId, now),
+    workspaceTimeZone(workspaceId),
+  ]);
+  return { quotes, totals, quietDays: days, timeZone };
+}
+
+export type QuoteTotals = {
+  /** Quote requests asked for in the window (`requestAtSql`, the date Activity uses). */
+  requests: number;
+  /** Quotes whose price went out in the window, whatever their stage ("Priced"). */
+  quotedCount: number;
+  quotedCents: number;
+  /** Marked or guessed won in the window, by `quote_outcome_at` (as `closeRateBetween`). */
+  wonCount: number;
+  wonCents: number;
+  /** Won out of everything decided in the window (no answer counts as decided). */
+  winRatePct: number | null;
+};
+
+/**
+ * Check 11 P5: Quotes' "Last 30 days" box, each number by the date its own thing happened —
+ * a request by when it was asked for, a price by when it went out (`quote_amount_at`: the
+ * owner email it came from, or when they typed it; older rows fall back to the owner's last
+ * email), a win and the win rate by when the quote was decided, the same rule as Activity's
+ * `closeRateBetween` (so only rolling 30 days vs calendar month differs). A typed amount on a
+ * quote that isn't won is never "priced". Not capped by the list's 300 rows.
+ */
+export async function quoteTotals(workspaceId: string, now: Date): Promise<QuoteTotals> {
+  const since = new Date(now.getTime() - WINDOW_MS).toISOString();
+  const until = now.toISOString();
+  const inWindow = (expr: SQL) =>
+    sql`(${expr} >= ${since}::timestamptz and ${expr} <= ${until}::timestamptz)`;
+  const pricedAt = sql`coalesce(${threads.quoteAmountAt}, ${lastOutSql()})`;
+  const priced = sql`(${threads.quoteAmountCents} is not null and (${threads.quoteAmountFrom} is distinct from 'owner' or ${threads.quoteOutcome} = 'won') and ${inWindow(pricedAt)})`;
+  const [quoteRow] = await db()
+    .select({
+      requests: sql<number>`count(*) filter (where ${inWindow(requestAtSql())})::int`,
+      quotedCount: sql<number>`count(*) filter (where ${priced})::int`,
+      quotedCents: sql<number>`coalesce(sum(${threads.quoteAmountCents}) filter (where ${priced}), 0)::bigint`,
+    })
+    .from(threads)
+    .innerJoin(mailboxes, eq(mailboxes.id, threads.mailboxId))
+    .where(and(eq(mailboxes.workspaceId, workspaceId), quoteThreadSql()));
+  // Decided quotes: exactly `closeRateBetween`'s rows (any thread with an outcome).
+  const decided = await db()
+    .select({
+      outcome: threads.quoteOutcome,
+      n: sql<number>`count(*)::int`,
+      cents: sql<number>`coalesce(sum(${threads.quoteAmountCents}), 0)::bigint`,
+    })
+    .from(threads)
+    .innerJoin(mailboxes, eq(mailboxes.id, threads.mailboxId))
+    .where(
+      and(
+        eq(mailboxes.workspaceId, workspaceId),
+        isNotNull(threads.quoteOutcome),
+        inWindow(sql`${threads.quoteOutcomeAt}`),
+      ),
+    )
+    .groupBy(threads.quoteOutcome);
+  const n = (o: QuoteOutcome) => Number(decided.find((r) => r.outcome === o)?.n ?? 0);
+  return {
+    requests: Number(quoteRow?.requests ?? 0),
+    quotedCount: Number(quoteRow?.quotedCount ?? 0),
+    quotedCents: Number(quoteRow?.quotedCents ?? 0),
+    wonCount: n("won"),
+    wonCents: Number(decided.find((r) => r.outcome === "won")?.cents ?? 0),
     // "No answer" counts as decided: a quote nobody answered wasn't won.
-    winRatePct: closeRate({
-      won: won.length,
-      lost: recent.filter((q) => q.stage === "lost").length,
-      noAnswer: recent.filter((q) => q.stage === "no_answer").length,
-    }),
+    winRatePct: closeRate({ won: n("won"), lost: n("lost"), noAnswer: n("no_answer") }),
   };
-  return { quotes, totals, quietDays: days };
 }
 
 async function ownedThread(workspaceId: string, threadId: string) {
@@ -218,6 +314,7 @@ async function ownedThread(workspaceId: string, threadId: string) {
       id: threads.id,
       outcome: threads.quoteOutcome,
       category: threads.category,
+      amountCents: threads.quoteAmountCents,
       workspace: workspaces,
     })
     .from(threads)
@@ -243,7 +340,15 @@ export async function setQuoteOutcome(
   const t = await ownedThread(workspaceId, threadId);
   if (!t) return false;
   if (!jobsAllowed(t.workspace, now)) throw new ReadOnlyError(effectiveStatus(t.workspace, now));
-  const typed = amountCents !== undefined && amountCents !== null;
+  // Check 11 P7: only Won takes an amount ("What you'll charge"); with Lost or No answer
+  // (or a reopen) a typed figure is ignored, so it never shows as a price.
+  // The field is prefilled with the amount we found: sent back unchanged, it isn't typed (it
+  // stays the reply's price, in price memory and correctable).
+  const typed =
+    outcome === "won" &&
+    amountCents !== undefined &&
+    amountCents !== null &&
+    amountCents !== t.amountCents;
   // One transaction, so price memory never sees a typed amount without its mark.
   await db().transaction(async (tx) => {
     await tx
@@ -254,7 +359,15 @@ export async function setQuoteOutcome(
         quoteOutcomeAt: outcome ? now : null,
         // Ideas C5: a new mark starts without a reason (asked again after Mark lost).
         quoteLostReason: null,
-        ...(typed ? { quoteAmountCents: amountCents } : {}),
+        // Check 11 P3: a typed amount is the owner's and is never read over from a reply.
+        ...(typed
+          ? {
+              quoteAmountCents: amountCents,
+              quoteAmountNote: null,
+              quoteAmountFrom: "owner" as const,
+              quoteAmountAt: now,
+            }
+          : {}),
       })
       .where(eq(threads.id, threadId));
     await tx.insert(activityLog).values({
@@ -281,6 +394,46 @@ export async function setQuoteOutcome(
     }
   }
   return true;
+}
+
+/**
+ * Check 11 P7: "Change amount" on a won quote. Scoped to the owner's workspace, refused for
+ * read-only accounts (ReadOnlyError), and only while the quote is won. The amount is the
+ * owner's (never read over from a reply, never in price memory); the activity row says an
+ * amount was typed, never which.
+ */
+export async function setQuoteAmount(
+  workspaceId: string,
+  threadId: string,
+  amountCents: number,
+  now: Date = new Date(),
+): Promise<"ok" | "not_won" | "not_found"> {
+  const t = await ownedThread(workspaceId, threadId);
+  if (!t) return "not_found";
+  if (!jobsAllowed(t.workspace, now)) throw new ReadOnlyError(effectiveStatus(t.workspace, now));
+  const changed = await db().transaction(async (tx) => {
+    const rows = await tx
+      .update(threads)
+      .set({
+        quoteAmountCents: amountCents,
+        quoteAmountNote: null,
+        quoteAmountFrom: "owner",
+        quoteAmountAt: now,
+      })
+      .where(and(eq(threads.id, threadId), eq(threads.quoteOutcome, "won")))
+      .returning({ id: threads.id });
+    if (rows.length) {
+      await tx.insert(activityLog).values({
+        workspaceId,
+        actor: "owner",
+        action: "quote_amount_changed",
+        threadId,
+        detail: { amountTyped: true },
+      });
+    }
+    return rows.length > 0;
+  });
+  return changed ? "ok" : "not_won";
 }
 
 /**
@@ -410,6 +563,7 @@ export async function guessNoAnswers(
         threadId: threads.id,
         workspace: workspaces,
         source: threads.quoteOutcomeSource,
+        amountCents: threads.quoteAmountCents,
         lastIn,
         quietFrom,
         sentNudges,
@@ -428,6 +582,9 @@ export async function guessNoAnswers(
           sql`${threads.quoteOutcomeSource} is distinct from 'owner'`,
           sql`${lastIn} is not null`,
           sql`${ballInTheirCourt}`,
+          // Check 11 P6: only a priced quote — an amount, or an owner email with a "$" figure
+          // in it (`ownerQuotedCents` decides below).
+          sql`(${threads.quoteAmountCents} is not null or exists (select 1 from messages pm where pm.thread_id = ${threads.id} and pm.direction = 'out' and ${notDraftSql("pm")} and pm.body_text like '%$%'))`,
           // Pre-filter on the two bars of `guessNoAnswer` (which still decides below).
           sql`(${quietFrom} <= ${ago(NO_ANSWER_WITHOUT_NUDGES_DAYS)}::timestamptz or (${quietFrom} <= ${ago(NO_ANSWER_AFTER_NUDGES_DAYS)}::timestamptz and ${sentNudges} >= 2))`,
         ),
@@ -435,6 +592,10 @@ export async function guessNoAnswers(
       .orderBy(threads.id)
       .limit(pageSize);
 
+    const pricedByText = await ownerQuotedCents(
+      rows.filter((r) => r.amountCents == null).map((r) => r.threadId),
+      () => null,
+    );
     for (const r of rows) {
       if (!jobsAllowed(r.workspace, now) || !canAutoSet(null, r.source)) continue;
       // The quiet's start stands in for the owner's last email; the SQL already checked the
@@ -448,6 +609,7 @@ export async function guessNoAnswers(
             lastIn && lastOutboundAt && lastIn >= lastOutboundAt ? new Date(0) : lastIn,
           lastOutboundAt,
           sentNudges: nudges,
+          priced: r.amountCents != null || pricedByText.has(r.threadId),
         },
         now,
       );
@@ -472,34 +634,79 @@ export async function guessNoAnswers(
 
 /**
  * Remember what each quote was for while the owner's reply text still exists
- * (bodies are purged after the retention window; the amount is kept). Never
- * overwrites an amount that's already set.
+ * (bodies are purged after the retention window; the amount is kept).
+ *
+ * Check 11 P3: an open quote (no outcome) whose amount came from a reply is read again, so
+ * "Sorry, the right price is $2,100" replaces the first $2,600 — on the card and in price
+ * memory. An amount the owner typed ('owner') and a decided quote are never touched.
  *
  * Plan #15: a captured amount on a thread whose kind of job is known also goes
- * into the owner's price memory (one row per thread, write-only from here). The
+ * into the owner's price memory (one row per thread, written from here). The
  * amount the owner types when marking a quote Won does not (it may be the final
- * bill, not the quote) — see `backfillPriceMemory`.
+ * bill, not the quote) — see `backfillPriceMemory`. Content-free: no amounts in logs.
  */
-export async function captureQuoteAmounts(workspaceId?: string): Promise<number> {
-  const open = await db()
-    .select({
-      id: threads.id,
-      workspaceId: mailboxes.workspaceId,
-      extracted: threads.extracted,
-      quoteOutcomeAt: threads.quoteOutcomeAt,
-    })
-    .from(threads)
-    .innerJoin(mailboxes, eq(mailboxes.id, threads.mailboxId))
-    .where(
-      and(
-        workspaceId ? eq(mailboxes.workspaceId, workspaceId) : undefined,
-        quoteThreadSql(),
-        isNull(threads.quoteAmountCents),
-      ),
-    )
-    // Newest first, so quotes with no figure in them can't crowd out today's.
-    .orderBy(desc(threads.lastMessageAt))
-    .limit(500);
+export async function captureQuoteAmounts(
+  workspaceId?: string,
+  opts: { pageSize?: number } = {},
+): Promise<number> {
+  const pageSize = opts.pageSize ?? 500;
+  let captured = 0;
+  // Check 11 P4: the daily run before the purge (no workspace) pages through EVERY match by
+  // id, so figure-less quotes can never crowd out an old one whose text is about to go. The
+  // Quotes screen's own call keeps one newest-first page (fast).
+  let after: string | null = null;
+  for (;;) {
+    const page = await capturePage(workspaceId, pageSize, after);
+    captured += await captureFrom(page);
+    if (workspaceId || page.length < pageSize) break;
+    after = page[page.length - 1]!.id;
+  }
+  await backfillPriceMemory(workspaceId);
+  return captured;
+}
+
+/** One page of quote threads whose amount may still be read from the owner's reply (exported for tests). */
+export async function capturePage(
+  workspaceId: string | undefined,
+  pageSize: number,
+  after: string | null,
+) {
+  return (
+    db()
+      .select({
+        id: threads.id,
+        workspaceId: mailboxes.workspaceId,
+        extracted: threads.extracted,
+        quoteOutcomeAt: threads.quoteOutcomeAt,
+        amountCents: threads.quoteAmountCents,
+        amountNote: threads.quoteAmountNote,
+        amountAt: threads.quoteAmountAt,
+      })
+      .from(threads)
+      .innerJoin(mailboxes, eq(mailboxes.id, threads.mailboxId))
+      .where(
+        and(
+          workspaceId ? eq(mailboxes.workspaceId, workspaceId) : undefined,
+          quoteThreadSql(),
+          or(
+            isNull(threads.quoteAmountCents),
+            // Check 11 P3: an open quote's amount read from a reply may be corrected.
+            and(eq(threads.quoteAmountFrom, "reply"), isNull(threads.quoteOutcome)),
+          ),
+          // Check 11 P4: only while an owner email still has its text — a purged thread (or
+          // one never answered) drops out of the pool for good.
+          sql`exists (select 1 from messages o where o.thread_id = ${threads.id} and o.direction = 'out' and ${notDraftSql("o")} and o.body_text is not null)`,
+          after ? sql`${threads.id} > ${after}::uuid` : undefined,
+        ),
+      )
+      // Per workspace: newest first, so quotes with no figure can't crowd out today's. The
+      // daily run pages by id instead (see captureQuoteAmounts).
+      .orderBy(...(workspaceId ? [desc(threads.lastMessageAt)] : [threads.id]))
+      .limit(pageSize)
+  );
+}
+
+async function captureFrom(open: Awaited<ReturnType<typeof capturePage>>): Promise<number> {
   let captured = 0;
   if (open.length) {
     const info = new Map(open.map((t) => [t.id, t]));
@@ -509,15 +716,46 @@ export async function captureQuoteAmounts(workspaceId?: string): Promise<number>
       open.map((t) => t.id),
       (id) => decidedAt(info.get(id)!),
     );
-    for (const [id, { cents, sentAt }] of byThread) {
+    for (const [id, { cents, sentAt, note }] of byThread) {
+      const t = info.get(id)!;
+      const fresh = t.amountCents == null;
+      if (
+        !fresh &&
+        t.amountCents === cents &&
+        t.amountNote === note &&
+        t.amountAt?.getTime() === sentAt.getTime()
+      )
+        continue;
       const set = await db()
         .update(threads)
-        .set({ quoteAmountCents: cents })
-        .where(and(eq(threads.id, id), isNull(threads.quoteAmountCents)))
+        .set({
+          quoteAmountCents: cents,
+          quoteAmountNote: note,
+          quoteAmountFrom: "reply",
+          quoteAmountAt: sentAt,
+        })
+        .where(
+          and(
+            eq(threads.id, id),
+            fresh
+              ? isNull(threads.quoteAmountCents)
+              : // Still open, still ours, still the amount we read: a typed amount or a mark
+                // made meanwhile wins.
+                and(
+                  eq(threads.quoteAmountFrom, "reply"),
+                  isNull(threads.quoteOutcome),
+                  eq(threads.quoteAmountCents, t.amountCents!),
+                ),
+          ),
+        )
         .returning({ id: threads.id });
       if (!set.length) continue;
-      captured++;
-      const t = info.get(id)!;
+      if (fresh || t.amountCents !== cents) captured++;
+      // Check 11 P2: price memory only learns clear prices, never our pick among several.
+      if (note === "picked") {
+        if (!fresh) await db().delete(priceHistory).where(eq(priceHistory.threadId, id));
+        continue;
+      }
       const service = serviceOf(t.extracted);
       if (!service) continue;
       await db()
@@ -529,10 +767,12 @@ export async function captureQuoteAmounts(workspaceId?: string): Promise<number>
           amountCents: cents,
           quotedAt: sentAt,
         })
-        .onConflictDoNothing();
+        .onConflictDoUpdate({
+          target: priceHistory.threadId,
+          set: { amountCents: cents, quotedAt: sentAt },
+        });
     }
   }
-  await backfillPriceMemory(workspaceId);
   return captured;
 }
 
@@ -569,6 +809,10 @@ async function backfillPriceMemory(workspaceId?: string): Promise<number> {
         workspaceId ? eq(mailboxes.workspaceId, workspaceId) : undefined,
         quoteThreadSql(),
         isNotNull(threads.quoteAmountCents),
+        // Check 11 P2: our pick among several figures never goes into price memory.
+        sql`${threads.quoteAmountNote} is distinct from 'picked'`,
+        // Check 11 P3: an amount the owner typed never goes in either.
+        sql`${threads.quoteAmountFrom} is distinct from 'owner'`,
         sql`coalesce(${service}, '') <> ''`,
         sql`not exists (select 1 from price_history ph where ph.thread_id = ${threads.id})`,
         // Scoped by workspace so activity_log's (workspace_id, created_at) index applies —

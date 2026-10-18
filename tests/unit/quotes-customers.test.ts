@@ -3,12 +3,21 @@ import { and, eq } from "drizzle-orm";
 import { beforeEach, describe, expect, it } from "vitest";
 import { setModelTransportForTests } from "@/ai/client";
 import type { Database } from "@/db";
-import { activityLog, drafts, mailboxes, messages, threads, workspaces } from "@/db/schema";
+import {
+  activityLog,
+  drafts,
+  mailboxes,
+  messages,
+  priceHistory,
+  threads,
+  workspaces,
+} from "@/db/schema";
 import { MailboxAuthError } from "@/mailbox/connector";
 import { ensureUserAndWorkspace } from "@/server/accounts";
 import { classifyPending } from "@/server/classification";
 import { threadsToFollowUp } from "@/server/followups";
 import { afterClassified } from "@/server/auto-outcomes";
+import { closeRateBetween } from "@/server/activity";
 import { flagPendingNudge } from "@/server/drafts";
 import { customerByKey, customerDetail, listCustomers } from "@/server/customers";
 import { ReadOnlyError } from "@/server/lifecycle";
@@ -17,6 +26,7 @@ import {
   amountFromOwnerText,
   canAutoSet,
   closeRate,
+  decidedLabel,
   formatCents,
   guessNoAnswer,
   isQuoteThread,
@@ -26,14 +36,19 @@ import {
   QUOTE_GUESS_FLAG,
   quoteAccepted,
   quoteStage,
+  readOwnerAmount,
+  stageLabel,
 } from "@/server/quote-rules";
 import {
   autoSetQuoteOutcome,
   captureQuoteAmounts,
+  capturePage,
+  setQuoteAmount,
   guessNoAnswers,
   listQuotes,
   setQuoteOutcome,
 } from "@/server/quotes";
+import { quoteThreadSql } from "@/server/thread-sql";
 import { createTestDb } from "../support/db";
 import { classification, fakeTransport } from "../support/fake-model";
 import { FakeWriter } from "../support/fake-writer";
@@ -47,6 +62,7 @@ describe("quote rules", () => {
     outcome: null,
     lastInboundAt: daysAgo(5),
     lastOutboundAt: null,
+    priced: true,
     ...o,
   });
   it("works out where each quote stands", () => {
@@ -65,11 +81,37 @@ describe("quote rules", () => {
     expect(quoteStage(f({ outcome: "maybe" }), NOW, 3)).toBe("waiting_on_you");
   });
 
+  it("Check 11 P6: no price given → 'Replied, no price yet', which never goes quiet", () => {
+    const unpriced = (o: Partial<Parameters<typeof quoteStage>[0]>) => f({ priced: false, ...o });
+    expect(quoteStage(unpriced({ lastOutboundAt: daysAgo(1) }), NOW, 3)).toBe("replied");
+    expect(
+      quoteStage(unpriced({ lastOutboundAt: daysAgo(30), lastInboundAt: daysAgo(31) }), NOW, 3),
+    ).toBe("replied");
+    // The customer wrote last, or it's decided: the price doesn't matter.
+    expect(quoteStage(unpriced({}), NOW, 3)).toBe("waiting_on_you");
+    expect(
+      quoteStage(unpriced({ lastOutboundAt: daysAgo(4), lastInboundAt: daysAgo(1) }), NOW, 3),
+    ).toBe("waiting_on_you");
+    expect(quoteStage(unpriced({ outcome: "won" }), NOW, 3)).toBe("won");
+    // Priced: Quoted, then Gone quiet.
+    expect(quoteStage(f({ lastOutboundAt: daysAgo(1) }), NOW, 3)).toBe("talking");
+    expect(quoteStage(f({ lastOutboundAt: daysAgo(4) }), NOW, 3)).toBe("quiet");
+    expect(stageLabel.replied).toBe("Replied, no price yet");
+    // Never a no-answer guess without a price.
+    expect(
+      guessNoAnswer(
+        { lastInboundAt: daysAgo(30), lastOutboundAt: daysAgo(25), sentNudges: 2, priced: false },
+        NOW,
+      ),
+    ).toBeNull();
+  });
+
   it("guesses no answer a week after two nudges, or after three quiet weeks", () => {
     const q = (outAgo: number, sentNudges: number, inAgo = outAgo + 2) => ({
       lastInboundAt: daysAgo(inAgo),
       lastOutboundAt: daysAgo(outAgo),
       sentNudges,
+      priced: true,
     });
     expect(guessNoAnswer(q(7, 2), NOW)).toBe("two_nudges");
     expect(guessNoAnswer(q(6, 2), NOW)).toBeNull();
@@ -81,11 +123,17 @@ describe("quote rules", () => {
     expect(guessNoAnswer(q(30, 2, 1), NOW)).toBeNull();
     // The customer never wrote → nobody to have answered.
     expect(
-      guessNoAnswer({ lastInboundAt: null, lastOutboundAt: daysAgo(30), sentNudges: 2 }, NOW),
+      guessNoAnswer(
+        { lastInboundAt: null, lastOutboundAt: daysAgo(30), sentNudges: 2, priced: true },
+        NOW,
+      ),
     ).toBeNull();
     // The owner never wrote → no quote was given.
     expect(
-      guessNoAnswer({ lastInboundAt: daysAgo(30), lastOutboundAt: null, sentNudges: 0 }, NOW),
+      guessNoAnswer(
+        { lastInboundAt: daysAgo(30), lastOutboundAt: null, sentNudges: 0, priced: true },
+        NOW,
+      ),
     ).toBeNull();
   });
 
@@ -106,6 +154,65 @@ describe("quote rules", () => {
     expect(amountFromOwnerText("It's $2,400 incl. permit, $150 deposit")).toBe(240_000);
     expect(amountFromOwnerText("about $3.5k all in")).toBe(350_000);
     expect(amountFromOwnerText("I'll come take a look")).toBeNull();
+    // Check 11 P2: the owner's own price, never the biggest number in the email.
+    const cases: [string, number | null][] = [
+      ["$900 for the faucet.\n\nJobs over $5,000 need a 30% deposit", 90_000],
+      ["$900 for the faucet.\n--\nMike's Plumbing\nJobs over $5,000 need a 30% deposit", 90_000],
+      [
+        "Hi Dana, $2,400 for the panel.\n\nFrom: Dana Ruiz <dana@x.com>\nSent: Monday, October 5, 2026 9:14 AM\nTo: Mike\nOur budget is $8,000",
+        240_000,
+      ],
+      [
+        "Hi Dana, $2,400 for the panel.\n\nOn Mon, Oct 5, 2026 at 9:14 AM Dana Ruiz <\ndana@x.com> wrote:\nOur budget is $8,000",
+        240_000,
+      ],
+      ["Normally $5,000 but I can do $4,200", 420_000],
+      ["The right price is $2,100, not $2,600", 210_000],
+      ["I charge $95 per hour", null],
+      ["$125/hr with a $75 trip charge", null],
+      ["Option A $650, Option B $3,900", null],
+      ["$600 installed, $10,000 workmanship guarantee", 60_000],
+      ["You'd save $2,000. Repair is $450.", 45_000],
+      ["The panel costs me $1,800 from the supply house; my price installed is $1,500", 150_000],
+      ["$ 3 200 for the deck boards", null],
+      ["About $1,2k", null],
+      ["$4,800 total, with a $500 deposit to book", 480_000],
+      ["$12k for the addition", 1_200_000],
+      ["$4,000 plus $250 tax, $4,250 total", 425_000],
+      ["$1,450 for the vanity.\n\nSent from my iPhone\n\n> Our budget is $3,000", 145_000],
+      // Check 39 P3: rebates, loans and monthly payments are never the price.
+      [
+        "$21,400 installed. After the $8,500 Mass Save rebate you'd be at $12,900, and the HEAT Loan covers up to $25,000 at 0%.",
+        2_140_000,
+      ],
+      [
+        "Single-zone mini-split $6,200 installed. You may get a $2,650 per ton rebate, up to $8,500 for the whole home.",
+        620_000,
+      ],
+      ["3-ton heat pump $14,950. Basic rebate is $250 per ton.", 1_495_000],
+      [
+        "Boiler replacement $9,800. With the 0% HEAT Loan up to $25,000 you'd pay about $117 a month.",
+        980_000,
+      ],
+      ["$219 a year, or $19 a month", 21_900],
+      [
+        "$7,450 for the AC. Income-eligible homes can get up to $16,000 through Mass Save.",
+        745_000,
+      ],
+      ["Up to $25,000 at 0%.", null],
+    ];
+    const wrong = cases.filter(([text, want]) => amountFromOwnerText(text) !== want);
+    expect(wrong.map(([t, w]) => [t, w, amountFromOwnerText(t)])).toEqual([]);
+    // How sure: a marked total or a lone figure is 'total'; the last of several is 'picked'.
+    expect(readOwnerAmount("$4,000 plus $250 tax, $4,250 total")).toEqual({
+      cents: 425_000,
+      note: "total",
+    });
+    expect(readOwnerAmount("That's $1,200.")).toEqual({ cents: 120_000, note: "total" });
+    expect(readOwnerAmount("Kitchen $3,000, bath $1,800")).toEqual({
+      cents: 180_000,
+      note: "picked",
+    });
     expect(formatCents(145_000)).toBe("$1,450");
     expect(formatCents(145_050)).toBe("$1,450.50");
     expect(parseDollars("$1,450")).toBe(145_000);
@@ -345,6 +452,265 @@ describe("quote tracker", () => {
     expect((await listQuotes(workspaceId, NOW)).quotes[0]!.stage).toBe("talking");
   });
 
+  it("price memory only learns clear prices: never a signature figure or our pick (Check 11 P2)", async () => {
+    const sig = await convo({
+      from: "dana@x.com",
+      name: "Dana",
+      category: "quote_request",
+      inAgo: 3,
+      outAgo: 2,
+      reply: "$900 for the faucet.\n\nMike's Plumbing\nJobs over $5,000 need a 30% deposit",
+    });
+    const two = await convo({
+      from: "kim@x.com",
+      name: "Kim",
+      category: "quote_request",
+      inAgo: 3,
+      outAgo: 2,
+      reply: "Kitchen $3,000, bath $1,800",
+    });
+    for (const id of [sig, two])
+      await database
+        .update(threads)
+        .set({ extracted: { service_requested: "faucet swap" } })
+        .where(eq(threads.id, id));
+    expect(await captureQuoteAmounts()).toBe(2);
+    const memory = await database.select().from(priceHistory);
+    expect(memory.map((r) => [r.threadId, r.amountCents])).toEqual([[sig, 90_000]]);
+    const by = Object.fromEntries(
+      (await listQuotes(workspaceId, NOW)).quotes.map((q) => [q.threadId, q]),
+    );
+    expect(by[sig]).toMatchObject({ amountCents: 90_000, amountUnsure: false });
+    expect(by[two]).toMatchObject({ amountCents: 180_000, amountUnsure: true });
+    // A second pass (and the backfill) still leaves the pick out.
+    await captureQuoteAmounts();
+    expect(await database.select().from(priceHistory)).toHaveLength(1);
+  });
+
+  describe("Check 11 P3: a corrected price replaces the first one", () => {
+    async function quoted(reply = "That panel is $2,600.") {
+      const t = await convo({
+        from: "dana@x.com",
+        name: "Dana",
+        category: "quote_request",
+        inAgo: 5,
+        outAgo: 4,
+        reply,
+      });
+      await database
+        .update(threads)
+        .set({ extracted: { service_requested: "panel upgrade" } })
+        .where(eq(threads.id, t));
+      return t;
+    }
+    const ownerWrites = (threadId: string, ago: number, bodyText: string) =>
+      database.insert(messages).values({
+        threadId,
+        mailboxId,
+        gmailMessageId: `fix${++g}`,
+        direction: "out",
+        fromAddress: "owner@shop.com",
+        bodyText,
+        sentAt: daysAgo(ago),
+      });
+    const row = async (id: string) =>
+      (await database.select().from(threads).where(eq(threads.id, id)))[0]!;
+    const memory = async (id: string) =>
+      (await database.select().from(priceHistory).where(eq(priceHistory.threadId, id)))[0];
+
+    it("on an open quote the owner's latest price wins, and price memory follows", async () => {
+      const t = await quoted();
+      await captureQuoteAmounts(workspaceId);
+      expect(await row(t)).toMatchObject({
+        quoteAmountCents: 260_000,
+        quoteAmountFrom: "reply",
+        quoteAmountAt: daysAgo(4),
+      });
+      expect((await memory(t))!.amountCents).toBe(260_000);
+
+      await ownerWrites(t, 3, "Sorry, I got that wrong. The right price is $2,100.");
+      expect((await listQuotes(workspaceId, NOW)).quotes[0]!.amountCents).toBe(210_000);
+      expect(await memory(t)).toMatchObject({ amountCents: 210_000, quotedAt: daysAgo(3) });
+      // A later note with no figure changes nothing; a second run is a no-op.
+      await ownerWrites(t, 2, "See you Tuesday.");
+      expect(await captureQuoteAmounts(workspaceId)).toBe(0);
+      expect((await row(t)).quoteAmountCents).toBe(210_000);
+    });
+
+    it("an amount the owner typed is never replaced", async () => {
+      const t = await quoted();
+      await captureQuoteAmounts(workspaceId);
+      await setQuoteOutcome(workspaceId, t, "won", 250_000, NOW);
+      await setQuoteOutcome(workspaceId, t, null, undefined, NOW); // reopened: still theirs
+      await ownerWrites(t, 1, "The right price is $2,100.");
+      await captureQuoteAmounts(workspaceId);
+      expect(await row(t)).toMatchObject({ quoteAmountCents: 250_000, quoteAmountFrom: "owner" });
+    });
+
+    it("a won quote keeps its amount when a later invoice email has a bigger figure", async () => {
+      const t = await quoted();
+      await captureQuoteAmounts(workspaceId);
+      await setQuoteOutcome(workspaceId, t, "won", undefined, daysAgo(2));
+      await ownerWrites(t, 1, "Invoice attached: $3,400 total with the extra outlets.");
+      await captureQuoteAmounts(workspaceId);
+      expect((await row(t)).quoteAmountCents).toBe(260_000);
+      expect((await memory(t))!.amountCents).toBe(260_000);
+    });
+  });
+
+  describe("Check 11 P4: the daily capture reaches every quote before its text is purged", () => {
+    it("an old priced quote is captured behind 500 newer figure-less ones, once", async () => {
+      const old = await convo({
+        from: "dana@x.com",
+        name: "Dana",
+        category: "quote_request",
+        inAgo: 28,
+        outAgo: 27,
+        reply: "That's $6,400 for the repipe.",
+      });
+      const many = await database
+        .insert(threads)
+        .values(
+          Array.from({ length: 500 }, (_, i) => ({
+            mailboxId,
+            gmailThreadId: `bulk${i}`,
+            category: "quote_request",
+            lastMessageAt: daysAgo(1),
+          })),
+        )
+        .returning({ id: threads.id });
+      await database.insert(messages).values(
+        many.map((t, i) => ({
+          threadId: t.id,
+          mailboxId,
+          gmailMessageId: `bulk${i}-out`,
+          direction: "out" as const,
+          fromAddress: "owner@shop.com",
+          bodyText: "I'll come take a look.",
+          sentAt: daysAgo(1),
+        })),
+      );
+      expect(await captureQuoteAmounts()).toBe(1);
+      expect((await database.select().from(threads).where(eq(threads.id, old)))[0]).toMatchObject({
+        quoteAmountCents: 640_000,
+      });
+      expect(await captureQuoteAmounts()).toBe(0);
+    });
+
+    it("a purged thread with no figure drops out of the pool", async () => {
+      const t = await convo({
+        from: "dana@x.com",
+        name: "Dana",
+        category: "quote_request",
+        inAgo: 40,
+        outAgo: 39,
+        reply: "I'll come take a look.",
+      });
+      expect((await capturePage(undefined, 500, null)).map((r) => r.id)).toEqual([t]);
+      await database.update(messages).set({ bodyText: null }).where(eq(messages.threadId, t));
+      expect(await capturePage(undefined, 500, null)).toEqual([]);
+      expect(await capturePage(workspaceId, 500, null)).toEqual([]);
+    });
+  });
+
+  it("Check 11 P5: the 30-day totals count each thing by the day it happened", async () => {
+    // Asked for 40 days ago, priced 39 days ago, won today: counts in Won (not in Asked for).
+    const old = await convo({
+      from: "old@x.com",
+      name: "Old",
+      category: "quote_request",
+      inAgo: 40,
+      outAgo: 39,
+      reply: "That's $2,100.",
+    });
+    // Priced, then the customer answered: still priced.
+    const haggle = await convo({
+      from: "hag@x.com",
+      name: "Hag",
+      category: "quote_request",
+      inAgo: 6,
+      outAgo: 5,
+      reply: "That's $3,200.",
+    });
+    await database.insert(messages).values({
+      threadId: haggle,
+      mailboxId,
+      gmailMessageId: `hag${++g}`,
+      direction: "in",
+      fromAddress: "hag@x.com",
+      bodyText: "Can you do $2,800?",
+      sentAt: daysAgo(4),
+    });
+    // A site visit, no price: asked for, not priced.
+    await convo({
+      from: "visit@x.com",
+      name: "Visit",
+      category: "quote_request",
+      inAgo: 3,
+      outAgo: 2,
+      reply: "I can come take a look Tuesday at 10.",
+    });
+    // Lost with an amount typed: never priced.
+    const lost = await convo({
+      from: "lost@x.com",
+      name: "Lost",
+      category: "quote_request",
+      inAgo: 8,
+      outAgo: 7,
+      reply: "Sure, I'll think about it.",
+    });
+    await setQuoteOutcome(workspaceId, old, "won", undefined, NOW);
+    await setQuoteOutcome(workspaceId, lost, "lost", 50_000, NOW);
+    const { totals } = await listQuotes(workspaceId, NOW);
+    expect(totals).toMatchObject({
+      requests: 3,
+      quotedCount: 1,
+      quotedCents: 320_000,
+      wonCount: 1,
+      wonCents: 210_000,
+      winRatePct: 50,
+    });
+    const activity = await closeRateBetween(workspaceId, new Date(NOW.getTime() - 30 * DAY), null);
+    expect(activity).toMatchObject({ won: totals.wonCount, ratePct: totals.winRatePct });
+  });
+
+  describe("Check 11 P6: a site visit is not a quote", () => {
+    it("a reply with no price reads 'Replied, no price yet' and is never guessed no answer", async () => {
+      const visit = await convo({
+        from: "v@x.com",
+        name: "Visit",
+        category: "quote_request",
+        inAgo: 23,
+        outAgo: 22,
+        reply: "I can come take a look Tuesday at 10.",
+      });
+      const priced = await convo({
+        from: "p@x.com",
+        name: "Priced",
+        category: "quote_request",
+        inAgo: 23,
+        outAgo: 22,
+        reply: "That's $1,800 for the job.",
+      });
+      expect(await guessNoAnswers(NOW)).toBe(1);
+      const by = Object.fromEntries(
+        (await listQuotes(workspaceId, NOW)).quotes.map((q) => [q.threadId, q]),
+      );
+      expect(by[visit]).toMatchObject({ stage: "replied", outcomeGuessed: false });
+      expect(by[priced]).toMatchObject({ stage: "no_answer", outcomeGuessed: true });
+      expect((await listQuotes(workspaceId, NOW)).totals.winRatePct).toBe(0);
+    });
+
+    it("'I called them' with no price gives 'Replied, no price yet'", async () => {
+      const t = await convo({ from: "c@x.com", name: "Call", category: "quote_request", inAgo: 5 });
+      await database
+        .update(threads)
+        .set({ handledOfflineAt: daysAgo(4) })
+        .where(eq(threads.id, t));
+      expect((await listQuotes(workspaceId, NOW)).quotes[0]).toMatchObject({ stage: "replied" });
+    });
+  });
+
   it("an unsent Gmail draft is neither the owner's answer nor a price (stage, amount)", async () => {
     const t = await convo({
       from: "dana@x.com",
@@ -384,14 +750,16 @@ describe("quote tracker", () => {
       category: "quote_request",
       inAgo: 10,
       outAgo: 9,
+      reply: "$800 for the job.",
     });
-    // Answered 25 days ago, never heard back: listQuotes guesses no answer.
+    // Priced 25 days ago, never heard back: listQuotes guesses no answer.
     const quiet = await convo({
       from: "kim@z.com",
       name: "Kim",
       category: "quote_request",
       inAgo: 26,
       outAgo: 25,
+      reply: "That's $1,900.",
     });
     await setQuoteOutcome(workspaceId, won, "won", undefined, NOW);
     const { quotes, totals } = await listQuotes(workspaceId, NOW);
@@ -418,6 +786,78 @@ describe("quote tracker", () => {
       .from(activityLog)
       .where(eq(activityLog.action, "quote_marked"));
     expect(log.map((l) => l.detail)).toEqual([{ outcome: "no_answer" }, { outcome: null }]);
+  });
+
+  describe("Check 11 P7: only Won takes an amount, and the owner can fix it after", () => {
+    it("an amount sent with Lost (or No answer) is not stored", async () => {
+      const t = await convo({ from: "d@x.com", name: "D", category: "quote_request", inAgo: 2 });
+      await setQuoteOutcome(workspaceId, t, "lost", 50_000, NOW);
+      await setQuoteOutcome(workspaceId, t, "no_answer", 60_000, NOW);
+      const [row] = await database.select().from(threads).where(eq(threads.id, t));
+      expect(row).toMatchObject({ quoteOutcome: "no_answer", quoteAmountCents: null });
+      const log = await database
+        .select()
+        .from(activityLog)
+        .where(eq(activityLog.action, "quote_marked"));
+      expect(log.map((l) => l.detail)).toEqual([{ outcome: "lost" }, { outcome: "no_answer" }]);
+    });
+
+    it("Change amount on a won quote: saved as the owner's, logged without the figure", async () => {
+      const t = await convo({
+        from: "d@x.com",
+        name: "D",
+        category: "quote_request",
+        inAgo: 3,
+        outAgo: 2,
+        reply: "That's $1,200.",
+      });
+      await captureQuoteAmounts(workspaceId);
+      expect(await setQuoteAmount(workspaceId, t, 135_000, NOW)).toBe("not_won");
+      // "Save as won" with the prefilled amount unchanged: still the reply's price.
+      await setQuoteOutcome(workspaceId, t, "won", 120_000, NOW);
+      expect((await database.select().from(threads).where(eq(threads.id, t)))[0]).toMatchObject({
+        quoteAmountCents: 120_000,
+        quoteAmountFrom: "reply",
+      });
+      expect(await setQuoteAmount(workspaceId, t, 135_000, NOW)).toBe("ok");
+      const [row] = await database.select().from(threads).where(eq(threads.id, t));
+      expect(row).toMatchObject({ quoteAmountCents: 135_000, quoteAmountFrom: "owner" });
+      const [log] = await database
+        .select()
+        .from(activityLog)
+        .where(eq(activityLog.action, "quote_amount_changed"));
+      expect(log!.detail).toEqual({ amountTyped: true });
+      expect(JSON.stringify(log)).not.toContain("1350");
+      // Price memory keeps the price from the reply.
+      const memory = await database.select().from(priceHistory);
+      expect(memory.every((m) => m.amountCents !== 135_000)).toBe(true);
+    });
+
+    it("Change amount is scoped to the workspace and refused when read-only", async () => {
+      const t = await convo({ from: "d@x.com", name: "D", category: "quote_request", inAgo: 2 });
+      await setQuoteOutcome(workspaceId, t, "won", 100_000, NOW);
+      const { workspace: other } = await ensureUserAndWorkspace({ email: "other@shop.com" });
+      expect(await setQuoteAmount(other.id, t, 1, NOW)).toBe("not_found");
+      await database
+        .update(workspaces)
+        .set({ status: "evaluation_expired" })
+        .where(eq(workspaces.id, workspaceId));
+      await expect(setQuoteAmount(workspaceId, t, 2_000, NOW)).rejects.toBeInstanceOf(
+        ReadOnlyError,
+      );
+      const [row] = await database.select().from(threads).where(eq(threads.id, t));
+      expect(row!.quoteAmountCents).toBe(100_000);
+    });
+
+    it("a decided card says when: 'Won Oct 14' in the owner's zone", () => {
+      expect(decidedLabel("won", new Date("2026-10-14T15:00:00Z"), "America/New_York")).toBe(
+        "Won Oct 14",
+      );
+      expect(decidedLabel("lost", new Date("2026-10-12T02:00:00Z"), "America/New_York")).toBe(
+        "Lost Oct 11",
+      );
+      expect(decidedLabel("no_answer", null, "nowhere")).toBe("No answer");
+    });
   });
 
   it("read-only accounts can't mark quotes (amendment Q9)", async () => {
@@ -1028,6 +1468,102 @@ describe("win/loss auto-guess", () => {
         .map((t) => t.id)
         .sort(),
     ).toEqual([...due].sort());
+  });
+
+  describe("Check 11 P1: an open quote stays on Quotes however the next email is sorted", () => {
+    it.each(["scheduling", "customer_question"])(
+      "the customer's next email sorted as %s keeps it listed, counted and open",
+      async (category) => {
+        const t = await quoteGiven();
+        // "Could you do Thursday instead of Wednesday?"
+        await customerWrites(t, 1);
+        await classifyWith(classification({ category: category as "scheduling" }));
+        expect(await rowOf(t)).toMatchObject({ category, quoteOutcome: null });
+        const { quotes, totals } = await listQuotes(workspaceId, NOW);
+        expect(quotes.map((q) => q.threadId)).toEqual([t]);
+        expect(quotes[0]).toMatchObject({ stage: "waiting_on_you", amountCents: 240_000 });
+        expect(totals.requests).toBe(1);
+        expect((await listCustomers(workspaceId, NOW))[0]).toMatchObject({ openQuotes: 1 });
+      },
+    );
+
+    it("a thread re-sorted as noise is not listed", async () => {
+      const t = await quoteGiven();
+      await customerWrites(t, 1);
+      await classifyWith(classification({ category: "noise" }));
+      expect(await rowOf(t)).toMatchObject({ category: "noise" });
+      expect((await listQuotes(workspaceId, NOW)).quotes).toEqual([]);
+    });
+
+    it("a thread holding an email that tried to instruct us is not listed — unless the owner marked it", async () => {
+      const t = await quoteGiven({ quoteRequestedAt: daysAgo(5), extracted: { injection: true } });
+      expect((await listQuotes(workspaceId, NOW)).quotes).toEqual([]);
+      await setQuoteOutcome(workspaceId, t, "lost", undefined, NOW);
+      expect((await listQuotes(workspaceId, NOW)).quotes.map((q) => q.threadId)).toEqual([t]);
+    });
+
+    it("isQuoteThread and quoteThreadSql agree on every case", async () => {
+      const cases: {
+        category: string | null;
+        quoteOutcome: string | null;
+        quoteOutcomeSource: string | null;
+        quoteRequestedAt: Date | null;
+        extracted: Record<string, unknown> | null;
+      }[] = [];
+      for (const category of ["quote_request", "scheduling", "noise", null])
+        for (const [quoteOutcome, quoteOutcomeSource] of [
+          [null, null],
+          ["won", "auto"],
+          [null, "auto"],
+          ["lost", "owner"],
+          [null, "owner"],
+          ["won", null],
+        ] as const)
+          for (const quoteRequestedAt of [null, daysAgo(3)])
+            for (const extracted of [null, { injection: true }, { injection: false }])
+              cases.push({
+                category,
+                quoteOutcome,
+                quoteOutcomeSource,
+                quoteRequestedAt,
+                extracted,
+              });
+      const ids: string[] = [];
+      for (const c of cases) {
+        const [row] = await database
+          .insert(threads)
+          .values({
+            mailboxId,
+            gmailThreadId: `twin${++g}`,
+            ...c,
+            quoteOutcomeSource: c.quoteOutcomeSource as "owner" | "auto" | null,
+          })
+          .returning({ id: threads.id });
+        ids.push(row!.id);
+      }
+      const inSql = new Set(
+        (await database.select({ id: threads.id }).from(threads).where(quoteThreadSql())).map(
+          (r) => r.id,
+        ),
+      );
+      const disagree = cases.filter((c, i) => isQuoteThread(c) !== inSql.has(ids[i]!));
+      expect(disagree).toEqual([]);
+      // Spot checks of the rule itself.
+      const q = (c: Partial<(typeof cases)[number]>) =>
+        isQuoteThread({
+          category: null,
+          quoteOutcome: null,
+          quoteOutcomeSource: null,
+          quoteRequestedAt: null,
+          extracted: null,
+          ...c,
+        });
+      expect(q({ category: "scheduling", quoteRequestedAt: daysAgo(1) })).toBe(true);
+      expect(q({ category: "noise", quoteRequestedAt: daysAgo(1) })).toBe(false);
+      expect(q({ category: "quote_request", extracted: { injection: true } })).toBe(false);
+      expect(q({ category: "noise", quoteOutcome: "won", quoteOutcomeSource: "owner" })).toBe(true);
+      expect(q({ category: "noise", quoteOutcome: "won", quoteOutcomeSource: "auto" })).toBe(false);
+    });
   });
 
   describe("a nudge waiting in the queue when the quote is decided", () => {

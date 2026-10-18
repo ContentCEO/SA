@@ -79,7 +79,19 @@ export async function markAnsweredByPhone(
   const typed = other?.amountCents != null;
   await db()
     .update(threads)
-    .set({ handledOfflineAt: now, ...(typed ? { quoteAmountCents: other!.amountCents } : {}) })
+    .set({
+      handledOfflineAt: now,
+      // A typed price is the owner's (Check 11 P3): never replaced by a price read from mail,
+      // never in price memory, and it went out now.
+      ...(typed
+        ? {
+            quoteAmountCents: other!.amountCents,
+            quoteAmountFrom: "owner" as const,
+            quoteAmountNote: null,
+            quoteAmountAt: now,
+          }
+        : {}),
+    })
     .where(eq(threads.id, threadId));
   // Check 10 P1: the call answered it, so "Needs you" lets go too (Inbox, Queue, follow-ups).
   await clearNeedsOwnerNow(workspaceId, threadId, "phone");

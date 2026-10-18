@@ -83,15 +83,32 @@ test("quotes: stages, amounts, and one-tap Won", async ({ page, context }) => {
   await expect(sam).toContainText("Gone quiet");
   await expect(sam).toContainText("$1,200");
 
+  // Check 11 P7: only Won asks for a figure, prefilled with the one we found.
   await sam.getByText("Mark how it ended").click();
-  await sam.getByLabel("Job amount (optional)").fill("1350");
-  await sam.getByRole("button", { name: "Mark won" }).click();
+  await sam.getByText("Mark won", { exact: true }).click();
+  const charge = sam.getByLabel("What you'll charge (optional)");
+  await expect(charge).toHaveValue("1200");
+  await charge.fill("1350");
+  await sam.getByRole("button", { name: "Save as won" }).click();
   await expect(page.getByRole("status").filter({ hasText: "Marked won" })).toBeVisible();
   await expect(page.getByRole("article", { name: "Quote for Sam Lee" })).toHaveCount(0);
 
   await page.getByRole("link", { name: /^Won \(1\)/ }).click();
-  await expect(page.getByRole("article", { name: "Quote for Sam Lee" })).toContainText("$1,350");
+  const samWon = page.getByRole("article", { name: "Quote for Sam Lee" });
+  await expect(samWon).toContainText("$1,350");
+  await expect(samWon).toContainText(/Won [A-Z][a-z]{2} \d{1,2}/);
   await expect(page.getByRole("region", { name: "Last 30 days" })).toContainText("$1,350");
+
+  // …and fix it after, without reopening.
+  await samWon.getByText("Change amount").click();
+  await samWon.getByLabel("What you'll charge (optional)").fill("1400");
+  await samWon.getByRole("button", { name: "Save amount" }).click();
+  await expect(page.getByRole("status").filter({ hasText: "Amount saved." })).toBeVisible();
+  await expect(page.getByRole("article", { name: "Quote for Sam Lee" })).toContainText("$1,400");
+  const overflow = await page.evaluate(
+    () => document.documentElement.scrollWidth > document.documentElement.clientWidth,
+  );
+  expect(overflow).toBe(false);
 });
 
 test("quotes: no answer is our guess, one tap changes it, and Activity shows the close rate", async ({
@@ -121,7 +138,8 @@ test("quotes: no answer is our guess, one tap changes it, and Activity shows the
   await page.getByRole("link", { name: /^No answer \(1\)/ }).click();
   await expect(page).toHaveURL(/stage=no_answer/);
   const kim = page.getByRole("article", { name: "Quote for Kim Park" });
-  await expect(kim).toContainText("No answer (our guess)");
+  // Check 11 P7: a decided card says the day.
+  await expect(kim).toContainText(/No answer [A-Z][a-z]{2} \d{1,2} \(our guess\)/);
 
   // Our guess was wrong: one tap.
   await kim.getByRole("button", { name: "Mark won", exact: true }).click();
@@ -138,7 +156,7 @@ test("quotes: no answer is our guess, one tap changes it, and Activity shows the
   await page.getByRole("link", { name: /^Open \(1\)/ }).click();
   const lee = page.getByRole("article", { name: "Quote for Lee Chan" });
   await lee.getByText("Mark how it ended").click();
-  await lee.getByRole("button", { name: "No answer", exact: true }).click();
+  await lee.getByRole("button", { name: "Mark no answer", exact: true }).click();
   await expect(page.getByRole("status").filter({ hasText: "Marked no answer." })).toBeVisible();
 
   const overflow = await page.evaluate(
@@ -205,4 +223,63 @@ test("another owner's customer link is a 404", async ({ page, context }) => {
   await signInAs(context, b);
   const res = await page.goto(`/customers/${m!.id}`);
   expect(res?.status()).toBe(404);
+});
+
+test("quotes: every filter chip shows without swiping, and Quoted filters to priced quotes", async ({
+  page,
+  context,
+}) => {
+  const owner = await seedOwner({ mailbox: true, backfilled: true });
+  await quote(owner.mailboxId!, {
+    name: "Ana Diaz",
+    from: "ana@customer.com",
+    inAgo: 2,
+    outAgo: 1,
+    reply: "Hi Ana, the panel is $2,400.",
+    summary: "Ana wants a panel.",
+  });
+  await quote(owner.mailboxId!, {
+    name: "Bo Kim",
+    from: "bo@customer.com",
+    inAgo: 1,
+    summary: "Bo wants a fan.",
+  });
+  await signInAs(context, owner);
+  await page.goto("/quotes");
+
+  const nav = page.getByRole("navigation", { name: "Quote filter" });
+  const viewport = page.viewportSize()!;
+  for (const label of [
+    "Open",
+    "Waiting on you",
+    "Quoted",
+    "Gone quiet",
+    "Won",
+    "Lost",
+    "No answer",
+  ]) {
+    const chip = nav.getByRole("link", { name: new RegExp(`^${label} \\(`) });
+    const box = (await chip.boundingBox())!;
+    expect(box.x, label).toBeGreaterThanOrEqual(0);
+    expect(box.x + box.width, label).toBeLessThanOrEqual(viewport.width);
+    expect(box.height, label).toBeGreaterThanOrEqual(44);
+  }
+  await expect(page.getByText("All time", { exact: true })).toBeVisible();
+  await expect(page.getByText("Quoted: you sent a price.")).toBeVisible();
+  await expect(page.getByRole("article", { name: "Quote for Bo Kim" })).toContainText(
+    /Last email .+ ago/,
+  );
+  // Nothing priced or won in an account like this: no big "$0".
+  const totals = page.getByRole("region", { name: "Last 30 days" });
+  await expect(totals).toContainText("None yet");
+  await expect(totals).not.toContainText("$0");
+
+  await nav.getByRole("link", { name: /^Quoted \(1\)/ }).click();
+  await expect(page).toHaveURL(/stage=talking/);
+  await expect(page.getByRole("article", { name: "Quote for Ana Diaz" })).toContainText("Quoted");
+  await expect(page.getByRole("article", { name: "Quote for Bo Kim" })).toHaveCount(0);
+  const overflow = await page.evaluate(
+    () => document.documentElement.scrollWidth > document.documentElement.clientWidth,
+  );
+  expect(overflow).toBe(false);
 });

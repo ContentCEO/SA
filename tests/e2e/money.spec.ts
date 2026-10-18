@@ -2,7 +2,8 @@ import { randomUUID } from "node:crypto";
 import { expect, test } from "@playwright/test";
 import { eq } from "drizzle-orm";
 import * as schema from "../../src/db/schema";
-import { seedOwner, signInAs, testDb } from "./support";
+import { calls, registerScenario, routeGoogleConsent } from "./fakes/client";
+import { mailboxFor, newOwnerEmail, seedOwner, setWorkspace, signInAs, testDb } from "./support";
 
 const DAY = 86_400_000;
 const ago = (d: number) => new Date(Date.now() - d * DAY);
@@ -43,6 +44,8 @@ async function invoice(
       fromAddress: o.from,
       fromName: o.name,
       bodyText: "Got the invoice, thanks.",
+      // Stored as sync stores it today (no Reply-To), so drafting needn't ask Gmail.
+      replyToHeader: {},
       sentAt: ago(5),
     },
     {
@@ -55,6 +58,7 @@ async function invoice(
       sentAt: ago(3),
     },
   ]);
+  return t!.id;
 }
 
 test("money owed: from Quotes, mark paid, undo, and hide one that isn't owed", async ({
@@ -141,7 +145,7 @@ test("money owed: empty, and read-only accounts can look but not mark", async ({
   await signInAs(context, owner);
   await page.goto("/money");
   await expect(
-    page.getByText("Nothing owed that we can see. Invoices show up here when a customer email"),
+    page.getByText("No invoices found in your email yet. When you send one or a customer writes"),
   ).toBeVisible();
 
   await invoice(owner.mailboxId!, {
@@ -181,4 +185,109 @@ test("money owed: the invoice number and nudges line are 16px (Check 8 P9)", asy
     const px = await el.evaluate((e) => parseFloat(getComputedStyle(e).fontSize));
     expect(px).toBeGreaterThanOrEqual(16);
   }
+});
+
+test("money owed: no big $0 when nothing is found, and the total is labelled when it shows", async ({
+  page,
+  context,
+}) => {
+  const owner = await seedOwner({ mailbox: true, backfilled: true });
+  await signInAs(context, owner);
+  await page.goto("/money");
+  const box = page.getByRole("region", { name: "Owed to you" });
+  await expect(box).toContainText("No open invoices found");
+  await expect(box).toContainText(
+    "We look at invoice emails from the last two weeks of sorting and everything new.",
+  );
+  await expect(box).not.toContainText("$0");
+  await expect(page.getByText("$0", { exact: true })).toHaveCount(0);
+
+  await invoice(owner.mailboxId!, {
+    name: "Kim Park",
+    from: "kim@customer.com",
+    amount: 800,
+    dueDaysAgo: 4,
+  });
+  await page.goto("/money");
+  await expect(box).toContainText("$800");
+  await expect(box).toContainText("Counted from your email, not your books.");
+  const overflow = await page.evaluate(
+    () => document.documentElement.scrollWidth > document.documentElement.clientWidth,
+  );
+  expect(overflow).toBe(false);
+});
+
+test("money owed: 'See it' when a reply is waiting, 'Draft a reminder' drafts one and sends nothing", async ({
+  page,
+  context,
+  request,
+}) => {
+  test.setTimeout(120_000);
+  const email = newOwnerEmail();
+  const scenario = await registerScenario(request, email);
+  const owner = await seedOwner({ email });
+  await setWorkspace(owner.workspaceId, {
+    status: "active",
+    plan: "solo",
+    setupPaidVia: "stripe",
+    setupPaidAt: new Date(),
+    setupCallCompletedAt: new Date(),
+  });
+  await signInAs(context, owner);
+  await routeGoogleConsent(page, context);
+  await page.goto("/connect");
+  await page.getByRole("button", { name: "Connect Gmail" }).click();
+  await page.getByRole("link", { name: "Allow" }).click();
+  await expect(page).toHaveURL(/\/welcome\/profile$/);
+  const mailbox = (await mailboxFor(owner.workspaceId))!;
+
+  const linda = await invoice(mailbox.id, {
+    name: "Linda Park",
+    from: "linda@customer.com",
+    amount: 640,
+    dueDaysAgo: 6,
+  });
+  await testDb.insert(schema.drafts).values({
+    threadId: linda,
+    mailboxId: mailbox.id,
+    kind: "reply",
+    gmailDraftId: `gd-${randomUUID().slice(0, 8)}`,
+    toAddress: "linda@customer.com",
+    subject: "Re: Invoice",
+    body: "Yes, card works.",
+    originalBody: "Yes, card works.",
+    status: "pending",
+    reason: "Linda asked how to pay.",
+    promptVersion: "draft.v8",
+  });
+  await invoice(mailbox.id, {
+    name: "Sam Lee",
+    from: "sam@customer.com",
+    amount: 300,
+    dueDaysAgo: 2,
+  });
+
+  await page.goto("/money");
+  const lindaCard = page.getByRole("article", { name: "Linda Park" });
+  await expect(lindaCard).toContainText("A reply to Linda is waiting in your Queue.");
+  const seeIt = lindaCard.getByRole("link", { name: "See it" });
+  expect((await seeIt.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+  await expect(seeIt).toHaveAttribute("href", `/queue#t-${linda}`);
+  await expect(lindaCard.getByRole("button", { name: "Draft a reminder" })).toHaveCount(0);
+
+  const samCard = page.getByRole("article", { name: "Sam Lee" });
+  const remind = samCard.getByRole("button", { name: "Draft a reminder" });
+  expect((await remind.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+  await remind.click();
+  await expect(page).toHaveURL(/\/queue\?done=drafted/);
+  const pending = await testDb
+    .select({ kind: schema.drafts.kind, status: schema.drafts.status })
+    .from(schema.drafts)
+    .where(eq(schema.drafts.mailboxId, mailbox.id));
+  expect(pending.filter((d) => d.status === "pending")).toHaveLength(2);
+  expect(pending.some((d) => d.kind === "followup" && d.status === "pending")).toBe(true);
+  // Nothing went out: no send of any kind reached (fake) Gmail.
+  const seen = await calls(request, scenario.id);
+  expect(seen.filter((c) => /send/.test(c.route))).toEqual([]);
+  expect(seen.some((c) => c.route === "gmail.drafts.create")).toBe(true);
 });

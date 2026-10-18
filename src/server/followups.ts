@@ -7,6 +7,7 @@ import { FOLLOWUP_CATEGORIES, followupSettings, MAX_FOLLOWUPS } from "./drafts";
 import {
   answeredByPhoneSql,
   ballInTheirCourtSql,
+  billOwedByOwnerSql,
   lastInSql,
   lastOutSql,
   quietSinceSql,
@@ -86,8 +87,9 @@ export async function threadsToFollowUp(
         inArray(threads.category, [...FOLLOWUP_CATEGORIES]),
         // Check 11 P8: the owner said "Not a quote", so no "following up on my quote".
         sql`not (${threads.category} = 'quote_request' and not ${quoteNotDismissedSql()})`,
-        // Never chase a bill the owner owes (round 2, TW A2).
-        sql`(${threads.extracted}->>'bill_direction') is distinct from 'owed_by_business'`,
+        // Never chase a bill the owner owes (round 2, TW A2), even when the sorter couldn't
+        // tell which way it went but the sender is a supplier (Check 12 P4).
+        sql`not ${billOwedByOwnerSql()}`,
         sql`${lastIn} is not null`,
         sql`${ballInTheirCourtSql()}`,
         sql`${quietFrom} <= ${quietSince}::timestamptz`,
