@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { beforeEach, describe, expect, it } from "vitest";
 import type { Database } from "@/db";
-import { businessProfiles, messages, threads, workspaces } from "@/db/schema";
+import { businessProfiles, drafts, messages, threads, workspaces } from "@/db/schema";
 import type { OutgoingSms } from "@/lib/sms";
 import { ensureUserAndWorkspace } from "@/server/accounts";
 import { saveConnectedMailbox } from "@/server/mailboxes";
@@ -86,6 +86,7 @@ async function lead(o: {
     fromName: "Dana Ruiz",
     sentAt: o.classifiedAt,
   });
+  return t!;
 }
 
 describe("phone numbers and wording", () => {
@@ -150,8 +151,9 @@ describe("lead alerts", () => {
     await lead({ classifiedAt: later(1), category: "scheduling" }); // not alert-worthy
     await lead({ classifiedAt: later(1), last: "out" }); // owner already replied
     expect((await sendLeadAlerts(later(2), { send })).sent).toBe(1);
+    // Check 19 P1: the quote request has no reply drafted, so it isn't on the queue: Quotes.
     expect(texts[0]!.body).toBe(
-      "Squared Away: 2 new emails (1 quote request) need you. Open: https://app.example/queue",
+      "Squared Away: 2 new emails (1 quote request) need you. Open: https://app.example/quotes",
     );
     expect(texts[0]!.body).not.toMatch(/Dana|Elm/);
 
@@ -160,6 +162,26 @@ describe("lead alerts", () => {
     expect((await sendLeadAlerts(later(13), { send })).sent).toBe(1);
     expect(texts[1]!.body).toContain("1 new quote request needs you");
     expect((await sendLeadAlerts(later(30), { send })).sent).toBe(0); // nothing new
+  });
+
+  it("Check 19 P1: a quote request whose reply is drafted links to the queue", async () => {
+    await verify();
+    const t = await lead({ classifiedAt: later(1) });
+    await database.insert(drafts).values({
+      threadId: t.id,
+      mailboxId,
+      gmailDraftId: "d-1",
+      toAddress: "dana@customer.com",
+      subject: "Re: quote",
+      body: "Hi Dana",
+      originalBody: "Hi Dana",
+      reason: "r",
+      promptVersion: "draft.v8",
+    });
+    expect((await sendLeadAlerts(later(2), { send })).sent).toBe(1);
+    expect(texts[0]!.body).toBe(
+      "Squared Away: 1 new quote request needs you. Open: https://app.example/queue",
+    );
   });
 
   it("holds texts overnight and sends them in the morning", async () => {

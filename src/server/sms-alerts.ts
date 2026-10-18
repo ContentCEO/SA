@@ -5,6 +5,7 @@ import { db } from "@/db";
 import { activityLog, businessProfiles, mailboxes, threads, workspaces } from "@/db/schema";
 import { appUrl } from "@/lib/app-url";
 import { sendSms, type SmsSender } from "@/lib/sms";
+import { queueCardIds, queueMembership } from "./drafts";
 import { localParts } from "./snooze-rules";
 import { jobsAllowed } from "./lifecycle";
 import { hitLimit } from "./rate-limit";
@@ -179,6 +180,7 @@ export async function removeAlertPhone(workspaceId: string) {
 export async function freshLeads(workspaceId: string, cursor: Date | null, now: Date) {
   return db()
     .select({
+      threadId: threads.id,
       category: threads.category,
       needsOwner: threads.needsOwner,
       classifiedAt: threads.classifiedAt,
@@ -202,6 +204,21 @@ export async function freshLeads(workspaceId: string, cursor: Date | null, now: 
       ),
     )
     .orderBy(desc(threads.classifiedAt));
+}
+
+/**
+ * Check 19 P1: new quote requests (not needs-you) that have no card on the queue yet — no
+ * draft, because drafting was skipped (AI limit, a model failure) or hasn't run. Ids only.
+ */
+export async function quotesWithoutCard(
+  workspaceId: string,
+  fresh: { threadId: string; needsOwner: boolean; category: string | null }[],
+  now: Date,
+): Promise<string[]> {
+  const quotes = fresh.filter((t) => !t.needsOwner && t.category === "quote_request");
+  if (!quotes.length) return [];
+  const onQueue = queueCardIds(await queueMembership(workspaceId, now));
+  return quotes.map((t) => t.threadId).filter((id) => !onQueue.has(id));
 }
 
 export const leadCounts = (fresh: { needsOwner: boolean; category: string | null }[]) => ({
@@ -254,6 +271,11 @@ export async function sendLeadAlerts(
     const fresh = await freshLeads(w.id, p.smsAlertCursor, now);
     if (!fresh.length) continue;
 
+    const counts = leadCounts(fresh);
+    // Check 19 P1: the link lands where the lead is — Quotes when a quote request has no
+    // reply on the queue yet.
+    const noCard = await quotesWithoutCard(w.id, fresh, now);
+    const url = appUrl(noCard.length ? "/quotes" : "/queue");
     const newest = fresh[0]!.classifiedAt!;
     // Claim the slot first so two runs can't both text.
     const claimed = await db()
@@ -271,8 +293,7 @@ export async function sendLeadAlerts(
       .returning({ id: businessProfiles.workspaceId });
     if (!claimed.length) continue;
 
-    const counts = leadCounts(fresh);
-    const r = await send({ to: p.alertPhone!, body: leadAlertBody(counts, appUrl("/queue")) });
+    const r = await send({ to: p.alertPhone!, body: leadAlertBody(counts, url) });
     if (r === "not_configured") {
       // Give the slot back so nothing is lost once texting is set up.
       await db()

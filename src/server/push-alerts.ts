@@ -37,10 +37,13 @@ export function pushSummaryText(c: {
   replies: number;
   needsYou: number;
   atRisk?: number;
+  /** Check 19 P1: fresh quote requests with no card on the queue yet (no draft). */
+  newQuotes?: number;
   canSend?: boolean;
 }): string {
   const parts = [
     c.atRisk ? atRiskPushPart(c.atRisk) : null,
+    c.newQuotes ? `${c.newQuotes} new quote request${c.newQuotes === 1 ? "" : "s"}` : null,
     c.needsYou
       ? `${c.needsYou} email${c.needsYou === 1 ? "" : "s"} need${c.needsYou === 1 ? "s" : ""} you`
       : null,
@@ -49,6 +52,27 @@ export function pushSummaryText(c: {
       : null,
   ].filter(Boolean);
   return parts.length ? parts.join(" · ") : "Your queue is up to date.";
+}
+
+/**
+ * Check 19 P1: the fresh quote requests (ids only) a buzz may be about that have no queue card
+ * — no reply drafted yet — from 24 hours before this owner's push cursor. The phone names
+ * them and the tap opens Quotes.
+ */
+export async function newQuotesWithoutCard(
+  workspaceId: string,
+  onQueue: ReadonlySet<string>,
+  now: Date,
+): Promise<string[]> {
+  const [p] = await db()
+    .select({ cursor: businessProfiles.pushAlertCursor })
+    .from(businessProfiles)
+    .where(eq(businessProfiles.workspaceId, workspaceId));
+  const from = new Date((p?.cursor ?? now).getTime() - 24 * 60 * 60 * 1000);
+  const fresh = await freshLeads(workspaceId, from, now);
+  return fresh
+    .filter((t) => !t.needsOwner && t.category === "quote_request" && !onQueue.has(t.threadId))
+    .map((t) => t.threadId);
 }
 
 /**

@@ -115,6 +115,34 @@ describe("job wiring", () => {
   });
 });
 
+describe("Check 19 P1: new-lead alerts go after drafting", () => {
+  const src = readFileSync("src/jobs/functions.ts", "utf8");
+  const fn = (id: string) => {
+    const start = src.indexOf(`id: "${id}"`);
+    return src.slice(start, src.indexOf("inngest.createFunction(", start));
+  };
+
+  it("draft-mailbox's last step is the lead alerts", () => {
+    const body = fn("draft-mailbox");
+    const at = body.indexOf('step.run("lead-alerts", () => alertsForMailbox(mailboxId))');
+    expect(at).toBeGreaterThan(body.indexOf('step.run("first-drafts-ready"'));
+    expect(at).toBeGreaterThan(body.indexOf("createDraftForThread"));
+    // Nothing runs after it.
+    expect(body.slice(at + 1)).not.toMatch(/step\.(run|sendEvent)\(/);
+  });
+
+  it("classify-mailbox only raises emergencies before drafting, never the ordinary alerts", () => {
+    const body = fn("classify-mailbox");
+    expect(body).not.toContain("alertsForMailbox(");
+    expect(body).toContain("emergencyAlertsForMailbox(");
+    const helper = src.slice(
+      src.indexOf("async function emergencyAlertsForMailbox"),
+      src.indexOf("async function alertsForMailbox"),
+    );
+    expect(helper).not.toMatch(/sendLeadAlerts|sendPushAlerts/);
+  });
+});
+
 describe("the 15-minute workspace-lifecycle job", () => {
   const lifecycleBody = () => {
     const src = readFileSync("src/jobs/functions.ts", "utf8");

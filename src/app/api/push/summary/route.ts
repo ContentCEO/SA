@@ -8,7 +8,7 @@ import { emergencyAlertText } from "@/server/emergency-alert-rules";
 import { emergencySummary } from "@/server/emergency-alerts";
 import { leadsAtRisk } from "@/server/leads-at-risk";
 import { notificationUrl, queueDeepLink } from "@/server/leads-at-risk-rules";
-import { pushSummaryText } from "@/server/push-alerts";
+import { newQuotesWithoutCard, pushSummaryText } from "@/server/push-alerts";
 import { canSend } from "@/server/lifecycle";
 import { hitLimit } from "@/server/rate-limit";
 import { termsRequiredResponse } from "@/server/session";
@@ -58,15 +58,25 @@ export async function GET() {
   // Replies package (B5 part 2): right after an emergency push, the phone says so and the tap
   // opens that card (`/queue?t=<uuid>#t-<uuid>`, which sw.js allows) — still no name or words.
   const emergencyCard = emergency?.threadIds.find((id) => onQueue.has(id));
+  // Check 19 P1: a fresh quote request with no reply drafted yet isn't on the queue: name it
+  // (as a count) and, when nothing else has a card to open, send the tap to Quotes. A lead
+  // already counted as at risk isn't counted twice.
+  const atRiskIds = new Set(atRisk.map((l) => l.threadId));
+  const newQuotes = (await newQuotesWithoutCard(workspace.id, onQueue, now)).filter(
+    (id) => !atRiskIds.has(id),
+  ).length;
+  const leadUrl = notificationUrl({
+    atRisk: atRisk.map((l) => l.threadId),
+    needsYou: headerPicks(q.needsYou.map(toNeedsYouItem)).map((i) => i.threadId),
+    onQueue,
+  });
   const url = emergency
     ? emergencyCard
       ? queueDeepLink(emergencyCard)
       : "/queue"
-    : notificationUrl({
-        atRisk: atRisk.map((l) => l.threadId),
-        needsYou: headerPicks(q.needsYou.map(toNeedsYouItem)).map((i) => i.threadId),
-        onQueue,
-      });
+    : leadUrl === "/queue" && newQuotes > 0
+      ? "/quotes"
+      : leadUrl;
   return NextResponse.json(
     {
       title: "Squared Away",
@@ -76,6 +86,7 @@ export async function GET() {
             replies: counts.drafts,
             needsYou: counts.needsYou,
             atRisk: atRisk.length,
+            newQuotes,
             canSend: canSend(workspace, now),
           }),
       url,
