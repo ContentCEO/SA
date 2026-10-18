@@ -1,5 +1,6 @@
 import "server-only";
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
+import { DISPUTE_REASONS } from "@/ai/classify";
 import { db } from "@/db";
 import { activityLog, mailboxes, threads, workspaces } from "@/db/schema";
 import { effectiveStatus, isReadOnly, ReadOnlyError } from "./lifecycle";
@@ -47,7 +48,17 @@ async function logCleared(rows: { id: string; workspaceId: string }[], by: Clear
     );
 }
 
-const CLEARED = { needsOwner: false, needsOwnerManual: false, needsOwnerReason: null } as const;
+/**
+ * What letting go writes. The reason goes too, except a dispute / legal reason: threads sorted
+ * before `extracted.disputed` existed are only recognised as disputes by it (review requests
+ * and closing questions must keep refusing them), and it only shows while the flag is up.
+ */
+const CLEARED = {
+  needsOwner: false,
+  needsOwnerManual: false,
+  needsOwnerReason: sql`case when ${inArray(threads.needsOwnerReason, [...DISPUTE_REASONS])} then ${threads.needsOwnerReason} else null end`,
+  needsOwnerSince: null,
+};
 
 /**
  * After a sync run stored mail: let go of every flag in this mailbox the owner has answered
@@ -61,7 +72,7 @@ export async function clearAnsweredNeedsOwner(mailboxId: string): Promise<number
   if (!box) return 0;
   const cleared = await db()
     .update(threads)
-    .set({ ...CLEARED, needsOwnerSince: null })
+    .set(CLEARED)
     .where(
       and(eq(threads.mailboxId, mailboxId), eq(threads.needsOwner, true), needsOwnerAnsweredSql()),
     )
@@ -84,7 +95,7 @@ export async function clearNeedsOwnerNow(
 ): Promise<boolean> {
   const cleared = await db()
     .update(threads)
-    .set({ ...CLEARED, needsOwnerSince: null })
+    .set(CLEARED)
     .where(and(eq(threads.id, threadId), eq(threads.needsOwner, true)))
     .returning({ id: threads.id });
   await logCleared(

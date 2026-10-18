@@ -119,6 +119,22 @@ describe("Needs you lets go once the owner answers (Check 10 P1)", () => {
     expect(logs[0]!.threadId).toBe(id);
   });
 
+  it("a dispute / legal reason stays on the row after letting go (older disputes are known by it)", async () => {
+    customer("c1", "t1", 2);
+    await runBackfill(mailboxId, deps());
+    const id = await flag("t1", ago(2));
+    await database
+      .update(threads)
+      .set({ needsOwnerReason: "Mentions something legal." })
+      .where(eq(threads.id, id));
+    owner("o1", "t1", 1);
+    await incrementalSync(mailboxId, deps());
+    expect(await row(id)).toMatchObject({
+      needsOwner: false,
+      needsOwnerReason: "Mentions something legal.",
+    });
+  });
+
   it("an owner reply from before the flag does not clear it", async () => {
     customer("c1", "t1", 3);
     owner("o1", "t1", 2);

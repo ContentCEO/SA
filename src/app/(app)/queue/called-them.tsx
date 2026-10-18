@@ -56,7 +56,7 @@ export function CalledThem({
       <p className="font-semibold">
         {back === "inbox"
           ? hasDraft
-            ? "Answered by phone? It's no longer waiting on you, the waiting draft is removed (from Gmail too) and we won't nudge them."
+            ? "Answered by phone? The waiting draft is removed (from Gmail too) and we won't nudge them."
             : "Answered by phone? It's no longer waiting on you and we won't nudge them."
           : done
             ? "Answered them another way? It leaves this list and we won't nudge them."

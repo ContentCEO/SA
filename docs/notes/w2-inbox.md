@@ -14,7 +14,9 @@ Base: cd15c59. One commit per step. Nothing here needs wave 1 unless marked "nee
   me" and Move it → complaint set it to now. `clearAnsweredNeedsOwner(mailboxId)` runs once per
   `incrementalSync` and in `finishBackfill`: one UPDATE clears `needs_owner`,
   `needs_owner_manual`, `needs_owner_reason`, `needs_owner_since` and logs one
-  `needs_owner_cleared` `{ by: "gmail_reply" }` per thread. `markAnsweredByPhone` clears it too
+  `needs_owner_cleared` `{ by: "gmail_reply" }` per thread. A dispute / legal reason
+  (`DISPUTE_REASONS`) is kept on the row when the flag goes, because older disputes are only
+  recognised by it (review requests and closing questions keep refusing them). `markAnsweredByPhone` clears it too
   (`{ by: "phone" }`). Inbox: `listInboxThreads` selects `needsOwner` as the open rule and orders by
   it; the needs_me chip uses it. `CalledThem` (with `back="inbox"`, its action returns to /inbox)
   on every non-junk card that is "Waiting on you" (inverted on black cards); "Take it off my list"
