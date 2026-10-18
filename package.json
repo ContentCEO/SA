@@ -20,6 +20,7 @@
     "db:migrate:http": "tsx --env-file-if-exists=.env.local scripts/migrate-http.ts",
     "vercel-build": "tsx scripts/migrate.ts && next build",
     "fingerprint": "tsx scripts/fingerprint.ts",
+    "reseal:secrets": "tsx --env-file-if-exists=.env.local scripts/reseal-secrets.ts",
     "eval": "NODE_OPTIONS=--conditions=react-server tsx --env-file-if-exists=.env.local scripts/eval.ts"
   },
   "dependencies": {

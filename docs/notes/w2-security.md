@@ -48,3 +48,11 @@ For the integrator: what `CLAUDE.md`, `docs/LAUNCH.md` and the legal drafts shou
   customers, billing, connect, admin incl. Growth and waitlist, welcome/terms), and
   `isCategory` (inbox `?c=`) uses `Object.hasOwn`. A unit test fails on any new
   `map[params.x]` lookup in src/app.
+- **Replacing the encryption key (Check 26 P7):** `decryptSecret` (`src/lib/crypto.ts`) tries
+  `TOKEN_ENCRYPTION_KEY`, then `TOKEN_ENCRYPTION_KEY_PREVIOUS` (optional, same 32-byte check,
+  same preview guard) when the auth tag fails; `encryptSecret` always uses the current key.
+  `pnpm reseal:secrets` (`scripts/reseal-secrets.ts` → `src/server/reseal-secrets.ts`) re-seals
+  every mailbox refresh token and every `v1.`-format `app_settings` value in batches, with a
+  conditional update (safe to re-run), and prints counts only. Steps in `docs/SETUP.md` §5a.
+  LAUNCH.md's secret-rotation step can point at §5a: rotating `TOKEN_ENCRYPTION_KEY` no longer
+  means every owner reconnects.
