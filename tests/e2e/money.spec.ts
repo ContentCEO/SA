@@ -180,7 +180,10 @@ test("money owed: the invoice number and chasing line are 16px (Check 8 P9)", as
   });
   await signInAs(context, owner);
   await page.goto("/money");
-  for (const el of [page.getByText("Invoice 1042").first(), page.getByTestId("chase-line").first()]) {
+  for (const el of [
+    page.getByText("Invoice 1042").first(),
+    page.getByTestId("chase-line").first(),
+  ]) {
     await expect(el).toBeVisible();
     const px = await el.evaluate((e) => parseFloat(getComputedStyle(e).fontSize));
     expect(px).toBeGreaterThanOrEqual(16);

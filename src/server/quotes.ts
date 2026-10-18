@@ -265,9 +265,7 @@ export async function listQuotes(workspaceId: string, now: Date = new Date()) {
         lastInboundAt: asDate(r.lastIn),
         lastOutboundAt: asDate(r.lastOut),
         priced:
-          r.amountCents != null ||
-          pricedByText.has(r.threadId) ||
-          pricedElsewhere.has(r.threadId),
+          r.amountCents != null || pricedByText.has(r.threadId) || pricedElsewhere.has(r.threadId),
       },
       now,
       days,

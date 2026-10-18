@@ -206,8 +206,56 @@ edits this file after it is created.
 - [x] Wave 2, Queue screen, 12) C32 P9 + C32 P11
 - [x] Wave 2, Queue screen, 13) C08 P7 + C08 P9
 - [x] Wave 2, Queue screen, 14) C09 P15 + C48 P5
+- [x] Wave 2, Quotes and Money, 1) C11 P1
+- [x] Wave 2, Quotes and Money, 2) C11 P2 + C39 P3 [M]
+- [x] Wave 2, Quotes and Money, 3) C11 P3 [M]
+- [x] Wave 2, Quotes and Money, 4) C11 P4
+- [x] Wave 2, Quotes and Money, 5) C11 P5
+- [x] Wave 2, Quotes and Money, 6) C11 P6
+- [x] Wave 2, Quotes and Money, 7) C11 P7
+- [x] Wave 2, Quotes and Money, 8) C11 P9
+- [x] Wave 2, Quotes and Money, 9) C12 P4
+- [x] Wave 2, Quotes and Money, 10) C12 P5
+- [x] Wave 2, Quotes and Money, 11) C12 P6
+- [x] Wave 2, Quotes and Money, 12) C12 P8 + C12 P9
+- [x] Wave 2, Settings and time zone, 1) C15 P1
+- [x] Wave 2, Settings and time zone, 2) C45 P1 + C44 P5 + C15 P7 [M]
+- [x] Wave 2, Settings and time zone, 3) C15 P2
+- [x] Wave 2, Settings and time zone, 4) C15 P3
+- [x] Wave 2, Settings and time zone, 5) C15 P4
+- [x] Wave 2, Settings and time zone, 6) C15 P5
+- [x] Wave 2, Settings and time zone, 7) C15 P6 + C24 P11
+- [x] Wave 2, Settings and time zone, 8) C15 P8 [M]
+- [x] Wave 2, Settings and time zone, 9) C43 P8 [M]
+- [x] Wave 2, Settings and time zone, 10) C15 P9 + C15 P10 + C15 P11 + C15 P12
+- [x] Wave 2, Follow-ups, 1) C12 P1
+- [x] Wave 2, Follow-ups, 2) C21 P2 [M]
+- [x] Wave 2, Follow-ups, 3) C21 P3
+- [x] Wave 2, Follow-ups, 4) C21 P4 [M]
+- [x] Wave 2, Follow-ups, 5) C21 P5
+- [x] Wave 2, Follow-ups, 6) C21 P6
+- [x] Wave 2, Follow-ups, 7) C36 P3
+- [x] Wave 2, Follow-ups, 8) C38 P4 [M]
+- [x] Wave 2, Customers and senders, 1) C13 P1 + C22 P10 + C41 P6
+- [x] Wave 2, Customers and senders, 2) C13 P2 + C22 P7 + C41 P7
+- [x] Wave 2, Customers and senders, 3) C13 P3
+- [x] Wave 2, Customers and senders, 4) C13 P4
+- [x] Wave 2, Customers and senders, 5) C41 P5
+- [x] Wave 2, Customers and senders, 6) C13 P5
+- [x] Wave 2, Customers and senders, 7) C13 P6 + C13 P7 + C13 P8
+- [x] Wave 2, Customers and senders, 8) C13 P9
+- [x] Wave 2, Autopilot rules, 1) C20 P2
+- [x] Wave 2, Autopilot rules, 2) C20 P13
+- [x] Wave 2, Autopilot rules, 3) C20 P3
+- [x] Wave 2, Autopilot rules, 4) C20 P8
+- [x] Wave 2, Autopilot rules, 5) C20 P7 [M]
+- [x] Wave 2, Autopilot rules, 6) C20 P6
 
 Queue screen 15) C09 P8 was not built (it waits for Davi's yes; `docs/LAUNCH.md` step 13). Voice 7) C24 P8's new prompt `voice-examples.v1` and the Inbox / Sync prompt lines wait for the Prompt
 versions group in `docs/notes/prompt-versions-inbox.md`.
+
+Autopilot rules 7) C20 P9, 8) C20 P10 [M] and 9) C48 P6 were not built (they wait for Davi's yes;
+`docs/LAUNCH.md` step 13). The classify.v6, followup.v5 and reply-language lines from the
+Follow-ups, Customers and Settings groups wait in `docs/notes/prompt-versions-inbox.md`.
 
 Later steps are added to this list as their pull requests merge.

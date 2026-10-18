@@ -1419,7 +1419,8 @@ Nothing below is switched on or changed until you say so.
     yes.
   - **Autopilot and visit times.** Send together now leaves out a scheduling reply that names a
     day or time (one at a time). The same rule could apply to autopilot's scheduling replies. Not
-    changed; your call.
+    changed; your call. Since merge B it's ready to build for every autopilot reply, not only
+    scheduling ones (Check 20 P9): autopilot can't see your calendar.
   - **Draft a reply while a job is drafting.** A background drafting job now stands down while
     your tap is writing the same conversation (and the other way round). Say if you'd rather jobs
     always retry at once.
@@ -1431,6 +1432,59 @@ Nothing below is switched on or changed until you say so.
     idea are back on the weekly refresh (a one-off clean-up); the privacy policy says the voice
     scrub replaces the details "it recognizes"; speech for Hold to talk goes to "Google, Apple or
     Microsoft"; /admin's "jobs look stopped" now waits 25 minutes.
+
+- **Wave 2 merge B (2026-10-18): questions from the Quotes and Money, Settings, Follow-ups,
+  Customers and Autopilot changes.** Each is built with the safe choice below; nothing changes
+  until you say so.
+  - **Money's "Draft a reminder" counts as a nudge.** It uses the follow-up writer, so it counts
+    toward the two nudges per conversation, ever, and the button hides once both are used. Or
+    should a reminder you tap not count?
+  - **Several prices in one reply.** When your reply has more than one price and none is marked
+    as the total, the last one is taken and the card says "Check amount" (and it stays out of
+    price memory). Two "Option A / Option B" prices give no amount; you type it on Won. OK?
+  - **Supplier lookalikes and "Not owed to me".** A bill with no clear direction stays off Money
+    owed when the same business domain has a supplier conversation (on Gmail or Yahoo, only the
+    exact address), or when you tapped "Not owed to me" on that exact address before. Want the
+    whole domain to count for "Not owed to me" too? (Built: the exact address, so one tap at a
+    property manager's office doesn't hide every colleague's invoice.)
+  - **"I sent the price another way" with a price.** That price is treated like one you typed:
+    it's never replaced by a price read from your email and never goes into price memory, and,
+    like any typed amount, it isn't in Quotes' "Priced" total unless the quote is won. Count it in
+    "Priced"?
+  - **"Use Central time" saves at once** when your phone's time zone differs (the review said it
+    should only fill the box). Built: one tap saves it.
+  - **Time zones for existing accounts.** An account set up before this change takes the time zone
+    of the next browser that opens it, once. If you've helped an owner on your own laptop, that
+    owner should check Settings → Morning email.
+  - **The per-trade examples** under "What work do you do?" are first drafts; you may want your
+    own wording. The three "never" lists stay separate (merging them is your call).
+  - **Spanish and Portuguese replies.** Until the drafting prompt names the reply language (the
+    Prompt versions step), a draft in the wrong language is only flagged on the card.
+  - **A second job on the same conversation** (the deck after the kitchen) gets no nudges of its
+    own: two per conversation, ever, still stands, and the "no answer" guess waits 21 quiet days
+    for it. Should a new price after the customer writes again get its own two?
+  - **Big invoices are now chased** when they need you only because of their size (still drafts
+    you tap). Or should invoices over a second, higher limit keep waiting on you?
+  - **Invoices you send** are recognised from the subject or the first lines ("Invoice 1043",
+    "invoice … $2,100"). A deposit request worded like an invoice counts too, so that
+    conversation is chased like an unpaid invoice. OK?
+  - **Your crew on your own domain.** Anyone on your business domain (mike@shop.com) is filed under
+    "Your crew and subs" on Customers, but is still sorted and drafted like anyone else unless you
+    add them to "Your crew's email addresses" (an internet provider's address like charter.net is
+    shared with customers). Or should the whole domain count everywhere for owners on their own
+    business domain?
+  - **Crew mail and the AI.** A conversation with only your crew on it is sorted without the AI (as
+    scheduling, needs nobody) unless a safety check fires (gas, carbon monoxide, electrical, a bank
+    change, an attack). OK?
+  - **Customers from before the first month.** Big jobs from people not in the mail we've read say
+    "Big job from someone who hasn't written in the mail we've read so far." Recognising returning
+    customers would mean reading (and storing) more than 30 days back on connect: your call.
+  - **Won amounts on Customers** appear once Quotes has been opened or the daily job has run.
+    OK?
+  - **Autopilot earned only from replies sent one at a time**, with the whole text on screen (not
+    from Review all ready or autopilot's own sends), and a line like "10 sent as drafted, 3
+    edited, 2 discarded in the last 60 days"?
+  - **A line on autopilot's replies** saying your email assistant wrote and sent them?
 
 ### Still needed from you
 

@@ -122,7 +122,9 @@ seasonal notes, your review link, the towns you work in, and the license and reg
 numbers you enter), your settings, and, if you turn on text
 alerts, your own mobile number. Also the sender rules you set (an email address or a company's web
 address, and what to do with its email), the people you mark as VIPs, short private notes you write
-about a customer, and, if you turn on away mode, the day you're back.
+about a customer, and, if you turn on away mode, the day you're back. Your crew's email addresses,
+if you list them, so their emails aren't treated as customers. They stay with your account until
+you remove them or delete your account.
 
 **Phone notifications:** if you turn them on, we store the address your browser's push service
 gives us for that phone (the push service is run by Google, Apple, Mozilla or Microsoft, depending

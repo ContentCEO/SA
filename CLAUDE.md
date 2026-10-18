@@ -285,7 +285,9 @@ Davi runs several builder sessions at once. The build order for review prompts i
   client's retries throws `MailboxRateLimitError`; jobs wrap Gmail steps in `politely()` which turns
   it into Inngest `RetryAfterError("2m")` — pause and resume, not fail. (First live backfill on
   2026-10-03 kept tripping `rateLimitExceeded` at 8 concurrent / 100 per page.)
-- **Follow-ups (M7):** daily cron `followup-scan` (9:11am America/New_York). `threadsToFollowUp`
+- **Follow-ups (M7):** hourly cron `followup-scan` (:11); each owner's scan runs once a day at
+  4am their time, due on the owner's calendar day (`nudgeDueDate`; Check 21 P3, wave 2 merge B;
+  was daily 9:11am America/New_York). `threadsToFollowUp`
   (`src/server/followups.ts`): quote_request / invoice_payment, not needs_owner, owner wrote last
   ≥ `followup_days` ago (default 3; choices 2/3/4/5/7) and ≤ 21 days ago, customer has written at
   least once, < 2 nudges **sent**, no draft of any kind since the owner's last message (so a
@@ -296,8 +298,9 @@ Davi runs several builder sessions at once. The build order for review prompts i
   `threads.followup_count`; the cap counts sent `followup` drafts. Reconcile also expires a pending
   nudge if the owner wrote to the customer some other way.
 - Settings → Follow-ups: on/off + wait days (stored on `business_profile`). Every nudge is a draft;
-  nothing sends without a tap. The sent screen says "I'll nudge Dana on Thursday if there's no
-  reply." / "That was the last nudge." for chased categories.
+  nothing sends without a tap. The sent screen says "A nudge for Dana will be ready Monday
+  morning if there's no reply." (Check 21 P3; was "I'll nudge Dana on Thursday…") / "That was
+  the last nudge. I won't chase this one again." for chased categories.
 - **Digest + Activity (M8):** `/activity` (in the header nav) renders `activity_log` as plain
   sentences (`describeActivity`; unknown actions hidden) with the customer's first name from the
   owner's own synced mail, plus a month summary. Time saved = 3 minutes × drafted replies actually
@@ -2936,6 +2939,208 @@ null}` flags any link on a plain one); reconcile expires it like a review note; 
     said no" / "Already paid". **Headings (Check 32 P9/P11)**, **Edit (Check 8 P7/P9):** the tab
     bar hides while a text field has focus. **Words (Check 9 P15 / Check 48 P5):** the Hold to
     talk note names Google, Apple or Microsoft.
+
+- **Wave 2 merge B (2026-10-18, branch `integrate-w2b`):** the Quotes and Money, Settings and
+  time zone, Follow-ups, Customers and senders, and Autopilot rules groups merged with `--no-ff`,
+  in that order, on top of 5b4579d (merge A). Migrations regenerated one at a time with
+  drizzle-kit on the previous snapshot (SQL byte-identical to each branch's): `0058_quote_amount_note`,
+  `0059_quote_amount_from`, `0060_time_zone_source`, `0061_work_hours`, `0062_reply_languages`,
+  `0063_nudge_after`, `0064_owner_invoice_at`, `0065_big_quote_days`, `0066_autopilot_skip`.
+  Prompt lines the groups couldn't write wait in `docs/notes/prompt-versions-inbox.md`
+  (classify.v6 `declines_quote` / `wait_until` / the "unknown" first-time sender; followup.v5
+  invoice reminders; the reply-language line). Reconciled with merge A and each other:
+  - **One quote rule:** `quoteThreadSql` / `isQuoteThread` = Quotes' rule (category, sticky
+    `quote_requested_at`, any outcome; noise / injection left out unless the owner marked it)
+    **and** the Inbox group's "Not a quote" (`quoteNotDismissedSql`; an owner outcome after the
+    dismissal brings it back). `quoteRequestSql` is an alias. Customers' conversation stages use
+    the same rule and Check 11 P6's priced test (`pricedThreadIds` in quotes.ts).
+  - **Who wrote last, everywhere:** `threadsToFollowUp` and `guessNoAnswers` keep the Sync
+    group's ball-in-their-court (an acknowledgement or auto-reply since the owner wrote doesn't
+    count) and count the quiet from `quietSinceSql` — against the normal and big-quote waits and
+    with the asked-for wait on top (`greatest(quiet start, nudge_after)`). A fresh invoice email
+    (no customer email) is the other way in. `guessNoAnswers` also keeps the priced pre-filter,
+    this-quote-only nudges, service calls and the big-quote clock. The drafter keeps the bounce
+    and acknowledgement rules beside wait / not-due; the service-call check reads the owner's
+    newest email, never a later acknowledgement.
+  - **listQueue** keeps the Queue group's needsYou / drafts / now shape and lanes; each item also
+    carries the reply languages, `alsoQuote`, `customerKey` and `autopilotSkip`. Queue cards keep
+    the h3 name heading with the `CustomerName` link inside it; `CustomerName` now wraps a long
+    name (Check 32 P11) instead of cutting it. The draft card shows the language line above
+    "Check before sending" and the autopilot wait line in the header; the queue note line shows
+    "Also about your quote", the private note and attachments.
+  - **Autopilot codes:** besides the Autopilot group's own, `crew` (Customers), `auto_reply`
+    (Sync, Check 20 P4) and the run code `left_inbox` (Sync, Check 25 P2: "This conversation left
+    your inbox in Gmail.") — each with one sentence, one phrase and one Settings line.
+    `autopilotOnKinds` takes `AutopilotWorkspace` (the referral free-plan fields).
+    `threadMessageLabels` uses the gmail client's unit names (`threads.get`).
+  - **Money card:** the follow-ups group's chasing line replaces "Nudges used" at 16px
+    (`data-testid="chase-line"`, read by the Check 8 P9 e2e), beside Quotes' "See it" / "Draft a
+    reminder" and `CustomerName`. **Quotes card:** a decided card says when ("Won Oct 14"); an
+    open service call reads "Service call"; "I sent the price another way" and "Not quotes" stay.
+  - **Settings:** Your Gmail uses the settings group's pure `syncLine` (one email, no check time)
+    with the Sync group's "This can take a while."; Your business's every-fact list gains "Your
+    crew" (a count); `SettingsScreen` keeps `errorText` beside `fillCounts`.
+  - **Integrator decisions:** a price typed on Quotes' "I sent the price another way" is the
+    owner's (`quote_amount_from = 'owner'`, `quote_amount_at` = the tap): never replaced by a
+    price read from mail, never in price memory, and — like any typed amount — not in "Priced"
+    unless the quote is won. That tap without a price reads "Quoted", not "Replied, no price yet"
+    (`answered_by_phone` with `via: "other"`). Inbox cards say "Your crew" in place of the kind.
+- **Quotes and Money (wave 2, `w2-quotes`):**
+  - **One quote rule (Check 11 P1):** `quoteThreadSql` / `isQuoteThread` are twins (144-case twin
+    test); `quoteRequestSql` is the same rule, so Quotes, Customers, follow-ups, the scorecard,
+    the monthly summary, lead pay and leads at risk count the same threads.
+  - **The quote amount (Check 11 P2 + Check 39 P3):** `readOwnerAmount` (quote-rules.ts) replaces
+    "largest $ figure". `stripForAmounts` cuts a "--" signature, Outlook header blocks, a wrapped
+    Gmail "On …" line and "Sent from my iPhone" (amounts only; the classifier's `prepareBody` is
+    unchanged). Figures need digits right after "$", proper thousands commas. Dropped: rates,
+    deposit, trip charge, guarantee, warranty, tax, "normally / was / not / save / budget",
+    and program words (rebate, incentive, credit, loan, financing, Mass Save, HEAT Loan, …) — the
+    saved price is before incentives. The last figure marked as the price → 'total'; the only
+    figure → 'total'; two or more "Option …" figures → none; else the LAST figure → 'picked'.
+    `threads.quote_amount_note` ('total' | 'picked'); 'picked' shows "Check amount" and never
+    goes into price memory. `ownerGavePrice` / acceptance use the same reader, so "$95 per hour"
+    alone isn't a price given.
+  - **A corrected price replaces the first (Check 11 P3):** `threads.quote_amount_from`
+    ('reply' | 'owner') and `quote_amount_at` (when the price went out). `captureQuoteAmounts`
+    re-reads open quotes whose amount came from a reply and moves amount, note, time and the
+    `price_history` row; a typed amount and a decided quote are never touched (the UPDATE
+    re-checks both). "Save as won" with the prefilled amount unchanged stays the reply's price.
+  - **Daily capture (Check 11 P4):** only quote threads with an owner email that still has text;
+    the purge job pages every match by id (500); the Quotes screen keeps one page.
+  - **30-day totals (Check 11 P5):** `quoteTotals` in SQL — Asked for by `requestAtSql`, Priced by
+    `quote_amount_at` (else the owner's last email; a typed amount only when won), Won and the
+    win rate by `quote_outcome_at` (exactly `closeRateBetween`'s rows).
+  - **A site visit isn't a quote (Check 11 P6):** stage `replied` ("Replied, no price yet") when
+    the owner wrote last without a price; it never goes quiet, and `guessNoAnswer` needs
+    `priced`. Homepage `stageWords` use semicolons.
+  - **Amount only on Won (Check 11 P7):** "Mark won" step (optional amount, prefilled) plus "Mark
+    lost" / "Mark no answer"; `setQuoteOutcome` ignores an amount unless won; "Change amount" on a
+    won card (`setQuoteAmount`, activity `quote_amount_changed {amountTyped}`). Decided cards say
+    the day ("Won Oct 14", `decidedLabel`).
+  - **Filters (Check 11 P9):** chips wrap, in the order Open, Waiting on you, Quoted, Gone quiet,
+    Won, Lost, No answer; one line per stage under the list; "Last email 41 minutes ago".
+  - **Supplier bills (Check 12 P4):** `billOwedByOwner` + SQL twin `billOwedByOwnerSql`: owed by
+    the business when the sorter said so, or the direction is unknown and the newest sender has a
+    `supplier_vendor` thread from the same business (domain; exact address on public webmail) or
+    an exact-address "Not owed to me" mark. A clear `owed_to_business` and the owner's own mark
+    win. Used by Money and follow-ups; addresses compared only in SQL. A receipt sorted owed by
+    the business, or with no amount, never marks anything.
+  - **No amount yet (Check 12 P5):** owed invoices with no amount show "Amount not stated", out of
+    the total; `captureInvoiceAmounts` (on view, and daily step `capture-invoice-amounts`) takes
+    the amount from the owner's own newest email on the thread (`readOwnerAmount`, never an
+    inbound email), stored with `amount_source: "your_email"` ("From your email").
+  - **Net terms (Check 12 P6):** `dueDay` reads "net 30", "within N days", "N days from …", "upon
+    receipt"; unknowable starts → "No due date"; the card shows "Due Oct 31".
+  - **Money card actions (Check 12 P8 + P9):** a pending draft → "A reply to Linda is waiting in
+    your Queue." + "See it"; else, owner wrote last, a nudge left and no needs-you → "Draft a
+    reminder" (the follow-up drafter, so it re-checks paid / not owed / caps and **counts as a
+    nudge**). No big $0: "No open invoices found"; the total shows with "Counted from your
+    email, not your books."
+- **Settings and time zone (wave 2, `w2-settings`):**
+  - **Money box (Check 15 P1):** "2,500" / "$2,500" save as 2500; blank is refused, never $0.
+  - **Time zone (Check 45 P1 + 44 P5 + 15 P7):** `business_profile.time_zone_source` default |
+    browser | owner. `ZoneCapture` (gated in the (app) layout) posts the browser's zone once while
+    the source is `default` (`saveDetectedTimeZone`, activity `time_zone_detected`);
+    `saveBusinessProfile` sets `completed_at` on conflict too. Setup's zone saves as `browser`,
+    never over `owner`; /settings/profile never moves it. Settings → Morning email has a visible
+    "Your time zone" select and "Use Central time" when the phone differs (saves at once;
+    `setOwnerTimeZone` → `owner`, logged `time_zone_changed {from, to}`). Playwright runs every
+    page with `timezoneId: "America/New_York"`.
+  - **Plain errors (Check 15 P2):** every profile rule has its own message (tested against Zod's
+    wording); "People who always need you" takes Gmail-style pastes.
+  - **Ways back (Check 15 P3):** `BackLink` / `CancelLink` on the two edit screens.
+  - **Every fact (Check 15 P4):** `describeProfileFacts` (pure) lists every saved fact with
+    "Not set." and a Change link to `/settings/profile#<field>`.
+  - **Never-lists (Check 15 P5):** wording only; `saveNeverSay` reports skipped lines.
+  - **Sign-off once (Check 15 P6 + 24 P11):** `signatureWithoutSignoff` drops a signature first
+    line equal to the learned sign-off in `workspaceContext`; greeting / sign-off can be "I don't
+    use one".
+  - **Working days for alerts (Check 15 P8):** `business_profile.work_days` / `work_start_hour` /
+    `work_end_hour` (defaults Mon–Sat 7–18) drive leads-at-risk; free-text hours stay for drafts.
+  - **Reply language (Check 43 P8):** `src/ai/language.ts` `detectLanguage` / `chooseReplyLanguage`
+    / `languageCardLine` / `languageMismatchFlag` / `replyLanguageLine`;
+    `business_profile.reply_languages` (English always; Spanish / Portuguese switches);
+    `drafts.customer_language` / `reply_language` (codes only); `checkDraft({ replyLanguage })`
+    flags a wrong-language reply (cap 0.5, never regenerated). The prompt doesn't name the
+    language yet (prompt-versions-inbox).
+  - **Polish (Check 15 P9–P12):** seasonal-note dates via `src/lib/plain-date.ts`, Add note keeps
+    what was typed, "1 email", per-trade `servicesExample`.
+- **Follow-ups (wave 2, `w2-followups`):**
+  - **Big invoices are chased (Check 12 P1):** `applyOwnerRules` returns `needsOwnerCode`
+    (`extracted.owner_code`, an `OWNER_RULE_KEYS` value or "model"). `amountOnlyNeedsOwner` /
+    `amountOnlyNeedsOwnerSql`: an invoice thread that needs the owner only for its amount (no
+    manual, complaint, dispute, injection, payment-change or "is this a bot" mark) is still
+    chased. Money's `chaseLine` says when nothing will be ("Not chased: this one needs you
+    first", "…it's been quiet too long"). `FOLLOWUP_MAX_AGE_DAYS` lives in followup-rules.ts.
+  - **A no stops nudges; "after the holidays" waits (Check 21 P2):** `threads.nudge_after` (start
+    of the asked-for day in the owner's zone, replaced at every customer email; injection emails
+    set nothing). `followupSignalsOf` reads `signals.declines_quote` / `extracted.wait_until`
+    (inert until classify.v6). A decline on a quote thread → auto Lost (`DECLINED_FLAG` on a
+    waiting nudge; the owner always wins). Quotes card / sent screen: "Waiting until Jan 4, as
+    they asked."
+  - **The owner's calendar day (Check 21 P3):** see Follow-ups (M7) above; `followupScanDue` /
+    `markFollowupScanned` (`app_settings` `followup-scan:<workspaceId>`), `quietCutoff`,
+    `nudgeDueDate`; the no-answer guess runs per due workspace in the same job.
+  - **Invoices the owner sends (Check 21 P4):** `threads.owner_invoice_at`; `looksLikeOwnerInvoice`
+    (pure, at sync, outbound rows, subject or first 2,000 own words; never a forward) sets
+    `extracted.invoice_thread`. A fresh invoice is chased only when its first To address has
+    written to the business before (`freshInvoiceToKnownSql`).
+  - **Answered elsewhere (Check 21 P5):** no nudge when the customer's reply address wrote on
+    another conversation after the owner's last email (`customerWroteElsewhere`); the newer card
+    shows "Also about your quote from Nov 2" (`QueueItem.alsoQuote`).
+  - **This quote's nudges (Check 21 P6):** `guessNoAnswers` counts only nudges sent after the
+    customer's newest email; `MAX_FOLLOWUPS` (two per conversation, ever) unchanged.
+  - **Service calls (Check 36 P3):** `isServiceCall` / `serviceCallSql`: an emergency the owner
+    answered with no dollar amount isn't chased or guessed "no answer"; Quotes shows "Service
+    call" (display only).
+  - **Big quotes (Check 38 P4):** `business_profile.big_quote_days` (null = normal wait; 7/10/14/21);
+    `FOLLOWUP_DAY_CHOICES` gains 10 and 14. `isBigQuote` / `chaseTiming` / `noAnswerAfterDays(n,
+big)`; the hourly job runs `captureQuoteAmounts` first.
+- **Customers and senders (wave 2, `w2-customers`):**
+  - **Crew (Check 13 P1 + 22 P10 + 41 P6):** `business_profile.crew_addresses` (wave 0's column;
+    Settings → Your business "Your crew's email addresses", max 30; `crew_list_saved {count}`).
+    Crew = on that list or one of the workspace's own Gmail addresses (`isCrewAddress` /
+    `crewSql`, parity-tested); the owner's business domain only files a Customers row. A
+    crew-only thread is stored as scheduling, low, needs nobody, `extracted.crew = true`, "From
+    your crew: …", with **no model call** unless a safety check fires. Jobs never draft for the
+    crew (thread mark or a crew To, read live); the owner's tap still drafts. Customers rows have
+    `kind` (town → crew → supplier → customer) with 44px group links (`?group=`). Quotes, found
+    money, leads at risk and the scorecard leave crew out.
+  - **Robots (Check 13 P2 + 41 P7):** `MACHINE_SENDER_DOMAINS` (indeed, ziprecruiter, glassdoor,
+    snagajob) in `isNoReplyAddress` / `noReplySql`; `customerRobotSql` / `isCustomerRobot`
+    (parity-tested); a robot or junk email's key is a 404.
+  - **First-time sender "unknown" (Check 22 P7):** a no-reply / lead-platform From with no usable
+    Reply-To → `"unknown"` (counts as first time); voicemail-by-email compares the number named.
+  - **Every customer (Check 13 P3):** no 500 cap (`CUSTOMERS_CEILING` 10,000, `customers_ceiling_hit`
+    logged), 50 at a time, `quoteFactsByAddress` (read-only; Customers never runs the Quotes
+    screen's work).
+  - **Names and the page (Check 13 P4–P8):** `newestNameSql`; `bigJobReason(historyDays)` ("…hasn't
+    written in the mail we've read so far." under a year of mail); the customer page's facts
+    line, job addresses and stage per card; `wroteWords`, `headlineName`, `listStartsOn`.
+  - **Names link to the page (Check 13 P9):** `customerKeySql` (opaque uuid) on Queue, Quotes and
+    Money; `CustomerName` (44px). No address in any URL.
+- **Autopilot rules (wave 2, `w2-autopilot`; Checks 20 P2 P13 P3 P8 P7 P6):** only stricter or
+  clearer; no new send path; the three layers, the 10-minute window and the claim are unchanged.
+  - **Unsynced mail (20 P2):** `MailboxWriter.threadMessageLabels` (threads.get format=minimal,
+    ids and labels only) gives the owner's drafts and the thread's mail in one call;
+    `unsyncedMessageIds` → "There's newer mail in this conversation." and `syncMailboxId`, so the
+    job asks for a sync. `threadDraftMessageIds` stays for other callers.
+  - **Daily cap (20 P13):** the cap check, countdown and `autopilot_scheduled` row are one
+    transaction under `pg_advisory_xact_lock(hashtext('autopilot-cap:<workspace>'))`; a rolling
+    24 hours ("At most 20 in any 24 hours."). `MIN_CONFIDENCE_PCT` / `DAILY_AUTOPILOT_CAP` in
+    `src/config/rules.ts`.
+  - **Other languages (20 P3):** `looksNonEnglish` (src/ai/language.ts) on the draft and the
+    newest part of the customer's email → "Not in English, so it waits for you."
+  - **Someone new copied (20 P8):** `newPersonCopied` (pure) → "Someone new is on this
+    conversation, so it waits for you." (crew aren't exempt).
+  - **Why it waited (20 P7):** `src/server/autopilot-reasons.ts` (`GUARDRAIL_CODES`, `RUN_CODES`),
+    `guardrailCodes` + `guardrailReasons`; `drafts.autopilot_skip` (jsonb codes) on refusals in a
+    switched-on kind and stand-downs, cleared when a countdown starts. Queue card and Activity
+    say why in fixed words; unknown codes are dropped.
+  - **Settings → Autopilot (20 P6):** two lists from the same codes (`AUTOPILOT_WHEN_LINES` /
+    `AUTOPILOT_NEVER_LINES`); a test fails when a guardrail code has no line or two.
+  - **Not built (Davi's yes needed):** 20 P9 (no day or time), 20 P10 (earn only from replies sent
+    one at a time; would add "batch" to `drafts.sent_via`), 48 P6 (assistant note).
 
 ## Milestones
 

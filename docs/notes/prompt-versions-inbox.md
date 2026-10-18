@@ -88,3 +88,72 @@ Counts are stored and shown (`messages.attachment_*`, `attachmentWords()` in
 - An email whose only content is attachments is classified with that line as its text instead
   of being treated as having no text (the `Attached:` line makes the body non-empty). The drafts
   test "the draft prompt carries 'Attached: 3 photos'" goes with that change.
+
+## From `w2-followups` (Check 21 P2): classify.v6 `declines_quote` and `wait_until`
+
+The code reads both loosely (`followupSignalsOf`, `src/server/followup-rules.ts`) and is inert
+until the fields exist. Schema: `signals.declines_quote: z.boolean().catch(false)` and
+`extracted.wait_until: z.string().nullable().catch(null)` (the names must stay exactly these).
+
+- Under `## signals`: "- declines_quote: true only when the customer turns down the price or the
+  job — they hired someone else (\"we went with someone else\", \"we found another contractor\"),
+  are holding off with no date (\"we're going to hold off for now\", \"we've decided not to do
+  it\"), or no longer need the work (\"we sold the house\", \"my brother-in-law is doing it\").
+  False for comparing quotes, haggling (\"can you do it for less?\"), questions, \"not yet\", or
+  a later date they name."
+- Under `## Extracted details`: "- wait_until: when the customer asks you to wait until a time,
+  that date as YYYY-MM-DD, counted from the Received date: \"after the holidays\" in December →
+  the first weekday of January; \"next month\" → the 1st of next month; \"in the spring\" → March
+  15; \"after the 20th\" → the 21st; a named date → that date. null when they name no time or
+  it's vague (\"later\", \"sometime\")."
+- Eval cases, each after an owner's priced reply:
+  - declines_quote true: "We went with someone else, thanks for your time." / "We found another
+    contractor who could start sooner." / "We've decided not to go ahead with the bathroom this
+    year." / "My brother-in-law is going to do it, but thanks."
+  - wait_until set (Received 2026-12-17): "We'll get back to you after the holidays." →
+    2027-01-04; "Can we revisit next month?" → 2027-01-01; "Let's pick this up in the spring." →
+    2027-03-15 (all declines_quote false).
+  - neither: "We're comparing quotes, will let you know." / "Can you do it for less?"
+
+## From `w2-customers` (Check 22 P7): classify.v6 "unknown" first-time sender
+
+`applyOwnerRules` already takes `firstTimeSender: boolean | "unknown"`; the prompt still reads
+`yes` for "unknown" (classification passes `firstTimeSender !== false`). In `emailBlock` of the
+next classify version, with `EmailInput.firstTimeSender: boolean | "unknown"` and
+classification.ts passing the raw value:
+
+```ts
+First time this sender has emailed the business: ${e.firstTimeSender === "unknown" ? "unknown (a lead site or voicemail service; judge the person from the email)" : e.firstTimeSender ? "yes" : "no"}
+```
+
+Eval case: a second Thumbtack lead for a home addition from the same `leads@thumbtack.com`
+address, `large_request`, expected needs-you with the big-job reason.
+
+## From `w2-followups` (Check 21 P4 / Check 12 P7): followup.v5 invoice reminders
+
+`followupTask({ nudgeNumber, daysQuiet, invoice })`, the drafter passing
+`isInvoiceThread(thread)`; task lines for invoice threads:
+
+- nudge 1: "The customer hasn't paid or replied for ${daysQuiet} days since the owner sent the
+  invoice. Write the owner's first, friendly reminder about the invoice. Don't add a deadline,
+  late fee or discount the owner didn't write."
+- nudge 2 (the second-reminder line): "The invoice is still unpaid, ${daysQuiet} days after the
+  last reminder. Write the owner's second and final reminder: polite and clear that payment is
+  still due. Don't offer an easy out or suggest it's fine not to pay."
+
+Until then the second invoice reminder still uses followup.v4's "give the customer an easy out".
+
+## From `w2-settings` (Check 43 P8, Check 24 P11): the reply language and voice notes
+
+- In the conversation block of draft.v9 and followup.v5, right after the "What it is" line, the
+  exact line from `replyLanguageLine(choice)` (`src/ai/language.ts`): `Reply language: Spanish`
+  (customer wrote Spanish, Spanish on) or `Reply language: English (the customer wrote in
+Spanish; use short, plain sentences)`. `createDraftForThread` already computes `language` (a
+  `LanguageChoice`) before the block is built; revisions use the draft's stored `reply_language`.
+- Instruction line: "Write the reply in the language named on the 'Reply language' line,
+  whatever language the customer wrote in."
+- Eval cases: a Spanish quote request with Spanish off (expect English, plain sentences, no
+  language flag) and with Spanish on (expect Spanish).
+- Voice (optional, Check 24 P11): with a ready voice and a null greeting / sign-off, the voice
+  block prints "Usual greeting: not given"; it could say "none — they jump straight in" /
+  "none — they don't sign off".

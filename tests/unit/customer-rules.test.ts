@@ -27,9 +27,9 @@ describe("customer page wording (Check 13 P5)", () => {
     );
     expect(customerThreadStage(q({ lastOutboundAt: daysAgo(4) }), NOW, 3)).toBe("Gone quiet");
     // Check 11 P6: the owner answered without a price (a site visit) — never "Gone quiet".
-    expect(
-      customerThreadStage(q({ lastOutboundAt: daysAgo(4), priced: false }), NOW, 3),
-    ).toBe("Replied, no price yet");
+    expect(customerThreadStage(q({ lastOutboundAt: daysAgo(4), priced: false }), NOW, 3)).toBe(
+      "Replied, no price yet",
+    );
     expect(customerThreadStage(q({ outcome: "won", amountCents: 210_000 }), NOW, 3)).toBe(
       "Won $2,100",
     );
