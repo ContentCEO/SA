@@ -325,3 +325,55 @@ test("Check 10 P2: past the first 100, Show older emails pages on and Back to ne
   await expect(page).toHaveURL(/\/inbox$/);
   await expect(page.locator("main li")).toHaveCount(100);
 });
+
+test("Check 10 P4 + P5: Draft ready goes to the draft; the reason shows on a closed card", async ({
+  page,
+  context,
+}) => {
+  const owner = await seedOwner({ mailbox: true, backfilled: true });
+  await seedThreads(owner.mailboxId!);
+  const [priya] = await testDb
+    .select()
+    .from(schema.threads)
+    .where(eq(schema.threads.gmailThreadId, `c-${owner.mailboxId}`));
+  await testDb.insert(schema.drafts).values({
+    threadId: priya!.id,
+    mailboxId: owner.mailboxId!,
+    kind: "reply",
+    gmailDraftId: `gd-${owner.mailboxId}`,
+    toAddress: "priya@example.com",
+    subject: "Re: Subject c",
+    body: "Hi Priya, happy to quote the water heater.",
+    originalBody: "Hi Priya, happy to quote the water heater.",
+    reason: "Quote request",
+    flags: [],
+    confidence: 80,
+    promptVersion: "draft.v7",
+  });
+  await signInAs(context, owner);
+  await page.goto("/inbox");
+  const row = (name: string) => page.locator("main li").filter({ hasText: name });
+
+  // P5: closed cards. The reason is on the needs-you card's face, not on a normal one.
+  await expect(
+    row("Dana")
+      .locator("summary")
+      .first()
+      .getByText("Complaint — you'll want to handle this yourself."),
+  ).toBeVisible();
+  await expect(row("Marco").locator("summary").first()).toHaveText(/Marco/);
+  await expect(row("Marco").locator("summary").first()).not.toContainText("handle this yourself");
+
+  // P4: Priya's card says a draft is ready and links to it.
+  await expect(row("Priya")).toContainText("Waiting on you · Draft ready");
+  await page.getByText("Priya", { exact: true }).click();
+  await expect(row("Priya").getByRole("button", { name: "Draft a reply" })).toHaveCount(0);
+  const see = row("Priya").getByRole("link", { name: "See the draft" });
+  await expect(see).toHaveAttribute("href", `/queue?t=${priya!.id}#t-${priya!.id}`);
+  // Marco has no draft: still offered.
+  await page.getByText("Marco", { exact: true }).click();
+  await expect(row("Marco").getByRole("button", { name: "Draft a reply" })).toBeVisible();
+  await see.click();
+  await expect(page).toHaveURL(/\/queue/);
+  await expect(page.locator(`#t-${priya!.id}`)).toBeVisible();
+});

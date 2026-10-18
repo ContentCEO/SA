@@ -56,6 +56,13 @@ Base: cd15c59. One commit per step. Nothing here needs wave 1 unless marked "nee
   emails" next to "No emails match that." The tier uses the 24-hour window at request time, so a
   row crossing it between page loads can move pages (rare, harmless).
 
+- **Draft ready / reason on the face (Check 10 P4, P5):** `listInboxThreads` selects
+  `pendingDraftId` (newest pending draft that isn't in its undo window or claimed for sending).
+  The tag line adds " · Draft ready" and the open card shows "See the draft" (link to
+  `/queue?t=<uuid>#t-<uuid>`, the draft card's existing id) instead of "Draft a reply";
+  `createDraftForThread`'s own check is unchanged. Needs-you cards show the reason under the tag
+  line (font-semibold, one line), and keep "Why: …" inside.
+
 ## Integration notes
 
 - `src/app/(app)/quotes/page.tsx`, `quotes/actions.ts`, `src/server/quotes.ts`,

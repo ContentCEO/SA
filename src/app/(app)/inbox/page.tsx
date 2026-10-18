@@ -2,7 +2,7 @@ import Link from "next/link";
 import { Headline } from "@/components/brand/headline";
 import { OfferButtons } from "@/components/app/offer-buttons";
 import { PermitCard } from "@/components/app/permit-card";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { CATEGORIES } from "@/ai/prompts/classify.v4";
 import { categoryLabels, categoryTag, isCategory } from "@/config/categories";
 import { relativeTime } from "@/lib/relative-time";
@@ -215,7 +215,12 @@ export default async function InboxPage(props: PageProps<"/inbox">) {
               {isCategory(row.category) ? categoryTag[row.category] : "Not sorted yet"}
               {row.needsOwner ? " · Needs you" : ""}
               {row.replyState ? ` · ${row.replyState}` : ""}
+              {row.pendingDraftId ? " · Draft ready" : ""}
             </span>
+            {row.needsOwner && row.needsOwnerReason ? (
+              // Check 10 P5: the reason on the face of the card, without opening it.
+              <span className="line-clamp-1 font-semibold">{row.needsOwnerReason}</span>
+            ) : null}
             <span className={cn("line-clamp-2", row.needsOwner ? "" : "text-muted-foreground")}>
               {row.summary ?? row.subject ?? "(no subject)"}
             </span>
@@ -251,6 +256,14 @@ export default async function InboxPage(props: PageProps<"/inbox">) {
                     : "Call or text them back from your own phone."}
                 </p>
               )
+            ) : row.pendingDraftId ? (
+              // Check 10 P4: the draft already exists; go to it instead of writing another.
+              <Link
+                href={`/queue?t=${row.id}#t-${row.id}`}
+                className={cn(buttonVariants(), "w-full")}
+              >
+                See the draft
+              </Link>
             ) : row.category !== "noise" && !readOnly ? (
               <form action={draftReplyAction}>
                 <input type="hidden" name="threadId" value={row.id} />
@@ -285,7 +298,7 @@ export default async function InboxPage(props: PageProps<"/inbox">) {
               // Check 10 P1: answered by phone, from the Inbox too.
               <CalledThem
                 threadId={row.id}
-                hasDraft={false}
+                hasDraft={row.pendingDraftId != null}
                 inverted={row.needsOwner}
                 back="inbox"
               />

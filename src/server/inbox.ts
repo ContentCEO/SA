@@ -30,6 +30,11 @@ export type InboxRow = {
   extracted: Record<string, unknown> | null;
   /** Leads package: a lead website / voicemail / text-message thread (never drafted). */
   leadChannel: string | null;
+  /**
+   * Check 10 P4: the draft waiting in the Queue for this thread (pending, not already in its
+   * undo window or being sent), or null.
+   */
+  pendingDraftId: string | null;
   /** "Replied" / "Waiting on you"; null for junk or no customer email. */
   replyState: ReplyState | null;
 };
@@ -109,6 +114,9 @@ export async function listInboxThreads(
       senderAddress: customerAddressSql(),
       lastIn: lastInSql(),
       lastOut: lastOutSql(),
+      pendingDraftId: sql<
+        string | null
+      >`(select d.id from drafts d where d.thread_id = ${threads.id} and d.status = 'pending' and d.send_after is null and d.send_claimed_at is null order by d.created_at desc limit 1)`,
     })
     .from(threads)
     .innerJoin(mailboxes, eq(mailboxes.id, threads.mailboxId))

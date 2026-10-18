@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { beforeEach, describe, expect, it } from "vitest";
 import type { Database } from "@/db";
-import { messages, threads } from "@/db/schema";
+import { drafts, messages, threads } from "@/db/schema";
 import { ensureUserAndWorkspace } from "@/server/accounts";
 import { inboxPage, listInboxThreads } from "@/server/inbox";
 import { compareInbox } from "@/server/inbox-rules";
@@ -187,5 +187,44 @@ describe("Inbox paging (Check 10 P2)", () => {
       { now: NOW, cursor: all.next },
     );
     expect(next.rows.every((r) => theirs.includes(r.id))).toBe(true);
+  });
+});
+
+describe("Draft ready (Check 10 P4)", () => {
+  it("only a pending draft counts (not a sent or discarded one, not one being sent)", async () => {
+    const draft = (threadId: string, status: "pending" | "sent" | "discarded", extra = {}) =>
+      database
+        .insert(drafts)
+        .values({
+          threadId,
+          mailboxId,
+          kind: "reply",
+          status,
+          gmailDraftId: `gd-${threadId}-${status}`,
+          toAddress: "dana@example.com",
+          subject: "Re: Help",
+          body: "Hi",
+          originalBody: "Hi",
+          reason: "r",
+          flags: [],
+          confidence: 80,
+          promptVersion: "draft.v7",
+          ...extra,
+        })
+        .returning({ id: drafts.id });
+    const waiting = await seedThread({ inAt: ago(1) });
+    const sent = await seedThread({ inAt: ago(2) });
+    const discarded = await seedThread({ inAt: ago(3) });
+    const sending = await seedThread({ inAt: ago(4) });
+    const [d] = await draft(waiting, "pending");
+    await draft(sent, "sent");
+    await draft(discarded, "discarded");
+    await draft(sending, "pending", { sendAfter: NOW });
+    const rows = await listInboxThreads(workspaceId, { kind: "all" }, { now: NOW });
+    const byId = new Map(rows.map((r) => [r.id, r.pendingDraftId]));
+    expect(byId.get(waiting)).toBe(d!.id);
+    expect(byId.get(sent)).toBeNull();
+    expect(byId.get(discarded)).toBeNull();
+    expect(byId.get(sending)).toBeNull();
   });
 });
