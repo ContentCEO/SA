@@ -14,7 +14,7 @@ import {
   sentDraftSummary,
 } from "@/server/drafts";
 import { digestCounts } from "@/server/digest";
-import { localDayStart } from "@/server/growth-client-rules";
+import { localDayStart } from "@/server/followup-rules";
 import { followupScanDue, markFollowupScanned, threadsToFollowUp } from "@/server/followups";
 import { localParts } from "@/server/snooze-rules";
 import { guessNoAnswers, listQuotes } from "@/server/quotes";

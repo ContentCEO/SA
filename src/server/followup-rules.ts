@@ -3,8 +3,16 @@
  * and the sent screen (drafts.ts) and the Money card (money-rules.ts). SQL twins live next to
  * the scan's query.
  */
-import { localDayStart } from "./growth-client-rules";
-import { localParts, usableTimeZone } from "./snooze-rules";
+import { atLocalHour, localParts, usableTimeZone } from "./snooze-rules";
+
+/** The instant a calendar date ('YYYY-MM-DD') begins (local midnight) in a time zone. DST-safe. */
+export function localDayStart(date: string, timeZone: string): Date {
+  const tz = usableTimeZone(timeZone);
+  const noon = new Date(`${date}T12:00:00Z`);
+  const seen = localParts(noon, tz).date;
+  const offset = seen === date ? 0 : seen < date ? 1 : -1;
+  return atLocalHour(noon, tz, offset, 0);
+}
 
 /** Don't chase anything the owner last wrote about more than this long ago. */
 export const FOLLOWUP_MAX_AGE_DAYS = 21;
