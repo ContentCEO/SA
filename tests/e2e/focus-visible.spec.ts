@@ -184,3 +184,35 @@ test("Check 32 P4: inverted chips and buttons on paper show a 3:1 focus ring", a
     expect(await ringContrast(page, chip), where("review chip")).toBeGreaterThanOrEqual(3);
   }
 });
+
+/** Check 32 P12: a skip link first on every screen; Enter moves focus to the content. */
+test("Skip to content: the first Tab on /queue, and Enter moves focus to main", async ({
+  page,
+  context,
+}, info) => {
+  test.skip(info.project.name !== "desktop", "keyboard check at 1280px");
+  const owner = await seedOwner({ mailbox: true, backfilled: true });
+  await signInAs(context, owner);
+  await page.goto("/queue");
+  await page.waitForLoadState("networkidle");
+  await page.keyboard.press("Tab");
+  const skip = page.getByRole("link", { name: "Skip to content" });
+  await expect(skip).toBeFocused();
+  const box = (await skip.boundingBox())!;
+  expect(box.height).toBeGreaterThanOrEqual(44);
+  expect(box.x).toBeLessThan(40);
+  expect(box.y).toBeLessThan(40);
+  await page.keyboard.press("Enter");
+  await expect(page.locator("main#main")).toBeFocused();
+  // The next Tab goes into the screen, not back to the header.
+  await page.keyboard.press("Tab");
+  expect(await page.evaluate(() => !!document.activeElement?.closest("main"))).toBe(true);
+
+  for (const path of ["/", "/growth", "/signin", "/privacy", "/terms"]) {
+    await context.clearCookies();
+    await page.goto(path);
+    await page.keyboard.press("Tab");
+    await expect(page.getByRole("link", { name: "Skip to content" }), path).toBeFocused();
+    await expect(page.locator("main#main"), path).toHaveCount(1);
+  }
+});

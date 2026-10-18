@@ -4,6 +4,7 @@ import { SiteFooter } from "@/components/app/site-footer";
 import { Headline } from "@/components/brand/headline";
 import { Wordmark } from "@/components/brand/wordmark";
 import { siteConfig } from "@/config/site";
+import { SkipLink } from "@/components/app/skip-link";
 
 // Check 32 P6: every screen has its own title ("… · Squared Away" from the root template).
 export const metadata: Metadata = { title: "Invite only" };
@@ -12,10 +13,15 @@ export default function NotInvitedPage() {
   const support = process.env.SUPPORT_EMAIL;
   return (
     <div className="mx-auto flex w-full max-w-xl flex-1 flex-col px-4 py-6">
+      <SkipLink />
       <header>
         <Wordmark />
       </header>
-      <main className="flex flex-1 flex-col justify-center gap-6 py-12">
+      <main
+        id="main"
+        tabIndex={-1}
+        className="flex flex-1 flex-col justify-center gap-6 py-12 outline-none"
+      >
         <Headline serif="not quite yet," heavy="invite only." />
         <p className="text-lg text-muted-foreground">
           Squared Away is invite-only right now. We set up each shop by hand so it works properly

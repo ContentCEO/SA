@@ -3,6 +3,7 @@ import Link from "next/link";
 import { SiteFooter } from "@/components/app/site-footer";
 import { Headline } from "@/components/brand/headline";
 import { Wordmark } from "@/components/brand/wordmark";
+import { SkipLink } from "@/components/app/skip-link";
 
 export const metadata: Metadata = {
   title: "Trial emails stopped",
@@ -18,12 +19,17 @@ export default async function TrialEmailsStoppedPage(props: PageProps<"/emails/s
   const bad = link === "bad";
   return (
     <div className="mx-auto flex w-full max-w-xl flex-1 flex-col px-4 py-6">
+      <SkipLink />
       <header>
         <Link href="/" className="inline-flex min-h-tap items-center">
           <Wordmark />
         </Link>
       </header>
-      <main className="flex flex-1 flex-col justify-center gap-6 py-12">
+      <main
+        id="main"
+        tabIndex={-1}
+        className="flex flex-1 flex-col justify-center gap-6 py-12 outline-none"
+      >
         {bad ? (
           <>
             <Headline serif="that link," heavy="didn't work." />

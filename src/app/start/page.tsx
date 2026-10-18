@@ -8,6 +8,7 @@ import { Wordmark } from "@/components/brand/wordmark";
 import { portalCopy } from "@/components/growth-portal/portal-copy";
 import { portalClient } from "@/server/growth-clients";
 import { requireOwner } from "@/server/session";
+import { SkipLink } from "@/components/app/skip-link";
 
 export const metadata: Metadata = { title: portalCopy.start.title, robots: { index: false } };
 
@@ -30,10 +31,11 @@ export default async function StartPage() {
   ];
   return (
     <div className="mx-auto flex w-full max-w-xl flex-1 flex-col gap-8 px-4 pt-6 pb-10">
+      <SkipLink />
       <header>
         <Wordmark />
       </header>
-      <main className="flex flex-1 flex-col gap-6">
+      <main id="main" tabIndex={-1} className="flex flex-1 flex-col gap-6 outline-none">
         <Headline serif={c.serif} heavy={c.heavy} />
         <nav aria-label="Choose" className="flex flex-col gap-4">
           {choices.map((choice, i) => (

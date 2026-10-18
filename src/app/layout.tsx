@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import localFont from "next/font/local";
 import "./globals.css";
 import { Announcer } from "@/components/app/announcer";
+import { SupportEmailProvider } from "@/components/app/help-line";
 import { ServiceWorker } from "@/components/app/service-worker";
 import { appUrl } from "@/lib/app-url";
 
@@ -77,7 +78,8 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       className={`${interTight.variable} ${instrumentSerif.variable} h-full antialiased`}
     >
       <body className="flex min-h-full flex-col">
-        {children}
+        {/* Check 32 P12: the crash page's help line reads SUPPORT_EMAIL from here. */}
+        <SupportEmailProvider email={process.env.SUPPORT_EMAIL}>{children}</SupportEmailProvider>
         {/* Check 32 P5: the live region every Notice reads out through. */}
         <Announcer />
         <ServiceWorker />

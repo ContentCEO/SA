@@ -8,6 +8,7 @@ import { siteConfig } from "@/config/site";
 import { Markdown } from "@/lib/markdown";
 import { SiteAnalytics } from "./site-analytics";
 import { SourceCapture } from "./source-fields";
+import { SkipLink } from "@/components/app/skip-link";
 
 /**
  * /privacy and /terms are rendered from docs/privacy-policy.md and
@@ -31,6 +32,7 @@ export async function loadLegalDoc(file: "privacy-policy.md" | "terms.md"): Prom
 export function LegalPage({ source }: { source: string }) {
   return (
     <div className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-10 px-4 py-6">
+      <SkipLink />
       <header className="flex items-center justify-between">
         <Link
           href="/"
@@ -43,7 +45,7 @@ export function LegalPage({ source }: { source: string }) {
           Home
         </Link>
       </header>
-      <main>
+      <main id="main" tabIndex={-1} className="outline-none">
         <Markdown source={source} />
       </main>
       <SiteFooter growthLink />

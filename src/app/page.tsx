@@ -32,6 +32,7 @@ import { GrowthSwitch } from "@/components/marketing/growth/growth-switch";
 import { SiteAnalytics } from "@/components/marketing/site-analytics";
 import { StructuredData } from "@/components/marketing/structured-data";
 import { phoneHref } from "@/lib/phone-href";
+import { SkipLink } from "@/components/app/skip-link";
 
 const telHref = phoneHref("tel", siteConfig.phone);
 
@@ -87,6 +88,7 @@ export default async function HomePage(props: PageProps<"/">) {
   return (
     <div className="flex flex-1 flex-col">
       <ForgetOffline />
+      <SkipLink />
       {/* data-site-header: GrowthSwitch makes it inert while the Growth bar covers it. */}
       <header data-site-header className="sticky top-0 z-10 border-b border-stone/60 bg-paper px-4">
         <div className="mx-auto flex w-full max-w-5xl items-center justify-between py-2">
@@ -123,7 +125,7 @@ export default async function HomePage(props: PageProps<"/">) {
         </div>
       </header>
 
-      <main className="flex flex-col">
+      <main id="main" tabIndex={-1} className="flex flex-col outline-none">
         {/* Part 1, the app (paper). Scrolling past the bridge switches the whole site to Growth. */}
         <div data-sa-half="app">
           <Section label="Introduction" className="pt-10 sm:pt-16">

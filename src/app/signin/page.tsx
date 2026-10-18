@@ -10,6 +10,7 @@ import { Headline } from "@/components/brand/headline";
 import { Wordmark } from "@/components/brand/wordmark";
 import { getWorkspaceForUser } from "@/server/accounts";
 import { signInWithGoogleAction } from "./actions";
+import { SkipLink } from "@/components/app/skip-link";
 
 export const metadata: Metadata = { title: "Sign in" };
 
@@ -22,12 +23,17 @@ export default async function SignInPage(props: PageProps<"/signin">) {
   return (
     <div className="mx-auto flex w-full max-w-xl flex-1 flex-col px-4 py-6">
       <ForgetOffline />
+      <SkipLink />
       <header>
         <Link href="/" className="inline-flex min-h-tap items-center">
           <Wordmark />
         </Link>
       </header>
-      <main className="flex flex-1 flex-col justify-center gap-6 py-12">
+      <main
+        id="main"
+        tabIndex={-1}
+        className="flex flex-1 flex-col justify-center gap-6 py-12 outline-none"
+      >
         <Headline serif="your inbox," heavy="handled." size="xl" />
         <p className="max-w-sm text-lg text-muted-foreground">
           Squared Away sorts your business email, drafts replies in your voice, and waits for your
