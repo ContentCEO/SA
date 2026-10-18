@@ -289,6 +289,47 @@ describe("#36 phone notifications", () => {
       errors.mockRestore();
     });
 
+    it("Check 19 P5: a refusing phone is counted, reset by a delivered push, and forgotten after 7 days", async () => {
+      const row = async () =>
+        (
+          await database.select().from(pushSubscriptions).where(eq(pushSubscriptions.endpoint, FCM))
+        )[0];
+      const failed = async () => "failed" as const;
+      const day = 24 * 60 * 60_000;
+      let t = NOON_NY.getTime();
+      for (let i = 0; i < 3; i++) {
+        await lead(new Date(t - 60_000));
+        await sendPushAlerts(new Date(t), { push: failed });
+        t += 11 * 60_000;
+      }
+      expect(await row()).toMatchObject({ failCount: 3, firstFailedAt: NOON_NY });
+      // A delivered push clears the run.
+      await lead(new Date(t - 60_000));
+      expect(await sendPushAlerts(new Date(t), { push })).toEqual({ sent: 1 });
+      expect(await row()).toMatchObject({ failCount: 0, firstFailedAt: null });
+
+      // Failing every day for a week: the row goes.
+      const start = t + day;
+      for (let d = 0; d <= 7; d++) {
+        const at = new Date(start + d * day);
+        await lead(new Date(at.getTime() - 60_000));
+        await sendPushAlerts(at, { push: failed });
+        if (d < 7) expect(await row(), `day ${d}`).toMatchObject({ failCount: d + 1 });
+      }
+      expect(await row()).toBeUndefined();
+    });
+
+    it("Check 19 P5: a push service answering 403 is a failure, not a dead phone", async () => {
+      const k = vapidKeys();
+      process.env.VAPID_PUBLIC_KEY = k.pub;
+      process.env.VAPID_PRIVATE_KEY = k.priv;
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async () => new Response(null, { status: 403 })),
+      );
+      expect(await sendPush(FCM)).toBe("failed");
+    });
+
     it("refuses an endpoint that isn't a push service", async () => {
       expect(await savePushSubscription(workspaceId, "https://internal.example.com/hook")).toBe(
         false,

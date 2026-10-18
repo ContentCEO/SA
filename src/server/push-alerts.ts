@@ -1,9 +1,9 @@
 import "server-only";
-import { and, count, eq, gte, inArray, isNull, lt, or } from "drizzle-orm";
+import { and, count, eq, gt, gte, inArray, isNull, lt, or, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { activityLog, businessProfiles, pushSubscriptions, workspaces } from "@/db/schema";
 import { isPushEndpoint } from "@/lib/push-endpoint";
-import { pushConfigured, sendPush, type PushSender } from "@/lib/web-push";
+import { pushConfigured, sendPush, type PushResult, type PushSender } from "@/lib/web-push";
 import { jobsAllowed } from "./lifecycle";
 import { atRiskPushPart } from "./leads-at-risk-rules";
 import { freshLeads, inQuietHours, leadCounts, SMS } from "./sms-alerts";
@@ -132,6 +132,62 @@ export async function removePushSubscription(workspaceId: string, endpoint: stri
     );
 }
 
+/** Check 19 P5: a phone whose push service has refused every push for this long is forgotten. */
+export const PUSH_FAILING_FOR_MS = 7 * 24 * 60 * 60 * 1000;
+
+/**
+ * What one push's answer means for that phone's row (Check 19 P5): "gone" forgets it; "sent"
+ * clears its failure count; "failed" (403 included — a changed key, a refusing service) counts
+ * one more and forgets a phone that has failed for 7 days. Shared by every push sender.
+ */
+export async function recordPushResult(
+  workspaceId: string,
+  endpoint: string,
+  result: PushResult,
+  now: Date = new Date(),
+) {
+  const row = and(
+    eq(pushSubscriptions.workspaceId, workspaceId),
+    eq(pushSubscriptions.endpoint, endpoint),
+  );
+  if (result === "gone") return removePushSubscription(workspaceId, endpoint);
+  if (result === "sent") {
+    await db()
+      .update(pushSubscriptions)
+      .set({ failCount: 0, firstFailedAt: null })
+      .where(and(row, gt(pushSubscriptions.failCount, 0)));
+    return;
+  }
+  if (result !== "failed") return;
+  const [r] = await db()
+    .update(pushSubscriptions)
+    .set({
+      failCount: sql`${pushSubscriptions.failCount} + 1`,
+      firstFailedAt: sql`coalesce(${pushSubscriptions.firstFailedAt}, ${now.toISOString()}::timestamptz)`,
+    })
+    .where(row)
+    .returning({ firstFailedAt: pushSubscriptions.firstFailedAt });
+  if (r?.firstFailedAt && now.getTime() - r.firstFailedAt.getTime() >= PUSH_FAILING_FOR_MS)
+    await removePushSubscription(workspaceId, endpoint);
+}
+
+/**
+ * Check 19 P5: the browser renewed this phone's subscription (`pushsubscriptionchange`): the
+ * new address takes the old one's place. Both must be real push services; the old row must be
+ * this owner's (or gone already). False when refused.
+ */
+export async function replacePushSubscription(
+  workspaceId: string,
+  oldEndpoint: unknown,
+  newEndpoint: unknown,
+): Promise<boolean> {
+  if (!isPushEndpoint(newEndpoint)) return false;
+  if (oldEndpoint != null && !isPushEndpoint(oldEndpoint)) return false;
+  if (typeof oldEndpoint === "string" && oldEndpoint !== newEndpoint)
+    await removePushSubscription(workspaceId, oldEndpoint);
+  return savePushSubscription(workspaceId, newEndpoint);
+}
+
 /** Each owner's phones (push endpoints), by workspace; one workspace when given. */
 export async function pushEndpointsByWorkspace(workspaceId?: string) {
   const subs = await db()
@@ -191,7 +247,7 @@ export async function sendPushAlerts(
       for (const endpoint of byWorkspace.get(w.id) ?? []) {
         try {
           const r = await push(endpoint);
-          if (r === "gone") await removePushSubscription(w.id, endpoint);
+          await recordPushResult(w.id, endpoint, r, now);
           if (r === "sent") delivered++;
         } catch (err) {
           console.error("push_alert_failed", {

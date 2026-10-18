@@ -271,6 +271,7 @@ describe("C3: every route handler is in the table with the guard it uses", () =>
   const ROUTES: Record<string, Guard> = {
     "src/app/api/badge/route.ts": "session",
     "src/app/api/push/summary/route.ts": "session",
+    "src/app/api/push/subscription/route.ts": "session",
     "src/app/api/drafts/[id]/send/route.ts": "session",
     "src/app/api/gmail/callback/route.ts": "session+state",
     "src/app/api/gmail/push/route.ts": "token",

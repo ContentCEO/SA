@@ -267,3 +267,66 @@ describe("service worker: the count lookup has a time limit", () => {
     });
   }
 });
+
+/* Check 19 P5: a renewed subscription reaches the server. */
+describe("service worker: pushsubscriptionchange", () => {
+  function changeWorker() {
+    const listeners: Record<string, (e: unknown) => void> = {};
+    const posts: { url: string; init: { method: string; body: string; credentials: string } }[] =
+      [];
+    const subscribe = vi.fn(async () => ({ endpoint: "https://fcm.googleapis.com/fcm/send/re" }));
+    runInNewContext(SRC, {
+      self: {
+        location: { origin: "https://sa.example" },
+        addEventListener: (type: string, fn: (e: unknown) => void) => (listeners[type] = fn),
+        registration: { pushManager: { subscribe } },
+        clients: {},
+      },
+      URL,
+      JSON,
+      caches: {},
+      fetch: async (url: string, init: { method: string; body: string; credentials: string }) => {
+        posts.push({ url, init });
+        return { ok: true, status: 200 };
+      },
+    });
+    const run = async (event: object) => {
+      let done: Promise<unknown> = Promise.resolve();
+      listeners.pushsubscriptionchange!({
+        ...event,
+        waitUntil: (p: Promise<unknown>) => (done = p),
+      });
+      await done;
+    };
+    return { run, posts, subscribe };
+  }
+  const OLD = "https://fcm.googleapis.com/fcm/send/old";
+
+  it("posts the browser's new address with the old one", async () => {
+    const w = changeWorker();
+    await w.run({
+      oldSubscription: { endpoint: OLD, options: {} },
+      newSubscription: { endpoint: "https://fcm.googleapis.com/fcm/send/new" },
+    });
+    expect(w.subscribe).not.toHaveBeenCalled();
+    expect(w.posts).toHaveLength(1);
+    expect(w.posts[0]!.url).toBe("/api/push/subscription");
+    expect(w.posts[0]!.init.method).toBe("POST");
+    expect(w.posts[0]!.init.credentials).toBe("same-origin");
+    expect(JSON.parse(w.posts[0]!.init.body)).toEqual({
+      oldEndpoint: OLD,
+      newEndpoint: "https://fcm.googleapis.com/fcm/send/new",
+    });
+  });
+
+  it("subscribes again with the old options when the browser gave no new one", async () => {
+    const w = changeWorker();
+    const options = { userVisibleOnly: true, applicationServerKey: "k" };
+    await w.run({ oldSubscription: { endpoint: OLD, options } });
+    expect(w.subscribe).toHaveBeenCalledWith(options);
+    expect(JSON.parse(w.posts[0]!.init.body)).toEqual({
+      oldEndpoint: OLD,
+      newEndpoint: "https://fcm.googleapis.com/fcm/send/re",
+    });
+  });
+});

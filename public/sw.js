@@ -187,6 +187,37 @@ self.addEventListener("push", (event) => {
   );
 });
 
+/*
+ * Check 19 P5: the browser renewed this phone's push subscription. Subscribe again with the
+ * old options when it didn't hand us a new one, then tell the app both addresses, so the
+ * server keeps pushing to the one that works. No signal: the server's failure count retires
+ * the old address after 7 days, and Settings re-saves it on the next visit.
+ */
+self.addEventListener("pushsubscriptionchange", (event) => {
+  const oldSub = event.oldSubscription;
+  const fresh = event.newSubscription
+    ? Promise.resolve(event.newSubscription)
+    : oldSub && oldSub.options
+      ? self.registration.pushManager.subscribe(oldSub.options)
+      : Promise.resolve(null);
+  event.waitUntil(
+    fresh
+      .then((sub) => {
+        if (!sub || !sub.endpoint) return undefined;
+        return fetch("/api/push/subscription", {
+          method: "POST",
+          credentials: "same-origin",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            oldEndpoint: oldSub && oldSub.endpoint ? oldSub.endpoint : null,
+            newEndpoint: sub.endpoint,
+          }),
+        });
+      })
+      .catch(() => undefined),
+  );
+});
+
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
   const url = safeUrl(event.notification.data && event.notification.data.url);

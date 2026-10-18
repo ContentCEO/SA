@@ -981,6 +981,13 @@ export const pushSubscriptions = pgTable(
       .references(() => workspaces.id, { onDelete: "cascade" }),
     endpoint: text("endpoint").notNull(),
     createdAt: createdAt(),
+    /**
+     * Check 19 P5: pushes this phone's push service refused in a row (any non-2xx but 404/410,
+     * 403 included), and when the run started. Reset by a delivered push; a row failing for
+     * 7 days is deleted.
+     */
+    failCount: integer("fail_count").notNull().default(0),
+    firstFailedAt: timestamp("first_failed_at", { withTimezone: true }),
   },
   (t) => [uniqueIndex("push_subscriptions_endpoint_uq").on(t.endpoint)],
 );

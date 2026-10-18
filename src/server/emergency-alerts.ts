@@ -17,7 +17,7 @@ import {
 import { queueDeepLink } from "./leads-at-risk-rules";
 import { jobsAllowed } from "./lifecycle";
 import { mailboxRunning } from "./mailbox-plan";
-import { pushEndpointsByWorkspace, removePushSubscription } from "./push-alerts";
+import { pushEndpointsByWorkspace, recordPushResult } from "./push-alerts";
 import { usableTimeZone } from "./snooze-rules";
 import {
   answeredByPhoneSql,
@@ -241,7 +241,7 @@ export async function sendEmergencyAlerts(
       for (const endpoint of phones) {
         try {
           const r = await push(endpoint);
-          if (r === "gone") await removePushSubscription(w.id, endpoint);
+          await recordPushResult(w.id, endpoint, r, now);
           if (r === "sent") phonesReached++;
         } catch (err) {
           console.error("emergency_push_failed", {
