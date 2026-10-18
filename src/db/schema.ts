@@ -225,6 +225,9 @@ export const mailboxes = pgTable(
   (t) => [
     uniqueIndex("mailboxes_workspace_email_uq").on(t.workspaceId, sql`lower(${t.email})`),
     index("mailboxes_workspace_idx").on(t.workspaceId),
+    // Check 25 P7: one Gmail in one account (checked in saveConnectedMailbox). Not unique yet:
+    // production may already hold a duplicate; check before making it unique.
+    index("mailboxes_email_lower_idx").on(sql`lower(${t.email})`),
   ],
 );
 

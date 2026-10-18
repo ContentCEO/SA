@@ -1,5 +1,5 @@
 import "server-only";
-import { and, asc, desc, eq, sql } from "drizzle-orm";
+import { and, asc, desc, eq, ne, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { activityLog, mailboxes, type Mailbox, type Workspace } from "@/db/schema";
 import { decryptSecret, encryptSecret } from "@/lib/crypto";
@@ -40,6 +40,18 @@ export class MailboxLimitError extends Error {
   }
 }
 
+/**
+ * Check 25 P7: this Gmail address is already connected to another Squared Away account (any
+ * status — live, waiting for a reconnect, or paused on a plan). One Gmail is live in one
+ * account only: two would read the same inbox and both write drafts into it.
+ */
+export class MailboxInUseError extends Error {
+  constructor() {
+    super("This Gmail is already connected to another account.");
+    this.name = "MailboxInUseError";
+  }
+}
+
 export async function listMailboxes(workspaceId: string): Promise<MailboxSummary[]> {
   return db()
     .select({
@@ -69,6 +81,22 @@ export async function saveConnectedMailbox(
   result: ConnectResult,
 ): Promise<MailboxSummary> {
   const email = result.email.toLowerCase();
+  // Check 25 P7: never the same Gmail in two accounts. Nothing is saved and the try is logged
+  // (content-free) on the workspace that tried.
+  const [elsewhere] = await db()
+    .select({ id: mailboxes.id })
+    .from(mailboxes)
+    .where(and(sql`lower(${mailboxes.email}) = ${email}`, ne(mailboxes.workspaceId, workspace.id)))
+    .limit(1);
+  if (elsewhere) {
+    await db().insert(activityLog).values({
+      workspaceId: workspace.id,
+      actor: "owner",
+      action: "mailbox_in_use_refused",
+      detail: {},
+    });
+    throw new MailboxInUseError();
+  }
   const existing = await listMailboxes(workspace.id);
   const isReconnect = existing.some((m) => m.email.toLowerCase() === email);
   const limit = mailboxLimit(workspace);

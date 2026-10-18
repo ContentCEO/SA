@@ -309,6 +309,13 @@
       "when": 1792281829718,
       "tag": "0043_backfill_cursor",
       "breakpoints": true
+    },
+    {
+      "idx": 44,
+      "version": "7",
+      "when": 1792283403217,
+      "tag": "0044_mailbox_email_index",
+      "breakpoints": true
     }
   ]
 }

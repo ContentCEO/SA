@@ -181,3 +181,21 @@ describe("Gmail connect callback: a Google account without Gmail (Check 47 P1)",
     errors.mockRestore();
   });
 });
+
+describe("Gmail connect callback: a Gmail already in another account (Check 25 P7)", () => {
+  it("GUARDRAIL: redirects to in_use and saves nothing; the other account's token is not revoked", async () => {
+    const other = await ensureUserAndWorkspace({ email: "spouse@shop.com" });
+    await saveConnectedMailbox(other.workspace, {
+      email: "owner@shop.com",
+      refreshToken: "rt-theirs",
+      grantedScopes: ALL_CONNECT_SCOPES,
+    });
+    granted = ALL_CONNECT_SCOPES;
+    expect(await callback()).toBe("/connect?error=in_use");
+    const rows = await database.select().from(mailboxes);
+    expect(rows.map((r) => r.workspaceId)).toEqual([other.workspace.id]);
+    expect(decryptSecret(rows[0]!.encryptedRefreshToken)).toBe("rt-theirs");
+    expect(google.map((c) => c.url)).not.toContain(REVOKE_URL);
+    expect(await statusOf()).toBe("invited");
+  });
+});

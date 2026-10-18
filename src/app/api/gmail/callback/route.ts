@@ -7,7 +7,7 @@ import { createGmailConnector } from "@/mailbox/gmail/connector";
 import { GMAIL_STATE_COOKIE, gmailRedirectPath, statesMatch } from "@/mailbox/gmail/oauth-state";
 import { getWorkspaceForUser } from "@/server/accounts";
 import { enqueue, mailboxConnected } from "@/jobs/client";
-import { MailboxLimitError, saveConnectedMailbox } from "@/server/mailboxes";
+import { MailboxInUseError, MailboxLimitError, saveConnectedMailbox } from "@/server/mailboxes";
 import { getBusinessProfile } from "@/server/profile";
 import { termsRequiredResponse } from "@/server/session";
 import { termsAccepted } from "@/server/terms";
@@ -55,6 +55,10 @@ export async function GET(request: NextRequest) {
       return to("/connect?error=no_gmail");
     }
     if (err instanceof MailboxLimitError) return to("/settings/gmail?error=limit");
+    // Check 25 P7: connected to another Squared Away account. Nothing was saved. The new token
+    // is NOT revoked: revoking a Google grant can end the other account's access to that same
+    // inbox too, and that account is working.
+    if (err instanceof MailboxInUseError) return to("/connect?error=in_use");
     // No token or email content in logs — just the kind of failure.
     console.error("gmail_connect_failed", { name: (err as Error).name });
     return to("/connect?error=failed");

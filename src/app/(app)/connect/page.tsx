@@ -15,6 +15,7 @@ const errors: Record<string, string> = {
     "Google let you untick a permission, and Squared Away needs both to work: “View your email messages and settings” and “Manage drafts and send emails.” Nothing was saved. Try again and leave both ticked.",
   expired: "That took a little long and timed out. Tap Connect Gmail to try again.",
   failed: "Something went wrong on the way back from Google. Nothing was saved. Try again.",
+  in_use: `This Gmail is already connected to another Squared Away account. Disconnect it there first, or call Davi at ${siteConfig.phone}.`,
   no_gmail: `This Google account doesn't have Gmail, so there's nothing for Squared Away to read. It works with Gmail and Google Workspace for now. If your business email is on Outlook, call or text Davi at ${siteConfig.phone}; Outlook is on the list.`,
 };
 

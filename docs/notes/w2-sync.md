@@ -217,3 +217,19 @@ Under "What we store": "How many photos or files an email had (never the files o
   inboxes take a while. New mail is still safe in Gmail." "For the first time" is gone.
 - Settings sync line: "This can take a while." (was "a few minutes"). Learning screen: serif
   "this can take a while," heavy "reading your email.", and the running count while reading.
+
+## Step 10 · Check 25 P7: one Gmail in one account
+
+- Migration `0044_mailbox_email_index`: plain (non-unique) index on `lower(mailboxes.email)`.
+  **Integrator / Davi:** before making it unique, count duplicates on the shared database:
+  `select lower(email), count(distinct workspace_id) from mailboxes group by 1 having count(distinct workspace_id) > 1;`
+- `saveConnectedMailbox` refuses an address that has a mailbox row in another workspace (any
+  status: active, reconnect_needed, paused, or plan-paused) with `MailboxInUseError`; nothing is
+  saved, no trial clock starts, and one `mailbox_in_use_refused` activity row (detail `{}`) goes
+  on the workspace that tried. Reconnecting in the same workspace is unchanged; after the other
+  account disconnects, the address can be connected.
+- Callback → `/connect?error=in_use`: "This Gmail is already connected to another Squared Away
+  account. Disconnect it there first, or call Davi at 978-201-9763."
+- **Adapted (safety):** the new token is **not** revoked at Google. A Google revoke ends the app's
+  grant for that Google account, which can also end the *other* account's working access to the
+  same inbox. The token is simply never stored. (Question for Davi below.)
