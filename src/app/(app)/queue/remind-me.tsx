@@ -7,18 +7,24 @@ import { CardTargets, closeOnEscape, QuestionLine, useFocusReturn } from "./focu
 
 export type SnoozeOption = { choice: string; label: string };
 
+/** A half-row button whose words may wrap (still at least 44px tall). */
+export const COMPACT = "h-auto min-h-11 w-full py-2 leading-tight whitespace-normal";
+
 /** Plan #6: put a conversation off; it comes back on top of the queue. */
 export function RemindMe({
   threadId,
   nextThreadId,
   options,
   inverted,
+  compact,
 }: {
   threadId: string;
   /** Check 9 P5: the card a snooze lands on. */
   nextThreadId?: string | null;
   options: SnoozeOption[];
   inverted?: boolean;
+  /** Check 9 P12: half a row wide — the words may wrap onto two lines. */
+  compact?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const { opener, restore } = useFocusReturn();
@@ -61,7 +67,7 @@ export function RemindMe({
       ref={opener}
       type="button"
       variant={inverted ? "default" : "outline"}
-      className="w-full"
+      className={compact ? COMPACT : "w-full"}
       onClick={() => setOpen(true)}
     >
       Remind me later

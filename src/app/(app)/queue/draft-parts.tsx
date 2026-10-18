@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { findGaps, fillGap } from "@/ai/gaps";
 import { Button } from "@/components/ui/button";
 import { confidenceWords, type ConfidenceLabel } from "@/config/drafting";
 import { cn } from "@/lib/utils";
+import { withoutCategoryPrefix } from "@/lib/card-words";
 import { closeOnEscape } from "./focus";
 
 /** Plan #8: three labels by weight and inversion — never colour. */
@@ -31,12 +32,21 @@ export function BodyWithGaps({
   body,
   onChange,
   expanded,
+  onToggle,
+  clamp = false,
   readOnly,
   priceSuggestions,
 }: {
   body: string;
   onChange: (next: string) => void;
   expanded: boolean;
+  /** "Show full draft" / "Show less" (shown only when the text really is cut short). */
+  onToggle?: () => void;
+  /**
+   * Check 9 P7: may the text fold to four lines? Never above a Send reply button — the owner
+   * reads the whole reply before okaying it — and never with a gap in it.
+   */
+  clamp?: boolean;
   readOnly?: boolean;
   /** Plan #15: the owner's past prices for similar jobs, offered in an open price gap. */
   priceSuggestions?: PastPrice[];
@@ -49,6 +59,17 @@ export function BodyWithGaps({
   const setOpen = (index: number | null) => setOpenOn(index === null ? null : { index, body });
   const [value, setValue] = useState("");
   const gaps = findGaps(body);
+  const folds = clamp && !gaps.length;
+  // Check 9 P7: the toggle only when folding hides something (measured while folded).
+  const text = useRef<HTMLParagraphElement>(null);
+  const [measured, setMeasured] = useState(false);
+  const cutShort = folds && measured;
+  useLayoutEffect(() => {
+    const el = text.current;
+    if (!folds || expanded || !el) return;
+    // A layout measurement of the folded text.
+    setMeasured(el.scrollHeight > el.clientHeight + 1);
+  }, [folds, expanded, body]);
   // Check 32 P1: Cancel (or Escape) puts focus back on the gap chip that opened the box.
   const chips = useRef<(HTMLButtonElement | null)[]>([]);
   const [returnTo, setReturnTo] = useState<number | null>(null);
@@ -92,9 +113,19 @@ export function BodyWithGaps({
 
   return (
     <div className="flex flex-col gap-2">
-      <p className={cn("whitespace-pre-line", !expanded && !gaps.length && "line-clamp-4")}>
+      <p ref={text} className={cn("whitespace-pre-line", folds && !expanded && "line-clamp-4")}>
         {parts}
       </p>
+      {cutShort && onToggle ? (
+        <button
+          type="button"
+          className="inline-flex min-h-tap items-center self-start font-semibold underline underline-offset-4"
+          aria-expanded={expanded}
+          onClick={onToggle}
+        >
+          {expanded ? "Show less" : "Show full draft"}
+        </button>
+      ) : null}
       {open !== null && gaps[open] ? (
         <form
           className="flex flex-col gap-2 rounded-lg border-2 border-charcoal p-3"
@@ -257,7 +288,7 @@ export function WhyThis({
       <dl className="flex flex-col gap-2 px-3 pb-3 text-sm">
         <div>
           <dt className="font-black">What it is</dt>
-          <dd>{reason}</dd>
+          <dd>{withoutCategoryPrefix(reason)}</dd>
         </div>
         <div>
           <dt className="font-black">From your business profile</dt>

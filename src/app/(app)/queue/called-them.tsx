@@ -5,6 +5,7 @@ import { PendingButton } from "@/components/app/pending-button";
 import { Button } from "@/components/ui/button";
 import { answeredByPhoneAction } from "./first-week-actions";
 import { CardTargets, closeOnEscape, QuestionLine, useFocusReturn } from "./focus";
+import { COMPACT } from "./remind-me";
 
 /**
  * Round 2 (FW E11): "I called them". Trades answer by phone all the time; one tap (and a
@@ -18,6 +19,7 @@ export function CalledThem({
   inverted,
   label = "I called them",
   confirm = "Yes, I called them",
+  compact,
 }: {
   threadId: string;
   /** Check 9 P5: the card the owner lands on afterwards. */
@@ -27,6 +29,8 @@ export function CalledThem({
   /** Leads package: "Done — I answered" / "Done — I called back" on lead cards. */
   label?: string;
   confirm?: string;
+  /** Check 9 P12: half a row wide — the words may wrap onto two lines. */
+  compact?: boolean;
 }) {
   const done = label !== "I called them";
   const [asking, setAsking] = useState(false);
@@ -43,7 +47,7 @@ export function CalledThem({
         ref={opener}
         type="button"
         variant={inverted ? "default" : "outline"}
-        className="w-full"
+        className={compact ? COMPACT : "w-full"}
         onClick={() => setAsking(true)}
       >
         {label}

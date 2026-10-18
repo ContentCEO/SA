@@ -14,6 +14,7 @@ import { DraftEditor, keptEditKey } from "./draft-editor";
 import { SendButton } from "./send-button";
 import { CardTargets, closeOnEscape, QuestionLine, useFocusReturn } from "./focus";
 import { readKept } from "@/lib/kept-text";
+import { withoutCategoryPrefix } from "@/lib/card-words";
 import {
   addIntent,
   intentsServerSnapshot,
@@ -75,6 +76,11 @@ export type DraftCardProps = {
   /** Quick tweaks / voice edits left (0 hides them). */
   revisionsLeft?: number;
   needsOwnerReason: string | null;
+  /**
+   * Check 9 P12: the card sits under "Right now", which already says it needs the owner — so
+   * "Needs you: …" shows only when there's no summary to say what it's about.
+   */
+  inRightNow?: boolean;
   canSend: boolean;
   /** Read-only account: show the draft, but no edit, discard or swipe. */
   readOnly?: boolean;
@@ -274,11 +280,18 @@ export function DraftCard(p: DraftCardProps) {
         ))}
         {p.openingLine ? <p className="text-sm font-semibold">{p.openingLine}</p> : null}
         {p.noteLine}
-        {p.summary ? <p className="font-semibold">{p.summary}</p> : null}
-        <p className={p.summary ? "text-muted-foreground" : undefined}>{p.reason}</p>
+        {/* Check 9 P12: what the customer wants, once. The sorting reason is in Why this?,
+            and stands in here only when there's no summary. */}
+        {p.summary ? (
+          <p className="font-semibold">{p.summary}</p>
+        ) : p.reason ? (
+          <p>{withoutCategoryPrefix(p.reason)}</p>
+        ) : null}
       </header>
 
-      {p.needsOwnerReason ? <p className="font-semibold">Needs you: {p.needsOwnerReason}</p> : null}
+      {p.needsOwnerReason && !(p.summary && p.inRightNow) ? (
+        <p className="font-semibold">Needs you: {withoutCategoryPrefix(p.needsOwnerReason)}</p>
+      ) : null}
 
       {p.autoSendAt ? (
         <form
@@ -340,17 +353,12 @@ export function DraftCard(p: DraftCardProps) {
               body={body}
               onChange={setBody}
               expanded={expanded}
+              onToggle={() => setExpanded((v) => !v)}
+              // Check 9 P7: no Send reply ever sits under hidden text.
+              clamp={!(p.canSend && !p.readOnly)}
               readOnly={p.readOnly}
               priceSuggestions={pastPrices}
             />
-            <button
-              type="button"
-              className="mt-1 inline-flex min-h-tap items-center font-semibold underline underline-offset-4"
-              aria-expanded={expanded}
-              onClick={() => setExpanded((v) => !v)}
-            >
-              {expanded ? "Show less" : "Show full draft"}
-            </button>
           </div>
 
           {pastPrices.length ? (
@@ -532,14 +540,23 @@ export function DraftCard(p: DraftCardProps) {
                   <SayAChange draftId={p.draftId} threadId={p.threadId} seenHash={p.seenHash} />
                 </div>
               ) : null}
-              <RemindMe
-                threadId={p.threadId}
-                nextThreadId={p.nextThreadId}
-                options={p.remindOptions ?? []}
-              />
-              {p.readOnly ? null : (
-                <CalledThem threadId={p.threadId} nextThreadId={p.nextThreadId} hasDraft />
-              )}
+              {/* Check 9 P12: side by side; a question that opens takes the whole row. */}
+              <div className="grid grid-cols-2 gap-2 [&:has(>form)>*]:col-span-2 [&>*:only-child]:col-span-2">
+                <RemindMe
+                  threadId={p.threadId}
+                  nextThreadId={p.nextThreadId}
+                  options={p.remindOptions ?? []}
+                  compact
+                />
+                {p.readOnly ? null : (
+                  <CalledThem
+                    threadId={p.threadId}
+                    nextThreadId={p.nextThreadId}
+                    hasDraft
+                    compact
+                  />
+                )}
+              </div>
             </div>
           )}
         </>

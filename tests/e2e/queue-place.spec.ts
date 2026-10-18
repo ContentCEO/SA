@@ -157,3 +157,52 @@ test("an emergency with a draft is the first card on the page, under Right now (
   const needs = await page.getByRole("region", { name: "Needs you" }).boundingBox();
   expect(box!.y).toBeLessThan(needs!.y);
 });
+
+test("the whole reply is on the card above Send reply; no toggle where nothing is hidden (Check 9 P7)", async ({
+  page,
+  context,
+}) => {
+  const owner = await seedOwner({ mailbox: true, backfilled: true });
+  await setWorkspace(owner.workspaceId, {
+    status: "active",
+    setupPaidAt: new Date(),
+    setupPaidVia: "stripe",
+  });
+  const cards = await seedDrafts(owner.mailboxId!);
+  const long = cards[0]!;
+  await testDb
+    .update(schema.drafts)
+    .set({
+      body: "Hey Avery,\n\nYes, we pull the gas permit and book the inspection.\nWhere is the range going?\nHow far is it from the meter?\nA photo of the spot helps.\n\nThanks, Sam",
+      flags: [],
+      confidence: 92,
+    })
+    .where(eq(schema.drafts.id, long.draftId));
+  await signInAs(context, owner);
+  await page.goto("/queue");
+  const card = page.locator(`article#t-${long.threadId}`);
+  await expect(card.getByRole("button", { name: "Send reply" })).toBeVisible();
+  const reply = card.locator("p.whitespace-pre-line");
+  await expect(reply).toContainText("Thanks, Sam");
+  // Nothing folded away: the text's full height is on screen.
+  expect(await reply.evaluate((el) => el.scrollHeight <= el.clientHeight + 1)).toBe(true);
+  await expect(page.getByRole("button", { name: "Show full draft" })).toHaveCount(0);
+});
+
+test("a short draft on a card that folds has no Show full draft (Check 9 P7)", async ({
+  page,
+  context,
+}) => {
+  const owner = await seedOwner({ mailbox: true, backfilled: true });
+  const cards = await seedDrafts(owner.mailboxId!);
+  await testDb
+    .update(schema.drafts)
+    .set({ body: "Hi Avery,\nYes, we can do that.\nThanks, Sam" })
+    .where(eq(schema.drafts.id, cards[0]!.draftId));
+  await signInAs(context, owner);
+  await page.goto("/queue");
+  const card = page.locator(`article#t-${cards[0]!.threadId}`);
+  await expect(card).toContainText("Yes, we can do that.");
+  await page.waitForLoadState("networkidle");
+  await expect(card.getByRole("button", { name: "Show full draft" })).toHaveCount(0);
+});

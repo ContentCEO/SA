@@ -285,6 +285,7 @@ export default async function QueuePage(props: PageProps<"/queue">) {
       })}
       revisionsLeft={i.revisionsLeft}
       needsOwnerReason={i.needsOwnerReason}
+      inRightNow={urgentIds.has(i.threadId)}
       canSend={sending && !i.mailboxPaused}
       readOnly={readOnly || i.mailboxPaused}
       autoSendAt={i.autoSendAt ? i.autoSendAt.toISOString() : null}
