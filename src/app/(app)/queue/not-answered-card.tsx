@@ -1,11 +1,11 @@
 import { ContactButtons } from "@/components/app/contact-buttons";
-import { Button } from "@/components/ui/button";
 import { categoryTag, isCategory } from "@/config/categories";
 import { gmailThreadLink } from "@/lib/gmail-link";
 import type { LeadCard } from "@/server/lead-cards";
 import type { NotAnsweredRow } from "@/server/never-answered";
 import { waitingWords } from "@/server/never-answered-rules";
 import { draftReplyAction } from "./actions";
+import { DraftReplyButton } from "./draft-reply-button";
 import { CalledThem } from "./called-them";
 
 /** Leads package (B6): one "Not answered yet" row. Light card: it waits, it isn't urgent. */
@@ -36,11 +36,9 @@ export function NotAnsweredCard({
       {row.summary ? <p className="text-muted-foreground">{row.summary}</p> : null}
       <div className="grid grid-cols-1 gap-2 pt-1">
         {readOnly ? null : (
-          <form action={draftReplyAction}>
+          <form action={draftReplyAction} className="flex flex-col gap-1">
             <input type="hidden" name="threadId" value={row.threadId} />
-            <Button type="submit" className="w-full">
-              Draft a reply
-            </Button>
+            <DraftReplyButton />
           </form>
         )}
         {lead?.phone && lead.phoneShown ? (

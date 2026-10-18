@@ -1,12 +1,12 @@
 import type { ReactNode } from "react";
 import { ContactButtons } from "@/components/app/contact-buttons";
 import { PendingButton } from "@/components/app/pending-button";
-import { Button } from "@/components/ui/button";
 import { relativeTime } from "@/lib/relative-time";
 import type { QueueItem } from "@/server/drafts";
 import { playbookApplies } from "@/server/complaint-rules";
 import type { LeadCard } from "@/server/lead-cards";
 import { draftReplyAction } from "./actions";
+import { DraftReplyButton } from "./draft-reply-button";
 import { CalledThem } from "./called-them";
 import { injectionClearable } from "@/server/injection-clear-rules";
 import {
@@ -151,11 +151,11 @@ export function NeedsYouCard({
         ) : null}
         {contact}
         {canDraft ? (
-          <form action={draftReplyAction}>
+          <form action={draftReplyAction} className="flex flex-col gap-1">
             <input type="hidden" name="threadId" value={i.threadId} />
-            <Button type="submit" className="w-full">
-              {lead?.outsideTown ? "Draft a reply anyway" : "Draft a reply"}
-            </Button>
+            <DraftReplyButton
+              label={lead?.outsideTown ? "Draft a reply anyway" : "Draft a reply"}
+            />
           </form>
         ) : null}
         {!readOnly && lead?.outsideTown && !i.checkIn ? (

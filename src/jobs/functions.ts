@@ -27,6 +27,7 @@ import { threadsToFollowUp } from "@/server/followups";
 import { getMailboxWorkspace } from "@/server/mailboxes";
 import { purgeRateLimits } from "@/server/rate-limit";
 import { purgeEmailSentRecords } from "@/lib/email";
+import { purgeStaleDraftClaims } from "@/server/draft-claims";
 import { sendAccessLostAlerts } from "@/server/alerts";
 import { purgeAdminNoticeMarkers } from "@/server/admin-notify";
 import { recordLifecycleRun } from "@/server/health-deep";
@@ -598,6 +599,7 @@ export const purgeBodies = inngest.createFunction(
     const costAlerts = await step.run("cost-alerts", () => sendCostAlerts());
     await step.run("purge-cost-markers", () => purgeCostAlertMarkers());
     await step.run("purge-email-sent-records", () => purgeEmailSentRecords());
+    await step.run("purge-draft-claims", () => purgeStaleDraftClaims());
     await step.run("purge-admin-notices", () => purgeAdminNoticeMarkers());
     // Check 18 P1: as in the lifecycle job, fail only after every step has run.
     reportAlertFailures("cost", costAlerts);

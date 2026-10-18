@@ -14,6 +14,7 @@ import {
   createDraftForThread,
   bodyHash,
   discardDraft,
+  pendingDraftCreatedAt,
   pendingDraftText,
   queueSend,
   reviseDraft,
@@ -350,6 +351,19 @@ export async function discardDraftAction(formData: FormData) {
   redirect(`/queue?done=discarded${at(nextCard(formData))}`);
 }
 
+/**
+ * Check 9 P9: after "already a draft", the waiting draft's time — waiting up to 25 seconds for
+ * another run (the first tap) that is still writing it.
+ */
+async function waitForPendingDraft(workspaceId: string, threadId: string) {
+  for (let i = 0; i < 25; i++) {
+    const at = await pendingDraftCreatedAt(workspaceId, threadId);
+    if (at) return at;
+    await new Promise((r) => setTimeout(r, 1000));
+  }
+  return null;
+}
+
 /** "Draft a reply" — the owner asked, so this runs now rather than waiting for the background job. */
 export async function draftReplyAction(formData: FormData) {
   const { workspace } = await requireOwner();
@@ -370,6 +384,15 @@ export async function draftReplyAction(formData: FormData) {
   }
   // Check 9 P5: the new draft card carries the same thread id, so the owner lands on it.
   if (r.status === "created") redirect(`/queue?done=drafted${at(threadId.data)}`);
+  // Check 9 P9: a second tap while the first was writing (or just after) isn't an error — the
+  // draft is there, or will be in a moment.
+  if (r.status === "skipped" && r.reason === "already_pending") {
+    const createdAt = await waitForPendingDraft(workspace.id, threadId.data);
+    // The other run stopped without a draft: plain "try again", never "it's below".
+    if (!createdAt) redirect(`/queue?error=draftfailed${at(threadId.data)}`);
+    if (Date.now() - createdAt.getTime() < 60_000)
+      redirect(`/queue?done=drafted${at(threadId.data)}`);
+  }
   if (r.status === "reconnect_needed") redirect(`/queue?error=reconnect${at(threadId.data)}`);
   const reasons: Record<string, string> = {
     already_pending: "exists",

@@ -123,6 +123,7 @@ import { isInvoiceThread, paymentSaid } from "./money-rules";
 import { quoteStopsNudges } from "./quote-rules";
 import { BACK_ON_TOP_MS, isEmergency } from "./snooze-rules";
 import { inEmergencyLane, recentEmergency } from "./emergency-rules";
+import { claimDrafting, releaseDrafting } from "./draft-claims";
 import { CHECKIN_AFTER_DAYS, CHECKIN_MAX_DAYS } from "./complaint-rules";
 import { headerPickIds, toNeedsYouItem } from "./digest-rules";
 import { answeredByPhone } from "./first-week-rules";
@@ -727,18 +728,55 @@ export async function workspaceContext(
  * deposit draft is written, whatever the trigger, when the newest email accepts a quote
  * the owner gave; a review request or closing question only when the owner taps for one.
  */
+type CreateOpts = DraftDeps & {
+  /** auto: reply to new mail. owner: they asked. followup: nudge a quiet thread. */
+  trigger: "auto" | "owner" | "followup";
+  ownerNote?: string | null;
+  /** Required when the owner triggers it: the thread must belong to them. */
+  workspaceId?: string;
+  /** A special note only the owner's tap may ask for. */
+  purpose?: OwnerPurpose;
+};
+
 export async function createDraftForThread(
   threadId: string,
-  opts: DraftDeps & {
-    /** auto: reply to new mail. owner: they asked. followup: nudge a quiet thread. */
-    trigger: "auto" | "owner" | "followup";
-    ownerNote?: string | null;
-    /** Required when the owner triggers it: the thread must belong to them. */
-    workspaceId?: string;
-    /** A special note only the owner's tap may ask for. */
-    purpose?: OwnerPurpose;
-  } = { trigger: "auto" },
+  opts: CreateOpts = { trigger: "auto" },
 ): Promise<CreateOutcome> {
+  // Check 9 P9: one run per thread at a time — a second (a double tap, or a tap while the job
+  // writes the same one) stands down before any Gmail read or model call.
+  const claim = await claimDrafting(threadId, opts.now?.() ?? new Date());
+  if (!claim) return { status: "skipped", reason: "already_pending" };
+  try {
+    return await writeDraftForThread(threadId, opts);
+  } finally {
+    await releaseDrafting(threadId, claim);
+  }
+}
+
+/**
+ * Check 9 P9: when the thread's waiting draft was written (for "already a draft" right after
+ * a double tap), or null when none is waiting.
+ */
+export async function pendingDraftCreatedAt(
+  workspaceId: string,
+  threadId: string,
+): Promise<Date | null> {
+  const [r] = await db()
+    .select({ createdAt: drafts.createdAt })
+    .from(drafts)
+    .innerJoin(mailboxes, eq(mailboxes.id, drafts.mailboxId))
+    .where(
+      and(
+        eq(drafts.threadId, threadId),
+        eq(drafts.status, "pending"),
+        eq(mailboxes.workspaceId, workspaceId),
+      ),
+    )
+    .limit(1);
+  return r?.createdAt ?? null;
+}
+
+async function writeDraftForThread(threadId: string, opts: CreateOpts): Promise<CreateOutcome> {
   const now = opts.now?.() ?? new Date();
   const row = await loadThread(threadId);
   if (!row) return { status: "skipped", reason: "not_found" };
