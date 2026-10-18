@@ -10,6 +10,8 @@ import {
   mentionsRealLegal,
 } from "@/ai/guards";
 import { mentionsMoney } from "@/ai/money-words";
+import { looksNonEnglish } from "@/ai/language";
+import { prepareBody } from "@/ai/classify";
 import {
   and,
   count,
@@ -179,6 +181,11 @@ export type GuardrailInput = {
    * forward to that address makes them look known.
    */
   firstReply?: boolean;
+  /**
+   * Check 20 P3: the draft or the customer's newest email looks Spanish or Portuguese. Every
+   * code check here reads English only, so it waits.
+   */
+  otherLanguage?: boolean;
 };
 
 /** Layer 3. Every reason this email must wait for the owner; empty = may go. */
@@ -226,6 +233,8 @@ export function guardrailReasons(g: GuardrailInput): string[] {
   if (g.leadChannel) out.push("Lead-site and voicemail emails always wait for you.");
   if (g.textAddress) out.push("That address may turn into a text message, so it waits for you.");
   if (g.firstReply) out.push("First replies to new customers always wait for you.");
+  if (g.otherLanguage || looksNonEnglish(g.draftBody))
+    out.push("Not in English, so it waits for you.");
   return out;
 }
 
@@ -470,6 +479,9 @@ async function blockers(row: NonNullable<Awaited<ReturnType<typeof loadForAutopi
     textAddress: isEmailToTextAddress(draft.toAddress) || looksLikePhoneAddress(draft.toAddress),
     // Any stored opening means the drafter was told it's a first contact (even "not_first").
     firstReply: draft.opening != null,
+    // Check 20 P3: the newest part of their email (quoted text cut, as the sorter reads it).
+    otherLanguage:
+      fullBody !== null && looksNonEnglish(`${customer?.subject ?? ""}\n${prepareBody(fullBody)}`),
   });
 }
 

@@ -138,6 +138,15 @@ describe("per-email guardrails (layer 3)", () => {
       );
     }
   });
+  it("Check 20 P3: a Spanish or Portuguese email or draft waits, English is unchanged", () => {
+    const line = "Not in English, so it waits for you.";
+    expect(guardrailReasons({ ...ok, otherLanguage: true })).toEqual([line]);
+    expect(guardrailReasons({ ...ok, draftBody: "Perfecto, nos vemos mañana a las 8." })).toContain(
+      line,
+    );
+    expect(guardrailReasons({ ...ok, draftBody: "Obrigado! Até amanhã." })).toContain(line);
+    expect(guardrailReasons({ ...ok, draftBody: "Thanks José, got it." })).toEqual([]);
+  });
   it("an invoice question with no amount is allowed", () => {
     expect(guardrailReasons({ ...ok, category: "invoice_payment" })).toEqual([]);
   });
@@ -821,6 +830,19 @@ describe("in the database", () => {
       expect(started).toHaveLength(DAILY_AUTOPILOT_CAP);
       const counting = (await database.select().from(drafts)).filter((d) => d.autoSendAt);
       expect(counting).toHaveLength(1);
+    });
+
+    it("Check 20 P3: a Spanish email never gets a countdown, even with an English draft", async () => {
+      const t = await conversation();
+      await database
+        .update(messages)
+        .set({ bodyText: "Hola, ¿puede venir el jueves por la mañana? Gracias." })
+        .where(and(eq(messages.threadId, t), eq(messages.direction, "in")));
+      expect(await considerAutopilot(await drafted(t), NOW)).toBeNull();
+      // The same conversation in English starts one.
+      expect(await considerAutopilot(await drafted(await conversation()), NOW)).toEqual(
+        later(GRACE_MINUTES),
+      );
     });
 
     it("Check 20 P13: a draft already counting down takes no second slot", async () => {
