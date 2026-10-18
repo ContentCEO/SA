@@ -602,6 +602,8 @@ describe("quote tracker", () => {
       expect((await memory(t))!.amountCents).toBe(260_000);
 
       await ownerWrites(t, 3, "Sorry, I got that wrong. The right price is $2,100.");
+      // Check 29 P7: screens read, jobs write — the next sync's upkeep picks the new figure up.
+      await quoteUpkeepForMailbox(mailboxId, NOW);
       expect((await listQuotes(workspaceId, NOW)).quotes[0]!.amountCents).toBe(210_000);
       expect(await memory(t)).toMatchObject({ amountCents: 210_000, quotedAt: daysAgo(3) });
       // A later note with no figure changes nothing; a second run is a no-op.
@@ -734,6 +736,8 @@ describe("quote tracker", () => {
     });
     await setQuoteOutcome(workspaceId, old, "won", undefined, NOW);
     await setQuoteOutcome(workspaceId, lost, "lost", 50_000, NOW);
+    // Check 29 P7: amounts are captured by the draft job's upkeep, not when Quotes opens.
+    await quoteUpkeepForMailbox(mailboxId, NOW);
     const { totals } = await listQuotes(workspaceId, NOW);
     expect(totals).toMatchObject({
       requests: 3,
@@ -1840,6 +1844,7 @@ describe("win/loss auto-guess", () => {
         await customerWrites(t, 1);
         await classifyWith(classification({ category: category as "scheduling" }));
         expect(await rowOf(t)).toMatchObject({ category, quoteOutcome: null });
+        await quoteUpkeepForMailbox(mailboxId, NOW); // Check 29 P7: the job captures the amount
         const { quotes, totals } = await listQuotes(workspaceId, NOW);
         expect(quotes.map((q) => q.threadId)).toEqual([t]);
         expect(quotes[0]).toMatchObject({ stage: "waiting_on_you", amountCents: 240_000 });
