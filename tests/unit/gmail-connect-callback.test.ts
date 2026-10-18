@@ -7,7 +7,7 @@ import { activityLog, mailboxes, workspaces } from "@/db/schema";
 import { decryptSecret } from "@/lib/crypto";
 import { GMAIL_STATE_COOKIE } from "@/mailbox/gmail/oauth-state";
 import { ALL_CONNECT_SCOPES, GMAIL_SCOPES } from "@/mailbox/gmail/scopes";
-import { ensureUserAndWorkspace } from "@/server/accounts";
+import { ensureUserAndWorkspace, signOutEverywhere } from "@/server/accounts";
 import { saveConnectedMailbox } from "@/server/mailboxes";
 import { recordTermsAcceptance } from "@/server/terms";
 import { createTestDb } from "../support/db";
@@ -20,7 +20,7 @@ import { createTestDb } from "../support/db";
  */
 
 const req = vi.hoisted(() => ({
-  session: null as { user: { id: string } } | null,
+  session: null as { user: { id: string; sv?: number } } | null,
   cookies: new Map<string, string>(),
 }));
 
@@ -65,7 +65,7 @@ beforeEach(async () => {
   const { user, workspace } = await ensureUserAndWorkspace({ email: "owner@shop.com" });
   await recordTermsAcceptance(user.id);
   workspaceId = workspace.id;
-  req.session = { user: { id: user.id } };
+  req.session = { user: { id: user.id, sv: 0 } };
   req.cookies = new Map([[GMAIL_STATE_COOKIE, "state-123"]]);
   google = [];
   hasGmail = true;
@@ -109,6 +109,16 @@ async function callback() {
 
 const statusOf = async () =>
   (await database.select().from(workspaces).where(eq(workspaces.id, workspaceId)))[0]!.status;
+
+describe("Check 26 P3: a sign-in ended by 'Sign out everywhere'", () => {
+  it("GUARDRAIL: saves nothing and asks Google nothing", async () => {
+    granted = ALL_CONNECT_SCOPES;
+    await signOutEverywhere(workspaceId, "owner");
+    expect(await callback()).toBe("/");
+    expect(await database.select().from(mailboxes)).toEqual([]);
+    expect(google).toEqual([]);
+  });
+});
 
 describe("Gmail connect callback: the two scopes", () => {
   for (const missing of [GMAIL_SCOPES.compose, GMAIL_SCOPES.readonly]) {

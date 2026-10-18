@@ -19,7 +19,7 @@ import { FakeWriter } from "../support/fake-writer";
 // The signed-in owner, without Auth.js: the route only reads `session.user.id`.
 const session = vi.hoisted(() => ({ userId: null as string | null }));
 vi.mock("@/auth", () => ({
-  auth: async () => (session.userId ? { user: { id: session.userId } } : null),
+  auth: async () => (session.userId ? { user: { id: session.userId, sv: 0 } } : null),
 }));
 // Every Gmail call the route could make lands here, so the test can prove none happened.
 const gmail = vi.hoisted(() => ({ writer: null as FakeWriter | null, built: 0 }));

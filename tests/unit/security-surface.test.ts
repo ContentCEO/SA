@@ -324,7 +324,9 @@ describe("C3: every route handler is in the table with the guard it uses", () =>
             if (at > -1) expect(terms, work).toBeLessThan(at);
           }
           if (guard === "session") {
-            expect(src).toContain("getWorkspaceForUser(session.user.id)");
+            // Check 26 P3: the workspace comes with the session-version check.
+            expect(src).toMatch(/getWorkspaceForSession\(session\??\.user\)/);
+            expect(src).not.toContain("getWorkspaceForUser(");
             expect(src).toMatch(/status: 401/);
           } else {
             // Check 42 P3: the cookie also says which Gmail the connect is for; the random

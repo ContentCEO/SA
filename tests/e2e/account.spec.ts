@@ -97,3 +97,31 @@ test("text alerts stay out of Settings until texting is set up", async ({ page, 
   await expect(page).toHaveURL(/\/settings$/);
   await expect(list.getByRole("link", { name: /^Your Gmail/ })).toBeVisible();
 });
+
+test("Sign out of every phone and computer ends the other sign-ins too (Check 26 P3)", async ({
+  page,
+  context,
+  browser,
+}) => {
+  const owner = await seedOwner();
+  await signInAs(context, owner);
+  // The same owner on a second device (another browser context, its own cookie).
+  const other = await browser.newContext();
+  const otherPage = await other.newPage();
+  await signInAs(other, owner);
+  await otherPage.goto("/settings");
+  await expect(otherPage).toHaveURL(/\/settings$/);
+
+  await page.goto("/settings/account");
+  const button = page.getByRole("button", { name: "Sign out of every phone and computer" });
+  const box = await button.boundingBox();
+  expect(box!.height).toBeGreaterThanOrEqual(44);
+  await button.click();
+  await expect(page).toHaveURL(/\/signin\?done=everywhere$/);
+  await expect(page.getByRole("status")).toHaveText("Signed out everywhere.");
+
+  // The other device lands on /signin on its next navigation.
+  await otherPage.goto("/queue");
+  await expect(otherPage).toHaveURL(/\/signin$/);
+  await other.close();
+});

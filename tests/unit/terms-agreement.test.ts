@@ -38,7 +38,7 @@ import { createTestDb } from "../support/db";
 // --- Request stand-ins: who's signed in, the cookie jar, the proxy's header -------------------
 
 const req = vi.hoisted(() => ({
-  session: null as { user: { id: string; email?: string } } | null,
+  session: null as { user: { id: string; email?: string; sv?: number } } | null,
   cookies: new Map<string, string>(),
   set: [] as { name: string; value: string; options: Record<string, unknown> }[],
   deleted: [] as unknown[],
@@ -263,7 +263,7 @@ beforeEach(async () => {
   const made = await ensureUserAndWorkspace({ email: "owner@shop.com", name: "Owner" });
   owner = { id: made.user.id, email: made.user.email };
   workspaceId = made.workspace.id;
-  req.session = { user: { id: owner.id, email: owner.email } };
+  req.session = { user: { id: owner.id, email: owner.email, sv: 0 } };
   req.cookies.clear();
   req.set.length = 0;
   req.deleted.length = 0;

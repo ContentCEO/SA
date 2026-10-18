@@ -8,7 +8,7 @@ import { SiteFooter } from "@/components/app/site-footer";
 import { TermsForm } from "@/components/app/terms-form";
 import { Headline } from "@/components/brand/headline";
 import { Wordmark } from "@/components/brand/wordmark";
-import { getWorkspaceForUser } from "@/server/accounts";
+import { getWorkspaceForSession } from "@/server/accounts";
 import { signInWithGoogleAction } from "./actions";
 
 export const metadata: Metadata = { title: "Sign in · Squared Away" };
@@ -16,8 +16,9 @@ export const metadata: Metadata = { title: "Sign in · Squared Away" };
 export default async function SignInPage(props: PageProps<"/signin">) {
   const session = await auth();
   // A session for an account that no longer exists (deleted on another device) stays here.
-  if (session?.user?.id && (await getWorkspaceForUser(session.user.id))) redirect("/start");
-  const { error } = await props.searchParams;
+  // Check 26 P3: so does one signed out everywhere (its version is behind), or it would loop.
+  if (await getWorkspaceForSession(session?.user)) redirect("/start");
+  const { error, done } = await props.searchParams;
 
   return (
     <div className="mx-auto flex w-full max-w-xl flex-1 flex-col px-4 py-6">
@@ -33,6 +34,7 @@ export default async function SignInPage(props: PageProps<"/signin">) {
           Squared Away sorts your business email, drafts replies in your voice, and waits for your
           okay before anything goes out.
         </p>
+        {done === "everywhere" ? <Notice>Signed out everywhere.</Notice> : null}
         {error ? (
           <Notice strong>Sign-in didn&apos;t go through. Give it another try.</Notice>
         ) : null}

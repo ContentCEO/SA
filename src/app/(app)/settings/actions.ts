@@ -7,6 +7,7 @@ import { z } from "zod";
 import { signOut } from "@/auth";
 import { createGmailConnector } from "@/mailbox/gmail/connector";
 import { deleteAccount, SubscriptionCancelError } from "@/server/account-deletion";
+import { signOutEverywhere } from "@/server/accounts";
 import { disconnectMailbox } from "@/server/mailboxes";
 import { hitLimit } from "@/server/rate-limit";
 import { requireOwner } from "@/server/session";
@@ -53,4 +54,15 @@ export async function deleteAccountAction() {
   }
   (await cookies()).delete(OFFLINE_COOKIE);
   await signOut({ redirectTo: "/goodbye" });
+}
+
+/**
+ * Check 26 P3: "Sign out of every phone and computer" (a lost phone, a shared shop computer).
+ * Every sign-in on the account stops working on its next request; then this device signs out.
+ */
+export async function signOutEverywhereAction() {
+  const { workspace } = await requireOwner();
+  await signOutEverywhere(workspace.id, "owner");
+  (await cookies()).delete(OFFLINE_COOKIE);
+  await signOut({ redirectTo: "/signin?done=everywhere" });
 }

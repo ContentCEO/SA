@@ -113,6 +113,12 @@ const moves: Record<AdminMove, { label: string; explain: string; confirm: string
     explain: "Puts them back where they were before the pause.",
     confirm: "Yes, resume",
   },
+  sign_out_everywhere: {
+    label: "Sign them out everywhere",
+    explain:
+      "Ends every sign-in on this account, on every phone and computer (for a lost phone). They sign in again with Google. Nothing else changes.",
+    confirm: "Yes, sign them out everywhere",
+  },
 };
 
 const done: Record<string, string> = {
@@ -121,6 +127,7 @@ const done: Record<string, string> = {
   mark_setup_call_done: "Marked active.",
   pause: "Account paused.",
   resume: "Account resumed.",
+  sign_out_everywhere: "Signed them out everywhere.",
   plan: "Plan saved.",
   launch_ticked: "Marked done.",
   stripe_test:

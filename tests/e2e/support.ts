@@ -122,19 +122,27 @@ export async function signInAs(
   owner: { userId: string; email: string },
   { agreedToTerms = true }: { agreedToTerms?: boolean } = {},
 ) {
-  await testDb
+  const [user] = await testDb
     .update(schema.users)
     .set(
       agreedToTerms
         ? { termsAcceptedAt: new Date(), termsVersion: TERMS_VERSION }
         : { termsAcceptedAt: null, termsVersion: null },
     )
-    .where(eq(schema.users.id, owner.userId));
+    .where(eq(schema.users.id, owner.userId))
+    .returning({ sessionVersion: schema.users.sessionVersion });
   const cookieName = "authjs.session-token";
   const value = await encode({
     secret: process.env.AUTH_SECRET!,
     salt: cookieName,
-    token: { sub: owner.userId, uid: owner.userId, email: owner.email, name: "Test Owner" },
+    // Check 26 P3: a real sign-in carries the account's session version (`sv`).
+    token: {
+      sub: owner.userId,
+      uid: owner.userId,
+      sv: user?.sessionVersion ?? 0,
+      email: owner.email,
+      name: "Test Owner",
+    },
   });
   const url = new URL(process.env.PLAYWRIGHT_BASE_URL ?? "http://localhost:3100");
   await context.addCookies([

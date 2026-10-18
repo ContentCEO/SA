@@ -1,7 +1,7 @@
 import "server-only";
 import { eq, inArray, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { invites, users, workspaces, type User, type Workspace } from "@/db/schema";
+import { activityLog, invites, users, workspaces, type User, type Workspace } from "@/db/schema";
 import { linkGrowthInvite } from "./growth-clients";
 import { referralRefusal, referralsVisible } from "./referral-rules";
 
@@ -115,4 +115,61 @@ export async function getWorkspaceForUser(userId: string): Promise<Workspace | u
     .from(workspaces)
     .where(eq(workspaces.ownerUserId, userId));
   return workspace;
+}
+
+/** What a sign-in carries that we check: the account id and its session version (`sv`). */
+export type SignedInUser = { id?: string; sv?: unknown } | null | undefined;
+
+/**
+ * Check 26 P3: the signed-in person's workspace, in one query with the account's session
+ * version. A sign-in made at another version (signed out everywhere since) or with none at all
+ * (a cookie from before session versions) gets nothing, the same as being signed out.
+ */
+export async function getWorkspaceForSession(user: SignedInUser): Promise<Workspace | undefined> {
+  if (!user?.id || typeof user.sv !== "number") return undefined;
+  const [row] = await db()
+    .select({ sessionVersion: users.sessionVersion, workspace: workspaces })
+    .from(workspaces)
+    .innerJoin(users, eq(users.id, workspaces.ownerUserId))
+    .where(eq(workspaces.ownerUserId, user.id));
+  if (!row || row.sessionVersion !== user.sv) return undefined;
+  return row.workspace;
+}
+
+/**
+ * Check 26 P3: "Sign out of every phone and computer". Moves the account's session version on,
+ * so every sign-in made before now stops working on its next request. Returns the new version.
+ */
+async function bumpSessionVersion(userId: string): Promise<boolean> {
+  const [row] = await db()
+    .update(users)
+    .set({ sessionVersion: sql`${users.sessionVersion} + 1` })
+    .where(eq(users.id, userId))
+    .returning({ id: users.id });
+  return Boolean(row);
+}
+
+/**
+ * Check 26 P3: end every sign-in on a workspace owner's account — the owner's "Sign out of every
+ * phone and computer", or Davi's admin move (the caller has checked who's asking). One
+ * content-free Activity row says who did it.
+ */
+export async function signOutEverywhere(
+  workspaceId: string,
+  by: "owner" | "admin",
+): Promise<boolean> {
+  const [w] = await db()
+    .select({ ownerUserId: workspaces.ownerUserId })
+    .from(workspaces)
+    .where(eq(workspaces.id, workspaceId));
+  if (!w || !(await bumpSessionVersion(w.ownerUserId))) return false;
+  await db()
+    .insert(activityLog)
+    .values({
+      workspaceId,
+      actor: by === "owner" ? "owner" : "squared_away",
+      action: "signed_out_everywhere",
+      detail: { by },
+    });
+  return true;
 }
