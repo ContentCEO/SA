@@ -121,3 +121,10 @@ For the integrator: what `CLAUDE.md`, `docs/LAUNCH.md` and the legal drafts shou
   slowest database tests take 10–14 s at load ~18 here and would fail at 20 s only under load.
   `tests/support/setup.ts` (setupFiles) holds `console.log` / `console.info` lines whose first
   argument is a snake_case tag (`ai_call`, job tags) and prints them only when that test fails.
+- **CI once per change, flaky tests shown (Check 31 P8):** ci.yml runs on push to `main` only,
+  on `pull_request`, and on `workflow_dispatch` (a branch without a PR: Actions → CI → Run
+  workflow). **CLAUDE.md / LAUNCH.md wording that says pushes to `claude/**` branches run CI
+  should change:** they run once a PR is open (or by hand). The job id stays `check`. In CI
+  Playwright reports to `github` and `playwright-results.json`; a "Flaky e2e tests" step
+  (always) runs `scripts/flaky-report.mjs` into the job summary, listing each test that passed
+  only on a retry with its file and project.
