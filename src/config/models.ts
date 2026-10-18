@@ -47,8 +47,8 @@ export const modelPricing: Record<ModelId, { inputPerMTok: number; outputPerMTok
 export const aiTimeouts = { interactiveMs: 45_000, jobMs: 90_000 } as const;
 export const aiMaxRetries = 1;
 
-const envCount = (name: string, fallback: number): number => {
-  const n = Number(process.env[name] ?? fallback);
+const positiveCount = (raw: string | undefined, fallback: number): number => {
+  const n = Number(raw ?? fallback);
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : fallback;
 };
 
@@ -58,10 +58,10 @@ const envCount = (name: string, fallback: number): number => {
  * inboxes (at least one), up to `AI_DAILY_CALL_CAP_MAX` (default 3000).
  */
 export function aiCallCapPerInbox(): number {
-  return envCount("AI_DAILY_CALL_CAP", 500);
+  return positiveCount(process.env.AI_DAILY_CALL_CAP, 500);
 }
 export function aiCallCapMax(): number {
-  return envCount("AI_DAILY_CALL_CAP_MAX", 3000);
+  return positiveCount(process.env.AI_DAILY_CALL_CAP_MAX, 3000);
 }
 /** The day's limit for a shop with this many running inboxes. */
 export function aiCallCapFor(runningInboxes: number): number {
