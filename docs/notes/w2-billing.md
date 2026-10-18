@@ -94,3 +94,12 @@ For the integrator to fold into CLAUDE.md / docs/LAUNCH.md / docs/privacy-policy
   (`setUpWithoutStripePlan`); /billing then hides Choose a plan and What happens next (display
   only — `checkoutTerms` unchanged). Without Stripe configured, /billing lists the setup fee and
   the three plans (prices, inboxes) without buttons above "Online payment isn't switched on yet".
+- **/admin layout (Check 16 P3):** a "Needs you" box right under the headline (`needsYou` in
+  admin-rules.ts: Growth calls from the last 7 days — no "called" mark exists yet —, new app
+  sign-ups to invite, stuck inboxes from the P1 counts, payments failed, trials ending within 24
+  hours; counts only, 44px links). The waitlist section now sits above Accounts; Davi's own card is
+  a folded `<details>` line "Your test account: … · status"; every card has `id="acct-<id>"`.
+- **Find and paging (Check 16 P5):** `adminOverview(now, { q, page })` (ilike on business name or
+  owner email, `%`/`_`/`\` literal, 50 per page, Davi's card pinned on page 1 only); GET find form
+  (`?q=`), "Show older/newer accounts" (`?page=`), "Showing 51 to 100 of 134."; invites page with
+  `?ipage=`. q is never logged.

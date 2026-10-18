@@ -1,5 +1,18 @@
 import "server-only";
-import { and, count, desc, eq, gte, inArray, max, sql, sum } from "drizzle-orm";
+import {
+  and,
+  count,
+  desc,
+  eq,
+  gte,
+  ilike,
+  inArray,
+  max,
+  or,
+  sql,
+  sum,
+  type SQL,
+} from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { utcDay } from "@/ai/usage";
 import { db } from "@/db";
@@ -84,13 +97,42 @@ export type AdminRow = {
  */
 export const ADMIN_PAGE_SIZE = 50;
 
-export async function countWorkspaces(): Promise<number> {
-  const [row] = await db().select({ n: count() }).from(workspaces);
+/**
+ * Check 16 P5: the find box matches the business name or the owner's sign-in email, part of
+ * either, any case; `%`, `_` and `\` are taken literally. Never logged (it can hold an email).
+ */
+export function accountSearch(q: string | null | undefined): SQL | undefined {
+  const text = q?.trim().slice(0, 200);
+  if (!text) return undefined;
+  const pattern = `%${text.replace(/[\\%_]/g, "\\$&")}%`;
+  return or(ilike(workspaces.businessName, pattern), ilike(users.email, pattern));
+}
+
+/** 1-based page number from a query value; anything odd is page 1. */
+export function pageNumber(v: unknown): number {
+  const n = typeof v === "string" && /^\d{1,6}$/.test(v) ? Number(v) : 1;
+  return n >= 1 ? n : 1;
+}
+
+export async function countWorkspaces(q?: string | null): Promise<number> {
+  const [row] = await db()
+    .select({ n: count() })
+    .from(workspaces)
+    .innerJoin(users, eq(users.id, workspaces.ownerUserId))
+    .where(accountSearch(q));
   return row?.n ?? 0;
 }
 
-/** Newest accounts first, at most `ADMIN_PAGE_SIZE`. */
-export async function adminOverview(now: Date = new Date()): Promise<AdminRow[]> {
+/**
+ * Newest accounts first, `ADMIN_PAGE_SIZE` per page (Check 16 P5: `page` is 1-based, `q` finds a
+ * shop by name or email). Davi's own account is pinned first on page 1.
+ */
+export async function adminOverview(
+  now: Date = new Date(),
+  opts: { q?: string | null; page?: number } = {},
+): Promise<AdminRow[]> {
+  const page = opts.page && opts.page > 1 ? Math.floor(opts.page) : 1;
+  const search = accountSearch(opts.q);
   const monthStart = `${utcDay(now).slice(0, 7)}-01`;
   const today = utcDay(now);
   const weekAgo = new Date(now.getTime() - 7 * 86_400_000);
@@ -113,17 +155,20 @@ export async function adminOverview(now: Date = new Date()): Promise<AdminRow[]>
     .select(columns)
     .from(workspaces)
     .innerJoin(users, eq(users.id, workspaces.ownerUserId))
-    .orderBy(desc(workspaces.createdAt))
-    .limit(ADMIN_PAGE_SIZE);
-  // Davi's own account is always shown first, however many newer accounts there are.
+    .where(search)
+    .orderBy(desc(workspaces.createdAt), desc(workspaces.id))
+    .limit(ADMIN_PAGE_SIZE)
+    .offset((page - 1) * ADMIN_PAGE_SIZE);
+  // Davi's own account is shown first on page 1, however many newer accounts there are.
   const adminEmail = process.env.ADMIN_EMAIL ? normalizeEmail(process.env.ADMIN_EMAIL) : null;
-  const own = adminEmail
-    ? await db()
-        .select(columns)
-        .from(workspaces)
-        .innerJoin(users, eq(users.id, workspaces.ownerUserId))
-        .where(eq(users.email, adminEmail))
-    : [];
+  const own =
+    adminEmail && page === 1
+      ? await db()
+          .select(columns)
+          .from(workspaces)
+          .innerJoin(users, eq(users.id, workspaces.ownerUserId))
+          .where(and(eq(users.email, adminEmail), search))
+      : [];
   const ws = [...own, ...newest.filter((w) => !own.some((o) => o.id === w.id))];
   if (ws.length === 0) return [];
   const ids = ws.map((w) => w.id);
@@ -450,7 +495,14 @@ export async function markTestUserAdded(email: string, now: Date = new Date()) {
   return rows.length > 0;
 }
 
-export async function listInvites() {
+export async function countInvites(): Promise<number> {
+  const [row] = await db().select({ n: count() }).from(invites);
+  return row?.n ?? 0;
+}
+
+/** Newest invites first, `ADMIN_PAGE_SIZE` per page (Check 16 P5: `page` is 1-based). */
+export async function listInvites(opts: { page?: number } = {}) {
+  const page = opts.page && opts.page > 1 ? Math.floor(opts.page) : 1;
   return db()
     .select({
       email: invites.email,
@@ -460,6 +512,7 @@ export async function listInvites() {
       testUserAddedAt: invites.testUserAddedAt,
     })
     .from(invites)
-    .orderBy(desc(invites.invitedAt))
-    .limit(ADMIN_PAGE_SIZE);
+    .orderBy(desc(invites.invitedAt), invites.email)
+    .limit(ADMIN_PAGE_SIZE)
+    .offset((page - 1) * ADMIN_PAGE_SIZE);
 }

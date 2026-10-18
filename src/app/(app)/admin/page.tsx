@@ -11,7 +11,9 @@ import {
   ADMIN_PAGE_SIZE,
   accountsNeedingYou,
   adminOverview,
+  countInvites,
   countWorkspaces,
+  pageNumber,
   listInvites,
   systemHealth,
   type AdminRow,
@@ -526,6 +528,22 @@ export default async function AdminPage(props: PageProps<"/admin">) {
   const params = await props.searchParams;
   const now = new Date();
   const referrals = referralsVisible();
+  // Check 16 P5: find a shop and page through every account (and invite). q is never logged.
+  const q = typeof params.q === "string" ? params.q.trim().slice(0, 200) : "";
+  const page = pageNumber(params.page);
+  const invitePage = pageNumber(params.ipage);
+  const hrefWith = (over: Record<string, string | number | null>) => {
+    const sp = new URLSearchParams();
+    const merged: Record<string, string | number | null> = {
+      q: q || null,
+      page: page > 1 ? page : null,
+      ipage: invitePage > 1 ? invitePage : null,
+      ...over,
+    };
+    for (const [k, v] of Object.entries(merged)) if (v !== null && v !== "") sp.set(k, String(v));
+    const qs = sp.toString();
+    return qs ? `/admin?${qs}` : "/admin";
+  };
   // Test payments can only be told apart with the live key. The counts come from the last check
   // (database only): a plain page load asks Stripe nothing new.
   const live = stripeConfigured() && stripeMode() === "live";
@@ -546,10 +564,11 @@ export default async function AdminPage(props: PageProps<"/admin">) {
     openDisputes,
     waitingStripe,
     accountCounts,
+    inviteTotal,
   ] = await Promise.all([
-    adminOverview(now),
-    countWorkspaces(),
-    listInvites(),
+    adminOverview(now, { q, page }),
+    countWorkspaces(q),
+    listInvites({ page: invitePage }),
     listWaitlist(),
     stripeConnectedAt(),
     systemHealth(now),
@@ -564,6 +583,7 @@ export default async function AdminPage(props: PageProps<"/admin">) {
     openDisputeCount(),
     stripeWaitingWorkspaces(),
     accountsNeedingYou(now),
+    countInvites(),
   ]);
   const growthStates = await growthStateForEmails(waiting.map((w) => w.email));
   // Check 16 P3: Growth requests from the last 7 days (no "called" mark exists yet: Check 16 P4).
@@ -720,10 +740,35 @@ export default async function AdminPage(props: PageProps<"/admin">) {
         <h2 id="accounts" className="text-xl font-black">
           Accounts ({total})
         </h2>
-        {total > rows.length ? (
-          <p className="text-muted-foreground">Showing the newest {ADMIN_PAGE_SIZE}.</p>
+        <form method="get" action="/admin" role="search" className="flex flex-col gap-2">
+          <label className="flex flex-col gap-1.5">
+            <span className="font-semibold">Find a shop (name or email)</span>
+            <input
+              name="q"
+              type="search"
+              defaultValue={q}
+              maxLength={200}
+              autoComplete="off"
+              className="min-h-tap rounded-lg border border-input bg-paper px-3 text-base"
+            />
+          </label>
+          <div className="flex items-center gap-4">
+            <Button type="submit" variant="outline">
+              Find
+            </Button>
+            {q ? (
+              <Link
+                href="/admin#accounts"
+                className="inline-flex min-h-tap items-center font-semibold underline underline-offset-4"
+              >
+                Clear
+              </Link>
+            ) : null}
+          </div>
+        </form>
+        {rows.length === 0 ? (
+          <p>{q ? "No shop matches that." : "No one has signed in yet."}</p>
         ) : null}
-        {rows.length === 0 ? <p>No one has signed in yet.</p> : null}
         {rows.map((w) =>
           isAdminEmail(w.ownerEmail) ? (
             // Check 16 P3: Davi's own test account folds to one line; its moves still work.
@@ -739,6 +784,30 @@ export default async function AdminPage(props: PageProps<"/admin">) {
             <WorkspaceCard key={w.workspaceId} w={w} now={now} />
           ),
         )}
+        {total > ADMIN_PAGE_SIZE ? (
+          <nav aria-label="More accounts" className="flex flex-col gap-1">
+            <p className="text-muted-foreground">
+              Showing {Math.min((page - 1) * ADMIN_PAGE_SIZE + 1, total)} to{" "}
+              {Math.min(page * ADMIN_PAGE_SIZE, total)} of {total}.
+            </p>
+            {page * ADMIN_PAGE_SIZE < total ? (
+              <Link
+                href={`${hrefWith({ page: page + 1 })}#accounts`}
+                className="inline-flex min-h-tap items-center font-semibold underline underline-offset-4"
+              >
+                Show older accounts
+              </Link>
+            ) : null}
+            {page > 1 ? (
+              <Link
+                href={`${hrefWith({ page: page - 1 > 1 ? page - 1 : null })}#accounts`}
+                className="inline-flex min-h-tap items-center font-semibold underline underline-offset-4"
+              >
+                Show newer accounts
+              </Link>
+            ) : null}
+          </nav>
+        ) : null}
       </section>
 
       <section id="stripe" aria-labelledby="stripe-heading" className="flex flex-col gap-3">
@@ -900,6 +969,30 @@ export default async function AdminPage(props: PageProps<"/admin">) {
               </li>
             ))}
           </ul>
+        ) : null}
+        {inviteTotal > ADMIN_PAGE_SIZE ? (
+          <nav aria-label="More invites" className="flex flex-col gap-1">
+            <p className="text-muted-foreground">
+              Showing {Math.min((invitePage - 1) * ADMIN_PAGE_SIZE + 1, inviteTotal)} to{" "}
+              {Math.min(invitePage * ADMIN_PAGE_SIZE, inviteTotal)} of {inviteTotal} invites.
+            </p>
+            {invitePage * ADMIN_PAGE_SIZE < inviteTotal ? (
+              <Link
+                href={`${hrefWith({ ipage: invitePage + 1 })}#invite`}
+                className="inline-flex min-h-tap items-center font-semibold underline underline-offset-4"
+              >
+                Show older invites
+              </Link>
+            ) : null}
+            {invitePage > 1 ? (
+              <Link
+                href={`${hrefWith({ ipage: invitePage - 1 > 1 ? invitePage - 1 : null })}#invite`}
+                className="inline-flex min-h-tap items-center font-semibold underline underline-offset-4"
+              >
+                Show newer invites
+              </Link>
+            ) : null}
+          </nav>
         ) : null}
       </section>
     </>

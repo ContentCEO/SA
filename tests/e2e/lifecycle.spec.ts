@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { expect, test } from "@playwright/test";
 import { eq } from "drizzle-orm";
 import * as schema from "../../src/db/schema";
@@ -303,4 +304,47 @@ test("admin: Needs you comes first, the waitlist sits above Accounts, Davi's car
   await expect(page.getByText(/^Your test account:/)).toBeVisible();
   await expect(page.getByRole("article", { name: admin.email })).toBeHidden();
   await expect(page.locator(`#acct-${owner.workspaceId}`)).toBeVisible();
+});
+
+test("admin: find a shop by name, and reach older accounts page by page (Check 16 P5)", async ({
+  page,
+  context,
+}) => {
+  const tag = randomUUID().slice(0, 8);
+  const found = await seedOwner();
+  await setWorkspace(found.workspaceId, { businessName: `Findme Roofing ${tag}` });
+  const old = await seedOwner();
+  await setWorkspace(old.workspaceId, {
+    businessName: `Oldest Shop ${tag}`,
+    createdAt: new Date("2020-01-01T12:00:00Z"),
+  });
+  // More than one page of accounts newer than it, all dated in the past so other tests' fresh
+  // owners stay on page 1.
+  const us = await testDb
+    .insert(schema.users)
+    .values(Array.from({ length: 51 }, (_, i) => ({ email: `filler-${tag}-${i}@example.com` })))
+    .returning({ id: schema.users.id });
+  await testDb
+    .insert(schema.workspaces)
+    .values(us.map((u) => ({ ownerUserId: u.id, createdAt: new Date("2021-01-01T12:00:00Z") })));
+
+  const admin = await seedAdmin();
+  await signInAs(context, admin);
+  await page.goto("/admin");
+  await page.getByLabel("Find a shop (name or email)").fill(`findme roofing ${tag}`);
+  await page.getByRole("button", { name: "Find" }).click();
+  await page.waitForURL(/[?&]q=/);
+  await expect(page.locator("article")).toHaveCount(1);
+  await expect(page.getByRole("article", { name: found.email })).toBeVisible();
+  await page.getByRole("link", { name: "Clear" }).click();
+
+  await page.goto("/admin");
+  await expect(page.getByText(/^Showing 1 to 50 of \d+\.$/)).toBeVisible();
+  for (let i = 0; i < 40; i++) {
+    if (await page.getByRole("article", { name: old.email }).count()) break;
+    await page.getByRole("link", { name: "Show older accounts" }).click();
+    await page.waitForURL(/[?&]page=\d+/);
+  }
+  await expect(page.getByRole("article", { name: old.email })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Show newer accounts" })).toBeVisible();
 });
