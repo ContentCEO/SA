@@ -699,7 +699,7 @@ describe("expired history after a long pause (Check 25 P3)", () => {
     // Back to ordinary history-based sync from the fresh cursor.
     fake.oldestHistory = 0;
     expect(await incrementalSync(mailboxId, later)).toMatchObject({ status: "ok", ingested: 0 });
-  });
+  }, 120_000);
 });
 
 describe("a very big first read resumes and finishes (Check 25 P5)", () => {
@@ -741,7 +741,7 @@ describe("a very big first read resumes and finishes (Check 25 P5)", () => {
     const ids = (await database.select().from(messages)).map((m) => m.gmailMessageId);
     expect(new Set(ids).size).toBe(ids.length);
     expect(ids.filter((i) => i.startsWith("b"))).toHaveLength(700);
-  });
+  }, 120_000);
 
   it("a failed run resumes from the saved token, not page 0", async () => {
     fill(120);
@@ -775,7 +775,7 @@ describe("a very big first read resumes and finishes (Check 25 P5)", () => {
     });
     expect(listed[0]).toBe("50");
     expect(fake.bodyFetches).toHaveLength(70);
-  });
+  }, 120_000);
 
   it("a token Gmail no longer takes starts the listing over (stored emails are skipped)", async () => {
     fill(60);
@@ -813,5 +813,91 @@ describe("a very big first read resumes and finishes (Check 25 P5)", () => {
     const [after] = await database.select().from(mailboxes);
     expect(after!.historyId).not.toBe(before!.historyId);
     expect(after!.backfillPagesDone).toBe(1);
+  }, 120_000);
+});
+
+describe("the stand-in Gmail behaves like Gmail (Check 25 P8)", () => {
+  it("a message deleted between the listing and the read: the rest are stored, it's skipped quietly", async () => {
+    fake.add({ id: "m1", threadId: "t1" });
+    fake.add({ id: "m2", threadId: "t2" });
+    fake.add({ id: "m3", threadId: "t3" });
+    const vanishing = () => {
+      const r = fake.reader();
+      return {
+        ...r,
+        listMessages: async (o: Parameters<typeof r.listMessages>[0]) => {
+          const page = await r.listMessages(o);
+          // Deleted for good right after Gmail listed it.
+          fake.messages = fake.messages.filter((m) => m.providerMessageId !== "m2");
+          return page;
+        },
+      };
+    };
+    expect(await runBackfill(mailboxId, { readerFor: vanishing, now: () => NOW })).toMatchObject({
+      status: "ok",
+      ingested: 2,
+    });
+    const ids = (await database.select().from(messages)).map((m) => m.gmailMessageId).sort();
+    expect(ids).toEqual(["m1", "m3"]);
+  });
+
+  it("the same change synced twice is stored once", async () => {
+    fake.add({ id: "m1", threadId: "t1" });
+    await runBackfill(mailboxId, deps());
+    const [box] = await database.select().from(mailboxes);
+    fake.add({ id: "m2", threadId: "t1", daysAgo: 0 });
+    fake.archive("m2");
+    expect(await incrementalSync(mailboxId, deps())).toMatchObject({ ingested: 1 });
+    // A retry from the old cursor (a step that ran but whose result was lost).
+    await database.update(mailboxes).set({ historyId: box!.historyId });
+    expect(await incrementalSync(mailboxId, deps())).toMatchObject({ ingested: 0 });
+    expect(await database.select().from(messages)).toHaveLength(2);
+    const [m2] = await database.select().from(messages).where(eq(messages.gmailMessageId, "m2"));
+    expect(m2!.labelIds).toEqual([]);
+  });
+
+  it("history reports a relabel as a label change, never as a new message", async () => {
+    fake.add({ id: "m1", threadId: "t1" });
+    const start = fake.history;
+    fake.relabel("m1", ["INBOX", "STARRED"]);
+    const page = await fake.reader().listHistory({ startHistoryId: String(start) });
+    expect(page.added).toEqual([]);
+    expect(page.labelChanges).toEqual([
+      { id: "m1", threadId: "t1", added: ["STARRED"], removed: [] },
+    ]);
+  });
+
+  it("counts Google's units per minute, so a test can check the peak", async () => {
+    let t = new Date("2026-10-17T10:00:00Z").getTime();
+    fake.clock = () => new Date(t);
+    for (let i = 0; i < 5; i++) fake.add({ id: `u${i}`, threadId: `ut${i}` });
+    const r = fake.reader(50);
+    await r.listMessages({ newerThanDays: 30 }); // 5
+    await r.getMessage("u0", { withBody: true }); // 20
+    t += 60_000;
+    await r.getMessage("u1", { withBody: false }); // 20, next minute
+    expect([...fake.unitsByMinute.values()]).toEqual([25, 20]);
+    expect(fake.peakUnitsPerMinute()).toBe(25);
+  });
+
+  it("revoked access on page 2 of a first read: not marked done, flagged for reconnecting", async () => {
+    for (let i = 0; i < 60; i++) fake.add({ id: `r${i}`, threadId: `rt${i}` });
+    let pages = 0;
+    const revokesLater = () => {
+      const r = fake.reader();
+      return {
+        ...r,
+        listMessages: async (o: Parameters<typeof r.listMessages>[0]) => {
+          if (++pages === 2) fake.revoked = true;
+          return r.listMessages(o);
+        },
+      };
+    };
+    expect(await runBackfill(mailboxId, { readerFor: revokesLater, now: () => NOW })).toEqual({
+      status: "reconnect_needed",
+    });
+    const [box] = await database.select().from(mailboxes);
+    expect(box!.backfillCompletedAt).toBeNull();
+    expect(box!.status).toBe("reconnect_needed");
   });
 });

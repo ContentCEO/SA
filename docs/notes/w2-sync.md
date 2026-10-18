@@ -283,3 +283,17 @@ Under "What we store": "How many photos or files an email had (never the files o
   newerThanDays: 365 }`. (Adapted: `after` and `inbox` added for the stepped reads of P1/P3/P5.)
 - Guard test: no `newer_than:` / `in:sent` / `in:inbox`, and no quoted Gmail label name, in src/
   outside src/mailbox/.
+
+## Step 14 · Check 25 P8: the test Gmail behaves like Gmail
+
+- `tests/support/fake-mailbox.ts` keeps a typed history log (messageAdded, labelAdded,
+  labelRemoved, messageDeleted) and returns the real client's `HistoryPage` shape (added = new
+  messages + SENT adds; every relabel is a label change). Owner actions: `archive`, `trash`,
+  `spam`, `notSpam`, `remove`. It lists by window like Gmail (inbox / not inbox, `after`, never
+  Spam or Trash) and counts Google's units per minute of a fake clock (`clock`,
+  `unitsByMinute`, `peakUnitsPerMinute()`).
+- New tests (tests/unit/sync.test.ts): deleted between list and get; the same change synced twice;
+  a relabel is never "added"; the unit counter; revoked access on page 2 of a first read. The 404
+  after 12 days and Spam → Not spam cases are in the P3 and P2 blocks.
+- `vitest.config.mts`: `hookTimeout: 30_000` (PGlite setup timed out at 10 s on a busy machine);
+  the heaviest sync tests carry their own 120 s timeout, so the sync file passes with no flags.

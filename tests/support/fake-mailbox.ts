@@ -1,3 +1,4 @@
+import { GMAIL_UNITS, type GmailMethod } from "@/mailbox/gmail/quota";
 import {
   HistoryExpiredError,
   MailboxAuthError,
@@ -36,6 +37,20 @@ export class FakeMailbox {
   calls = 0;
   /** Gmail's history log, as typed records. */
   log: HistoryRecord[] = [];
+  /**
+   * Check 25 P8: Google's quota units, per minute of a fake clock. Each call costs what the
+   * real method costs (GMAIL_UNITS); `clock` says which minute it falls in (tests move it).
+   */
+  clock: () => Date = () => new Date();
+  unitsByMinute = new Map<number, number>();
+  /** The busiest minute's units. */
+  peakUnitsPerMinute() {
+    return Math.max(0, ...this.unitsByMinute.values());
+  }
+  private spend(method: GmailMethod) {
+    const minute = Math.floor(this.clock().getTime() / 60_000);
+    this.unitsByMinute.set(minute, (this.unitsByMinute.get(minute) ?? 0) + GMAIL_UNITS[method]);
+  }
 
   add(m: Partial<MailMessage> & { id: string; threadId: string; daysAgo?: number; now?: Date }) {
     const now = m.now ?? new Date("2026-09-28T12:00:00Z");
@@ -123,17 +138,18 @@ export class FakeMailbox {
   }
 
   reader(pageSize = 2): MailboxReader {
-    const guard = () => {
+    const guard = (method: GmailMethod) => {
       this.calls++;
+      this.spend(method);
       if (this.revoked) throw new MailboxAuthError();
     };
     return {
       getProfile: async () => {
-        guard();
+        guard("getProfile");
         return { emailAddress: "owner@shop.com", historyId: String(this.history) };
       },
       listMessages: async ({ newerThanDays, after, inbox, sentOnly, pageToken, maxResults }) => {
-        guard();
+        guard("messages.list");
         const cutoff = after
           ? Math.floor(after.getTime() / 1000) * 1000 // Gmail's after: is in whole seconds
           : new Date("2026-09-28T12:00:00Z").getTime() - (newerThanDays ?? 9999) * 86_400_000;
@@ -152,7 +168,7 @@ export class FakeMailbox {
         };
       },
       getMessage: async (id, { withBody, headers }) => {
-        guard();
+        guard("messages.get");
         if (!withBody && headers) this.headerRequests.push({ id, headers });
         const m = this.messages.find((x) => x.providerMessageId === id);
         if (!m) return null;
@@ -181,7 +197,7 @@ export class FakeMailbox {
           : copy;
       },
       listHistory: async ({ startHistoryId }) => {
-        guard();
+        guard("history.list");
         const start = Number(startHistoryId);
         if (start < this.oldestHistory) throw new HistoryExpiredError();
         // Like the real client: new messages (with their labels) and SENT label adds count as
@@ -207,7 +223,7 @@ export class FakeMailbox {
         return { added, labelChanges, deleted, historyId: String(this.history) };
       },
       watch: async () => {
-        guard();
+        guard("watch");
         return { historyId: String(this.history), expiration: Date.now() + 7 * 86_400_000 };
       },
     };
