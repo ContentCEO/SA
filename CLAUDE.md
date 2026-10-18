@@ -3192,6 +3192,9 @@ big)`; the hourly job runs `captureQuoteAmounts` first.
     `quote_dismissed` / `quote_restored`, `mail_gap`, `mailbox_in_use_refused`,
     `reply_languages_saved`, `work_hours_saved`. `second_subscription` is hidden on purpose
     (an /admin signal). The guard test also reads billing.ts's `log(id, "action")` helper.
+  - **The electric company everywhere a town office is kept out (integrator):** review and
+    thank-you offers treat `extracted.utility` as untrusted, Found money's one-tap drafting
+    and the "never answered" leads leave it out, beside `municipal`.
   - **Autopilot:** the electric company is a guardrail code, `utility` ("The electric company
     always waits for you.", one Settings line "Emails from the electric company."); town emails
     already had `municipal`, and since they now always need the owner they also hit

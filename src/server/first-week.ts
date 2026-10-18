@@ -148,6 +148,8 @@ function openQuoteWhere(boxIds: string[], since: Date) {
     sql`coalesce(${threads.extracted}->>'injection', '') <> 'true'`,
     sql`coalesce(${threads.extracted}->>'payment_change', '') <> 'true'`,
     sql`coalesce(${threads.extracted}->>'municipal', '') <> 'true'`,
+    // Check 37 P3 (integrator, merge C): nor the electric company.
+    sql`coalesce(${threads.extracted}->>'utility', '') <> 'true'`,
     // Check 41 P6: never the owner's own crew.
     sql`not ${crewThreadSql(sql`(select fw_mb.workspace_id from mailboxes fw_mb where fw_mb.id = ${threads.mailboxId})`)}`,
   );
