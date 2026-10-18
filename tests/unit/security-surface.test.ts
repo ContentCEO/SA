@@ -324,7 +324,9 @@ describe("C3: every route handler is in the table with the guard it uses", () =>
             expect(src).toContain("getWorkspaceForUser(session.user.id)");
             expect(src).toMatch(/status: 401/);
           } else {
-            expect(src).toMatch(/statesMatch\(expected, params\.get\("state"\)\)/);
+            // Check 42 P3: the cookie also says which Gmail the connect is for; the random
+            // state part is what's compared.
+            expect(src).toMatch(/statesMatch\(cookie\?\.state, params\.get\("state"\)\)/);
             expect(readFileSync("src/mailbox/gmail/oauth-state.ts", "utf8")).toContain(
               "timingSafeEqual",
             );
@@ -921,7 +923,7 @@ describe("C4: no open redirects", () => {
         "createPortal() got from Stripe, never from the form",
     ],
     [
-      "src/app/(app)/connect/actions.ts: redirect(createGmailConnector().authorizationUrl({ state, redirectUri: appUrl(gmailRedirectPath), loginHint: session?.user?.email ?? undefined, }))",
+      'src/app/(app)/connect/actions.ts: redirect(createGmailConnector().authorizationUrl({ state, redirectUri: appUrl(gmailRedirectPath), loginHint, prompt: connect.mode === "add" ? "consent select_account" : "consent", }))',
       "Google's consent screen, built by our connector with our own callback URL",
     ],
     [
@@ -1198,7 +1200,11 @@ describe("Secrets at rest (re-confirmed in the M11 audit)", () => {
           writes.push(`${rel(f)} (shorthand)`);
       });
     }
-    expect(writes).toEqual(["src/server/mailboxes.ts encryptSecret(result.refreshToken)"]);
+    expect(writes).toEqual([
+      "src/server/mailboxes.ts encryptSecret(result.refreshToken)",
+      // Check 47 P2: a refresh token a provider rotated on refresh.
+      "src/server/mailboxes.ts encryptSecret(token)",
+    ]);
     // Nothing writes the column through raw SQL either.
     for (const f of ALL)
       expect(readFileSync(f, "utf8"), rel(f)).not.toMatch(/encrypted_refresh_token\s*=/);
