@@ -29,24 +29,46 @@ export function replyState(r: {
   return r.lastOut && r.lastOut >= r.lastIn ? "Replied" : "Waiting on you";
 }
 
-/** What a typed search looks through on a row, lowercased. Never leaves the phone. */
+/** Check 10 P8: lowercased with accents dropped, so "jose" finds "José" and "joão" "Joao". */
+export function foldForSearch(s: string): string {
+  return s.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase();
+}
+
+/** What a typed search looks through on a row, folded. Never leaves the phone. */
 export function searchText(r: {
   senderName: string | null;
   senderAddress: string | null;
   subject: string | null;
   summary: string | null;
   categoryLabel: string | null;
+  /** Check 10 P8: everything else the card shows: the work, the address, invoice / permit no. */
+  serviceRequested?: string | null;
+  address?: string | null;
+  invoiceNumber?: string | null;
+  permitNumber?: string | null;
 }): string {
-  return [r.senderName, r.senderAddress, r.subject, r.summary, r.categoryLabel]
-    .filter(Boolean)
-    .join(" ")
-    .toLowerCase();
+  return foldForSearch(
+    [
+      r.senderName,
+      r.senderAddress,
+      r.subject,
+      r.summary,
+      r.categoryLabel,
+      r.serviceRequested,
+      r.address,
+      r.invoiceNumber,
+      r.permitNumber,
+    ]
+      .filter(Boolean)
+      .join(" "),
+  );
 }
 
-/** True when every word typed appears somewhere in the row's text. */
+/** True when every word typed appears somewhere in the row's text (accents don't matter). */
 export function matchesSearch(text: string, query: string): boolean {
-  const words = query.toLowerCase().split(/\s+/).filter(Boolean);
-  return words.every((w) => text.includes(w));
+  const words = foldForSearch(query).split(/\s+/).filter(Boolean);
+  const folded = foldForSearch(text);
+  return words.every((w) => folded.includes(w));
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -115,7 +137,6 @@ export function isOlderUnsorted(
   const at = r.lastIn ?? r.lastMessageAt;
   return r.category === null && at != null && at.getTime() < now.getTime() - lookbackDays * DAY_MS;
 }
-
 
 /**
  * Check 10 P7: the kind word on a card. A sort that failed says so instead of a placeholder

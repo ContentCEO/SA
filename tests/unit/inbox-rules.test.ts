@@ -5,6 +5,8 @@ import {
   isFoldableJunk,
   isOlderUnsorted,
   kindWord,
+  matchesSearch,
+  searchText,
   replyState,
   urgencyWord,
   type InboxRankInput,
@@ -139,5 +141,49 @@ describe("unsorted and failed sorts (Check 10 P7)", () => {
     );
     expect(kindWord({ category: null, extracted: null }, tags, false)).toBe("Not sorted yet");
     expect(kindWord({ category: null, extracted: null }, tags, true)).toBe("Not sorted");
+  });
+});
+
+describe("search (Check 10 P8)", () => {
+  const kevin = searchText({
+    senderName: "Kevin O'Connor",
+    senderAddress: "kevin@example.com",
+    subject: "Leak",
+    summary: "Kevin's kitchen sink leaks.",
+    categoryLabel: "Questions",
+    serviceRequested: "sink repair",
+    address: "14 Pine St, Dracut",
+    invoiceNumber: "1042",
+    permitNumber: "E-2026-118",
+  });
+
+  it("finds the address, the work and invoice / permit numbers", () => {
+    expect(matchesSearch(kevin, "pine st")).toBe(true);
+    expect(matchesSearch(kevin, "1042")).toBe(true);
+    expect(matchesSearch(kevin, "sink repair")).toBe(true);
+    expect(matchesSearch(kevin, "e-2026-118")).toBe(true);
+  });
+
+  it("ignores accents both ways", () => {
+    const jose = searchText({
+      senderName: "José Silva",
+      senderAddress: null,
+      subject: null,
+      summary: null,
+      categoryLabel: null,
+    });
+    const joao = searchText({
+      senderName: "Joao Souza",
+      senderAddress: null,
+      subject: null,
+      summary: null,
+      categoryLabel: null,
+    });
+    expect(matchesSearch(jose, "jose")).toBe(true);
+    expect(matchesSearch(joao, "joão")).toBe(true);
+  });
+
+  it("every word must match: one missing from every field fails", () => {
+    expect(matchesSearch(kevin, "pine lowell")).toBe(false);
   });
 });

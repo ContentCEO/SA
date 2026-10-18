@@ -141,6 +141,23 @@ function Details({ row }: { row: InboxRow }) {
   );
 }
 
+/** Check 10 P8: the extracted facts a card shows, for the search on the phone. */
+function searchFacts(extracted: Record<string, unknown> | null) {
+  const x = (extracted ?? {}) as {
+    service_requested?: unknown;
+    address?: unknown;
+    invoice?: { invoice_number?: unknown } | null;
+    permit?: { permit_number?: unknown } | null;
+  };
+  const str = (v: unknown) => (typeof v === "string" ? v : null);
+  return {
+    serviceRequested: str(x.service_requested),
+    address: str(x.address),
+    invoiceNumber: str(x.invoice?.invoice_number),
+    permitNumber: str(x.permit?.permit_number),
+  };
+}
+
 /** Plan #15: the owner's past prices for similar jobs, as text. Only they see it. */
 function PastPricesLine({ prices }: { prices: PriceMemoryItem[] | undefined }) {
   if (!prices?.length) return null;
@@ -419,6 +436,7 @@ export default async function InboxPage(props: PageProps<"/inbox">) {
               subject: r.subject,
               summary: r.summary,
               categoryLabel: isCategory(r.category) ? categoryLabels[r.category] : null,
+              ...searchFacts(r.extracted),
             }),
             group: junkIds.has(r.id) ? "junk" : olderIds.has(r.id) ? "older" : "main",
             node: renderRow(r),

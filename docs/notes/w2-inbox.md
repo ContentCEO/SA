@@ -81,6 +81,11 @@ Base: cd15c59. One commit per step. Nothing here needs wave 1 unless marked "nee
   within a few minutes. It's safe in Gmail." The 14-day look-back itself is unchanged.
   Also fixed here: step 3's junk filter was NULL for unsorted threads, which hid them from All.
 
+- **Search (Check 10 P8):** `searchText` also takes the work, the address, the invoice number and
+  the permit number (from `extracted`, passed by the page); `foldForSearch` (NFD, combining marks
+  stripped, lowercased) is applied to the row text and the query; every word must still match.
+  Search stays on the phone.
+
 ## Integration notes
 
 - `src/app/(app)/quotes/page.tsx`, `quotes/actions.ts`, `src/server/quotes.ts`,
