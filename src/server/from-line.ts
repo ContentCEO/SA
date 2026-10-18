@@ -6,6 +6,7 @@ import type { MailboxReader } from "@/mailbox/connector";
 import { pickSenderName } from "./from-line-rules";
 import { jobsAllowed } from "./lifecycle";
 import { mailboxRunning } from "./mailbox-plan";
+import { mailboxOn } from "./mailbox-plan-rules";
 import { defaultReaderFor } from "./sync";
 
 /**
@@ -69,7 +70,12 @@ export async function refreshAllSendAs(
 
 /** Check 42 P4: the first read, right after connect (the backfill job). */
 export async function refreshSendAsFor(mailboxId: string): Promise<string> {
-  const [mailbox] = await db().select().from(mailboxes).where(eq(mailboxes.id, mailboxId));
-  if (!mailbox || mailbox.status !== "active") return "skipped";
-  return refreshSendAs(mailbox);
+  const [row] = await db()
+    .select({ mailbox: mailboxes, workspace: workspaces })
+    .from(mailboxes)
+    .innerJoin(workspaces, eq(workspaces.id, mailboxes.workspaceId))
+    .where(eq(mailboxes.id, mailboxId));
+  // A lost or plan-paused mailbox, or a read-only account, is never read.
+  if (!row || !mailboxOn(row.mailbox) || !jobsAllowed(row.workspace)) return "skipped";
+  return refreshSendAs(row.mailbox);
 }
