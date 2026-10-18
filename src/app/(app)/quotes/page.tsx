@@ -1,5 +1,6 @@
 import { ArrowRight } from "lucide-react";
 import type { Metadata } from "next";
+import { noticeText } from "@/lib/notice-text";
 import { CustomerName } from "@/components/app/customer-name";
 import Link from "next/link";
 import { Notice } from "@/components/app/notice";
@@ -201,7 +202,13 @@ function QuoteCard({
                 </Button>
               ))}
             </div>
-            <Button type="submit" name="outcome" value="reopen" variant="outline" className="w-full">
+            <Button
+              type="submit"
+              name="outcome"
+              value="reopen"
+              variant="outline"
+              className="w-full"
+            >
               Reopen
             </Button>
           </form>
@@ -310,8 +317,8 @@ export default async function QuotesPage(props: PageProps<"/quotes">) {
   );
   const count = (f: Filter) =>
     quotes.filter((q) => (f === "open" ? OPEN.includes(q.stage) : q.stage === f)).length;
-  const doneMsg = typeof params.done === "string" ? done[params.done] : undefined;
-  const errorMsg = typeof params.error === "string" ? errors[params.error] : undefined;
+  const doneMsg = noticeText(done, params.done);
+  const errorMsg = noticeText(errors, params.error);
 
   return (
     <>

@@ -16,7 +16,7 @@ import { createTestDb } from "../support/db";
 
 const session = vi.hoisted(() => ({ userId: null as string | null }));
 vi.mock("@/auth", () => ({
-  auth: async () => (session.userId ? { user: { id: session.userId } } : null),
+  auth: async () => (session.userId ? { user: { id: session.userId, sv: 0 } } : null),
 }));
 class Redirected extends Error {
   constructor(readonly url: string) {

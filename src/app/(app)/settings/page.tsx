@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { noticeText } from "@/lib/notice-text";
 import { MenuList, type MenuItem } from "@/components/app/menu-list";
 import { Notice } from "@/components/app/notice";
 import { Headline } from "@/components/brand/headline";
@@ -39,8 +40,8 @@ export default async function SettingsPage(props: PageProps<"/settings">) {
     awayState(workspace.id),
     listRules(workspace.id),
   ]);
-  const doneMsg = typeof params.done === "string" ? LIST_MESSAGES.done[params.done] : undefined;
-  const errorMsg = typeof params.error === "string" ? LIST_MESSAGES.error[params.error] : undefined;
+  const doneMsg = noticeText(LIST_MESSAGES.done, params.done);
+  const errorMsg = noticeText(LIST_MESSAGES.error, params.error);
   const lost = mailboxes.some((m) => m.status === "reconnect_needed" && !m.planPausedAt);
   const pausedOnPlan = mailboxes.filter((m) => m.planPausedAt).length;
   const autopilotOn = autopilot.categories.filter((c) => c.on).length;

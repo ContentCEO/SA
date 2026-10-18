@@ -13,8 +13,12 @@ export const LIMITS = {
   waitlist: { max: 10, windowSec: 60 * 60 },
   /** Sending replies, per workspace. */
   send: { max: 60, windowSec: 10 * 60 },
-  /** The owner's "Draft a reply" (a model call), per workspace. */
-  draft: { max: 30, windowSec: 60 * 60 },
+  /**
+   * The owner's "Draft a reply" (a model call), per workspace. Check 40 P3: 90 an hour, so a
+   * storm-day owner tapping through a pile of new leads isn't stopped; only taps that reach the
+   * model count (createDraftForThread's `beforeModelCall`). The daily AI cap is the cost guard.
+   */
+  draft: { max: 90, windowSec: 60 * 60 },
   /** Quick tweaks and voice edits on drafts (a model call each), per workspace. */
   revise: { max: 40, windowSec: 60 * 60 },
   /** Re-learn voice (reads up to 200 sent emails + a model call), per workspace. */

@@ -44,7 +44,11 @@ export default defineConfig({
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 1 : 0,
-  reporter: process.env.CI ? "github" : "list",
+  // Check 31 P8: in CI, also a JSON file, so the job summary can list tests that passed only on
+  // their retry (scripts/flaky-report.mjs).
+  reporter: process.env.CI
+    ? [["github"], ["json", { outputFile: "playwright-results.json" }]]
+    : "list",
   use: {
     baseURL,
     trace: "on-first-retry",

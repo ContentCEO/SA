@@ -211,6 +211,7 @@ test("someone who doesn't agree can still disconnect Gmail and delete their acco
   const confirm = page.getByRole("form", { name: "Delete my account" });
   await expect(confirm).toContainText("This can't be undone");
   await noHorizontalScroll(page);
+  await confirm.getByLabel("Type DELETE to confirm").fill("delete");
   await confirm.getByRole("button", { name: "Yes, delete everything" }).click();
   await expect(page).toHaveURL(/\/goodbye$/);
   expect(

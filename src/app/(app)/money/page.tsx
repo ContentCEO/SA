@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { noticeText } from "@/lib/notice-text";
 import Link from "next/link";
 import { CustomerName } from "@/components/app/customer-name";
 import { Notice } from "@/components/app/notice";
@@ -232,8 +233,8 @@ export default async function MoneyPage(props: PageProps<"/money">) {
   ]);
   const readOnly = isReadOnly(workspace, now);
   const showHidden = params.show === "hidden";
-  const doneMsg = typeof params.done === "string" ? done[params.done] : undefined;
-  const errorMsg = typeof params.error === "string" ? errors[params.error] : undefined;
+  const doneMsg = noticeText(done, params.done);
+  const errorMsg = noticeText(errors, params.error);
   const offers = await threadOffers(
     workspace.id,
     paidRecently.map((r) => r.threadId),

@@ -70,6 +70,11 @@ export function describeActivity(
         return `Drafted a thank-you for the payment, with a review request${to}`;
       if (detail.purpose === "safety") return `Wrote a gas safety note${to}`;
       return `Drafted a reply${to}${about}`;
+    // Check 26 P3.
+    case "signed_out_everywhere":
+      return detail.by === "admin"
+        ? "Squared Away signed you out on every phone and computer"
+        : "You signed out on every phone and computer";
     case "closing_question":
       return `Drafted a question${to} asking if they went another way`;
     case "followup_drafted":

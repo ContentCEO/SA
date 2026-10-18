@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { noticeText } from "@/lib/notice-text";
 import Link from "next/link";
 import { Headline } from "@/components/brand/headline";
 import { adminToday } from "@/server/growth-client-rules";
@@ -18,8 +19,8 @@ export default async function AdminGrowthPage(props: PageProps<"/admin/growth">)
   const params = await props.searchParams;
   const now = new Date();
   const [data, choices] = await Promise.all([listGrowthAdmin(), growthAccountChoices()]);
-  const done = typeof params.done === "string" ? GROWTH_DONE[params.done] : undefined;
-  const error = typeof params.error === "string" ? GROWTH_ERRORS[params.error] : undefined;
+  const done = noticeText(GROWTH_DONE, params.done);
+  const error = noticeText(GROWTH_ERRORS, params.error);
   return (
     <>
       <Headline serif="squared away growth," heavy="your clients." />

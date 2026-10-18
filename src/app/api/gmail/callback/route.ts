@@ -10,7 +10,7 @@ import {
   parseStateCookie,
   statesMatch,
 } from "@/mailbox/gmail/oauth-state";
-import { getWorkspaceForUser } from "@/server/accounts";
+import { getWorkspaceForSession } from "@/server/accounts";
 import { enqueue, mailboxConnected } from "@/jobs/client";
 import {
   listMailboxes,
@@ -33,6 +33,9 @@ export async function GET(request: NextRequest) {
   if (!session?.user?.id) return to("/");
   // Not agreed to the current terms (Davi, 2026-10-15): 403, and nothing from Google is saved.
   if (!(await termsAccepted(session.user.id))) return termsRequiredResponse();
+  // Check 26 P3: a sign-in ended by "Sign out everywhere" saves nothing from Google.
+  const workspace = await getWorkspaceForSession(session.user);
+  if (!workspace) return to("/");
 
   const params = request.nextUrl.searchParams;
   const cookieStore = await cookies();
@@ -45,9 +48,6 @@ export async function GET(request: NextRequest) {
 
   const code = params.get("code");
   if (!code) return to("/connect?error=failed");
-
-  const workspace = await getWorkspaceForUser(session.user.id);
-  if (!workspace) return to("/");
 
   try {
     const result = await createGmailConnector().exchangeCode({

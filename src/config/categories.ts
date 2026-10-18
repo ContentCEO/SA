@@ -37,7 +37,8 @@ export const isLeadCategory = (c: string | null | undefined): boolean =>
   (LEAD_CATEGORIES as readonly string[]).includes(c ?? "");
 
 export function isCategory(v: unknown): v is Category {
-  return typeof v === "string" && v in categoryLabels;
+  // Check 26 P6: own keys only ("constructor" is `in` every object).
+  return typeof v === "string" && Object.hasOwn(categoryLabels, v);
 }
 
 /**

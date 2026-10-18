@@ -12,6 +12,7 @@ import {
   type Workspace,
 } from "@/db/schema";
 import { isAdminEmail } from "./admin";
+import { signOutEverywhere } from "./sign-out-everywhere";
 import {
   canMakeMove,
   effectiveStatus,
@@ -119,6 +120,11 @@ export async function applyAdminMove(
   const [w] = await db().select().from(workspaces).where(eq(workspaces.id, workspaceId));
   if (!w) throw new Error("Workspace not found.");
   if (!canMakeMove(move, w, now)) throw new MoveNotAllowedError(move, w.status);
+  // Check 26 P3: not a status move. Ends the owner's sign-ins; the status stays as it is.
+  if (move === "sign_out_everywhere") {
+    await signOutEverywhere(workspaceId, "admin");
+    return w.status;
+  }
 
   let set: Partial<Workspace>;
   switch (move) {

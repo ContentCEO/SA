@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { noticeText } from "@/lib/notice-text";
 import { ConfirmChange } from "@/components/app/confirm-change";
 import { CopyLink } from "@/components/app/copy-link";
 import { Notice } from "@/components/app/notice";
@@ -148,9 +149,7 @@ export default async function BillingPage(props: PageProps<"/billing">) {
       ? workspace.stripeCancelAt
         ? `Your plan is set to end on ${shortDate(workspace.stripeCancelAt, tz)}. Turn renewal back on in Manage billing first.`
         : "Your plan is set to end. Turn renewal back on in Manage billing first."
-      : typeof params.error === "string"
-        ? errors[params.error]
-        : undefined;
+      : noticeText(errors, params.error);
   // Round 2 (FW): paid, setup call still to come — say what happens next.
   // Check 17 P11: set up but nothing in Stripe (house account, or no subscription on file):
   // no offer to buy and no "What happens next" (display only; checkoutTerms is unchanged).

@@ -12,7 +12,7 @@ import { createTestDb } from "../support/db";
 // The signed-in owner, without Auth.js: the route only reads `session.user.id`.
 const session = vi.hoisted(() => ({ userId: null as string | null }));
 vi.mock("@/auth", () => ({
-  auth: async () => (session.userId ? { user: { id: session.userId } } : null),
+  auth: async () => (session.userId ? { user: { id: session.userId, sv: 0 } } : null),
 }));
 // GUARDRAIL (plan M8 A1): the summary counts from the content-free membership. listQueue
 // loads names, summaries and draft text, so calling it from here fails the test.

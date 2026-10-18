@@ -1,5 +1,6 @@
 import { ChevronLeft } from "lucide-react";
 import type { Metadata } from "next";
+import { noticeText } from "@/lib/notice-text";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Headline } from "@/components/brand/headline";
@@ -42,8 +43,8 @@ export default async function CustomerPage(props: PageProps<"/customers/[key]">)
   const first = headlineName(customer.name, customer.address);
   const note = await noteFor(workspace.id, customer.address);
   const params = await props.searchParams;
-  const doneMsg = typeof params.done === "string" ? NOTE_DONE[params.done] : undefined;
-  const errorMsg = typeof params.error === "string" ? NOTE_ERRORS[params.error] : undefined;
+  const doneMsg = noticeText(NOTE_DONE, params.done);
+  const errorMsg = noticeText(NOTE_ERRORS, params.error);
   const readOnly = isReadOnly(workspace);
 
   return (

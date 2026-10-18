@@ -111,9 +111,11 @@ test("privacy and terms: drafts are labelled, and every page links to them", asy
 
 test("robots.txt, sitemap.xml and the share image", async ({ request }) => {
   const robots = await (await request.get("/robots.txt")).text();
-  for (const path of ["/admin", "/api/", "/queue", "/settings", "/money", "/record"]) {
+  for (const path of ["/api/", "/queue", "/settings", "/money", "/record"]) {
     expect(robots).toContain(`Disallow: ${path}`);
   }
+  // Check 26 P9: /admin isn't named (its pages say noindex instead).
+  expect(robots).not.toContain("/admin");
   expect(robots).toMatch(/Sitemap: https?:\/\/[^\s]+\/sitemap\.xml/);
   const sitemap = await (await request.get("/sitemap.xml")).text();
   for (const path of ["/growth", "/privacy", "/terms"]) expect(sitemap).toContain(`${path}</loc>`);

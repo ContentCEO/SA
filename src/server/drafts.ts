@@ -242,6 +242,8 @@ export type CreateOutcome =
         // Check 21 P1: the owner's email bounced: no nudge.
         | "bounced"
         | "followup_cap"
+        // Check 40 P3: the owner's hourly "Draft a reply" limit, counted at the model call.
+        | "rate_limited"
         | "untrusted"
         | "municipal"
         /** Check 37 P3: the electric company — only the owner's tap drafts to it. */
@@ -889,6 +891,12 @@ type CreateOpts = DraftDeps & {
   workspaceId?: string;
   /** A special note only the owner's tap may ask for. */
   purpose?: OwnerPurpose;
+  /**
+   * Check 40 P3: runs once, right before the model is asked (never for a tap that stops
+   * earlier: already a draft, no text, a skip). False stops it ("rate_limited"). The owner's
+   * taps count their hourly limit here, so wasted taps don't use it up.
+   */
+  beforeModelCall?: () => Promise<boolean>;
 };
 
 export async function createDraftForThread(
@@ -1449,6 +1457,8 @@ async function writeDraftForThread(threadId: string, opts: CreateOpts): Promise<
 
   let result: (ModelDraft & { opening?: Opening }) | null = null;
   if (safety && safetyKind) result = SAFETY_NOTES[safetyKind].note(ctx);
+  else if (opts.beforeModelCall && !(await opts.beforeModelCall()))
+    return { status: "skipped", reason: "rate_limited" };
   else
     try {
       const request = {

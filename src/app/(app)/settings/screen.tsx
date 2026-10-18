@@ -1,4 +1,5 @@
 import { BackLink } from "@/components/app/back-link";
+import { noticeText } from "@/lib/notice-text";
 import { Notice } from "@/components/app/notice";
 import { Headline } from "@/components/brand/headline";
 import { SCREEN_MESSAGES, type SettingsScreenPath } from "./messages";
@@ -40,10 +41,8 @@ export function SettingsScreen({
     done: Record<string, string>;
     error: Record<string, string>;
   };
-  const done =
-    typeof params.done === "string" ? fillCounts(messages.done[params.done], params) : undefined;
-  const error =
-    errorText ?? (typeof params.error === "string" ? messages.error[params.error] : undefined);
+  const done = fillCounts(noticeText(messages.done, params.done), params);
+  const error = errorText ?? noticeText(messages.error, params.error);
   return (
     <>
       <div className="flex flex-col gap-2">

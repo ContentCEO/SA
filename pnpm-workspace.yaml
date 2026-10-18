@@ -1,3 +1,7 @@
 ignoredBuiltDependencies:
   - sharp
   - unrs-resolver
+# Check 26 P11: next's postcss pins source-map-js 1.2.1 (GHSA-68fv-2mgg-jv7q, high); 1.2.2 is the
+# fixed patch release of the same line. Remove once next ships a postcss that needs >=1.2.2.
+overrides:
+  "source-map-js@<1.2.2": "^1.2.2"

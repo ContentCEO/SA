@@ -324,7 +324,9 @@ describe("C3: every route handler is in the table with the guard it uses", () =>
             if (at > -1) expect(terms, work).toBeLessThan(at);
           }
           if (guard === "session") {
-            expect(src).toContain("getWorkspaceForUser(session.user.id)");
+            // Check 26 P3: the workspace comes with the session-version check.
+            expect(src).toMatch(/getWorkspaceForSession\(session\??\.user\)/);
+            expect(src).not.toContain("getWorkspaceForUser(");
             expect(src).toMatch(/status: 401/);
           } else {
             // Check 42 P3: the cookie also says which Gmail the connect is for; the random
@@ -338,8 +340,11 @@ describe("C3: every route handler is in the table with the guard it uses", () =>
         }
         case "token": {
           const [post] = handlers(file);
-          expect(firstStatement(post!.fn)).toMatch(/^if \(!tokenOk\(/);
-          expect(src).toContain("timingSafeEqual");
+          // Check 26 P10: Pub/Sub's signed ID token (the old ?token= only during the switch).
+          expect(firstStatement(post!.fn)).toMatch(/^if \(!\(await pushAuthorized\(request\)\)\)/);
+          const auth = readFileSync("src/server/pubsub-auth.ts", "utf8");
+          expect(auth).toContain('verify("RSA-SHA256"');
+          expect(auth).toContain("timingSafeEqual");
           break;
         }
         case "stripe-signature":
@@ -956,6 +961,11 @@ describe("C4: no open redirects", () => {
       'Check 29 P3: "/" with a session cookie → `to` is homeRedirect()\'s fixed SIGNED_IN_HOME ' +
         '("/start") on this site, never anything from the request (pinned in home-static.test.ts)',
     ],
+    [
+      "src/app/signin/actions.ts: redirectTo(safeNextPath(next))",
+      "Check 26 P4: back to the screen that asked for a fresh sign-in (Delete my account) " +
+        "after Google: safeNextPath allows only a path on this site",
+    ],
   ];
 
   it("every redirect target is one of our own paths, or a reviewed exception", () => {
@@ -1119,7 +1129,16 @@ describe("C4: no open redirects", () => {
       [
         `src/app/welcome/terms/actions.ts ${READS[0]}`,
         "src/app/welcome/terms/page.tsx { next }",
+        // Check 26 P4: the fresh sign-in before Delete my account comes back to that screen.
+        `src/app/signin/actions.ts ${READS[0]}`,
+        "src/app/signin/page.tsx { next }",
       ].sort(),
+    );
+    expect(readFileSync("src/app/signin/page.tsx", "utf8")).toContain(
+      'const back = recent && typeof next === "string" ? safeNextPath(next) : undefined;',
+    );
+    expect(readFileSync("src/app/signin/actions.ts", "utf8")).toContain(
+      'await signIn("google", { redirectTo: safeNextPath(next) });',
     );
     const page = readFileSync("src/app/welcome/terms/page.tsx", "utf8");
     expect(page).toContain(
@@ -1221,6 +1240,8 @@ describe("Secrets at rest (re-confirmed in the M11 audit)", () => {
       "src/server/mailboxes.ts encryptSecret(result.refreshToken)",
       // Check 47 P2: a refresh token a provider rotated on refresh.
       "src/server/mailboxes.ts encryptSecret(token)",
+      // Check 26 P7: pnpm reseal:secrets, moving a token to the current key.
+      "src/server/reseal-secrets.ts encryptSecret(plain)",
     ]);
     // Nothing writes the column through raw SQL either.
     for (const f of ALL)
@@ -1349,5 +1370,318 @@ describe("Only two places can send mail", () => {
         parseText("f.ts", 'fetch(base + "/messages/send"); fetch(`${b}/drafts/send`);'),
       ),
     ).toHaveLength(2);
+  });
+});
+
+/**
+ * Check 31 P4: every rate limit is called where it should be — before the work it guards. One
+ * row per hitLimit call in src: the function that makes it, the limit, and the calls that do
+ * the work. `hook` rows count inside createDraftForThread's `beforeModelCall` option instead
+ * (Check 40 P3: only a tap that reaches the model counts). Deleting any one hitLimit call, or
+ * moving it after its work, fails here.
+ */
+type LimitSite = {
+  file: string;
+  fn: string;
+  limit: string;
+  /** The calls that do the guarded work; the limit must come before the first of them. */
+  work: string[];
+  hook?: "beforeModelCall";
+};
+const LIMIT_SITES: LimitSite[] = [
+  // Send reply (three ways in the queue) and the send API.
+  { file: "src/app/(app)/queue/actions.ts", fn: "sendTap", limit: "send", work: ["queueSend"] },
+  {
+    file: "src/app/(app)/queue/actions.ts",
+    fn: "practiceSendAction",
+    limit: "send",
+    work: ["practiceSend"],
+  },
+  {
+    file: "src/app/(app)/queue/actions.ts",
+    fn: "batchSendAction",
+    limit: "send",
+    work: ["batchSend"],
+  },
+  { file: "src/app/api/drafts/[id]/send/route.ts", fn: "POST", limit: "send", work: ["queueSend"] },
+  // Draft a reply and the other owner-asked drafts.
+  {
+    file: "src/app/(app)/queue/actions.ts",
+    fn: "draftReplyAction",
+    limit: "draft",
+    work: ["createDraftForThread"],
+    hook: "beforeModelCall",
+  },
+  {
+    file: "src/app/(app)/inbox/actions.ts",
+    fn: "askFor",
+    limit: "draft",
+    work: ["createDraftForThread"],
+    hook: "beforeModelCall",
+  },
+  {
+    file: "src/app/(app)/queue/first-week-actions.ts",
+    fn: "foundMoneyDraftsAction",
+    limit: "draft",
+    work: ["claimFoundMoneyDrafts", "enqueue"],
+  },
+  {
+    file: "src/app/(app)/money/actions.ts",
+    fn: "draftReminderAction",
+    limit: "draft",
+    work: ["draftInvoiceReminder"],
+  },
+  {
+    file: "src/app/(app)/queue/leads-actions.ts",
+    fn: "addTownAction",
+    limit: "draft",
+    work: ["addServiceTown"],
+  },
+  {
+    file: "src/app/(app)/queue/actions.ts",
+    fn: "reviseDraftAction",
+    limit: "revise",
+    work: ["reviseDraft"],
+  },
+  {
+    file: "src/app/(app)/settings/profile-actions.ts",
+    fn: "relearnVoiceAction",
+    limit: "relearn",
+    work: ["resetVoiceRestarts", "enqueue"],
+  },
+  // Billing.
+  {
+    file: "src/app/(app)/billing/actions.ts",
+    fn: "startCheckoutAction",
+    limit: "billing",
+    work: ["createCheckout"],
+  },
+  {
+    file: "src/app/(app)/billing/actions.ts",
+    fn: "openPortalAction",
+    limit: "billing",
+    work: ["createPortal"],
+  },
+  {
+    // Check 17 P9 (batch C): the owner reports a checkout that never came back.
+    file: "src/app/(app)/billing/actions.ts",
+    fn: "reportStripeWaitingAction",
+    limit: "billing",
+    work: ["noteStripeWaiting"],
+  },
+  {
+    file: "src/app/(app)/billing/actions.ts",
+    fn: "keepFreePlanAction",
+    limit: "billing",
+    work: ["keepFreePlan"],
+  },
+  {
+    file: "src/app/(app)/billing/actions.ts",
+    fn: "goBackAction",
+    limit: "billing",
+    work: ["goBackToPaidPlan"],
+  },
+  {
+    file: "src/app/welcome/terms/actions.ts",
+    fn: "openPortalFromTermsAction",
+    limit: "billing",
+    work: ["createPortal"],
+  },
+  // Gmail connect.
+  {
+    file: "src/app/(app)/connect/actions.ts",
+    fn: "startGmailConnect",
+    limit: "connect",
+    work: ["newOAuthState", "authorizationUrl"],
+  },
+  {
+    file: "src/app/(app)/settings/actions.ts",
+    fn: "swapMailboxAction",
+    limit: "connect",
+    work: ["swapPlanMailbox"],
+  },
+  // Public forms, per hashed IP.
+  {
+    file: "src/app/waitlist-actions.ts",
+    fn: "joinWaitlistAction",
+    limit: "waitlist",
+    work: ["joinWaitlist"],
+  },
+  {
+    file: "src/app/growth-actions.ts",
+    fn: "requestGrowthCallAction",
+    limit: "waitlist",
+    work: ["requestGrowthCall"],
+  },
+  // Text alerts.
+  {
+    file: "src/server/sms-alerts.ts",
+    fn: "startPhoneVerification",
+    limit: "smsCode",
+    work: ["upsertProfile"],
+  },
+  { file: "src/server/sms-alerts.ts", fn: "confirmPhone", limit: "smsVerify", work: ["db"] },
+  // The count-only endpoints phones poll.
+  { file: "src/app/api/badge/route.ts", fn: "GET", limit: "poll", work: ["badgeCount"] },
+  {
+    file: "src/app/api/push/summary/route.ts",
+    fn: "GET",
+    limit: "poll",
+    work: ["queueMembership", "leadsAtRisk"],
+  },
+  // Owner taps that write to Gmail.
+  {
+    file: "src/app/(app)/queue/actions.ts",
+    fn: "editorAction",
+    limit: "gmailWrite",
+    work: ["saveDraftEdit"],
+  },
+  {
+    file: "src/app/(app)/queue/actions.ts",
+    fn: "discardDraftAction",
+    limit: "gmailWrite",
+    work: ["discardDraft"],
+  },
+  {
+    file: "src/app/(app)/inbox/actions.ts",
+    fn: "takeOffListAction",
+    limit: "gmailWrite",
+    work: ["takeOffMyList"],
+  },
+  {
+    file: "src/app/(app)/inbox/actions.ts",
+    fn: "resortAction",
+    limit: "gmailWrite",
+    work: ["resortThread"],
+  },
+];
+
+/** The name a call is made by: `f()` → "f", `a.b.c()` → "c". */
+function callName(c: ts.CallExpression): string | null {
+  let x: ts.Expression = c.expression;
+  while (ts.isParenthesizedExpression(x)) x = x.expression;
+  if (ts.isIdentifier(x)) return x.text;
+  if (ts.isPropertyAccessExpression(x)) return x.name.text;
+  return null;
+}
+/** `hitLimit("<name>", …)` → "<name>". */
+function limitOf(c: ts.CallExpression): string | null {
+  if (callName(c) !== "hitLimit") return null;
+  const a = c.arguments[0];
+  return a && ts.isStringLiteral(a) ? a.text : "?";
+}
+/** The top-level function (declared or `const f = …`) a node sits in, by name. */
+function topFunctionName(n: ts.Node): string | null {
+  let top: ts.Node | null = null;
+  for (let p: ts.Node | undefined = n; p; p = p.parent) if (isFnLike(p)) top = p;
+  if (!top) return null;
+  if (ts.isFunctionDeclaration(top)) return top.name?.text ?? null;
+  return ts.isVariableDeclaration(top.parent) && ts.isIdentifier(top.parent.name)
+    ? top.parent.name.text
+    : null;
+}
+/** The named top-level function of a module (exported or not). */
+function moduleFunction(sf: ts.SourceFile, name: string): FnLike | null {
+  return (
+    exportedFunctions(sf).find((f) => f.name === name)?.fn ?? localFunctions(sf).get(name) ?? null
+  );
+}
+
+/** What's wrong with one row in a parsed file, or null. */
+function limitSiteProblem(sf: ts.SourceFile, site: LimitSite): string | null {
+  const fn = moduleFunction(sf, site.fn);
+  if (!fn) return "function not found";
+  const calls: ts.CallExpression[] = [];
+  walk(fn, (n) => {
+    if (ts.isCallExpression(n)) calls.push(n);
+  });
+  const work = calls.find((c) => site.work.includes(callName(c) ?? ""));
+  if (!work) return `no ${site.work.join(" / ")} call`;
+  const limits = calls.filter((c) => limitOf(c) === site.limit);
+  const awaited = (c: ts.CallExpression) => {
+    let p: ts.Node = c.parent;
+    while (ts.isParenthesizedExpression(p)) p = p.parent;
+    return ts.isAwaitExpression(p);
+  };
+  if (site.hook) {
+    // The limit is counted in the work call's own `beforeModelCall` option.
+    const hooked = limits.some((c) => {
+      for (let p: ts.Node | undefined = c; p && p !== work; p = p.parent) {
+        if (ts.isPropertyAssignment(p) && p.name.getText() === site.hook)
+          return awaited(c) && p.parent.parent === work;
+      }
+      return false;
+    });
+    return hooked ? null : `no awaited hitLimit("${site.limit}") in ${site.hook}`;
+  }
+  const first = limits.find(awaited);
+  if (!first) return `no awaited hitLimit("${site.limit}")`;
+  if (first.getStart() > work.getStart()) return `hitLimit("${site.limit}") comes after the work`;
+  return null;
+}
+
+describe("Check 31 P4: every rate limit is called before the work it guards", () => {
+  for (const site of LIMIT_SITES) {
+    it(`${site.file}#${site.fn}: ${site.limit} before ${site.work.join(" / ")}`, () => {
+      expect(limitSiteProblem(parse(join(ROOT, site.file)), site)).toBeNull();
+    });
+  }
+
+  it("every LIMITS key has a row, and every hitLimit call in src is in the table", async () => {
+    const { LIMITS } = await import("@/server/rate-limit");
+    const covered = new Set(LIMIT_SITES.map((s) => s.limit));
+    expect(Object.keys(LIMITS).filter((k) => !covered.has(k))).toEqual([]);
+    const found: string[] = [];
+    for (const f of ALL) {
+      if (rel(f) === "src/server/rate-limit.ts") continue;
+      walk(parse(f), (n) => {
+        if (!ts.isCallExpression(n)) return;
+        const limit = limitOf(n);
+        if (limit) found.push(`${rel(f)}#${topFunctionName(n)}:${limit}`);
+      });
+    }
+    expect(found.sort()).toEqual(LIMIT_SITES.map((s) => `${s.file}#${s.fn}:${s.limit}`).sort());
+  });
+
+  it("self-test: a limit after the work, a missing limit and a limit outside the hook are caught", () => {
+    const site: LimitSite = { file: "x.ts", fn: "act", limit: "send", work: ["queueSend"] };
+    const fixture = (body: string) =>
+      parseText("x.ts", `export async function act() {\n${body}\n}`);
+    expect(
+      limitSiteProblem(fixture(`await hitLimit("send", w);\nawait queueSend(w);`), site),
+    ).toBeNull();
+    expect(
+      limitSiteProblem(fixture(`await queueSend(w);\nawait hitLimit("send", w);`), site),
+    ).toMatch(/after the work/);
+    expect(limitSiteProblem(fixture(`await queueSend(w);`), site)).toMatch(/no awaited/);
+    expect(limitSiteProblem(fixture(`hitLimit("send", w);\nawait queueSend(w);`), site)).toMatch(
+      /no awaited/,
+    );
+    expect(
+      limitSiteProblem(fixture(`await hitLimit("draft", w);\nawait queueSend(w);`), site),
+    ).toMatch(/no awaited/);
+    const hook: LimitSite = {
+      file: "x.ts",
+      fn: "act",
+      limit: "draft",
+      work: ["createDraftForThread"],
+      hook: "beforeModelCall",
+    };
+    expect(
+      limitSiteProblem(
+        fixture(
+          `await createDraftForThread(t, { beforeModelCall: async () => (await hitLimit("draft", w)).allowed });`,
+        ),
+        hook,
+      ),
+    ).toBeNull();
+    expect(
+      limitSiteProblem(
+        fixture(
+          `await createDraftForThread(t, { other: async () => await hitLimit("draft", w) });`,
+        ),
+        hook,
+      ),
+    ).toMatch(/beforeModelCall/);
   });
 });

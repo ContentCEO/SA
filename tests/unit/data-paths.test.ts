@@ -35,6 +35,8 @@ const FETCH_HOSTS: Record<string, string> = {
   "gmail.googleapis.com": "Google",
   "oauth2.googleapis.com": "Google",
   "openidconnect.googleapis.com": "Google",
+  // Check 26 P10: Google's public signing keys, to check Gmail push requests (sends nothing).
+  "www.googleapis.com": "Google",
   "accounts.google.com": "Google",
   // "**Resend** — delivers our emails to you …"
   "api.resend.com": "Resend",

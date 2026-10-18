@@ -75,6 +75,12 @@ export const users = pgTable("users", {
    */
   termsAcceptedAt: timestamp("terms_accepted_at", { withTimezone: true }),
   termsVersion: text("terms_version"),
+  /**
+   * Check 26 P3: every sign-in carries the version it was made at (the JWT's `sv`). "Sign out of
+   * every phone and computer" (or Davi's admin move) adds one, and every older sign-in stops
+   * working on its next request.
+   */
+  sessionVersion: integer("session_version").notNull().default(0),
 });
 
 /** Sign-in is invite-only. Davi adds rows here (script now, /admin in Milestone 6). */

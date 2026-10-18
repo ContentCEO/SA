@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { Metadata } from "next";
+import { noticeText } from "@/lib/notice-text";
+import { DRAFT_LIMIT_ERROR, draftLimitText } from "@/server/draft-limit-rules";
 import Link from "next/link";
 import { auth } from "@/auth";
 import { getWorkspaceForUser } from "@/server/accounts";
@@ -185,12 +187,15 @@ export default async function QueuePage(props: PageProps<"/queue">) {
     .filter((d): d is Date => d !== null)
     .sort((a, b) => b.getTime() - a.getTime())[0];
   const refused = Number(params.refused) || 0;
-  const doneMsg = typeof params.done === "string" ? done[params.done] : undefined;
-  const errorMsg = typeof params.error === "string" ? errors[params.error] : undefined;
+  const doneMsg = noticeText(done, params.done);
   const timeZone = usableTimeZone(profile?.timeZone ?? "America/New_York");
   // Check 43 P4: no signature → one muted line under the first draft (none on read-only).
   const signatureLine = noSignatureLine(profile?.signature);
   const clock = new Intl.DateTimeFormat("en-US", { hour: "numeric", minute: "2-digit", timeZone });
+  // Check 40 P3: the hourly Draft a reply limit, with the time they can ask again.
+  const draftLimitMsg =
+    params.error === DRAFT_LIMIT_ERROR ? draftLimitText(params.until, timeZone) : undefined;
+  const errorMsg = noticeText(errors, params.error) ?? draftLimitMsg;
   // Check 42 P1: "This was already answered from Gmail at 2:14pm. Nothing was sent."
   const answeredAt = params.error === "answered" ? Number(params.at) : NaN;
   const answered =

@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { dayWord } from "@/lib/trial-words";
+import { noticeText } from "@/lib/notice-text";
 import { Notice } from "@/components/app/notice";
 import { Headline } from "@/components/brand/headline";
 import { Button } from "@/components/ui/button";
@@ -53,9 +54,7 @@ export default async function ConnectPage(props: PageProps<"/connect">) {
       ? `That's ${again.email} again, which is already connected. Tap Connect another Gmail and pick the other account on Google's screen.`
       : error === "wrong_account" && card
         ? `You picked ${picked ? picked.email : "a different Google account"} but this card is for ${card.email}. Try again and pick ${card.email}.`
-        : typeof error === "string"
-          ? errors[error]
-          : undefined;
+        : noticeText(errors, error);
   const days = dayWord(pricing.evaluationDays);
 
   return (

@@ -67,7 +67,8 @@ const ADMIN = "davi@shop.com";
 // that user agreed to the current terms (beforeEach makes Davi's user row, agreed).
 const session = vi.hoisted(() => ({ email: null as string | null, id: "" }));
 vi.mock("@/auth", () => ({
-  auth: async () => (session.email ? { user: { id: session.id, email: session.email } } : null),
+  auth: async () =>
+    session.email ? { user: { id: session.id, email: session.email, sv: 0 } } : null,
 }));
 class Redirected extends Error {
   constructor(readonly url: string) {

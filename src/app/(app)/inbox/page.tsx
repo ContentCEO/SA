@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { noticeText } from "@/lib/notice-text";
 import { Headline } from "@/components/brand/headline";
 import { UpdatedAt } from "@/components/app/updated-at";
 import { updatedTime } from "@/lib/refresh-rules";
@@ -216,8 +217,8 @@ export default async function InboxPage(props: PageProps<"/inbox">) {
     notesForThreads(workspace.id, ids),
   ]);
   const own = boxes.map((b) => b.email);
-  const doneMsg = typeof params.done === "string" ? INBOX_DONE[params.done] : undefined;
-  const errorMsg = typeof params.error === "string" ? INBOX_ERRORS[params.error] : undefined;
+  const doneMsg = noticeText(INBOX_DONE, params.done);
+  const errorMsg = noticeText(INBOX_ERRORS, params.error);
 
   function renderRow(row: InboxRow) {
     const permit = (row.extracted as { permit?: Parameters<typeof PermitCard>[0]["permit"] })

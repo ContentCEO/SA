@@ -505,6 +505,13 @@
       "when": 1792354263194,
       "tag": "0071_thread_prompt_version",
       "breakpoints": true
+    },
+    {
+      "idx": 72,
+      "version": "7",
+      "when": 1792358940055,
+      "tag": "0072_session_version",
+      "breakpoints": true
     }
   ]
 }

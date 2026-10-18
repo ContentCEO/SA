@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { noticeText } from "@/lib/notice-text";
 import { cookies } from "next/headers";
 import Link from "next/link";
 import { redirect } from "next/navigation";
@@ -41,6 +42,8 @@ const errors: Record<string, string> = {
   busy: "That's a lot in a short time, so we've paused it for a bit. Try again in a few minutes.",
   delete_billing:
     "We couldn't cancel your plan, so nothing was deleted. Try again, or call us and we'll do it.",
+  // Check 26 P4.
+  confirm: "Type DELETE to confirm.",
   unknown: "That didn't work. Refresh and try again.",
 };
 
@@ -58,8 +61,8 @@ export default async function TermsAgreementPage(props: PageProps<"/welcome/term
   if (hasCurrentTerms(terms)) redirect(back);
   const copy = termsScreenCopy(terms);
   const mailboxes = await listMailboxes(workspace.id);
-  const doneMsg = typeof doneKey === "string" ? done[doneKey] : undefined;
-  const errorMsg = typeof errorKey === "string" ? errors[errorKey] : undefined;
+  const doneMsg = noticeText(done, doneKey);
+  const errorMsg = noticeText(errors, errorKey);
 
   return (
     <div className="mx-auto flex w-full max-w-xl flex-1 flex-col px-4 py-6">

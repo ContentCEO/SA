@@ -38,7 +38,7 @@ import { createTestDb } from "../support/db";
 // --- Request stand-ins: who's signed in, the cookie jar, the proxy's header -------------------
 
 const req = vi.hoisted(() => ({
-  session: null as { user: { id: string; email?: string } } | null,
+  session: null as { user: { id: string; email?: string; sv?: number; sat?: number } } | null,
   cookies: new Map<string, string>(),
   set: [] as { name: string; value: string; options: Record<string, unknown> }[],
   deleted: [] as unknown[],
@@ -263,7 +263,9 @@ beforeEach(async () => {
   const made = await ensureUserAndWorkspace({ email: "owner@shop.com", name: "Owner" });
   owner = { id: made.user.id, email: made.user.email };
   workspaceId = made.workspace.id;
-  req.session = { user: { id: owner.id, email: owner.email } };
+  req.session = {
+    user: { id: owner.id, email: owner.email, sv: 0, sat: Math.floor(Date.now() / 1000) },
+  };
   req.cookies.clear();
   req.set.length = 0;
   req.deleted.length = 0;
@@ -483,7 +485,9 @@ describe("/welcome/terms: the ways out, without agreeing", () => {
     const m = await box();
     req.path = "/settings";
     const toTerms = `/welcome/terms?next=${encodeURIComponent("/settings")}`;
-    expect(await whereTo(() => settings.deleteAccountAction())).toBe(toTerms);
+    expect(await whereTo(() => settings.deleteAccountAction(form({ confirm: "DELETE" })))).toBe(
+      toTerms,
+    );
     expect(await whereTo(() => settings.disconnectMailboxAction(form({ mailboxId: m.id })))).toBe(
       toTerms,
     );
@@ -495,7 +499,7 @@ describe("/welcome/terms: the ways out, without agreeing", () => {
   it("Delete my account works from the terms screen: everything goes, then /goodbye", async () => {
     const { deleteAccountFromTermsAction } = await import("@/app/welcome/terms/actions");
     await box();
-    await deleteAccountFromTermsAction();
+    await deleteAccountFromTermsAction(form({ confirm: "DELETE" }));
     expect(await database.select().from(users)).toEqual([]);
     expect(await database.select().from(workspaces)).toEqual([]);
     expect(await database.select().from(mailboxes)).toEqual([]);
@@ -516,7 +520,9 @@ describe("/welcome/terms: the ways out, without agreeing", () => {
         },
       },
     } as unknown as Stripe);
-    expect(await whereTo(deleteAccountFromTermsAction)).toBe("/welcome/terms?error=delete_billing");
+    expect(await whereTo(() => deleteAccountFromTermsAction(form({ confirm: "DELETE" })))).toBe(
+      "/welcome/terms?error=delete_billing",
+    );
     expect(await database.select().from(users)).toHaveLength(1);
     expect(req.signOut).toEqual([]);
   });
@@ -580,7 +586,9 @@ describe("/welcome/terms: the ways out, without agreeing", () => {
     const actions = await import("@/app/welcome/terms/actions");
     const m = await box();
     req.session = null;
-    expect(await whereTo(actions.deleteAccountFromTermsAction)).toBe("/signin");
+    expect(
+      await whereTo(() => actions.deleteAccountFromTermsAction(form({ confirm: "DELETE" }))),
+    ).toBe("/signin");
     expect(
       await whereTo(() => actions.disconnectMailboxFromTermsAction(form({ mailboxId: m.id }))),
     ).toBe("/signin");

@@ -117,6 +117,8 @@ export const SCREEN_MESSAGES = {
     error: {
       delete_billing:
         "We couldn't cancel your plan, so nothing was deleted. Try again, or call us and we'll do it.",
+      // Check 26 P4.
+      confirm: "Type DELETE to confirm.",
     },
   },
 } satisfies Record<string, Messages>;

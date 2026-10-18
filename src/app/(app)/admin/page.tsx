@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { noticeText } from "@/lib/notice-text";
 import { describeSource } from "@/server/source-rules";
 import type { Metadata } from "next";
 import { Notice } from "@/components/app/notice";
@@ -128,6 +129,12 @@ const moves: Record<AdminMove, { label: string; explain: string; confirm: string
     explain: "Puts them back where they were before the pause.",
     confirm: "Yes, resume",
   },
+  sign_out_everywhere: {
+    label: "Sign them out everywhere",
+    explain:
+      "Ends every sign-in on this account, on every phone and computer (for a lost phone). They sign in again with Google. Nothing else changes.",
+    confirm: "Yes, sign them out everywhere",
+  },
 };
 
 const done: Record<string, string> = {
@@ -136,6 +143,7 @@ const done: Record<string, string> = {
   mark_setup_call_done: "Marked active.",
   pause: "Account paused.",
   resume: "Account resumed.",
+  sign_out_everywhere: "Signed them out everywhere.",
   plan: "Plan saved.",
   launch_ticked: "Marked done.",
   stripe_test:
@@ -629,29 +637,24 @@ export default async function AdminPage(props: PageProps<"/admin">) {
   // Waitlist Growth notices show in the waitlist section (the page scrolls there).
   const code = (v: unknown, prefix: string) =>
     typeof v === "string" && v.startsWith(prefix) ? v : undefined;
-  const waitlistDone = WAITLIST_GROWTH_DONE[code(params.done, "wl_") ?? ""];
-  const waitlistError = WAITLIST_GROWTH_ERRORS[code(params.error, "wl_") ?? ""];
+  const waitlistDone = noticeText(WAITLIST_GROWTH_DONE, code(params.done, "wl_"));
+  const waitlistError = noticeText(WAITLIST_GROWTH_ERRORS, code(params.error, "wl_"));
   // Payment messages show inside the Payments section (the page scrolls there), not at the top.
   const isStripe = (k: unknown) => typeof k === "string" && k.startsWith("stripe");
   // Check 16 P6: a move's notice shows inside the card it changed, naming it (not at the top).
   const onCard = cardNotice(params, rows, pricing.plans);
-  const doneMsg =
-    !onCard && typeof params.done === "string" && !isStripe(params.done)
-      ? done[params.done]
-      : undefined;
+  const doneMsg = !onCard && !isStripe(params.done) ? noticeText(done, params.done) : undefined;
   const errorMsg =
-    !onCard && typeof params.error === "string" && !isStripe(params.error)
-      ? errors[params.error]
-      : undefined;
+    !onCard && !isStripe(params.error) ? noticeText(errors, params.error) : undefined;
   const stripeDone =
     params.done === "stripe_test_reset"
       ? testPayments && testPayments.reset !== null
         ? testPaymentsResetNotice({ reset: testPayments.reset, unchecked: testPayments.unchecked })
         : undefined
       : isStripe(params.done)
-        ? done[params.done as string]
+        ? noticeText(done, params.done)
         : undefined;
-  const stripeError = isStripe(params.error) ? errors[params.error as string] : undefined;
+  const stripeError = isStripe(params.error) ? noticeText(errors, params.error) : undefined;
   // Only a fixed code travels in the URL (M11 C10); anything else shows nothing.
   const stripeReason = stripeReasonText(params.reason);
   // Check 16 P1: one stuck inbox inverts the box, even when the others are fine.

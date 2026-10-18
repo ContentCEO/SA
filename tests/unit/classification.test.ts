@@ -14,6 +14,7 @@ import { UTILITY_DATE_REASON, UTILITY_SCAM_REASON } from "@/ai/guards";
 import { createDraftForThread, queueMembership } from "@/server/drafts";
 import { createTestDb } from "../support/db";
 import { UTILITY_EMAILS } from "../support/utility-emails";
+import { DATE_BOUND_CODE } from "../support/no-date-params";
 import { classification, fakeTransport } from "../support/fake-model";
 
 const NOW = new Date("2026-09-28T12:00:00Z");
@@ -838,7 +839,8 @@ describe("sticky quote-request facts (M8 A11)", () => {
       () => null,
       (e: unknown) => e as { cause?: unknown },
     );
-    expect(String(err?.cause ?? err)).toMatch(/A Date was bound into SQL/);
+    // Check 26 P5: the error is a SafeQueryError (no cause); the guard's code names it.
+    expect(String(err?.cause ?? err)).toContain(`(code ${DATE_BOUND_CODE})`);
     await expect(
       database.execute(sql`select ${NOW.toISOString()}::timestamptz as t`),
     ).resolves.toBeDefined();

@@ -24,7 +24,7 @@ const mask = (s: string | undefined) => s?.replace(EMAIL, "[email]");
  * placeholders, not values) of anything that starts "Failed query:".
  */
 const QUERY_PARAMS = /\n\s*params:[\s\S]*$/;
-function scrubText(s: string | undefined): string | undefined {
+export function scrubText(s: string | undefined): string | undefined {
   if (s == null) return s;
   let out = s.replace(QUERY_PARAMS, "\nparams: [dropped]");
   if (out.startsWith("Failed query:")) out = out.split("\n")[0];

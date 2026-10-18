@@ -121,3 +121,43 @@ export const getWorkspaceForUser = cache(async (userId: string): Promise<Workspa
     .where(eq(workspaces.ownerUserId, userId));
   return workspace;
 });
+
+/** What a sign-in carries that we check: the account id and its session version (`sv`). */
+export type SignedInUser = { id?: string; sv?: unknown } | null | undefined;
+
+/**
+ * Check 26 P3: the signed-in person's workspace, in one query with the account's session
+ * version. A sign-in made at another version (signed out everywhere since) or with none at all
+ * (a cookie from before session versions) gets nothing, the same as being signed out.
+ * Check 29 P7: React cache() on the id and version (primitives, so every caller in a request
+ * shares one query; `session.user` itself is a fresh object per auth() call).
+ */
+const workspaceForSession = cache(
+  async (userId: string, sv: number): Promise<Workspace | undefined> => {
+    const [row] = await db()
+      .select({ sessionVersion: users.sessionVersion, workspace: workspaces })
+      .from(workspaces)
+      .innerJoin(users, eq(users.id, workspaces.ownerUserId))
+      .where(eq(workspaces.ownerUserId, userId));
+    if (!row || row.sessionVersion !== sv) return undefined;
+    return row.workspace;
+  },
+);
+
+export async function getWorkspaceForSession(user: SignedInUser): Promise<Workspace | undefined> {
+  if (!user?.id || typeof user.sv !== "number") return undefined;
+  return workspaceForSession(user.id, user.sv);
+}
+
+/**
+ * Check 26 P3: whether a sign-in is at the account's current session version, without needing a
+ * workspace (requireAdmin: Davi's account is checked by email, not by workspace).
+ */
+export async function signInIsCurrent(user: SignedInUser): Promise<boolean> {
+  if (!user?.id || typeof user.sv !== "number") return false;
+  const [row] = await db()
+    .select({ sessionVersion: users.sessionVersion })
+    .from(users)
+    .where(eq(users.id, user.id));
+  return row?.sessionVersion === user.sv;
+}

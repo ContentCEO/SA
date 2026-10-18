@@ -3,6 +3,10 @@ import type { PgDatabase, PgQueryResultHKT } from "drizzle-orm/pg-core";
 import postgres from "postgres";
 import { assertPreviewSafe } from "../config/environment-guard";
 import * as schema from "./schema";
+import { installSafeQueryErrors } from "./safe-errors";
+
+// Check 26 P5: no query error ever carries the row's values (see safe-errors.ts).
+installSafeQueryErrors();
 
 /** Any Postgres-backed Drizzle database with our schema (Neon/local Postgres, PGlite in tests). */
 export type Database = PgDatabase<PgQueryResultHKT, typeof schema>;
@@ -31,3 +35,4 @@ export function setDbForTests(database: Database | undefined) {
 }
 
 export { schema };
+export { SafeQueryError } from "./safe-errors";
