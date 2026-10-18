@@ -260,6 +260,8 @@ describe("service worker: the count lookup has a time limit", () => {
       expect(w.shown).toHaveLength(1);
       expect(w.shown[0]!.title).toBe("Squared Away");
       expect(w.shown[0]!.options.body).toBe("Something new is waiting in your queue.");
+      // Check 46 P3: the one-colour mark, not the full app icon.
+      expect(w.shown[0]!.options.badge).toBe("/app-icon/badge-96");
       // No answer: the badge is left as it was.
       expect(w.nav.setAppBadge).not.toHaveBeenCalled();
       expect(w.nav.clearAppBadge).not.toHaveBeenCalled();

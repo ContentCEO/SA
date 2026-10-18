@@ -176,7 +176,8 @@ self.addEventListener("push", (event) => {
         self.registration.showNotification((s && s.title) || "Squared Away", {
           body: (s && s.body) || "Something new is waiting in your queue.",
           icon: "/app-icon/192",
-          badge: "/app-icon/192",
+          // Check 46 P3: Android draws the badge's shape only — the "sa." mark alone.
+          badge: "/app-icon/badge-96",
           tag: "sa-queue",
           renotify: true,
           data: { url: safeUrl(s && s.url) },

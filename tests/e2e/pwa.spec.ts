@@ -20,6 +20,10 @@ test("installable: manifest opens on the queue, full screen, with real icons", a
     expect(img.headers()["content-type"]).toContain("image/png");
   }
   expect((await request.get("/app-icon/apple-180")).ok()).toBe(true);
+  // Check 46 P3: the notification badge (the "sa." mark alone).
+  const badge = await request.get("/app-icon/badge-96");
+  expect(badge.ok()).toBe(true);
+  expect(badge.headers()["content-type"]).toBe("image/png");
   expect((await request.get("/app-icon/nope")).status()).toBe(404);
 });
 
