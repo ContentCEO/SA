@@ -4,6 +4,8 @@
  */
 export type ReplyMime = {
   from: string;
+  /** Check 43 P3: the name customers see ("Mike Rossi"). Empty = the bare address. */
+  fromName?: string | null;
   to: string;
   subject: string;
   inReplyTo?: string | null;
@@ -19,6 +21,19 @@ export function encodeHeader(value: string): string {
   return /^[\x20-\x7e]*$/.test(v) ? v : `=?UTF-8?B?${Buffer.from(v, "utf8").toString("base64")}?=`;
 }
 
+/**
+ * Check 43 P3: an address with its display name. No name → the address; a plain ASCII name →
+ * "Name" <email> (quotes and backslashes escaped); anything else → an RFC 2047 word. CR/LF in
+ * either part can never start a new header.
+ */
+export function formatAddress(name: string | null | undefined, email: string): string {
+  const address = clean(email);
+  const n = clean(name ?? "").replace(/\s+/g, " ");
+  if (!n) return address;
+  if (/^[\x20-\x7e]*$/.test(n)) return `"${n.replace(/(["\\])/g, "\\$1")}" <${address}>`;
+  return `${encodeHeader(n)} <${address}>`;
+}
+
 export function replySubject(subject: string | null | undefined): string {
   const s = clean(subject ?? "");
   if (!s) return "Re: your email";
@@ -27,7 +42,7 @@ export function replySubject(subject: string | null | undefined): string {
 
 export function buildReplyMime(m: ReplyMime): string {
   const headers = [
-    `From: ${clean(m.from)}`,
+    `From: ${formatAddress(m.fromName, m.from)}`,
     `To: ${clean(m.to)}`,
     `Subject: ${encodeHeader(m.subject)}`,
     "MIME-Version: 1.0",

@@ -28,6 +28,10 @@ export type ProfileDefaults = {
   paymentTerms: string | null;
   policies: string | null;
   signature: string | null;
+  /** Check 43 P3: the name in the From line, as saved (null = not set). */
+  fromName: string | null;
+  /** What the From line says while `fromName` is empty (the Google name, else the business). */
+  fromNameFallback: string | null;
   reviewUrl: string | null;
   doNotPromise: string[];
   vipSenders: string[];
@@ -53,6 +57,7 @@ const OPTIONAL_FIELDS = [
   "paymentTerms",
   "policies",
   "signature",
+  "fromName",
   "reviewUrl",
   "doNotPromise",
   "vipSenders",
@@ -263,6 +268,16 @@ export function BusinessProfileForm({
         hint="Permits, warranty, cancellations, cleanup."
         defaultValue={v("policies", defaults.policies) as string}
         error={e.policies}
+      />
+      <TextField
+        name="fromName"
+        label="Name customers see on your emails"
+        hint={`Usually your name, or your name and the shop: Mike Rossi, Rossi Plumbing.${
+          defaults.fromNameFallback ? ` Left empty, they see “${defaults.fromNameFallback}”.` : ""
+        }`}
+        autoComplete="name"
+        defaultValue={v("fromName", defaults.fromName) as string}
+        error={e.fromName}
       />
       <TextArea
         name="signature"

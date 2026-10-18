@@ -13,6 +13,7 @@ import {
 } from "./lifecycle";
 import { defaultWriter } from "./drafts";
 import { markReconnectNeeded } from "./sync";
+import { senderNameFor } from "./from-line";
 
 export type PracticeOutcome =
   | { status: "sent"; to: string; left: number }
@@ -65,6 +66,7 @@ export async function practiceSend(
 
   const mime = buildReplyMime({
     from: mailbox.email,
+    fromName: await senderNameFor(workspaceId),
     to: mailbox.email,
     subject: `[Practice] ${draft.subject}`,
     body: [

@@ -38,6 +38,8 @@ export type DraftCardProps = {
   toAddress: string;
   /** The customer's email named this address to reply to (a website form's Reply-To). */
   toFromReplyTo?: boolean;
+  /** Check 43 P3: the name the customer sees in the From line ("Mike Rossi"). */
+  fromName?: string | null;
   tag: string;
   /** Round 2 (FW E9): when the customer wrote ("Wrote 9 days ago"), on every card. */
   wrote?: string | null;
@@ -109,9 +111,23 @@ function Pending({
  * H7: who the reply goes to, as visible text (never an aria-label: Sentry's ui.* scrub isn't
  * relied on), so the owner can catch a wrong address before tapping Send reply.
  */
-function ToLine({ address, fromReplyTo }: { address: string; fromReplyTo?: boolean }) {
+function ToLine({
+  address,
+  fromReplyTo,
+  fromName,
+}: {
+  address: string;
+  fromReplyTo?: boolean;
+  fromName?: string | null;
+}) {
   return (
     <p className="text-sm break-all">
+      {/* Check 43 P3: what the customer will see as the sender. */}
+      {fromName ? (
+        <span className="block">
+          <span className="font-semibold">From:</span> {fromName}
+        </span>
+      ) : null}
       <span className="font-semibold">To:</span> {address}
       {fromReplyTo ? (
         <span className="block text-muted-foreground">the reply address in their email</span>
@@ -250,7 +266,7 @@ export function DraftCard(p: DraftCardProps) {
           <span className="text-lg font-black">{p.customer}</span>
           <ConfidenceTag label={p.label} />
         </div>
-        <ToLine address={p.toAddress} fromReplyTo={p.toFromReplyTo} />
+        <ToLine address={p.toAddress} fromReplyTo={p.toFromReplyTo} fromName={p.fromName} />
         <span className="text-sm font-semibold">{p.tag}</span>
         {p.wrote ? <span className="text-sm">{p.wrote}</span> : null}
         {(p.leadLines ?? []).map((line) => (
@@ -306,7 +322,9 @@ export function DraftCard(p: DraftCardProps) {
           kept={kept}
           seenHash={p.seenHash}
           toAddress={p.toAddress}
-          toLine={<ToLine address={p.toAddress} fromReplyTo={p.toFromReplyTo} />}
+          toLine={
+            <ToLine address={p.toAddress} fromReplyTo={p.toFromReplyTo} fromName={p.fromName} />
+          }
           canSend={p.canSend}
           confirmTiming={!!p.timingNote}
           onCancel={() => {

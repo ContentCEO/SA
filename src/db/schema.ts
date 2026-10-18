@@ -541,6 +541,11 @@ export const businessProfiles = pgTable("business_profile", {
   paymentTerms: text("payment_terms"),
   policies: text("policies"),
   signature: text("signature"),
+  /**
+   * Check 43 P3: "Name customers see on your emails" (max 80), put in the From line of every
+   * reply. Empty = the owner's Google account name, else the business name (`senderNameFor`).
+   */
+  fromName: text("from_name"),
   /** Plan #29: where happy customers leave a review (https only). Added to a draft only on a tap. */
   reviewUrl: text("review_url"),
   doNotPromise: jsonb("do_not_promise").$type<string[]>().notNull().default([]),

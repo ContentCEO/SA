@@ -111,6 +111,7 @@ import { gmailThreadLink } from "@/lib/gmail-link";
 import { staleTiming, type StaleTiming } from "./draft-timing";
 import { workspaceTimeZone } from "./snooze";
 import { buildReplyMime, replySubject, sameText, toGmailRaw } from "@/mailbox/mime";
+import { senderNameFor } from "./from-line";
 import {
   canSend,
   effectiveStatus,
@@ -1244,6 +1245,7 @@ export async function createDraftForThread(
       raw: toGmailRaw(
         buildReplyMime({
           from: mailbox.email,
+          fromName: await senderNameFor(workspace.id),
           to,
           subject,
           inReplyTo: last.rfc822MessageId,
@@ -1402,16 +1404,30 @@ export function mimeFor(
   mailbox: Mailbox,
   body: string,
   replyTo: { rfc822MessageId: string | null; references: string | null } | undefined,
+  /** Check 43 P3: the name in the From line (`senderNameFor`); null = the bare address. */
+  fromName: string | null,
 ) {
   return toGmailRaw(
     buildReplyMime({
       from: mailbox.email,
+      fromName,
       to: d.toAddress,
       subject: d.subject,
       inReplyTo: replyTo?.rfc822MessageId,
       references: replyTo?.references,
       body,
     }),
+  );
+}
+
+/** A stored draft's Gmail message, rebuilt with new text: threading and From name read live. */
+export async function draftRaw(d: Draft, mailbox: Mailbox, body: string) {
+  return mimeFor(
+    d,
+    mailbox,
+    body,
+    await replyToHeaders(d),
+    await senderNameFor(mailbox.workspaceId),
   );
 }
 
@@ -1618,7 +1634,7 @@ export async function sendDraft(
       body = opts.editedBody.trim();
       await writer.updateDraft(draft.gmailDraftId!, {
         threadId: thread.gmailThreadId,
-        raw: mimeFor(draft, mailbox, body, await replyToHeaders(draft)),
+        raw: await draftRaw(draft, mailbox, body),
       });
     }
 
@@ -1871,7 +1887,7 @@ export async function queueSend(
       body = opts.editedBody.trim();
       await writer.updateDraft(draft.gmailDraftId!, {
         threadId: thread.gmailThreadId,
-        raw: mimeFor(draft, mailbox, body, await replyToHeaders(draft)),
+        raw: await draftRaw(draft, mailbox, body),
       });
     }
   } catch (err) {
@@ -2330,7 +2346,7 @@ export async function saveDraftEdit(
     }
     await writer.updateDraft(draft.gmailDraftId!, {
       threadId: thread.gmailThreadId,
-      raw: mimeFor(draft, mailbox, body.trim(), await replyToHeaders(draft)),
+      raw: await draftRaw(draft, mailbox, body.trim()),
     });
     // The owner touched it, so it waits for their tap — autopilot stands down.
     await db()
@@ -2617,7 +2633,7 @@ export async function reviseDraft(
     if (moved) return moved;
     await writer.updateDraft(draft.gmailDraftId!, {
       threadId: thread.gmailThreadId,
-      raw: mimeFor(draft, mailbox, body, await replyToHeaders(draft)),
+      raw: await draftRaw(draft, mailbox, body),
     });
   } catch (err) {
     if (err instanceof MailboxAuthError) {

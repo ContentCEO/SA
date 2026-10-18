@@ -27,6 +27,7 @@ import { listMailboxes } from "@/server/mailboxes";
 import { getBusinessProfile } from "@/server/profile";
 import { priceMemoryFor } from "@/server/price-memory";
 import { requireOwner } from "@/server/session";
+import { senderNameFor } from "@/server/from-line";
 import { MAILBOX_PAUSED_LINE } from "@/server/mailbox-plan-rules";
 import { dismissChecklistAction } from "./actions";
 import { OnboardingChecklist } from "@/components/app/onboarding-checklist";
@@ -112,6 +113,8 @@ export default async function QueuePage(props: PageProps<"/queue">) {
   const doneMsg = typeof params.done === "string" ? done[params.done] : undefined;
   const errorMsg = typeof params.error === "string" ? errors[params.error] : undefined;
   const sending = canSend(workspace);
+  // Check 43 P3: the name the customer sees in the From line, shown on every card.
+  const fromName = await senderNameFor(workspace.id);
   const timeZone = usableTimeZone(
     (await getBusinessProfile(workspace.id))?.timeZone ?? "America/New_York",
   );
@@ -416,6 +419,7 @@ export default async function QueuePage(props: PageProps<"/queue">) {
               draftId={i.draftId!}
               customer={who(i)}
               toAddress={i.toAddress ?? ""}
+              fromName={fromName}
               toFromReplyTo={i.replyRedirected && i.toAddress === i.customerAddress}
               tag={`${i.backFromSnooze ? "Back from snooze · " : ""}${tag(i)}`}
               wrote={wroteLine(i.customerWroteAt, now)}
