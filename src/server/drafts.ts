@@ -1509,16 +1509,20 @@ async function writeDraftForThread(threadId: string, opts: CreateOpts): Promise<
 
   // Check 43 P5: a website form lead answered at its Reply-To never saw the form robot's
   // subject; "Re: Form Submission - Request a quote" reads like spam to them.
+  // A fresh invoice reminder (Check 21 P4) has no customer email: plain "Re:".
   const subject =
-    replyRedirected(customer) && to !== (customer.fromAddress ?? "").trim().toLowerCase()
+    customer &&
+    replyRedirected(customer) &&
+    to !== (customer.fromAddress ?? "").trim().toLowerCase()
       ? formReplySubject(last.subject ?? thread.subject, workspace.businessName)
       : replySubject(last.subject ?? thread.subject);
-  // Check 42 P4: answer from the address the customer wrote to (a verified send-as alias).
+  // Check 42 P4: answer from the address the customer wrote to (a verified send-as alias). A
+  // fresh invoice reminder goes from the alias the owner sent the invoice from, if it was one.
   const fromAddress = pickFromAddress({
     mailboxEmail: mailbox.email,
     sendAs: mailbox.sendAs,
-    to: customer.toAddresses,
-    cc: customer.ccAddresses,
+    to: customer ? customer.toAddresses : last.fromAddress ? [last.fromAddress] : [],
+    cc: customer ? customer.ccAddresses : [],
   });
   const writer = (opts.writerFor ?? defaultWriter)(mailbox);
 

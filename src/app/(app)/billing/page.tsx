@@ -3,7 +3,6 @@ import { ConfirmChange } from "@/components/app/confirm-change";
 import { CopyLink } from "@/components/app/copy-link";
 import { Notice } from "@/components/app/notice";
 import { PaymentWaiting } from "@/components/app/payment-waiting";
-import { e2eMode } from "@/config/e2e";
 import { Headline } from "@/components/brand/headline";
 import { Button } from "@/components/ui/button";
 import { formatDollars, planRank, pricing, type PlanId } from "@/config/pricing";
@@ -182,7 +181,6 @@ export default async function BillingPage(props: PageProps<"/billing">) {
       {waitingForStripe ? (
         <section role="status" className="sa-inverted flex flex-col gap-2 rounded-xl p-4">
           <PaymentWaiting
-            {...(e2eMode() ? { everyMs: 300, times: 3 } : {})}
             giveUpText={stripeGiveUpLine(davi ?? siteConfig.operator)}
             phone={siteConfig.phone}
             phoneHref={phoneHref("tel", siteConfig.phone)}

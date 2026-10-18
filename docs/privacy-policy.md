@@ -348,7 +348,7 @@ In plain words:
   any style suggestions waiting for you, your business details, your activity history and your AI
   usage counts stay until you delete your account.
 - **Delete my account** (Settings): deletes your account and everything in it from Squared Away,
-  after one confirmation. Stripe keeps its own payment records, and we keep the amount and dates
+  after one confirmation. Stripe keeps its own payment records. We keep only the amount and dates
   of any refund or card dispute (no card details, no link to you). First it cancels your
   subscription straight away (not at the end of the paid period), and any other plan Stripe still
   has for you, and removes our access at Google. It also

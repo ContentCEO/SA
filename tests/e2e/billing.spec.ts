@@ -170,6 +170,7 @@ test("paid but no Stripe notice: the page stops waiting and says what happens ne
   page,
   context,
 }) => {
+  test.setTimeout(120_000);
   const owner = await seedOwner({ mailbox: true, backfilled: true });
   await setWorkspace(owner.workspaceId, {
     status: "evaluating",
@@ -179,11 +180,12 @@ test("paid but no Stripe notice: the page stops waiting and says what happens ne
   await signInAs(context, owner);
   await page.goto("/billing?done=paid&session_id=cs_test_e2e");
   await expect(page.getByText("Payment received — finishing up.")).toBeVisible();
-  // e2e mode refreshes 3 times, 300ms apart, then gives up.
+  // 10 refreshes, 3 seconds apart, then it gives up (the same timing as live: only the four
+  // seams in tests/unit/e2e-mode.test.ts may read the e2e switch).
   await expect(
     page.getByText(/Stripe has your payment, but our side hasn't caught up yet/),
   ).toBeVisible({
-    timeout: 15_000,
+    timeout: 60_000,
   });
   await expect(page.getByRole("link", { name: /\d{3}-\d{3}-\d{4}/ }).first()).toBeVisible();
   // Davi sees it on /admin (recorded by the page's server action).
