@@ -26,6 +26,7 @@ import {
   rules,
   seasonalNotes,
   stripeEvents,
+  stripeMoneyEvents,
   threads,
   usage,
   voiceProfiles,
@@ -77,6 +78,8 @@ const KEPT: Record<string, string> = {
     "global settings and markers; deleteAccount deletes the workspace's cost-alert and sent-email markers. Left: the per-mailbox done markers `cleanup:draft-messages-v1:<mailbox id>` and `backfill:reply-to-v1:<mailbox id>` (content-free uuids, never read once the mailbox is gone)",
   rate_limits: "counters keyed by workspace or hashed IP; purged daily after 2 days",
   stripe_events: "Stripe event ids and types only, for webhook idempotency",
+  stripe_money_events:
+    "refund and dispute amounts and dates from Stripe (no card details), workspace id cleared (SET NULL), like Stripe's own payment records",
   referral_credits:
     "salted email fingerprint with the workspace ids cleared (SET NULL), so a referral is paid once",
 };
@@ -91,6 +94,8 @@ const SET_NULL: Record<string, string> = {
     "an invite outlives the referrer's account; the invitee still signs in, unlinked",
   "referral_credits.referred_workspace_id":
     "the credit record outlives the referred account so the same email is never paid twice",
+  "stripe_money_events.workspace_id":
+    "a refund or dispute record outlives the account, like Stripe's own payment records",
   "referral_credits.beneficiary_workspace_id":
     "the credit record outlives the referrer's account (it was already paid or is skipped)",
 };
@@ -337,6 +342,9 @@ async function seedOwner(email: string, tag: string, extra: { referredBy?: strin
   ]);
   await database.insert(rateLimits).values({ key: `send:${ws}`, windowStart: NOW, count: 1 });
   await database.insert(stripeEvents).values({ id: `evt_${tag}`, type: "invoice.paid" });
+  await database
+    .insert(stripeMoneyEvents)
+    .values({ id: `re_${tag}`, workspaceId: ws, kind: "refund", amountCents: 49_900 });
   return { userId: user.id, workspaceId: ws, a, b };
 }
 
@@ -389,7 +397,13 @@ describe("delete my account", () => {
     expect(canceled).toEqual(["sub_owner"]);
 
     const after = await snapshot();
-    const kept = new Set(["waitlist", "rate_limits", "stripe_events", "referral_credits"]);
+    const kept = new Set([
+      "waitlist",
+      "rate_limits",
+      "stripe_events",
+      "referral_credits",
+      "stripe_money_events",
+    ]);
     for (const name of Object.keys(after)) {
       if (kept.has(name)) continue;
       // The owner's rows are all gone (invites and the cost-alert / sent-email markers too),
@@ -410,6 +424,13 @@ describe("delete my account", () => {
     const credits = await database.select().from(referralCredits);
     expect(credits).toHaveLength(1);
     expect(credits[0]!.referredWorkspaceId).toBeNull();
+    // Check 17 P8: the owner's refund record stays, with no workspace id.
+    const money = await database
+      .select()
+      .from(stripeMoneyEvents)
+      .where(eq(stripeMoneyEvents.id, "re_owner"));
+    expect(money).toHaveLength(1);
+    expect(money[0]!.workspaceId).toBeNull();
     expect(credits[0]!.beneficiaryWorkspaceId).toBe(other.workspaceId);
   });
 

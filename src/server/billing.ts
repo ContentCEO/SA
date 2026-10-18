@@ -44,6 +44,7 @@ import { resumeTarget, setupReallyPaid } from "./lifecycle";
 import { fitMailboxesToPlan } from "./mailbox-plan";
 import { creditReferralSafely } from "./referrals";
 import { applyPlanChange } from "./workspace-lifecycle";
+import { recordDispute, recordRefunds } from "./stripe-money";
 import { workspaceTimeZone } from "./snooze";
 import { isTermsUrlMissingError, stripeErrorReason } from "./stripe-error-rules";
 
@@ -87,6 +88,10 @@ const WEBHOOK_EVENTS: Stripe.WebhookEndpointCreateParams.EnabledEvent[] = [
   // Check 17 P5: bank debits and other delayed methods finish after the page closes.
   "checkout.session.async_payment_succeeded",
   "checkout.session.async_payment_failed",
+  // Check 17 P8: recorded and shown on /admin; they never move an account on their own.
+  "charge.refunded",
+  "charge.dispute.created",
+  "charge.dispute.closed",
   "customer.subscription.created",
   "customer.subscription.updated",
   "customer.subscription.deleted",
@@ -1037,6 +1042,18 @@ export async function handleStripeWebhook(rawBody: string, signature: string | n
       case "customer.subscription.updated":
       case "customer.subscription.deleted":
         await applySubscription(event.data.object, new Date(), { eventId: event.id });
+        break;
+      case "charge.refunded":
+        await recordRefunds(event.data.object);
+        break;
+      case "charge.dispute.created":
+      case "charge.dispute.closed":
+        await recordDispute(
+          event.data.object,
+          event.type === "charge.dispute.created" ? "dispute_opened" : "dispute_closed",
+          new Date(),
+          { livemode: event.livemode === true },
+        );
         break;
     }
   } catch (err) {

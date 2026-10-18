@@ -13,6 +13,7 @@ import {
   jsonb,
   pgEnum,
   pgTable,
+  primaryKey,
   text,
   timestamp,
   uniqueIndex,
@@ -857,6 +858,31 @@ export const stripeEvents = pgTable("stripe_events", {
   type: text("type").notNull(),
   receivedAt: timestamp("received_at", { withTimezone: true }).notNull().defaultNow(),
 });
+
+/**
+ * Check 17 P8: refunds and card disputes made in Stripe, recorded and shown on /admin. Never moves
+ * an account on its own (Davi decides what a refund means). No card details, no email text: the
+ * Stripe object id (refund or dispute), the amount and dates. Idempotent on (id, kind). Outlives
+ * a deleted account (workspace_id SET NULL), like Stripe's own payment records.
+ */
+export const stripeMoneyEvents = pgTable(
+  "stripe_money_events",
+  {
+    id: text("id").notNull(),
+    workspaceId: uuid("workspace_id").references(() => workspaces.id, { onDelete: "set null" }),
+    kind: text("kind").$type<"refund" | "dispute_opened" | "dispute_closed">().notNull(),
+    amountCents: integer("amount_cents").notNull(),
+    /** The charge's invoice had the setup fee's price on it. */
+    includesSetup: boolean("includes_setup").notNull().default(false),
+    evidenceDueBy: timestamp("evidence_due_by", { withTimezone: true }),
+    outcome: text("outcome").$type<"won" | "lost">(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.id, t.kind] }),
+    index("stripe_money_events_workspace_idx").on(t.workspaceId),
+  ],
+);
 
 /**
  * Plan #15 price memory: what the owner quoted for a kind of job, one row per quote thread.

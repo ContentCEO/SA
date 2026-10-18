@@ -54,3 +54,29 @@ For the integrator to fold into CLAUDE.md / docs/LAUNCH.md / docs/privacy-policy
   (over-limit lines, no automatic pausing) was **not built**: Davi's 2026-10-16 decision already
   pauses the extra Gmail addresses on a lower plan (`fitMailboxesToPlan`, called from both paths),
   so an account is never left over its limit.
+- **Plan picker (Check 17 P7):** a card with a Stripe subscription shows "Plan is set by their
+  Stripe subscription…" instead of the picker; `setWorkspacePlan` refuses
+  (`PlanSetByStripeError`, conditional update on `stripe_subscription_id is null`) and the action
+  redirects `?error=plan_stripe`. The Plan stat shows the plan's name.
+- **Refunds and disputes (Check 17 P8):** migration `0045_stripe_money_events` (id + kind primary
+  key, `workspace_id` SET NULL, amount, includes_setup, evidence_due_by, outcome). Webhook events
+  `charge.refunded` (refunds read with `refunds.list`; includes_setup = the charge's invoice has
+  the setup lookup key's price, via `invoicePayments.list` + `invoices.listLineItems`, best
+  effort), `charge.dispute.created` / `.closed`. Nothing changes status or setupPaidVia. /admin
+  card lines ("Refunded $499 (setup) on Oct 20", "Card dispute open: answer by Oct 30" inverted
+  until closed), Payments counts open disputes, owner activity `refund_recorded` ("Refunded $499
+  to your card"), Davi emailed once per dispute (`dispute-<id>`; business name, amount, date,
+  Stripe dashboard link).
+
+## docs/LAUNCH.md (Check 17 P8)
+
+- After this ships, tap **Connect Stripe again** so the endpoint gets `charge.refunded`,
+  `charge.dispute.created` and `charge.dispute.closed` (same tap as the Check 17 P5 events).
+- Replace 7f's "a refund doesn't move the account back" with: "A refund or card dispute shows on
+  the account's /admin card (and disputes in Payments, plus an email). Nothing moves the account
+  on its own: decide in Stripe and /admin what a refund means."
+
+## docs/privacy-policy.md (Check 17 P8)
+
+- Under "How long we keep it": "If you get a refund or open a card dispute, we keep its amount and
+  dates (no card details) after you delete your account, like Stripe's own payment records."

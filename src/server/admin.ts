@@ -22,6 +22,8 @@ import { effectiveStatus, jobsAllowed } from "./lifecycle";
 import { referralsVisible } from "./referral-rules";
 import { workspacesWithTwoPlans } from "./billing";
 import { CHECKOUT_NOTICE_ACTIONS } from "./billing-notice-rules";
+import { moneyEventsFor } from "./stripe-money";
+import type { MoneyEventRow } from "./stripe-money-rules";
 
 export function isAdminEmail(email: string | null | undefined): boolean {
   const admin = process.env.ADMIN_EMAIL;
@@ -45,6 +47,8 @@ export type AdminRow = {
   twoLivePlans: boolean;
   /** Check 17 P5: the newest checkout finished with nothing charged; Davi decides in Stripe. */
   checkoutNeedsReview: boolean;
+  /** Check 17 P8: refunds and card disputes recorded from Stripe (amounts and dates only). */
+  moneyEvents: MoneyEventRow[];
   mailboxes: {
     total: number;
     needReconnect: number;
@@ -240,6 +244,7 @@ export async function adminOverview(now: Date = new Date()): Promise<AdminRow[]>
     .groupBy(activityLog.workspaceId);
 
   const twoPlans = await workspacesWithTwoPlans(ids);
+  const money = await moneyEventsFor(ids);
   const notices = await db()
     .select({
       workspaceId: activityLog.workspaceId,
@@ -282,6 +287,7 @@ export async function adminOverview(now: Date = new Date()): Promise<AdminRow[]>
     hasSubscription: Boolean(w.hasSubscription),
     twoLivePlans: twoPlans.has(w.id),
     checkoutNeedsReview: reviews.has(w.id),
+    moneyEvents: money.get(w.id) ?? [],
     createdAt: w.createdAt,
     mailboxes: {
       total: b.get(w.id)?.total ?? 0,

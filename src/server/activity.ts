@@ -2,6 +2,7 @@ import "server-only";
 import { and, count, desc, eq, gte, inArray, isNotNull, lt, sql } from "drizzle-orm";
 import { pricing } from "@/config/pricing";
 import { siteConfig } from "@/config/site";
+import { refundSentence } from "./stripe-money-rules";
 import { daysPhrase } from "@/lib/trial-words";
 import { categoryLabels, categoryTag, isCategory } from "@/config/categories";
 import { db } from "@/db";
@@ -233,6 +234,9 @@ export function describeActivity(
         ? `You canceled your plan. It stays on until ${label}.`
         : "You canceled your plan";
     }
+    case "refund_recorded":
+      // Check 17 P8: what the owner got back (disputes get no sentence on purpose).
+      return refundSentence(detail.amountCents);
     // Check 17 P5: checkouts that didn't simply pay.
     case "payment_pending":
       return "Your bank payment is on its way — sending turns on when it clears";

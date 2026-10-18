@@ -57,6 +57,8 @@ import {
 import { SALES_TAX_LINES, SALES_TAX_ON_NOTE, TERMS_BOX_OFF_LINE } from "@/server/billing-rules";
 import { stripeReasonText } from "@/server/stripe-error-rules";
 import { CHECKOUT_REVIEW_LINE } from "@/server/billing-notice-rules";
+import { moneyLines, openDisputesLine } from "@/server/stripe-money-rules";
+import { openDisputeCount } from "@/server/stripe-money";
 import { lastTestPaymentsResult } from "@/server/test-payments";
 import {
   PAST_DUE_RESET_NOTE,
@@ -364,6 +366,16 @@ function WorkspaceCard({ w, now }: { w: AdminRow; now: Date }) {
           {CHECKOUT_REVIEW_LINE}
         </p>
       ) : null}
+      {moneyLines(w.moneyEvents).map((l) => (
+        <p
+          key={l.text}
+          className={
+            l.strong ? "sa-inverted self-start rounded-md px-2 py-1 font-black" : "font-semibold"
+          }
+        >
+          {l.text}
+        </p>
+      ))}
       {w.twoLivePlans ? (
         <p className="sa-inverted self-start rounded-md px-2 py-1 font-black">{TWO_PLANS_LINE}</p>
       ) : null}
@@ -517,6 +529,7 @@ export default async function AdminPage(props: PageProps<"/admin">) {
     modelsDown,
     launchFacts,
     orphans,
+    openDisputes,
   ] = await Promise.all([
     adminOverview(now),
     countWorkspaces(),
@@ -532,6 +545,7 @@ export default async function AdminPage(props: PageProps<"/admin">) {
     modelsDownToday(now),
     loadLaunchFacts(),
     stripeOrphans(),
+    openDisputeCount(),
   ]);
   const growthStates = await growthStateForEmails(waiting.map((w) => w.email));
   const today = adminToday(now);
@@ -645,6 +659,9 @@ export default async function AdminPage(props: PageProps<"/admin">) {
             {stripeError}
             {stripeReason ? ` ${stripeReason}` : null}
           </Notice>
+        ) : null}
+        {openDisputesLine(openDisputes) ? (
+          <p className="sa-inverted rounded-xl p-4 font-black">{openDisputesLine(openDisputes)}</p>
         ) : null}
         {orphans && orphans.count > 0 ? (
           <form
