@@ -2,7 +2,7 @@
  * Drizzle schema. Tables are added milestone by milestone; migrations are
  * generated into /drizzle with `pnpm db:generate` and checked in.
  */
-import { sql } from "drizzle-orm";
+import { type SQLWrapper, sql } from "drizzle-orm";
 import {
   type AnyPgColumn,
   boolean,
@@ -25,6 +25,15 @@ import type { LostReason } from "../server/quote-rules";
 import type { ReplyToHeader } from "../server/reply-address-rules";
 
 export const tradeEnum = pgEnum("trade", TRADES);
+
+/**
+ * Check 30 P4: the customer's reply address of an email: the stored usable Reply-To, else the
+ * sender, lowercased and trimmed. The one source of this expression: the messages index
+ * `messages_mailbox_reply_address_idx` and `messageReplyAddress` / `replyAddressSql`
+ * (src/server/thread-sql.ts) all build it here, so the planner matches the index.
+ */
+export const replyAddressExpr = (replyToHeader: SQLWrapper, fromAddress: SQLWrapper) =>
+  sql<string | null>`lower(trim(coalesce(${replyToHeader}->>'address', ${fromAddress})))`;
 
 export const workspaceStatusEnum = pgEnum("workspace_status", [
   "invited",
@@ -332,6 +341,8 @@ export const threads = pgTable(
   (t) => [
     uniqueIndex("threads_mailbox_gmail_uq").on(t.mailboxId, t.gmailThreadId),
     index("threads_mailbox_last_idx").on(t.mailboxId, t.lastMessageAt),
+    // Check 30 P4: /admin's "last sorted" (max classified_at per shop).
+    index("threads_mailbox_classified_idx").on(t.mailboxId, t.classifiedAt),
   ],
 );
 
@@ -386,6 +397,14 @@ export const messages = pgTable(
     uniqueIndex("messages_mailbox_gmail_uq").on(t.mailboxId, t.gmailMessageId),
     index("messages_thread_sent_idx").on(t.threadId, t.sentAt),
     index("messages_retention_idx").on(t.sentAt),
+    // Check 29 P6: classification's first-time-sender count (same address, earlier email).
+    index("messages_mailbox_from_sent_idx").on(t.mailboxId, t.fromAddress, t.sentAt),
+    // Check 30 P4: a customer's conversations, found by their reply address. The expression
+    // must stay the exact text `messageReplyAddress` uses (both come from replyAddressExpr), or
+    // the planner can't match it.
+    index("messages_mailbox_reply_address_idx")
+      .on(t.mailboxId, replyAddressExpr(t.replyToHeader, t.fromAddress))
+      .where(sql`direction = 'in'`),
   ],
 );
 
@@ -403,7 +422,13 @@ export const activityLog = pgTable(
     detail: jsonb("detail").$type<Record<string, unknown>>().notNull().default({}),
     createdAt: createdAt(),
   },
-  (t) => [index("activity_workspace_created_idx").on(t.workspaceId, t.createdAt)],
+  (t) => [
+    index("activity_workspace_created_idx").on(t.workspaceId, t.createdAt),
+    // Check 30 P4: /admin's "last morning email" reads only these rows.
+    index("activity_digest_sent_idx")
+      .on(t.workspaceId, t.createdAt)
+      .where(sql`action = 'digest_sent'`),
+  ],
 );
 
 export const draftStatusEnum = pgEnum("draft_status", [
@@ -512,6 +537,11 @@ export const drafts = pgTable(
   },
   (t) => [
     index("drafts_mailbox_status_idx").on(t.mailboxId, t.status),
+    // Check 30 P1 + Check 29 P6: drafts by thread, any status (deleting a thread or a mailbox
+    // looks drafts up by thread_id; so do the draft jobs' "newest draft on this thread").
+    index("drafts_thread_created_idx").on(t.threadId, t.createdAt),
+    // Check 30 P1: deleting a message sets drafts.reply_to_message_id to null (FK lookup).
+    index("drafts_reply_to_message_idx").on(t.replyToMessageId),
     // At most one live draft per thread.
     uniqueIndex("drafts_one_pending_per_thread")
       .on(t.threadId)
@@ -760,6 +790,8 @@ export const customerNotes = pgTable(
   },
   (t) => [
     uniqueIndex("customer_notes_workspace_address_uq").on(t.workspaceId, t.address),
+    // Check 30 P1: Disconnect deletes a mailbox's notes (FK lookup by mailbox_id).
+    index("customer_notes_mailbox_idx").on(t.mailboxId),
     check("customer_notes_body_len", sql`char_length(${t.body}) between 1 and 200`),
   ],
 );
@@ -825,7 +857,11 @@ export const pushSubscriptions = pgTable(
     endpoint: text("endpoint").notNull(),
     createdAt: createdAt(),
   },
-  (t) => [uniqueIndex("push_subscriptions_endpoint_uq").on(t.endpoint)],
+  (t) => [
+    uniqueIndex("push_subscriptions_endpoint_uq").on(t.endpoint),
+    // Check 30 P1: every push and account delete looks a shop's phones up by workspace.
+    index("push_subscriptions_workspace_idx").on(t.workspaceId),
+  ],
 );
 
 /** App-wide settings Davi's admin tools write (e.g. the Stripe webhook secret, encrypted). */
