@@ -33,6 +33,7 @@ import { getMailboxWorkspace } from "@/server/mailboxes";
 import { purgeRateLimits } from "@/server/rate-limit";
 import { purgeGmailUnits } from "@/server/gmail-units";
 import { purgeJobRuns } from "@/server/job-runs";
+import { purgeSmsDeliveries } from "@/server/sms-deliveries";
 import { purgeEmailSentRecords } from "@/lib/email";
 import { purgeStaleDraftClaims } from "@/server/draft-claims";
 import { sendAccessLostAlerts } from "@/server/alerts";
@@ -88,6 +89,12 @@ import {
  * An emergency goes first, on its own (replies package, B5 part 2): it takes the shared slot,
  * and the ordinary alert then leaves it out.
  */
+async function emergencyAlertsForMailbox(mailboxId: string) {
+  const workspaceId = await getMailboxWorkspace(mailboxId);
+  if (!workspaceId) return { sent: 0 };
+  return sendEmergencyAlerts(new Date(), { workspaceId });
+}
+
 async function alertsForMailbox(mailboxId: string) {
   const workspaceId = await getMailboxWorkspace(mailboxId);
   if (!workspaceId) return { sent: 0 };
@@ -251,7 +258,11 @@ export const classifyMailbox = inngest.createFunction(
       // in `classified`), so a gas smell on a capped day still alerts the owner.
       total += r.classified;
       if (r.capped || r.remaining === 0) {
-        if (total > 0) await step.run("text-alerts", () => alertsForMailbox(event.data.mailboxId));
+        // Check 19 P1: an emergency can't wait for drafting, so it goes now. Every other
+        // new-lead text / buzz waits for draft-mailbox's last step ("lead-alerts"), so the
+        // reply exists (or the lead is on Quotes) by the time the phone points at it.
+        if (total > 0)
+          await step.run("emergency-alerts", () => emergencyAlertsForMailbox(event.data.mailboxId));
         await step.sendEvent(
           "draft",
           mailboxDraftRequested.create({ mailboxId: event.data.mailboxId }),
@@ -316,6 +327,10 @@ export const draftMailbox = inngest.createFunction(
         );
       }
     }
+    // Check 19 P1: new-lead texts and buzzes go last, once the replies above exist, so the
+    // queue they open shows the lead. A quote request left without a draft (AI limit, a model
+    // failure) is named in the buzz and its link opens Quotes. The 15-minute job is the backstop.
+    await step.run("lead-alerts", () => alertsForMailbox(mailboxId));
     return { created };
   },
 );
@@ -741,6 +756,8 @@ export const purgeBodies = inngest.createFunction(
       await purgeRateLimits();
       await purgeGmailUnits();
       await purgeJobRuns();
+      // Check 19 P6: Twilio delivery reports older than 30 days.
+      await purgeSmsDeliveries();
     });
     await step.run("purge-expired-notes", () => purgeExpiredNotes());
     // Plan #45: tell Davi when an account's AI cost passes 40% of its plan.

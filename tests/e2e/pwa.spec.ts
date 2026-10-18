@@ -1,4 +1,7 @@
-import { expect, test } from "@playwright/test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { chromium, expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
 import { seedOwner, seedQueue, setWorkspace, signInAs } from "./support";
 
@@ -19,8 +22,53 @@ test("installable: manifest opens on the queue, full screen, with real icons", a
     expect(img.ok(), icon.src).toBe(true);
     expect(img.headers()["content-type"]).toContain("image/png");
   }
+  // Check 46 P4: one maskable icon, the phone screenshots for Chrome's richer install sheet
+  // (each a real PNG), and the language.
+  expect((m.icons as { purpose?: string }[]).some((i) => i.purpose === "maskable")).toBe(true);
+  expect(m).toMatchObject({ id: "/queue", scope: "/", lang: "en-US", dir: "ltr" });
+  const shots = m.screenshots as { src: string; sizes: string; form_factor: string }[];
+  expect(shots.length).toBeGreaterThanOrEqual(3);
+  for (const shot of shots) {
+    expect(shot).toMatchObject({ sizes: "1080x1920", form_factor: "narrow" });
+    const img = await request.get(shot.src);
+    expect(img.ok(), shot.src).toBe(true);
+    expect(img.headers()["content-type"]).toContain("image/png");
+  }
   expect((await request.get("/app-icon/apple-180")).ok()).toBe(true);
+  // Check 46 P3: the notification badge (the "sa." mark alone).
+  const badge = await request.get("/app-icon/badge-96");
+  expect(badge.ok()).toBe(true);
+  expect(badge.headers()["content-type"]).toBe("image/png");
   expect((await request.get("/app-icon/nope")).status()).toBe(404);
+});
+
+test("Check 46 P4: Chrome itself says the site is installable", async ({}, info) => {
+  // Chrome refuses installability in a private (incognito) context: a real profile.
+  const dir = mkdtempSync(join(tmpdir(), "sa-install-"));
+  const context = await chromium.launchPersistentContext(dir, {
+    baseURL: info.project.use.baseURL,
+    ...(process.env.PLAYWRIGHT_CHROMIUM_PATH
+      ? { executablePath: process.env.PLAYWRIGHT_CHROMIUM_PATH }
+      : {}),
+  });
+  try {
+    const page = context.pages()[0] ?? (await context.newPage());
+    await page.goto("/");
+    // The service worker is registered and active (production build only).
+    await page.waitForFunction(
+      async () => !!(await navigator.serviceWorker.getRegistration())?.active,
+      undefined,
+      { timeout: 30_000 },
+    );
+    const cdp = await context.newCDPSession(page);
+    const { installabilityErrors } = (await cdp.send("Page.getInstallabilityErrors")) as {
+      installabilityErrors: { errorId: string }[];
+    };
+    expect(installabilityErrors.map((e) => e.errorId)).toEqual([]);
+  } finally {
+    await context.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test("service worker is always fresh, and the offline page explains plainly", async ({
@@ -48,6 +96,27 @@ test("settings shows how to get the app", async ({ page, context }) => {
   const section = page.getByRole("region", { name: "Get the app" });
   await expect(section).toContainText("Put Squared Away on your home screen");
   await expect(section).toContainText(/Install|Add to Home Screen/);
+});
+
+test("Check 46 P1: an iPhone in Safari gets the iOS 26 steps", async ({ browser }, info) => {
+  const owner = await seedOwner({ mailbox: true });
+  const context = await browser.newContext({
+    baseURL: info.project.use.baseURL,
+    userAgent:
+      "Mozilla/5.0 (iPhone; CPU iPhone OS 26_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Mobile/15E148 Safari/604.1",
+    viewport: { width: 375, height: 812 },
+  });
+  try {
+    await signInAs(context, owner);
+    const page = await context.newPage();
+    await page.goto("/settings/phone");
+    const section = page.getByRole("region", { name: "Get the app" });
+    await expect(section).toContainText("Open as Web App");
+    await expect(section).toContainText("three dots (More)");
+    await expect(section).not.toContainText("on your phone");
+  } finally {
+    await context.close();
+  }
 });
 
 /** Stand-ins for the Badging API that record every call in `window.__badge`. */

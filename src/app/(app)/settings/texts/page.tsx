@@ -4,8 +4,11 @@ import { Button } from "@/components/ui/button";
 import { smsConfigured } from "@/lib/sms";
 import { getBusinessProfile } from "@/server/profile";
 import { requireOwner } from "@/server/session";
-import { formatUsPhone } from "@/server/sms-alerts";
+import { formatUsPhone, textsStep } from "@/server/sms-alerts";
 import { zoneTimeName } from "@/server/time-zone-rules";
+import { lastSmsDelivery } from "@/server/sms-deliveries";
+import { lastTextLine } from "@/server/sms-delivery-rules";
+import { usableTimeZone } from "@/server/snooze-rules";
 import { EmergencySwitch } from "../emergency-switch";
 import { SettingsScreen } from "../screen";
 import {
@@ -22,6 +25,19 @@ export default async function TextAlertSettingsPage(props: PageProps<"/settings/
   const { workspace } = await requireOwner();
   if (!smsConfigured()) redirect("/settings");
   const profile = await getBusinessProfile(workspace.id);
+  const now = new Date();
+  const step = textsStep(profile ?? null, now);
+  // Check 19 P6: what Twilio said about the last text, in plain words (never claimed before
+  // Twilio reports it delivered).
+  const lastLine =
+    step === "phone"
+      ? null
+      : lastTextLine({
+          stoppedReason: profile?.smsStoppedReason,
+          last: await lastSmsDelivery(workspace.id),
+          timeZone: usableTimeZone(profile?.timeZone),
+          now,
+        });
   return (
     <SettingsScreen path="/settings/texts" heavy="text alerts." params={await props.searchParams}>
       <p className="text-muted-foreground">
@@ -30,10 +46,15 @@ export default async function TextAlertSettingsPage(props: PageProps<"/settings/
         {zoneTimeName(profile?.timeZone)} (except emergencies, if you leave that on below), at most
         one every 10 minutes. Reply STOP any time.
       </p>
-      {profile?.alertPhoneVerifiedAt && profile.alertPhone ? (
+      {lastLine ? (
+        <p role="status" className="font-semibold">
+          {lastLine}
+        </p>
+      ) : null}
+      {profile && step === "confirmed" ? (
         <div className="flex flex-col gap-3">
           <p>
-            Texts go to <span className="font-semibold">{formatUsPhone(profile.alertPhone)}</span>.
+            Texts go to <span className="font-semibold">{formatUsPhone(profile.alertPhone!)}</span>.
           </p>
           <form action={toggleSmsAlertsAction}>
             <input type="hidden" name="enabled" value={profile.smsAlertsEnabled ? "off" : "on"} />
@@ -53,7 +74,7 @@ export default async function TextAlertSettingsPage(props: PageProps<"/settings/
           </form>
           <EmergencySwitch enabled={profile.emergencyAlertsEnabled} from="texts" />
         </div>
-      ) : profile?.smsCodeExpiresAt && profile.smsCodeExpiresAt > new Date() ? (
+      ) : profile && step === "code" ? (
         <form action={confirmSmsCodeAction} className="flex flex-col gap-3">
           <label className="flex flex-col gap-1.5">
             <span className="font-semibold">

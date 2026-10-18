@@ -64,10 +64,16 @@ export function vapidAuthorization(endpoint: string, now: Date = new Date()): st
 }
 
 export type PushResult = "sent" | "gone" | "failed" | "not_configured";
-export type PushSender = (endpoint: string) => Promise<PushResult>;
+/**
+ * Check 19 P8: `ttlSec` = how long the push service may hold it for a phone that's off or out
+ * of signal (default 4 hours); alerts pass the time left until the owner's 9pm.
+ */
+export type PushSender = (endpoint: string, opts?: { ttlSec?: number }) => Promise<PushResult>;
+
+export const PUSH_TTL_MAX_SEC = 4 * 60 * 60;
 
 /** Send one empty push. "gone" = the phone unsubscribed; forget that endpoint. */
-export const sendPush: PushSender = async (endpoint) => {
+export const sendPush: PushSender = async (endpoint, opts = {}) => {
   if (!pushConfigured()) return "not_configured";
   // Defence in depth (M11 C6): only real push services are ever fetched, whatever is stored.
   // "gone" makes the caller forget the row.
@@ -77,7 +83,9 @@ export const sendPush: PushSender = async (endpoint) => {
       method: "POST",
       headers: {
         Authorization: vapidAuthorization(endpoint),
-        TTL: String(4 * 60 * 60),
+        TTL: String(
+          Math.max(0, Math.min(PUSH_TTL_MAX_SEC, Math.floor(opts.ttlSec ?? PUSH_TTL_MAX_SEC))),
+        ),
         Urgency: "normal",
         "Content-Length": "0",
       },

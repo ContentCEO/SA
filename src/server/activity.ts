@@ -1,4 +1,6 @@
 import "server-only";
+import { smsAlertActivityLine } from "./sms-delivery-rules";
+import { deliveryStatuses } from "./sms-deliveries";
 import { and, count, desc, eq, gte, inArray, isNotNull, lt, sql } from "drizzle-orm";
 import { pricing } from "@/config/pricing";
 import { siteConfig } from "@/config/site";
@@ -229,7 +231,8 @@ export function describeActivity(
     case "lead_at_risk_push_sent":
       return atRiskActivityLine(detail.leads);
     case "sms_alert_sent":
-      return "Texted you about new emails that need you";
+      // Check 19 P6: "Texted you" only once Twilio reports it delivered.
+      return smsAlertActivityLine(typeof detail.delivery === "string" ? detail.delivery : null);
     // Replies package (B5 part 2): counts only, never which email.
     case "emergency_alert_sent":
       return emergencyActivityLine(detail.emergencies);
@@ -238,6 +241,10 @@ export function describeActivity(
         ? "You turned on emergency alerts, even at night"
         : "You turned off emergency alerts at night";
     case "sms_alerts_changed":
+      // Check 19 P6: texts that switched themselves off say why.
+      if (detail.reason === "opted_out") return "Turned off text alerts because you replied STOP";
+      if (detail.reason === "not_mobile")
+        return "Turned off text alerts because that number can't get texts";
       return detail.enabled ? "You turned on text alerts" : "You turned off text alerts";
     case "access_alert_sent":
       return detail.reminder
@@ -591,10 +598,19 @@ export async function listActivityPage(
   }
 
   const zone = rows.some((r) => !r.threadId) ? await workspaceTimeZone(workspaceId) : null;
+  // Check 19 P6: each new-lead text's delivery report, by our delivery row id.
+  const deliveryIds = rows.flatMap((r) =>
+    r.action === "sms_alert_sent" && typeof r.detail.deliveryId === "string"
+      ? [r.detail.deliveryId]
+      : [],
+  );
+  const deliveries = await deliveryStatuses(workspaceId, deliveryIds);
   const entries = rows.flatMap((r) => {
+    const delivery =
+      typeof r.detail.deliveryId === "string" ? deliveries.get(r.detail.deliveryId) : undefined;
     const text = describeActivity(
       r.action,
-      r.detail,
+      delivery ? { ...r.detail, delivery } : r.detail,
       r.threadId ? (who.get(r.threadId) ?? null) : null,
       zone,
     );

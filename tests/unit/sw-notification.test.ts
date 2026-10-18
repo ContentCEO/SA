@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { runInNewContext } from "node:vm";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { isNotificationUrl } from "@/server/leads-at-risk-rules";
 
 /*
@@ -207,5 +207,189 @@ describe("service worker: the home-screen badge on a push", () => {
     });
     await throws.run();
     expect(throws.shown).toHaveLength(1);
+  });
+});
+
+/* Check 19 P3: every push shows a notification within about 4 seconds, whatever the signal. */
+describe("service worker: the count lookup has a time limit", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  function hangingWorker(withAbort: boolean) {
+    const listeners: Record<string, (e: unknown) => void> = {};
+    const shown: { title: string; options: { body: string; badge: string } }[] = [];
+    const nav = { setAppBadge: vi.fn(async () => {}), clearAppBadge: vi.fn(async () => {}) };
+    const seen: { signal?: AbortSignal }[] = [];
+    runInNewContext(SRC, {
+      self: {
+        location: { origin: "https://sa.example" },
+        navigator: nav,
+        addEventListener: (type: string, fn: (e: unknown) => void) => (listeners[type] = fn),
+        registration: {
+          showNotification: async (title: string, options: { body: string; badge: string }) =>
+            void shown.push({ title, options }),
+        },
+        clients: {},
+      },
+      URL,
+      caches: {},
+      setTimeout,
+      ...(withAbort ? { AbortController } : {}),
+      // A basement with one bar: the answer never comes (unless the signal gives up).
+      fetch: (_url: string, init: { signal?: AbortSignal }) => {
+        seen.push(init);
+        return new Promise((_, reject) =>
+          init.signal?.addEventListener("abort", () => reject(new Error("AbortError"))),
+        );
+      },
+    });
+    let done: Promise<unknown> = Promise.resolve();
+    listeners.push!({ waitUntil: (p: Promise<unknown>) => (done = p) });
+    return { done, shown, nav, seen };
+  }
+
+  for (const withAbort of [true, false]) {
+    it(`shows the plain line after 4 seconds (${withAbort ? "with" : "without"} an abort signal)`, async () => {
+      vi.useFakeTimers();
+      const w = hangingWorker(withAbort);
+      await vi.advanceTimersByTimeAsync(3_900);
+      expect(w.shown).toHaveLength(0);
+      await vi.advanceTimersByTimeAsync(200);
+      await w.done;
+      expect(w.shown).toHaveLength(1);
+      expect(w.shown[0]!.title).toBe("Squared Away");
+      expect(w.shown[0]!.options.body).toBe("Something new is waiting in your queue.");
+      // Check 46 P3: the one-colour mark, not the full app icon.
+      expect(w.shown[0]!.options.badge).toBe("/app-icon/badge-96");
+      // No answer: the badge is left as it was.
+      expect(w.nav.setAppBadge).not.toHaveBeenCalled();
+      expect(w.nav.clearAppBadge).not.toHaveBeenCalled();
+      if (withAbort) expect(w.seen[0]!.signal).toBeDefined();
+    });
+  }
+});
+
+/* Check 19 P5: a renewed subscription reaches the server. */
+describe("service worker: pushsubscriptionchange", () => {
+  function changeWorker() {
+    const listeners: Record<string, (e: unknown) => void> = {};
+    const posts: { url: string; init: { method: string; body: string; credentials: string } }[] =
+      [];
+    const subscribe = vi.fn(async () => ({ endpoint: "https://fcm.googleapis.com/fcm/send/re" }));
+    runInNewContext(SRC, {
+      self: {
+        location: { origin: "https://sa.example" },
+        addEventListener: (type: string, fn: (e: unknown) => void) => (listeners[type] = fn),
+        registration: { pushManager: { subscribe } },
+        clients: {},
+      },
+      URL,
+      JSON,
+      caches: {},
+      fetch: async (url: string, init: { method: string; body: string; credentials: string }) => {
+        posts.push({ url, init });
+        return { ok: true, status: 200 };
+      },
+    });
+    const run = async (event: object) => {
+      let done: Promise<unknown> = Promise.resolve();
+      listeners.pushsubscriptionchange!({
+        ...event,
+        waitUntil: (p: Promise<unknown>) => (done = p),
+      });
+      await done;
+    };
+    return { run, posts, subscribe };
+  }
+  const OLD = "https://fcm.googleapis.com/fcm/send/old";
+
+  it("posts the browser's new address with the old one", async () => {
+    const w = changeWorker();
+    await w.run({
+      oldSubscription: { endpoint: OLD, options: {} },
+      newSubscription: { endpoint: "https://fcm.googleapis.com/fcm/send/new" },
+    });
+    expect(w.subscribe).not.toHaveBeenCalled();
+    expect(w.posts).toHaveLength(1);
+    expect(w.posts[0]!.url).toBe("/api/push/subscription");
+    expect(w.posts[0]!.init.method).toBe("POST");
+    expect(w.posts[0]!.init.credentials).toBe("same-origin");
+    expect(JSON.parse(w.posts[0]!.init.body)).toEqual({
+      oldEndpoint: OLD,
+      newEndpoint: "https://fcm.googleapis.com/fcm/send/new",
+    });
+  });
+
+  it("subscribes again with the old options when the browser gave no new one", async () => {
+    const w = changeWorker();
+    const options = { userVisibleOnly: true, applicationServerKey: "k" };
+    await w.run({ oldSubscription: { endpoint: OLD, options } });
+    expect(w.subscribe).toHaveBeenCalledWith(options);
+    expect(JSON.parse(w.posts[0]!.init.body)).toEqual({
+      oldEndpoint: OLD,
+      newEndpoint: "https://fcm.googleapis.com/fcm/send/re",
+    });
+  });
+});
+
+/* Check 46 P5: an edit to the no-signal page reaches phones that already have the app. */
+describe("service worker: refreshing the no-signal page", () => {
+  class FakeRequest {
+    constructor(
+      readonly url: string,
+      readonly init: { cache?: string } = {},
+    ) {}
+    get cache() {
+      return this.init.cache;
+    }
+  }
+  function offlineWorker(add: (r: FakeRequest) => Promise<void>) {
+    const listeners: Record<string, (e: unknown) => void> = {};
+    runInNewContext(SRC, {
+      self: {
+        location: { origin: "https://sa.example" },
+        addEventListener: (type: string, fn: (e: unknown) => void) => (listeners[type] = fn),
+        registration: {},
+        clients: {},
+        skipWaiting: () => {},
+      },
+      URL,
+      Request: FakeRequest,
+      caches: { open: async () => ({ add }) },
+    });
+    const run = async (type: string, event: object) => {
+      let done: Promise<unknown> = Promise.resolve();
+      listeners[type]!({ ...event, waitUntil: (p: Promise<unknown>) => (done = p) });
+      await done;
+    };
+    return run;
+  }
+
+  it("on 'refresh-offline' it saves /offline.html again, from the server", async () => {
+    const added: FakeRequest[] = [];
+    const run = offlineWorker(async (r) => void added.push(r));
+    await run("message", { data: { type: "refresh-offline" } });
+    expect(added).toHaveLength(1);
+    expect(added[0]!.url).toBe("/offline.html");
+    expect(added[0]!.cache).toBe("reload");
+    // Anything else is ignored.
+    await run("message", { data: { type: "other" } });
+    await run("message", { data: null });
+    expect(added).toHaveLength(1);
+  });
+
+  it("no signal: a failing save doesn't throw", async () => {
+    const run = offlineWorker(async () => {
+      throw new TypeError("Failed to fetch");
+    });
+    await expect(run("message", { data: { type: "refresh-offline" } })).resolves.toBeUndefined();
+  });
+
+  it("a fresh install takes the server's copy too", async () => {
+    const added: FakeRequest[] = [];
+    const run = offlineWorker(async (r) => void added.push(r));
+    await run("install", {});
+    expect(added[0]!.cache).toBe("reload");
   });
 });

@@ -88,6 +88,7 @@ export const SCREEN_MESSAGES = {
       sms_code: "That code didn't match, or it expired. Send a new one.",
       sms_not_configured: "Texting isn't switched on yet.",
       sms_not_verified: "Confirm your number first.",
+      sms_send_failed: "We couldn't text that number. Check it's a mobile number and try again.",
     },
   },
   "/settings/away": {

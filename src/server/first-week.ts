@@ -37,7 +37,7 @@ import {
 } from "./first-week-rules";
 import { effectiveStatus, isReadOnly, jobsAllowed, ReadOnlyError } from "./lifecycle";
 import { clearNeedsOwnerNow } from "./needs-owner";
-import { pushEndpointsByWorkspace, removePushSubscription } from "./push-alerts";
+import { pushEndpointsByWorkspace, recordPushResult } from "./push-alerts";
 import {
   answeredByPhoneSql,
   crewThreadSql,
@@ -474,7 +474,7 @@ export async function sendFirstDraftsReady(
       const endpoints = (await pushEndpointsByWorkspace(r.workspace.id)).get(r.workspace.id) ?? [];
       for (const endpoint of endpoints) {
         const p = await push(endpoint);
-        if (p === "gone") await removePushSubscription(r.workspace.id, endpoint);
+        await recordPushResult(r.workspace.id, endpoint, p, now);
         if (p === "sent") phones++;
       }
     }

@@ -18,9 +18,9 @@ import {
   claimPushSlot,
   pushEndpointsByWorkspace,
   releasePushSlot,
-  removePushSubscription,
+  recordPushResult,
 } from "./push-alerts";
-import { inQuietHours } from "./sms-alerts";
+import { inQuietHours, secondsUntilQuiet } from "./sms-alerts";
 import { atLocalHour, usableTimeZone } from "./snooze-rules";
 import {
   asDate,
@@ -246,8 +246,9 @@ export async function sendLeadAtRiskPushes(
       let delivered = 0;
       for (const endpoint of byWorkspace.get(w.id) ?? []) {
         try {
-          const r = await push(endpoint);
-          if (r === "gone") await removePushSubscription(w.id, endpoint);
+          // Check 19 P8: the push service drops it rather than buzz after 9pm.
+          const r = await push(endpoint, { ttlSec: secondsUntilQuiet(now, tz) });
+          await recordPushResult(w.id, endpoint, r, now);
           if (r === "sent") delivered++;
         } catch (err) {
           console.error("lead_at_risk_push_failed", {

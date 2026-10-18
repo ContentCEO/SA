@@ -771,6 +771,8 @@ export const businessProfiles = pgTable("business_profile", {
   /** sha256 of the 6-digit code + its expiry; cleared once used. */
   smsCodeHash: text("sms_code_hash"),
   smsCodeExpiresAt: timestamp("sms_code_expires_at", { withTimezone: true }),
+  /** Check 19 P9: wrong guesses at the current code; the fifth throws the code away. */
+  smsCodeTries: integer("sms_code_tries").notNull().default(0),
   smsAlertsEnabled: boolean("sms_alerts_enabled").notNull().default(false),
   /** Newest classification already covered by a text, and when the last text went out. */
   smsAlertCursor: timestamp("sms_alert_cursor", { withTimezone: true }),
@@ -784,6 +786,12 @@ export const businessProfiles = pgTable("business_profile", {
   pushLastSentAt: timestamp("push_last_sent_at", { withTimezone: true }),
   pushAlertCursor: timestamp("push_alert_cursor", { withTimezone: true }),
   smsLastSentAt: timestamp("sms_last_sent_at", { withTimezone: true }),
+  /**
+   * Check 19 P6: why texts switched themselves off — 'opted_out' (the owner replied STOP,
+   * Twilio 21610) or 'not_mobile' (30006, the number can't take texts). Cleared when the
+   * owner turns texts on again or starts a new number.
+   */
+  smsStoppedReason: text("sms_stopped_reason"),
   /** Plan #35: the owner's local month ('YYYY-MM') last summarized (sent, or skipped as empty). */
   monthlySummaryLastSentFor: text("monthly_summary_last_sent_for"),
   /**
@@ -1044,11 +1052,45 @@ export const pushSubscriptions = pgTable(
       .references(() => workspaces.id, { onDelete: "cascade" }),
     endpoint: text("endpoint").notNull(),
     createdAt: createdAt(),
+    /**
+     * Check 19 P5: pushes this phone's push service refused in a row (any non-2xx but 404/410,
+     * 403 included), and when the run started. Reset by a delivered push; a row failing for
+     * 7 days is deleted.
+     */
+    failCount: integer("fail_count").notNull().default(0),
+    firstFailedAt: timestamp("first_failed_at", { withTimezone: true }),
   },
   (t) => [
     uniqueIndex("push_subscriptions_endpoint_uq").on(t.endpoint),
     // Check 30 P1: every push and account delete looks a shop's phones up by workspace.
     index("push_subscriptions_workspace_idx").on(t.workspaceId),
+  ],
+);
+
+/**
+ * Check 19 P6: what Twilio said about each text we sent the owner (status callbacks). No body
+ * and no phone number: the message's id, which kind it was, its status and Twilio's error
+ * code. Purged after 30 days.
+ */
+export const smsDeliveries = pgTable(
+  "sms_deliveries",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    messageSid: text("message_sid").notNull(),
+    /** 'code' | 'alert'. */
+    kind: text("kind").notNull(),
+    /** Twilio's MessageStatus: queued, sent, delivered, undelivered, failed … */
+    status: text("status").notNull().default("queued"),
+    errorCode: integer("error_code"),
+    createdAt: createdAt(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("sms_deliveries_message_sid_uq").on(t.messageSid),
+    index("sms_deliveries_workspace_created_idx").on(t.workspaceId, t.createdAt),
   ],
 );
 

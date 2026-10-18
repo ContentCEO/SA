@@ -126,6 +126,24 @@ describe("/api/push/summary counts like the queue (plan #36, M8 A1)", () => {
     expect(JSON.stringify(json)).not.toMatch(/SECRET|@example\.com/i);
   });
 
+  it("Check 19 P1: a fresh quote request with no draft yet is named, and the tap opens Quotes", async () => {
+    const t = await thread({
+      category: "quote_request",
+      classifiedAt: at(-1),
+      lastMessageAt: at(-2),
+    });
+    const { json } = await summary();
+    expect(json.body).toBe("1 new quote request");
+    expect(json.body).not.toBe("Your queue is up to date.");
+    expect(json.url).toBe("/quotes");
+    expect(JSON.stringify(json)).not.toMatch(/SECRET|@example\.com/i);
+    // Once its reply is drafted it is a queue card like any other: counted once, as a reply.
+    await draft(t.id);
+    const after = (await summary()).json;
+    expect(after.body).toBe("1 reply ready to send");
+    expect(after.url).toBe("/queue");
+  });
+
   it("signed out → 401", async () => {
     session.userId = null;
     expect((await summary()).status).toBe(401);
