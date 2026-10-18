@@ -378,17 +378,6 @@ export function DraftCard(p: DraftCardProps) {
               {expanded ? "Show less" : "Show full draft"}
             </button>
           </div>
-          {p.noSignatureLine ? (
-            <p className="flex flex-wrap items-center gap-x-2 text-sm text-muted-foreground">
-              <span>{p.noSignatureLine}</span>
-              <Link
-                href={SIGNATURE_FIELD_HREF}
-                className="inline-flex min-h-tap items-center font-semibold text-foreground underline underline-offset-4"
-              >
-                Add a signature
-              </Link>
-            </p>
-          ) : null}
 
           {pastPrices.length ? (
             <PastPrices
@@ -568,6 +557,18 @@ export function DraftCard(p: DraftCardProps) {
               {p.readOnly ? null : <CalledThem threadId={p.threadId} hasDraft />}
             </div>
           )}
+          {/* Check 43 P4: under the reply and its buttons, so Send reply stays on the first screen. */}
+          {p.noSignatureLine ? (
+            <p className="flex flex-wrap items-center gap-x-2 text-sm text-muted-foreground">
+              <span>{p.noSignatureLine}</span>
+              <Link
+                href={SIGNATURE_FIELD_HREF}
+                className="inline-flex min-h-tap items-center font-semibold text-foreground underline underline-offset-4"
+              >
+                Add a signature
+              </Link>
+            </p>
+          ) : null}
         </>
       )}
     </article>

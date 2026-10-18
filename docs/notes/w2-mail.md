@@ -71,8 +71,8 @@
   `0045_send_as` (mailboxes.send_as text[] default '{}', drafts.from_address). Additive only.
 - No prompt files changed. The drafter is still told "(none — sign off with the first name
   only)" when the signature is empty; no prompt line needed for this group.
-- `mimeFor` gained a required `fromName` argument; call sites now use `draftRaw(draft, mailbox,
-  body)` (drafts.ts). Any group adding a new Gmail-draft rewrite should use `draftRaw`.
+- `mimeFor` gained a required `fromName` argument; call sites now use `draftRaw()` (drafts.ts).
+  Any group adding a new Gmail-draft rewrite should use `draftRaw`.
 - `buildReplyMime` output is now multipart/alternative. Tests that read a draft body must use
   `FakeWriter.bodyOf` (reads text/plain) or `FakeWriter.partOf`; hand-built single-part raws
   still work. `editInGmail` writes a single text part.
