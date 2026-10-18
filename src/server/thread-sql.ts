@@ -279,18 +279,26 @@ const newestSenderSql = () =>
  * outer thread's newest email and matches `cond` (on alias `bs_t`). Content-free: addresses
  * are only compared inside the database, never selected.
  */
-const sameSenderThreadSql = (cond: SQL) =>
+const sameSenderThreadSql = (cond: SQL, byDomain: boolean) =>
   sql`(${newestSenderSql()} like '%@%' and exists (select 1 from threads bs_t join messages bs_i on bs_i.thread_id = bs_t.id
     where bs_t.mailbox_id in (select bs_x.id from mailboxes bs_x where bs_x.workspace_id = (select bs_w.workspace_id from mailboxes bs_w where bs_w.id = ${threads.mailboxId}))
       and bs_t.id <> ${outerThreadId()} and bs_i.direction = 'in' and ${cond}
-      and ${senderKeySql(norm("bs_i.from_address"))} = ${senderKeySql(newestSenderSql())}))`;
+      and ${
+        byDomain
+          ? sql`${senderKeySql(norm("bs_i.from_address"))} = ${senderKeySql(newestSenderSql())}`
+          : sql`${norm("bs_i.from_address")} = ${newestSenderSql()}`
+      }))`;
 
-/** Check 12 P4: the sender has another thread sorted supplier_vendor. */
+/** Check 12 P4: the sender's business (domain) has another thread sorted supplier_vendor. */
 export const senderHasSupplierThreadSql = () =>
-  sameSenderThreadSql(sql`bs_t.category = 'supplier_vendor'`);
-/** Check 12 P4: the owner tapped "Not owed to me" on another thread from the sender. */
+  sameSenderThreadSql(sql`bs_t.category = 'supplier_vendor'`, true);
+/**
+ * Check 12 P4: the owner tapped "Not owed to me" on another thread from this exact address.
+ * Not the whole domain (safe default): a property manager's office or a company with several
+ * contacts shares one, and one hidden duplicate must not hide every colleague's invoice.
+ */
 export const senderMarkedNotOwedSql = () =>
-  sameSenderThreadSql(sql`bs_t.invoice_paid_source = 'not_owed'`);
+  sameSenderThreadSql(sql`bs_t.invoice_paid_source = 'not_owed'`, false);
 
 /**
  * SQL twin of `billOwedByOwner` (money-rules.ts) — keep the two in step: a bill the business

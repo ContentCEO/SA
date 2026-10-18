@@ -78,15 +78,16 @@ For the integrator to fold into CLAUDE.md (Decisions) and the other shared files
 - **Check 12 P4 (supplier-bill gaps):** `billOwedByOwner` (money-rules.ts, pure) + its SQL twin
   `billOwedByOwnerSql` (thread-sql.ts): a thread is a bill the business owes when the sorter
   said `owed_by_business`, or the direction is unknown / missing and the newest sender has
-  another thread in the workspace sorted `supplier_vendor` or marked "Not owed to me". "Same
-  sender" = same domain, or the same full address on public webmail (`PUBLIC_WEBMAIL_DOMAINS`:
-  one gmail.com supplier must not hide every gmail.com customer). A clear `owed_to_business`
+  another thread in the workspace from the same business sorted `supplier_vendor` (same domain,
+  or the same full address on public webmail, `PUBLIC_WEBMAIL_DOMAINS`: one gmail.com supplier
+  must not hide every gmail.com customer), or another thread from the exact same address marked
+  "Not owed to me" (address only, a safe-default change from the spec's domain; see Questions). A clear `owed_to_business`
   and the owner's own mark on the thread (paid / put back) win. Used in `moneyThreads` (so Money
   owed, the totals, the morning email's money lines and receipt matching) and in
   `threadsToFollowUp`. Addresses are only compared inside SQL, never selected or logged.
   Receipts (`afterClassified`): a receipt sorted `owed_by_business` never marks anything, and a
   receipt with no amount never marks anything.
-  **Adapted:** (a) no new "not owed domains" table — the domain is read from the owner's own
+  **Adapted:** (a) no new "not owed domains" table — the sender is read from the owner's own
   "Not owed to me" threads at query time, so nothing new is stored and no migration was needed
   in a non-[M] step; (b) no one-off backfill job — the rule runs at read time on every thread,
   old (classify.v1–v3, no direction stored) or new, and never touches an owner's mark, so a
@@ -145,12 +146,11 @@ For the integrator to fold into CLAUDE.md (Decisions) and the other shared files
   when the same business domain has a supplier thread or a "Not owed to me" tap. On Gmail/Yahoo
   addresses only the exact same address counts. OK?
 
-- **"Not owed to me" remembers the sender (Check 12 P4, as the spec asks):** after the owner taps
-  "Not owed to me" on one bill, later bills from the same business domain (or the same Gmail /
-  Yahoo address) whose direction the sorter couldn't tell stay off Money owed. If an owner taps
-  it on a customer's thread (say a duplicate), that customer's later unclear invoices would be
-  hidden too, until the owner taps Put back on one. Keep it, or limit it to domains that also
-  have a supplier thread?
+- **"Not owed to me" remembers the sender (Check 12 P4):** the spec says the same business
+  domain; built the safe default instead: only the exact same address. Otherwise one "Not owed
+  to me" (say on a duplicate) from someone at a property manager's office would hide every
+  colleague's later invoice there, and those threads would vanish from Money with no Put back
+  to tap. Supplier threads still count for the whole domain. Want the whole domain?
 
 ## Integration notes
 
@@ -173,6 +173,8 @@ For the integrator to fold into CLAUDE.md (Decisions) and the other shared files
 - **Check 11 P7:** "Save as won" with the prefilled amount sent back unchanged is not a typed
   amount: it stays the reply's price (`quote_amount_from = 'reply'`, still in price memory,
   still correctable). Only a different figure is the owner's.
+- **Check 12 P4:** "Not owed to me" now carries over by exact address only, not domain (the e2e
+  sunlight sweep showed one hidden `kim@customer.com` row hiding `dana@customer.com`).
 - **Check 12 P4:** `tests/unit/money-so-far.test.ts` (Replies package) used one sender for every
   thread, including its supplier and "Not owed to me" rows; those rows now come from a supplier
   address, since a supplier thread or a "Not owed to me" tap now keeps that sender's unclear

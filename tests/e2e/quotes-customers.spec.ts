@@ -138,7 +138,8 @@ test("quotes: no answer is our guess, one tap changes it, and Activity shows the
   await page.getByRole("link", { name: /^No answer \(1\)/ }).click();
   await expect(page).toHaveURL(/stage=no_answer/);
   const kim = page.getByRole("article", { name: "Quote for Kim Park" });
-  await expect(kim).toContainText("No answer (our guess)");
+  // Check 11 P7: a decided card says the day.
+  await expect(kim).toContainText(/No answer [A-Z][a-z]{2} \d{1,2} \(our guess\)/);
 
   // Our guess was wrong: one tap.
   await kim.getByRole("button", { name: "Mark won", exact: true }).click();
