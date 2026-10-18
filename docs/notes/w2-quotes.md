@@ -145,6 +145,13 @@ For the integrator to fold into CLAUDE.md (Decisions) and the other shared files
   when the same business domain has a supplier thread or a "Not owed to me" tap. On Gmail/Yahoo
   addresses only the exact same address counts. OK?
 
+- **"Not owed to me" remembers the sender (Check 12 P4, as the spec asks):** after the owner taps
+  "Not owed to me" on one bill, later bills from the same business domain (or the same Gmail /
+  Yahoo address) whose direction the sorter couldn't tell stay off Money owed. If an owner taps
+  it on a customer's thread (say a duplicate), that customer's later unclear invoices would be
+  hidden too, until the owner taps Put back on one. Keep it, or limit it to domains that also
+  have a supplier thread?
+
 ## Integration notes
 
 - Migrations: `0044_quote_amount_note` (step 2) and `0045_quote_amount_from` (step 3), both
@@ -160,3 +167,13 @@ For the integrator to fold into CLAUDE.md (Decisions) and the other shared files
 - `src/jobs/functions.ts`: one new step in `purge-expired-bodies`.
 - `src/server/activity.ts`: one new `describeActivity` case (`quote_amount_changed`).
 - `tests/unit/leads-at-risk.test.ts`: one expectation now "replied" (Check 11 P6).
+
+## Review fixes (after the steps)
+
+- **Check 11 P7:** "Save as won" with the prefilled amount sent back unchanged is not a typed
+  amount: it stays the reply's price (`quote_amount_from = 'reply'`, still in price memory,
+  still correctable). Only a different figure is the owner's.
+- **Check 12 P4:** `tests/unit/money-so-far.test.ts` (Replies package) used one sender for every
+  thread, including its supplier and "Not owed to me" rows; those rows now come from a supplier
+  address, since a supplier thread or a "Not owed to me" tap now keeps that sender's unclear
+  bills off Money owed.

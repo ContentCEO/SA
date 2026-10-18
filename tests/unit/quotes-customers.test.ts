@@ -813,7 +813,12 @@ describe("quote tracker", () => {
       });
       await captureQuoteAmounts(workspaceId);
       expect(await setQuoteAmount(workspaceId, t, 135_000, NOW)).toBe("not_won");
-      await setQuoteOutcome(workspaceId, t, "won", undefined, NOW);
+      // "Save as won" with the prefilled amount unchanged: still the reply's price.
+      await setQuoteOutcome(workspaceId, t, "won", 120_000, NOW);
+      expect((await database.select().from(threads).where(eq(threads.id, t)))[0]).toMatchObject({
+        quoteAmountCents: 120_000,
+        quoteAmountFrom: "reply",
+      });
       expect(await setQuoteAmount(workspaceId, t, 135_000, NOW)).toBe("ok");
       const [row] = await database.select().from(threads).where(eq(threads.id, t));
       expect(row).toMatchObject({ quoteAmountCents: 135_000, quoteAmountFrom: "owner" });

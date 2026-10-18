@@ -291,6 +291,7 @@ async function ownedThread(workspaceId: string, threadId: string) {
       id: threads.id,
       outcome: threads.quoteOutcome,
       category: threads.category,
+      amountCents: threads.quoteAmountCents,
       workspace: workspaces,
     })
     .from(threads)
@@ -318,7 +319,13 @@ export async function setQuoteOutcome(
   if (!jobsAllowed(t.workspace, now)) throw new ReadOnlyError(effectiveStatus(t.workspace, now));
   // Check 11 P7: only Won takes an amount ("What you'll charge"); with Lost or No answer
   // (or a reopen) a typed figure is ignored, so it never shows as a price.
-  const typed = outcome === "won" && amountCents !== undefined && amountCents !== null;
+  // The field is prefilled with the amount we found: sent back unchanged, it isn't typed (it
+  // stays the reply's price, in price memory and correctable).
+  const typed =
+    outcome === "won" &&
+    amountCents !== undefined &&
+    amountCents !== null &&
+    amountCents !== t.amountCents;
   // One transaction, so price memory never sees a typed amount without its mark.
   await db().transaction(async (tx) => {
     await tx
