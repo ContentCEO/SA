@@ -75,3 +75,21 @@ For the integrator to fold into CLAUDE.md (Decisions) and the other shared files
   scroll), in the order Open, Waiting on you, Quoted (new, stage `talking`), Gone quiet, Won,
   Lost, No answer, under an "All time" line. Every stage has a one-line explanation under the
   list. Card time reads "Last email 41 minutes ago". Priced / Won show "None yet" instead of $0.
+- **Check 12 P4 (supplier-bill gaps):** `billOwedByOwner` (money-rules.ts, pure) + its SQL twin
+  `billOwedByOwnerSql` (thread-sql.ts): a thread is a bill the business owes when the sorter
+  said `owed_by_business`, or the direction is unknown / missing and the newest sender has
+  another thread in the workspace sorted `supplier_vendor` or marked "Not owed to me". "Same
+  sender" = same domain, or the same full address on public webmail (`PUBLIC_WEBMAIL_DOMAINS`:
+  one gmail.com supplier must not hide every gmail.com customer). A clear `owed_to_business`
+  and the owner's own mark on the thread (paid / put back) win. Used in `moneyThreads` (so Money
+  owed, the totals, the morning email's money lines and receipt matching) and in
+  `threadsToFollowUp`. Addresses are only compared inside SQL, never selected or logged.
+  Receipts (`afterClassified`): a receipt sorted `owed_by_business` never marks anything, and a
+  receipt with no amount never marks anything.
+  **Adapted:** (a) no new "not owed domains" table — the domain is read from the owner's own
+  "Not owed to me" threads at query time, so nothing new is stored and no migration was needed
+  in a non-[M] step; (b) no one-off backfill job — the rule runs at read time on every thread,
+  old (classify.v1–v3, no direction stored) or new, and never touches an owner's mark, so a
+  backfill would change nothing the screens show; (c) `pnpm eval` not run (no
+  `ANTHROPIC_API_KEY` here), so `tests/evals/baseline.json` is still empty. Two eval cases added
+  (`i-subcontractor-invoice`, `i-quickbooks-supplier-receipt`).

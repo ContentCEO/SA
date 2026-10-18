@@ -98,6 +98,27 @@ export function isInvoiceThread(t: { category: string | null; extracted: unknown
   );
 }
 
+/**
+ * Check 12 P4: a bill the BUSINESS owes (a supplier's or a subcontractor's invoice), never
+ * money owed to the owner — kept off Money owed and never chased. True when the sorter said
+ * `owed_by_business`; or when it said nothing clear (unknown, or a thread sorted before
+ * classify.v4 with no direction stored) and the sender is someone the business buys from —
+ * another thread from the same sender (the same domain, or the same address on public
+ * webmail) is sorted supplier_vendor, or the owner tapped "Not owed to me" on one. An owner's
+ * own mark on this thread (paid, or put back) always wins. SQL twin: `billOwedByOwnerSql`
+ * (thread-sql.ts) — keep the two in step.
+ */
+export function billOwedByOwner(f: {
+  direction: unknown;
+  ownerMarked: boolean;
+  senderHasSupplierThread: boolean;
+  senderMarkedNotOwed: boolean;
+}): boolean {
+  if (f.direction === "owed_by_business") return true;
+  if (f.direction === "owed_to_business" || f.ownerMarked) return false;
+  return f.senderHasSupplierThread || f.senderMarkedNotOwed;
+}
+
 /** Dollars → cents (never a fraction of a cent). */
 export const toCents = (dollars: number) => Math.round(dollars * 100);
 

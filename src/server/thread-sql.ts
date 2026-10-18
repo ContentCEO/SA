@@ -264,6 +264,45 @@ export const requestReplySql = () =>
   sql`(select ${replyAddressSql("m")} from messages m where m.thread_id = ${outerThreadId()} and m.direction = 'in' and m.sent_at >= coalesce(${threads.quoteRequestedAt}, '-infinity'::timestamptz) order by m.sent_at asc, m.id asc limit 1)`;
 
 /**
+ * Check 12 P4: who an address is, for "the same sender" — its domain ("@supply.com"), or the
+ * whole address on public webmail (one gmail.com supplier says nothing about the rest).
+ */
+const senderKeySql = (addr: SQL) =>
+  sql`(case when ${domainOf(addr)} in (${WEBMAIL_SQL}) then ${addr} else '@' || ${domainOf(addr)} end)`;
+
+/** The outer thread's newest inbound sender, normalized (WHERE clauses only). */
+const newestSenderSql = () =>
+  sql`(select ${norm("bs_m.from_address")} from messages bs_m where bs_m.thread_id = ${outerThreadId()} and bs_m.direction = 'in' order by bs_m.sent_at desc limit 1)`;
+
+/**
+ * Another thread in the same workspace whose inbound mail comes from the same sender as the
+ * outer thread's newest email and matches `cond` (on alias `bs_t`). Content-free: addresses
+ * are only compared inside the database, never selected.
+ */
+const sameSenderThreadSql = (cond: SQL) =>
+  sql`(${newestSenderSql()} like '%@%' and exists (select 1 from threads bs_t join messages bs_i on bs_i.thread_id = bs_t.id
+    where bs_t.mailbox_id in (select bs_x.id from mailboxes bs_x where bs_x.workspace_id = (select bs_w.workspace_id from mailboxes bs_w where bs_w.id = ${threads.mailboxId}))
+      and bs_t.id <> ${outerThreadId()} and bs_i.direction = 'in' and ${cond}
+      and ${senderKeySql(norm("bs_i.from_address"))} = ${senderKeySql(newestSenderSql())}))`;
+
+/** Check 12 P4: the sender has another thread sorted supplier_vendor. */
+export const senderHasSupplierThreadSql = () =>
+  sameSenderThreadSql(sql`bs_t.category = 'supplier_vendor'`);
+/** Check 12 P4: the owner tapped "Not owed to me" on another thread from the sender. */
+export const senderMarkedNotOwedSql = () =>
+  sameSenderThreadSql(sql`bs_t.invoice_paid_source = 'not_owed'`);
+
+/**
+ * SQL twin of `billOwedByOwner` (money-rules.ts) — keep the two in step: a bill the business
+ * owes. Never NULL, so `not (...)` is safe.
+ */
+export const billOwedByOwnerSql = () =>
+  sql`coalesce((${threads.extracted}->>'bill_direction') = 'owed_by_business'
+    or ((${threads.extracted}->>'bill_direction') is distinct from 'owed_to_business'
+      and ${threads.invoicePaidSource} is distinct from 'owner'
+      and (${senderHasSupplierThreadSql()} or ${senderMarkedNotOwedSql()})), false)`;
+
+/**
  * SQL twin of `isNoReplyAddress` for an address expression: the local part before the last
  * "@" matches the shared no-reply pattern. Used only inside WHERE clauses, so the address
  * itself never leaves the database.

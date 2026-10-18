@@ -4,7 +4,7 @@ import { db } from "@/db";
 import { mailboxes, threads } from "@/db/schema";
 import { mailboxOn } from "./mailbox-plan-rules";
 import { FOLLOWUP_CATEGORIES, followupSettings, MAX_FOLLOWUPS } from "./drafts";
-import { lastInSql, lastOutSql, answeredByPhoneSql } from "./thread-sql";
+import { lastInSql, lastOutSql, answeredByPhoneSql, billOwedByOwnerSql } from "./thread-sql";
 import { isAway } from "./away";
 
 /** Don't chase anything the owner last wrote about more than this long ago. */
@@ -73,8 +73,9 @@ export async function threadsToFollowUp(
         sql`(${threads.quoteOutcome} is null or (${threads.quoteOutcome} = 'won' and ${threads.category} = 'invoice_payment'))`,
         isNull(threads.invoicePaidAt),
         inArray(threads.category, [...FOLLOWUP_CATEGORIES]),
-        // Never chase a bill the owner owes (round 2, TW A2).
-        sql`(${threads.extracted}->>'bill_direction') is distinct from 'owed_by_business'`,
+        // Never chase a bill the owner owes (round 2, TW A2), even when the sorter couldn't
+        // tell which way it went but the sender is a supplier (Check 12 P4).
+        sql`not ${billOwedByOwnerSql()}`,
         sql`${lastIn} is not null`,
         sql`${lastOut} > ${lastIn}`,
         sql`${lastOut} <= ${quietSince}::timestamptz`,

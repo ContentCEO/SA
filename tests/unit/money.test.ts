@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { beforeEach, describe, expect, it } from "vitest";
 import { setModelTransportForTests } from "@/ai/client";
 import type { Database } from "@/db";
@@ -21,6 +21,7 @@ import { ReadOnlyError } from "@/server/lifecycle";
 import { saveConnectedMailbox } from "@/server/mailboxes";
 import { autoMarkInvoicePaid, listMoney, setInvoiceNotOwed, setInvoicePaid } from "@/server/money";
 import {
+  billOwedByOwner,
   carryInvoiceFacts,
   clearsAutoPaid,
   dueLabel,
@@ -40,6 +41,11 @@ import {
 } from "@/server/money-rules";
 import { pushSummaryText } from "@/server/push-alerts";
 import { leadAlertBody } from "@/server/sms-alerts";
+import {
+  billOwedByOwnerSql,
+  senderHasSupplierThreadSql,
+  senderMarkedNotOwedSql,
+} from "@/server/thread-sql";
 import { createTestDb } from "../support/db";
 import { classification, fakeTransport } from "../support/fake-model";
 import { FakeWriter } from "../support/fake-writer";
@@ -1541,6 +1547,143 @@ describe("auto paid", () => {
       },
     ]);
     expect(money.totalOwedCents).toBe(50_000);
+  });
+});
+
+describe("Check 12 P4: bills the owner owes stay off Money owed", () => {
+  beforeEach(setupDb, DB_HOOK_TIMEOUT);
+
+  it("the rule: owed_by_business, or unclear and from a supplier / a 'Not owed to me' sender", () => {
+    const b = (o: Partial<Parameters<typeof billOwedByOwner>[0]>) =>
+      billOwedByOwner({
+        direction: undefined,
+        ownerMarked: false,
+        senderHasSupplierThread: false,
+        senderMarkedNotOwed: false,
+        ...o,
+      });
+    expect(b({ direction: "owed_by_business" })).toBe(true);
+    expect(b({})).toBe(false);
+    expect(b({ direction: "unknown", senderHasSupplierThread: true })).toBe(true);
+    expect(b({ senderMarkedNotOwed: true })).toBe(true);
+    // A clear "owed to you", or the owner's own mark on this thread, wins.
+    expect(b({ direction: "owed_to_business", senderHasSupplierThread: true })).toBe(false);
+    expect(b({ ownerMarked: true, senderHasSupplierThread: true })).toBe(false);
+    expect(b({ ownerMarked: true, direction: "owed_by_business" })).toBe(true);
+  });
+
+  it("an unknown-direction bill from a supplier's domain is not owed to you, and never nudged", async () => {
+    // The supply house has a thread sorted supplier_vendor (an order confirmation).
+    await invoiceThread({
+      from: "orders@northside-supply.test",
+      name: "Northside",
+      category: "supplier_vendor",
+      invoice: null,
+    });
+    const bill = await invoiceThread({
+      from: "billing@northside-supply.test",
+      name: "Northside Billing",
+      invoice: { amount: 1240, invoice_number: "55120", due_date: "2026-11-01" },
+      inAgo: 9,
+      outAgo: 8,
+    });
+    const customer = await invoiceThread({ invoice: { amount: 900 }, inAgo: 9, outAgo: 8 });
+    const { owed, totalOwedCents } = await listMoney(workspaceId, NOW);
+    expect(owed.map((r) => r.threadId)).toEqual([customer]);
+    expect(totalOwedCents).toBe(90_000);
+    const chased = await threadsToFollowUp(mailboxId, NOW);
+    expect(chased).toContain(customer);
+    expect(chased).not.toContain(bill);
+    // The owner's "Put back" on it wins.
+    await setInvoicePaid(workspaceId, bill, false, NOW);
+    expect((await listMoney(workspaceId, NOW)).owed.map((r) => r.threadId)).toContain(bill);
+  });
+
+  it("'Not owed to me' on one bill keeps that sender's later bills off the list", async () => {
+    const first = await invoiceThread({ from: "ap@sub-electric.test", invoice: { amount: 500 } });
+    await setInvoiceNotOwed(workspaceId, first, NOW);
+    const second = await invoiceThread({ from: "ap@sub-electric.test", invoice: { amount: 700 } });
+    expect((await listMoney(workspaceId, NOW)).owed.map((r) => r.threadId)).not.toContain(second);
+    // On public webmail only the same address counts, never the whole domain.
+    const gm = await invoiceThread({ from: "plumbsupply@gmail.com", invoice: { amount: 100 } });
+    await setInvoiceNotOwed(workspaceId, gm, NOW);
+    const customer = await invoiceThread({ from: "dana@gmail.com", invoice: { amount: 300 } });
+    expect((await listMoney(workspaceId, NOW)).owed.map((r) => r.threadId)).toContain(customer);
+  });
+
+  it("a QuickBooks receipt for the owner's own supplier bill 1037 marks nothing", async () => {
+    const t = await invoiceThread({ invoice: { amount: 412, invoice_number: "1037" } });
+    await receiptThread("payments@intuit.com");
+    await classifyWith(
+      paidSays(
+        { invoice_number: "1037", amount: 412 },
+        {
+          extracted: {
+            ...classification().extracted,
+            service_requested: null,
+            invoice: inv({ invoice_number: "1037", amount: 412, status: "paid" }),
+            invoice_direction: "owed_by_business",
+          },
+        },
+      ),
+    );
+    expect((await rowOf(t)).invoicePaidAt).toBeNull();
+    expect(await paidLogs()).toEqual([]);
+  });
+
+  it("a receipt without an amount marks nothing, even with a matching number", async () => {
+    const t = await invoiceThread({ invoice: { amount: 1200, invoice_number: "INV-0042" } });
+    await receiptThread("receipts@stripe.com");
+    await classifyWith(paidSays({ invoice_number: "#42", amount: null }));
+    expect((await rowOf(t)).invoicePaidAt).toBeNull();
+    expect(await paidLogs()).toEqual([]);
+  });
+
+  it("the SQL twin agrees with billOwedByOwner", async () => {
+    await invoiceThread({ from: "orders@supply.test", category: "supplier_vendor", invoice: null });
+    const cases = [
+      { from: "a@supply.test", dir: "unknown", src: null },
+      { from: "b@supply.test", dir: "owed_to_business", src: null },
+      { from: "c@supply.test", dir: undefined, src: "owner" },
+      { from: "d@other.test", dir: "owed_by_business", src: null },
+      { from: "e@other.test", dir: undefined, src: null },
+    ] as const;
+    const ids: string[] = [];
+    for (const c of cases) {
+      const id = await invoiceThread({ from: c.from, invoice: { amount: 10 } });
+      await database
+        .update(threads)
+        .set({
+          extracted: c.dir ? { bill_direction: c.dir } : {},
+          invoicePaidSource: c.src,
+          invoicePaidAt: null,
+        })
+        .where(eq(threads.id, id));
+      ids.push(id);
+    }
+    const rows = await database
+      .select({
+        id: threads.id,
+        sql: sql<boolean>`${billOwedByOwnerSql()}`,
+        supplier: sql<boolean>`${senderHasSupplierThreadSql()}`,
+        notOwed: sql<boolean>`${senderMarkedNotOwedSql()}`,
+      })
+      .from(threads);
+    const by = new Map(rows.map((r) => [r.id, r]));
+    const got = cases.map((c, i) => {
+      const r = by.get(ids[i]!)!;
+      return [
+        r.sql,
+        billOwedByOwner({
+          direction: c.dir,
+          ownerMarked: c.src === "owner",
+          senderHasSupplierThread: r.supplier,
+          senderMarkedNotOwed: r.notOwed,
+        }),
+      ];
+    });
+    expect(got.map(([a, b]) => a === b)).toEqual(cases.map(() => true));
+    expect(got.map(([a]) => a)).toEqual([true, false, false, true, false]);
   });
 });
 

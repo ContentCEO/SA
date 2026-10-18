@@ -386,6 +386,36 @@ export const EVAL_CASES: EvalCase[] = [
     body: "When is the invoice due? I didn't see a date on it.",
     expect: { category: "invoice_payment", needsOwner: false },
   }),
+  // Check 12 P4: a subcontractor's bill in plain words, and the owner's own payment receipt for
+  // a supplier bill — both money the business owes, never "Owed to you".
+  c({
+    id: "i-subcontractor-invoice",
+    trade: "carpentry",
+    fromName: "Dan Ortiz",
+    fromAddress: "dan@ortiz-drywall.test",
+    subject: "Maple St drywall",
+    body: "Hi, here's my invoice for the Maple St job: $1,800 for hanging and taping, invoice 2214. Net 15. Thanks for the work.",
+    expect: {
+      category: ["invoice_payment", "supplier_vendor"],
+      needsOwner: false,
+      invoiceStatus: "unpaid",
+      billOwedByBusiness: true,
+    },
+  }),
+  c({
+    id: "i-quickbooks-supplier-receipt",
+    trade: "plumbing",
+    fromName: "QuickBooks Payments",
+    fromAddress: "quickbooks@notification.intuit.test",
+    subject: "Payment confirmation: Bill 1037",
+    body: "You paid Bill 1037 to Northside Supply. Amount: $412.00. Payment date: Oct 14. Thanks for using QuickBooks.",
+    expect: {
+      category: ["invoice_payment", "supplier_vendor"],
+      needsOwner: false,
+      invoiceStatus: "paid",
+      billOwedByBusiness: true,
+    },
+  }),
   c({
     id: "i-supplier-bill",
     trade: "hvac",

@@ -4,8 +4,14 @@ import { db } from "@/db";
 import { activityLog, businessProfiles, mailboxes, threads, workspaces } from "@/db/schema";
 import { expirePendingNudge, flagPendingNudge, unflagPendingNudge, type DraftDeps } from "./drafts";
 import { effectiveStatus, jobsAllowed, ReadOnlyError } from "./lifecycle";
-import { customerAddressSql, customerNameSql } from "./thread-sql";
 import {
+  customerAddressSql,
+  customerNameSql,
+  senderHasSupplierThreadSql,
+  senderMarkedNotOwedSql,
+} from "./thread-sql";
+import {
+  billOwedByOwner,
   dueLabel,
   invoiceOf,
   isOwed,
@@ -106,6 +112,9 @@ async function moneyThreads(
       senderAddress: sql<
         string | null
       >`(select lower(m.from_address) from messages m where m.thread_id = ${threads.id} and m.direction = 'in' order by m.sent_at desc limit 1)`,
+      // Check 12 P4: facts for `billOwedByOwner` (yes/no only; no address leaves SQL).
+      senderHasSupplierThread: sql<boolean>`${senderHasSupplierThreadSql()}`,
+      senderMarkedNotOwed: sql<boolean>`${senderMarkedNotOwedSql()}`,
     })
     .from(threads)
     .innerJoin(mailboxes, eq(mailboxes.id, threads.mailboxId))
@@ -128,13 +137,28 @@ async function moneyThreads(
     .orderBy(desc(threads.lastMessageAt))
     // A defensive cap only: after the filter above, a 1–15 person shop has far fewer.
     .limit(2000);
-  return rows
-    .filter((r) => !isReceiptSender(r.senderAddress) && !isReceiptSender(r.customerAddress))
-    .map((r) => {
-      const { senderAddress, ...row } = r;
-      void senderAddress;
-      return { ...row, invoice: invoiceOf(row.extracted) };
-    });
+  return (
+    rows
+      .filter((r) => !isReceiptSender(r.senderAddress) && !isReceiptSender(r.customerAddress))
+      // Check 12 P4: a supplier's or subcontractor's bill is money the owner owes, not owed to
+      // them — even when the sorter couldn't tell which way it went.
+      .filter(
+        (r) =>
+          !billOwedByOwner({
+            direction: (r.extracted as { bill_direction?: unknown } | null)?.bill_direction,
+            ownerMarked: r.paidSource === "owner",
+            senderHasSupplierThread: r.senderHasSupplierThread === true,
+            senderMarkedNotOwed: r.senderMarkedNotOwed === true,
+          }),
+      )
+      .map((r) => {
+        const { senderAddress, senderHasSupplierThread, senderMarkedNotOwed, ...row } = r;
+        void senderAddress;
+        void senderHasSupplierThread;
+        void senderMarkedNotOwed;
+        return { ...row, invoice: invoiceOf(row.extracted) };
+      })
+  );
 }
 
 function toRow(
