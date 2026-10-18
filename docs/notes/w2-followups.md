@@ -138,3 +138,11 @@ drafter would pass `isInvoiceThread(thread)`), with these task lines for invoice
   the same customer address the owner answered before the newer email).
 - Documented limit: a different person's own address (a spouse) can't be matched; "I called
   them" or Discard covers it.
+
+## Step 6 — Check 21 P6: only this quote's nudges count before "no answer"
+
+- `guessNoAnswers` (and its SQL pre-filter) counts only follow-ups sent after the customer's newest
+  email (`coalesce(decided_at, created_at) > lastIn`). Fewer than two such → the 21-day rule.
+- `MAX_FOLLOWUPS` / "two per conversation, ever" unchanged (comment says so). **Davi's call:**
+  whether a new job priced on the same conversation (the deck after the kitchen) may get its own
+  two nudges. Today it gets none, and is guessed "no answer" only after 21 quiet days.

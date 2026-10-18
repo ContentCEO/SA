@@ -17,6 +17,7 @@ import { digestCounts } from "@/server/digest";
 import { localDayStart } from "@/server/growth-client-rules";
 import { followupScanDue, markFollowupScanned, threadsToFollowUp } from "@/server/followups";
 import { localParts } from "@/server/snooze-rules";
+import { guessNoAnswers } from "@/server/quotes";
 import { saveConnectedMailbox } from "@/server/mailboxes";
 import { followupSettingsInput, saveFollowupSettings } from "@/server/profile";
 import { createTestDb } from "../support/db";
@@ -1053,5 +1054,76 @@ describe("the customer answered in a separate email (Check 21 P5)", () => {
     const q = await listQueue(workspaceId, NOW);
     const card = q.needsYou.find((i) => i.threadId === newer);
     expect(card?.alsoQuote).toMatchObject({ quotedAt: daysAgo(4) });
+  });
+});
+
+describe("only this quote's nudges count before guessing no answer (Check 21 P6)", () => {
+  async function deckTimeline() {
+    await database
+      .update(workspaces)
+      .set({ status: "active" })
+      .where(eq(workspaces.id, workspaceId));
+    // Kitchen quote 9 days ago, nudged 6 and 2 days ago.
+    const t = await quietThread({ ownerRepliedDaysAgo: 9 });
+    await sentNudge(t, 6);
+    await sentNudge(t, 2);
+    // Yesterday: "Could you price the deck instead?"; today the owner prices the deck.
+    await database.insert(messages).values([
+      {
+        threadId: t,
+        mailboxId,
+        gmailMessageId: `${t}-deck-in`,
+        direction: "in",
+        fromAddress: "dana@customer.com",
+        bodyText: "Could you price the deck instead?",
+        sentAt: daysAgo(1),
+      },
+      {
+        threadId: t,
+        mailboxId,
+        gmailMessageId: `${t}-deck-out`,
+        direction: "out",
+        fromAddress: "owner@shop.com",
+        toAddresses: ["dana@customer.com"],
+        bodyText: "The deck is $6,400.",
+        sentAt: NOW,
+      },
+    ]);
+    return t;
+  }
+  const outcome = async (t: string) =>
+    (await database.select().from(threads).where(eq(threads.id, t)))[0]!.quoteOutcome;
+  const later = (d: number) => new Date(NOW.getTime() + d * DAY);
+
+  it("the deck isn't guessed 'no answer' eight days after its price; it is after 21 quiet days", async () => {
+    const t = await deckTimeline();
+    await guessNoAnswers(later(8), workspaceId);
+    expect(await outcome(t)).toBeNull();
+    await guessNoAnswers(later(20), workspaceId);
+    expect(await outcome(t)).toBeNull();
+    await guessNoAnswers(later(21), workspaceId);
+    expect(await outcome(t)).toBe("no_answer");
+  });
+
+  it("two nudges after the customer's last email, then a quiet week → no answer", async () => {
+    await database
+      .update(workspaces)
+      .set({ status: "active" })
+      .where(eq(workspaces.id, workspaceId));
+    const t = await quietThread({ ownerRepliedDaysAgo: 16 });
+    await sentNudge(t, 13);
+    await sentNudge(t, 8);
+    await guessNoAnswers(NOW, workspaceId);
+    expect(await outcome(t)).toBe("no_answer");
+  });
+
+  it("an owner's own outcome is never overwritten", async () => {
+    const t = await deckTimeline();
+    await database
+      .update(threads)
+      .set({ quoteOutcome: null, quoteOutcomeSource: "owner" })
+      .where(eq(threads.id, t));
+    await guessNoAnswers(later(30), workspaceId);
+    expect(await outcome(t)).toBeNull();
   });
 });

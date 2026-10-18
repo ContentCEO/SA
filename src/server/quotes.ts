@@ -398,7 +398,11 @@ export async function guessNoAnswers(
   const pageSize = opts.pageSize ?? 500;
   const lastIn = lastInSql();
   const lastOut = lastOutSql();
-  const sentNudges = sql<number>`(select count(*) from drafts d where d.thread_id = ${threads.id} and d.kind = 'followup' and d.status in ('sent', 'edited_and_sent'))`;
+  // Check 21 P6: only nudges sent after the customer's newest email count toward "two nudges,
+  // then a quiet week" — on a conversation holding two jobs, the kitchen's nudges say nothing
+  // about the deck priced after the customer wrote again. The two-per-conversation cap
+  // (MAX_FOLLOWUPS) is unchanged; whether to reset it per job is Davi's call.
+  const sentNudges = sql<number>`(select count(*) from drafts d where d.thread_id = ${threads.id} and d.kind = 'followup' and d.status in ('sent', 'edited_and_sent') and coalesce(d.decided_at, d.created_at) > coalesce(${lastIn}, '-infinity'::timestamptz))`;
   const ago = (days: number) => new Date(now.getTime() - days * DAY_MS).toISOString();
   const quietFrom = sql`greatest(${lastOut}, ${threads.nudgeAfter})`;
   const inScope = and(
