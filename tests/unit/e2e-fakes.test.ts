@@ -157,11 +157,17 @@ describe("the fake server", () => {
   const scenarioId = "7b0e5c9d-2f1a-4c3b-8d6e-0a1b2c3d4e5f";
   const ownerEmail = "owner-fake@example.com";
 
-  const register = async (id: string, email: string, grant: FakeGrant = {}, noGmail = false) => {
+  const register = async (
+    id: string,
+    email: string,
+    grant: FakeGrant = {},
+    noGmail = false,
+    chooser = false,
+  ) => {
     const res = await fetch(`${url}/__scenarios`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ id, ownerEmail: email, grant, noGmail }),
+      body: JSON.stringify({ id, ownerEmail: email, grant, noGmail, chooser }),
     });
     expect(res.status).toBe(201);
   };
@@ -292,6 +298,18 @@ describe("the fake server", () => {
     const page = await (await fetch(`${url}/o/oauth2/v2/auth?${good}`)).text();
     expect(page).toContain(`code=e2e-${scenarioId}`);
     expect(page).toContain("state=s1");
+
+    // Check 42 P3: "Connect another Gmail" sends no hint and asks for Google's account chooser;
+    // the fake picks the scenario registered to be picked there.
+    const chooser = new URLSearchParams(base);
+    chooser.set("prompt", "consent select_account");
+    expect((await fetch(`${url}/o/oauth2/v2/auth?${chooser}`)).status).toBe(400);
+    const officeId = "7c9e1a3b-5d7f-4a9b-8c1d-2e3f4a5b6c7d";
+    await register(officeId, "office@example.com", {}, false, true);
+    const picked = await (await fetch(`${url}/o/oauth2/v2/auth?${chooser}`)).text();
+    expect(picked).toContain(`code=e2e-${officeId}`);
+    // A plain consent with no hint is still refused.
+    expect((await fetch(`${url}/o/oauth2/v2/auth?${base}`)).status).toBe(400);
   });
 
   it("asks for exactly the app's scopes, and those two cover every Gmail call the app makes", () => {

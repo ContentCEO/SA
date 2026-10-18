@@ -233,3 +233,24 @@ Under "What we store": "How many photos or files an email had (never the files o
 - **Adapted (safety):** the new token is **not** revoked at Google. A Google revoke ends the app's
   grant for that Google account, which can also end the *other* account's working access to the
   same inbox. The token is simply never stored. (Question for Davi below.)
+
+## Step 11 · Check 42 P3: Connect another Gmail and Reconnect pick the right account
+
+- `/connect` works out a mode: `?reconnect=<mailbox id>` (that card), `?add=1` (another inbox),
+  no inbox yet → first, exactly one inbox → reconnect it, several → add. Only the workspace's own
+  mailbox ids are read from the URL — never an address. The button says "Connect Gmail" /
+  "Connect another Gmail" / "Reconnect Gmail". Settings' Reconnect links carry the card's id;
+  "Connect another Gmail" links `?add=1`; the lost-access banner links the one lost inbox.
+- `startGmailConnect` reads hidden `mode` / `mailboxId`, re-reads the mailbox scoped to the
+  workspace; first → `login_hint` = sign-in email, reconnect → that mailbox's email, add → no
+  hint and `prompt=consent select_account` (`authorizationUrl` takes `prompt`).
+- The state cookie is `<state>~<mode>~<mailbox id>` (`stateCookieValue` / `parseStateCookie`);
+  the state part is still compared in constant time; an old plain cookie reads as "first".
+- Callback: add + an address already connected here → `?error=already_connected&mailbox=<id>`
+  ("That's mike@shop.com again, which is already connected. Tap Connect another Gmail and pick the
+  other account on Google's screen."); reconnect + a different address → nothing saved,
+  `?error=wrong_account&mailbox=<card>[&picked=<id>]` ("You picked office@shop.com but this card
+  is for mike@shop.com. Try again and pick mike@shop.com." — "a different Google account" when the
+  picked one isn't connected here). No revoke in either case (it may be live).
+- e2e fake Google: `registerScenario(…, { chooser: true })` is the account picked on the chooser;
+  a plain consent without a hint is still refused.

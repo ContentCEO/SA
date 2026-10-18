@@ -14,7 +14,16 @@ export interface MailboxConnector {
   /** Scopes we must have. Missing any of them means we refuse the connection. */
   readonly requiredScopes: readonly string[];
   /** URL to send the owner to for consent. `state` is our CSRF token. */
-  authorizationUrl(opts: { state: string; redirectUri: string; loginHint?: string }): string;
+  authorizationUrl(opts: {
+    state: string;
+    redirectUri: string;
+    loginHint?: string;
+    /**
+     * Check 42 P3: Google's `prompt`. Default "consent" (a refresh token every time);
+     * "consent select_account" shows Google's account chooser (adding another inbox).
+     */
+    prompt?: "consent" | "consent select_account";
+  }): string;
   /** Exchange the callback code for a long-lived credential. */
   exchangeCode(opts: { code: string; redirectUri: string }): Promise<ConnectResult>;
   /** Revoke our access at the provider. Must not throw if already revoked. */

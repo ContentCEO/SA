@@ -187,7 +187,10 @@ export default async function GmailSettingsPage(props: PageProps<"/settings/gmai
                     ))}
                   </dl>
                   {needsYou ? (
-                    <Link href="/connect" className={cn(buttonVariants({ size: "lg" }), "w-full")}>
+                    <Link
+                      href={`/connect?reconnect=${m.id}`}
+                      className={cn(buttonVariants({ size: "lg" }), "w-full")}
+                    >
                       Reconnect Gmail
                     </Link>
                   ) : null}
@@ -204,7 +207,7 @@ export default async function GmailSettingsPage(props: PageProps<"/settings/gmai
 
         {mailboxes.length > 0 && canAddMore ? (
           <Link
-            href="/connect"
+            href="/connect?add=1"
             className="inline-flex min-h-tap items-center font-semibold underline underline-offset-4"
           >
             Connect another Gmail

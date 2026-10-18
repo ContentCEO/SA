@@ -4,10 +4,20 @@ import { auth } from "@/auth";
 import { appUrl } from "@/lib/app-url";
 import { MissingScopesError, NoGmailError } from "@/mailbox/connector";
 import { createGmailConnector } from "@/mailbox/gmail/connector";
-import { GMAIL_STATE_COOKIE, gmailRedirectPath, statesMatch } from "@/mailbox/gmail/oauth-state";
+import {
+  GMAIL_STATE_COOKIE,
+  gmailRedirectPath,
+  parseStateCookie,
+  statesMatch,
+} from "@/mailbox/gmail/oauth-state";
 import { getWorkspaceForUser } from "@/server/accounts";
 import { enqueue, mailboxConnected } from "@/jobs/client";
-import { MailboxInUseError, MailboxLimitError, saveConnectedMailbox } from "@/server/mailboxes";
+import {
+  listMailboxes,
+  MailboxInUseError,
+  MailboxLimitError,
+  saveConnectedMailbox,
+} from "@/server/mailboxes";
 import { getBusinessProfile } from "@/server/profile";
 import { termsRequiredResponse } from "@/server/session";
 import { termsAccepted } from "@/server/terms";
@@ -26,10 +36,11 @@ export async function GET(request: NextRequest) {
 
   const params = request.nextUrl.searchParams;
   const cookieStore = await cookies();
-  const expected = cookieStore.get(GMAIL_STATE_COOKIE)?.value;
+  const cookie = parseStateCookie(cookieStore.get(GMAIL_STATE_COOKIE)?.value);
   cookieStore.delete({ name: GMAIL_STATE_COOKIE, path: "/api/gmail" });
 
-  if (!statesMatch(expected, params.get("state"))) return to("/connect?error=expired");
+  if (!statesMatch(cookie?.state, params.get("state"))) return to("/connect?error=expired");
+  const connect = cookie!.connect;
   if (params.get("error")) return to("/connect?error=denied");
 
   const code = params.get("code");
@@ -43,6 +54,22 @@ export async function GET(request: NextRequest) {
       code,
       redirectUri: appUrl(gmailRedirectPath),
     });
+    // Check 42 P3: the owner meant a different Gmail than Google sent back. Nothing is saved
+    // (and the token isn't revoked: that address may be live here or in another account).
+    // Only mailbox ids go in the URL, never an address.
+    const own = await listMailboxes(workspace.id);
+    const picked = own.find((m) => m.email.toLowerCase() === result.email.toLowerCase());
+    if (connect.mode === "add" && picked) {
+      return to(`/connect?error=already_connected&mailbox=${picked.id}`);
+    }
+    if (connect.mode === "reconnect") {
+      const card = own.find((m) => m.id === connect.mailboxId);
+      if (card && card.email.toLowerCase() !== result.email.toLowerCase()) {
+        return to(
+          `/connect?error=wrong_account&mailbox=${card.id}${picked ? `&picked=${picked.id}` : ""}`,
+        );
+      }
+    }
     const mailbox = await saveConnectedMailbox(workspace, result);
     await enqueue(mailboxConnected.create({ mailboxId: mailbox.id }));
     // First time through: continue onboarding with the business profile.

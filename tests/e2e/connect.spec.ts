@@ -127,6 +127,33 @@ test("a Google account without Gmail is refused plainly and the trial doesn't st
   expect(blocked).toEqual([]);
 });
 
+test("Connect another Gmail lets the owner pick the other account on Google's chooser (Check 42 P3)", async ({
+  page,
+  context,
+  request,
+}) => {
+  const owner = await seedOwner({ mailbox: true, backfilled: true });
+  await testDb
+    .update(schema.workspaces)
+    .set({ plan: "crew" })
+    .where(eq(schema.workspaces.id, owner.workspaceId));
+  const office = `office-${owner.email}`;
+  const scenario = await registerScenario(request, office, {}, { chooser: true });
+  await signInAs(context, owner);
+  const { blocked } = await routeGoogleConsent(page, context);
+
+  await page.goto("/settings/gmail");
+  await page.getByRole("link", { name: "Connect another Gmail" }).click();
+  await expect(page).toHaveURL(/\/connect\?add=1$/);
+  await page.getByRole("button", { name: "Connect another Gmail" }).click();
+  await page.getByRole("link", { name: "Allow" }).click();
+  await expect(page).not.toHaveURL(/error=/);
+  expect(await mailboxCount(owner.workspaceId)).toBe(2);
+  const consent = (await calls(request, scenario.id)).find((c) => c.route === "consent");
+  expect(consent).toBeTruthy();
+  expect(blocked).toEqual([]);
+});
+
 test("an owner whose older grant still carries gmail.send connects as usual", async ({
   page,
   context,

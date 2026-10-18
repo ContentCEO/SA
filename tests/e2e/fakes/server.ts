@@ -140,6 +140,11 @@ type Scenario = {
   grant: FakeGrant;
   /** Check 47 P1: a Google account with no Gmail (Gmail answers "Mail service not enabled"). */
   noGmail: boolean;
+  /**
+   * Check 42 P3: the account the owner picks on Google's account chooser (a connect with no
+   * login_hint and prompt "consent select_account").
+   */
+  chooser: boolean;
   /** What the owner allowed on the consent page; the authorization code carries it. */
   consented: string[] | null;
   /** What the issued tokens carry: null before the code exchange and after a revoke. */
@@ -320,6 +325,7 @@ export function createFakes() {
       ownerEmail,
       grant,
       noGmail: input.noGmail === true,
+      chooser: input.chooser === true,
       consented: null,
       granted: null,
       messages: new Map(buildInbox(r, ownerEmail, Date.now(), { lead }).map((m) => [m.id, m])),
@@ -337,16 +343,27 @@ export function createFakes() {
   function consent(url: URL, res: ServerResponse) {
     const q = url.searchParams;
     const hint = q.get("login_hint")?.toLowerCase();
+    // Google's account chooser (adding another inbox, Check 42 P3): no hint, and the owner picks
+    // the account a scenario was registered to pick.
+    const choosing = !hint && q.get("prompt") === "consent select_account";
     const s = hint
       ? [...scenarios.values()].reverse().find((x) => x.ownerEmail === hint)
-      : undefined;
+      : choosing
+        ? [...scenarios.values()].reverse().find((x) => x.chooser)
+        : undefined;
     const problems: string[] = [];
-    if (!s) problems.push("login_hint is missing or no scenario is registered for it");
+    if (!s)
+      problems.push(
+        choosing
+          ? "no scenario is registered to be picked on the account chooser"
+          : "login_hint is missing or no scenario is registered for it",
+      );
     const wrongClient = q.get("client_id") !== E2E_CLIENT_ID;
     if (wrongClient) problems.push("client_id is not the e2e client");
     if (q.get("response_type") !== "code") problems.push("response_type must be code");
     if (q.get("access_type") !== "offline") problems.push("access_type must be offline");
-    if (q.get("prompt") !== "consent") problems.push("prompt must be consent");
+    if (q.get("prompt") !== "consent" && q.get("prompt") !== "consent select_account")
+      problems.push("prompt must be consent (or consent select_account)");
     const scopes = (q.get("scope") ?? "").split(" ").filter(Boolean);
     if (scopes.length !== CONNECT_SCOPES.length || !CONNECT_SCOPES.every((x) => scopes.includes(x)))
       problems.push(

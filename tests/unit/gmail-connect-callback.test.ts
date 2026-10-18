@@ -199,3 +199,51 @@ describe("Gmail connect callback: a Gmail already in another account (Check 25 P
     expect(await statusOf()).toBe("invited");
   });
 });
+
+describe("Gmail connect callback: the Gmail the owner meant (Check 42 P3)", () => {
+  const ws = async () =>
+    (await database.select().from(workspaces).where(eq(workspaces.id, workspaceId)))[0]!;
+
+  it("Connect another Gmail that comes back as the one already connected: says so, saves nothing", async () => {
+    const first = await saveConnectedMailbox(await ws(), {
+      email: "owner@shop.com",
+      refreshToken: "rt-old",
+      grantedScopes: ALL_CONNECT_SCOPES,
+    });
+    granted = ALL_CONNECT_SCOPES;
+    req.cookies.set(GMAIL_STATE_COOKIE, "state-123~add~");
+    expect(await callback()).toBe(`/connect?error=already_connected&mailbox=${first.id}`);
+    const rows = await database.select().from(mailboxes);
+    expect(rows).toHaveLength(1);
+    expect(decryptSecret(rows[0]!.encryptedRefreshToken)).toBe("rt-old");
+    expect(google.map((c) => c.url)).not.toContain(REVOKE_URL);
+  });
+
+  it("Reconnect that comes back as a different address: not saved as new, says which card it was", async () => {
+    const [w] = await database.select().from(workspaces).where(eq(workspaces.id, workspaceId));
+    await database.update(workspaces).set({ plan: "crew" }).where(eq(workspaces.id, workspaceId));
+    const mike = await saveConnectedMailbox(
+      { ...w!, plan: "crew" },
+      { email: "mike@shop.com", refreshToken: "rt-mike", grantedScopes: ALL_CONNECT_SCOPES },
+    );
+    granted = ALL_CONNECT_SCOPES; // userinfo answers owner@shop.com
+    req.cookies.set(GMAIL_STATE_COOKIE, `state-123~reconnect~${mike.id}`);
+    expect(await callback()).toBe(`/connect?error=wrong_account&mailbox=${mike.id}`);
+    expect((await database.select().from(mailboxes)).map((m) => m.email)).toEqual([
+      "mike@shop.com",
+    ]);
+  });
+
+  it("Reconnect that comes back as the right address saves the new token", async () => {
+    const box = await saveConnectedMailbox(await ws(), {
+      email: "owner@shop.com",
+      refreshToken: "rt-old",
+      grantedScopes: ALL_CONNECT_SCOPES,
+    });
+    granted = ALL_CONNECT_SCOPES;
+    req.cookies.set(GMAIL_STATE_COOKIE, `state-123~reconnect~${box.id}`);
+    await callback();
+    const [row] = await database.select().from(mailboxes);
+    expect(decryptSecret(row!.encryptedRefreshToken)).toBe("rt-new");
+  });
+});

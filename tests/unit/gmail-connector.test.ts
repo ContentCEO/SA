@@ -9,7 +9,7 @@ import {
   REQUIRED_GMAIL_SCOPES,
   missingScopes,
 } from "@/mailbox/gmail/scopes";
-import { statesMatch } from "@/mailbox/gmail/oauth-state";
+import { parseStateCookie, stateCookieValue, statesMatch } from "@/mailbox/gmail/oauth-state";
 
 const allScopes = [
   "openid",
@@ -54,6 +54,46 @@ describe("gmail authorization url", () => {
     expect(url.searchParams.get("prompt")).toBe("consent");
     expect(url.searchParams.get("state")).toBe("s");
     expect(url.searchParams.get("login_hint")).toBe("a@b.com");
+  });
+});
+
+describe("which Google account (Check 42 P3)", () => {
+  const url = (opts: Parameters<ReturnType<typeof createGmailConnector>["authorizationUrl"]>[0]) =>
+    new URL(createGmailConnector().authorizationUrl(opts));
+
+  it("first: hinted the sign-in address; reconnect: hinted that card's address", () => {
+    const first = url({ state: "s", redirectUri: "https://x/cb", loginHint: "owner@shop.com" });
+    expect(first.searchParams.get("login_hint")).toBe("owner@shop.com");
+    expect(first.searchParams.get("prompt")).toBe("consent");
+    const again = url({ state: "s", redirectUri: "https://x/cb", loginHint: "mike@shop.com" });
+    expect(again.searchParams.get("login_hint")).toBe("mike@shop.com");
+  });
+
+  it("add: no hint, and Google's account chooser", () => {
+    const add = url({ state: "s", redirectUri: "https://x/cb", prompt: "consent select_account" });
+    expect(add.searchParams.has("login_hint")).toBe(false);
+    expect(add.searchParams.get("prompt")).toBe("consent select_account");
+    expect(add.searchParams.get("access_type")).toBe("offline");
+  });
+
+  it("the state cookie carries the mode; the state itself is still compared in constant time", () => {
+    const v = stateCookieValue("abc", {
+      mode: "reconnect",
+      mailboxId: "7c9e1a3b-5d7f-4a9b-8c1d-2e3f4a5b6c7d",
+    });
+    expect(parseStateCookie(v)).toEqual({
+      state: "abc",
+      connect: { mode: "reconnect", mailboxId: "7c9e1a3b-5d7f-4a9b-8c1d-2e3f4a5b6c7d" },
+    });
+    expect(parseStateCookie(stateCookieValue("abc", { mode: "add" }))!.connect).toEqual({
+      mode: "add",
+    });
+    // An old plain cookie, or a mailbox id that isn't one, reads as a plain first connect.
+    expect(parseStateCookie("abc")).toEqual({ state: "abc", connect: { mode: "first" } });
+    expect(parseStateCookie("abc~reconnect~not-a-uuid")!.connect).toEqual({ mode: "first" });
+    expect(parseStateCookie(undefined)).toBeUndefined();
+    expect(statesMatch(parseStateCookie(v)!.state, "abc")).toBe(true);
+    expect(statesMatch(parseStateCookie(v)!.state, v)).toBe(false);
   });
 });
 

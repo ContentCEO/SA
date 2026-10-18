@@ -48,7 +48,7 @@ export function createGmailConnector(fetchImpl: Fetch = fetch): MailboxConnector
     provider: "gmail",
     requiredScopes: REQUIRED_GMAIL_SCOPES,
 
-    authorizationUrl({ state, redirectUri, loginHint }) {
+    authorizationUrl({ state, redirectUri, loginHint, prompt = "consent" }) {
       const url = new URL(AUTH_URL);
       url.search = new URLSearchParams({
         client_id: clientCredentials().clientId,
@@ -57,7 +57,7 @@ export function createGmailConnector(fetchImpl: Fetch = fetch): MailboxConnector
         scope: ALL_CONNECT_SCOPES.join(" "),
         // Offline + consent guarantees Google hands us a refresh token every time.
         access_type: "offline",
-        prompt: "consent",
+        prompt,
         include_granted_scopes: "true",
         state,
         ...(loginHint ? { login_hint: loginHint } : {}),
