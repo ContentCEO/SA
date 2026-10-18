@@ -43,6 +43,7 @@ import { siteConfig } from "@/config/site";
 import { resumeTarget, setupReallyPaid } from "./lifecycle";
 import { fitMailboxesToPlan } from "./mailbox-plan";
 import { creditReferralSafely } from "./referrals";
+import { applyPlanChange } from "./workspace-lifecycle";
 import { workspaceTimeZone } from "./snooze";
 import { isTermsUrlMissingError, stripeErrorReason } from "./stripe-error-rules";
 
@@ -805,6 +806,7 @@ export async function applyCheckoutCompleted(
   }
   const plan = second ? w.plan : isPlanId(session.metadata?.plan) ? session.metadata.plan : w.plan;
   const includesSetup = session.metadata?.includesSetup === "1";
+  await applyPlanChange(w.id, w.plan, plan, "stripe", now);
   // Check 17 P1: a paused account isn't moved by Stripe; the payment is kept in paused_from,
   // where Resume takes it back to.
   const paused = w.status === "paused";
@@ -943,6 +945,9 @@ async function applyFreshSubscription(
   // Check 17 P3: a cancellation from Stripe's page keeps the plan on until a date; say when.
   const planEndsAt = planEndsAtFrom(sub);
   await notePlanEnd(w, planEndsAt);
+  // Check 17 P6: a downgrade in Stripe's page has the same autopilot effect as one in /admin.
+  // Done before the plan is written, so a failure here makes Stripe retry it.
+  await applyPlanChange(w.id, w.plan, plan, "stripe", now);
   if (w.status === "paused") {
     // Check 17 P1: a paused account stays paused, but what Stripe says is kept in paused_from,
     // so Resume takes it to where the payment stands now (never back to "active" after a

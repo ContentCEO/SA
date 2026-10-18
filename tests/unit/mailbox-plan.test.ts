@@ -11,7 +11,7 @@ import { ensureUserAndWorkspace } from "@/server/accounts";
 import { sendAccessLostAlerts } from "@/server/alerts";
 import { unsortedSweepMailboxes } from "@/server/assistant-status";
 import { runAutopilotSend } from "@/server/autopilot";
-import { applySubscription } from "@/server/billing";
+import { applySubscription, setStripeForTests } from "@/server/billing";
 import { planLookupKey } from "@/server/billing-rules";
 import { classifyPending } from "@/server/classification";
 import {
@@ -149,10 +149,21 @@ describe("a lower plan pauses the extra Gmail addresses", () => {
         metadata: { workspaceId },
         items: { data: [{ price: { lookup_key: planLookupKey(plan) } }] },
       }) as unknown as Stripe.Subscription;
-    await applySubscription(sub("solo"), NOW);
-    expect(await pausedIds()).toEqual([boxes[1]!, boxes[2]!].sort());
-    await applySubscription(sub("company"), NOW);
-    expect(await pausedIds()).toEqual([]);
+    // Check 17 P4: the webhook reads the subscription fresh; Stripe holds the latest payload.
+    let current: Stripe.Subscription | null = null;
+    setStripeForTests({
+      subscriptions: { retrieve: async () => current },
+    } as unknown as Stripe);
+    try {
+      current = sub("solo");
+      await applySubscription(current, NOW);
+      expect(await pausedIds()).toEqual([boxes[1]!, boxes[2]!].sort());
+      current = sub("company");
+      await applySubscription(current, NOW);
+      expect(await pausedIds()).toEqual([]);
+    } finally {
+      setStripeForTests(undefined);
+    }
   });
 
   it("an autopilot countdown on a paused address stops", async () => {

@@ -193,6 +193,35 @@ export async function clearAutopilotCountdowns(
 }
 
 /**
+ * Check 17 P6: what a plan change does, wherever it comes from (/admin or Stripe's billing
+ * page): dropping to a plan without autopilot switches every category back to draft and stops
+ * anything counting down; one content-free `plan_changed` row says who changed it. The Gmail
+ * limit is fitted separately (`fitMailboxesToPlan`). No-op when the plan didn't change.
+ */
+export async function applyPlanChange(
+  workspaceId: string,
+  from: Workspace["plan"],
+  to: Workspace["plan"],
+  by: "admin" | "stripe",
+  now: Date = new Date(),
+) {
+  if (from === to) return;
+  if (!to || !pricing.plans[to].autopilot) {
+    await db()
+      .update(rules)
+      .set({ mode: "draft", updatedAt: now })
+      .where(eq(rules.workspaceId, workspaceId));
+    await clearAutopilotCountdowns(workspaceId);
+  }
+  await db().insert(activityLog).values({
+    workspaceId,
+    actor: "squared_away",
+    action: "plan_changed",
+    detail: { by, from, to },
+  });
+}
+
+/**
  * Davi sets the plan by hand until Stripe does (Milestone 10). The plan
  * decides mailbox limits and whether autopilot can be unlocked. Dropping to a
  * plan without autopilot switches it off and stops anything counting down.
@@ -205,21 +234,7 @@ export async function setWorkspacePlan(
   const [w] = await db().select().from(workspaces).where(eq(workspaces.id, workspaceId));
   if (!w) throw new Error("Workspace not found.");
   await db().update(workspaces).set({ plan }).where(eq(workspaces.id, workspaceId));
-  if (!plan || !pricing.plans[plan].autopilot) {
-    await db()
-      .update(rules)
-      .set({ mode: "draft", updatedAt: now })
-      .where(eq(rules.workspaceId, workspaceId));
-    await clearAutopilotCountdowns(workspaceId);
-  }
-  await db()
-    .insert(activityLog)
-    .values({
-      workspaceId,
-      actor: "squared_away",
-      action: "plan_changed",
-      detail: { by: "admin", from: w.plan, to: plan },
-    });
+  await applyPlanChange(workspaceId, w.plan, plan, "admin", now);
   // A plan covering fewer Gmail addresses pauses the extra ones; a bigger one turns them back
   // on (Davi, 2026-10-16).
   await fitMailboxesToPlan(workspaceId, now);

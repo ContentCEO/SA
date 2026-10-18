@@ -5,7 +5,17 @@ import Stripe from "stripe";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { pricing } from "@/config/pricing";
 import type { Database } from "@/db";
-import { activityLog, appSettings, stripeEvents, workspaces, type Workspace } from "@/db/schema";
+import {
+  activityLog,
+  appSettings,
+  drafts,
+  rules,
+  stripeEvents,
+  threads,
+  workspaces,
+  type Workspace,
+} from "@/db/schema";
+import { saveConnectedMailbox } from "@/server/mailboxes";
 import { encryptSecret } from "@/lib/crypto";
 import { ensureUserAndWorkspace } from "@/server/accounts";
 import {
@@ -1177,5 +1187,68 @@ describe("Davi hears about billing changes; the owner gets one confirmation (Che
     expect((await reload()).status).toBe("past_due");
     expect(fetchSpy).toHaveBeenCalled();
     expect(logged).toHaveBeenCalledWith("billing_notice_failed", { error: "Error" });
+  });
+});
+
+describe("a plan change in Stripe applies the plan rules (Check 17 P6)", () => {
+  async function autopilotSetup() {
+    const mailboxId = (
+      await saveConnectedMailbox(await reload(), {
+        email: "owner@shop.com",
+        refreshToken: "rt",
+        grantedScopes: [],
+      })
+    ).id;
+    const [t] = await database
+      .insert(threads)
+      .values({ mailboxId, gmailThreadId: "g1", category: "scheduling", lastMessageAt: NOW })
+      .returning();
+    const [d] = await database
+      .insert(drafts)
+      .values({
+        threadId: t!.id,
+        mailboxId,
+        kind: "reply",
+        gmailDraftId: "gd1",
+        toAddress: "dana@example.com",
+        subject: "Re: visit",
+        body: "Tuesday works.",
+        originalBody: "Tuesday works.",
+        status: "pending",
+        reason: "r",
+        flags: [],
+        confidence: 95,
+        promptVersion: "draft.v1",
+        autoSendAt: new Date(NOW.getTime() + 600_000),
+      })
+      .returning();
+    await database
+      .insert(rules)
+      .values({ workspaceId: workspace.id, category: "scheduling", mode: "autopilot" });
+    return d!.id;
+  }
+  const draftRow = async (id: string) =>
+    (await database.select().from(drafts).where(eq(drafts.id, id)))[0]!;
+
+  it("Crew → Solo in Stripe's page: rules back to draft, countdowns cleared, logged by stripe", async () => {
+    await applyCheckoutCompleted(paidSession(), NOW);
+    const d = await autopilotSetup();
+    await applySubscription(subscription("active", "solo"), NOW);
+    expect((await reload()).plan).toBe("solo");
+    expect((await database.select().from(rules))[0]!.mode).toBe("draft");
+    expect((await draftRow(d)).autoSendAt).toBeNull();
+    const changed = (await database.select().from(activityLog)).filter(
+      (l) => l.action === "plan_changed",
+    );
+    expect(changed.at(-1)!.detail).toEqual({ by: "stripe", from: "crew", to: "solo" });
+  });
+
+  it("Solo → Crew leaves rules and countdowns alone", async () => {
+    await applyCheckoutCompleted(paidSession(), NOW);
+    await applySubscription(subscription("active", "solo"), NOW);
+    const d = await autopilotSetup();
+    await applySubscription(subscription("active", "crew"), NOW);
+    expect((await database.select().from(rules))[0]!.mode).toBe("autopilot");
+    expect((await draftRow(d)).autoSendAt).not.toBeNull();
   });
 });

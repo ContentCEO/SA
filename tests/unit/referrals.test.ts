@@ -106,6 +106,15 @@ function fakeStripe() {
       },
     },
     subscriptions: {
+      // Check 17 P4: the webhook reads each subscription fresh (not counted as a Stripe call).
+      retrieve: async (id: string) => {
+        const sub = subs.get(id);
+        if (!sub)
+          throw Object.assign(new Error("No such subscription"), { code: "resource_missing" });
+        return sub;
+      },
+      // Delete my account lists the customer's live subscriptions (the stored one is added).
+      list: async () => ({ data: [] }),
       cancel: async (id: string) => {
         calls.push({ method: "subscriptions.cancel", args: [id] });
         return { id };
@@ -148,6 +157,7 @@ beforeEach(async () => {
   calls = [];
   txns = [];
   failCreate = undefined;
+  subs.clear();
   setStripeForTests(fakeStripe());
   await database
     .insert(appSettings)
@@ -221,13 +231,18 @@ const paidSession = (workspaceId: string, over: Record<string, unknown> = {}) =>
     ...over,
   }) as unknown as Stripe.Checkout.Session;
 
-const subscription = (workspaceId: string, status: string) =>
-  ({
+/** What Stripe holds now for each subscription (the latest payload a test built). */
+const subs = new Map<string, Stripe.Subscription>();
+const subscription = (workspaceId: string, status: string) => {
+  const sub = {
     id: "sub_new",
     status,
     metadata: { workspaceId },
     items: { data: [{ price: { lookup_key: planLookupKey("solo") } }] },
-  }) as unknown as Stripe.Subscription;
+  } as unknown as Stripe.Subscription;
+  subs.set(sub.id, sub);
+  return sub;
+};
 
 /** The full happy path: pay (setup_paid, no credit yet), then the setup call (→ active). */
 async function payAndFinishSetup(referredId: string) {

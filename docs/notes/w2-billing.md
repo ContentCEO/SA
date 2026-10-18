@@ -47,3 +47,10 @@ For the integrator to fold into CLAUDE.md / docs/LAUNCH.md / docs/privacy-policy
   for past due / recovered / canceled moves the webhook makes; never paused or house accounts.
   The owner gets one "You're set up" email after a paid checkout that included setup
   (`setup-confirmation:<session id>`), plan name only.
+- **Plan changes (Check 17 P6):** `applyPlanChange(workspaceId, from, to, by)` in
+  workspace-lifecycle.ts holds the side effects (rules → draft and countdowns cleared when the new
+  plan lacks autopilot; `plan_changed { by, from, to }`). Called by `setWorkspacePlan` ("admin") and
+  by the webhook ("stripe") on a subscription's plan change and on a paid checkout's plan. Item 3
+  (over-limit lines, no automatic pausing) was **not built**: Davi's 2026-10-16 decision already
+  pauses the extra Gmail addresses on a lower plan (`fitMailboxesToPlan`, called from both paths),
+  so an account is never left over its limit.
