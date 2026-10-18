@@ -94,5 +94,13 @@ export const OPEN_SITE_HOSTS: readonly string[] = [
   "www.networx.com",
 ];
 
+/**
+ * Check 13 P2: the local part of a lead platform's per-customer relay address
+ * (reply+8x2k@messages.thumbtack.com): a reply there reaches one person. Anything else at a
+ * platform (leads@angi.com, pro@homeadvisor.com) is the platform itself. Works in JavaScript
+ * and in Postgres (`customerRobotSql`).
+ */
+export const LEAD_RELAY_LOCAL_PATTERN = "(^reply[+._-]|[+])";
+
 /** Everything else: the customer wrote to the owner themselves. */
 export const DIRECT_EMAIL = "Direct email";

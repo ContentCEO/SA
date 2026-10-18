@@ -46,3 +46,40 @@ address)` (`thread-sql.ts`, parity-tested); `crewThreadSql` = a thread whose eve
 - Privacy policy, "What you tell us": "Your crew's email addresses, if you list them, so their
   emails aren't treated as customers. They stay with your account until you remove them or
   delete your account."
+
+## Step 2: Check 13 P2 + Check 22 P7 + Check 41 P7 (robots, lead-site first contacts, job boards)
+
+Proposed `CLAUDE.md` decision text:
+
+- **Robots off Customers (Check 13 P2 + 41 P7, wave 2):** `isNoReplyAddress` also covers the
+  job boards on `MACHINE_SENDER_DOMAINS` (`sender-rules.ts`: indeed.com, indeedemail.com,
+  ziprecruiter.com, glassdoor.com, snagajob.com — the domain and its subdomains, any local part;
+  craigslist left out, its relays are people; `noReplySql` reads the same list), so drafts,
+  Customers, leads at risk and the scorecard skip them with no other change. Customers uses
+  `customerRobotSql` (`thread-sql.ts`), the SQL twin of `isCustomerRobot`
+  (`customer-robot-rules.ts`, pure, parity-tested): no-reply / job board, a website form's robot
+  (`looksLikeFormSender`'s `FORM_SENDER_DOMAINS` / `FORM_SENDER_LOCAL_PATTERN`, now exported),
+  a lead platform's own address that isn't a per-customer relay (`LEAD_RELAY_LOCAL_PATTERN` in
+  `config/lead-sources.ts`: `reply+…` or any `+`), or a receipt domain
+  (`RECEIPT_SENDER_DOMAINS`). Applied to the reply address, so a Squarespace lead with a usable
+  Reply-To is the person. `customerByKey` opens a page only for an email that is itself on the
+  list (`listedMessage`: inbox, not junk, not a robot, not a lead site's notice), so a junk or
+  robot email's id is a 404.
+- **First-time sender for lead sites and voicemail (Check 22 P7):** when the From is a no-reply
+  address or a lead platform and there is no usable Reply-To, "first time" is `"unknown"`
+  (counts as first time for the big-job rule; `applyOwnerRules` takes `boolean | "unknown"`). A
+  voicemail-by-email (`channel.kind === "phone"`) whose subject names a number is first time
+  unless an earlier voicemail from that service named the same number (`voicemailFirstTime`);
+  no number → `"unknown"`.
+
+For the Prompt versions group (classify.v6; this group writes no prompt files): the prompt still
+reads `yes` for `"unknown"` (classification passes `firstTimeSender !== false`). The intended
+change, in `emailBlock` of the next classify version, with `EmailInput.firstTimeSender: boolean |
+"unknown"`, and classification.ts passing the raw value:
+
+```ts
+First time this sender has emailed the business: ${e.firstTimeSender === "unknown" ? "unknown (a lead site or voicemail service; judge the person from the email)" : e.firstTimeSender ? "yes" : "no"}
+```
+
+Eval case to add with it (tests/evals/cases.ts): a second Thumbtack lead for a home addition from
+the same `leads@thumbtack.com` address, `large_request`, expected needs-you with the big-job reason.

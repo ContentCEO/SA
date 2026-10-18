@@ -245,6 +245,31 @@ test("customers: suppliers and towns are kept apart under their own links", asyn
   await expect(page.getByRole("link", { name: /Priya Shah/ })).toHaveCount(0);
 });
 
+test("a junk email's id is not a customer page (Check 13 P2)", async ({ page, context }) => {
+  const owner = await seedOwner({ mailbox: true, backfilled: true });
+  const gid = `j-${randomUUID().slice(0, 8)}`;
+  const [t] = await testDb
+    .insert(schema.threads)
+    .values({ mailboxId: owner.mailboxId!, gmailThreadId: gid, inInbox: true, category: "noise" })
+    .returning();
+  const [m] = await testDb
+    .insert(schema.messages)
+    .values({
+      threadId: t!.id,
+      mailboxId: owner.mailboxId!,
+      gmailMessageId: `${gid}-in`,
+      direction: "in",
+      fromAddress: "deals@shop-sale.com",
+      fromName: "Deals",
+      bodyText: "Sale",
+      sentAt: ago(1),
+    })
+    .returning();
+  await signInAs(context, owner);
+  const res = await page.goto(`/customers/${m!.id}`);
+  expect(res?.status()).toBe(404);
+});
+
 test("another owner's customer link is a 404", async ({ page, context }) => {
   const a = await seedOwner({ mailbox: true, backfilled: true });
   await quote(a.mailboxId!, { name: "Ann", from: "ann@c.com", inAgo: 1, summary: "Ann." });

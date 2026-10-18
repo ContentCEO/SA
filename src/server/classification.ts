@@ -51,7 +51,8 @@ import { junkShortcutBlocked, matchRules } from "./owner-sender-rule-rules";
 import { rulesForWorkspace } from "./sender-rule-store";
 import { channelName, channelOf } from "./channel-rules";
 import { crewContextFor } from "./crew";
-import { isCrewAddress, type CrewContext } from "./sender-rules";
+import { isCrewAddress, isNoReplyAddress, type CrewContext } from "./sender-rules";
+import { findUsPhones } from "@/lib/phone-numbers";
 
 /** Classify inbound mail from this far back on the first pass; everything new after that. */
 export const CLASSIFY_LOOKBACK_DAYS = 14;
@@ -390,7 +391,16 @@ export async function classifyPending(
               ),
             )
         : [{ n: 1 }];
-      const firstTimeSender = (prior?.n ?? 0) === 0 || (priorReply?.n ?? 0) === 0;
+      let firstTimeSender: boolean | "unknown" =
+        (prior?.n ?? 0) === 0 || (priorReply?.n ?? 0) === 0;
+      // Check 22 P7: a lead site or a voicemail service sends every lead from one robot
+      // address, so "an earlier email from this address" says nothing about the person. With
+      // no usable Reply-To it is "unknown" (judged as first time); a voicemail whose subject
+      // names the caller's number is first time unless an earlier voicemail named that number.
+      if (!replyTo && (isNoReplyAddress(m.fromAddress) || leadPlatformOf(m.fromAddress))) {
+        firstTimeSender =
+          channel?.kind === "phone" ? await voicemailFirstTime(mailboxId, m) : "unknown";
+      }
       // Check 38 P3: amounts the owner already wrote on this conversation (their own words,
       // quoted text cut; never an unsent draft or a forward to the crew). A customer repeating
       // the contract total isn't new money. Never logged.
@@ -423,7 +433,9 @@ export async function classifyPending(
             fromAddress: m.fromAddress,
             subject: m.subject,
             receivedAt: m.sentAt,
-            firstTimeSender,
+            // The prompt still reads yes / no ("unknown" reads as yes until classify.v6 gives
+            // it its own words, see docs/notes/w2-customers.md).
+            firstTimeSender: firstTimeSender !== false,
             threadSummary: thread?.summary ?? null,
             body: m.bodyText ?? m.snippet ?? "",
             earlier,
@@ -798,6 +810,33 @@ export async function classifyPending(
 
   const remaining = Math.max(0, newestPerThread.size - classified);
   return { classified, superseded, remaining: capped ? 0 : remaining, capped, codeOnly };
+}
+
+/**
+ * Check 22 P7: a voicemail-by-email whose subject names the caller ("New voicemail from (508)
+ * 555-1234") is from someone new unless an earlier voicemail from the same service named the
+ * same number. No number in the subject: "unknown". Subjects are read here only; never logged.
+ */
+async function voicemailFirstTime(
+  mailboxId: string,
+  m: { fromAddress: string | null; subject: string | null; sentAt: Date },
+): Promise<boolean | "unknown"> {
+  const [number] = findUsPhones(m.subject ?? "");
+  if (!number) return "unknown";
+  const earlier = await db()
+    .select({ subject: messages.subject })
+    .from(messages)
+    .where(
+      and(
+        eq(messages.mailboxId, mailboxId),
+        eq(messages.direction, "in"),
+        eq(messages.fromAddress, m.fromAddress ?? ""),
+        lt(messages.sentAt, m.sentAt),
+      ),
+    )
+    .orderBy(desc(messages.sentAt))
+    .limit(1000);
+  return !earlier.some((e) => findUsPhones(e.subject ?? "").includes(number));
 }
 
 /**

@@ -2,7 +2,14 @@ import "server-only";
 import { eq, isNotNull, or, sql, type SQL } from "drizzle-orm";
 import { EMAIL_TO_TEXT_DOMAINS, PHONE_SERVICES } from "@/config/phone-services";
 import { messages, threads } from "@/db/schema";
-import { NO_REPLY_LOCAL_PATTERN, PUBLIC_WEBMAIL_DOMAINS } from "./sender-rules";
+import { LEAD_RELAY_LOCAL_PATTERN, LEAD_SOURCES } from "@/config/lead-sources";
+import { RECEIPT_SENDER_DOMAINS } from "./money-rules";
+import { FORM_SENDER_DOMAINS, FORM_SENDER_LOCAL_PATTERN } from "./reply-address-rules";
+import {
+  MACHINE_SENDER_DOMAINS,
+  NO_REPLY_LOCAL_PATTERN,
+  PUBLIC_WEBMAIL_DOMAINS,
+} from "./sender-rules";
 
 /**
  * SQL pieces about a thread, shared by the quote tracker, the scorecard and the summaries.
@@ -264,7 +271,38 @@ export const requestReplySql = () =>
  * itself never leaves the database.
  */
 export const noReplySql = (address: SQL) =>
-  sql`(position('@' in coalesce(${address}, '')) > 1 and regexp_replace(lower(trim(${address})), '@[^@]*$', '') ~ ${NO_REPLY_LOCAL_PATTERN})`;
+  sql`(position('@' in coalesce(${address}, '')) > 1 and (regexp_replace(lower(trim(${address})), '@[^@]*$', '') ~ ${NO_REPLY_LOCAL_PATTERN} or ${hostIn(sql`regexp_replace(lower(trim(${address})), '^.*@', '')`, MACHINE_SENDER_DOMAINS)}))`;
+
+/** A host expression is one of these domains or a subdomain of one (`exact`: the host only). */
+const hostIn = (host: SQL, domains: readonly string[], exact = false) =>
+  domains.length
+    ? sql`(${sql.join(
+        domains.map((d) =>
+          exact ? sql`${host} = ${d}` : sql`(${host} = ${d} or ${host} like ${`%.${d}`})`,
+        ),
+        sql` or `,
+      )})`
+    : sql`false`;
+
+/**
+ * Check 13 P2: SQL twin of `isCustomerRobot` (customer-robot-rules.ts) for a reply-address
+ * expression: a no-reply or job-board sender, a website form's robot (no usable Reply-To was
+ * stored, or the address would be the person's), a lead platform's own address that isn't a
+ * per-customer relay, or a payment-receipt sender. WHERE clauses only.
+ */
+export const customerRobotSql = (address: SQL) => {
+  const a = sql`lower(trim(coalesce(${address}, '')))`;
+  const local = sql`regexp_replace(${a}, '@[^@]*$', '')`;
+  const host = sql`regexp_replace(${a}, '^.*@', '')`;
+  const leadHost = sql.join(
+    LEAD_SOURCES.map((s) => hostIn(host, s.domains, s.exact === true)),
+    sql` or `,
+  );
+  return sql`(position('@' in ${a}) > 1 and (${noReplySql(address)}
+    or ${hostIn(host, FORM_SENDER_DOMAINS)} or ${local} ~ ${FORM_SENDER_LOCAL_PATTERN}
+    or ((${leadHost}) and not ${local} ~ ${LEAD_RELAY_LOCAL_PATTERN})
+    or ${hostIn(host, RECEIPT_SENDER_DOMAINS)}))`;
+};
 
 /**
  * Check 22 P10 + 41 P6: SQL twin of `isCrewAddress` (sender-rules.ts) for an address

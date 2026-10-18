@@ -8,7 +8,7 @@ import {
   crewSql,
   messageReplyAddress,
   messageReplyName,
-  noReplySql,
+  customerRobotSql,
   sideEmailSql,
 } from "./thread-sql";
 import { listQuotes, type QuoteRow } from "./quotes";
@@ -55,6 +55,28 @@ const asDate = (v: unknown) => (v ? new Date(v as string | Date) : null);
 const notNoise = or(isNull(threads.category), ne(threads.category, "noise"));
 
 /**
+ * The inbound emails Customers is built from (Check 13 P2: one rule for the list and for the
+ * customer page, so a key that isn't on the list is a 404). Needs messages, threads and
+ * mailboxes in the query.
+ */
+function listedMessage(workspaceId: string) {
+  const addr = messageReplyAddress();
+  return and(
+    eq(mailboxes.workspaceId, workspaceId),
+    eq(messages.direction, "in"),
+    eq(threads.inInbox, true),
+    sql`${messages.fromAddress} is not null`,
+    // A robot is never a customer, or one portal or one website form shows up as one huge
+    // customer (round 2 A9, Check 13 P2): a no-reply or job-board sender, a form robot with no
+    // usable Reply-To, a lead platform's own address, a payment receipt.
+    sql`not ${customerRobotSql(addr)}`,
+    // Leads package: a lead website's or a phone service's sender isn't the customer.
+    isNull(threads.leadChannel),
+    notNoise,
+  );
+}
+
+/**
  * Everyone who has written to the owner's business inbox (noise left out),
  * built from mail we've already synced — nothing for the owner to type. A customer is the
  * address a reply goes to: a website form's Reply-To, so two people who used the same form
@@ -82,20 +104,7 @@ export async function listCustomers(workspaceId: string, now: Date = new Date())
     .from(messages)
     .innerJoin(threads, eq(threads.id, messages.threadId))
     .innerJoin(mailboxes, eq(mailboxes.id, messages.mailboxId))
-    .where(
-      and(
-        eq(mailboxes.workspaceId, workspaceId),
-        eq(messages.direction, "in"),
-        eq(threads.inInbox, true),
-        sql`${messages.fromAddress} is not null`,
-        // A robot (a lead portal's no-reply, a form with no Reply-To) is never a customer,
-        // or one portal shows up as one huge customer (round 2 A9).
-        sql`not ${noReplySql(addr)}`,
-        // Leads package: a lead website's or a phone service's sender isn't the customer.
-        isNull(threads.leadChannel),
-        notNoise,
-      ),
-    )
+    .where(listedMessage(workspaceId))
     .groupBy(addr)
     .orderBy(desc(max(threads.lastMessageAt)))
     .limit(500);
@@ -146,17 +155,14 @@ export type CustomerThread = {
 /** Look a customer up by the opaque key from `listCustomers`. Scoped to the workspace. */
 export async function customerByKey(workspaceId: string, key: string) {
   if (!/^[0-9a-f-]{36}$/i.test(key)) return null;
+  // Check 13 P2: only a key the list could have given out — an email that is itself on
+  // Customers (not junk, not a robot, not a lead site's notice) — opens a page.
   const [m] = await db()
     .select({ address: messageReplyAddress() })
     .from(messages)
+    .innerJoin(threads, eq(threads.id, messages.threadId))
     .innerJoin(mailboxes, eq(mailboxes.id, messages.mailboxId))
-    .where(
-      and(
-        eq(messages.id, key),
-        eq(mailboxes.workspaceId, workspaceId),
-        eq(messages.direction, "in"),
-      ),
-    );
+    .where(and(eq(messages.id, key), listedMessage(workspaceId)));
   return m?.address ? customerDetail(workspaceId, m.address) : null;
 }
 

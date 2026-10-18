@@ -15,6 +15,21 @@ export const NO_REPLY_LOCAL_PATTERN =
 const NO_REPLY_LOCAL = new RegExp(NO_REPLY_LOCAL_PATTERN);
 
 /**
+ * Check 41 P7: job boards, whose notices ("New application: Landscape Laborer") come from
+ * addresses with no no-reply word (indeedapply@indeed.com, alerts@ziprecruiter.com). The whole
+ * domain and its subdomains, any local part; a look-alike (indeedhomes.com) is a person.
+ * Craigslist is left out: its relay addresses are real people. The SQL twin (`noReplySql`)
+ * reads this same list.
+ */
+export const MACHINE_SENDER_DOMAINS: readonly string[] = [
+  "indeed.com",
+  "indeedemail.com",
+  "ziprecruiter.com",
+  "glassdoor.com",
+  "snagajob.com",
+];
+
+/**
  * noreply@thumbtack.com, do-not-reply@…, notifications@…, mailer-daemon@…, and the robots
  * round 2 found treated as people (review A9): voice-noreply@google.com,
  * form-submission@squarespace.info, wordpress@site.com, bounces+…@, postmaster@. A no-reply
@@ -24,6 +39,8 @@ export function isNoReplyAddress(address: string | null | undefined): boolean {
   const s = (address ?? "").trim().toLowerCase();
   const at = s.lastIndexOf("@");
   if (at <= 0) return false;
+  const domain = s.slice(at + 1);
+  if (MACHINE_SENDER_DOMAINS.some((d) => domain === d || domain.endsWith(`.${d}`))) return true;
   return NO_REPLY_LOCAL.test(s.slice(0, at));
 }
 

@@ -113,7 +113,7 @@ export const REPOINTED_FLAG =
  * Hosts that send website-form and booking-request emails from a robot address, with the
  * customer in Reply-To. A short list on purpose: anything else is worded as a person.
  */
-const FORM_SENDER_DOMAINS = [
+export const FORM_SENDER_DOMAINS: readonly string[] = [
   "squarespace.info",
   "squarespace.com",
   "wix.com",
@@ -125,9 +125,13 @@ const FORM_SENDER_DOMAINS = [
   "getjobber.com",
   "housecallpro.com",
 ];
-/** A form robot's local part: wordpress@site.com, form-submission@…, webform@…, forms@…. */
-const FORM_SENDER_LOCAL =
-  /^(wordpress|webmaster|forms?|form[-_.]?submissions?|web-?forms?|submissions?|website)([+._-]|$)/;
+/**
+ * A form robot's local part: wordpress@site.com, form-submission@…, webform@…, forms@…. Written
+ * so the same pattern works in JavaScript and in Postgres (`customerRobotSql`, Check 13 P2).
+ */
+export const FORM_SENDER_LOCAL_PATTERN =
+  "^(wordpress|webmaster|forms?|form[-_.]?submissions?|web-?forms?|submissions?|website)([+._-]|$)";
+const FORM_SENDER_LOCAL = new RegExp(FORM_SENDER_LOCAL_PATTERN);
 
 /**
  * Does this From look like a website form's robot (so a reply to it reaches nobody), rather

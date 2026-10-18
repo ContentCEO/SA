@@ -288,7 +288,8 @@ export function prepareBody(body: string): string {
 export function applyOwnerRules(
   m: ModelClassification,
   ctx: {
-    firstTimeSender: boolean;
+    /** Check 22 P7: "unknown" (a lead site or voicemail robot) counts as first time. */
+    firstTimeSender: boolean | "unknown";
     senderIsVip: boolean;
     /** Ideas H3: a company-wide "Always needs me" rule matched the sender or reply address. */
     senderNeedsMe?: boolean;
@@ -390,7 +391,7 @@ export function applyOwnerRules(
     [ctx.senderNeedsMe === true, "sender_rule", SENDER_NEEDS_ME_REASON],
     // Check 38 P3: a new customer's big job reads better than "Mentions more than $2,500".
     [
-      ctx.firstTimeSender && m.signals.large_request,
+      ctx.firstTimeSender !== false && m.signals.large_request,
       "big_new_job",
       "New customer asking about a big job.",
     ],
