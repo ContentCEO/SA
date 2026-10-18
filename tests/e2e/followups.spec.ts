@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { eq } from "drizzle-orm";
 import * as schema from "../../src/db/schema";
+import { announced } from "./announcer";
 import { seedOwner, seedQueue, signInAs, testDb } from "./support";
 
 test("settings: follow-ups can be switched off and the wait changed", async ({ page, context }) => {
@@ -78,4 +79,29 @@ test("queue: a nudge is labelled as a follow-up", async ({ page, context }) => {
   const card = page.getByRole("article", { name: "Draft reply to Priya" });
   await expect(card).toContainText("Follow-up · Quote request");
   await expect(card).toContainText("Gentle nudge.");
+});
+
+/** Check 32 P5: after a self-saving switch saves, focus is back on it and the result is read. */
+test("Space on the Follow-ups switch saves, keeps focus there and reads 'Saved.'", async ({
+  page,
+  context,
+}, info) => {
+  test.skip(info.project.name !== "desktop", "keyboard check");
+  const owner = await seedOwner({ mailbox: true, backfilled: true });
+  await signInAs(context, owner);
+  await page.goto("/settings/follow-ups");
+  await page.waitForLoadState("networkidle");
+  const toggle = () => page.getByRole("main").getByLabel("Nudge quotes and invoices that go quiet");
+  await toggle().focus();
+  await page.keyboard.press("Space");
+  await expect(page).toHaveURL(/\/settings\/follow-ups\?done=saved$/);
+  await expect(toggle()).not.toBeChecked();
+  await expect(toggle()).toBeFocused();
+  await expect.poll(async () => (await announced(page)).polite).toContain("Saved.");
+
+  // Turn it back (same screen, same notice): focus stays on the switch.
+  await page.keyboard.press("Space");
+  await expect(toggle()).toBeChecked();
+  await expect(toggle()).toBeFocused();
+  await expect.poll(async () => (await announced(page)).polite).toContain("Saved.");
 });

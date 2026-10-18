@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import localFont from "next/font/local";
 import "./globals.css";
+import { Announcer } from "@/components/app/announcer";
 import { ServiceWorker } from "@/components/app/service-worker";
 import { appUrl } from "@/lib/app-url";
 
@@ -76,6 +77,8 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
     >
       <body className="flex min-h-full flex-col">
         {children}
+        {/* Check 32 P5: the live region every Notice reads out through. */}
+        <Announcer />
         <ServiceWorker />
       </body>
     </html>
