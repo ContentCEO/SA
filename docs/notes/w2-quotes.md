@@ -113,3 +113,50 @@ For the integrator to fold into CLAUDE.md (Decisions) and the other shared files
   something we can't know ("within 10 days of completion") → "No due date". `dueLabel` also
   returns `day`: "Due Oct 31" / "Was due Oct 10" (local calendar date), shown under the label on
   the Money card.
+- **Check 12 P8 (reminder / reply waiting on the Money card):** `MoneyRow` gains
+  `pendingDraftId`, `customerWroteLast` and `canDraftReminder`. A card with a pending draft says
+  "A reply to Linda is waiting in your Queue." with a 44px "See it" link to `/queue#t-<thread>`;
+  otherwise, when the owner wrote last, a nudge is left and the thread is an invoice thread that
+  doesn't need the owner, "Draft a reminder" → `draftReminderAction` (draft rate limit) →
+  `draftInvoiceReminder` (money.ts; owner-scoped, read-only refused, only a row Money owed lists
+  as owed) → `/queue?done=drafted`. Read-only accounts see neither.
+  **Adapted:** the spec says the owner draft action with trigger "owner", but that path refuses
+  when the owner wrote last (`owner_replied_last`) and doesn't re-check paid / not owed. So the
+  reminder is written by the follow-up drafter (`trigger: "followup"`), which re-checks paid,
+  not owed, a bill the owner owes, a decided quote, needs-you, the two-nudge cap, a waiting
+  draft and away mode. It is a nudge: it counts toward the two per thread, ever. Nothing sends
+  without Send reply. (A Davi question below.)
+- **Check 12 P9 (no big $0):** with no owed rows the box says "No open invoices found" and "We
+  look at invoice emails from the last two weeks of sorting and everything new." (from
+  `CLASSIFY_LOOKBACK_DAYS`); the dollar total shows only with at least one owed row, with
+  "Counted from your email, not your books." under it.
+
+## Questions for Davi
+
+- **Reminders count as nudges (Check 12 P8):** "Draft a reminder" on Money uses the follow-up
+  writer, so it counts toward the two nudges per thread, ever, and the button hides once both are
+  used. Built that way so the "max 2 nudges" promise holds. Is that what you want, or should an
+  owner-tapped reminder not count?
+- **Several prices in one reply (Check 11 P2):** when the owner's reply has more than one price
+  and none is marked as the total, we take the last one and show "Check amount" on the card (and
+  keep it out of price memory). Two "Option A / Option B" prices give no amount (the owner types
+  it on Won). OK?
+- **Supplier lookalikes (Check 12 P4):** a bill with no clear direction is kept off Money owed
+  when the same business domain has a supplier thread or a "Not owed to me" tap. On Gmail/Yahoo
+  addresses only the exact same address counts. OK?
+
+## Integration notes
+
+- Migrations: `0044_quote_amount_note` (step 2) and `0045_quote_amount_from` (step 3), both
+  additive; renumber at merge.
+- No prompt files changed. No classify-prompt lines needed for the Prompt versions group.
+- Two eval cases added in `tests/evals/cases.ts` (Prompt versions group also edits it).
+- `src/server/followups.ts` (Follow-ups group) — one line: the `bill_direction` filter became
+  `not ${billOwedByOwnerSql()}`.
+- `src/server/thread-sql.ts`: `quoteThreadSql` rewritten (raw SQL now), `quoteRequestSql` is an
+  alias of it; new `billOwedByOwnerSql` / `senderHasSupplierThreadSql` /
+  `senderMarkedNotOwedSql`. Customers group reads `listQuotes`.
+- `src/components/marketing/home-copy.ts` (Homepage words): `stageWords` uses semicolons.
+- `src/jobs/functions.ts`: one new step in `purge-expired-bodies`.
+- `src/server/activity.ts`: one new `describeActivity` case (`quote_amount_changed`).
+- `tests/unit/leads-at-risk.test.ts`: one expectation now "replied" (Check 11 P6).

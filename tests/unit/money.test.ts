@@ -19,7 +19,13 @@ import {
 import { threadsToFollowUp } from "@/server/followups";
 import { ReadOnlyError } from "@/server/lifecycle";
 import { saveConnectedMailbox } from "@/server/mailboxes";
-import { autoMarkInvoicePaid, listMoney, setInvoiceNotOwed, setInvoicePaid } from "@/server/money";
+import {
+  autoMarkInvoicePaid,
+  draftInvoiceReminder,
+  listMoney,
+  setInvoiceNotOwed,
+  setInvoicePaid,
+} from "@/server/money";
 import {
   billOwedByOwner,
   carryInvoiceFacts,
@@ -1670,6 +1676,74 @@ describe("Check 12 P5: invoices with no amount yet", () => {
       .set({ bodyText: "I'll pay the $2,000 Friday." })
       .where(and(eq(messages.threadId, t), eq(messages.direction, "in")));
     expect((await listMoney(workspaceId, NOW)).owed[0]).toMatchObject({ amountCents: null });
+  });
+});
+
+describe("Check 12 P8: a reminder from the Money card", () => {
+  beforeEach(setupDb, DB_HOOK_TIMEOUT);
+  const reminder = {
+    body: "Hi Dana,\n\nJust a reminder about the invoice. Thanks, Davi",
+    reason: "Invoice unpaid. Gentle reminder.",
+    flags: [],
+    confidence: 0.9,
+    used_facts: [],
+  };
+
+  it("each row says whether a reply is waiting, who wrote last, and whether a reminder can be drafted", async () => {
+    const waiting = await invoiceThread({ invoice: { amount: 640 } });
+    const d = await pendingNudge(waiting);
+    const quiet = await invoiceThread({ from: "sam@customer.com", invoice: { amount: 300 } });
+    const theyWrote = await invoiceThread({
+      from: "kim@customer.com",
+      invoice: { amount: 200 },
+      inAgo: 1,
+      outAgo: 3,
+    });
+    const by = Object.fromEntries(
+      (await listMoney(workspaceId, NOW)).owed.map((r) => [r.threadId, r]),
+    );
+    expect(by[waiting]).toMatchObject({ pendingDraftId: d.id, canDraftReminder: false });
+    expect(by[quiet]).toMatchObject({
+      pendingDraftId: null,
+      customerWroteLast: false,
+      canDraftReminder: true,
+    });
+    expect(by[theyWrote]).toMatchObject({ customerWroteLast: true, canDraftReminder: false });
+  });
+
+  it("drafts a pending reminder (no send), scoped to the workspace, refused when read-only or paid", async () => {
+    const t = await invoiceThread({ invoice: { amount: 300 } });
+    const writer = new FakeWriter();
+    const fake = fakeTransport([reminder]);
+    setModelTransportForTests(fake.transport);
+    const { workspace: other } = await ensureUserAndWorkspace({ email: "other@shop.com" });
+    expect(await draftInvoiceReminder(other.id, t, NOW, { writerFor: () => writer })).toBe(
+      "not_found",
+    );
+    expect(await draftInvoiceReminder(workspaceId, t, NOW, { writerFor: () => writer })).toBe(
+      "created",
+    );
+    const [row] = await database.select().from(drafts).where(eq(drafts.threadId, t));
+    expect(row).toMatchObject({ kind: "followup", status: "pending" });
+    expect(writer.calls).toEqual(["createDraft"]);
+    // A second tap: one is already waiting.
+    expect(await draftInvoiceReminder(workspaceId, t, NOW, { writerFor: () => writer })).toBe(
+      "already_pending",
+    );
+    // Paid → not owed any more.
+    const paid = await invoiceThread({ from: "p@customer.com", invoice: { amount: 50 } });
+    await setInvoicePaid(workspaceId, paid, true, NOW, { writerFor: () => writer });
+    expect(await draftInvoiceReminder(workspaceId, paid, NOW, { writerFor: () => writer })).toBe(
+      "not_owed",
+    );
+    await database
+      .update(workspaces)
+      .set({ status: "evaluation_expired" })
+      .where(eq(workspaces.id, workspaceId));
+    await expect(
+      draftInvoiceReminder(workspaceId, t, NOW, { writerFor: () => writer }),
+    ).rejects.toBeInstanceOf(ReadOnlyError);
+    expect(fake.calls).toHaveLength(1);
   });
 });
 

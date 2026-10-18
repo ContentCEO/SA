@@ -10,12 +10,23 @@ import {
   threads,
   workspaces,
 } from "@/db/schema";
-import { expirePendingNudge, flagPendingNudge, unflagPendingNudge, type DraftDeps } from "./drafts";
+import {
+  createDraftForThread,
+  expirePendingNudge,
+  flagPendingNudge,
+  FOLLOWUP_CATEGORIES,
+  MAX_FOLLOWUPS,
+  unflagPendingNudge,
+  type CreateOutcome,
+  type DraftDeps,
+} from "./drafts";
 import { effectiveStatus, jobsAllowed, ReadOnlyError } from "./lifecycle";
 import { readOwnerAmount } from "./quote-rules";
 import {
   customerAddressSql,
   customerNameSql,
+  lastInSql,
+  lastOutSql,
   notDraftMessage,
   notDraftSql,
   sideEmailSql,
@@ -58,6 +69,16 @@ export type MoneyRow = {
   paidAt: Date | null;
   paidSource: "owner" | "auto" | "not_owed" | null;
   lastMessageAt: Date | null;
+  /** Check 12 P8: a reply already waiting in the Queue on this thread ("See it"), or null. */
+  pendingDraftId: string | null;
+  /** Check 12 P8: the customer wrote last (so a reply, not a reminder, is what's due). */
+  customerWroteLast: boolean;
+  /**
+   * Check 12 P8: "Draft a reminder" can work: the owner wrote last, nothing is waiting, a nudge
+   * is left (of two, ever) and the thread is one nudges are written for (an invoice thread that
+   * doesn't need the owner). The drafter re-checks all of it.
+   */
+  canDraftReminder: boolean;
 };
 
 const DAY_MS = 86_400_000;
@@ -117,6 +138,14 @@ async function moneyThreads(
       paidSource: threads.invoicePaidSource,
       followupCount: threads.followupCount,
       lastMessageAt: threads.lastMessageAt,
+      category: threads.category,
+      needsOwner: threads.needsOwner,
+      // Check 12 P8: the Queue card on this thread, and who wrote last (the shared rule).
+      pendingDraftId: sql<
+        string | null
+      >`(select d.id from drafts d where d.thread_id = ${threads.id} and d.status = 'pending' order by d.created_at desc limit 1)`,
+      lastIn: lastInSql(),
+      lastOut: lastOutSql(),
       // As a reply addresses them (a form's Reply-To, else From); the sender is for the
       // receipt check (a receipt's Reply-To is the merchant).
       customerName: customerNameSql(),
@@ -198,7 +227,57 @@ function toRow(
     paidAt: asDate(r.paidAt),
     paidSource: r.paidSource ?? null,
     lastMessageAt: asDate(r.lastMessageAt),
+    pendingDraftId: r.pendingDraftId ?? null,
+    customerWroteLast: customerWroteLast(r),
+    canDraftReminder:
+      !r.pendingDraftId &&
+      !customerWroteLast(r) &&
+      r.lastOut != null &&
+      r.followupCount < MAX_FOLLOWUPS &&
+      !r.needsOwner &&
+      (FOLLOWUP_CATEGORIES as readonly string[]).includes(r.category ?? ""),
   };
+}
+
+function customerWroteLast(r: { lastIn: unknown; lastOut: unknown }): boolean {
+  const lastIn = asDate(r.lastIn);
+  const lastOut = asDate(r.lastOut);
+  return lastIn != null && (lastOut == null || lastIn > lastOut);
+}
+
+/**
+ * Check 12 P8: "Draft a reminder" on a Money owed card — the owner's tap, so it runs now. It
+ * only drafts: the reminder lands in the Queue like every draft and nothing sends without
+ * Send reply. Written by the follow-up drafter (a reminder is a nudge, and counts toward the
+ * two per thread, ever), which re-checks everything: paid or not owed, a bill the owner owes,
+ * a decided quote, needs-you, the cap, a draft already waiting, away mode, a lost or paused
+ * Gmail, read-only. Scoped to the owner's workspace and to a row Money owed lists as owed.
+ */
+export async function draftInvoiceReminder(
+  workspaceId: string,
+  threadId: string,
+  now: Date = new Date(),
+  deps: DraftDeps = {},
+): Promise<
+  | "created"
+  | "not_owed"
+  | "reconnect_needed"
+  | Extract<CreateOutcome, { status: "skipped" }>["reason"]
+> {
+  const t = await ownedThread(workspaceId, threadId);
+  if (!t) return "not_found";
+  if (!jobsAllowed(t.workspace, now)) throw new ReadOnlyError(effectiveStatus(t.workspace, now));
+  const open = await openInvoices(workspaceId, "", now);
+  if (!open.some((o) => o.threadId === threadId)) return "not_owed";
+  const r = await createDraftForThread(threadId, {
+    ...deps,
+    trigger: "followup",
+    now: () => now,
+    aiMode: deps.aiMode ?? "interactive",
+  });
+  if (r.status === "created") return "created";
+  if (r.status === "reconnect_needed") return "reconnect_needed";
+  return r.reason;
 }
 
 /**

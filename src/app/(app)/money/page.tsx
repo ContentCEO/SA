@@ -7,6 +7,8 @@ import { Button } from "@/components/ui/button";
 import { gmailThreadLink } from "@/lib/gmail-link";
 import { relativeTime } from "@/lib/relative-time";
 import { cn } from "@/lib/utils";
+import { numberWord } from "@/lib/number-words";
+import { CLASSIFY_LOOKBACK_DAYS } from "@/server/classification";
 import { MAX_FOLLOWUPS } from "@/server/drafts";
 import { isReadOnly } from "@/server/lifecycle";
 import { listMoney, type MoneyRow } from "@/server/money";
@@ -14,6 +16,7 @@ import { threadOffers, type ThreadOffers } from "@/server/offers";
 import { formatCents } from "@/server/quote-rules";
 import { requireOwner } from "@/server/session";
 import {
+  draftReminderAction,
   markInvoicePaidAction,
   notOwedAction,
   putBackAction,
@@ -29,6 +32,15 @@ const done: Record<string, string> = {
   restored: "Put back on the list.",
 };
 const errors: Record<string, string> = {
+  // Check 12 P8: "Draft a reminder" (fixed codes from draftReminderAction).
+  reminder_exists: "A reply on that one is already waiting in your Queue.",
+  reminder_cap: "That one has had both nudges already, so we won't write another.",
+  reminder_away: "Away mode is on, so reminders wait until you're back.",
+  reminder_failed: "We couldn't write that reminder. Try again in a minute.",
+  ai_busy: "Writing is slow right now. Try again in a minute.",
+  busy: "That's a lot of drafts for one hour. Try again a little later.",
+  reconnect: "Gmail needs reconnecting before we can write drafts. The note at the top says how.",
+  paused: "That Gmail address is paused on your plan, so nothing is drafted from it.",
   readonly:
     "Your account is read-only right now, so nothing was changed. The note at the top says why.",
   unknown: "That didn't work. Refresh and try again.",
@@ -41,6 +53,7 @@ const nameOf = (r: MoneyRow) => r.customerName ?? r.customerAddress ?? "Someone"
  * names and amounts never go in an aria-label, which error reports copy from taps (A9).
  */
 function OwedCard({ r, readOnly }: { r: MoneyRow; readOnly: boolean }) {
+  const first = nameOf(r).split(/[\s,@]+/)[0] || "them";
   const pastDue = (r.due.daysPastDue ?? 0) > 0;
   const nameId = `owed-${r.threadId}`;
   return (
@@ -87,6 +100,26 @@ function OwedCard({ r, readOnly }: { r: MoneyRow; readOnly: boolean }) {
       <p className="text-sm opacity-80">
         Nudges used: {Math.min(r.nudgesUsed, MAX_FOLLOWUPS)} of {MAX_FOLLOWUPS}
       </p>
+      {readOnly ? null : r.pendingDraftId ? (
+        // Check 12 P8: a reply is already waiting — one tap to it.
+        <div className="flex flex-col gap-1">
+          <p className="font-semibold">A reply to {first} is waiting in your Queue.</p>
+          <Link
+            href={`/queue#t-${r.threadId}`}
+            className="inline-flex min-h-tap items-center justify-center rounded-lg border font-semibold"
+          >
+            See it
+          </Link>
+        </div>
+      ) : r.canDraftReminder ? (
+        // Check 12 P8: drafts only — it waits in the Queue for Send reply.
+        <form action={draftReminderAction}>
+          <input type="hidden" name="threadId" value={r.threadId} />
+          <Button type="submit" variant="outline" className="w-full">
+            Draft a reminder
+          </Button>
+        </form>
+      ) : null}
       {readOnly ? null : (
         <div className="flex flex-col gap-2">
           <form action={markInvoicePaidAction}>
@@ -186,6 +219,11 @@ export default async function MoneyPage(props: PageProps<"/money">) {
   );
   const pastDue = owed.filter((r) => (r.due.daysPastDue ?? 0) > 0).length;
   const noAmount = owed.filter((r) => !r.amountCents).length;
+  const lookbackDays: number = CLASSIFY_LOOKBACK_DAYS;
+  const weeks = lookbackDays / 7;
+  const lookback = Number.isInteger(weeks)
+    ? `${numberWord(weeks)} week${weeks === 1 ? "" : "s"}`
+    : `${lookbackDays} days`;
 
   return (
     <>
@@ -200,14 +238,25 @@ export default async function MoneyPage(props: PageProps<"/money">) {
         <h2 id="owed-total" className="text-lg font-black">
           Owed to you
         </h2>
-        <p className="text-4xl font-black">{formatCents(totalOwedCents)}</p>
-        <p className="text-muted-foreground">
-          {owed.length === 0
-            ? "Nothing open."
-            : `${owed.length} invoice${owed.length === 1 ? "" : "s"}${
+        {owed.length === 0 ? (
+          // Check 12 P9: never a big "$0" — it only means we haven't found any yet.
+          <>
+            <p className="text-2xl font-black">No open invoices found</p>
+            <p className="text-muted-foreground">
+              We look at invoice emails from the last {lookback} of sorting and everything new.
+            </p>
+          </>
+        ) : (
+          <>
+            <p className="text-4xl font-black">{formatCents(totalOwedCents)}</p>
+            <p className="text-sm font-semibold">Counted from your email, not your books.</p>
+            <p className="text-muted-foreground">
+              {`${owed.length} invoice${owed.length === 1 ? "" : "s"}${
                 noAmount ? `, ${noAmount} with no amount yet` : ""
               }${pastDue ? `, ${pastDue} past due` : ""}. Oldest due first.`}
-        </p>
+            </p>
+          </>
+        )}
       </section>
 
       {owed.length ? (
