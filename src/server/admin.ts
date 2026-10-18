@@ -7,6 +7,7 @@ import {
   gte,
   ilike,
   inArray,
+  isNull,
   max,
   or,
   sql,
@@ -26,6 +27,7 @@ import {
   tradeEnum,
   usage,
   users,
+  waitlist,
   workspaces,
 } from "@/db/schema";
 import { mailboxOn } from "./mailbox-plan-rules";
@@ -480,6 +482,35 @@ export async function inviteOwner(input: {
     .onConflictDoNothing()
     .returning({ email: invites.email });
   return row ? "invited" : "already_invited";
+}
+
+/**
+ * Check 16 P7: take back an invite before it's used — only while it was never accepted and no
+ * account has that email. A waitlist entry it came from offers Invite again.
+ */
+export async function removeInvite(
+  email: string,
+): Promise<"removed" | "already_signed_in" | "not_found"> {
+  const address = normalizeEmail(email);
+  return db().transaction(async (tx) => {
+    const [invite] = await tx
+      .select({ acceptedAt: invites.acceptedAt })
+      .from(invites)
+      .where(eq(invites.email, address))
+      .for("update");
+    if (!invite) return "not_found";
+    const [user] = await tx
+      .select({ id: users.id })
+      .from(users)
+      .where(sql`lower(${users.email}) = ${address}`);
+    if (invite.acceptedAt || user) return "already_signed_in";
+    await tx.delete(invites).where(and(eq(invites.email, address), isNull(invites.acceptedAt)));
+    await tx
+      .update(waitlist)
+      .set({ invitedAt: null })
+      .where(sql`lower(${waitlist.email}) = ${address}`);
+    return "removed";
+  });
 }
 
 /**

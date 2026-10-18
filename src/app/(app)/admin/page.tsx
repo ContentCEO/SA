@@ -25,6 +25,7 @@ import { modelsDownToday } from "@/server/model-alerts";
 import { isAdminEmail } from "@/server/admin";
 import { ADMIN_MOVES, canMakeMove, type AdminMove } from "@/server/lifecycle";
 import {
+  cardNotice,
   needsYou,
   NOTHING_NEEDS_YOU,
   ORPHAN_PLAN_LINE,
@@ -42,6 +43,7 @@ import {
   connectStripeAction,
   inviteAction,
   inviteFromWaitlistAction,
+  removeInviteAction,
   testUserAddedAction,
   resetTestPaymentsAction,
   setPlanAction,
@@ -151,6 +153,8 @@ const done: Record<string, string> = {
     "Invited, and emailed them the sign-in link. Add them as a Google test user too (see the list under Invite an owner).",
   test_user: "Marked as a Google test user.",
   already_invited: "That address was already invited.",
+  invite_removed: "Invite taken back. That address can't sign in now.",
+  invite_gone: "That invite was already gone.",
 };
 /** Where Google Cloud lists an app's test users (Google Auth Platform → Audience). */
 const GOOGLE_AUDIENCE_URL = "https://console.cloud.google.com/auth/audience";
@@ -163,6 +167,7 @@ const errors: Record<string, string> = {
     "That account pays through Stripe, so its plan follows the subscription. Change it in Stripe.",
   move: "That change isn't allowed from the account's current status. Refresh and look again.",
   invite: "That doesn't look like an email address.",
+  invite_used: "They've already signed in, so that invite can't be taken back.",
   growth_only: growthCopy.admin.growthOnlyError,
   unknown: "That didn't work. Refresh and try again.",
 };
@@ -353,7 +358,16 @@ function Stat({ label, value }: { label: string; value: React.ReactNode }) {
   );
 }
 
-function WorkspaceCard({ w, now }: { w: AdminRow; now: Date }) {
+function WorkspaceCard({
+  w,
+  now,
+  notice,
+}: {
+  w: AdminRow;
+  now: Date;
+  /** Check 16 P6: the notice for a move Davi just made on this card. */
+  notice?: { text: string; strong: boolean } | null;
+}) {
   const own = isAdminEmail(w.ownerEmail);
   const allowed = (Object.keys(ADMIN_MOVES) as AdminMove[]).filter(
     (m) =>
@@ -413,6 +427,7 @@ function WorkspaceCard({ w, now }: { w: AdminRow; now: Date }) {
           {statusLabel[w.status]}
         </span>
       </header>
+      {notice ? <Notice strong={notice.strong}>{notice.text}</Notice> : null}
       <dl className="grid grid-cols-2 gap-x-4 gap-y-2">
         <Stat label="Trade" value={isTrade(w.trade) ? tradeLabel[w.trade] : "—"} />
         <Stat label="Plan" value={planName(w.plan, pricing.plans)} />
@@ -607,10 +622,16 @@ export default async function AdminPage(props: PageProps<"/admin">) {
   const waitlistError = WAITLIST_GROWTH_ERRORS[code(params.error, "wl_") ?? ""];
   // Payment messages show inside the Payments section (the page scrolls there), not at the top.
   const isStripe = (k: unknown) => typeof k === "string" && k.startsWith("stripe");
+  // Check 16 P6: a move's notice shows inside the card it changed, naming it (not at the top).
+  const onCard = cardNotice(params, rows, pricing.plans);
   const doneMsg =
-    typeof params.done === "string" && !isStripe(params.done) ? done[params.done] : undefined;
+    !onCard && typeof params.done === "string" && !isStripe(params.done)
+      ? done[params.done]
+      : undefined;
   const errorMsg =
-    typeof params.error === "string" && !isStripe(params.error) ? errors[params.error] : undefined;
+    !onCard && typeof params.error === "string" && !isStripe(params.error)
+      ? errors[params.error]
+      : undefined;
   const stripeDone =
     params.done === "stripe_test_reset"
       ? testPayments && testPayments.reset !== null
@@ -772,16 +793,29 @@ export default async function AdminPage(props: PageProps<"/admin">) {
         {rows.map((w) =>
           isAdminEmail(w.ownerEmail) ? (
             // Check 16 P3: Davi's own test account folds to one line; its moves still work.
-            <details key={w.workspaceId} className="rounded-xl border">
+            <details
+              key={w.workspaceId}
+              className="rounded-xl border"
+              open={onCard?.workspaceId === w.workspaceId}
+            >
               <summary className="flex min-h-tap cursor-pointer items-center px-4 font-semibold">
                 Your test account: {w.businessName || w.ownerEmail} · {statusLabel[w.status]}
               </summary>
               <div className="p-2">
-                <WorkspaceCard w={w} now={now} />
+                <WorkspaceCard
+                  w={w}
+                  now={now}
+                  notice={onCard?.workspaceId === w.workspaceId ? onCard : null}
+                />
               </div>
             </details>
           ) : (
-            <WorkspaceCard key={w.workspaceId} w={w} now={now} />
+            <WorkspaceCard
+              key={w.workspaceId}
+              w={w}
+              now={now}
+              notice={onCard?.workspaceId === w.workspaceId ? onCard : null}
+            />
           ),
         )}
         {total > ADMIN_PAGE_SIZE ? (
@@ -926,7 +960,7 @@ export default async function AdminPage(props: PageProps<"/admin">) {
             />
           </label>
           <Button type="submit" className="w-full">
-            Add to invite list
+            Invite and email them
           </Button>
           <p className="text-sm text-muted-foreground">
             This lets them sign in and emails them the sign-in link, with what to have ready. Until
@@ -943,6 +977,23 @@ export default async function AdminPage(props: PageProps<"/admin">) {
                     {i.acceptedAt ? "Signed in" : "Not yet"}
                   </span>
                 </span>
+                {!i.acceptedAt ? (
+                  // Check 16 P7: a typo or a mistaken invite can be taken back before it's used.
+                  <details className="rounded-lg border">
+                    <summary className="flex min-h-tap cursor-pointer items-center px-4 font-semibold">
+                      Take back this invite
+                    </summary>
+                    <form action={removeInviteAction} className="flex flex-col gap-2 px-4 pb-4">
+                      <input type="hidden" name="email" value={i.email} />
+                      <p>
+                        They won&apos;t be able to sign in. The email we sent them stops working.
+                      </p>
+                      <Button type="submit" className="w-full">
+                        Yes, take back the invite
+                      </Button>
+                    </form>
+                  </details>
+                ) : null}
                 {/* Round 2 (FW A4): until Google approves the app, only test users get in. */}
                 {i.testUserAddedAt ? (
                   <span className="text-sm text-muted-foreground">Google test user: added</span>

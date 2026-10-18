@@ -1,3 +1,7 @@
+import { pricing } from "@/config/pricing";
+
+const EVALUATION_DAYS = pricing.evaluationDays;
+
 /**
  * Pure helpers for /admin wording and its "Needs you" box. No database, no server-only: the
  * page and the tests both use them.
@@ -61,4 +65,62 @@ export function needsYou(input: NeedsYouInput): NeedsYouLine[] {
     count: input[l.key],
     href: l.href,
   }));
+}
+
+/**
+ * Check 16 P6: after a move or a plan change Davi lands back on that card, with a notice naming
+ * it. Only the workspace's uuid travels in the URL; the name comes from the loaded row. An
+ * unknown or malformed `w`, or a code with no card wording, gives null (the page then shows its
+ * usual top notice, if any).
+ */
+export type CardNoticeRow = {
+  workspaceId: string;
+  businessName: string | null;
+  ownerEmail: string;
+  plan: string | null;
+  evaluationEndsAt: Date | null;
+};
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+const cardTime = new Intl.DateTimeFormat("en-US", {
+  timeZone: "America/New_York",
+  month: "short",
+  day: "numeric",
+  hour: "numeric",
+  minute: "2-digit",
+});
+
+export function cardNotice(
+  params: { done?: unknown; error?: unknown; w?: unknown },
+  rows: CardNoticeRow[],
+  plans: Record<string, { name: string }>,
+): { workspaceId: string; text: string; strong: boolean } | null {
+  if (typeof params.w !== "string" || !UUID.test(params.w)) return null;
+  const row = rows.find((r) => r.workspaceId === params.w);
+  if (!row) return null;
+  const name = row.businessName || row.ownerEmail;
+  const done = typeof params.done === "string" ? params.done : null;
+  const error = typeof params.error === "string" ? params.error : null;
+  const texts: Record<string, string> = {
+    pause: `Paused ${name}.`,
+    resume: `Resumed ${name}.`,
+    mark_setup_call_done: `Marked ${name} active.`,
+    house_account: `${name} can send now (marked as your own test account).`,
+    extend_evaluation: `Added ${EVALUATION_DAYS} days for ${name}.${
+      row.evaluationEndsAt ? ` Trial now ends ${cardTime.format(row.evaluationEndsAt)}.` : ""
+    }`,
+    plan: row.plan
+      ? `Plan saved for ${name}: ${plans[row.plan]?.name ?? row.plan}.`
+      : `Plan removed for ${name}.`,
+  };
+  const errorTexts: Record<string, string> = {
+    move: `That change isn't allowed for ${name} from its current status. Look again.`,
+    plan_stripe: `${name} pays through Stripe, so its plan follows the subscription. Change it in Stripe.`,
+  };
+  if (done && texts[done])
+    return { workspaceId: row.workspaceId, text: texts[done], strong: false };
+  if (error && errorTexts[error]) {
+    return { workspaceId: row.workspaceId, text: errorTexts[error], strong: true };
+  }
+  return null;
 }

@@ -177,7 +177,7 @@ test("admin: invite an owner", async ({ page, context }) => {
   await page.goto("/admin");
   await page.getByLabel("Their Gmail address").fill(email);
   await page.getByLabel("Trade").selectOption("electrical");
-  await page.getByRole("button", { name: "Add to invite list" }).click();
+  await page.getByRole("button", { name: "Invite and email them" }).click();
   await page.waitForURL(/done=invited/);
   await expect(page.getByText("Invited. They can sign in now")).toBeVisible();
   await expect(page.getByText(email)).toBeVisible();
@@ -347,4 +347,56 @@ test("admin: find a shop by name, and reach older accounts page by page (Check 1
   }
   await expect(page.getByRole("article", { name: old.email })).toBeVisible();
   await expect(page.getByRole("link", { name: "Show newer accounts" })).toBeVisible();
+});
+
+test("admin: a move lands back on its card with the shop's name (Check 16 P6)", async ({
+  page,
+  context,
+}) => {
+  const first = await seedOwner({ mailbox: true, backfilled: true });
+  await setWorkspace(first.workspaceId, { status: "active", businessName: "First Shop" });
+  const second = await seedOwner({ mailbox: true, backfilled: true });
+  await setWorkspace(second.workspaceId, {
+    status: "active",
+    businessName: `Ruiz Street ${randomUUID().slice(0, 6)}`,
+  });
+  const admin = await seedAdmin();
+  await signInAs(context, admin);
+  await page.goto("/admin");
+  const card = page.getByRole("article", { name: second.email });
+  await card.getByText("Pause account").click();
+  await card.getByRole("button", { name: "Yes, pause" }).click();
+  await page.waitForURL(new RegExp(`#acct-${second.workspaceId}$`));
+  expect(page.url()).toContain(`w=${second.workspaceId}`);
+  expect(page.url()).not.toContain("Ruiz");
+  const after = page.getByRole("article", { name: second.email });
+  await expect(after.getByRole("status")).toContainText(/^Paused Ruiz Street/);
+  await expect(page.getByRole("article", { name: first.email }).getByRole("status")).toHaveCount(0);
+});
+
+test("admin: take back an unused invite; a signed-in owner's has no take-back (Check 16 P7)", async ({
+  page,
+  context,
+}) => {
+  const signedIn = await seedOwner();
+  await testDb
+    .update(schema.invites)
+    .set({ acceptedAt: new Date() })
+    .where(eq(schema.invites.email, signedIn.email));
+  const admin = await seedAdmin();
+  await signInAs(context, admin);
+  const email = `typo-${randomUUID().slice(0, 8)}@example.com`;
+  await page.goto("/admin");
+  await page.getByLabel("Their Gmail address").fill(email);
+  await page.getByRole("button", { name: "Invite and email them" }).click();
+  await page.waitForURL(/done=invited/);
+  const row = page.getByRole("listitem").filter({ hasText: email });
+  await row.getByText("Take back this invite").click();
+  await row.getByRole("button", { name: "Yes, take back the invite" }).click();
+  await page.waitForURL(/done=invite_removed/);
+  await expect(page.getByRole("listitem").filter({ hasText: email })).toHaveCount(0);
+  const [gone] = await testDb.select().from(schema.invites).where(eq(schema.invites.email, email));
+  expect(gone).toBeUndefined();
+  const mine = page.getByRole("listitem").filter({ hasText: signedIn.email });
+  if (await mine.count()) await expect(mine.getByText("Take back this invite")).toHaveCount(0);
 });

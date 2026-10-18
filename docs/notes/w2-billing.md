@@ -103,3 +103,12 @@ For the integrator to fold into CLAUDE.md / docs/LAUNCH.md / docs/privacy-policy
   owner email, `%`/`_`/`\` literal, 50 per page, Davi's card pinned on page 1 only); GET find form
   (`?q=`), "Show older/newer accounts" (`?page=`), "Showing 51 to 100 of 134."; invites page with
   `?ipage=`. q is never logged.
+- **Card notices (Check 16 P6):** moves and plan saves redirect to
+  `/admin?done=<move>&w=<uuid>#acct-<uuid>` (errors likewise); `cardNotice` (admin-rules.ts)
+  validates `w` and shows the notice inside that card with the business name or owner email
+  ("Paused Ruiz Street Plumbing."). Only the uuid is in the URL. Davi's folded card opens when the
+  notice is for it. A card not on the loaded page shows nothing (no top notice either).
+- **Take back an invite (Check 16 P7):** `removeInvite(email)` deletes an invite only while it was
+  never accepted and no user has that email (lower-case), and sets the waitlist entry's
+  `invited_at` back to null. "Take back this invite" (one confirmation) on "Not yet" rows. The
+  manual button is now "Invite and email them". Nothing is logged.
