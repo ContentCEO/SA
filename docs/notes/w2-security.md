@@ -102,3 +102,17 @@ For the integrator: what `CLAUDE.md`, `docs/LAUNCH.md` and the legal drafts shou
   `.github/audit-allow.txt` ("<GHSA id> <date> <reason>", empty today; only for advisories with
   no fix yet). `.github/dependabot.yml`: npm, weekly, security updates only (version-update PRs
   off with `open-pull-requests-limit: 0`).
+- **Smoke tests after each production deploy (Check 31 P6):** `.github/workflows/smoke.yml`
+  runs on `deployment_status` only, when the state is success and the environment is
+  Production: install, then `/api/health`'s commit must match the deployed sha (polled up to
+  two minutes for the alias; else "Production is running a different commit"), then
+  `PLAYWRIGHT_BASE_URL=<site> pnpm test:e2e` (smoke specs only, no database), report uploaded
+  on failure for 7 days. The site is the repository variable `PRODUCTION_URL` when set, else
+  the deployment's `environment_url` — which needs a Vercel login on this project (per-deploy
+  URLs are protected), so Davi should add `PRODUCTION_URL=https://sa-dac3.vercel.app` (later
+  the real domain) under GitHub → Settings → Secrets and variables → Actions → Variables.
+  `tests/unit/e2e-harness.test.ts` pins the trigger and the smoke mode.
+- **LAUNCH.md line (integrator, Check 31 P6):** "A red **Smoke** run in GitHub Actions after a
+  deploy means production is broken or isn't running the commit you merged: open the site now.
+  To roll back, Vercel → sa → Deployments → the last good Production deployment → ⋯ → Promote
+  (Instant Rollback)."

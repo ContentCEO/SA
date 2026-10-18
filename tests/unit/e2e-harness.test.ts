@@ -160,3 +160,26 @@ describe("playwright.config.ts", () => {
     }
   });
 });
+
+describe("Check 31 P6: the production smoke workflow", () => {
+  const yml = readFileSync(join(".github", "workflows", "smoke.yml"), "utf8");
+
+  it("runs only on a deployment status (never on push or pull_request)", () => {
+    const on = yml.slice(yml.indexOf("\non:"), yml.indexOf("\nconcurrency:"));
+    expect(on.trim()).toBe("on:\n  deployment_status:");
+    expect(yml).toContain("github.event.deployment_status.state == 'success'");
+    expect(yml).toContain("github.event.deployment.environment == 'Production'");
+  });
+
+  it("is a smoke run (PLAYWRIGHT_BASE_URL set), so it can never seed a database", () => {
+    expect(yml).toMatch(/PLAYWRIGHT_BASE_URL: \$\{\{ env\.SMOKE_URL \}\}\n\s+run: pnpm test:e2e/);
+    expect(yml).not.toMatch(/DATABASE_URL|SA_E2E|postgres/i);
+  });
+
+  it("checks production runs the deployed commit before testing, and keeps the report", () => {
+    expect(yml.indexOf("/api/health")).toBeGreaterThan(-1);
+    expect(yml.indexOf("/api/health")).toBeLessThan(yml.indexOf("run: pnpm test:e2e"));
+    expect(yml).toContain("Production is running a different commit");
+    expect(yml).toContain("retention-days: 7");
+  });
+});
