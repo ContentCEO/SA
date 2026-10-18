@@ -267,6 +267,31 @@ export const noReplySql = (address: SQL) =>
   sql`(position('@' in coalesce(${address}, '')) > 1 and regexp_replace(lower(trim(${address})), '@[^@]*$', '') ~ ${NO_REPLY_LOCAL_PATTERN})`;
 
 /**
+ * Check 22 P10 + 41 P6: SQL twin of `isCrewAddress` (sender-rules.ts) for an address
+ * expression in workspace `workspaceId`: on the owner's crew list
+ * (`business_profile.crew_addresses`), one of the workspace's own Gmail addresses, or on a
+ * connected mailbox's business domain (never public webmail). WHERE clauses / aggregates only,
+ * so the address never leaves the database.
+ */
+export const crewSql = (workspaceId: string | SQL, address: SQL) => {
+  const a = sql`lower(trim(coalesce(${address}, '')))`;
+  const w = typeof workspaceId === "string" ? sql`${workspaceId}::uuid` : workspaceId;
+  return sql`(position('@' in ${a}) > 1 and (
+    exists (select 1 from business_profile cw_bp where cw_bp.workspace_id = ${w} and ${a} = any(cw_bp.crew_addresses))
+    or exists (select 1 from mailboxes cw_mb where cw_mb.workspace_id = ${w} and (lower(trim(cw_mb.email)) = ${a}
+      or (${domainOf(norm("cw_mb.email"))} not in (${WEBMAIL_SQL}) and ${domainOf(norm("cw_mb.email"))} = ${domainOf(a)})))
+  ))`;
+};
+
+/**
+ * Check 22 P10 + 41 P6: the outer thread is a conversation with the owner's own people only —
+ * it has inbound mail and every inbound email's reply address is crew (`crewSql`). A customer
+ * thread where the crew replied to a forward still has the customer on it, so it never is.
+ */
+export const crewThreadSql = (workspaceId: string | SQL) =>
+  sql`(exists (select 1 from messages cw_i where cw_i.thread_id = ${outerThreadId()} and cw_i.direction = 'in') and not exists (select 1 from messages cw_o where cw_o.thread_id = ${outerThreadId()} and cw_o.direction = 'in' and not ${crewSql(workspaceId, replyAddressSql("cw_o"))}))`;
+
+/**
  * SQL twin of `channelOf(from)?.kind` being `phone` or `phone_text` (leads package): the sender
  * is a voicemail-by-email service on `PHONE_SERVICES` (exact address) or an email-to-text
  * gateway on `EMAIL_TO_TEXT_DOMAINS` (the domain or a subdomain). Pass the From address, not the

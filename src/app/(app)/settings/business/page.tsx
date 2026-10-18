@@ -26,6 +26,12 @@ export default async function BusinessSettingsPage(props: PageProps<"/settings/b
     ["Area", profile?.serviceArea],
     ["Never promise", profile?.doNotPromise.length ? profile.doNotPromise.join(" · ") : null],
     ["Always send me", profile?.vipSenders.length ? profile.vipSenders.join(", ") : null],
+    [
+      "Your crew",
+      profile?.crewAddresses.length
+        ? `${profile.crewAddresses.length} address${profile.crewAddresses.length === 1 ? "" : "es"}`
+        : null,
+    ],
     ["Review link", profile?.reviewUrl],
     ["Licenses", licenseFacts(profile?.licenses)],
     [

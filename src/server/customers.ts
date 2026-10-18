@@ -3,8 +3,41 @@ import { and, desc, eq, inArray, max, ne, or, isNull, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { mailboxes, messages, threads } from "@/db/schema";
 import { isDecidedStage } from "./quote-rules";
-import { messageReplyAddress, messageReplyName, noReplySql } from "./thread-sql";
+import { looksMunicipal } from "@/ai/guards";
+import {
+  crewSql,
+  messageReplyAddress,
+  messageReplyName,
+  noReplySql,
+  sideEmailSql,
+} from "./thread-sql";
 import { listQuotes, type QuoteRow } from "./quotes";
+
+/**
+ * Check 13 P1: who someone is to the business. Customers are the default list; the other three
+ * are kept apart under their own links.
+ */
+export const CUSTOMER_KINDS = ["customer", "supplier", "town", "crew"] as const;
+export type CustomerKind = (typeof CUSTOMER_KINDS)[number];
+
+/**
+ * Check 13 P1, pure: a building department or inspector (any of their mail looks municipal, or
+ * a thread was marked so), then the owner's own people (crew list, own Gmail address or business
+ * domain, or they only ever wrote as a side conversation — the crew's reply to a forward), then
+ * a supplier (more than half of their conversations are supplier_vendor), else a customer.
+ */
+export function customerKind(r: {
+  municipal: boolean;
+  crew: boolean;
+  onlySide: boolean;
+  supplierThreads: number;
+  conversations: number;
+}): CustomerKind {
+  if (r.municipal) return "town";
+  if (r.crew || r.onlySide) return "crew";
+  if (r.conversations > 0 && r.supplierThreads * 2 > r.conversations) return "supplier";
+  return "customer";
+}
 
 export type CustomerRow = {
   /** Opaque link key (their newest message's id) — keeps email addresses out of URLs and logs. */
@@ -15,7 +48,7 @@ export type CustomerRow = {
   lastContactAt: Date | null;
   openQuotes: number;
   wonCents: number;
-  isSupplier: boolean;
+  kind: CustomerKind;
 };
 
 const asDate = (v: unknown) => (v ? new Date(v as string | Date) : null);
@@ -37,6 +70,14 @@ export async function listCustomers(workspaceId: string, now: Date = new Date())
       conversations: sql<number>`count(distinct ${messages.threadId})::int`,
       lastContactAt: max(threads.lastMessageAt),
       supplierThreads: sql<number>`count(distinct ${messages.threadId}) filter (where ${threads.category} = 'supplier_vendor')`,
+      // Check 13 P1: content-free flags for the kind. A sender pair list is read only for
+      // `looksMunicipal` (the same check the sorter uses); it never leaves this function.
+      municipalMark: sql<boolean>`coalesce(bool_or(${threads.extracted}->>'municipal' = 'true'), false)`,
+      crew: sql<boolean>`coalesce(bool_or(${crewSql(workspaceId, addr)}), false)`,
+      onlySide: sql<boolean>`coalesce(bool_and(${sideEmailSql("messages")}), false)`,
+      senders: sql<
+        string[] | null
+      >`(array_agg(distinct coalesce(${messages.fromAddress}, '') || chr(1) || coalesce(${messages.fromName}, '')))[1:20]`,
     })
     .from(messages)
     .innerJoin(threads, eq(threads.id, messages.threadId))
@@ -76,8 +117,18 @@ export async function listCustomers(workspaceId: string, now: Date = new Date())
       lastContactAt: asDate(r.lastContactAt),
       openQuotes: qs.filter((q) => !isDecidedStage(q.stage)).length,
       wonCents: qs.filter((q) => q.stage === "won").reduce((t, q) => t + (q.amountCents ?? 0), 0),
-      isSupplier:
-        Number(r.supplierThreads) > 0 && Number(r.supplierThreads) === Number(r.conversations),
+      kind: customerKind({
+        municipal:
+          !!r.municipalMark ||
+          (r.senders ?? []).some((p) => {
+            const [from, name] = p.split("\u0001");
+            return looksMunicipal(from || null, name || null);
+          }),
+        crew: !!r.crew,
+        onlySide: !!r.onlySide,
+        supplierThreads: Number(r.supplierThreads),
+        conversations: Number(r.conversations),
+      }),
     };
   });
 }

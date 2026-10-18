@@ -4,12 +4,24 @@ import { relativeTime } from "@/lib/relative-time";
 import { listCustomers } from "@/server/customers";
 import { formatCents } from "@/server/quote-rules";
 import { requireOwner } from "@/server/session";
-import { CustomerList } from "./customer-list";
+import { CustomerList, type CustomerGroup } from "./customer-list";
+import type { CustomerKind } from "@/server/customers";
 
 export const metadata: Metadata = { title: "Customers" };
 
-export default async function CustomersPage() {
+/** Check 13 P1: each kind's group in the list (the URL carries only the group's name). */
+const GROUP_OF: Record<CustomerKind, CustomerGroup> = {
+  customer: "customers",
+  supplier: "suppliers",
+  town: "towns",
+  crew: "crew",
+};
+const GROUPS: readonly CustomerGroup[] = ["customers", "suppliers", "towns", "crew"];
+
+export default async function CustomersPage(props: PageProps<"/customers">) {
   const { workspace } = await requireOwner();
+  const { group: rawGroup } = await props.searchParams;
+  const group = GROUPS.find((g) => g === rawGroup) ?? "customers";
   const now = new Date();
   const customers = await listCustomers(workspace.id, now);
 
@@ -17,21 +29,23 @@ export default async function CustomersPage() {
     <>
       <Headline serif="who you work for," heavy="customers." />
       <p className="text-muted-foreground">
-        Everyone who&apos;s emailed your business, built from your inbox. Junk mail is left out.
+        People who&apos;ve emailed you about work. Suppliers, towns and your crew are kept apart.
       </p>
       {customers.length ? (
         <CustomerList
+          group={group}
           items={customers.map((c) => ({
             key: c.key,
             name: c.name ?? c.address,
             address: c.address,
             line: `${c.conversations} conversation${c.conversations === 1 ? "" : "s"}${
               c.lastContactAt ? ` · last ${relativeTime(c.lastContactAt, now)}` : ""
-            }${c.isSupplier ? " · supplier" : ""}`,
+            }`,
             facts: [
               c.openQuotes ? `${c.openQuotes} open quote${c.openQuotes === 1 ? "" : "s"}` : null,
               c.wonCents ? `Won ${formatCents(c.wonCents)}` : null,
             ].filter((f): f is string => !!f),
+            group: GROUP_OF[c.kind],
           }))}
         />
       ) : (

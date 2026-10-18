@@ -49,3 +49,38 @@ export const PUBLIC_WEBMAIL_DOMAINS = new Set([
   "att.net",
   "verizon.net",
 ]);
+
+/**
+ * The owner's business domain for a mailbox address: its domain, or null on public webmail
+ * (shared with strangers, so "same domain" means nothing there).
+ */
+export function businessDomainOf(email: string | null | undefined): string | null {
+  const s = (email ?? "").trim().toLowerCase();
+  const at = s.lastIndexOf("@");
+  if (at <= 0) return null;
+  const domain = s.slice(at + 1);
+  return domain && !PUBLIC_WEBMAIL_DOMAINS.has(domain) ? domain : null;
+}
+
+/** What "the owner's own people" is decided from (Check 22 P10 + 41 P6). */
+export type CrewContext = {
+  /** `business_profile.crew_addresses`: lowercased emails the owner listed. */
+  listed: readonly string[];
+  /** Every Gmail address connected to the workspace. */
+  mailboxEmails: readonly string[];
+};
+
+/**
+ * Check 22 P10 + 41 P6: an address that is one of the owner's own people, never a customer —
+ * on the owner's crew list, one of the workspace's own Gmail addresses (the owner writing to
+ * themselves from another connected address), or on the owner's business domain (never
+ * public webmail). SQL twin: `crewSql` in thread-sql.ts. Pure.
+ */
+export function isCrewAddress(address: string | null | undefined, ctx: CrewContext): boolean {
+  const s = (address ?? "").trim().toLowerCase();
+  if (!s.includes("@")) return false;
+  if (ctx.listed.some((a) => a.trim().toLowerCase() === s)) return true;
+  if (ctx.mailboxEmails.some((a) => a.trim().toLowerCase() === s)) return true;
+  const domain = s.slice(s.lastIndexOf("@") + 1);
+  return ctx.mailboxEmails.some((a) => businessDomainOf(a) === domain);
+}

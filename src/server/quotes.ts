@@ -13,6 +13,7 @@ import {
   lastOutSql,
   notDraftMessage,
   quoteThreadSql,
+  crewThreadSql,
 } from "./thread-sql";
 import {
   amountFromOwnerText,
@@ -163,7 +164,14 @@ export async function listQuotes(workspaceId: string, now: Date = new Date()) {
     })
     .from(threads)
     .innerJoin(mailboxes, eq(mailboxes.id, threads.mailboxId))
-    .where(and(eq(mailboxes.workspaceId, workspaceId), quoteThreadSql()))
+    .where(
+      and(
+        eq(mailboxes.workspaceId, workspaceId),
+        quoteThreadSql(),
+        // Check 41 P6: a conversation with only the owner's crew on it is never a quote.
+        sql`not ${crewThreadSql(workspaceId)}`,
+      ),
+    )
     .orderBy(desc(threads.lastMessageAt))
     .limit(300);
 

@@ -3,7 +3,15 @@ import { and, eq } from "drizzle-orm";
 import { beforeEach, describe, expect, it } from "vitest";
 import { setModelTransportForTests } from "@/ai/client";
 import type { Database } from "@/db";
-import { activityLog, drafts, mailboxes, messages, threads, workspaces } from "@/db/schema";
+import {
+  activityLog,
+  businessProfiles,
+  drafts,
+  mailboxes,
+  messages,
+  threads,
+  workspaces,
+} from "@/db/schema";
 import { MailboxAuthError } from "@/mailbox/connector";
 import { ensureUserAndWorkspace } from "@/server/accounts";
 import { classifyPending } from "@/server/classification";
@@ -460,7 +468,8 @@ describe("customer list", () => {
     const list = await listCustomers(workspaceId, NOW);
     expect(list.map((c) => c.address)).toEqual(["dana@x.com", "rep@supply.com"]);
     expect(list[0]).toMatchObject({ name: "Dana Ruiz", conversations: 2, wonCents: 70_000 });
-    expect(list[1]!.isSupplier).toBe(true);
+    expect(list[1]!.kind).toBe("supplier");
+    expect(list[0]!.kind).toBe("customer");
 
     const d = await customerDetail(workspaceId, "DANA@x.com");
     expect(d!.threads).toHaveLength(2);
@@ -469,6 +478,101 @@ describe("customer list", () => {
     expect(await customerDetail(workspaceId, "nobody@x.com")).toBeNull();
     expect((await customerByKey(workspaceId, list[0]!.key))!.address).toBe("dana@x.com");
     expect(await customerByKey(workspaceId, "not-a-key")).toBeNull();
+  });
+
+  it("keeps suppliers, towns and the owner's own crew apart from customers (Check 13 P1)", async () => {
+    await convo({ from: "dana@x.com", name: "Dana Ruiz", category: "quote_request", inAgo: 2 });
+    await convo({
+      from: "inspections@chelmsfordma.gov",
+      name: "Chelmsford Building Dept",
+      category: "scheduling",
+      inAgo: 3,
+    });
+    // A supplier rep: 2 of 3 conversations are supplier_vendor, one was sorted as a question.
+    await convo({
+      from: "rep@supply.com",
+      name: "Supply Rep",
+      category: "supplier_vendor",
+      inAgo: 4,
+    });
+    await convo({
+      from: "rep@supply.com",
+      name: "Supply Rep",
+      category: "supplier_vendor",
+      inAgo: 5,
+    });
+    await convo({
+      from: "rep@supply.com",
+      name: "Supply Rep",
+      category: "customer_question",
+      inAgo: 6,
+    });
+    // A lead the owner forwarded to the crew: Mike on the owner's own domain and a sub on
+    // gmail.com both replied to the forward.
+    const lead = await convo({
+      from: "pat@x.com",
+      name: "Pat",
+      category: "quote_request",
+      inAgo: 3,
+    });
+    const add = (
+      o: Partial<typeof messages.$inferInsert> & {
+        gmailMessageId: string;
+        direction: "in" | "out";
+      },
+    ) =>
+      database.insert(messages).values({
+        threadId: lead,
+        mailboxId,
+        bodyText: "x",
+        sentAt: daysAgo(2),
+        ...o,
+      });
+    await add({
+      gmailMessageId: "fwd-1",
+      direction: "out",
+      fromAddress: "owner@shop.com",
+      subject: "Fwd: Job",
+      toAddresses: ["mike@shop.com", "sub@gmail.com"],
+      sentAt: daysAgo(2.5),
+    });
+    await add({
+      gmailMessageId: "crew-1",
+      direction: "in",
+      fromAddress: "mike@shop.com",
+      fromName: "Mike",
+      subject: "Re: Fwd: Job",
+      toAddresses: ["owner@shop.com"],
+    });
+    await add({
+      gmailMessageId: "sub-1",
+      direction: "in",
+      fromAddress: "sub@gmail.com",
+      fromName: "Sub Guy",
+      subject: "Re: Fwd: Job",
+      toAddresses: ["owner@shop.com"],
+    });
+
+    const list = await listCustomers(workspaceId, NOW);
+    const kindOf = (a: string) => list.find((c) => c.address === a)?.kind;
+    expect(kindOf("dana@x.com")).toBe("customer");
+    expect(kindOf("pat@x.com")).toBe("customer");
+    expect(kindOf("inspections@chelmsfordma.gov")).toBe("town");
+    expect(kindOf("rep@supply.com")).toBe("supplier");
+    expect(kindOf("mike@shop.com")).toBe("crew");
+    expect(kindOf("sub@gmail.com")).toBe("crew");
+    // A crew page still opens.
+    const mike = list.find((c) => c.address === "mike@shop.com")!;
+    expect((await customerByKey(workspaceId, mike.key))!.address).toBe("mike@shop.com");
+  });
+
+  it("a gmail.com address on the crew list is crew, not a customer (Check 41 P6)", async () => {
+    await convo({ from: "rosa.helper@gmail.com", name: "Jay", category: "scheduling", inAgo: 1 });
+    expect((await listCustomers(workspaceId, NOW))[0]!.kind).toBe("customer");
+    await database
+      .insert(businessProfiles)
+      .values({ workspaceId, crewAddresses: ["rosa.helper@gmail.com"] });
+    expect((await listCustomers(workspaceId, NOW))[0]!.kind).toBe("crew");
   });
 
   it("never shows another workspace's customers", async () => {

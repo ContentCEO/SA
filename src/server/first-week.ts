@@ -37,7 +37,13 @@ import {
 } from "./first-week-rules";
 import { effectiveStatus, isReadOnly, jobsAllowed, ReadOnlyError } from "./lifecycle";
 import { pushEndpointsByWorkspace, removePushSubscription } from "./push-alerts";
-import { answeredByPhoneSql, lastInSql, lastOutSql, waitingSinceSql } from "./thread-sql";
+import {
+  answeredByPhoneSql,
+  crewThreadSql,
+  lastInSql,
+  lastOutSql,
+  waitingSinceSql,
+} from "./thread-sql";
 
 /**
  * Round 2, "First week" review (FW): the new owner's first days. Counts and ids only; nothing
@@ -112,6 +118,8 @@ function openQuoteWhere(boxIds: string[], since: Date) {
     sql`coalesce(${threads.extracted}->>'injection', '') <> 'true'`,
     sql`coalesce(${threads.extracted}->>'payment_change', '') <> 'true'`,
     sql`coalesce(${threads.extracted}->>'municipal', '') <> 'true'`,
+    // Check 41 P6: never the owner's own crew.
+    sql`not ${crewThreadSql(sql`(select fw_mb.workspace_id from mailboxes fw_mb where fw_mb.id = ${threads.mailboxId})`)}`,
   );
 }
 

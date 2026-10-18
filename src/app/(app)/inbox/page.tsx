@@ -179,7 +179,12 @@ export default async function InboxPage(props: PageProps<"/inbox">) {
               </span>
             </div>
             <span className="text-sm font-semibold">
-              {isCategory(row.category) ? categoryTag[row.category] : "Not sorted yet"}
+              {/* Check 22 P10: the owner's own people, never a kind of customer email. */}
+              {(row.extracted as { crew?: unknown } | null)?.crew === true
+                ? "Your crew"
+                : isCategory(row.category)
+                  ? categoryTag[row.category]
+                  : "Not sorted yet"}
               {row.needsOwner ? " · Needs you" : ""}
               {row.priority === "high" && !row.needsOwner ? " · Urgent" : ""}
               {row.replyState ? ` · ${row.replyState}` : ""}

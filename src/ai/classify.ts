@@ -147,6 +147,12 @@ export type Extracted = ModelClassification["extracted"] & {
   /** Ideas H4: the sorter's own kind for this email, whatever kind the owner chose. */
   model_category?: Category;
   /**
+   * Check 22 P10 + 41 P6: a conversation with the owner's own people only (the crew list in
+   * Settings, another connected Gmail address of theirs, or their business domain). Never a
+   * customer, never drafted by a job, never autopilot. Only ever present as `true`.
+   */
+  crew?: boolean;
+  /**
    * Leads package: every owner rule this email matched, as fixed content-free keys
    * (`OWNER_RULE_KEYS`). Cards read these, never the reason text.
    */

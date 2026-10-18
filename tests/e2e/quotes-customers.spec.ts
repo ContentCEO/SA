@@ -197,6 +197,54 @@ test("customers: list, search on the phone, and one customer's emails", async ({
   expect(page.url()).toMatch(/\/customers\/[0-9a-f-]{36}$/);
 });
 
+test("customers: suppliers and towns are kept apart under their own links", async ({
+  page,
+  context,
+}) => {
+  const owner = await seedOwner({ mailbox: true, backfilled: true });
+  await quote(owner.mailboxId!, {
+    name: "Priya Shah",
+    from: "priya@customer.com",
+    inAgo: 2,
+    summary: "Priya wants a water heater swapped.",
+  });
+  for (const [name, from, category] of [
+    ["Supply House Branch 42", "branch42@supplyhouse.com", "supplier_vendor"],
+    ["Chelmsford Building Dept", "inspections@chelmsfordma.gov", "scheduling"],
+  ] as const) {
+    const gid = `k-${randomUUID().slice(0, 8)}`;
+    const [t] = await testDb
+      .insert(schema.threads)
+      .values({ mailboxId: owner.mailboxId!, gmailThreadId: gid, inInbox: true, category })
+      .returning();
+    await testDb.insert(schema.messages).values({
+      threadId: t!.id,
+      mailboxId: owner.mailboxId!,
+      gmailMessageId: `${gid}-in`,
+      direction: "in",
+      fromAddress: from,
+      fromName: name,
+      bodyText: "Hello",
+      sentAt: ago(1),
+    });
+  }
+  await signInAs(context, owner);
+
+  await page.goto("/customers");
+  await expect(page.getByText("Suppliers, towns and your crew are kept apart.")).toBeVisible();
+  await expect(page.getByRole("link", { name: /Priya Shah/ })).toBeVisible();
+  await expect(page.getByRole("link", { name: /Supply House/ })).toHaveCount(0);
+  await expect(page.getByRole("link", { name: /Chelmsford/ })).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "Towns and inspectors (1)" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Your crew and subs (0)" })).toBeVisible();
+  const suppliers = page.getByRole("link", { name: "Suppliers (1)" });
+  expect((await suppliers.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+  await suppliers.click();
+  await expect(page).toHaveURL(/\/customers\?group=suppliers$/);
+  await expect(page.getByRole("link", { name: /Supply House Branch 42/ })).toBeVisible();
+  await expect(page.getByRole("link", { name: /Priya Shah/ })).toHaveCount(0);
+});
+
 test("another owner's customer link is a 404", async ({ page, context }) => {
   const a = await seedOwner({ mailbox: true, backfilled: true });
   await quote(a.mailboxId!, { name: "Ann", from: "ann@c.com", inAgo: 1, summary: "Ann." });
