@@ -54,6 +54,27 @@ test("settings shows how to get the app", async ({ page, context }) => {
   await expect(section).toContainText(/Install|Add to Home Screen/);
 });
 
+test("Check 46 P1: an iPhone in Safari gets the iOS 26 steps", async ({ browser }, info) => {
+  const owner = await seedOwner({ mailbox: true });
+  const context = await browser.newContext({
+    baseURL: info.project.use.baseURL,
+    userAgent:
+      "Mozilla/5.0 (iPhone; CPU iPhone OS 26_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Mobile/15E148 Safari/604.1",
+    viewport: { width: 375, height: 812 },
+  });
+  try {
+    await signInAs(context, owner);
+    const page = await context.newPage();
+    await page.goto("/settings/phone");
+    const section = page.getByRole("region", { name: "Get the app" });
+    await expect(section).toContainText("Open as Web App");
+    await expect(section).toContainText("three dots (More)");
+    await expect(section).not.toContainText("on your phone");
+  } finally {
+    await context.close();
+  }
+});
+
 /** Stand-ins for the Badging API that record every call in `window.__badge`. */
 async function recordBadge(page: Page) {
   await page.addInitScript(() => {
