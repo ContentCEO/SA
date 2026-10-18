@@ -132,7 +132,13 @@ you remove them or delete your account.
 **Phone notifications:** if you turn them on, we store the address your browser's push service
 gives us for that phone (the push service is run by Google, Apple, Mozilla or Microsoft, depending
 on your browser). The notification we send through it is empty; your phone then asks us for the
-counts to show, so no counts, names or email content pass through the push service.
+counts to show, so no counts, names or email content pass through the push service. If your
+phone's notification service keeps refusing our notifications for 7 days, we forget that phone's
+notification address.
+
+**Text alerts:** for each text alert we send you, whether your carrier delivered it (the message's
+id from our texting provider, its status and error code — never the text or your number), kept 30
+days. If texts stop because you replied STOP or the number can't take texts, we note which.
 
 **Payments:** card details are handled by Stripe and never reach us. We keep your Stripe customer
 and subscription IDs and your plan, and, when your plan covers fewer Gmail addresses than you've
@@ -324,9 +330,10 @@ In plain words:
   delete your account.
 - **When you agreed to the terms, and which version,** is kept until you delete your account.
 - **Your mobile number for text alerts** is kept until you remove it in Settings or delete your
-  account.
+  account. **Whether each text was delivered** (the message's id, status and error code) is kept
+  30 days.
 - **Phone notification addresses** are deleted when you turn notifications off, when that phone
-  stops accepting them, or when you delete your account.
+  stops accepting them (7 days of refusals), or when you delete your account.
 - **Waitlist entries** are kept until you ask us to remove them. When we invite you, we note the
   date on your entry.
 - **Growth client records** (your services, start date, status, the updates posted for you and

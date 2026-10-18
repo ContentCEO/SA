@@ -282,6 +282,48 @@ edits this file after it is created.
 - [x] Wave 2, Billing and admin, 13) C16 P8
 - [x] Wave 2, Billing and admin, 14) C16 P9 + C16 P10 + C29 P8
 - [x] Wave 2, Billing and admin, 15) C05 P5
+- [x] Wave 2, Data and speed, 1) C30 P1 + C29 P6 + C30 P4 [M]
+- [x] Wave 2, Data and speed, 2) C30 P3
+- [x] Wave 2, Data and speed, 3) C30 P6 [M]
+- [x] Wave 2, Data and speed, 4) C29 P7
+- [x] Wave 2, Data and speed, 5) C29 P4 + C29 P5
+- [x] Wave 2, Data and speed, 6) C29 P3
+- [x] Wave 2, Phone look and accessibility, 1) C32 P2 + C08 P2 + C08 P5
+- [x] Wave 2, Phone look and accessibility, 2) C08 P3
+- [x] Wave 2, Phone look and accessibility, 3) C08 P4
+- [x] Wave 2, Phone look and accessibility, 4) C32 P5
+- [x] Wave 2, Phone look and accessibility, 5) C32 P3 + C32 P4
+- [x] Wave 2, Phone look and accessibility, 6) C32 P6
+- [x] Wave 2, Phone look and accessibility, 7) C32 P8
+- [x] Wave 2, Phone look and accessibility, 8) C32 P10
+- [x] Wave 2, Phone look and accessibility, 9) C32 P12
+- [x] Wave 2, Phone look and accessibility, 10) C08 P6 + C08 P8 + C08 P10
+- [x] Wave 2, Phone look and accessibility, 11) C07 P2
+- [x] Wave 2, Phone look and accessibility, 12) C07 P3
+- [x] Wave 2, Phone look and accessibility, 13) C07 P5 + C07 P9 + C07 P11 + C01 P5 + C03 P8
+- [x] Wave 2, Security and limits, 1) C26 P3 [M]
+- [x] Wave 2, Security and limits, 2) C26 P4
+- [x] Wave 2, Security and limits, 3) C26 P5
+- [x] Wave 2, Security and limits, 4) C26 P6
+- [x] Wave 2, Security and limits, 5) C26 P7
+- [x] Wave 2, Security and limits, 6) C40 P3
+- [x] Wave 2, Security and limits, 7) C31 P4
+- [x] Wave 2, Security and limits, 8) C26 P9 + C26 P10
+- [x] Wave 2, Security and limits, 9) C26 P11
+- [x] Wave 2, Security and limits, 10) C31 P6
+- [x] Wave 2, Security and limits, 11) C31 P7
+- [x] Wave 2, Security and limits, 12) C31 P8
+- [x] Wave 2, Phone alerts and the app, 1) C19 P1
+- [x] Wave 2, Phone alerts and the app, 2) C19 P2
+- [x] Wave 2, Phone alerts and the app, 3) C19 P3
+- [x] Wave 2, Phone alerts and the app, 4) C19 P4
+- [x] Wave 2, Phone alerts and the app, 5) C19 P5 [M]
+- [x] Wave 2, Phone alerts and the app, 6) C19 P6 [M]
+- [x] Wave 2, Phone alerts and the app, 7) C19 P7 + C19 P8 + C19 P9
+- [x] Wave 2, Phone alerts and the app, 8) C46 P3
+- [x] Wave 2, Phone alerts and the app, 9) C46 P5
+- [x] Wave 2, Phone alerts and the app, 10) C46 P1 + C46 P2
+- [x] Wave 2, Phone alerts and the app, 11) C46 P4
 
 Queue screen 15) C09 P8 was not built (it waits for Davi's yes; `docs/LAUNCH.md` step 13). Voice 7) C24 P8's new prompt `voice-examples.v1` and the Inbox / Sync prompt lines wait for the Prompt
 versions group in `docs/notes/prompt-versions-inbox.md`.

@@ -659,8 +659,8 @@ explanations: [SETUP.md](SETUP.md) §4.
 | `VAPID_SUBJECT`                                                                       | Optional (defaults to `APP_URL`)                               | No                                                    |
 | `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_MESSAGING_SERVICE_SID`             | Optional (step 10; token sensitive)                            | No                                                    |
 | `TWILIO_FROM_NUMBER`                                                                  | Only instead of the Messaging Service, for a quick test        | No                                                    |
-| `GMAIL_PUBSUB_TOPIC`, `GMAIL_PUSH_VERIFICATION_TOKEN`                                 | Optional (step 10; token sensitive)                            | No                                                    |
-| `AI_DAILY_CALL_CAP`, `RETENTION_BODY_DAYS`                                            | Leave unset (the defaults are what the policy promises)        | Leave unset                                           |
+| `GMAIL_PUBSUB_TOPIC`, `GMAIL_PUSH_AUDIENCE`, `GMAIL_PUSH_SERVICE_ACCOUNT`             | Optional (step 10; none sensitive; SETUP.md §6a)               | No                                                    |
+| `AI_DAILY_CALL_CAP`, `AI_DAILY_CALL_CAP_MAX`, `RETENTION_BODY_DAYS`                   | Leave unset (the defaults are what the policy promises)        | Leave unset                                           |
 | `FEATURE_CLOSING_QUESTION`                                                            | `1` (set 2026-10-14 at your request; step 13)                  | `1` (set 2026-10-14)                                  |
 | `FEATURE_REFERRALS`                                                                   | Only after the SETUP.md §6d steps (step 13)                    | No                                                    |
 | `STRIPE_WEBHOOK_SECRET`                                                               | **Never set on Vercel** (Connect Stripe stores its own)        | **Never set on Vercel**                               |
@@ -961,11 +961,11 @@ mode and test mode are set up separately. In this order:
 **Instant Gmail notifications (Pub/Sub).** Without this, new mail is picked up every 5 minutes.
 
 - Where: [SETUP.md](SETUP.md) §6a. Use the production domain in the push endpoint.
-- Paste: Vercel → `GMAIL_PUBSUB_TOPIC`, `GMAIL_PUSH_VERIFICATION_TOKEN` (sensitive) → Redeploy;
-  then Inngest → Functions → renew-gmail-watches → Invoke.
+- Paste: Vercel → `GMAIL_PUBSUB_TOPIC`, `GMAIL_PUSH_AUDIENCE`, `GMAIL_PUSH_SERVICE_ACCOUNT`
+  (none sensitive; the push is checked by Google's signed token, §6a) → Redeploy; then Inngest →
+  Functions → renew-gmail-watches → Invoke. The old `GMAIL_PUSH_VERIFICATION_TOKEN` is no longer
+  set up; if it is still in Vercel from before, remove it after the switch.
 - Worked when: a new email to a connected mailbox shows in Inbox within a minute.
-- Later hardening (not needed to launch): switch the push subscription from the `?token=` check to
-  Google's signed (OIDC) push authentication.
 
 ## 11. Check the background jobs after the merge
 
@@ -995,6 +995,11 @@ morning emails all run as background jobs.
 
 Worked when: all eight checks below pass. If one fails, don't invite more owners until it's
 fixed.
+
+A red **Smoke** run in GitHub Actions after a deploy means production is broken or isn't running
+the commit you merged: open the site now. To roll back, Vercel → sa → Deployments → the last good
+Production deployment → ⋯ → Promote (Instant Rollback). (The run needs the `PRODUCTION_URL`
+repository variable, step 13.)
 
 1. `https://<production address>/api/health` shows `"ok":true` and the `commit` you merged.
 2. Sign in at `/signin` with your Google account.
@@ -1225,6 +1230,43 @@ Recorded here so nobody asks again.
 
 Nothing below is switched on or changed until you say so.
 
+- **Wave 2 merge D (2026-10-18): data and speed, phone look, security, phone alerts.** Each was
+  built the safe way; say if you want it different:
+  - **Daily AI limit:** 500 calls per connected inbox, at most 3,000 a day for one shop, and
+    sorting may use 80% of it (the rest is kept for replies). Are 500 and 3,000 the numbers you
+    want? They change no price. When sorting has used its share, the top of every screen says:
+    "Most of today's assistant limit is used. New email waits until 8pm to be sorted, so the rest
+    is kept for your replies. It's safe in Gmail and catches up on its own." Is that wording okay?
+  - **Homepage from the CDN:** someone whose sign-in cookie is broken (for example after their
+    account was deleted on another device) is sent to the sign-in page from "/" until they sign
+    in again or the cookie runs out. Okay?
+  - **Index migration:** before the merge deploys, someone should check the shared database's
+    table sizes (the query is in the top comment of `drizzle/0070_data_speed_indexes.sql`). Fine
+    to merge as is while it's a handful of shops.
+  - **Installed app locked upright on Android** (sideways works in the browser and on iPhone).
+    Keep the lock, or let it turn?
+  - **Error notices** are read out by screen readers as an alert once, by the notice itself, not
+    through a second hidden region (which would read them twice). Fine?
+  - **Sign-in length:** a sign-in lasts 30 days from the last visit (unchanged). 14 days instead?
+    Shorter means a lost phone stops working sooner, but owners sign in again more often.
+  - **One-time sign-in after this ships:** every sign-in made before this change carries no
+    session version, so every owner — you too — is asked to sign in with Google once after it
+    deploys. Fine, or should old sign-ins be let through until the owner taps "Sign out of every
+    phone and computer"? (Built: refused, the safer choice.)
+  - **Gmail push:** when you turn instant notifications on, follow SETUP.md §6a (a service
+    account and the signed setup), not the old `?token=` way.
+  - **Smoke runs:** add the repository variable `PRODUCTION_URL` = `https://sa-dac3.vercel.app`
+    (GitHub → Settings → Secrets and variables → Actions → Variables). Without it the smoke run
+    uses the deploy's own address, which asks for a Vercel login and fails.
+  - **Dependabot:** turn on "Dependabot security updates" under GitHub → Settings → Code
+    security, so the weekly check opens pull requests.
+  - **CI on branches:** pushing to a `claude/…` branch no longer runs CI by itself; it runs when
+    a pull request is open (or from Actions → CI → Run workflow). Okay?
+  - **Texts (Twilio):** nothing new to set — the delivery-status callback is signed with
+    `TWILIO_AUTH_TOKEN` and goes to `APP_URL/api/twilio/status`; the "stop at 9pm" validity
+    window only applies with `TWILIO_MESSAGING_SERVICE_SID` (recommended anyway). A STOP reply
+    turns texts off until the owner turns them on again in Settings; emergency pushes may still
+    arrive late at night (that is their point).
 - **Agreeing to the terms again (2026-10-16, merged 2026-10-17).** The terms' trial paragraph
   now says the drafts can be sent from Gmail during the trial (it used to say only "sending to
   customers is switched off"), and the terms and privacy policy gained lines for the trial
@@ -1552,3 +1594,8 @@ Nothing below is switched on or changed until you say so.
 - The `sa-preview` Neon project and its pooled string ([step 2](#2-give-previews-their-own-database)).
 - The phone-notification keys ([step 9](#9-phone-notifications-vapid-keys)); the engineers can make
   and add them if you say so.
+- The `PRODUCTION_URL` repository variable for the Smoke run, and Dependabot security updates
+  ([step 13](#13-decisions-waiting-on-you), wave 2 merge D).
+- Two iPhone checks on a real phone (SETUP.md §11: the home bar in the installed app; nothing
+  under the notch sideways), and on a real Android phone the install sheet (the screenshots) and
+  the status-bar badge ("sa." should show, not a square).

@@ -312,6 +312,11 @@ for the number plus about $0.01 per text, and a one-time US carrier (A2P 10DLC) 
    on by default.
 5. Vercel → sa → Environment Variables (Production): `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`
    (sensitive), `TWILIO_MESSAGING_SERVICE_SID`. Redeploy.
+6. Nothing else to set (Check 19 P6): every text asks Twilio to report its delivery to
+   `APP_URL/api/twilio/status`, signed with `TWILIO_AUTH_TOKEN`; the owner's Text alerts screen
+   then shows "Last text delivered at 9:42am." or why the last one didn't arrive, and a STOP
+   reply (or a landline) switches their texts off. The "nothing after 9pm" validity window on
+   each text applies only through a Messaging Service, not `TWILIO_FROM_NUMBER`.
 
 ### 6d. Feature switches (off by default)
 
@@ -457,7 +462,8 @@ Microsoft) only sees a ping, and the phone then fetches the counts from us (`src
    app (on iPhone, only from the Home Screen app) and the first new quote request buzzes the phone.
 
 Keep the pair once owners use it: after a change, each phone has to switch notifications off and
-on again.
+on again. A phone whose push service keeps refusing for 7 days is forgotten on its own (Check 19
+P5); the Settings switch shows "off" there the next time it opens.
 
 ### 6f. SUPPORT_EMAIL
 

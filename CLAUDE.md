@@ -111,6 +111,9 @@ Davi runs several builder sessions at once. The build order for review prompts i
   ("Only two places can send mail": `sendDraft` in drafts.ts and `practiceSend` in practice.ts).
 - Business facts from `src/config/site.ts`; `SUPPORT_EMAIL` and `APP_URL` from env, never hardcoded.
 - Write tests with features. Guardrail tests are the product.
+- Readers and forms keep values they don't recognize; new list values may arrive in the database
+  before the code that knows them. (`SelectField` shows them as "Current: …"; `orStored` accepts
+  the stored value back, nothing else.)
 
 ## Decisions
 
@@ -373,7 +376,8 @@ Davi runs several builder sessions at once. The build order for review prompts i
   non-cascade foreign key fails it until its lifecycle is decided (KEPT / SET_NULL lists there).
 - **Rate limits (2026-10-06):** `src/server/rate-limit.ts`, fixed windows in the `rate_limits` table
   (one atomic upsert; holds across serverless instances). Per workspace: send 60/10 min (action +
-  API → 429 with Retry-After), Draft a reply 30/h, re-learn voice 3/day, billing 10/h, Gmail connect
+  API → 429 with Retry-After), Draft a reply 90/h (counted at the model call, Check 40 P3),
+  re-learn voice 3/day, billing 10/h, Gmail connect
   10/h. Waitlist 10/h per **hashed** IP (salted with AUTH_SECRET; raw IPs never stored). Webhooks
   are signature/token-checked instead. Purged daily with bodies. e2e global setup clears the table.
   **M11 (S4):** `poll` 300/10 min on `/api/badge` and `/api/push/summary` (429 + Retry-After,
@@ -3491,6 +3495,172 @@ big)`; the hourly job runs `captureQuoteAmounts` first.
     from `growthCopy.admin.growthOnlyLine(inviteState)`; nothing beyond account/invite existence by
     email is read.
 
+- **Wave 2 merge D (2026-10-18, branch `integrate-w2d`):** the Data and speed, Phone look and
+  accessibility, Security and limits, and Phone alerts and the app groups merged with `--no-ff`,
+  in that order, on top of 27e4704 (merge C). Migrations regenerated one at a time with
+  drizzle-kit on the previous snapshot (SQL byte-identical to each branch's; speed's index file
+  keeps its hand-written `IF NOT EXISTS` and size-check comment): `0070_data_speed_indexes`,
+  `0071_thread_prompt_version`, `0072_session_version`, `0073_push_failures`,
+  `0074_sms_deliveries`, `0075_sms_code_tries`. No prompt lines came out of these four groups.
+  Reconciled at the merge: the Queue and Inbox pages keep batches A–C's cards (lead cards,
+  attachments, autopilot waits, the From line, the card-anchored notices) inside speed's two-wait
+  loading; `getWorkspaceForSession` keeps speed's one-query-per-request React `cache()` (keyed on
+  the user id and session version, since `session.user` is a fresh object per `auth()` call);
+  the static homepage's Growth form reads a referral link's `?ref=` in the browser through the
+  shared `ReferralField` (src/components/marketing/referral-field.tsx), like the waitlist form;
+  the Quotes group's tests run `quoteUpkeepForMailbox` before reading Quotes (screens read, jobs
+  write); batch C's `reportStripeWaitingAction` and alerts' `/api/push/subscription` have
+  `LIMIT_SITES` rows, and that route checks the session version like every other API route;
+  the read-only price list on /billing names "Your plan" like the checkout list; the admin move
+  `sign_out_everywhere` lands its notice on the card (Check 16 P6) and is a described Activity
+  line.
+  - **Indexes (Check 30 P1/P4, Check 29 P6):** every foreign key leads an index
+    (`tests/unit/fk-indexes.test.ts`; allow-list with reasons). Index migrations are plain
+    `CREATE INDEX IF NOT EXISTS` (drizzle runs migrations in one transaction, so no CONCURRENTLY);
+    check table sizes first and pre-build big ones by hand with CONCURRENTLY. The reply-address
+    expression lives once in `replyAddressExpr` (schema.ts) so the planner matches its index
+    (`tests/unit/query-plans.test.ts`). `/admin`'s "last sorted" / "last morning email" are
+    per-mailbox / per-workspace scalar subqueries (`lastSortedQuery` / `lastDigestQuery`).
+  - **Extracted facts (Check 30 P6):** `threads.classified_prompt_version` records the classify
+    version that wrote `extracted`; read `extracted` with `readExtracted(extracted, version?)`
+    (src/server/extracted.ts), not casts. A new classify version that adds keys adds its schema
+    there.
+  - **Screens read, jobs write (Check 29 P7):** opening a screen never writes; quote amounts and
+    no-answer guesses are refreshed by the draft job after every sync (`quoteUpkeepForMailbox`,
+    step `quote-upkeep`, never fails the job) and the daily jobs. A "no answer" guess appears
+    within one sync (about 5 minutes) or the daily scan, not the moment Quotes opens. Shared
+    per-request reads (`getWorkspaceForUser`, `listMailboxes`, `getBusinessProfile`,
+    `termsAccepted`) use React `cache()`; Queue and Inbox load in two `Promise.all` waits.
+  - **AI limit (Check 29 P4/P5):** a shop's daily limit is `AI_DAILY_CALL_CAP` (500) per running
+    inbox, at least one, up to `AI_DAILY_CALL_CAP_MAX` (3000) (`dailyAiCallCap`, SQL twin
+    `dailyAiCallCapSql`). Sorting may use 80% of it (`SORT_SHARE`, `reserveAiCall(..., "sort")`;
+    every `callStructured` caller passes a `purpose`); drafts and voice keep the rest. At
+    sorting's share the top note says "Most of today's assistant limit is used. New email waits
+    until 8pm to be sorted…". Prices and plan inbox limits unchanged.
+  - **Homepage from the CDN (Check 29 P3):** `src/app/page.tsx` reads no session and no search
+    params, so "/" is prerendered. The signed-in redirect is in `src/proxy.ts` ("/" in the
+    matcher; a GET/HEAD with an Auth.js session cookie → `/start`, rule in
+    `src/lib/home-redirect.ts`); a stale cookie lands on /signin. Referral codes: the forms read
+    `?ref=` in the browser, only when the page passed `referrals` (= `referralsVisible()` at
+    build time). `isReferralCode` lives in `src/lib/referral-code.ts`.
+  - **Phone tab bar and focus (Check 32 P2, Check 8 P2/P5):** the bottom `<nav>` has
+    `data-tabbar` (keep it there); under 640px `html:has([data-tabbar])` gets
+    `scroll-padding-bottom` for the bar and `scroll-padding-top: 16px`. The viewport is
+    `viewport-fit=cover`; the (app) wrapper `#sa-app` (class `sa-app`) pads all four safe areas;
+    every other page pads on `<body>`. Manual iPhone checks: docs/SETUP.md §11.
+  - **Back to the app (Check 8 P3):** `RefreshOnReturn` calls `router.refresh()` after ≥60s
+    hidden, never while a text box has focus or anything has `data-editing="true"` (the draft
+    card while Edit or Change it is open; rules in `src/lib/refresh-rules.ts`). Tapping the tab
+    you're on scrolls to the top and refreshes. Queue, Inbox, Quotes and Money show "Updated
+    9:41 AM" (`UpdatedAt`).
+  - **Sunlight is client-only (Check 8 P4):** `SunlightButton` flips `data-contrast` on `#sa-app`
+    and writes the `sa_contrast` cookie from the browser (not httpOnly; a display setting).
+    `toggleSunlightAction` is gone; cookie names live in `src/lib/device-cookies.ts`.
+  - **Notices are read out (Check 32 P5):** one always-present polite live region (`Announcer`,
+    root layout) in a closed shadow root; `Notice` is a client component (`role="status"`,
+    `aria-live="off"`) that writes its words there; strong notices stay `role="alert"`. Tests
+    keep finding notices with `getByText` / `getByRole("status")`; `tests/e2e/announcer.ts` reads
+    what was announced. `AutoSaveForm` + `FocusAfterSave` put focus back on the saved switch.
+  - **Titles (Check 32 P6):** root `title: { default: "Squared Away", template: "%s · Squared
+Away" }`; pages set a short title and never write "· Squared Away" by hand
+    (`tests/unit/page-titles.test.ts`); Queue is "Queue (N)".
+  - **axe in e2e (Check 32 P8):** `@axe-core/playwright` 4.13.0 (exact); `tests/e2e/a11y.spec.ts`
+    fails on serious/critical. Fields: `<label htmlFor>` holds the label only; hint and error are
+    the control's description (Check 32 P10). `SkipLink` first on every screen, every `<main>` is
+    `id="main"` (Check 32 P12). `tests/e2e/tap-targets.spec.ts` sweeps 375 and 320px (skip
+    `.sr-only:not(:focus)`).
+  - **Two tones, enforced (Check 7 P2/P3/P5/P9/P11, Check 1 P5):** no `opacity-*` greys on text
+    (`two-tone.test.ts`; use `text-muted-foreground`), `variant="ghost"` only in the confirm
+    components (`buttons.test.ts` allow-list), every field uses `border-input`
+    (`input-contrast.test.ts`), featured panels are `border-2 border-charcoal bg-card`, never
+    inverted (`inversion-uses.test.ts`). Sunlight uses a variable-weight Inter Tight instance;
+    /app-icon (every size, the badge too) draws in Inter Tight Black; `scripts/favicon.ts`
+    rebuilds favicon.ico.
+  - **Sign out everywhere (Check 26 P3, `0072_session_version`):** `users.session_version`; the
+    jwt callback stores it as `sv` on a fresh sign-in; `getWorkspaceForSession(session.user)` /
+    `signInIsCurrent` return nothing unless `sv` equals the account's version. `requireOwner`,
+    `requireSignedIn`, `requireAdmin`, `/signin`'s bounce, every API route and the Gmail callback
+    use it. **A cookie with no `sv` is refused**, so every owner (Davi too) signs in again once
+    after this deploys. Settings → Account → "Sign out of every phone and computer"
+    (`signOutEverywhereAction`, log `signed_out_everywhere` {by}); /admin → "Sign them out
+    everywhere" (`ADMIN_MOVES.sign_out_everywhere`, changes no status). Every unit test that
+    mocks `@/auth` needs `sv: 0`; e2e `signInAs` reads the account's version.
+  - **Delete my account needs a fresh sign-in and the typed word (Check 26 P4):** `sat` (sign-in
+    time) in the JWT; `requireRecentSignIn(15)` → `/signin?next=…&reason=recent`; both delete
+    actions need the form field `confirm` = DELETE (`account-deletion-rules.ts`). Google can't be
+    made to ask for a password again (no `prompt=login`).
+  - **No row values in query errors (Check 26 P5):** `src/db/safe-errors.ts` wraps Drizzle's
+    `queryWithCache` once and rethrows `SafeQueryError` ("Failed query: <first SQL line>" + code;
+    params, cause and stack dropped; `.code` kept). Inngest middleware `ScrubErrors` runs
+    `scrubText` over job errors. The unit-test date guard fails with code `SA_DATE_BOUND_INTO_SQL`.
+  - **Notices take own keys only (Check 26 P6):** `noticeText(map, key)`
+    (`src/lib/notice-text.ts`) for every `?done=` / `?error=` lookup in src/app (a unit test fails
+    on plain `map[params.x]`); `isCategory` uses `Object.hasOwn`.
+  - **Replacing the encryption key (Check 26 P7):** `decryptSecret` tries `TOKEN_ENCRYPTION_KEY`,
+    then `TOKEN_ENCRYPTION_KEY_PREVIOUS`; `pnpm reseal:secrets` re-seals every refresh token and
+    `v1.` app setting (docs/SETUP.md §5a). Rotating the key no longer means every owner
+    reconnects.
+  - **Draft a reply 90/h, counted at the model (Check 40 P3):** `createDraftForThread` takes
+    `beforeModelCall` (runs once, right before the model is asked; false → skipped
+    `rate_limited`); taps that end in already-pending / no text use nothing. Refusal →
+    `/queue?error=draft_limit&until=<ms>` ("You can ask again at 10:00am.",
+    `draft-limit-rules.ts`).
+  - **Every rate limit is proven wired (Check 31 P4):** `LIMIT_SITES` in
+    `tests/unit/security-surface.test.ts` has one row per `hitLimit` call in src; a new call needs
+    a row.
+  - **Headers, robots, Pub/Sub (Check 26 P9/P10):** `poweredByHeader: false`,
+    `Cross-Origin-Opener-Policy: same-origin`, robots.txt no longer names /admin. Gmail push
+    checks Pub/Sub's signed ID token (`src/server/pubsub-auth.ts`; `GMAIL_PUSH_AUDIENCE`,
+    `GMAIL_PUSH_SERVICE_ACCOUNT`; keys from `www.googleapis.com`, on data-paths' Google line);
+    the old `?token=` is accepted only while neither is set (one `gmail_push_legacy_token`
+    warning per cold start). docs/SETUP.md §6a describes only the signed setup.
+  - **Dependencies, CI, smoke (Check 26 P11, Check 31 P6/P7/P8):** `shadcn` in devDependencies;
+    `source-map-js@<1.2.2` overridden to `^1.2.2`; CI runs `scripts/audit-check.ts` (high /
+    critical advisories in production dependencies fail unless listed in
+    `.github/audit-allow.txt`); `.github/dependabot.yml` security updates only. CI runs on push
+    to `main`, on `pull_request` and `workflow_dispatch` only (a `claude/**` push without a PR
+    runs nothing); Playwright also reports JSON in CI and `scripts/flaky-report.mjs` lists tests
+    that passed only on a retry. `.github/workflows/smoke.yml` runs the smoke specs against
+    production after each successful Production deploy (`PRODUCTION_URL` repository variable;
+    `/api/health`'s commit must match). vitest `hookTimeout` 60s; `tests/support/setup.ts` holds
+    snake_case console lines until a test fails.
+  - **Alerts after drafting (Check 19 P1):** classify-mailbox raises only emergencies right away
+    (`emergencyAlertsForMailbox`); the ordinary new-lead text / buzz is draft-mailbox's last step
+    `lead-alerts` (`alertsForMailbox`, after `quote-upkeep` and the drafts), so the queue it opens
+    already shows the reply. `/api/push/summary` names fresh quote requests with no queue card
+    (`newQuotesWithoutCard`) and opens `/quotes`; `freshLeads` also returns `threadId` and
+    `lastMessageAt`.
+  - **Push failures (Check 19 P2/P5, `0073_push_failures`):** try/catch per owner and per
+    phone; no phone took it → slot and cursor handed back (`releasePushSlot`), no Activity row.
+    `recordPushResult`: gone → row deleted; sent → `fail_count` reset; failed → counted, and a
+    phone failing for 7 days (`PUSH_FAILING_FOR_MS`) is deleted. `PushToggle` re-saves this
+    phone's subscription on every visit; `POST /api/push/subscription` (session, terms, same
+    origin, `poll` limit) swaps a renewed address (`sw.js` `pushsubscriptionchange`).
+  - **Service worker (Check 19 P3, Check 46 P3/P5):** the summary lookup gives up after 4
+    seconds so every push shows a notification (Safari drops silent ones). Badge =
+    `/app-icon/badge-96` ("sa." alone, light, transparent). `refresh-offline` re-saves
+    `/offline.html` at most once a day per phone: editing public/offline.html is enough.
+  - **Code texts and delivery reports (Check 19 P4/P6/P9, `0074_sms_deliveries`,
+    `0075_sms_code_tries`):** `normalizeUsPhone` refuses toll-free and N11 area codes; a refused
+    code text clears the code and number (`SmsError("send_failed")`); the fifth wrong guess
+    throws the code away (`sms_code_tries`, one conditional update). `sendSms` sends
+    `StatusCallback = APP_URL/api/twilio/status` and returns `{ status, sid }` (the `SmsSender`
+    type); `sms_deliveries` keeps each report (no body, no number; purged after 30 days);
+    `POST /api/twilio/status` checks `X-Twilio-Signature` (403 otherwise, always 403 without the
+    token). 21610 (STOP) / 30006 (not a mobile) switch texts off with
+    `business_profile.sms_stopped_reason` and one Activity line; Activity's `sms_alert_sent`
+    reads "Texted you…" only once delivered (`deliveryId`, never Twilio's id).
+  - **Caps and quiet hours (Check 19 P7/P8):** the ten-a-day caps count from the owner's local
+    midnight; the tenth text ends "That's today's last text; the rest wait in the app."
+    `secondsUntilQuiet` (until 9pm local, ≤4h, ≥60s) is the push TTL (`PushSender` takes
+    `{ ttlSec }`) and the text's `ValidityPeriod` (Messaging Service only); emergency alerts keep
+    the 4-hour TTL.
+  - **Get the app (Check 46 P1/P2/P4):** `installSteps(ua, maxTouchPoints)`
+    (`src/lib/install-steps.ts`) per browser; the manifest has `screenshots` (3 × 1080x1920 from
+    `scripts/app-shots.mjs`, invented e2e data only), `lang`, `dir`; pwa.spec asks Chrome's
+    `Page.getInstallabilityErrors`. The installed app stays locked upright on Android
+    (`orientation: "portrait"`) until Davi says otherwise.
+
 ## Milestones
 
 - [x] **0. Scaffold**
@@ -3515,6 +3685,13 @@ big)`; the hourly job runs `captureQuoteAmounts` first.
 - **Wave 2 merge C questions** (mail format, town and utility lists, numbers, billing and
   admin): docs/LAUNCH.md step 13 "Still open", with three live checks (send-as alias, Outlook
   line breaks, the From line) and the sender domains to confirm from real notices.
+- **Wave 2 merge D questions** (data and speed, phone look, security, phone alerts):
+  docs/LAUNCH.md step 13 "Still open" — the AI limit numbers (500 per inbox, 3,000 a day) and
+  the "sorting waits" wording; the broken-cookie homepage case; the shared database's table sizes
+  before the index migration runs; the Android portrait lock; the error notice read as an alert
+  (not twice); the 30-day sign-in length; everyone signing in once after the deploy; the
+  signed Gmail push setup; `PRODUCTION_URL` repository variable; Dependabot security updates;
+  CI on branches only through a PR.
 - **Inngest plan (Check 49 P1):** the free plan pauses every job at 50,000 executions a month (21,029
   from Oct 1 to 16 with one shop). `docs/LAUNCH.md` "Check your free plans now", Inngest item.
 - **Vercel Pro (Check 49 P1):** the team is on Hobby, which is non-commercial only; Pro (about $20 a
