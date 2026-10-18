@@ -6,7 +6,8 @@ import { phoneHref } from "@/lib/phone-href";
 export function SiteFooter({ growthLink = false }: { growthLink?: boolean } = {}) {
   const support = process.env.SUPPORT_EMAIL;
   return (
-    <footer className="flex flex-col gap-1 text-sm text-muted-foreground">
+    // gap-2: 8px between the phone link, the email and the legal links (gloves; Check 8 P8).
+    <footer className="flex flex-col gap-2 text-sm text-muted-foreground">
       <span>
         Questions? Call{" "}
         <a
@@ -15,17 +16,21 @@ export function SiteFooter({ growthLink = false }: { growthLink?: boolean } = {}
         >
           {siteConfig.phone}
         </a>
-        {support ? (
-          <>
-            {" "}
-            or email{" "}
-            <a className="underline underline-offset-4" href={`mailto:${support}`}>
-              {support}
-            </a>
-          </>
-        ) : null}
-        .
+        {support ? " or email" : "."}
       </span>
+      {/* Check 8 P8 / Check 3 P8: its own line and a 44px target, like the phone link (it was
+          17px tall, 1px under the phone link). break-all: a long address wraps, never scrolls. */}
+      {support ? (
+        <span>
+          <a
+            className="inline-flex min-h-tap items-center break-all underline underline-offset-4"
+            href={`mailto:${support}`}
+          >
+            {support}
+          </a>
+          .
+        </span>
+      ) : null}
       <nav aria-label="Legal" className="flex gap-4">
         <Link
           href="/privacy"

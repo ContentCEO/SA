@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { seedAdmin, seedOwner, signInAs } from "./support";
+import { seedAdmin, seedOwner, seedQueue, signInAs } from "./support";
 
 /** Outside review: five tabs (Queue, Inbox, Quotes, Money, More) with readable labels. */
 test("five tabs: Money is one, the rest live under More", async ({ page, context }) => {
@@ -109,3 +109,66 @@ test("the tab bar fits at 150% and 200% text, with and without Sunlight", async 
     }
   }
 });
+
+/** Check 8 P6: on a slow signal, a tap on More shows something within 300ms. */
+test("More shows its loading screen or a dark tab at once on a slow signal", async ({
+  page,
+  context,
+}, info) => {
+  test.skip(info.project.name !== "mobile", "the tab bar shows on phones only");
+  const owner = await seedOwner({ mailbox: true, backfilled: true });
+  await signInAs(context, owner);
+  await page.goto("/queue");
+  await page.waitForLoadState("networkidle");
+  // Two seconds for anything /more from here on (its data, and any prefetch not done yet).
+  await page.route("**/more**", async (route) => {
+    await new Promise((r) => setTimeout(r, 2000));
+    await route.continue();
+  });
+  const more = page.locator("[data-tabbar]").getByRole("link", { name: "More" });
+  const started = Date.now();
+  await more.click();
+  await expect
+    .poll(
+      () =>
+        page.evaluate(
+          () =>
+            !!document.querySelector('main [role="status"][aria-label="Loading"]') ||
+            !!Array.from(document.querySelectorAll("[data-tabbar] a")).find(
+              (a) => a.textContent?.trim() === "More" && a.querySelector(".sa-inverted"),
+            ),
+        ),
+      { intervals: [25], timeout: 300 },
+    )
+    .toBe(true);
+  expect(Date.now() - started).toBeLessThan(1000);
+  await expect(page).toHaveURL(/\/more$/, { timeout: 10_000 });
+});
+
+/** Check 8 P10: sideways, the first thing to tap inside the screen is on the first screen. */
+for (const size of [
+  { width: 568, height: 320 },
+  { width: 812, height: 375 },
+]) {
+  test(`sideways at ${size.width}×${size.height}: something to tap on the first screen`, async ({
+    page,
+    context,
+  }, info) => {
+    test.skip(info.project.name !== "mobile", "a phone turned sideways");
+    const owner = await seedOwner({ mailbox: true, backfilled: true });
+    await seedQueue(owner.mailboxId!);
+    await signInAs(context, owner);
+    await page.setViewportSize(size);
+    for (const path of ["/queue", "/inbox"]) {
+      await page.goto(path);
+      await page.waitForLoadState("networkidle");
+      const first = page.locator("main").locator("a, button").filter({ visible: true }).first();
+      const box = (await first.boundingBox())!;
+      expect(box.y + 44, `${path}: ${await first.textContent()}`).toBeLessThan(size.height);
+      const overflow = await page.evaluate(
+        () => document.documentElement.scrollWidth > document.documentElement.clientWidth,
+      );
+      expect(overflow, path).toBe(false);
+    }
+  });
+}

@@ -1,7 +1,7 @@
 "use client";
 
 import { Banknote, ClipboardCheck, Inbox, Menu, Receipt } from "lucide-react";
-import Link from "next/link";
+import Link, { useLinkStatus } from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { Wordmark } from "@/components/brand/wordmark";
 import { cn } from "@/lib/utils";
@@ -90,14 +90,7 @@ export function AppHeader({ sunlight = false }: { sunlight?: boolean }) {
                     on && "font-black",
                   )}
                 >
-                  <span
-                    className={cn(
-                      "sa-tab-pill flex h-7 w-full max-w-11 shrink-0 items-center justify-center rounded-full",
-                      on && "sa-inverted",
-                    )}
-                  >
-                    <Icon aria-hidden className="size-5" strokeWidth={on ? 2.5 : 2} />
-                  </span>
+                  <TabPill on={on} Icon={Icon} />
                   {label}
                 </Link>
               </li>
@@ -106,5 +99,25 @@ export function AppHeader({ sunlight = false }: { sunlight?: boolean }) {
         </ul>
       </nav>
     </>
+  );
+}
+
+/**
+ * Check 8 P6: the tapped tab darkens on the tap itself (useLinkStatus is pending until the new
+ * screen's history entry lands), not only once the screen has arrived. Must sit inside the Link.
+ */
+function TabPill({ on, Icon }: { on: boolean; Icon: (typeof NAV)[number]["Icon"] }) {
+  const { pending } = useLinkStatus();
+  const lit = on || pending;
+  return (
+    <span
+      data-pending={pending ? "" : undefined}
+      className={cn(
+        "sa-tab-pill flex h-7 w-full max-w-11 shrink-0 items-center justify-center rounded-full",
+        lit && "sa-inverted",
+      )}
+    >
+      <Icon aria-hidden className="size-5" strokeWidth={lit ? 2.5 : 2} />
+    </span>
   );
 }

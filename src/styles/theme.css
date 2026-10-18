@@ -129,6 +129,42 @@
 }
 
 /*
+ * A phone held sideways (Check 8 P10): the header, a two-line headline and the tab bar used to
+ * fill the whole first screen. In the signed-in app only: no serif line on the headline, a
+ * smaller heavy line, tighter spacing, and a 48px tab bar with each label beside its icon.
+ * (The installed app is locked upright on Android by the manifest; browsers and iPhone aren't.)
+ */
+@media (orientation: landscape) and (max-height: 500px) {
+  .sa-app h1 .sa-headline-serif {
+    display: none;
+  }
+  .sa-app h1 .sa-headline-heavy {
+    font-size: 1.75rem;
+  }
+  .sa-app {
+    gap: 1rem;
+    padding-top: max(0.5rem, env(safe-area-inset-top));
+  }
+  .sa-app > main {
+    gap: 1rem;
+  }
+  [data-tabbar] .sa-tab {
+    flex-direction: row;
+    gap: 0.375rem;
+    min-height: 3rem;
+  }
+  [data-tabbar] .sa-tab-pill {
+    width: 2.75rem;
+    max-width: 50%;
+  }
+}
+@media (orientation: landscape) and (max-height: 500px) and (max-width: 639.98px) {
+  html:has([data-tabbar]) {
+    scroll-padding-bottom: calc(3rem + 1px + env(safe-area-inset-bottom) + 12px);
+  }
+}
+
+/*
  * viewport-fit=cover (Check 8 P2): the signed-in app pads its own wrapper and tab bar for the
  * safe areas; every other page (homepage, /growth, /signin, legal) gets the insets on <body>,
  * which are 0 except on a notched phone held sideways or the installed app's home bar.

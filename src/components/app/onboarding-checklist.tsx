@@ -21,7 +21,7 @@ export function OnboardingChecklist({
       <h2 id="getting-started" className="text-lg font-black">
         {list.allDone ? "You're all set up." : "Getting started"}
       </h2>
-      <ol className="flex flex-col gap-1">
+      <ol className="flex flex-col gap-2">
         {list.steps.map((s, i) => (
           <li key={s.key}>
             <Link

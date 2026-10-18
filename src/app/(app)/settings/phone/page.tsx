@@ -31,7 +31,7 @@ export default async function PhoneSettingsPage(props: PageProps<"/settings/phon
           On this phone
         </h2>
         <AutoSaveForm action={saveHandAction} hideButton className="flex flex-col gap-3">
-          <fieldset className="flex flex-col gap-1">
+          <fieldset className="flex flex-col gap-2">
             <legend className="font-semibold">Which hand do you hold it in?</legend>
             {(
               [

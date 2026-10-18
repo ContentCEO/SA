@@ -280,7 +280,7 @@ export default async function QuotesPage(props: PageProps<"/quotes">) {
         </section>
       ) : null}
 
-      <nav aria-label="Quote filter" className="-mx-1 flex gap-1 overflow-x-auto pb-1">
+      <nav aria-label="Quote filter" className="-mx-1 flex gap-2 overflow-x-auto pb-1">
         {FILTERS.map(([key, label]) => (
           <Link
             key={key}
