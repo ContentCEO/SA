@@ -3,10 +3,12 @@ import { expect, test } from "@playwright/test";
 import { eq } from "drizzle-orm";
 import * as schema from "../../src/db/schema";
 import { localMonthName } from "../../src/server/snooze-rules";
-import { seedOwner, seedQueue, signInAs, testDb } from "./support";
+import { seedOwner, seedQueue, setWorkspace, signInAs, testDb } from "./support";
 
 test("activity: plain log, honest estimate, reachable from the menu", async ({ page, context }) => {
   const owner = await seedOwner({ mailbox: true, backfilled: true });
+  // Sending is on (setup paid): the week and month boxes, not the trial's.
+  await setWorkspace(owner.workspaceId, { status: "active", plan: "solo", setupPaidVia: "stripe" });
   const { draft, quote } = await seedQueue(owner.mailboxId!);
   await testDb
     .update(schema.drafts)
@@ -58,9 +60,11 @@ test("activity: plain log, honest estimate, reachable from the menu", async ({ p
     name: `${localMonthName(new Date(), "America/New_York")} so far`,
   });
   await expect(month.getByText("Time saved: about 3 minutes.")).toBeVisible();
-  await expect(
-    month.getByText(/That's an estimate: 3 minutes for each drafted reply you sent/),
-  ).toBeVisible();
+  // Check 14 P3: the rule the math uses, said once in each box.
+  const RULE =
+    "Our estimate: 3 minutes for each drafted reply or follow-up that went out, from the app, from Gmail or by autopilot.";
+  await expect(month).toContainText(RULE);
+  expect(((await month.textContent()) ?? "").split(RULE).length - 1).toBe(1);
 
   // Plan #32/#33: this week so far — the reply just sent from the app answers the quote
   // request at once (sync hasn't brought in its email yet), so the quote is out.
@@ -68,25 +72,32 @@ test("activity: plain log, honest estimate, reachable from the menu", async ({ p
   await expect(week).toBeVisible();
   const figure = (label: string) =>
     week.locator("div").filter({ has: page.getByRole("term").filter({ hasText: label }) });
-  await expect(figure("Replies sent").getByRole("definition")).toHaveText("1");
+  await expect(figure("Replies you sent").getByRole("definition")).toHaveText("1");
   await expect(figure("Follow-ups sent").getByRole("definition")).toHaveText("0");
-  await expect(figure("Quotes out").getByRole("definition")).toHaveText("1");
+  await expect(figure("Quote requests answered").getByRole("definition")).toHaveText("1");
+  await expect(figure("Autopilot sent")).toHaveCount(0);
   await expect(figure("Time saved (estimate)").getByRole("definition")).toHaveText(
     "about 3 minutes",
   );
-  await expect(week).toContainText(
-    "You answered quote requests in under a minute on average this week.",
-  );
+  await expect(week).toContainText("1 of this week's quote requests answered, in under a minute.");
   await expect(week).not.toContainText("still waiting");
   await expect(week).toContainText("Nothing sent last week.");
-  await expect(
-    week.getByText(/That's an estimate: 3 minutes for each drafted reply you sent/),
-  ).toBeVisible();
+  await expect(week).toContainText(RULE);
+  expect(((await week.textContent()) ?? "").split(RULE).length - 1).toBe(1);
+  await expect(week).toContainText("Answered counts your first reply to each quote request");
+  await expect(week).toContainText("Clock time, nights and weekends included.");
 
   const overflow = await page.evaluate(
     () => document.documentElement.scrollWidth > document.documentElement.clientWidth,
   );
   expect(overflow).toBe(false);
+
+  // Check 42 P5: the record names the sign-in, never a person, and claims no proof of who.
+  await page.getByRole("link", { name: "See record" }).first().click();
+  await expect(page).toHaveURL(/\/record\//);
+  await expect(page.getByText(`Your sign-in (${owner.email})`)).toBeVisible();
+  await expect(page.getByText("Anyone who uses this sign-in can okay replies.")).toBeVisible();
+  await expect(page.getByText(/this is the proof/)).toHaveCount(0);
 });
 
 test("activity at 375px: monthly close rate counts owner and auto outcomes, Money owed link works", async ({
@@ -95,6 +106,7 @@ test("activity at 375px: monthly close rate counts owner and auto outcomes, Mone
 }) => {
   await page.setViewportSize({ width: 375, height: 812 });
   const owner = await seedOwner({ mailbox: true, backfilled: true });
+  await setWorkspace(owner.workspaceId, { status: "active", plan: "solo", setupPaidVia: "stripe" });
   const now = new Date();
   const decided = [
     { name: "Ana", outcome: "won", source: "owner" },
@@ -140,7 +152,7 @@ test("activity at 375px: monthly close rate counts owner and auto outcomes, Mone
   const week = page.getByRole("region", { name: "This week so far" });
   await expect(week.getByRole("heading", { name: "This week so far" })).toBeVisible();
   await expect(week.getByText("Time saved (estimate)")).toBeVisible();
-  await expect(week.getByText(/That's an estimate/)).toBeVisible();
+  await expect(week.getByText(/Our estimate: 3 minutes/)).toBeVisible();
   const close = page.getByRole("region", { name: "Quotes decided this month" });
   await expect(close).toContainText("You won 1 of 3 quotes decided this month (33%).");
   // Won / Lost / No answer: one each — the auto "no answer" counts as decided.
@@ -159,6 +171,36 @@ test("activity at 375px: monthly close rate counts owner and auto outcomes, Mone
   await page.getByRole("link", { name: "Money owed →" }).click();
   await expect(page).toHaveURL(/\/money$/);
   await expect(page.getByRole("region", { name: "Owed to you" })).toBeVisible();
+});
+
+test("activity on the trial: numbers that move, never a time-saved zero (Check 14 P9)", async ({
+  page,
+  context,
+}) => {
+  await page.setViewportSize({ width: 375, height: 812 });
+  const owner = await seedOwner({ mailbox: true, backfilled: true });
+  const now = Date.now();
+  await setWorkspace(owner.workspaceId, {
+    status: "evaluating",
+    evaluationStartedAt: new Date(now - 86_400_000),
+    evaluationEndsAt: new Date(now + 2 * 86_400_000),
+  });
+  await seedQueue(owner.mailboxId!);
+  await signInAs(context, owner);
+  await page.goto("/activity");
+  const box = page.getByRole("region", { name: "Your three days so far" });
+  await expect(box).toBeVisible();
+  for (const label of [
+    "Conversations sorted",
+    "Drafts written",
+    "Drafts you changed",
+    "Practice copies sent",
+  ])
+    await expect(box.getByRole("term").filter({ hasText: label })).toBeVisible();
+  await expect(box).toContainText("Sending turns on after setup.");
+  await expect(page.getByRole("region", { name: "This week so far" })).toHaveCount(0);
+  await expect(page.getByRole("main")).not.toContainText("about 0 minutes");
+  await expect(page.getByRole("main")).not.toContainText("Time saved");
 });
 
 test("settings: morning summary time and time zone are saved", async ({ page, context }) => {

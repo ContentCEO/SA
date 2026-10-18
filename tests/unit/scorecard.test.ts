@@ -7,7 +7,7 @@ import { ensureUserAndWorkspace } from "@/server/accounts";
 import { saveConnectedMailbox } from "@/server/mailboxes";
 import { isAutomatedSender, isNoReplyAddress as offerNoReply } from "@/server/offer-rules";
 import { scorecardQueries, weekScorecards, weeklyScorecard } from "@/server/scorecard";
-import { weekBounds } from "@/server/scorecard-rules";
+import { responseTimeSentence, scorecardCountsLine, weekBounds } from "@/server/scorecard-rules";
 import { isNoReplyAddress } from "@/server/sender-rules";
 import { noReplySql } from "@/server/thread-sql";
 import { createTestDb } from "../support/db";
@@ -140,6 +140,7 @@ describe("weeklyScorecard: replies and follow-ups sent (#32)", () => {
     expect(Object.keys(s).sort()).toEqual(
       [
         "asWritten",
+        "autopilotSent",
         "followupsSent",
         "minutesSaved",
         "quotesOut",
@@ -148,7 +149,12 @@ describe("weeklyScorecard: replies and follow-ups sent (#32)", () => {
         "speed",
       ].sort(),
     );
-    expect(Object.keys(s.response).sort()).toEqual(["answered", "avgMinutes", "unanswered"]);
+    expect(Object.keys(s.response).sort()).toEqual([
+      "answered",
+      "avgMinutes",
+      "typicalMinutes",
+      "unanswered",
+    ]);
     expect(JSON.stringify(s)).not.toMatch(/SECRET|@/);
   });
 });
@@ -197,7 +203,53 @@ describe("weeklyScorecard: quotes out (#32)", () => {
     await msg(t, "in", day(1, 9));
     const s = await week();
     expect(s.quotesOut).toBe(1);
-    expect(s.response).toEqual({ avgMinutes: 120, answered: 1, unanswered: 0 });
+    expect(s.response).toEqual({
+      avgMinutes: 120,
+      typicalMinutes: 120,
+      answered: 1,
+      unanswered: 0,
+    });
+  });
+});
+
+describe("quote requests answered vs this week's response sentence (Check 14 P4)", () => {
+  it("asked last Friday, answered Monday: this week's answered count, last week's response time", async () => {
+    const friday = await thread();
+    await msg(friday, "in", day(-3, 9));
+    await msg(friday, "out", day(0, 9));
+    // One asked this week, still waiting.
+    const waiting = await thread();
+    await msg(waiting, "in", day(1, 9));
+    const { thisWeek, lastWeek } = await weekScorecards(workspaceId, NOW, NY);
+    expect(thisWeek.quotesOut).toBe(1);
+    expect(lastWeek.quotesOut).toBe(0);
+    expect(lastWeek.response).toMatchObject({
+      answered: 1,
+      unanswered: 0,
+      typicalMinutes: 3 * 1440,
+    });
+    expect(thisWeek.response).toMatchObject({ answered: 0, unanswered: 1 });
+    expect(scorecardCountsLine(thisWeek, "This week")).toContain("1 quote request answered");
+    expect(responseTimeSentence(thisWeek.response, lastWeek.response)).toBe(
+      "Of this week's quote requests: none answered yet (last week's typical answer: 3 days). 1 is still waiting.",
+    );
+    expect(responseTimeSentence(lastWeek.response, null, "last week")).toBe(
+      "1 of last week's quote requests answered, in 3 days.",
+    );
+  });
+});
+
+describe("weeklyScorecard: autopilot's sends are kept apart (Check 14 P3)", () => {
+  it("counts autopilot sends apart from the owner's and in the time saved", async () => {
+    const t = await thread();
+    await draft(t, { status: "sent", decidedAt: day(1, 9), sentVia: "app" });
+    await draft(t, { status: "sent", decidedAt: day(1, 10), sentVia: "autopilot" });
+    await draft(t, { status: "sent", kind: "followup", decidedAt: day(1, 11), sentVia: "gmail" });
+    // The owner's own Gmail reply is never a drafted reply sent.
+    await draft(t, { status: "sent", decidedAt: day(1, 12), sentVia: "own_words" });
+    const s = await week();
+    expect(s).toMatchObject({ repliesSent: 1, autopilotSent: 1, followupsSent: 1 });
+    expect(s.minutesSaved).toBe(9);
   });
 });
 
@@ -213,16 +265,31 @@ describe("weeklyScorecard: a quote request is dated from when it was asked for",
     // Not yet answered: this week has one waiting request; last week has none.
     let s = await week();
     expect(s.quotesOut).toBe(0);
-    expect(s.response).toEqual({ avgMinutes: null, answered: 0, unanswered: 1 });
+    expect(s.response).toEqual({
+      avgMinutes: null,
+      typicalMinutes: null,
+      answered: 0,
+      unanswered: 1,
+    });
     let last = await weeklyScorecard(workspaceId, WEEK.lastStart, WEEK.start, NOW);
     expect(last.quotesOut).toBe(0);
-    expect(last.response).toEqual({ avgMinutes: null, answered: 0, unanswered: 0 });
+    expect(last.response).toEqual({
+      avgMinutes: null,
+      typicalMinutes: null,
+      answered: 0,
+      unanswered: 0,
+    });
 
     // The owner quotes two hours later: this week's quote out, timed from the request.
     await msg(t, "out", day(1, 11));
     s = await week();
     expect(s.quotesOut).toBe(1);
-    expect(s.response).toEqual({ avgMinutes: 120, answered: 1, unanswered: 0 });
+    expect(s.response).toEqual({
+      avgMinutes: 120,
+      typicalMinutes: 120,
+      answered: 1,
+      unanswered: 0,
+    });
     last = await weeklyScorecard(workspaceId, WEEK.lastStart, WEEK.start, NOW);
     expect(last.quotesOut).toBe(0);
     expect(last.response.answered).toBe(0);
@@ -242,13 +309,23 @@ describe("weeklyScorecard: a forward to the crew answers nobody", () => {
     await msg(t, "out", day(0, 9, 40), "owner@shop.com", mailboxId, "crew@shop.com", "RE: FW: x");
     let s = await week();
     expect(s.quotesOut).toBe(0);
-    expect(s.response).toEqual({ avgMinutes: null, answered: 0, unanswered: 1 });
+    expect(s.response).toEqual({
+      avgMinutes: null,
+      typicalMinutes: null,
+      answered: 0,
+      unanswered: 1,
+    });
 
     // 11:00: the real reply, to the customer.
     await msg(t, "out", day(0, 11));
     s = await week();
     expect(s.quotesOut).toBe(1);
-    expect(s.response).toEqual({ avgMinutes: 120, answered: 1, unanswered: 0 });
+    expect(s.response).toEqual({
+      avgMinutes: 120,
+      typicalMinutes: 120,
+      answered: 1,
+      unanswered: 0,
+    });
   });
 
   it("forwarding something to the customer (To or Cc) answers them", async () => {
@@ -266,7 +343,12 @@ describe("weeklyScorecard: a forward to the crew answers nobody", () => {
       subject: "Fwd: SECRET-SUBJECT",
       sentAt: day(0, 9, 30),
     });
-    expect((await week()).response).toEqual({ avgMinutes: 30, answered: 1, unanswered: 0 });
+    expect((await week()).response).toEqual({
+      avgMinutes: 30,
+      typicalMinutes: 30,
+      answered: 1,
+      unanswered: 0,
+    });
   });
 
   it("a 'Re:' sent only to the crew on the owner's own domain is no answer: the request stays unanswered", async () => {
@@ -277,11 +359,16 @@ describe("weeklyScorecard: a forward to the crew answers nobody", () => {
     await msg(t, "in", day(0, 9, 30), "crew@shop.com", mailboxId, "owner@shop.com");
     let s = await week();
     expect(s.quotesOut).toBe(0);
-    expect(s.response).toEqual({ avgMinutes: null, answered: 0, unanswered: 1 });
+    expect(s.response).toEqual({
+      avgMinutes: null,
+      typicalMinutes: null,
+      answered: 0,
+      unanswered: 1,
+    });
     await msg(t, "out", day(0, 10));
     s = await week();
     expect(s.quotesOut).toBe(1);
-    expect(s.response).toEqual({ avgMinutes: 60, answered: 1, unanswered: 0 });
+    expect(s.response).toEqual({ avgMinutes: 60, typicalMinutes: 60, answered: 1, unanswered: 0 });
   });
 
   it("a lead forwarded in by a property manager, Cc'ing the tenant: the owner's reply to the tenant is the answer", async () => {
@@ -309,7 +396,7 @@ describe("weeklyScorecard: a forward to the crew answers nobody", () => {
     );
     const s = await week();
     expect(s.quotesOut).toBe(1);
-    expect(s.response).toEqual({ avgMinutes: 20, answered: 1, unanswered: 0 });
+    expect(s.response).toEqual({ avgMinutes: 20, typicalMinutes: 20, answered: 1, unanswered: 0 });
   });
 
   it("a contact-form lead answered from Gmail (to the Reply-To address) counts as answered and as a quote out", async () => {
@@ -326,7 +413,7 @@ describe("weeklyScorecard: a forward to the crew answers nobody", () => {
     await msg(t, "out", day(0, 9, 45), "owner@shop.com", mailboxId, CUSTOMER);
     const s = await week();
     expect(s.quotesOut).toBe(1);
-    expect(s.response).toEqual({ avgMinutes: 45, answered: 1, unanswered: 0 });
+    expect(s.response).toEqual({ avgMinutes: 45, typicalMinutes: 45, answered: 1, unanswered: 0 });
   });
 });
 
@@ -354,7 +441,7 @@ describe("weeklyScorecard: answered from the app before the next sync (A12)", ()
     await msg(t, "in", day(0, 9));
     await draft(t, { status: "sent", decidedAt: day(0, 9, 45) });
     const s = await week();
-    expect(s.response).toEqual({ avgMinutes: 45, answered: 1, unanswered: 0 });
+    expect(s.response).toEqual({ avgMinutes: 45, typicalMinutes: 45, answered: 1, unanswered: 0 });
     expect(s.quotesOut).toBe(1);
     expect(s.repliesSent).toBe(1);
   });
@@ -364,7 +451,12 @@ describe("weeklyScorecard: answered from the app before the next sync (A12)", ()
     await msg(t, "in", day(0, 9));
     await msg(t, "out", day(0, 9, 20)); // sync's sent_at, a little before decided_at was stamped
     await draft(t, { status: "edited_and_sent", decidedAt: day(0, 9, 21) });
-    expect((await week()).response).toEqual({ avgMinutes: 20, answered: 1, unanswered: 0 });
+    expect((await week()).response).toEqual({
+      avgMinutes: 20,
+      typicalMinutes: 20,
+      answered: 1,
+      unanswered: 0,
+    });
   });
 
   it("a send waiting out its undo window counts as answered; a draft not yet okayed doesn't", async () => {
@@ -380,7 +472,12 @@ describe("weeklyScorecard: answered from the app before the next sync (A12)", ()
 
     const s = await week();
     // The queued one is timed to now at the latest (2 h), never to a moment still ahead.
-    expect(s.response).toEqual({ avgMinutes: 120, answered: 1, unanswered: 2 });
+    expect(s.response).toEqual({
+      avgMinutes: 120,
+      typicalMinutes: 120,
+      answered: 1,
+      unanswered: 2,
+    });
     expect(s.quotesOut).toBe(1);
   });
 
@@ -402,7 +499,12 @@ describe("weeklyScorecard: answered from the app before the next sync (A12)", ()
     await msg(both, "in", day(0, 9));
     await msg(both, "out", day(0, 10));
 
-    expect((await week()).response).toEqual({ avgMinutes: 60, answered: 1, unanswered: 1 });
+    expect((await week()).response).toEqual({
+      avgMinutes: 60,
+      typicalMinutes: 60,
+      answered: 1,
+      unanswered: 1,
+    });
   });
 });
 
@@ -436,6 +538,8 @@ describe("weeklyScorecard: response time (#33)", () => {
     const s = await week();
     expect(s.response).toEqual({
       avgMinutes: Math.round((120 + 30 + 60) / 3),
+      // Check 14 P5: the typical (middle) answer.
+      typicalMinutes: 60,
       answered: 3,
       unanswered: 2,
     });
@@ -465,7 +569,7 @@ describe("weeklyScorecard: response time (#33)", () => {
     await ownerRow(sent, ["SENT"], day(1, 10));
 
     const s = await week();
-    expect(s.response).toEqual({ avgMinutes: 60, answered: 1, unanswered: 1 });
+    expect(s.response).toEqual({ avgMinutes: 60, typicalMinutes: 60, answered: 1, unanswered: 1 });
     expect(s.quotesOut).toBe(1);
   });
 
@@ -480,7 +584,12 @@ describe("weeklyScorecard: response time (#33)", () => {
     await msg(person, "in", day(0, 9), "dana@customer.com");
 
     const s = await week();
-    expect(s.response).toEqual({ avgMinutes: null, answered: 0, unanswered: 1 });
+    expect(s.response).toEqual({
+      avgMinutes: null,
+      typicalMinutes: null,
+      answered: 0,
+      unanswered: 1,
+    });
   });
 
   it("a request in late Sunday night, answered Monday, belongs to LAST week (the week of the request)", async () => {
@@ -491,8 +600,18 @@ describe("weeklyScorecard: response time (#33)", () => {
 
     const { thisWeek, lastWeek, bounds } = await weekScorecards(workspaceId, now, NY);
     expect(bounds.start.toISOString()).toBe("2026-10-12T04:00:00.000Z");
-    expect(lastWeek.response).toEqual({ avgMinutes: 540, answered: 1, unanswered: 0 });
-    expect(thisWeek.response).toEqual({ avgMinutes: null, answered: 0, unanswered: 0 });
+    expect(lastWeek.response).toEqual({
+      avgMinutes: 540,
+      typicalMinutes: 540,
+      answered: 1,
+      unanswered: 0,
+    });
+    expect(thisWeek.response).toEqual({
+      avgMinutes: null,
+      typicalMinutes: null,
+      answered: 0,
+      unanswered: 0,
+    });
     // The reply itself went out this week, so the quote is "out" this week.
     expect(thisWeek.quotesOut).toBe(1);
     expect(lastWeek.quotesOut).toBe(0);
@@ -504,7 +623,12 @@ describe("weeklyScorecard: response time (#33)", () => {
     await msg(t, "in", T("2026-11-01T03:30:00Z")); // Sat Oct 31, 11:30pm EDT
     await msg(t, "out", T("2026-11-01T13:30:00Z")); // Sun Nov 1, 8:30am EST (9 h on the clock)
     const { thisWeek } = await weekScorecards(workspaceId, now, NY);
-    expect(thisWeek.response).toEqual({ avgMinutes: 600, answered: 1, unanswered: 0 });
+    expect(thisWeek.response).toEqual({
+      avgMinutes: 600,
+      typicalMinutes: 600,
+      answered: 1,
+      unanswered: 0,
+    });
   });
 });
 
@@ -527,15 +651,21 @@ describe("weeklyScorecard is scoped to the workspace", () => {
     expect(await week()).toEqual({
       repliesSent: 0,
       followupsSent: 0,
+      autopilotSent: 0,
       quotesOut: 0,
-      response: { avgMinutes: null, answered: 0, unanswered: 0 },
+      response: { avgMinutes: null, typicalMinutes: null, answered: 0, unanswered: 0 },
       minutesSaved: 0,
       speed: { fast: 0, counted: 0 },
       asWritten: { asWritten: 0, counted: 0 },
     });
     const theirs = await weeklyScorecard(other.workspaceId, WEEK.start, WEEK.end, NOW);
     expect(theirs).toMatchObject({ repliesSent: 1, followupsSent: 1, quotesOut: 1 });
-    expect(theirs.response).toEqual({ avgMinutes: 60, answered: 1, unanswered: 1 });
+    expect(theirs.response).toEqual({
+      avgMinutes: 60,
+      typicalMinutes: 60,
+      answered: 1,
+      unanswered: 1,
+    });
   });
 });
 

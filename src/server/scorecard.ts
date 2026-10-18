@@ -3,7 +3,13 @@ import { and, count, eq, gte, inArray, lt, sql, type SQL } from "drizzle-orm";
 import { MINUTES_PER_SENT_REPLY } from "@/config/drafting";
 import { db } from "@/db";
 import { drafts, mailboxes, threads } from "@/db/schema";
-import { averageMinutes, quoteSpeed, weekBounds, type ScorecardNumbers } from "./scorecard-rules";
+import {
+  averageMinutes,
+  medianMinutes,
+  quoteSpeed,
+  weekBounds,
+  type ScorecardNumbers,
+} from "./scorecard-rules";
 import {
   asDate,
   noReplySql,
@@ -24,6 +30,16 @@ export type Scorecard = ScorecardNumbers;
 
 /** A Date for raw SQL: postgres.js can't bind a Date inside a sql`` template (A10). */
 const at = (d: Date) => sql`${d.toISOString()}::timestamptz`;
+
+/**
+ * Check 14 P3: a sent draft autopilot sent, with no tap from the owner. `sent_via` says so for
+ * sends since the send-path package; older rows are read from their `reply_sent` entry.
+ * Spelled "drafts"."id" on purpose: in a select list Drizzle leaves a column unqualified, which
+ * inside the subquery would mean the activity row's own id. Only for queries on `drafts`.
+ */
+export function autopilotSentSql(): SQL<boolean> {
+  return sql<boolean>`(${drafts.sentVia} = 'autopilot' or (${drafts.sentVia} is null and exists (select 1 from activity_log a where a.action = 'reply_sent' and a.detail->>'draftId' = "drafts"."id"::text and a.detail->>'autopilot' = 'true')))`;
+}
 
 /**
  * When the owner first answered on the thread after `after` (a SQL timestamp), up to `now`:
@@ -51,8 +67,9 @@ function firstAnswerSql(after: SQL, now: Date): SQL {
 export function scorecardQueries(workspaceId: string, start: Date, end: Date, now: Date) {
   // Sent from the app, by when the owner okayed it. Drizzle encodes the Dates here (a
   // column is on the left of every comparison).
+  const auto = autopilotSentSql();
   const sent = db()
-    .select({ kind: drafts.kind, n: count() })
+    .select({ kind: drafts.kind, auto, n: count() })
     .from(drafts)
     .innerJoin(mailboxes, eq(mailboxes.id, drafts.mailboxId))
     .where(
@@ -65,7 +82,7 @@ export function scorecardQueries(workspaceId: string, start: Date, end: Date, no
         lt(drafts.decidedAt, end),
       ),
     )
-    .groupBy(drafts.kind);
+    .groupBy(drafts.kind, auto);
 
   // When the quote was asked for (the sticky mark from classification; the thread's first
   // customer email on older threads), who asked, and the owner's first answer after it. A
@@ -75,9 +92,9 @@ export function scorecardQueries(workspaceId: string, start: Date, end: Date, no
   const requester = requestReplySql();
   const answer = firstAnswerSql(requestedAt, now);
 
-  // Quotes out: each quote request once, in the week its quote went out — the owner's first
-  // answer to the request. Not a nudge or later chat on a quote already out, and not a cold
-  // email (nothing came in before it).
+  // Quote requests answered (Check 14 P4; once called "quotes out"): each quote request once,
+  // in the week of the owner's first answer to it — any first reply, or "I called them", asked
+  // any week. Not a nudge or later chat, and not a cold email (nothing came in before it).
   const quotesOut = db()
     .select({ n: count() })
     .from(threads)
@@ -92,7 +109,8 @@ export function scorecardQueries(workspaceId: string, start: Date, end: Date, no
     );
 
   // Response time: quote requests asked for this week (the week of the request), to the
-  // owner's first answer after it, up to now. Calendar time. A no-reply sender (a lead
+  // owner's first answer after it, up to now. Clock time, nights and weekends included (the
+  // screen says so); the owner is shown the typical (median) gap. A no-reply sender (a lead
   // platform's notice) is answered on the platform, never here (A13).
   // `settled`: the owner marked how it ended (say, after a phone call) — handled, so never
   // "still waiting", though there's no email to time.
@@ -162,9 +180,12 @@ export async function weeklyScorecard(
     q.response,
     q.asWritten,
   ]);
-  const sentOf = (kind: "reply" | "followup") => Number(sent.find((r) => r.kind === kind)?.n ?? 0);
+  // Check 14 P3: autopilot's sends kept apart from the owner's own.
+  const sentOf = (kind: "reply" | "followup") =>
+    sent.filter((r) => r.kind === kind && !r.auto).reduce((sum, r) => sum + Number(r.n), 0);
   const repliesSent = sentOf("reply");
   const followupsSent = sentOf("followup");
+  const autopilotSent = sent.filter((r) => r.auto).reduce((sum, r) => sum + Number(r.n), 0);
 
   const pairs: { from: Date; to: Date }[] = [];
   const waiting: Date[] = [];
@@ -182,10 +203,17 @@ export async function weeklyScorecard(
   return {
     repliesSent,
     followupsSent,
+    autopilotSent,
     quotesOut: Number(out[0]?.n ?? 0),
-    response: { avgMinutes: averageMinutes(pairs), answered: pairs.length, unanswered },
-    // Same rule as the month: every drafted reply or follow-up the owner sent.
-    minutesSaved: MINUTES_PER_SENT_REPLY * (repliesSent + followupsSent),
+    response: {
+      avgMinutes: averageMinutes(pairs),
+      // Check 14 P5: the typical answer (median), what the owner is shown.
+      typicalMinutes: medianMinutes(pairs),
+      answered: pairs.length,
+      unanswered,
+    },
+    // Same rule as the month (timeSavedRule): every drafted reply or follow-up that went out.
+    minutesSaved: MINUTES_PER_SENT_REPLY * (repliesSent + followupsSent + autopilotSent),
     // Ideas C8: within 24 hours, calendar time. Known edge: Monday's email counts last week
     // at send time, so a late-Sunday request still inside its first day is left out of it
     // (never marked slow early); the Activity card counts it once its 24 hours are up.

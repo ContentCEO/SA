@@ -2,6 +2,7 @@
  * Pure rules for the Activity screen (outside review K1: lead with money, group the feed by
  * day). No database here; activity.ts gathers the rows.
  */
+import { z } from "zod";
 import { formatCents } from "./quote-rules";
 import { usableTimeZone } from "./snooze-rules";
 
@@ -152,4 +153,22 @@ export function groupByDay<T extends { at: Date }>(
     g.entries.push(e);
   }
   return groups;
+}
+
+/**
+ * Check 14 P6: Activity's "Show older" cursor, `?before=<iso>_<id>`. Anything that doesn't
+ * parse is the first page; the query is always scoped to the owner's own workspace.
+ */
+const cursorSchema = z.object({ at: z.iso.datetime(), id: z.uuid() });
+
+export function activityCursorParam(c: { at: Date; id: string }): string {
+  return `${c.at.toISOString()}_${c.id}`;
+}
+
+export function parseActivityCursor(raw: unknown): { at: Date; id: string } | undefined {
+  if (typeof raw !== "string" || raw.length > 100) return undefined;
+  const i = raw.indexOf("_");
+  if (i < 0) return undefined;
+  const parsed = cursorSchema.safeParse({ at: raw.slice(0, i), id: raw.slice(i + 1) });
+  return parsed.success ? { at: new Date(parsed.data.at), id: parsed.data.id } : undefined;
 }

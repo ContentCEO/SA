@@ -203,7 +203,11 @@ export function buildDigest(
       ? `${plural(c.nudgesReady, "follow-up")} ready for quiet quotes or invoices.`
       : null,
     c.sentYesterday || c.sortedYesterday
-      ? `Yesterday: ${plural(c.sortedYesterday, "email")} sorted, ${plural(c.sentYesterday, "reply", "replies")} sent.`
+      ? // Check 14 P11: the 24 hours before this email (not the calendar day), conversations
+        // (threads), and drafted replies and follow-ups together.
+        `In the last day: ${plural(c.sortedYesterday, "conversation")} sorted, ${c.sentYesterday} ${
+          c.sentYesterday === 1 ? "reply or follow-up" : "replies and follow-ups"
+        } sent.`
       : null,
   ].filter((l): l is string => !!l);
   const lastWeek = extras.lastWeek ?? [];

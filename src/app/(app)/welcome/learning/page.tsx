@@ -6,12 +6,12 @@ import { cn } from "@/lib/utils";
 import { listMailboxes } from "@/server/mailboxes";
 import { describeVoice, getVoiceProfile } from "@/server/profile";
 import { requireOwner } from "@/server/session";
-import { syncSummary } from "@/server/sync";
 import { CLASSIFY_LOOKBACK_DAYS } from "@/server/classification";
 import { firstLookCounts } from "@/server/first-week";
 import { firstLookLines } from "@/server/first-week-rules";
 import { effectiveStatus } from "@/server/lifecycle";
 import { TRIAL_NO_SEND_LINE, TRIAL_SIDE_DOOR_LINE } from "@/server/trial-email-rules";
+import { syncSummary } from "@/server/sync";
 
 function Step({ done, children }: { done: boolean; children: React.ReactNode }) {
   return (
@@ -62,7 +62,9 @@ export default async function WelcomeLearningPage() {
       <ul className="flex flex-col gap-3" aria-live="polite">
         <Step done={Boolean(box?.backfillCompletedAt)}>
           {box?.backfillCompletedAt
-            ? `Read ${read.toLocaleString("en-US")} emails from the last 30 days.`
+            ? // Check 14 P2: no number once it's done. "Your last 30 days" below carries the
+              // only final count, so the screen can't show two different read figures.
+              "Read your last 30 days of email."
             : read > 0
               ? `Reading the last 30 days of email: ${read.toLocaleString("en-US")} so far…`
               : "Reading the last 30 days of email…"}

@@ -158,42 +158,55 @@ function openQuoteWhere(boxIds: string[], since: Date) {
  * customer wrote last (`waitingSinceSql`: a phone call counts as an answer), and quotes the
  * owner answered that went quiet for the follow-up wait with no nudge sent yet. Newest first.
  */
-async function foundMoneyIds(workspaceId: string, boxIds: string[], now: Date) {
-  if (!boxIds.length) return { replies: [] as string[], nudges: [] as string[] };
+async function foundMoneyWhere(workspaceId: string, boxIds: string[], now: Date) {
   const sortedSince = new Date(now.getTime() - CLASSIFY_LOOKBACK_DAYS * 86_400_000);
-  const replies = await db()
-    .select({ id: threads.id })
-    .from(threads)
-    .where(
-      and(
-        openQuoteWhere(boxIds, sortedSince),
-        eq(threads.inInbox, true),
-        sql`${waitingSinceSql()} is not null`,
-      ),
-    )
-    .orderBy(sql`${threads.lastMessageAt} desc`)
-    .limit(FOUND_MONEY_MAX);
+  const replies = and(
+    openQuoteWhere(boxIds, sortedSince),
+    eq(threads.inInbox, true),
+    sql`${waitingSinceSql()} is not null`,
+  );
   const { days } = await followupSettings(workspaceId);
   const quietSince = new Date(now.getTime() - days * 86_400_000);
   const readSince = new Date(now.getTime() - 30 * 86_400_000);
-  const nudges = await db()
-    .select({ id: threads.id })
-    .from(threads)
-    .where(
-      and(
-        openQuoteWhere(boxIds, readSince),
-        eq(threads.needsOwner, false),
-        isNull(threads.invoicePaidAt),
-        sql`${lastInSql()} is not null`,
-        sql`${lastOutSql()} > ${lastInSql()}`,
-        sql`${lastOutSql()} <= ${at(quietSince)}`,
-        sql`not ${answeredByPhoneSql()}`,
-        sql`not exists (select 1 from drafts d where d.thread_id = ${threads.id} and d.kind = 'followup' and d.status in ('sent', 'edited_and_sent'))`,
-      ),
-    )
-    .orderBy(sql`${threads.lastMessageAt} desc`)
-    .limit(FOUND_MONEY_MAX);
+  const nudges = and(
+    openQuoteWhere(boxIds, readSince),
+    eq(threads.needsOwner, false),
+    isNull(threads.invoicePaidAt),
+    sql`${lastInSql()} is not null`,
+    sql`${lastOutSql()} > ${lastInSql()}`,
+    sql`${lastOutSql()} <= ${at(quietSince)}`,
+    sql`not ${answeredByPhoneSql()}`,
+    sql`not exists (select 1 from drafts d where d.thread_id = ${threads.id} and d.kind = 'followup' and d.status in ('sent', 'edited_and_sent'))`,
+  );
+  return { replies, nudges };
+}
+
+/** The ids to draft for, newest first, at most FOUND_MONEY_MAX of each (one tap's worth). */
+async function foundMoneyIds(workspaceId: string, boxIds: string[], now: Date) {
+  if (!boxIds.length) return { replies: [] as string[], nudges: [] as string[] };
+  const where = await foundMoneyWhere(workspaceId, boxIds, now);
+  const ids = (w: typeof where.replies) =>
+    db()
+      .select({ id: threads.id })
+      .from(threads)
+      .where(w)
+      .orderBy(sql`${threads.lastMessageAt} desc`)
+      .limit(FOUND_MONEY_MAX);
+  const [replies, nudges] = await Promise.all([ids(where.replies), ids(where.nudges)]);
   return { replies: replies.map((r) => r.id), nudges: nudges.map((r) => r.id) };
+}
+
+/**
+ * Check 14 P8: how many there really are, with the same rules and no limit — the card states
+ * these as exact, so they must not stop at the one-tap cap.
+ */
+async function foundMoneyCounts(workspaceId: string, boxIds: string[], now: Date) {
+  if (!boxIds.length) return { replies: 0, nudges: 0 };
+  const where = await foundMoneyWhere(workspaceId, boxIds, now);
+  const n = async (w: typeof where.replies) =>
+    Number((await db().select({ n: count() }).from(threads).where(w))[0]?.n ?? 0);
+  const [replies, nudges] = await Promise.all([n(where.replies), n(where.nudges)]);
+  return { replies, nudges };
 }
 
 const foundMoneyKey = (workspaceId: string) => `found-money-drafted:${workspaceId}`;
@@ -293,7 +306,7 @@ export async function firstLookCounts(
     )
     .groupBy(threads.category);
   const of = (c: string) => byCategory.find((r) => r.category === c)?.n ?? 0;
-  const found = await foundMoneyIds(workspaceId, boxIds, now);
+  const found = await foundMoneyCounts(workspaceId, boxIds, now);
   const [tapped] = await db()
     .select({ key: appSettings.key })
     .from(appSettings)
@@ -303,13 +316,13 @@ export async function firstLookCounts(
       read: read?.n ?? 0,
       sorted: byCategory.reduce((sum, r) => sum + r.n, 0),
       quoteRequests: of(QUOTE),
-      unansweredQuotes: found.replies.length,
+      unansweredQuotes: found.replies,
       invoices: of("invoice_payment"),
       complaints: of("complaint"),
       junk: of("noise"),
-      quietQuotes: found.nudges.length,
+      quietQuotes: found.nudges,
     },
-    offerDrafts: !tapped && found.replies.length + found.nudges.length > 0,
+    offerDrafts: !tapped && found.replies + found.nudges > 0,
   };
 }
 
@@ -483,6 +496,46 @@ export async function sendFirstDraftsReady(
 
 // ---------------------------------------------------------------------------------------------
 // FW F2 / E7: the trial's numbers
+
+/**
+ * Check 14 P9: Activity's "Your three days so far" box — numbers that move while sending is
+ * off. Conversations sorted, drafts written, drafts the owner changed (a tweak, or text that
+ * differs from what we wrote) and practice copies sent, since the trial started. Counts only.
+ */
+export async function trialActivityCounts(workspace: Workspace) {
+  const zero = { sorted: 0, drafted: 0, changed: 0, practice: 0 };
+  const start = workspace.evaluationStartedAt;
+  if (!start) return zero;
+  const boxIds = (
+    await db()
+      .select({ id: mailboxes.id })
+      .from(mailboxes)
+      .where(eq(mailboxes.workspaceId, workspace.id))
+  ).map((b) => b.id);
+  const [practice] = await db()
+    .select({ n: count() })
+    .from(activityLog)
+    .where(
+      and(
+        eq(activityLog.workspaceId, workspace.id),
+        eq(activityLog.action, "practice_sent"),
+        gte(activityLog.createdAt, start),
+      ),
+    );
+  if (!boxIds.length) return { ...zero, practice: practice?.n ?? 0 };
+  const { sorted, drafted } = await trialCounts(workspace);
+  const [changed] = await db()
+    .select({ n: count() })
+    .from(drafts)
+    .where(
+      and(
+        inArray(drafts.mailboxId, boxIds),
+        gte(drafts.createdAt, start),
+        sql`(${drafts.revisions} > 0 or (${drafts.body} is not null and ${drafts.originalBody} is not null and ${drafts.body} <> ${drafts.originalBody}))`,
+      ),
+    );
+  return { sorted, drafted, changed: changed?.n ?? 0, practice: practice?.n ?? 0 };
+}
 
 /** What the three days did so far: conversations sorted and drafts written since the start. */
 export async function trialCounts(workspace: Workspace) {

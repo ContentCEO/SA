@@ -16,6 +16,7 @@ import {
 } from "@/server/activity";
 import { buildDigest, digestCounts, digestDue, localParts, sendDigests } from "@/server/digest";
 import { queueThreadUrl } from "@/server/digest-rules";
+import { timeSavedRule } from "@/server/scorecard-rules";
 import { listQueue, queueCounts } from "@/server/drafts";
 import { lastInSql, lastOutSql, waitingSinceSql } from "@/server/thread-sql";
 import { appUrl } from "@/lib/app-url";
@@ -106,7 +107,9 @@ describe("digest content", () => {
       ].join("\n"),
     );
     expect(d.text).toContain("1 follow-up ready");
-    expect(d.text).toContain("Yesterday: 14 emails sorted, 2 replies sent.");
+    expect(d.text).toContain(
+      "In the last day: 14 conversations sorted, 2 replies and follow-ups sent.",
+    );
     expect(d.text).not.toContain("more in your queue");
     expect(d.html).toContain(`href="https://app/queue#t-${T1}"`);
     expect(d.html).toContain("A complaint — waiting since yesterday</a>");
@@ -402,6 +405,18 @@ describe("in the database", () => {
     expect(entries.map((e) => e.text)).toContain("You connected Gmail");
   });
 
+  it("a conversation sorted twice in a month counts once (Check 14 P11)", async () => {
+    const [t] = await database.select().from(threads);
+    const before = (await monthSummary(workspaceId, NOW)).sorted;
+    await database
+      .update(threads)
+      .set({ classifiedAt: new Date(NOW.getTime() - 60_000) })
+      .where(eq(threads.id, t!.id));
+    await database.update(threads).set({ classifiedAt: NOW }).where(eq(threads.id, t!.id));
+    expect(before).toBe(1);
+    expect((await monthSummary(workspaceId, NOW)).sorted).toBe(1);
+  });
+
   it("time saved is counted only from replies actually sent", async () => {
     const [t] = await database.select().from(threads);
     const base = {
@@ -427,8 +442,51 @@ describe("in the database", () => {
       sent: 3,
       sentAfterEditing: 1,
       nudgesSent: 1,
+      autopilotSent: 0,
       minutesSaved: 9,
     });
+  });
+
+  it("autopilot's sends are kept apart from the owner's, and the tiles add up to the time saved (Check 14 P3)", async () => {
+    const [t] = await database.select().from(threads);
+    const base = {
+      threadId: t!.id,
+      mailboxId,
+      toAddress: "x@y.com",
+      subject: "Re",
+      body: "b",
+      originalBody: "b",
+      reason: "r",
+      promptVersion: "draft.v1",
+      createdAt: NOW,
+      decidedAt: NOW,
+    };
+    const rows: (typeof drafts.$inferInsert)[] = [];
+    // 14 replies went out: 3 by autopilot (2 marked by sent_via, 1 older one only in the log)…
+    for (let i = 0; i < 11; i++)
+      rows.push({ ...base, gmailDraftId: `r${i}`, status: "sent", sentVia: "app" });
+    rows.push({ ...base, gmailDraftId: "a1", status: "sent", sentVia: "autopilot" });
+    rows.push({ ...base, gmailDraftId: "a2", status: "sent", sentVia: "autopilot" });
+    rows.push({ ...base, gmailDraftId: "a3", status: "sent", sentVia: null });
+    // …and 2 follow-ups.
+    rows.push({ ...base, gmailDraftId: "f1", status: "sent", kind: "followup", sentVia: "app" });
+    rows.push({ ...base, gmailDraftId: "f2", status: "sent", kind: "followup", sentVia: "gmail" });
+    const made = await database.insert(drafts).values(rows).returning();
+    const legacy = made.find((d) => d.gmailDraftId === "a3")!;
+    await database.insert(activityLog).values({
+      workspaceId,
+      actor: "squared_away",
+      action: "reply_sent",
+      threadId: t!.id,
+      detail: { draftId: legacy.id, autopilot: true },
+    });
+    const m = await monthSummary(workspaceId, NOW);
+    // The Activity tiles: Replies you sent = sent − follow-ups − autopilot.
+    expect(m.sent - m.nudgesSent - m.autopilotSent).toBe(11);
+    expect(m.autopilotSent).toBe(3);
+    expect(m.nudgesSent).toBe(2);
+    // 11 + 3 + 2 = 16 went out → 48 minutes: an owner can multiply the tiles by 3.
+    expect(m.minutesSaved).toBe(3 * (11 + 3 + 2));
   });
 
   it("sent replies count in the month they were sent, not the month they were drafted (A18)", async () => {
@@ -471,6 +529,7 @@ describe("in the database", () => {
       sent: 1,
       sentAfterEditing: 0,
       nudgesSent: 0,
+      autopilotSent: 0,
       minutesSaved: 3,
     });
   });
@@ -916,15 +975,33 @@ describe("digest: needs-you header, queue agreement and Monday's last week (plan
     it("the owner's Monday gets last week's counts below the rest — counts only", async () => {
       await lastWeekWork();
       const { email } = await runDigest(MONDAY);
-      expect(email!.text).toContain("Last week: 1 reply sent, 1 follow-up sent, 0 quotes out.");
+      expect(email!.text).toContain(
+        "Last week: 1 reply sent, 1 follow-up sent, 0 quote requests answered.",
+      );
       // No quote requests came in last week: said as that, never "none answered".
       expect(email!.text).toContain("No quote requests came in last week.");
       expect(email!.text).not.toContain("answered last week");
       expect(email!.text).toContain("Time saved: about 6 minutes");
-      expect(email!.html).toContain("Last week: 1 reply sent, 1 follow-up sent, 0 quotes out.");
+      // Check 14 P3: the same rule sentence as the Activity screen, said once.
+      expect(email!.text.split(timeSavedRule()).length - 1).toBe(1);
+      expect(email!.html).toContain(
+        "Last week: 1 reply sent, 1 follow-up sent, 0 quote requests answered.",
+      );
       expect(email!.text.indexOf("Needs you:")).toBeLessThan(email!.text.indexOf("Last week:"));
       // GUARDRAIL: names, subjects, addresses and text never come along.
       expect(`${email!.subject}${email!.text}${email!.html}`).not.toMatch(/SECRET|@example\.com/i);
+    });
+
+    it("Monday's response line is the typical answer, the same helper as the screen (Check 14 P5)", async () => {
+      await lastWeekWork();
+      const t = await thread({ category: "quote_request" }, [
+        { dir: "in", at: new Date("2026-10-06T13:00:00Z") },
+        { dir: "out", at: new Date("2026-10-06T15:00:00Z") },
+      ]);
+      expect(t.id).toBeTruthy();
+      const { email } = await runDigest(MONDAY);
+      expect(email!.text).toContain("1 of last week's quote requests answered, in 2 h.");
+      expect(email!.text).not.toContain("on average");
     });
 
     it("Tuesday doesn't", async () => {

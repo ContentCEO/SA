@@ -4,6 +4,7 @@ import { pricing } from "@/config/pricing";
 import { daysPhrase } from "@/lib/trial-words";
 import { categoryLabels, categoryTag, isCategory } from "@/config/categories";
 import { db } from "@/db";
+import { firstNameOf } from "@/lib/first-name";
 import { activityLog, drafts, mailboxes, messages, threads } from "@/db/schema";
 import { MINUTES_PER_SENT_REPLY } from "@/config/drafting";
 import { dollarsToCents, tally, type MoneySoFar, type MonthMoney } from "./activity-rules";
@@ -24,6 +25,7 @@ import { workspaceTimeZone } from "./snooze";
 import { localMonthStart, usableTimeZone } from "./snooze-rules";
 import { messageReplyName } from "./thread-sql";
 import { zoneTimeName } from "./time-zone-rules";
+import { autopilotSentSql } from "./scorecard";
 
 // The time-saved assumption lives in config (pure files read it too); re-exported for old callers.
 export { MINUTES_PER_SENT_REPLY } from "@/config/drafting";
@@ -50,7 +52,8 @@ export function describeActivity(
   // Plan #47 free months and the plan effects that come with them (dates in the owner's zone).
   const referral = referralActivityLine(action, detail, timeZone);
   if (referral) return referral;
-  const name = who?.name?.split(/[\s,]+/)[0] || null;
+  // Check 14 P10: one careful helper (never a surname, an address, a title or a business).
+  const name = firstNameOf(who?.name ?? null);
   const to = name ? ` to ${name}` : "";
   const about = who?.category && isCategory(who.category) ? ` · ${categoryTag[who.category]}` : "";
   const from = name ? ` from ${name}` : "";
@@ -74,8 +77,9 @@ export function describeActivity(
       return `You sent ${detail.kind === "followup" ? "a follow-up" : "a reply"}${to}${
         detail.editedByOwner ? ", after editing it" : ""
       }`;
+    // Check 42 P5: anyone with that Gmail could have sent it, so not "You".
     case "reply_sent_from_gmail":
-      return `You sent the draft${to} from Gmail`;
+      return `The draft${to} was sent from Gmail, outside the app`;
     // Check 14 P1: our draft was deleted and the owner wrote their own reply in Gmail.
     case "owner_wrote_own_reply":
       return `You answered ${name ?? "them"} yourself in Gmail`;
@@ -153,12 +157,58 @@ export function describeActivity(
       return "You turned on away mode";
     case "away_off":
       return "You turned off away mode";
-    // Ideas C5: the reason shows on Quotes and in the month's line, not as its own entry.
-    case "quote_lost_reason":
-      return null;
     // Check 11 P7: never the amount.
     case "quote_amount_changed":
       return `You changed the amount on ${name ? `${name}'s won quote` : "a won quote"}`;
+    // Check 14 P7: owner taps that were logged but never shown. Content-free.
+    case "answered_by_phone":
+      return `${name ? `You marked that you called ${name}` : "You marked a conversation as answered by phone"}${
+        detail.draftRemoved === true ? " (the waiting draft was taken away)" : ""
+      }`;
+    case "found_money_drafts_requested": {
+      const asked = (Number(detail.replies) || 0) + (Number(detail.nudges) || 0);
+      return `You asked for drafts for ${asked} ${asked === 1 ? "quote" : "quotes"} that slipped`;
+    }
+    case "first_drafts_ready_sent":
+      return "Told you your first drafts were ready";
+    case "seasonal_note_added":
+      return "You added a seasonal note";
+    case "never_say_saved":
+      return "You updated your never-say list";
+    // The same guard found these: logged, never shown.
+    case "complaint_fixed":
+      return `You marked the complaint${from} as fixed`;
+    case "complaint_checkin_closed":
+      return `You said all is good after the fix${name ? ` for ${name}` : ""}`;
+    case "owner_cleared_injection":
+      return `You said an email${from} is a normal email`;
+    case "sender_rule_removed":
+      return "You removed a sender rule";
+    case "service_town_added":
+      return "You added a town to your service area";
+    case "trial_email_sent":
+      return "Emailed you about your trial";
+    case "trial_emails_stopped":
+      return "You stopped the trial emails";
+    // Wave 2 batches A-C: logged lines with no content (counts and fixed words only).
+    case "needs_owner_cleared":
+      return detail.by === "gmail_reply"
+        ? `You answered ${name ?? "them"} in Gmail, so it's off your Needs you list`
+        : detail.by === "phone"
+          ? `You called ${name ?? "them"}, so it's off your Needs you list`
+          : `You took the conversation${name ? ` with ${name}` : ""} off your Needs you list`;
+    case "quote_dismissed":
+      return `You said the conversation${name ? ` with ${name}` : ""} isn't a quote`;
+    case "quote_restored":
+      return `You put the conversation${name ? ` with ${name}` : ""} back on Quotes`;
+    case "mail_gap":
+      return "Your Gmail was out of reach for more than 30 days. We read the last 30 days again; anything older is only in Gmail";
+    case "mailbox_in_use_refused":
+      return "A Gmail address you tried to connect is already used by another Squared Away account, so it wasn't connected";
+    case "reply_languages_saved":
+      return "You changed the languages you answer customers in";
+    case "work_hours_saved":
+      return "You updated your work hours";
     case "marked_needs_owner":
       return `You marked a conversation${name ? ` with ${name}` : ""} as needing you`;
     case "mailbox_connected":
@@ -293,6 +343,120 @@ export function describeActivity(
   }
 }
 
+/**
+ * Check 14 P6/P7: every action `describeActivity` has a sentence for. Activity filters on this
+ * list in SQL before the page limit, so hidden rows never shrink a page. A guard test checks
+ * every action the code logs is here or in HIDDEN_ON_PURPOSE.
+ */
+export const DESCRIBED_ACTIONS = [
+  "draft_created",
+  "closing_question",
+  "followup_drafted",
+  "reply_sent",
+  "reply_sent_from_gmail",
+  "owner_wrote_own_reply",
+  "send_stood_down",
+  "draft_discarded",
+  "draft_repointed",
+  "reply_went_to_form",
+  "draft_revised",
+  "practice_sent",
+  "send_undone",
+  "send_stopped",
+  "snoozed",
+  "draft_expired",
+  "quote_marked",
+  "quote_outcome_guessed",
+  "invoice_marked_paid",
+  "invoice_marked_unpaid",
+  "invoice_marked_not_owed",
+  "invoice_reopened",
+  "sender_rule_added",
+  "vip_added",
+  "thread_resorted",
+  "away_on",
+  "away_off",
+  "answered_by_phone",
+  "found_money_drafts_requested",
+  "first_drafts_ready_sent",
+  "seasonal_note_added",
+  "never_say_saved",
+  "complaint_fixed",
+  "complaint_checkin_closed",
+  "owner_cleared_injection",
+  "sender_rule_removed",
+  "service_town_added",
+  "trial_email_sent",
+  "trial_emails_stopped",
+  "mailbox_plan_swap",
+  "mailboxes_fit_plan",
+  // Batches A and B, and plan #47's lines (referralActivityLine, checked first).
+  "quote_amount_changed",
+  "quote_dismissed",
+  "quote_restored",
+  "crew_list_saved",
+  "time_zone_changed",
+  "time_zone_detected",
+  "autopilot_skipped",
+  "needs_owner_cleared",
+  "mail_gap",
+  "mailbox_in_use_refused",
+  "reply_languages_saved",
+  "work_hours_saved",
+  "autopilot_turned_off_plan",
+  "referral_reward_earned",
+  "referral_free_month_scheduled",
+  "referral_free_month_started",
+  "referral_plan_kept",
+  "referral_keep_undone",
+  "referral_free_month_ended",
+  "referral_reward_returned",
+  "marked_needs_owner",
+  "mailbox_connected",
+  "mailbox_reconnected",
+  "mailbox_disconnected",
+  "push_alert_sent",
+  "lead_at_risk_push_sent",
+  "sms_alert_sent",
+  "emergency_alert_sent",
+  "emergency_alerts_changed",
+  "sms_alerts_changed",
+  "access_alert_sent",
+  "mailbox_access_lost",
+  "voice_learned",
+  "voice_idea_accepted",
+  "voice_idea_ignored",
+  "voice_profile_edited",
+  "business_profile_saved",
+  "followup_settings_saved",
+  "digest_settings_saved",
+  "autopilot_scheduled",
+  "autopilot_held",
+  "autopilot_stood_down",
+  "autopilot_changed",
+  "plan_changed",
+  "payment_received",
+  "subscription_changed",
+  "digest_sent",
+  "monthly_summary_sent",
+  "referral_credit_applied",
+  "test_payment_reset",
+  "evaluation_started",
+  "evaluation_expired",
+  "workspace_status_changed",
+] as const;
+
+/**
+ * Logged on purpose but never a line: `send_approved` is the send record's own row (the reply's
+ * line is `reply_sent`), the checklist's hide is a screen setting, and a lost reason shows on
+ * Quotes and in the month's line (Ideas C5).
+ */
+export const HIDDEN_ON_PURPOSE = [
+  "send_approved",
+  "checklist_dismissed",
+  "quote_lost_reason",
+] as const;
+
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 /** "2026-10-12" → "Oct 12" (a local date stored with the entry). */
 function shortDate(ymd: string): string | null {
@@ -331,13 +495,47 @@ export function sendStoppedWhy(why: unknown): string {
               : "something changed";
 }
 
-export async function listActivity(workspaceId: string, limit = 100): Promise<ActivityEntry[]> {
+export type ActivityCursor = { at: Date; id: string };
+
+/** Newest first, a page at a time (Check 14 P6). */
+export async function listActivity(
+  workspaceId: string,
+  opts: { before?: ActivityCursor; limit?: number } = {},
+): Promise<ActivityEntry[]> {
+  return (await listActivityPage(workspaceId, opts)).entries;
+}
+
+/**
+ * One page of Activity: only described actions (filtered in SQL before the limit, so hidden
+ * rows never shrink a page), newest first by (created_at to the millisecond, id), older than
+ * `before`. `older` is the cursor for the next page when a full page came back.
+ */
+export async function listActivityPage(
+  workspaceId: string,
+  opts: { before?: ActivityCursor; limit?: number } = {},
+): Promise<{ entries: ActivityEntry[]; older: ActivityCursor | null }> {
+  const limit = opts.limit ?? 100;
+  // To the millisecond: a JS Date (the cursor) has no microseconds, so ordering and the cursor
+  // compare on the same value and no row on a page boundary is skipped.
+  const ms = sql`date_trunc('milliseconds', ${activityLog.createdAt})`;
   const rows = await db()
     .select()
     .from(activityLog)
-    .where(eq(activityLog.workspaceId, workspaceId))
-    .orderBy(desc(activityLog.createdAt))
+    .where(
+      and(
+        eq(activityLog.workspaceId, workspaceId),
+        inArray(activityLog.action, [...DESCRIBED_ACTIONS]),
+        // The one described action that's only sometimes a line (it turned sending off).
+        sql`not (${activityLog.action} = 'test_payment_reset' and coalesce(${activityLog.detail}->>'setupPaymentCleared', 'false') <> 'true')`,
+        opts.before
+          ? sql`(${ms}, ${activityLog.id}) < (${opts.before.at.toISOString()}::timestamptz, ${opts.before.id}::uuid)`
+          : undefined,
+      ),
+    )
+    .orderBy(desc(ms), desc(activityLog.id))
     .limit(limit);
+  const last = rows.at(-1);
+  const older = rows.length === limit && last ? { at: last.createdAt, id: last.id } : null;
 
   const threadIds = [...new Set(rows.map((r) => r.threadId).filter((t): t is string => !!t))];
   const who = new Map<string, Who>();
@@ -360,7 +558,7 @@ export async function listActivity(workspaceId: string, limit = 100): Promise<Ac
   }
 
   const zone = rows.some((r) => !r.threadId) ? await workspaceTimeZone(workspaceId) : null;
-  return rows.flatMap((r) => {
+  const entries = rows.flatMap((r) => {
     const text = describeActivity(
       r.action,
       r.detail,
@@ -372,6 +570,7 @@ export async function listActivity(workspaceId: string, limit = 100): Promise<Ac
       SENT_ACTIONS.has(r.action) && typeof r.detail.draftId === "string" ? r.detail.draftId : null;
     return [{ id: r.id, at: r.createdAt, text, byYou: r.actor === "owner", recordId }];
   });
+  return { entries, older };
 }
 
 export type MonthSummary = {
@@ -380,6 +579,8 @@ export type MonthSummary = {
   sent: number;
   sentAfterEditing: number;
   nudgesSent: number;
+  /** Check 14 P3: sent by autopilot, with no tap (inside `sent`, apart from "you sent"). */
+  autopilotSent: number;
   minutesSaved: number;
 };
 
@@ -405,7 +606,15 @@ export async function monthSummary(
       .where(eq(mailboxes.workspaceId, workspaceId))
   ).map((b) => b.id);
   if (boxes.length === 0)
-    return { sorted: 0, drafted: 0, sent: 0, sentAfterEditing: 0, nudgesSent: 0, minutesSaved: 0 };
+    return {
+      sorted: 0,
+      drafted: 0,
+      sent: 0,
+      sentAfterEditing: 0,
+      nudgesSent: 0,
+      autopilotSent: 0,
+      minutesSaved: 0,
+    };
 
   const [sorted] = await db()
     .select({ n: count() })
@@ -420,7 +629,7 @@ export async function monthSummary(
   // on the days they share (plan M8 A18; a week that started last month also counts last
   // month's days). Drafted stays on when it was made.
   const sentRows = await db()
-    .select({ status: drafts.status, kind: drafts.kind })
+    .select({ status: drafts.status, kind: drafts.kind, auto: autopilotSentSql() })
     .from(drafts)
     .where(
       and(
@@ -437,7 +646,9 @@ export async function monthSummary(
     drafted: made?.n ?? 0,
     sent,
     sentAfterEditing: sentRows.filter((d) => d.status === "edited_and_sent").length,
-    nudgesSent: sentRows.filter((d) => d.kind === "followup").length,
+    // Autopilot never sends follow-ups, so "you sent" = sent − follow-ups − autopilot.
+    nudgesSent: sentRows.filter((d) => d.kind === "followup" && !d.auto).length,
+    autopilotSent: sentRows.filter((d) => d.auto).length,
     minutesSaved: sent * MINUTES_PER_SENT_REPLY,
   };
 }

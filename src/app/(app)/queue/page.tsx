@@ -6,6 +6,7 @@ import { categoryLabels, draftTag, isCategory } from "@/config/categories";
 import { languageCardLine } from "@/ai/language";
 import { autopilotOnKinds } from "@/server/autopilot";
 import { autopilotWaitLine } from "@/server/autopilot-reasons";
+import { firstNameOf } from "@/lib/first-name";
 import { findGaps } from "@/ai/gaps";
 import { confidenceLabel } from "@/config/drafting";
 import { gmailThreadLink } from "@/lib/gmail-link";
@@ -97,7 +98,8 @@ function nextLine(
   // Check 9 P15: only what the code does — replies show up on the queue; alerts are opt-in.
   return `When ${name ?? "they"} write${name ? "s" : ""} back, it shows up here.`;
 }
-const firstName = (name: string | null) => (name ? name.split(/[\s,]+/)[0] : null);
+// Check 14 P10: the same careful first name as Activity.
+const firstName = (name: string | null) => firstNameOf(name);
 const capitalize = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
 const gmailLink = (i: QueueItem) => gmailThreadLink(i);

@@ -4,6 +4,7 @@ import { z } from "zod";
 import { Headline } from "@/components/brand/headline";
 import { getBusinessProfile } from "@/server/profile";
 import { sendRecord } from "@/server/send-record";
+import { recordClosingLine, whoOkayedLine } from "@/server/send-record-rules";
 import { requireOwner } from "@/server/session";
 
 // No loading.tsx here on purpose: streaming would turn notFound() into a 200.
@@ -13,7 +14,9 @@ import { requireOwner } from "@/server/session";
  * Facts from the activity log only — no email text.
  */
 export default async function SendRecordPage(props: PageProps<"/record/[draftId]">) {
-  const { workspace } = await requireOwner();
+  const { workspace, session } = await requireOwner();
+  // Check 42 P5: one sign-in per shop, so the record names the sign-in, never a person.
+  const signedInAs = session?.user?.email ?? null;
   const { draftId } = await props.params;
   if (!z.string().uuid().safeParse(draftId).success) notFound();
   const r = await sendRecord(workspace.id, draftId);
@@ -30,14 +33,7 @@ export default async function SendRecordPage(props: PageProps<"/record/[draftId]
       : "Not recorded";
 
   const rows: [string, string][] = [
-    [
-      "Who okayed it",
-      r.approvedBy === "autopilot"
-        ? "Autopilot — you switched it on for this kind of email"
-        : r.approvedBy === "you_in_gmail"
-          ? "You, from Gmail"
-          : "You",
-    ],
+    ["Who okayed it", whoOkayedLine(r.approvedBy, signedInAs)],
     [
       r.approvedBy === "autopilot" ? "Lined up" : "Okayed",
       `${when(r.approvedAt)}${r.device ? ` · on a ${r.device}` : ""}`,
@@ -69,9 +65,7 @@ export default async function SendRecordPage(props: PageProps<"/record/[draftId]
           </div>
         ))}
       </dl>
-      <p className="text-muted-foreground">
-        Nothing leaves your inbox without your okay — this is the proof for this reply.
-      </p>
+      <p className="text-muted-foreground">{recordClosingLine(r.approvedBy, signedInAs)}</p>
       <Link href="/activity" className="inline-flex min-h-tap items-center font-semibold underline">
         Back to Activity
       </Link>

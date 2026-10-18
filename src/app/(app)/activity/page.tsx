@@ -5,9 +5,8 @@ import { buttonVariants } from "@/components/ui/button";
 import { relativeTime } from "@/lib/relative-time";
 import { cn } from "@/lib/utils";
 import {
-  listActivity,
+  listActivityPage,
   lostReasonsBetween,
-  MINUTES_PER_SENT_REPLY,
   localMonthName,
   monthCloseRate,
   monthMoney,
@@ -15,7 +14,9 @@ import {
   moneySoFar,
 } from "@/server/activity";
 import {
+  activityCursorParam,
   groupByDay,
+  parseActivityCursor,
   MONEY_SO_FAR_NOTE,
   moneyIsEmpty,
   moneySoFarLines,
@@ -29,22 +30,34 @@ import {
   scorecardIsEmpty,
   scorecardLines,
   timeSavedPhrase,
+  timeSavedRule,
 } from "@/server/scorecard-rules";
 import { requireOwner } from "@/server/session";
 import { lostReasonsSentence } from "@/server/quote-rules";
 import { localMonthStart } from "@/server/snooze-rules";
 import { accountLockReason } from "@/server/autopilot";
 import { workspaceTimeZone } from "@/server/snooze";
+import { MINUTES_PER_SENT_REPLY } from "@/config/drafting";
+import { pricing } from "@/config/pricing";
+import { daysPhrase } from "@/lib/trial-words";
+import { trialActivityCounts } from "@/server/first-week";
+import { canSend, effectiveStatus } from "@/server/lifecycle";
+
+/** The statuses before setup is paid: Activity shows what the app did, not what was sent. */
+const TRIAL_STATUSES: string[] = ["invited", "evaluating", "evaluation_expired"];
 
 export const metadata: Metadata = { title: "Activity" };
 
-export default async function ActivityPage() {
+export default async function ActivityPage(props: PageProps<"/activity">) {
   const { workspace } = await requireOwner();
+  const params = await props.searchParams;
+  // Check 14 P6: older pages of the log; a cursor that doesn't parse is the first page.
+  const before = parseActivityCursor(params.before);
   const now = new Date();
   // One month for the whole screen, in the owner's own time zone.
   const timeZone = await workspaceTimeZone(workspace.id);
-  const [entries, month, close, weeks, money, soFar] = await Promise.all([
-    listActivity(workspace.id),
+  const [{ entries, older }, month, close, weeks, money, soFar] = await Promise.all([
+    listActivityPage(workspace.id, { before }),
     monthSummary(workspace.id, now, timeZone),
     monthCloseRate(workspace.id, now, timeZone),
     weekScorecards(workspace.id, now, timeZone),
@@ -66,6 +79,17 @@ export default async function ActivityPage() {
   const writtenLine = asWrittenSentence(thisWeek.asWritten, lastWeek.asWritten, "this week");
   // The autopilot link only where autopilot can be had (a plan with it, setup done).
   const autopilotOffered = accountLockReason(workspace, now) === null;
+  // Check 14 P9: a trial (or a trial that ended) can't send, so its numbers are what the app
+  // did, not what was sent.
+  const status = effectiveStatus(workspace, now);
+  const trial =
+    !canSend(workspace, now) && TRIAL_STATUSES.includes(status)
+      ? await trialActivityCounts(workspace)
+      : null;
+  const trialHeading =
+    status === "evaluation_expired"
+      ? `Your ${daysPhrase(pricing.evaluationDays)}`
+      : `Your ${daysPhrase(pricing.evaluationDays)} so far`;
 
   return (
     <>
@@ -110,92 +134,144 @@ export default async function ActivityPage() {
         <p className="text-sm text-ash">{MONEY_SO_FAR_NOTE}</p>
       </section>
 
-      <section
-        aria-labelledby="week"
-        className="flex flex-col gap-3 rounded-xl border-2 border-charcoal p-4"
-      >
-        <h2 id="week" className="text-lg font-black">
-          This week so far
-        </h2>
-        <dl className="grid grid-cols-2 gap-x-4 gap-y-2">
-          {[
-            ["Replies sent", thisWeek.repliesSent],
-            ["Follow-ups sent", thisWeek.followupsSent],
-            ["Quotes out", thisWeek.quotesOut],
-            ["Time saved (estimate)", timeSavedPhrase(thisWeek.minutesSaved)],
-          ].map(([label, value]) => (
-            <div key={label} className="flex flex-col">
-              <dt className="text-sm text-muted-foreground">{label}</dt>
-              <dd className="text-2xl font-black">{value}</dd>
-            </div>
-          ))}
-        </dl>
-        <p className="text-lg">{responseTimeSentence(thisWeek.response, lastWeek.response)}</p>
-        {speedLine ? <p className="text-lg">{speedLine}</p> : null}
-        {writtenLine ? <p className="text-lg">{writtenLine}</p> : null}
-        <p>
-          {scorecardIsEmpty(lastWeek)
-            ? "Nothing sent last week."
-            : scorecardLines(lastWeek, "Last week", { average: false }).join(" ")}
-        </p>
-        <p className="text-sm text-muted-foreground">
-          That&apos;s an estimate: {MINUTES_PER_SENT_REPLY} minutes for each drafted reply you sent.
-          Weeks start on Monday. Response time runs from a customer&apos;s first email asking for a
-          quote to your first reply.
-        </p>
-        {speedLine ? (
+      {trial ? (
+        // Check 14 P9: while sending is off, numbers that move — never a time-saved zero.
+        <section
+          aria-labelledby="trial-so-far"
+          className="flex flex-col gap-3 rounded-xl border-2 border-charcoal p-4"
+        >
+          <h2 id="trial-so-far" className="text-lg font-black">
+            {trialHeading}
+          </h2>
+          <dl className="grid grid-cols-2 gap-x-4 gap-y-2">
+            {(
+              [
+                ["Conversations sorted", trial.sorted],
+                ["Drafts written", trial.drafted],
+                ["Drafts you changed", trial.changed],
+                ["Practice copies sent", trial.practice],
+              ] as [string, number][]
+            ).map(([label, value]) => (
+              <div key={label} className="flex flex-col">
+                <dt className="text-sm text-muted-foreground">{label}</dt>
+                <dd className="text-2xl font-black">{value}</dd>
+              </div>
+            ))}
+          </dl>
           <p className="text-sm text-muted-foreground">
-            Within 24 hours means 24 hours on the clock, from the customer&apos;s first email asking
-            for a quote to your first reply. Nights and weekends count. A request still inside its
-            first 24 hours isn&apos;t counted until you answer it or the 24 hours are up.
+            Sending turns on after setup. Then each drafted reply you send counts as about{" "}
+            {MINUTES_PER_SENT_REPLY} minutes saved (our estimate).
           </p>
-        ) : null}
-        {writtenLine ? (
-          <p className="text-sm text-muted-foreground">
-            Counts drafts you sent from the app. Filling in a blank like a price doesn&apos;t count
-            against it. Replies autopilot sent, and drafts you sent from Gmail, aren&apos;t counted.
-          </p>
-        ) : null}
-        {writtenLine && autopilotOffered ? (
-          <Link
-            href="/settings/autopilot"
-            className="inline-flex min-h-tap items-center text-sm font-semibold underline underline-offset-4"
+        </section>
+      ) : (
+        <>
+          <section
+            aria-labelledby="week"
+            className="flex flex-col gap-3 rounded-xl border-2 border-charcoal p-4"
           >
-            See which kinds of email are close to autopilot
-          </Link>
-        ) : null}
-      </section>
+            <h2 id="week" className="text-lg font-black">
+              This week so far
+            </h2>
+            <dl className="grid grid-cols-2 gap-x-4 gap-y-2">
+              {(
+                [
+                  // Check 14 P3: autopilot's sends are never "you sent"; the tiles add up to the
+                  // time saved (each × the rule's minutes).
+                  ["Replies you sent", thisWeek.repliesSent],
+                  ["Follow-ups sent", thisWeek.followupsSent],
+                  ...((thisWeek.autopilotSent ?? 0) > 0
+                    ? [["Autopilot sent", thisWeek.autopilotSent ?? 0]]
+                    : []),
+                  // Check 14 P4: any first answer, so not "quotes out".
+                  ["Quote requests answered", thisWeek.quotesOut],
+                  ["Time saved (estimate)", timeSavedPhrase(thisWeek.minutesSaved)],
+                ] as [string, string | number][]
+              ).map(([label, value]) => (
+                <div key={label} className="flex flex-col">
+                  <dt className="text-sm text-muted-foreground">{label}</dt>
+                  <dd className="text-2xl font-black">{value}</dd>
+                </div>
+              ))}
+            </dl>
+            <p className="text-lg">{responseTimeSentence(thisWeek.response, lastWeek.response)}</p>
+            {speedLine ? <p className="text-lg">{speedLine}</p> : null}
+            {writtenLine ? <p className="text-lg">{writtenLine}</p> : null}
+            <p>
+              {scorecardIsEmpty(lastWeek)
+                ? "Nothing sent last week."
+                : scorecardLines(lastWeek, "Last week", { average: false, rule: false }).join(" ")}
+            </p>
+            {/* The rule once in this box (Check 14 P3); last week's line leaves it out. */}
+            <p className="text-sm text-muted-foreground">
+              {timeSavedRule()} Weeks start on Monday. Answered counts your first reply to each
+              quote request, by email or by tapping I called them, in the week you answered.
+              Response time runs from a customer&apos;s first email asking for a quote to your first
+              reply. Clock time, nights and weekends included. The typical time is the middle one,
+              so one slow answer can&apos;t drag it.
+            </p>
+            {speedLine ? (
+              <p className="text-sm text-muted-foreground">
+                Within 24 hours means 24 hours on the clock, from the customer&apos;s first email
+                asking for a quote to your first reply. Nights and weekends count. A request still
+                inside its first 24 hours isn&apos;t counted until you answer it or the 24 hours are
+                up.
+              </p>
+            ) : null}
+            {writtenLine ? (
+              <p className="text-sm text-muted-foreground">
+                Counts drafts you sent from the app. Filling in a blank like a price doesn&apos;t
+                count against it. Replies autopilot sent, and drafts you sent from Gmail,
+                aren&apos;t counted.
+              </p>
+            ) : null}
+            {writtenLine && autopilotOffered ? (
+              <Link
+                href="/settings/autopilot"
+                className="inline-flex min-h-tap items-center text-sm font-semibold underline underline-offset-4"
+              >
+                See which kinds of email are close to autopilot
+              </Link>
+            ) : null}
+          </section>
 
-      <section
-        aria-labelledby="month"
-        className="flex flex-col gap-3 rounded-xl border-2 border-charcoal p-4"
-      >
-        <h2 id="month" className="text-lg font-black">
-          {monthName} so far
-        </h2>
-        <dl className="grid grid-cols-2 gap-x-4 gap-y-2">
-          {[
-            ["Emails sorted", month.sorted],
-            ["Replies drafted", month.drafted],
-            // Replies only, like the week's figure; follow-ups have their own line.
-            ["Replies you sent", month.sent - month.nudgesSent],
-            ["Follow-ups sent", month.nudgesSent],
-          ].map(([label, value]) => (
-            <div key={label} className="flex flex-col">
-              <dt className="text-sm text-muted-foreground">{label}</dt>
-              <dd className="text-2xl font-black">{value}</dd>
-            </div>
-          ))}
-        </dl>
-        <p className="text-lg">
-          <span className="font-black">Time saved: {timeSavedPhrase(month.minutesSaved)}.</span>{" "}
-          <span className="text-muted-foreground">
-            That&apos;s an estimate: {MINUTES_PER_SENT_REPLY} minutes for each drafted reply you
-            sent{month.sentAfterEditing ? ` (${month.sentAfterEditing} after editing)` : ""}.
-            Sorting isn&apos;t counted.
-          </span>
-        </p>
-      </section>
+          <section
+            aria-labelledby="month"
+            className="flex flex-col gap-3 rounded-xl border-2 border-charcoal p-4"
+          >
+            <h2 id="month" className="text-lg font-black">
+              {monthName} so far
+            </h2>
+            <dl className="grid grid-cols-2 gap-x-4 gap-y-2">
+              {(
+                [
+                  // Check 14 P11: named for what they count (threads sorted; every draft row).
+                  ["Conversations sorted", month.sorted],
+                  ["Drafts written", month.drafted],
+                  // Replies only, like the week's figure; follow-ups and autopilot have their own.
+                  ["Replies you sent", month.sent - month.nudgesSent - month.autopilotSent],
+                  ["Follow-ups sent", month.nudgesSent],
+                  ...(month.autopilotSent > 0 ? [["Autopilot sent", month.autopilotSent]] : []),
+                ] as [string, number][]
+              ).map(([label, value]) => (
+                <div key={label} className="flex flex-col">
+                  <dt className="text-sm text-muted-foreground">{label}</dt>
+                  <dd className="text-2xl font-black">{value}</dd>
+                </div>
+              ))}
+            </dl>
+            <p className="text-lg">
+              <span className="font-black">Time saved: {timeSavedPhrase(month.minutesSaved)}.</span>{" "}
+              <span className="text-muted-foreground">
+                {timeSavedRule()}
+                {month.sentAfterEditing
+                  ? ` ${month.sentAfterEditing} went out after you edited ${month.sentAfterEditing === 1 ? "it" : "them"}.`
+                  : ""}{" "}
+                Sorting isn&apos;t counted.
+              </span>
+            </p>
+          </section>
+        </>
+      )}
 
       <section aria-labelledby="close-rate" className="flex flex-col gap-3 rounded-xl border p-4">
         <h2 id="close-rate" className="text-lg font-black">
@@ -239,10 +315,14 @@ export default async function ActivityPage() {
 
       <section aria-labelledby="log" className="flex flex-col gap-3">
         <h2 id="log" className="text-xl font-black">
-          Everything, newest first
+          What happened, newest first
         </h2>
         {entries.length === 0 ? (
-          <p className="text-lg">Nothing yet. Once your email is read, you&apos;ll see it here.</p>
+          <p className="text-lg">
+            {before
+              ? "Nothing older."
+              : "Nothing yet. Once your email is read, you'll see it here."}
+          </p>
         ) : (
           days.map((day) => (
             <section
@@ -288,6 +368,14 @@ export default async function ActivityPage() {
             </section>
           ))
         )}
+        {older ? (
+          <Link
+            href={`/activity?before=${encodeURIComponent(activityCursorParam(older))}#log`}
+            className={cn(buttonVariants({ variant: "outline" }), "min-h-tap self-start")}
+          >
+            Show older
+          </Link>
+        ) : null}
       </section>
     </>
   );

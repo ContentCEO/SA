@@ -120,6 +120,10 @@ async function readSortAndDraft(
     await page.reload();
     await expect(page.getByText("all set,")).toBeVisible({ timeout: 15_000 });
     await expect(page.getByText("Learned how you write from 5 sent emails.")).toBeVisible();
+    // Check 14 P2: one read count on the screen, never "1 emails".
+    await expect(page.getByText("Read your last 30 days of email.")).toBeVisible();
+    await expect(page.getByText(/emails? from the last 30 days/)).toHaveCount(1);
+    await expect(page.getByText(/\b1 emails\b/)).toHaveCount(0);
   });
 
   await test.step("It sorts the new email and writes a reply as a real Gmail draft", async () => {

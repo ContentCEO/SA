@@ -65,3 +65,21 @@ export function buildSendRecord(
     draftedAt: d.createdAt,
   };
 }
+
+/**
+ * Check 42 P5: the record says only what the app knows. One sign-in per shop, so the app knows
+ * which sign-in tapped, never which person; a Gmail send could be anyone with that Gmail.
+ */
+export function whoOkayedLine(approvedBy: SendRecord["approvedBy"], signedInAs: string | null) {
+  if (approvedBy === "autopilot") return "Autopilot — you switched it on for this kind of email";
+  if (approvedBy === "you_in_gmail") return "Sent from Gmail, outside the app";
+  return signedInAs ? `Your sign-in (${signedInAs})` : "Your sign-in";
+}
+
+export function recordClosingLine(approvedBy: SendRecord["approvedBy"], signedInAs: string | null) {
+  if (approvedBy === "you_in_gmail")
+    return "This reply was sent from Gmail, outside the app, so the app has no tap to show for it.";
+  if (approvedBy === "autopilot")
+    return "Autopilot sent this on its own, under the rules you switched on.";
+  return `This is the record of the tap made while signed in as ${signedInAs ?? "this account"}. Anyone who uses this sign-in can okay replies.`;
+}
