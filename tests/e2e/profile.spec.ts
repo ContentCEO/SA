@@ -154,3 +154,29 @@ test("settings: a cleared money box is refused, and the saved amount stays (Chec
   await expect(page).toHaveURL(/\/settings\/business\?done=profile/);
   expect(await saved()).toBe(2500);
 });
+
+test("the two edit screens have a way back at the top and a Cancel (Check 15 P3)", async ({
+  page,
+  context,
+}) => {
+  const owner = await seedOwner({ mailbox: true, backfilled: true });
+  await signInAs(context, owner);
+
+  for (const [path, label, lands] of [
+    ["/settings/profile", "Your business", /\/settings\/business$/],
+    ["/settings/voice", "Your voice", /\/settings\/writing$/],
+  ] as const) {
+    await page.goto(path);
+    const back = page.getByRole("main").getByRole("link", { name: label, exact: true });
+    await expect(back).toBeVisible();
+    expect((await back.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+    const cancel = page.getByRole("link", { name: "Cancel", exact: true });
+    await expect(cancel).toBeAttached();
+    expect((await cancel.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+    await back.click();
+    await expect(page).toHaveURL(lands);
+    await page.goto(path);
+    await page.getByRole("link", { name: "Cancel", exact: true }).click();
+    await expect(page).toHaveURL(lands);
+  }
+});

@@ -2,6 +2,7 @@
 
 import { useActionState } from "react";
 import { saveVoiceAction, type FormState } from "@/app/(app)/settings/profile-actions";
+import { CancelLink } from "@/components/app/back-link";
 import { Button } from "@/components/ui/button";
 import { useFocusFirstError } from "./use-focus-first-error";
 import { SelectField, TextArea, TextField } from "./field";
@@ -88,6 +89,7 @@ export function VoiceForm({ defaults }: { defaults: VoiceDefaults }) {
       <Button type="submit" size="lg" disabled={pending} className="w-full">
         {pending ? "Saving…" : "Save how I write"}
       </Button>
+      <CancelLink href="/settings/writing" />
     </form>
   );
 }

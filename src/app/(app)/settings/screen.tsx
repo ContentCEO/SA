@@ -1,5 +1,4 @@
-import { ChevronLeft } from "lucide-react";
-import Link from "next/link";
+import { BackLink } from "@/components/app/back-link";
 import { Notice } from "@/components/app/notice";
 import { Headline } from "@/components/brand/headline";
 import { SCREEN_MESSAGES, type SettingsScreenPath } from "./messages";
@@ -27,13 +26,7 @@ export function SettingsScreen({
   return (
     <>
       <div className="flex flex-col gap-2">
-        <Link
-          href="/settings"
-          className="-ml-1 inline-flex min-h-tap items-center gap-1 self-start font-semibold underline-offset-4 hover:underline"
-        >
-          <ChevronLeft aria-hidden className="size-5" />
-          Settings
-        </Link>
+        <BackLink href="/settings">Settings</BackLink>
         <Headline serif="settings," heavy={heavy} />
       </div>
       {done ? <Notice>{done}</Notice> : null}

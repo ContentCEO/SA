@@ -7,6 +7,7 @@ import { amountSuggestionsFor, MAX_EXTRA_TRADES, TRADE_OPTIONS } from "@/config/
 import { US_STATES } from "@/config/us-states";
 import { depositTermsWarning } from "@/server/deposit-rules";
 import { saveBusinessProfileAction, type FormState } from "@/app/(app)/settings/profile-actions";
+import { CancelLink } from "@/components/app/back-link";
 import { Button } from "@/components/ui/button";
 import { useFocusFirstError } from "./use-focus-first-error";
 import { useKeptForm } from "./use-kept-form";
@@ -70,6 +71,7 @@ export function BusinessProfileForm({
   returnTo,
   submitLabel,
   setup = false,
+  cancelHref,
 }: {
   defaults: ProfileDefaults;
   returnTo: "/settings/business?done=profile" | "/welcome/learning";
@@ -80,6 +82,8 @@ export function BusinessProfileForm({
    * zone is saved with it, so 7am and quiet hours are the owner's own from day one.
    */
   setup?: boolean;
+  /** Check 15 P3: "Cancel" under the button, back to this screen (Settings only, not setup). */
+  cancelHref?: string;
 }) {
   const [state, action, pending] = useActionState<FormState, FormData>(
     saveBusinessProfileAction,
@@ -396,6 +400,7 @@ export function BusinessProfileForm({
       <Button type="submit" size="lg" disabled={pending} className="w-full">
         {pending ? "Saving…" : submitLabel}
       </Button>
+      {cancelHref ? <CancelLink href={cancelHref} /> : null}
     </form>
   );
 }
