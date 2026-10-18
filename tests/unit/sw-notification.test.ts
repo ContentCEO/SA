@@ -332,3 +332,64 @@ describe("service worker: pushsubscriptionchange", () => {
     });
   });
 });
+
+/* Check 46 P5: an edit to the no-signal page reaches phones that already have the app. */
+describe("service worker: refreshing the no-signal page", () => {
+  class FakeRequest {
+    constructor(
+      readonly url: string,
+      readonly init: { cache?: string } = {},
+    ) {}
+    get cache() {
+      return this.init.cache;
+    }
+  }
+  function offlineWorker(add: (r: FakeRequest) => Promise<void>) {
+    const listeners: Record<string, (e: unknown) => void> = {};
+    runInNewContext(SRC, {
+      self: {
+        location: { origin: "https://sa.example" },
+        addEventListener: (type: string, fn: (e: unknown) => void) => (listeners[type] = fn),
+        registration: {},
+        clients: {},
+        skipWaiting: () => {},
+      },
+      URL,
+      Request: FakeRequest,
+      caches: { open: async () => ({ add }) },
+    });
+    const run = async (type: string, event: object) => {
+      let done: Promise<unknown> = Promise.resolve();
+      listeners[type]!({ ...event, waitUntil: (p: Promise<unknown>) => (done = p) });
+      await done;
+    };
+    return run;
+  }
+
+  it("on 'refresh-offline' it saves /offline.html again, from the server", async () => {
+    const added: FakeRequest[] = [];
+    const run = offlineWorker(async (r) => void added.push(r));
+    await run("message", { data: { type: "refresh-offline" } });
+    expect(added).toHaveLength(1);
+    expect(added[0]!.url).toBe("/offline.html");
+    expect(added[0]!.cache).toBe("reload");
+    // Anything else is ignored.
+    await run("message", { data: { type: "other" } });
+    await run("message", { data: null });
+    expect(added).toHaveLength(1);
+  });
+
+  it("no signal: a failing save doesn't throw", async () => {
+    const run = offlineWorker(async () => {
+      throw new TypeError("Failed to fetch");
+    });
+    await expect(run("message", { data: { type: "refresh-offline" } })).resolves.toBeUndefined();
+  });
+
+  it("a fresh install takes the server's copy too", async () => {
+    const added: FakeRequest[] = [];
+    const run = offlineWorker(async (r) => void added.push(r));
+    await run("install", {});
+    expect(added[0]!.cache).toBe("reload");
+  });
+});

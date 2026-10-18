@@ -11,11 +11,23 @@
  */
 const CACHE = "sa-offline-v1";
 const QUEUE = "sa-queue-v1";
+// Editing offline.html is enough: phones that already have the app pick it up within a day
+// (the page asks for a "refresh-offline" once a day; Check 46 P5).
 const OFFLINE_URL = "/offline.html";
 
+// Always the server's copy, never a stale one from the browser's HTTP cache.
+const saveOfflinePage = () =>
+  caches.open(CACHE).then((c) => c.add(new Request(OFFLINE_URL, { cache: "reload" })));
+
 self.addEventListener("install", (event) => {
-  event.waitUntil(caches.open(CACHE).then((c) => c.add(OFFLINE_URL)));
+  event.waitUntil(saveOfflinePage());
   self.skipWaiting();
+});
+
+/* Check 46 P5: fetch the no-signal page again. No signal right now is fine: keep the old one. */
+self.addEventListener("message", (event) => {
+  if (!event.data || event.data.type !== "refresh-offline") return;
+  event.waitUntil(saveOfflinePage().catch(() => undefined));
 });
 
 self.addEventListener("activate", (event) => {
