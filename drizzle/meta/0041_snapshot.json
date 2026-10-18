@@ -3080,19 +3080,6 @@
           ],
           "onDelete": "cascade",
           "onUpdate": "no action"
-        },
-        "voice_profile_learned_from_mailbox_id_mailboxes_id_fk": {
-          "name": "voice_profile_learned_from_mailbox_id_mailboxes_id_fk",
-          "tableFrom": "voice_profile",
-          "tableTo": "mailboxes",
-          "columnsFrom": [
-            "learned_from_mailbox_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "set null",
-          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},

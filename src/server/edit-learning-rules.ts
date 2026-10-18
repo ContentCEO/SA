@@ -149,7 +149,12 @@ export type AcceptedIdea = { kind: string; targetWords: number | null };
  * nothing here (the owner types those).
  */
 export function ideaChanges(voice: IdeaVoice, acceptedOldestFirst: AcceptedIdea[]): IdeaVoice {
-  const out = { ...voice };
+  // Only these three fields: callers spread the result into an UPDATE.
+  const out: IdeaVoice = {
+    avgLengthWords: voice.avgLengthWords,
+    formality: voice.formality,
+    summary: voice.summary,
+  };
   for (const idea of acceptedOldestFirst) {
     if ((idea.kind === "shorter" || idea.kind === "longer") && idea.targetWords)
       out.avgLengthWords = idea.targetWords;

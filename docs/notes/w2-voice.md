@@ -29,7 +29,7 @@
   block of 2+ short lines, everything from the first line that is mostly a phone, link or
   license number (the sign-off above it stays). Any email with one word left counts ("Sounds
   good"); a forward with under 5 own words is skipped and counted. `console.info("voice_learn",
-  {workspaceId, outcome, emailsRead, forwardsSkipped})` — counts only. Classification's
+{workspaceId, outcome, emailsRead, forwardsSkipped})` — counts only. Classification's
   `prepareBody` is unchanged (separate decision).
   The review's Check 24 script wasn't available to this builder: the 36 cases in
   `tests/unit/voice-text.test.ts` were re-invented to cover every category the review lists.
@@ -63,7 +63,7 @@
   of them, else the oldest by `created_at` (not `connected_at`, which a reconnect resets, so the
   choice would jump). `no_mailbox` only when none is running (already true at the base; the
   backstop uses the same filter, so no 15-minute re-queue). `voice_profile.learned_from_mailbox_id`
-  (FK, set null) → Settings → Your voice shows "Learned from mike@shop.com".
+  (no foreign key: the voice stays when that Gmail is disconnected) → Settings → Your voice shows "Learned from mike@shop.com".
 - **Accepted voice ideas don't stop the weekly refresh (Check 24 P7):** `decideSuggestion` no
   longer sets `source = edited`; the change itself comes from `ideaChanges`
   (`edit-learning-rules.ts`, pure; `SUMMARY_ADDS` moved there), and `learnVoice` re-applies every
@@ -93,7 +93,7 @@
     then in one UPDATE … WHERE `updated_at` = the value read (so an edit made meanwhile wins and
     re-flags): `examples = …, examples_stale = false`. Unusable output twice → leave the flag set.
   - Prompt `src/ai/prompts/voice-examples.v1.ts` (`VOICE_EXAMPLES_PROMPT_VERSION =
-    "voice-examples.v1"`, registry line, prompt-versions test), exact lines:
+"voice-examples.v1"`, registry line, prompt-versions test), exact lines:
     ```
     // Check 24 P8: five sample replies written from the owner's stored voice settings only.
     export const VOICE_EXAMPLES_INSTRUCTIONS = `You write five short sample email replies for a small trade contractor, in their own voice, so an assistant can copy the style.

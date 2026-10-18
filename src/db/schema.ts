@@ -630,9 +630,9 @@ export const voiceProfiles = pgTable("voice_profile", {
   /** Check 29 P2: times the 15-minute backstop restarted a learn stuck at "learning". */
   restartCount: integer("restart_count").notNull().default(0),
   /** Check 24 P6: the inbox the stored voice was learned from ("Learned from mike@…"). */
-  learnedFromMailboxId: uuid("learned_from_mailbox_id").references(() => mailboxes.id, {
-    onDelete: "set null",
-  }),
+  // No foreign key on purpose: the voice belongs to the account and stays when that Gmail is
+  // disconnected (verification-doc / data-lifecycle tests); the screen just stops naming it.
+  learnedFromMailboxId: uuid("learned_from_mailbox_id"),
   /**
    * Check 24 P8: greeting, sign-off, formality or length changed since the sample replies were
    * written, so drafts get no samples until new ones are written.

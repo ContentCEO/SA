@@ -156,7 +156,12 @@ export async function learnVoice(
     .select()
     .from(voiceProfiles)
     .where(eq(voiceProfiles.workspaceId, workspaceId));
-  if (existing?.source === "edited" && !opts.force) return "skipped_edited";
+  if (existing?.source === "edited" && !opts.force) {
+    // A forced re-learn that died and was restarted by the backstop (which never forces): close
+    // the attempt instead of leaving it at "learning" to be restarted again (the voice stays).
+    if (voiceAttempt(existing) === "learning") await recordAttempt(workspaceId, "failed", now);
+    return "skipped_edited";
+  }
 
   const [ws] = await db().select().from(workspaces).where(eq(workspaces.id, workspaceId));
   if (!ws || !jobsAllowed(ws, now)) return "read_only";

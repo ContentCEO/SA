@@ -548,6 +548,16 @@ describe("Check 29 P2: a learn that keeps dying is restarted at most twice", () 
     expect((await row()).restartCount).toBe(0);
   });
 
+  it("a restarted forced re-learn of an edited voice closes the attempt instead of looping", async () => {
+    await saveVoiceEdits(workspaceId, edits());
+    await database
+      .update(voiceProfiles)
+      .set({ lastAttempt: "learning", lastAttemptAt: t0, restartCount: 1 });
+    expect(await learnVoice(workspaceId, deps())).toBe("skipped_edited");
+    expect(await row()).toMatchObject({ status: "ready", lastAttempt: "failed" });
+    expect(await workspacesNeedingVoice(later(1))).toEqual([]);
+  });
+
   it("a thrown error in the model call leaves status failed, not learning", async () => {
     addSent(6);
     setModelTransportForTests(async () => {
