@@ -87,5 +87,6 @@ test("the Gmail-connect state cookie is httpOnly, SameSite=Lax and only sent to 
   expect(state!.path).toBe("/api/gmail");
   // `pnpm start` runs in production mode, where it's Secure too.
   expect(state!.secure).toBe(true);
-  expect(state!.value).toMatch(/^[A-Za-z0-9_-]{40,}$/);
+  // The random state, then which Gmail the connect is for (Check 42 P3): no address, ever.
+  expect(state!.value).toMatch(/^[A-Za-z0-9_-]{40,}~first~$/);
 });
