@@ -42,6 +42,10 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      # Check 26 P11: fail on a high or critical advisory in production dependencies (the
+      # reviewed exceptions, if any, are in .github/audit-allow.txt).
+      - name: Audit production dependencies
+        run: pnpm exec tsx scripts/audit-check.ts
       # Check 30 P2: drizzle silently skips a migration stamped older than one already applied,
       # so this branch's journal must be main's journal unchanged plus new entries at the end.
       - name: Migration journal only grows

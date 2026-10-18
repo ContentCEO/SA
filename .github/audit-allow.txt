@@ -1,0 +1,4 @@
+# Check 26 P11: high or critical advisories CI's audit lets through, each reviewed.
+# Only for an advisory with no fixed version yet. One per line:
+#   <GHSA id> <date added, YYYY-MM-DD> <why it's acceptable for now>
+# Remove the line as soon as a fix ships. (Empty: nothing is excused today.)

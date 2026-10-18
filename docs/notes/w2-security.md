@@ -94,3 +94,11 @@ For the integrator: what `CLAUDE.md`, `docs/LAUNCH.md` and the legal drafts shou
   `GMAIL_PUSH_VERIFICATION_TOKEN`, around lines 662 and 963 at 05bb296) should become
   `GMAIL_PUBSUB_TOPIC`, `GMAIL_PUSH_AUDIENCE`, `GMAIL_PUSH_SERVICE_ACCOUNT` (none sensitive)
   and point at SETUP.md §6a; the token is no longer set up.
+- **Dependencies (Check 26 P11):** `shadcn` moved to devDependencies (only its CSS is imported
+  at build; Vercel installs devDependencies for the build). `pnpm-workspace.yaml` overrides
+  `source-map-js@<1.2.2` → `^1.2.2` (next's postcss pinned 1.2.1, GHSA-68fv-2mgg-jv7q, high).
+  `pnpm audit --prod` now finds nothing. CI runs `scripts/audit-check.ts` right after install:
+  it fails on any high/critical advisory in production dependencies not listed in
+  `.github/audit-allow.txt` ("<GHSA id> <date> <reason>", empty today; only for advisories with
+  no fix yet). `.github/dependabot.yml`: npm, weekly, security updates only (version-update PRs
+  off with `open-pull-requests-limit: 0`).
