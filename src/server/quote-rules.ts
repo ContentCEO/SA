@@ -30,6 +30,23 @@ export const stageLabel: Record<QuoteStage, string> = {
   no_answer: "No answer",
 };
 
+/**
+ * Check 36 P3: "Pipe burst… how much to fix it today?" answered "On my way" — a service call,
+ * not an estimate. Shown instead of "Gone quiet" / "Quoted" (a display label only, never a
+ * stored outcome); never nudged, never guessed "no answer". A price from the owner later
+ * brings normal chasing back.
+ */
+export const SERVICE_CALL_LABEL = "Service call";
+
+/**
+ * Check 36 P3: the thread carries the emergency mark and the owner's newest email (their own
+ * words, quoted part already cut) names no dollar amount.
+ */
+export function isServiceCall(extracted: unknown, ownerNewestText: string | null): boolean {
+  if ((extracted as { emergency?: unknown } | null)?.emergency !== true) return false;
+  return amountFromOwnerText(ownerNewestText) === null;
+}
+
 /** Decided = has an outcome (won / lost / no answer). Everything else is still open. */
 export function isDecidedStage(stage: QuoteStage): stage is QuoteOutcome {
   return isQuoteOutcome(stage);

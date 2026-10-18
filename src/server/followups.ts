@@ -14,6 +14,7 @@ import {
   lastOutSql,
   notDraftSql,
   replyAddressSql,
+  serviceCallSql,
   sideEmailSql,
 } from "./thread-sql";
 import { isAway } from "./away";
@@ -148,6 +149,9 @@ export async function threadsToFollowUp(
         sql`not ${purposeSent}`,
         sql`not ${saidPaid}`,
         sql`not ${wroteElsewhere}`,
+        // Check 36 P3: an emergency answered "On my way" with no price is a service call, not an
+        // estimate to check in on. SQL twin of `isServiceCall`; the drafter's check decides.
+        sql`not ${serviceCallSql()}`,
         // "I called them" (round 2, FW E11): the call answered it, so no nudge.
         sql`not ${answeredByPhoneSql()}`,
         // Ideas H3: sorted under the owner's "Never draft" rule.

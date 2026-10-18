@@ -146,3 +146,18 @@ drafter would pass `isInvoiceThread(thread)`), with these task lines for invoice
 - `MAX_FOLLOWUPS` / "two per conversation, ever" unchanged (comment says so). **Davi's call:**
   whether a new job priced on the same conversation (the deck after the kitchen) may get its own
   two nudges. Today it gets none, and is guessed "no answer" only after 21 quiet days.
+
+## Step 7 — Check 36 P3: an emergency service call isn't chased as a quote
+
+- Uses Check 36 P2's `extracted.emergency` mark (already on the base). `isServiceCall(extracted,
+ownerNewestText)` (quote-rules.ts): emergency mark and the owner's newest email (own words,
+  quoted part cut with `prepareBody`) has no dollar amount (`amountFromOwnerText`).
+- Drafter (follow-up) → `followup_not_allowed`; scan SQL twin `serviceCallSql()` (thread-sql.ts:
+  newest non-draft, non-side owner email has no `$digit` at all). `sentDraftSummary` promises no
+  nudge for one. `guessNoAnswers` skips them (SQL + code). Quotes card shows "Service call"
+  (`SERVICE_CALL_LABEL`, display only; filters still use the computed stage). A price written
+  later brings normal chasing back.
+- The emergency mark is replaced at the next classification once its 48 hours are over, so a
+  later customer email on an old emergency makes it an ordinary thread again.
+- Also in this commit: two Check 21 P5 test fixtures in followups.test.ts (a second thread from
+  the same customer address now correctly reads as "answered elsewhere").

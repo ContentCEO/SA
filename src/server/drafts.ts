@@ -121,7 +121,7 @@ import {
 } from "./lifecycle";
 import { batchEligible, firstLine } from "./batch-rules";
 import { isInvoiceThread, paymentSaid } from "./money-rules";
-import { quoteStopsNudges } from "./quote-rules";
+import { isServiceCall, quoteStopsNudges } from "./quote-rules";
 import { BACK_ON_TOP_MS, isEmergency, usableTimeZone } from "./snooze-rules";
 import { inEmergencyLane, recentEmergency } from "./emergency-rules";
 import { CHECKIN_AFTER_DAYS, CHECKIN_MAX_DAYS } from "./complaint-rules";
@@ -1024,6 +1024,10 @@ export async function createDraftForThread(
   if (!last) return { status: "skipped", reason: "no_text" };
   if (afterOwner && last.direction !== "out")
     return { status: "skipped", reason: "customer_replied" };
+  // Check 36 P3: an emergency the owner answered with no price ("On my way, be there in 30") was
+  // a service call: no "checking in on the estimate". A price written later brings it back.
+  if (followup && isServiceCall(thread.extracted, prepareBody(last.bodyText ?? last.snippet ?? "")))
+    return { status: "skipped", reason: "followup_not_allowed" };
   if (
     !afterOwner &&
     purpose !== "review_request" &&
@@ -3751,6 +3755,8 @@ export async function sentDraftSummary(
     !needsOwnerBlocksNudge(row.thread) &&
     !quoteStopsNudges(row.thread) &&
     row.thread.invoicePaidAt == null &&
+    // Check 36 P3: a service call (emergency, no price in what was sent) isn't chased.
+    !isServiceCall(row.thread.extracted, row.draft.body) &&
     // Check 21 P4: the same "quote or invoice" rule as the scan.
     (FOLLOWUP_CATEGORIES.includes(row.thread.category as (typeof FOLLOWUP_CATEGORIES)[number]) ||
       isInvoiceThread(row.thread)) &&

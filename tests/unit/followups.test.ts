@@ -17,7 +17,7 @@ import { digestCounts } from "@/server/digest";
 import { localDayStart } from "@/server/growth-client-rules";
 import { followupScanDue, markFollowupScanned, threadsToFollowUp } from "@/server/followups";
 import { localParts } from "@/server/snooze-rules";
-import { guessNoAnswers } from "@/server/quotes";
+import { guessNoAnswers, listQuotes } from "@/server/quotes";
 import { saveConnectedMailbox } from "@/server/mailboxes";
 import { followupSettingsInput, saveFollowupSettings } from "@/server/profile";
 import { createTestDb } from "../support/db";
@@ -53,6 +53,8 @@ async function quietThread(
     complainedAt?: Date;
     ownerRepliedDaysAgo?: number;
     customerWroteAfter?: boolean;
+    /** The customer's address (Check 21 P5: one customer's newer email stops older nudges). */
+    from?: string;
   } = {},
 ) {
   const id = `g${++g}`;
@@ -81,7 +83,7 @@ async function quietThread(
       gmailMessageId: `${id}-in`,
       rfc822MessageId: `<${id}-in@customer.com>`,
       direction: "in",
-      fromAddress: "dana@customer.com",
+      fromAddress: opts.from ?? "dana@customer.com",
       fromName: "Dana Ruiz",
       subject: "Panel upgrade",
       bodyText: "Can you quote a 200 amp panel upgrade?",
@@ -165,7 +167,7 @@ beforeEach(async () => {
 describe("which threads get a nudge", () => {
   it("a quote the owner answered 3+ days ago with no reply is due", async () => {
     const due = await quietThread({ ownerRepliedDaysAgo: 4 });
-    await quietThread({ ownerRepliedDaysAgo: 1 }); // too soon
+    await quietThread({ ownerRepliedDaysAgo: 1, from: "lee@customer.com" }); // too soon
     expect(await threadsToFollowUp(mailboxId, NOW)).toEqual([due]);
   });
 
@@ -937,7 +939,12 @@ describe("invoices the owner sends are chased (Check 21 P4)", () => {
   }
 
   it("a fresh invoice email to an address that wrote before → reminder to that address; a stranger → none", async () => {
-    await quietThread({ category: "customer_question", customerWroteAfter: true }); // Dana wrote
+    // Dana wrote before the invoice went out (not after: that would answer it, Check 21 P5).
+    await quietThread({
+      category: "customer_question",
+      ownerRepliedDaysAgo: 10,
+      customerWroteAfter: true,
+    });
     const known = await freshInvoice("Dana@Customer.com");
     const stranger = await freshInvoice("typo@custmer.com");
     expect(await threadsToFollowUp(mailboxId, NOW)).toEqual([known]);
@@ -1125,5 +1132,46 @@ describe("only this quote's nudges count before guessing no answer (Check 21 P6)
       .where(eq(threads.id, t));
     await guessNoAnswers(later(30), workspaceId);
     expect(await outcome(t)).toBeNull();
+  });
+});
+
+describe("an emergency service call isn't chased as a quote (Check 36 P3)", () => {
+  async function burstPipe(ownerReply: string) {
+    const t = await quietThread({
+      ownerRepliedDaysAgo: 4,
+      extracted: { emergency: true, emergency_at: daysAgo(5).toISOString(), urgency: "emergency" },
+    });
+    await database
+      .update(messages)
+      .set({ bodyText: ownerReply })
+      .where(eq(messages.gmailMessageId, `${await gidOf(t)}-out`));
+    return t;
+  }
+  const gidOf = async (t: string) =>
+    (await database.select().from(threads).where(eq(threads.id, t)))[0]!.gmailThreadId;
+
+  it("'On my way' with no price: not picked on day 4, no draft, no 'no answer' guess, shown as a service call", async () => {
+    await database
+      .update(workspaces)
+      .set({ status: "active" })
+      .where(eq(workspaces.id, workspaceId));
+    const t = await burstPipe("On my way, be there in 30.");
+    expect(await threadsToFollowUp(mailboxId, NOW)).toEqual([]);
+    setModelTransportForTests(fakeTransport([nudge()]).transport);
+    expect(await createDraftForThread(t, { trigger: "followup", ...deps() })).toEqual({
+      status: "skipped",
+      reason: "followup_not_allowed",
+    });
+    await guessNoAnswers(new Date(NOW.getTime() + 30 * DAY), workspaceId);
+    const [row] = await database.select().from(threads).where(eq(threads.id, t));
+    expect(row!.quoteOutcome).toBeNull();
+    const { quotes } = await listQuotes(workspaceId, NOW);
+    expect(quotes.find((q) => q.threadId === t)!.serviceCall).toBe(true);
+  });
+
+  it("with a price in the owner's reply it's chased as usual; a normal quote is unchanged", async () => {
+    const priced = await burstPipe("It'll be $380 to replace the section.");
+    const normal = await quietThread({ ownerRepliedDaysAgo: 4 });
+    expect((await threadsToFollowUp(mailboxId, NOW)).sort()).toEqual([priced, normal].sort());
   });
 });

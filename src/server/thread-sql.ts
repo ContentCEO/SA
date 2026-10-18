@@ -281,3 +281,20 @@ export const phoneMessageSenderSql = (fromAddress: SQL) => {
   );
   return sql`(position('@' in ${a}) > 1 and (${a} in (${sql.join(senders, sql`, `)}) or ${sql.join(gateways, sql` or `)}))`;
 };
+
+/**
+ * Check 36 P3: the owner's newest email on the outer thread (not an unsent draft, not a side
+ * email): its text, for the "service call" rule only (an amount check in code). Never logged.
+ */
+export const ownerNewestBodySql = () =>
+  sql<
+    string | null
+  >`(select ow_m.body_text from messages ow_m where ow_m.thread_id = ${outerThreadId()} and ow_m.direction = 'out' and ${notDraftSql("ow_m")} and not ${sideEmailSql("ow_m")} order by ow_m.sent_at desc limit 1)`;
+
+/**
+ * Check 36 P3: SQL twin (a superset) of `isServiceCall`: an emergency-marked thread whose
+ * owner's newest email has no dollar figure at all. The code check (`isServiceCall`, on the
+ * owner's own words without the quoted part) is the real gate. Never NULL.
+ */
+export const serviceCallSql = () =>
+  sql`(coalesce(${threads.extracted}->>'emergency', '') = 'true' and coalesce(${ownerNewestBodySql()}, '') !~ '\\$\\s?[0-9]')`;

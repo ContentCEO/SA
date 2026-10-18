@@ -22,13 +22,16 @@ import {
   lastInSql,
   lastOutSql,
   notDraftMessage,
+  ownerNewestBodySql,
   quoteThreadSql,
+  serviceCallSql,
 } from "./thread-sql";
 import {
   amountFromOwnerText,
   canAutoSet,
   closeRate,
   guessNoAnswer,
+  isServiceCall,
   NO_ANSWER_AFTER_NUDGES_DAYS,
   NO_ANSWER_WITHOUT_NUDGES_DAYS,
   noAnswerAfterDays,
@@ -60,6 +63,8 @@ export type QuoteRow = {
   startedAt: Date;
   /** Check 21 P2: "Waiting until Jan 4, as they asked." while an open quote's wait is ahead. */
   waitingLine: string | null;
+  /** Check 36 P3: an emergency answered with no price — shown as "Service call", not chased. */
+  serviceCall: boolean;
 };
 
 const DAY_MS = 86_400_000;
@@ -159,6 +164,8 @@ export async function listQuotes(workspaceId: string, now: Date = new Date()) {
   const rows = await db()
     .select({
       nudgeAfter: threads.nudgeAfter,
+      extracted: threads.extracted,
+      ownerNewestBody: ownerNewestBodySql(),
       threadId: threads.id,
       gmailThreadId: threads.gmailThreadId,
       mailboxEmail: mailboxes.email,
@@ -204,6 +211,8 @@ export async function listQuotes(workspaceId: string, now: Date = new Date()) {
     lastMessageAt: asDate(r.lastMessageAt),
     startedAt: asDate(r.firstAt) ?? r.startedAt,
     waitingLine: r.outcome == null ? waitingLine(asDate(r.nudgeAfter), now, timeZone) : null,
+    serviceCall:
+      r.outcome == null && isServiceCall(r.extracted, prepareBody(r.ownerNewestBody ?? "")),
   }));
 
   // Last 30 days, by when the request came in.
@@ -440,6 +449,8 @@ export async function guessNoAnswers(
         lastOut,
         sentNudges,
         nudgeAfter: threads.nudgeAfter,
+        extracted: threads.extracted,
+        ownerNewestBody: ownerNewestBodySql(),
       })
       .from(threads)
       .innerJoin(mailboxes, eq(mailboxes.id, threads.mailboxId))
@@ -455,6 +466,8 @@ export async function guessNoAnswers(
           sql`${threads.quoteOutcomeSource} is distinct from 'owner'`,
           sql`${lastIn} is not null`,
           sql`${lastOut} > ${lastIn}`,
+          // Check 36 P3: a service call (emergency, no price) is never guessed "no answer".
+          sql`not ${serviceCallSql()}`,
           // Pre-filter on the two bars of `guessNoAnswer` (which still decides below).
           // Check 21 P2: quiet days count from the date they asked us to wait for, when later.
           sql`(${quietFrom} <= ${ago(NO_ANSWER_WITHOUT_NUDGES_DAYS)}::timestamptz or (${quietFrom} <= ${ago(NO_ANSWER_AFTER_NUDGES_DAYS)}::timestamptz and ${sentNudges} >= 2))`,
@@ -465,6 +478,7 @@ export async function guessNoAnswers(
 
     for (const r of rows) {
       if (!jobsAllowed(r.workspace, now) || !canAutoSet(null, r.source)) continue;
+      if (isServiceCall(r.extracted, prepareBody(r.ownerNewestBody ?? ""))) continue;
       const lastOutboundAt = asDate(r.lastOut);
       const nudges = Number(r.sentNudges);
       const waitedFor = asDate(r.nudgeAfter);

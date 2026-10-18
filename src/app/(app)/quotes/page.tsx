@@ -13,6 +13,7 @@ import {
   formatCents,
   isDecidedStage,
   QUOTE_OUTCOMES,
+  SERVICE_CALL_LABEL,
   stageLabel,
   type QuoteOutcome,
   type QuoteStage,
@@ -86,7 +87,8 @@ function QuoteCard({
       </div>
       <div className="flex items-baseline justify-between gap-3">
         <span className="text-sm font-semibold">
-          {stageLabel[q.stage]}
+          {/* Check 36 P3: a display label only, never a stored outcome. */}
+          {q.serviceCall && !decided ? SERVICE_CALL_LABEL : stageLabel[q.stage]}
           {q.outcomeGuessed ? <span className="font-normal"> (our guess)</span> : null}
         </span>
         {q.amountCents ? (
