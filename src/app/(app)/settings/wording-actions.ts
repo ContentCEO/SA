@@ -37,18 +37,32 @@ export async function addNeverSayAction(phrase: string): Promise<NeverSayResult>
   return { ok: true, message: "Added. Future drafts won't say it." };
 }
 
-export async function addSeasonalNoteAction(formData: FormData) {
+export type NoteFormState = {
+  errors?: { text?: string[]; endsOn?: string[]; form?: string[] };
+  values?: { text: string; endsOn: string };
+};
+
+/**
+ * Check 15 P9: Settings → Your business → Add note. A refusal comes back with its own message
+ * and what was typed (kept in the boxes); a saved note goes back to the screen.
+ */
+export async function addSeasonalNoteFormAction(
+  _prev: NoteFormState,
+  formData: FormData,
+): Promise<NoteFormState> {
   const { workspace } = await requireOwner();
-  const parsed = seasonalNoteInput.safeParse({
-    text: formData.get("text") ?? "",
-    endsOn: formData.get("endsOn") ?? "",
-  });
-  if (!parsed.success) redirect("/settings/business?error=note_invalid");
+  const values = {
+    text: String(formData.get("text") ?? "").slice(0, 500),
+    endsOn: String(formData.get("endsOn") ?? "").slice(0, 20),
+  };
+  const parsed = seasonalNoteInput.safeParse(values);
+  if (!parsed.success) return { errors: z.flattenError(parsed.error).fieldErrors, values };
   try {
     await addSeasonalNote(workspace.id, parsed.data);
   } catch (err) {
     if (err instanceof SeasonalNoteError) {
-      redirect(`/settings/business?error=note_${err.code}`);
+      const where = err.code === "full" ? "form" : "endsOn";
+      return { errors: { [where]: [err.message] }, values };
     }
     throw err;
   }

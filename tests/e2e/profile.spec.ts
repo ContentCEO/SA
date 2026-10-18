@@ -213,3 +213,22 @@ test("Your business shows the price list, and Change lands on its box (Check 15 
   await expect(page).toHaveURL(/\/settings\/profile#pricingNotes$/);
   await expect(page.getByLabel("Your price list")).toBeFocused();
 });
+
+test("the main trade can't be ticked again as an extra one (Check 15 P11)", async ({
+  page,
+  context,
+}) => {
+  const owner = await seedOwner({ mailbox: true, backfilled: true });
+  await signInAs(context, owner);
+  await page.goto("/settings/profile");
+  const extras = page.getByRole("group", { name: /Do you do other trades too/ });
+  await page.getByLabel("What's your trade?").selectOption("plumbing");
+  await expect(extras.getByRole("checkbox", { name: "Plumbing" })).toHaveCount(0);
+  await expect(extras.getByRole("checkbox", { name: "Electrical" })).toBeVisible();
+  await expect(
+    page.getByText("Leaks, water heaters, drain clearing.", { exact: false }),
+  ).toBeVisible();
+  await page.getByLabel("What's your trade?").selectOption("electrical");
+  await expect(extras.getByRole("checkbox", { name: "Electrical" })).toHaveCount(0);
+  await expect(extras.getByRole("checkbox", { name: "Plumbing" })).toBeVisible();
+});

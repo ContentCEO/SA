@@ -2,13 +2,13 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { DisconnectButton } from "@/components/app/disconnect-button";
 import { Button, buttonVariants } from "@/components/ui/button";
-import { relativeTime } from "@/lib/relative-time";
 import { cn } from "@/lib/utils";
 import { mailboxHealth } from "@/server/mailbox-health";
 import { planPausedLine } from "@/server/mailbox-plan-rules";
-import { listMailboxes, mailboxLimit, type MailboxSummary } from "@/server/mailboxes";
+import { listMailboxes, mailboxLimit } from "@/server/mailboxes";
 import { requireOwner } from "@/server/session";
 import { BACKFILL_DAYS, syncSummary } from "@/server/sync";
+import { syncLine } from "@/server/gmail-screen-rules";
 import { disconnectMailboxAction, swapMailboxAction } from "../actions";
 import { SettingsScreen } from "../screen";
 
@@ -19,18 +19,6 @@ const statusWords = {
   reconnect_needed: "Needs reconnecting",
   paused: "Paused",
 } as const;
-
-function syncLine(m: MailboxSummary, messageCount: number): string {
-  if (m.status === "reconnect_needed") {
-    return "Google access was removed, so Squared Away has stopped reading this inbox. Reconnect to pick up where it left off.";
-  }
-  if (m.status === "paused") return "Paused. Nothing is being read or drafted.";
-  if (!m.backfillCompletedAt) {
-    return `Reading your last ${BACKFILL_DAYS} days of email. This can take a few minutes.`;
-  }
-  const checked = m.lastSyncedAt ? `, checked ${relativeTime(m.lastSyncedAt)}` : "";
-  return `${messageCount.toLocaleString("en-US")} emails from the last ${BACKFILL_DAYS} days${checked}.`;
-}
 
 export default async function GmailSettingsPage(props: PageProps<"/settings/gmail">) {
   const { workspace } = await requireOwner();
@@ -145,7 +133,7 @@ export default async function GmailSettingsPage(props: PageProps<"/settings/gmai
                       {statusWords[m.status]}
                     </span>
                     <span className={cn("mt-1", needsYou ? "" : "text-muted-foreground")}>
-                      {syncLine(m, counts.get(m.id) ?? 0)}
+                      {syncLine(m, counts.get(m.id) ?? 0, BACKFILL_DAYS)}
                     </span>
                   </div>
                   <dl aria-label={`Health of ${m.email}`} className="flex flex-col gap-1.5">

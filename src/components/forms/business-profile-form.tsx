@@ -4,7 +4,12 @@ import Link from "next/link";
 import { useActionState, useEffect, useState, type FormEvent } from "react";
 import { TimeZoneInput } from "./time-zone-input";
 import { LICENSE_LABELS, type Licenses } from "@/config/licenses";
-import { amountSuggestionsFor, MAX_EXTRA_TRADES, TRADE_OPTIONS } from "@/config/trades";
+import {
+  amountSuggestionsFor,
+  MAX_EXTRA_TRADES,
+  servicesExampleFor,
+  TRADE_OPTIONS,
+} from "@/config/trades";
 import { US_STATES } from "@/config/us-states";
 import { depositTermsWarning } from "@/server/deposit-rules";
 import { saveBusinessProfileAction, type FormState } from "@/app/(app)/settings/profile-actions";
@@ -131,9 +136,13 @@ export function BusinessProfileForm({
     const typed = state.values?.amountThresholdDollars;
     return typed ?? defaults.amountThresholdDollars.toLocaleString("en-US");
   });
+  // Check 15 P11: the main trade isn't offered again as an extra one, and the services
+  // example matches it (the server still drops the main trade: cleanExtraTrades).
+  const [mainTrade, setMainTrade] = useState(String(v("trade", defaults.trade) ?? ""));
   const readTrades = (ev: FormEvent<HTMLFormElement>) => {
     const t = ev.target as HTMLInputElement | HTMLSelectElement;
     if (t.name !== "trade" && t.name !== "extraTrades") return;
+    if (t.name === "trade") setMainTrade(t.value);
     const data = new FormData(ev.currentTarget);
     setSuggestions(
       amountSuggestionsFor(String(data.get("trade") ?? ""), data.getAll("extraTrades").map(String)),
@@ -194,23 +203,25 @@ export function BusinessProfileForm({
         </span>
         <input type="hidden" name="extraTradesShown" value="1" />
         <div className="grid grid-cols-1 gap-x-4 sm:grid-cols-2">
-          {extraChoices.map((t) => {
-            const before = state.values
-              ? (state.values.extraTrades ?? "").split(",").includes(t.value)
-              : defaults.extraTrades.includes(t.value);
-            return (
-              <label key={t.value} className="flex min-h-tap items-center gap-3">
-                <input
-                  type="checkbox"
-                  name="extraTrades"
-                  value={t.value}
-                  defaultChecked={before}
-                  className="size-5 shrink-0 accent-current"
-                />
-                <span>{t.label}</span>
-              </label>
-            );
-          })}
+          {extraChoices
+            .filter((t) => t.value !== mainTrade)
+            .map((t) => {
+              const before = state.values
+                ? (state.values.extraTrades ?? "").split(",").includes(t.value)
+                : defaults.extraTrades.includes(t.value);
+              return (
+                <label key={t.value} className="flex min-h-tap items-center gap-3">
+                  <input
+                    type="checkbox"
+                    name="extraTrades"
+                    value={t.value}
+                    defaultChecked={before}
+                    className="size-5 shrink-0 accent-current"
+                  />
+                  <span>{t.label}</span>
+                </label>
+              );
+            })}
         </div>
         {e.extraTrades?.length ? (
           <span id="extraTrades-error" className="font-semibold">
@@ -404,7 +415,7 @@ export function BusinessProfileForm({
       <TextArea
         name="services"
         label="What work do you take on? (required)"
-        hint="The jobs you want more of, and the ones you don't do. “Service calls, panel upgrades, EV chargers. No new construction.”"
+        hint={`The jobs you want more of, and the ones you don't do. “${servicesExampleFor(mainTrade)}”`}
         defaultValue={v("services", defaults.services) as string}
         error={e.services}
       />

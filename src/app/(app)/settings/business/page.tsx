@@ -12,7 +12,9 @@ import { activeNotes, MAX_ACTIVE_NOTES, NOTE_MAX_CHARS, ownerToday } from "@/ser
 import { requireOwner } from "@/server/session";
 import { SettingsScreen } from "../screen";
 import { saveWorkHoursAction } from "../profile-actions";
-import { addSeasonalNoteAction, removeSeasonalNoteAction } from "../wording-actions";
+import { removeSeasonalNoteAction } from "../wording-actions";
+import { untilLine } from "@/lib/plain-date";
+import { SeasonalNoteForm } from "./seasonal-note-form";
 
 export const metadata: Metadata = { title: "Your business" };
 
@@ -79,9 +81,9 @@ export default async function BusinessSettingsPage(props: PageProps<"/settings/b
           Seasonal notes
         </h2>
         <p className="text-muted-foreground">
-          Short notes drafts can mention until their last day — “Booked through November”, “On
-          vacation Aug 1–10, back Aug 11”. Up to {MAX_ACTIVE_NOTES} at a time. They disappear on
-          their own.
+          Short notes your drafts can mention until their last day, like “Booked through November”
+          or “On vacation Aug 1 to 10, back Aug 11”. Up to {MAX_ACTIVE_NOTES} at a time. Each one
+          disappears after its last day.
         </p>
         {awayNote ? (
           <div className="flex flex-col gap-1 rounded-lg border bg-card p-3">
@@ -100,7 +102,9 @@ export default async function BusinessSettingsPage(props: PageProps<"/settings/b
               <li key={n.id} className="flex items-center gap-3 rounded-lg border bg-card p-3">
                 <div className="flex flex-1 flex-col">
                   <span className="font-semibold">{n.text}</span>
-                  <span className="text-sm text-muted-foreground">Until {n.endsOn}</span>
+                  <span className="text-sm text-muted-foreground">
+                    {untilLine(n.endsOn, today)}
+                  </span>
                 </div>
                 <form action={removeSeasonalNoteAction}>
                   <input type="hidden" name="id" value={n.id} />
@@ -113,31 +117,7 @@ export default async function BusinessSettingsPage(props: PageProps<"/settings/b
           </ul>
         ) : null}
         {ownNotes.length < MAX_ACTIVE_NOTES ? (
-          <form action={addSeasonalNoteAction} className="flex flex-col gap-3">
-            <label className="flex flex-col gap-1.5">
-              <span className="font-semibold">Note</span>
-              <input
-                name="text"
-                required
-                maxLength={NOTE_MAX_CHARS}
-                placeholder="Booked through November"
-                className="min-h-tap rounded-lg border border-input bg-paper px-3 text-base"
-              />
-            </label>
-            <label className="flex flex-col gap-1.5">
-              <span className="font-semibold">Last day it applies</span>
-              <input
-                name="endsOn"
-                type="date"
-                required
-                min={today}
-                className="min-h-tap rounded-lg border border-input bg-paper px-3 text-base"
-              />
-            </label>
-            <Button type="submit" variant="outline" className="w-full">
-              Add note
-            </Button>
-          </form>
+          <SeasonalNoteForm today={today} maxChars={NOTE_MAX_CHARS} />
         ) : null}
       </section>
 

@@ -46,6 +46,27 @@ export function cleanExtraTrades(values: readonly unknown[], main: Trade | null)
   );
 }
 
+/**
+ * Check 15 P11: the example under "What work do you take on?", one per trade, so a plumber
+ * isn't shown an electrician's jobs. "other" keeps a general one.
+ */
+export const servicesExample: Record<Trade, string> = {
+  carpentry: "Decks, trim and doors, stair repairs. No new framing.",
+  plumbing: "Leaks, water heaters, drain clearing. No new construction.",
+  electrical: "Service calls, panel upgrades, EV chargers. No new construction.",
+  hvac: "Furnace and AC repair, heat pumps, tune-ups. No ductwork in new builds.",
+  roofing: "Leak repairs, shingle roofs, gutters. No flat commercial roofs.",
+  painting: "Interior rooms, exterior trim, cabinets. No commercial jobs.",
+  landscaping: "Mowing, spring cleanups, patios. No tree removal.",
+  remodeling: "Kitchens, bathrooms, basements. No additions.",
+  other: "Repairs, installs, small jobs. No big projects.",
+};
+
+/** "“Leaks, water heaters…”" for a trade, or the general example. */
+export function servicesExampleFor(trade: string | null | undefined): string {
+  return servicesExample[isTrade(trade) ? trade : "other"];
+}
+
 /** For <select>s. */
 export const TRADE_OPTIONS = TRADES.map((value) => ({ value, label: tradeLabel[value] }));
 

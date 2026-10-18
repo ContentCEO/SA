@@ -12,7 +12,9 @@ test("after the backfill, Settings shows how much was read and when", async ({ p
   const owner = await seedOwner({ mailbox: true, backfilled: true, messageCount: 3 });
   await signInAs(context, owner);
   await page.goto("/settings/gmail");
-  await expect(page.getByText("3 emails from the last 30 days, checked just now.")).toBeVisible();
+  // Check 15 P10: the check time is said once, in the health list.
+  await expect(page.getByText("3 emails from the last 30 days.", { exact: true })).toBeVisible();
+  await expect(page.getByText(/checked just now/)).toHaveCount(0);
   const health = page.getByRole("definition").filter({ hasText: "Checked every 5 minutes." });
   await expect(health).toBeVisible();
   // Healthy: no Reconnect button in the Gmail section.
