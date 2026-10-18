@@ -281,6 +281,12 @@ export const threads = pgTable(
      */
     handledOfflineAt: timestamp("handled_offline_at", { withTimezone: true }),
     /**
+     * Check 21 P2: the customer asked us to wait ("after the holidays"): no nudge before this
+     * instant (the start of that day in the owner's zone). Set from the classifier's
+     * `wait_until` and replaced at every new customer email (cleared when it has none).
+     */
+    nudgeAfter: timestamp("nudge_after", { withTimezone: true }),
+    /**
      * Leads package (B2 / B3): where the lead came from, decided in code from the sender
      * (`channelOf`, src/server/channel-rules.ts): a phone service key ("google_voice"),
      * "phone_text" (an email-to-text gateway) or a lead-site key ("thumbtack"). Null = a direct

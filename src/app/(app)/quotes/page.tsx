@@ -94,6 +94,7 @@ function QuoteCard({
         ) : null}
       </div>
       {q.summary ? <p className="opacity-80">{q.summary}</p> : null}
+      {q.waitingLine ? <p className="text-sm font-semibold">{q.waitingLine}</p> : null}
       {readOnly ? null : (
         // Plan #26: only on a quote that went quiet after both nudges (the server decides).
         <OfferButtons

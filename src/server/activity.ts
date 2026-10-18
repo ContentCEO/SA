@@ -108,6 +108,9 @@ export function describeActivity(
     case "quote_outcome_guessed":
       if (detail.outcome === "won")
         return `Marked a quote${from} as won — they said go ahead. Change it on Quotes`;
+      // Check 21 P2: the customer said no ("we went with someone else").
+      if (detail.outcome === "lost" && detail.why === "declined")
+        return `Marked a quote${from} as lost — they said no. Change it on Quotes`;
       if (detail.outcome === "no_answer")
         return `Marked a quote${from} as no answer after ${
           detail.why === "three_weeks" ? "three quiet weeks" : "two nudges and a quiet week"

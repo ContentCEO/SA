@@ -34,6 +34,7 @@ import {
 } from "./guards";
 import { isLeadCategory } from "@/config/categories";
 import { EMERGENCY_REASON } from "@/server/emergency-rules";
+import { followupSignalsOf } from "@/server/followup-rules";
 import { OUTSIDE_AREA_REASON, outsideArea } from "@/server/service-area-rules";
 import type { ChannelKind } from "@/server/channel-rules";
 
@@ -156,6 +157,13 @@ export type Extracted = ModelClassification["extracted"] & {
    * doesn't, and on rows sorted before it existed.
    */
   owner_code?: string;
+  /**
+   * Check 21 P2: the customer turns the quote down (hired someone else, holding off
+   * indefinitely, no longer needs it). Our "lost" guess; stops nudges. Only ever `true`.
+   */
+  declines_quote?: boolean;
+  /** Check 21 P2: the date (YYYY-MM-DD) they asked us to wait for. Becomes `threads.nudge_after`. */
+  wait_until?: string;
 };
 
 /** The owner-rule keys, in display order (leads package §1g). */
@@ -802,6 +810,8 @@ export async function classifyEmail(
       ...(result.signals.mentions_refund_or_dispute || legal ? { disputed: true } : {}),
       owner_rule_hits: hits,
       ...(needsOwnerCode ? { owner_code: needsOwnerCode } : {}),
+      // Check 21 P2: read loosely, so a classify version without them simply has none.
+      ...followupSignalsOf(result, opts.now ?? new Date()),
     },
     unreadable: false,
   };

@@ -39,6 +39,7 @@ import { OfflineQueue } from "./offline-queue";
 import { devicePrefs } from "@/lib/device-prefs";
 import { ScrollToThread } from "./scroll-to-thread";
 import { SNOOZE_LABELS, snoozeOptions, usableTimeZone } from "@/server/snooze-rules";
+import { waitingLine } from "@/server/followup-rules";
 import { batchCandidates } from "@/server/drafts";
 import { BATCH_CATEGORIES } from "@/server/batch-rules";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -71,6 +72,9 @@ function nextLine(
   timeZone: string,
 ) {
   const name = firstName(sent.toName);
+  // Check 21 P2: they asked us to wait ("after the holidays").
+  const waiting = waitingLine(sent.waitingUntil, new Date(), timeZone);
+  if (waiting) return waiting;
   if (sent.nudgeOn) {
     const weekday = new Intl.DateTimeFormat("en-US", { weekday: "long", timeZone });
     return `I'll nudge ${name ?? "them"} on ${weekday.format(sent.nudgeOn)} if there's no reply.`;

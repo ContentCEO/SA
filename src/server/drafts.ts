@@ -211,6 +211,7 @@ export type CreateOutcome =
         | "model_failed"
         | "read_only"
         | "followup_not_allowed"
+        | "wait_requested"
         | "customer_replied"
         | "followup_cap"
         | "untrusted"
@@ -884,6 +885,9 @@ export async function createDraftForThread(
     ) {
       return { status: "skipped", reason: "followup_not_allowed" };
     }
+    // Check 21 P2: they asked us to wait ("after the holidays"): not before that day.
+    if (thread.nudgeAfter && thread.nudgeAfter.getTime() > now.getTime())
+      return { status: "skipped", reason: "wait_requested" };
     const sentNudges = await countSentFollowups(threadId);
     if (sentNudges >= MAX_FOLLOWUPS) return { status: "skipped", reason: "followup_cap" };
     nudgeNumber = sentNudges === 0 ? 1 : 2;
@@ -3590,6 +3594,7 @@ export async function sentDraftSummary(
       kind: row.draft.kind,
       purpose: row.draft.purpose ?? null,
       nudgeOn: null,
+      waitingUntil: null,
       lastNudgeUsed: false,
     };
   }
@@ -3631,6 +3636,17 @@ export async function sentDraftSummary(
     nudgeOn:
       chased && sentNudges < MAX_FOLLOWUPS
         ? new Date(decidedAt.getTime() + settings.days * 86_400_000)
+        : null,
+    /**
+     * Check 21 P2: they asked us to wait; the sent screen says "Waiting until Jan 4, as they
+     * asked." instead of the next nudge day.
+     */
+    waitingUntil:
+      chased &&
+      sentNudges < MAX_FOLLOWUPS &&
+      row.thread.nudgeAfter &&
+      row.thread.nudgeAfter.getTime() > now.getTime()
+        ? row.thread.nudgeAfter
         : null,
     lastNudgeUsed: chased && sentNudges >= MAX_FOLLOWUPS,
   };

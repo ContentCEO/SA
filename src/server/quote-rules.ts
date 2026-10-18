@@ -100,11 +100,18 @@ const NUDGES_BEFORE_NO_ANSWER = 2;
  * or three weeks however many were sent. Returns why, or null for no guess.
  */
 export function guessNoAnswer(
-  f: { lastInboundAt: Date | null; lastOutboundAt: Date | null; sentNudges: number },
+  f: {
+    lastInboundAt: Date | null;
+    lastOutboundAt: Date | null;
+    sentNudges: number;
+    /** Check 21 P2: count quiet days from here instead (the date they asked us to wait for). */
+    quietFrom?: Date;
+  },
   now: Date,
 ): "two_nudges" | "three_weeks" | null {
   if (!f.lastInboundAt || !f.lastOutboundAt || f.lastOutboundAt <= f.lastInboundAt) return null;
-  const quietDays = (now.getTime() - f.lastOutboundAt.getTime()) / 86_400_000;
+  const from = f.quietFrom && f.quietFrom > f.lastOutboundAt ? f.quietFrom : f.lastOutboundAt;
+  const quietDays = (now.getTime() - from.getTime()) / 86_400_000;
   if (f.sentNudges >= NUDGES_BEFORE_NO_ANSWER && quietDays >= NO_ANSWER_AFTER_NUDGES_DAYS)
     return "two_nudges";
   if (quietDays >= NO_ANSWER_WITHOUT_NUDGES_DAYS) return "three_weeks";
@@ -134,6 +141,8 @@ export function canAutoSet(outcome: string | null, source: string | null): boole
 
 /** Added to a waiting nudge when we guess a quote's outcome (a guess never deletes it). */
 export const QUOTE_GUESS_FLAG = "We think this quote is closed — check before sending.";
+/** Check 21 P2: the note on a waiting nudge when the customer said no. */
+export const DECLINED_FLAG = "They said no. Check before sending.";
 
 /** The note on a waiting nudge closed because the owner decided the quote. */
 export function quoteDecidedNote(outcome: QuoteOutcome): string {

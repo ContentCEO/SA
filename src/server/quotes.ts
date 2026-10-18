@@ -2,7 +2,17 @@ import "server-only";
 import { and, desc, eq, inArray, isNotNull, isNull, sql, type SQL } from "drizzle-orm";
 import { prepareBody } from "@/ai/classify";
 import { db } from "@/db";
-import { activityLog, mailboxes, messages, priceHistory, threads, workspaces } from "@/db/schema";
+import {
+  activityLog,
+  businessProfiles,
+  mailboxes,
+  messages,
+  priceHistory,
+  threads,
+  workspaces,
+} from "@/db/schema";
+import { waitingLine } from "./followup-rules";
+import { usableTimeZone } from "./snooze-rules";
 import { expirePendingNudge, flagPendingNudge, followupSettings, type DraftDeps } from "./drafts";
 import { effectiveStatus, JOBS_ALLOWED, jobsAllowed, ReadOnlyError } from "./lifecycle";
 import {
@@ -48,6 +58,8 @@ export type QuoteRow = {
   amountCents: number | null;
   lastMessageAt: Date | null;
   startedAt: Date;
+  /** Check 21 P2: "Waiting until Jan 4, as they asked." while an open quote's wait is ahead. */
+  waitingLine: string | null;
 };
 
 const DAY_MS = 86_400_000;
@@ -139,8 +151,14 @@ export async function listQuotes(workspaceId: string, now: Date = new Date()) {
   await captureQuoteAmounts(workspaceId);
   await guessNoAnswers(now, workspaceId);
   const { days } = await followupSettings(workspaceId);
+  const [profile] = await db()
+    .select({ timeZone: businessProfiles.timeZone })
+    .from(businessProfiles)
+    .where(eq(businessProfiles.workspaceId, workspaceId));
+  const timeZone = usableTimeZone(profile?.timeZone);
   const rows = await db()
     .select({
+      nudgeAfter: threads.nudgeAfter,
       threadId: threads.id,
       gmailThreadId: threads.gmailThreadId,
       mailboxEmail: mailboxes.email,
@@ -185,6 +203,7 @@ export async function listQuotes(workspaceId: string, now: Date = new Date()) {
     amountCents: r.amountCents,
     lastMessageAt: asDate(r.lastMessageAt),
     startedAt: asDate(r.firstAt) ?? r.startedAt,
+    waitingLine: r.outcome == null ? waitingLine(asDate(r.nudgeAfter), now, timeZone) : null,
   }));
 
   // Last 30 days, by when the request came in.
@@ -291,7 +310,7 @@ export async function autoSetQuoteOutcome(
   threadId: string,
   outcome: QuoteOutcome,
   now: Date,
-  opts: { extra?: SQL; why?: string } = {},
+  opts: { extra?: SQL; why?: string; flag?: string } = {},
 ): Promise<boolean> {
   const [row] = await db()
     .update(threads)
@@ -324,7 +343,7 @@ export async function autoSetQuoteOutcome(
   // A guess never deletes a waiting nudge; it asks the owner to check it (unless the
   // nudge is for a won job's invoice, which is still chased).
   if (quoteStopsNudges({ quoteOutcome: outcome, category: row.category })) {
-    await flagPendingNudge(threadId, QUOTE_GUESS_FLAG);
+    await flagPendingNudge(threadId, opts.flag ?? QUOTE_GUESS_FLAG);
   }
   return true;
 }
@@ -371,6 +390,7 @@ export async function guessNoAnswers(
   const lastOut = lastOutSql();
   const sentNudges = sql<number>`(select count(*) from drafts d where d.thread_id = ${threads.id} and d.kind = 'followup' and d.status in ('sent', 'edited_and_sent'))`;
   const ago = (days: number) => new Date(now.getTime() - days * DAY_MS).toISOString();
+  const quietFrom = sql`greatest(${lastOut}, ${threads.nudgeAfter})`;
   const inScope = and(
     workspaceId ? eq(mailboxes.workspaceId, workspaceId) : undefined,
     workspaceJobsAllowedSql(now),
@@ -405,6 +425,7 @@ export async function guessNoAnswers(
         lastIn,
         lastOut,
         sentNudges,
+        nudgeAfter: threads.nudgeAfter,
       })
       .from(threads)
       .innerJoin(mailboxes, eq(mailboxes.id, threads.mailboxId))
@@ -421,7 +442,8 @@ export async function guessNoAnswers(
           sql`${lastIn} is not null`,
           sql`${lastOut} > ${lastIn}`,
           // Pre-filter on the two bars of `guessNoAnswer` (which still decides below).
-          sql`(${lastOut} <= ${ago(NO_ANSWER_WITHOUT_NUDGES_DAYS)}::timestamptz or (${lastOut} <= ${ago(NO_ANSWER_AFTER_NUDGES_DAYS)}::timestamptz and ${sentNudges} >= 2))`,
+          // Check 21 P2: quiet days count from the date they asked us to wait for, when later.
+          sql`(${quietFrom} <= ${ago(NO_ANSWER_WITHOUT_NUDGES_DAYS)}::timestamptz or (${quietFrom} <= ${ago(NO_ANSWER_AFTER_NUDGES_DAYS)}::timestamptz and ${sentNudges} >= 2))`,
         ),
       )
       .orderBy(threads.id)
@@ -431,8 +453,15 @@ export async function guessNoAnswers(
       if (!jobsAllowed(r.workspace, now) || !canAutoSet(null, r.source)) continue;
       const lastOutboundAt = asDate(r.lastOut);
       const nudges = Number(r.sentNudges);
+      const waitedFor = asDate(r.nudgeAfter);
       const why = guessNoAnswer(
-        { lastInboundAt: asDate(r.lastIn), lastOutboundAt, sentNudges: nudges },
+        {
+          lastInboundAt: asDate(r.lastIn),
+          lastOutboundAt,
+          sentNudges: nudges,
+          quietFrom:
+            waitedFor && lastOutboundAt && waitedFor > lastOutboundAt ? waitedFor : undefined,
+        },
         now,
       );
       if (!why || !lastOutboundAt) continue;
@@ -443,7 +472,7 @@ export async function guessNoAnswers(
         extra: and(
           isNull(threads.quoteOutcome),
           sql`${lastOut} > ${lastIn}`,
-          sql`${lastOut} <= ${ago(noAnswerAfterDays(nudges))}::timestamptz`,
+          sql`${quietFrom} <= ${ago(noAnswerAfterDays(nudges))}::timestamptz`,
         ),
       });
       if (ok) set++;

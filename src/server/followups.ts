@@ -102,7 +102,10 @@ export async function threadsToFollowUp(
         sql`${lastIn} is not null`,
         sql`${lastOut} > ${lastIn}`,
         sql`${lastOut} <= ${quietSince}::timestamptz`,
-        sql`${lastOut} >= ${notBefore}::timestamptz`,
+        // Check 21 P2: a customer who asked us to wait ("after the holidays") isn't nudged
+        // before then, and the 21-day window counts from that date when it's later.
+        sql`(${threads.nudgeAfter} is null or ${threads.nudgeAfter} <= ${now.toISOString()}::timestamptz)`,
+        sql`greatest(${lastOut}, ${threads.nudgeAfter}) >= ${notBefore}::timestamptz`,
         sql`${sentNudges} < ${MAX_FOLLOWUPS}`,
         sql`(${lastDraft} is null or ${lastDraft} < ${lastOut})`,
         sql`not ${pending}`,
