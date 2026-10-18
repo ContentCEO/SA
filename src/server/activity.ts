@@ -140,9 +140,51 @@ export function describeActivity(
       return "You turned on away mode";
     case "away_off":
       return "You turned off away mode";
-    // Ideas C5: the reason shows on Quotes and in the month's line, not as its own entry.
-    case "quote_lost_reason":
-      return null;
+    // Check 14 P7: owner taps that were logged but never shown. Content-free.
+    case "answered_by_phone":
+      return `${name ? `You marked that you called ${name}` : "You marked a conversation as answered by phone"}${
+        detail.draftRemoved === true ? " (the waiting draft was taken away)" : ""
+      }`;
+    case "found_money_drafts_requested": {
+      const asked = (Number(detail.replies) || 0) + (Number(detail.nudges) || 0);
+      return `You asked for drafts for ${asked} ${asked === 1 ? "quote" : "quotes"} that slipped`;
+    }
+    case "first_drafts_ready_sent":
+      return "Told you your first drafts were ready";
+    case "seasonal_note_added":
+      return "You added a seasonal note";
+    case "never_say_saved":
+      return "You updated your never-say list";
+    // The same guard found these: logged, never shown.
+    case "complaint_fixed":
+      return `You marked the complaint${from} as fixed`;
+    case "complaint_checkin_closed":
+      return `You said all is good after the fix${name ? ` for ${name}` : ""}`;
+    case "owner_cleared_injection":
+      return `You said an email${from} is a normal email`;
+    case "sender_rule_removed":
+      return "You removed a sender rule";
+    case "service_town_added":
+      return "You added a town to your service area";
+    case "trial_email_sent":
+      return "Emailed you about your trial";
+    case "trial_emails_stopped":
+      return "You stopped the trial emails";
+    case "mailbox_plan_swap":
+      return detail.paused
+        ? "You switched which Gmail address is on"
+        : "You turned a Gmail address back on";
+    case "mailboxes_fit_plan": {
+      const paused = Number(detail.paused) || 0;
+      const resumed = Number(detail.resumed) || 0;
+      const bits = [
+        paused ? `paused ${paused} Gmail ${paused === 1 ? "address" : "addresses"}` : null,
+        resumed ? `turned ${resumed} back on` : null,
+      ].filter(Boolean);
+      return bits.length
+        ? `${bits.join(" and ")[0]!.toUpperCase()}${bits.join(" and ").slice(1)} to fit your plan`
+        : "Your Gmail addresses fit your plan";
+    }
     case "marked_needs_owner":
       return `You marked a conversation${name ? ` with ${name}` : ""} as needing you`;
     case "mailbox_connected":
@@ -258,6 +300,99 @@ export function describeActivity(
   }
 }
 
+/**
+ * Check 14 P6/P7: every action `describeActivity` has a sentence for. Activity filters on this
+ * list in SQL before the page limit, so hidden rows never shrink a page. A guard test checks
+ * every action the code logs is here or in HIDDEN_ON_PURPOSE.
+ */
+export const DESCRIBED_ACTIONS = [
+  "draft_created",
+  "closing_question",
+  "followup_drafted",
+  "reply_sent",
+  "reply_sent_from_gmail",
+  "owner_wrote_own_reply",
+  "send_stood_down",
+  "draft_discarded",
+  "draft_repointed",
+  "reply_went_to_form",
+  "draft_revised",
+  "practice_sent",
+  "send_undone",
+  "send_stopped",
+  "snoozed",
+  "draft_expired",
+  "quote_marked",
+  "quote_outcome_guessed",
+  "invoice_marked_paid",
+  "invoice_marked_unpaid",
+  "invoice_marked_not_owed",
+  "invoice_reopened",
+  "sender_rule_added",
+  "vip_added",
+  "thread_resorted",
+  "away_on",
+  "away_off",
+  "answered_by_phone",
+  "found_money_drafts_requested",
+  "first_drafts_ready_sent",
+  "seasonal_note_added",
+  "never_say_saved",
+  "complaint_fixed",
+  "complaint_checkin_closed",
+  "owner_cleared_injection",
+  "sender_rule_removed",
+  "service_town_added",
+  "trial_email_sent",
+  "trial_emails_stopped",
+  "mailbox_plan_swap",
+  "mailboxes_fit_plan",
+  "marked_needs_owner",
+  "mailbox_connected",
+  "mailbox_reconnected",
+  "mailbox_disconnected",
+  "push_alert_sent",
+  "lead_at_risk_push_sent",
+  "sms_alert_sent",
+  "emergency_alert_sent",
+  "emergency_alerts_changed",
+  "sms_alerts_changed",
+  "access_alert_sent",
+  "mailbox_access_lost",
+  "voice_learned",
+  "voice_idea_accepted",
+  "voice_idea_ignored",
+  "voice_profile_edited",
+  "business_profile_saved",
+  "followup_settings_saved",
+  "digest_settings_saved",
+  "autopilot_scheduled",
+  "autopilot_held",
+  "autopilot_stood_down",
+  "autopilot_changed",
+  "plan_changed",
+  "payment_received",
+  "subscription_changed",
+  "digest_sent",
+  "monthly_summary_sent",
+  "referral_credit_applied",
+  "test_payment_reset",
+  "evaluation_started",
+  "evaluation_expired",
+  "workspace_status_changed",
+] as const;
+
+/**
+ * Logged on purpose but never a line: `send_approved` is the send record's own row (the reply's
+ * line is `reply_sent`), the checklist's hide is a screen setting, and a lost reason shows on
+ * Quotes and in the month's line (Ideas C5).
+ */
+export const HIDDEN_ON_PURPOSE = [
+  "send_approved",
+  "checklist_dismissed",
+  "quote_lost_reason",
+] as const;
+
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 /** "2026-10-12" → "Oct 12" (a local date stored with the entry). */
 function shortDate(ymd: string): string | null {
@@ -292,13 +427,47 @@ export function sendStoppedWhy(why: unknown): string {
           : "something changed";
 }
 
-export async function listActivity(workspaceId: string, limit = 100): Promise<ActivityEntry[]> {
+export type ActivityCursor = { at: Date; id: string };
+
+/** Newest first, a page at a time (Check 14 P6). */
+export async function listActivity(
+  workspaceId: string,
+  opts: { before?: ActivityCursor; limit?: number } = {},
+): Promise<ActivityEntry[]> {
+  return (await listActivityPage(workspaceId, opts)).entries;
+}
+
+/**
+ * One page of Activity: only described actions (filtered in SQL before the limit, so hidden
+ * rows never shrink a page), newest first by (created_at to the millisecond, id), older than
+ * `before`. `older` is the cursor for the next page when a full page came back.
+ */
+export async function listActivityPage(
+  workspaceId: string,
+  opts: { before?: ActivityCursor; limit?: number } = {},
+): Promise<{ entries: ActivityEntry[]; older: ActivityCursor | null }> {
+  const limit = opts.limit ?? 100;
+  // To the millisecond: a JS Date (the cursor) has no microseconds, so ordering and the cursor
+  // compare on the same value and no row on a page boundary is skipped.
+  const ms = sql`date_trunc('milliseconds', ${activityLog.createdAt})`;
   const rows = await db()
     .select()
     .from(activityLog)
-    .where(eq(activityLog.workspaceId, workspaceId))
-    .orderBy(desc(activityLog.createdAt))
+    .where(
+      and(
+        eq(activityLog.workspaceId, workspaceId),
+        inArray(activityLog.action, [...DESCRIBED_ACTIONS]),
+        // The one described action that's only sometimes a line (it turned sending off).
+        sql`not (${activityLog.action} = 'test_payment_reset' and coalesce(${activityLog.detail}->>'setupPaymentCleared', 'false') <> 'true')`,
+        opts.before
+          ? sql`(${ms}, ${activityLog.id}) < (${opts.before.at.toISOString()}::timestamptz, ${opts.before.id}::uuid)`
+          : undefined,
+      ),
+    )
+    .orderBy(desc(ms), desc(activityLog.id))
     .limit(limit);
+  const last = rows.at(-1);
+  const older = rows.length === limit && last ? { at: last.createdAt, id: last.id } : null;
 
   const threadIds = [...new Set(rows.map((r) => r.threadId).filter((t): t is string => !!t))];
   const who = new Map<string, Who>();
@@ -320,7 +489,7 @@ export async function listActivity(workspaceId: string, limit = 100): Promise<Ac
     }
   }
 
-  return rows.flatMap((r) => {
+  const entries = rows.flatMap((r) => {
     const text = describeActivity(
       r.action,
       r.detail,
@@ -331,6 +500,7 @@ export async function listActivity(workspaceId: string, limit = 100): Promise<Ac
       SENT_ACTIONS.has(r.action) && typeof r.detail.draftId === "string" ? r.detail.draftId : null;
     return [{ id: r.id, at: r.createdAt, text, byYou: r.actor === "owner", recordId }];
   });
+  return { entries, older };
 }
 
 export type MonthSummary = {

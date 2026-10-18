@@ -5,7 +5,7 @@ import { buttonVariants } from "@/components/ui/button";
 import { relativeTime } from "@/lib/relative-time";
 import { cn } from "@/lib/utils";
 import {
-  listActivity,
+  listActivityPage,
   lostReasonsBetween,
   localMonthName,
   monthCloseRate,
@@ -14,7 +14,9 @@ import {
   moneySoFar,
 } from "@/server/activity";
 import {
+  activityCursorParam,
   groupByDay,
+  parseActivityCursor,
   MONEY_SO_FAR_NOTE,
   moneyIsEmpty,
   moneySoFarLines,
@@ -38,13 +40,16 @@ import { workspaceTimeZone } from "@/server/snooze";
 
 export const metadata: Metadata = { title: "Activity" };
 
-export default async function ActivityPage() {
+export default async function ActivityPage(props: PageProps<"/activity">) {
   const { workspace } = await requireOwner();
+  const params = await props.searchParams;
+  // Check 14 P6: older pages of the log; a cursor that doesn't parse is the first page.
+  const before = parseActivityCursor(params.before);
   const now = new Date();
   // One month for the whole screen, in the owner's own time zone.
   const timeZone = await workspaceTimeZone(workspace.id);
-  const [entries, month, close, weeks, money, soFar] = await Promise.all([
-    listActivity(workspace.id),
+  const [{ entries, older }, month, close, weeks, money, soFar] = await Promise.all([
+    listActivityPage(workspace.id, { before }),
     monthSummary(workspace.id, now, timeZone),
     monthCloseRate(workspace.id, now, timeZone),
     weekScorecards(workspace.id, now, timeZone),
@@ -255,10 +260,14 @@ export default async function ActivityPage() {
 
       <section aria-labelledby="log" className="flex flex-col gap-3">
         <h2 id="log" className="text-xl font-black">
-          Everything, newest first
+          What happened, newest first
         </h2>
         {entries.length === 0 ? (
-          <p className="text-lg">Nothing yet. Once your email is read, you&apos;ll see it here.</p>
+          <p className="text-lg">
+            {before
+              ? "Nothing older."
+              : "Nothing yet. Once your email is read, you'll see it here."}
+          </p>
         ) : (
           days.map((day) => (
             <section
@@ -304,6 +313,14 @@ export default async function ActivityPage() {
             </section>
           ))
         )}
+        {older ? (
+          <Link
+            href={`/activity?before=${encodeURIComponent(activityCursorParam(older))}#log`}
+            className={cn(buttonVariants({ variant: "outline" }), "min-h-tap self-start")}
+          >
+            Show older
+          </Link>
+        ) : null}
       </section>
     </>
   );
