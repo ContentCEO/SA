@@ -130,7 +130,8 @@ export function isLastDay(msLeft: number): boolean {
 export function trialSoFarLine(c: { sorted: number; drafted: number }): string | null {
   if (!c.sorted && !c.drafted) return null;
   const bits = [
-    c.sorted ? `sorted ${n(c.sorted, "email", "emails")}` : null,
+    // Check 14 P11: it counts conversations (threads), not emails.
+    c.sorted ? `sorted ${n(c.sorted, "conversation", "conversations")}` : null,
     c.drafted ? `written ${n(c.drafted, "draft", "drafts")}` : null,
   ].filter(Boolean);
   return `So far it has ${bits.join(" and ")} for you.`;

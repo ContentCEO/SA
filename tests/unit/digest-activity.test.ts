@@ -107,7 +107,9 @@ describe("digest content", () => {
       ].join("\n"),
     );
     expect(d.text).toContain("1 follow-up ready");
-    expect(d.text).toContain("Yesterday: 14 emails sorted, 2 replies sent.");
+    expect(d.text).toContain(
+      "In the last day: 14 conversations sorted, 2 replies and follow-ups sent.",
+    );
     expect(d.text).not.toContain("more in your queue");
     expect(d.html).toContain(`href="https://app/queue#t-${T1}"`);
     expect(d.html).toContain("A complaint — waiting since yesterday</a>");
@@ -403,6 +405,18 @@ describe("in the database", () => {
       "You marked a conversation with SECRET-NAME as needing you",
     );
     expect(entries.map((e) => e.text)).toContain("You connected Gmail");
+  });
+
+  it("a conversation sorted twice in a month counts once (Check 14 P11)", async () => {
+    const [t] = await database.select().from(threads);
+    const before = (await monthSummary(workspaceId, NOW)).sorted;
+    await database
+      .update(threads)
+      .set({ classifiedAt: new Date(NOW.getTime() - 60_000) })
+      .where(eq(threads.id, t!.id));
+    await database.update(threads).set({ classifiedAt: NOW }).where(eq(threads.id, t!.id));
+    expect(before).toBe(1);
+    expect((await monthSummary(workspaceId, NOW)).sorted).toBe(1);
   });
 
   it("time saved is counted only from replies actually sent", async () => {

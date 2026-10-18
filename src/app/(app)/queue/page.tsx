@@ -3,6 +3,7 @@ import Link from "next/link";
 import { Notice } from "@/components/app/notice";
 import { Headline } from "@/components/brand/headline";
 import { draftTag } from "@/config/categories";
+import { firstNameOf } from "@/lib/first-name";
 import { findGaps } from "@/ai/gaps";
 import { confidenceLabel } from "@/config/drafting";
 import { gmailThreadLink } from "@/lib/gmail-link";
@@ -78,7 +79,8 @@ function nextLine(
   if (sent.lastNudgeUsed) return "That was the last nudge. I won't chase this one again.";
   return `I'll let you know when ${name ?? "they"} write${name ? "s" : ""} back.`;
 }
-const firstName = (name: string | null) => (name ? name.split(/[\s,]+/)[0] : null);
+// Check 14 P10: the same careful first name as Activity.
+const firstName = (name: string | null) => firstNameOf(name);
 const capitalize = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
 const gmailLink = (i: QueueItem) => gmailThreadLink(i);

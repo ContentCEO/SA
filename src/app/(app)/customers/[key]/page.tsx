@@ -3,6 +3,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Headline } from "@/components/brand/headline";
 import { categoryTag, isCategory } from "@/config/categories";
+import { firstNameOf } from "@/lib/first-name";
 import { gmailThreadLink } from "@/lib/gmail-link";
 import { relativeTime } from "@/lib/relative-time";
 import { customerByKey } from "@/server/customers";
@@ -32,7 +33,8 @@ export default async function CustomerPage(props: PageProps<"/customers/[key]">)
   const customer = await customerByKey(workspace.id, key);
   if (!customer) notFound();
   const now = new Date();
-  const first = (customer.name ?? customer.address).split(/[\s,]+/)[0]!.toLowerCase();
+  // Check 14 P10: a careful first name; a business or bare address gets a plain heading.
+  const first = firstNameOf(customer.name)?.toLowerCase() ?? "this customer";
   const note = await noteFor(workspace.id, customer.address);
   const params = await props.searchParams;
   const doneMsg = typeof params.done === "string" ? NOTE_DONE[params.done] : undefined;

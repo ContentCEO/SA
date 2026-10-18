@@ -28,6 +28,7 @@ import {
   markAnsweredByPhone,
   sendFirstDraftsReady,
   trialCounts,
+  trialActivityCounts,
 } from "@/server/first-week";
 import {
   answeredByPhone,
@@ -111,7 +112,7 @@ describe("first-week rules (pure)", () => {
     expect(isLastDay(25 * HOUR)).toBe(false);
     expect(isLastDay(0)).toBe(false);
     expect(trialSoFarLine({ sorted: 14, drafted: 6 })).toBe(
-      "So far it has sorted 14 emails and written 6 drafts for you.",
+      "So far it has sorted 14 conversations and written 6 drafts for you.",
     );
     expect(trialSoFarLine({ sorted: 0, drafted: 0 })).toBeNull();
     expect(waitingLine({ drafts: 6, needsYou: 1 })).toBe(
@@ -486,6 +487,53 @@ describe("first week, with the database", () => {
     await pendingDraft(t);
     const [w] = await database.select().from(workspaces).where(eq(workspaces.id, workspaceId));
     expect(await trialCounts(w!)).toEqual({ sorted: 1, drafted: 1 });
+  });
+
+  it("Activity's trial box: sorted, drafted, changed and practice copies since the start (Check 14 P9)", async () => {
+    await database
+      .update(workspaces)
+      .set({ status: "evaluating", evaluationStartedAt: ago(2 * DAY) })
+      .where(eq(workspaces.id, workspaceId));
+    const t1 = await thread({ inAt: ago(DAY) });
+    const t2 = await thread({ inAt: ago(DAY) });
+    const t3 = await thread({ inAt: ago(DAY) });
+    await thread({ inAt: ago(5 * DAY), classifiedAt: ago(5 * DAY) });
+    await pendingDraft(t1);
+    const tweaked = await pendingDraft(t2);
+    const edited = await pendingDraft(t3);
+    await database.update(drafts).set({ revisions: 1 }).where(eq(drafts.id, tweaked.id));
+    await database
+      .update(drafts)
+      .set({ body: "Thanks! I can come Tuesday." })
+      .where(eq(drafts.id, edited.id));
+    // Practice copies: two in the trial, one from before it (not counted), another account's.
+    const practice = (ws: string, createdAt: Date) =>
+      database
+        .insert(activityLog)
+        .values({
+          workspaceId: ws,
+          actor: "owner",
+          action: "practice_sent",
+          detail: {},
+          createdAt,
+        });
+    await practice(workspaceId, ago(DAY));
+    await practice(workspaceId, ago(HOUR));
+    await practice(workspaceId, ago(3 * DAY));
+    const [w] = await database.select().from(workspaces).where(eq(workspaces.id, workspaceId));
+    expect(await trialActivityCounts(w!)).toEqual({
+      sorted: 3,
+      drafted: 3,
+      changed: 2,
+      practice: 2,
+    });
+    // No clock yet: zeros, no error.
+    expect(await trialActivityCounts({ ...w!, evaluationStartedAt: null })).toEqual({
+      sorted: 0,
+      drafted: 0,
+      changed: 0,
+      practice: 0,
+    });
   });
 
   it("the invite email: once per invite, not after sign-in, and never fails the invite", async () => {

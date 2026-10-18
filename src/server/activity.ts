@@ -4,6 +4,7 @@ import { pricing } from "@/config/pricing";
 import { daysPhrase } from "@/lib/trial-words";
 import { categoryLabels, categoryTag, isCategory } from "@/config/categories";
 import { db } from "@/db";
+import { firstNameOf } from "@/lib/first-name";
 import { activityLog, drafts, mailboxes, messages, threads } from "@/db/schema";
 import { MINUTES_PER_SENT_REPLY } from "@/config/drafting";
 import { dollarsToCents, tally, type MoneySoFar, type MonthMoney } from "./activity-rules";
@@ -44,7 +45,8 @@ export function describeActivity(
   detail: Record<string, unknown>,
   who: Who | null,
 ): string | null {
-  const name = who?.name?.split(/[\s,]+/)[0] || null;
+  // Check 14 P10: one careful helper (never a surname, an address, a title or a business).
+  const name = firstNameOf(who?.name ?? null);
   const to = name ? ` to ${name}` : "";
   const about = who?.category && isCategory(who.category) ? ` · ${categoryTag[who.category]}` : "";
   const from = name ? ` from ${name}` : "";

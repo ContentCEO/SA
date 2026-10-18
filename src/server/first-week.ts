@@ -459,6 +459,46 @@ export async function sendFirstDraftsReady(
 // ---------------------------------------------------------------------------------------------
 // FW F2 / E7: the trial's numbers
 
+/**
+ * Check 14 P9: Activity's "Your three days so far" box — numbers that move while sending is
+ * off. Conversations sorted, drafts written, drafts the owner changed (a tweak, or text that
+ * differs from what we wrote) and practice copies sent, since the trial started. Counts only.
+ */
+export async function trialActivityCounts(workspace: Workspace) {
+  const zero = { sorted: 0, drafted: 0, changed: 0, practice: 0 };
+  const start = workspace.evaluationStartedAt;
+  if (!start) return zero;
+  const boxIds = (
+    await db()
+      .select({ id: mailboxes.id })
+      .from(mailboxes)
+      .where(eq(mailboxes.workspaceId, workspace.id))
+  ).map((b) => b.id);
+  const [practice] = await db()
+    .select({ n: count() })
+    .from(activityLog)
+    .where(
+      and(
+        eq(activityLog.workspaceId, workspace.id),
+        eq(activityLog.action, "practice_sent"),
+        gte(activityLog.createdAt, start),
+      ),
+    );
+  if (!boxIds.length) return { ...zero, practice: practice?.n ?? 0 };
+  const { sorted, drafted } = await trialCounts(workspace);
+  const [changed] = await db()
+    .select({ n: count() })
+    .from(drafts)
+    .where(
+      and(
+        inArray(drafts.mailboxId, boxIds),
+        gte(drafts.createdAt, start),
+        sql`(${drafts.revisions} > 0 or (${drafts.body} is not null and ${drafts.originalBody} is not null and ${drafts.body} <> ${drafts.originalBody}))`,
+      ),
+    );
+  return { sorted, drafted, changed: changed?.n ?? 0, practice: practice?.n ?? 0 };
+}
+
 /** What the three days did so far: conversations sorted and drafts written since the start. */
 export async function trialCounts(workspace: Workspace) {
   const start = workspace.evaluationStartedAt;
