@@ -335,6 +335,26 @@ test("customers: the page shows what the row shows (Check 13 P5)", async ({ page
   await expect(page.getByText("Waiting on you")).toBeVisible();
 });
 
+test("a Quotes card's name opens the customer's page (Check 13 P9)", async ({ page, context }) => {
+  const owner = await seedOwner({ mailbox: true, backfilled: true });
+  await quote(owner.mailboxId!, {
+    name: "Rita Gomez",
+    from: "rita@customer.com",
+    inAgo: 1,
+    summary: "Rita wants a fence.",
+  });
+  await signInAs(context, owner);
+  await page.goto("/quotes");
+  const card = page.getByRole("article", { name: "Quote for Rita Gomez" });
+  const link = card.getByRole("link", { name: "Rita Gomez" });
+  expect((await link.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+  await link.click();
+  await expect(page).toHaveURL(/\/customers\/[0-9a-f-]{36}$/);
+  expect(page.url()).not.toContain("@");
+  await expect(page.getByText("Rita wants a fence.")).toBeVisible();
+  await expect(page.getByText("Rita Gomez", { exact: true })).toBeVisible();
+});
+
 test("a junk email's id is not a customer page (Check 13 P2)", async ({ page, context }) => {
   const owner = await seedOwner({ mailbox: true, backfilled: true });
   const gid = `j-${randomUUID().slice(0, 8)}`;

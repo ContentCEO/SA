@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { CustomerName } from "@/components/app/customer-name";
 import Link from "next/link";
 import { Notice } from "@/components/app/notice";
 import { OfferButtons } from "@/components/app/offer-buttons";
@@ -79,7 +80,7 @@ function QuoteCard({
       )}
     >
       <div className="flex items-baseline justify-between gap-3">
-        <span className="truncate text-lg font-black">{name}</span>
+        <CustomerName name={name} customerKey={q.customerKey} className="text-lg font-black" />
         <span className="shrink-0 text-sm opacity-80">
           {q.lastMessageAt ? relativeTime(q.lastMessageAt) : ""}
         </span>

@@ -70,6 +70,18 @@ export const customerNameSql = () =>
     string | null
   >`(select ${replyNameSql("cx_m")} from messages cx_m where cx_m.thread_id = ${outerThreadId()} and cx_m.direction = 'in' order by cx_m.sent_at desc limit 1)`;
 
+/**
+ * Check 13 P9: the outer thread's customer page key — the newest inbound email on the thread
+ * whose reply address is the thread's customer (`customerAddressSql`), and only one the
+ * Customers list would accept (inbox, not junk, not a lead site's notice, not a robot:
+ * `customerByKey`'s rule), so a link never leads to a 404. An opaque uuid; the address never
+ * goes in a URL. Null = no link.
+ */
+export const customerKeySql = () =>
+  sql<
+    string | null
+  >`(select ck_m.id::text from messages ck_m join threads ck_t on ck_t.id = ck_m.thread_id where ck_m.thread_id = ${outerThreadId()} and ck_m.direction = 'in' and ck_m.from_address is not null and ${replyAddressSql("ck_m")} = ${customerAddressSql()} and ck_t.in_inbox and ck_t.category is distinct from 'noise' and ck_t.lead_channel is null and not ${customerRobotSql(replyAddressSql("ck_m"))} order by ck_m.sent_at desc limit 1)`;
+
 /** Not an unsent Gmail draft, for a messages alias. */
 export const notDraftSql = (alias: string) => sql`not ${unsentDraftSql(alias)}`;
 

@@ -14,6 +14,7 @@ import {
   notDraftMessage,
   quoteThreadSql,
   crewThreadSql,
+  customerKeySql,
 } from "./thread-sql";
 import {
   amountFromOwnerText,
@@ -39,6 +40,8 @@ export type QuoteRow = {
   mailboxEmail: string;
   customerName: string | null;
   customerAddress: string | null;
+  /** Check 13 P9: the customer page key (an opaque message id), or null when there's no page. */
+  customerKey: string | null;
   summary: string | null;
   subject: string | null;
   stage: QuoteStage;
@@ -161,6 +164,7 @@ export async function listQuotes(workspaceId: string, now: Date = new Date()) {
       // As a reply addresses them: a website form's Reply-To, else the sender.
       customerName: customerNameSql(),
       customerAddress: customerAddressSql(),
+      customerKey: customerKeySql(),
     })
     .from(threads)
     .innerJoin(mailboxes, eq(mailboxes.id, threads.mailboxId))
@@ -181,6 +185,7 @@ export async function listQuotes(workspaceId: string, now: Date = new Date()) {
     mailboxEmail: r.mailboxEmail,
     customerName: r.customerName,
     customerAddress: r.customerAddress,
+    customerKey: r.customerKey,
     summary: r.summary,
     subject: r.subject,
     stage: quoteStage(

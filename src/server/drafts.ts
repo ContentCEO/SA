@@ -137,6 +137,7 @@ import {
   sideEmailSql,
   waitingSinceSql,
   answeredByPhoneSql,
+  customerKeySql,
 } from "./thread-sql";
 import {
   closingQuestionAllowed,
@@ -3060,6 +3061,8 @@ export type QueueItem = {
   threadId: string;
   customerName: string | null;
   customerAddress: string | null;
+  /** Check 13 P9: the customer page key (an opaque message id), or null when there's no page. */
+  customerKey: string | null;
   /** The address this draft goes to (H7: shown on every card). Null on needs-you items. */
   toAddress: string | null;
   /** The customer's email gave a Reply-To (a website form): the reply goes there, not to From. */
@@ -3392,6 +3395,18 @@ export async function listQueue(
     return out;
   };
   const who = await senders([...needIds, ...members.drafts.map((m) => m.threadId)]);
+  // Check 13 P9: the customer page each card's name links to.
+  const keyIds = [...needIds, ...members.drafts.map((m) => m.threadId)];
+  const keys = new Map(
+    keyIds.length
+      ? (
+          await db()
+            .select({ id: threads.id, key: customerKeySql() })
+            .from(threads)
+            .where(inArray(threads.id, keyIds))
+        ).map((r) => [r.id, r.key] as const)
+      : [],
+  );
 
   return {
     needsYou: shownNeeds.flatMap((m) => {
@@ -3407,6 +3422,7 @@ export async function listQueue(
           threadId: t.id,
           customerName: who.get(t.id)?.name ?? null,
           customerAddress: who.get(t.id)?.address ?? null,
+          customerKey: keys.get(t.id) ?? null,
           toAddress: null,
           replyRedirected: who.get(t.id)?.redirected ?? false,
           category: t.category,
@@ -3448,6 +3464,7 @@ export async function listQueue(
           threadId: thread.id,
           customerName: who.get(thread.id)?.name ?? null,
           customerAddress: who.get(thread.id)?.address ?? draft.toAddress,
+          customerKey: keys.get(thread.id) ?? null,
           toAddress: draft.toAddress,
           replyRedirected: who.get(thread.id)?.redirected ?? false,
           category: thread.category,

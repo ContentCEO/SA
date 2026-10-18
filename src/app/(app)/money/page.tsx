@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { CustomerName } from "@/components/app/customer-name";
 import { Notice } from "@/components/app/notice";
 import { OfferButtons } from "@/components/app/offer-buttons";
 import { Headline } from "@/components/brand/headline";
@@ -52,9 +53,12 @@ function OwedCard({ r, readOnly }: { r: MoneyRow; readOnly: boolean }) {
       )}
     >
       <div className="flex items-baseline justify-between gap-3">
-        <span id={nameId} className="min-w-0 truncate text-lg font-black">
-          {nameOf(r)}
-        </span>
+        <CustomerName
+          id={nameId}
+          name={nameOf(r)}
+          customerKey={r.customerKey}
+          className="text-lg font-black"
+        />
         {r.amountCents ? (
           <span className="shrink-0 text-2xl font-black">{formatCents(r.amountCents)}</span>
         ) : (
@@ -123,9 +127,12 @@ function SettledRow({
   return (
     <li aria-labelledby={nameId} className="flex flex-col gap-2 px-4 py-3">
       <div className="flex items-baseline justify-between gap-3">
-        <span id={nameId} className="min-w-0 truncate font-semibold">
-          {nameOf(r)}
-        </span>
+        <CustomerName
+          id={nameId}
+          name={nameOf(r)}
+          customerKey={r.customerKey}
+          className="font-semibold"
+        />
         <span className="shrink-0 font-black">
           {r.amountCents ? formatCents(r.amountCents) : "Amount not stated"}
         </span>

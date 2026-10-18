@@ -135,3 +135,14 @@ the same `leads@thumbtack.com` address, `large_request`, expected needs-you with
   emailed first show up once they write back." (`listStartsOn`: the workspace's first mailbox
   row's `created_at` minus `BACKFILL_DAYS`; `connected_at` moves on reconnect). An empty
   search: "No one matches that. They may have written from another address, or before <date>."
+
+## Step 8: Check 13 P9 (customer names link to their page)
+
+- `customerKeySql` (`thread-sql.ts`): the newest inbound email on the thread whose reply
+  address is the thread's customer and that `customerByKey` would accept (inbox, not junk, no
+  lead channel, not a robot), as an opaque uuid. Selected by `listQueue` (one extra query for
+  the shown threads), `listQuotes` and Money (`MoneyRow.customerKey`); the name on Queue (draft
+  and needs-you cards; never a voicemail / text / lead-site card), Quotes and Money cards is a
+  `CustomerName` link (`src/components/app/customer-name.tsx`, 44px, name underlined) to
+  `/customers/<key>`, or plain text when there's no page. No address in any URL.
+- Inbox cards were left to Check 10 P6 (Inbox group); `customerKeySql` is there for it.

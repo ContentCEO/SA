@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { CustomerName } from "@/components/app/customer-name";
 import { useFormStatus } from "react-dom";
 import { Button } from "@/components/ui/button";
 import { fillGap, findGaps } from "@/ai/gaps";
@@ -34,6 +35,8 @@ export type DraftCardProps = {
   /** Plan #6: the "Remind me" times allowed for this one right now. */
   remindOptions?: SnoozeOption[];
   customer: string;
+  /** Check 13 P9: the customer page key; the name links there when set. */
+  customerKey?: string | null;
   /** H7: the address this reply goes to, shown on the card and above the editor. */
   toAddress: string;
   /** The customer's email named this address to reply to (a website form's Reply-To). */
@@ -247,7 +250,11 @@ export function DraftCard(p: DraftCardProps) {
     >
       <header className="flex flex-col gap-1">
         <div className="flex items-baseline justify-between gap-2">
-          <span className="text-lg font-black">{p.customer}</span>
+          <CustomerName
+            name={p.customer}
+            customerKey={p.customerKey ?? null}
+            className="text-lg font-black"
+          />
           <ConfidenceTag label={p.label} />
         </div>
         <ToLine address={p.toAddress} fromReplyTo={p.toFromReplyTo} />

@@ -4,7 +4,7 @@ import { db } from "@/db";
 import { activityLog, businessProfiles, mailboxes, threads, workspaces } from "@/db/schema";
 import { expirePendingNudge, flagPendingNudge, unflagPendingNudge, type DraftDeps } from "./drafts";
 import { effectiveStatus, jobsAllowed, ReadOnlyError } from "./lifecycle";
-import { customerAddressSql, customerNameSql } from "./thread-sql";
+import { customerAddressSql, customerKeySql, customerNameSql } from "./thread-sql";
 import {
   dueLabel,
   invoiceOf,
@@ -26,6 +26,8 @@ export type MoneyRow = {
   mailboxEmail: string;
   customerName: string | null;
   customerAddress: string | null;
+  /** Check 13 P9: the customer page key (an opaque message id), or null when there's no page. */
+  customerKey: string | null;
   /** Null when the email never said how much (a paid / hidden row, or one the owner put back). */
   amountCents: number | null;
   invoiceNumber: string | null;
@@ -103,6 +105,7 @@ async function moneyThreads(
       // receipt check (a receipt's Reply-To is the merchant).
       customerName: customerNameSql(),
       customerAddress: customerAddressSql(),
+      customerKey: customerKeySql(),
       senderAddress: sql<
         string | null
       >`(select lower(m.from_address) from messages m where m.thread_id = ${threads.id} and m.direction = 'in' order by m.sent_at desc limit 1)`,
@@ -149,6 +152,7 @@ function toRow(
     mailboxEmail: r.mailboxEmail,
     customerName: r.customerName,
     customerAddress: r.customerAddress,
+    customerKey: r.customerKey,
     amountCents: invoice?.amount ? toCents(invoice.amount) : null,
     invoiceNumber: invoice?.invoice_number ?? null,
     earlierOpen: (invoice?.earlier_open ?? []).map((e) => ({

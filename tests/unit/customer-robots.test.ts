@@ -8,6 +8,7 @@ import { ensureUserAndWorkspace } from "@/server/accounts";
 import { isCustomerRobot } from "@/server/customer-robot-rules";
 import { customerByKey, listCustomers } from "@/server/customers";
 import { createDraftForThread } from "@/server/drafts";
+import { listQuotes } from "@/server/quotes";
 import { saveConnectedMailbox } from "@/server/mailboxes";
 import { customerRobotSql } from "@/server/thread-sql";
 import { createTestDb } from "../support/db";
@@ -135,6 +136,17 @@ describe("Customers leaves robots out", () => {
     expect((await customerByKey(workspaceId, dana.messageId))!.address).toBe("dana@gmail.com");
     for (const key of robotKeys) expect(await customerByKey(workspaceId, key)).toBeNull();
     expect(await customerByKey(workspaceId, junk.messageId)).toBeNull();
+  });
+
+  it("card links only go to pages that exist (Check 13 P9)", async () => {
+    await convo("dana@gmail.com", { name: "Dana Ruiz" });
+    await convo("leads@angi.com", { name: "Angi" });
+    const { quotes } = await listQuotes(workspaceId, NOW);
+    const byAddr = new Map(quotes.map((q) => [q.customerAddress, q.customerKey]));
+    const key = byAddr.get("dana@gmail.com")!;
+    expect(key).toMatch(/^[0-9a-f-]{36}$/);
+    expect((await customerByKey(workspaceId, key))!.address).toBe("dana@gmail.com");
+    expect(byAddr.get("leads@angi.com")).toBeNull();
   });
 
   it("a job-board notice never gets an automatic draft (Check 41 P7)", async () => {

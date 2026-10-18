@@ -415,6 +415,7 @@ export default async function QueuePage(props: PageProps<"/queue">) {
               key={`${i.draftId}:${i.body}`}
               draftId={i.draftId!}
               customer={who(i)}
+              customerKey={i.customerKey}
               toAddress={i.toAddress ?? ""}
               toFromReplyTo={i.replyRedirected && i.toAddress === i.customerAddress}
               tag={`${i.backFromSnooze ? "Back from snooze · " : ""}${tag(i)}`}

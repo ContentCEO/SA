@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { ContactButtons } from "@/components/app/contact-buttons";
+import { CustomerName } from "@/components/app/customer-name";
 import { PendingButton } from "@/components/app/pending-button";
 import { Button } from "@/components/ui/button";
 import { relativeTime } from "@/lib/relative-time";
@@ -103,7 +104,11 @@ export function NeedsYouCard({
       className="sa-inverted flex scroll-mt-4 scroll-mb-28 flex-col gap-2 rounded-xl p-4 sm:scroll-mb-4"
     >
       <div className="flex items-baseline justify-between gap-3">
-        <span className="truncate text-lg font-black">{name}</span>
+        <CustomerName
+          name={name}
+          customerKey={phoneLine || site ? null : i.customerKey}
+          className="text-lg font-black"
+        />
         <span className="shrink-0 text-sm text-ash">
           {i.lastMessageAt ? relativeTime(i.lastMessageAt) : ""}
         </span>
