@@ -113,6 +113,58 @@ function UseThis() {
   );
 }
 
+/** Check 48 P5: true for every browser that shows Hold to talk. */
+export const VOICE_NOTE_GENERAL =
+  "Your browser sends what you say to its maker (Google, Apple or Microsoft) to turn it into text. Prefer not to? Type it in the box.";
+
+/**
+ * Check 48 P5: the note under Hold to talk. Names one company only when the browser clearly
+ * says which (Microsoft Edge on a computer, Apple's Safari); otherwise the general sentence.
+ * The user-agent text is read in the browser only — never stored, sent or logged.
+ */
+export function voiceNote(userAgent: string): string {
+  const tail = " to turn it into text. Prefer not to? Type it in the box.";
+  if (/\bEdg\//.test(userAgent)) return `Your browser sends what you say to Microsoft${tail}`;
+  if (
+    /\bVersion\/[\d.]+.*\bSafari\//.test(userAgent) &&
+    !/Chrome|Chromium|CriOS|FxiOS|EdgiOS|OPR|Android/.test(userAgent)
+  )
+    return `Your browser sends what you say to Apple${tail}`;
+  return VOICE_NOTE_GENERAL;
+}
+
+/** Hold to talk, always with its note (Check 48 P5: never one without the other). */
+export function HoldToTalk({
+  listening,
+  onStart,
+  onStop,
+  note,
+}: {
+  listening: boolean;
+  onStart: () => void;
+  onStop: () => void;
+  note: string;
+}) {
+  return (
+    <>
+      <Button
+        type="button"
+        variant="outline"
+        aria-pressed={listening}
+        className="w-full select-none"
+        onPointerDown={onStart}
+        onPointerUp={onStop}
+        onPointerLeave={onStop}
+        onKeyDown={(e) => (e.key === " " || e.key === "Enter") && onStart()}
+        onKeyUp={(e) => (e.key === " " || e.key === "Enter") && onStop()}
+      >
+        {listening ? "Listening… let go when done" : "Hold to talk"}
+      </Button>
+      <p className="text-base text-muted-foreground">{note}</p>
+    </>
+  );
+}
+
 /**
  * Plan #4: say (or type) a change — "make it Tuesday instead". Hold to talk
  * where the browser supports it; the words land in the box to check first.
@@ -124,6 +176,11 @@ export function SayAChange({ draftId, threadId, seenHash, cardBody }: ReviseProp
     noop,
     () => speechCtor() !== null,
     () => false,
+  );
+  const userAgent = useSyncExternalStore(
+    noop,
+    () => navigator.userAgent,
+    () => "",
   );
   const [listening, setListening] = useState(false);
   const rec = useRef<Recognition | null>(null);
@@ -170,24 +227,12 @@ export function SayAChange({ draftId, threadId, seenHash, cardBody }: ReviseProp
         />
       </label>
       {canTalk ? (
-        <>
-          <Button
-            type="button"
-            variant="outline"
-            aria-pressed={listening}
-            className="w-full select-none"
-            onPointerDown={startTalking}
-            onPointerUp={stopTalking}
-            onPointerLeave={stopTalking}
-            onKeyDown={(e) => (e.key === " " || e.key === "Enter") && startTalking()}
-            onKeyUp={(e) => (e.key === " " || e.key === "Enter") && stopTalking()}
-          >
-            {listening ? "Listening… let go when done" : "Hold to talk"}
-          </Button>
-          <p className="text-sm text-muted-foreground">
-            Your browser sends your voice to Google or Apple to turn it into text.
-          </p>
-        </>
+        <HoldToTalk
+          listening={listening}
+          onStart={startTalking}
+          onStop={stopTalking}
+          note={voiceNote(userAgent)}
+        />
       ) : null}
       {text.trim().length >= 2 ? <UseThis /> : null}
     </form>

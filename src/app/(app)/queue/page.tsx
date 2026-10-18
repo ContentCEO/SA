@@ -77,7 +77,8 @@ function nextLine(
     return `I'll nudge ${name ?? "them"} on ${weekday.format(sent.nudgeOn)} if there's no reply.`;
   }
   if (sent.lastNudgeUsed) return "That was the last nudge. I won't chase this one again.";
-  return `I'll let you know when ${name ?? "they"} write${name ? "s" : ""} back.`;
+  // Check 9 P15: only what the code does — replies show up on the queue; alerts are opt-in.
+  return `When ${name ?? "they"} write${name ? "s" : ""} back, it shows up here.`;
 }
 const firstName = (name: string | null) => (name ? name.split(/[\s,]+/)[0] : null);
 const capitalize = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
