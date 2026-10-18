@@ -3,7 +3,13 @@ import { and, count, desc, eq, isNull, sql, type SQL } from "drizzle-orm";
 import type { Category } from "@/ai/prompts/classify.v4";
 import { db } from "@/db";
 import { mailboxes, threads } from "@/db/schema";
-import { INBOX_URGENT_WINDOW_MS, replyState, type ReplyState } from "./inbox-rules";
+import { CLASSIFY_LOOKBACK_DAYS } from "./classification";
+import {
+  INBOX_URGENT_WINDOW_MS,
+  isOlderUnsorted,
+  replyState,
+  type ReplyState,
+} from "./inbox-rules";
 import { openNeedsOwnerSql } from "./needs-owner";
 import { asDate, customerAddressSql, customerNameSql, lastInSql, lastOutSql } from "./thread-sql";
 
@@ -40,6 +46,8 @@ export type InboxRow = {
   pendingDraftId: string | null;
   /** "Replied" / "Waiting on you"; null for junk or no customer email. */
   replyState: ReplyState | null;
+  /** Check 10 P7: never sorted and from before the sorter's look-back: it never will be. */
+  olderUnsorted: boolean;
 };
 
 /**
@@ -57,17 +65,29 @@ function tierSql(now: Date) {
 /** Check 10 P2: where the next page starts — the last row shown (content-free, in the URL). */
 export type InboxCursor = { afterId: string; before: Date | null };
 
-/** Check 10 P2: rows shown on All apart from folded junk, and the junk itself. */
-type JunkPart = "all" | "no_junk" | "only_junk";
+/**
+ * Check 10 P2 / P7: on All, folded junk and older unsorted mail sit in their own lines, so the
+ * page is "main" rows only; each folded line is fetched as its own part.
+ */
+type Part = "any" | "main" | "junk" | "older";
 
-const junkSql = () => sql`(${threads.category} = 'noise' and not ${openNeedsOwnerSql()})`;
+/** Never NULL (it is negated for the main rows; an unsorted thread has no category). */
+const junkSql = () =>
+  sql`(coalesce(${threads.category} = 'noise', false) and not ${openNeedsOwnerSql()})`;
+
+/**
+ * Check 10 P7: never sorted, and its latest customer email is older than the sorter looks
+ * back (CLASSIFY_LOOKBACK_DAYS), so it never will be. Twin of `isOlderUnsorted`.
+ */
+const olderUnsortedSql = (now: Date) =>
+  sql`(${threads.category} is null and coalesce(${lastInSql()}, ${threads.lastMessageAt}) < ${new Date(now.getTime() - CLASSIFY_LOOKBACK_DAYS * 86_400_000).toISOString()}::timestamptz)`;
 const timeKey = () => sql`coalesce(${threads.lastMessageAt}, '-infinity'::timestamptz)`;
 
 /** Recent inbox threads for the owner's own mailboxes. Never crosses workspaces. */
 export async function listInboxThreads(
   workspaceId: string,
   filter: InboxFilter,
-  opts: { limit?: number; now?: Date; cursor?: InboxCursor | null; junk?: JunkPart } = {},
+  opts: { limit?: number; now?: Date; cursor?: InboxCursor | null; part?: Part } = {},
 ): Promise<InboxRow[]> {
   const limit = opts.limit ?? 100;
   const now = opts.now ?? new Date();
@@ -76,8 +96,10 @@ export async function listInboxThreads(
   if (filter.kind === "needs_me") where.push(openNeedsOwnerSql());
   if (filter.kind === "unsorted") where.push(isNull(threads.category));
   if (filter.kind === "category") where.push(eq(threads.category, filter.category));
-  if (opts.junk === "no_junk") where.push(sql`not ${junkSql()}`);
-  if (opts.junk === "only_junk") where.push(junkSql());
+  if (opts.part === "main")
+    where.push(sql`not ${junkSql()}`, sql`not coalesce(${olderUnsortedSql(now)}, false)`);
+  if (opts.part === "junk") where.push(junkSql());
+  if (opts.part === "older") where.push(olderUnsortedSql(now));
 
   // Check 10 P2: keyset paging in the same order. The anchor is the last row of the previous
   // page, looked up in THIS workspace (an id from elsewhere finds nothing and falls back to
@@ -138,23 +160,35 @@ export async function listInboxThreads(
       category: r.category,
       needsOwner: r.needsOwner,
     }),
+    olderUnsorted: isOlderUnsorted(
+      { category: r.category, lastIn: asDate(lastIn), lastMessageAt: asDate(r.lastMessageAt) },
+      now,
+      CLASSIFY_LOOKBACK_DAYS,
+    ),
   }));
 }
 
 export const INBOX_PAGE_SIZE = 100;
-export const INBOX_JUNK_SHOWN = 50;
+export const INBOX_FOLD_SHOWN = 50;
+
+type Fold = { count: number; rows: InboxRow[] };
 
 export type InboxPage = {
   rows: InboxRow[];
-  /** On All: folded junk (count, and the newest few for the folded line). */
-  junk: { count: number; rows: InboxRow[] };
+  /** On All, first page: folded junk (count, and the newest few for the folded line). */
+  junk: Fold;
+  /** Check 10 P7: on All, first page: unsorted mail from before sorting started. */
+  older: Fold;
+  /** Check 10 P7: any unsorted inbox thread at all (the "Not sorted" chip shows only then). */
+  hasUnsorted: boolean;
   /** Where "Show older emails" goes; null on the last page. */
   next: InboxCursor | null;
 };
 
 /**
  * Check 10 P2: one page of the Inbox. On All, junk doesn't take real rows' places: the page is
- * up to 100 non-junk rows, and junk is a count plus the 50 newest (first page only).
+ * up to 100 other rows, and junk is a count plus the 50 newest (first page only). Older
+ * unsorted mail folds the same way (Check 10 P7).
  */
 export async function inboxPage(
   workspaceId: string,
@@ -164,24 +198,43 @@ export async function inboxPage(
   const now = opts.now ?? new Date();
   const size = opts.pageSize ?? INBOX_PAGE_SIZE;
   const fold = filter.kind === "all";
-  const fetched = await listInboxThreads(workspaceId, filter, {
-    now,
-    cursor: opts.cursor,
-    limit: size + 1,
-    junk: fold ? "no_junk" : "all",
-  });
+  const inWorkspace = [eq(mailboxes.workspaceId, workspaceId), eq(threads.inInbox, true)];
+  const countOf = async (cond: SQL) => {
+    const [r] = await db()
+      .select({ n: count() })
+      .from(threads)
+      .innerJoin(mailboxes, eq(mailboxes.id, threads.mailboxId))
+      .where(and(...inWorkspace, cond));
+    return Number(r?.n ?? 0);
+  };
+  const [fetched, hasUnsorted] = await Promise.all([
+    listInboxThreads(workspaceId, filter, {
+      now,
+      cursor: opts.cursor,
+      limit: size + 1,
+      part: fold ? "main" : "any",
+    }),
+    countOf(isNull(threads.category)).then((n) => n > 0),
+  ]);
   const rows = fetched.slice(0, size);
   const last = rows.at(-1);
   const next =
     fetched.length > size && last ? { afterId: last.id, before: last.lastMessageAt } : null;
-  if (!fold || opts.cursor) return { rows, junk: { count: 0, rows: [] }, next };
-  const [junkRows, [counted]] = await Promise.all([
-    listInboxThreads(workspaceId, filter, { now, limit: INBOX_JUNK_SHOWN, junk: "only_junk" }),
-    db()
-      .select({ n: count() })
-      .from(threads)
-      .innerJoin(mailboxes, eq(mailboxes.id, threads.mailboxId))
-      .where(and(eq(mailboxes.workspaceId, workspaceId), eq(threads.inInbox, true), junkSql())),
+  const none = { count: 0, rows: [] };
+  if (!fold || opts.cursor) return { rows, junk: none, older: none, hasUnsorted, next };
+  const part = (p: "junk" | "older") =>
+    listInboxThreads(workspaceId, filter, { now, limit: INBOX_FOLD_SHOWN, part: p });
+  const [junkRows, junkCount, olderRows, olderCount] = await Promise.all([
+    part("junk"),
+    countOf(junkSql()),
+    part("older"),
+    countOf(olderUnsortedSql(now)),
   ]);
-  return { rows, junk: { count: Number(counted?.n ?? 0), rows: junkRows }, next };
+  return {
+    rows,
+    junk: { count: junkCount, rows: junkRows },
+    older: { count: olderCount, rows: olderRows },
+    hasUnsorted,
+    next,
+  };
 }

@@ -49,6 +49,8 @@ export function matchesSearch(text: string, query: string): boolean {
   return words.every((w) => text.includes(w));
 }
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+
 /** Check 10 P3: an emergency or urgent email counts as "today's" for this long. */
 export const INBOX_URGENT_WINDOW_MS = 24 * 60 * 60 * 1000;
 
@@ -99,4 +101,32 @@ export function urgencyWord(r: { urgency: string | null; priority: string | null
   if (r.urgency === "emergency") return "Emergency";
   if (r.priority === "high") return "Urgent";
   return null;
+}
+
+/**
+ * Check 10 P7: never sorted, and the latest customer email is older than the sorter looks
+ * back, so it never will be (it sat in Gmail before Squared Away started). Folded on All.
+ */
+export function isOlderUnsorted(
+  r: { category: string | null; lastIn: Date | null; lastMessageAt: Date | null },
+  now: Date,
+  lookbackDays: number,
+): boolean {
+  const at = r.lastIn ?? r.lastMessageAt;
+  return r.category === null && at != null && at.getTime() < now.getTime() - lookbackDays * DAY_MS;
+}
+
+
+/**
+ * Check 10 P7: the kind word on a card. A sort that failed says so instead of a placeholder
+ * category; never-sorted mail says whether a sort is still coming.
+ */
+export function kindWord(
+  r: { category: string | null; extracted: Record<string, unknown> | null },
+  tags: Record<string, string>,
+  olderUnsorted: boolean,
+): string {
+  if (r.extracted?.unreadable === true) return "Couldn't sort";
+  if (r.category === null) return olderUnsorted ? "Not sorted" : "Not sorted yet";
+  return tags[r.category] ?? "Email";
 }

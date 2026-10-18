@@ -403,3 +403,52 @@ test("Check 10 P6: an open Inbox card opens Gmail and the customer's page", asyn
   await expect(page.locator("main")).toContainText("Marco");
   await expect(page.locator("main")).toContainText("move rough-in to Thursday");
 });
+
+test("Check 10 P7: older unsorted mail folds into one line; the Not sorted chip lists it", async ({
+  page,
+  context,
+}) => {
+  const owner = await seedOwner({ mailbox: true, backfilled: true });
+  await seedThreads(owner.mailboxId!);
+  for (const [g, days, name] of [
+    ["u-old", 20, "Oldfield"],
+    ["u-new", 0, "Newman"],
+  ] as const) {
+    const at = new Date(Date.now() - days * 86_400_000 - 60_000);
+    const [t] = await testDb
+      .insert(schema.threads)
+      .values({
+        mailboxId: owner.mailboxId!,
+        gmailThreadId: `${g}-${owner.mailboxId}`,
+        inInbox: true,
+        subject: `Hello from ${name}`,
+        lastMessageAt: at,
+      })
+      .returning();
+    await testDb.insert(schema.messages).values({
+      threadId: t!.id,
+      mailboxId: owner.mailboxId!,
+      gmailMessageId: `${g}-m-${owner.mailboxId}`,
+      direction: "in",
+      fromName: name,
+      fromAddress: `${name.toLowerCase()}@example.com`,
+      sentAt: at,
+    });
+  }
+  await signInAs(context, owner);
+  await page.goto("/inbox");
+  const row = (name: string) => page.locator("main li").filter({ hasText: name });
+  await expect(row("Newman")).toContainText("Not sorted yet");
+  await expect(row("Oldfield")).toBeHidden();
+  const fold = page.getByText("1 older email, from before Squared Away started sorting");
+  await expect(fold).toBeVisible();
+  await fold.click();
+  await expect(row("Oldfield")).toBeVisible();
+  await expect(row("Oldfield")).toContainText("Not sorted");
+  await expect(row("Oldfield")).not.toContainText("Not sorted yet");
+
+  await page.getByRole("link", { name: "Not sorted" }).click();
+  await expect(page).toHaveURL(/c=unsorted/);
+  await expect(page.locator("main li")).toHaveCount(2);
+  await expect(row("Oldfield")).toBeVisible();
+});

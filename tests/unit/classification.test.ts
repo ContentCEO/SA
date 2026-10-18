@@ -166,6 +166,22 @@ describe("classifyPending", () => {
     expect(row).toMatchObject({ needsOwner: false, needsOwnerSince: null });
   });
 
+  it("Check 10 P7: a sort that failed twice is stored as unreadable", async () => {
+    const t = await thread("t1");
+    await message(t.id, "m1");
+    setModelTransportForTests(fakeTransport([null, { junk: true }]).transport);
+    await classifyPending(mailboxId, { now: NOW });
+    const [row] = await database.select().from(threads).where(eq(threads.id, t.id));
+    expect(row!.extracted).toMatchObject({ unreadable: true });
+    expect(row!.needsOwner).toBe(true);
+    // The next sort that works drops the mark.
+    await message(t.id, "m2", { sentAt: daysAgo(0.5) });
+    setModelTransportForTests(fakeTransport([classification()]).transport);
+    await classifyPending(mailboxId, { now: NOW });
+    const [again] = await database.select().from(threads).where(eq(threads.id, t.id));
+    expect((again!.extracted as Record<string, unknown>).unreadable).toBeUndefined();
+  });
+
   it("stops cleanly at the daily cap", async () => {
     process.env.AI_DAILY_CALL_CAP = "1";
     await message((await thread("t1")).id, "a");

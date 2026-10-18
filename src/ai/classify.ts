@@ -38,6 +38,11 @@ import type { ChannelKind } from "@/server/channel-rules";
  * Rows written before v3 simply lack the newer keys — read them as optional.
  */
 export type Extracted = ModelClassification["extracted"] & {
+  /**
+   * Check 10 P7: the model failed twice and nothing was decided (the category is a placeholder
+   * so other code keeps working). Only ever present as `true`. Screens say "Couldn't sort".
+   */
+  unreadable?: boolean;
   municipal?: boolean;
   injection?: boolean;
   accepts_quote?: boolean;
@@ -368,6 +373,7 @@ export async function classifyEmail(
       ...(gasInText || paymentChangeInText ? { priority: "high" as const } : {}),
       extracted: {
         ...UNREADABLE.extracted,
+        unreadable: true,
         ...(gasInText ? { urgency: "emergency" as const } : {}),
         ...(preCheck.flagged ? { injection: true } : {}),
         ...(municipalSender ? { municipal: true } : {}),

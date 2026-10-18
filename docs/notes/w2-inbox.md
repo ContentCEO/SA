@@ -70,6 +70,17 @@ Base: cd15c59. One commit per step. Nothing here needs wave 1 unless marked "nee
   `customerByKey` resolves any inbound id in the workspace). Not shown for lead websites / phone
   services. No customer address in any URL or log.
 
+- **Unsorted older mail, failed sorts (Check 10 P7):** a model failure (twice) stores
+  `extracted.unreadable = true` (category stays the placeholder `customer_question`); the card's
+  kind word is then "Couldn't sort" (`kindWord`, inbox-rules.ts). Never-sorted threads whose
+  latest customer email is older than `CLASSIFY_LOOKBACK_DAYS` (`isOlderUnsorted` / SQL twin)
+  fold on All into "N older emails, from before Squared Away started sorting" (count + 50 newest,
+  first page), read "Not sorted", say "This came in before Squared Away started sorting your
+  email. It's safe in Gmail." and are listed under a new "Not sorted" chip that only shows when
+  any unsorted mail exists. Newer unsorted rows keep "Not sorted yet" plus "We'll sort this
+  within a few minutes. It's safe in Gmail." The 14-day look-back itself is unchanged.
+  Also fixed here: step 3's junk filter was NULL for unsorted threads, which hid them from All.
+
 ## Integration notes
 
 - `src/app/(app)/quotes/page.tsx`, `quotes/actions.ts`, `src/server/quotes.ts`,
@@ -79,6 +90,10 @@ Base: cd15c59. One commit per step. Nothing here needs wave 1 unless marked "nee
 - `src/app/(app)/queue/called-them.tsx` gained an optional `back` prop (Queue screen group).
 
 ## Questions for Davi
+
+- Unsorted mail from 15 to 30 days ago is now folded and labelled "from before Squared Away
+  started sorting". Do you want the sorter to look back the full 30 days instead of 14 (more AI
+  calls on the first day)?
 
 - A quote marked "I sent the price another way" counts like "I called them", so it gets **no
   follow-up nudge** (same as a phone answer). Should a price sent from QuickBooks or Jobber still

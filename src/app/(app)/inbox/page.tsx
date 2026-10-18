@@ -16,7 +16,7 @@ import { threadOffers, type ThreadOffers } from "@/server/offers";
 import { priceMemoryFor, type PriceMemoryItem } from "@/server/price-memory";
 import { getBusinessProfile } from "@/server/profile";
 import { requireOwner } from "@/server/session";
-import { searchText, urgencyWord } from "@/server/inbox-rules";
+import { kindWord, searchText, urgencyWord } from "@/server/inbox-rules";
 import { draftReplyAction } from "../queue/actions";
 import { channelKind, channelName, openSiteUrl } from "@/server/channel-rules";
 import { InboxSearch } from "./inbox-search";
@@ -83,6 +83,8 @@ const chips: { key: string; label: string }[] = [
   { key: "all", label: "All" },
   { key: "needs_me", label: "Needs me" },
   ...CATEGORIES.map((c) => ({ key: c, label: categoryLabels[c] })),
+  // Check 10 P7: only shown when there's unsorted mail (or it's the open filter).
+  { key: "unsorted", label: "Not sorted" },
 ];
 
 function Details({ row }: { row: InboxRow }) {
@@ -162,9 +164,11 @@ export default async function InboxPage(props: PageProps<"/inbox">) {
     inboxPage(workspace.id, filter, { cursor }),
     listMailboxes(workspace.id),
   ]);
-  // Check 10 P2: the page's real rows, then the newest folded junk (All, first page only).
+  // Check 10 P2 / P7: the page's real rows, then the newest folded junk and older unsorted
+  // mail (All, first page only).
   const junkIds = new Set(page.junk.rows.map((r) => r.id));
-  const rows = [...page.rows, ...page.junk.rows];
+  const olderIds = new Set(page.older.rows.map((r) => r.id));
+  const rows = [...page.rows, ...page.junk.rows, ...page.older.rows];
   const active = filterKey(filter);
   const olderHref = page.next ? inboxHref(active, page.next) : null;
   // "Ask for a review" / the closing question, only where the server's rules allow (#29 #26).
@@ -213,7 +217,7 @@ export default async function InboxPage(props: PageProps<"/inbox">) {
             <span className="text-sm font-semibold">
               {/* Check 10 P3: by weight only, first, on every card. */}
               {urgencyWord(row) ? <span className="font-black">{urgencyWord(row)} · </span> : null}
-              {isCategory(row.category) ? categoryTag[row.category] : "Not sorted yet"}
+              {kindWord(row, categoryTag, row.olderUnsorted)}
               {row.needsOwner ? " · Needs you" : ""}
               {row.replyState ? ` · ${row.replyState}` : ""}
               {row.pendingDraftId ? " · Draft ready" : ""}
@@ -227,6 +231,14 @@ export default async function InboxPage(props: PageProps<"/inbox">) {
             </span>
           </summary>
           <div className="flex flex-col gap-3 border-t border-border px-4 pt-3 pb-4">
+            {row.category === null ? (
+              // Check 10 P7: never promise a sort that won't come.
+              <p className="text-sm font-semibold">
+                {row.olderUnsorted
+                  ? "This came in before Squared Away started sorting your email. It's safe in Gmail."
+                  : "We'll sort this within a few minutes. It's safe in Gmail."}
+              </p>
+            ) : null}
             {/* Check 10 P6: the customer's page, by the opaque key of their newest email (never
                 an address in a URL). Lead websites and phone services aren't customers. */}
             {customerOf.get(row.id)?.address && !row.leadChannel ? (
@@ -355,19 +367,21 @@ export default async function InboxPage(props: PageProps<"/inbox">) {
       {errorMsg ? <Notice strong>{errorMsg}</Notice> : null}
 
       <nav aria-label="Filter" className="-mx-4 flex gap-2 overflow-x-auto px-4 pb-1">
-        {chips.map((c) => (
-          <Link
-            key={c.key}
-            href={inboxHref(c.key)}
-            aria-current={active === c.key ? "page" : undefined}
-            className={cn(
-              "inline-flex min-h-tap shrink-0 items-center rounded-full border px-4 text-sm font-semibold whitespace-nowrap",
-              active === c.key ? "border-charcoal bg-charcoal text-offwhite" : "bg-card",
-            )}
-          >
-            {c.label}
-          </Link>
-        ))}
+        {chips
+          .filter((c) => c.key !== "unsorted" || page.hasUnsorted || active === "unsorted")
+          .map((c) => (
+            <Link
+              key={c.key}
+              href={inboxHref(c.key)}
+              aria-current={active === c.key ? "page" : undefined}
+              className={cn(
+                "inline-flex min-h-tap shrink-0 items-center rounded-full border px-4 text-sm font-semibold whitespace-nowrap",
+                active === c.key ? "border-charcoal bg-charcoal text-offwhite" : "bg-card",
+              )}
+            >
+              {c.label}
+            </Link>
+          ))}
       </nav>
 
       {cursor ? (
@@ -406,10 +420,11 @@ export default async function InboxPage(props: PageProps<"/inbox">) {
               summary: r.summary,
               categoryLabel: isCategory(r.category) ? categoryLabels[r.category] : null,
             }),
-            junk: junkIds.has(r.id),
+            group: junkIds.has(r.id) ? "junk" : olderIds.has(r.id) ? "older" : "main",
             node: renderRow(r),
           }))}
           junkCount={page.junk.count}
+          olderCount={page.older.count}
           olderHref={olderHref}
         />
       )}

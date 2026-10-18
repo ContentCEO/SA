@@ -228,3 +228,19 @@ describe("Draft ready (Check 10 P4)", () => {
     expect(byId.get(sending)).toBeNull();
   });
 });
+
+describe("older unsorted mail (Check 10 P7)", () => {
+  it("folds on All, still listed under Not sorted; newer unsorted stays in the list", async () => {
+    const old = await seedThread({ category: null, inAt: ago(20 * 24) });
+    const fresh = await seedThread({ category: null, inAt: ago(2) });
+    const sorted = await seedThread({ inAt: ago(30 * 24) });
+    const p = await inboxPage(workspaceId, { kind: "all" }, { now: NOW });
+    expect(p.rows.map((r) => r.id).sort()).toEqual([fresh, sorted].sort());
+    expect(p.older).toMatchObject({ count: 1 });
+    expect(p.older.rows.map((r) => r.id)).toEqual([old]);
+    expect(p.older.rows[0]!.olderUnsorted).toBe(true);
+    expect(p.hasUnsorted).toBe(true);
+    const u = await inboxPage(workspaceId, { kind: "unsorted" }, { now: NOW });
+    expect(u.rows.map((r) => r.id).sort()).toEqual([old, fresh].sort());
+  });
+});

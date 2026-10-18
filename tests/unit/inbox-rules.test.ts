@@ -3,6 +3,8 @@ import {
   compareInbox,
   inboxRank,
   isFoldableJunk,
+  isOlderUnsorted,
+  kindWord,
   replyState,
   urgencyWord,
   type InboxRankInput,
@@ -104,5 +106,38 @@ describe("inbox order (Check 10 P3)", () => {
     expect(urgencyWord({ urgency: "emergency", priority: "high" })).toBe("Emergency");
     expect(urgencyWord({ urgency: "high", priority: "high" })).toBe("Urgent");
     expect(urgencyWord({ urgency: "normal", priority: "normal" })).toBeNull();
+  });
+});
+
+describe("unsorted and failed sorts (Check 10 P7)", () => {
+  const NOW = t(12);
+  const DAY = 86_400_000;
+  const days = (n: number) => new Date(NOW.getTime() - n * DAY);
+
+  it("folds never-sorted mail whose latest customer email is past the look-back", () => {
+    const r = (o: Partial<Parameters<typeof isOlderUnsorted>[0]>) => ({
+      category: null,
+      lastIn: days(20),
+      lastMessageAt: days(20),
+      ...o,
+    });
+    expect(isOlderUnsorted(r({}), NOW, 14)).toBe(true);
+    expect(isOlderUnsorted(r({ lastIn: days(3) }), NOW, 14)).toBe(false);
+    expect(isOlderUnsorted(r({ category: "scheduling" }), NOW, 14)).toBe(false);
+    // No customer email at all: the thread's own time decides.
+    expect(isOlderUnsorted(r({ lastIn: null }), NOW, 14)).toBe(true);
+    expect(isOlderUnsorted(r({ lastIn: null, lastMessageAt: null }), NOW, 14)).toBe(false);
+  });
+
+  it("the kind word: Couldn't sort for a failed sort, Not sorted (yet) for never sorted", () => {
+    const tags = { customer_question: "Question" };
+    expect(
+      kindWord({ category: "customer_question", extracted: { unreadable: true } }, tags, false),
+    ).toBe("Couldn't sort");
+    expect(kindWord({ category: "customer_question", extracted: {} }, tags, false)).toBe(
+      "Question",
+    );
+    expect(kindWord({ category: null, extracted: null }, tags, false)).toBe("Not sorted yet");
+    expect(kindWord({ category: null, extracted: null }, tags, true)).toBe("Not sorted");
   });
 });

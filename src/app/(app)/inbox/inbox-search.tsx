@@ -5,7 +5,13 @@ import { useEffect, useRef, useState } from "react";
 import { matchesSearch } from "@/server/inbox-rules";
 
 /** One inbox row: its server-rendered `<li>`, the text a search looks through, and junk or not. */
-export type InboxSearchRow = { id: string; text: string; junk: boolean; node: React.ReactNode };
+export type InboxSearchRow = {
+  id: string;
+  text: string;
+  /** Folded on All: junk, or unsorted mail from before sorting started (Check 10 P7). */
+  group: "main" | "junk" | "older";
+  node: React.ReactNode;
+};
 
 /**
  * Inbox search and the folded junk line (outside review). Filters on the phone, so what's
@@ -15,11 +21,14 @@ export type InboxSearchRow = { id: string; text: string; junk: boolean; node: Re
 export function InboxSearch({
   rows,
   junkCount,
+  olderCount,
   olderHref,
 }: {
   rows: InboxSearchRow[];
   /** Check 10 P2: all folded junk (the line may hold only the newest few). */
   junkCount?: number;
+  /** Check 10 P7: all older unsorted mail (the line may hold only the newest few). */
+  olderCount?: number;
   /** Check 10 P2: the next page, when this one was full. */
   olderHref?: string | null;
 }) {
@@ -30,8 +39,10 @@ export function InboxSearch({
     if (input.current?.value) setQ(input.current.value);
   }, []);
   const query = q.trim();
-  const main = rows.filter((r) => !r.junk);
-  const junk = rows.filter((r) => r.junk);
+  const main = rows.filter((r) => r.group === "main");
+  const junk = rows.filter((r) => r.group === "junk");
+  const olderRows = rows.filter((r) => r.group === "older");
+  const olderTotal = Math.max(olderCount ?? 0, olderRows.length);
   const found = query ? rows.filter((r) => matchesSearch(r.text, query)) : null;
   const list = (items: InboxSearchRow[], className = "flex flex-col gap-3") => (
     <ul className={className}>{items.map((r) => r.node)}</ul>
@@ -82,6 +93,15 @@ export function InboxSearch({
                 {junkTotal} junk email{junkTotal === 1 ? "" : "s"}
               </summary>
               {list(junk, "flex flex-col gap-3 px-3 pb-3")}
+            </details>
+          ) : null}
+          {olderRows.length ? (
+            <details className="rounded-xl border">
+              <summary className="flex min-h-tap cursor-pointer items-center px-4 font-semibold">
+                {olderTotal} older email{olderTotal === 1 ? "" : "s"}, from before Squared Away
+                started sorting
+              </summary>
+              {list(olderRows, "flex flex-col gap-3 px-3 pb-3")}
             </details>
           ) : null}
           {older}
