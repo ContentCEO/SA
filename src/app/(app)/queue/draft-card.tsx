@@ -88,6 +88,8 @@ export type DraftCardProps = {
   priceMemory?: PastPrice[];
   /** Ideas G7: the owner's private note line (rendered by the server page). */
   noteLine?: React.ReactNode;
+  /** Check 37 P2: the permit card (and the town caution), rendered by the page. */
+  permitCard?: React.ReactNode;
   /** Ideas H4: "Wrong kind?" (rendered by the server page). */
   moreActions?: React.ReactNode;
 };
@@ -265,6 +267,7 @@ export function DraftCard(p: DraftCardProps) {
       </header>
 
       {p.needsOwnerReason ? <p className="font-semibold">Needs you: {p.needsOwnerReason}</p> : null}
+      {p.permitCard}
 
       {p.autoSendAt ? (
         <form

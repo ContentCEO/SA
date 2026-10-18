@@ -60,3 +60,21 @@
 - Prompt versions group (next classify version): add "electric company work requests,
   cut-and-reconnect appointments, meter sets, planned outages for a job, interconnection
   approvals" to the never-noise paperwork line.
+
+## Step 3 (Check 36 P4 + Check 37 P2): town emails on the Queue
+
+- Decision: every town email (code or the model's signal) that isn't junk needs the owner, with a
+  fixed line from its permit facts only (`municipalReason` in `src/ai/classify.ts`): "From the
+  town: inspection failed, N things to fix." / "… inspection scheduled." / "… inspection passed."
+  (priority normal) / "From the town." Owner-rule key `municipal` (fixed text: the model's words
+  never ride along). Injection, gas, CO, electrical, payment change and the utility scam still win.
+  Only the owner's tap drafts to the town, as before. The owner rules now read the kind the
+  email ends up with (a town or utility email the model called junk is re-sorted first).
+- Decision: permit facts carry across emails on a thread (`carryPermitFacts`,
+  `src/server/permit-rules.ts`): same permit (number, or same issuing body when a number is
+  missing) keeps the fix list until it passes; new corrections replace it; a different permit
+  replaces everything; an attack email never changes it. Retention purge unchanged.
+- The permit card (and the town caution) shows on the Queue's Needs-you card and draft cards; the
+  folded Inbox row says "Permit E-26-0412 · 3 things to fix". The Failed badge now uses
+  `bg-primary text-primary-foreground` so it stays inverted on a charcoal card too.
+- Eval cases with `municipal: true` now expect `needsOwner: true`.

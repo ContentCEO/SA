@@ -190,6 +190,7 @@ export const OWNER_RULE_KEYS = [
   "big_new_job",
   "emergency",
   "utility",
+  "municipal",
   "water_smell",
   "phone",
   "site",
@@ -202,11 +203,28 @@ export type OwnerRuleKey = (typeof OWNER_RULE_KEYS)[number];
 const FIXED_TEXT_HITS: readonly OwnerRuleKey[] = [
   "emergency",
   "utility",
+  "municipal",
   "water_smell",
   "phone",
   "site",
   "outside_area",
 ];
+
+/**
+ * Check 36 P4: why a town email needs the owner, built only from the stored permit facts (never
+ * the model's words or the town's name).
+ */
+export function municipalReason(permit: ModelClassification["extracted"]["permit"]): string {
+  if (permit?.result === "failed") {
+    const n = permit.corrections?.length ?? 0;
+    return n > 0
+      ? `From the town: inspection failed, ${n} thing${n === 1 ? "" : "s"} to fix.`
+      : "From the town: inspection failed.";
+  }
+  if (permit?.result === "scheduled") return "From the town: inspection scheduled.";
+  if (permit?.result === "passed") return "From the town: inspection passed.";
+  return "From the town.";
+}
 
 /** The needs-owner reasons a dispute or legal threat gets (when the model gave none). */
 export const LEGAL_REASON = "Mentions something legal.";
@@ -322,6 +340,8 @@ export function applyOwnerRules(
     utilityScam?: boolean;
     /** Check 37 P3: from the electric company and the email carries a date. */
     utilityDate?: boolean;
+    /** Check 36 P4: from the town (code or the model's signal). */
+    municipal?: boolean;
     /** Check 22 P3: lawyers, liens, small claims found in code anywhere in the email. */
     legalThreat?: boolean;
     /** Check 48 P1: asks whether a person or an AI is answering. */
@@ -428,6 +448,7 @@ export function applyOwnerRules(
     ],
     [emergency, "emergency", EMERGENCY_REASON],
     [!!ctx.utilityDate && m.category !== "noise", "utility", UTILITY_DATE_REASON],
+    [!!ctx.municipal && m.category !== "noise", "municipal", municipalReason(m.extracted.permit)],
     [!!ctx.waterSmell, "water_smell", WATER_SMELL_REASON],
     [
       channelLead && channel?.kind !== "site",
@@ -472,7 +493,11 @@ export function applyOwnerRules(
           : // Check 36 P1: smelly water is worth a call, not a 2am emergency.
             hit[1] === "water_smell"
             ? "normal"
-            : m.priority,
+            : // Check 36 P4: a passed inspection is good news, worth a look, not urgent.
+              matched.some(([, key]) => key === "municipal") &&
+                m.extracted.permit?.result === "passed"
+              ? "normal"
+              : m.priority,
       hits,
     };
   }
@@ -794,6 +819,7 @@ export async function classifyEmail(
     paymentChange,
     utilityScam,
     utilityDate: utilitySender && result.extracted.dates.length > 0,
+    municipal,
     legalThreat,
     asksIfAi: asksAi,
     ignoreAmounts: [...incentiveAmounts(allText), ...(opts.ownerAmounts ?? [])],

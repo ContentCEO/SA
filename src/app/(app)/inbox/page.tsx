@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { Headline } from "@/components/brand/headline";
 import { OfferButtons } from "@/components/app/offer-buttons";
-import { PermitCard, TownCaution } from "@/components/app/permit-card";
+import { PermitCard, permitSummaryLine, TownCaution } from "@/components/app/permit-card";
 import { Button } from "@/components/ui/button";
 import { CATEGORIES } from "@/ai/prompts/classify.v4";
 import { categoryLabels, categoryTag, isCategory } from "@/config/categories";
@@ -159,6 +159,9 @@ export default async function InboxPage(props: PageProps<"/inbox">) {
   const foldJunk = filter.kind === "all";
 
   function renderRow(row: InboxRow) {
+    const permit = (row.extracted as { permit?: Parameters<typeof PermitCard>[0]["permit"] })
+      ?.permit;
+    const permitLine = permitSummaryLine(permit);
     return (
       <li key={row.id}>
         <details
@@ -187,6 +190,7 @@ export default async function InboxPage(props: PageProps<"/inbox">) {
             <span className={cn("line-clamp-2", row.needsOwner ? "" : "text-muted-foreground")}>
               {row.summary ?? row.subject ?? "(no subject)"}
             </span>
+            {permitLine ? <span className="text-sm font-semibold">{permitLine}</span> : null}
           </summary>
           <div className="flex flex-col gap-3 border-t border-border px-4 pt-3 pb-4">
             <NoteLine note={customerOf.get(row.id)?.note} editKey={customerOf.get(row.id)?.key} />
@@ -195,11 +199,7 @@ export default async function InboxPage(props: PageProps<"/inbox">) {
               <p className="font-semibold">Why: {row.needsOwnerReason}</p>
             ) : null}
             <TownCaution extracted={row.extracted} />
-            <PermitCard
-              permit={
-                (row.extracted as { permit?: Parameters<typeof PermitCard>[0]["permit"] })?.permit
-              }
-            />
+            <PermitCard permit={permit} />
             <Details row={row} />
             <PastPricesLine prices={pastPrices.get(row.id)} />
             {row.leadChannel ? (

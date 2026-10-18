@@ -43,6 +43,7 @@ import {
   isOwed,
   PAID_GUESS_FLAG,
 } from "./money-rules";
+import { carryPermitFacts, permitOf } from "./permit-rules";
 import { jobKindOf, leadPlatformOf } from "./monthly-rules";
 import { keepQuoteAccepted, quoteAccepted } from "./quote-rules";
 import { ownerGavePrice } from "./quotes";
@@ -605,6 +606,11 @@ export async function classifyPending(
       // doesn't say it again, and price memory needs it (plan #15).
       service_requested: said(result.extracted.service_requested) ?? prevService,
       invoice: storedInvoice,
+      // Check 37 P2: the inspector's fix list stays until that permit passes ("re-inspection
+      // Thursday" doesn't repeat it). An attack email never changes it.
+      permit: injection
+        ? permitOf(thread?.extracted)
+        : carryPermitFacts(permitOf(thread?.extracted), permitOf(result.extracted)),
       ...(paymentSaid === "paid" || paymentSaid === "partly_paid"
         ? { payment_said: paymentSaid }
         : {}),

@@ -16,6 +16,17 @@ const resultWords = {
   other: "Permit update",
 } as const;
 
+/**
+ * Check 37 P2: the Inbox row's one-line permit note while it's folded, only when there's a fix
+ * list: "Permit E-26-0412 · 3 things to fix".
+ */
+export function permitSummaryLine(permit: Permit | null | undefined): string | null {
+  const n = permit?.corrections?.length ?? 0;
+  if (!permit || n === 0) return null;
+  const fix = `${n} thing${n === 1 ? "" : "s"} to fix`;
+  return permit.permit_number ? `Permit ${permit.permit_number} · ${fix}` : fix;
+}
+
 /** Permit / inspection facts pulled from the email (feature plan #17). Status by weight, not colour. */
 export function PermitCard({ permit }: { permit: Permit | null | undefined }) {
   if (!permit) return null;
@@ -34,7 +45,8 @@ export function PermitCard({ permit }: { permit: Permit | null | undefined }) {
         <span
           className={cn(
             "rounded px-1.5 py-0.5 font-black",
-            failed ? "sa-inverted" : "border border-current",
+            // Inverted against whatever it sits on (a charcoal Needs-you card too).
+            failed ? "bg-primary text-primary-foreground" : "border border-current",
           )}
         >
           {resultWords[permit.result ?? "other"]}

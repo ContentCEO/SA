@@ -686,6 +686,7 @@ export const EVAL_CASES: EvalCase[] = [
   }),
 
   // ── building departments / permits (#17) ──────────────────────────
+  // Check 36 P4 (wave 2): every town email that isn't junk needs the owner, with a fixed line.
   c({
     id: "p-passed",
     trade: "electrical",
@@ -695,7 +696,7 @@ export const EVAL_CASES: EvalCase[] = [
     body: "Rough electrical inspection for permit E-2026-118 at 12 Elm St: PASSED. You may proceed to cover.",
     expect: {
       category: ["customer_question", "scheduling", "supplier_vendor"],
-      needsOwner: false,
+      needsOwner: true,
       municipal: true,
       permitResult: "passed",
     },
@@ -709,7 +710,7 @@ export const EVAL_CASES: EvalCase[] = [
     body: "Permit E-2026-119, 4 Oak St. Result: FAILED. Corrections: 1) Missing GFCI protection in garage. 2) Panel directory not labeled. Call to reschedule.",
     expect: {
       category: ["customer_question", "scheduling", "supplier_vendor"],
-      needsOwner: false,
+      needsOwner: true,
       municipal: true,
       permitResult: "failed",
     },
@@ -723,7 +724,7 @@ export const EVAL_CASES: EvalCase[] = [
     body: "Your rough plumbing inspection for permit P-552 is scheduled for Tuesday Oct 14 between 9 and 11am.",
     expect: {
       category: ["scheduling", "customer_question"],
-      needsOwner: false,
+      needsOwner: true,
       municipal: true,
       permitResult: "scheduled",
     },
@@ -737,7 +738,7 @@ export const EVAL_CASES: EvalCase[] = [
     body: "Your roofing permit R-77 for 9 Pine Rd has been issued. Print and post it on site.",
     expect: {
       category: ["customer_question", "supplier_vendor", "scheduling"],
-      needsOwner: false,
+      needsOwner: true,
       municipal: true,
     },
   }),
@@ -752,7 +753,7 @@ export const EVAL_CASES: EvalCase[] = [
     body: "Our records show the reduced pressure backflow preventer (RPZ) at 14 Cedar Ln is due for its semiannual test by November 15. Failure to test may result in termination of water service. Please have a certified tester submit results.",
     expect: {
       category: ["customer_question", "scheduling"],
-      needsOwner: false,
+      needsOwner: true,
       municipal: true,
     },
   }),
@@ -765,7 +766,7 @@ export const EVAL_CASES: EvalCase[] = [
     body: "The water service at 22 Oak St will be shut off Tuesday October 21 from 9am to noon for the curb stop repair your office requested. Call the DPW office with questions.",
     expect: {
       category: ["scheduling", "customer_question"],
-      needsOwner: false,
+      needsOwner: true,
       municipal: true,
     },
   }),
@@ -789,7 +790,7 @@ export const EVAL_CASES: EvalCase[] = [
     body: "Your rough wiring inspection for permit E-26-0412 at 5 King St is set for Thursday between 9 and 11. Please have the panel cover off.",
     expect: {
       category: ["scheduling", "customer_question"],
-      needsOwner: false,
+      needsOwner: true,
       municipal: true,
     },
   }),
@@ -802,7 +803,7 @@ export const EVAL_CASES: EvalCase[] = [
     body: "A framing inspection for permit B26-1182 at 410 Mesa Dr is scheduled for Monday October 20, 8am to noon.",
     expect: {
       category: ["scheduling", "customer_question"],
-      needsOwner: false,
+      needsOwner: true,
       municipal: true,
       permitResult: "scheduled",
     },
@@ -816,7 +817,7 @@ export const EVAL_CASES: EvalCase[] = [
     body: "Plan review for permit R26-0907 (patio cover, 18 Vista Ct) needs corrections: 1) Show post footing size. 2) Add beam span table. Resubmit through the portal.",
     expect: {
       category: ["customer_question", "scheduling"],
-      needsOwner: false,
+      needsOwner: true,
       municipal: true,
     },
   }),
@@ -830,7 +831,7 @@ export const EVAL_CASES: EvalCase[] = [
     body: "Your reroof permit RR-26-5531 for 902 Elm Ln has been issued. Print and post it on site.",
     expect: {
       category: ["customer_question", "scheduling"],
-      needsOwner: false,
+      needsOwner: true,
       municipal: true,
     },
   }),
@@ -1813,7 +1814,7 @@ export const EVAL_CASES: EvalCase[] = [
     fromAddress: "wires.inspector@example.com",
     subject: "Rough inspection",
     body: "I can do the rough wiring inspection at 33 Elm Thursday at 10. Please have the panel cover off.",
-    expect: { category: ["scheduling", "customer_question"], needsOwner: false, municipal: true },
+    expect: { category: ["scheduling", "customer_question"], needsOwner: true, municipal: true },
   }),
   c({
     id: "r2-opengov-permit",
@@ -1824,7 +1825,7 @@ export const EVAL_CASES: EvalCase[] = [
     body: "Building permit BP-2026-311 for 8 Canal St (kitchen remodel) has been issued.",
     expect: {
       category: ["customer_question", "scheduling", "supplier_vendor"],
-      needsOwner: false,
+      needsOwner: true,
       municipal: true,
     },
   }),
@@ -1835,7 +1836,7 @@ export const EVAL_CASES: EvalCase[] = [
     fromAddress: "health@example.gov",
     subject: "Septic inspection",
     body: "The Title 5 septic inspection for 2 Mill Rd is scheduled for October 22 at 1pm.",
-    expect: { category: ["scheduling", "customer_question"], needsOwner: false, municipal: true },
+    expect: { category: ["scheduling", "customer_question"], needsOwner: true, municipal: true },
   }),
   c({
     id: "r2-conservation",
@@ -1846,7 +1847,7 @@ export const EVAL_CASES: EvalCase[] = [
     body: "The order of conditions for the retaining wall at 5 Brook Ln was issued. Work within 100 feet of the wetland needs erosion controls in place first.",
     expect: {
       category: ["customer_question", "scheduling", "supplier_vendor"],
-      needsOwner: false,
+      needsOwner: true,
       municipal: true,
     },
   }),

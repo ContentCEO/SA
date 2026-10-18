@@ -1,9 +1,11 @@
 import type { ReactNode } from "react";
 import { ContactButtons } from "@/components/app/contact-buttons";
+import { PermitCard, TownCaution } from "@/components/app/permit-card";
 import { PendingButton } from "@/components/app/pending-button";
 import { Button } from "@/components/ui/button";
 import { relativeTime } from "@/lib/relative-time";
 import type { QueueItem } from "@/server/drafts";
+import type { PermitFacts } from "@/server/permit-rules";
 import { playbookApplies } from "@/server/complaint-rules";
 import type { LeadCard } from "@/server/lead-cards";
 import { draftReplyAction } from "./actions";
@@ -126,6 +128,9 @@ export function NeedsYouCard({
         <p className="font-black">{lead.outsideTown} isn&apos;t one of your towns.</p>
       ) : null}
       {i.summary ? <p className="text-ash">{i.summary}</p> : null}
+      {/* Check 37 P2: the inspector's facts where the owner works. */}
+      <TownCaution extracted={i.extracted} />
+      <PermitCard permit={(i.extracted as { permit?: PermitFacts } | null)?.permit} />
       {site ? (
         <p className="text-sm">
           Answer them on {site.name} — replies by email don&apos;t reach them.
