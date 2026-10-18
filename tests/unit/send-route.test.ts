@@ -156,6 +156,26 @@ describe("C5: the send API refuses anything but a same-origin request, without t
     expect(queued).toEqual([]);
   });
 
+  it("Check 31 P4: past LIMITS.send.max sends → 429 with Retry-After, and no Gmail call", async () => {
+    await status({ status: "active", setupPaidVia: "stripe" });
+    const { hitLimit, LIMITS } = await import("@/server/rate-limit");
+    for (let i = 0; i < LIMITS.send.max; i++)
+      expect((await hitLimit("send", workspaceId)).allowed).toBe(true);
+    gmail.built = 0;
+    const fetchSpy = vi.fn(async () => new Response(null, { status: 500 }));
+    vi.stubGlobal("fetch", fetchSpy);
+    const res = await send({ origin: `https://${HOST}` });
+    expect(res.status).toBe(429);
+    const retry = Number(res.headers.get("retry-after"));
+    expect(retry).toBeGreaterThanOrEqual(1);
+    expect(retry).toBeLessThanOrEqual(LIMITS.send.windowSec);
+    expect(gmail.built).toBe(0);
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(queued).toEqual([]);
+    const [d] = await database.select().from(drafts).where(eq(drafts.id, draftId));
+    expect(d!.sendAfter).toBeNull();
+  });
+
   it("same origin, paid and active → 202 and the undo window starts (control case)", async () => {
     await status({ status: "active", setupPaidVia: "stripe" });
     const res = await send({ origin: `https://${HOST}` });

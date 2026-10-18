@@ -66,3 +66,11 @@ For the integrator: what `CLAUDE.md`, `docs/LAUNCH.md` and the legal drafts shou
   You can ask again at 10:00am." in the owner's zone (`src/server/draft-limit-rules.ts`; a
   missing or odd time says "Try again in a little while."). The daily AI cap is unchanged.
   CLAUDE.md's rate-limit line should say "Draft a reply 90/h (counted at the model call)".
+- **Every rate limit is proven wired (Check 31 P4):** `tests/unit/security-surface.test.ts`
+  `LIMIT_SITES`: one row per `hitLimit` call in src (file, function, limit, the work calls it
+  guards); each row checks an awaited `hitLimit("<name>")` comes before the first work call
+  (the two Draft a reply rows check it sits in `createDraftForThread`'s `beforeModelCall`). It
+  fails when a LIMITS key has no row or a hitLimit call isn't in the table, and has a fixture
+  self-test. `send-route.test.ts` proves the send API's 429 + Retry-After with no Gmail call.
+  Spot-checked: deleting the send (sendTap), billing (checkout) or connect limit fails it.
+  New hitLimit calls (other groups) need a row here.

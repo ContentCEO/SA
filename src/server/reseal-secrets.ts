@@ -18,14 +18,14 @@ export async function resealSecrets(
   const counts = () => ({ resealed: 0, current: 0, unreadable: 0 });
   const out = { mailboxes: counts(), settings: counts() };
 
-  /** One sealed value: what to write instead, or why not. */
-  const reseal = (sealed: string, c: ResealCounts): string | null => {
+  /** One sealed value opened for re-sealing, or null (already current, or unreadable). */
+  const opened = (sealed: string, c: ResealCounts): string | null => {
     if (sealedWithCurrentKey(sealed)) {
       c.current += 1;
       return null;
     }
     try {
-      return encryptSecret(decryptSecret(sealed));
+      return decryptSecret(sealed);
     } catch {
       c.unreadable += 1;
       return null;
@@ -41,11 +41,11 @@ export async function resealSecrets(
       .orderBy(asc(mailboxes.id))
       .limit(batchSize);
     for (const row of rows) {
-      const next = reseal(row.sealed, out.mailboxes);
-      if (next === null) continue;
+      const plain = opened(row.sealed, out.mailboxes);
+      if (plain === null) continue;
       const done = await db()
         .update(mailboxes)
-        .set({ encryptedRefreshToken: next })
+        .set({ encryptedRefreshToken: encryptSecret(plain) })
         .where(and(eq(mailboxes.id, row.id), eq(mailboxes.encryptedRefreshToken, row.sealed)))
         .returning({ id: mailboxes.id });
       // Changed meanwhile (a reconnect sealed a new token with the current key): nothing to do.
@@ -68,11 +68,11 @@ export async function resealSecrets(
       .orderBy(asc(appSettings.key))
       .limit(batchSize);
     for (const row of rows) {
-      const next = reseal(row.sealed, out.settings);
-      if (next === null) continue;
+      const plain = opened(row.sealed, out.settings);
+      if (plain === null) continue;
       const done = await db()
         .update(appSettings)
-        .set({ value: next })
+        .set({ value: encryptSecret(plain) })
         .where(and(eq(appSettings.key, row.key), eq(appSettings.value, row.sealed)))
         .returning({ key: appSettings.key });
       if (done.length) out.settings.resealed += 1;
