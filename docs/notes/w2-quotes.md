@@ -62,3 +62,12 @@ For the integrator to fold into CLAUDE.md (Decisions) and the other shared files
   list, one line per stage. The homepage's stage list (home-copy.ts `stageWords`) switches to
   semicolons because the new label has a comma: "waiting on you; replied, no price yet; quoted;
   gone quiet; won; lost; or no answer" (public-site copy; Homepage words group may want to look).
+- **Check 11 P7 (amount only on Won):** the open card's "Mark how it ended" now holds a "Mark
+  won" step ("What you'll charge (optional)", prefilled with the amount we found, then "Save as
+  won") and two one-tap buttons, "Mark lost" and "Mark no answer". `setQuoteOutcome` ignores an
+  amount unless the outcome is won; `markQuoteAction` refuses one with any other outcome
+  (error=amount). A won card has "Change amount" → `changeAmountAction` → `setQuoteAmount`
+  (owner-scoped, read-only refused, only while won, `quote_amount_from = 'owner'`; activity
+  `quote_amount_changed` with `{ amountTyped: true }`, Activity line "You changed the amount on
+  Dana's won quote"). Decided cards say the day in the owner's zone: "Won Oct 14"
+  (`decidedLabel`). Same words on both cards: Mark won / Mark lost / Mark no answer / Reopen.

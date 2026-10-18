@@ -142,6 +142,9 @@ export function describeActivity(
     // Ideas C5: the reason shows on Quotes and in the month's line, not as its own entry.
     case "quote_lost_reason":
       return null;
+    // Check 11 P7: never the amount.
+    case "quote_amount_changed":
+      return `You changed the amount on ${name ? `${name}'s won quote` : "a won quote"}`;
     case "marked_needs_owner":
       return `You marked a conversation${name ? ` with ${name}` : ""} as needing you`;
     case "mailbox_connected":

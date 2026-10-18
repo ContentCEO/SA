@@ -10,6 +10,7 @@ import { cn } from "@/lib/utils";
 import { isReadOnly } from "@/server/lifecycle";
 import { threadOffers, type ThreadOffers } from "@/server/offers";
 import {
+  decidedLabel,
   formatCents,
   isDecidedStage,
   QUOTE_OUTCOMES,
@@ -19,7 +20,7 @@ import {
 } from "@/server/quote-rules";
 import { listQuotes, type QuoteRow } from "@/server/quotes";
 import { requireOwner } from "@/server/session";
-import { lostReasonAction, markQuoteAction } from "./actions";
+import { changeAmountAction, lostReasonAction, markQuoteAction } from "./actions";
 import { leadSourcePay } from "@/server/lead-pay";
 import { leadPaySentence } from "@/server/quote-rules";
 import { LOST_REASON_BUTTONS, LOST_REASON_WORDS, LOST_REASONS } from "@/server/quote-rules";
@@ -41,6 +42,7 @@ const done: Record<string, string> = {
   won: "Marked won. Nice one.",
   lost: "Marked lost. Why? One tap on the card, optional.",
   lost_reason: "Got it.",
+  amount: "Amount saved.",
   no_answer: "Marked no answer.",
   reopen: "Reopened.",
 };
@@ -57,16 +59,35 @@ const markLabel: Record<QuoteOutcome, string> = {
   no_answer: "Mark no answer",
 };
 
+/** "What you'll charge (optional)", prefilled with the amount we found (or the one saved). */
+function AmountField({ id, cents }: { id: string; cents: number | null }) {
+  return (
+    <label htmlFor={id} className="flex flex-col gap-1 text-sm font-semibold">
+      What you&apos;ll charge (optional)
+      <input
+        id={id}
+        name="amount"
+        inputMode="decimal"
+        defaultValue={cents ? String(cents / 100) : ""}
+        placeholder="e.g. 1450"
+        className="min-h-tap rounded-lg border bg-background px-3 text-base text-foreground"
+      />
+    </label>
+  );
+}
+
 function QuoteCard({
   q,
   filter,
   readOnly,
   offers,
+  timeZone,
 }: {
   q: QuoteRow;
   filter: Filter;
   readOnly: boolean;
   offers: ThreadOffers | undefined;
+  timeZone: string;
 }) {
   const name = q.customerName ?? q.customerAddress ?? "Someone";
   const decided = isDecidedStage(q.stage);
@@ -86,7 +107,10 @@ function QuoteCard({
       </div>
       <div className="flex items-baseline justify-between gap-3">
         <span className="text-sm font-semibold">
-          {stageLabel[q.stage]}
+          {/* Check 11 P7: a decided card says when — "Won Oct 14". */}
+          {isDecidedStage(q.stage)
+            ? decidedLabel(q.stage, q.outcomeAt, timeZone)
+            : stageLabel[q.stage]}
           {q.outcomeGuessed ? <span className="font-normal"> (our guess)</span> : null}
         </span>
         {q.amountCents ? (
@@ -131,55 +155,66 @@ function QuoteCard({
       ) : null}
       {readOnly ? null : decided ? (
         // One tap to change it — our guess or the owner's own mark.
-        <form action={markQuoteAction} className="flex flex-col gap-2">
-          <input type="hidden" name="threadId" value={q.threadId} />
-          <input type="hidden" name="stage" value={filter} />
-          <div className="grid grid-cols-2 gap-2">
-            {QUOTE_OUTCOMES.filter((o) => o !== q.stage).map((o) => (
-              <Button key={o} type="submit" name="outcome" value={o} variant="outline">
-                {markLabel[o]}
-              </Button>
-            ))}
-          </div>
-          <Button type="submit" name="outcome" value="reopen" variant="ghost" className="w-full">
-            Reopen
-          </Button>
-        </form>
+        <>
+          {q.stage === "won" ? (
+            // Check 11 P7: fix a won amount without reopening the quote.
+            <details className="rounded-lg border">
+              <summary className="flex min-h-tap cursor-pointer list-none items-center px-3 font-semibold underline underline-offset-4">
+                Change amount
+              </summary>
+              <form action={changeAmountAction} className="flex flex-col gap-2 px-3 pb-3">
+                <input type="hidden" name="threadId" value={q.threadId} />
+                <input type="hidden" name="stage" value={filter} />
+                <AmountField id={`amount-${q.threadId}`} cents={q.amountCents} />
+                <Button type="submit">Save amount</Button>
+              </form>
+            </details>
+          ) : null}
+          <form action={markQuoteAction} className="flex flex-col gap-2">
+            <input type="hidden" name="threadId" value={q.threadId} />
+            <input type="hidden" name="stage" value={filter} />
+            <div className="grid grid-cols-2 gap-2">
+              {QUOTE_OUTCOMES.filter((o) => o !== q.stage).map((o) => (
+                <Button key={o} type="submit" name="outcome" value={o} variant="outline">
+                  {markLabel[o]}
+                </Button>
+              ))}
+            </div>
+            <Button type="submit" name="outcome" value="reopen" variant="ghost" className="w-full">
+              Reopen
+            </Button>
+          </form>
+        </>
       ) : (
         <details className="group">
           <summary className="inline-flex min-h-tap w-full cursor-pointer list-none items-center justify-center rounded-lg border font-semibold">
             Mark how it ended
           </summary>
-          <form action={markQuoteAction} className="mt-3 flex flex-col gap-2">
-            <input type="hidden" name="threadId" value={q.threadId} />
-            <input type="hidden" name="stage" value={filter} />
-            <label className="flex flex-col gap-1 text-sm font-semibold">
-              Job amount (optional)
-              <input
-                name="amount"
-                inputMode="decimal"
-                placeholder={q.amountCents ? String(q.amountCents / 100) : "e.g. 1450"}
-                className="min-h-tap rounded-lg border bg-background px-3 text-base text-foreground"
-              />
-            </label>
-            <div className="grid grid-cols-2 gap-2">
-              <Button type="submit" name="outcome" value="won">
+          <div className="mt-3 flex flex-col gap-2">
+            {/* Check 11 P7: only Won asks for a dollar figure. */}
+            <details className="rounded-lg border">
+              <summary className="inline-flex min-h-tap w-full cursor-pointer list-none items-center justify-center rounded-lg bg-primary font-semibold text-primary-foreground">
                 Mark won
-              </Button>
+              </summary>
+              <form action={markQuoteAction} className="flex flex-col gap-2 p-3">
+                <input type="hidden" name="threadId" value={q.threadId} />
+                <input type="hidden" name="stage" value={filter} />
+                <input type="hidden" name="outcome" value="won" />
+                <AmountField id={`won-${q.threadId}`} cents={q.amountCents} />
+                <Button type="submit">Save as won</Button>
+              </form>
+            </details>
+            <form action={markQuoteAction} className="grid grid-cols-2 gap-2">
+              <input type="hidden" name="threadId" value={q.threadId} />
+              <input type="hidden" name="stage" value={filter} />
               <Button type="submit" name="outcome" value="lost" variant="outline">
                 Mark lost
               </Button>
-              <Button
-                type="submit"
-                name="outcome"
-                value="no_answer"
-                variant="outline"
-                className="col-span-2"
-              >
-                No answer
+              <Button type="submit" name="outcome" value="no_answer" variant="outline">
+                Mark no answer
               </Button>
-            </div>
-          </form>
+            </form>
+          </div>
         </details>
       )}
       <a
@@ -200,7 +235,7 @@ export default async function QuotesPage(props: PageProps<"/quotes">) {
   const filter: Filter = FILTERS.some(([k]) => k === params.stage)
     ? (params.stage as Filter)
     : "open";
-  const [{ quotes, totals, quietDays }, leadPay] = await Promise.all([
+  const [{ quotes, totals, quietDays, timeZone }, leadPay] = await Promise.all([
     listQuotes(workspace.id),
     leadSourcePay(workspace.id),
   ]);
@@ -306,6 +341,7 @@ export default async function QuotesPage(props: PageProps<"/quotes">) {
               filter={filter}
               readOnly={readOnly}
               offers={offers.get(q.threadId)}
+              timeZone={timeZone}
             />
           ))}
         </div>

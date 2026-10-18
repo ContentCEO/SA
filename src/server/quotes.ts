@@ -4,6 +4,7 @@ import { prepareBody } from "@/ai/classify";
 import { db } from "@/db";
 import { activityLog, mailboxes, messages, priceHistory, threads, workspaces } from "@/db/schema";
 import { expirePendingNudge, flagPendingNudge, followupSettings, type DraftDeps } from "./drafts";
+import { workspaceTimeZone } from "./snooze";
 import { effectiveStatus, JOBS_ALLOWED, jobsAllowed, ReadOnlyError } from "./lifecycle";
 import {
   asDate,
@@ -50,6 +51,8 @@ export type QuoteRow = {
   amountCents: number | null;
   /** Check 11 P2: the amount is our pick among several figures — the card says "Check amount". */
   amountUnsure: boolean;
+  /** When it was decided (the owner's mark or our guess); null while open. */
+  outcomeAt: Date | null;
   lastMessageAt: Date | null;
   startedAt: Date;
 };
@@ -155,6 +158,7 @@ export async function listQuotes(workspaceId: string, now: Date = new Date()) {
       subject: threads.subject,
       outcome: threads.quoteOutcome,
       outcomeSource: threads.quoteOutcomeSource,
+      outcomeAt: threads.quoteOutcomeAt,
       lostReason: threads.quoteLostReason,
       amountCents: threads.quoteAmountCents,
       amountNote: threads.quoteAmountNote,
@@ -203,12 +207,16 @@ export async function listQuotes(workspaceId: string, now: Date = new Date()) {
     lostReason: shownLostReason(r.outcome, r.lostReason),
     amountCents: r.amountCents,
     amountUnsure: r.amountCents != null && r.amountNote === "picked",
+    outcomeAt: r.outcome ? asDate(r.outcomeAt) : null,
     lastMessageAt: asDate(r.lastMessageAt),
     startedAt: asDate(r.firstAt) ?? r.startedAt,
   }));
 
-  const totals = await quoteTotals(workspaceId, now);
-  return { quotes, totals, quietDays: days };
+  const [totals, timeZone] = await Promise.all([
+    quoteTotals(workspaceId, now),
+    workspaceTimeZone(workspaceId),
+  ]);
+  return { quotes, totals, quietDays: days, timeZone };
 }
 
 export type QuoteTotals = {
@@ -308,7 +316,9 @@ export async function setQuoteOutcome(
   const t = await ownedThread(workspaceId, threadId);
   if (!t) return false;
   if (!jobsAllowed(t.workspace, now)) throw new ReadOnlyError(effectiveStatus(t.workspace, now));
-  const typed = amountCents !== undefined && amountCents !== null;
+  // Check 11 P7: only Won takes an amount ("What you'll charge"); with Lost or No answer
+  // (or a reopen) a typed figure is ignored, so it never shows as a price.
+  const typed = outcome === "won" && amountCents !== undefined && amountCents !== null;
   // One transaction, so price memory never sees a typed amount without its mark.
   await db().transaction(async (tx) => {
     await tx
@@ -354,6 +364,46 @@ export async function setQuoteOutcome(
     }
   }
   return true;
+}
+
+/**
+ * Check 11 P7: "Change amount" on a won quote. Scoped to the owner's workspace, refused for
+ * read-only accounts (ReadOnlyError), and only while the quote is won. The amount is the
+ * owner's (never read over from a reply, never in price memory); the activity row says an
+ * amount was typed, never which.
+ */
+export async function setQuoteAmount(
+  workspaceId: string,
+  threadId: string,
+  amountCents: number,
+  now: Date = new Date(),
+): Promise<"ok" | "not_won" | "not_found"> {
+  const t = await ownedThread(workspaceId, threadId);
+  if (!t) return "not_found";
+  if (!jobsAllowed(t.workspace, now)) throw new ReadOnlyError(effectiveStatus(t.workspace, now));
+  const changed = await db().transaction(async (tx) => {
+    const rows = await tx
+      .update(threads)
+      .set({
+        quoteAmountCents: amountCents,
+        quoteAmountNote: null,
+        quoteAmountFrom: "owner",
+        quoteAmountAt: now,
+      })
+      .where(and(eq(threads.id, threadId), eq(threads.quoteOutcome, "won")))
+      .returning({ id: threads.id });
+    if (rows.length) {
+      await tx.insert(activityLog).values({
+        workspaceId,
+        actor: "owner",
+        action: "quote_amount_changed",
+        threadId,
+        detail: { amountTyped: true },
+      });
+    }
+    return rows.length > 0;
+  });
+  return changed ? "ok" : "not_won";
 }
 
 /**

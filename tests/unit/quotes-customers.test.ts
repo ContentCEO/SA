@@ -26,6 +26,7 @@ import {
   amountFromOwnerText,
   canAutoSet,
   closeRate,
+  decidedLabel,
   formatCents,
   guessNoAnswer,
   isQuoteThread,
@@ -42,6 +43,7 @@ import {
   autoSetQuoteOutcome,
   captureQuoteAmounts,
   capturePage,
+  setQuoteAmount,
   guessNoAnswers,
   listQuotes,
   setQuoteOutcome,
@@ -784,6 +786,73 @@ describe("quote tracker", () => {
       .from(activityLog)
       .where(eq(activityLog.action, "quote_marked"));
     expect(log.map((l) => l.detail)).toEqual([{ outcome: "no_answer" }, { outcome: null }]);
+  });
+
+  describe("Check 11 P7: only Won takes an amount, and the owner can fix it after", () => {
+    it("an amount sent with Lost (or No answer) is not stored", async () => {
+      const t = await convo({ from: "d@x.com", name: "D", category: "quote_request", inAgo: 2 });
+      await setQuoteOutcome(workspaceId, t, "lost", 50_000, NOW);
+      await setQuoteOutcome(workspaceId, t, "no_answer", 60_000, NOW);
+      const [row] = await database.select().from(threads).where(eq(threads.id, t));
+      expect(row).toMatchObject({ quoteOutcome: "no_answer", quoteAmountCents: null });
+      const log = await database
+        .select()
+        .from(activityLog)
+        .where(eq(activityLog.action, "quote_marked"));
+      expect(log.map((l) => l.detail)).toEqual([{ outcome: "lost" }, { outcome: "no_answer" }]);
+    });
+
+    it("Change amount on a won quote: saved as the owner's, logged without the figure", async () => {
+      const t = await convo({
+        from: "d@x.com",
+        name: "D",
+        category: "quote_request",
+        inAgo: 3,
+        outAgo: 2,
+        reply: "That's $1,200.",
+      });
+      await captureQuoteAmounts(workspaceId);
+      expect(await setQuoteAmount(workspaceId, t, 135_000, NOW)).toBe("not_won");
+      await setQuoteOutcome(workspaceId, t, "won", undefined, NOW);
+      expect(await setQuoteAmount(workspaceId, t, 135_000, NOW)).toBe("ok");
+      const [row] = await database.select().from(threads).where(eq(threads.id, t));
+      expect(row).toMatchObject({ quoteAmountCents: 135_000, quoteAmountFrom: "owner" });
+      const [log] = await database
+        .select()
+        .from(activityLog)
+        .where(eq(activityLog.action, "quote_amount_changed"));
+      expect(log!.detail).toEqual({ amountTyped: true });
+      expect(JSON.stringify(log)).not.toContain("1350");
+      // Price memory keeps the price from the reply.
+      const memory = await database.select().from(priceHistory);
+      expect(memory.every((m) => m.amountCents !== 135_000)).toBe(true);
+    });
+
+    it("Change amount is scoped to the workspace and refused when read-only", async () => {
+      const t = await convo({ from: "d@x.com", name: "D", category: "quote_request", inAgo: 2 });
+      await setQuoteOutcome(workspaceId, t, "won", 100_000, NOW);
+      const { workspace: other } = await ensureUserAndWorkspace({ email: "other@shop.com" });
+      expect(await setQuoteAmount(other.id, t, 1, NOW)).toBe("not_found");
+      await database
+        .update(workspaces)
+        .set({ status: "evaluation_expired" })
+        .where(eq(workspaces.id, workspaceId));
+      await expect(setQuoteAmount(workspaceId, t, 2_000, NOW)).rejects.toBeInstanceOf(
+        ReadOnlyError,
+      );
+      const [row] = await database.select().from(threads).where(eq(threads.id, t));
+      expect(row!.quoteAmountCents).toBe(100_000);
+    });
+
+    it("a decided card says when: 'Won Oct 14' in the owner's zone", () => {
+      expect(decidedLabel("won", new Date("2026-10-14T15:00:00Z"), "America/New_York")).toBe(
+        "Won Oct 14",
+      );
+      expect(decidedLabel("lost", new Date("2026-10-12T02:00:00Z"), "America/New_York")).toBe(
+        "Lost Oct 11",
+      );
+      expect(decidedLabel("no_answer", null, "nowhere")).toBe("No answer");
+    });
   });
 
   it("read-only accounts can't mark quotes (amendment Q9)", async () => {

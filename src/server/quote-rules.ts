@@ -354,6 +354,27 @@ export function amountFromOwnerText(text: string | null | undefined): number | n
   return readOwnerAmount(text)?.cents ?? null;
 }
 
+/**
+ * Check 11 P7: a decided card's stage with its day — "Won Oct 14", "Lost Oct 11", "No answer
+ * Oct 9" — in the owner's time zone (Eastern if it's invalid). Just the stage without a date.
+ */
+export function decidedLabel(outcome: QuoteOutcome, at: Date | null, timeZone: string): string {
+  const word = stageLabel[outcome];
+  if (!at) return word;
+  let tz = timeZone;
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: tz });
+  } catch {
+    tz = "America/New_York";
+  }
+  const day = new Intl.DateTimeFormat("en-US", {
+    timeZone: tz,
+    month: "short",
+    day: "numeric",
+  }).format(at);
+  return `${word} ${day}`;
+}
+
 /** "$1,450" / "$1,450.50" from cents. */
 export function formatCents(cents: number): string {
   const dollars = cents / 100;

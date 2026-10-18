@@ -83,15 +83,32 @@ test("quotes: stages, amounts, and one-tap Won", async ({ page, context }) => {
   await expect(sam).toContainText("Gone quiet");
   await expect(sam).toContainText("$1,200");
 
+  // Check 11 P7: only Won asks for a figure, prefilled with the one we found.
   await sam.getByText("Mark how it ended").click();
-  await sam.getByLabel("Job amount (optional)").fill("1350");
-  await sam.getByRole("button", { name: "Mark won" }).click();
+  await sam.getByText("Mark won", { exact: true }).click();
+  const charge = sam.getByLabel("What you'll charge (optional)");
+  await expect(charge).toHaveValue("1200");
+  await charge.fill("1350");
+  await sam.getByRole("button", { name: "Save as won" }).click();
   await expect(page.getByRole("status").filter({ hasText: "Marked won" })).toBeVisible();
   await expect(page.getByRole("article", { name: "Quote for Sam Lee" })).toHaveCount(0);
 
   await page.getByRole("link", { name: /^Won \(1\)/ }).click();
-  await expect(page.getByRole("article", { name: "Quote for Sam Lee" })).toContainText("$1,350");
+  const samWon = page.getByRole("article", { name: "Quote for Sam Lee" });
+  await expect(samWon).toContainText("$1,350");
+  await expect(samWon).toContainText(/Won [A-Z][a-z]{2} \d{1,2}/);
   await expect(page.getByRole("region", { name: "Last 30 days" })).toContainText("$1,350");
+
+  // …and fix it after, without reopening.
+  await samWon.getByText("Change amount").click();
+  await samWon.getByLabel("What you'll charge (optional)").fill("1400");
+  await samWon.getByRole("button", { name: "Save amount" }).click();
+  await expect(page.getByRole("status").filter({ hasText: "Amount saved." })).toBeVisible();
+  await expect(page.getByRole("article", { name: "Quote for Sam Lee" })).toContainText("$1,400");
+  const overflow = await page.evaluate(
+    () => document.documentElement.scrollWidth > document.documentElement.clientWidth,
+  );
+  expect(overflow).toBe(false);
 });
 
 test("quotes: no answer is our guess, one tap changes it, and Activity shows the close rate", async ({
@@ -138,7 +155,7 @@ test("quotes: no answer is our guess, one tap changes it, and Activity shows the
   await page.getByRole("link", { name: /^Open \(1\)/ }).click();
   const lee = page.getByRole("article", { name: "Quote for Lee Chan" });
   await lee.getByText("Mark how it ended").click();
-  await lee.getByRole("button", { name: "No answer", exact: true }).click();
+  await lee.getByRole("button", { name: "Mark no answer", exact: true }).click();
   await expect(page.getByRole("status").filter({ hasText: "Marked no answer." })).toBeVisible();
 
   const overflow = await page.evaluate(
