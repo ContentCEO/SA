@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState, useState } from "react";
 import { saveVoiceAction, type FormState } from "@/app/(app)/settings/profile-actions";
 import { CancelLink } from "@/components/app/back-link";
 import { Button } from "@/components/ui/button";
@@ -23,6 +23,35 @@ export function VoiceForm({ defaults }: { defaults: VoiceDefaults }) {
   const formRef = useFocusFirstError(state.errors);
   const v = (k: keyof VoiceDefaults, fallback: string | number | null) =>
     state.values?.[k] ?? fallback ?? "";
+  // Check 24 P11: "I don't use one" clears the box and saves no greeting / no sign-off.
+  const [greeting, setGreeting] = useState(String(v("greetingStyle", defaults.greetingStyle)));
+  const [signoff, setSignoff] = useState(String(v("signoffStyle", defaults.signoffStyle)));
+  const [noGreeting, setNoGreeting] = useState(state.values?.noGreeting === "on");
+  const [noSignoff, setNoSignoff] = useState(state.values?.noSignoff === "on");
+  const noneBox = (
+    what: string,
+    name: string,
+    checked: boolean,
+    set: (on: boolean) => void,
+    clear: () => void,
+  ) => (
+    <label className="-mt-4 flex min-h-tap items-center gap-3">
+      <input
+        type="checkbox"
+        name={name}
+        value="on"
+        checked={checked}
+        onChange={(ev) => {
+          set(ev.target.checked);
+          if (ev.target.checked) clear();
+        }}
+        className="size-5 shrink-0"
+      />
+      <span>
+        I don&apos;t use one<span className="sr-only"> ({what})</span>
+      </span>
+    </label>
+  );
 
   return (
     <form ref={formRef} action={action} className="flex flex-col gap-6" noValidate>
@@ -35,16 +64,22 @@ export function VoiceForm({ defaults }: { defaults: VoiceDefaults }) {
         name="greetingStyle"
         label="How do you usually open?"
         hint="Exactly as you type it — “Hey”, “Hi [name],”."
-        defaultValue={v("greetingStyle", defaults.greetingStyle) as string}
+        value={greeting}
+        onValueChange={setGreeting}
+        disabled={noGreeting}
         error={e.greetingStyle}
       />
+      {noneBox("no greeting", "noGreeting", noGreeting, setNoGreeting, () => setGreeting(""))}
       <TextField
         name="signoffStyle"
         label="How do you usually sign off?"
         hint="“Thanks, Davi”, “– D”."
-        defaultValue={v("signoffStyle", defaults.signoffStyle) as string}
+        value={signoff}
+        onValueChange={setSignoff}
+        disabled={noSignoff}
         error={e.signoffStyle}
       />
+      {noneBox("no sign-off", "noSignoff", noSignoff, setNoSignoff, () => setSignoff(""))}
       <SelectField
         name="formality"
         label="How formal are you?"

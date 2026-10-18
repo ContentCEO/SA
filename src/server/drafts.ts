@@ -81,6 +81,7 @@ import {
 } from "@/ai/purpose";
 import { AiCapReachedError, bumpUsageCounter } from "@/ai/usage";
 import { featureOn } from "@/config/features";
+import { signatureWithoutSignoff } from "./signature-rules";
 import { mailboxOn } from "./mailbox-plan-rules";
 import { mailboxRunning } from "./mailbox-plan";
 import { activeNotes } from "./seasonal-notes";
@@ -686,7 +687,11 @@ export async function workspaceContext(
     pricingNotes: profile?.pricingNotes ?? null,
     paymentTerms: profile?.paymentTerms ?? null,
     policies: profile?.policies ?? null,
-    signature: profile?.signature ?? null,
+    // Check 15 P6: a first line that is the sign-off isn't printed twice.
+    signature: signatureWithoutSignoff(
+      profile?.signature,
+      voice?.status === "ready" ? voice.signoffStyle : null,
+    ),
     doNotPromise: profile?.doNotPromise ?? [],
     neverSay: profile?.neverSay ?? [],
     // Check 38 P6: the saved registration and license numbers.

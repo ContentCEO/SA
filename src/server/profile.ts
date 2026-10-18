@@ -501,17 +501,23 @@ export async function getVoiceProfile(workspaceId: string): Promise<VoiceProfile
   return row;
 }
 
-export const voiceEditInput = z.object({
-  greetingStyle: z
-    .string({ message: "How do you usually open?" })
-    .trim()
-    .min(1, "How do you usually open?")
-    .max(100, "Keep this under 100 characters."),
-  signoffStyle: z
-    .string({ message: "How do you usually sign off?" })
-    .trim()
-    .min(1, "How do you usually sign off?")
-    .max(100, "Keep this under 100 characters."),
+/** Check 24 P11: an empty box (or "I don't use one") saves null: no greeting / no sign-off. */
+const optionalStyle = z
+  .string({ message: "Keep this under 100 characters." })
+  .trim()
+  .max(100, "Keep this under 100 characters.")
+  .optional()
+  .transform((v) => (v ? v : null));
+const ticked = z
+  .literal("on", { message: "Tick the box or leave it empty." })
+  .optional()
+  .transform((v) => v === "on");
+
+const voiceFields = z.object({
+  greetingStyle: optionalStyle,
+  noGreeting: ticked,
+  signoffStyle: optionalStyle,
+  noSignoff: ticked,
   formality: z.enum(["casual", "neutral", "formal"], { message: "Pick how formal you are." }),
   // Check 15 P2: a blank box is "type a number", not "at least 10".
   avgLengthWords: z.preprocess(
@@ -529,6 +535,12 @@ export const voiceEditInput = z.object({
     .trim()
     .max(600, "Keep this under 600 characters."),
 });
+
+export const voiceEditInput = voiceFields.transform(({ noGreeting, noSignoff, ...v }) => ({
+  ...v,
+  greetingStyle: noGreeting ? null : v.greetingStyle,
+  signoffStyle: noSignoff ? null : v.signoffStyle,
+}));
 
 /** The owner corrected the learned voice. Weekly re-learning won't overwrite this. */
 export async function saveVoiceEdits(
@@ -555,10 +567,16 @@ export function describeVoice(
   const parts: string[] = [];
   if (v.greetingStyle && v.signoffStyle) {
     parts.push(`You usually open with “${v.greetingStyle}” and sign off “${v.signoffStyle}”.`);
-  } else if (v.greetingStyle) {
-    parts.push(`You usually open with “${v.greetingStyle}”.`);
-  } else if (v.signoffStyle) {
-    parts.push(`You usually sign off “${v.signoffStyle}”.`);
+  } else {
+    // Check 24 P11: no greeting or no sign-off is a way of writing, so it's said.
+    parts.push(
+      v.greetingStyle
+        ? `You usually open with “${v.greetingStyle}”.`
+        : "You usually jump straight in.",
+    );
+    parts.push(
+      v.signoffStyle ? `You usually sign off “${v.signoffStyle}”.` : "You don't sign off.",
+    );
   }
   if (v.avgLengthWords) {
     const feel =

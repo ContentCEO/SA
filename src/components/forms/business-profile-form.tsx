@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useActionState, useEffect, useState, type FormEvent } from "react";
 import { TimeZoneInput } from "./time-zone-input";
 import { LICENSE_LABELS, type Licenses } from "@/config/licenses";
@@ -288,14 +289,22 @@ export function BusinessProfileForm({
         defaultValue={v("policies", defaults.policies) as string}
         error={e.policies}
       />
-      <TextArea
-        name="signature"
-        label="How do you sign your emails?"
-        hint="Exactly as you'd type it."
-        defaultValue={v("signature", defaults.signature) as string}
-        error={e.signature}
-        rows={3}
-      />
+      <div className="flex flex-col gap-1.5">
+        <TextArea
+          name="signature"
+          label="What goes under your name?"
+          hint="Business name, phone, license number. Your sign-off (like “Thanks, Mike”) is set in Your voice."
+          defaultValue={v("signature", defaults.signature) as string}
+          error={e.signature}
+          rows={3}
+        />
+        <Link
+          href="/settings/voice"
+          className="inline-flex min-h-tap items-center self-start text-sm font-semibold underline underline-offset-4"
+        >
+          Set your sign-off in Your voice
+        </Link>
+      </div>
       <TextField
         name="reviewUrl"
         type="url"

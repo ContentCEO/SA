@@ -273,6 +273,62 @@ describe("review link (plan #29)", () => {
   });
 });
 
+describe("no greeting or no sign-off (Check 24 P11)", () => {
+  const base = {
+    greetingStyle: "",
+    signoffStyle: "",
+    formality: "casual",
+    avgLengthWords: "40",
+    phrasesUsed: "",
+    phrasesAvoided: "",
+    summary: "",
+  };
+  it("an empty box saves null, and the old “How do you usually open?” error is gone", () => {
+    const r = voiceEditInput.safeParse(base);
+    expect(r.success).toBe(true);
+    expect(r.data).toMatchObject({ greetingStyle: null, signoffStyle: null });
+    expect(JSON.stringify(r)).not.toContain("How do you usually open?");
+  });
+  it("“I don't use one” wins over a typed box", () => {
+    const r = voiceEditInput.parse({
+      ...base,
+      greetingStyle: "Hey",
+      noGreeting: "on",
+      signoffStyle: "– D",
+      noSignoff: "on",
+    });
+    expect(r).toMatchObject({ greetingStyle: null, signoffStyle: null });
+    expect(r).not.toHaveProperty("noGreeting");
+    expect(voiceEditInput.parse({ ...base, signoffStyle: " – D " }).signoffStyle).toBe("– D");
+  });
+  it("describeVoice says so", () => {
+    expect(
+      describeVoice({
+        greetingStyle: null,
+        signoffStyle: null,
+        avgLengthWords: null,
+        formality: null,
+      }),
+    ).toBe("You usually jump straight in. You don't sign off.");
+    expect(
+      describeVoice({
+        greetingStyle: null,
+        signoffStyle: "– D",
+        avgLengthWords: null,
+        formality: null,
+      }),
+    ).toBe("You usually jump straight in. You usually sign off “– D”.");
+    expect(
+      describeVoice({
+        greetingStyle: "Hey",
+        signoffStyle: null,
+        avgLengthWords: null,
+        formality: null,
+      }),
+    ).toBe("You usually open with “Hey”. You don't sign off.");
+  });
+});
+
 describe("describeVoice", () => {
   it("reads like a person noticed", () => {
     expect(

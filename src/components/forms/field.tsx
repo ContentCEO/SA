@@ -30,8 +30,10 @@ export function TextField({
   type = "text",
   inputMode,
   autoComplete,
+  disabled,
   ...p
 }: Common & {
+  disabled?: boolean;
   defaultValue?: string | number | null;
   /** Controlled use (with `onValueChange`); otherwise `defaultValue`. */
   value?: string;
@@ -50,6 +52,7 @@ export function TextField({
         inputMode={inputMode}
         autoComplete={autoComplete}
         required={p.required}
+        disabled={disabled}
         {...(value !== undefined
           ? { value, onChange: (e) => onValueChange?.(e.target.value) }
           : { defaultValue: defaultValue ?? "" })}
