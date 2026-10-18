@@ -3,6 +3,7 @@
  * invent prices, dates or promises; these catch it when it does anyway. They
  * never rewrite the draft — they flag it for the owner and lower confidence.
  */
+import { languageMismatchFlag, type ReplyLanguage } from "./language";
 import type { Licenses } from "@/config/licenses";
 import { MA_DEPOSIT_DRAFT_FLAG } from "@/config/ma-rules";
 import { overMaDepositCap } from "@/server/deposit-rules";
@@ -239,6 +240,8 @@ export type CheckContext = {
    * in it is an amount the owner gave (review A5), even without a "$".
    */
   ownerInstruction?: string | null;
+  /** Check 43 P8: the language the reply should be in (decided in code). Left out: no check. */
+  replyLanguage?: ReplyLanguage;
 };
 
 /** What kind of problem each flag is, so the caller can decide to regenerate. */
@@ -282,7 +285,9 @@ export type CheckHit =
    */
   | "price_list"
   /** Check 48 P1: says a person wrote it with no help. Flag only, never regenerated. */
-  | "human_claim";
+  | "human_claim"
+  /** Check 43 P8: the reply isn't in the language chosen for it. Flag only. */
+  | "language";
 export type CheckResult = { flags: string[]; confidenceCap: number; hits: CheckHit[] };
 
 /**
@@ -1082,6 +1087,14 @@ export function checkDraft(draftBody: string, ctx: CheckContext): CheckResult {
     flags.push(`Uses “${avoided[0]}”, which doesn't sound like you.`);
     cap = Math.min(cap, 0.6);
     hits.push("filler");
+  }
+
+  // Check 43 P8: a reply in another language than the one chosen (the owner may not read it).
+  const wrongLanguage = ctx.replyLanguage ? languageMismatchFlag(body, ctx.replyLanguage) : null;
+  if (wrongLanguage) {
+    flags.push(wrongLanguage);
+    cap = Math.min(cap, 0.5);
+    hits.push("language");
   }
 
   return { flags, confidenceCap: cap, hits };

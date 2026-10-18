@@ -16,6 +16,7 @@ import {
   or,
   sql,
 } from "drizzle-orm";
+import { chooseReplyLanguage, detectLanguage, isReplyLanguage } from "@/ai/language";
 import { callStructured } from "@/ai/client";
 import {
   checkDraft,
@@ -536,6 +537,8 @@ type DraftContext = WorkspaceContext & {
   timeZone: string | null;
   /** Check 38 P2: the owner's two-letter state, for the Massachusetts deposit rule. */
   state?: string | null;
+  /** Check 43 P8: the languages the owner answers customers in (English always). */
+  replyLanguages?: string[];
 };
 
 /**
@@ -719,6 +722,7 @@ export async function workspaceContext(
     reviewUrl: profile?.reviewUrl ?? null,
     timeZone: profile?.timeZone ?? null,
     state: profile?.state ?? null,
+    replyLanguages: profile?.replyLanguages ?? ["en"],
   };
 }
 
@@ -1126,7 +1130,10 @@ export async function createDraftForThread(
     ...ctx.seasonalNotes.map((n) => spellDate(n.endsOn)),
   ];
   const lastInbound = [...withText].reverse().find((x) => x.m.direction === "in");
+  // Check 43 P8: the reply's language, decided in code from the customer's newest email.
+  const language = chooseReplyLanguage(detectLanguage(lastInbound?.text), ctx.replyLanguages);
   const checkContext = {
+    replyLanguage: language.reply,
     sourceText: [withText.map((x) => x.text).join("\n"), ...ownerFacts, opts.ownerNote]
       .filter(Boolean)
       .join("\n"),
@@ -1288,6 +1295,8 @@ export async function createDraftForThread(
         usedFacts: [...new Set(result.used_facts ?? [])],
         // A key, never text: the shape of a first reply (null on every other draft).
         opening: storedOpening(firstContact, result.opening),
+        customerLanguage: language.customer,
+        replyLanguage: language.reply,
         promptVersion,
         createdAt: now,
       })
@@ -2484,6 +2493,8 @@ export async function reviseDraft(
   ];
   const lastInbound = [...withText].reverse().find((x) => x.m.direction === "in");
   const checkContext = {
+    // Check 43 P8: a change keeps the language the draft was written for.
+    ...(isReplyLanguage(draft.replyLanguage) ? { replyLanguage: draft.replyLanguage } : {}),
     sourceText: [withText.map((x) => x.text).join("\n"), ...ownerFacts].filter(Boolean).join("\n"),
     // Check 23 P3: "Add my availability" writes the hours on purpose, so their days count.
     ...whenContext(
@@ -3069,6 +3080,9 @@ export type QueueItem = {
   usedFacts: string[];
   /** Replies package (draft.v7): a first reply's shape (a key), else null. */
   opening: string | null;
+  /** Check 43 P8: the customer's language and the reply's (codes), for the card's line. */
+  customerLanguage: string | null;
+  replyLanguage: string | null;
   /** Quick tweaks / voice edits left on this draft (plan #3, #4). */
   revisionsLeft: number;
   /** Plan #6: high priority and needs the owner — snooze only until tonight. */
@@ -3412,6 +3426,8 @@ export async function listQueue(
           confidence: null,
           usedFacts: [],
           opening: null,
+          customerLanguage: null,
+          replyLanguage: null,
           revisionsLeft: 0,
           emergency: m.emergency,
           backFromSnooze: m.backFromSnooze,
@@ -3453,6 +3469,8 @@ export async function listQueue(
           confidence: draft.confidence,
           usedFacts: draft.usedFacts,
           opening: draft.opening ?? null,
+          customerLanguage: draft.customerLanguage ?? null,
+          replyLanguage: draft.replyLanguage ?? null,
           revisionsLeft: Math.max(0, MAX_REVISIONS_PER_DRAFT - draft.revisions),
           emergency: m.emergency,
           backFromSnooze: m.backFromSnooze,

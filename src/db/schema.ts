@@ -504,6 +504,12 @@ export const drafts = pgTable(
      */
     opening: text("opening"),
     /**
+     * Check 43 P8: the language the customer's newest email was in ("en" | "es" | "pt", decided
+     * in code; null = couldn't tell) and the one this reply was written for. Codes only.
+     */
+    customerLanguage: text("customer_language"),
+    replyLanguage: text("reply_language"),
+    /**
      * Check 14 P1: how a sent draft left. app = the owner's tap here, autopilot = autopilot,
      * gmail = our draft sent from Gmail (same or edited text), own_words = closed because the
      * owner wrote their own reply in Gmail (status stays `sent` so caps hold, but it never counts
@@ -581,6 +587,11 @@ export const businessProfiles = pgTable("business_profile", {
   workDays: integer("work_days").array().notNull().default([1, 2, 3, 4, 5, 6]),
   workStartHour: integer("work_start_hour").notNull().default(7),
   workEndHour: integer("work_end_hour").notNull().default(18),
+  /**
+   * Check 43 P8: the languages the owner answers customers in. English always; "es" / "pt"
+   * only when switched on (the owner can read a reply in it before sending).
+   */
+  replyLanguages: text("reply_languages").array().notNull().default(["en"]),
   digestLastSentOn: text("digest_last_sent_on"),
   /** Text alerts to the owner's own phone (E.164, e.g. +15085551234). Off until they opt in. */
   alertPhone: text("alert_phone"),

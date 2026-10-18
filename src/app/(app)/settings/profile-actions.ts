@@ -11,6 +11,8 @@ import {
   saveDigestSettings,
   saveFollowupSettings,
   saveDetectedTimeZone,
+  replyLanguagesInput,
+  saveReplyLanguages,
   saveVoiceEdits,
   saveWorkHours,
   setOwnerTimeZone,
@@ -118,6 +120,15 @@ export async function saveWorkHoursAction(formData: FormData) {
   }
   await saveWorkHours(workspace.id, parsed.data);
   redirect("/settings/business?done=work_hours");
+}
+
+/** Check 43 P8: the languages the owner answers customers in (Settings → Your voice). */
+export async function saveReplyLanguagesAction(formData: FormData) {
+  const { workspace } = await requireOwner();
+  const parsed = replyLanguagesInput.safeParse(formData.getAll("languages").map(String));
+  if (!parsed.success) redirect("/settings/writing?error=unknown");
+  await saveReplyLanguages(workspace.id, parsed.data);
+  redirect("/settings/writing?done=languages");
 }
 
 /** Check 44 P5: "Use Central time" — a deliberate tap to take this phone's zone. */

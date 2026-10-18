@@ -436,6 +436,33 @@ export async function saveWorkHours(
     });
 }
 
+/**
+ * Check 43 P8: "Languages you answer customers in". English is always on; Spanish and
+ * Portuguese are switches. Anything else posted is ignored.
+ */
+export const replyLanguagesInput = z
+  .array(z.string())
+  .transform((list) => ["en", ...OPTIONAL_REPLY_LANGUAGES.filter((l) => list.includes(l))]);
+export const OPTIONAL_REPLY_LANGUAGES = ["es", "pt"] as const;
+
+export async function saveReplyLanguages(
+  workspaceId: string,
+  languages: z.output<typeof replyLanguagesInput>,
+  now: Date = new Date(),
+) {
+  const set = { replyLanguages: languages, updatedAt: now };
+  await db()
+    .insert(businessProfiles)
+    .values({ workspaceId, ...set })
+    .onConflictDoUpdate({ target: businessProfiles.workspaceId, set });
+  await db().insert(activityLog).values({
+    workspaceId,
+    actor: "owner",
+    action: "reply_languages_saved",
+    detail: { languages },
+  });
+}
+
 export const DIGEST_HOURS = [5, 6, 7, 8, 9] as const;
 
 export const digestSettingsInput = z.object({
