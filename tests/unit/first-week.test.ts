@@ -508,15 +508,13 @@ describe("first week, with the database", () => {
       .where(eq(drafts.id, edited.id));
     // Practice copies: two in the trial, one from before it (not counted), another account's.
     const practice = (ws: string, createdAt: Date) =>
-      database
-        .insert(activityLog)
-        .values({
-          workspaceId: ws,
-          actor: "owner",
-          action: "practice_sent",
-          detail: {},
-          createdAt,
-        });
+      database.insert(activityLog).values({
+        workspaceId: ws,
+        actor: "owner",
+        action: "practice_sent",
+        detail: {},
+        createdAt,
+      });
     await practice(workspaceId, ago(DAY));
     await practice(workspaceId, ago(HOUR));
     await practice(workspaceId, ago(3 * DAY));
