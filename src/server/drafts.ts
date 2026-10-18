@@ -756,12 +756,6 @@ export async function createDraftForThread(
   // A nudge or closing question follows the owner's own last message; a review request
   // may follow either; everything else answers the customer.
   const afterOwner = followup || purpose === "closing_question";
-  // An unsent Gmail draft is not part of the conversation: never "the owner wrote", never
-  // text for the model or the checks, never what a nudge is threaded to (notDraftMessage).
-  // For a nudge or closing question, neither is a side conversation (a forward to the crew
-  // and the crew's reply, `sideEmailSql`): the same "who wrote last" as the follow-up scan,
-  // so a thread it picks isn't skipped here, and the note is threaded to — and only shows
-  // the model — the conversation with the customer.
   // Check 20 P4 / 21 P1: for a job, an automatic reply or bounce is not part of the
   // conversation either: it is never answered, and never what a nudge follows. The owner's own
   // tap sees everything.
@@ -775,6 +769,12 @@ export async function createDraftForThread(
     if (newestIn?.autoReply) return { status: "skipped", reason: "auto_reply" };
     if (newestIn?.ackOnly) return { status: "skipped", reason: "acknowledgement" };
   }
+  // An unsent Gmail draft is not part of the conversation: never "the owner wrote", never
+  // text for the model or the checks, never what a nudge is threaded to (notDraftMessage).
+  // For a nudge or closing question, neither is a side conversation (a forward to the crew
+  // and the crew's reply, `sideEmailSql`): the same "who wrote last" as the follow-up scan,
+  // so a thread it picks isn't skipped here, and the note is threaded to — and only shows
+  // the model — the conversation with the customer.
   const notAuto = opts.trigger === "owner" ? undefined : eq(messages.autoReply, false);
   const conversation = afterOwner
     ? and(
