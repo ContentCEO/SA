@@ -161,6 +161,15 @@ export function createGmailReader(opts: GmailReaderOptions): MailboxReader & Mai
     }
   }
 
+  async function threadMessageLabels(threadId: string) {
+    // format=minimal still carries each message's snippet (body text), so the `fields` mask
+    // asks Google for message ids and labels only: no headers, snippet or text reach us.
+    const r = await call<{ messages?: { id: string; labelIds?: string[] }[] }>(
+      `/threads/${encodeURIComponent(threadId)}?format=minimal&fields=${encodeURIComponent("messages(id,labelIds)")}`,
+    );
+    return (r?.messages ?? []).map((m) => ({ id: m.id, labelIds: m.labelIds ?? [] }));
+  }
+
   return {
     async getProfile() {
       const p = await call<{ emailAddress: string; historyId: string }>("/profile");
@@ -254,15 +263,12 @@ export function createGmailReader(opts: GmailReaderOptions): MailboxReader & Mai
     },
 
     async threadDraftMessageIds(threadId) {
-      // format=minimal still carries each message's snippet (body text), so the `fields` mask
-      // asks Google for message ids and labels only: no headers, snippet or text reach us.
-      const r = await call<{ messages?: { id: string; labelIds?: string[] }[] }>(
-        `/threads/${encodeURIComponent(threadId)}?format=minimal&fields=${encodeURIComponent("messages(id,labelIds)")}`,
-      );
-      return (r?.messages ?? [])
-        .filter((m) => (m.labelIds ?? []).includes("DRAFT") && !(m.labelIds ?? []).includes("SENT"))
+      return (await threadMessageLabels(threadId))
+        .filter((m) => m.labelIds.includes("DRAFT") && !m.labelIds.includes("SENT"))
         .map((m) => m.id);
     },
+
+    threadMessageLabels,
 
     async sendDraft(draftId) {
       const r = await call<{ id: string; threadId: string }>("/drafts/send", {

@@ -359,7 +359,17 @@ export const autopilotSend = inngest.createFunction(
   },
   async ({ event, step }) => {
     await step.sleepUntil("grace-window", new Date(event.data.at));
-    return step.run("send", () => politely(() => runAutopilotSend(event.data.draftId)));
+    const result = await step.run("send", () =>
+      politely(() => runAutopilotSend(event.data.draftId)),
+    );
+    // Check 20 P2: Gmail had mail we haven't synced; fetch it now so it reaches the queue.
+    if (result.status === "stood_down" && result.syncMailboxId) {
+      await step.sendEvent(
+        "sync-newer-mail",
+        mailboxSyncRequested.create({ mailboxId: result.syncMailboxId }),
+      );
+    }
+    return result;
   },
 );
 

@@ -280,6 +280,22 @@ describe("history", () => {
     expect(await r.threadDraftMessageIds("gone")).toEqual([]);
   });
 
+  it("Check 20 P2: lists every message of a thread with its labels, ids and labels only", async () => {
+    const f = vi
+      .fn()
+      .mockResolvedValueOnce(token())
+      .mockResolvedValueOnce(
+        json({ id: "t", messages: [{ id: "in", labelIds: ["INBOX"] }, { id: "bare" }] }),
+      );
+    const { r } = reader(f);
+    expect(await r.threadMessageLabels("t")).toEqual([
+      { id: "in", labelIds: ["INBOX"] },
+      { id: "bare", labelIds: [] },
+    ]);
+    const url = new URL(String(f.mock.calls[1]![0]));
+    expect(url.searchParams.get("fields")).toBe("messages(id,labelIds)");
+  });
+
   it("asks for metadata only unless a body is needed", async () => {
     const f = vi
       .fn()

@@ -27,6 +27,7 @@ import {
   overdueAutopilotDrafts,
   runAutopilotSend,
   setAutopilot,
+  unsyncedMessageIds,
   type GuardrailInput,
 } from "@/server/autopilot";
 import {
@@ -51,6 +52,19 @@ const cleanDraft = (over: Partial<ModelDraft> = {}): ModelDraft => ({
   confidence: 0.95,
   used_facts: [],
   ...over,
+});
+
+describe("unsyncedMessageIds (Check 20 P2)", () => {
+  const m = (id: string, ...labelIds: string[]) => ({ id, labelIds });
+  it("counts ids after the newest stored one, never drafts", () => {
+    const known = new Set(["a", "b"]);
+    expect(unsyncedMessageIds([m("a"), m("b"), m("c", "INBOX")], known)).toEqual(["c"]);
+    expect(unsyncedMessageIds([m("a"), m("b"), m("d", "DRAFT")], known)).toEqual([]);
+    expect(unsyncedMessageIds([m("a"), m("b"), m("s", "DRAFT", "SENT")], known)).toEqual(["s"]);
+    expect(unsyncedMessageIds([m("old"), m("a"), m("b")], known)).toEqual([]);
+    expect(unsyncedMessageIds([m("x"), m("y")], known)).toEqual(["x", "y"]);
+    expect(unsyncedMessageIds([], known)).toEqual([]);
+  });
 });
 
 describe("account lock (layer 1)", () => {
@@ -456,6 +470,50 @@ describe("in the database", () => {
       await considerAutopilot(second, NOW);
       await writer.createDraft({ threadId: "some-other-thread", raw: "" });
       expect(await runAutopilotSend(second, deps(later(GRACE_MINUTES)))).toEqual({
+        status: "sent",
+      });
+    });
+
+    it("Check 20 P2: mail Gmail has but sync hasn't stored yet stands it down, in the same one call", async () => {
+      const t = await conversation();
+      const draftId = await drafted(t);
+      await considerAutopilot(draftId, NOW);
+      const [thread] = await database.select().from(threads).where(eq(threads.id, t));
+      // Gmail lists what we stored, then the customer's "Actually, hold off" we haven't synced.
+      writer.threadMail.set(thread!.gmailThreadId, [
+        { id: `${thread!.gmailThreadId}-earlier`, labelIds: ["SENT"] },
+        { id: `${thread!.gmailThreadId}-in`, labelIds: ["INBOX"] },
+        { id: "not-synced-yet", labelIds: ["INBOX", "UNREAD"] },
+      ]);
+      writer.calls = [];
+      const r = await runAutopilotSend(draftId, deps(later(GRACE_MINUTES)));
+      expect(r).toEqual({
+        status: "stood_down",
+        reasons: ["There's newer mail in this conversation."],
+        syncMailboxId: mailboxId,
+      });
+      expect(writer.sent).toHaveLength(0);
+      expect(writer.calls).toEqual(["getDraft", "threadMessageLabels"]);
+      const [d] = await database.select().from(drafts).where(eq(drafts.id, draftId));
+      expect(d).toMatchObject({ status: "pending", autoSendAt: null, autoSendClaimedAt: null });
+      const [log] = await database
+        .select()
+        .from(activityLog)
+        .where(eq(activityLog.action, "autopilot_stood_down"));
+      expect(JSON.stringify(log!.detail)).not.toMatch(/not-synced-yet|hold off/);
+    });
+
+    it("Check 20 P2: only ids we already have (and older mail the backfill never read) still send", async () => {
+      const t = await conversation();
+      const draftId = await drafted(t);
+      await considerAutopilot(draftId, NOW);
+      const [thread] = await database.select().from(threads).where(eq(threads.id, t));
+      writer.threadMail.set(thread!.gmailThreadId, [
+        { id: "older-than-the-backfill", labelIds: ["INBOX"] },
+        { id: `${thread!.gmailThreadId}-earlier`, labelIds: ["SENT"] },
+        { id: `${thread!.gmailThreadId}-in`, labelIds: ["INBOX"] },
+      ]);
+      expect(await runAutopilotSend(draftId, deps(later(GRACE_MINUTES)))).toEqual({
         status: "sent",
       });
     });

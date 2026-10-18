@@ -55,7 +55,7 @@ import { isEmailToTextAddress, looksLikePhoneAddress } from "./channel-rules";
 import { complainedAddresses } from "./offers";
 import { recentEmergency } from "./emergency-rules";
 import { injectionClearedRecently } from "./injection-clear-rules";
-import { markReconnectNeeded } from "./sync";
+import { isUnsentDraft, markReconnectNeeded } from "./sync";
 import { staleTiming, timingNote } from "./draft-timing";
 import { workspaceTimeZone } from "./snooze";
 import { unsentDraftMessage } from "./thread-sql";
@@ -496,10 +496,31 @@ export async function considerAutopilot(
   return at;
 }
 
+export const NEWER_MAIL_LINE = "There's newer mail in this conversation.";
+
+/**
+ * Check 20 P2: ids Gmail lists on the thread (oldest first) after the newest one we have
+ * stored, that we don't have: mail that hasn't synced yet. Drafts don't count (sync never
+ * stores them). Unknown ids before a stored one are older mail the 30-day backfill never read.
+ * If we hold none of them we can't tell, so every one counts. Pure; ids only.
+ */
+export function unsyncedMessageIds(
+  listed: readonly { id: string; labelIds: readonly string[] }[],
+  known: ReadonlySet<string>,
+): string[] {
+  const mail = listed.filter((m) => !isUnsentDraft(m.labelIds));
+  let last = -1;
+  mail.forEach((m, i) => {
+    if (known.has(m.id)) last = i;
+  });
+  return mail.slice(last + 1).map((m) => m.id);
+}
+
 export type AutopilotSendResult =
   | { status: "sent" }
   | { status: "not_due" }
-  | { status: "stood_down"; reasons: string[] }
+  /** `syncMailboxId`: Gmail has mail we haven't synced; the job asks for a sync (Check 20 P2). */
+  | { status: "stood_down"; reasons: string[]; syncMailboxId?: string }
   | { status: "gone" }
   | { status: "failed"; outcome: SendOutcome["status"] };
 
@@ -560,7 +581,7 @@ export async function runAutopilotSend(
   );
   const reasons = [
     ...(await blockers(row, now)),
-    ...(newer.length ? ["There's newer mail in this conversation."] : []),
+    ...(newer.length ? [NEWER_MAIL_LINE] : []),
     ...(timing ? [timingNote(timing)] : []),
   ];
   // Layer 1 already needs what the send gate needs. If they ever differ, stand down here rather
@@ -571,15 +592,25 @@ export async function runAutopilotSend(
   // The owner may be writing their own reply in Gmail right now: sync doesn't store drafts,
   // so only Gmail can say. Asked only when sending is otherwise allowed — a blocked account
   // or a lost mailbox gets no Google call (sendDraft refuses those before any).
+  // Check 20 P2: the same one call lists every message, so mail that landed after the last
+  // sync ("Actually, hold off") stops the send too, and a sync is asked for.
+  let unsynced = false;
   if (!reasons.length && canSend(row.workspace, now) && mailboxOn(row.mailbox)) {
     const writer = (opts.writerFor ?? defaultWriter)(row.mailbox);
     try {
       const own = row.draft.gmailDraftId ? await writer.getDraft(row.draft.gmailDraftId) : null;
       const ours = new Set([own?.messageId, row.draft.gmailMessageId].filter(Boolean));
-      const others = (await writer.threadDraftMessageIds(row.thread.gmailThreadId)).filter(
-        (id) => !ours.has(id),
-      );
+      const listed = await writer.threadMessageLabels(row.thread.gmailThreadId);
+      const others = listed.filter((m) => isUnsentDraft(m.labelIds) && !ours.has(m.id));
       if (others.length) reasons.push("You're writing a reply in Gmail.");
+      const stored = await db()
+        .select({ id: messages.gmailMessageId })
+        .from(messages)
+        .where(eq(messages.threadId, row.thread.id));
+      if (unsyncedMessageIds(listed, new Set(stored.map((s) => s.id))).length) {
+        unsynced = true;
+        reasons.push(NEWER_MAIL_LINE);
+      }
     } catch (err) {
       await release();
       if (err instanceof MailboxAuthError) {
@@ -603,7 +634,9 @@ export async function runAutopilotSend(
         threadId: row.thread.id,
         detail: { draftId, reasonCount: reasons.length },
       });
-    return { status: "stood_down", reasons };
+    return unsynced
+      ? { status: "stood_down", reasons, syncMailboxId: row.mailbox.id }
+      : { status: "stood_down", reasons };
   }
 
   let outcome;

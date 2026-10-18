@@ -88,6 +88,20 @@ export class FakeWriter implements MailboxWriter {
     this.calls.push("threadDraftMessageIds");
     return [...this.drafts.values()].filter((d) => d.threadId === threadId).map((d) => d.messageId);
   }
+  /**
+   * Check 20 P2: mail on a thread that isn't a draft (as Gmail lists it), per thread id. Empty
+   * by default: tests add an id here for mail that hasn't synced yet.
+   */
+  threadMail = new Map<string, { id: string; labelIds: string[] }[]>();
+  async threadMessageLabels(threadId: string) {
+    this.calls.push("threadMessageLabels");
+    return [
+      ...(this.threadMail.get(threadId) ?? []),
+      ...[...this.drafts.values()]
+        .filter((d) => d.threadId === threadId)
+        .map((d) => ({ id: d.messageId, labelIds: ["DRAFT"] })),
+    ];
+  }
   /** Practice sends (#40): brand-new messages, recorded with their raw MIME. */
   messages: string[] = [];
   async sendMessage(raw: string) {
