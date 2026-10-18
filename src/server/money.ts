@@ -1,12 +1,24 @@
 import "server-only";
 import { and, desc, eq, gte, inArray, isNotNull, isNull, or, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { activityLog, businessProfiles, mailboxes, threads, workspaces } from "@/db/schema";
+import { prepareBody } from "@/ai/classify";
+import {
+  activityLog,
+  businessProfiles,
+  mailboxes,
+  messages,
+  threads,
+  workspaces,
+} from "@/db/schema";
 import { expirePendingNudge, flagPendingNudge, unflagPendingNudge, type DraftDeps } from "./drafts";
 import { effectiveStatus, jobsAllowed, ReadOnlyError } from "./lifecycle";
+import { readOwnerAmount } from "./quote-rules";
 import {
   customerAddressSql,
   customerNameSql,
+  notDraftMessage,
+  notDraftSql,
+  sideEmailSql,
   senderHasSupplierThreadSql,
   senderMarkedNotOwedSql,
 } from "./thread-sql";
@@ -32,8 +44,10 @@ export type MoneyRow = {
   mailboxEmail: string;
   customerName: string | null;
   customerAddress: string | null;
-  /** Null when the email never said how much (a paid / hidden row, or one the owner put back). */
+  /** Null when no email said how much ("Amount not stated"; never in the total). */
   amountCents: number | null;
+  /** Check 12 P5: the amount was read from the owner's own invoice email ("From your email"). */
+  amountFromYourEmail: boolean;
   invoiceNumber: string | null;
   /** Earlier invoices on the thread still owed when this one arrived (counted in the total). */
   earlierOpen: { invoiceNumber: string | null; amountCents: number }[];
@@ -73,13 +87,10 @@ async function moneyThreads(
   const unmarkedOwed = and(
     isNull(threads.invoicePaidAt),
     isNull(threads.invoicePaidSource),
-    // SQL twin of `holdsOwedInvoice` (a superset): the current invoice is owed with an
-    // amount, or an earlier one on the thread is still open, amount or not on the current.
+    // SQL twin of `holdsOwedInvoice` (a superset): the current invoice is owed (Check 12
+    // P5: amount or not), or an earlier one on the thread is still open.
     or(
-      and(
-        sql`${threads.extracted}->'invoice'->>'status' in ('unpaid', 'partly_paid')`,
-        sql`${threads.extracted}->'invoice'->>'amount' is not null`,
-      ),
+      sql`${threads.extracted}->'invoice'->>'status' in ('unpaid', 'partly_paid')`,
       sql`${threads.extracted}->'invoice'->'earlier_open' is not null`,
     ),
   );
@@ -174,6 +185,7 @@ function toRow(
     customerName: r.customerName,
     customerAddress: r.customerAddress,
     amountCents: invoice?.amount ? toCents(invoice.amount) : null,
+    amountFromYourEmail: !!invoice?.amount && invoice.amount_source === "your_email",
     invoiceNumber: invoice?.invoice_number ?? null,
     earlierOpen: (invoice?.earlier_open ?? []).map((e) => ({
       invoiceNumber: e.invoice_number,
@@ -232,6 +244,8 @@ export async function listMoney(
   hidden: MoneyRow[];
   totalOwedCents: number;
 }> {
+  // Check 12 P5: read amounts from the owner's own invoice emails first.
+  await captureInvoiceAmounts(workspaceId);
   const [profile] = await db()
     .select({ timeZone: businessProfiles.timeZone })
     .from(businessProfiles)
@@ -259,6 +273,96 @@ export async function listMoney(
     hidden,
     totalOwedCents: owedRows.reduce((t, r) => t + owedCents(r.invoice), 0),
   };
+}
+
+/**
+ * Check 12 P5: an owed invoice whose customer email never said how much ("Got your invoice,
+ * I'll pay Friday") takes its amount from the owner's own newest email on the thread — the
+ * invoice they sent — read like a quote (`readOwnerAmount`: quoted text, signatures, deposits
+ * and other non-price figures left out). Never from an inbound email, never from a purpose
+ * note the app sent, an unsent draft or a forward to the crew, and never on a thread holding
+ * several invoices (`earlier_open`: that email may be about another one). Stored as
+ * `extracted.invoice.amount` with `amount_source: "your_email"`, only while the row is still
+ * unmarked and still has no amount. Runs on view (one newest-first page) and daily before the
+ * purge (every page, by id). Logs nothing; returns a count.
+ */
+export async function captureInvoiceAmounts(
+  workspaceId?: string,
+  opts: { pageSize?: number } = {},
+): Promise<number> {
+  const pageSize = opts.pageSize ?? 500;
+  let captured = 0;
+  let after: string | null = null;
+  for (;;) {
+    const page = await db()
+      .select({ id: threads.id })
+      .from(threads)
+      .innerJoin(mailboxes, eq(mailboxes.id, threads.mailboxId))
+      .where(
+        and(
+          workspaceId ? eq(mailboxes.workspaceId, workspaceId) : undefined,
+          or(
+            eq(threads.category, "invoice_payment"),
+            sql`${threads.extracted}->>'invoice_thread' = 'true'`,
+          ),
+          isNull(threads.invoicePaidAt),
+          isNull(threads.invoicePaidSource),
+          sql`${threads.category} is distinct from 'supplier_vendor'`,
+          sql`${threads.extracted}->'invoice'->>'status' in ('unpaid', 'partly_paid')`,
+          sql`${threads.extracted}->'invoice'->>'amount' is null`,
+          // Several invoices on the thread: the owner's newest email may be about an earlier
+          // one ("#41, $500" before the customer's "got #42"), so nothing is guessed.
+          sql`${threads.extracted}->'invoice'->'earlier_open' is null`,
+          sql`exists (select 1 from messages o where o.thread_id = ${threads.id} and o.direction = 'out' and ${notDraftSql("o")} and o.body_text is not null)`,
+          after ? sql`${threads.id} > ${after}::uuid` : undefined,
+        ),
+      )
+      .orderBy(...(workspaceId ? [desc(threads.lastMessageAt)] : [threads.id]))
+      .limit(pageSize);
+    if (page.length) {
+      const newest = await db()
+        .selectDistinctOn([messages.threadId], {
+          threadId: messages.threadId,
+          body: messages.bodyText,
+        })
+        .from(messages)
+        .where(
+          and(
+            inArray(
+              messages.threadId,
+              page.map((p) => p.id),
+            ),
+            eq(messages.direction, "out"),
+            notDraftMessage(),
+            sql`not exists (select 1 from drafts d where d.thread_id = ${messages.threadId} and d.purpose is not null and d.sent_gmail_message_id = ${messages.gmailMessageId})`,
+            sql`not ${sideEmailSql("messages")}`,
+          ),
+        )
+        .orderBy(messages.threadId, desc(messages.sentAt));
+      for (const m of newest) {
+        const read = m.body ? readOwnerAmount(prepareBody(m.body)) : null;
+        if (!read) continue;
+        const dollars = read.cents / 100;
+        const set = await db()
+          .update(threads)
+          .set({
+            extracted: sql`jsonb_set(${threads.extracted}, '{invoice}', (${threads.extracted}->'invoice') || ${JSON.stringify({ amount: dollars, amount_source: "your_email" })}::jsonb)`,
+          })
+          .where(
+            and(
+              eq(threads.id, m.threadId),
+              isNull(threads.invoicePaidSource),
+              sql`${threads.extracted}->'invoice'->>'amount' is null`,
+            ),
+          )
+          .returning({ id: threads.id });
+        captured += set.length;
+      }
+    }
+    if (workspaceId || page.length < pageSize) break;
+    after = page[page.length - 1]!.id;
+  }
+  return captured;
 }
 
 /** Open invoices a payment receipt could be for (never the receipt's own thread). */

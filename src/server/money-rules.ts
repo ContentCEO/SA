@@ -42,8 +42,14 @@ export const INVOICE_STATUSES = ["unpaid", "paid", "partly_paid", "unknown"] as 
 export type InvoiceStatus = (typeof INVOICE_STATUSES)[number];
 export type InvoiceFacts = {
   invoice_number: string | null;
-  /** In dollars, as the sorter read it. */
+  /** In dollars, as the sorter read it (or from the owner's own invoice email: `amount_source`). */
   amount: number | null;
+  /**
+   * Check 12 P5: "your_email" when the amount was read from the owner's own sent email on the
+   * thread (`captureInvoiceAmounts`) because the customer's email gave none. The card says
+   * "From your email". Absent when the sorter read it from the email itself.
+   */
+  amount_source?: "your_email";
   /** As written in the email. */
   due_date: string | null;
   status: InvoiceStatus;
@@ -75,6 +81,9 @@ export function invoiceOf(extracted: unknown): InvoiceFacts | null {
   return {
     invoice_number: str(r.invoice_number),
     amount,
+    ...(amount !== null && r.amount_source === "your_email"
+      ? { amount_source: "your_email" as const }
+      : {}),
     due_date: str(r.due_date),
     status: (INVOICE_STATUSES as readonly unknown[]).includes(r.status)
       ? (r.status as InvoiceStatus)
@@ -125,7 +134,8 @@ export const toCents = (dollars: number) => Math.round(dollars * 100);
 /**
  * Still owed: nobody has marked it paid (or hidden it), and either the owner put it back on
  * the list ("Undo" / "Put back") — which beats whatever the email said, amount or not — or
- * there's an amount and the email says unpaid / partly paid.
+ * the email says unpaid / partly paid (Check 12 P5: with or without an amount — "Got your
+ * invoice, I'll pay Friday" is owed, "Amount not stated", left out of the total).
  */
 export function isOwed(f: {
   invoice: InvoiceFacts | null;
@@ -139,14 +149,14 @@ export function isOwed(f: {
 
 /**
  * The invoice facts themselves say money is owed, whatever the marks: the current invoice
- * has an amount and is unpaid / partly paid, or an earlier invoice on the thread is still
+ * is unpaid / partly paid (Check 12 P5: an amount isn't needed — the row then reads "Amount
+ * not stated" and adds nothing to the total), or an earlier invoice on the thread is still
  * open (`earlier_open` only ever holds entries with an amount). "Got #42 for phase 2" with
  * no amount, while #41's $500 is open, still owes the $500.
  */
 export function holdsOwedInvoice(invoice: InvoiceFacts | null): boolean {
   if (!invoice) return false;
   if ((invoice.earlier_open ?? []).some((e) => (e.amount ?? 0) > 0)) return true;
-  if (!(invoice.amount && invoice.amount > 0)) return false;
   return invoice.status === "unpaid" || invoice.status === "partly_paid";
 }
 
@@ -431,6 +441,10 @@ export function carryInvoiceFacts(
   return promoteEarlierOpen({
     invoice_number: next.invoice_number ?? prev.invoice_number,
     amount: next.amount ?? prev.amount,
+    // Check 12 P5: an amount read from the owner's email keeps its label while it's kept.
+    ...(next.amount == null && prev.amount != null && prev.amount_source
+      ? { amount_source: prev.amount_source }
+      : {}),
     due_date: next.due_date ?? prev.due_date,
     // "Can you resend invoice 42?" doesn't say whether it's paid: the earlier word stands.
     status: next.status === "unknown" ? prev.status : next.status,

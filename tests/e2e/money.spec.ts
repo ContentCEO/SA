@@ -141,7 +141,7 @@ test("money owed: empty, and read-only accounts can look but not mark", async ({
   await signInAs(context, owner);
   await page.goto("/money");
   await expect(
-    page.getByText("Nothing owed that we can see. Invoices show up here when a customer email"),
+    page.getByText("No invoices found in your email yet. When you send one or a customer writes"),
   ).toBeVisible();
 
   await invoice(owner.mailboxId!, {

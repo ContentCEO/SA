@@ -56,7 +56,13 @@ function OwedCard({ r, readOnly }: { r: MoneyRow; readOnly: boolean }) {
           {nameOf(r)}
         </span>
         {r.amountCents ? (
-          <span className="shrink-0 text-2xl font-black">{formatCents(r.amountCents)}</span>
+          <span className="flex shrink-0 flex-col items-end">
+            <span className="text-2xl font-black">{formatCents(r.amountCents)}</span>
+            {/* Check 12 P5: where the figure came from, when it wasn't the customer's email. */}
+            {r.amountFromYourEmail ? (
+              <span className="text-sm opacity-80">From your email</span>
+            ) : null}
+          </span>
         ) : (
           <span className="shrink-0 font-semibold">Amount not stated</span>
         )}
@@ -175,6 +181,7 @@ export default async function MoneyPage(props: PageProps<"/money">) {
     now,
   );
   const pastDue = owed.filter((r) => (r.due.daysPastDue ?? 0) > 0).length;
+  const noAmount = owed.filter((r) => !r.amountCents).length;
 
   return (
     <>
@@ -194,8 +201,8 @@ export default async function MoneyPage(props: PageProps<"/money">) {
           {owed.length === 0
             ? "Nothing open."
             : `${owed.length} invoice${owed.length === 1 ? "" : "s"}${
-                pastDue ? `, ${pastDue} past due` : ""
-              }. Oldest due first.`}
+                noAmount ? `, ${noAmount} with no amount yet` : ""
+              }${pastDue ? `, ${pastDue} past due` : ""}. Oldest due first.`}
         </p>
       </section>
 
@@ -209,7 +216,8 @@ export default async function MoneyPage(props: PageProps<"/money">) {
         </ol>
       ) : (
         <p className="text-lg">
-          Nothing owed that we can see. Invoices show up here when a customer email mentions one.
+          No invoices found in your email yet. When you send one or a customer writes about one, it
+          shows up here.
         </p>
       )}
 

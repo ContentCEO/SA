@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { and, eq, sql } from "drizzle-orm";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { setModelTransportForTests } from "@/ai/client";
 import type { Database } from "@/db";
 import { activityLog, drafts, mailboxes, messages, threads, workspaces } from "@/db/schema";
@@ -134,7 +134,8 @@ describe("money rules", () => {
     expect(o(inv({ status: "paid" }))).toBe(false);
     expect(o(inv({ status: "unknown" }))).toBe(false);
     expect(o(inv({ status: "paid" }), null, "owner")).toBe(true); // the owner undid a paid mark
-    expect(o(inv({ amount: null }))).toBe(false);
+    // Check 12 P5: an unpaid invoice with no amount is owed too ("Amount not stated").
+    expect(o(inv({ amount: null }))).toBe(true);
     // The owner put back a row whose email never said how much: it's owed, amount unknown.
     expect(o(inv({ amount: null }), null, "owner")).toBe(true);
     expect(o(null, null, "owner")).toBe(true);
@@ -322,7 +323,8 @@ describe("money rules", () => {
     expect(holdsOwedInvoice(carried)).toBe(true);
     expect(isOwed({ invoice: carried, paidAt: null, paidSource: null })).toBe(true);
     expect(isOwed({ invoice: carried, paidAt: NOW, paidSource: "auto" })).toBe(false);
-    expect(holdsOwedInvoice(inv({ amount: null }))).toBe(false);
+    // Check 12 P5: an unpaid invoice with no amount is owed ("Amount not stated").
+    expect(holdsOwedInvoice(inv({ amount: null }))).toBe(true);
     expect(holdsOwedInvoice(inv({ status: "paid" }))).toBe(false);
     expect(holdsOwedInvoice(null)).toBe(false);
   });
@@ -570,9 +572,14 @@ describe("money owed list", () => {
       invoice: { amount: 300, due_date: "2026-10-05", status: "partly_paid" },
     });
     await database.update(threads).set({ followupCount: 1 }).where(eq(threads.id, late));
-    // Not on the list: paid per the email, no amount, noise, a supplier's bill, a quote.
+    // Check 12 P5: no amount (and none in the owner's email) is listed last, out of the total.
+    const noAmount = await invoiceThread({
+      from: "b@c.com",
+      invoice: { amount: null },
+      outAgo: null,
+    });
+    // Not on the list: paid per the email, noise, a supplier's bill, a quote.
     await invoiceThread({ from: "a@c.com", invoice: { status: "paid" } });
-    await invoiceThread({ from: "b@c.com", invoice: { amount: null } });
     await invoiceThread({ from: "c@c.com", category: "noise" });
     // The supplier's bill looks owed in every other way (an invoice thread, an unpaid amount):
     // only its category keeps it off.
@@ -599,7 +606,7 @@ describe("money owed list", () => {
     await invoiceThread({ box: otherBox.id, from: "z@c.com", invoice: { amount: 9999 } });
 
     const money = await listMoney(workspaceId, NOW);
-    expect(money.owed.map((r) => r.threadId)).toEqual([late, partly, soon]);
+    expect(money.owed.map((r) => r.threadId)).toEqual([late, partly, soon, noAmount]);
     expect(money.owed[0]).toMatchObject({
       customerName: "Dana Ruiz",
       customerAddress: "dana@customer.com",
@@ -1505,7 +1512,10 @@ describe("auto paid", () => {
 
   it("an invoice waiting with no amount ('Got it, will pay Friday'), then 'Paid it': our paid guess", async () => {
     const t = await invoiceThread({ invoice: { invoice_number: "1043", amount: null } });
-    expect((await listMoney(workspaceId, NOW)).owed).toEqual([]);
+    // Check 12 P5: it's owed, with the amount from the owner's own invoice email.
+    expect((await listMoney(workspaceId, NOW)).owed).toMatchObject([
+      { threadId: t, amountCents: 120_000, amountFromYourEmail: true },
+    ]);
     await writes(t);
     await classifyWith(paidSays({}));
     expect((await rowOf(t)).invoicePaidSource).toBe("auto");
@@ -1547,6 +1557,75 @@ describe("auto paid", () => {
       },
     ]);
     expect(money.totalOwedCents).toBe(50_000);
+  });
+});
+
+describe("Check 12 P5: invoices with no amount yet", () => {
+  beforeEach(setupDb, DB_HOOK_TIMEOUT);
+  const ownerSends = (threadId: string, bodyText: string, ago = 3) =>
+    database.insert(messages).values({
+      threadId,
+      mailboxId,
+      gmailMessageId: `os${++g}`,
+      direction: "out",
+      fromAddress: "owner@shop.com",
+      toAddresses: ["dana@customer.com"],
+      bodyText,
+      sentAt: daysAgo(ago),
+    });
+
+  it("'Got your invoice, I'll pay Friday' is owed, with no amount and out of the total", async () => {
+    const t = await invoiceThread({ invoice: { amount: null }, outAgo: null });
+    const other = await invoiceThread({ from: "sam@customer.com", invoice: { amount: 300 } });
+    const { owed, totalOwedCents } = await listMoney(workspaceId, NOW);
+    expect(owed.map((r) => r.threadId).sort()).toEqual([t, other].sort());
+    expect(owed.find((r) => r.threadId === t)).toMatchObject({
+      amountCents: null,
+      amountFromYourEmail: false,
+    });
+    expect(totalOwedCents).toBe(30_000);
+  });
+
+  it("takes the amount from the owner's own invoice email, labelled — never from quoted customer text", async () => {
+    const spies = (["log", "info", "warn", "error"] as const).map((k) =>
+      vi.spyOn(console, k).mockImplementation(() => {}),
+    );
+    const t = await invoiceThread({ invoice: { amount: null }, outAgo: null });
+    await ownerSends(t, "Hi Dana, invoice 1043 attached: $1,850 for the panel work. Thanks!");
+    const quoted = await invoiceThread({
+      from: "kim@customer.com",
+      invoice: { amount: null },
+      outAgo: null,
+    });
+    await ownerSends(
+      quoted,
+      "Thanks Kim!\n\nOn Mon, Oct 5, 2026, Kim wrote:\n> I'll send the $900 Friday",
+    );
+    const { owed, totalOwedCents } = await listMoney(workspaceId, NOW);
+    expect(owed.find((r) => r.threadId === t)).toMatchObject({
+      amountCents: 185_000,
+      amountFromYourEmail: true,
+    });
+    expect(owed.find((r) => r.threadId === quoted)).toMatchObject({ amountCents: null });
+    expect(totalOwedCents).toBe(185_000);
+    // Idempotent, and it never writes over an amount.
+    const { captureInvoiceAmounts } = await import("@/server/money");
+    expect(await captureInvoiceAmounts()).toBe(0);
+    for (const spy of spies) {
+      const said = JSON.stringify(spy.mock.calls);
+      expect(said).not.toMatch(/1,?850|Dana|Kim|900/);
+      spy.mockRestore();
+    }
+  });
+
+  it("an inbound email never supplies the amount", async () => {
+    const t = await invoiceThread({ invoice: { amount: null }, outAgo: null });
+    await writes(t); // the customer's own words, with no figure the owner wrote
+    await database
+      .update(messages)
+      .set({ bodyText: "I'll pay the $2,000 Friday." })
+      .where(and(eq(messages.threadId, t), eq(messages.direction, "in")));
+    expect((await listMoney(workspaceId, NOW)).owed[0]).toMatchObject({ amountCents: null });
   });
 });
 

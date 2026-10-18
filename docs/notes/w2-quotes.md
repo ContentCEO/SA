@@ -93,3 +93,16 @@ For the integrator to fold into CLAUDE.md (Decisions) and the other shared files
   backfill would change nothing the screens show; (c) `pnpm eval` not run (no
   `ANTHROPIC_API_KEY` here), so `tests/evals/baseline.json` is still empty. Two eval cases added
   (`i-subcontractor-invoice`, `i-quickbooks-supplier-receipt`).
+- **Check 12 P5 (invoices with no amount):** `holdsOwedInvoice` no longer needs an amount, so an
+  unpaid / partly paid invoice thread with none is on Money owed as "Amount not stated", left
+  out of the dollar total; the summary says "3 invoices, 1 with no amount yet". (The morning
+  email's owed line already handles a count with no amounts.) New `captureInvoiceAmounts`
+  (money.ts; on view, and daily before the purge as step `capture-invoice-amounts` in
+  `purge-expired-bodies`, paging every match by id): an owed, unmarked invoice thread with no
+  amount and no `earlier_open` takes the figure from the owner's own newest email on the thread
+  (not an unsent draft, not a purpose note, not a forward to the crew; quoted text stripped) —
+  read with `readOwnerAmount`, not "largest figure" (Check 11 P2's reasons apply to invoices
+  too) — stored as `extracted.invoice.amount` with `amount_source: "your_email"`; the card says
+  "From your email". Never from an inbound email. `carryInvoiceFacts` keeps the label while the
+  amount is carried. Logs nothing. Empty text: "No invoices found in your email yet. When you
+  send one or a customer writes about one, it shows up here."
