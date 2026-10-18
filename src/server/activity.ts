@@ -374,6 +374,7 @@ export function describeActivity(
  */
 export const DESCRIBED_ACTIONS = [
   "draft_created",
+  "signed_out_everywhere",
   "closing_question",
   "followup_drafted",
   "reply_sent",

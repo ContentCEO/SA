@@ -69,7 +69,7 @@ export function DeleteAccountButton({
           autoCapitalize="characters"
           autoCorrect="off"
           spellCheck={false}
-          className="min-h-tap w-full rounded-lg border-2 border-paper bg-paper px-3 text-lg text-charcoal"
+          className="min-h-tap w-full rounded-lg border-2 border-input bg-paper px-3 text-lg text-charcoal"
         />
       </div>
       <div className="flex flex-col gap-2 sm:flex-row">
