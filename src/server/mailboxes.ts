@@ -1,11 +1,15 @@
 import "server-only";
-import { and, asc, eq, sql } from "drizzle-orm";
+import { and, asc, desc, eq, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { activityLog, mailboxes, type Mailbox, type Workspace } from "@/db/schema";
 import { decryptSecret, encryptSecret } from "@/lib/crypto";
 import type { ConnectResult, MailboxConnector } from "@/mailbox/connector";
 import { fitMailboxesToPlan } from "./mailbox-plan";
+import type { FirstReadProgress } from "./mailbox-health";
 import { mailboxLimitFor } from "./mailbox-plan-rules";
+
+/** Same as sync's BACKFILL_DAYS (not imported: sync imports this module's neighbours). */
+const BACKFILL_DAYS_FOR_PROGRESS = 30;
 import { startEvaluation } from "./workspace-lifecycle";
 
 /** What the UI may see about a mailbox. Never includes the token. */
@@ -21,6 +25,7 @@ export type MailboxSummary = Pick<
   | "watchExpiresAt"
   | "lastSyncErrorCode"
   | "planPausedAt"
+  | "backfillSince"
 >;
 
 /** Before a plan is chosen (evaluation), a workspace gets one mailbox. */
@@ -48,6 +53,7 @@ export async function listMailboxes(workspaceId: string): Promise<MailboxSummary
       watchExpiresAt: mailboxes.watchExpiresAt,
       lastSyncErrorCode: mailboxes.lastSyncErrorCode,
       planPausedAt: mailboxes.planPausedAt,
+      backfillSince: mailboxes.backfillSince,
     })
     .from(mailboxes)
     .where(eq(mailboxes.workspaceId, workspaceId))
@@ -120,7 +126,55 @@ export async function saveConnectedMailbox(
     watchExpiresAt: row.watchExpiresAt,
     lastSyncErrorCode: row.lastSyncErrorCode,
     planPausedAt: row.planPausedAt,
+    backfillSince: row.backfillSince,
   };
+}
+
+/**
+ * Check 25 P6: a first read in progress, for Settings → Your Gmail. The start is the read's
+ * fixed window plus 30 days (`backfill_since` is "now − 30 days" at the begin); a read that
+ * began after the owner reconnected says so instead of "for the first time". Counts only.
+ */
+export async function firstReadProgress(
+  m: Pick<MailboxSummary, "id" | "backfillSince"> & { workspaceId: string },
+  count: number,
+  timeZone: string,
+): Promise<FirstReadProgress> {
+  const startedAt = m.backfillSince
+    ? new Date(m.backfillSince.getTime() + BACKFILL_DAYS_FOR_PROGRESS * 86_400_000)
+    : null;
+  const [reconnect] = await db()
+    .select({ at: activityLog.createdAt })
+    .from(activityLog)
+    .where(
+      and(
+        eq(activityLog.workspaceId, m.workspaceId),
+        eq(activityLog.action, "mailbox_reconnected"),
+        sql`${activityLog.detail}->>'mailboxId' = ${m.id}`,
+      ),
+    )
+    .orderBy(desc(activityLog.createdAt))
+    .limit(1);
+  // The read restarted at (or just after) the reconnect.
+  const afterReconnect =
+    !!reconnect && (!startedAt || reconnect.at.getTime() <= startedAt.getTime() + 60 * 60_000);
+  let startedLabel: string | null = null;
+  if (startedAt) {
+    try {
+      startedLabel = startedAt.toLocaleTimeString("en-US", {
+        hour: "numeric",
+        minute: "2-digit",
+        timeZone,
+      });
+    } catch {
+      startedLabel = startedAt.toLocaleTimeString("en-US", {
+        hour: "numeric",
+        minute: "2-digit",
+        timeZone: "America/New_York",
+      });
+    }
+  }
+  return { count, startedAt, startedLabel, afterReconnect };
 }
 
 /**

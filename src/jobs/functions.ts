@@ -120,9 +120,7 @@ export const backfillMailbox = inngest.createFunction(
     let total = 0;
     let done = false;
     for (let page = 0; page < MAX_BACKFILL_PAGES_PER_RUN; page++) {
-      const result = await step.run(`page-${page}`, () =>
-        politely(() => backfillPage(mailboxId)),
-      );
+      const result = await step.run(`page-${page}`, () => politely(() => backfillPage(mailboxId)));
       if (result.status !== "ok") return result;
       total += result.ingested;
       if (result.done) {

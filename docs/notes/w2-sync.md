@@ -201,3 +201,19 @@ Under "What we store": "How many photos or files an email had (never the files o
   `{ status: "continuing" }`; the 5-minute poll starts the next stretch (singleton skip prevents
   overlap). `runBackfill(…, { maxPages })` does the same in one go for tests and the e2e hook.
 - `newer_than:` is gone from sync (both the first read and the re-read use `after:`).
+
+## Step 9 · Check 25 P6: tell the owner plainly when mail checking is behind
+
+- Every signed-in screen (`StaleMailLine` under the StatusBanner in the (app) layout): for an
+  account we still read (`jobsAllowed`), an active, plan-on inbox already read once whose last
+  check is older than `STALE_SYNC_MS` (30 min) shows "Mail last checked 42 minutes ago. New
+  emails may not be here yet. They're safe in Gmail." (`.sa-inverted`, role=status). Not for a
+  fresh inbox, a first read in progress, lost access (own banner) or a read-only account.
+- `mailboxHealth`: stale → New mail "Should be every 5 minutes. The last check was 42 minutes
+  ago."; first read → "Reading your last 30 days: 1,250 emails so far, started 2:10 PM." (count =
+  stored messages; start = `backfill_since` + 30 days, so no new column; time in the owner's zone);
+  after a reconnect (a `mailbox_reconnected` activity row for that mailbox at or before the read's
+  start + 1 h) → "Reading your last 30 days again after reconnecting."; over 3 hours → adds "Big
+  inboxes take a while. New mail is still safe in Gmail." "For the first time" is gone.
+- Settings sync line: "This can take a while." (was "a few minutes"). Learning screen: serif
+  "this can take a while," heavy "reading your email.", and the running count while reading.

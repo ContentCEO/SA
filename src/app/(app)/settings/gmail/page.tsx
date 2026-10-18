@@ -6,7 +6,13 @@ import { relativeTime } from "@/lib/relative-time";
 import { cn } from "@/lib/utils";
 import { mailboxHealth } from "@/server/mailbox-health";
 import { planPausedLine } from "@/server/mailbox-plan-rules";
-import { listMailboxes, mailboxLimit, type MailboxSummary } from "@/server/mailboxes";
+import {
+  firstReadProgress,
+  listMailboxes,
+  mailboxLimit,
+  type MailboxSummary,
+} from "@/server/mailboxes";
+import { getBusinessProfile } from "@/server/profile";
 import { requireOwner } from "@/server/session";
 import { BACKFILL_DAYS, syncSummary } from "@/server/sync";
 import { disconnectMailboxAction, swapMailboxAction } from "../actions";
@@ -26,7 +32,7 @@ function syncLine(m: MailboxSummary, messageCount: number): string {
   }
   if (m.status === "paused") return "Paused. Nothing is being read or drafted.";
   if (!m.backfillCompletedAt) {
-    return `Reading your last ${BACKFILL_DAYS} days of email. This can take a few minutes.`;
+    return `Reading your last ${BACKFILL_DAYS} days of email. This can take a while.`;
   }
   const checked = m.lastSyncedAt ? `, checked ${relativeTime(m.lastSyncedAt)}` : "";
   return `${messageCount.toLocaleString("en-US")} emails from the last ${BACKFILL_DAYS} days${checked}.`;
@@ -39,6 +45,25 @@ export default async function GmailSettingsPage(props: PageProps<"/settings/gmai
   const counts = new Map(
     await Promise.all(
       mailboxes.map(async (m) => [m.id, (await syncSummary(m.id)).messageCount] as const),
+    ),
+  );
+  // Check 25 P6: a first read in progress shows how far it got and when it started.
+  const timeZone = (await getBusinessProfile(workspace.id))?.timeZone ?? "America/New_York";
+  const firstReads = new Map(
+    await Promise.all(
+      mailboxes
+        .filter((m) => !m.backfillCompletedAt)
+        .map(
+          async (m) =>
+            [
+              m.id,
+              await firstReadProgress(
+                { ...m, workspaceId: workspace.id },
+                counts.get(m.id) ?? 0,
+                timeZone,
+              ),
+            ] as const,
+        ),
     ),
   );
   const limit = mailboxLimit(workspace);
@@ -129,7 +154,12 @@ export default async function GmailSettingsPage(props: PageProps<"/settings/gmai
                   </li>
                 );
               }
-              const health = mailboxHealth(m, now, Boolean(process.env.GMAIL_PUBSUB_TOPIC));
+              const health = mailboxHealth(
+                m,
+                now,
+                Boolean(process.env.GMAIL_PUBSUB_TOPIC),
+                firstReads.get(m.id),
+              );
               const needsYou = health.needsReconnect;
               return (
                 <li
