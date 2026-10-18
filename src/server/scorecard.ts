@@ -3,7 +3,13 @@ import { and, count, eq, gte, inArray, lt, sql, type SQL } from "drizzle-orm";
 import { MINUTES_PER_SENT_REPLY } from "@/config/drafting";
 import { db } from "@/db";
 import { drafts, mailboxes, threads } from "@/db/schema";
-import { averageMinutes, quoteSpeed, weekBounds, type ScorecardNumbers } from "./scorecard-rules";
+import {
+  averageMinutes,
+  medianMinutes,
+  quoteSpeed,
+  weekBounds,
+  type ScorecardNumbers,
+} from "./scorecard-rules";
 import {
   asDate,
   noReplySql,
@@ -102,7 +108,8 @@ export function scorecardQueries(workspaceId: string, start: Date, end: Date, no
     );
 
   // Response time: quote requests asked for this week (the week of the request), to the
-  // owner's first answer after it, up to now. Calendar time. A no-reply sender (a lead
+  // owner's first answer after it, up to now. Clock time, nights and weekends included (the
+  // screen says so); the owner is shown the typical (median) gap. A no-reply sender (a lead
   // platform's notice) is answered on the platform, never here (A13).
   // `settled`: the owner marked how it ended (say, after a phone call) — handled, so never
   // "still waiting", though there's no email to time.
@@ -195,7 +202,13 @@ export async function weeklyScorecard(
     followupsSent,
     autopilotSent,
     quotesOut: Number(out[0]?.n ?? 0),
-    response: { avgMinutes: averageMinutes(pairs), answered: pairs.length, unanswered },
+    response: {
+      avgMinutes: averageMinutes(pairs),
+      // Check 14 P5: the typical answer (median), what the owner is shown.
+      typicalMinutes: medianMinutes(pairs),
+      answered: pairs.length,
+      unanswered,
+    },
     // Same rule as the month (timeSavedRule): every drafted reply or follow-up that went out.
     minutesSaved: MINUTES_PER_SENT_REPLY * (repliesSent + followupsSent + autopilotSent),
     // Ideas C8: within 24 hours, calendar time. Known edge: Monday's email counts last week

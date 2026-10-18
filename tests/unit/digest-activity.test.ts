@@ -974,6 +974,18 @@ describe("digest: needs-you header, queue agreement and Monday's last week (plan
       expect(`${email!.subject}${email!.text}${email!.html}`).not.toMatch(/SECRET|@example\.com/i);
     });
 
+    it("Monday's response line is the typical answer, the same helper as the screen (Check 14 P5)", async () => {
+      await lastWeekWork();
+      const t = await thread({ category: "quote_request" }, [
+        { dir: "in", at: new Date("2026-10-06T13:00:00Z") },
+        { dir: "out", at: new Date("2026-10-06T15:00:00Z") },
+      ]);
+      expect(t.id).toBeTruthy();
+      const { email } = await runDigest(MONDAY);
+      expect(email!.text).toContain("1 of last week's quote requests answered, in 2 h.");
+      expect(email!.text).not.toContain("on average");
+    });
+
     it("Tuesday doesn't", async () => {
       await lastWeekWork();
       const { email } = await runDigest(new Date("2026-10-13T11:30:00Z"));

@@ -51,35 +51,56 @@ export function averageMinutes(pairs: { from: Date; to: Date }[]): number | null
 }
 
 /**
- * "You answered this week's quote requests in 2 h 10 min on average (last week: 3 h 40 min)."
- * With nothing answered: "Of this week's quote requests: none answered yet (last week: 3 h 40
- * min on average)." — so last week's figure is said either way. With none in at all
- * (`answered` and `unanswered` both 0): "No quote requests came in last week." Requests still
- * waiting are always said out loud, so a fast average can't hide them. Check 14 P4: every
- * sentence names its own group (the requests asked that week), so it can't read as
- * contradicting "Quote requests answered", which counts answers given that week.
+ * Check 14 P5: the typical gap (the median) in whole minutes, or null with nothing to go on.
+ * An even count takes the mean of the two middle gaps. One slow weekend can't drag it the way
+ * it drags the average.
+ */
+export function medianMinutes(pairs: { from: Date; to: Date }[]): number | null {
+  if (pairs.length === 0) return null;
+  const gaps = pairs
+    .map((p) => Math.max(0, p.to.getTime() - p.from.getTime()) / 60_000)
+    .sort((a, b) => a - b);
+  const mid = Math.floor(gaps.length / 2);
+  return Math.round(gaps.length % 2 ? gaps[mid]! : (gaps[mid - 1]! + gaps[mid]!) / 2);
+}
+
+/**
+ * "Your typical first answer to this week's quote requests: 2 h 10 min, the middle of 3
+ * (last week: 3 h 40 min)." One answered: "1 of this week's quote requests answered, in 2 h 10
+ * min." With nothing answered: "Of this week's quote requests: none answered yet (last week's
+ * typical answer: 3 h 40 min)." — so last week's figure is said either way. With none in at
+ * all (`answered` and `unanswered` both 0): "No quote requests came in last week." Requests
+ * still waiting are always said out loud, so a quick typical time can't hide them.
+ * Check 14 P4: every sentence names its own group (the requests asked that week), so it can't
+ * read as contradicting "Quote requests answered", which counts answers given that week.
+ * Check 14 P5: the typical time (median), not the average; clock time, nights included.
  */
 export function responseTimeSentence(
-  thisWeek: { avgMinutes: number | null; unanswered: number; answered?: number },
-  lastWeek: { avgMinutes: number | null } | null,
+  thisWeek: { typicalMinutes: number | null; unanswered: number; answered?: number },
+  lastWeek: { typicalMinutes: number | null } | null,
   period: "this week" | "last week" = "this week",
 ): string {
   const before = period === "this week" ? "last week" : "the week before";
-  const earlier = lastWeek?.avgMinutes != null ? formatDuration(lastWeek.avgMinutes) : null;
+  const earlier = lastWeek?.typicalMinutes != null ? formatDuration(lastWeek.typicalMinutes) : null;
   // None came in at all (only known when `answered` is given): say so, rather than "none
   // answered", which reads as if the owner missed some.
   const noneCameIn = thisWeek.answered === 0 && Math.round(thisWeek.unanswered) <= 0;
   const whose = period === "this week" ? "this week's" : "last week's";
+  const typical = thisWeek.typicalMinutes;
+  const answered = thisWeek.answered;
   let s =
-    thisWeek.avgMinutes == null
+    typical == null
       ? (noneCameIn
           ? period === "this week"
             ? "No quote requests have come in yet this week"
             : "No quote requests came in last week"
           : `Of ${whose} quote requests: none answered${period === "this week" ? " yet" : ""}`) +
-        (earlier ? ` (${before}: ${earlier} on average).` : ".")
-      : `You answered ${whose} quote requests in ${formatDuration(thisWeek.avgMinutes)} on average` +
-        (earlier ? ` (${before}: ${earlier}).` : ".");
+        (earlier ? ` (${before}'s typical answer: ${earlier}).` : ".")
+      : (answered === 1
+          ? `1 of ${whose} quote requests answered, in ${formatDuration(typical)}`
+          : `Your typical first answer to ${whose} quote requests: ${formatDuration(typical)}${
+              answered && answered > 1 ? `, the middle of ${answered}` : ""
+            }`) + (earlier ? ` (${before}: ${earlier}).` : ".");
   const n = Math.max(0, Math.round(thisWeek.unanswered));
   if (n > 0) s += ` ${n} ${n === 1 ? "is" : "are"} still waiting.`;
   return s;
@@ -121,7 +142,16 @@ export type ScorecardNumbers = {
   autopilotSent?: number;
   /** Quote requests first answered in the week (any first reply, or "I called them"). */
   quotesOut: number;
-  response: { avgMinutes: number | null; answered: number; unanswered: number };
+  /**
+   * `typicalMinutes` (the median) is what the owner screens and the Monday email say
+   * (Check 14 P5); `avgMinutes` stays in the data for anything that wants the mean.
+   */
+  response: {
+    avgMinutes: number | null;
+    typicalMinutes: number | null;
+    answered: number;
+    unanswered: number;
+  };
   minutesSaved: number;
   /** Ideas C8: quote requests answered within a day, of those that can be judged yet. */
   speed?: QuoteSpeed;

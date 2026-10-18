@@ -77,14 +77,13 @@ test("activity: plain log, honest estimate, reachable from the menu", async ({ p
   await expect(figure("Time saved (estimate)").getByRole("definition")).toHaveText(
     "about 3 minutes",
   );
-  await expect(week).toContainText(
-    "You answered this week's quote requests in under a minute on average.",
-  );
+  await expect(week).toContainText("1 of this week's quote requests answered, in under a minute.");
   await expect(week).not.toContainText("still waiting");
   await expect(week).toContainText("Nothing sent last week.");
   await expect(week).toContainText(RULE);
   expect(((await week.textContent()) ?? "").split(RULE).length - 1).toBe(1);
   await expect(week).toContainText("Answered counts your first reply to each quote request");
+  await expect(week).toContainText("Clock time, nights and weekends included.");
 
   const overflow = await page.evaluate(
     () => document.documentElement.scrollWidth > document.documentElement.clientWidth,

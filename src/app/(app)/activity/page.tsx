@@ -150,7 +150,9 @@ export default async function ActivityPage() {
         <p className="text-sm text-muted-foreground">
           {timeSavedRule()} Weeks start on Monday. Answered counts your first reply to each quote
           request, by email or by tapping I called them, in the week you answered. Response time
-          runs from a customer&apos;s first email asking for a quote to your first reply.
+          runs from a customer&apos;s first email asking for a quote to your first reply. Clock
+          time, nights and weekends included. The typical time is the middle one, so one slow answer
+          can&apos;t drag it.
         </p>
         {speedLine ? (
           <p className="text-sm text-muted-foreground">
