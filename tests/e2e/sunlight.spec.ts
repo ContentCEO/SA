@@ -3,7 +3,7 @@ import { expect, type Page, test } from "@playwright/test";
 import * as schema from "../../src/db/schema";
 import { seedOwner, seedQueue, signInAs, testDb } from "./support";
 
-test("sunlight mode: one tap, remembered on this device, nothing spills off screen", async ({
+test("sunlight mode: one tap, no server call, remembered on this device, nothing spills off screen", async ({
   page,
   context,
 }) => {
@@ -11,19 +11,33 @@ test("sunlight mode: one tap, remembered on this device, nothing spills off scre
   await seedQueue(owner.mailboxId!);
   await signInAs(context, owner);
   await page.goto("/queue");
+  await page.waitForLoadState("networkidle");
 
+  // Check 8 P4: the tap changes the screen itself — no POST, no refresh.
+  const posts: string[] = [];
+  page.on("request", (r) => {
+    if (r.method() === "POST") posts.push(r.url());
+  });
   const toggle = page.getByRole("button", { name: "Sunlight" });
   await expect(toggle).toHaveAttribute("aria-pressed", "false");
   const before = await page.evaluate(() => getComputedStyle(document.documentElement).fontSize);
   await toggle.click();
+  await expect(toggle).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator('[data-contrast="high"]')).toHaveCount(1);
+  const after = await page.evaluate(() => getComputedStyle(document.documentElement).fontSize);
+  expect(parseFloat(after)).toBeGreaterThan(parseFloat(before));
+  expect(posts).toEqual([]);
+  const cookie = (await context.cookies()).find((c) => c.name === "sa_contrast");
+  expect(cookie?.value).toBe("high");
+  expect(cookie?.httpOnly).toBe(false);
+
+  // A reload keeps it (the server reads the cookie: right look on the first paint).
+  await page.reload();
+  await expect(page.locator('[data-contrast="high"]')).toHaveCount(1);
   await expect(page.getByRole("button", { name: "Sunlight" })).toHaveAttribute(
     "aria-pressed",
     "true",
   );
-  await expect(page.locator('[data-contrast="high"]')).toHaveCount(1);
-  const after = await page.evaluate(() => getComputedStyle(document.documentElement).fontSize);
-  expect(parseFloat(after)).toBeGreaterThan(parseFloat(before));
-
   await page.goto("/settings");
   await expect(page.locator('[data-contrast="high"]')).toHaveCount(1);
   for (const path of ["/queue", "/settings", "/settings/phone", "/more"]) {
@@ -34,8 +48,54 @@ test("sunlight mode: one tap, remembered on this device, nothing spills off scre
     expect(overflow, path).toBe(false);
   }
 
+  // A second tap turns it off, and that sticks too.
   await page.getByRole("button", { name: "Sunlight" }).click();
   await expect(page.locator('[data-contrast="high"]')).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Sunlight" })).toHaveAttribute(
+    "aria-pressed",
+    "false",
+  );
+  expect(posts).toEqual([]);
+  await page.reload();
+  await expect(page.locator('[data-contrast="high"]')).toHaveCount(0);
+});
+
+test("Check 8 P4: Sunlight works with no signal", async ({ page, context }) => {
+  const owner = await seedOwner({ mailbox: true, backfilled: true });
+  await signInAs(context, owner);
+  await page.goto("/queue");
+  await page.waitForLoadState("networkidle");
+  await context.setOffline(true);
+  await page.getByRole("button", { name: "Sunlight" }).click();
+  await expect(page.locator('[data-contrast="high"]')).toHaveCount(1);
+  await expect(page.getByText("something broke")).toHaveCount(0);
+  // Not stopped by the no-signal guard either: nothing to send.
+  await expect(page.getByText("Nothing was sent or changed.")).toHaveCount(0);
+  await context.setOffline(false);
+});
+
+test("Check 8 P4: after a Sunlight tap the other tabs still open at once", async ({
+  page,
+  context,
+}) => {
+  const owner = await seedOwner({ mailbox: true, backfilled: true });
+  await signInAs(context, owner);
+  await page.goto("/queue");
+  await page.waitForLoadState("networkidle");
+  await page.getByRole("button", { name: "Sunlight" }).click();
+  await expect(page.locator('[data-contrast="high"]')).toHaveCount(1);
+  // A slow signal from here on: the Inbox's data takes 3 seconds.
+  await page.route("**/inbox**", async (route) => {
+    await new Promise((r) => setTimeout(r, 3000));
+    await route.continue();
+  });
+  await page
+    .getByRole("navigation", { name: "Main" })
+    .filter({ visible: true })
+    .getByRole("link", { name: "Inbox" })
+    .click();
+  await expect(page.getByRole("status", { name: "Loading" })).toBeVisible({ timeout: 500 });
+  await expect(page.locator("[data-updated-at]")).toBeVisible({ timeout: 10_000 });
 });
 
 const DAY = 86_400_000;

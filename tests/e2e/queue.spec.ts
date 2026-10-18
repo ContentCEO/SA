@@ -223,8 +223,8 @@ test("a refresh that keeps the link doesn't pull the owner back to the card", as
   await settled(page);
   await expect(needsYou).not.toBeInViewport();
 
-  // …then the owner scrolls up and turns on Sunlight. That action re-renders the page in place
-  // (no redirect, `#t-…` still in the URL), which remounts ScrollToThread.
+  // …then the owner scrolls up and turns on Sunlight (a client-only switch since Check 8 P4;
+  // `#t-…` still in the URL). Nothing may scroll them back down to the card.
   await page.evaluate(() => window.scrollTo(0, 0));
   const sunlight = page.getByRole("button", { name: "Sunlight" });
   await expect(sunlight).toHaveAttribute("aria-pressed", "false");

@@ -75,7 +75,7 @@ async function tapOffline(page: Page, tap: () => Promise<void>) {
   await expect(page.getByText(BLOCKED)).toHaveCount(0);
 }
 
-test("no signal: Send reply, Mark paid, Sunlight and Save business profile say nothing was sent", async ({
+test("no signal: Send reply, Mark paid and Save business profile say nothing was sent", async ({
   page,
   context,
 }) => {
@@ -88,7 +88,7 @@ test("no signal: Send reply, Mark paid, Sunlight and Save business profile say n
   await page.waitForLoadState("networkidle");
   const card = page.getByRole("article", { name: "Draft reply to Priya" });
   await tapOffline(page, () => card.getByRole("button", { name: "Send reply" }).click());
-  await tapOffline(page, () => page.getByRole("button", { name: "Sunlight" }).click());
+  // Sunlight needs no signal at all now (Check 8 P4, sunlight.spec.ts).
   const [after] = await testDb.select().from(schema.drafts).where(eq(schema.drafts.id, draft.id));
   expect(after!.sendAfter).toBeNull();
 

@@ -1,11 +1,11 @@
 "use client";
 
-import { Banknote, ClipboardCheck, Inbox, Menu, Receipt, Sun } from "lucide-react";
+import { Banknote, ClipboardCheck, Inbox, Menu, Receipt } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { Wordmark } from "@/components/brand/wordmark";
 import { cn } from "@/lib/utils";
-import { toggleSunlightAction } from "@/app/(app)/settings/device-actions";
+import { SunlightButton } from "@/components/app/sunlight-button";
 import { currentTab } from "@/config/nav";
 
 /** Five tabs (outside review, 2026-10-15): Money owed is a tab; the rest live under More. */
@@ -65,20 +65,7 @@ export function AppHeader({ sunlight = false }: { sunlight?: boolean }) {
             ))}
           </nav>
           {/* Plan #37: easier to read outdoors. Remembered on this device. */}
-          <form action={toggleSunlightAction}>
-            <button
-              type="submit"
-              aria-pressed={sunlight}
-              className={cn(
-                "inline-flex min-h-tap min-w-tap items-center justify-center gap-1.5 rounded-md px-2 font-semibold",
-                sunlight && "sa-inverted font-black",
-              )}
-            >
-              <Sun aria-hidden className="size-5" strokeWidth={sunlight ? 2.75 : 2} />
-              {/* Words on phones (room to spare); icon only beside the full nav. */}
-              <span className="sm:sr-only">Sunlight</span>
-            </button>
-          </form>
+          <SunlightButton initial={sunlight} />
         </div>
       </header>
       {/* data-tabbar: theme.css pads focus scrolling above this bar on phones (Check 32 P2). */}
