@@ -4,7 +4,7 @@ import { noticeText } from "@/lib/notice-text";
 import { DRAFT_LIMIT_ERROR, draftLimitText } from "@/server/draft-limit-rules";
 import Link from "next/link";
 import { auth } from "@/auth";
-import { getWorkspaceForUser } from "@/server/accounts";
+import { getWorkspaceForSession } from "@/server/accounts";
 import { badgeCount } from "@/server/badge";
 import { Notice } from "@/components/app/notice";
 import { Headline } from "@/components/brand/headline";
@@ -118,7 +118,8 @@ const gmailLink = (i: QueueItem) => gmailThreadLink(i);
  */
 export async function generateMetadata(): Promise<Metadata> {
   const session = await auth();
-  const workspace = session?.user?.id ? await getWorkspaceForUser(session.user.id) : null;
+  // Check 26 P3: a sign-in ended by "Sign out everywhere" sees no count, only "Queue".
+  const workspace = await getWorkspaceForSession(session?.user);
   const waiting = workspace ? await badgeCount(workspace).catch(() => 0) : 0;
   return { title: waiting > 0 ? `Queue (${waiting})` : "Queue" };
 }
