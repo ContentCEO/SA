@@ -1,10 +1,11 @@
 "use client";
 
-import { useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { findGaps, fillGap } from "@/ai/gaps";
 import { Button } from "@/components/ui/button";
 import { confidenceWords, type ConfidenceLabel } from "@/config/drafting";
 import { cn } from "@/lib/utils";
+import { closeOnEscape } from "./focus";
 
 /** Plan #8: three labels by weight and inversion — never colour. */
 export function ConfidenceTag({ label }: { label: ConfidenceLabel }) {
@@ -48,6 +49,19 @@ export function BodyWithGaps({
   const setOpen = (index: number | null) => setOpenOn(index === null ? null : { index, body });
   const [value, setValue] = useState("");
   const gaps = findGaps(body);
+  // Check 32 P1: Cancel (or Escape) puts focus back on the gap chip that opened the box.
+  const chips = useRef<(HTMLButtonElement | null)[]>([]);
+  const [returnTo, setReturnTo] = useState<number | null>(null);
+  useEffect(() => {
+    if (returnTo === null) return;
+    chips.current[returnTo]?.focus();
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- one-shot: focus has moved
+    setReturnTo(null);
+  }, [returnTo]);
+  const cancel = () => {
+    if (open !== null) setReturnTo(open);
+    setOpen(null);
+  };
 
   const parts: React.ReactNode[] = [];
   let rest = body;
@@ -57,6 +71,9 @@ export function BodyWithGaps({
     parts.push(
       <button
         key={i}
+        ref={(el) => {
+          chips.current[i] = el;
+        }}
         type="button"
         disabled={readOnly}
         aria-label={`Fill in ${g.label}`}
@@ -81,6 +98,7 @@ export function BodyWithGaps({
       {open !== null && gaps[open] ? (
         <form
           className="flex flex-col gap-2 rounded-lg border-2 border-charcoal p-3"
+          onKeyDown={closeOnEscape(cancel)}
           onSubmit={(e) => {
             e.preventDefault();
             if (!value.trim()) return;
@@ -129,7 +147,7 @@ export function BodyWithGaps({
           ) : null}
           <div className="grid grid-cols-2 gap-2">
             <Button type="submit">Fill in</Button>
-            <Button type="button" variant="ghost" onClick={() => setOpen(null)}>
+            <Button type="button" variant="ghost" onClick={cancel}>
               Cancel
             </Button>
           </div>

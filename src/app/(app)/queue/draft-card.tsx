@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useId, useRef, useState, useSyncExternalStore } from "react";
 import { useFormStatus } from "react-dom";
 import { Button } from "@/components/ui/button";
 import { fillGap, findGaps } from "@/ai/gaps";
@@ -12,6 +12,7 @@ import { CalledThem } from "./called-them";
 import { AutopilotCountdown } from "./autopilot-countdown";
 import { DraftEditor, keptEditKey } from "./draft-editor";
 import { SendButton } from "./send-button";
+import { closeOnEscape, QuestionLine, useFocusReturn } from "./focus";
 import { readKept } from "@/lib/kept-text";
 import {
   addIntent,
@@ -154,6 +155,14 @@ export function DraftCard(p: DraftCardProps) {
   // stays on the first screen of a card.
   const [changing, setChanging] = useState(false);
   const [confirmDiscard, setConfirmDiscard] = useState(false);
+  // Check 32 P1: closing a question (Keep it, Cancel, Escape) puts focus back on its opener.
+  const { opener: discardOpener, restore: restoreDiscardFocus } = useFocusReturn();
+  const { opener: editOpener, restore: restoreEditFocus } = useFocusReturn();
+  const discardTitle = useId();
+  const keepDraft = () => {
+    restoreDiscardFocus();
+    setConfirmDiscard(false);
+  };
   const [dx, setDx] = useState(0);
   const start = useRef<{ x: number; y: number } | null>(null);
   const buzzed = useRef(false);
@@ -310,6 +319,7 @@ export function DraftCard(p: DraftCardProps) {
           canSend={p.canSend}
           confirmTiming={!!p.timingNote}
           onCancel={() => {
+            restoreEditFocus();
             setKept(null);
             setEditing(false);
           }}
@@ -369,17 +379,16 @@ export function DraftCard(p: DraftCardProps) {
           ) : confirmDiscard ? (
             <form
               action={discardDraftAction}
+              aria-labelledby={discardTitle}
+              onKeyDown={closeOnEscape(keepDraft)}
               className="sa-inverted flex flex-col gap-2 rounded-lg p-3"
             >
               <input type="hidden" name="draftId" value={p.draftId} />
-              <p className="font-semibold">Discard this draft? It&apos;s removed from Gmail too.</p>
+              <QuestionLine id={discardTitle} className="font-semibold">
+                Discard this draft? It&apos;s removed from Gmail too.
+              </QuestionLine>
               <Pending label="Discard draft" busy="Discarding…" className="w-full" />
-              <Button
-                type="button"
-                variant="ghost"
-                className="w-full"
-                onClick={() => setConfirmDiscard(false)}
-              >
+              <Button type="button" variant="ghost" className="w-full" onClick={keepDraft}>
                 Keep it
               </Button>
             </form>
@@ -462,6 +471,7 @@ export function DraftCard(p: DraftCardProps) {
                   {/* Edit sits under the thumb: right by default, left if mirrored. Discard is
                       on the far side; Change it, when there, in the middle. */}
                   <Button
+                    ref={editOpener}
                     type="button"
                     variant="outline"
                     className={p.leftHanded ? "order-1" : "order-3"}
@@ -485,6 +495,7 @@ export function DraftCard(p: DraftCardProps) {
                     </Button>
                   ) : null}
                   <Button
+                    ref={discardOpener}
                     type="button"
                     variant="outline"
                     className={p.leftHanded ? "order-3" : "order-1"}

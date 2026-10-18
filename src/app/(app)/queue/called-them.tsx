@@ -1,9 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useId, useState } from "react";
 import { PendingButton } from "@/components/app/pending-button";
 import { Button } from "@/components/ui/button";
 import { answeredByPhoneAction } from "./first-week-actions";
+import { closeOnEscape, QuestionLine, useFocusReturn } from "./focus";
 
 /**
  * Round 2 (FW E11): "I called them". Trades answer by phone all the time; one tap (and a
@@ -26,9 +27,17 @@ export function CalledThem({
 }) {
   const done = label !== "I called them";
   const [asking, setAsking] = useState(false);
+  const { opener, restore } = useFocusReturn();
+  const titleId = useId();
+  // Check 32 P1: Keep it (or Escape) puts focus back on the button that asked.
+  const close = () => {
+    restore();
+    setAsking(false);
+  };
   if (!asking) {
     return (
       <Button
+        ref={opener}
         type="button"
         variant={inverted ? "default" : "outline"}
         className="w-full"
@@ -41,6 +50,8 @@ export function CalledThem({
   return (
     <form
       action={answeredByPhoneAction}
+      aria-labelledby={titleId}
+      onKeyDown={closeOnEscape(close)}
       className={
         inverted
           ? "flex flex-col gap-2 rounded-lg border-2 border-current p-3"
@@ -49,18 +60,18 @@ export function CalledThem({
     >
       <input type="hidden" name="threadId" value={threadId} />
       {done ? <input type="hidden" name="as" value="done" /> : null}
-      <p className="font-semibold">
+      <QuestionLine id={titleId} className="font-semibold">
         {done
           ? "Answered them another way? It leaves this list and we won't nudge them."
           : hasDraft
             ? "Answered by phone? This draft is removed (from Gmail too) and we won't nudge them."
             : "Answered by phone? It leaves this list and we won't nudge them."}{" "}
         If they write again, it comes back.
-      </p>
+      </QuestionLine>
       <PendingButton pending="Saving…" className="w-full">
         {confirm}
       </PendingButton>
-      <Button type="button" variant="ghost" className="w-full" onClick={() => setAsking(false)}>
+      <Button type="button" variant="ghost" className="w-full" onClick={close}>
         Keep it
       </Button>
     </form>

@@ -1,8 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useId, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { snoozeAction } from "./actions";
+import { closeOnEscape, QuestionLine, useFocusReturn } from "./focus";
 
 export type SnoozeOption = { choice: string; label: string };
 
@@ -17,11 +18,25 @@ export function RemindMe({
   inverted?: boolean;
 }) {
   const [open, setOpen] = useState(false);
+  const { opener, restore } = useFocusReturn();
+  const titleId = useId();
   if (!options.length) return null;
+  // Check 32 P1: Never mind (or Escape) puts focus back on Remind me later.
+  const close = () => {
+    restore();
+    setOpen(false);
+  };
   return open ? (
-    <form action={snoozeAction} className="flex flex-col gap-2" aria-label="Remind me">
+    <form
+      action={snoozeAction}
+      className="flex flex-col gap-2"
+      aria-labelledby={titleId}
+      onKeyDown={closeOnEscape(close)}
+    >
       <input type="hidden" name="threadId" value={threadId} />
-      <p className="font-semibold">Remind me…</p>
+      <QuestionLine id={titleId} className="font-semibold">
+        Remind me…
+      </QuestionLine>
       {options.map((o) => (
         <Button
           key={o.choice}
@@ -34,12 +49,13 @@ export function RemindMe({
           {o.label}
         </Button>
       ))}
-      <Button type="button" variant="ghost" className="w-full" onClick={() => setOpen(false)}>
+      <Button type="button" variant="ghost" className="w-full" onClick={close}>
         Never mind
       </Button>
     </form>
   ) : (
     <Button
+      ref={opener}
       type="button"
       variant={inverted ? "default" : "outline"}
       className="w-full"
