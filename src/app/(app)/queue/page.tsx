@@ -247,6 +247,8 @@ export default async function QueuePage(props: PageProps<"/queue">) {
     ].filter((l): l is string => !!l);
   };
 
+  // Check 9 P14: the one-time swipe tip sits on the first draft card on the page.
+  const firstDraftId = [...rightNow, ...drafts].find((i) => i.draftId)?.draftId ?? null;
   const draftCard = (i: QueueItem) => (
     <DraftCard
       // Remount when the text changes (e.g. edited in Gmail) so filled gaps reset to it.
@@ -262,6 +264,7 @@ export default async function QueuePage(props: PageProps<"/queue">) {
       leadLines={draftLeadLines(i)}
       threadId={i.threadId}
       leftHanded={device.leftHanded}
+      swipeTip={i.draftId === firstDraftId}
       offlineEnabled={device.offline}
       remindOptions={remindOptions(i)}
       summary={i.summary}
