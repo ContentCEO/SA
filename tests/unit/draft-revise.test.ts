@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { eq } from "drizzle-orm";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { setModelTransportForTests } from "@/ai/client";
 import type { ModelDraft } from "@/ai/prompts/draft.v6";
 import { isTweak, TWEAKS } from "@/ai/prompts/revise.v2";
@@ -162,6 +162,23 @@ describe("#3 quick tweaks and #4 voice edits", () => {
     );
     expect(calls[0]!.user).toContain("usually around {{price}}.");
     expect(calls[0]!.user).not.toContain("guarantee");
+  });
+
+  it("Check 23 P9: a retry that adds an invented price never replaces the better first try", async () => {
+    const d = await pendingDraft();
+    const { transport, calls } = fakeTransport([
+      draft("Hi Dana, I can come look tomorrow. What's the address?"),
+      draft("Hi Dana, I can come look tomorrow, it's $950. What's the address?"),
+    ]);
+    setModelTransportForTests(transport);
+    const info = vi.spyOn(console, "info").mockImplementation(() => {});
+    await reviseDraft(workspaceId, d.id, { tweak: "warmer" }, deps());
+    expect(calls).toHaveLength(2);
+    const [after] = await database.select().from(drafts);
+    expect(after!.body).toBe("Hi Dana, I can come look tomorrow. What's the address?");
+    expect(after!.flags.join(" ")).not.toContain("$950");
+    expect(info).toHaveBeenCalledWith("draft_retry_kept", { kept: "first" });
+    info.mockRestore();
   });
 
   it("a tweak can't introduce a price: one retry, then a flag", async () => {

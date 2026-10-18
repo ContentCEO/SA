@@ -633,18 +633,53 @@ function purposeGuards(purpose: DraftPurpose | null, body: string, ctx: DraftCon
  * Flags and confidence (0–100) for a finished draft. Purpose flags go first, so the cut to six
  * can't drop them, and they cap confidence on their own (A6).
  */
-function scoreDraft(
+/**
+ * Check 23 P9: after the one retry, keep whichever attempt broke fewer of the owner's rules
+ * (REGENERATE_ON hits); on a tie, the retry. A worse retry never replaces a better first draft.
+ * Logs only which one was kept.
+ */
+function betterAttempt<T extends { body: string }>(
+  first: T,
+  firstChecks: CheckResult,
+  retry: T | null,
+  context: Parameters<typeof checkDraft>[1],
+): T {
+  if (!retry?.body.trim()) return first;
+  const hits = (c: CheckResult) => c.hits.filter((h) => REGENERATE_ON.includes(h)).length;
+  const kept =
+    hits(checkDraft(retry.body.trim(), context)) <= hits(firstChecks) ? "retry" : "first";
+  console.info("draft_retry_kept", { kept });
+  return kept === "retry" ? retry : first;
+}
+
+/** How many "Check before sending" lines a card shows. */
+export const MAX_CARD_FLAGS = 6;
+
+/**
+ * Check 23 P9: at most six lines, in the order given, de-duplicated. If anything is cut, the
+ * last line says how much ("And 2 more things to check."), so nothing is dropped silently.
+ */
+export function capFlags(all: string[]): string[] {
+  const flags = [...new Set(all.map((f) => f.trim()).filter(Boolean))];
+  if (flags.length <= MAX_CARD_FLAGS) return flags;
+  const kept = flags.slice(0, MAX_CARD_FLAGS - 1);
+  const more = flags.length - kept.length;
+  return [...kept, `And ${more} more ${more === 1 ? "thing" : "things"} to check.`];
+}
+
+/**
+ * The card's "Check before sending" lines and confidence. Check 23 P9: the fixed cautions and
+ * purpose flags first, then what the code's checks found (in checkDraft's order), then the
+ * model's own notes — so a code-found warning ("Mentions $1,545 — that price isn't in the
+ * email…") is never pushed out by the model's notes.
+ */
+export function scoreDraft(
   result: { flags: string[]; confidence: number },
   checks: CheckResult,
   purposeFlags: string[],
+  fixedFlags: string[] = [],
 ) {
-  const flags = [
-    ...new Set([
-      ...purposeFlags,
-      ...result.flags.map((f) => f.trim()).filter(Boolean),
-      ...checks.flags,
-    ]),
-  ].slice(0, 6);
+  const flags = capFlags([...fixedFlags, ...purposeFlags, ...checks.flags, ...result.flags]);
   const confidence = Math.round(
     Math.max(
       0,
@@ -1246,7 +1281,7 @@ async function writeDraftForThread(threadId: string, opts: CreateOpts): Promise<
             ...request,
             user: `${convo}\n\nYour last attempt broke the owner's rules: ${first.flags.join(" ")} Write it again without that.`,
           });
-          if (retry?.body.trim()) result = retry;
+          result = betterAttempt(result, first, retry, checkContext);
         }
       }
     } catch (err) {
@@ -1257,17 +1292,22 @@ async function writeDraftForThread(threadId: string, opts: CreateOpts): Promise<
 
   // What the owner must sort before a purpose note can go (A6).
   const { body, flags: purposeFlags } = purposeGuards(purpose, result.body.trim(), ctx);
-  const scored = scoreDraft(result, checkDraft(body, checkContext), [
-    ...(maybeText ? [MAYBE_TEXT_FLAG] : []),
-    ...(safety && safetyKind ? [SAFETY_NOTES[safetyKind].flag, ...purposeFlags] : purposeFlags),
-  ]);
   // Check 43 P9: the fixed caution goes first (so the cut to six never drops it), and the
   // card never says Ready on one of these. Check 38 P1: a change order's reminder next.
   const fixedFlags = [
     ...(dispute ? [DISPUTE_FLAG] : []),
     ...(changeOrder && !followup && !safety ? [CHANGE_ORDER_FLAG] : []),
   ];
-  const flags = [...new Set([...fixedFlags, ...scored.flags])].slice(0, 6);
+  const scored = scoreDraft(
+    result,
+    checkDraft(body, checkContext),
+    [
+      ...(maybeText ? [MAYBE_TEXT_FLAG] : []),
+      ...(safety && safetyKind ? [SAFETY_NOTES[safetyKind].flag, ...purposeFlags] : purposeFlags),
+    ],
+    fixedFlags,
+  );
+  const flags = scored.flags;
   const confidence = dispute
     ? Math.min(scored.confidence, Math.round(DISPUTE_CONFIDENCE_CAP * 100))
     : scored.confidence;
@@ -2632,7 +2672,7 @@ export async function reviseDraft(
           ...request,
           user: `${convo}\n\nYour last attempt broke the owner's rules: ${first.flags.join(" ")} Write it again without that.`,
         });
-        if (retry?.body.trim()) result = retry;
+        result = betterAttempt(result, first, retry, checkContext);
       }
     }
   } catch (err) {
@@ -2649,16 +2689,18 @@ export async function reviseDraft(
     ...(isNoReplyAddress(draft.toAddress) ? [NO_REPLY_FLAG] : []),
     ...((draft.flags ?? []).includes(REPOINTED_FLAG) ? [REPOINTED_FLAG] : []),
   ];
-  const scored = scoreDraft(result, checkDraft(body, checkContext), [
-    ...addressFlags,
-    ...purposeFlags,
-  ]);
   // Check 43 P9: a tweak never lifts the caution or its cap (nor Check 38 P1's reminder).
   const fixedFlags = [
     ...(dispute ? [DISPUTE_FLAG] : []),
     ...((draft.flags ?? []).includes(CHANGE_ORDER_FLAG) ? [CHANGE_ORDER_FLAG] : []),
   ];
-  const flags = [...new Set([...fixedFlags, ...scored.flags])].slice(0, 6);
+  const scored = scoreDraft(
+    result,
+    checkDraft(body, checkContext),
+    [...addressFlags, ...purposeFlags],
+    fixedFlags,
+  );
+  const flags = scored.flags;
   const confidence = dispute
     ? Math.min(scored.confidence, Math.round(DISPUTE_CONFIDENCE_CAP * 100))
     : scored.confidence;
