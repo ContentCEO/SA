@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { noticeText } from "@/lib/notice-text";
 import Link from "next/link";
 import { Notice } from "@/components/app/notice";
 import { Headline } from "@/components/brand/headline";
@@ -127,8 +128,8 @@ export default async function QueuePage(props: PageProps<"/queue">) {
     .filter((d): d is Date => d !== null)
     .sort((a, b) => b.getTime() - a.getTime())[0];
   const refused = Number(params.refused) || 0;
-  const doneMsg = typeof params.done === "string" ? done[params.done] : undefined;
-  const errorMsg = typeof params.error === "string" ? errors[params.error] : undefined;
+  const doneMsg = noticeText(done, params.done);
+  const errorMsg = noticeText(errors, params.error);
   const sending = canSend(workspace);
   const timeZone = usableTimeZone(
     (await getBusinessProfile(workspace.id))?.timeZone ?? "America/New_York",

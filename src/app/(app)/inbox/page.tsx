@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { noticeText } from "@/lib/notice-text";
 import { Headline } from "@/components/brand/headline";
 import { OfferButtons } from "@/components/app/offer-buttons";
 import { PermitCard } from "@/components/app/permit-card";
@@ -211,8 +212,8 @@ export default async function InboxPage(props: PageProps<"/inbox">) {
     rows.map((r) => r.id),
   );
   const own = boxes.map((b) => b.email);
-  const doneMsg = typeof params.done === "string" ? INBOX_DONE[params.done] : undefined;
-  const errorMsg = typeof params.error === "string" ? INBOX_ERRORS[params.error] : undefined;
+  const doneMsg = noticeText(INBOX_DONE, params.done);
+  const errorMsg = noticeText(INBOX_ERRORS, params.error);
 
   function renderRow(row: InboxRow) {
     return (

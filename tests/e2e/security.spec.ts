@@ -90,3 +90,27 @@ test("the Gmail-connect state cookie is httpOnly, SameSite=Lax and only sent to 
   // The random state, then which Gmail the connect is for (Check 42 P3): no address, ever.
   expect(state!.value).toMatch(/^[A-Za-z0-9_-]{40,}~first~$/);
 });
+
+test("a built-in word in ?done= / ?error= shows the normal screen with no notice (Check 26 P6)", async ({
+  page,
+  context,
+}) => {
+  const owner = await seedOwner();
+  await signInAs(context, owner);
+  for (const path of [
+    "/settings/gmail?done=constructor",
+    "/settings/gmail?done=valueOf",
+    "/queue?done=__proto__&error=toString",
+    "/money?error=constructor",
+    "/connect?error=hasOwnProperty",
+    "/inbox?c=constructor",
+  ]) {
+    const res = await page.goto(path);
+    expect(res?.status(), path).toBe(200);
+    await expect(page.getByText("something broke"), path).toHaveCount(0);
+    await expect(page.getByRole("heading").first(), path).toBeVisible();
+    await expect(
+      page.getByRole("alert").filter({ hasText: /function|\[native code\]/ }),
+    ).toHaveCount(0);
+  }
+});

@@ -42,3 +42,9 @@ For the integrator: what `CLAUDE.md`, `docs/LAUNCH.md` and the legal drafts shou
   in place, so NonRetriableError / RetryAfterError still behave. The waitlist and Growth catches
   stay. The unit-test date guard now fails with code `SA_DATE_BOUND_INTO_SQL` (its message is a
   dropped cause now).
+- **Notices take own keys only (Check 26 P6):** `noticeText(map, key)` (`src/lib/notice-text.ts`)
+  returns a notice only for a string key the map owns with a string value. Every `?done=` /
+  `?error=` lookup in src/app uses it (settings screens and list, queue, money, quotes, inbox,
+  customers, billing, connect, admin incl. Growth and waitlist, welcome/terms), and
+  `isCategory` (inbox `?c=`) uses `Object.hasOwn`. A unit test fails on any new
+  `map[params.x]` lookup in src/app.

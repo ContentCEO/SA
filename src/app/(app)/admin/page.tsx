@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { noticeText } from "@/lib/notice-text";
 import { describeSource } from "@/server/source-rules";
 import type { Metadata } from "next";
 import { Notice } from "@/components/app/notice";
@@ -524,23 +525,21 @@ export default async function AdminPage(props: PageProps<"/admin">) {
   // Waitlist Growth notices show in the waitlist section (the page scrolls there).
   const code = (v: unknown, prefix: string) =>
     typeof v === "string" && v.startsWith(prefix) ? v : undefined;
-  const waitlistDone = WAITLIST_GROWTH_DONE[code(params.done, "wl_") ?? ""];
-  const waitlistError = WAITLIST_GROWTH_ERRORS[code(params.error, "wl_") ?? ""];
+  const waitlistDone = noticeText(WAITLIST_GROWTH_DONE, code(params.done, "wl_"));
+  const waitlistError = noticeText(WAITLIST_GROWTH_ERRORS, code(params.error, "wl_"));
   // Payment messages show inside the Payments section (the page scrolls there), not at the top.
   const isStripe = (k: unknown) => typeof k === "string" && k.startsWith("stripe");
-  const doneMsg =
-    typeof params.done === "string" && !isStripe(params.done) ? done[params.done] : undefined;
-  const errorMsg =
-    typeof params.error === "string" && !isStripe(params.error) ? errors[params.error] : undefined;
+  const doneMsg = !isStripe(params.done) ? noticeText(done, params.done) : undefined;
+  const errorMsg = !isStripe(params.error) ? noticeText(errors, params.error) : undefined;
   const stripeDone =
     params.done === "stripe_test_reset"
       ? testPayments && testPayments.reset !== null
         ? testPaymentsResetNotice({ reset: testPayments.reset, unchecked: testPayments.unchecked })
         : undefined
       : isStripe(params.done)
-        ? done[params.done as string]
+        ? noticeText(done, params.done)
         : undefined;
-  const stripeError = isStripe(params.error) ? errors[params.error as string] : undefined;
+  const stripeError = isStripe(params.error) ? noticeText(errors, params.error) : undefined;
   // Only a fixed code travels in the URL (M11 C10); anything else shows nothing.
   const stripeReason = stripeReasonText(params.reason);
   // Check 16 P1: one stuck inbox inverts the box, even when the others are fine.

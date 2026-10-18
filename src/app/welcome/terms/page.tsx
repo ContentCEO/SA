@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { noticeText } from "@/lib/notice-text";
 import { cookies } from "next/headers";
 import Link from "next/link";
 import { redirect } from "next/navigation";
@@ -59,8 +60,8 @@ export default async function TermsAgreementPage(props: PageProps<"/welcome/term
   if (hasCurrentTerms(terms)) redirect(back);
   const copy = termsScreenCopy(terms);
   const mailboxes = await listMailboxes(workspace.id);
-  const doneMsg = typeof doneKey === "string" ? done[doneKey] : undefined;
-  const errorMsg = typeof errorKey === "string" ? errors[errorKey] : undefined;
+  const doneMsg = noticeText(done, doneKey);
+  const errorMsg = noticeText(errors, errorKey);
 
   return (
     <div className="mx-auto flex w-full max-w-xl flex-1 flex-col px-4 py-6">

@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { noticeText } from "@/lib/notice-text";
 import { CustomerName } from "@/components/app/customer-name";
 import Link from "next/link";
 import { Notice } from "@/components/app/notice";
@@ -306,8 +307,8 @@ export default async function QuotesPage(props: PageProps<"/quotes">) {
   );
   const count = (f: Filter) =>
     quotes.filter((q) => (f === "open" ? OPEN.includes(q.stage) : q.stage === f)).length;
-  const doneMsg = typeof params.done === "string" ? done[params.done] : undefined;
-  const errorMsg = typeof params.error === "string" ? errors[params.error] : undefined;
+  const doneMsg = noticeText(done, params.done);
+  const errorMsg = noticeText(errors, params.error);
 
   return (
     <>
