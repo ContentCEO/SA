@@ -68,7 +68,11 @@ function OwedCard({ r, readOnly }: { r: MoneyRow; readOnly: boolean }) {
         )}
       </div>
       <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
-        <span className="font-semibold">{r.due.text}</span>
+        <span className="flex flex-col">
+          <span className="font-semibold">{r.due.text}</span>
+          {/* Check 12 P6: the due day itself. */}
+          {r.due.day ? <span className="text-sm opacity-80">{r.due.day}</span> : null}
+        </span>
         {r.invoiceNumber ? (
           <span className="min-w-0 truncate text-sm opacity-80">Invoice {r.invoiceNumber}</span>
         ) : null}

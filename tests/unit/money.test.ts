@@ -64,14 +64,27 @@ const inv = (o: Partial<InvoiceFacts> = {}): InvoiceFacts => ({
 describe("money rules", () => {
   it("reads the due date from the owner's own calendar day", () => {
     const tz = "America/New_York";
-    expect(dueLabel(null, NOW, tz)).toEqual({ daysPastDue: null, text: "No due date" });
-    // Never a guess: words that aren't a date are no due date.
-    for (const vague of ["net 30", "upon receipt", "end of month", "Friday", "2026", "Feb 31"]) {
+    expect(dueLabel(null, NOW, tz)).toMatchObject({ daysPastDue: null, text: "No due date" });
+    // Never a guess: words that aren't a date are no due date. (Net terms are read since
+    // Check 12 P6 — see "reads net terms".)
+    for (const vague of [
+      "end of month",
+      "Friday",
+      "2026",
+      "Feb 31",
+      "within 10 days of completion",
+    ]) {
       expect(dueLabel(vague, NOW, tz)).toEqual({ daysPastDue: null, text: "No due date" });
     }
-    expect(dueLabel("2026-10-20", NOW, tz)).toEqual({ daysPastDue: -10, text: "Not due yet" });
-    expect(dueLabel("2026-10-10", NOW, tz)).toEqual({ daysPastDue: 0, text: "Due today" });
-    expect(dueLabel("2026-10-07", NOW, tz)).toEqual({ daysPastDue: 3, text: "3 days past due" });
+    expect(dueLabel("2026-10-20", NOW, tz)).toMatchObject({
+      daysPastDue: -10,
+      text: "Not due yet",
+    });
+    expect(dueLabel("2026-10-10", NOW, tz)).toMatchObject({ daysPastDue: 0, text: "Due today" });
+    expect(dueLabel("2026-10-07", NOW, tz)).toMatchObject({
+      daysPastDue: 3,
+      text: "3 days past due",
+    });
     expect(dueLabel("2026-10-09", NOW, tz).text).toBe("1 day past due");
     // Written out, with and without a year (no year = this year, not 2001).
     expect(dueLabel("October 7, 2026", NOW, tz).text).toBe("3 days past due");
@@ -88,16 +101,47 @@ describe("money rules", () => {
     expect(dueLabel("2026-10-10", lateEvening, "Not/AZone").text).toBe("Due today");
   });
 
+  it("reads net terms (Check 12 P6): never past due early, and shows the due day", () => {
+    const tz = "America/New_York";
+    const oct16 = new Date("2026-10-16T15:00:00Z");
+    const oct1 = new Date("2026-10-01T15:00:00Z");
+    const oct10 = new Date("2026-10-10T15:00:00Z");
+    expect(dueLabel("Net 30 from 10/01/2026", oct16, tz, oct1)).toEqual({
+      daysPastDue: -15,
+      text: "Not due yet",
+      day: "Due Oct 31",
+    });
+    expect(dueLabel("net 30", oct16, tz, oct1)).toMatchObject({
+      text: "Not due yet",
+      day: "Due Oct 31",
+    });
+    expect(dueLabel("Net30", oct16, tz, oct1).day).toBe("Due Oct 31");
+    expect(dueLabel("due upon receipt", oct16, tz, oct10)).toEqual({
+      daysPastDue: 6,
+      text: "6 days past due",
+      day: "Was due Oct 10",
+    });
+    expect(dueLabel("within 10 days", oct16, tz, oct10).day).toBe("Due Oct 20");
+    expect(dueLabel("15 days from the invoice date", oct16, tz, oct10).day).toBe("Due Oct 25");
+    expect(dueLabel("within 10 days of completion", oct16, tz, oct1)).toEqual({
+      daysPastDue: null,
+      text: "No due date",
+    });
+    expect(dueLabel("Due Nov 15 (net 30)", oct16, tz, oct1).day).toBe("Due Nov 15");
+    // A plain date still shows its day.
+    expect(dueLabel("Oct 7", NOW, tz).day).toBe("Was due Oct 7");
+  });
+
   it("puts a date with no year in the year that makes sense around New Year", () => {
     const tz = "America/New_York";
     // Seen in late December, "Jan 5" is next month — not 349 days late.
     const dec20 = new Date("2026-12-20T15:00:00Z");
-    expect(dueLabel("Jan 5", dec20, tz)).toEqual({ daysPastDue: -16, text: "Not due yet" });
+    expect(dueLabel("Jan 5", dec20, tz)).toMatchObject({ daysPastDue: -16, text: "Not due yet" });
     expect(dueLabel("1/5", dec20, tz).text).toBe("Not due yet");
     expect(dueLabel("Dec 18", dec20, tz).text).toBe("2 days past due");
     // Seen early January, "Dec 28" was last month — 6 days late, not next December.
     const jan3 = new Date("2027-01-03T15:00:00Z");
-    expect(dueLabel("Dec 28", jan3, tz)).toEqual({ daysPastDue: 6, text: "6 days past due" });
+    expect(dueLabel("Dec 28", jan3, tz)).toMatchObject({ daysPastDue: 6, text: "6 days past due" });
     expect(dueLabel("12/28", jan3, tz).text).toBe("6 days past due");
     expect(dueLabel("Jan 10", jan3, tz).text).toBe("Not due yet");
     // A long-overdue one stays in the past; a year that's written is always taken as written.
@@ -110,7 +154,7 @@ describe("money rules", () => {
     // Invoiced Nov 2025, "due Dec 5", still unpaid in Oct 2026: about ten months late —
     // not "Not due yet" for this coming December.
     const written = new Date("2025-11-10T15:00:00Z");
-    expect(dueLabel("Dec 5", NOW, tz, written)).toEqual({
+    expect(dueLabel("Dec 5", NOW, tz, written)).toMatchObject({
       daysPastDue: 309,
       text: "309 days past due",
     });

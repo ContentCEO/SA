@@ -51,7 +51,8 @@ export type MoneyRow = {
   invoiceNumber: string | null;
   /** Earlier invoices on the thread still owed when this one arrived (counted in the total). */
   earlierOpen: { invoiceNumber: string | null; amountCents: number }[];
-  due: { daysPastDue: number | null; text: string };
+  /** Check 12 P6: `day` = "Due Oct 31" / "Was due Oct 10" in the owner's zone, when known. */
+  due: { daysPastDue: number | null; text: string; day?: string | null };
   /** Follow-up nudges sent on the thread (threads.followup_count), out of two. */
   nudgesUsed: number;
   paidAt: Date | null;

@@ -106,3 +106,10 @@ For the integrator to fold into CLAUDE.md (Decisions) and the other shared files
   "From your email". Never from an inbound email. `carryInvoiceFacts` keeps the label while the
   amount is carried. Logs nothing. Empty text: "No invoices found in your email yet. When you
   send one or a customer writes about one, it shows up here."
+- **Check 12 P6 (net terms):** `dueDay` reads payment terms before dates: "net 30" / "Net30",
+  "within N days", "N days from/after …". With a date in the text, due = that date + N (unless
+  the date follows "due"/"by": "Due Nov 15 (net 30)" is Nov 15); without one, the day the email
+  was written + N. "Upon receipt" / "due on receipt" = the day it was written. Terms counted from
+  something we can't know ("within 10 days of completion") → "No due date". `dueLabel` also
+  returns `day`: "Due Oct 31" / "Was due Oct 10" (local calendar date), shown under the label on
+  the Money card.
