@@ -6,6 +6,7 @@ import { Headline } from "@/components/brand/headline";
 import { Button } from "@/components/ui/button";
 import { formatDollars, pricing, type PlanId } from "@/config/pricing";
 import { siteConfig } from "@/config/site";
+import { FEATURED_PLAN, planFeatureLines } from "@/server/plan-features";
 import { cn } from "@/lib/utils";
 import { stripeConfigured } from "@/server/billing";
 import {
@@ -13,13 +14,14 @@ import {
   checkoutTerms,
   firstChargeLine,
   PLAN_IDS,
-  SALES_TAX_NOTE,
+  setupCallSentence,
 } from "@/server/billing-rules";
 import { effectiveStatus, setupReallyPaid } from "@/server/lifecycle";
 import { phoneHref } from "@/lib/phone-href";
 import { referralCredit } from "@/server/referral-rules";
 import { referralLinkFor } from "@/server/referrals";
 import { requireOwner } from "@/server/session";
+import { TRIAL_NO_SEND_LINE, TRIAL_SIDE_DOOR_LINE } from "@/server/trial-email-rules";
 import { openPortalAction, startCheckoutAction } from "./actions";
 
 export const metadata: Metadata = { title: "Plan & billing" };
@@ -47,10 +49,18 @@ export default async function BillingPage(props: PageProps<"/billing">) {
   const awaitingSetupCall =
     effectiveStatus(workspace) === "setup_paid" && setupReallyPaid(workspace);
   const davi = siteConfig.operator.split(" ")[0];
+  const onTrial = effectiveStatus(workspace) === "evaluating";
 
   return (
     <>
       <Headline serif="your plan," heavy="plain and simple." />
+      {onTrial ? (
+        // The trial's side door (Davi, 2026-10-16), and what a plan changes.
+        <p className="text-lg">
+          {TRIAL_NO_SEND_LINE} {TRIAL_SIDE_DOOR_LINE} A plan turns on Send reply in Squared Away,
+          and every reply still waits for your okay.
+        </p>
+      ) : null}
       {errorMsg ? <Notice strong>{errorMsg}</Notice> : null}
 
       {waitingForStripe ? (
@@ -84,8 +94,7 @@ export default async function BillingPage(props: PageProps<"/billing">) {
               .
             </li>
             <li>
-              Have your price list handy. On the call, {davi} loads your prices, hours and the
-              things you never promise, and tunes your drafts with you.
+              Have your price list handy. On the call, {davi} {setupCallSentence("after")}.
             </li>
             <li>Sending is on now. Every reply still waits for you to tap Send reply.</li>
           </ol>
@@ -129,6 +138,7 @@ export default async function BillingPage(props: PageProps<"/billing">) {
             <h2 id="choose" className="text-xl font-black">
               Choose a plan
             </h2>
+
             {terms.includeSetupFee ? (
               <p>
                 Every plan starts with a one-time{" "}
@@ -136,14 +146,14 @@ export default async function BillingPage(props: PageProps<"/billing">) {
                   {pricing.setupFee.name.toLowerCase()} of{" "}
                   {formatDollars(pricing.setupFee.amountCents)}
                 </span>
-                : a call with us to load your prices, hours and never-promise list, and tune your
-                drafts. It&apos;s added to your first payment.
+                : a call with us to {setupCallSentence("before")}. It&apos;s added to your first
+                payment.
               </p>
             ) : null}
             <ul className="flex flex-col gap-3">
               {PLAN_IDS.map((id) => {
                 const p = pricing.plans[id];
-                const featured = id === "crew";
+                const featured = id === FEATURED_PLAN;
                 return (
                   <li
                     key={id}
@@ -164,9 +174,7 @@ export default async function BillingPage(props: PageProps<"/billing">) {
                       </span>
                     </div>
                     <p className={featured ? "text-ash" : "text-muted-foreground"}>
-                      {p.mailboxLimit} Gmail inbox{p.mailboxLimit === 1 ? "" : "es"}
-                      {p.autopilot ? " · Autopilot" : ""}
-                      {id === "company" ? " · Priority support" : ""}
+                      {planFeatureLines(id).join(" · ")}
                     </p>
                     <p className="text-sm">{firstChargeLine(id, terms.includeSetupFee)}</p>
                     <form action={startCheckoutAction}>
@@ -179,7 +187,7 @@ export default async function BillingPage(props: PageProps<"/billing">) {
                 );
               })}
             </ul>
-            <p className="text-sm text-muted-foreground">{SALES_TAX_NOTE}</p>
+            {/* Each card's first-payment line already says "plus sales tax" (Check 35 P2). */}
             <p className="text-sm text-muted-foreground">
               Paid securely through Stripe. Month to month — cancel any time from Manage billing.
             </p>

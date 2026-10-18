@@ -9,6 +9,7 @@ import { requireOwner } from "@/server/session";
 import { decideVoiceIdeaAction, relearnVoiceAction } from "../profile-actions";
 import { SettingsScreen } from "../screen";
 import { saveNeverSayAction } from "../wording-actions";
+import { showGaps } from "@/ai/gaps";
 
 export const metadata: Metadata = { title: "Your voice" };
 
@@ -57,7 +58,8 @@ export default async function WritingSettingsPage(props: PageProps<"/settings/wr
               <ul className="mt-2 flex flex-col gap-3">
                 {voice.examples.map((ex, i) => (
                   <li key={i} className="rounded-lg border bg-paper p-3 whitespace-pre-line">
-                    {ex}
+                    {/* Check 23 P7: voice.v3 samples carry {{…}} gaps; show them as plain words. */}
+                    {showGaps(ex)}
                   </li>
                 ))}
               </ul>

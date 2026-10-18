@@ -1,3 +1,4 @@
+import { dayWord } from "@/lib/trial-words";
 import { Notice } from "@/components/app/notice";
 import { Headline } from "@/components/brand/headline";
 import { Button } from "@/components/ui/button";
@@ -16,15 +17,13 @@ const errors: Record<string, string> = {
   failed: "Something went wrong on the way back from Google. Nothing was saved. Try again.",
 };
 
-const words = ["zero", "one", "two", "three", "four", "five"];
-
 export default async function ConnectPage(props: PageProps<"/connect">) {
   const { workspace } = await requireOwner();
   // Round 2 (FW): setup's honest step count starts here (2: your shop, 3: reading your email).
   const firstConnect = (await listMailboxes(workspace.id)).length === 0;
   const { error } = await props.searchParams;
   const message = typeof error === "string" ? errors[error] : undefined;
-  const days = words[pricing.evaluationDays] ?? String(pricing.evaluationDays);
+  const days = dayWord(pricing.evaluationDays);
 
   return (
     <>
@@ -60,7 +59,9 @@ export default async function ConnectPage(props: PageProps<"/connect">) {
         <ul className="flex list-disc flex-col gap-2 pl-5 text-lg">
           <li>
             Send anything without your okay. For your first {days} days, Squared Away won&apos;t
-            send anything to a customer: you can only send yourself practice copies.
+            send anything to a customer: from Squared Away you can only send yourself practice
+            copies. Your drafts are in your Gmail Drafts folder too, so you can send one from Gmail
+            yourself if you want.
           </li>
           <li>Delete, archive, or move your email.</li>
           <li>

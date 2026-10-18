@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { eq } from "drizzle-orm";
 import * as schema from "../../src/db/schema";
+import { firstChargeLine, PLAN_IDS } from "../../src/server/billing-rules";
 import { seedAdmin, signInAs, testDb } from "./support";
 
 const unique = () => `lead-${Date.now()}-${Math.random().toString(36).slice(2, 6)}@example.com`;
@@ -20,15 +21,49 @@ test("home page: promise, pricing from config, and a way in", async ({ page }) =
   for (const text of ["$499 once", "Solo", "$99", "Crew", "$199", "Company", "$299"]) {
     await expect(pricing).toContainText(text);
   }
-  // Stripe Tax (Davi, 2026-10-14): prices are tax-exclusive, and the page says so.
-  await expect(pricing.getByText("Plus sales tax where it applies.")).toBeVisible();
-  await page
-    .getByRole("navigation", { name: "Site" })
-    .getByRole("link", { name: "Sign in" })
-    .click();
+  // Check 35 P2: each card says the first payment in /billing's words (built from the config),
+  // and with it the sales tax (Stripe Tax, Davi 2026-10-14), once per card and not again below.
+  for (const id of PLAN_IDS) {
+    await expect(pricing.getByText(firstChargeLine(id, true), { exact: true })).toBeVisible();
+  }
+  await expect(pricing.getByText("Plus sales tax where it applies.", { exact: true })).toHaveCount(
+    0,
+  );
+  // Check 6 P9: one name for the join action.
+  const nav = page.getByRole("navigation", { name: "Site" });
+  await expect(nav.getByRole("link", { name: "Join the waitlist" })).toBeVisible();
+  await expect(nav.getByRole("link", { name: "Get on the list" })).toHaveCount(0);
+  await nav.getByRole("link", { name: "Sign in" }).click();
   await expect(page).toHaveURL(/\/signin$/);
 
   await page.goto("/");
+  const overflow = await page.evaluate(
+    () => document.documentElement.scrollWidth > document.documentElement.clientWidth,
+  );
+  expect(overflow).toBe(false);
+});
+
+test("home page: the queue picture shows Send reply, and the trade cards come first (375px)", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 375, height: 812 });
+  await page.goto("/");
+  // Check 6 P4: the picture shows the main action; the caption says the trial rule once.
+  const figure = page.locator("figure").first();
+  await expect(figure).toContainText("Send reply");
+  await expect(figure.locator("p").last()).toContainText("won't send to a customer");
+  // Check 34 P2: the first "what it does" card is what a trade inbox tool does.
+  const cards = page.getByRole("region", { name: "What it does" }).getByRole("heading", {
+    level: 3,
+  });
+  await expect(cards.first()).toHaveText("Knows your trade");
+  // Check 6 P9: the header's join button stays on one line next to the wordmark and Sign in.
+  const join = page.getByRole("navigation", { name: "Site" }).getByRole("link", {
+    name: "Join the waitlist",
+  });
+  expect((await join.boundingBox())!.height).toBeLessThanOrEqual(48);
+  // Check 34 P5: it's added to the home screen, not found in an app store.
+  await expect(page.getByText(/add it to your phone's home screen/)).toBeVisible();
   const overflow = await page.evaluate(
     () => document.documentElement.scrollWidth > document.documentElement.clientWidth,
   );
@@ -54,7 +89,7 @@ test.describe("waitlist form", () => {
     await expect(form.getByLabel(/Business email/)).toHaveAttribute("autocomplete", "email");
     await expect(
       form.getByText(
-        "Gmail or Google Workspace today. On Outlook? Join anyway — it's on the list.",
+        "Gmail, or your own business address if it runs on Google. On Outlook? Join anyway, it's on the list.",
       ),
     ).toBeVisible();
     await expect(form.getByLabel(/^Phone/)).toHaveAttribute("inputmode", "tel");

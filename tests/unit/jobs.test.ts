@@ -4,7 +4,9 @@ import { describe, expect, it } from "vitest";
 import {
   afterSync,
   functions,
+  AlertFailuresError,
   politely,
+  reportAlertFailures,
   reportSummaryFailures,
   SummaryFailuresError,
 } from "@/jobs/functions";
@@ -60,6 +62,28 @@ describe("job wiring", () => {
     const report = body.indexOf("reportSummaryFailures(digests, monthly)");
     expect(report).toBeGreaterThan(body.indexOf('step.run("monthly"'));
     expect(body.indexOf('step.run("monthly"')).toBeGreaterThan(body.indexOf('step.run("send"'));
+  });
+
+  it("Check 18 P1: a refused alert email fails the lifecycle / purge run only after every step", () => {
+    expect(() => reportAlertFailures("access", { failed: 0 })).not.toThrow();
+    expect(() => reportAlertFailures("access", { failed: 2 })).toThrow(AlertFailuresError);
+    expect(() => reportAlertFailures("cost", { failed: 1 })).toThrow(
+      "Alert emails failed: 1 cost.",
+    );
+    const src = readFileSync("src/jobs/functions.ts", "utf8");
+    const life = src.slice(src.indexOf('id: "workspace-lifecycle"'));
+    const lifeEnd = life.indexOf("return {");
+    const report = life.indexOf('reportAlertFailures("access", alerts)');
+    expect(report).toBeGreaterThan(0);
+    // Every step of the job runs before the report.
+    const lastStep = life.slice(0, lifeEnd).lastIndexOf("step.run(");
+    expect(report).toBeGreaterThan(lastStep);
+    expect(report).toBeLessThan(lifeEnd);
+    const purge = src.slice(src.indexOf('id: "purge-expired-bodies"'));
+    const purgeEnd = purge.indexOf("return {");
+    const costReport = purge.indexOf('reportAlertFailures("cost", costAlerts)');
+    expect(costReport).toBeGreaterThan(purge.slice(0, purgeEnd).lastIndexOf("step.run("));
+    expect(costReport).toBeLessThan(purgeEnd);
   });
 
   it("registers every job with Inngest", () => {

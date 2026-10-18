@@ -1,5 +1,8 @@
 import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { faqs, features } from "@/components/marketing/home-copy";
+import { MAX_FOLLOWUPS } from "@/config/rules";
+import { numberWord } from "@/lib/number-words";
 import { loadLegalDoc } from "@/components/marketing/legal-page";
 import { UNDO_WINDOW_SECONDS } from "@/config/drafting";
 import { bodyRetentionDays } from "@/config/retention";
@@ -36,12 +39,11 @@ function bullet(doc: string, label: string): string {
   return flat(end === -1 ? rest : rest.slice(0, end));
 }
 
+/** A homepage FAQ answer as visitors read it (src/app/page.tsx renders home-copy.ts). */
 function homepageFaq(question: string): string {
-  const src = readFileSync("src/app/page.tsx", "utf8");
-  const escaped = question.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const m = src.match(new RegExp(`q: "${escaped}",\\s*a:\\s*"([^"]+)"`));
-  expect(m, `FAQ "${question}"`).not.toBeNull();
-  return m![1];
+  const f = faqs.find((x) => x.q === question);
+  expect(f, `FAQ "${question}"`).toBeDefined();
+  return f!.a;
 }
 
 afterEach(() => vi.unstubAllEnvs());
@@ -107,9 +109,15 @@ describe("terms", () => {
     expect(deletion).toContain("cancelSubscriptionNow(");
   });
 
-  it("the trial can't send to customers; practice copies go only to the owner", () => {
-    expect(terms).toContain("sending to customers is switched off");
+  it("Squared Away sends nothing to customers in the trial; the Gmail side door is said (2026-10-16)", () => {
+    expect(terms).toContain(
+      "it won't send anything to a customer: its own sending is switched off",
+    );
     expect(terms).toContain("practice copies, to your own address");
+    expect(terms).toContain(
+      "Your drafts are real Gmail drafts, in your Gmail Drafts folder too, so you can send one from Gmail yourself if you want",
+    );
+    expect(terms).not.toContain("sending to customers is switched off");
   });
 
   it("autopilot only on plans that include it, after setup, one kind of email at a time", () => {
@@ -319,6 +327,17 @@ describe("homepage FAQ", () => {
     expect(a).toContain("Gmail Drafts folder");
   });
 
+  it("answers why not Gmail's own AI or Jobber, second, in plain words (Check 34 P1)", () => {
+    const q = "How is this different from Gmail's own AI, or from Jobber?";
+    expect(faqs[1].q).toBe(q);
+    const a = homepageFaq(q);
+    expect(a).toContain("price list");
+    expect(a).toContain("building-department");
+    expect(a).toContain("without your okay");
+    expect(a).not.toMatch(/only one|unlike any|best|never sends anything/i);
+    expect(a).not.toContain('"');
+  });
+
   it("the deletion answer says exactly what the policy says", () => {
     const a = homepageFaq("What if I stop?");
     expect(a).toContain(DELETION_SENTENCE);
@@ -337,14 +356,20 @@ describe("homepage FAQ", () => {
       "When you connect, it reads the last 30 days of your email (the text only for your inbox), then new mail as it arrives",
     );
     expect(a).toContain(`up to ${MAX_SENT_EMAILS} of your sent emails from the last year`);
-    expect(a).toContain(`It keeps email text for ${bodyRetentionDays()} days.`);
+    // Check 6 P2: bodies are purged; who, when, subject and summaries stay (as the policy says).
+    expect(a).toContain(`It deletes the body of each email after ${bodyRetentionDays()} days.`);
+    expect(a).toContain("It has no permission to delete, archive or move your emails.");
   });
 });
 
 describe("owner-facing copy about the trial", () => {
   // Practice copies to the owner's own address go out (through gmail.compose) during the trial, so
   // no screen may say sending is off altogether (the policy's scope table says otherwise).
-  const screens = ["src/app/page.tsx", "src/app/(app)/connect/page.tsx"];
+  const screens = [
+    "src/app/page.tsx",
+    "src/components/marketing/home-copy.ts",
+    "src/app/(app)/connect/page.tsx",
+  ];
 
   it("never says sending is switched off completely", () => {
     for (const f of screens) {
@@ -354,7 +379,7 @@ describe("owner-facing copy about the trial", () => {
 
   it("the pre-consent Gmail explainer says only customers are off-limits during the trial", () => {
     expect(flat(readFileSync("src/app/(app)/connect/page.tsx", "utf8"))).toContain(
-      "Squared Away won&apos;t send anything to a customer: you can only send yourself practice copies.",
+      "Squared Away won&apos;t send anything to a customer: from Squared Away you can only send yourself practice copies. Your drafts are in your Gmail Drafts folder too, so you can send one from Gmail yourself if you want.",
     );
   });
 
@@ -362,8 +387,10 @@ describe("owner-facing copy about the trial", () => {
     // Practice copies go out during the trial; and every nudge is a draft the owner okays.
     const files = [
       "src/app/page.tsx",
+      "src/components/marketing/home-copy.ts",
       "src/app/(app)/connect/page.tsx",
       "src/components/app/status-banner.tsx",
+      "src/components/app/trial-clock.tsx",
       "src/components/marketing/queue-preview.tsx",
     ];
     for (const f of files) {
@@ -377,15 +404,28 @@ describe("owner-facing copy about the trial", () => {
         // The cap counts nudges sent; a discarded one doesn't count, so never promise drafts.
         "nudge drafts at most",
         "sending is off",
+        // Check 6 P1: checkDraft flags after the fact; it can't stop the AI inventing.
+        "never invents",
+        // Check 6 P2: email is used for sorting, quotes, money and customers too; and the
+        // compose permission removes the drafts it wrote.
+        "only used to write your replies",
+        "can't delete, archive or move anything",
       ]) {
         expect(text, `${f}: ${bad}`).not.toContain(bad);
       }
     }
   });
 
+  it("the homepage says replies are drafted in the owner's voice, not their own words (Check 6 P8)", () => {
+    for (const f of ["src/app/page.tsx", "src/components/marketing/home-copy.ts"]) {
+      expect(flat(readFileSync(f, "utf8")).toLowerCase(), f).not.toContain("in your own words");
+    }
+  });
+
   it("the homepage states the nudge cap the code keeps (nudges sent, each a draft)", () => {
-    expect(flat(readFileSync("src/app/page.tsx", "utf8"))).toContain(
-      "Two nudges at most per conversation — each one a draft that waits for your okay.",
+    // Check 34 P3: and only where the customer emailed and the owner emailed back.
+    expect(features.find((f) => f.title === "Chases quiet quotes")?.body).toContain(
+      `it drafts a friendly nudge, ${numberWord(MAX_FOLLOWUPS)} at most, each one waiting for your okay.`,
     );
   });
 
@@ -405,5 +445,39 @@ describe("owner-facing copy about the trial", () => {
     );
     expect(page).not.toMatch(/only when you tap <strong>Send reply<\/strong>\./);
     expect(page).not.toMatch(/three things|all three|read, draft, and send/);
+  });
+
+  it("names what the leads package stores and promises (lead sources, Call / Text, towns)", () => {
+    const policy = flat(raw("privacy-policy.md"));
+    expect(policy).toContain(
+      "Which lead website or phone service a conversation came through (for example Thumbtack or Google Voice)",
+    );
+    expect(policy).toContain("the towns you work in");
+    expect(policy).toContain(
+      "To show **Call** and **Text** buttons, we look for a phone number in the customer's email when you open your queue. We don't store the number. Calls and texts go from your own phone: Squared Away never calls or texts your customers.",
+    );
+    expect(policy).toContain(
+      "we never draft or send to an email-to-text address, because that would text your customer.",
+    );
+    expect(policy).toContain("lead-source, done and fixed marks");
+  });
+
+  it("names what the replies package stores and sends (first replies, emergencies, money totals)", async () => {
+    const policy = flat(raw("privacy-policy.md"));
+    const { EMERGENCY_ALERTS, emergencyAlertText } = await import("@/server/emergency-alert-rules");
+    expect(policy).toContain("which kind of first reply the draft is");
+    expect(policy).toContain("when we let your phone know about an emergency email");
+    expect(policy).toContain("first-reply labels, when we alerted you to an emergency");
+    expect(policy).toContain("**Emergencies, even at night**");
+    // The words and caps the code keeps.
+    expect(emergencyAlertText(1)).toContain("An emergency email just came in.");
+    expect(policy).toContain('It says only "An emergency email just came in."');
+    expect(policy).toContain(
+      `at most ${EMERGENCY_ALERTS.nightCap} a night and ${EMERGENCY_ALERTS.dayCap} a day`,
+    );
+    expect(policy).toContain(
+      "this month's money so far as totals (quotes you won, invoices paid and what's still owed)",
+    );
+    expect(policy).toContain("It's a draft like any other and waits for your **Send reply**.");
   });
 });

@@ -18,7 +18,9 @@ export type PracticeOutcome =
   | { status: "sent"; to: string; left: number }
   | { status: "limit" }
   | { status: "not_found" }
-  | { status: "reconnect_needed" };
+  | { status: "reconnect_needed" }
+  /** The plan covers fewer Gmail addresses and this one is paused (2026-10-16). */
+  | { status: "mailbox_paused" };
 
 export async function practiceSendsUsed(workspaceId: string): Promise<number> {
   const [r] = await db()
@@ -56,6 +58,7 @@ export async function practiceSend(
   if (!canPracticeSend(workspace, now)) {
     throw new SendingBlockedError(effectiveStatus(workspace, now));
   }
+  if (mailbox.planPausedAt) return { status: "mailbox_paused" };
   if (mailbox.status !== "active") return { status: "reconnect_needed" };
   const used = await practiceSendsUsed(workspaceId);
   if (used >= PRACTICE_SEND_LIMIT) return { status: "limit" };
@@ -66,7 +69,7 @@ export async function practiceSend(
     subject: `[Practice] ${draft.subject}`,
     body: [
       `This is a practice copy. Your customer (${draft.toAddress}) did NOT get it.`,
-      "During your three days, Squared Away only sends to you.",
+      "During your trial, Squared Away only sends to you.",
       "",
       "---",
       "",

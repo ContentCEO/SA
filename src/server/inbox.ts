@@ -24,6 +24,8 @@ export type InboxRow = {
   senderName: string | null;
   senderAddress: string | null;
   extracted: Record<string, unknown> | null;
+  /** Leads package: a lead website / voicemail / text-message thread (never drafted). */
+  leadChannel: string | null;
   /** "Replied" / "Waiting on you"; null for junk or no customer email. */
   replyState: ReplyState | null;
 };
@@ -50,6 +52,7 @@ export async function listInboxThreads(
       needsOwnerReason: threads.needsOwnerReason,
       lastMessageAt: threads.lastMessageAt,
       extracted: threads.extracted,
+      leadChannel: threads.leadChannel,
       // Latest inbound email's customer, as a reply addresses them (a form's Reply-To, else From).
       senderName: customerNameSql(),
       senderAddress: customerAddressSql(),

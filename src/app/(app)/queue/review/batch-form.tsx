@@ -15,13 +15,24 @@ function SendAll({ n }: { n: number }) {
 }
 
 /** Plan #5: one button, then one confirmation. The server re-checks each reply. */
-export function BatchForm({ draftIds, categories }: { draftIds: string[]; categories: string[] }) {
+export function BatchForm({
+  rows,
+  categories,
+}: {
+  /** Check 9 P1: each reply with the fingerprint of its text and the address shown. */
+  rows: { draftId: string; seenHash: string; toAddress: string }[];
+  categories: string[];
+}) {
   const [confirming, setConfirming] = useState(false);
-  const n = draftIds.length;
+  const n = rows.length;
   return confirming ? (
     <form action={batchSendAction} className="sa-inverted flex flex-col gap-2 rounded-xl p-4">
-      {draftIds.map((id) => (
-        <input key={id} type="hidden" name="draftId" value={id} />
+      {rows.map((r) => (
+        <span key={r.draftId} hidden>
+          <input type="hidden" name="draftId" value={r.draftId} />
+          <input type="hidden" name={`seen:${r.draftId}`} value={r.seenHash} />
+          <input type="hidden" name={`seenTo:${r.draftId}`} value={r.toAddress} />
+        </span>
       ))}
       {categories.map((c) => (
         <input key={c} type="hidden" name="category" value={c} />

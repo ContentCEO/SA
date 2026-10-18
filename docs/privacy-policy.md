@@ -100,11 +100,25 @@ Settings removes all of our access, that one included.
   a complaint (so we never offer to ask that customer for a review), which customers were
   sent a review request, and when you marked a conversation as answered by phone (**I called
   them**).
+- Which kind you moved an email to, when you change it yourself (**Wrong kind? Move it**).
+- If you tell us, why a quote was lost (price, timing or went with someone else).
+- Which lead website or phone service a conversation came through (for example Thumbtack or
+  Google Voice), which of our "needs you" checks it matched (as short labels like "emergency" or
+  "outside your towns", not text from the email), whether you marked it done, and when you marked
+  a complaint fixed or closed its check-in.
+- For a first reply to someone you've never written to, which kind of first reply the draft is
+  (a short label like "urgent" or "asked about price", not text from the email), and when we let
+  your phone know about an emergency email.
+- Whether an email looked like a gas smell, a carbon monoxide alarm, an electrical fire sign,
+  sulfur-smelling water or an emergency (and when), why an email was marked as trying to instruct
+  the assistant (a short code, not the text), and whether you said it was a normal email.
 
 **What you tell us:** your business details (business name, trade, services, service area, hours,
 price list, payment terms, policies, things you never promise, words you never use, short
-seasonal notes, your review link), your settings, and, if you turn on text alerts, your own mobile
-number.
+seasonal notes, your review link, the towns you work in), your settings, and, if you turn on text
+alerts, your own mobile number. Also the sender rules you set (an email address or a company's web
+address, and what to do with its email), the people you mark as VIPs, short private notes you write
+about a customer, and, if you turn on away mode, the day you're back.
 
 **Phone notifications:** if you turn them on, we store the address your browser's push service
 gives us for that phone (the push service is run by Google, Apple, Mozilla or Microsoft, depending
@@ -112,14 +126,16 @@ on your browser). The notification we send through it is empty; your phone then 
 counts to show, so no counts, names or email content pass through the push service.
 
 **Payments:** card details are handled by Stripe and never reach us. We keep your Stripe customer
-and subscription IDs and your plan.
+and subscription IDs and your plan, and, when your plan covers fewer Gmail addresses than you've
+connected, which of them is paused (nothing in a paused one is read or deleted).
 
 **What happens in the app:** a record of actions (for example "draft created", "reply sent",
 "Gmail connected"), including for each reply you approved when you approved it and whether from a
 phone or a computer; daily counts of AI use and estimated cost; and, for replies you edited
 before sending, counts of what you changed (how many words, whether you changed the greeting or
-sign-off) and the change in tone, which we use to suggest updates to your writing style. These
-records hold IDs, counts and yes/no marks, not email text.
+sign-off) and the change in tone, which we use to suggest updates to your writing style; and
+which trial emails we sent you and whether you stopped them. These records hold IDs, counts and
+yes/no marks, not email text.
 
 **Cookies:** we use only the cookies needed to keep you signed in, to protect the Gmail connection
 step from forgery, and to remember for a few minutes that you ticked "I agree" while Google signs
@@ -132,7 +148,8 @@ the campaign tags in the link, the site you came from, your rough location (coun
 city, worked out from your IP address, which it doesn't keep), and your device type, operating
 system and browser. It never runs on the signed-in app. If you switch on offline approvals, your
 phone keeps a copy of your queue (in the browser's storage) and the approvals you make without
-signal until they reach us; signing out deletes them.
+signal until they reach us; signing out deletes them. Private customer notes are left out of
+that copy.
 
 ## How we use it
 
@@ -141,15 +158,31 @@ signal until they reach us; signing out deletes them.
   approve, and notes you can send: asking for the deposit after a customer accepts your quote,
   asking for a review when you tap **Ask for a review**, or, once a quote has had both follow-ups
   and a week of quiet, asking whether the customer went another way, only when you tap it.
+- To write a warm first reply when someone you've never written to asks about a job: it thanks
+  them and asks only what's missing, or asks for the best number and the address when something
+  is going wrong right now. It's a draft like any other and waits for your **Send reply**.
 - To reword a draft when you ask, by tapping a quick change or telling it what to change. If you
   speak the change, your browser turns your words into text using its own speech service (run by
   Google or Apple, depending on your phone); we receive only the text.
 - To keep your quotes, money owed and customers in order, and to remember the prices you quoted.
+- To show **Call** and **Text** buttons, we look for a phone number in the customer's email when
+  you open your queue. We don't store the number. Calls and texts go from your own phone:
+  Squared Away never calls or texts your customers.
+- To point out a request from outside the towns you work in, and to tell you when you've worked
+  for a customer before.
 - To send a reply when you approve it, and, during your trial, a practice copy to your own address
   when you tap **Send it to yourself instead**.
 - To send you your morning summary, a monthly summary at the start of each month, an email if
-  Google stops letting us read your Gmail (plus one reminder two days later), and, if you turn them
-  on, text alerts and phone notifications. The morning summary lists the kinds of email waiting and how long they have waited, with links into the app; the monthly summary has counts, your most common kinds of job and where requests came from; the Gmail alert names your own Gmail address; texts and notifications have counts only. None of them contain a customer's name or words.
+  Google stops letting us read your Gmail (plus one reminder two days later), during your trial a
+  short email on day 2 and on the last day and one a week after it ends (counts only, each with a
+  link to stop them), and, if you turn them on, text alerts and phone notifications. The morning summary lists the kinds of email waiting and how long they have waited, with links into the app, and this month's money so far as totals (quotes you won, invoices paid and what's still owed); the monthly summary has counts, your most common kinds of job and where requests came from; the Gmail alert names your own Gmail address; texts and notifications have counts only. None of them contain a customer's name or words.
+- If you leave **Emergencies, even at night** on, an email that sounds like an emergency (a leak,
+  no heat, no power, a gas smell) reaches your phone right away by the texts and notifications
+  you turned on, even between 9pm and 7am. That includes a voicemail or text message your phone
+  service emails you (such as Google Voice), even though it comes from a "no-reply" address. It
+  says only "An emergency email just came in." — once per conversation, at most 3 a night and 6 a
+  day — and it goes only to your own phone, never to the customer or caller. You can switch it off
+  in Settings.
 - To run your account: billing, support, keeping the service working and secure.
 
 We don't sell your information or your customers' information. We don't use it for advertising.
@@ -158,9 +191,13 @@ We don't sell your information or your customers' information. We don't use it f
 
 Every reply waits in your queue until you approve it, by tapping **Send reply** (or **Send N
 replies** after reviewing several together). You then have 20 seconds to undo it before it goes.
-During your three-day trial, sending to customers is switched off in the code. You can still send
-yourself a practice copy of a draft: it goes only to your own Gmail address, as a new email marked
-"[Practice]", never to the customer.
+We don't draft replies to lead-website notices or voicemail emails — answer those on the
+website or from your own phone — and we never draft or send to an email-to-text address,
+because that would text your customer.
+During your three-day trial, Squared Away won't send anything to a customer: its own sending is
+switched off in the code. You can still send yourself a practice copy of a draft: it goes only to
+your own Gmail address, as a new email marked "[Practice]", never to the customer. Your drafts are
+in your Gmail Drafts folder too, so you can send one from Gmail yourself if you want.
 
 Autopilot is off unless you turn it on, one kind of email at a time, and only on plans that
 include it after your setup call. It only becomes available for a kind of email after you have
@@ -180,6 +217,16 @@ work, ads or posts. Gmail data we receive through Google's APIs is never used fo
 Limited Use below). If you hire us for Growth, what we need from you (such as photos or access to
 your ad accounts) is agreed with you directly, outside this app.
 
+**If you're a Growth client:** you can sign in to a Growth dashboard. For it we keep which Growth
+services you have, the day Growth started, whether it is active, paused or ended, and the time
+zone your months are counted in; the updates {{OPERATOR}} posts for you (a title and text in
+{{OPERATOR}}'s own words) and when we emailed you about each one; and the numbers
+{{OPERATOR}} enters after each monthly check-in with you (new leads, calls, jobs won, money from
+jobs won, reviews gained, ad spend, and a short note). The dashboard shows only those numbers,
+as you told them to {{OPERATOR}}. It never reads anything from the inbox app: no email, no
+counts or totals from your inbox, quotes or drafts. If we invite you to Growth before you have
+an account, your invite notes the services and start date until you first sign in.
+
 ## Where your information goes
 
 We use these service providers. Each gets only what it needs:
@@ -189,7 +236,10 @@ We use these service providers. Each gets only what it needs:
   and email address) and subject, your business details and your writing-style description, sent for the task at hand only: sorting a message, learning your
   style from your sent mail, writing a draft, follow-up, deposit or review note, rewording a draft
   when you ask, or comparing a reply before and after you edited it to see how the tone changed.
-  Your price memory is never sent. Under Anthropic's commercial terms, this data is not used to
+  Your price memory is never sent. Neither are your private customer notes or your sender
+  rules. New email from a sender you set to Always junk usually isn't sent to the AI, unless it
+  looks like a complaint, a legal matter or a building department, or you moved that
+  conversation yourself. Under Anthropic's commercial terms, this data is not used to
   train their models. Anthropic may keep it for a limited time under its own policies, for example
   to prevent misuse.
 - **Vercel** — hosts the website and app, on servers in the United States (its US East region),
@@ -201,9 +251,12 @@ We use these service providers. Each gets only what it needs:
   page may also ask for your billing address, which Stripe uses to work out sales tax; Squared Away
   doesn't store it. Stripe saves that address, and the name you enter there, on its customer record
   of you.
-- **Resend** — delivers our emails to you (your invite with the sign-in link, a one-time "your
-  first drafts are ready" email, the morning summary, the monthly summary and the Gmail-access
-  alert and reminder), which never contain a customer's name or words; the email confirming you
+- **Resend** — delivers our emails to you (your invite with the sign-in link, your Growth
+  dashboard invite, a "New update from Squared Away Growth" email with the update's title and a
+  link, a one-time "your first drafts are ready" email, during your trial a short email on day 2
+  and on the last day and one a week after it ends unless you stop them, the morning summary, the
+  monthly summary and the Gmail-access alert and reminder), which never contain a customer's name
+  or words; the email confirming you
   joined the waitlist; and four kinds of notice to us: when someone joins the waitlist or asks for
   a Growth call (each says only that a sign-up or request came in, with no name, number or email
   address), when someone pays (it names only the plan and whether the setup fee was included),
@@ -251,11 +304,15 @@ In plain words:
   details (number, amount, due date, paid or not) and permit details (permit number, who issued
   it, inspection time and result) are kept so your inbox, quotes, money owed and activity history
   keep working, until you disconnect that Gmail address or delete your account.
-- **Your price memory, quote won/lost marks, invoice paid marks, complaint markers,
-  review-request records and the counts and tone change of edited replies** stay after the
+- **Your price memory, quote won/lost marks, why a quote was lost, invoice paid marks, complaint
+  markers, review-request records, lead-source, done and fixed marks, first-reply labels, when
+  we alerted you to an emergency, and the counts and tone change of edited replies** stay after the
   30-day email-text purge, until you disconnect that Gmail address or delete your account.
 - **Your writing style, style suggestions, business details, settings, activity history and AI
   usage counts** are kept until you delete your account.
+- **Private customer notes** stay until you remove them, disconnect the Gmail address they were
+  written under, or delete your account. **Sender rules and VIPs** stay until you remove them or
+  delete your account.
 - **When you agreed to the terms, and which version,** is kept until you delete your account.
 - **Your mobile number for text alerts** is kept until you remove it in Settings or delete your
   account.
@@ -263,6 +320,9 @@ In plain words:
   stops accepting them, or when you delete your account.
 - **Waitlist entries** are kept until you ask us to remove them. When we invite you, we note the
   date on your entry.
+- **Growth client records** (your services, start date, status, the updates posted for you and
+  the monthly numbers entered for you) are kept until you delete your account, or ask us to
+  remove them. Ending Growth closes the dashboard but keeps them.
 - **Growth call requests** are kept until you ask us to remove them (call, text or email us). If
   you send another request from the same email address, the newest one replaces the one before;
   the name and trade from your first entry stay on it.
@@ -299,7 +359,7 @@ Connections are encrypted (HTTPS). Google access tokens are encrypted before the
 are never shown in the browser or written to logs. Our logs never contain email text, access
 tokens or customers' personal details. Only the account owner can see their mail in the app; our
 admin page shows account health and counts, plus the waitlist and Growth call requests people send
-us from the website.
+us from the website, and for Growth clients what {{OPERATOR}} entered for them.
 
 If a security breach exposes your information, we'll tell you as soon as we can and without
 unreasonable delay, as Massachusetts law (Chapter 93H) requires, and we'll notify the authorities

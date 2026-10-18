@@ -31,6 +31,7 @@ export async function signInWithGoogleAction(
     path: TERMS_COOKIE_PATH,
     maxAge: TERMS_COOKIE_MAX_AGE_SECONDS,
   });
-  await signIn("google", { redirectTo: "/queue" });
+  // /start sends Growth clients to the choice of inbox or Growth dashboard, everyone else to /queue.
+  await signIn("google", { redirectTo: "/start" });
   return {};
 }

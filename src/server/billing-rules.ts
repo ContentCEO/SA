@@ -61,6 +61,30 @@ export const SALES_TAX_ON_NOTE =
 export const SALES_TAX_NOTE = "Plus sales tax where it applies.";
 
 /**
+ * Check 35 P3: what the one-time setup call covers, said the same way everywhere (homepage,
+ * /billing before and after paying, the setup_paid banner). Only things the business profile
+ * stores (prices, hours, service area, never-promise list).
+ */
+export const SETUP_CALL_COVERS = [
+  "your prices",
+  "hours",
+  "service area",
+  "the things you never promise",
+] as const;
+
+/**
+ * The sentence after each place's own lead-in: "before" follows "a call with us to …", "after"
+ * follows "{operator} …" once it's paid.
+ */
+export function setupCallSentence(kind: "before" | "after"): string {
+  const items = [...SETUP_CALL_COVERS];
+  const list = `${items.slice(0, -1).join(", ")} and ${items[items.length - 1]}`;
+  return kind === "before"
+    ? `load ${list}, then tune your drafts until they sound like you`
+    : `loads ${list}, then tunes your drafts until they sound like you`;
+}
+
+/**
  * Round 2 (FW): the first charge, said plainly before Stripe's page, from the config: the plan's
  * first month plus the one-time setup fee when it's still due, then the monthly price. Tax is
  * on top (prices are tax-exclusive), so it says so.

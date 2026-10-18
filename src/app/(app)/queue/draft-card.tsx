@@ -1,15 +1,18 @@
 "use client";
 
-import { useEffect, useRef, useState, useSyncExternalStore, useTransition } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useFormStatus } from "react-dom";
 import { Button } from "@/components/ui/button";
-import { addNeverSayAction } from "../settings/wording-actions";
 import { fillGap, findGaps } from "@/ai/gaps";
 import type { ConfidenceLabel } from "@/config/drafting";
 import { BodyWithGaps, ConfidenceTag, PastPrices, WhyThis, type PastPrice } from "./draft-parts";
-import { SayAChange, TweakChips } from "./revise-controls";
+import { OtherWaysToReply, SayAChange, TweakChips } from "./revise-controls";
 import { RemindMe, type SnoozeOption } from "./remind-me";
 import { CalledThem } from "./called-them";
+import { AutopilotCountdown } from "./autopilot-countdown";
+import { DraftEditor, keptEditKey } from "./draft-editor";
+import { SendButton } from "./send-button";
+import { readKept } from "@/lib/kept-text";
 import {
   addIntent,
   intentsServerSnapshot,
@@ -22,7 +25,6 @@ import {
   discardDraftAction,
   holdAutopilotAction,
   practiceSendAction,
-  saveDraftEditAction,
   sendDraftAction,
 } from "./actions";
 
@@ -39,10 +41,23 @@ export type DraftCardProps = {
   tag: string;
   /** Round 2 (FW E9): when the customer wrote ("Wrote 9 days ago"), on every card. */
   wrote?: string | null;
+  /** Leads package (B14 / B9): one-liners from code ("Repeat customer: …"). */
+  leadLines?: string[];
+  /** Replies package: "First reply: asks 2 questions · …" on a first reply to a new lead. */
+  openingLine?: string | null;
+  /** Replies package: show "Other ways to reply" (a first reply that can still be changed). */
+  otherWays?: boolean;
   /** One line on what the customer wants, from sorting — so the card reads without opening Gmail. */
   summary?: string | null;
   reason: string;
   body: string;
+  /** Check 9 P1: the fingerprint of `body`, posted with Send reply so a changed draft waits. */
+  seenHash: string;
+  /**
+   * Check 43 P7: the draft's time words may be out of date ("Written Friday. It says
+   * “tomorrow”…"). Send reply becomes "Send reply anyway", which confirms it.
+   */
+  timingNote?: string | null;
   flags: string[];
   /** Plan #8: Ready / Check the details / Check everything. */
   label: ConfidenceLabel;
@@ -58,8 +73,10 @@ export type DraftCardProps = {
   canSend: boolean;
   /** Read-only account: show the draft, but no edit, discard or swipe. */
   readOnly?: boolean;
-  /** Autopilot will send this at this (formatted) time unless held. */
+  /** Autopilot will send this at this time (ISO) unless held (Check 9 P2: a live countdown). */
   autoSendAt?: string | null;
+  /** The same time as a clock ("9:42 AM"), in the owner's time zone. */
+  autoSendClock?: string | null;
   sendingOffLabel: string;
   sendingOffDetail: string;
   /** Plan #40: practice sends left during the three days; null outside them. */
@@ -69,6 +86,10 @@ export type DraftCardProps = {
    * a figure reaches the draft only when they tap it into a {{price}} gap.
    */
   priceMemory?: PastPrice[];
+  /** Ideas G7: the owner's private note line (rendered by the server page). */
+  noteLine?: React.ReactNode;
+  /** Ideas H4: "Wrong kind?" (rendered by the server page). */
+  moreActions?: React.ReactNode;
 };
 
 function Pending({
@@ -119,6 +140,15 @@ const buzz = () => {
  */
 export function DraftCard(p: DraftCardProps) {
   const [editing, setEditing] = useState(false);
+  // Check 8 P1 / 9 P4: text typed in Edit before a reload or a failed save, kept in this tab.
+  const [kept, setKept] = useState<string | null>(null);
+  useEffect(() => {
+    const k = readKept(keptEditKey(p.draftId), p.seenHash);
+    if (k === null) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- read once from the browser after mount
+    setKept(k);
+    setEditing(true);
+  }, [p.draftId, p.seenHash]);
   const [expanded, setExpanded] = useState(false);
   // Outside review (2026-10-15): the quick changes live behind one button, so Send reply
   // stays on the first screen of a card.
@@ -161,7 +191,6 @@ export function DraftCard(p: DraftCardProps) {
     const t = setTimeout(() => setDiscardIn((s) => (s === null ? null : s - 1)), 1000);
     return () => clearTimeout(t);
   }, [discardIn]);
-  const editor = useRef<HTMLTextAreaElement>(null);
   // The body as the owner sees it — gaps they fill in change it before sending.
   const [body, setBody] = useState(p.body);
   const gapsLeft = findGaps(body).length;
@@ -171,17 +200,6 @@ export function DraftCard(p: DraftCardProps) {
     if (priceGap >= 0) setBody(fillGap(body, priceGap, value));
   };
   const pastPrices = p.priceMemory ?? [];
-  const [neverSayNote, setNeverSayNote] = useState<string | null>(null);
-  const [savingPhrase, startSaving] = useTransition();
-  const neverSay = () => {
-    const el = editor.current;
-    const phrase = el ? el.value.slice(el.selectionStart, el.selectionEnd).trim() : "";
-    if (!phrase) {
-      setNeverSayNote("Select the words first — press and hold, then drag.");
-      return;
-    }
-    startSaving(async () => setNeverSayNote((await addNeverSayAction(phrase)).message));
-  };
 
   const onPointerDown = (e: React.PointerEvent) => {
     if (editing || p.readOnly || e.pointerType === "mouse") return;
@@ -235,6 +253,13 @@ export function DraftCard(p: DraftCardProps) {
         <ToLine address={p.toAddress} fromReplyTo={p.toFromReplyTo} />
         <span className="text-sm font-semibold">{p.tag}</span>
         {p.wrote ? <span className="text-sm">{p.wrote}</span> : null}
+        {(p.leadLines ?? []).map((line) => (
+          <p key={line} className="text-sm font-semibold">
+            {line}
+          </p>
+        ))}
+        {p.openingLine ? <p className="text-sm font-semibold">{p.openingLine}</p> : null}
+        {p.noteLine}
         {p.summary ? <p className="font-semibold">{p.summary}</p> : null}
         <p className={p.summary ? "text-muted-foreground" : undefined}>{p.reason}</p>
       </header>
@@ -248,12 +273,16 @@ export function DraftCard(p: DraftCardProps) {
           className="sa-inverted flex flex-col gap-2 rounded-lg p-3"
         >
           <input type="hidden" name="draftId" value={p.draftId} />
-          <p>
-            <span className="font-black">Autopilot sends this at {p.autoSendAt}</span>{" "}
-            <span className="text-ash">unless you hold it.</span>
-          </p>
+          <AutopilotCountdown sendAt={p.autoSendAt} clock={p.autoSendClock ?? ""} />
           <Pending label="Hold it" busy="Holding…" className="w-full" />
         </form>
+      ) : null}
+
+      {p.timingNote && !p.readOnly ? (
+        <div role="note" className="rounded-lg border-2 border-charcoal p-3">
+          <p className="font-black">{p.timingNote}</p>
+          <p className="text-sm">Read it again before it goes, or tap Edit to change it.</p>
+        </div>
       ) : null}
 
       {p.flags.length || p.label === "check_everything" ? (
@@ -271,60 +300,20 @@ export function DraftCard(p: DraftCardProps) {
       ) : null}
 
       {editing ? (
-        <form className="flex flex-col gap-3">
-          <input type="hidden" name="draftId" value={p.draftId} />
-          {p.toAddress ? <input type="hidden" name="seenTo" value={p.toAddress} /> : null}
-          <ToLine address={p.toAddress} fromReplyTo={p.toFromReplyTo} />
-          <label className="flex flex-col gap-1.5">
-            <span className="font-semibold">Your reply</span>
-            <textarea
-              ref={editor}
-              name="body"
-              defaultValue={body}
-              rows={10}
-              autoFocus
-              className="w-full rounded-lg border border-input bg-paper px-3 py-2.5 text-base"
-            />
-          </label>
-          {p.canSend ? (
-            <Pending
-              formAction={sendDraftAction}
-              label="Send reply"
-              busy="Sending…"
-              size="lg"
-              className="w-full"
-            />
-          ) : null}
-          <Pending
-            formAction={saveDraftEditAction}
-            label="Save changes"
-            busy="Saving…"
-            variant="outline"
-            className="w-full"
-          />
-          <Button
-            type="button"
-            variant="outline"
-            className="w-full"
-            disabled={savingPhrase}
-            onClick={neverSay}
-          >
-            {savingPhrase ? "Adding…" : "Never say this"}
-          </Button>
-          {neverSayNote ? (
-            <p role="status" className="text-sm font-semibold">
-              {neverSayNote}
-            </p>
-          ) : null}
-          <Button
-            type="button"
-            variant="ghost"
-            className="w-full"
-            onClick={() => setEditing(false)}
-          >
-            Cancel
-          </Button>
-        </form>
+        <DraftEditor
+          draftId={p.draftId}
+          body={body}
+          kept={kept}
+          seenHash={p.seenHash}
+          toAddress={p.toAddress}
+          toLine={<ToLine address={p.toAddress} fromReplyTo={p.toFromReplyTo} />}
+          canSend={p.canSend}
+          confirmTiming={!!p.timingNote}
+          onCancel={() => {
+            setKept(null);
+            setEditing(false);
+          }}
+        />
       ) : null}
       {editing ? null : (
         <>
@@ -356,6 +345,7 @@ export function DraftCard(p: DraftCardProps) {
           ) : null}
 
           <WhyThis reason={p.reason} usedFacts={p.usedFacts} flags={p.flags} />
+          {p.readOnly ? null : p.moreActions}
 
           {discardIn !== null ? (
             <form
@@ -419,11 +409,19 @@ export function DraftCard(p: DraftCardProps) {
                   </Button>
                 </div>
               ) : p.canSend ? (
-                <form action={sendDraftAction} onSubmit={okayOffline}>
+                <form
+                  action={sendDraftAction}
+                  onSubmit={okayOffline}
+                  // Check 8 P1: with offline okays on, the no-signal guard lets this one through
+                  // (it's kept on the phone); otherwise a tap with no signal is stopped first.
+                  data-offline-ok={p.offlineEnabled ? "" : undefined}
+                >
                   <input type="hidden" name="draftId" value={p.draftId} />
+                  <input type="hidden" name="seen" value={p.seenHash} />
                   {p.toAddress ? <input type="hidden" name="seenTo" value={p.toAddress} /> : null}
                   {body !== p.body ? <input type="hidden" name="body" value={body} /> : null}
-                  <Pending label="Send reply" busy="Sending…" size="lg" className="w-full" />
+                  {p.timingNote ? <input type="hidden" name="confirmedTiming" value="1" /> : null}
+                  <SendButton label={p.timingNote ? "Send reply anyway" : "Send reply"} />
                 </form>
               ) : (
                 <>
@@ -496,6 +494,9 @@ export function DraftCard(p: DraftCardProps) {
                   </Button>
                 </div>
               )}
+              {canChange && p.otherWays ? (
+                <OtherWaysToReply draftId={p.draftId} seenHash={p.seenHash} />
+              ) : null}
               {canChange && changing ? (
                 <div
                   id={`change-${p.draftId}`}
@@ -504,8 +505,8 @@ export function DraftCard(p: DraftCardProps) {
                   <p className="text-sm text-muted-foreground">
                     Each change writes a new version for you to read. Nothing is sent.
                   </p>
-                  <TweakChips draftId={p.draftId} />
-                  <SayAChange draftId={p.draftId} />
+                  <TweakChips draftId={p.draftId} seenHash={p.seenHash} />
+                  <SayAChange draftId={p.draftId} seenHash={p.seenHash} />
                 </div>
               ) : null}
               <RemindMe threadId={p.threadId} options={p.remindOptions ?? []} />

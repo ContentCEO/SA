@@ -7,11 +7,20 @@ import { SiteFooter } from "@/components/app/site-footer";
 import { Headline } from "@/components/brand/headline";
 import { Wordmark } from "@/components/brand/wordmark";
 import { QueuePreview } from "@/components/marketing/queue-preview";
+import { PlanCards } from "@/components/marketing/plan-cards";
+import { setupCallSentence } from "@/server/billing-rules";
 import { WaitlistForm } from "@/components/marketing/waitlist-form";
+import {
+  faqs,
+  features,
+  pricingPromise,
+  promiseBand,
+  steps,
+} from "@/components/marketing/home-copy";
 import { isReferralCode, referralsVisible } from "@/server/referral-rules";
-import { SALES_TAX_NOTE } from "@/server/billing-rules";
 import { formatDollars, pricing } from "@/config/pricing";
 import { siteConfig } from "@/config/site";
+import { capitalized, dayAdjective } from "@/lib/trial-words";
 import { cn } from "@/lib/utils";
 import { Phone } from "lucide-react";
 import { AboutDavi } from "@/components/marketing/about-davi";
@@ -27,7 +36,7 @@ import { phoneHref } from "@/lib/phone-href";
 const telHref = phoneHref("tel", siteConfig.phone);
 
 const description =
-  "AI email help for contractors, built for carpenters and the trades they work with: Squared Away sorts your business email, drafts replies in your voice, and drafts quote follow-ups — and nothing goes out without your okay.";
+  "AI email help for contractors, built for carpenters, plumbers, and electricians: Squared Away sorts your business email, drafts replies in your voice, and drafts quote follow-ups — and nothing goes out without your okay.";
 
 export const metadata: Metadata = {
   // The words people search for; the share card keeps the brand line.
@@ -39,87 +48,15 @@ export const metadata: Metadata = {
     siteName: "Squared Away",
     title: "Squared Away — your inbox, handled.",
     description:
-      "Built for carpenters and the trades they work with. Sorts your business email, drafts replies in your voice, and waits for your okay before anything goes out.",
+      "Built for carpenters, plumbers, and electricians. Sorts your business email, drafts replies in your voice, and waits for your okay before anything goes out.",
   },
   twitter: {
     card: "summary_large_image",
     title: "Squared Away — your inbox, handled.",
     description:
-      "Built for carpenters and the trades they work with. Nothing goes out without your okay.",
+      "Built for carpenters, plumbers, and electricians. Nothing goes out without your okay.",
   },
 };
-
-const steps = [
-  {
-    n: "1",
-    title: "Connect your Gmail",
-    body: "We show you exactly what Squared Away can and can't do before Google asks for permission.",
-  },
-  {
-    n: "2",
-    title: "It sorts and drafts",
-    body: "Every email is sorted — quote, question, scheduling, invoice, complaint, junk — and replies are written in your own words, as real Gmail drafts.",
-  },
-  {
-    n: "3",
-    title: "You tap Send reply",
-    body: "Read it, change it if you like, send it. From the truck, between jobs, one-handed.",
-  },
-];
-
-const features = [
-  {
-    title: "Sorts every email",
-    body: "Quote requests, questions, scheduling, invoices, suppliers. Complaints and anything big are put in front of you, not answered.",
-  },
-  {
-    title: "Writes like you",
-    body: "It learns your greetings, sign-off and phrases from your sent mail. It never invents a price, a date or a promise — it asks, or flags it for you.",
-  },
-  {
-    title: "Chases quiet quotes",
-    body: "If a customer goes quiet on a quote or invoice, it drafts a friendly nudge. Two nudges at most per conversation — each one a draft that waits for your okay.",
-  },
-  {
-    title: "Morning summary",
-    body: "When you're set up, it sends one short email at the time you choose: what's waiting and what needs you. Skipped on quiet mornings.",
-  },
-  {
-    title: "Autopilot, when you're ready",
-    body: "Off by default. Earned one kind of email at a time, never for complaints or money, and every reply waits 10 minutes so you can stop it.",
-  },
-  {
-    title: "Your data stays yours",
-    body: "Email text is deleted after 30 days. It's only used to write your replies — never to train AI. Disconnect any time.",
-  },
-];
-
-const faqs = [
-  {
-    q: "Will it send emails without me?",
-    a: "No. Every reply waits in your queue until you tap Send reply. Autopilot exists, but it's off until you switch it on for a specific kind of email, and only after you've approved ten of those yourself.",
-  },
-  {
-    q: "Do I have to change how I do email?",
-    a: "No. It works inside the Gmail you already use. Each draft is also saved in your Gmail Drafts folder, so you can read it there too.",
-  },
-  {
-    q: "Can it see all my email?",
-    a: "It has permission to read your Gmail. When you connect, it reads the last 30 days of your email (the text only for your inbox), then new mail as it arrives, and up to 200 of your sent emails from the last year to learn how you write. It keeps email text for 30 days. It can't delete, archive or move anything.",
-  },
-  {
-    q: "Does it work with Outlook?",
-    a: "Gmail only for now, including Google Workspace. Outlook is on the list — join the waitlist anyway.",
-  },
-  {
-    q: "What does the trial look like?",
-    a: "Three days with your real inbox. It sorts and drafts so you can judge the replies — Squared Away won't send anything to a customer during the trial. If it's not for you, disconnect and you're done.",
-  },
-  {
-    q: "What if I stop?",
-    a: "Disconnect Gmail in Settings and our access is removed at Google straight away. Want it all gone? Delete my account in Settings deletes your account and everything in it from Squared Away, after one confirmation. Stripe keeps its own payment records. Month to month, no contract.",
-  },
-];
 
 function Section({
   id,
@@ -141,11 +78,11 @@ function Section({
 
 export default async function HomePage(props: PageProps<"/">) {
   const session = await auth();
-  if (session?.user?.id) redirect("/queue");
+  // Signed in: /start (the inbox, or for a Growth client the choice of inbox or Growth).
+  if (session?.user?.id) redirect("/start");
   // Plan #47: a referral link's code rides along on the waitlist form — only while it's switched on.
   const { ref } = await props.searchParams;
   const referralCode = referralsVisible() && isReferralCode(ref) ? ref : undefined;
-  const plans = Object.values(pricing.plans);
 
   return (
     <div className="flex flex-1 flex-col">
@@ -177,9 +114,9 @@ export default async function HomePage(props: PageProps<"/">) {
             </Link>
             <Link
               href="#waitlist"
-              className="inline-flex min-h-tap items-center rounded-lg bg-charcoal px-4 font-semibold text-offwhite"
+              className="inline-flex min-h-tap items-center rounded-lg bg-charcoal px-3 font-semibold whitespace-nowrap text-offwhite"
             >
-              Get on the list
+              Join the waitlist
             </Link>
           </nav>
         </div>
@@ -192,7 +129,7 @@ export default async function HomePage(props: PageProps<"/">) {
             <div className="grid items-center gap-12 lg:grid-cols-[1.1fr_1fr]">
               <div className="flex flex-col gap-6">
                 <p className="font-semibold text-slate">
-                  Built for carpenters, and the trades they work with
+                  Built for carpenters, plumbers, and electricians
                 </p>
                 <Headline serif="your inbox," heavy="handled." size="xl" />
                 <p className="max-w-lg text-xl leading-relaxed">
@@ -214,8 +151,8 @@ export default async function HomePage(props: PageProps<"/">) {
                   </Link>
                 </div>
                 <p className="text-slate">
-                  Works with Gmail · On the web or as an app on your phone · Three-day trial on your
-                  real inbox.
+                  Works with Gmail · On the web, or add it to your phone&apos;s home screen ·{" "}
+                  {capitalized(dayAdjective(pricing.evaluationDays))} trial on your real inbox.
                 </p>
                 <Link
                   href="#growth"
@@ -250,11 +187,7 @@ export default async function HomePage(props: PageProps<"/">) {
                 <span className="sa-headline-serif text-4xl sm:text-5xl">the one rule,</span>{" "}
                 <span className="sa-headline-heavy text-5xl sm:text-7xl">your okay first.</span>
               </p>
-              <p className="max-w-2xl text-xl leading-relaxed text-ash">
-                Squared Away drafts; you decide. Replies sit in your queue until you tap Send reply
-                — and during your three-day trial, Squared Away won&apos;t send anything to a
-                customer: that&apos;s switched off in the code, not just hidden behind a button.
-              </p>
+              <p className="max-w-2xl text-xl leading-relaxed text-ash">{promiseBand.join(" ")}</p>
             </div>
           </section>
 
@@ -280,47 +213,15 @@ export default async function HomePage(props: PageProps<"/">) {
                   {pricing.setupFee.name} — {formatDollars(pricing.setupFee.amountCents)} once
                 </span>
                 <span className="text-lg text-slate">
-                  A call with us to load your prices, hours, service area and the things you never
-                  promise, then tune the drafts until they sound like you.
+                  A call with us to {setupCallSentence("before")}.
                 </span>
               </div>
             </div>
-            <ul className="grid gap-4 md:grid-cols-3">
-              {plans.map((p) => (
-                <li
-                  key={p.name}
-                  className={cn(
-                    "flex flex-col gap-3 rounded-2xl p-6",
-                    p.name === "Crew" ? "sa-inverted" : "border bg-card",
-                  )}
-                >
-                  <span className="text-xl font-black">{p.name}</span>
-                  <span>
-                    <span className="sa-headline-heavy text-5xl">
-                      {formatDollars(p.amountCents)}
-                    </span>
-                    <span className={p.name === "Crew" ? "text-ash" : "text-slate"}> / month</span>
-                  </span>
-                  <ul className="flex flex-col gap-1.5 text-lg">
-                    <li>
-                      {p.mailboxLimit} Gmail inbox{p.mailboxLimit === 1 ? "" : "es"}
-                    </li>
-                    <li>Sorting, drafts, follow-ups, morning summary</li>
-                    {p.autopilot ? <li>Autopilot for the emails you choose</li> : null}
-                    {p.name === "Company" ? <li>Priority support</li> : null}
-                  </ul>
-                </li>
-              ))}
-            </ul>
-            <p className="text-slate">{SALES_TAX_NOTE}</p>
-            <p className="text-lg font-semibold">
-              On every plan, each reply waits for your okay, and follow-ups are two nudges at most,
-              each one a draft you approve. Where autopilot is included, it stays off until you earn
-              it, and every autopilot reply waits 10 minutes so you can stop it.
-            </p>
+            <PlanCards />
+            <p className="text-lg font-semibold">{pricingPromise}</p>
             <p className="text-slate">
-              Prices in US dollars. Month to month — stop any time. Every plan starts with the
-              three-day trial.
+              Prices in US dollars. Month to month — stop any time. Every plan starts with the{" "}
+              {dayAdjective(pricing.evaluationDays)} trial.
             </p>
             <p className="text-lg">
               Questions about which plan fits?{" "}
@@ -358,7 +259,7 @@ export default async function HomePage(props: PageProps<"/">) {
               <div className="flex flex-col gap-4">
                 <Headline as="h2" serif="get on the list," heavy="we'll set you up." />
                 <p className="text-xl leading-relaxed">
-                  We onboard a few shops at a time and set each one up by hand, so it works properly
+                  We take on a few shops at a time and set each one up by hand, so it works properly
                   from the first morning.
                 </p>
                 <div className="flex flex-col gap-2">

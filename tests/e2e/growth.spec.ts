@@ -404,7 +404,7 @@ test.describe("homepage: the way into Squared Away Growth", () => {
       document.getElementById("waitlist")!.scrollIntoView({ block: "start" });
       return document.querySelector('[data-sa-half="growth"]')!.getBoundingClientRect().top;
     });
-    // A screen tall enough that, after "Get on the list", Growth's top sits at 96% of it: inside
+    // A screen tall enough that, after "Join the waitlist", Growth's top sits at 96% of it: inside
     // the band (85–100%), below the middle line (92.5%), so the app side is right.
     const width = page.viewportSize()!.width;
     await page.setViewportSize({ width, height: Math.round(gap / 0.96) });
@@ -414,7 +414,7 @@ test.describe("homepage: the way into Squared Away Growth", () => {
     await expectGrowth(page);
     await page
       .getByRole("navigation", { name: "Site" })
-      .getByRole("link", { name: "Get on the list" })
+      .getByRole("link", { name: "Join the waitlist" })
       .click();
     await expect(page.getByRole("region", { name: "Join the waitlist" })).toBeInViewport();
     const at = await page.evaluate(
@@ -474,6 +474,7 @@ test.describe("homepage: the way into Squared Away Growth", () => {
       "Introducing Squared Away Growth",
       "Squared Away Growth",
       "What we take on",
+      "You own everything",
       "How Growth works",
       "Ground rules",
       "Growth questions",
@@ -1239,17 +1240,23 @@ test("admin: Growth requests and app sign-ups side by side; Growth-only is never
   await expect(b.getByText("Growth call", { exact: true })).toBeVisible();
   await expect(b.getByText("App waitlist", { exact: true })).toHaveCount(0);
   await expect(b).toContainText(
-    "Not on the app waitlist. A Growth call never invites anyone to the app.",
+    "Not on the app waitlist. Asking for a Growth call never invites anyone.",
   );
   await expect(b).toContainText("Wants help with: Google ads, Reviews");
-  await expect(b.getByRole("button")).toHaveCount(0);
+  // No app invite on a Growth-only row: only the explicit Growth controls.
+  await expect(b.getByRole("button", { name: /^Invite Sam/ })).toHaveCount(0);
+  await expect(b.locator("summary", { hasText: /^Invite to Growth$/ })).toBeVisible();
+  await expect(b.locator("summary", { hasText: /^Remove Growth request$/ })).toBeVisible();
   await expect(b).not.toContainText("growth-only");
   await expect(page.getByText("Earlier request")).toHaveCount(0);
 
   // A posted invite for a Growth-only email (e.g. a stale page) invites nobody and says why.
-  await a.locator('input[name="email"]').evaluate((el, v) => {
-    (el as HTMLInputElement).value = v;
-  }, only);
+  await a
+    .locator("form", { has: page.getByRole("button", { name: "Invite Rosa" }) })
+    .locator('input[name="email"]')
+    .evaluate((el, v) => {
+      (el as HTMLInputElement).value = v;
+    }, only);
   await a.getByRole("button", { name: "Invite Rosa" }).click();
   await expect(page).toHaveURL(/\/admin\?error=growth_only#waitlist$/);
   await expect(

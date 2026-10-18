@@ -1,5 +1,5 @@
 import "server-only";
-import { eq } from "drizzle-orm";
+import { and, asc, eq } from "drizzle-orm";
 import { callStructured } from "@/ai/client";
 import { prepareBody } from "@/ai/classify";
 import {
@@ -7,13 +7,14 @@ import {
   VOICE_INSTRUCTIONS,
   VOICE_PROMPT_VERSION,
   voiceSchema,
-} from "@/ai/prompts/voice.v2";
+} from "@/ai/prompts/voice.v3";
 import { AiCapReachedError } from "@/ai/usage";
 import { db } from "@/db";
 import { activityLog, mailboxes, voiceProfiles, workspaces, type Mailbox } from "@/db/schema";
 import { decryptSecret } from "@/lib/crypto";
 import { MailboxAuthError, type MailboxReader } from "@/mailbox/connector";
 import { createGmailReader } from "@/mailbox/gmail/api";
+import { mailboxRunning } from "./mailbox-plan";
 import { jobsAllowed } from "./lifecycle";
 import { markReconnectNeeded } from "./sync";
 
@@ -82,11 +83,14 @@ export async function learnVoice(
   const [ws] = await db().select().from(workspaces).where(eq(workspaces.id, workspaceId));
   if (!ws || !jobsAllowed(ws, now)) return "read_only";
 
+  // The oldest address that's on: Google access works and the plan covers it (2026-10-16).
   const [mailbox] = await db()
     .select()
     .from(mailboxes)
-    .where(eq(mailboxes.workspaceId, workspaceId));
-  if (!mailbox || mailbox.status !== "active") return "no_mailbox";
+    .where(and(eq(mailboxes.workspaceId, workspaceId), mailboxRunning()))
+    .orderBy(asc(mailboxes.createdAt))
+    .limit(1);
+  if (!mailbox) return "no_mailbox";
 
   await setStatus(workspaceId, "learning", now);
   const reader = (
@@ -140,7 +144,7 @@ export async function learnVoice(
       workspaceId,
       role: "voice" as const,
       promptVersion: VOICE_PROMPT_VERSION,
-      maxTokens: 4096,
+      maxTokens: 8192,
       system: [{ text: VOICE_INSTRUCTIONS, cache: false }],
       user: sentMailBlock(bodies),
       schema: voiceSchema,
@@ -205,7 +209,7 @@ export async function workspacesNeedingVoice(now: Date = new Date()): Promise<st
     .from(mailboxes)
     .innerJoin(workspaces, eq(workspaces.id, mailboxes.workspaceId))
     .leftJoin(voiceProfiles, eq(voiceProfiles.workspaceId, mailboxes.workspaceId))
-    .where(eq(mailboxes.status, "active"));
+    .where(mailboxRunning());
   const stuckBefore = now.getTime() - VOICE_STUCK_AFTER_MS;
   const due = rows.filter(
     (r) =>
@@ -229,7 +233,7 @@ export async function workspacesDueForVoiceRefresh(now: Date = new Date()) {
     .from(mailboxes)
     .innerJoin(workspaces, eq(workspaces.id, mailboxes.workspaceId))
     .leftJoin(voiceProfiles, eq(voiceProfiles.workspaceId, mailboxes.workspaceId))
-    .where(eq(mailboxes.status, "active"));
+    .where(mailboxRunning());
   const due = rows.filter(
     (r) =>
       jobsAllowed(r.workspace, now) &&

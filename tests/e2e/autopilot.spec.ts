@@ -99,6 +99,34 @@ test("queue: an autopilot reply says when it sends, and Hold it stops it", async
   expect(after).toMatchObject({ status: "pending", autoSendAt: null });
 });
 
+test("queue: the autopilot countdown moves on its own and refreshes at zero (Check 9 P2)", async ({
+  page,
+  context,
+}) => {
+  const owner = await seedOwner({ mailbox: true, backfilled: true });
+  await setWorkspace(owner.workspaceId, { status: "active", plan: "crew", setupPaidVia: "stripe" });
+  const { draft } = await seedQueue(owner.mailboxId!);
+  await testDb
+    .update(schema.drafts)
+    .set({ autoSendAt: new Date(Date.now() + 8 * 60_000) })
+    .where(eq(schema.drafts.id, draft.id));
+  await signInAs(context, owner);
+  await page.clock.install();
+  await page.goto("/queue");
+  const card = page.getByRole("article", { name: "Draft reply to Priya" });
+  await expect(card.getByText(/^Sends in [78] min$/)).toBeVisible();
+  // The clock time is there once for screen readers, not on every tick.
+  await expect(card.getByRole("status")).toContainText(/Autopilot sends this at \d{1,2}:\d{2}/);
+  await page.clock.fastForward("07:30");
+  await expect(card.getByText(/^Sends in \d+ seconds?$/)).toBeVisible();
+  const refreshed = page.waitForRequest(
+    (r) => new URL(r.url()).pathname === "/queue" && r.headers()["rsc"] === "1",
+  );
+  await page.clock.fastForward("01:00");
+  await expect(card.getByText("Sending now…")).toBeVisible();
+  await refreshed;
+});
+
 test("admin: set an owner's plan by hand", async ({ page, context }) => {
   const owner = await seedOwner({ mailbox: true });
   await signInAs(context, await seedAdmin());

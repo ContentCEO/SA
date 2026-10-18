@@ -8,6 +8,7 @@ import { SENDING_BLOCKED_MESSAGE, SendingBlockedError } from "@/server/lifecycle
 import { hitLimit } from "@/server/rate-limit";
 import { termsRequiredResponse } from "@/server/session";
 import { termsAccepted } from "@/server/terms";
+import { MAILBOX_PAUSED_LINE } from "@/server/mailbox-plan-rules";
 
 export const dynamic = "force-dynamic";
 
@@ -54,6 +55,7 @@ export async function POST(request: NextRequest, ctx: RouteContext<"/api/drafts/
     seen?: unknown;
     okayedAt?: unknown;
     seenTo?: unknown;
+    confirmedTiming?: unknown;
   };
   const editedBody =
     typeof payload.body === "string" && payload.body.trim() ? payload.body : undefined;
@@ -62,17 +64,44 @@ export async function POST(request: NextRequest, ctx: RouteContext<"/api/drafts/
     typeof payload.seen === "string" && typeof payload.okayedAt === "number"
       ? { seenHash: payload.seen, okayedAt: new Date(payload.okayedAt) }
       : undefined;
+  // Check 9 P1: an online send may say which text it saw too; a change since → 409.
+  const seenHash = !offline && typeof payload.seen === "string" ? payload.seen : undefined;
 
   // The "To:" the phone showed when the owner okayed it (H7); a change there is refused.
   const seenTo =
     typeof payload.seenTo === "string" && payload.seenTo.length <= 320 ? payload.seenTo : undefined;
 
   try {
-    const outcome = await queueSend(workspace.id, id, { editedBody, offline, seenTo });
+    const outcome = await queueSend(workspace.id, id, {
+      editedBody,
+      offline,
+      seenTo,
+      seenHash,
+      // Check 43 P7: only an explicit yes; anything else gets 409 timing_check.
+      confirmedTiming: payload.confirmedTiming === true,
+    });
     if (outcome.status === "gaps_unfilled") {
       return NextResponse.json(
         { error: "Fill in every highlighted gap before sending." },
         { status: 422 },
+      );
+    }
+    if (outcome.status === "text_address") {
+      // Leads package: Squared Away never texts customers.
+      return NextResponse.json(
+        {
+          status: "text_address",
+          error:
+            "That address turns email into a text message, and Squared Away never texts customers. Use Text from my phone instead.",
+        },
+        { status: 403 },
+      );
+    }
+    if (outcome.status === "mailbox_paused") {
+      // 2026-10-16: the plan covers fewer Gmail addresses and this one is paused.
+      return NextResponse.json(
+        { status: "mailbox_paused", error: MAILBOX_PAUSED_LINE },
+        { status: 403 },
       );
     }
     if (outcome.status === "queued") {

@@ -29,7 +29,8 @@ import {
   stripeKeyMode,
 } from "./billing-rules";
 import { paymentNoticeCopy } from "./first-week-rules";
-import { setupReallyPaid } from "./lifecycle";
+import { resumeTarget, setupReallyPaid } from "./lifecycle";
+import { fitMailboxesToPlan } from "./mailbox-plan";
 import { creditReferralSafely } from "./referrals";
 import { isTermsUrlMissingError, stripeErrorReason } from "./stripe-error-rules";
 
@@ -474,6 +475,21 @@ export async function notifyPaymentReceived(
   }
 }
 
+/**
+ * The plan's Gmail limit after a payment or plan change (2026-10-16). Never fails the webhook:
+ * the 15-minute job fits it again if this didn't (`fitAllMailboxesToPlans`). Ids and names only.
+ */
+async function fitMailboxesSafely(workspaceId: string, now: Date) {
+  try {
+    await fitMailboxesToPlan(workspaceId, now);
+  } catch (err) {
+    console.error("mailbox_plan_fit_failed", {
+      workspaceId,
+      error: err instanceof Error ? err.name : "unknown",
+    });
+  }
+}
+
 export async function applyCheckoutCompleted(
   session: Stripe.Checkout.Session,
   now = new Date(),
@@ -484,11 +500,19 @@ export async function applyCheckoutCompleted(
   if (!w) return "unknown_workspace";
   const plan = isPlanId(session.metadata?.plan) ? session.metadata.plan : w.plan;
   const includesSetup = session.metadata?.includesSetup === "1";
-  const to = statusAfterCheckout(w, now);
+  // Check 17 P1: a paused account isn't moved by Stripe; the payment is kept in paused_from,
+  // where Resume takes it back to.
+  const paused = w.status === "paused";
+  const settled = statusAfterCheckout(
+    paused ? { ...w, status: w.pausedFrom ?? resumeTarget(w, now) } : w,
+    now,
+  );
+  const to = paused ? w.status : settled;
   await db()
     .update(workspaces)
     .set({
       status: to,
+      ...(paused ? { pausedFrom: settled } : {}),
       plan,
       stripeCustomerId:
         typeof session.customer === "string" ? session.customer : w.stripeCustomerId,
@@ -505,6 +529,7 @@ export async function applyCheckoutCompleted(
     })
     .where(eq(workspaces.id, w.id));
   await log(w.id, "payment_received", { plan, includesSetup, from: w.status, to });
+  await fitMailboxesSafely(w.id, now);
   await notifyPaymentReceived(session.id, { plan, includesSetup }, deps);
   // Plan #47: a referral is settled the first time the account is active. Never fails the webhook.
   if (to === "active") await creditReferralSafely(w.id, now);
@@ -521,9 +546,31 @@ export async function applySubscription(sub: Stripe.Subscription, now = new Date
     w = bySub;
   }
   if (!w) return "unknown_workspace";
-  const to = statusAfterSubscription(w, sub.status, now);
   const plan = planFromLookupKey(sub.items.data[0]?.price?.lookup_key) ?? w.plan;
   const ended = sub.status === "canceled" || sub.status === "incomplete_expired";
+  if (w.status === "paused") {
+    // Check 17 P1: a paused account stays paused, but what Stripe says is kept in paused_from,
+    // so Resume takes it to where the payment stands now (never back to "active" after a
+    // canceled or failed subscription).
+    const before = w.pausedFrom ?? resumeTarget(w, now);
+    const after = statusAfterSubscription({ ...w, status: before }, sub.status, now);
+    await db()
+      .update(workspaces)
+      .set({ pausedFrom: after, plan, stripeSubscriptionId: ended ? null : sub.id })
+      .where(eq(workspaces.id, w.id));
+    if (after !== w.pausedFrom || plan !== w.plan) {
+      await log(w.id, "subscription_changed", {
+        stripeStatus: sub.status,
+        from: w.status,
+        to: w.status,
+        pausedFrom: { before: w.pausedFrom, after },
+        plan,
+      });
+    }
+    if (plan !== w.plan) await fitMailboxesSafely(w.id, now);
+    return "applied";
+  }
+  const to = statusAfterSubscription(w, sub.status, now);
   await db()
     .update(workspaces)
     .set({ status: to, plan, stripeSubscriptionId: ended ? null : sub.id })
@@ -531,6 +578,8 @@ export async function applySubscription(sub: Stripe.Subscription, now = new Date
   if (to !== w.status || plan !== w.plan) {
     await log(w.id, "subscription_changed", { stripeStatus: sub.status, from: w.status, to, plan });
   }
+  // A cheaper plan pauses the Gmail addresses it doesn't cover; a bigger one turns them back on.
+  if (plan !== w.plan) await fitMailboxesSafely(w.id, now);
   if (to === "active") await creditReferralSafely(w.id, now);
   return "applied";
 }

@@ -14,6 +14,7 @@ import {
   type Mailbox,
 } from "@/db/schema";
 import { MailboxAuthError, type MailboxReader, type MailMessage } from "@/mailbox/connector";
+import { mailboxOn } from "./mailbox-plan-rules";
 import { jobsAllowed } from "./lifecycle";
 import { amountFromOwnerText } from "./quote-rules";
 import { defaultReaderFor, isUnsentDraft, markReconnectNeeded } from "./sync";
@@ -134,8 +135,9 @@ export async function runDraftMessagesCleanup(
         await markDone(mailbox.id);
         continue;
       }
-      if (mailbox.status !== "active" || !jobsAllowed(workspace, now)) {
-        // Its rows wait (no marker): checked again every run until it can be read.
+      if (!mailboxOn(mailbox) || !jobsAllowed(workspace, now)) {
+        // Its rows wait (no marker): checked again every run until it can be read (lost access,
+        // read-only, or paused on the plan).
         totals.skipped++;
         continue;
       }

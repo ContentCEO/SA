@@ -16,6 +16,9 @@ import {
   type AdminRow,
 } from "@/server/admin";
 import { requireAdmin } from "@/server/session";
+import { mailboxesLine, mailboxesStuck, systemTroubleLines } from "@/server/admin-mailbox-rules";
+import { modelDownLine, stoppedHeading } from "@/server/model-alert-rules";
+import { modelsDownToday } from "@/server/model-alerts";
 import { isAdminEmail } from "@/server/admin";
 import { ADMIN_MOVES, canMakeMove, type AdminMove } from "@/server/lifecycle";
 import {
@@ -27,7 +30,11 @@ import {
   testUserAddedAction,
   resetTestPaymentsAction,
   setPlanAction,
+  tickLaunchAction,
 } from "./actions";
+import { LaunchReady } from "./launch-ready";
+import { launchChecks } from "@/server/launch-ready";
+import { loadLaunchFacts } from "@/server/launch-ticks";
 import { PendingButton } from "@/components/app/pending-button";
 import {
   salesTaxStatus,
@@ -51,6 +58,13 @@ import { describeWaitlistEntry, formatStamp } from "@/server/growth-note";
 import { growthCopy } from "@/components/marketing/growth/growth-copy";
 import { phoneHref } from "@/lib/phone-href";
 import { pricing } from "@/config/pricing";
+import { adminToday, type GrowthStatus } from "@/server/growth-client-rules";
+import { countGrowthClients, growthStateForEmails } from "@/server/growth-clients";
+import {
+  WAITLIST_GROWTH_DONE,
+  WAITLIST_GROWTH_ERRORS,
+  WaitlistGrowthControls,
+} from "./growth-admin";
 
 export const metadata: Metadata = { title: "Admin", robots: { index: false } };
 
@@ -67,9 +81,9 @@ const statusLabel: Record<AdminRow["status"], string> = {
 
 const moves: Record<AdminMove, { label: string; explain: string; confirm: string }> = {
   extend_evaluation: {
-    label: "Give 3 more days",
+    label: `Give ${pricing.evaluationDays} more days`,
     explain: "Restarts drafting if it had stopped. Sending stays off.",
-    confirm: "Add 3 days",
+    confirm: `Add ${pricing.evaluationDays} days`,
   },
   house_account: {
     label: "Use as my own test account",
@@ -101,6 +115,7 @@ const done: Record<string, string> = {
   pause: "Account paused.",
   resume: "Account resumed.",
   plan: "Plan saved.",
+  launch_ticked: "Marked done.",
   stripe_test:
     "Stripe connected in TEST mode: prices, billing portal and payment notifications are set up. Use card 4242 4242 4242 4242 to try it.",
   stripe_live: "Stripe connected in LIVE mode. Real cards will be charged.",
@@ -146,11 +161,16 @@ function WaitlistEntry({
   w,
   now,
   referrals,
+  growth,
+  today,
 }: {
   w: Awaited<ReturnType<typeof listWaitlist>>[number];
   now: Date;
   /** Plan #47: referralsVisible(), so a stored code shows only while referrals are on. */
   referrals: boolean;
+  /** Squared Away Growth: a Growth invite waiting, or already a client (by email). */
+  growth: { invitedAt: Date | null; client: GrowthStatus | null } | undefined;
+  today: string;
 }) {
   const facts = describeWaitlistEntry(w);
   const request = facts.growth[0];
@@ -210,6 +230,16 @@ function WaitlistEntry({
           {request.nameGiven ? <span>{ga.nameGiven(request.nameGiven)}</span> : null}
           {request.tradeGiven ? <span>{ga.tradeGiven(request.tradeGiven)}</span> : null}
           {request.note ? <p className="text-muted-foreground">“{request.note}”</p> : null}
+          <WaitlistGrowthControls
+            email={w.email}
+            trade={w.trade}
+            growthOnly={!facts.app}
+            request={request}
+            state={growth}
+            hasAccount={w.inviteState === "has_account"}
+            today={today}
+            now={now}
+          />
         </div>
       ) : null}
       {!facts.app ? (
@@ -305,11 +335,15 @@ function WorkspaceCard({ w, now }: { w: AdminRow; now: Date }) {
       (m !== "house_account" || (own && w.setupPaidVia !== "house")),
   );
   const inverted = ["evaluation_expired", "past_due", "paused", "canceled"].includes(w.status);
+  const stuck = mailboxesStuck(w.mailboxes);
   return (
     <article
       aria-label={w.ownerEmail}
       className="flex flex-col gap-3 rounded-xl border bg-card p-4"
     >
+      {stuck ? (
+        <p className="sa-inverted self-start rounded-md px-2 py-1 text-sm font-black">Stuck</p>
+      ) : null}
       <header className="flex flex-wrap items-baseline justify-between gap-2">
         <div className="flex min-w-0 flex-col">
           <span className="truncate text-lg font-black">{w.businessName || w.ownerEmail}</span>
@@ -348,14 +382,7 @@ function WorkspaceCard({ w, now }: { w: AdminRow; now: Date }) {
           }
           value={w.evaluationEndsAt ? et.format(w.evaluationEndsAt) : "Not started"}
         />
-        <Stat
-          label="Mailboxes"
-          value={
-            w.mailboxes.total === 0
-              ? "None connected"
-              : `${w.mailboxes.total}${w.mailboxes.needReconnect ? `, ${w.mailboxes.needReconnect} need reconnect` : ", healthy"}`
-          }
-        />
+        <Stat label="Mailboxes" value={mailboxesLine(w.mailboxes, now)} />
         <Stat
           label="Last sync"
           value={w.mailboxes.lastSyncedAt ? relativeTime(w.mailboxes.lastSyncedAt, now) : "Never"}
@@ -446,19 +473,41 @@ export default async function AdminPage(props: PageProps<"/admin">) {
   // Test payments can only be told apart with the live key. The counts come from the last check
   // (database only): a plain page load asks Stripe nothing new.
   const live = stripeConfigured() && stripeMode() === "live";
-  const [rows, total, invited, waiting, stripeAt, system, salesTax, testPayments, termsBoxOff] =
-    await Promise.all([
-      adminOverview(now),
-      countWorkspaces(),
-      listInvites(),
-      listWaitlist(),
-      stripeConnectedAt(),
-      systemHealth(now),
-      salesTaxStatus(),
-      live ? lastTestPaymentsResult() : null,
-      // Database only: set by the last checkout that had to go without the terms box.
-      termsBoxOffSince(),
-    ]);
+  const [
+    rows,
+    total,
+    invited,
+    waiting,
+    stripeAt,
+    system,
+    salesTax,
+    testPayments,
+    termsBoxOff,
+    growthClientCount,
+    modelsDown,
+    launchFacts,
+  ] = await Promise.all([
+    adminOverview(now),
+    countWorkspaces(),
+    listInvites(),
+    listWaitlist(),
+    stripeConnectedAt(),
+    systemHealth(now),
+    salesTaxStatus(),
+    live ? lastTestPaymentsResult() : null,
+    // Database only: set by the last checkout that had to go without the terms box.
+    termsBoxOffSince(),
+    countGrowthClients(),
+    modelsDownToday(now),
+    loadLaunchFacts(),
+  ]);
+  const growthStates = await growthStateForEmails(waiting.map((w) => w.email));
+  const today = adminToday(now);
+  // Waitlist Growth notices show in the waitlist section (the page scrolls there).
+  const code = (v: unknown, prefix: string) =>
+    typeof v === "string" && v.startsWith(prefix) ? v : undefined;
+  const waitlistDone = WAITLIST_GROWTH_DONE[code(params.done, "wl_") ?? ""];
+  const waitlistError = WAITLIST_GROWTH_ERRORS[code(params.error, "wl_") ?? ""];
   // Payment messages show inside the Payments section (the page scrolls there), not at the top.
   const isStripe = (k: unknown) => typeof k === "string" && k.startsWith("stripe");
   const doneMsg =
@@ -476,6 +525,10 @@ export default async function AdminPage(props: PageProps<"/admin">) {
   const stripeError = isStripe(params.error) ? errors[params.error as string] : undefined;
   // Only a fixed code travels in the URL (M11 C10); anything else shows nothing.
   const stripeReason = stripeReasonText(params.reason);
+  // Check 16 P1: one stuck inbox inverts the box, even when the others are fine.
+  const troubleLines = systemTroubleLines(system);
+  // Check 48 P3: a model Anthropic said was missing today. Model names and times only.
+  const systemInverted = system.jobsLookStopped || troubleLines.length > 0 || modelsDown.length > 0;
 
   return (
     <>
@@ -495,13 +548,19 @@ export default async function AdminPage(props: PageProps<"/admin">) {
       <section
         aria-labelledby="system"
         className={
-          system.jobsLookStopped
+          systemInverted
             ? "sa-inverted flex flex-col gap-2 rounded-xl p-4"
             : "flex flex-col gap-2 rounded-xl border-2 border-charcoal p-4"
         }
       >
         <h2 id="system" className="text-lg font-black">
-          {system.jobsLookStopped ? "Background jobs look stopped" : "System"}
+          {system.jobsLookStopped
+            ? "Background jobs look stopped"
+            : modelsDown.length
+              ? stoppedHeading(modelsDown.map((m) => m.role))
+              : troubleLines.length
+                ? "An inbox looks stuck"
+                : "System"}
         </h2>
         <p>
           {system.workingMailboxes === 0
@@ -511,6 +570,16 @@ export default async function AdminPage(props: PageProps<"/admin">) {
             ? ` ${system.needReconnect} need${system.needReconnect === 1 ? "s" : ""} reconnecting.`
             : ""}
         </p>
+        {modelsDown.map((m) => (
+          <p key={`${m.role}:${m.model}`} className="font-semibold">
+            {modelDownLine(m.role, m.model, et.format(m.since))}
+          </p>
+        ))}
+        {troubleLines.map((line) => (
+          <p key={line} className="font-semibold">
+            {line}
+          </p>
+        ))}
         {system.jobsLookStopped ? (
           <p>
             Mail is normally checked every 5 minutes. Open the Inngest dashboard (Vercel → sa →
@@ -518,6 +587,8 @@ export default async function AdminPage(props: PageProps<"/admin">) {
           </p>
         ) : null}
       </section>
+
+      <LaunchReady rows={launchChecks(process.env, launchFacts)} tickAction={tickLaunchAction} />
 
       <section aria-labelledby="accounts" className="flex flex-col gap-3">
         <h2 id="accounts" className="text-xl font-black">
@@ -577,15 +648,36 @@ export default async function AdminPage(props: PageProps<"/admin">) {
         <h2 id="waitlist-heading" className="text-xl font-black">
           {ga.heading(waiting.length)}
         </h2>
+        {waitlistDone ? <Notice>{waitlistDone}</Notice> : null}
+        {waitlistError ? <Notice strong>{waitlistError}</Notice> : null}
         {waiting.length === 0 ? (
           <p>{ga.empty}</p>
         ) : (
           <ul className="flex flex-col gap-3">
             {waiting.map((w) => (
-              <WaitlistEntry key={w.email} w={w} now={now} referrals={referrals} />
+              <WaitlistEntry
+                key={w.email}
+                w={w}
+                now={now}
+                referrals={referrals}
+                growth={growthStates.get(w.email.toLowerCase())}
+                today={today}
+              />
             ))}
           </ul>
         )}
+      </section>
+
+      <section aria-labelledby="growth-heading" className="flex flex-col gap-2">
+        <h2 id="growth-heading" className="text-xl font-black">
+          Growth clients ({growthClientCount})
+        </h2>
+        <Link
+          href="/admin/growth"
+          className="inline-flex min-h-tap items-center self-start font-semibold underline underline-offset-4"
+        >
+          Start Growth, post updates and enter monthly numbers
+        </Link>
       </section>
 
       <section aria-labelledby="invite" className="flex flex-col gap-3">

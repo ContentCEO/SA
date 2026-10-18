@@ -85,6 +85,10 @@ pnpm build
 pnpm test:e2e       # browser tests against the production build (see §1 step 8 and §3)
 ```
 
+Several builder sessions often run at once. Before starting one, read "Working in parallel" in
+`CLAUDE.md` (branch names, one migration at a time, notes in `docs/notes/`) and find the step in
+`docs/BUILD-ORDER.md`.
+
 ## 3. End-to-end tests with fake Google and Anthropic
 
 The browser tests drive the real app (`pnpm start`, the production build) against local fakes of
@@ -143,6 +147,9 @@ In a sandbox with a preinstalled Chromium:
 
 ## 4. Environment variables
 
+Every outside account behind these settings (its plan, the limit that bites and whose login holds
+it) is listed in [VENDORS.md](VENDORS.md).
+
 Every variable the code reads. "Environments" says where it belongs in Vercel (Settings →
 Environment Variables); a change there needs a redeploy. Previews and production share one
 database until the preview split (`docs/LAUNCH.md` step 2: an empty Neon project, `sa-preview`,
@@ -174,6 +181,8 @@ sets it, in `.env.example`).
 | `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`                                               | No                       | Phone notifications (web push). Public key alone shows the switch; both are needed to send.                                                                                                                 | §6e.                                                                                   | Prod (private key sensitive)      |
 | `VAPID_SUBJECT`                                                                       | No (default `APP_URL`)   | Contact the push services can reach.                                                                                                                                                                        | `mailto:` address or https URL.                                                        | Prod                              |
 | `NEXT_PUBLIC_SENTRY_DSN`                                                              | No                       | Error alerts (scrubbed). Read at build time: redeploy after setting.                                                                                                                                        | §6b.                                                                                   | Prod                              |
+| `HEALTH_TOKEN`                                                                        | No                       | `/api/health/deep` (database + background jobs, for an uptime monitor). Without it the route is a 404 (§6g).                                                                                                | `openssl rand -hex 24`                                                                 | Prod (sensitive)                  |
+| `CRON_SECRET`                                                                         | No                       | Lets Vercel Cron call `/api/cron/jobs-check` (Vercel sends it as a Bearer token). Without it the route is a 404 (§6g).                                                                                      | `openssl rand -hex 24`                                                                 | Prod (sensitive)                  |
 | `FEATURE_CLOSING_QUESTION`                                                            | No (off when unset)      | Plan #26. **On** in Vercel since 2026-10-14 (Davi's okay); live from the next deploy.                                                                                                                       | `1` (§6d).                                                                             | Prod + Preview                    |
 | `FEATURE_REFERRALS`                                                                   | No (off)                 | Plan #47. **Ask Davi first**; does nothing while `REFERRAL_CREDIT_CENTS` is null.                                                                                                                           | `1` (§6d).                                                                             | Prod, only with Davi's okay       |
 | `RETENTION_BODY_DAYS`                                                                 | No (default 30)          | Days before email text is purged. The privacy policy and homepage promise 30: don't change it without changing them.                                                                                        | A number.                                                                              | Prod                              |
@@ -244,14 +253,20 @@ or query strings, user reduced to an id, email addresses masked. No tracing or s
 
 Owners can opt in to a text when a new quote request or an email that needs them arrives. Texts
 are counts plus a link only (no names, no email text), confirmed with a 6-digit code, quiet from
-9pm–7am in the owner's time zone, max one per 10 minutes and 10 a day. Costs: about $1.15/month
+9pm–7am in the owner's time zone, max one per 10 minutes and 10 a day. An emergency email (a leak,
+no heat, no power, a gas smell) is the one exception while the owner leaves "Emergencies, even at
+night" on (it's on by default): "An emergency email just came in." right away, night or day, once
+per conversation, at most 3 a night and 6 a day (phone notifications follow the same switch). A
+voicemail or text message emailed by a phone service (Google Voice) counts, though its sender is
+no-reply. Costs: about $1.15/month
 for the number plus about $0.01 per text, and a one-time US carrier (A2P 10DLC) registration.
 
 1. twilio.com → sign up → upgrade the account (add a card).
 2. Phone Numbers → Buy a number (local, SMS-capable).
 3. Messaging → Regulatory compliance → **A2P 10DLC**: register the brand (your business) and a
    campaign. Use case "Account notifications"; sample message
-   `Squared Away: 1 new quote request needs you. Open: https://…/queue`; opt-in = "the business
+   `Squared Away: 1 new quote request needs you. Open: https://…/queue` (and a second one,
+   `Squared Away: An emergency email just came in. Open: https://…/queue`); opt-in = "the business
    owner enters their own mobile number in Settings and confirms a texted code". Approval takes
    days; texts may be blocked by carriers until it's approved.
 4. Messaging → Services → Create → add the number to the service. Opt-out (STOP/HELP) handling is
@@ -363,6 +378,32 @@ Set it in Vercel → sa → Environment Variables (Production and Preview) to th
 us, then redeploy. How to know it worked: the footer of https://<domain>/ and the contact block of
 `/privacy` show it.
 
+### 6g. Is everything running? (uptime monitor, optional)
+
+`/api/health` only says the site answers. `/api/health/deep` also checks the database and that
+the 15-minute safety job ran in the last 30 minutes (that job sorts mail that waited, sends alerts
+and the morning email's backstops). It answers `{"db":"ok","jobs":"ok","minutesSinceJobs":…}`
+with no ids, and **503** when the jobs are stale or the database is down. When the jobs are
+stale it also emails `ADMIN_EMAIL` "Background jobs look stopped", at most once an hour. This
+works even when Inngest itself is down.
+
+1. Make a token: `openssl rand -hex 24`. Add it in Vercel → sa → Settings → Environment Variables
+   as `HEALTH_TOKEN` (Production, sensitive), then redeploy.
+2. In a free uptime monitor (for example UptimeRobot or Better Stack), add an HTTP(s) monitor for
+   `https://<domain>/api/health/deep?token=<the token>` (or send it as the header
+   `x-health-token`), every 5 minutes, alerting on any status other than 200. Never paste the
+   token anywhere else.
+3. How to know it worked: the monitor shows "up"; a wrong token gives 404.
+
+Vercel Cron backstop: `/api/cron/jobs-check` runs the same check (and the same hourly email) when
+Vercel calls it with `CRON_SECRET`. It is **not scheduled yet**: Vercel's Hobby plan allows cron
+jobs once a day only, and a more frequent schedule can stop the deploy. On Vercel Pro, set
+`CRON_SECRET` (Production, sensitive) and add this to a `vercel.json` at the repo root:
+
+```json
+{ "crons": [{ "path": "/api/cron/jobs-check", "schedule": "*/30 * * * *" }] }
+```
+
 ## 7. Inviting an owner
 
 ```bash
@@ -384,6 +425,12 @@ The digest is sent through Resend's HTTP API (`src/lib/email.ts`). Without `RESE
 4. Put both in Vercel (Production) and redeploy.
 
 The digest carries counts and categories only — no customer names, subjects or email text.
+
+The trial emails (2026-10-16, `src/server/trial-emails.ts`: day 2, the last day, and one a week
+after an unpaid trial ends) use the same key and sender, counts only, from the 15-minute
+lifecycle job. Each carries a one-click "Stop these emails" link signed with `AUTH_SECRET`
+(rotating it makes old links land on "that link didn't work"; owners can still switch them off in
+Settings → Morning email).
 
 The same key and sender also carry the waitlist emails (`src/server/waitlist-emails.ts`): a
 content-free "New waitlist sign-up" notice to `ADMIN_EMAIL`, and one "You're on the Squared Away

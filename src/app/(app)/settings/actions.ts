@@ -9,6 +9,7 @@ import { createGmailConnector } from "@/mailbox/gmail/connector";
 import { deleteAccount, SubscriptionCancelError } from "@/server/account-deletion";
 import { disconnectMailbox } from "@/server/mailboxes";
 import { requireOwner } from "@/server/session";
+import { swapPlanMailbox } from "@/server/mailbox-plan";
 
 const input = z.object({ mailboxId: z.string().uuid() });
 
@@ -19,6 +20,24 @@ export async function disconnectMailboxAction(formData: FormData) {
   if (!parsed.success) redirect("/settings/gmail?error=unknown");
   const ok = await disconnectMailbox(workspace.id, parsed.data.mailboxId, createGmailConnector());
   redirect(ok ? "/settings/gmail?done=disconnected" : "/settings/gmail?error=unknown");
+}
+
+/**
+ * "Use this one instead" (2026-10-16): a Gmail address paused on the plan comes on, and the one
+ * named in `replaceId` is paused in its place. The server re-checks the plan's limit.
+ */
+export async function swapMailboxAction(formData: FormData) {
+  const { workspace } = await requireOwner();
+  const parsed = z
+    .object({ mailboxId: z.string().uuid(), replaceId: z.string().uuid().nullable() })
+    .safeParse({
+      mailboxId: formData.get("mailboxId"),
+      replaceId: formData.get("replaceId") || null,
+    });
+  if (!parsed.success) redirect("/settings/gmail?error=unknown");
+  const r = await swapPlanMailbox(workspace.id, parsed.data.mailboxId, parsed.data.replaceId);
+  if (r === "swapped" || r === "resumed") redirect(`/settings/gmail?done=${r}`);
+  redirect(r === "choose" ? "/settings/gmail?error=choose" : "/settings/gmail?error=unknown");
 }
 
 export async function deleteAccountAction() {

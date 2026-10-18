@@ -348,8 +348,14 @@ describe("boundary: who may read the e2e switch", () => {
 
   it("the one Anthropic client takes its options from the seam ({} off e2e mode)", () => {
     const creations = files.flatMap((f) =>
-      [...f.text.matchAll(/new Anthropic\(([^)]*\)?)\)/g)].map((m) => `${f.path}: ${m[1]}`),
+      [...f.text.matchAll(/new Anthropic\(([\s\S]*?)\);/g)].map(
+        (m) => `${f.path}: ${m[1]!.replace(/\s+/g, " ").trim()}`,
+      ),
     );
-    expect(creations).toEqual(["src/ai/client.ts: anthropicClientOptions()"]);
+    // Check 48 P4: our time limit and retry count first, then the seam spread last, so e2e mode
+    // (fake base URL, no retries) always wins.
+    expect(creations).toEqual([
+      "src/ai/client.ts: { maxRetries: aiMaxRetries, timeout: aiTimeouts.jobMs, ...anthropicClientOptions(), }",
+    ]);
   });
 });

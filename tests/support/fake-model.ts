@@ -1,5 +1,5 @@
 import type { Transport, TransportResult } from "@/ai/client";
-import type { ModelClassification } from "@/ai/prompts/classify.v4";
+import type { ModelClassification } from "@/ai/prompts/classify.v5";
 
 export function classification(over: Partial<ModelClassification> = {}): ModelClassification {
   return {
@@ -20,6 +20,7 @@ export function classification(over: Partial<ModelClassification> = {}): ModelCl
       routine_paperwork: false,
       payment_change_request: false,
       smells_gas: false,
+      co_alarm: false,
     },
     extracted: {
       service_requested: "panel upgrade",

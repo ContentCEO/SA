@@ -1,14 +1,15 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { DisconnectButton } from "@/components/app/disconnect-button";
-import { buttonVariants } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { relativeTime } from "@/lib/relative-time";
 import { cn } from "@/lib/utils";
 import { mailboxHealth } from "@/server/mailbox-health";
+import { planPausedLine } from "@/server/mailbox-plan-rules";
 import { listMailboxes, mailboxLimit, type MailboxSummary } from "@/server/mailboxes";
 import { requireOwner } from "@/server/session";
 import { BACKFILL_DAYS, syncSummary } from "@/server/sync";
-import { disconnectMailboxAction } from "../actions";
+import { disconnectMailboxAction, swapMailboxAction } from "../actions";
 import { SettingsScreen } from "../screen";
 
 export const metadata: Metadata = { title: "Your Gmail" };
@@ -40,7 +41,11 @@ export default async function GmailSettingsPage(props: PageProps<"/settings/gmai
       mailboxes.map(async (m) => [m.id, (await syncSummary(m.id)).messageCount] as const),
     ),
   );
-  const canAddMore = mailboxes.length < mailboxLimit(workspace);
+  const limit = mailboxLimit(workspace);
+  const canAddMore = mailboxes.length < limit;
+  // A lower plan pauses the Gmail addresses it doesn't cover (2026-10-16); the owner picks.
+  const onNow = mailboxes.filter((m) => !m.planPausedAt);
+  const roomOnPlan = onNow.length < limit;
 
   return (
     <SettingsScreen path="/settings/gmail" heavy="your gmail." params={await props.searchParams}>
@@ -58,6 +63,72 @@ export default async function GmailSettingsPage(props: PageProps<"/settings/gmai
         ) : (
           <ul className="flex flex-col gap-3">
             {mailboxes.map((m) => {
+              if (m.planPausedAt) {
+                return (
+                  <li
+                    key={m.id}
+                    aria-labelledby={`paused-${m.id}`}
+                    className="flex flex-col gap-3 rounded-xl border-2 border-charcoal p-4"
+                  >
+                    <div className="flex flex-col">
+                      <span id={`paused-${m.id}`} className="text-lg font-semibold break-all">
+                        {m.email}
+                      </span>
+                      <span className="font-black">{planPausedLine(limit)}</span>
+                      <span className="mt-1 text-muted-foreground">
+                        Nothing in it is read, sorted or drafted, and its drafts can&apos;t be sent
+                        from here. Everything already here is kept.
+                      </span>
+                    </div>
+                    {roomOnPlan ? (
+                      <form action={swapMailboxAction}>
+                        <input type="hidden" name="mailboxId" value={m.id} />
+                        <Button type="submit" className="w-full">
+                          Use this one instead
+                        </Button>
+                      </form>
+                    ) : onNow.length === 1 ? (
+                      <form action={swapMailboxAction} className="flex flex-col gap-1">
+                        <input type="hidden" name="mailboxId" value={m.id} />
+                        <input type="hidden" name="replaceId" value={onNow[0]!.id} />
+                        <Button type="submit" className="w-full">
+                          Use this one instead
+                        </Button>
+                        <span className="text-sm break-all text-muted-foreground">
+                          {onNow[0]!.email} is paused in its place.
+                        </span>
+                      </form>
+                    ) : (
+                      <details className="rounded-lg border">
+                        <summary className="flex min-h-tap cursor-pointer list-none items-center px-3 font-semibold underline underline-offset-4">
+                          Use this one instead
+                        </summary>
+                        <div className="flex flex-col gap-2 px-3 pb-3">
+                          <p className="text-sm text-muted-foreground">Which one should pause?</p>
+                          {onNow.map((o) => (
+                            <form key={o.id} action={swapMailboxAction}>
+                              <input type="hidden" name="mailboxId" value={m.id} />
+                              <input type="hidden" name="replaceId" value={o.id} />
+                              <Button
+                                type="submit"
+                                variant="outline"
+                                className="h-auto min-h-tap w-full py-2 break-all whitespace-normal"
+                              >
+                                Pause {o.email}
+                              </Button>
+                            </form>
+                          ))}
+                        </div>
+                      </details>
+                    )}
+                    <DisconnectButton
+                      mailboxId={m.id}
+                      email={m.email}
+                      action={disconnectMailboxAction}
+                    />
+                  </li>
+                );
+              }
               const health = mailboxHealth(m, now, Boolean(process.env.GMAIL_PUBSUB_TOPIC));
               const needsYou = health.needsReconnect;
               return (

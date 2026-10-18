@@ -1,10 +1,11 @@
 import "server-only";
 import { and, asc, eq, sql } from "drizzle-orm";
-import { pricing } from "@/config/pricing";
 import { db } from "@/db";
 import { activityLog, mailboxes, type Mailbox, type Workspace } from "@/db/schema";
 import { decryptSecret, encryptSecret } from "@/lib/crypto";
 import type { ConnectResult, MailboxConnector } from "@/mailbox/connector";
+import { fitMailboxesToPlan } from "./mailbox-plan";
+import { mailboxLimitFor } from "./mailbox-plan-rules";
 import { startEvaluation } from "./workspace-lifecycle";
 
 /** What the UI may see about a mailbox. Never includes the token. */
@@ -19,11 +20,12 @@ export type MailboxSummary = Pick<
   | "lastSyncedAt"
   | "watchExpiresAt"
   | "lastSyncErrorCode"
+  | "planPausedAt"
 >;
 
 /** Before a plan is chosen (evaluation), a workspace gets one mailbox. */
 export function mailboxLimit(workspace: Pick<Workspace, "plan">): number {
-  return workspace.plan ? pricing.plans[workspace.plan].mailboxLimit : 1;
+  return mailboxLimitFor(workspace.plan);
 }
 
 export class MailboxLimitError extends Error {
@@ -45,6 +47,7 @@ export async function listMailboxes(workspaceId: string): Promise<MailboxSummary
       lastSyncedAt: mailboxes.lastSyncedAt,
       watchExpiresAt: mailboxes.watchExpiresAt,
       lastSyncErrorCode: mailboxes.lastSyncErrorCode,
+      planPausedAt: mailboxes.planPausedAt,
     })
     .from(mailboxes)
     .where(eq(mailboxes.workspaceId, workspaceId))
@@ -112,6 +115,7 @@ export async function saveConnectedMailbox(
     lastSyncedAt: row.lastSyncedAt,
     watchExpiresAt: row.watchExpiresAt,
     lastSyncErrorCode: row.lastSyncErrorCode,
+    planPausedAt: row.planPausedAt,
   };
 }
 
@@ -152,6 +156,8 @@ export async function disconnectMailbox(
       action: "mailbox_disconnected",
       detail: { mailboxId: row.id, provider: row.provider, revokedAtProvider: revoked },
     });
+  // An address the plan had paused comes back on if this one made room (2026-10-16).
+  await fitMailboxesToPlan(workspaceId);
   return true;
 }
 

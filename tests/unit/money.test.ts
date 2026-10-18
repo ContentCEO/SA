@@ -1547,7 +1547,7 @@ describe("auto paid", () => {
 describe("privacy: invoice facts stay on the owner's screen", () => {
   beforeEach(setupDb, DB_HOOK_TIMEOUT);
 
-  it("never reach the morning summary, phone notifications or text alerts", async () => {
+  it("never reach phone notifications or text alerts; the morning summary gets totals only", async () => {
     await invoiceThread({
       name: "Zelda Secretname",
       from: "zelda@customer.com",
@@ -1573,10 +1573,20 @@ describe("privacy: invoice facts stay on the owner's screen", () => {
       { quotes: 0, needsYou: counts.needsYou.length },
       "https://app.example",
     );
-    const out = JSON.stringify({ digest, push, sms });
+    const out = JSON.stringify({ push, sms });
     for (const leak of ["98765", "987.65", "98,765", "SECRET", "Zelda", "zelda@"]) {
       expect(out).not.toContain(leak);
     }
+    // Replies package (Davi, 2026-10-16: money in the morning email): the month's money
+    // TOTALS may go in it — here the one open invoice is the whole total — but never a name,
+    // an invoice number or a due date, and the amount only inside the total's own line.
+    const mail = JSON.stringify(digest);
+    for (const leak of ["SECRET", "Zelda", "zelda@", "2026-09-01", "987.65"]) {
+      expect(mail).not.toContain(leak);
+    }
+    expect(digest.text.split("\n").filter((l) => /98,?765/.test(l))).toEqual([
+      "Still owed to you: $98,765 on Money owed.",
+    ]);
     expect(counts.needsYou).toHaveLength(1); // the thread was counted, just not described
   });
 });

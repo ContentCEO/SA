@@ -46,6 +46,58 @@ export function moneyIsEmpty(m: MonthMoney): boolean {
   return m.won.count === 0 && m.paidAfterNudge.count === 0;
 }
 
+/**
+ * Replies package (Davi, 2026-10-16: money in the morning email): this month so far, as the
+ * morning email and Activity both say it. `won` = quotes marked won this month (the owner's
+ * mark or our guess) from the owner's own quoted amount; `paid` = invoices on Money owed
+ * marked paid this month (the owner's mark or our guess; never "Not owed to me", supplier
+ * bills or receipts); `owed` = everything still open on Money owed right now, whenever it
+ * was sent. Totals only — no names, subjects or customer details.
+ */
+export type MoneySoFar = {
+  won: MoneyTally;
+  paid: MoneyTally;
+  owed: { count: number; cents: number };
+};
+
+/** The note under the totals, the same words Activity has always used for its money card. */
+export const MONEY_SO_FAR_NOTE =
+  "From your own quotes and the invoices on Money owed. Won and paid can be our guess — check Quotes and Money owed.";
+
+const s = (n: number) => (n === 1 ? "" : "s");
+
+/** "$4,200 in quotes you won (+1 with no amount we could see)", or null when there were none. */
+function soFarPart(t: MoneyTally, what: "won" | "paid"): string | null {
+  if (t.count === 0) return null;
+  if (t.count === t.withoutAmount)
+    return what === "won"
+      ? `${t.count} quote${s(t.count)} won (no amounts we could see)`
+      : `${t.count} invoice${s(t.count)} paid (no amounts we could see)`;
+  const more = t.withoutAmount ? ` (+${t.withoutAmount} with no amount we could see)` : "";
+  return what === "won"
+    ? `${formatCents(t.cents)} in quotes you won${more}`
+    : `${formatCents(t.cents)} in invoices paid${more}`;
+}
+
+/**
+ * "This month so far: $4,200 in quotes you won · $1,800 in invoices paid." and "Still owed
+ * to you: $3,050 on Money owed." Zero parts are left out; nothing at all when all are zero.
+ */
+export function moneySoFarLines(m: MoneySoFar): string[] {
+  const parts = [soFarPart(m.won, "won"), soFarPart(m.paid, "paid")].filter(
+    (p): p is string => !!p,
+  );
+  const owed =
+    m.owed.cents > 0
+      ? `Still owed to you: ${formatCents(m.owed.cents)} on Money owed.`
+      : m.owed.count > 0
+        ? `Still owed to you: ${m.owed.count} invoice${s(m.owed.count)} on Money owed (no amounts we could see).`
+        : null;
+  return [parts.length ? `This month so far: ${parts.join(" · ")}.` : null, owed].filter(
+    (l): l is string => !!l,
+  );
+}
+
 export type DayGroup<T> = { key: string; label: string; entries: T[] };
 
 /** The owner's calendar date (YYYY-MM-DD) for an instant. */

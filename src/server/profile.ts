@@ -1,7 +1,9 @@
 import "server-only";
 import { eq } from "drizzle-orm";
 import { z } from "zod";
+import { LICENSE_FIELD_MAX, type Licenses } from "@/config/licenses";
 import { cleanExtraTrades, MAX_EXTRA_TRADES, TRADES } from "@/config/trades";
+import { US_STATE_CODES } from "@/config/us-states";
 import { db } from "@/db";
 import {
   activityLog,
@@ -11,6 +13,7 @@ import {
   type BusinessProfile,
   type VoiceProfile,
 } from "@/db/schema";
+import { normalizeTown } from "./service-area-rules";
 
 /** Textareas: trim, cap, empty → null. */
 const longText = (max = 2000) =>
@@ -38,6 +41,31 @@ const lines = (maxItems: number, maxLen = 200) =>
         .max(maxItems, `Up to ${maxItems} lines.`),
     );
 
+export const MAX_CREW_ADDRESSES = 30;
+
+/**
+ * Check 50 P3: the owner's crew addresses (`business_profile.crew_addresses`), one per line:
+ * each an email, lowercased, de-duplicated after lowercasing, at most 30. Not in any form yet.
+ */
+export const crewAddressesSchema = z
+  .string()
+  .transform((v) =>
+    v
+      .split("\n")
+      .map((l) => l.trim().toLowerCase())
+      .filter(Boolean),
+  )
+  .pipe(
+    z.array(
+      z
+        .string()
+        .max(254, "Keep each line under 254 characters.")
+        .email("Each line should be one email address."),
+    ),
+  )
+  .transform((list) => [...new Set(list)])
+  .pipe(z.array(z.string()).max(MAX_CREW_ADDRESSES, `Up to ${MAX_CREW_ADDRESSES} addresses.`));
+
 export const REVIEW_URL_MESSAGE =
   "That doesn't look like a web link. Copy it from your Google or Yelp page — it starts with https://";
 
@@ -60,6 +88,18 @@ const reviewUrl = z
     (v) => v === null || (!NOT_IN_A_LINK.test(v) && httpsLink.safeParse(v).success),
     REVIEW_URL_MESSAGE,
   )
+  .optional();
+
+/** Check 38 P6: one short line each; '' clears it. Left out = leave the saved one as it is. */
+const licenseLine = z
+  .string()
+  .trim()
+  .max(LICENSE_FIELD_MAX, `Keep this under ${LICENSE_FIELD_MAX} characters.`)
+  .optional();
+const licenseDate = z
+  .string()
+  .trim()
+  .refine((v) => v === "" || /^\d{4}-\d{2}-\d{2}$/.test(v), "Pick the date it runs out.")
   .optional();
 
 export const businessProfileInput = z.object({
@@ -85,6 +125,21 @@ export const businessProfileInput = z.object({
     .optional(),
   services: z.string().trim().min(1, "Tell us what work you do.").max(2000),
   serviceArea: longText(),
+  /**
+   * Leads package (B9): "Towns you work in", one per line, de-duplicated by town name. Left out
+   * entirely (a form without the field) = leave the list as it is.
+   */
+  serviceTowns: lines(100, 60)
+    .transform((list) => {
+      const seen = new Set<string>();
+      return list.filter((t) => {
+        const key = JSON.stringify(normalizeTown(t));
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+    })
+    .optional(),
   hours: longText(500),
   leadTime: longText(500),
   pricingNotes: longText(),
@@ -96,6 +151,26 @@ export const businessProfileInput = z.object({
   vipSenders: lines(50, 254).pipe(
     z.array(z.string().toLowerCase().email("Each VIP line should be one email address.")),
   ),
+  /**
+   * Check 38 P2: "Which state do you work in?" — two letters, '' = not set. Left out = leave it.
+   * Massachusetts turns on the one-third deposit warning.
+   */
+  state: z
+    .string()
+    .trim()
+    .toUpperCase()
+    .refine(
+      (v) => v === "" || (US_STATE_CODES as readonly string[]).includes(v),
+      "Pick your state from the list.",
+    )
+    .transform((v) => (v === "" ? null : v))
+    .optional(),
+  // Check 38 P6: "Licenses and registrations".
+  hicNumber: licenseLine,
+  hicExpiresOn: licenseDate,
+  cslNumber: licenseLine,
+  leadSafeLicense: licenseLine,
+  insuranceCarrier: licenseLine,
   amountThresholdDollars: z.coerce
     .number({ message: "Enter a dollar amount." })
     .int("Whole dollars, please.")
@@ -130,8 +205,35 @@ export async function saveBusinessProfile(
   data: z.output<typeof businessProfileInput>,
   now: Date = new Date(),
 ) {
-  const { businessName, trade, extraTrades, timeZone, ...rest } = data;
-  const profile = { ...rest, ...(timeZone ? { timeZone } : {}) };
+  const {
+    businessName,
+    trade,
+    extraTrades,
+    timeZone,
+    hicNumber,
+    hicExpiresOn,
+    cslNumber,
+    leadSafeLicense,
+    insuranceCarrier,
+    ...rest
+  } = data;
+  // Check 38 P6: a form that shows the license fields sends all of them; one that doesn't
+  // leaves the saved numbers alone.
+  const licenseInput = { hicNumber, hicExpiresOn, cslNumber, leadSafeLicense, insuranceCarrier };
+  const licenses: Licenses | undefined = Object.values(licenseInput).some((v) => v !== undefined)
+    ? Object.fromEntries(
+        (
+          [
+            ["hic_number", hicNumber],
+            ["hic_expires_on", hicExpiresOn],
+            ["csl_number", cslNumber],
+            ["lead_safe_license", leadSafeLicense],
+            ["insurance_carrier", insuranceCarrier],
+          ] as const
+        ).filter(([, v]) => v),
+      )
+    : undefined;
+  const profile = { ...rest, ...(timeZone ? { timeZone } : {}), ...(licenses ? { licenses } : {}) };
   await db()
     .update(workspaces)
     .set({

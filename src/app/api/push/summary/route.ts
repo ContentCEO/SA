@@ -4,8 +4,10 @@ import { getWorkspaceForUser } from "@/server/accounts";
 import { badgeCountOf } from "@/server/badge";
 import { headerPicks, toNeedsYouItem } from "@/server/digest-rules";
 import { countQueue, queueCardIds, queueMembership } from "@/server/drafts";
+import { emergencyAlertText } from "@/server/emergency-alert-rules";
+import { emergencySummary } from "@/server/emergency-alerts";
 import { leadsAtRisk } from "@/server/leads-at-risk";
-import { notificationUrl } from "@/server/leads-at-risk-rules";
+import { notificationUrl, queueDeepLink } from "@/server/leads-at-risk-rules";
 import { pushSummaryText } from "@/server/push-alerts";
 import { canSend } from "@/server/lifecycle";
 import { hitLimit } from "@/server/rate-limit";
@@ -20,7 +22,8 @@ export const dynamic = "force-dynamic";
  * Plan #36: the service worker asks this when an (empty) push arrives, with
  * the owner's own cookie, and shows the answer. Counts only, plus where a tap
  * goes: a queue card by its thread id (a uuid), the quote tracker or the queue
- * (plan #34) — never a name, an address or a subject. `count` is the number for the
+ * (plan #34) — never a name, an address or a subject. Right after an emergency alert it
+ * says "An emergency email just came in." and opens that card (replies package, B5 part 2). `count` is the number for the
  * home-screen badge (plan #38): replies + needs-you, 0 for a read-only account (M8 A6).
  */
 export async function GET() {
@@ -43,27 +46,38 @@ export async function GET() {
   const now = new Date();
   // Content-free membership of the queue (plan M8 A1) — the same rules as queueCounts, never
   // listQueue — and the leads that have waited past the mark (ids and times only).
-  const [q, atRisk] = await Promise.all([
+  const [q, atRisk, emergency] = await Promise.all([
     queueMembership(workspace.id, now),
     workspaceTimeZone(workspace.id).then((tz) =>
       leadsAtRisk(workspace.id, now, usableTimeZone(tz)),
     ),
+    emergencySummary(workspace.id, now),
   ]);
   const counts = countQueue(q);
-  const url = notificationUrl({
-    atRisk: atRisk.map((l) => l.threadId),
-    needsYou: headerPicks(q.needsYou.map(toNeedsYouItem)).map((i) => i.threadId),
-    onQueue: queueCardIds(q),
-  });
+  const onQueue = queueCardIds(q);
+  // Replies package (B5 part 2): right after an emergency push, the phone says so and the tap
+  // opens that card (`/queue?t=<uuid>#t-<uuid>`, which sw.js allows) — still no name or words.
+  const emergencyCard = emergency?.threadIds.find((id) => onQueue.has(id));
+  const url = emergency
+    ? emergencyCard
+      ? queueDeepLink(emergencyCard)
+      : "/queue"
+    : notificationUrl({
+        atRisk: atRisk.map((l) => l.threadId),
+        needsYou: headerPicks(q.needsYou.map(toNeedsYouItem)).map((i) => i.threadId),
+        onQueue,
+      });
   return NextResponse.json(
     {
       title: "Squared Away",
-      body: pushSummaryText({
-        replies: counts.drafts,
-        needsYou: counts.needsYou,
-        atRisk: atRisk.length,
-        canSend: canSend(workspace, now),
-      }),
+      body: emergency
+        ? emergencyAlertText(emergency.threadIds.length)
+        : pushSummaryText({
+            replies: counts.drafts,
+            needsYou: counts.needsYou,
+            atRisk: atRisk.length,
+            canSend: canSend(workspace, now),
+          }),
       url,
       count: badgeCountOf(workspace, counts, now),
     },

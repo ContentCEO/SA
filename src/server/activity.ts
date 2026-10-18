@@ -1,13 +1,23 @@
 import "server-only";
 import { and, count, desc, eq, gte, inArray, isNotNull, lt, sql } from "drizzle-orm";
+import { pricing } from "@/config/pricing";
+import { daysPhrase } from "@/lib/trial-words";
 import { categoryLabels, categoryTag, isCategory } from "@/config/categories";
 import { db } from "@/db";
 import { activityLog, drafts, mailboxes, messages, threads } from "@/db/schema";
 import { MINUTES_PER_SENT_REPLY } from "@/config/drafting";
-import { dollarsToCents, tally, type MonthMoney } from "./activity-rules";
+import { dollarsToCents, tally, type MoneySoFar, type MonthMoney } from "./activity-rules";
+import { invoiceTotals } from "./money";
 import { atRiskActivityLine } from "./leads-at-risk-rules";
+import { emergencyActivityLine } from "./emergency-alert-rules";
 import { invoiceOf } from "./money-rules";
-import { closeRate, isQuoteOutcome, type QuoteOutcome } from "./quote-rules";
+import {
+  closeRate,
+  isLostReason,
+  isQuoteOutcome,
+  type LostReason,
+  type QuoteOutcome,
+} from "./quote-rules";
 import { workspaceTimeZone } from "./snooze";
 import { localMonthStart, usableTimeZone } from "./snooze-rules";
 import { messageReplyName } from "./thread-sql";
@@ -43,6 +53,9 @@ export function describeActivity(
       if (detail.purpose === "deposit")
         return `Drafted deposit details${name ? ` for ${name}` : ""}${who ? ` · ${categoryTag.quote_request}` : ""}`;
       if (detail.purpose === "review_request") return `Drafted a review request${to}`;
+      if (detail.purpose === "thank_you") return `Drafted a thank-you for the payment${to}`;
+      if (detail.purpose === "thank_you_review")
+        return `Drafted a thank-you for the payment, with a review request${to}`;
       if (detail.purpose === "safety") return `Wrote a gas safety note${to}`;
       return `Drafted a reply${to}${about}`;
     case "closing_question":
@@ -56,6 +69,12 @@ export function describeActivity(
       }`;
     case "reply_sent_from_gmail":
       return `You sent the draft${to} from Gmail`;
+    // Check 14 P1: our draft was deleted and the owner wrote their own reply in Gmail.
+    case "owner_wrote_own_reply":
+      return `You answered ${name ?? "them"} yourself in Gmail`;
+    // Check 42 P1: the customer was answered from Gmail during the undo window.
+    case "send_stood_down":
+      return `Didn't send the reply${to}: someone had already answered from Gmail`;
     case "draft_discarded":
       return `You discarded the draft${to}`;
     // Review B1: website-form leads now go to the customer's own address.
@@ -77,15 +96,7 @@ export function describeActivity(
     case "send_undone":
       return `You stopped the reply${to} before it went`;
     case "send_stopped":
-      return `Didn't send the reply${to} — ${
-        detail.why === "changed_in_gmail"
-          ? "it was changed in Gmail"
-          : detail.why === "blocked"
-            ? "sending was switched off"
-            : detail.why === "reconnect_needed"
-              ? "Gmail needs reconnecting"
-              : "something changed"
-      }. It's back in your queue`;
+      return `Didn't send the reply${to} — ${sendStoppedWhy(detail.why)}. It's back in your queue`;
     case "snoozed":
       return `You put off the conversation${name ? ` with ${name}` : ""} till later`;
     case "draft_expired":
@@ -115,6 +126,22 @@ export function describeActivity(
       return `You said ${name ? `${name}'s invoice` : "an invoice"} isn't owed to you`;
     case "invoice_reopened":
       return `${name ? `${name}'s conversation` : "A conversation"} mentions a new invoice, so it's back on Money owed`;
+    // Ideas H3/H4/E7: content-free; never the address or the note.
+    case "sender_rule_added":
+      return "You set a sender rule";
+    case "vip_added":
+      return "You added a VIP";
+    case "thread_resorted":
+      return isCategory(detail.to)
+        ? `You moved an email${from} to ${categoryLabels[detail.to]}`
+        : null;
+    case "away_on":
+      return "You turned on away mode";
+    case "away_off":
+      return "You turned off away mode";
+    // Ideas C5: the reason shows on Quotes and in the month's line, not as its own entry.
+    case "quote_lost_reason":
+      return null;
     case "marked_needs_owner":
       return `You marked a conversation${name ? ` with ${name}` : ""} as needing you`;
     case "mailbox_connected":
@@ -129,6 +156,13 @@ export function describeActivity(
       return atRiskActivityLine(detail.leads);
     case "sms_alert_sent":
       return "Texted you about new emails that need you";
+    // Replies package (B5 part 2): counts only, never which email.
+    case "emergency_alert_sent":
+      return emergencyActivityLine(detail.emergencies);
+    case "emergency_alerts_changed":
+      return detail.enabled
+        ? "You turned on emergency alerts, even at night"
+        : "You turned off emergency alerts at night";
     case "sms_alerts_changed":
       return detail.enabled ? "You turned on text alerts" : "You turned off text alerts";
     case "access_alert_sent":
@@ -175,7 +209,14 @@ export function describeActivity(
       return detail.includesSetup
         ? "Payment received — setup paid and sending switched on"
         : "Payment received — your plan is back on";
-    case "subscription_changed":
+    case "subscription_changed": {
+      // Check 17 P1: while paused, Stripe's news is kept for when the account is resumed.
+      const held = (detail.pausedFrom as { after?: unknown } | undefined)?.after;
+      if (detail.to === "paused" && (held === "past_due" || held === "canceled")) {
+        return held === "past_due"
+          ? "A payment didn't go through while your account was paused"
+          : "Your plan ended while your account was paused — nothing was deleted";
+      }
       return detail.to === "past_due"
         ? "A payment didn't go through — paused until your card is updated"
         : detail.to === "canceled"
@@ -183,6 +224,7 @@ export function describeActivity(
           : detail.from === "past_due" || detail.from === "canceled"
             ? "Payment sorted — switched back on"
             : "Your plan was updated";
+    }
     case "digest_sent":
       return "Sent your morning summary";
     case "monthly_summary_sent":
@@ -196,9 +238,10 @@ export function describeActivity(
         ? "Your test payment was cleared — the setup fee is still due"
         : null;
     case "evaluation_started":
-      return "Your three days started";
+      return `Your ${daysPhrase(pricing.evaluationDays)} started`;
     case "evaluation_expired":
-      return "Your three days ended";
+      // The trial may have been extended, so not "three days".
+      return "Your trial ended";
     case "workspace_status_changed":
       return detail.to === "setup_paid"
         ? "Setup paid — sending switched on"
@@ -207,7 +250,7 @@ export function describeActivity(
           : detail.to === "paused"
             ? "Your account was paused"
             : detail.to === "evaluating"
-              ? "Your three days were extended"
+              ? `Your trial was extended by ${daysPhrase(pricing.evaluationDays)}`
               : "Your account status changed";
     default:
       return null;
@@ -231,6 +274,22 @@ export type ActivityEntry = {
   recordId: string | null;
 };
 const SENT_ACTIONS = new Set(["reply_sent", "reply_sent_from_gmail", "reply_went_to_form"]);
+
+/**
+ * Why a send was stopped after its undo window, in a few plain words (Activity, and the Queue's
+ * "Didn't send" box, Check 9 P10).
+ */
+export function sendStoppedWhy(why: unknown): string {
+  return why === "changed_in_gmail"
+    ? "it was changed in Gmail"
+    : why === "blocked"
+      ? "sending was switched off"
+      : why === "reconnect_needed"
+        ? "Gmail needs reconnecting"
+        : why === "answered_elsewhere"
+          ? "someone had already answered from Gmail"
+          : "something changed";
+}
 
 export async function listActivity(workspaceId: string, limit = 100): Promise<ActivityEntry[]> {
   const rows = await db()
@@ -325,6 +384,8 @@ export async function monthSummary(
       and(
         inArray(drafts.mailboxId, boxes),
         inArray(drafts.status, ["sent", "edited_and_sent"]),
+        // Check 14 P1: the owner's own Gmail reply is theirs, not a drafted reply sent.
+        sql`${drafts.sentVia} is distinct from 'own_words'`,
         gte(drafts.decidedAt, start),
       ),
     );
@@ -400,17 +461,7 @@ export async function monthMoney(
   timeZone?: string,
 ): Promise<MonthMoney> {
   const start = localMonthStart(now, await monthZone(workspaceId, timeZone));
-  const won = await db()
-    .select({ cents: threads.quoteAmountCents })
-    .from(threads)
-    .innerJoin(mailboxes, eq(mailboxes.id, threads.mailboxId))
-    .where(
-      and(
-        eq(mailboxes.workspaceId, workspaceId),
-        eq(threads.quoteOutcome, "won"),
-        gte(threads.quoteOutcomeAt, start),
-      ),
-    );
+  const won = await wonSince(workspaceId, start);
   const paid = await db()
     .select({ extracted: threads.extracted })
     .from(threads)
@@ -425,6 +476,7 @@ export async function monthMoney(
           where ${drafts.threadId} = ${threads.id}
             and ${drafts.kind} = 'followup'
             and ${drafts.status} in ('sent', 'edited_and_sent')
+            and ${drafts.sentVia} is distinct from 'own_words'
             and ${drafts.decidedAt} < ${threads.invoicePaidAt}
         )`,
       ),
@@ -433,4 +485,66 @@ export async function monthMoney(
     won: tally(won.map((r) => r.cents)),
     paidAfterNudge: tally(paid.map((r) => dollarsToCents(invoiceOf(r.extracted)?.amount))),
   };
+}
+
+/** Quotes marked won since `start` (the owner's mark or our guess), with the quoted amount. */
+async function wonSince(workspaceId: string, start: Date) {
+  return db()
+    .select({ cents: threads.quoteAmountCents })
+    .from(threads)
+    .innerJoin(mailboxes, eq(mailboxes.id, threads.mailboxId))
+    .where(
+      and(
+        eq(mailboxes.workspaceId, workspaceId),
+        eq(threads.quoteOutcome, "won"),
+        gte(threads.quoteOutcomeAt, start),
+      ),
+    );
+}
+
+/**
+ * Replies package (Davi, 2026-10-16): "this month so far" for the morning email and
+ * Activity — quotes won (the same rows as "Quotes won" above), invoices paid this month and
+ * what's still owed, from Money's own data (`invoiceTotals`). The month is the owner's,
+ * in their time zone. Totals only: no name, subject or customer detail leaves here.
+ */
+export async function moneySoFar(
+  workspaceId: string,
+  now: Date = new Date(),
+  timeZone?: string,
+): Promise<MoneySoFar> {
+  const start = localMonthStart(now, await monthZone(workspaceId, timeZone));
+  const [won, invoices] = await Promise.all([
+    wonSince(workspaceId, start),
+    invoiceTotals(workspaceId, now, start),
+  ]);
+  return {
+    won: tally(won.map((r) => r.cents)),
+    paid: tally(invoices.paidCents),
+    owed: { count: invoices.owedCount, cents: invoices.owedCents },
+  };
+}
+
+/**
+ * Ideas C5: why quotes were lost this month (the owner's taps), by `quote_outcome_at` in the
+ * owner's month — the same quotes as the month's Lost count. Counts only.
+ */
+export async function lostReasonsBetween(workspaceId: string, start: Date, end: Date | null) {
+  const rows = await db()
+    .select({ reason: threads.quoteLostReason, n: count() })
+    .from(threads)
+    .innerJoin(mailboxes, eq(mailboxes.id, threads.mailboxId))
+    .where(
+      and(
+        eq(mailboxes.workspaceId, workspaceId),
+        eq(threads.quoteOutcome, "lost"),
+        isNotNull(threads.quoteLostReason),
+        gte(threads.quoteOutcomeAt, start),
+        end ? lt(threads.quoteOutcomeAt, end) : undefined,
+      ),
+    )
+    .groupBy(threads.quoteLostReason);
+  const out: Partial<Record<LostReason, number>> = {};
+  for (const r of rows) if (isLostReason(r.reason)) out[r.reason] = Number(r.n);
+  return out;
 }

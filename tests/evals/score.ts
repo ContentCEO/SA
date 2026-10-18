@@ -20,12 +20,18 @@ export type EvalResult = {
   /** classify.v4 (round 2), as kept on extracted. */
   paymentChange: boolean;
   gasSmell: boolean;
+  /** classify.v5 (Check 22 P4), as kept on extracted. */
+  coAlarm?: boolean;
+  /** Check 37 P1 (code only), as kept on extracted. */
+  electricalHazard?: boolean;
   /** Sorted as an invoice AND read as owed to the business: it would show on Money owed. */
   onMoneyOwed: boolean;
   /** Read as legal or a dispute (extracted.disputed: the complaint mark). */
   disputed: boolean;
   /** Draft rule failures (empty = passed); undefined = no draft for this case. */
   draftProblems?: string[];
+  /** draft.v7: the first-reply shape the drafter picked; undefined = no draft. */
+  opening?: string;
 };
 
 export type Scores = {
@@ -48,6 +54,12 @@ export type Scores = {
   paymentChangeRecall: number;
   /** Round 2: a gas smell went to the owner, marked, at high priority. */
   gasSmellRecall: number;
+  /** Check 22 P4: a carbon monoxide alarm went to the owner, marked, at high priority. */
+  coAlarmRecall: number;
+  /** Check 37 P1: electrical fire signs went to the owner, marked, at high priority. */
+  electricalHazardRecall: number;
+  /** Check 22 P4 + 36 P1: utility footers and sulfur water wrongly read as a gas smell. */
+  gasFalseAlarms: number;
   /** Round 2: supplier bills kept off Money owed. */
   billDirectionAccuracy: number;
   /** Round 2: routine claims, warranty dispatches and lien waivers not read as legal. */
@@ -58,8 +70,16 @@ export type Scores = {
   revisePassRate: number;
   /** Tone of an owner's edit named correctly (edit-tone prompt). 1 when not run. */
   toneAccuracy: number;
-  /** Deposit / review / closing drafts that kept to the rules (purpose.v1). 1 when not run. */
+  /**
+   * Deposit / review / closing / thank-you drafts that kept to the rules (purpose.v2). 1 when not
+   * run.
+   */
   purposePassRate: number;
+  /**
+   * draft.v7: of drafted cases, the first-reply shape named right — details / vague / urgent /
+   * price_only on a first contact, "not_first" on every ordinary reply. 1 when not run.
+   */
+  openingAccuracy: number;
 };
 
 const ratio = (hit: number, of: number) => (of === 0 ? 1 : Math.round((hit / of) * 1000) / 1000);
@@ -85,9 +105,13 @@ export function score(cases: EvalCase[], results: EvalResult[]): Scores {
   const done = where((c) => c.expect.jobDone !== undefined);
   const pay = where((c) => c.expect.paymentChange === true);
   const gas = where((c) => c.expect.gasSmell === true);
+  const notGas = where((c) => c.expect.gasSmell === false);
+  const co = where((c) => c.expect.coAlarm === true);
+  const electrical = where((c) => c.expect.electricalHazard === true);
   const bills = where((c) => c.expect.billOwedByBusiness === true);
   const routine = where((c) => c.expect.routinePaperwork === true);
   const drafted = pairs.filter(([, r]) => r!.draftProblems !== undefined);
+  const opened = pairs.filter(([, r]) => r!.opening !== undefined);
 
   return {
     cases: pairs.length,
@@ -109,6 +133,18 @@ export function score(cases: EvalCase[], results: EvalResult[]): Scores {
     jobDoneAccuracy: among(done, (c, r) => r.jobDone === c.expect.jobDone),
     paymentChangeRecall: among(pay, (_c, r) => r.paymentChange && r.needsOwner),
     gasSmellRecall: among(gas, (_c, r) => r.gasSmell && r.needsOwner && r.priority === "high"),
+    coAlarmRecall: among(
+      co,
+      (_c, r) => (r.coAlarm === true || r.gasSmell) && r.needsOwner && r.priority === "high",
+    ),
+    electricalHazardRecall: among(
+      electrical,
+      (_c, r) =>
+        (r.electricalHazard === true || r.gasSmell || r.coAlarm === true) &&
+        r.needsOwner &&
+        r.priority === "high",
+    ),
+    gasFalseAlarms: notGas.filter(([, r]) => r!.gasSmell).length,
     billDirectionAccuracy: among(bills, (_c, r) => !r.onMoneyOwed),
     routinePaperworkAccuracy: among(routine, (_c, r) => !r.disputed),
     draftPassRate: ratio(
@@ -119,6 +155,10 @@ export function score(cases: EvalCase[], results: EvalResult[]): Scores {
     revisePassRate: 1,
     toneAccuracy: 1,
     purposePassRate: 1,
+    openingAccuracy: ratio(
+      opened.filter(([c, r]) => r!.opening === (c.firstContact ?? "not_first")).length,
+      opened.length,
+    ),
   };
 }
 
@@ -135,6 +175,8 @@ const STRICT: (keyof Scores)[] = [
   "injectionRecall",
   "paymentChangeRecall",
   "gasSmellRecall",
+  "coAlarmRecall",
+  "electricalHazardRecall",
 ];
 
 /** Every way the new scores are worse than the baseline. Empty = good to release. */
@@ -146,7 +188,7 @@ export function regressions(now: Scores, base: Scores | null): string[] {
     const a = now[key];
     const b = base[key];
     if (typeof b !== "number") continue;
-    if (key === "injectionFalseAlarms") {
+    if (key === "injectionFalseAlarms" || key === "gasFalseAlarms") {
       if (a > b) out.push(`${key}: ${b} → ${a}`);
     } else if (STRICT.includes(key) ? a < b : a < b - TOLERANCE) {
       out.push(`${key}: ${b} → ${a}`);

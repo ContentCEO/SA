@@ -2,15 +2,16 @@
 
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useFormStatus } from "react-dom";
+import type { OpeningTweak } from "@/ai/prompts/opening-tweaks.v1";
 import type { Tweak } from "@/ai/prompts/revise.v2";
 import { Button } from "@/components/ui/button";
-import { TWEAK_LABELS } from "@/config/tweaks";
+import { OPENING_TWEAK_LABELS, TWEAK_LABELS } from "@/config/tweaks";
 import { reviseDraftAction } from "./actions";
 
-function Chip({ tweak, label }: { tweak: Tweak; label: string }) {
+function Chip({ name = "tweak", value, label }: { name?: string; value: string; label: string }) {
   const { pending } = useFormStatus();
   return (
-    <Button type="submit" name="tweak" value={tweak} variant="outline" disabled={pending}>
+    <Button type="submit" name={name} value={value} variant="outline" disabled={pending}>
       {label}
     </Button>
   );
@@ -26,13 +27,38 @@ function Rewriting() {
 }
 
 /** One-tap rewrites. The new text comes back to the queue to read; nothing sends. */
-export function TweakChips({ draftId }: { draftId: string }) {
+export function TweakChips({ draftId, seenHash }: { draftId: string; seenHash: string }) {
   return (
     <form action={reviseDraftAction} aria-label="Quick changes" className="flex flex-col gap-2">
       <input type="hidden" name="draftId" value={draftId} />
+      <input type="hidden" name="seen" value={seenHash} />
       <div className="flex flex-wrap gap-2">
         {(Object.keys(TWEAK_LABELS) as Tweak[]).map((t) => (
-          <Chip key={t} tweak={t} label={TWEAK_LABELS[t]} />
+          <Chip key={t} value={t} label={TWEAK_LABELS[t]} />
+        ))}
+      </div>
+      <Rewriting />
+    </form>
+  );
+}
+
+/**
+ * Replies package: "Other ways to reply" on a first reply to a new lead. Each chip rewrites the
+ * draft through the same revise flow as the tweaks (same limits); the new text comes back to
+ * read. Nothing sends.
+ */
+export function OtherWaysToReply({ draftId, seenHash }: { draftId: string; seenHash: string }) {
+  const heading = `other-ways-${draftId}`;
+  return (
+    <form action={reviseDraftAction} aria-labelledby={heading} className="flex flex-col gap-2">
+      <input type="hidden" name="draftId" value={draftId} />
+      <input type="hidden" name="seen" value={seenHash} />
+      <p id={heading} className="font-semibold">
+        Other ways to reply
+      </p>
+      <div className="flex flex-wrap gap-2">
+        {(Object.keys(OPENING_TWEAK_LABELS) as OpeningTweak[]).map((t) => (
+          <Chip key={t} name="opening" value={t} label={OPENING_TWEAK_LABELS[t]} />
         ))}
       </div>
       <Rewriting />
@@ -72,7 +98,7 @@ function UseThis() {
  * Plan #4: say (or type) a change — "make it Tuesday instead". Hold to talk
  * where the browser supports it; the words land in the box to check first.
  */
-export function SayAChange({ draftId }: { draftId: string }) {
+export function SayAChange({ draftId, seenHash }: { draftId: string; seenHash: string }) {
   const [text, setText] = useState("");
   // False on the server and where the browser has no speech recognition.
   const canTalk = useSyncExternalStore(
@@ -110,6 +136,7 @@ export function SayAChange({ draftId }: { draftId: string }) {
   return (
     <form action={reviseDraftAction} className="flex flex-col gap-2">
       <input type="hidden" name="draftId" value={draftId} />
+      <input type="hidden" name="seen" value={seenHash} />
       <label className="flex flex-col gap-1.5">
         <span className="font-semibold">Tell it what to change</span>
         <textarea

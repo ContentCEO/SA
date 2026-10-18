@@ -12,7 +12,14 @@ import {
   type Workspace,
 } from "@/db/schema";
 import { isAdminEmail } from "./admin";
-import { canMakeMove, EVALUATION_MS, resumeTarget, type AdminMove } from "./lifecycle";
+import {
+  canMakeMove,
+  effectiveStatus,
+  EVALUATION_MS,
+  resumeTarget,
+  type AdminMove,
+} from "./lifecycle";
+import { fitMailboxesToPlan } from "./mailbox-plan";
 import { creditReferralSafely } from "./referrals";
 
 /**
@@ -141,10 +148,11 @@ export async function applyAdminMove(
       set = { status: "active", setupCallCompletedAt: now };
       break;
     case "pause":
-      set = { status: "paused" };
+      // Check 17 P1: remember where it stood, so Resume can't skip past a failed payment.
+      set = { status: "paused", pausedFrom: effectiveStatus(w, now) };
       break;
     case "resume":
-      set = { status: resumeTarget(w, now) };
+      set = { status: resumeTarget(w, now), pausedFrom: null };
       break;
   }
 
@@ -212,4 +220,7 @@ export async function setWorkspacePlan(
       action: "plan_changed",
       detail: { by: "admin", from: w.plan, to: plan },
     });
+  // A plan covering fewer Gmail addresses pauses the extra ones; a bigger one turns them back
+  // on (Davi, 2026-10-16).
+  await fitMailboxesToPlan(workspaceId, now);
 }

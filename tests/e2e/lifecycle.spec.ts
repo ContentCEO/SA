@@ -24,7 +24,7 @@ test("during the three days: the clock is on every screen and sending is off", a
   await expect(clock).toContainText("Day 1 of 3");
   await expect(clock).toContainText("2 days");
   const card = page.getByRole("article", { name: "Draft reply to Priya" });
-  await expect(card.getByRole("note")).toContainText("Sending is off during your three days");
+  await expect(card.getByRole("note")).toContainText("Send reply is off during your three days");
   await expect(card.getByRole("button", { name: "Edit" })).toBeVisible();
 
   await page.goto("/inbox");
@@ -121,6 +121,46 @@ test("admin: sees health with no email content, and can turn sending on", async 
     .where(eq(schema.workspaces.id, owner.workspaceId));
   expect(w!.status).toBe("evaluating");
   expect(w!.setupPaidVia).toBeNull();
+});
+
+test("admin: one stuck inbox inverts the System box and its card (Check 16 P1)", async ({
+  page,
+  context,
+}) => {
+  const owner = await seedOwner({ mailbox: true, backfilled: true });
+  await setWorkspace(owner.workspaceId, { status: "active", businessName: "Stale Pipes" });
+  await testDb
+    .update(schema.mailboxes)
+    .set({
+      lastSyncedAt: new Date(Date.now() - 6 * 3_600_000),
+      lastSyncErrorCode: "sync_failed",
+      lastSyncErrorAt: new Date(),
+    })
+    .where(eq(schema.mailboxes.id, owner.mailboxId!));
+  const admin = await seedAdmin();
+  await signInAs(context, admin);
+  await page.goto("/admin");
+
+  const system = page.getByRole("region", { name: /System|stuck|stopped/ });
+  await expect(system).toContainText(/ha(s|ve)n't been checked for over 30 minutes/);
+  const card = page.getByRole("article", { name: owner.email });
+  await expect(card).toContainText("Stuck");
+  await expect(card).toContainText("not checked for 6 hours");
+  await expect(card).toContainText("checks failing");
+  await expect(card).not.toContainText("healthy");
+});
+
+test("admin: an invited owner's card has no Give 3 more days (Check 16 P2)", async ({
+  page,
+  context,
+}) => {
+  const invited = await seedOwner();
+  const admin = await seedAdmin();
+  await signInAs(context, admin);
+  await page.goto("/admin");
+  const card = page.getByRole("article", { name: invited.email });
+  await expect(card).toContainText("Invited");
+  await expect(card.getByText("Give 3 more days")).toHaveCount(0);
 });
 
 test("admin: invite an owner", async ({ page, context }) => {

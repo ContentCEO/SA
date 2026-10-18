@@ -9,12 +9,17 @@ import { classifyPending } from "@/server/classification";
 import { saveConnectedMailbox } from "@/server/mailboxes";
 import {
   businessProfileInput,
+  crewAddressesSchema,
   describeVoice,
   getBusinessProfile,
+  MAX_CREW_ADDRESSES,
   REVIEW_URL_MESSAGE,
   saveBusinessProfile,
 } from "@/server/profile";
 import { profileDefaults } from "@/server/profile-defaults";
+import { hicExpiryLine, licenseFacts } from "@/config/licenses";
+import { MA_DEPOSIT_SETTINGS_LINE } from "@/config/ma-rules";
+import { depositTermsWarning } from "@/server/deposit-rules";
 import { createTestDb } from "../support/db";
 import { classification, fakeTransport } from "../support/fake-model";
 
@@ -225,5 +230,121 @@ describe("profile drives classification", () => {
       businessProfileInput.parse({ ...valid, reviewUrl: "" }),
     );
     expect((await getBusinessProfile(workspace.id))!.reviewUrl).toBeNull();
+  });
+});
+
+describe("licenses and registrations (Check 38 P6)", () => {
+  let database: Database;
+  beforeEach(async () => {
+    database = await createTestDb();
+  });
+  it("saves the numbers, keeps them when a form doesn't carry them, clears an emptied line", async () => {
+    const { workspace } = await ensureUserAndWorkspace({ email: "owner@shop.com" });
+    const ws = async () =>
+      (await database.select().from(workspaces).where(eq(workspaces.id, workspace.id)))[0]!;
+    await saveBusinessProfile(
+      workspace.id,
+      businessProfileInput.parse({
+        ...valid,
+        hicNumber: " 198344 ",
+        hicExpiresOn: "2026-11-01",
+        cslNumber: "CS-104512",
+        leadSafeLicense: "",
+        insuranceCarrier: "Plymouth Rock",
+      }),
+    );
+    expect((await getBusinessProfile(workspace.id))!.licenses).toEqual({
+      hic_number: "198344",
+      hic_expires_on: "2026-11-01",
+      csl_number: "CS-104512",
+      insurance_carrier: "Plymouth Rock",
+    });
+    expect((await profileDefaults(await ws())).licenses.csl_number).toBe("CS-104512");
+    // A save without the fields leaves them alone.
+    await saveBusinessProfile(workspace.id, businessProfileInput.parse(valid));
+    expect((await getBusinessProfile(workspace.id))!.licenses.hic_number).toBe("198344");
+    // Emptied in the form: gone.
+    await saveBusinessProfile(
+      workspace.id,
+      businessProfileInput.parse({
+        ...valid,
+        hicNumber: "",
+        hicExpiresOn: "",
+        cslNumber: "CS-104512",
+        leadSafeLicense: "",
+        insuranceCarrier: "",
+      }),
+    );
+    expect((await getBusinessProfile(workspace.id))!.licenses).toEqual({ csl_number: "CS-104512" });
+  });
+
+  it("one line each, 40 characters at most, and a real date", () => {
+    const long = businessProfileInput.safeParse({ ...valid, hicNumber: "x".repeat(41) });
+    expect(long.error!.issues[0]!.message).toBe("Keep this under 40 characters.");
+    const date = businessProfileInput.safeParse({ ...valid, hicExpiresOn: "next year" });
+    expect(date.error!.issues[0]!.message).toBe("Pick the date it runs out.");
+  });
+
+  it("Settings shows one line when the HIC runs out within 30 days", () => {
+    const l = { hic_number: "198344", hic_expires_on: "2026-11-10" };
+    expect(hicExpiryLine(l, "2026-10-01")).toBeNull();
+    expect(hicExpiryLine(l, "2026-10-11")).toBe(
+      "Your HIC registration runs out in 30 days. Renew it with the state.",
+    );
+    expect(hicExpiryLine(l, "2026-11-09")).toBe(
+      "Your HIC registration runs out in 1 day. Renew it with the state.",
+    );
+    expect(hicExpiryLine(l, "2026-11-12")).toMatch(/has passed/);
+    expect(hicExpiryLine({}, "2026-11-12")).toBeNull();
+  });
+
+  it("the drafting block lists only the filled ones, and says so when there are none", () => {
+    expect(licenseFacts({ hic_number: "198344", lead_safe_license: " " })).toBe(
+      "Home improvement registration (HIC) number: 198344",
+    );
+    expect(licenseFacts({})).toBeNull();
+  });
+});
+
+describe("which state (Check 38 P2)", () => {
+  it("two letters from the list, '' clears it, left out leaves it", () => {
+    expect(businessProfileInput.parse({ ...valid, state: "MA" }).state).toBe("MA");
+    expect(businessProfileInput.parse({ ...valid, state: "" }).state).toBeNull();
+    expect(businessProfileInput.parse(valid).state).toBeUndefined();
+    expect(
+      businessProfileInput.safeParse({ ...valid, state: "Mass" }).error!.issues[0]!.message,
+    ).toBe("Pick your state from the list.");
+  });
+
+  it("an MA shop asking for half down still saves, and sees the warning", async () => {
+    await createTestDb();
+    const { workspace } = await ensureUserAndWorkspace({ email: "owner@shop.com" });
+    const terms = "Half down to get on the schedule, balance at completion.";
+    await saveBusinessProfile(
+      workspace.id,
+      businessProfileInput.parse({ ...valid, state: "MA", paymentTerms: terms }),
+    );
+    const p = (await getBusinessProfile(workspace.id))!;
+    expect(p).toMatchObject({ state: "MA", paymentTerms: terms });
+    expect(depositTermsWarning(p.state, p.paymentTerms)).toBe(MA_DEPOSIT_SETTINGS_LINE);
+    expect(depositTermsWarning("NH", p.paymentTerms)).toBeNull();
+    expect(depositTermsWarning("MA", "One-third at signing")).toBeNull();
+    expect(depositTermsWarning(null, p.paymentTerms)).toBeNull();
+  });
+});
+
+describe("crew addresses rule (Check 50 P3, not in a form yet)", () => {
+  it("lowercases, trims and de-duplicates emails", () => {
+    expect(crewAddressesSchema.parse(" Mike@Shop.com\nmike@shop.com\n\nana@shop.com ")).toEqual([
+      "mike@shop.com",
+      "ana@shop.com",
+    ]);
+  });
+
+  it("refuses a line that isn't an email, and more than 30 addresses", () => {
+    expect(crewAddressesSchema.safeParse("mike at shop").success).toBe(false);
+    const many = Array.from({ length: MAX_CREW_ADDRESSES + 1 }, (_, i) => `c${i}@shop.com`);
+    expect(crewAddressesSchema.safeParse(many.join("\n")).success).toBe(false);
+    expect(crewAddressesSchema.safeParse(many.slice(1).join("\n")).success).toBe(true);
   });
 });

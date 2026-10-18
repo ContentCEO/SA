@@ -78,6 +78,26 @@ default, CI too) and refuses a non-local `DATABASE_URL` or an `APP_URL` that isn
 `http://localhost:<PORT>`. Stop any `pnpm dev`/`pnpm start` on those ports first. In the
 `/home/user/SA-launch` worktree use `PORT=3300` (fakes 3301, database `squared_away_launch`).
 
+## Working in parallel
+
+Davi runs several builder sessions at once. The build order for review prompts is
+`docs/BUILD-ORDER.md`.
+
+1. Branch from the tip of `claude/squared-away-mvp-ddxl7s`; name the branch
+   `claude/c<check>-p<prompt>-<slug>` when the prompt came from a review page; put "Check N PN" in
+   the commit message.
+2. First confirm the problem in the prompt still exists at the tip; if it's fixed, stop and say so.
+3. Migrations: only one session adds migrations at a time. It holds the lane by assigning itself
+   the pinned GitHub issue titled "Migration lane" (create it if missing, with `gh issue create`)
+   and unassigns after its PR merges. Others don't run `pnpm db:generate` while the lane is taken.
+   Write the schema change last: rebase on the tip, then `pnpm db:generate`, then push at once.
+   Never renumber or edit a migration that has run on the shared database.
+4. Shared files: `CLAUDE.md`, `docs/LAUNCH.md` and `docs/privacy-policy.md` are edited only by the
+   session that merges branches (the integrator). Other builders write what those files need to
+   say in `docs/notes/<branch>.md`; the integrator folds it in and deletes the note.
+5. Open a draft pull request on the first push, titled with the check and prompt id.
+6. Don't run two sessions whose prompts name the same file in their "area" line.
+
 ## Conventions
 
 - Buttons name the action ("Send reply", never "Submit"); toast uses the same word ("Reply sent.").
@@ -87,6 +107,8 @@ default, CI too) and refuses a non-local `DATABASE_URL` or an `APP_URL` that isn
 - Never log tokens, email bodies, or customer personal details. Log prompt version, model,
   tokens, latency only.
 - Every gate (sending, plan limits, autopilot guardrails) is enforced server-side and has a test.
+- A new send path needs Davi's okay and a new allowlist row in `tests/unit/security-surface.test.ts`
+  ("Only two places can send mail": `sendDraft` in drafts.ts and `practiceSend` in practice.ts).
 - Business facts from `src/config/site.ts`; `SUPPORT_EMAIL` and `APP_URL` from env, never hardcoded.
 - Write tests with features. Guardrail tests are the product.
 
@@ -94,6 +116,11 @@ default, CI too) and refuses a non-local `DATABASE_URL` or an `APP_URL` that isn
 
 - **pnpm** as package manager (lockfile committed, CI uses `--frozen-lockfile`).
 - **Next 16.3 / React 19.2 / Tailwind 4 / Zod 4** — latest stable at scaffold time.
+- **Next 16.3.8** (and `eslint-config-next` 16.3.8), 2026-10-17 (Check 26 P1): clears the six
+  `next` advisories for >=16.0.0 <16.3.8 in `pnpm audit --prod`. The only documented change between
+  16.3.6 and 16.3.8 is the custom cache handler key format, which we don't use. The `braces`,
+  `source-map-js` and MCP SDK advisories come through `shadcn` and `next`'s `postcss`; left for their
+  own prompt.
 - shadcn init installed a stray `cn` npm package; replaced with the standard clsx + tailwind-merge
   `cn` in `src/lib/utils.ts`.
 - No OS dark mode. The brand is a light paper surface with charcoal inversions; a system dark theme
@@ -1370,7 +1397,7 @@ default, CI too) and refuses a non-local `DATABASE_URL` or an `APP_URL` that isn
     30-day month at 0.25 CU (more if it autoscales) against Free's 100 per project, so on Free it
     would likely be suspended around day 16–17 of each billing period. Launch = $0.106/CU-hour,
     about $19–20 a month for that compute (estimate from Neon's prices). Production's plan isn't
-    visible to the engineers. LAUNCH.md "Check your Neon plan now (this week)", before step 0.
+    visible to the engineers. LAUNCH.md "Check your free plans now (this week)", before step 0.
   - **Test-mode Stripe accounts: reset them** with the built `/admin` → Payments → Reset test
     payments after the live key swap and Connect Stripe (LAUNCH.md 7c; see "Reset test
     payments" above).
@@ -1559,6 +1586,1036 @@ default, CI too) and refuses a non-local `DATABASE_URL` or an `APP_URL` that isn
   confirm at myaccount.google.com/permissions that Squared Away has no Gmail access, reconnect,
   and confirm that mailbox's `mailboxes.scopes` has no `gmail.send`. The demo video's "Before
   recording" note repeats the clear-out (filming comes after the check).
+- **Leads package (2026-10-16, branch `leads-build`; plan `ideas-plan-leads.md`: B4 B5-lane B3
+  B2 B6 B14 B9 G5):** migration 0032 `leads` (additive: `threads.lead_channel`,
+  `complaint_fixed_at`, `complaint_checkin_done_at`; `business_profile.service_towns`). **No prompt change** (classify.v4 untouched; the eval
+  baseline is still empty): the town is read in code from the address the classifier already
+  extracts, emergencies use its existing `urgency`, lead-site names come from labelled lines.
+  - **Where a lead came from** (`src/server/channel-rules.ts`, pure; `src/config/phone-services.ts`):
+    `channelOf(from)` = `phone` (Google Voice `voice-noreply@google.com`, exact), `phone_text`
+    (email-to-text gateways, carriers' own published domains) or `site` (via `leadPlatformOf`,
+    so platform matching never disagrees with the monthly label / Reply-To rules). Every
+    `LEAD_SOURCES` entry has `site` (Facebook `null`; Google Local Services included, exact
+    hosts only); "Open <site>" is a **fixed** https URL whose host must be on `OPEN_SITE_HOSTS`
+    (`openSiteUrl`; tested) — never a link read from an email. Stored at classification as
+    `threads.lead_channel` (never cleared by a later email). Promotions/Social shortcut bypassed
+    for phone channels only. Customers leaves lead-channel threads out.
+  - **Never drafted, never sent:** `createDraftForThread` refuses `lead_site` / `phone_message`
+    first (every trigger, before the Reply-To read or any model call), then on the final `to`
+    `text_address` (any gateway, every trigger; also a form whose Reply-To is a gateway) and
+    `lead_site` by address (older threads); a phone-number-shaped address the owner never wrote
+    to → jobs skip (`maybe_text_address`), the owner's tap gets `MAYBE_TEXT_FLAG` first.
+    `queueSend` → `text_address` (403 on the API, `?error=textaddr`); `sendDraft` closes such a
+    draft as discarded with **no Gmail call**; `reconcileDrafts` first expires pending drafts to a
+    gateway or a lead-site robot (and their Gmail drafts); autopilot refuses lead channels and
+    phone-like addresses. Precedence: lead-site/phone refusals before the no-reply rule.
+  - **Owner rules** (`applyOwnerRules`): every hit stored as content-free keys in
+    `extracted.owner_rule_hits` (`OWNER_RULE_KEYS`); new hits `emergency` (model urgency
+    `emergency` + `LEAD_CATEGORIES` → needs you, priority high: emergencies are no longer
+    auto-drafted), `phone`, `site`, `outside_area`. When any of those four hit, the stored reason
+    is our fixed text (never the model's prose, which could carry a town or name past the purge).
+    Cards read flags, never reason strings.
+  - **Done** = the existing "I called them" (`handled_offline_at`, round 2 E11), relabelled "Done —
+    I answered" / "Done — I called back" on lead cards (`?done=done`); no `owner_done_at` column.
+    It already answers leads at risk, Not answered yet, Quotes and follow-ups via `lastOutSql`.
+  - **Queue** (`queueMembership`, shared by digest / badge / push / screen): `lane` (B5, sorted
+    first; injection never) and G5 check-ins (`checkIn`: fixed 2–30 days ago, not closed since, no
+    customer email and no owner email / app reply since, no draft pending; never an emergency)
+    join needs-you, content-free. The screen renders
+    `NeedsYouCard` (`queue/needs-you-card.tsx`) with `leadCardsFor` (`src/server/lead-cards.ts`:
+    a fixed number of queries per render): Call / Text (`ContactButtons`, plain `tel:` /
+    `sms:?&body=`; numbers from `src/lib/phone-numbers.ts` + `contact-rules.ts`, code only:
+    toll-free / N11 / 555-01xx refused, the owner's signature / alert phone / sent-mail tails
+    skipped, machine mail needs a field label like "Phone:", a voicemail's subject names the
+    caller; nothing stored or logged), emergency section with Call now first, voicemail cards
+    (Call back, no Draft a reply, "Open in Gmail (to play it)"), lead-site cards (Open <site>,
+    name / service / town parsed from labelled lines only, `lead-site-rules.ts`), complaint
+    cards (Call first, **Mark fixed** → `?done=fixed`, refused with a pending draft
+    `has_draft` or a legal hit), check-ins (All good), repeat-customer line (B14,
+    `repeat-customer-rules.ts`: won > quoted (amount or a real owner email) > asked; lead
+    channels and no-reply skipped; no price) and the towns line (B9).
+  - **Not answered yet (B6)** (`never-answered.ts`): over 24 h and under 14 days, one row per
+    customer (`row_number() over (partition by waitingReplySql())`, address never selected), no
+    queue card, active mailbox synced < 30 min; lead channels, no-reply, injection, municipal,
+    job done and decided quotes left out; the morning email adds a count-only line (excluding
+    queue cards and leads at risk).
+  - **Towns (B9):** "Towns you work in" under "Where do you work?" (pre-filled from it while the
+    list is empty; saved only on Save), de-duped by `normalizeTown`. `townFromAddress` only reads
+    "…, Town, ST [zip]" / "…, Town" (no digits, not a street). "Add <town> to my towns" takes the
+    town from the stored address (never the form) and clears needs-you only when
+    `owner_rule_hits` is exactly `["outside_area"]`.
+  - Scorecard response time and `guessNoAnswers` leave lead-channel threads out. Inbox swaps
+    Draft a reply for Open <site> (or a plain line) on lead-channel threads.
+  - Privacy policy lines added (lead source / rule-hit / done / fixed marks; towns; Call / Text
+    reads the number at render and never stores it; never draft/send to lead sites, voicemails or
+    gateways); the documents were already dated 2026-10-16 = `TERMS_VERSION`, so no date move.
+  - **Not built (deviations):** classify.v5 (customer name / town from the model, strict
+    emergency wording) — waits for the eval baseline; purpose.v2 notes (polite no, calm
+    complaint reply, check-in note) — the owner's ordinary "Draft a reply" covers them for now, so
+    no `declined_at`; held B5 part 2 (emergency alerts) and its columns; RingCentral /
+    Grasshopper / OpenPhone senders (need samples).
+- **Ideas "control" package (2026-10-16, branch `ideas-build`; H3, H4, G7, E7 built; G3 and B7
+  not built in this pass, see Waiting on Davi):** migration 0033 `control` (additive; was 0032 before the leads merge): `owner_sender_rules`,
+  `customer_notes`, `threads.category_manual` / `category_manual_at`, `business_profile.away_back_on`,
+  `seasonal_notes.away` (+ partial unique index, one away note). No prompt change.
+  - **H3 sender rules** (`sender-rule-store.ts`, pure `owner-sender-rule-rules.ts`; the store is
+    not called `*-rules.ts` because the purity test scans that suffix): Always junk / Never draft
+    (address or company domain) and company-wide Always needs me; "Always needs me" for one
+    address writes the VIP list instead (one list for that fact; DB check refuses an address
+    `needs_me`). Keyed only from an email whose Reply-To was read (`keyFromMessage`: NULL header,
+    lead-site relays and no-reply addresses refused). **Direction:** caution (VIP, needs me, never
+    draft) matches From or the reply address; junk only when From matches and there is no redirect
+    or the reply address matches too; a NULL header never junks; any caution beats junk. The
+    junk shortcut (no model call, `extracted.sender_rule = "junk"`) is skipped for a moved
+    thread, municipal senders, injection text, sticky marks and a whole-word guard list (lawyer,
+    refund, leak, damage…). Junk refused for anyone the owner wrote to, a VIP, an open quote or an
+    owed invoice, building departments; company rules never on webmail or the owner's domain; cap 200. Never draft is read live in `createDraftForThread` (jobs only, the customer's newest
+    non-side email) and the auto-draft / follow-up scans skip `sender_rule = no_draft`. Inbox
+    rows carry "Rules for this sender" (posts the email id, never the address); Settings → Sender
+    rules lists and removes. Activity `{action, scope}` only.
+  - **H4 Move it** (`resort.ts`): `category_manual` wins in classification's UPDATE
+    (`coalesce(category_manual, model)` in SQL, race-safe); the model's own kind is stored as
+    `extracted.model_category`. To complaint: needs you + sticky `complained_at`. To junk:
+    discards the waiting reply (refused while it's in its undo window). To quote: request time =
+    first customer email after the owner's last real reply. **Decision:** `quote_requested_at` is
+    set once and never cleared, _except_ by the owner moving an undecided quote away (also
+    clears `job_kind` and `quote_accepted`, withdraws a waiting deposit note). A job never drafts
+    on a moved thread whose `model_category` isn't auto-draftable (`owner_moved`); autopilot
+    refuses manual ≠ model ("You chose this kind yourself…") and such sends don't earn.
+  - **G7 private notes** (`customer-notes.ts`): ≤200 chars, one per customer reply address, saved
+    from the customer page (key = an email id), shown on Inbox rows and Queue cards (drafts keyed
+    on `to_address`, others on the newest non-side inbound). Never sent to the AI or anywhere else
+    (boundary test in `control.test.ts`). Not encrypted (like bodies; only tokens are). With the
+    offline queue on (`sa_offline`), cards say "Note saved · Open" without the text. Goes with
+    the mailbox it was written under.
+  - **E7 away mode** (`away.ts`, pure `away-rules.ts`, `/settings/away`): day back after today and
+    ≤90 days, read at use (no cron); one `away` seasonal note "Away until … (Oct 9). Back …
+    (Oct 10)." (both date forms so `checkDraft` sees the date as given), outside the 5-note cap,
+    read-only on the business screen. Nudges pause (`threadsToFollowUp` → none, followup trigger
+    → `away`). Autopilot, alerts and the digest don't change; the screen's last line says so
+    when autopilot is on. A default-zone owner's browser zone decides "today" and is saved.
+  - Privacy policy (same 2026-10-16 date as `TERMS_VERSION`, so no new re-agree): what you tell
+    us (rules, VIPs, notes, away day), the moved-kind record, notes/rules never sent to Anthropic
+    and the junk-shortcut exception, retention, and notes left out of the offline copy.
+
+- **Ideas "numbers" package, part (2026-10-16, branch `ideas-build`; C8, H8, C5, K2 built;
+  D4 and D7 not built, see Waiting on Davi):** migration 0034 `numbers` (additive; was 0033 before the leads merge): `threads.quote_lost_reason`.
+  No prompt change; nothing new is sent to the AI or to a customer.
+  - **C8 quote speed** (`quoteSpeed` / `quoteSpeedSentence`, `scorecard-rules.ts`): of the week's
+    quote requests, answered within `QUOTE_SPEED_HOURS` 24 calendar hours (nights and weekends
+    count; the Activity explainer says so) out of those that can be judged: answered ones plus
+    unanswered ones already over 24 hours; owner-settled ones left out. Percent from 5. Same
+    request set and exclusions as response time. **Known edge:** Monday's email counts last week
+    at send time, so a late-Sunday request still in its first day is left out of it (never
+    marked slow early); the Activity card counts it later.
+  - **H8 sent without changes** (`asWrittenSentence`, query in `scorecardQueries.asWritten`):
+    replies + follow-ups sent from the app this week (`sent_gmail_message_id` set, so a
+    reconcile-"sent" draft counts in neither number), never autopilot (`reply_sent.detail.autopilot`),
+    and drafts that had `{{gaps}}` left out of both: `sendDraft` now writes `hadGaps` (yes/no)
+    into `reply_sent`; older rows fall back to `original_body` and drop out once purged. Shown
+    from 5 sent, "up/down from" only when last week also had 5; a link to
+    `/settings/autopilot` where autopilot can be had (no claim that it earns autopilot). Both
+    lines go into `scorecardLines`, so Monday's email has them (counts only; `ScorecardNumbers`
+    fields are optional for older callers).
+  - **C5 why you lost it** (`setLostReason` in quotes.ts, rules in quote-rules.ts): Price /
+    Timing / Went with someone else, one optional tap on a Lost card; any new outcome clears it;
+    read only through `shownLostReason` (old code can leave a stale reason on a reopened quote).
+    Activity: "Lost this month: …" (`lostReasonsBetween`, the owner's month, by
+    `quote_outcome_at`). Activity row `quote_lost_reason {reason}` is hidden from the feed.
+  - **K2 which lead sources pay** (`lead-pay.ts`, `leadPayRows` / `leadPaySentence`): Quotes
+    card "Where your work comes from", last 90 days (`requestAtSql`), only the requester's
+    domain leaves SQL. A no-reply From with a different Reply-To is "Website form". Lead sites
+    (`leadPlatformOf`) count Won only when the owner marked it and never say "0 won" ("Tap Won on
+    Quotes…"). ≥2 sources to show, 6 rows max ("Everywhere else"). Owner-only.
+  - Privacy policy: why a quote was lost (store + retention), same 2026-10-16 date.
+- **Leads + ideas merge (2026-10-16, `ideas-build` ← `leads-build`):** leads' `0032_leads` reaches
+  the shared database first (PR #13's previews run it), and drizzle's migrator only applies a
+  migration whose journal `when` is later than the last applied one, so the ideas migrations were
+  renumbered after it: `0033_control` (when 1792192470911) and `0034_numbers` (when
+  1792192476806; leads' 0032 is 1792180535102), regenerated with drizzle-kit (same SQL) so the
+  snapshots chain 0032_leads → 0033 → 0034. `tests/unit/migrations-order.test.ts`
+  fails if any journal `when` doesn't strictly increase in idx order (or tags/files disagree).
+  Combined behaviour: `OWNER_RULE_KEYS` gains `sender_rule` (a company "Always needs me"), so
+  "Add <town>" only clears needs-you when the town was the one reason; the junk-by-rule shortcut
+  never fires for voicemail / text-message emails (they are always read, like the Promotions
+  shortcut); `companyChoice` refuses email-to-text gateways ("Anyone at vtext.com" would be
+  many people); `createDraftForThread` keeps every refusal from both sides (lead_site /
+  phone_message first, then the jobs-only owner_moved / sender_rule / away, then text_address /
+  maybe_text_address on the final address); autopilot refuses owner-moved kinds, lead channels and
+  phone-like addresses. `NeedsYouCard` takes the private note line and the Move it sheet (not on
+  check-ins or read-only accounts); draft cards show the lead lines then the note. Quote speed
+  (C8) reads the same request query as response time, so it leaves lead-channel threads out too.
+- **Growth cross-sell rule (Check 5 P1, 2026-10-17):** the app may mention Growth only with static
+  text that is the same for every owner (no props, no counts, no conditions on mail, drafts,
+  quotes, money owed or activity). No Growth mention on /billing, read-only or expired screens, or
+  in lifecycle, digest, monthly-summary, alert or text-message content. No app data is ever copied
+  into a Growth lead. The one allowed line is `GrowthMention` (`src/components/app/growth-mention.tsx`,
+  no props, copy `growthCopy.appMention`), placed on the More screen only and hidden there for
+  read-only or expired accounts (`jobsAllowed`).
+- **Growth code may not import inbox modules or tables (Check 2 P5):** no `@/mailbox`, `@/ai`,
+  `@/jobs`, sync / classification / inbox / drafts / voice / quotes / customers / followups / digest,
+  and no threads, messages, drafts, mailboxes, voice or business profile, usage or activity log
+  tables. `tests/unit/growth-boundary.test.ts` enforces both rules; a new Growth file (like the
+  client portal) is added to its `GROWTH_PATHS` / `MENTIONS` lists on purpose, with a reason.
+- **Where email text may go (Check 48 P7, 2026-10-17):** only to Anthropic, as one synchronous
+  `messages.parse` per task (`src/ai/client.ts`), as the privacy policy says. No Message Batches or
+  Files API until `ALLOWED_DATA_PATHS` (`src/config/models.ts`) turns one on with a policy update
+  and a `TERMS_VERSION` bump; no "Covered Model" (30-day retention); `fetch` only to hosts tied to
+  a privacy-policy line; no other AI SDK. `tests/unit/data-paths.test.ts` enforces it.
+- **Preview guard (Check 26 P2, 2026-10-17):** `previewGuard` (`src/config/environment-guard.ts`,
+  pure) runs in `db()`, `loadKey()` and `/api/health`: on `VERCEL_ENV=preview` a database host,
+  `TOKEN_ENCRYPTION_KEY` or `AUTH_SECRET` whose sha256 is production's throws "This preview is
+  pointed at production. See docs/LAUNCH.md step 2." (no values) and health answers 503
+  `preview_uses_production`. Fingerprint lists ship empty (blocks nothing; see Waiting on Davi);
+  `pnpm fingerprint [env file]` prints the hashes.
+- **Reserved columns (Check 50 P3, migration `0035_reserved_columns`):** added once so several
+  prompts don't fight over them; nothing reads or writes them yet. Check 38 P2, 44 P1, 45 P2 use
+  `business_profile.state`; Check 20 P4 and 21 P1 use `messages.auto_reply` and
+  `messages.ack_only`; Check 22 P10 and 41 P6 use `business_profile.crew_addresses` (max 30; not
+  `team_addresses`), validated by `crewAddressesSchema` (`src/server/profile.ts`: emails,
+  lowercased, de-duplicated). None of them adds a migration. `migrations-columns.test.ts` fails
+  when two migrations add the same table.column.
+- **Prompt versions (Check 50 P2, `src/ai/prompts/registry.ts`):** a new version is a new
+  `<kind>.v<N>.ts` file (constant `<KIND>_PROMPT_VERSION = "<kind>.v<N>"`) plus one line in
+  `ACTIVE`; `prompt-versions.test.ts` fails on two files with one version, a gap, an `ACTIVE`
+  that isn't the newest file, or code that records a version imported from an older file.
+  Active after the wave 1 integration: classify.v5, draft.v8, followup.v4, voice.v3, revise.v2,
+  purpose.v2, edit-tone.v1, opening-tweaks.v1, dispute-caution.v1 (a suffix on draft / revise
+  versions, never stored alone). Taken, so the review pages' names shift:
+  - **draft.v8** = the review's "draft.v7" bundle: Check 23 P11 + 43 P1 + 44 P1 (and 45 P2) + the
+    prompt parts of 40 P1 and 41 P1. Then the trade files of Check 36 P8, 37 P4 and 39 P6, in
+    draft.v8 or the next version (**draft.v9**).
+  - **classify.v5** = Check 12 P2 + 12 P3 + 22 P9 + 38 P5 + 45 P7, plus the classify parts of
+    21 P1, 21 P2, 22 P4, 37 P3 and 39 P5.
+  - **followup.v5** = Check 12 P7 + 21 P7. **voice.v3** = Check 24 P5 + 24 P9.
+  - Any later purpose prompt starts at **purpose.v3**; any change to the "Other ways to reply"
+    asks is **opening-tweaks.v2**.
+- **Davi's decisions package (2026-10-16, branch `decisions-build`):** migration 0036
+  `decisions` (additive; 0035 on its branch): `mailboxes.plan_paused_at`, `workspaces.trial_emails_stopped_at` /
+  `trial_emails_sent` (text[]), partial unique index `drafts_one_thank_you_per_thread`. Prompt
+  `purpose.v2` (re-exports v1's three tasks unchanged, adds `thankYouTask`); eval cases added
+  (`tests/evals/purposes.ts` thank-you ×3, `cases.ts` i-paid-happy / i-paid-zelle).
+  - **Headline:** "Built for carpenters, plumbers, and electricians" (hero, both meta
+    descriptions, `opengraph-image.tsx`); `tests/unit/decisions-copy.test.ts` pins it.
+  - **Trial side door stays:** the drafts are real Gmail drafts, so an owner may send one from
+    Gmail during the trial; only Squared Away's own Send is off. One wording,
+    `TRIAL_NO_SEND_LINE` + `TRIAL_SIDE_DOOR_LINE` (`trial-email-rules.ts`), on the homepage FAQ
+    and promise, the connect explainer ("from Squared Away you can only send yourself practice
+    copies"), the Day N banner (last day / expired: "to send replies from Squared Away"), the
+    learning screen and /billing (trial only), the invite and first-drafts emails, the trial
+    emails, `docs/terms.md` and the privacy policy (same 2026-10-16 date: no re-agree; Davi's
+    call in LAUNCH.md). `sendingOffLabel(evaluating)` is now **"Send reply is off during your
+    three days"** and `sendingBlockedReason` adds the Gmail line. Push stays "ready to check".
+    `decisions-copy.test.ts` bans "nothing goes to a customer", "sending is off during",
+    "customer: you can only send yourself practice copies", "can't be sent"….
+  - **Trial emails** (`trial-emails.ts`, pure `trial-email-rules.ts`, links in
+    `trial-email-links.ts`): day 1 = the existing first-drafts email (during the trial it gains the
+    trial line and the stop link, and isn't emailed once stopped); `day2` from 24 h after the clock
+    started; `day3` on the end's local date ("Your trial ends today at 3:00 PM") or the day before
+    when the end is earlier than `digest_hour` + 2 h ("…tomorrow at 6:30 AM"); day 3 wins a tie
+    and day 2 never goes after it; `after` 7–14 days after an expiry with no payment at all
+    (`setup_paid_via`, `setup_paid_at` or a subscription). Window: `digest_hour` ≤ local hour < 20
+    in `business_profile.time_zone` (Eastern default). Step `trial-emails` in the 15-minute
+    lifecycle job, one email per account per run, marked in `trial_emails_sent` only after
+    Resend took it (`array_append … where not = any`); keys `trial-<ws>-day2|day3|after`;
+    no Resend → nothing sent or marked. Counts only (`trialCounts` + `queueCounts`). Every one
+    carries "Stop these emails" → `/api/emails/stop?w=<ws>&s=<HMAC-SHA256(AUTH_SECRET,
+"trial-emails:stop:"+ws)>` (constant-time; no secret → no link and no trial email) plus
+    `List-Unsubscribe` / `-Post` headers (`OutgoingEmail.headers`). GET → 303 `/emails/stopped`
+    (public, noindex; `?link=bad` changes nothing), POST (mail apps' one-click) → 200 / 400.
+    Route guard `signed-link` in the C3 table. Settings → Morning email: "Trial emails" switch
+    (`saveTrialEmailsAction`) only while `trialEmailsMatter` (evaluating / expired, unpaid).
+  - **Plan pause** (`mailbox-plan.ts`, pure `mailbox-plan-rules.ts`): `fitMailboxesToPlan`
+    (workspace row `FOR UPDATE`) keeps min(limit, connected) on — pauses the newest of those on,
+    turns the oldest paused back on — after `setWorkspacePlan`, Stripe's checkout and plan
+    changes (`fitMailboxesSafely`, never fails the webhook), a disconnect, and step
+    `fit-mailboxes-to-plans` (15-minute backstop). Pausing clears that mailbox's autopilot
+    countdowns; Activity `mailboxes_fit_plan {paused, resumed, limit}`. "Use this one instead"
+    (`swapPlanMailbox`, Settings → Your Gmail; "Paused: your plan covers N Gmail address(es)."):
+    one for one under the lock, or straight on when there's room; `choose` when no valid one to
+    pause. **On** = `mailboxOn` / SQL `mailboxRunning()` (status active AND not plan-paused) in
+    every gate that skipped a lost mailbox: sync, poll, Gmail push + watch, classify, unsorted
+    sweep, voice (oldest running mailbox), drafts (every trigger → `mailbox_paused`), reconcile,
+    reply-to backfill, draft cleanup, batch, follow-ups, leads at risk, not answered yet,
+    new-lead texts / pushes (`freshLeads`), access-lost emails, the reconnect banner, admin's
+    "jobs look stopped". `sendDraft` / `queueSend` / practice / revise / edit refuse with
+    `mailbox_paused` before any Gmail call (API 403 `MAILBOX_PAUSED_LINE`, `?error=paused`);
+    autopilot stands down with "This Gmail address is paused on your plan." The queue still shows
+    its drafts (`QueueItem.mailboxPaused`, read-only card). A static test fails on any new
+    status-only gate (`mailbox-plan.test.ts`).
+  - **Reset test payments:** Davi chose "let it be usable" — already as built (past_due →
+    `restored()`, jobs run, can't send without `setup_paid_via`); a test proves it end to end,
+    LAUNCH.md moved it to "Decided on 2026-10-16".
+  - **Lost reason "Other"** (`LOST_REASONS` + "another reason"; never the sentence's headline;
+    plain text column, older code just doesn't show it).
+  - **Say thanks** (Money's paid rows, replacing "Ask for a review" there; Inbox keeps its own):
+    owner purpose `thank_you`, stored as `thank_you` or `thank_you_review` (the review ask inside,
+    only when `reviewOfferReason` is null for that customer — the full review rules); both count in
+    `recentReviewAddresses` via `REVIEW_ASK_PURPOSES`, and `thank_you_review` is inserted under
+    `lockReviewAddress`. Base rule `thankYouOfferReason`: owner/auto paid mark (never not_owed),
+    no injection / municipal, not junk / supplier, not a robot / receipt sender, once per thread
+    (index; an expired one doesn't count; a discarded one does). A complaint or an unknown
+    customer still gets a plain thank-you. Same `checkTerms` as review requests (`review: {url:
+null}` flags any link on a plain one); reconcile expires it like a review note; never a job,
+    autopilot, batch, earning or `followup_count`.
+  - Privacy policy (same 2026-10-16 date): the trial emails in the Resend list, which trial emails
+    went and whether they were stopped, and which Gmail address a plan pause stopped.
+
+- **Replies package (2026-10-16, branch `replies-build`; Davi's answers that day):** migration
+  0037 `replies` (0035 on its branch; additive: `drafts.opening`, `threads.emergency_alerted_at`,
+  `business_profile.emergency_alerts_enabled` default true). Prompts `draft.v7`,
+  `opening-tweaks.v1`; eval set +12 first-contact cases, +3 revise cases, metric
+  `openingAccuracy`. **The eval baseline is still empty** (no `ANTHROPIC_API_KEY` repo secret).
+  - **Warm first replies (draft.v7):** draft.v6's rules plus a "First contact" section, used only
+    when the code says so: `isFirstContact` (`first-contact-rules.ts`, pure) = an ordinary reply
+    (no nudge, purpose note or gas safety note) on quote_request / customer_question /
+    scheduling, no "I called them" on the thread, and `ownerWroteBefore`
+    (`known-customer.ts`) false — no non-draft, non-side owner email on this thread or to the
+    customer's reply address (never the From: a form robot is shared by every lead) from **any**
+    of the workspace's mailboxes, and no app send to them (sent, queued or claimed). Asked only when everything else already says first
+    contact. The task line `FIRST_CONTACT_TASK` tells the model; it picks `opening` details /
+    vague / urgent / price_only (`not_first` otherwise) via `replyDraftSchema` (draft.v6's
+    schema + `opening` with `.catch("not_first")`: a bad value never loses the draft; the SDK
+    puts enums in the description, so nothing enforces them at the API). Stored only on a first
+    contact (`storedOpening`; the model's "not_first" there is kept, so non-null = code said
+    first contact). The business block, conversation block and date helpers are re-exported
+    from draft.v6 unchanged (cache and nudges untouched); nudges keep `draftSchema`. Purpose notes
+    now use v7's instructions (evals too). `checkDraft`, regenerate rules and gaps unchanged.
+    v7 still bans "Thank you for reaching out" (checkDraft's filler); the warm opener is
+    "Thanks for reaching out". Activity `draft_created` gets `firstContact: true`.
+  - **Card:** "First reply: asks 2 questions · they described the job" (`openingLine`, counts
+    `?` runs in the current text) and **Other ways to reply** (`OtherWaysToReply`, below the
+    Discard · Change it · Edit row so Send reply stays put): Ask a few questions / Offer to come
+    take a look / Short and friendly (`OPENING_TWEAKS`, labels mirrored in
+    `OPENING_TWEAK_LABELS`, a test keeps them equal). `reviseDraft({ opening })` = revise.v2's
+    instructions + the fixed ask, logged `revise.v2+opening-tweaks.v1`, same 5-per-draft / 40-an-hour
+    limits; refused (`not_first_contact`, before any model call) unless the stored opening is one
+    of the four shapes on a plain reply. Hidden on read-only accounts (`offersOtherWays`).
+    **Autopilot refuses any draft with an opening** ("First replies to new customers always wait
+    for you."): Davi said no to instant replies to new leads, and an old forward could make a
+    new lead look known.
+  - **Money in the morning email:** `moneySoFar` (activity.ts) → `moneySoFarLines`
+    (activity-rules.ts): "This month so far: $X in quotes you won · $Y in invoices paid." and
+    "Still owed to you: $Z on Money owed.", plus Activity's own note (`MONEY_SO_FAR_NOTE`). Won =
+    `quote_outcome` won (owner or guess) by `quote_outcome_at` in the owner's month, from
+    `quote_amount_cents`; paid / owed = `invoiceTotals` (money.ts) on Money's own rows
+    (`moneyThreads`, now with `paidSince` so a 31-day month reaches past the 30-day paid list):
+    no supplier bills, receipt senders, bills the owner owes or "Not owed to me". Items with no
+    amount are counted and said. Zero parts left out; no section when all zero; it never makes a
+    quiet morning worth sending. Activity shows the same lines on its money card ("Nothing won or
+    paid yet" only when neither). The M7 privacy test now allows the total line in the email
+    (never a name, invoice number or due date); push and texts still carry no amounts.
+  - **Emergency alerts (B5 part 2)** (`emergency-alerts.ts`, rules in
+    `emergency-alert-rules.ts`): candidates = `inEmergencyLane` exactly (a gas smell counts via
+    its urgency mark), needs_owner, in the inbox, mailbox on (`mailboxRunning()`: active and not
+    plan-paused), never alerted, not snoozed, not injection, the customer's newest non-side email
+    under an hour old **and already sorted**, its reply address not no-reply — **except** a
+    voicemail / text-message email (`phoneMessageSenderSql`, the SQL twin of `channelOf` kind
+    phone / phone_text; integration 2026-10-17) — unanswered (owner email / "I called them" / app send / undo
+    window). One alert per run per owner covering every new emergency; caps 3 between 9pm and
+    7am (from the night's 9pm, across midnight) and 6 per local day, counted from
+    `emergency_alert_sent` rows; count + mark + Activity row in one transaction under
+    `pg_advisory_xact_lock(hashtext('emergency-alert:<ws>'))`. Sent through the owner's push
+    phones and verified text number; nothing reached → marks and row taken back. Takes the push /
+    SMS slots (`push_last_sent_at` / `sms_last_sent_at`) without waiting for them, so ordinary
+    alerts wait 10 minutes after it, and `freshLeads` leaves an alerted emergency out until a
+    later email is sorted on it. Words: "An emergency email just came in. Open Squared Away."
+    (push, via `/api/push/summary` while that alert is the newest push and < 30 min old,
+    `emergencySummaryApplies`; the tap opens `/queue?t=<uuid>#t-<uuid>`) and "Squared Away: An
+    emergency email just came in. Open: <deep link>" (text). Runs first in `alertsForMailbox`
+    (after sorting) and in the 15-minute backstop. Read-only accounts never. Setting
+    **Emergencies, even at night** (`EmergencySwitch`, one switch on both Notifications and Text
+    alerts; `saveEmergencyAlertsAction` → `?done=saved` on the screen it came from); off = an
+    emergency waits like any email. Activity "Let you know right away about an emergency email"
+    (counts) and the switch's on/off row.
+  - Privacy policy lines added (first-reply labels, emergency alert times, the switch, money totals
+    in the morning email); same 2026-10-16 date as `TERMS_VERSION` (as the other 2026-10-16
+    packages did, no new re-agree); `legal-docs.test.ts` holds them to the code. SETUP.md §6c
+    names the emergency exception and a second A2P sample message.
+
+- **Growth client portal (2026-10-16, branch `growth-portal`):** migration `0038_growth` (0035 on its branch)
+  (additive; renumbered at merge): `growth_clients` (one per workspace, cascade; status active |
+  paused | ended; `started_on` date; `services` text[] of `GROWTH_SERVICES` ids; `time_zone`,
+  set by Davi, Eastern default), `growth_updates` (title ≤80, body ≤2000, Davi's words;
+  `notified_at`), `growth_monthly` (unique client + 'YYYY-MM'; optional new_leads, calls,
+  jobs_won, money_won_cents, reviews_gained, ad_spend_cents; note ≤280), and on `invites`
+  `growth_invited_at` / `growth_services` / `growth_started_on`. Rules in
+  `src/server/growth-client-rules.ts` (pure), DB in `src/server/growth-clients.ts`.
+  - **Growth never uses inbox data (Davi's review, Check 5 P1 / Check 2 P5):** every dashboard
+    number is one Davi entered in `growth_monthly`, labelled "From your monthly check-in(s) with
+    Davi"; the money line is "Money from jobs you won since Growth started (as you told Davi)".
+    Growth files never import mailbox / ai / jobs / sync / inbox / drafts / voice / quotes /
+    customers / followups / digest code, nor the threads, messages, drafts, mailboxes,
+    voice/business profile, usage or activity tables (`growth-portal.test.ts`); the client's
+    months use `growth_clients.time_zone`, never `business_profile.time_zone`. /admin's Growth
+    card shows only what Davi entered. Nothing goes to the AI.
+  - **Sign-in lands on `/start`** (the sign-in action, `/signin` and `/` for a signed-in
+    owner): an active or paused client picks "My inbox · Squared Away" (/queue, which shows
+    Connect Gmail when none is connected) or "My Growth dashboard" (`/my-growth`; not `/g` —
+    robots' `Disallow: /g` would also block `/growth`). Everyone else is redirected to /queue.
+    Both are outside `(app)` (own header, no tab bar), in the proxy matcher and robots, behind
+    `requireOwner` (terms). `/my-growth` 404s for non-clients and ended clients (no
+    loading.tsx; in the C2 must-404 list).
+  - **Admin "Growth clients"** on its own page `/admin/growth` (/admin only links to it with a
+    count: with every client's forms inline, /admin got slow enough under load to time out older
+    admin e2e tests). `admin/growth-admin.tsx`, actions in `admin/growth-actions.ts`, all
+    `requireAdmin` first; `growth_*` notices on /admin/growth, `wl_*` in /admin's waitlist card: Start Growth for this account (accounts listed as business name +
+    owner email; a client whose Growth ended can be started again), change services / start date
+    / time zone, pause / resume / end (confirm each), Post an update, Monthly numbers (one form per
+    month; emptying every box removes the month), Invite to Growth (no account yet).
+  - **Invite to Growth** (also on a waitlist card's Growth request, services pre-ticked from the
+    request): an invite row (sign-in gate) with the Growth fields; refused for an address with an
+    account. `ensureUserAndWorkspace` → `linkGrowthInvite` makes the client once and clears the
+    fields (never fails sign-in). No trial: the clock still starts only at Gmail connect. Email
+    "Your Squared Away Growth dashboard" once per invite (`growth-invite-email:<hmac>-<time>`).
+  - **Update email** "New update from Squared Away Growth": the title + a link only, Resend key
+    `growth-update-<workspace>-<update>`, `notified_at` set only after Resend took it; off without
+    Resend; "Email it to them" retries an unsent one.
+  - **Remove** on a waitlist card's Growth request (confirm step): a growth-only row is deleted; a
+    mixed row keeps the app sign-up and loses only the Growth block (`withoutGrowthBlocks`).
+    Decided on the row as it is at the tap. Log `growth_request_removed {result}`.
+  - **Pledge** `growthCopy.pledge` (GrowthChapter, so /growth and the homepage half; the dashboard
+    too): names `GROWTH_OWNED` for every service (copy test), "We never take a percentage of
+    your jobs or your business." The in-app mention is `GrowthMention` (no props, static
+    `growthCopy.appMention`), More screen only, hidden on read-only or expired accounts; clients also get a
+    "Growth" row to `/my-growth` there.
+  - Docs: `docs/growth-agreement.md` (draft, not legal advice, [To confirm] items), privacy-policy
+    Growth-client lines (same 2026-10-16 date, kept at the integration),
+    LAUNCH.md step 13. **Referrals:** not built; a Growth credit would hook into `startGrowth` /
+    `linkGrowthInvite` (the moment someone becomes a client).
+
+- **Integration (2026-10-17, branch `integrate-3` on `wave0`):** decisions, replies and
+  growth-portal merged with `--no-ff` in that order.
+  - **Migrations:** wave0 keeps `0035_reserved_columns`; the packages' 0035s were regenerated
+    with drizzle-kit on top of it as `0036_decisions` (when 1792207285776), `0037_replies`
+    (1792207482652) and `0038_growth` (1792208657111), SQL byte-identical to the originals.
+    Applied on a scratch database on top of main's journal: 39 rows, nothing skipped.
+  - **Emergency voicemails alert (lead engineer's decision):** an emergency-lane email from a
+    phone service (Google Voice's voice-noreply@google.com, an email-to-text gateway) alerts the
+    owner's phone even though its From is no-reply; every other no-reply sender still never
+    alerts. The alert goes only to the owner's own push endpoints and verified number; the
+    caller gets nothing (lead-channel threads are never drafted). Test in
+    `emergency-alerts.test.ts`, plus a parity test of `phoneMessageSenderSql` against `channelOf`.
+  - **Paused drafts aren't counted:** `QueueMember.paused` marks members on a plan-paused Gmail
+    address; `actionableQueue` / `countQueue` leave them out, so the morning email (replies,
+    nudges, needs-you), the badge, the phone's notification, the banner and the trial emails
+    never count what the owner can't act on. The queue screen still shows them, marked paused
+    (read-only card, no Send reply, no Other ways to reply).
+    The morning email's money totals hold no drafts (won quotes and invoices, the same as Money
+    and Activity), so the pause doesn't change them. Trial emails need a connected address the
+    plan covers (`notPlanPaused()`); emergency alerts use `mailboxRunning()`. Static checks in
+    `mailbox-plan.test.ts`.
+  - The Growth boundary test lists the portal's files with reasons, and server imports of the
+    portal modules are allow-listed (`accounts.ts` for `linkGrowthInvite`). `admin-no-content`
+    covers /admin/growth's readers. The terms and privacy policy took clarifications only (trial
+    emails, plan pause, emergency voicemails, alerts as a convenience, Growth as a separate
+    service); the date stays 2026-10-16 with `TERMS_VERSION` (re-agree is Davi's call, LAUNCH.md).
+
+- **Wave 1 integration (2026-10-17, branch `integrate-w1` on `claude/squared-away-mvp-ddxl7s`):**
+  `wave1-send`, `wave1-checks`, `wave1-home`, `wave1-safety` and `wave1-break` merged with
+  `--no-ff` in that order.
+  - **Migrations:** one chain after 0038 in merge order: `0039_send_path_sent_via` (when
+    1792258162358), `0040_send_path_autopilot_claim` (1792258870232), `0041_licenses`
+    (1792271229521; `0039_licenses` on its branch, regenerated with drizzle-kit on top of 0040, SQL
+    byte-identical). Applied on a scratch database on top of main's journal: 42 rows, nothing
+    skipped. The referral branch takes the numbers after these.
+  - **Prompts:** `draft.v8` (Draft checks: Check 38 P6 licenses line, Check 40 P1 deductible, Check
+    41 P1 safety), `voice.v3` (Check 23 P7 typed blanks), new kind `dispute-caution.v1` (Check 43
+    P9). A dispute / legal draft stores `draft.v8+dispute-caution.v1` (a tweak
+    `revise.v2+dispute-caution.v1`); `dispute-caution.test.ts` pins it to `ACTIVE.draft`.
+  - **Edit box and blanks:** the Edit box's word swap (Check 9 P4: `{{time}}` shows as `[time]`)
+    swaps only typed gaps; a `[name]`-style blank (Check 23 P7) shows as written, goes back
+    unchanged, and is named in "Fill in [name] first" (`src/ai/gaps.ts`, test in
+    `gmail-hiccups.test.ts`). The Queue's gap notice lives in `queue-messages.ts`: "Fill in every
+    blank before sending. Nothing was sent."
+  - **Merge of `wave1-safety` (same day, after the three above):** no migration. One `draft.v8`
+    holds both groups' marked lines (Draft checks: Check 38 P6 / 40 P1 / 41 P1; Safety guards:
+    Check 48 P1 "Who is writing"); `classify.v5` is Safety's (Check 22 P4 + 36 P1, 22 P3, 48 P1,
+    22 P5). Safety notes keep their own versions (`safety-note.v1`, `safety-note-co.v1`,
+    `safety-note-electrical.v1`) and never get the dispute caution. In `classifyPending` the
+    code-only path after the AI limit (Check 39 P1) runs first and the change-order rule (Check
+    38 P1) and quote acceptance run only on a model result. The business profile form has both
+    the licenses group / MA deposit line and the remodeler's amount suggestions (the amount input
+    is the controlled one). Privacy policy gained the safety-marks line (date unchanged).
+    classify.v5's `co_alarm` is `z.boolean().catch(false)`; evals gained `coAlarmRecall`,
+    `electricalHazardRecall` (strict) and `gasFalseAlarms` (no increase allowed). Evals not run.
+  - **Merge of `wave1-break` (same day, last):** migrations `0042_paused_from` (when 1792276181035) and `0043_fallback_calls` (1792276182158), `0039_paused_from` /
+    `0040_fallback_calls` on the branch, regenerated one at a time with drizzle-kit on top of
+    0041 (SQL byte-identical). No prompt change. Three fence tests changed on purpose by the
+    branch: `data-paths` checks `messages.create` (Check 29 P1 parses the answer itself; same
+    single request, same data path), `e2e-mode` accepts `...anthropicClientOptions()` spread
+    last (e2e mode still wins), `security-surface` has the new "shared-secret" route guard.
+    `reviseDraft` takes both `openedHash` (Check 42 P2) and `aiMode` (Check 48 P4).
+    **Integrator fix (missing model names the part):** `src/server/model-alert-rules.ts` (pure):
+    `MODEL_PART` (classify → Sorting, draft → Drafting, voice → Voice learning),
+    `stoppedHeading`, `modelDownEmail`, `modelDownLine`. `recordModelDown(role, model, now)`
+    writes `model_down:<role>:<model>:<UTC day>` and emails once per role and model per day
+    (`model_alert:<role>:<model>:<day>`), because drafting and voice share one model. The email
+    says "Drafting is stopped: … Owners' replies are waiting to be drafted." (and so on);
+    /admin's System box heading is "Sorting is stopped" / "Drafting is stopped" / "Voice
+    learning is stopped" (several: "Drafting and voice learning are stopped") and each line
+    starts with its part. Tests in `ai-client.test.ts`.
+  - **Send path (wave 1, group "Send path"):**
+    - **Check 9 P1 (seen text):** every Send reply (card, Edit box) posts `seen` = `bodyHash` of the
+      text the card showed; the review page posts `seen:<draftId>` / `seenTo:<draftId>` per row.
+      `queueSend({ seenHash })` returns `changed_since_seen` when the stored text differs, and the
+      queue write itself only lands while `drafts.body` is still the text that was checked. The
+      server action refuses a tap with no fingerprint (an old page) the same way; the JSON route
+      takes an optional `seen` for online sends (409 `changed_since_seen`). Notice:
+      "That draft changed since you opened it, so nothing was sent. Here's the latest version. Read
+      it, then tap Send reply again."
+    - **Check 42 P1 (answered from Gmail):** `answeredSince(threadId, since, mailboxEmail)`
+      (`src/server/drafts.ts`): an email from the shop on the thread after the draft was written,
+      not an unsent Gmail draft, not a practice copy (To/Cc only the mailbox's own address) and
+      **not a side conversation** (`sideEmailSql`: a forward to the crew is no answer; the spec
+      didn't say, but without it a forward to the crew would set the reply aside). queueSend and
+      sendDraft return `answered_elsewhere` (with when) before any Gmail call; the Queue shows "This
+      was already answered from Gmail at 2:14pm. Nothing was sent." with "Open the conversation in
+      Gmail" (no Send anyway). reconcileDrafts sets a waiting reply aside (expired, Gmail draft
+      deleted, note "Someone answered this from Gmail, so this reply was set aside.") after the
+      customer-wrote-again and the Gmail-draft-gone branches. A send in its undo window is closed
+      the same way by deliverQueuedSend, which logs `send_stood_down` {draftId, reason} (Activity:
+      "Didn't send the reply to Dana: someone had already answered from Gmail") instead of
+      `send_stopped`. Autopilot unchanged (its own newer-mail check runs first).
+    - **Check 14 P1 (`drafts.sent_via`, migration `0039_send_path_sent_via`, additive):** app /
+      autopilot / gmail / own_words; null = older rows, counted as before. Reconcile with our Gmail
+      draft gone and a newer shop email: our message id or the same text (`prepareBody` +
+      `sameText`) → `gmail` (`edited_and_sent` when the id matched but the text differs); otherwise
+      `own_words` with status still `sent` (two-nudge cap unchanged), Activity
+      `owner_wrote_own_reply` "You answered Dana yourself in Gmail" (no See record). decidedAt =
+      that email's time. own_words is left out of monthSummary, the weekly scorecard's sent count,
+      monthMoney's "paid after a follow-up" and the digest's "sent yesterday".
+    - **Check 9 P2 (honest Hold it; migration `0040_send_path_autopilot_claim`, additive):**
+      `drafts.auto_send_claimed_at`. `runAutopilotSend` claims the draft in one conditional UPDATE
+      (pending, countdown due, unclaimed or claim older than `AUTOPILOT_CLAIM_LEASE_MS` = 2 min)
+      before any Gmail call; only the claimer goes on, and the claim is released when it stands
+      down, fails or throws. `sendDraft(by: "autopilot")` sends only a draft that is still counting
+      down **and** claimed (an edit, hold or plan change that cleared the countdown wins);
+      `queueSend` answers `already_sending` while a live autopilot claim holds it.
+      `holdAutopilot` → `{status: "held"} | {status: "too_late", sent} | {status: "not_found"}`;
+      "Held." only for a draft that did not go; too late → "Too late, autopilot already sent it.
+      See it on Activity." (+ See record) or "Too late to hold: autopilot is sending it right now."
+      The card shows a live countdown (`autopilot-countdown.tsx`: "Sends in 6 min", seconds in the
+      last minute; the clock time once for screen readers) and refreshes every 4 s for a minute at
+      zero.
+    - **Check 42 P2 (never overwrite Gmail's text):** `saveDraftEdit` and `reviseDraft` read the
+      Gmail draft first (reviseDraft before the model is called, and again before it writes): a
+      different text there becomes the draft's (`takeGmailText`, countdown and queued send
+      cleared) and they return `changed_in_gmail` without writing to Gmail. Both take an
+      `openedHash` (the Edit box posts `opened`, the quick-change forms post `seen`): a stored text
+      that moved on since → `changed_since_opened`, no Gmail call, no model call. The Edit box is
+      now `draft-editor.tsx` with `editorAction` (useActionState; `saveDraftEditAction` is gone):
+      it answers inside the card, puts the newest text in the box and keeps what was typed in a
+      read-only "Your text" box. Quick changes redirect to `?error=changed_editing`.
+    - **Check 8 P1 (no signal):** `NoSignalGuard` (`src/components/app/no-signal-guard.tsx`, once in
+      the (app) layout) stops any form submit while `navigator.onLine` is false — a capture
+      listener on `window`, ahead of React's own on `document` — unless the form is inside
+      `[data-offline-ok]` (only the card's Send reply, and only with offline okays on). Strip above
+      the tab bar: "No signal. Nothing was sent or changed. Try again when you have a bar."
+      (role=alert, inverted), and a quieter "No signal right now." whenever offline. New
+      `src/app/(app)/error.tsx` keeps the header and tab bar; offline or a failed request (a
+      `TypeError`) says "We couldn't reach Squared Away. If this was a reply, open the Queue when
+      you have signal: if the card is still there, it wasn't sent." Send reply shows "Still trying.
+      Weak signal. Don't close the app." after 12 s (`send-button.tsx`, words only). Typed text is
+      kept per tab in sessionStorage (`src/lib/kept-text.ts`, fingerprinted by what the screen
+      showed so a stale copy is dropped once the save went through): the Edit box (key per draft;
+      the card reopens the editor on reload) and the business profile form (`use-kept-form.ts`).
+    - **Check 9 P3 (Gmail hiccups):** queueSend, saveDraftEdit, reviseDraft and discardDraft return
+      `gmail_busy` (MailboxRateLimitError) or `gmail_failed` (anything else Gmail threw) instead of
+      throwing; logged as `<where>_gmail_failed` {draftId, kind, error name}. Queue notices:
+      `gmail_failed` "Gmail didn't answer, so nothing was sent. Try again in a minute.", and every
+      notice a Send reply tap can reach now says whether anything was sent (unit test pins it).
+      The Queue's notice words moved to `src/app/(app)/queue/queue-messages.ts`.
+    - **Check 9 P4 (Edit box keeps the text):** the Edit box's Save changes and Send reply both go
+      through `editorAction` (useActionState, `intent` = save | send); refusals answer inside the
+      card (role=alert) and the editor stays open. Gaps show as words ([time], [job address]) with
+      "Replace each [ ] before sending."; Send reply is replaced by "Fill in [time] first" while one
+      is left; the text goes back with tokens (`toEditorText` / `fromEditorText` /
+      `editorGapsLeft` in `src/ai/gaps.ts`), so the server's gap gate is unchanged.
+    - **Check 43 P7 (stale "tomorrow"):** pure `staleTiming(body, createdAt, now, timeZone)` in
+      `src/server/draft-timing.ts`: day words (today, tonight, tomorrow, this morning / afternoon /
+      evening, this week / weekend, next week, later today; hoy, mañana, esta tarde; hoje, amanhã)
+      when the draft's local day (owner's zone) is before today's; minute/hour words (in a few
+      minutes, in an hour, shortly, right away) also when it's over 2 hours old. `sendDraft` and
+      `queueSend` return `timing_check` {words, writtenOn, meant} before any Gmail call unless
+      `confirmedTiming`; the queued send (`deliverQueuedSend`) passes it (the tap was checked
+      seconds before); autopilot stands down with the note and can never confirm; batch counts it
+      refused. The card shows "Written Friday. It says “tomorrow”, which meant Saturday. Check the
+      timing." and Send reply becomes "Send reply anyway" (posts `confirmedTiming=1`), Edit stays.
+      The JSON route takes `confirmedTiming: true` (else 409 `timing_check`); offline okays are
+      refused with "its time words … may be out of date". **Wording differs from the spec** ("which
+      now means Saturday" was wrong for a draft read days later): it says what "tomorrow" meant
+      when written.
+    - **Check 43 P9 (dispute caution; prompt `dispute-caution.v1`, new kind in the registry):** on a
+      thread with `extracted.disputed` or the needs-owner reason LEGAL_REASON / DISPUTE_REASON,
+      every draft (the owner's tap; jobs never draft these) and every quick change gets the fixed
+      flag first ("This is about a dispute or something legal. What you write can be used later.
+      Keep it short and factual; many owners call their lawyer or insurer first."), confidence
+      capped at 40 (never Ready), and the fixed task line appended to the conversation's task.
+      Stored prompt version `draft.v8+dispute-caution.v1` (was `draft.v7+…` on its branch) (or `revise.v2+…`). Eval cases
+      `d-lawyer-reply`, `d-refund-dispute` (field `disputeCaution`); evals not run.
+    - **Check 9 P10 (stopped / late sends):** `sentDraftSummary` now returns `stopped: {why}` when the
+      newest send step for the draft is `send_stopped` (pending) or `send_stood_down` (expired),
+      and `late` when its window ended over a minute ago and no job holds it. The Queue shows
+      "Didn't send. It was changed in Gmail, so it's back below to check." (words shared with
+      Activity via `sendStoppedWhy`), and lists late sends on top ("Waiting to send: reply to
+      Priya", "Still sending. This is taking longer than usual.", Stop it = undo while unclaimed),
+      refreshing every 10 s (`late-sends.tsx`, `lateSends()`).
+    - **Check 38 P1 (change orders):** classification sets `extracted.change_order_approved` (only
+      `true`, content-free) instead of `quote_accepted` when the email accepts and the thread's
+      outcome was won before this email (`quote_outcome_at` < the email; any source; a legacy won
+      with no time is not "before"). `createDraftForThread` never picks a deposit when the newest
+      email is a change-order approval or the outcome was won before the newest customer email,
+      and adds the fixed flag "Change order approved. Put it in writing with the price and any new
+      finish date." Autopilot keeps refusing (accepts_quote). Eval cases `co-s3-lights`,
+      `co-e02-vanity` (invented stand-ins: the review's E02 text wasn't in the prompt).
+    - **Follow-ups on this branch:** the queue write also refuses a draft an autopilot run has
+      claimed meanwhile (`already_sending`); the Send reply handler returns a kind and the actions
+      redirect to fixed paths (the open-redirect fence, security-surface C4, stays unchanged).
+  - **Draft checks (wave 1, group "Draft checks"):**
+    - **Days and times as whole words (Check 20 P1 + 23 P3 + 23 P4, wave 1):** `src/ai/when-words.ts`
+      (pure). `normalizeWhen` writes days, dates and times one way ("Fri" → friday, "8 a.m." → 8am,
+      "Nov 27th" → november 27, "Mon–Fri" / "weekdays" → each day; "Sat", "Sun", "Wed" only when
+      capitalised, since they are everyday words) and `whenTokens` turns them into keys; the check
+      compares keys, never substrings ("fridge" no longer excuses "Fri"). New sources in
+      `CheckContext`: `whenSourceText` (the conversation, seasonal notes **and their end dates**
+      written "November 27", the owner's instruction / spoken words / a clean earlier draft — never
+      the hours, lead time or policies), `hoursText` (its times always count; its days only with
+      `allowHours`: the "Add my availability" tweak, or the customer asked when the owner is open,
+      `asksWhenAvailable`), `leadTimeText` (only its "two weeks out" wording counts). Times now include
+      "at 9", "around 8", "9:30", "9 o'clock", "10 a.m.", "in the morning"; loose timing adds "within
+      the hour", "before the day is out", "by tonight", holidays as deadlines ("before Thanksgiving";
+      any mention of the holiday in the conversation allows it), lead times ("three weeks out",
+      "booked up through …"). A "today"/"tonight"/"tomorrow" whose only source is a customer email
+      from an earlier local day gets "Says “tomorrow”, but they wrote that on Tuesday. Check the day."
+      A never-promise item about same-day work is broken by "today", "tonight", "within the hour" or
+      "before the day is out". Built in `whenContext()` in `src/server/drafts.ts` for new drafts and
+      revisions. "This coming Friday" reads as Friday (the day token covers it).
+    - **Money however it's said, round 2 (Check 23 P1 + 20 P11 + 36 P10, wave 1):** `moneyMentions`
+      now reads k-ranges ("3-4k" → 3000 and 4000; not "model 3-4K" or "10k BTU"), spoken prices
+      ("fourteen fifty", "twelve-fifty", "nineteen ninety-nine", "one fifty to come out" — only next
+      to a price word; for one to twelve only the clearly-price words, since "it's nine thirty" is a
+      time), "ninety-five bucks", "a buck fifty", "a hundred and a quarter/half", "seven hundred
+      fifty" (750) and "two thousand five hundred" (2500), €/£, "dólares"/"reais"/"pesos" (with
+      "1.500" thousands), "R$ 1.500,00", "mil quinientos", and the price words es / cuesta (unos) /
+      custa / fica em. New `vagueMoney()` ("low four figures", "a few bucks", "couple hundred
+      bucks"): autopilot's `mentionsMoney` counts it, and checkDraft flags it (hit `money`, cap 0.3)
+      "Gives a rough price (“low four figures”). Check you want to name a number." unless the owner
+      wrote it. Soft promise "for free" (also free of cost / won't cost you / we'll cover it); an
+      owner whose text offers free estimates may say "estimates are for free".
+    - **Claims, licenses and credentials (Check 23 P2 + 38 P6 + 36 P7, wave 1, migration
+      `0039_licenses` on this branch — renumber at merge):** `business_profile.licenses` jsonb
+      (`src/config/licenses.ts`: `hic_number`, `hic_expires_on`, `csl_number`, `lead_safe_license`,
+      `insurance_carrier`; one line each, ≤40 characters). Settings → Your business → Edit business
+      profile has a "Licenses and registrations (optional)" group (also in setup's optional
+      section); a form without the fields leaves them alone, an emptied line clears it. Settings →
+      Your business lists them and shows one line when the HIC runs out within 30 days (no email).
+      **Never on the public site** (Davi: no license number published until confirmed). Drafting:
+      `draft.v8`'s business block adds "Registration and licenses (quote exactly; never add
+      others)" (so revise / follow-up / purpose prompts that share `workspaceBlock` see it too), and
+      "Never invent" says never give another number or claim an unsaved credential; the numbers are
+      owner text for the check. checkDraft: a number after HIC / CSL / CS- / MP- / JP- / MGF / LR- /
+      license / lic. / registration / reg # (3+ digits) whose digits aren't in the owner's text →
+      hit `license` ("Mentions a license or registration number you haven't saved. Check it.", cap
+      0.3, in `REGENERATE_ON`), and the money finder never reads it as a price; "we're registered /
+      licensed / lead-safe certified / insured" with the matching field empty and not in the
+      owner's own words → hit `credential` ("Says you're registered and licensed. Add it in
+      Settings or take it out.", cap 0.5, flag only). "Licensed" is also backed by a license
+      number in the owner's text (a plumber's MP- in the signature). The old "licensed and
+      insured" soft promise became these claims. Warranty / guarantee / promise words now compare
+      with the owner's text only (a customer's "is that under warranty?" no longer excuses it). New
+      soft promises: no permit needed (incl. "skip the inspection"), up to code, waived fee, price
+      match, fit you in.
+    - **Prompt versions after wave 1 "Draft checks":** `draft.v8` (Check 38 P6 so far; later steps
+      add to it). `draft.v8` re-exports draft.v7's reply schema / openings / first-contact task and
+      draft.v6's conversation block; its `workspaceBlock` is v6's plus the licenses line.
+    - **Insurance-job promises (Check 40 P1, wave 1):** `INSURANCE_PROMISES` in draft-checks.ts —
+      cover / waive / absorb / eat / take care of / pay the deductible, "insurance will cover",
+      negotiating or dealing with the adjuster, handling the homeowner's claim, assignment of
+      benefits, "sign … today", "free roof", "no cost to you" / "nothing out of pocket". Only when
+      the owner never wrote it. Hit `insurance`, cap 0.2, in `REGENERATE_ON` (one fresh attempt),
+      flag "Talks about the deductible or the insurance claim in a way you may not be allowed to
+      promise. Check it." Any flag already keeps a draft out of autopilot and Send together (tested).
+      `draft.v8` "Never invent" gains the deductible / claim / sign-today line.
+    - **Lead-paint and safety claims (Check 41 P1, wave 1):** `SAFETY_CLAIMS` in draft-checks.ts —
+      "no lead worries" (no need to worry about lead, lead-free, no lead), "safe for people or
+      pets" (safe / harmless / non-toxic within a sentence of kids, baby, pets, dogs, family…,
+      either order), "pet and kid safe" (pet-safe, kid-friendly…), and on an older home only
+      (`olderHome()`: a year 1800–1977 near built / house / home / colonial, or "old house",
+      "pre-1978", "victorian") power sanding, sandblasting, torching, burning off, heat guns. Only
+      when the owner never wrote it. Hit `safety`, cap 0.3, in `REGENERATE_ON`; flag "Says “…”.
+      Safety and lead claims are yours to make, not the assistant's. Check it before sending."
+      `draft.v8` "Never invent" gains the safe / non-toxic / lead line. Eval cases: nursery paint,
+      1924 colonial exterior, lawn treatment with dogs, mice bait with a toddler.
+    - **Rule claims and rebate promises (Check 39 P4 + 37 P5, wave 1):** a draft sentence naming a
+      program or rule word (rebate, incentive, tax credit / credit — not "credit card" — HEAT Loan,
+      Mass Save, 0% loan, qualify, eligible, EPA, R-22, R-410A, R-454B, R-32, freon, refrigerant,
+      banned, phased out, legal / illegal, no longer made / allowed, code requires) that the owner's
+      own text (profile, price list, notes, instruction, their emails) never uses → hit
+      `rule_claim`, "Says something about a rebate, tax credit or refrigerant rule. Check it's still
+      true before sending.", cap 0.5, flag only (not in `REGENERATE_ON`, no extra model call). New
+      soft promise "a rebate or utility will pay" (Eversource / National Grid / Unitil / Mass Save /
+      the utility / rebates … covers / pays for / gives back / free / no cost; "you'll qualify for
+      the rebate").
+    - **“That's covered” and overages (Check 38 P7, wave 1):** new soft promises (owner-text rule,
+      usual "make sure you stand behind that" wording): "that's covered" (that's / it's / this is
+      covered, "covered under warranty / labor"; not "covered with plastic" or "you're covered for
+      Tuesday"), "fix it for free", "add it to the (final) bill / invoice / price", "that's fine"
+      right before an amount or "over", "no extra charge / cost / fee".
+    - **Light payment-terms check (Check 23 P5, wave 1):** every ordinary reply now carries
+      `termsSource` (payment terms + policies + price list, plus the owner's spoken words on a
+      tweak) and `ownerWrote` (the owner's emails on the thread, a clean earlier draft). checkDraft
+      flags a way to pay said the draft's way ("Venmo works", "by Zelle", "pay in cash"), deposit
+      wording ("half down", "a deposit of", "30% up front") and credit terms ("net 30", "due in 15
+      days", "pay later", "payment plan", "financing") that the owner's terms and emails don't say:
+      "Mentions “net 30” — that isn't in your payment terms. Check it.", cap 0.5. **Adapted:** its
+      hit is `payment_terms`, not `terms` as the prompt says, because `terms` is in `REGENERATE_ON`
+      and the prompt says this one must flag without a rewrite. Off when a caller gives no
+      `termsSource` (old callers unchanged). "Let me check" and "card" alone stay clean.
+      (draft.v6's vocabulary line "T&M vs. fixed price, net 30" is Check 23 P11's, in the review's
+      draft.v7 bundle — not done here.)
+    - **Massachusetts deposit cap (Check 38 P2, wave 1; uses wave 0's `business_profile.state`, no
+      migration):** "Which state do you work in?" (two-letter select, "Not set" allowed; in setup's
+      optional section and Settings; **no** preselect from the browser's time zone — the owner
+      picks it). `src/server/deposit-rules.ts` (pure): `depositShare()` reads the largest share paid
+      before work ("50%", "40 percent down", "half down", "two-thirds up front", "a third at
+      signing", "60/40", "in full up front"; a share only counts in a deposit clause, so "70% on
+      completion" and "10% off" don't), `overMaDepositCap()` (> one-third, MA only; "33%" and
+      "one-third" are fine). Wording and numbers in `src/config/ma-rules.ts`. An MA shop whose
+      payment terms ask for more sees, under "How do you get paid?" and on Settings → Your
+      business, "In Massachusetts a deposit can't be more than one-third of the contract, unless
+      special-order materials cost more (c.142A §2). Check this line." (the save still goes
+      through). checkDraft flags any MA draft (deposit notes included) that states a share over a
+      third: hit `deposit_cap`, "Massachusetts caps a deposit at one-third, or the cost of
+      special-order materials if higher. Check this before sending.", cap 0.5, never rewritten.
+      `SelectField` gained `emptyLabel` (an empty choice the owner can pick).
+    - **Phone numbers, links and names nobody gave (Check 23 P6, wave 1):** checkDraft flags (hit
+      `contact`, cap 0.3, in `REGENERATE_ON` — one fresh attempt) a US phone number whose digits
+      aren't in `sourceText` ("Has the number 978-555-0142, which isn't in your profile or this
+      email. Check it."), any link or email address not in `sourceText` (a review request's own link
+      keeps its own check), and a name the draft introduces — "my guy Pete", "our tech Luis", "the
+      Hendersons", "for Marie last week" — found nowhere in the conversation, the profile or the
+      conversation's From names (`knownNames`, from drafts.ts) ("Mentions “Pete”, who isn't in this
+      email or your profile. Check it."). Narrow on purpose: greetings, towns, streets, days,
+      holidays and brands ("for Eversource customers") don't trip it. At most two contact lines per
+      draft. Any flag already keeps a draft from autopilot (tested).
+    - **[name]-style blanks are gaps (Check 23 P7, wave 1):** `findGaps` now also returns the
+      blanks the send gate already refused (`OTHER_PLACEHOLDER`): "[name]" → their name, "[time]"
+      → time, "[date]" / "[day]" → date, "[price]" / "[amount]" / "$___" / "$X,XXX" → price,
+      anything else → its own words; `fillGap` fills them the same way, in text order. So the card
+      shows a chip, counts it in "Fill in N gaps to send", and never shows Send reply or Ready
+      until it's filled. checkDraft adds "Has a blank (“[name]”) to fill in." (hit `blank`, cap
+      0.6, no rewrite). The queue's gap notice is now "Fill in every blank before sending. Nothing
+      was sent." Prompt **`voice.v3`**: sample replies use `{{custom:name}}`, `{{custom:address}}`,
+      `{{date}}`, `{{time}}`, `{{price}}`; Settings → Your voice shows them as "[name]" etc.
+      (`showGaps`), never braces. Profiles learned with v2 keep "[name]"; the card handles those.
+      No voice eval set exists, so none was extended.
+    - **Whole-word phrases (Check 23 P10, wave 1):** `phraseRegex()` in draft-checks.ts (escaped,
+      inner spaces match any whitespace incl. a line break, no letter or digit either side, `iu`,
+      curly quotes read as straight) for the never-say list, the voice's avoided phrases and FILLER.
+      "hun" no longer flags "hunt", "sir" no longer flags "desire"; "Thanks hun!", "no problem!"
+      and "a.s.a.p." still do.
+    - **Filler variants (Check 23 P13, wave 1):** FILLER adds thanks (so much) for reaching out, I
+      hope you're / you are doing well, hope all is well, don't / do not hesitate, I / we apologize
+      for any inconvenience, at your earliest convenience, please be advised, rest assured, valued
+      customer ("sorry for the delay" stays off). **Adapted:** on a first reply to a new lead
+      (`firstContact` in the check context, from drafts.ts) "Thanks (so much) for reaching out" is
+      not filler, because draft.v7's first-contact section (Davi, 2026-10-16) tells the drafter it
+      may open that way.
+    - **Price-list wording (Check 23 P14, wave 1):** `priceListRows()` reads each price-list line:
+      its amounts, the qualifier on its first price ("from", "starting at", "starts at", "about"
+      before it; "plus parts" / "+ parts", "per hour" after it) and its job words (longer than
+      three letters, before the colon or the first price). checkDraft (given `priceList` = the
+      owner's price list, from drafts.ts) flags a listed amount written without its qualifier
+      ("Gives $1,450 without “from”, as your price list has it. Check it." — "from", "starting" and
+      "starts" count as the same) or in a sentence with none of the line's job words, as whole words
+      ("Uses your $1,450 price for something else. Check it."). **Adapted:** hit `price_list`, not
+      `money`, because the prompt says these join `REGENERATE_ON` only if Davi says so (`money` is
+      in it). Cap 0.5.
+  - **Homepage words (wave 1, group "Homepage words"):**
+    - **Homepage copy module (wave 1, Homepage words):** the homepage's steps, feature cards, FAQ,
+      promise band and pricing paragraph live in `src/components/marketing/home-copy.ts` (pure);
+      `src/app/page.tsx` renders them, and tests read the strings as visitors see them
+      (`homepageFaq()` in `legal-docs.test.ts` now looks the answer up in `faqs`). Plan cards are
+      `src/components/marketing/plan-cards.tsx`, keyed on plan ids.
+    - **Rule numbers in one pure place:** `src/config/rules.ts` holds `EARN_THRESHOLD`,
+      `GRACE_MINUTES` and `MAX_FOLLOWUPS` (re-exported from `src/server/autopilot.ts` and
+      `src/server/drafts.ts`, so callers didn't change). The homepage builds every rule number from
+      them (`numberWord()` in `src/lib/number-words.ts` spells 1–10).
+    - **Trial length words:** `src/lib/trial-words.ts` (`dayWord`, `daysPhrase`, `dayAdjective`);
+      nothing in `src/` types "three days" / "three-day" / "Day N of 3" / "3 more days" (guard test
+      in `tests/unit/trial-words.test.ts`, skipping `src/ai/prompts/` and comment lines; setup
+      steps "Step 1 of 3" aren't the trial and aren't caught). `TRIAL_NO_SEND_LINE` is built from
+      `pricing.evaluationDays`. The trial banner is `TrialClock` (`src/components/app/trial-clock.tsx`)
+      and says the clock's own length (`daysPhrase(clock.of)`), so a trial extended in /admin reads
+      "Day 3 of 6 · … your six days". `trialLengthDays(w)` (lifecycle.ts) gives the same length to
+      the Send reply note and the after-trial reason/banner ("Your six days are up."). Activity:
+      "Your three days started" (config), "Your trial ended", "Your trial was extended by three
+      days". Practice copies say "During your trial, Squared Away only sends to you." Admin buttons:
+      `Give ${evaluationDays} more days` / `Add ${evaluationDays} days`. A unit test fails with "ask
+      Davi to update the terms" if `evaluationDays` changes while `docs/terms.md` says "three-day
+      trial".
+    - **Plan lines by id:** `src/server/plan-features.ts` (pure): `FEATURED_PLAN`,
+      `planFeatureLines(id)`, `autopilotPlanNames()`, `SIGN_INS_PER_PLAN`. Used by the homepage
+      cards, `/billing` and autopilot's lock reason. No page compares a plan's display name.
+    - **First payment on the homepage cards:** each card shows `firstChargeLine(id, true)` (the
+      setup fee always included for a visitor), as `/billing` does. The standalone "Plus sales tax
+      where it applies." note is gone from the homepage and `/billing` (each card's line says it);
+      `SALES_TAX_NOTE` stays exported.
+    - **Setup call wording:** `SETUP_CALL_COVERS` + `setupCallSentence("before" | "after")` in
+      `billing-rules.ts`: "your prices, hours, service area and the things you never promise", then
+      "tune your drafts until they sound like you". Used by the homepage setup box, `/billing`
+      (before and after paying) and the setup_paid banner. "Scheduling" is gone.
+    - **Homepage feature cards (nine):** Knows your trade · Won't take orders from strangers · Sorts
+      every email (with the morning summary as its last sentence) · Writes like you · Chases quiet
+      quotes (only quotes the customer emailed about and the owner emailed back; "Quotes sent from
+      other software are left to that software"; "I called them" stops it) · Every quote in one list
+      (stage names from `stageLabel`) · Who owes you · Your customers, in one place · Your data stays
+      yours. No "Buzzes you" card (phone alerts aren't live until the VAPID keys are in) and no
+      Autopilot card (its rules are in the first FAQ, the plan cards and the pricing paragraph,
+      which now also says autopilot never answers a complaint or sends a reply that mentions money).
+    - **Queue picture:** shows Send reply (across the card) with Edit and Discard under it, as the
+      real card lays them out; no trial banner inside the phone; one caption under it: "Example.
+      During your three-day trial it drafts like this, but won't send to a customer."
+    - **Join button:** the header says "Join the waitlist" (was "Get on the list"), like every other
+      join action.
+  - **Safety guards (wave 1, group "Safety guards"):**
+    - **Gas, propane, CO and smelly water (Check 22 P4 + Check 36 P1):** `mentionsGasSmell`
+      (`src/ai/guards.ts`) first removes printed advice ("Smell gas? Leave the building…", "if you
+      (ever) smell gas…", "gas odor calls…"), then matches gas / propane smells, a gas leak (not "gas
+      leak detector / test"), a leaking or hissing gas line, Spanish and Portuguese, and a red tag only
+      next to the word gas or propane (an electrical inspector's red tag is not a gas leak).
+      Rotten-egg / sulfur smells are gas **unless** every one sits in the same sentence as a water word
+      (water, shower, faucet, tap; "water heater" doesn't count) and nothing names gas, propane, a
+      meter, stove, range, oven, furnace, boiler, pilot or dryer — then `mentionsWaterSmell`:
+      needs you at normal priority, `WATER_SMELL_REASON`, `extracted.water_smell`, owner-rule key
+      `water_smell`, no safety note, no emergency. The model's `smells_gas` only overrides the water
+      reading when the email names gas or propane.
+    - `mentionsCarbonMonoxide`: a CO word (carbon monoxide, CO alarm/detector, "co2 detector") with
+      something happening within 60 characters (went off, going off, sounding, a reading, ppm,
+      detected, headaches, dizzy…; beeping only without battery/chirp), or "detector going off" next
+      to a furnace / boiler / heater (not a smoke detector). An install quote is not an alarm.
+      `CO_REASON`, `extracted.co_alarm`, urgency emergency, owner-rule key `co_alarm`; treated like gas
+      everywhere (needs you, high, emergency lane and night alerts through the urgency mark, autopilot
+      and batch refuse it). Gas wins when both.
+    - **Safety notes:** one per thread (purpose `safety`, gas or CO). The CO note is
+      `coSafetyNote` (`safety-note-co.v1`, flag `CO_SAFETY_NOTE_FLAG`). A safety note is never written
+      on a thread sorted as junk unless the owner has written to that address before (`knownCustomer`;
+      `threadsToAutoDraft` leaves junk out unless the owner wrote on the conversation), and never to a
+      no-reply address (as before). The gas note's wording is unchanged.
+    - **After the day's AI limit (Check 39 P1):** `classifyPending` no longer stops at the first
+      `AiCapReachedError`. That email and every later one in the batch go through
+      `codeOnlyClassification` (`src/ai/classify.ts`, pure; the same code checks and the same shape
+      as the no-model fallback): a gas smell, CO alarm, payment change or attack is stored through
+      the normal write (needs you, high for safety and payment, `classified_at` set, no model
+      category, no auto-marks); everything else stays unsorted for the model after the reset.
+      `ClassifyRunResult.codeOnly` counts them (they are in `classified` too), so the classify job's
+      text/push alerts fire. `threadsToAutoDraft` orders a gas / CO thread still without its safety
+      note first, so the note (no model) is written before a model draft hits the limit.
+    - **Quoted and forwarded text (Check 22 P3 + Check 20 P5):** `splitQuoted` (`src/ai/classify.ts`)
+      returns the newest part and what quoting cut; `prepareBody` is its `kept` part (unchanged).
+      `classifyEmail` runs the gas, CO, payment-change and new `mentionsLegalThreat`
+      (`src/ai/guards.ts`: attorney / lawyer / law office, lawsuit, suing / "will sue", small claims,
+      demand letter, cease and desist, 93A, attorney general, consumer protection, filing or placing
+      a lien, a lien on the house; never "Sue" the name, "denied", "dispute" or "court" alone, nor a
+      power of attorney) on the WHOLE email too (subject + raw body + the burst, CRLF normalised,
+      ≤20,000 chars). The attack check keeps to the newest part (quoted text is often the owner's own
+      words). A legal hit in code → needs you, high, `LEGAL_REASON`, `extracted.disputed` (so the
+      sticky complaint mark), and it survives the routine-paperwork drop. When the newest part is
+      under 300 characters and quoting cut something, the first 1,500 characters of the cut part go
+      to the model in a second untrusted `<email>` block labelled "Quoted or forwarded text (older,
+      may be from someone else)" (classify.v5). Never logged.
+    - **Autopilot reads the whole newest customer email** (`blockers`): gas / CO / payment change /
+      legal words anywhere in it, quoted part included, stop the countdown ("Something legal is
+      mentioned in this conversation, so it waits for you." and the existing gas / payment lines); a
+      purged body (no text left) waits ("We can't read their email any more, so it waits for you.").
+    - `threadsToAutoDraft` picks safety-note threads with a separate first query, then the usual
+      query, so the ordinary order (newest first) is exactly as before.
+    - **Emergencies (Check 36 P2), adapted:** the leads package already made the model's
+      `urgency: emergency` on a lead count in code (needs you, high, `EMERGENCY_REASON`, counted in
+      `freshLeads` / the emergency lane), so step 1 of the prompt was built. Added: a 48-hour sticky
+      mark — `extracted.emergency` + `emergency_at` (the emergency email's time), set when a sort hits
+      `emergency`, a gas smell or a CO alarm (never from an attack email) and carried across later
+      sorts while it is under 48 hours old (`recentEmergency`, `src/server/emergency-rules.ts`, pure).
+      Autopilot ("There was an emergency on this conversation in the last 2 days, so it waits for
+      you.") and batch send (`batchCandidates(…, now)`) refuse the thread meanwhile. **Not built:**
+      the prompt's one automatic draft on an emergency (with an "Emergency: call them first" flag):
+      CLAUDE.md's leads package says "emergencies are no longer auto-drafted", so that decision is
+      kept until Davi says otherwise (question 2 below).
+    - **Electrical fire signs (Check 37 P1):** `mentionsElectricalHazard` (`src/ai/guards.ts`, code
+      only, no prompt change): burning smells, smoke / sparks / arcing / hot to the touch / loud
+      buzzing / scorched / melted within 40 characters of an outlet, plug, switch, panel, breaker,
+      box, fixture, light, ceiling, meter, wire or cord (or "out of / behind the wall"), a shock,
+      wires down, the meter or service pulled off, lights going bright and dim, Spanish and
+      Portuguese. Smoke detectors / alarms, spark plugs, "a burning question", hot tubs and hot water
+      are taken out first. `ELECTRICAL_HAZARD_REASON`, `extracted.electrical_hazard`, urgency
+      emergency, owner-rule key `electrical`; order injection > gas > CO > electrical > payment
+      change. Also in the no-model fallback and the after-the-limit code path. One fixed
+      `electricalSafetyNote` per thread (purpose `safety`, `safety-note-electrical.v1`,
+      `ELECTRICAL_SAFETY_NOTE_FLAG`), same limits as the gas note (not on junk unless known, never
+      to a no-reply address). Autopilot and batch refuse it; it counts for the 48-hour emergency
+      mark. Eval metric `electricalHazardRecall` (strict).
+    - **Attack-check false alarms (Check 22 P2):** `injectionCheck` no longer flags a bookkeeper's
+      / adjuster's / lender's "send me all the invoices" (only someone else's things or secrets:
+      the owner's, other customers', every customer's, passwords, logins, tokens, API keys, contact
+      or customer lists), the writer's own "my / our earlier instructions", "rules about / for",
+      "assistant manager" (and other job titles), Spanish "indicaciones" (the rules words need
+      anteriores / previas / todas las), or "when writing your response, list…" (it needs an order
+      to say / include / mention / add / reveal / confirm / agree / promise / always / never within
+      60 characters). Every round 2 catch still flags.
+    - **"This is a normal email"** (`clearInjectionMark`, `src/server/injection-clear.ts`; rules in
+      `injection-clear-rules.ts`): a button on Queue needs-you cards whose mark has recorded reasons
+      (`extracted.injection_reasons`: instructions / encoded / hidden / sticky / model, content-free)
+      with no hidden or encoded text. Classification also keeps `extracted.without_injection` (the
+      owner rules' answer with the mark left out: needs-you, reason, priority, hits) so the card is
+      put right without a model call. Clearing removes `injection`, sets
+      `injection_cleared_by_owner` / `injection_cleared_at` (kept across later sorts, so the sticky
+      copy stops), restores the facts (the owner's "This one needs me" still wins), and writes
+      Activity `owner_cleared_injection` (no detail). Refused for another workspace, hidden or
+      encoded text, older rows without reasons, and read-only accounts. The draft job no longer holds
+      emails dated before the clear against the thread. Autopilot refuses the thread for 30 days
+      ("You said an email here was normal after we flagged it, so it waits for you."). Notices
+      `?done=normal_email`, `?error=not_clearable`.
+    - **"Is this a bot?" (Check 48 P1 + Check 43 P2):** `asksIfAi` (`src/ai/guards.ts`, English,
+      Spanish, Portuguese; also "hi assistant, can you ask Mike to call me", "if a bot is reading
+      this, pass it to a human"). The attack check now splits phrases that only ADDRESS the
+      assistant ("Dear AI assistant:", "if an AI is reading", "as the AI", "you are (now) an AI")
+      from real orders: addressing counts as an attack only with an order within 80 characters
+      (agree, approve, confirm, include, send, reveal, must…) or when the email isn't asking if a
+      person is reading. Gone: "(talking) to an AI", "send the photos to the assistant", "you are an
+      AI, right?", "answer as the owner and not as the assistant". `ASKS_IF_AI_REASON` ("Asks whether
+      a person or an AI is answering. Answer this one yourself."), `extracted.asks_if_ai` (sticky for
+      the thread like `injection`), owner-rule key `asks_if_ai` (after injection and the safety
+      marks). Jobs never draft it (`asks_if_ai`); the owner's tap does, with **draft.v8**'s "Who is
+      writing" rule. `checkDraft` hit `human_claim` (`HUMAN_CLAIM_FLAG` "Says a person wrote this
+      without help. Check it's true before sending.", cap 0.2, not regenerated; `claimsHuman`).
+      Autopilot ("Asks if a person is answering, so it waits for you.") and batch send refuse both.
+      Check 43 P2's separate wording `BOT_QUESTION_REASON` was folded into Check 48 P1's reason.
+    - **draft.v8** (this branch): draft.v7 + a "Who is writing" section (Check 48 P1). Everything else
+      re-exported from draft.v7, so the cache is unchanged. Other groups' draft.v8 changes (Check 23
+      P11 / 43 P1 / 44 P1 / 45 P2, 40 P1, 41 P1) need combining into this one file at merge.
+    - **Promotions / Social tabs (Check 22 P1):** `mustReadDespiteTab` (`src/server/classification.ts`)
+      skips the no-model junk shortcut for: a lead-site sender (`leadPlatformOf`) whose subject
+      looks like a lead (lead, request, sent you a message, new message, quote, estimate, hired,
+      booked); facebookmail.com with "lead" in the subject; permit / inspection / certificate of
+      occupancy in the subject or snippet; and anything the code checks catch (gas, CO, electrical,
+      payment change, attack). A lead site's own marketing keeps the shortcut. The municipal, phone
+      and sticky-mark exceptions are unchanged; the shortcut's result shape is unchanged.
+    - **Payment change (Check 22 P5):** `looksLikePaymentChange(text, { supplier })` splits "pay
+      somewhere new" (pay / wire / send TO a new account, "update your records … new bank", "don't
+      pay the old account", gift cards of any brand up to three words) from "details changed", which
+      counts only with "our" / "the" and an ask within 60 characters (update, use, send, remit, pay,
+      wire, attached, below, going forward) — or always for a supplier (`supplier_vendor` sort, or a
+      thread whose stored `bill_direction` is `owed_by_business`). A customer's own card, bank or
+      payment info ("my", "I") never counts. classify.v5's `payment_change_request` says the same.
+      The reason text is unchanged.
+    - **Real legal words (Check 22 P11 + 36 P6 + 45 P4):** `REAL_LEGAL` drops "denied", "denial" and
+      a bare "court" (kept: "take / see you in court", "court date / case / order"); "dispute" counts
+      only as disputing a charge / bill / invoice / payment, "disputing the / your…", "filed a
+      dispute" or a chargeback. Added other states' words (DTPA, FDUTPA, CUTPA, CSLB / Contractors
+      State License Board, Registrar of Contractors / "ROC complaint", DBPR, TDLR, licensing board
+      complaint, recovery fund, deceptive / unfair trade practices) and Spanish (abogado(s),
+      demandar, poner una demanda, queja formal; not "corte" or a bare "demanda"). A lawyer word in
+      the same sentence as closing / title / real estate / purchase and sale is not a threat. Both
+      `mentionsRealLegal` and the code legal check `mentionsLegalThreat` use the sentence rule and
+      the state words. Note: removing "dispute" alone / "court" / "denied" can drop a legal mark that
+      was set before, as Check 22 P11 and 36 P6 ask; Check 45 P4's "only add" applies to its own
+      words. Evals not run (`pnpm eval --no-drafts` needs `ANTHROPIC_API_KEY`), so needs-owner recall
+      wasn't measured live.
+    - **The money limit (Check 38 P3 + 22 P6 + 39 P2):** in `applyOwnerRules` the amount rule
+      never applies to junk (`noise`), ignores `incentiveAmounts` (a "$" figure with rebate,
+      incentive, tax credit, credit of, loan, financing, 0%, zero percent, per ton, grant, Mass
+      Save, HEAT Loan or utility program in the same clause within 40 characters; whole dollars) and
+      amounts the owner already wrote on the conversation (`ownerAmounts`: `moneyMentions` of the
+      owner's own non-draft, non-side emails, quoted text cut; never logged). "New customer asking
+      about a big job." now reads before "Mentions more than $X." (`owner_rule_hits` already holds the
+      content-free codes, so no `owner_codes`). `extracted.dollar_amounts` is stored as the model
+      gave it. `prepareBody` also cuts at an Outlook header block (From: then Sent:/Date: and
+      Subject: within four lines, only below something the sender wrote) and at Spanish "El …
+      escribió:" / Portuguese "Em … escreveu:". Setup asks a remodeler (main or extra trade) for the
+      amount up front with the hint "Most of your job emails mention big numbers…" and suggestion
+      buttons (`AMOUNT_SUGGESTIONS` in `src/config/trades.ts`; $10,000 / $25,000 are the review's
+      examples, question 4); other trades keep it folded. The stored default ($2,500) is unchanged.
+      The eval stand-in now lists every $ figure, and the unit test checks each case's needs-you
+      against the code; `v-statement` now expects needs-you (question 5).
+  - **When things break (wave 1, group "When things break"):**
+    - **Check 18 P1 (alert emails can't stop jobs):** `sendAccessLostAlerts` and `sendCostAlerts`
+      catch each row (log `access_alert_failed` / `cost_alert_failed` with ids + `err.name`; nothing
+      marked, so the next run retries) and return `failed`. `workspace-lifecycle` and
+      `purge-expired-bodies` call `reportAlertFailures` (`AlertFailuresError`, counts only) after
+      their last step, like `reportSummaryFailures`.
+    - **Check 16 P1 (one stuck inbox shows on /admin):** `mailboxTrouble()` in `src/server/admin.ts`
+      (watched = mailbox on + account's jobs allowed; stale = backfilled and last check older than
+      `STALE_SYNC_MS`, the owner's own 30 minutes; stuck first read = no backfill
+      `FIRST_READ_STUCK_MS` (2h) after `createdAt`). `systemHealth` adds `staleMailboxes` /
+      `stuckFirstReads`; the System box inverts with "An inbox looks stuck" (unless jobs look
+      stopped). `AdminRow.mailboxes` adds `stale`, `oldestStaleSyncAt`, `stuckFirstRead`,
+      `errorCode` (fixed code). Card phrases in `src/server/admin-mailbox-rules.ts` (pure); "healthy"
+      only when nothing applies; an inverted "Stuck" line tops the card.
+    - **Check 17 P1 (pause/resume):** migration `0039_paused_from` (additive):
+      `workspaces.paused_from` (workspace_status, nullable). Pause stores `effectiveStatus`; Resume
+      goes to `resumeTarget` (paused_from; a run-out evaluation → expired) and clears it. While
+      paused, `applySubscription` and `applyCheckoutCompleted` keep status `paused` and write Stripe's
+      answer into `paused_from` (log `subscription_changed` with `pausedFrom: {before, after}`).
+      `resumeTarget` never returns setup_paid / active for `setup_paid_via = 'stripe'` with no
+      subscription id (→ canceled), with or without paused_from; the house account is unchanged.
+      (The checkout-while-paused case is an extension of the spec: a checkout started before the
+      pause and paid after it used to un-pause the account.)
+    - **Check 16 P2:** `ADMIN_MOVES.extend_evaluation` = evaluating / evaluation_expired only (not
+      invited: the clock starts on the first Gmail connect). docs/google-verification.md's
+      "Give 3 more days" line still holds (it's about trial accounts).
+    - **Check 29 P1 (broken AI answers):** `src/ai/client.ts` calls `messages.create` with the same
+      parameters `messages.parse` sent and parses the first text block itself
+      (`parseStructuredText`: JSON.parse + Zod; any failure → `parsed: null` with the real usage).
+      Every returned answer is recorded in `usage` with its cost. `isProviderFault` = APIError with no
+      status / 408 / 429 / ≥500, or APIConnectionError (timeouts included); only those are refunded,
+      our own errors are not. maxTokens: drafts and rewrites 4096, voice 8192 (Sonnet thinks inside
+      max_tokens). `data-paths.test.ts` now checks for `messages.create` (was `messages.parse`).
+    - **Check 48 P3 (missing / overloaded model):** `ModelUnavailableError(role, model)` in
+      `src/ai/client.ts` for a 404 or a 400 saying the model isn't available: refunded, logged
+      `ai_model_unavailable {role, model, promptVersion}`, `recordModelDown` (`src/server/model-alerts.ts`)
+      writes `app_settings` `model_down:<model>:<UTC day>` (first time seen) and emails Davi once per
+      model per day through the new `notifyAdminOnce` (`src/server/admin-notify.ts`, marker
+      `admin_notice:<key>` written only after Resend took it; purged after 3 days in the daily purge
+      job). Jobs wrap model steps in `stopIfModelMissing` → `NonRetriableError` (classify, draft,
+      follow-ups, voice, voice ideas, found money); `captureEditSignals` keeps the counts without the
+      tone so the purge job still runs. Stand-ins in `modelFallbacks` (`src/config/models.ts`):
+      classify → `claude-haiku-5-5`, draft / voice → `claude-sonnet-5-5`, all
+      `fallbackApproved: false`; used only for a missing model or a 529 after the SDK retries, once
+      per call; migration `0040_fallback_calls` (`usage.fallback_calls`, additive) and
+      `fallbackUsed: true` on the `ai_call` line. /admin's System box: "Sorting stopped since <time>:
+      model not available (<model>)." and the heading "Sorting is stopped" (integrator: each line and the heading name the part that stopped, see the merge block above).
+    - **Check 48 P4 (model time limits):** `aiTimeouts = { interactiveMs: 45000, jobMs: 90000 }`,
+      `aiMaxRetries = 1` in `src/config/models.ts`. The client is built with them (e2e mode still
+      overrides with `maxRetries: 0`); `callStructured({ mode })` ("job" by default) passes the time
+      left as the SDK's per-request `timeout` and also races its own deadline (one deadline for the
+      whole call, stand-in included), so a call that never answers ends as
+      `APIConnectionTimeoutError`: refunded, logged `ai_call_failed { error: "timeout" }`. Draft a
+      reply, tweak chips / Change it / Other ways to reply and the Inbox offers pass
+      `aiMode: "interactive"`; a slow, down or missing model (`isTemporaryAiFailure`) redirects to
+      `?error=ai_busy` "Writing is slow right now, so nothing changed. Try again in a moment."
+    - **Check 1 P4 (deep health check):** `/api/health/deep` (`HEALTH_TOKEN` as `x-health-token` or
+      `?token=`, else 404): `select 1`, the newest active mailbox check, and
+      `app_settings` `jobs:workspace-lifecycle:last-run` (written by a new last step `record-run` of
+      the 15-minute job; before the first one, the newest mail check stands in). Answers
+      `{db, jobs: ok|stale, minutesSinceJobs, minutesSinceMailCheck}` (no ids); 503 when stale
+      (> 30 min) or the database is down, and then "Background jobs look stopped" to Davi at most once
+      per UTC hour (`notifyAdminOnce`, key `jobs_stopped:<hour>`). `/api/cron/jobs-check` does the
+      same for Vercel Cron (`Authorization: Bearer <CRON_SECRET>`, else 404) but is **not
+      scheduled**: no `vercel.json` was added (see Questions). `reserveAiCall` also emails "An
+      account used 80% of today's AI limit" once per account per UTC day (no account named; link
+      /admin; 5 s timeout, never fails the call). security-surface's route table has the new
+      "shared-secret" guard. SETUP.md §6g + two env rows; `.env.example` has both names.
+    - **Check 50 P6 ("Ready for paying owners" on /admin):** pure `launchChecks(env, facts)` in
+      `src/server/launch-ready.ts` (7 automatic rows from env names and safe facts: APP_URL not
+      *.vercel.app, EMAIL_FROM not resend.dev, SUPPORT_EMAIL set, Stripe key live / test / no key,
+      a webhook secret in env or stored by Connect Stripe, INNGEST_SIGNING_KEY set, VERCEL_ENV
+      production; 10 hand rows ticked by Davi). Ticks = `app_settings` `launch_tick:<key>` (ISO date)
+      via `tickLaunchAction` (requireAdmin; logs `launch_ticked {key}` only); `loadLaunchFacts` never
+      selects the webhook secret. Box (`src/app/(app)/admin/launch-ready.tsx`) sits under the System
+      box: "N of M done", Done / Not yet (inverted) / Check by hand (outlined), a 44px Done button on
+      un-ticked hand rows. No gate reads the ticks; there is no Undo (a mistaken tick is fixed by
+      deleting the app_settings row).
 
 ## Milestones
 
@@ -1581,12 +2638,44 @@ default, CI too) and refuses a non-local `DATABASE_URL` or an `APP_URL` that isn
 
 ## Waiting on Davi
 
+- **Inngest plan (Check 49 P1):** the free plan pauses every job at 50,000 executions a month (21,029
+  from Oct 1 to 16 with one shop). `docs/LAUNCH.md` "Check your free plans now", Inngest item.
+- **Vercel Pro (Check 49 P1):** the team is on Hobby, which is non-commercial only; Pro (about $20 a
+  month) before the first paying customer. `docs/LAUNCH.md` "Check your free plans now", Vercel
+  item. All outside accounts: `docs/VENDORS.md`.
+- **Protect main + hold production for CI (Check 31 P3):** tap through `docs/LAUNCH.md` "Protect
+  main" (GitHub ruleset: PR required, checks `check` + `old-code-new-schema`, no force push or
+  delete) and "Hold production for CI" (Vercel Deployment Checks on `check`, or the stated
+  fallback). Needs his admin rights; the engineers can't do it.
+- **Preview guard fingerprints (Check 26 P2):** `src/config/environment-guard.ts` ships with empty
+  `PRODUCTION_DB_HOST_SHA256` / `PRODUCTION_KEY_SHA256S`, so it blocks nothing yet. Either Davi
+  supplies production's fingerprints (`pnpm fingerprint <pulled env file>` prints hashes only;
+  `docs/LAUNCH.md` step 2, "The preview guard"), or this becomes moot once previews have their own
+  database and keys (LAUNCH.md step 2a–2e, the real fix). Never read the values to make them.
+- **Leads package (2026-10-16):** (1) **Privacy lines — merge blocker:** approve the new lines in
+  `docs/privacy-policy.md` (lead source / done / fixed marks, towns, Call / Text reads the number
+  without storing it, no drafts to lead sites / voicemails / email-to-text). The documents were
+  already dated today, so no extra re-agreement; if this merges after another 2026-10-16 bump has
+  shipped, batch it with the other packages' lines into one date move. (2) **Real samples**
+  (customer details blurred) of each lead site's email (Thumbtack, Angi / HomeAdvisor, Houzz, Yelp,
+  Nextdoor, Porch, Bark, Networx, Google Local Services) — Primary or Promotions? does any take an
+  email reply? does each fixed "Open <site>" link land on the pro's inbox? — and RingCentral /
+  Grasshopper / OpenPhone voicemail emails. The site parsers and the Open links were written
+  against invented samples. (3) Emergency alerts (B5 part 2): Davi said yes on 2026-10-16,
+  built in the replies package. (4) The eval baseline (`ANTHROPIC_API_KEY` repo secret) before classify.v5 (names / towns from
+  the model, strict emergency wording) can be written and compared.
+- **Replies package (2026-10-16):** (1) the eval baseline (`ANTHROPIC_API_KEY` repo secret, then
+  run "Prompt evals") before draft.v7 can be compared with a live model; (2) a Google Voice
+  voicemail comes from `voice-noreply@google.com`, a no-reply sender, so an emergency
+  voicemail does **not** buzz at night (as specified) — his call whether it should; (3) the
+  privacy lines ride on the 2026-10-16 date: if another 2026-10-16 bump has already shipped when
+  this merges, batch them into one date move.
 - **The launch checklist is `docs/LAUNCH.md`** (in order, where to click, how to know it worked,
   and every open decision in its step 13, split into "Decided on 2026-10-15", "Decided on
   2026-10-14", "Still open" and "Still needed from you"). The items below are the same list in engineering words.
 - **Neon plan (urgent, this week):** check Neon → Billing and production's Usage box; on Free the
   5-minute poll likely uses up the 100 CU-hours mid-period and pauses production. Launch is about
-  $19–20 a month (LAUNCH.md "Check your Neon plan now"). His money decision.
+  $19–20 a month (LAUNCH.md "Check your free plans now"). His money decision.
 - **Preview database (decided: option B):** Davi creates the Neon project `sa-preview`, copies
   its pooled string and tells the engineers; they untick Preview on the shared `DATABASE_URL`
   (Vercel API, target only); Davi adds `DATABASE_URL` as a Preview-only Secret with that string;
@@ -1635,9 +2724,9 @@ default, CI too) and refuses a non-local `DATABASE_URL` or an `APP_URL` that isn
   the trades." / "It began as the tool for A&C Construction's own inbox." (no "builder", no
   pronouns). Davi may want other words (LAUNCH.md step 13). Separate from his photo and license
   line.
-- **Reset test payments and past_due (open):** as built, a past_due test account goes back to
-  setup_paid / active (jobs and AI resume, can't send); alternative: keep it read-only until it
-  pays (small code change). LAUNCH.md step 13.
+- **Terms re-agreement (2026-10-16 decisions package):** `docs/terms.md`'s trial paragraph now
+  names the Gmail side door; the date stayed 2026-10-16 (no re-agree). If Davi wants everyone to
+  agree to it, move both documents' date and `TERMS_VERSION` together (LAUNCH.md "Still open").
 - **Phone notifications (#36):** `VAPID_PUBLIC_KEY` + `VAPID_PRIVATE_KEY` (free) in Vercel
   Production, then redeploy. Off until then. The engineers can generate and add them if Davi says
   so.
@@ -1698,14 +2787,26 @@ default, CI too) and refuses a non-local `DATABASE_URL` or an `APP_URL` that isn
   new owner is active voids the referral (the referrer's credit); repeat waitlist joins and plain invites
   carry no referral (docs/SETUP.md §6d).
 - **Growth:** confirmed 2026-10-14: all seven services are offered today and the ground rules
-  stand (no fake reviews, price before any work, Growth never touches the inbox). Still open: a
-  written agreement (no Growth terms of service yet), a Settings link to /growth for signed-in
-  owners, an admin Remove button (removing a waitlist entry or Growth request is done by hand in
-  the database for now; the policy says call, text or email us), and whether a Growth request may
-  ever carry a referral. No tracking pixels on /growth without a privacy-policy change and his
+  stand (no fake reviews, price before any work, Growth never touches the inbox). Built
+  2026-10-16: client portal, pledge, the More line, admin Remove. Still open: a lawyer's review
+  of `docs/growth-agreement.md` and its [To confirm] items, Growth prices (none anywhere until he
+  picks), whether ended clients should keep seeing their dashboard (today a 404), and whether a
+  Growth request may ever carry a referral. No tracking pixels on /growth without a privacy-policy change and his
   okay. Only the newest Growth request per email is kept and a growth-only row's phone becomes the
   newest number, so anyone who knows a lead's email can replace their number: check an
   unfamiliar number before calling.
+
+- **Ideas packages (2026-10-16, `ideas-build`) — not built yet, and his questions:**
+  - Not built in this pass (time box): G3 suggested VIPs and B7 "Send at 7am instead" (control
+    plan), D4 part payments (numbers plan; its nudge wording needs `followup.v5`), and the whole
+    site package (A3 trade pages incl. /remodelers, A15 /security, A6 slow-reply calculator).
+  - Wait for the eval baseline (prompt changes): D7's "thank them for the payment" line
+    (`purpose.v4`), D4's balance-only nudges and `classify.v5`'s `amount_paid`.
+  - His calls (defaults built): what a VIP means (today: needs you, no automatic draft); whether
+    away mode should pause autopilot, texts / phone alerts / the morning email (built: no);
+    remembered "not junk" / "always supplier" rules (cut); the privacy-policy lines added for
+    these features (same 2026-10-16 version). Decided 2026-10-16: "Other" added; "Say thanks"
+    built (decisions package above).
 
 ## Launch blockers to remember
 

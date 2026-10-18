@@ -21,11 +21,15 @@ import {
   toNeedsYouItem,
   type NeedsYouItem,
 } from "./digest-rules";
-import { queueMembership } from "./drafts";
+import { MONEY_SO_FAR_NOTE, moneySoFarLines, type MoneySoFar } from "./activity-rules";
+import { moneySoFar } from "./activity";
+import { actionableQueue, queueMembership } from "./drafts";
 import { leadsAtRisk } from "./leads-at-risk";
 import { atRiskDigestLine, atRiskOffQueueLine } from "./leads-at-risk-rules";
 import { jobsAllowed } from "./lifecycle";
 import { weeklyScorecard } from "./scorecard";
+import { notAnsweredYet } from "./never-answered";
+import { notAnsweredLine } from "./never-answered-rules";
 import { workspaceTimeZone } from "./snooze";
 import { scorecardIsEmpty, scorecardLines, weekBounds } from "./scorecard-rules";
 import { localParts, localWeekday, usableTimeZone } from "./snooze-rules";
@@ -65,6 +69,16 @@ export type DigestCounts = {
    * owner, so they count as waiting, and the summary sends them to the quote list.
    */
   leadsAtRiskOffQueue: number;
+  /**
+   * Leads package (B6): customers who have waited over a day with no card on the queue and
+   * aren't already counted as leads at risk. A count, never which.
+   */
+  notAnswered?: number;
+  /**
+   * Replies package (Davi, 2026-10-16): this month's money so far — totals only (quotes won,
+   * invoices paid, still owed), the same numbers as Activity. Optional for older callers.
+   */
+  money?: MoneySoFar;
 };
 
 /**
@@ -97,7 +111,10 @@ export async function digestCounts(
   const dayAgo = new Date(now.getTime() - 86_400_000);
 
   // Who is waiting, and since when (the customer's first email after the owner last wrote, A14).
-  const q = await queueMembership(workspaceId, now);
+  // Integration 2026-10-17: only what the owner can act on — a plan-paused Gmail address's
+  // drafts and needs-you cards stay on the queue (marked paused) but are never counted here.
+  const all = await queueMembership(workspaceId, now);
+  const q = actionableQueue(all);
 
   const [sent] = await db()
     .select({ n: count() })
@@ -106,6 +123,8 @@ export async function digestCounts(
       and(
         inArray(drafts.mailboxId, boxes),
         inArray(drafts.status, ["sent", "edited_and_sent"]),
+        // Check 14 P1: the owner's own Gmail reply isn't a drafted reply sent.
+        sql`${drafts.sentVia} is distinct from 'own_words'`,
         gte(drafts.decidedAt, dayAgo),
       ),
     );
@@ -118,7 +137,7 @@ export async function digestCounts(
   // morning catch-up, and a count is harmless. Counts only.
   const tz = usableTimeZone(timeZone ?? (await workspaceTimeZone(workspaceId)));
   const atRisk = await leadsAtRisk(workspaceId, now, tz);
-  const onQueue = new Set([...q.needsYou, ...q.drafts].map((m) => m.threadId));
+  const onQueue = new Set([...all.needsYou, ...all.drafts].map((m) => m.threadId));
 
   return {
     repliesReady: q.drafts.filter((d) => d.kind === "reply").length,
@@ -128,6 +147,15 @@ export async function digestCounts(
     sortedYesterday: sorted?.n ?? 0,
     leadsAtRisk: atRisk.length,
     leadsAtRiskOffQueue: atRisk.filter((l) => !onQueue.has(l.threadId)).length,
+    notAnswered: (
+      await notAnsweredYet(
+        workspaceId,
+        now,
+        new Set([...onQueue, ...atRisk.map((l) => l.threadId)]),
+        Infinity,
+      )
+    ).length,
+    money: await moneySoFar(workspaceId, now, tz),
   };
 }
 
@@ -162,7 +190,10 @@ export function buildDigest(
   const offQueue = c.leadsAtRiskOffQueue
     ? { text: atRiskOffQueueLine(c.leadsAtRiskOffQueue), href: links.quotesUrl }
     : null;
-  const needsNothing = header.empty && !offQueue;
+  const notAnswered = c.notAnswered
+    ? { text: notAnsweredLine(c.notAnswered), href: links.queueUrl }
+    : null;
+  const needsNothing = header.empty && !offQueue && !notAnswered;
   const lines = [
     atRiskDigestLine(c.leadsAtRisk),
     c.repliesReady
@@ -176,8 +207,11 @@ export function buildDigest(
       : null,
   ].filter((l): l is string => !!l);
   const lastWeek = extras.lastWeek ?? [];
+  // This month's money so far (totals only); the section is left out when all of it is zero.
+  // It never makes a quiet morning worth an email on its own (`worthSending` ignores it).
+  const money = c.money ? moneySoFarLines(c.money) : [];
   const onQueue = c.needsYou.length + c.repliesReady + c.nudgesReady;
-  const waiting = onQueue + c.leadsAtRiskOffQueue;
+  const waiting = onQueue + c.leadsAtRiskOffQueue + (c.notAnswered ?? 0);
   const subject = waiting
     ? `${plural(waiting, "thing")} waiting on you`
     : "Nothing waiting on you this morning";
@@ -192,8 +226,10 @@ export function buildDigest(
           ...header.lines.map((l) => `• ${l.text}: ${l.href}`),
           ...(header.more ? [moreInQueue(header.more)] : []),
           ...(offQueue ? [`• ${offQueue.text}: ${offQueue.href}`] : []),
+          ...(notAnswered ? [`• ${notAnswered.text}: ${notAnswered.href}`] : []),
         ]),
     ...(lines.length ? ["", ...lines] : []),
+    ...(money.length ? ["", ...money, MONEY_SO_FAR_NOTE] : []),
     ...(lastWeek.length ? ["", ...lastWeek] : []),
     "",
     ...(onQueue ? [`Open your queue: ${links.queueUrl}`, ""] : []),
@@ -215,6 +251,7 @@ export function buildDigest(
           ? `<p style="margin:0"><a href="${esc(links.queueUrl)}" style="display:block;padding:12px 0;color:#5e5d59;font-size:16px;line-height:1.35">${esc(moreInQueue(header.more))}</a></p>`
           : "",
         offQueue ? needsLink(offQueue) : "",
+        notAnswered ? needsLink(notAnswered) : "",
       ].join("\n");
   const html = `<!doctype html><html><body style="margin:0;background:#f7f6f3;color:#1b1b1b;font-family:Inter,Helvetica,Arial,sans-serif">
 <div style="max-width:480px;margin:0 auto;padding:24px 16px">
@@ -225,6 +262,7 @@ ${needsHtml}
 <div style="margin:20px 0 0">
 ${lines.map(para).join("\n")}
 </div>
+${money.length ? `<div style="margin:20px 0 0;padding:16px 0 0;border-top:1px solid #1b1b1b">\n${money.map(para).join("\n")}\n<p style="margin:0;font-size:14px;color:#5e5d59">${esc(MONEY_SO_FAR_NOTE)}</p>\n</div>` : ""}
 ${lastWeek.length ? `<div style="margin:20px 0 0;padding:16px 0 0;border-top:1px solid #1b1b1b">\n${lastWeek.map(para).join("\n")}\n</div>` : ""}
 ${
   onQueue

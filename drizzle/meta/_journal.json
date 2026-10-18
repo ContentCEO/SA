@@ -225,6 +225,90 @@
       "when": 1792174183546,
       "tag": "0031_first_week",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1792180535102,
+      "tag": "0032_leads",
+      "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1792192470911,
+      "tag": "0033_control",
+      "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1792192476806,
+      "tag": "0034_numbers",
+      "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "7",
+      "when": 1792196322389,
+      "tag": "0035_reserved_columns",
+      "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1792207285776,
+      "tag": "0036_decisions",
+      "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1792207482652,
+      "tag": "0037_replies",
+      "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1792208657111,
+      "tag": "0038_growth",
+      "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "7",
+      "when": 1792258162358,
+      "tag": "0039_send_path_sent_via",
+      "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "7",
+      "when": 1792258870232,
+      "tag": "0040_send_path_autopilot_claim",
+      "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "7",
+      "when": 1792271229521,
+      "tag": "0041_licenses",
+      "breakpoints": true
+    },
+    {
+      "idx": 42,
+      "version": "7",
+      "when": 1792276181035,
+      "tag": "0042_paused_from",
+      "breakpoints": true
+    },
+    {
+      "idx": 43,
+      "version": "7",
+      "when": 1792276182158,
+      "tag": "0043_fallback_calls",
+      "breakpoints": true
     }
   ]
 }

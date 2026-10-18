@@ -10,14 +10,33 @@ import { cn } from "@/lib/utils";
 import { listInboxThreads, type InboxFilter, type InboxRow } from "@/server/inbox";
 import { listMailboxes } from "@/server/mailboxes";
 import { isReadOnly } from "@/server/lifecycle";
-import { threadOffers } from "@/server/offers";
+import { threadOffers, type ThreadOffers } from "@/server/offers";
 import { priceMemoryFor, type PriceMemoryItem } from "@/server/price-memory";
 import { getBusinessProfile } from "@/server/profile";
 import { requireOwner } from "@/server/session";
 import { isFoldableJunk, searchText } from "@/server/inbox-rules";
 import { draftReplyAction } from "../queue/actions";
+import { channelKind, channelName, openSiteUrl } from "@/server/channel-rules";
 import { InboxSearch } from "./inbox-search";
 import { markNeedsOwnerAction } from "./actions";
+import { Notice } from "@/components/app/notice";
+import { NoteLine } from "@/components/app/note-line";
+import { ResortSheet, SenderRuleSheet } from "@/components/app/sender-sheets";
+import { CONTROL_DONE, CONTROL_ERRORS } from "@/config/control-messages";
+import { notesForThreads } from "@/server/customer-notes";
+import { companyChoice } from "@/server/owner-sender-rule-rules";
+
+const INBOX_ERRORS: Record<string, string> = {
+  ...CONTROL_ERRORS,
+  busy: "That's a lot in a short time, so we've paused it for a bit. Try again in a few minutes.",
+  readonly:
+    "Your account is read-only right now, so nothing was changed. The note at the top says why.",
+  unknown: "That didn't work. Refresh and try again.",
+};
+
+/** Inbox rows keep "Ask for a review" (a finished job); "Say thanks" is Money's (2026-10-16). */
+const inboxOffers = (o: ThreadOffers | undefined): ThreadOffers | undefined =>
+  o ? { ...o, thankYou: false } : undefined;
 
 function parseFilter(v: string | string[] | undefined): InboxFilter {
   if (v === "needs_me") return { kind: "needs_me" };
@@ -126,6 +145,16 @@ export default async function InboxPage(props: PageProps<"/inbox">) {
     { timeZone },
   );
 
+  // Ideas G7 / H3: the customer of each row (their newest email that isn't a side
+  // conversation), its private note, and the email id the sheets post.
+  const customerOf = await notesForThreads(
+    workspace.id,
+    rows.map((r) => r.id),
+  );
+  const own = boxes.map((b) => b.email);
+  const doneMsg = typeof params.done === "string" ? CONTROL_DONE[params.done] : undefined;
+  const errorMsg = typeof params.error === "string" ? INBOX_ERRORS[params.error] : undefined;
+
   // Junk folds into one line on "All" (outside review); the Junk chip lists it as usual.
   const foldJunk = filter.kind === "all";
 
@@ -160,6 +189,7 @@ export default async function InboxPage(props: PageProps<"/inbox">) {
             </span>
           </summary>
           <div className="flex flex-col gap-3 border-t border-border px-4 pt-3 pb-4">
+            <NoteLine note={customerOf.get(row.id)?.note} editKey={customerOf.get(row.id)?.key} />
             {row.subject ? <p className="text-sm">Subject: {row.subject}</p> : null}
             {row.needsOwner && row.needsOwnerReason ? (
               <p className="font-semibold">Why: {row.needsOwnerReason}</p>
@@ -171,7 +201,25 @@ export default async function InboxPage(props: PageProps<"/inbox">) {
             />
             <Details row={row} />
             <PastPricesLine prices={pastPrices.get(row.id)} />
-            {row.category !== "noise" && !readOnly ? (
+            {row.leadChannel ? (
+              // Leads package: nobody reads an email reply to a lead website or a phone message.
+              openSiteUrl(row.leadChannel) ? (
+                <a
+                  href={openSiteUrl(row.leadChannel)!}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex min-h-tap items-center justify-center rounded-lg border-2 border-current px-4 font-black"
+                >
+                  Open {channelName(row.leadChannel)}
+                </a>
+              ) : (
+                <p className="text-sm font-semibold">
+                  {channelKind(row.leadChannel) === "site"
+                    ? "Answer them on the website."
+                    : "Call or text them back from your own phone."}
+                </p>
+              )
+            ) : row.category !== "noise" && !readOnly ? (
               <form action={draftReplyAction}>
                 <input type="hidden" name="threadId" value={row.id} />
                 <Button type="submit" className="w-full">
@@ -179,7 +227,28 @@ export default async function InboxPage(props: PageProps<"/inbox">) {
                 </Button>
               </form>
             ) : null}
-            {!readOnly ? <OfferButtons threadId={row.id} offers={offers.get(row.id)} /> : null}
+            {!readOnly ? (
+              // "Say thanks" lives on Money's paid rows only (2026-10-16).
+              <OfferButtons threadId={row.id} offers={inboxOffers(offers.get(row.id))} />
+            ) : null}
+            {!readOnly ? (
+              <ResortSheet threadId={row.id} current={row.category} back="inbox" />
+            ) : null}
+            {/* The sheet names the same email the server keys the rule on (the customer's
+                newest email that isn't a side conversation). */}
+            {!readOnly && customerOf.get(row.id)?.address ? (
+              <SenderRuleSheet
+                messageId={customerOf.get(row.id)!.key}
+                who={
+                  customerOf.get(row.id)!.address === row.senderAddress && row.senderName
+                    ? row.senderName
+                    : customerOf.get(row.id)!.address!
+                }
+                address={customerOf.get(row.id)!.address!}
+                company={companyChoice(customerOf.get(row.id)!.address!, own)}
+                back="inbox"
+              />
+            ) : null}
             {!row.needsOwner ? (
               <form action={markNeedsOwnerAction}>
                 <input type="hidden" name="threadId" value={row.id} />
@@ -197,6 +266,8 @@ export default async function InboxPage(props: PageProps<"/inbox">) {
   return (
     <>
       <Headline serif="everything that came in," heavy="sorted." />
+      {doneMsg ? <Notice>{doneMsg}</Notice> : null}
+      {errorMsg ? <Notice strong>{errorMsg}</Notice> : null}
 
       <nav aria-label="Filter" className="-mx-4 flex gap-2 overflow-x-auto px-4 pb-1">
         {chips.map((c) => (

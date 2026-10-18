@@ -106,6 +106,14 @@ export function GrowthChapter({
         </ul>
       </Section>
 
+      <Section label={c.pledge.region}>
+        <Headline as="h2" serif={c.pledge.serif} heavy={c.pledge.heavy} />
+        <div className="flex max-w-3xl flex-col gap-4 border-l-4 border-offwhite pl-5">
+          <p className="text-xl leading-relaxed">{c.pledge.body}</p>
+          <p className="text-xl font-black">{c.pledge.percent}</p>
+        </div>
+      </Section>
+
       <Section label={c.how.region}>
         <Headline as="h2" serif={c.how.serif} heavy={c.how.heavy} />
         <ol className="grid gap-6 md:grid-cols-3">

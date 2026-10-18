@@ -1,8 +1,22 @@
 import "server-only";
-import { looksMunicipal } from "@/ai/guards";
+import {
+  injectionCheck,
+  looksLikePaymentChange,
+  looksMunicipal,
+  mentionsCarbonMonoxide,
+  mentionsElectricalHazard,
+  mentionsGasSmell,
+} from "@/ai/guards";
 import { and, count, desc, eq, gte, inArray, isNull, lt, sql } from "drizzle-orm";
-import { classifyEmail, DISPUTE_REASONS, type Classification } from "@/ai/classify";
+import {
+  classifyEmail,
+  codeOnlyClassification,
+  DISPUTE_REASONS,
+  prepareBody,
+  type Classification,
+} from "@/ai/classify";
 import { AiCapReachedError } from "@/ai/usage";
+import { moneyMentions } from "@/ai/money-words";
 import { OTHER_JOB_KIND } from "@/config/job-kinds";
 import { db } from "@/db";
 import {
@@ -13,6 +27,8 @@ import {
   threads,
   workspaces,
 } from "@/db/schema";
+import { mailboxOn } from "./mailbox-plan-rules";
+import { recentEmergency } from "./emergency-rules";
 import { afterClassified } from "./auto-outcomes";
 import { unflagPendingNudge } from "./drafts";
 import { jobsAllowed } from "./lifecycle";
@@ -26,11 +42,14 @@ import {
   isOwed,
   PAID_GUESS_FLAG,
 } from "./money-rules";
-import { jobKindOf } from "./monthly-rules";
+import { jobKindOf, leadPlatformOf } from "./monthly-rules";
 import { keepQuoteAccepted, quoteAccepted } from "./quote-rules";
 import { ownerGavePrice } from "./quotes";
 import { messageReplyAddress, notDraftMessage, notDraftSql, sideEmailSql } from "./thread-sql";
 import { customerReplyAddress, replyRedirected } from "./reply-address-rules";
+import { junkShortcutBlocked, matchRules } from "./owner-sender-rule-rules";
+import { rulesForWorkspace } from "./sender-rule-store";
+import { channelName, channelOf } from "./channel-rules";
 
 /** Classify inbound mail from this far back on the first pass; everything new after that. */
 export const CLASSIFY_LOOKBACK_DAYS = 14;
@@ -46,11 +65,49 @@ export const BURST_MAX = 4;
 /** Gmail tabs that are never a customer. Skipping the model call here saves real money. */
 const NOISE_LABELS = ["CATEGORY_PROMOTIONS", "CATEGORY_SOCIAL"];
 
+/** A lead site's subject that is a lead, not its marketing (Check 22 P1). */
+const LEAD_SUBJECT =
+  /\b(leads?|requests?|sent you a message|new message|quotes?|estimates?|hired|booked)\b/i;
+const PERMIT_WORDS = /\b(permits?|inspections?|certificate of occupancy)\b/i;
+
+/**
+ * Check 22 P1: Promotions / Social mail that must still be read by the sorter instead of being
+ * junked without a look: a lead from a lead site (Nextdoor, Angi, Houzz…), a Facebook lead ad,
+ * anything about a permit or inspection, and anything the checks in code catch (gas, CO,
+ * electrical fire signs, a new bank account, an attack). A lead site's own marketing ("Upgrade
+ * your plan") keeps the shortcut. Pure.
+ */
+export function mustReadDespiteTab(m: {
+  fromAddress: string | null;
+  subject: string | null;
+  snippet: string | null;
+  bodyText: string | null;
+}): boolean {
+  const subject = m.subject ?? "";
+  const from = (m.fromAddress ?? "").toLowerCase();
+  if (leadPlatformOf(from) && LEAD_SUBJECT.test(subject)) return true;
+  if (from.endsWith("@facebookmail.com") && /\blead/i.test(subject)) return true;
+  if (PERMIT_WORDS.test(`${subject}\n${m.snippet ?? ""}`)) return true;
+  const text = `${subject}\n${m.bodyText ?? m.snippet ?? ""}`;
+  return (
+    mentionsGasSmell(text) ||
+    mentionsCarbonMonoxide(text) ||
+    mentionsElectricalHazard(text) ||
+    looksLikePaymentChange(text) ||
+    injectionCheck(text).flagged
+  );
+}
+
 export type ClassifyRunResult = {
   classified: number;
   superseded: number;
   remaining: number;
   capped: boolean;
+  /**
+   * Check 39 P1: emails stored by the checks in code alone after the day's AI limit was hit (a
+   * gas smell, a CO alarm, a new bank account, an attack). Also counted in `classified`.
+   */
+  codeOnly: number;
 };
 
 const NOISE: Omit<Classification, "summary"> = {
@@ -117,8 +174,9 @@ export async function classifyPending(
     .from(mailboxes)
     .innerJoin(workspaces, eq(workspaces.id, mailboxes.workspaceId))
     .where(eq(mailboxes.id, mailboxId));
-  if (!box || box.mailbox.status !== "active" || !jobsAllowed(box.workspace, now))
-    return { classified: 0, superseded: 0, remaining: 0, capped: false };
+  // Lost access or paused on the plan (2026-10-16): nothing is sorted, no AI spent.
+  if (!box || !mailboxOn(box.mailbox) || !jobsAllowed(box.workspace, now))
+    return { classified: 0, superseded: 0, remaining: 0, capped: false, codeOnly: 0 };
 
   const since = new Date(now.getTime() - CLASSIFY_LOOKBACK_DAYS * 86_400_000);
   const pending = await pendingFor(mailboxId, since);
@@ -145,10 +203,14 @@ export async function classifyPending(
     extraTrades: box.workspace.extraTrades ?? [],
     amountThresholdDollars: profile?.amountThresholdDollars ?? DEFAULT_AMOUNT_THRESHOLD_DOLLARS,
     vipSenders: (profile?.vipSenders ?? []).map((v) => v.toLowerCase()),
+    serviceTowns: profile?.serviceTowns ?? [],
   };
+  // The owner's sender rules (ideas H3), read once per run. Never sent to the model.
+  const senderRules = await rulesForWorkspace(box.workspace.id);
 
   const batch = [...newestPerThread.values()].slice(0, limit);
   let classified = 0;
+  let codeOnly = 0;
   let capped = false;
   for (const m of batch) {
     let result: Classification;
@@ -161,25 +223,109 @@ export async function classifyPending(
         extracted: threads.extracted,
         quoteOutcome: threads.quoteOutcome,
         quoteOutcomeSource: threads.quoteOutcomeSource,
+        quoteOutcomeAt: threads.quoteOutcomeAt,
         invoicePaidAt: threads.invoicePaidAt,
         invoicePaidSource: threads.invoicePaidSource,
         needsOwnerReason: threads.needsOwnerReason,
         quoteAmountCents: threads.quoteAmountCents,
         quoteRequestedAt: threads.quoteRequestedAt,
+        categoryManual: threads.categoryManual,
       })
       .from(threads)
       .where(eq(threads.id, m.threadId));
     const prevMarks = (thread?.extracted ?? {}) as {
       injection?: unknown;
       payment_change?: unknown;
+      asks_if_ai?: unknown;
+      bill_direction?: unknown;
     };
-    if (
+    // The burst the model reads with it (B4), oldest first.
+    const earlier = older
+      .filter(
+        (o) =>
+          m.sentAt.getTime() - o.sentAt.getTime() <= BURST_WINDOW_MS &&
+          o.fromAddress === m.fromAddress,
+      )
+      .slice(0, BURST_MAX)
+      .reverse()
+      .map((o) => ({ receivedAt: o.sentAt, body: o.bodyText ?? o.snippet ?? "" }));
+    // Every older unsorted email is checked in code too, even outside the burst (B3): the
+    // drafter reads them.
+    const alsoCheck = older.map((o) => `${o.subject ?? ""}\n${o.bodyText ?? o.snippet ?? ""}`);
+    // A thread once caught trying to instruct us (or asking to pay a new account) keeps that
+    // mark: "any update?" doesn't clear it (B3).
+    const sticky = {
+      injection: prevMarks.injection === true,
+      paymentChange: prevMarks.payment_change === true,
+      // Check 48 P1: "is this a bot?" stays the owner's to answer for the whole thread.
+      asksIfAi: prevMarks.asks_if_ai === true,
+    };
+    // Check 39 P1: past the day's AI limit, only what the checks in code catch is stored now (a
+    // gas smell, a CO alarm, a new bank account, an attack), through the same write as any
+    // other result. Everything else stays unsorted for the model after the reset.
+    const codeOnlyResult = () =>
+      codeOnlyClassification(
+        {
+          fromName: m.fromName,
+          fromAddress: m.fromAddress,
+          subject: m.subject,
+          receivedAt: m.sentAt,
+          firstTimeSender: false,
+          threadSummary: null,
+          body: m.bodyText ?? m.snippet ?? "",
+          earlier,
+        },
+        { alsoCheck, sticky },
+      );
+    // Where it came from, decided in code from the sender (leads package): a voicemail or
+    // text-message email, a lead website, or null for a person writing directly.
+    const channel = channelOf(m.fromAddress);
+    // Ideas H3: the owner's sender rules. Caution (a VIP, a company "Always needs me") matches
+    // the sender or the reply address; "Always junk" only the sender, in the safe direction.
+    const rule = matchRules(senderRules, {
+      from: m.fromAddress,
+      replyAddress: customerReplyAddress(m),
+      replyToHeader: m.replyToHeader,
+      vips: business.vipSenders,
+    });
+    const ruleText = `${m.subject ?? ""}\n${m.bodyText ?? m.snippet ?? ""}`;
+    const junkByRule =
+      rule.junk &&
+      !thread?.categoryManual &&
+      // Voicemail and text-message emails are always read (leads package): a company rule
+      // (say, everyone at google.com) never quietly junks a caller.
+      channel?.kind !== "phone" &&
+      channel?.kind !== "phone_text" &&
+      !looksMunicipal(m.fromAddress, m.fromName) &&
+      prevMarks.injection !== true &&
+      prevMarks.payment_change !== true &&
+      !injectionCheck(ruleText).flagged &&
+      !junkShortcutBlocked(ruleText);
+    if (capped) {
+      const code = codeOnlyResult();
+      if (!code) continue;
+      result = code;
+      codeOnly++;
+    } else if (junkByRule) {
+      // No model call: the owner said this sender is junk, and nothing in it says otherwise.
+      result = {
+        ...NOISE,
+        summary: m.subject ? `Junk (your rule): ${m.subject}` : "Junk (your rule).",
+        extracted: { ...NOISE.extracted, sender_rule: "junk" },
+      };
+    } else if (
       m.labelIds.some((l) => NOISE_LABELS.includes(l)) &&
+      // Voicemail and text-message emails are few and never marketing: always read. Lead
+      // websites keep the shortcut (their marketing would eat the daily AI limit).
+      channel?.kind !== "phone" &&
+      channel?.kind !== "phone_text" &&
       // A building department landing in Promotions still gets read.
       !looksMunicipal(m.fromAddress, m.fromName) &&
       // A thread already marked keeps its mark (B3): it is never quietly turned into junk.
       prevMarks.injection !== true &&
-      prevMarks.payment_change !== true
+      prevMarks.payment_change !== true &&
+      // Check 22 P1: a lead, a permit, or something the safety checks catch is always read.
+      !mustReadDespiteTab(m)
     ) {
       result = {
         ...NOISE,
@@ -213,12 +359,31 @@ export async function classifyPending(
             )
         : [{ n: 1 }];
       const firstTimeSender = (prior?.n ?? 0) === 0 || (priorReply?.n ?? 0) === 0;
+      // Check 38 P3: amounts the owner already wrote on this conversation (their own words,
+      // quoted text cut; never an unsent draft or a forward to the crew). A customer repeating
+      // the contract total isn't new money. Never logged.
+      const ownerBodies = await db()
+        .select({ body: messages.bodyText })
+        .from(messages)
+        .where(
+          and(
+            eq(messages.threadId, m.threadId),
+            eq(messages.direction, "out"),
+            notDraftMessage(),
+            sql`not ${sideEmailSql("messages")}`,
+            lt(messages.sentAt, m.sentAt),
+          ),
+        );
+      const ownerAmounts = ownerBodies.flatMap((o) =>
+        o.body ? moneyMentions(prepareBody(o.body)).map((x) => Math.round(x.amount)) : [],
+      );
       // VIP by either address: both only add caution.
       const senderIsVip = [m.fromAddress, replyTo].some(
         (a) => !!a && business.vipSenders.includes(a.toLowerCase()),
       );
+      let fromModel: Classification | null = null;
       try {
-        result = await classifyEmail(
+        fromModel = await classifyEmail(
           box.workspace.id,
           business,
           {
@@ -229,40 +394,59 @@ export async function classifyPending(
             firstTimeSender,
             threadSummary: thread?.summary ?? null,
             body: m.bodyText ?? m.snippet ?? "",
-            // The burst the model reads with it (B4), oldest first.
-            earlier: older
-              .filter(
-                (o) =>
-                  m.sentAt.getTime() - o.sentAt.getTime() <= BURST_WINDOW_MS &&
-                  o.fromAddress === m.fromAddress,
-              )
-              .slice(0, BURST_MAX)
-              .reverse()
-              .map((o) => ({ receivedAt: o.sentAt, body: o.bodyText ?? o.snippet ?? "" })),
+            earlier,
           },
           {
             senderIsVip,
+            senderNeedsMe: rule.caution === "needs_me",
             now,
-            // Every older unsorted email is checked in code too, even outside the burst (B3):
-            // the drafter reads them.
-            alsoCheck: older.map((o) => `${o.subject ?? ""}\n${o.bodyText ?? o.snippet ?? ""}`),
-            // A thread once caught trying to instruct us (or asking to pay a new account)
-            // keeps that mark: "any update?" doesn't clear it (B3).
-            sticky: {
-              injection: prevMarks.injection === true,
-              paymentChange: prevMarks.payment_change === true,
-            },
+            alsoCheck,
+            sticky,
+            channel: channel ? { kind: channel.kind, name: channelName(channel.key) ?? "" } : null,
+            serviceTowns: business.serviceTowns,
+            ownerAmounts,
+            // Check 22 P5: a supplier's thread (its bills are owed by the business).
+            supplierThread: prevMarks.bill_direction === "owed_by_business",
           },
         );
       } catch (err) {
-        if (err instanceof AiCapReachedError) {
-          capped = true;
-          break;
-        }
-        throw err;
+        if (!(err instanceof AiCapReachedError)) throw err;
+        // Check 39 P1: the limit was reached on this email. Don't stop the batch: this one and
+        // every later one still get the checks in code.
+        capped = true;
       }
-      viaModel = true;
-      if (result.extracted.accepts_quote) {
+      if (!fromModel) {
+        const code = codeOnlyResult();
+        if (!code) continue;
+        result = code;
+        codeOnly++;
+      } else {
+        viaModel = true;
+        // What the sorter itself said (ideas H4): a kind the owner chose never feeds automatic
+        // drafts or autopilot unless the sorter's own kind would have. Content-free.
+        result = {
+          ...fromModel,
+          extracted: {
+            ...fromModel.extracted,
+            model_category: fromModel.category,
+            ...(rule.noDraft ? { sender_rule: "no_draft" as const } : {}),
+          },
+        };
+      }
+      // Check 38 P1: a yes on a job already won before this email is a change order, not the
+      // quote's acceptance (any source of the win: the owner's, or our guess they left alone).
+      // Only the model reads an acceptance; a code-only result (Check 39 P1) never has one.
+      const wonBefore =
+        thread?.quoteOutcome === "won" &&
+        thread.quoteOutcomeAt != null &&
+        thread.quoteOutcomeAt.getTime() < new Date(m.sentAt).getTime();
+      if (viaModel && result.extracted.accepts_quote && wonBefore) {
+        if (result.extracted.injection !== true)
+          result = {
+            ...result,
+            extracted: { ...result.extracted, change_order_approved: true },
+          };
+      } else if (viaModel && result.extracted.accepts_quote) {
         const [ownerBefore] = await db()
           .select({ n: count() })
           .from(messages)
@@ -385,8 +569,32 @@ export async function classifyPending(
       v === "owed_to_business" || v === "owed_by_business";
     const billDirection =
       !injection && isDir(dirNow) ? dirNow : isDir(dirBefore) ? dirBefore : null;
+    // Check 36 P2: an emergency marks the thread for 48 hours (from the emergency email), kept
+    // across later sorts so autopilot and batch send stay away. Never from an attack email.
+    const emergencyNow =
+      !injection &&
+      ((result.extracted.owner_rule_hits ?? []).includes("emergency") ||
+        result.extracted.gas_smell === true ||
+        result.extracted.co_alarm === true ||
+        result.extracted.electrical_hazard === true);
+    const prevEmergencyAt = recentEmergency(thread?.extracted, now)
+      ? (thread?.extracted as { emergency_at: string }).emergency_at
+      : null;
+    const emergencyAt = emergencyNow ? new Date(m.sentAt).toISOString() : prevEmergencyAt;
+    // Check 22 P2: the owner's "This is a normal email" is kept across later sorts (autopilot
+    // reads its date); the mark itself is gone, so `sticky` no longer carries it.
+    const cleared = thread?.extracted as
+      { injection_cleared_by_owner?: unknown; injection_cleared_at?: unknown } | null | undefined;
     const stored = {
       ...result.extracted,
+      ...(cleared?.injection_cleared_by_owner === true &&
+      typeof cleared.injection_cleared_at === "string"
+        ? {
+            injection_cleared_by_owner: true,
+            injection_cleared_at: cleared.injection_cleared_at,
+          }
+        : {}),
+      ...(emergencyAt ? { emergency: true, emergency_at: emergencyAt } : {}),
       // The kind of job carries over like the invoice facts: "Go ahead, when can you start?"
       // doesn't say it again, and price memory needs it (plan #15).
       service_requested: said(result.extracted.service_requested) ?? prevService,
@@ -420,11 +628,15 @@ export async function classifyPending(
       thread?.quoteRequestedAt != null ||
       thread?.quoteOutcome != null ||
       thread?.quoteOutcomeSource != null;
+    // The owner's own kind (ideas H4) wins, decided in SQL so a "Move it" tapped while the
+    // model was reading isn't overwritten: `category = coalesce(category_manual, model)`.
+    const effectiveCategory = sql`coalesce(${threads.categoryManual}, ${result.category})`;
     const isQuoteNow = result.category === "quote_request";
-    const markQuote = !injection && (legacyQuote || isQuoteNow);
+    const markQuote = !injection && (legacyQuote || isQuoteNow || thread?.categoryManual != null);
+    const quoteNowSql = sql`(${legacyQuote ? sql`true` : sql`false`} or ${effectiveCategory} = 'quote_request')`;
     const requestAt = new Date(m.sentAt).toISOString();
     const jobKind =
-      !injection && (wasQuote || isQuoteNow)
+      !injection && (wasQuote || isQuoteNow || thread?.categoryManual != null)
         ? jobKindOf(
             box.workspace.trade,
             stored.service_requested ?? null,
@@ -435,7 +647,7 @@ export async function classifyPending(
     await db()
       .update(threads)
       .set({
-        category: result.category,
+        category: effectiveCategory,
         priority: result.priority,
         // The owner's own "This one needs me" always wins.
         needsOwner: sql`${threads.needsOwnerManual} or ${result.needsOwner}`,
@@ -443,6 +655,8 @@ export async function classifyPending(
         summary: result.summary,
         extracted: stored,
         classifiedAt: now,
+        // Leads package: kept once set — a later email on the thread doesn't clear it.
+        ...(channel ? { leadChannel: channel.key } : {}),
         // Sticky (A1): a later "looks great" never makes a complaint look like a happy
         // customer, so the mark is never cleared. It holds the LATEST complaint (the
         // 12-month rule counts from the most recent one), and a thread that was sorted as a
@@ -462,19 +676,21 @@ export async function classifyPending(
           ? {
               // `requestAt` is an ISO string, never a Date: postgres.js can't bind a Date
               // inside raw SQL (A10; the classification tests' driver refuses one).
-              quoteRequestedAt: sql`coalesce(${threads.quoteRequestedAt}, ${
+              quoteRequestedAt: sql`case when not ${quoteNowSql} then ${threads.quoteRequestedAt} else coalesce(${threads.quoteRequestedAt}, ${
                 legacyQuote
                   ? sql`(select min(i.sent_at) from messages i where i.thread_id = ${threads.id} and i.direction = 'in')`
                   : sql`(select min(i.sent_at) from messages i where i.thread_id = ${threads.id} and i.direction = 'in' and not ${sideEmailSql("i")} and i.sent_at <= ${requestAt}::timestamptz and i.sent_at > coalesce((select max(o.sent_at) from messages o where o.thread_id = ${threads.id} and o.direction = 'out' and ${notDraftSql("o")} and not ${sideEmailSql("o")} and o.sent_at < ${requestAt}::timestamptz), '-infinity'::timestamptz))`
-              }, ${requestAt}::timestamptz)`,
+              }, ${requestAt}::timestamptz) end`,
             }
           : {}),
         ...(jobKind === null
           ? {}
           : jobKind === OTHER_JOB_KIND
-            ? { jobKind: sql`coalesce(${threads.jobKind}, ${jobKind})` }
+            ? {
+                jobKind: sql`case when ${wasQuote ? sql`true` : sql`false`} or ${effectiveCategory} = 'quote_request' then coalesce(${threads.jobKind}, ${jobKind}) else ${threads.jobKind} end`,
+              }
             : {
-                jobKind: sql`case when ${threads.jobKind} is null or ${threads.jobKind} = ${OTHER_JOB_KIND} then ${jobKind} else ${threads.jobKind} end`,
+                jobKind: sql`case when not (${wasQuote ? sql`true` : sql`false`} or ${effectiveCategory} = 'quote_request') then ${threads.jobKind} when ${threads.jobKind} is null or ${threads.jobKind} = ${OTHER_JOB_KIND} then ${jobKind} else ${threads.jobKind} end`,
               }),
         ...(reopen
           ? {
@@ -546,7 +762,7 @@ export async function classifyPending(
   }
 
   const remaining = Math.max(0, newestPerThread.size - classified);
-  return { classified, superseded, remaining: capped ? 0 : remaining, capped };
+  return { classified, superseded, remaining: capped ? 0 : remaining, capped, codeOnly };
 }
 
 /** Inbox action: the owner says a thread needs them. Scoped to their workspace. */

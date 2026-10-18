@@ -118,7 +118,7 @@ test("money owed at 375px: every control is a 44px target and nothing spills, in
 }) => {
   await page.setViewportSize({ width: 375, height: 812 });
   const owner = await seedOwner({ mailbox: true, backfilled: true });
-  // A review link, so Sam's paid row also carries "Ask for a review" into the sweep.
+  // Sam's paid row carries "Say thanks" into the sweep (2026-10-16).
   await testDb
     .insert(schema.businessProfiles)
     .values({ workspaceId: owner.workspaceId, reviewUrl: "https://g.page/r/sweep-test/review" });
@@ -145,7 +145,7 @@ test("money owed at 375px: every control is a 44px target and nothing spills, in
       } else {
         const paid = page.getByRole("region", { name: "Paid in the last 30 days" });
         await expect(paid).toContainText("Sam Lee");
-        await expect(paid.getByRole("button", { name: "Ask for a review" })).toBeVisible();
+        await expect(paid.getByRole("button", { name: "Say thanks" })).toBeVisible();
       }
       expect(await smallTargets(page), `${path} sunlight=${sunlight}`).toEqual([]);
       const overflow = await page.evaluate(

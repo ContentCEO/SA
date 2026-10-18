@@ -14,6 +14,11 @@ import {
   type ToneShift,
 } from "@/ai/prompts/edit-tone.v1";
 import {
+  OPENING_TWEAKS,
+  OPENING_TWEAKS_PROMPT_VERSION,
+  type OpeningTweak,
+} from "@/ai/prompts/opening-tweaks.v1";
+import {
   REVISE_INSTRUCTIONS,
   REVISE_PROMPT_VERSION,
   reviseTask,
@@ -24,8 +29,9 @@ import {
 export type ReviseCase = {
   id: string;
   draft: string;
-  /** A one-tap tweak, or what the owner said. */
+  /** A one-tap tweak, an "Other ways to reply" chip (replies package), or what the owner said. */
   tweak?: Tweak;
+  opening?: OpeningTweak;
   spoken?: string;
   /** Must appear in the result (e.g. a fact the owner dictated, or a gap kept). */
   mustContain?: string[];
@@ -67,6 +73,24 @@ export const REVISE_CASES: ReviseCase[] = [
     tweak: "shorter",
     mustNotContain: ["50% off"],
   },
+  // "Other ways to reply" on a first reply to a new lead (opening-tweaks.v1).
+  { id: "rv-open-questions", draft: BASE, opening: "questions", mustContain: ["?"] },
+  {
+    id: "rv-open-visit",
+    draft: BASE,
+    opening: "visit",
+    mustContain: ["look"],
+    mustNotContain: [
+      "tomorrow",
+      "monday",
+      "tuesday",
+      "wednesday",
+      "thursday",
+      "friday",
+      "saturday",
+    ],
+  },
+  { id: "rv-open-short", draft: BASE, opening: "short", shorter: true, mustContain: ["?"] },
 ];
 
 export type ToneCase = { id: string; drafted: string; sent: string; expect: ToneShift[] };
@@ -127,11 +151,13 @@ export async function runEditEvals(workspaceId: string) {
   let revisePassed = 0;
   const reviseProblems: Record<string, string[]> = {};
   for (const c of REVISE_CASES) {
-    const ask = c.spoken ?? TWEAKS[c.tweak!].ask;
+    const ask = c.spoken ?? (c.opening ? OPENING_TWEAKS[c.opening].ask : TWEAKS[c.tweak!].ask);
     const r = await callStructured({
       workspaceId,
       role: "draft",
-      promptVersion: REVISE_PROMPT_VERSION,
+      promptVersion: c.opening
+        ? `${REVISE_PROMPT_VERSION}+${OPENING_TWEAKS_PROMPT_VERSION}`
+        : REVISE_PROMPT_VERSION,
       maxTokens: 2048,
       effort: "medium",
       system: [
