@@ -3,10 +3,16 @@ import { and, desc, eq, inArray, max, ne, or, isNull, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { mailboxes, messages, threads } from "@/db/schema";
 import { looksMunicipal } from "@/ai/guards";
+import { customerThreadStage } from "./customer-rules";
+import { followupSettings } from "./drafts";
+import { listMoney } from "./money";
+import { isQuoteThread } from "./quote-rules";
 import {
   crewSql,
   crewThreadSql,
   customerAddressSql,
+  lastInSql,
+  lastOutSql,
   quoteThreadSql,
   messageReplyAddress,
   messageReplyName,
@@ -197,10 +203,12 @@ export type CustomerThread = {
   summary: string | null;
   category: string | null;
   lastMessageAt: Date | null;
+  /** Check 13 P5: "Waiting on you", "Priced, waiting on them", "Won $2,100"…, or none. */
+  stage: string | null;
 };
 
 /** Look a customer up by the opaque key from `listCustomers`. Scoped to the workspace. */
-export async function customerByKey(workspaceId: string, key: string) {
+export async function customerByKey(workspaceId: string, key: string, now: Date = new Date()) {
   if (!/^[0-9a-f-]{36}$/i.test(key)) return null;
   // Check 13 P2: only a key the list could have given out — an email that is itself on
   // Customers (not junk, not a robot, not a lead site's notice) — opens a page.
@@ -210,11 +218,11 @@ export async function customerByKey(workspaceId: string, key: string) {
     .innerJoin(threads, eq(threads.id, messages.threadId))
     .innerJoin(mailboxes, eq(mailboxes.id, messages.mailboxId))
     .where(and(eq(messages.id, key), listedMessage(workspaceId)));
-  return m?.address ? customerDetail(workspaceId, m.address) : null;
+  return m?.address ? customerDetail(workspaceId, m.address, now) : null;
 }
 
 /** One customer's conversations (they wrote in at least once). Scoped to the workspace. */
-export async function customerDetail(workspaceId: string, address: string) {
+export async function customerDetail(workspaceId: string, address: string, now: Date = new Date()) {
   const email = address.trim().toLowerCase();
   const ids = await db()
     .selectDistinct({ id: messages.threadId })
@@ -237,6 +245,12 @@ export async function customerDetail(workspaceId: string, address: string) {
       summary: threads.summary,
       category: threads.category,
       lastMessageAt: threads.lastMessageAt,
+      quoteOutcome: threads.quoteOutcome,
+      quoteOutcomeSource: threads.quoteOutcomeSource,
+      quoteAmountCents: threads.quoteAmountCents,
+      lastIn: lastInSql(),
+      lastOut: lastOutSql(),
+      jobAddress: sql<string | null>`nullif(trim(${threads.extracted}->>'address'), '')`,
     })
     .from(threads)
     .innerJoin(mailboxes, eq(mailboxes.id, threads.mailboxId))
@@ -261,5 +275,68 @@ export async function customerDetail(workspaceId: string, address: string) {
         sql`${messageReplyAddress()} = ${email}`,
       ),
     );
-  return { address: email, name: named?.name ?? null, threads: list satisfies CustomerThread[] };
+  // Check 13 P5: what the list knows, on the page too — the same quote facts as the row, what
+  // Money says they owe (receipt senders are already left out there), when they last wrote
+  // themselves (never a side email), and the job addresses the sorter kept.
+  const [quoteFacts, money, { days: quietDays }, [wrote]] = await Promise.all([
+    quoteFactsByAddress(workspaceId),
+    listMoney(workspaceId, now),
+    followupSettings(workspaceId),
+    db()
+      .select({ at: sql<string | Date | null>`max(${messages.sentAt})` })
+      .from(messages)
+      .innerJoin(mailboxes, eq(mailboxes.id, messages.mailboxId))
+      .where(
+        and(
+          eq(mailboxes.workspaceId, workspaceId),
+          eq(messages.direction, "in"),
+          sql`${messageReplyAddress()} = ${email}`,
+          sql`not ${sideEmailSql("messages")}`,
+        ),
+      ),
+  ]);
+  const q = quoteFacts.get(email);
+  const owedCents = money.owed
+    .filter((r) => r.customerAddress === email)
+    .reduce(
+      (t, r) => t + (r.amountCents ?? 0) + r.earlierOpen.reduce((e, x) => e + x.amountCents, 0),
+      0,
+    );
+  const addresses = [
+    ...new Set(list.map((t) => t.jobAddress).filter((a): a is string => !!a)),
+  ].slice(0, 10);
+  const shown: CustomerThread[] = list.map((t) => ({
+    threadId: t.threadId,
+    gmailThreadId: t.gmailThreadId,
+    mailboxEmail: t.mailboxEmail,
+    subject: t.subject,
+    summary: t.summary,
+    category: t.category,
+    lastMessageAt: t.lastMessageAt,
+    stage: customerThreadStage(
+      {
+        isQuote: isQuoteThread({
+          category: t.category,
+          quoteOutcome: t.quoteOutcome,
+          quoteOutcomeSource: t.quoteOutcomeSource,
+        }),
+        outcome: t.quoteOutcome,
+        amountCents: t.quoteAmountCents,
+        lastInboundAt: asDate(t.lastIn),
+        lastOutboundAt: asDate(t.lastOut),
+      },
+      now,
+      quietDays,
+    ),
+  }));
+  return {
+    address: email,
+    name: named?.name ?? null,
+    threads: shown,
+    openQuotes: q?.open ?? 0,
+    wonCents: q?.wonCents ?? 0,
+    owedCents,
+    lastWroteAt: asDate(wrote?.at),
+    addresses,
+  };
 }

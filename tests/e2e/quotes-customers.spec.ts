@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { eq } from "drizzle-orm";
 import { expect, test } from "@playwright/test";
 import * as schema from "../../src/db/schema";
 import { seedOwner, signInAs, testDb } from "./support";
@@ -285,6 +286,43 @@ test("customers: 50 at a time, and search finds everyone (Check 13 P3)", async (
   await expect(page.getByRole("link", { name: /Number55/ })).toHaveCount(0);
   await page.getByRole("button", { name: "Show 50 more" }).click();
   await expect(page.getByRole("link", { name: /Number55/ })).toBeVisible();
+});
+
+test("customers: the page shows what the row shows (Check 13 P5)", async ({ page, context }) => {
+  const owner = await seedOwner({ mailbox: true, backfilled: true });
+  await quote(owner.mailboxId!, {
+    name: "Jose Alvarez",
+    from: "jose@customer.com",
+    inAgo: 9,
+    outAgo: 8,
+    reply: "Hi Jose, the deck is $2,100.",
+    summary: "Jose wants a deck.",
+  });
+  await testDb
+    .update(schema.threads)
+    .set({
+      quoteOutcome: "won",
+      quoteOutcomeSource: "owner",
+      quoteAmountCents: 210_000,
+      extracted: { address: "12 Elm St" },
+    })
+    .where(eq(schema.threads.summary, "Jose wants a deck."));
+  await quote(owner.mailboxId!, {
+    name: "Dana Ruiz",
+    from: "dana@customer.com",
+    inAgo: 1,
+    summary: "Dana wants a panel upgrade quote.",
+  });
+  await signInAs(context, owner);
+  await page.goto("/customers");
+  await expect(page.getByRole("link", { name: /Jose Alvarez/ })).toContainText("Won $2,100");
+  await page.getByRole("link", { name: /Jose Alvarez/ }).click();
+  await expect(page.getByText(/^Won \$2,100 · Wrote you/)).toBeVisible();
+  await expect(page.getByRole("region", { name: "Job addresses" })).toContainText("12 Elm St");
+  await page.goto("/customers");
+  await page.getByRole("link", { name: /Dana Ruiz/ }).click();
+  await expect(page.getByText(/^1 open quote · Wrote you/)).toBeVisible();
+  await expect(page.getByText("Waiting on you")).toBeVisible();
 });
 
 test("a junk email's id is not a customer page (Check 13 P2)", async ({ page, context }) => {

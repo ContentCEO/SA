@@ -668,6 +668,59 @@ describe("customer list", () => {
     expect((await customerByKey(workspaceId, anon.key))!.name).toBeNull();
   });
 
+  it("the customer page carries what the list knows (Check 13 P5)", async () => {
+    const won = await convo({
+      from: "jose@x.com",
+      name: "Jose Alvarez",
+      category: "quote_request",
+      inAgo: 9,
+      outAgo: 8,
+      reply: "$2,100",
+    });
+    await database
+      .update(threads)
+      .set({ extracted: { address: "12 Elm St" } })
+      .where(eq(threads.id, won));
+    await setQuoteOutcome(workspaceId, won, "won", 210_000, NOW);
+    const open = await convo({
+      from: "jose@x.com",
+      name: "Jose Alvarez",
+      category: "quote_request",
+      inAgo: 2,
+    });
+    await database
+      .update(threads)
+      .set({ extracted: { address: " 4 Oak Ave " } })
+      .where(eq(threads.id, open));
+    const bill = await convo({
+      from: "jose@x.com",
+      name: "Jose Alvarez",
+      category: "invoice_payment",
+      inAgo: 3,
+    });
+    await database
+      .update(threads)
+      .set({
+        extracted: {
+          address: "12 Elm St",
+          invoice: { invoice_number: "41", amount: 350, due_date: null, status: "unpaid" },
+          invoice_thread: true,
+        },
+      })
+      .where(eq(threads.id, bill));
+
+    const d = await customerDetail(workspaceId, "jose@x.com", NOW);
+    expect(d).toMatchObject({ openQuotes: 1, wonCents: 210_000, owedCents: 35_000 });
+    expect(d!.lastWroteAt).toEqual(daysAgo(2));
+    expect(d!.addresses.sort()).toEqual(["12 Elm St", "4 Oak Ave"]);
+    const stageOf = (id: string) => d!.threads.find((t) => t.threadId === id)!.stage;
+    expect(stageOf(won)).toBe("Won $2,100");
+    expect(stageOf(open)).toBe("Waiting on you");
+    expect(stageOf(bill)).toBe("Waiting on you");
+    const row = (await listCustomers(workspaceId, NOW)).find((c) => c.address === "jose@x.com")!;
+    expect(row).toMatchObject({ openQuotes: 1, wonCents: 210_000 });
+  });
+
   it("never shows another workspace's customers", async () => {
     await convo({ from: "dana@x.com", name: "Dana", category: "quote_request", inAgo: 1 });
     const { workspace: other } = await ensureUserAndWorkspace({ email: "other@shop.com" });

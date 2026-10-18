@@ -108,3 +108,15 @@ the same `leads@thumbtack.com` address, `large_request`, expected needs-you with
   rule itself is unchanged. No other screen showed the old "New customer asking about a big
   job." text (cards read the `big_new_job` hit key). Widening the backfill or keeping more
   addresses was not done: Davi's call (see Questions).
+
+## Step 6: Check 13 P5 (the customer page knows what the list knows)
+
+- `customerDetail` returns `openQuotes` / `wonCents` (the same `quoteFactsByAddress` as the
+  row), `owedCents` (Money's owed rows for that reply address, earlier open invoices included;
+  receipt senders are already out), `lastWroteAt` (newest inbound, never a side email) and
+  `addresses` (distinct trimmed `extracted.address`, max 10). The page shows one facts line
+  ("1 open quote · Won $2,100 · Owes $350 · Wrote you Oct 8", owner's time zone), "Job
+  addresses", and a stage line per card (`customerThreadStage`, `customer-rules.ts`: Quotes'
+  stages as "Waiting on you" / "Priced, waiting on them" / "Gone quiet" / "Won $2,100" / "Lost" /
+  "No answer"; other threads "Waiting on you" only when the customer wrote last). No new email
+  text on the page.

@@ -6,6 +6,8 @@ import { categoryTag, isCategory } from "@/config/categories";
 import { gmailThreadLink } from "@/lib/gmail-link";
 import { relativeTime } from "@/lib/relative-time";
 import { customerByKey } from "@/server/customers";
+import { customerFactsLine } from "@/server/customer-rules";
+import { getBusinessProfile } from "@/server/profile";
 import { requireOwner } from "@/server/session";
 import { Notice } from "@/components/app/notice";
 import { Button } from "@/components/ui/button";
@@ -29,9 +31,11 @@ export const metadata: Metadata = { title: "Customer" };
 export default async function CustomerPage(props: PageProps<"/customers/[key]">) {
   const { workspace } = await requireOwner();
   const { key } = await props.params;
-  const customer = await customerByKey(workspace.id, key);
-  if (!customer) notFound();
   const now = new Date();
+  const customer = await customerByKey(workspace.id, key, now);
+  if (!customer) notFound();
+  const profile = await getBusinessProfile(workspace.id);
+  const facts = customerFactsLine(customer, profile?.timeZone ?? "America/New_York");
   const first = (customer.name ?? customer.address).split(/[\s,]+/)[0]!.toLowerCase();
   const note = await noteFor(workspace.id, customer.address);
   const params = await props.searchParams;
@@ -53,7 +57,22 @@ export default async function CustomerPage(props: PageProps<"/customers/[key]">)
         >
           {customer.address}
         </a>
+        {facts ? <p className="font-semibold">{facts}</p> : null}
       </div>
+      {customer.addresses.length ? (
+        <section aria-labelledby="job-addresses" className="flex flex-col gap-1">
+          <h2 id="job-addresses" className="font-semibold">
+            Job addresses
+          </h2>
+          <ul className="flex flex-col gap-0.5 text-muted-foreground">
+            {customer.addresses.map((a) => (
+              <li key={a} className="break-words">
+                {a}
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
       <section
         id="note"
         aria-labelledby="note-heading"
@@ -119,6 +138,7 @@ export default async function CustomerPage(props: PageProps<"/customers/[key]">)
                 {t.lastMessageAt ? relativeTime(t.lastMessageAt, now) : ""}
               </span>
             </div>
+            {t.stage ? <p className="font-semibold">{t.stage}</p> : null}
             <p>{t.summary ?? t.subject ?? "(no subject)"}</p>
             <a
               href={gmailThreadLink(t)}
