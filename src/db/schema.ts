@@ -268,6 +268,12 @@ export const threads = pgTable(
     needsOwnerReason: text("needs_owner_reason"),
     /** The owner said "This one needs me". Classification never clears it. */
     needsOwnerManual: boolean("needs_owner_manual").notNull().default(false),
+    /**
+     * Check 10 P1: when needs_owner last turned true (the email that raised it, or the owner's
+     * own mark). Any owner answer after this (a Gmail reply, an app send, "I called them") lets
+     * go of the flag. Null on older rows: reads fall back to classified_at.
+     */
+    needsOwnerSince: timestamp("needs_owner_since", { withTimezone: true }),
     /** Plan #6: hidden from the queue until then; comes back on top. */
     snoozedUntil: timestamp("snoozed_until", { withTimezone: true }),
     /** One-sentence summary from classification. Kept after bodies are purged. */
@@ -304,6 +310,11 @@ export const threads = pgTable(
      * "Needs you", and the scorecard counts it. A later customer email starts things over.
      */
     handledOfflineAt: timestamp("handled_offline_at", { withTimezone: true }),
+    /**
+     * Check 11 P8: the owner said "Not a quote". Off Quotes (and Customers' open quotes) until
+     * "Put back", or until the owner marks an outcome after this time.
+     */
+    quoteDismissedAt: timestamp("quote_dismissed_at", { withTimezone: true }),
     /**
      * Leads package (B2 / B3): where the lead came from, decided in code from the sender
      * (`channelOf`, src/server/channel-rules.ts): a phone service key ("google_voice"),

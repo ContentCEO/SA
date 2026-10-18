@@ -17,9 +17,14 @@ import {
   type QuoteOutcome,
   type QuoteStage,
 } from "@/server/quote-rules";
-import { listQuotes, type QuoteRow } from "@/server/quotes";
+import { listDismissedQuotes, listQuotes, type QuoteRow } from "@/server/quotes";
 import { requireOwner } from "@/server/session";
-import { lostReasonAction, markQuoteAction } from "./actions";
+import {
+  dismissQuoteAction,
+  lostReasonAction,
+  markQuoteAction,
+  sentAnotherWayAction,
+} from "./actions";
 import { leadSourcePay } from "@/server/lead-pay";
 import { leadPaySentence } from "@/server/quote-rules";
 import { LOST_REASON_BUTTONS, LOST_REASON_WORDS, LOST_REASONS } from "@/server/quote-rules";
@@ -43,6 +48,9 @@ const done: Record<string, string> = {
   lost_reason: "Got it.",
   no_answer: "Marked no answer.",
   reopen: "Reopened.",
+  sent_other: "Got it. It counts as answered, and it comes back if they write again.",
+  dismissed: "Taken off Quotes. Put it back from “Not quotes” at the bottom.",
+  restored: "Put back on Quotes.",
 };
 const errors: Record<string, string> = {
   amount: "That amount didn't look right. Type just the number, like 1450.",
@@ -178,6 +186,29 @@ function QuoteCard({
           </form>
         </details>
       )}
+      {!readOnly && q.stage === "waiting_on_you" ? (
+        // Check 11 P8: an estimate sent from QuickBooks or Jobber never shows in Gmail.
+        <details>
+          <summary className="inline-flex min-h-tap w-full cursor-pointer list-none items-center justify-center font-semibold underline underline-offset-4">
+            I sent the price another way
+          </summary>
+          <form action={sentAnotherWayAction} className="mt-2 flex flex-col gap-2">
+            <input type="hidden" name="threadId" value={q.threadId} />
+            <label className="flex flex-col gap-1 text-sm font-semibold">
+              Price you gave (optional)
+              <input
+                name="amount"
+                inputMode="decimal"
+                placeholder="e.g. 1450"
+                className="min-h-tap rounded-lg border bg-background px-3 text-base text-foreground"
+              />
+            </label>
+            <Button type="submit" variant="outline" className="w-full">
+              Mark price sent
+            </Button>
+          </form>
+        </details>
+      ) : null}
       <a
         href={gmailThreadLink(q)}
         target="_blank"
@@ -186,6 +217,22 @@ function QuoteCard({
       >
         Open in Gmail
       </a>
+      {!readOnly && !decided ? (
+        // Check 11 P8: sorting got it wrong (a supplier's price sheet). One confirmation.
+        <details>
+          <summary className="inline-flex min-h-tap w-full cursor-pointer list-none items-center justify-center text-sm font-semibold underline underline-offset-4">
+            Not a quote
+          </summary>
+          <form action={dismissQuoteAction} className="mt-2 flex flex-col gap-2">
+            <input type="hidden" name="threadId" value={q.threadId} />
+            <input type="hidden" name="dismiss" value="yes" />
+            <p className="text-sm">Take it off Quotes? Nothing is sent. You can put it back.</p>
+            <Button type="submit" variant="outline" className="w-full">
+              Yes, not a quote
+            </Button>
+          </form>
+        </details>
+      ) : null}
     </article>
   );
 }
@@ -196,9 +243,10 @@ export default async function QuotesPage(props: PageProps<"/quotes">) {
   const filter: Filter = FILTERS.some(([k]) => k === params.stage)
     ? (params.stage as Filter)
     : "open";
-  const [{ quotes, totals, quietDays }, leadPay] = await Promise.all([
+  const [{ quotes, totals, quietDays }, leadPay, dismissed] = await Promise.all([
     listQuotes(workspace.id),
     leadSourcePay(workspace.id),
+    listDismissedQuotes(workspace.id),
   ]);
   const readOnly = isReadOnly(workspace);
   const shown = quotes.filter((q) =>
@@ -309,6 +357,33 @@ export default async function QuotesPage(props: PageProps<"/quotes">) {
             : "No quote requests yet. When a customer asks for a price, it shows up here by itself."}
         </p>
       )}
+      {dismissed.length ? (
+        // Check 11 P8: what the owner took off Quotes, with Put back.
+        <details className="rounded-xl border">
+          <summary className="flex min-h-tap cursor-pointer items-center px-4 font-semibold">
+            Not quotes ({dismissed.length})
+          </summary>
+          <ul className="flex flex-col gap-2 px-4 pb-4">
+            {dismissed.map((d) => (
+              <li key={d.threadId} className="flex items-center justify-between gap-3">
+                <span className="min-w-0 truncate">
+                  {d.customerName ?? d.customerAddress ?? "Someone"}
+                  {d.summary ? <span className="text-muted-foreground"> · {d.summary}</span> : null}
+                </span>
+                {readOnly ? null : (
+                  <form action={dismissQuoteAction} className="shrink-0">
+                    <input type="hidden" name="threadId" value={d.threadId} />
+                    <input type="hidden" name="dismiss" value="no" />
+                    <Button type="submit" variant="outline">
+                      Put back
+                    </Button>
+                  </form>
+                )}
+              </li>
+            ))}
+          </ul>
+        </details>
+      ) : null}
       <p className="text-sm text-muted-foreground">
         &ldquo;Gone quiet&rdquo; means you replied {quietDays}+ days ago and haven&apos;t heard
         back. &ldquo;No answer&rdquo; can be our guess: a week after two follow-ups, or three quiet

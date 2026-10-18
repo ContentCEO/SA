@@ -5,7 +5,7 @@
  */
 import { isLeadCategory } from "@/config/categories";
 
-export const EMERGENCY_REASON = "Sounds like an emergency — call them if you can.";
+export const EMERGENCY_REASON = "Sounds like an emergency. Call them if you can.";
 
 /**
  * Check 36 P2: an emergency keeps a mark on the thread for this long (`extracted.emergency` +

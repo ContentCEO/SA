@@ -11,18 +11,21 @@ import { requireOwner } from "@/server/session";
 /** Round 2 (FW E11): "I called them". No draft, no nudge; it counts as answered. */
 export async function answeredByPhoneAction(formData: FormData) {
   const { workspace } = await requireOwner();
+  // Check 10 P1: the Inbox carries the same button; back to the screen it was tapped on.
+  const onInbox = formData.get("back") === "inbox";
+  const back = (q: string) => (onInbox ? `/inbox?${q}` : `/queue?${q}`);
   const threadId = z.string().uuid().safeParse(formData.get("threadId"));
-  if (!threadId.success) redirect("/queue?error=unknown");
+  if (!threadId.success) redirect(back("error=unknown"));
   let r;
   try {
     r = await markAnsweredByPhone(workspace.id, threadId.data);
   } catch (err) {
-    if (err instanceof ReadOnlyError) redirect("/queue?error=readonly");
+    if (err instanceof ReadOnlyError) redirect(back("error=readonly"));
     throw err;
   }
   // Leads package: the same mark says "Done" on lead-site, voicemail and emergency cards.
   const done = formData.get("as") === "done" ? "done" : "called";
-  redirect(r === "marked" ? `/queue?done=${done}` : "/queue?error=unknown");
+  redirect(back(r === "marked" ? `done=${done}` : "error=unknown"));
 }
 
 /** Round 2 (FW D1): hide the "your last 30 days" card. */

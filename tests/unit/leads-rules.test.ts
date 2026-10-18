@@ -295,7 +295,7 @@ describe("owner rules (leads package)", () => {
     const m = classification({ category: "complaint" });
     m.extracted = { ...m.extracted, urgency: "emergency" };
     const r = applyOwnerRules(m, { ...ctx, outsideArea: true });
-    expect(r.needsOwnerReason).toBe("Complaint — you'll want to handle this yourself.");
+    expect(r.needsOwnerReason).toBe("A complaint. You'll want to answer this one yourself.");
     expect(r.hits).toEqual(["complaint", "emergency"]);
   });
   it("outside area on a quote request; the model's reason never wins over it", () => {
@@ -316,7 +316,7 @@ describe("owner rules (leads package)", () => {
     const site = { kind: "site" as const, name: "Thumbtack" };
     expect(applyOwnerRules(classification(), { ...ctx, channel: site })).toMatchObject({
       needsOwner: true,
-      needsOwnerReason: "Came through Thumbtack — answer them there.",
+      needsOwnerReason: "Came through Thumbtack. Answer them there.",
     });
     expect(
       applyOwnerRules(classification({ category: "noise" }), { ...ctx, channel: site }).needsOwner,
@@ -326,7 +326,7 @@ describe("owner rules (leads package)", () => {
         ...ctx,
         channel: { kind: "phone_text", name: "Text message" },
       }).needsOwnerReason,
-    ).toBe("Text message — text them back from your phone.");
+    ).toBe("Text message. Text them back from your phone.");
   });
   it("injection never enters the lane", () => {
     const m = classification({ category: "quote_request" });

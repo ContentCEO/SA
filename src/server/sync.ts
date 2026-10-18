@@ -24,6 +24,7 @@ import { createGmailReader } from "@/mailbox/gmail/api";
 import { parseAddressList } from "@/mailbox/gmail/parse";
 import { jobsAllowed } from "./lifecycle";
 import { mailboxRunning } from "./mailbox-plan";
+import { clearAnsweredNeedsOwner } from "./needs-owner";
 import { mailboxOn } from "./mailbox-plan-rules";
 import { pickReplyTo, type ReplyToHeader } from "./reply-address-rules";
 import { unsentDraftMessage } from "./thread-sql";
@@ -389,6 +390,8 @@ export async function backfillPage(
 /** Step 3: mark the backfill done so incremental sync can take over. */
 export async function finishBackfill(mailboxId: string, deps: SyncDeps = {}) {
   const now = deps.now?.() ?? new Date();
+  // Check 10 P1: a re-read can bring in owner replies to flagged threads.
+  await clearAnsweredNeedsOwner(mailboxId);
   await db()
     .update(mailboxes)
     .set({ backfillCompletedAt: now, lastSyncedAt: now })
@@ -448,6 +451,9 @@ export async function incrementalSync(
       } while (pageToken);
       cursor = profile.historyId;
     }
+    // Check 10 P1: an owner reply from Gmail lets go of "Needs you" (once per run; one
+    // UPDATE over this mailbox's flagged threads, so cheap even with nothing new).
+    await clearAnsweredNeedsOwner(mailbox.id);
     await db()
       .update(mailboxes)
       .set({ historyId: cursor, lastSyncedAt: now })

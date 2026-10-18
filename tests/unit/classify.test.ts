@@ -1,7 +1,21 @@
 import { randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { applyOwnerRules, classifyEmail, prepareBody } from "@/ai/classify";
+import {
+  applyOwnerRules,
+  classifyEmail,
+  COMPLAINT_REASON,
+  DISPUTE_REASON,
+  DISPUTE_REASONS,
+  LEGAL_REASON,
+  LOW_CONFIDENCE_REASON,
+  MODEL_FLAG_REASON,
+  OLD_LEGAL_REASON,
+  prepareBody,
+  UNREADABLE_REASON,
+} from "@/ai/classify";
+import { INJECTION_REASON } from "@/ai/guards";
+import { EMERGENCY_REASON } from "@/server/emergency-rules";
 import { setModelTransportForTests } from "@/ai/client";
 import { estimateCostCentiCents } from "@/ai/cost";
 import { emailBlock } from "@/ai/prompts/classify.v5";
@@ -307,5 +321,33 @@ describe("classifier prompt version", () => {
     const src = readFileSync("src/ai/classify.ts", "utf8");
     expect(src).toMatch(/from\s+["'](\.\/prompts|@\/ai\/prompts)\/classify\.v5["']/);
     expect(src).not.toMatch(/classify\.v[1234]["']/);
+  });
+});
+
+describe("needs-you reasons read plainly (Check 10 P10)", () => {
+  it("no dashes, and the injection reason says what to do", () => {
+    for (const r of [
+      COMPLAINT_REASON,
+      LOW_CONFIDENCE_REASON,
+      UNREADABLE_REASON,
+      MODEL_FLAG_REASON,
+      LEGAL_REASON,
+      DISPUTE_REASON,
+      INJECTION_REASON,
+      EMERGENCY_REASON,
+    ]) {
+      expect(r).not.toMatch(/[—–]| - /);
+    }
+    expect(LEGAL_REASON).toBe("Mentions a lawyer, a lien or a claim.");
+    expect(INJECTION_REASON).toBe(
+      "Careful: this email has hidden instructions aimed at our AI. We won't write a reply. Check who sent it before you click anything.",
+    );
+  });
+
+  it("rows stored with the old legal wording are still recognised as disputes", () => {
+    expect(OLD_LEGAL_REASON).toBe("Mentions something legal.");
+    expect(DISPUTE_REASONS).toEqual(
+      expect.arrayContaining([LEGAL_REASON, DISPUTE_REASON, OLD_LEGAL_REASON]),
+    );
   });
 });

@@ -326,6 +326,15 @@ describe("first week, with the database", () => {
       fromAddress: "dana@customer.com",
       sentAt: new Date(NOW.getTime() + HOUR),
     });
+    // Check 10 P1: the call cleared the flag (logged by: phone); the sorter raises it again
+    // for the new email when it needs the owner, from that email's time.
+    expect(
+      (await database.select().from(threads).where(eq(threads.id, needs)))[0]!.needsOwner,
+    ).toBe(false);
+    await database
+      .update(threads)
+      .set({ needsOwner: true, needsOwnerSince: new Date(NOW.getTime() + HOUR) })
+      .where(eq(threads.id, needs));
     expect(
       (await queueMembership(workspaceId, new Date(NOW.getTime() + 2 * HOUR))).needsYou.map(
         (m) => m.threadId,

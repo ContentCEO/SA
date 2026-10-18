@@ -224,6 +224,7 @@ export async function classifyPending(
         quoteOutcome: threads.quoteOutcome,
         quoteOutcomeSource: threads.quoteOutcomeSource,
         quoteOutcomeAt: threads.quoteOutcomeAt,
+        quoteDismissedAt: threads.quoteDismissedAt,
         invoicePaidAt: threads.invoicePaidAt,
         invoicePaidSource: threads.invoicePaidSource,
         needsOwnerReason: threads.needsOwnerReason,
@@ -467,6 +468,9 @@ export async function classifyPending(
               category: thread?.category ?? null,
               quoteOutcome: thread?.quoteOutcome ?? null,
               quoteOutcomeSource: thread?.quoteOutcomeSource ?? null,
+              // Check 11 P8: a thread the owner said is "Not a quote" was no quote.
+              quoteDismissedAt: thread?.quoteDismissedAt ?? null,
+              quoteOutcomeAt: thread?.quoteOutcomeAt ?? null,
             },
             category: result.category,
             ownerWroteBefore: (ownerBefore?.n ?? 0) > 0,
@@ -652,6 +656,10 @@ export async function classifyPending(
         // The owner's own "This one needs me" always wins.
         needsOwner: sql`${threads.needsOwnerManual} or ${result.needsOwner}`,
         needsOwnerReason: sql`case when ${threads.needsOwnerManual} then ${threads.needsOwnerReason} else ${result.needsOwnerReason} end`,
+        // Check 10 P1: when the flag went up — this email's time when it was down (any owner
+        // answer after the email lets go of it, even one sent before this sort ran); kept while
+        // it stays up; cleared with it.
+        needsOwnerSince: sql`case when not (${threads.needsOwnerManual} or ${result.needsOwner}) then null when ${threads.needsOwner} then coalesce(${threads.needsOwnerSince}, ${requestAt}::timestamptz) else ${requestAt}::timestamptz end`,
         summary: result.summary,
         extracted: stored,
         classifiedAt: now,
@@ -775,7 +783,13 @@ export async function markNeedsOwner(workspaceId: string, threadId: string): Pro
   if (owned.length === 0) return false;
   await db()
     .update(threads)
-    .set({ needsOwner: true, needsOwnerManual: true, needsOwnerReason: "You marked this one." })
+    .set({
+      needsOwner: true,
+      needsOwnerManual: true,
+      needsOwnerReason: "You marked this one.",
+      // Check 10 P1: a mark set now outlasts every earlier owner reply.
+      needsOwnerSince: sql`${new Date().toISOString()}::timestamptz`,
+    })
     .where(eq(threads.id, threadId));
   await db().insert(activityLog).values({
     workspaceId,

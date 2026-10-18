@@ -13,6 +13,7 @@ import { OWNER_SENDER_RULE_ACTIONS, OWNER_SENDER_RULE_SCOPES } from "@/db/schema
 import { ReadOnlyError } from "@/server/lifecycle";
 import { saveRule } from "@/server/sender-rule-store";
 import { resortThread } from "@/server/resort";
+import { takeOffMyList } from "@/server/needs-owner";
 
 const input = z.object({ threadId: z.string().uuid() });
 
@@ -22,6 +23,25 @@ export async function markNeedsOwnerAction(formData: FormData) {
   if (!parsed.success) return;
   await markNeedsOwner(workspace.id, parsed.data.threadId);
   revalidatePath("/inbox");
+}
+
+/**
+ * Check 10 P1: "Take it off my list" on a "Needs you" card the owner already answered. Clears
+ * the flag only (no draft, no send). Scoped to the workspace, read-only refused, rate limited.
+ */
+export async function takeOffListAction(formData: FormData) {
+  const { workspace } = await requireOwner();
+  const parsed = input.safeParse({ threadId: formData.get("threadId") });
+  if (!parsed.success) redirect("/inbox?error=unknown");
+  if (!(await hitLimit("gmailWrite", workspace.id)).allowed) redirect("/inbox?error=busy");
+  let r;
+  try {
+    r = await takeOffMyList(workspace.id, parsed.data.threadId);
+  } catch (err) {
+    if (err instanceof ReadOnlyError) redirect("/inbox?error=readonly");
+    throw err;
+  }
+  redirect(r === "not_found" ? "/inbox?error=unknown" : "/inbox?done=off_list");
 }
 
 /** Skip reasons → the Queue's ?error= keys. Anything else is a plain "couldn't write it". */

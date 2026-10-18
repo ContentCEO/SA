@@ -139,6 +139,49 @@ describe("classifyPending", () => {
     });
   });
 
+  it("Check 10 P1: the flag remembers when it went up (the email's time), kept while it stays up", async () => {
+    const t = await thread("t1");
+    await message(t.id, "m1", { sentAt: daysAgo(2) });
+    setModelTransportForTests(
+      fakeTransport([classification({ category: "complaint", needs_owner: true })]).transport,
+    );
+    await classifyPending(mailboxId, { now: NOW });
+    let [row] = await database.select().from(threads);
+    expect(row!.needsOwnerSince).toEqual(daysAgo(2));
+    // A second email while it's still up keeps the first time.
+    await message(t.id, "m2", { sentAt: daysAgo(1) });
+    setModelTransportForTests(
+      fakeTransport([classification({ category: "complaint", needs_owner: true })]).transport,
+    );
+    await classifyPending(mailboxId, { now: NOW });
+    [row] = await database.select().from(threads);
+    expect(row!.needsOwnerSince).toEqual(daysAgo(2));
+    // Down again: no time.
+    await message(t.id, "m3", { sentAt: daysAgo(0.5) });
+    setModelTransportForTests(
+      fakeTransport([classification({ category: "scheduling", needs_owner: false })]).transport,
+    );
+    await classifyPending(mailboxId, { now: NOW });
+    [row] = await database.select().from(threads);
+    expect(row).toMatchObject({ needsOwner: false, needsOwnerSince: null });
+  });
+
+  it("Check 10 P7: a sort that failed twice is stored as unreadable", async () => {
+    const t = await thread("t1");
+    await message(t.id, "m1");
+    setModelTransportForTests(fakeTransport([null, { junk: true }]).transport);
+    await classifyPending(mailboxId, { now: NOW });
+    const [row] = await database.select().from(threads).where(eq(threads.id, t.id));
+    expect(row!.extracted).toMatchObject({ unreadable: true });
+    expect(row!.needsOwner).toBe(true);
+    // The next sort that works drops the mark.
+    await message(t.id, "m2", { sentAt: daysAgo(0.5) });
+    setModelTransportForTests(fakeTransport([classification()]).transport);
+    await classifyPending(mailboxId, { now: NOW });
+    const [again] = await database.select().from(threads).where(eq(threads.id, t.id));
+    expect((again!.extracted as Record<string, unknown>).unreadable).toBeUndefined();
+  });
+
   it("stops cleanly at the daily cap", async () => {
     process.env.AI_DAILY_CALL_CAP = "1";
     await message((await thread("t1")).id, "a");
