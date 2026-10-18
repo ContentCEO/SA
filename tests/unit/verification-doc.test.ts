@@ -296,6 +296,16 @@ describe("the demo video script matches the end-to-end journey", () => {
     expect(step4).not.toMatch(/production domain/);
   });
 
+  it("Check 28 P2: the branding is verified and published before the video is recorded", () => {
+    const before = flat(
+      section("Before submitting (for Davi only; never pasted into Google's form)"),
+    );
+    expect(before).toContain("**Publish the branding before filming**");
+    expect(before).toContain("**Verify Branding**");
+    expect(before).toContain("**Publish branding** within 7 days");
+    expect(before).toContain("shows the app's domain, not its name");
+  });
+
   it("Check 28 P1: one OAuth client on the production project, cleaned of vercel.app and localhost before submitting", () => {
     const before = flat(
       section("Before submitting (for Davi only; never pasted into Google's form)"),

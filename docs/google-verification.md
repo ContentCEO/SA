@@ -400,6 +400,13 @@ production Stripe is still in test mode.
   your behalf". Only then send the practice copy and the real reply.
 - Verify the production domain in Google Search Console, add it under Google Auth Platform →
   Branding → Authorized domains, and point the homepage, privacy policy and terms links there.
+- **Publish the branding before filming** (launch checklist step 0b, then 0d). Google has a
+  separate brand check: Branding → **Verify Branding**, wait for "Ready to publish" (an automatic
+  check, usually minutes; a manual review takes 2–3 business days), then **Publish branding**
+  within 7 days, or it has to be verified again. Until it is published Google's consent screen
+  shows the app's domain, not its name, and the demo video must show the consent screen with the
+  app name on it, so don't record until the screen says "Squared Away" (start Connect Gmail on
+  the domain and look).
 - **Clean the live client first** (launch checklist step 0e, its first sub-step, only after the old
   address forwards to the domain in step 5.9): the production Google project has **exactly one
   OAuth client**, and its Authorized redirect URIs and JavaScript origins list only

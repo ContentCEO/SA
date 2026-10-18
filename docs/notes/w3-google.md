@@ -104,3 +104,50 @@ When you add the domain in Vercel → Domains, leave it as a Production domain (
 Production domains in that list are the ones Vercel serves without noindex; `sa-dac3.vercel.app`
 is a team address that isn't in that list, which is most likely why it carries noindex today.
 ```
+
+## Step 3: Check 28 P2 (LAUNCH.md text only; google-verification.md was edited on the branch)
+
+**LAUNCH.md step 0b.** After the "Paste:" bullet (the three links), add:
+
+```
+- Then verify the brand: on the same Branding page tap **Verify Branding**. If the status says
+  **Ready to publish**, tap **Publish branding** within 7 days (after 7 days the check has to be
+  run again). If Google asks for a manual review instead, wait (usually 2–3 business days) and
+  answer any email from Google. Until the branding is published, Google's consent screen shows
+  your domain where the app name should be.
+- Worked when: Branding shows the branding as published (verified), and Google's consent screen
+  (start Connect Gmail on your domain, stop at Google's permissions screen, then go back) shows
+  "Squared Away" at the top instead of the domain.
+```
+
+Keep the existing "Worked when: Branding saves with no red warning …" line as the first check.
+
+**LAUNCH.md order list** (the bullets under "Two of them can start now; the rest wait for the
+merge"): change the second bullet to
+
+```
+- **After [step 1](#1-merge-the-launch-branch) (merge) and [step 5](#5-support-email-and-the-production-domain) (domain):**
+  0b (all of it, including Verify Branding and Publish branding), then 0d, then 0e (submit). 0d
+  can't start before 0b is finished: the video must show the app name on Google's screen.
+```
+
+**LAUNCH.md step 0d.** Add as the first bullet:
+
+```
+- Branding is published (0b): Google's consent screen shows Squared Away, not the domain. If it
+  shows the domain, stop and finish 0b.
+```
+
+**Assertions (`tests/unit/launch-doc.test.ts`):**
+
+```ts
+it("Check 28 P2: brand verification is in 0b, before the video", () => {
+  const s = sections0();
+  const step0b = s.slice(s.indexOf("**0b."), s.indexOf("**0c."));
+  expect(step0b).toContain("**Verify Branding**");
+  expect(step0b).toContain("**Publish branding**");
+  expect(step0b).toContain("within 7 days");
+  const step0d = s.slice(s.indexOf("**0d."), s.indexOf("**0e."));
+  expect(step0d).toContain("Branding is published (0b)");
+});
+```
