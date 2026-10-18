@@ -33,3 +33,18 @@ Proposed CLAUDE.md Decisions line:
   `CREATE INDEX IF NOT EXISTS` (drizzle runs migrations in one transaction, so no CONCURRENTLY);
   check table sizes first and pre-build big ones by hand with CONCURRENTLY. The reply-address
   expression lives once in `replyAddressExpr` (schema.ts) so the planner matches its index."
+
+## Step 2: Check 30 P3 — forms keep values they don't recognize
+
+- `SelectField` renders a stored value missing from its options as one extra selected option,
+  "Current: <value>", so saving posts it back instead of the browser's first option.
+- Server: `orStored` (`src/server/stored-value-rules.ts`) lets exactly the stored value through a
+  select's validation; any other unknown value is refused as before. Used for the business form's
+  trade and state (`businessProfileInputFor`) and the voice form's formality (`voiceEditInputFor`).
+  Extra trades (checkboxes, no box for an unknown value) keep stored unknown values on save
+  (`unknownStored`).
+
+**CLAUDE.md, add to Conventions (exact text):**
+"- Readers and forms keep values they don't recognize; new list values may arrive in the database
+  before the code that knows them. (`SelectField` shows them as \"Current: …\"; `orStored` accepts
+  the stored value back, nothing else.)"

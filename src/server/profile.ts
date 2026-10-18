@@ -2,7 +2,7 @@ import "server-only";
 import { eq } from "drizzle-orm";
 import { z } from "zod";
 import { LICENSE_FIELD_MAX, type Licenses } from "@/config/licenses";
-import { cleanExtraTrades, MAX_EXTRA_TRADES, TRADES } from "@/config/trades";
+import { cleanExtraTrades, MAX_EXTRA_TRADES, TRADES, type Trade } from "@/config/trades";
 import { US_STATE_CODES } from "@/config/us-states";
 import { db } from "@/db";
 import {
@@ -14,6 +14,7 @@ import {
   type VoiceProfile,
 } from "@/db/schema";
 import { normalizeTown } from "./service-area-rules";
+import { orStored, unknownStored } from "./stored-value-rules";
 
 /** Textareas: trim, cap, empty → null. */
 const longText = (max = 2000) =>
@@ -102,9 +103,20 @@ const licenseDate = z
   .refine((v) => v === "" || /^\d{4}-\d{2}-\d{2}$/.test(v), "Pick the date it runs out.")
   .optional();
 
+const tradeField = z.enum(TRADES, { message: "Pick your trade." });
+const stateField = z
+  .string()
+  .trim()
+  .toUpperCase()
+  .refine(
+    (v) => v === "" || (US_STATE_CODES as readonly string[]).includes(v),
+    "Pick your state from the list.",
+  )
+  .transform((v) => (v === "" ? null : v));
+
 export const businessProfileInput = z.object({
   businessName: z.string().trim().min(1, "What's the business called?").max(120),
-  trade: z.enum(TRADES, { message: "Pick your trade." }),
+  trade: tradeField,
   /**
    * Round 2 (TW A4): up to two more trades, as the form's ticked boxes joined by commas.
    * Left out entirely = leave them as they are.
@@ -155,16 +167,7 @@ export const businessProfileInput = z.object({
    * Check 38 P2: "Which state do you work in?" — two letters, '' = not set. Left out = leave it.
    * Massachusetts turns on the one-third deposit warning.
    */
-  state: z
-    .string()
-    .trim()
-    .toUpperCase()
-    .refine(
-      (v) => v === "" || (US_STATE_CODES as readonly string[]).includes(v),
-      "Pick your state from the list.",
-    )
-    .transform((v) => (v === "" ? null : v))
-    .optional(),
+  state: stateField.optional(),
   // Check 38 P6: "Licenses and registrations".
   hicNumber: licenseLine,
   hicExpiresOn: licenseDate,
@@ -189,6 +192,17 @@ export const businessProfileInput = z.object({
     .catch(undefined),
 });
 export type BusinessProfileInput = z.input<typeof businessProfileInput>;
+
+/**
+ * Check 30 P3: the form's schema for one shop. A trade or state stored by newer code (not in
+ * this code's lists) is accepted when posted back unchanged; any other unknown value is refused.
+ */
+export function businessProfileInputFor(stored: { trade?: string | null; state?: string | null }) {
+  return businessProfileInput.extend({
+    trade: orStored(tradeField, stored.trade),
+    state: orStored(stateField, stored.state).optional(),
+  });
+}
 
 export async function getBusinessProfile(
   workspaceId: string,
@@ -234,12 +248,29 @@ export async function saveBusinessProfile(
       )
     : undefined;
   const profile = { ...rest, ...(timeZone ? { timeZone } : {}), ...(licenses ? { licenses } : {}) };
+  // Check 30 P3: an extra trade stored by newer code has no box on this form, so it can't have
+  // been unticked: keep it.
+  const keptExtra = extraTrades
+    ? unknownStored(
+        (
+          await db()
+            .select({ extraTrades: workspaces.extraTrades })
+            .from(workspaces)
+            .where(eq(workspaces.id, workspaceId))
+        )[0]?.extraTrades,
+        TRADES,
+      )
+    : [];
   await db()
     .update(workspaces)
     .set({
       businessName,
       trade,
-      ...(extraTrades ? { extraTrades: cleanExtraTrades(extraTrades, trade) } : {}),
+      ...(extraTrades
+        ? {
+            extraTrades: [...keptExtra, ...cleanExtraTrades(extraTrades, trade)] as Trade[],
+          }
+        : {}),
     })
     .where(eq(workspaces.id, workspaceId));
   await db()
@@ -345,15 +376,21 @@ export async function getVoiceProfile(workspaceId: string): Promise<VoiceProfile
   return row;
 }
 
+const formalityField = z.enum(["casual", "neutral", "formal"]);
 export const voiceEditInput = z.object({
   greetingStyle: z.string().trim().min(1, "How do you usually open?").max(100),
   signoffStyle: z.string().trim().min(1, "How do you usually sign off?").max(100),
-  formality: z.enum(["casual", "neutral", "formal"]),
+  formality: formalityField,
   avgLengthWords: z.coerce.number().int().min(10).max(400),
   phrasesUsed: lines(20, 120),
   phrasesAvoided: lines(20, 120),
   summary: z.string().trim().max(600),
 });
+
+/** Check 30 P3: a formality stored by newer code is kept when posted back unchanged. */
+export function voiceEditInputFor(stored: { formality?: string | null }) {
+  return voiceEditInput.extend({ formality: orStored(formalityField, stored.formality) });
+}
 
 /** The owner corrected the learned voice. Weekly re-learning won't overwrite this. */
 export async function saveVoiceEdits(

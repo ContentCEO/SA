@@ -103,6 +103,13 @@ export function SelectField({
   /** Check 38 P2: an optional select's empty choice ("Not set"), which the owner can pick. */
   emptyLabel?: string;
 }) {
+  // Check 30 P3: a stored value this code's list doesn't have (newer code put it in the shared
+  // database) is shown as its own selected option, so saving the form keeps it. Without it the
+  // browser would pick the first option and save that instead.
+  const unknown =
+    typeof defaultValue === "string" &&
+    defaultValue !== "" &&
+    !options.some((o) => o.value === defaultValue);
   return (
     <label className={cn("flex flex-col gap-1.5", p.className)}>
       <span className="font-semibold">{p.label}</span>
@@ -123,6 +130,7 @@ export function SelectField({
             {o.label}
           </option>
         ))}
+        {unknown ? <option value={defaultValue ?? ""}>Current: {defaultValue}</option> : null}
       </select>
       <FieldError {...p} />
     </label>

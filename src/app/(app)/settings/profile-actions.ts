@@ -4,14 +4,16 @@ import { redirect } from "next/navigation";
 import { z } from "zod";
 import { enqueue, voiceLearnRequested } from "@/jobs/client";
 import {
-  businessProfileInput,
+  businessProfileInputFor,
   digestSettingsInput,
   followupSettingsInput,
   saveBusinessProfile,
   saveDigestSettings,
   saveFollowupSettings,
+  getBusinessProfile,
+  getVoiceProfile,
   saveVoiceEdits,
-  voiceEditInput,
+  voiceEditInputFor,
 } from "@/server/profile";
 import { AutopilotNotAllowedError, setAutopilot } from "@/server/autopilot";
 import { decideSuggestion } from "@/server/edit-learning";
@@ -39,7 +41,12 @@ export async function saveBusinessProfileAction(
       .getAll("extraTrades")
       .map((v) => String(v))
       .join(",");
-  const parsed = businessProfileInput.safeParse(raw);
+  // Check 30 P3: a trade or state stored by newer code is kept when posted back unchanged.
+  const stored = await getBusinessProfile(workspace.id);
+  const parsed = businessProfileInputFor({
+    trade: workspace.trade,
+    state: stored?.state,
+  }).safeParse(raw);
   if (!parsed.success)
     return {
       errors: z.flattenError(parsed.error).fieldErrors as Record<string, string[]>,
@@ -52,7 +59,9 @@ export async function saveBusinessProfileAction(
 export async function saveVoiceAction(_prev: FormState, formData: FormData): Promise<FormState> {
   const { workspace } = await requireOwner();
   const raw = values(formData);
-  const parsed = voiceEditInput.safeParse(raw);
+  const parsed = voiceEditInputFor({
+    formality: (await getVoiceProfile(workspace.id))?.formality,
+  }).safeParse(raw);
   if (!parsed.success)
     return {
       errors: z.flattenError(parsed.error).fieldErrors as Record<string, string[]>,
