@@ -63,6 +63,13 @@ Base: cd15c59. One commit per step. Nothing here needs wave 1 unless marked "nee
   `createDraftForThread`'s own check is unchanged. Needs-you cards show the reason under the tag
   line (font-semibold, one line), and keep "Why: …" inside.
 
+- **Open in Gmail and the customer (Check 10 P6):** `listInboxThreads` selects `gmailThreadId`
+  and `mailboxEmail`; the open card has a full-width "Open in Gmail" (`gmailThreadLink`, new tab,
+  rel noreferrer) and "From <name>" linking to `/customers/<key>`, where key is the opaque id of
+  the customer's newest non-side email (`notesForThreads`, the same key the sender sheets post;
+  `customerByKey` resolves any inbound id in the workspace). Not shown for lead websites / phone
+  services. No customer address in any URL or log.
+
 ## Integration notes
 
 - `src/app/(app)/quotes/page.tsx`, `quotes/actions.ts`, `src/server/quotes.ts`,

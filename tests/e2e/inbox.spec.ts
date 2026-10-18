@@ -91,7 +91,7 @@ test("'This one needs me' moves a thread into Needs me", async ({ page, context 
   await signInAs(context, owner);
 
   await page.goto("/inbox?c=quote_request");
-  await page.getByText("Priya", { exact: true }).click();
+  await page.locator("main li").filter({ hasText: "Priya" }).locator("summary").first().click();
   await expect(page.getByText("Work")).toBeVisible();
   await page.getByRole("button", { name: "This one needs me" }).click();
   // Wait for the save to land before moving on.
@@ -99,7 +99,7 @@ test("'This one needs me' moves a thread into Needs me", async ({ page, context 
 
   await page.goto("/inbox?c=needs_me");
   await expect(page.locator("main li")).toHaveCount(2);
-  await expect(page.getByText("Priya", { exact: true })).toBeVisible();
+  await expect(page.getByText("Priya", { exact: true }).first()).toBeVisible();
 });
 
 test("a failed inspection shows the permit card with what to fix", async ({ page, context }) => {
@@ -240,7 +240,7 @@ test("Check 10 P1: 'I called them' on an Inbox card turns it back to a normal ca
   await expect(items.first()).toContainText("Dana");
   await expect(items.first()).toContainText("Needs you");
 
-  await page.getByText("Dana", { exact: true }).click();
+  await page.locator("main li").filter({ hasText: "Dana" }).locator("summary").first().click();
   await items.first().getByRole("button", { name: "I called them" }).click();
   await page.getByRole("button", { name: "Yes, I called them" }).click();
   await expect(page).toHaveURL(/\/inbox\?done=called/);
@@ -366,14 +366,40 @@ test("Check 10 P4 + P5: Draft ready goes to the draft; the reason shows on a clo
 
   // P4: Priya's card says a draft is ready and links to it.
   await expect(row("Priya")).toContainText("Waiting on you · Draft ready");
-  await page.getByText("Priya", { exact: true }).click();
+  await page.locator("main li").filter({ hasText: "Priya" }).locator("summary").first().click();
   await expect(row("Priya").getByRole("button", { name: "Draft a reply" })).toHaveCount(0);
   const see = row("Priya").getByRole("link", { name: "See the draft" });
   await expect(see).toHaveAttribute("href", `/queue?t=${priya!.id}#t-${priya!.id}`);
   // Marco has no draft: still offered.
-  await page.getByText("Marco", { exact: true }).click();
+  await page.locator("main li").filter({ hasText: "Marco" }).locator("summary").first().click();
   await expect(row("Marco").getByRole("button", { name: "Draft a reply" })).toBeVisible();
   await see.click();
   await expect(page).toHaveURL(/\/queue/);
   await expect(page.locator(`#t-${priya!.id}`)).toBeVisible();
+});
+
+test("Check 10 P6: an open Inbox card opens Gmail and the customer's page", async ({
+  page,
+  context,
+}) => {
+  const owner = await seedOwner({ mailbox: true, backfilled: true });
+  await seedThreads(owner.mailboxId!);
+  await signInAs(context, owner);
+  await page.goto("/inbox");
+  const marco = page.locator("main li").filter({ hasText: "Marco" });
+  await page.locator("main li").filter({ hasText: "Marco" }).locator("summary").first().click();
+  const gmail = marco.getByRole("link", { name: "Open in Gmail" });
+  await expect(gmail).toHaveAttribute(
+    "href",
+    `https://mail.google.com/mail/?authuser=${encodeURIComponent(owner.email)}#all/a-${owner.mailboxId}`,
+  );
+  await expect(gmail).toHaveAttribute("target", "_blank");
+  const name = marco.getByRole("link", { name: "Marco" });
+  const href = await name.getAttribute("href");
+  expect(href).toMatch(/^\/customers\/[0-9a-f-]{36}$/);
+  expect(href).not.toContain("@");
+  await name.click();
+  await expect(page).toHaveURL(/\/customers\/[0-9a-f-]{36}$/);
+  await expect(page.locator("main")).toContainText("Marco");
+  await expect(page.locator("main")).toContainText("move rough-in to Thursday");
 });

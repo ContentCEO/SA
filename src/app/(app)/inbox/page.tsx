@@ -5,6 +5,7 @@ import { PermitCard } from "@/components/app/permit-card";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { CATEGORIES } from "@/ai/prompts/classify.v4";
 import { categoryLabels, categoryTag, isCategory } from "@/config/categories";
+import { gmailThreadLink } from "@/lib/gmail-link";
 import { relativeTime } from "@/lib/relative-time";
 import { cn } from "@/lib/utils";
 import { z } from "zod";
@@ -226,6 +227,19 @@ export default async function InboxPage(props: PageProps<"/inbox">) {
             </span>
           </summary>
           <div className="flex flex-col gap-3 border-t border-border px-4 pt-3 pb-4">
+            {/* Check 10 P6: the customer's page, by the opaque key of their newest email (never
+                an address in a URL). Lead websites and phone services aren't customers. */}
+            {customerOf.get(row.id)?.address && !row.leadChannel ? (
+              <p className="text-sm">
+                From{" "}
+                <Link
+                  href={`/customers/${customerOf.get(row.id)!.key}`}
+                  className="inline-flex min-h-tap items-center font-semibold underline underline-offset-4"
+                >
+                  {row.senderName || row.senderAddress || "this customer"}
+                </Link>
+              </p>
+            ) : null}
             <NoteLine note={customerOf.get(row.id)?.note} editKey={customerOf.get(row.id)?.key} />
             {row.subject ? <p className="text-sm">Subject: {row.subject}</p> : null}
             {row.needsOwner && row.needsOwnerReason ? (
@@ -276,6 +290,14 @@ export default async function InboxPage(props: PageProps<"/inbox">) {
               // "Say thanks" lives on Money's paid rows only (2026-10-16).
               <OfferButtons threadId={row.id} offers={inboxOffers(offers.get(row.id))} />
             ) : null}
+            <a
+              href={gmailThreadLink(row)}
+              target="_blank"
+              rel="noreferrer"
+              className={cn(buttonVariants({ variant: "outline" }), "w-full")}
+            >
+              Open in Gmail
+            </a>
             {!readOnly ? (
               <ResortSheet threadId={row.id} current={row.category} back="inbox" />
             ) : null}

@@ -15,6 +15,9 @@ export type InboxFilter =
 
 export type InboxRow = {
   id: string;
+  /** Check 10 P6: for "Open in Gmail" (the owner's own mailbox, as on Queue and Quotes). */
+  gmailThreadId: string;
+  mailboxEmail: string;
   subject: string | null;
   summary: string | null;
   category: string | null;
@@ -98,6 +101,8 @@ export async function listInboxThreads(
   const rows = await db()
     .select({
       id: threads.id,
+      gmailThreadId: threads.gmailThreadId,
+      mailboxEmail: mailboxes.email,
       subject: threads.subject,
       summary: threads.summary,
       category: threads.category,
