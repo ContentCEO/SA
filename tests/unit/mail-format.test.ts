@@ -4,9 +4,10 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { setModelTransportForTests } from "@/ai/client";
 import type { ModelDraft } from "@/ai/prompts/draft.v5";
 import type { Database } from "@/db";
-import { businessProfiles, drafts, messages, threads } from "@/db/schema";
+import { businessProfiles, drafts, mailboxes, messages, threads } from "@/db/schema";
 import { ensureUserAndWorkspace } from "@/server/accounts";
-import { createDraftForThread, saveDraftEdit } from "@/server/drafts";
+import { createDraftForThread, listQueue, saveDraftEdit } from "@/server/drafts";
+import { refreshSendAs } from "@/server/from-line";
 import { saveConnectedMailbox } from "@/server/mailboxes";
 import { createTestDb } from "../support/db";
 import { fakeTransport } from "../support/fake-model";
@@ -129,5 +130,49 @@ describe("Check 43 P3: the From line carries the owner's name", () => {
     const edited = writer.drafts.get(draft.gmailDraftId!)!.raw;
     expect(header(edited, "From")).toBe('"Mike Rossi" <mike@rossi.com>');
     expect(header(edited, "In-Reply-To")).toBe("<gt1-m1@mail.x.com>");
+  });
+});
+
+describe("Check 42 P4: reply from the address the customer wrote to", () => {
+  const mailbox = async () =>
+    (await database.select().from(mailboxes).where(eq(mailboxes.id, mailboxId)))[0]!;
+  const reads = (list: string[] | Error) => () => ({
+    listSendAs: async () => {
+      if (list instanceof Error) throw list;
+      return list;
+    },
+  });
+
+  it("answers from office@ when the customer wrote to office@, and keeps it on rewrites", async () => {
+    expect(
+      await refreshSendAs(await mailbox(), reads(["mike@rossi.com", "office@rossi.com"])),
+    ).toBe("ok");
+    const t = await seedThread({ to: ["office@rossi.com"] });
+    const { draft, raw } = await draftFor(t.id);
+    expect(header(raw, "From")).toBe('"Michael Rossi" <office@rossi.com>');
+    expect(draft.fromAddress).toBe("office@rossi.com");
+    expect(await saveDraftEdit(workspaceId, draft.id, "New text", deps())).toBe("saved");
+    expect(header(writer.drafts.get(draft.gmailDraftId!)!.raw, "From")).toBe(
+      '"Michael Rossi" <office@rossi.com>',
+    );
+    const q = await listQueue(workspaceId, NOW);
+    expect(q.drafts[0]!.fromAddress).toBe("office@rossi.com");
+  });
+
+  it("changes nothing for a customer who wrote to the connected address", async () => {
+    await refreshSendAs(await mailbox(), reads(["mike@rossi.com", "office@rossi.com"]));
+    const t = await seedThread({ to: ["mike@rossi.com"], cc: ["office@rossi.com"] });
+    const { draft, raw } = await draftFor(t.id);
+    expect(header(raw, "From")).toBe('"Michael Rossi" <mike@rossi.com>');
+    expect(draft.fromAddress).toBeNull();
+  });
+
+  it("a failed send-as read keeps From as the connected address and drafting works", async () => {
+    expect(await refreshSendAs(await mailbox(), reads(new Error("boom")))).toBe("failed");
+    expect((await mailbox()).sendAs).toEqual([]);
+    const t = await seedThread({ to: ["office@rossi.com"] });
+    const { draft, raw } = await draftFor(t.id);
+    expect(header(raw, "From")).toBe('"Michael Rossi" <mike@rossi.com>');
+    expect(draft.fromAddress).toBeNull();
   });
 });

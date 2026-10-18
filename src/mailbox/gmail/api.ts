@@ -282,6 +282,24 @@ export function createGmailReader(opts: GmailReaderOptions): MailboxReader & Mai
       return { messageId: r.id };
     },
 
+    async listSendAs() {
+      // Check 42 P4: users.settings.sendAs.list accepts gmail.readonly (no new consent). The
+      // field mask keeps signatures and SMTP settings out: addresses and status only.
+      const r = await call<{
+        sendAs?: { sendAsEmail?: string; isPrimary?: boolean; verificationStatus?: string }[];
+      }>(
+        `/settings/sendAs?fields=${encodeURIComponent("sendAs(sendAsEmail,isPrimary,verificationStatus)")}`,
+      );
+      return [
+        ...new Set(
+          (r?.sendAs ?? [])
+            .filter((a) => a.isPrimary || a.verificationStatus === "accepted")
+            .map((a) => (a.sendAsEmail ?? "").trim().toLowerCase())
+            .filter((a) => /^[^\s@<>",;]+@[^\s@<>",;]+$/.test(a)),
+        ),
+      ];
+    },
+
     async watch(topicName) {
       const r = await call<{ historyId: string; expiration: string }>("/watch", {
         method: "POST",

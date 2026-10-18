@@ -372,3 +372,26 @@ describe("message parsing", () => {
     ]);
   });
 });
+
+describe("Check 42 P4: send-as addresses", () => {
+  it("keeps the primary and verified aliases, addresses only, lowercased", async () => {
+    const f = vi
+      .fn()
+      .mockResolvedValueOnce(token())
+      .mockResolvedValueOnce(
+        json({
+          sendAs: [
+            { sendAsEmail: "Mike@Rossi.com", isPrimary: true },
+            { sendAsEmail: "office@rossi.com", verificationStatus: "accepted" },
+            { sendAsEmail: "info@rossi.com", verificationStatus: "pending" },
+            { sendAsEmail: "bad\r\nBcc: x@y.com", verificationStatus: "accepted" },
+          ],
+        }),
+      );
+    expect(await reader(f).r.listSendAs!()).toEqual(["mike@rossi.com", "office@rossi.com"]);
+    const url = String(f.mock.calls[1]![0]);
+    expect(url).toContain("/settings/sendAs?fields=");
+    // The mask keeps signatures and SMTP settings out of the response.
+    expect(decodeURIComponent(url)).toContain("sendAs(sendAsEmail,isPrimary,verificationStatus)");
+  });
+});

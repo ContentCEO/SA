@@ -24,3 +24,25 @@ export function pickSenderName(p: {
   }
   return null;
 }
+
+/**
+ * Check 42 P4: the address a reply goes out from. The first of Gmail's send-as addresses that
+ * the customer's newest email was sent to (To, then Cc), so a customer who wrote to office@
+ * hears back from office@. Anything else — no aliases read yet, an alias Gmail hasn't verified,
+ * the customer wrote to the connected address — is the connected address.
+ */
+export function pickFromAddress(p: {
+  mailboxEmail: string;
+  sendAs: readonly string[] | null | undefined;
+  to: readonly string[] | null | undefined;
+  cc: readonly string[] | null | undefined;
+}): string {
+  const own = p.mailboxEmail.trim().toLowerCase();
+  const allowed = new Set((p.sendAs ?? []).map((a) => a.trim().toLowerCase()));
+  for (const a of [...(p.to ?? []), ...(p.cc ?? [])]) {
+    const addr = a.trim().toLowerCase();
+    if (addr === own) return p.mailboxEmail;
+    if (allowed.has(addr) && !/[\r\n]/.test(addr)) return addr;
+  }
+  return p.mailboxEmail;
+}

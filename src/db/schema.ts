@@ -198,6 +198,15 @@ export const mailboxes = pgTable(
     accessAlertsSent: integer("access_alerts_sent").notNull().default(0),
     /** Last sync problem as a short code (access_lost / rate_limited / sync_failed) — never text. */
     lastSyncErrorCode: text("last_sync_error_code"),
+    /**
+     * Check 42 P4: Gmail's "send mail as" addresses (office@, info@), lowercased, verified or the
+     * primary only. Addresses only, refreshed at connect and daily; never logged. Empty = not read
+     * yet (replies go from `email`).
+     */
+    sendAs: text("send_as")
+      .array()
+      .notNull()
+      .default(sql`'{}'::text[]`),
     lastSyncErrorAt: timestamp("last_sync_error_at", { withTimezone: true }),
     /**
      * Davi, 2026-10-16: the plan covers fewer Gmail addresses than are connected, so this one is
@@ -455,6 +464,11 @@ export const drafts = pgTable(
     gmailDraftId: text("gmail_draft_id"),
     gmailMessageId: text("gmail_message_id"),
     toAddress: text("to_address").notNull(),
+    /**
+     * Check 42 P4: the address this reply goes out from (a send-as alias the customer wrote to),
+     * kept so every rewrite and the send use the same one. Null (older drafts) = the mailbox's.
+     */
+    fromAddress: text("from_address"),
     subject: text("subject").notNull(),
     /** Current text (after any owner edits). Purged with other bodies after the retention window. */
     body: text("body"),

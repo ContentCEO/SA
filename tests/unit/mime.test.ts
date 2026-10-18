@@ -7,7 +7,7 @@ import {
   sameText,
   toGmailRaw,
 } from "@/mailbox/mime";
-import { pickSenderName } from "@/server/from-line-rules";
+import { pickFromAddress, pickSenderName } from "@/server/from-line-rules";
 import { FakeWriter } from "../support/fake-writer";
 
 describe("reply MIME", () => {
@@ -121,5 +121,39 @@ describe("Check 43 P3: the owner's name in the From line", () => {
     expect(pickSenderName({ fromName: null, userName: null, businessName: "Rossi" })).toBe("Rossi");
     expect(pickSenderName({})).toBeNull();
     expect(pickSenderName({ fromName: "x".repeat(200) })).toHaveLength(80);
+  });
+});
+
+describe("Check 42 P4: reply from the address the customer wrote to", () => {
+  const base = { mailboxEmail: "mike@rossi.com", sendAs: ["mike@rossi.com", "office@rossi.com"] };
+  it("picks the alias in To, else the connected address", () => {
+    expect(pickFromAddress({ ...base, to: ["office@rossi.com"], cc: [] })).toBe("office@rossi.com");
+    expect(pickFromAddress({ ...base, to: ["Office@Rossi.com"], cc: [] })).toBe("office@rossi.com");
+    expect(pickFromAddress({ ...base, to: ["mike@rossi.com"], cc: [] })).toBe("mike@rossi.com");
+    expect(pickFromAddress({ ...base, to: ["someone@else.com"], cc: [] })).toBe("mike@rossi.com");
+  });
+  it("never uses an alias Gmail hasn't verified (not in the list)", () => {
+    expect(pickFromAddress({ ...base, to: ["info@rossi.com"], cc: [] })).toBe("mike@rossi.com");
+    expect(pickFromAddress({ ...base, sendAs: [], to: ["office@rossi.com"], cc: [] })).toBe(
+      "mike@rossi.com",
+    );
+  });
+  it("finds the alias in Cc", () => {
+    expect(pickFromAddress({ ...base, to: ["dana@x.com"], cc: ["office@rossi.com"] })).toBe(
+      "office@rossi.com",
+    );
+  });
+  it("puts the alias in a clean From header", () => {
+    const mime = buildReplyMime({
+      from: "office@rossi.com",
+      fromName: "Rossi Plumbing",
+      to: "dana@x.com",
+      subject: "Re: Hi",
+      body: "x",
+    });
+    expect(mime).toContain('From: "Rossi Plumbing" <office@rossi.com>\r\n');
+    expect(formatAddress(null, "office@rossi.com\r\nBcc: x@y.com")).toBe(
+      "office@rossi.com Bcc: x@y.com",
+    );
   });
 });

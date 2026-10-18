@@ -76,6 +76,8 @@ export const GMAIL_METHOD_SCOPES: Readonly<Record<string, readonly string[]>> = 
     "gmail.drafts.send": s(addonsCompose, "gmail.compose", "gmail.modify"),
     "gmail.messages.send": s(addonsCompose, "gmail.compose", "gmail.modify", "gmail.send"),
     "gmail.watch": s("gmail.metadata", "gmail.modify", "gmail.readonly"),
+    // Check 42 P4: users.settings.sendAs.list (gmail.readonly is enough: no new consent).
+    "gmail.settings.sendAs.list": s("gmail.modify", "gmail.readonly", "gmail.settings.basic"),
   };
 })();
 const GMAIL_PREFIX = "/google/gmail/v1/users/me";
@@ -651,6 +653,12 @@ export function createFakes() {
       addMessage(s, sent);
       return sendJson(res, 200, { ...ref(sent), labelIds: sent.labelIds });
     }
+    if (routeName === "gmail.settings.sendAs.list") {
+      at();
+      return sendJson(res, 200, {
+        sendAs: [{ sendAsEmail: s.ownerEmail, isPrimary: true, verificationStatus: "accepted" }],
+      });
+    }
     if (routeName === "gmail.watch") {
       at();
       return sendJson(res, 200, {
@@ -779,6 +787,8 @@ function gmailRouteName(method: string, seg: string[]): string {
   if (method === "PUT" && a === "drafts" && b && !c) return "gmail.drafts.update";
   if (method === "DELETE" && a === "drafts" && b && !c) return "gmail.drafts.delete";
   if (method === "POST" && a === "watch" && !b) return "gmail.watch";
+  if (method === "GET" && a === "settings" && b === "sendAs" && !c)
+    return "gmail.settings.sendAs.list";
   return "unknown";
 }
 

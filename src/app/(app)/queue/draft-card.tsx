@@ -40,6 +40,8 @@ export type DraftCardProps = {
   toFromReplyTo?: boolean;
   /** Check 43 P3: the name the customer sees in the From line ("Mike Rossi"). */
   fromName?: string | null;
+  /** Check 42 P4: the send-as alias it goes out from, only when not the connected address. */
+  fromAddress?: string | null;
   tag: string;
   /** Round 2 (FW E9): when the customer wrote ("Wrote 9 days ago"), on every card. */
   wrote?: string | null;
@@ -115,17 +117,20 @@ function ToLine({
   address,
   fromReplyTo,
   fromName,
+  fromAddress,
 }: {
   address: string;
   fromReplyTo?: boolean;
   fromName?: string | null;
+  fromAddress?: string | null;
 }) {
+  const from = [fromName, fromAddress].filter(Boolean).join(" · ");
   return (
     <p className="text-sm break-all">
       {/* Check 43 P3: what the customer will see as the sender. */}
-      {fromName ? (
+      {from ? (
         <span className="block">
-          <span className="font-semibold">From:</span> {fromName}
+          <span className="font-semibold">From:</span> {from}
         </span>
       ) : null}
       <span className="font-semibold">To:</span> {address}
@@ -266,7 +271,12 @@ export function DraftCard(p: DraftCardProps) {
           <span className="text-lg font-black">{p.customer}</span>
           <ConfidenceTag label={p.label} />
         </div>
-        <ToLine address={p.toAddress} fromReplyTo={p.toFromReplyTo} fromName={p.fromName} />
+        <ToLine
+          address={p.toAddress}
+          fromReplyTo={p.toFromReplyTo}
+          fromName={p.fromName}
+          fromAddress={p.fromAddress}
+        />
         <span className="text-sm font-semibold">{p.tag}</span>
         {p.wrote ? <span className="text-sm">{p.wrote}</span> : null}
         {(p.leadLines ?? []).map((line) => (
@@ -323,7 +333,12 @@ export function DraftCard(p: DraftCardProps) {
           seenHash={p.seenHash}
           toAddress={p.toAddress}
           toLine={
-            <ToLine address={p.toAddress} fromReplyTo={p.toFromReplyTo} fromName={p.fromName} />
+            <ToLine
+              address={p.toAddress}
+              fromReplyTo={p.toFromReplyTo}
+              fromName={p.fromName}
+              fromAddress={p.fromAddress}
+            />
           }
           canSend={p.canSend}
           confirmTiming={!!p.timingNote}

@@ -1,4 +1,5 @@
 import { cron, NonRetriableError, RetryAfterError } from "inngest";
+import { refreshAllSendAs, refreshSendAsFor } from "@/server/from-line";
 import { MailboxRateLimitError } from "@/mailbox/connector";
 import { ModelUnavailableError } from "@/ai/client";
 import {
@@ -123,6 +124,9 @@ export const backfillMailbox = inngest.createFunction(
   },
   async ({ event, step }) => {
     const { mailboxId } = event.data;
+    // Check 42 P4: which addresses replies may go out from — on every connect and reconnect,
+    // before the backfill's own checks. Best effort: it never fails the job.
+    await step.run("send-as", () => refreshSendAsFor(mailboxId));
     const start = await step.run("begin", () => politely(() => beginBackfill(mailboxId)));
     if (start.status !== "ok") return start;
 
@@ -577,10 +581,16 @@ export const foundMoneyDrafts = inngest.createFunction(
   },
 );
 
-/** Daily: renew Gmail push watches before they silently expire. */
+/**
+ * Daily: renew Gmail push watches before they silently expire, and re-read each mailbox's
+ * "send mail as" addresses (Check 42 P4).
+ */
 export const renewGmailWatches = inngest.createFunction(
   { id: "renew-gmail-watches", triggers: [cron("17 6 * * *")] },
-  async ({ step }) => ({ renewed: await step.run("renew", () => renewWatches()) }),
+  async ({ step }) => ({
+    renewed: await step.run("renew", () => renewWatches()),
+    sendAs: await step.run("send-as", () => refreshAllSendAs()),
+  }),
 );
 
 /** Daily: purge email text past the retention window (and stale rate-limit windows). */

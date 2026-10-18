@@ -112,6 +112,7 @@ import { staleTiming, type StaleTiming } from "./draft-timing";
 import { workspaceTimeZone } from "./snooze";
 import { buildReplyMime, replySubject, sameText, toGmailRaw } from "@/mailbox/mime";
 import { senderNameFor } from "./from-line";
+import { pickFromAddress } from "./from-line-rules";
 import {
   canSend,
   effectiveStatus,
@@ -1236,6 +1237,13 @@ export async function createDraftForThread(
     : scored.confidence;
 
   const subject = replySubject(last.subject ?? thread.subject);
+  // Check 42 P4: answer from the address the customer wrote to (a verified send-as alias).
+  const fromAddress = pickFromAddress({
+    mailboxEmail: mailbox.email,
+    sendAs: mailbox.sendAs,
+    to: customer.toAddresses,
+    cc: customer.ccAddresses,
+  });
   const writer = (opts.writerFor ?? defaultWriter)(mailbox);
 
   let created: { draftId: string; messageId: string };
@@ -1244,7 +1252,7 @@ export async function createDraftForThread(
       threadId: thread.gmailThreadId,
       raw: toGmailRaw(
         buildReplyMime({
-          from: mailbox.email,
+          from: fromAddress,
           fromName: await senderNameFor(workspace.id),
           to,
           subject,
@@ -1275,6 +1283,8 @@ export async function createDraftForThread(
         gmailDraftId: created.draftId,
         gmailMessageId: created.messageId,
         toAddress: to,
+        // Null when it's the connected address, as on every draft before Check 42 P4.
+        fromAddress: fromAddress === mailbox.email ? null : fromAddress,
         subject,
         body,
         originalBody: body,
@@ -1409,7 +1419,8 @@ export function mimeFor(
 ) {
   return toGmailRaw(
     buildReplyMime({
-      from: mailbox.email,
+      // Check 42 P4: the same address the draft was written from.
+      from: d.fromAddress ?? mailbox.email,
       fromName,
       to: d.toAddress,
       subject: d.subject,
@@ -3067,6 +3078,8 @@ export type QueueItem = {
   customerAddress: string | null;
   /** The address this draft goes to (H7: shown on every card). Null on needs-you items. */
   toAddress: string | null;
+  /** Check 42 P4: the send-as alias this reply goes out from; null = the connected address. */
+  fromAddress: string | null;
   /** The customer's email gave a Reply-To (a website form): the reply goes there, not to From. */
   replyRedirected: boolean;
   category: string | null;
@@ -3413,6 +3426,7 @@ export async function listQueue(
           customerName: who.get(t.id)?.name ?? null,
           customerAddress: who.get(t.id)?.address ?? null,
           toAddress: null,
+          fromAddress: null,
           replyRedirected: who.get(t.id)?.redirected ?? false,
           category: t.category,
           summary: t.summary,
@@ -3454,6 +3468,7 @@ export async function listQueue(
           customerName: who.get(thread.id)?.name ?? null,
           customerAddress: who.get(thread.id)?.address ?? draft.toAddress,
           toAddress: draft.toAddress,
+          fromAddress: draft.fromAddress,
           replyRedirected: who.get(thread.id)?.redirected ?? false,
           category: thread.category,
           summary: thread.summary,

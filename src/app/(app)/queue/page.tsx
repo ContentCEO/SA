@@ -420,6 +420,11 @@ export default async function QueuePage(props: PageProps<"/queue">) {
               customer={who(i)}
               toAddress={i.toAddress ?? ""}
               fromName={fromName}
+              fromAddress={
+                i.fromAddress && i.fromAddress !== i.mailboxEmail.toLowerCase()
+                  ? i.fromAddress
+                  : null
+              }
               toFromReplyTo={i.replyRedirected && i.toAddress === i.customerAddress}
               tag={`${i.backFromSnooze ? "Back from snooze · " : ""}${tag(i)}`}
               wrote={wroteLine(i.customerWroteAt, now)}

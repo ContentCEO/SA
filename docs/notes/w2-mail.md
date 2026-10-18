@@ -11,9 +11,28 @@
     (quotes and backslashes escaped), anything else → RFC 2047 word. Every rewrite of a stored
     draft goes through `draftRaw()` (drafts.ts), so an edit, a revise, a send with edits and the
     Reply-To backfill all carry the current name. The card shows "From: Mike Rossi" above To.
+  - **Send-as (Check 42 P4):** `listSendAs()` (gmail.readonly, field mask: address + status
+    only) → `mailboxes.send_as` (verified aliases and the primary, lowercased, max 50), read
+    in the backfill job's first step (every connect and reconnect) and daily in
+    `renew-gmail-watches` (`refreshAllSendAs`). Best effort: a failure keeps the stored list and
+    is logged by error name only. `pickFromAddress` (from-line-rules.ts): the first send-as
+    address in the customer's newest email's To, then Cc; else the connected address. Stored on
+    `drafts.from_address` (null = connected address), used by every rewrite (`mimeFor`). The
+    card says "From: Name · office@…" only when it differs. Practice sends stay from the
+    connected address (they go to the owner).
+  - Known gaps: `workspaceMailboxEmails` (the "self" list for Reply-To picking and
+    `answeredSince`'s "only to yourself" rule) doesn't include send-as aliases.
+
+## Privacy policy (What we store)
+
+- "Your Gmail "send mail as" addresses (like office@ or info@ on your account), so a reply goes
+  out from the address your customer wrote to. Read with the Gmail access you already gave; we
+  don't read their settings or signatures."
 
 ## Davi to-dos
 
+- Check 42 P4 is not verified live: on an account with a verified "send mail as" alias, have a
+  customer address write to the alias and check the reply goes out from it.
 - Check 43 P3 is not verified live: send one reply from the preview to a second address and
   look at the From line in Gmail web, Gmail on a phone and Apple Mail.
 
