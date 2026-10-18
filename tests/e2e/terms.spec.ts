@@ -132,7 +132,7 @@ test("an account that hasn't agreed is held on /welcome/terms until it does", as
   // The button without the box: refused on the server, nothing recorded.
   const agreeButton = page.getByRole("button", { name: "Agree and continue" });
   await atLeast44High(agreeButton);
-  await atLeast44High(page.getByRole("button", { name: "Sign out" }));
+  await atLeast44High(page.getByRole("button", { name: "Sign out", exact: true }));
   await atLeast44High(page.locator("label").filter({ has: agreeBox(page) }));
   await agreeButton.click();
   await expect(errorLine(page)).toHaveText(AGREE_REQUIRED_MESSAGE);
@@ -177,7 +177,7 @@ test("someone who doesn't agree can sign out from the terms screen", async ({ pa
   await signInAs(context, owner, { agreedToTerms: false });
   await page.goto("/queue");
   await expect(page).toHaveURL(/\/welcome\/terms/);
-  await page.getByRole("button", { name: "Sign out" }).click();
+  await page.getByRole("button", { name: "Sign out", exact: true }).click();
   await expect(page).toHaveURL(/\/$/);
   await page.goto("/queue");
   await expect(page).toHaveURL(/\/signin$/);

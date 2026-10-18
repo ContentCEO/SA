@@ -30,7 +30,7 @@ test("signed in, / goes to the queue; after Sign out / shows the homepage again"
   await page.goto("/");
   await expect(page).toHaveURL(/\/queue/);
   await page.goto("/settings/account");
-  await page.getByRole("button", { name: "Sign out" }).click();
+  await page.getByRole("button", { name: "Sign out", exact: true }).click();
   await expect(page).toHaveURL(/\/$/);
   await expect(page.getByRole("heading", { level: 1 })).toHaveText(heading);
 });
