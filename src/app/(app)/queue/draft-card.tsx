@@ -2,7 +2,9 @@
 
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useFormStatus } from "react-dom";
+import Link from "next/link";
 import { Button } from "@/components/ui/button";
+import { SIGNATURE_FIELD_HREF } from "@/server/from-line-rules";
 import { fillGap, findGaps } from "@/ai/gaps";
 import type { ConfidenceLabel } from "@/config/drafting";
 import { BodyWithGaps, ConfidenceTag, PastPrices, WhyThis, type PastPrice } from "./draft-parts";
@@ -42,6 +44,8 @@ export type DraftCardProps = {
   fromName?: string | null;
   /** Check 42 P4: the send-as alias it goes out from, only when not the connected address. */
   fromAddress?: string | null;
+  /** Check 43 P4: "No signature…" under the reply (the queue's first card, signature empty). */
+  noSignatureLine?: string | null;
   tag: string;
   /** Round 2 (FW E9): when the customer wrote ("Wrote 9 days ago"), on every card. */
   wrote?: string | null;
@@ -367,6 +371,17 @@ export function DraftCard(p: DraftCardProps) {
               {expanded ? "Show less" : "Show full draft"}
             </button>
           </div>
+          {p.noSignatureLine ? (
+            <p className="flex flex-wrap items-center gap-x-2 text-sm text-muted-foreground">
+              <span>{p.noSignatureLine}</span>
+              <Link
+                href={SIGNATURE_FIELD_HREF}
+                className="inline-flex min-h-tap items-center font-semibold text-foreground underline underline-offset-4"
+              >
+                Add a signature
+              </Link>
+            </p>
+          ) : null}
 
           {pastPrices.length ? (
             <PastPrices

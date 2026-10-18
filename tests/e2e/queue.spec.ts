@@ -39,6 +39,14 @@ test("queue: needs-you first, then drafts; sending is off until setup, and it sa
   // The Send button is replaced by an explanation, not hidden.
   await expect(card.getByRole("button", { name: "Send reply" })).toHaveCount(0);
   await expect(card.getByRole("note")).toContainText("Sending isn't on yet");
+  // Check 43 P3: who the customer sees as the sender, above To.
+  await expect(card).toContainText("From:");
+  // Check 43 P4: no signature saved → one line under the first draft, linking to the field.
+  await expect(card).toContainText("No signature. Customers won't see your phone number.");
+  await expect(card.getByRole("link", { name: "Add a signature" })).toHaveAttribute(
+    "href",
+    "/settings/profile#signature",
+  );
 
   await card.getByRole("button", { name: "Show full draft" }).click();
   await expect(card).toContainText("how old is the current panel?");
@@ -74,6 +82,26 @@ test("queue: needs-you first, then drafts; sending is off until setup, and it sa
     () => document.documentElement.scrollWidth > document.documentElement.clientWidth,
   );
   expect(overflow).toBe(false);
+});
+
+test("Check 43 P4: an owner with a signature sees no 'No signature' line", async ({
+  page,
+  context,
+}) => {
+  const owner = await seedOwner({ mailbox: true, backfilled: true });
+  await seedQueue(owner.mailboxId!);
+  await testDb
+    .insert(schema.businessProfiles)
+    .values({ workspaceId: owner.workspaceId, signature: "Davi\n978-555-0142" })
+    .onConflictDoUpdate({
+      target: schema.businessProfiles.workspaceId,
+      set: { signature: "Davi\n978-555-0142" },
+    });
+  await signInAs(context, owner);
+  await page.goto("/queue");
+  const card = page.getByRole("article", { name: "Draft reply to Priya" });
+  await expect(card).toContainText("Asked for the address and panel age.");
+  await expect(page.getByText("No signature.")).toHaveCount(0);
 });
 
 test("hitting the send endpoint directly before setup gets a 403", async ({

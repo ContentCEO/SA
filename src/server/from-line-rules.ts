@@ -46,3 +46,17 @@ export function pickFromAddress(p: {
   }
   return p.mailboxEmail;
 }
+
+/** Check 43 P4: the one muted line under the queue's first draft while there's no signature. */
+export const NO_SIGNATURE_LINE = "No signature. Customers won't see your phone number.";
+
+/**
+ * Check 43 P4: Gmail's own signature never reaches replies written through the API, so with the
+ * app's signature box empty the customer gets no phone number. Null once anything is typed.
+ */
+export function noSignatureLine(signature: string | null | undefined): string | null {
+  return (signature ?? "").trim() ? null : NO_SIGNATURE_LINE;
+}
+
+/** Check 43 P4: where "Add a signature" goes (the field's anchor in Settings → Your business). */
+export const SIGNATURE_FIELD_HREF = "/settings/profile#signature";

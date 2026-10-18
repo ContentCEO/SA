@@ -20,6 +20,11 @@
     `drafts.from_address` (null = connected address), used by every rewrite (`mimeFor`). The
     card says "From: Name · office@…" only when it differs. Practice sends stay from the
     connected address (they go to the owner).
+  - **Signature (Check 43 P4):** the form says Gmail's own signature isn't added (Google adds it
+    only in Gmail's web app). With `business_profile.signature` empty, the queue's first draft
+    card shows "No signature. Customers won't see your phone number." + "Add a signature"
+    (`/settings/profile#signature`). Read live from the profile, no table; shown on every visit
+    (not once a day: no table to remember it). "Show full draft" already removes the clamp.
   - Known gaps: `workspaceMailboxEmails` (the "self" list for Reply-To picking and
     `answeredSince`'s "only to yourself" rule) doesn't include send-as aliases.
 

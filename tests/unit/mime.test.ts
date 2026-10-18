@@ -7,7 +7,12 @@ import {
   sameText,
   toGmailRaw,
 } from "@/mailbox/mime";
-import { pickFromAddress, pickSenderName } from "@/server/from-line-rules";
+import {
+  NO_SIGNATURE_LINE,
+  noSignatureLine,
+  pickFromAddress,
+  pickSenderName,
+} from "@/server/from-line-rules";
 import { FakeWriter } from "../support/fake-writer";
 
 describe("reply MIME", () => {
@@ -155,5 +160,13 @@ describe("Check 42 P4: reply from the address the customer wrote to", () => {
     expect(formatAddress(null, "office@rossi.com\r\nBcc: x@y.com")).toBe(
       "office@rossi.com Bcc: x@y.com",
     );
+  });
+});
+
+describe("Check 43 P4: the 'No signature' line", () => {
+  it("shows only while the signature is empty", () => {
+    expect(noSignatureLine(null)).toBe("No signature. Customers won't see your phone number.");
+    expect(noSignatureLine("  \n ")).toBe(NO_SIGNATURE_LINE);
+    expect(noSignatureLine("Mike\n978-555-0142")).toBeNull();
   });
 });

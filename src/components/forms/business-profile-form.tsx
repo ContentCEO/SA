@@ -279,14 +279,21 @@ export function BusinessProfileForm({
         defaultValue={v("fromName", defaults.fromName) as string}
         error={e.fromName}
       />
-      <TextArea
-        name="signature"
-        label="How do you sign your emails?"
-        hint="Exactly as you'd type it."
-        defaultValue={v("signature", defaults.signature) as string}
-        error={e.signature}
-        rows={3}
-      />
+      <div id="signature" className="flex scroll-mt-4 flex-col gap-1.5">
+        <TextArea
+          name="signature"
+          label="How do you sign your emails?"
+          hint="Exactly as you'd type it."
+          defaultValue={v("signature", defaults.signature) as string}
+          error={e.signature}
+          rows={3}
+        />
+        {/* Check 43 P4: Gmail's own signature is only added in Gmail's web app. */}
+        <p className="text-sm">
+          Your Gmail signature isn&apos;t added to replies sent from Squared Away. Type the lines
+          you want customers to see, like your phone number.
+        </p>
+      </div>
       <TextField
         name="reviewUrl"
         type="url"

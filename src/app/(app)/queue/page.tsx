@@ -28,6 +28,7 @@ import { getBusinessProfile } from "@/server/profile";
 import { priceMemoryFor } from "@/server/price-memory";
 import { requireOwner } from "@/server/session";
 import { senderNameFor } from "@/server/from-line";
+import { noSignatureLine } from "@/server/from-line-rules";
 import { MAILBOX_PAUSED_LINE } from "@/server/mailbox-plan-rules";
 import { dismissChecklistAction } from "./actions";
 import { OnboardingChecklist } from "@/components/app/onboarding-checklist";
@@ -115,9 +116,10 @@ export default async function QueuePage(props: PageProps<"/queue">) {
   const sending = canSend(workspace);
   // Check 43 P3: the name the customer sees in the From line, shown on every card.
   const fromName = await senderNameFor(workspace.id);
-  const timeZone = usableTimeZone(
-    (await getBusinessProfile(workspace.id))?.timeZone ?? "America/New_York",
-  );
+  const profile = await getBusinessProfile(workspace.id);
+  const timeZone = usableTimeZone(profile?.timeZone ?? "America/New_York");
+  // Check 43 P4: no signature → one muted line under the first draft (none on read-only).
+  const signatureLine = noSignatureLine(profile?.signature);
   const clock = new Intl.DateTimeFormat("en-US", { hour: "numeric", minute: "2-digit", timeZone });
   const readOnly = isReadOnly(workspace);
   // Check 42 P1: "This was already answered from Gmail at 2:14pm. Nothing was sent."
@@ -412,7 +414,7 @@ export default async function QueuePage(props: PageProps<"/queue">) {
               Review all {readyCount} ready
             </Link>
           ) : null}
-          {queue.drafts.map((i) => (
+          {queue.drafts.map((i, index) => (
             <DraftCard
               // Remount when the text changes (e.g. edited in Gmail) so filled gaps reset to it.
               key={`${i.draftId}:${i.body}`}
@@ -420,6 +422,7 @@ export default async function QueuePage(props: PageProps<"/queue">) {
               customer={who(i)}
               toAddress={i.toAddress ?? ""}
               fromName={fromName}
+              noSignatureLine={index === 0 && !readOnly ? signatureLine : null}
               fromAddress={
                 i.fromAddress && i.fromAddress !== i.mailboxEmail.toLowerCase()
                   ? i.fromAddress

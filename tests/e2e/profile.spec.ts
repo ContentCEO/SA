@@ -23,6 +23,12 @@ test("onboarding: business profile, then the learning screen", async ({ page, co
     .fill("Service calls, panel upgrades, EV chargers.");
   // Round 2 (FW): everything optional is folded away during setup.
   await page.getByText("More details, optional").click();
+  // Check 43 P4: Gmail's own signature never reaches these replies, and the form says so.
+  await expect(
+    page.getByText("Your Gmail signature isn't added to replies sent from Squared Away."),
+  ).toBeVisible();
+  // Check 43 P3: the name customers see in the From line.
+  await expect(page.getByLabel("Name customers see on your emails")).toBeVisible();
   await page
     .getByLabel("Things we should never promise")
     .fill("Same-day service\nA price over email");
