@@ -40,6 +40,8 @@ const errors: Record<string, string> = {
   busy: "That's a lot in a short time, so we've paused it for a bit. Try again in a few minutes.",
   delete_billing:
     "We couldn't cancel your plan, so nothing was deleted. Try again, or call us and we'll do it.",
+  // Check 26 P4.
+  confirm: "Type DELETE to confirm.",
   unknown: "That didn't work. Refresh and try again.",
 };
 

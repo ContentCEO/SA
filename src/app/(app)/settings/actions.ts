@@ -10,7 +10,8 @@ import { deleteAccount, SubscriptionCancelError } from "@/server/account-deletio
 import { signOutEverywhere } from "@/server/accounts";
 import { disconnectMailbox } from "@/server/mailboxes";
 import { hitLimit } from "@/server/rate-limit";
-import { requireOwner } from "@/server/session";
+import { deleteConfirmed, DELETE_RECENT_SIGN_IN_MINUTES } from "@/server/account-deletion-rules";
+import { requireOwner, requireRecentSignIn } from "@/server/session";
 import { swapPlanMailbox } from "@/server/mailbox-plan";
 
 const input = z.object({ mailboxId: z.string().uuid() });
@@ -44,8 +45,12 @@ export async function swapMailboxAction(formData: FormData) {
   redirect(r === "choose" ? "/settings/gmail?error=choose" : "/settings/gmail?error=unknown");
 }
 
-export async function deleteAccountAction() {
+export async function deleteAccountAction(formData: FormData) {
   const { userId } = await requireOwner();
+  // Check 26 P4: a fresh Google sign-in and the typed word, both checked here on the server —
+  // a direct POST that skips the screen's confirmation deletes nothing.
+  await requireRecentSignIn(DELETE_RECENT_SIGN_IN_MINUTES);
+  if (!deleteConfirmed(formData.get("confirm"))) redirect("/settings/account?error=confirm");
   try {
     await deleteAccount(userId, createGmailConnector());
   } catch (err) {

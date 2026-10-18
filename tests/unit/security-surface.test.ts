@@ -953,6 +953,11 @@ describe("C4: no open redirects", () => {
       "src/app/welcome/terms/page.tsx: redirect(back)",
       "the same, for someone who had already agreed: const back = safeNextPath(next)",
     ],
+    [
+      "src/app/signin/actions.ts: redirectTo(safeNextPath(next))",
+      "Check 26 P4: back to the screen that asked for a fresh sign-in (Delete my account) " +
+        "after Google: safeNextPath allows only a path on this site",
+    ],
   ];
 
   it("every redirect target is one of our own paths, or a reviewed exception", () => {
@@ -1116,7 +1121,16 @@ describe("C4: no open redirects", () => {
       [
         `src/app/welcome/terms/actions.ts ${READS[0]}`,
         "src/app/welcome/terms/page.tsx { next }",
+        // Check 26 P4: the fresh sign-in before Delete my account comes back to that screen.
+        `src/app/signin/actions.ts ${READS[0]}`,
+        "src/app/signin/page.tsx { next }",
       ].sort(),
+    );
+    expect(readFileSync("src/app/signin/page.tsx", "utf8")).toContain(
+      'const back = recent && typeof next === "string" ? safeNextPath(next) : undefined;',
+    );
+    expect(readFileSync("src/app/signin/actions.ts", "utf8")).toContain(
+      'await signIn("google", { redirectTo: safeNextPath(next) });',
     );
     const page = readFileSync("src/app/welcome/terms/page.tsx", "utf8");
     expect(page).toContain(

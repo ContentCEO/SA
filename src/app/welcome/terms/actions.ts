@@ -11,7 +11,8 @@ import { deleteAccount, SubscriptionCancelError } from "@/server/account-deletio
 import { CheckoutNotAllowedError, createPortal } from "@/server/billing";
 import { disconnectMailbox } from "@/server/mailboxes";
 import { hitLimit } from "@/server/rate-limit";
-import { requireSignedIn } from "@/server/session";
+import { deleteConfirmed, DELETE_RECENT_SIGN_IN_MINUTES } from "@/server/account-deletion-rules";
+import { requireRecentSignIn, requireSignedIn } from "@/server/session";
 import { recordTermsAcceptance } from "@/server/terms";
 import { agreed, type AgreeState, safeNextPath } from "@/server/terms-rules";
 
@@ -40,8 +41,11 @@ export async function agreeToTermsAction(
  */
 
 /** Delete my account, from the terms screen. Same order and rules as Settings'. */
-export async function deleteAccountFromTermsAction() {
+export async function deleteAccountFromTermsAction(formData: FormData) {
   const { userId } = await requireSignedIn();
+  // Check 26 P4: the same server-side checks as Settings' Delete my account.
+  await requireRecentSignIn(DELETE_RECENT_SIGN_IN_MINUTES);
+  if (!deleteConfirmed(formData.get("confirm"))) redirect("/welcome/terms?error=confirm");
   try {
     await deleteAccount(userId, createGmailConnector());
   } catch (err) {

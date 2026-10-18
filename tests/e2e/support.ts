@@ -120,7 +120,14 @@ export async function latestDraft(workspaceId: string) {
 export async function signInAs(
   context: BrowserContext,
   owner: { userId: string; email: string },
-  { agreedToTerms = true }: { agreedToTerms?: boolean } = {},
+  {
+    agreedToTerms = true,
+    signedInMinutesAgo = 0,
+  }: {
+    agreedToTerms?: boolean;
+    /** Check 26 P4: how long ago the (pretend) Google sign-in was. */
+    signedInMinutesAgo?: number;
+  } = {},
 ) {
   const [user] = await testDb
     .update(schema.users)
@@ -140,6 +147,7 @@ export async function signInAs(
       sub: owner.userId,
       uid: owner.userId,
       sv: user?.sessionVersion ?? 0,
+      sat: Math.floor(Date.now() / 1000) - signedInMinutesAgo * 60,
       email: owner.email,
       name: "Test Owner",
     },

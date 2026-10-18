@@ -367,6 +367,7 @@ test("a paid owner connects Gmail and a customer gets one threaded reply", async
   await test.step("Delete my account: Google access is revoked and nothing of theirs is left", async () => {
     await page.goto("/settings/account");
     await page.getByRole("button", { name: "Delete my account" }).click();
+    await page.getByLabel("Type DELETE to confirm").fill("delete");
     await page.getByRole("button", { name: "Yes, delete everything" }).click();
     await expect(page).toHaveURL(/\/goodbye$/);
     expect(only(await calls(request, scenario.id), "revoke")).toHaveLength(1);

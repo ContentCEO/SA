@@ -19,3 +19,15 @@ For the integrator: what `CLAUDE.md`, `docs/LAUNCH.md` and the legal drafts shou
   from every status, changes no status; `applyAdminMove` special-cases it; the action re-checks
   `requireAdmin`), logged {by: admin}. `session.maxAge` stays Auth.js's default 30 days until Davi
   answers (see Questions). e2e `signInAs` reads the account's version into the forged cookie.
+- **Delete my account needs a fresh sign-in and the typed word (Check 26 P4):** the jwt callback
+  stores `sat` (sign-in time, seconds) on a fresh Google sign-in, because Auth.js re-issues the
+  token (and its `iat`) on every visit. `requireRecentSignIn(15)` (`src/server/session.ts`)
+  redirects an older sign-in (or one with no `sat`) to `/signin?next=<this screen>&reason=recent`
+  ("For your safety, sign in again to delete your account."; `/signin` doesn't bounce a
+  signed-in person to /start then, and the sign-in action sends them back through
+  `safeNextPath`). Both delete actions (Settings and the terms screen) then require the form
+  field `confirm` = DELETE (trimmed, any case; `src/server/account-deletion-rules.ts`), else
+  `?error=confirm` ("Type DELETE to confirm."). The screen's field keeps the button off until it
+  matches; the server is the gate. Google can't be made to ask for a password again (its OIDC
+  has no `prompt=login`), so a browser still signed in to Google goes straight through: the
+  check proves the Google account is at hand, not a password.

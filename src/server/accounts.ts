@@ -137,6 +137,19 @@ export async function getWorkspaceForSession(user: SignedInUser): Promise<Worksp
 }
 
 /**
+ * Check 26 P3: whether a sign-in is at the account's current session version, without needing a
+ * workspace (requireAdmin: Davi's account is checked by email, not by workspace).
+ */
+export async function signInIsCurrent(user: SignedInUser): Promise<boolean> {
+  if (!user?.id || typeof user.sv !== "number") return false;
+  const [row] = await db()
+    .select({ sessionVersion: users.sessionVersion })
+    .from(users)
+    .where(eq(users.id, user.id));
+  return row?.sessionVersion === user.sv;
+}
+
+/**
  * Check 26 P3: "Sign out of every phone and computer". Moves the account's session version on,
  * so every sign-in made before now stops working on its next request. Returns the new version.
  */
