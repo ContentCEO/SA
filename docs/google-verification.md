@@ -21,6 +21,8 @@ are **never** pasted into Google's form.
    (`src/app/(app)/connect/page.tsx`). Only then do we ask for Gmail access: `openid email profile`
    plus the two Gmail scopes below, with `access_type=offline`, `prompt=consent` and
    `include_granted_scopes=true` (`src/mailbox/gmail/connector.ts`, `src/mailbox/gmail/scopes.ts`).
+   Adding a second Gmail address uses `prompt=consent select_account`, so Google shows its account
+   chooser; the scopes are the same.
 
 If the owner unticks either Gmail permission on Google's consent screen, we revoke what was granted
 and save nothing, and we explain why both are needed.
