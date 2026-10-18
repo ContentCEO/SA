@@ -326,6 +326,21 @@ export async function adminOverview(now: Date = new Date()): Promise<AdminRow[]>
   }));
 }
 
+/**
+ * Check 16 P3: account counts for the "Needs you" box, across every account (not just the page
+ * shown). Counts only.
+ */
+export async function accountsNeedingYou(now: Date = new Date()) {
+  const soon = new Date(now.getTime() + 24 * 3_600_000);
+  const [row] = await db()
+    .select({
+      pastDue: sql<number>`count(*) filter (where ${workspaces.status} = 'past_due')::int`,
+      trialsEnding: sql<number>`count(*) filter (where ${workspaces.status} = 'evaluating' and ${workspaces.evaluationEndsAt} > ${now.toISOString()}::timestamptz and ${workspaces.evaluationEndsAt} <= ${soon.toISOString()}::timestamptz)::int`,
+    })
+    .from(workspaces);
+  return { paymentsFailed: row?.pastDue ?? 0, trialsEndingSoon: row?.trialsEnding ?? 0 };
+}
+
 /** The 5-minute poll syncs every working mailbox; much older than that means jobs stopped. */
 export const JOBS_STALE_AFTER_MS = 20 * 60 * 1000;
 

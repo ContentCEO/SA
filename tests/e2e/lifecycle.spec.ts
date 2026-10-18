@@ -107,10 +107,15 @@ test("admin: sees health with no email content, and can turn sending on", async 
     .set({ setupPaidVia: null })
     .where(eq(schema.workspaces.ownerUserId, admin.userId));
   await page.reload();
+  // Check 16 P3: Davi's own card starts folded to one line.
+  await page.getByText(/^Your test account:/).click();
   const mine = page.getByRole("article", { name: admin.email });
   await mine.getByText("Use as my own test account").click();
   await mine.getByRole("button", { name: "Yes, this is my account" }).click();
   await expect(page.getByText("Your account can send now")).toBeVisible();
+  if (!(await page.getByRole("article", { name: admin.email }).isVisible())) {
+    await page.getByText(/^Your test account:/).click();
+  }
   await expect(page.getByRole("article", { name: admin.email })).toContainText(
     "Your own test account",
   );
@@ -272,4 +277,30 @@ test("pausing a paying account warns that Stripe keeps charging (Check 17 P2)", 
   const card = page.getByRole("article", { name: owner.email });
   await card.getByText("Pause account").click();
   await expect(card).toContainText("Their Stripe plan keeps charging.");
+});
+
+test("admin: Needs you comes first, the waitlist sits above Accounts, Davi's card is folded (Check 16 P3)", async ({
+  page,
+  context,
+}) => {
+  const owner = await seedOwner({ mailbox: true, backfilled: true });
+  await setWorkspace(owner.workspaceId, { status: "past_due", plan: "solo" });
+  const admin = await seedAdmin();
+  await signInAs(context, admin);
+  await page.goto("/admin");
+  const top = async (name: RegExp) =>
+    (await page.getByRole("heading", { name }).first().boundingBox())!.y;
+  const needs = await top(/^Needs you$/);
+  const waitlist = await top(/waitlist/i);
+  const accounts = await top(/^Accounts \(/);
+  expect(needs).toBeLessThan(accounts);
+  expect(waitlist).toBeLessThan(accounts);
+  await expect(page.getByRole("region", { name: "Needs you" })).toContainText(
+    /Payments failed: \d+/,
+  );
+  await expect(page.getByRole("region", { name: "Needs you" })).not.toContainText(owner.email);
+  // Davi's own card: one line, folded.
+  await expect(page.getByText(/^Your test account:/)).toBeVisible();
+  await expect(page.getByRole("article", { name: admin.email })).toBeHidden();
+  await expect(page.locator(`#acct-${owner.workspaceId}`)).toBeVisible();
 });

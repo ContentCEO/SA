@@ -30,3 +30,35 @@ export const TWO_PLANS_LINE = "Two live Stripe plans: cancel one in Stripe";
 
 /** Check 17 P4: in Payments, when a live plan or paid checkout matched no account here. */
 export const ORPHAN_PLAN_LINE = "A Stripe plan has no account here. Check Stripe.";
+
+/**
+ * Check 16 P3: the "Needs you" box at the top of /admin. Counts only, never names; each line
+ * links to where Davi acts on it. Lines appear only above zero, in this fixed order.
+ */
+export type NeedsYouInput = {
+  growthCalls: number;
+  newSignups: number;
+  stuckInboxes: number;
+  paymentsFailed: number;
+  trialsEndingSoon: number;
+};
+export type NeedsYouLine = { key: keyof NeedsYouInput; text: string; count: number; href: string };
+
+const NEEDS_YOU: Array<{ key: keyof NeedsYouInput; label: string; href: string }> = [
+  { key: "growthCalls", label: "Growth calls to return", href: "#waitlist" },
+  { key: "newSignups", label: "New sign-ups to invite", href: "#waitlist" },
+  { key: "stuckInboxes", label: "Inboxes stuck", href: "#accounts" },
+  { key: "paymentsFailed", label: "Payments failed", href: "#accounts" },
+  { key: "trialsEndingSoon", label: "Trials ending in the next 24 hours", href: "#accounts" },
+];
+
+export const NOTHING_NEEDS_YOU = "Nothing needs you right now.";
+
+export function needsYou(input: NeedsYouInput): NeedsYouLine[] {
+  return NEEDS_YOU.filter((l) => input[l.key] > 0).map((l) => ({
+    key: l.key,
+    text: `${l.label}: ${input[l.key]}`,
+    count: input[l.key],
+    href: l.href,
+  }));
+}

@@ -9,6 +9,7 @@ import { tradeEnum } from "@/db/schema";
 import { relativeTime } from "@/lib/relative-time";
 import {
   ADMIN_PAGE_SIZE,
+  accountsNeedingYou,
   adminOverview,
   countWorkspaces,
   listInvites,
@@ -22,6 +23,8 @@ import { modelsDownToday } from "@/server/model-alerts";
 import { isAdminEmail } from "@/server/admin";
 import { ADMIN_MOVES, canMakeMove, type AdminMove } from "@/server/lifecycle";
 import {
+  needsYou,
+  NOTHING_NEEDS_YOU,
   ORPHAN_PLAN_LINE,
   PAUSE_EXPLAIN,
   PLAN_SET_BY_STRIPE_LINE,
@@ -73,7 +76,7 @@ import {
 } from "@/server/test-payment-rules";
 import { listWaitlist } from "@/server/waitlist";
 import { referralsVisible } from "@/server/referral-rules";
-import { describeWaitlistEntry, formatStamp } from "@/server/growth-note";
+import { describeWaitlistEntry, formatStamp, localStamp } from "@/server/growth-note";
 import { growthCopy } from "@/components/marketing/growth/growth-copy";
 import { phoneHref } from "@/lib/phone-href";
 import { pricing } from "@/config/pricing";
@@ -360,6 +363,7 @@ function WorkspaceCard({ w, now }: { w: AdminRow; now: Date }) {
   const stuck = mailboxesStuck(w.mailboxes);
   return (
     <article
+      id={`acct-${w.workspaceId}`}
       aria-label={w.ownerEmail}
       className="flex flex-col gap-3 rounded-xl border bg-card p-4"
     >
@@ -541,6 +545,7 @@ export default async function AdminPage(props: PageProps<"/admin">) {
     orphans,
     openDisputes,
     waitingStripe,
+    accountCounts,
   ] = await Promise.all([
     adminOverview(now),
     countWorkspaces(),
@@ -558,8 +563,22 @@ export default async function AdminPage(props: PageProps<"/admin">) {
     stripeOrphans(),
     openDisputeCount(),
     stripeWaitingWorkspaces(),
+    accountsNeedingYou(now),
   ]);
   const growthStates = await growthStateForEmails(waiting.map((w) => w.email));
+  // Check 16 P3: Growth requests from the last 7 days (no "called" mark exists yet: Check 16 P4).
+  const weekAgo = localStamp(new Date(now.getTime() - 7 * 86_400_000));
+  const needs = needsYou({
+    growthCalls: waiting.filter((w) => {
+      const at = describeWaitlistEntry(w).growth[0]?.at;
+      return Boolean(at && at >= weekAgo);
+    }).length,
+    newSignups: waiting.filter(
+      (w) => describeWaitlistEntry(w).app && w.inviteState === "not_invited",
+    ).length,
+    stuckInboxes: system.staleMailboxes + system.stuckFirstReads,
+    ...accountCounts,
+  });
   const today = adminToday(now);
   // Waitlist Growth notices show in the waitlist section (the page scrolls there).
   const code = (v: unknown, prefix: string) =>
@@ -591,6 +610,31 @@ export default async function AdminPage(props: PageProps<"/admin">) {
   return (
     <>
       <Headline serif="behind the counter," heavy="admin." />
+      {/* Check 16 P3: what needs Davi, first thing on a phone. Counts only, never names. */}
+      <section
+        aria-labelledby="needs-you"
+        className="flex flex-col gap-1 rounded-xl border-2 border-charcoal p-4"
+      >
+        <h2 id="needs-you" className="text-lg font-black">
+          Needs you
+        </h2>
+        {needs.length === 0 ? (
+          <p>{NOTHING_NEEDS_YOU}</p>
+        ) : (
+          <ul className="flex flex-col">
+            {needs.map((l) => (
+              <li key={l.key}>
+                <a
+                  href={l.href}
+                  className="flex min-h-tap items-center font-semibold underline underline-offset-4"
+                >
+                  {l.text}
+                </a>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
       <Link
         href="/admin/costs"
         className="inline-flex min-h-tap items-center font-semibold underline underline-offset-4"
@@ -648,6 +692,30 @@ export default async function AdminPage(props: PageProps<"/admin">) {
 
       <LaunchReady rows={launchChecks(process.env, launchFacts)} tickAction={tickLaunchAction} />
 
+      <section id="waitlist" aria-labelledby="waitlist-heading" className="flex flex-col gap-3">
+        <h2 id="waitlist-heading" className="text-xl font-black">
+          {ga.heading(waiting.length)}
+        </h2>
+        {waitlistDone ? <Notice>{waitlistDone}</Notice> : null}
+        {waitlistError ? <Notice strong>{waitlistError}</Notice> : null}
+        {waiting.length === 0 ? (
+          <p>{ga.empty}</p>
+        ) : (
+          <ul className="flex flex-col gap-3">
+            {waiting.map((w) => (
+              <WaitlistEntry
+                key={w.email}
+                w={w}
+                now={now}
+                referrals={referrals}
+                growth={growthStates.get(w.email.toLowerCase())}
+                today={today}
+              />
+            ))}
+          </ul>
+        )}
+      </section>
+
       <section aria-labelledby="accounts" className="flex flex-col gap-3">
         <h2 id="accounts" className="text-xl font-black">
           Accounts ({total})
@@ -656,9 +724,21 @@ export default async function AdminPage(props: PageProps<"/admin">) {
           <p className="text-muted-foreground">Showing the newest {ADMIN_PAGE_SIZE}.</p>
         ) : null}
         {rows.length === 0 ? <p>No one has signed in yet.</p> : null}
-        {rows.map((w) => (
-          <WorkspaceCard key={w.workspaceId} w={w} now={now} />
-        ))}
+        {rows.map((w) =>
+          isAdminEmail(w.ownerEmail) ? (
+            // Check 16 P3: Davi's own test account folds to one line; its moves still work.
+            <details key={w.workspaceId} className="rounded-xl border">
+              <summary className="flex min-h-tap cursor-pointer items-center px-4 font-semibold">
+                Your test account: {w.businessName || w.ownerEmail} · {statusLabel[w.status]}
+              </summary>
+              <div className="p-2">
+                <WorkspaceCard w={w} now={now} />
+              </div>
+            </details>
+          ) : (
+            <WorkspaceCard key={w.workspaceId} w={w} now={now} />
+          ),
+        )}
       </section>
 
       <section id="stripe" aria-labelledby="stripe-heading" className="flex flex-col gap-3">
@@ -723,30 +803,6 @@ export default async function AdminPage(props: PageProps<"/admin">) {
           </>
         ) : (
           <p>Add STRIPE_SECRET_KEY to the sa project in Vercel first.</p>
-        )}
-      </section>
-
-      <section id="waitlist" aria-labelledby="waitlist-heading" className="flex flex-col gap-3">
-        <h2 id="waitlist-heading" className="text-xl font-black">
-          {ga.heading(waiting.length)}
-        </h2>
-        {waitlistDone ? <Notice>{waitlistDone}</Notice> : null}
-        {waitlistError ? <Notice strong>{waitlistError}</Notice> : null}
-        {waiting.length === 0 ? (
-          <p>{ga.empty}</p>
-        ) : (
-          <ul className="flex flex-col gap-3">
-            {waiting.map((w) => (
-              <WaitlistEntry
-                key={w.email}
-                w={w}
-                now={now}
-                referrals={referrals}
-                growth={growthStates.get(w.email.toLowerCase())}
-                today={today}
-              />
-            ))}
-          </ul>
         )}
       </section>
 
