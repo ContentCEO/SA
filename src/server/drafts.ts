@@ -1,6 +1,6 @@
 import "server-only";
 import { MAX_FOLLOWUPS } from "@/config/rules";
-import { needsOwnerBlocksNudge } from "./followup-rules";
+import { needsOwnerBlocksNudge, nudgeDueDate } from "./followup-rules";
 import { createHash } from "node:crypto";
 import {
   and,
@@ -122,7 +122,7 @@ import {
 import { batchEligible, firstLine } from "./batch-rules";
 import { isInvoiceThread, paymentSaid } from "./money-rules";
 import { quoteStopsNudges } from "./quote-rules";
-import { BACK_ON_TOP_MS, isEmergency } from "./snooze-rules";
+import { BACK_ON_TOP_MS, isEmergency, usableTimeZone } from "./snooze-rules";
 import { inEmergencyLane, recentEmergency } from "./emergency-rules";
 import { CHECKIN_AFTER_DAYS, CHECKIN_MAX_DAYS } from "./complaint-rules";
 import { headerPickIds, toNeedsYouItem } from "./digest-rules";
@@ -497,10 +497,19 @@ async function depositAlreadyOn(threadId: string): Promise<boolean> {
 
 export async function followupSettings(workspaceId: string) {
   const [p] = await db()
-    .select({ enabled: businessProfiles.followupsEnabled, days: businessProfiles.followupDays })
+    .select({
+      enabled: businessProfiles.followupsEnabled,
+      days: businessProfiles.followupDays,
+      timeZone: businessProfiles.timeZone,
+    })
     .from(businessProfiles)
     .where(eq(businessProfiles.workspaceId, workspaceId));
-  return { enabled: p?.enabled ?? true, days: p?.days ?? 3 };
+  return {
+    enabled: p?.enabled ?? true,
+    days: p?.days ?? 3,
+    // Check 21 P3: waits are counted in the owner's calendar days.
+    timeZone: usableTimeZone(p?.timeZone),
+  };
 }
 
 /**
@@ -3633,9 +3642,11 @@ export async function sentDraftSummary(
     kind: row.draft.kind,
     purpose: row.draft.purpose ?? null,
     /** When we'll nudge if they go quiet; null if we won't. */
+    // Check 21 P3: the same calendar-day rule as the scan (`nudgeDueDate`), so the day promised
+    // is the day the draft is ready (by 5am, the owner's time).
     nudgeOn:
       chased && sentNudges < MAX_FOLLOWUPS
-        ? new Date(decidedAt.getTime() + settings.days * 86_400_000)
+        ? nudgeDueDate(decidedAt, settings.days, settings.timeZone).startsAt
         : null,
     /**
      * Check 21 P2: they asked us to wait; the sent screen says "Waiting until Jan 4, as they

@@ -40,6 +40,10 @@ export default async function FollowupSettingsPage(props: PageProps<"/settings/f
               </option>
             ))}
           </select>
+          {/* Check 21 P3 */}
+          <span className="text-sm text-muted-foreground">
+            Nudges are ready by 5am your time, as drafts.
+          </span>
         </label>
         <p className="text-muted-foreground">
           A nudge is a draft in your queue, like any other reply — nothing sends without you. Never

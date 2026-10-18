@@ -1,12 +1,15 @@
 import "server-only";
 import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { mailboxes, threads } from "@/db/schema";
+import { appSettings, businessProfiles, mailboxes, threads, workspaces } from "@/db/schema";
+import { jobsAllowed } from "./lifecycle";
+import { localParts, usableTimeZone } from "./snooze-rules";
 import { mailboxOn } from "./mailbox-plan-rules";
+import { mailboxRunning } from "./mailbox-plan";
 import { FOLLOWUP_CATEGORIES, followupSettings, MAX_FOLLOWUPS } from "./drafts";
 import { lastInSql, lastOutSql, answeredByPhoneSql } from "./thread-sql";
 import { isAway } from "./away";
-import { FOLLOWUP_MAX_AGE_DAYS } from "./followup-rules";
+import { FOLLOWUP_MAX_AGE_DAYS, FOLLOWUP_SCAN_LOCAL_HOUR, quietCutoff } from "./followup-rules";
 
 /**
  * SQL twin of `amountOnlyNeedsOwner` (followup-rules.ts): an invoice thread whose only owner
@@ -70,7 +73,8 @@ export async function threadsToFollowUp(
   // Ideas E7: nudges pause while the owner is away (createDraftForThread checks it again).
   if (await isAway(box.workspaceId, now)) return [];
 
-  const quietSince = new Date(now.getTime() - settings.days * 86_400_000).toISOString();
+  // Check 21 P3: due on the owner's calendar day (`nudgeDueDate`), not N×24 hours later.
+  const quietSince = quietCutoff(now, settings.days, settings.timeZone).toISOString();
   const notBefore = new Date(now.getTime() - FOLLOWUP_MAX_AGE_DAYS * 86_400_000).toISOString();
   // The shared "who wrote last": an unsent Gmail draft isn't the owner writing, and a lead
   // forwarded to the crew was never quoted, so it gets no "following up on my quote" nudge.
@@ -101,7 +105,7 @@ export async function threadsToFollowUp(
         sql`(${threads.extracted}->>'bill_direction') is distinct from 'owed_by_business'`,
         sql`${lastIn} is not null`,
         sql`${lastOut} > ${lastIn}`,
-        sql`${lastOut} <= ${quietSince}::timestamptz`,
+        sql`${lastOut} < ${quietSince}::timestamptz`,
         // Check 21 P2: a customer who asked us to wait ("after the holidays") isn't nudged
         // before then, and the 21-day window counts from that date when it's later.
         sql`(${threads.nudgeAfter} is null or ${threads.nudgeAfter} <= ${now.toISOString()}::timestamptz)`,
@@ -120,4 +124,59 @@ export async function threadsToFollowUp(
     .orderBy(desc(threads.lastMessageAt))
     .limit(limit);
   return rows.map((r) => r.id);
+}
+
+/** Check 21 P3: `app_settings` key holding the owner's local date of their last scan. */
+const scannedKey = (workspaceId: string) => `followup-scan:${workspaceId}`;
+
+/**
+ * Check 21 P3: the workspaces whose follow-up scan is due now — the owner's local hour is 4am
+ * (`FOLLOWUP_SCAN_LOCAL_HOUR`, their `business_profile.time_zone`, Eastern when unset) and they
+ * weren't scanned on that local date yet — with their running mailboxes. Read-only accounts are
+ * left out (createDraftForThread would refuse anyway).
+ */
+export async function followupScanDue(now: Date = new Date()) {
+  const rows = await db()
+    .select({
+      workspaceId: workspaces.id,
+      workspace: workspaces,
+      timeZone: businessProfiles.timeZone,
+      mailboxId: mailboxes.id,
+      backfillCompletedAt: mailboxes.backfillCompletedAt,
+      scanned: sql<
+        string | null
+      >`(select s.value from app_settings s where s.key = 'followup-scan:' || ${workspaces.id}::text)`,
+    })
+    .from(mailboxes)
+    .innerJoin(workspaces, eq(workspaces.id, mailboxes.workspaceId))
+    .leftJoin(businessProfiles, eq(businessProfiles.workspaceId, workspaces.id))
+    .where(mailboxRunning());
+  const due = new Map<
+    string,
+    { workspaceId: string; localDate: string; mailboxes: { id: string; backfillDone: boolean }[] }
+  >();
+  for (const r of rows) {
+    if (!jobsAllowed(r.workspace, now)) continue;
+    const local = localParts(now, usableTimeZone(r.timeZone));
+    if (local.hour !== FOLLOWUP_SCAN_LOCAL_HOUR || r.scanned === local.date) continue;
+    const entry = due.get(r.workspaceId) ?? {
+      workspaceId: r.workspaceId,
+      localDate: local.date,
+      mailboxes: [],
+    };
+    entry.mailboxes.push({ id: r.mailboxId, backfillDone: r.backfillCompletedAt != null });
+    due.set(r.workspaceId, entry);
+  }
+  return [...due.values()];
+}
+
+/** Check 21 P3: the scan for this owner's local date is done; a retry the same day is a no-op. */
+export async function markFollowupScanned(workspaceId: string, localDate: string) {
+  await db()
+    .insert(appSettings)
+    .values({ key: scannedKey(workspaceId), value: localDate, updatedAt: new Date() })
+    .onConflictDoUpdate({
+      target: appSettings.key,
+      set: { value: localDate, updatedAt: new Date() },
+    });
 }

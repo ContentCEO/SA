@@ -4,6 +4,7 @@
  * the scan's query.
  */
 import { localDayStart } from "./growth-client-rules";
+import { localParts, usableTimeZone } from "./snooze-rules";
 
 /** Don't chase anything the owner last wrote about more than this long ago. */
 export const FOLLOWUP_MAX_AGE_DAYS = 21;
@@ -107,4 +108,39 @@ export function waitingLine(nudgeAfter: Date | null, now: Date, timeZone: string
     timeZone,
   });
   return `Waiting until ${day}, as they asked.`;
+}
+
+/**
+ * Check 21 P3: the scan runs once a day per owner, at this local hour, so nudges are ready
+ * before the earliest morning email (5am).
+ */
+export const FOLLOWUP_SCAN_LOCAL_HOUR = 4;
+
+/** 'YYYY-MM-DD' plus `n` calendar days. */
+export function addDays(date: string, n: number): string {
+  return new Date(Date.parse(`${date}T12:00:00Z`) + n * DAY_MS).toISOString().slice(0, 10);
+}
+
+/**
+ * Check 21 P3: the day a nudge is due, counted in the owner's calendar days: the local date of
+ * the owner's last email plus the wait. A quote sent any time Friday with a 3-day wait is due
+ * Monday (drafted that morning at 4am). `startsAt` is that day's local midnight.
+ */
+export function nudgeDueDate(
+  lastOut: Date,
+  days: number,
+  timeZone: string,
+): { date: string; startsAt: Date } {
+  const tz = usableTimeZone(timeZone);
+  const date = addDays(localParts(lastOut, tz).date, days);
+  return { date, startsAt: localDayStart(date, tz) };
+}
+
+/**
+ * Check 21 P3: the scan's cutoff — a thread is due when the owner's last email is before this
+ * instant, i.e. its `nudgeDueDate` is today or earlier in the owner's zone.
+ */
+export function quietCutoff(now: Date, days: number, timeZone: string): Date {
+  const tz = usableTimeZone(timeZone);
+  return localDayStart(addDays(localParts(now, tz).date, 1 - days), tz);
 }

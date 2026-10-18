@@ -111,7 +111,9 @@ test("after sending: the squared-away moment", async ({ page, context }) => {
   await expect(page.getByText("reply sent,")).toBeVisible();
   await expect(page.getByText("squared away.")).toBeVisible();
   // A quote: we say when we'll nudge if it goes quiet.
-  await expect(page.getByText(/I'll nudge Priya on \w+day if there's no reply\./)).toBeVisible();
+  await expect(
+    page.getByText(/A nudge for Priya will be ready \w+day morning if there's no reply\./),
+  ).toBeVisible();
 });
 
 test("a link from the morning summary lands on its card (plan #31)", async ({ page, context }) => {

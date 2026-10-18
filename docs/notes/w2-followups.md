@@ -34,7 +34,7 @@ For the integrator to fold into CLAUDE.md / docs. One section per step.
   (`tests/unit/followup-signals.test.ts`) extends the schema the way v6 will.
 - `afterClassified`: `declines_quote` on a quote thread (sorted quote before, sticky request time,
   an outcome, or sorted quote now) → `autoSetQuoteOutcome(…, "lost", { why: "declined", flag:
-  DECLINED_FLAG })`; the owner always wins. A waiting nudge gets "They said no. Check before
+DECLINED_FLAG })`; the owner always wins. A waiting nudge gets "They said no. Check before
   sending." Activity: "Marked a quote from Dana as lost — they said no. Change it on Quotes".
 - Scan and drafter skip `nudge_after > now` (drafter reason `wait_requested`); the 21-day window
   counts from `greatest(lastOut, nudge_after)`. `guessNoAnswers` counts quiet days from the later
@@ -60,6 +60,7 @@ from the Received date: \"after the holidays\" in December → the first weekday
 a named date → that date. null when they name no time or it's vague (\"later\", \"sometime\")."
 
 Eval cases to add (tests/evals/cases.ts), each after an owner's priced reply:
+
 - declines_quote true: "We went with someone else, thanks for your time." / "We found another
   contractor who could start sooner." / "We've decided not to go ahead with the bathroom this
   year." / "My brother-in-law is going to do it, but thanks."
@@ -68,3 +69,24 @@ Eval cases to add (tests/evals/cases.ts), each after an owner's priced reply:
   (all declines_quote false).
 - neither (declines_quote false, wait_until null): "We're comparing quotes, will let you know." /
   "Can you do it for less?"
+
+## Step 3 — Check 21 P3: nudges by the owner's calendar day, ready by 5am their time
+
+- `followup-scan` is now hourly at :11 (`cron("11 * * * *")`, was daily 9:11am Eastern). Each
+  workspace is scanned once a day, in the hour its local time is 4am (`FOLLOWUP_SCAN_LOCAL_HOUR`,
+  `business_profile.time_zone` via `usableTimeZone`, Eastern when unset): `followupScanDue(now)`
+  lists due workspaces with their running mailboxes; `markFollowupScanned` writes the owner's
+  local date to `app_settings` `followup-scan:<workspaceId>` after the scan, so a retry the same
+  day is a no-op. The "no draft since the owner's last message / none pending" rules still stop
+  doubles. The no-answer guess runs per due workspace in the same job.
+- Waits count in the owner's calendar days: `nudgeDueDate(lastOut, days, tz)` (followup-rules.ts)
+  = local date of the owner's last email + N; the scan uses `quietCutoff(now, days, tz)` (the
+  start of local day today − N + 1). `sentDraftSummary.nudgeOn` = that due day's local midnight.
+  `followupSettings()` now also returns `timeZone`.
+- Sent screen: "A nudge for Dana will be ready Monday morning if there's no reply." (no pronoun:
+  we don't know the customer's). "That was the last nudge. I won't chase this one again." kept.
+- Settings → Follow-ups: "Nudges are ready by 5am your time, as drafts." under the wait choice.
+- CLAUDE.md line to update: "**Follow-ups (M7):** daily cron `followup-scan` (9:11am
+  America/New_York)" → "hourly cron `followup-scan` (:11); each owner's scan runs once a day at
+  4am their time (Check 21 P3); due on the owner's calendar day (`nudgeDueDate`)". The M7 sent
+  screen sentence ("I'll nudge Dana on Thursday…") becomes the new wording above.

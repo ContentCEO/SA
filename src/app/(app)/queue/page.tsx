@@ -77,7 +77,8 @@ function nextLine(
   if (waiting) return waiting;
   if (sent.nudgeOn) {
     const weekday = new Intl.DateTimeFormat("en-US", { weekday: "long", timeZone });
-    return `I'll nudge ${name ?? "them"} on ${weekday.format(sent.nudgeOn)} if there's no reply.`;
+    // Check 21 P3: a draft ready that morning, never a send.
+    return `A nudge for ${name ?? "them"} will be ready ${weekday.format(sent.nudgeOn)} morning if there's no reply.`;
   }
   if (sent.lastNudgeUsed) return "That was the last nudge. I won't chase this one again.";
   return `I'll let you know when ${name ?? "they"} write${name ? "s" : ""} back.`;

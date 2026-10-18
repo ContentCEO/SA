@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { setModelTransportForTests } from "@/ai/client";
 import type { ModelDraft } from "@/ai/prompts/draft.v5";
 import type { Database } from "@/db";
-import { activityLog, drafts, messages, threads, workspaces } from "@/db/schema";
+import { activityLog, businessProfiles, drafts, messages, threads, workspaces } from "@/db/schema";
 import { ensureUserAndWorkspace } from "@/server/accounts";
 import {
   createDraftForThread,
@@ -12,7 +12,10 @@ import {
   sendDraft,
   sentDraftSummary,
 } from "@/server/drafts";
-import { threadsToFollowUp } from "@/server/followups";
+import { digestCounts } from "@/server/digest";
+import { localDayStart } from "@/server/growth-client-rules";
+import { followupScanDue, markFollowupScanned, threadsToFollowUp } from "@/server/followups";
+import { localParts } from "@/server/snooze-rules";
 import { saveConnectedMailbox } from "@/server/mailboxes";
 import { followupSettingsInput, saveFollowupSettings } from "@/server/profile";
 import { createTestDb } from "../support/db";
@@ -562,7 +565,8 @@ describe("writing and sending a nudge", () => {
 
     const summary = await sentDraftSummary(workspaceId, r.draftId);
     expect(summary!.kind).toBe("followup");
-    expect(summary!.nudgeOn).toEqual(new Date(NOW.getTime() + 3 * DAY));
+    // Check 21 P3: the owner's calendar day (Eastern by default), ready that morning.
+    expect(summary!.nudgeOn).toEqual(new Date("2026-10-08T04:00:00Z"));
     expect(summary!.lastNudgeUsed).toBe(false);
   });
 
@@ -726,5 +730,154 @@ describe("a decided quote is never chased (plan #30, amendment A3)", () => {
     await decide(t, "won", "auto");
     const summary = await sentDraftSummary(workspaceId, d!.id);
     expect(summary).toMatchObject({ nudgeOn: null, lastNudgeUsed: false });
+  });
+});
+
+describe("nudges by the owner's calendar day, ready by 5am (Check 21 P3)", () => {
+  const at = (date: string, hm: string, tz: string) => {
+    const [h, m] = hm.split(":").map(Number) as [number, number];
+    return new Date(localDayStart(date, tz).getTime() + (h * 60 + m) * 60_000);
+  };
+  async function owner(tz: string, days: number) {
+    await database
+      .insert(businessProfiles)
+      .values({ workspaceId, timeZone: tz, followupDays: days })
+      .onConflictDoUpdate({
+        target: businessProfiles.workspaceId,
+        set: { timeZone: tz, followupDays: days },
+      });
+  }
+  /** The owner's quote went out at `out` (sent from the app), after the customer asked. */
+  async function quoteSentAt(out: Date) {
+    const id = `c${++g}`;
+    const [t] = await database
+      .insert(threads)
+      .values({
+        mailboxId,
+        gmailThreadId: id,
+        inInbox: true,
+        category: "quote_request",
+        classifiedAt: new Date(out.getTime() - DAY),
+        lastMessageAt: out,
+      })
+      .returning();
+    await database.insert(messages).values([
+      {
+        threadId: t!.id,
+        mailboxId,
+        gmailMessageId: `${id}-in`,
+        direction: "in",
+        fromAddress: "dana@customer.com",
+        fromName: "Dana Ruiz",
+        bodyText: "Quote please.",
+        sentAt: new Date(out.getTime() - DAY),
+      },
+      {
+        threadId: t!.id,
+        mailboxId,
+        gmailMessageId: `${id}-out`,
+        direction: "out",
+        fromAddress: "owner@shop.com",
+        toAddresses: ["dana@customer.com"],
+        bodyText: "It's $900.",
+        sentAt: out,
+      },
+    ]);
+    const [d] = await database
+      .insert(drafts)
+      .values({
+        threadId: t!.id,
+        mailboxId,
+        kind: "reply",
+        gmailDraftId: `gd-${id}`,
+        toAddress: "dana@customer.com",
+        subject: "Re: Quote",
+        body: "It's $900.",
+        originalBody: "It's $900.",
+        status: "sent",
+        reason: "reply",
+        promptVersion: "draft.v8",
+        createdAt: new Date(out.getTime() - 60_000),
+        decidedAt: out,
+      })
+      .returning();
+    return { threadId: t!.id, draftId: d!.id };
+  }
+  /** The first local date (4am scans, day by day) on which the scan picks the thread. */
+  async function firstPick(threadId: string, from: string, tz: string) {
+    for (let i = 0; i < 10; i++) {
+      const date = new Date(Date.parse(`${from}T12:00:00Z`) + i * DAY).toISOString().slice(0, 10);
+      if ((await threadsToFollowUp(mailboxId, at(date, "04:00", tz), 50)).includes(threadId))
+        return date;
+    }
+    return null;
+  }
+
+  it.each([
+    ["Friday 2:00pm, 3-day wait", "America/New_York", 3, "2026-10-23", "14:00", "2026-10-26"],
+    ["Wednesday 10:00am, 3-day wait", "America/New_York", 3, "2026-10-21", "10:00", "2026-10-24"],
+    ["Thursday 4:00pm, 2-day wait", "America/New_York", 2, "2026-10-22", "16:00", "2026-10-24"],
+    ["Los Angeles Monday 7:00pm", "America/Los_Angeles", 3, "2026-10-19", "19:00", "2026-10-22"],
+  ] as const)(
+    "%s: the sent screen's day is the day the scan first picks it",
+    async (_l, tz, days, date, hm, expected) => {
+      await owner(tz, days);
+      const { threadId, draftId } = await quoteSentAt(at(date, hm, tz));
+      const summary = await sentDraftSummary(workspaceId, draftId, at(date, hm, tz));
+      expect(localParts(summary!.nudgeOn!, tz).date).toBe(expected);
+      expect(await firstPick(threadId, date, tz)).toBe(expected);
+    },
+  );
+
+  it("the scan runs once per owner per local day, at 4am their time", async () => {
+    await database
+      .update(workspaces)
+      .set({ status: "active" })
+      .where(eq(workspaces.id, workspaceId));
+    await owner("America/Los_Angeles", 3);
+    const ids = (r: Awaited<ReturnType<typeof followupScanDue>>) => r.map((w) => w.workspaceId);
+    // 4am Eastern is 1am in Los Angeles: not yet.
+    expect(ids(await followupScanDue(at("2026-10-26", "04:30", "America/New_York")))).toEqual([]);
+    const four = at("2026-10-26", "04:11", "America/Los_Angeles");
+    const due = await followupScanDue(four);
+    expect(ids(due)).toEqual([workspaceId]);
+    expect(due[0]!.localDate).toBe("2026-10-26");
+    await markFollowupScanned(workspaceId, due[0]!.localDate);
+    // A retry in the same hour: nothing to do.
+    expect(await followupScanDue(new Date(four.getTime() + 20 * 60_000))).toEqual([]);
+    expect(await followupScanDue(at("2026-10-26", "05:11", "America/Los_Angeles"))).toEqual([]);
+    expect(ids(await followupScanDue(at("2026-10-27", "04:11", "America/Los_Angeles")))).toEqual([
+      workspaceId,
+    ]);
+  });
+
+  it("a second scan the same morning drafts nothing, and the 7am morning email counts the nudge", async () => {
+    await database
+      .update(workspaces)
+      .set({ status: "active", setupPaidVia: "stripe" })
+      .where(eq(workspaces.id, workspaceId));
+    const tz = "America/New_York";
+    await owner(tz, 3);
+    const { threadId } = await quoteSentAt(at("2026-10-23", "14:00", tz));
+    const four = at("2026-10-26", "04:11", tz);
+    setModelTransportForTests(fakeTransport([nudge(), nudge()]).transport);
+    const run = async (now: Date) => {
+      let made = 0;
+      for (const t of await threadsToFollowUp(mailboxId, now)) {
+        const r = await createDraftForThread(t, {
+          trigger: "followup",
+          writerFor: () => writer,
+          now: () => now,
+        });
+        if (r.status === "created") made++;
+      }
+      return made;
+    };
+    expect(await run(four)).toBe(1);
+    expect(await run(new Date(four.getTime() + 15 * 60_000))).toBe(0);
+    const nudges = await database.select().from(drafts).where(eq(drafts.threadId, threadId));
+    expect(nudges.filter((d) => d.kind === "followup")).toHaveLength(1);
+    const counts = await digestCounts(workspaceId, at("2026-10-26", "07:03", tz), tz);
+    expect(counts.nudgesReady).toBe(1);
   });
 });
