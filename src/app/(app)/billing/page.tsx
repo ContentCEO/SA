@@ -377,6 +377,8 @@ export default async function BillingPage(props: PageProps<"/billing">) {
                       aria-label={`${p.name} plan`}
                       className="flex flex-col gap-1 rounded-xl border bg-card p-4"
                     >
+                      {/* Check 7 P5: the current plan is named, never inverted. */}
+                      {workspace.plan === id ? <span className="font-black">Your plan</span> : null}
                       <div className="flex items-baseline justify-between">
                         <span className="text-xl font-black">{p.name}</span>
                         <span>

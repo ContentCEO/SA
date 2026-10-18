@@ -15,13 +15,16 @@ describe("charcoal panels mean something needs the owner", () => {
 
   it("billing inverts only its status boxes, never a plan card", () => {
     const src = readFileSync("src/app/(app)/billing/page.tsx", "utf8");
-    const plans = src.slice(
-      src.indexOf("PLAN_IDS.map"),
-      src.indexOf("</ul>", src.indexOf("PLAN_IDS.map")),
-    );
-    expect(plans).not.toContain("sa-inverted");
-    expect(plans).toContain("border-2 border-charcoal bg-card");
-    expect(plans).toContain("Your plan");
+    // Every plan list on the screen (Check 17 P11 added a read-only price list before checkout).
+    const lists: string[] = [];
+    for (let at = src.indexOf("PLAN_IDS.map"); at !== -1; at = src.indexOf("PLAN_IDS.map", at + 1))
+      lists.push(src.slice(at, src.indexOf("</ul>", at)));
+    expect(lists.length).toBeGreaterThan(0);
+    for (const plans of lists) {
+      expect(plans).not.toContain("sa-inverted");
+      expect(plans).toContain("Your plan");
+    }
+    expect(lists.join("\n")).toContain("border-2 border-charcoal bg-card");
   });
 
   it("the theme says what inversion is for", () => {
