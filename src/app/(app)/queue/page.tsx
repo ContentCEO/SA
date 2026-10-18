@@ -33,6 +33,7 @@ import { OnboardingChecklist } from "@/components/app/onboarding-checklist";
 import { checklistFor } from "@/server/onboarding";
 import { DraftCard } from "./draft-card";
 import { UndoSend } from "./undo-send";
+import { SentStrip } from "./sent-strip";
 import { LateSends } from "./late-sends";
 import { sendStoppedWhy } from "@/server/activity";
 import { OfflineQueue } from "./offline-queue";
@@ -196,6 +197,25 @@ export default async function QueuePage(props: PageProps<"/queue">) {
   // The lane comes from the queue's own membership, like the counts (B5).
   const lane = queue.needsYou.filter((i) => i.lane);
   const needsYou = queue.needsYou.filter((i) => !i.lane);
+  // Check 9 P5: the cards in page order. A send, discard or snooze lands on the next one (the
+  // one before when it was the last), and the notice for a tap sits on the card it landed on.
+  const cardOrder = [...lane, ...needsYou, ...queue.drafts].map((i) => i.threadId);
+  const nextThreadId = (threadId: string) => {
+    const at = cardOrder.indexOf(threadId);
+    return cardOrder[at + 1] ?? cardOrder[at - 1] ?? null;
+  };
+  const landedOn =
+    typeof params.t === "string" && cardOrder.includes(params.t.toLowerCase())
+      ? params.t.toLowerCase()
+      : null;
+  const tapNotice =
+    doneMsg || errorMsg ? (
+      <>
+        {doneMsg ? <Notice>{doneMsg}</Notice> : null}
+        {errorMsg ? <Notice strong>{errorMsg}</Notice> : null}
+      </>
+    ) : null;
+  const noticeFor = (threadId: string) => (landedOn === threadId ? tapNotice : null);
   const needsYouProps = (i: QueueItem) => ({
     i,
     lead: leadCards.get(i.threadId),
@@ -208,6 +228,8 @@ export default async function QueuePage(props: PageProps<"/queue">) {
     timeZone,
     note: noteFor(i),
     resort: <ResortSheet threadId={i.threadId} current={i.category} back="queue" />,
+    nextThreadId: nextThreadId(i.threadId),
+    notice: noticeFor(i.threadId),
   });
   // Check 43 P7: "Written Friday. It says “tomorrow”, which meant Saturday. Check the timing."
   const timingNoteFor = (i: QueueItem) => {
@@ -225,20 +247,16 @@ export default async function QueuePage(props: PageProps<"/queue">) {
   return (
     <>
       {sentAll.length ? (
-        <section
-          aria-live="polite"
-          className="sa-inverted flex animate-in flex-col gap-3 rounded-xl p-6 duration-500 zoom-in-95 fade-in"
+        <SentStrip
+          serif={
+            sentAll.length > 1
+              ? `${sentAll.length} replies ${sendingIds.length ? "on their way" : "sent"},`
+              : sendingIds.length
+                ? "reply on its way,"
+                : "reply sent,"
+          }
+          heavy="squared away."
         >
-          <p className="flex flex-col">
-            <span className="sa-headline-serif text-3xl">
-              {sentAll.length > 1
-                ? `${sentAll.length} replies ${sendingIds.length ? "on their way" : "sent"},`
-                : sendingIds.length
-                  ? "reply on its way,"
-                  : "reply sent,"}
-            </span>{" "}
-            <span className="sa-headline-heavy text-4xl">squared away.</span>
-          </p>
           {sent ? <p className="text-ash">{nextLine(sent, timeZone)}</p> : null}
           {sent && !sent.sendingAt ? (
             <Link
@@ -257,7 +275,7 @@ export default async function QueuePage(props: PageProps<"/queue">) {
           {sendingIds.length && sendAt ? (
             <UndoSend key={sendingIds.join()} draftIds={sendingIds} sendAt={sendAt.toISOString()} />
           ) : null}
-        </section>
+        </SentStrip>
       ) : (
         <Headline serif="waiting on you," heavy="the queue." />
       )}
@@ -285,8 +303,8 @@ export default async function QueuePage(props: PageProps<"/queue">) {
           </Button>
         </form>
       ) : null}
-      {doneMsg ? <Notice>{doneMsg}</Notice> : null}
-      {errorMsg ? <Notice strong>{errorMsg}</Notice> : null}
+      {/* On the card the tap landed on when it's on the page (Check 9 P5), else up here. */}
+      {landedOn ? null : tapNotice}
       {params.error === "autopilot_sent" ? (
         <Notice strong>
           Too late, autopilot already sent it. See it on Activity.
@@ -414,6 +432,8 @@ export default async function QueuePage(props: PageProps<"/queue">) {
               // Remount when the text changes (e.g. edited in Gmail) so filled gaps reset to it.
               key={`${i.draftId}:${i.body}`}
               draftId={i.draftId!}
+              nextThreadId={nextThreadId(i.threadId)}
+              notice={noticeFor(i.threadId)}
               customer={who(i)}
               toAddress={i.toAddress ?? ""}
               toFromReplyTo={i.replyRedirected && i.toAddress === i.customerAddress}
@@ -465,6 +485,8 @@ export default async function QueuePage(props: PageProps<"/queue">) {
           ))}
         </section>
       ) : null}
+      {/* Room under the last card so the fixed "squared away." strip never covers it. */}
+      {sentAll.length ? <div aria-hidden className="h-56 shrink-0" /> : null}
     </>
   );
 }

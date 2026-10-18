@@ -30,6 +30,19 @@ export function QuestionLine({
   );
 }
 
+/**
+ * Check 9 P5: which card a tap came from and which comes next, so the action lands the owner
+ * back on the card (a refusal, a save) or on the next one (a send, a discard, a snooze).
+ */
+export function CardTargets({ threadId, next }: { threadId: string; next?: string | null }) {
+  return (
+    <>
+      <input type="hidden" name="threadId" value={threadId} />
+      {next ? <input type="hidden" name="nextThreadId" value={next} /> : null}
+    </>
+  );
+}
+
 /** Escape inside a question does what Keep it / Never mind / Cancel does. */
 export const closeOnEscape =
   (close: () => void) =>

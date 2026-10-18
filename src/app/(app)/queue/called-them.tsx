@@ -4,7 +4,7 @@ import { useId, useState } from "react";
 import { PendingButton } from "@/components/app/pending-button";
 import { Button } from "@/components/ui/button";
 import { answeredByPhoneAction } from "./first-week-actions";
-import { closeOnEscape, QuestionLine, useFocusReturn } from "./focus";
+import { CardTargets, closeOnEscape, QuestionLine, useFocusReturn } from "./focus";
 
 /**
  * Round 2 (FW E11): "I called them". Trades answer by phone all the time; one tap (and a
@@ -13,12 +13,15 @@ import { closeOnEscape, QuestionLine, useFocusReturn } from "./focus";
  */
 export function CalledThem({
   threadId,
+  nextThreadId,
   hasDraft,
   inverted,
   label = "I called them",
   confirm = "Yes, I called them",
 }: {
   threadId: string;
+  /** Check 9 P5: the card the owner lands on afterwards. */
+  nextThreadId?: string | null;
   hasDraft: boolean;
   inverted?: boolean;
   /** Leads package: "Done — I answered" / "Done — I called back" on lead cards. */
@@ -58,7 +61,7 @@ export function CalledThem({
           : "sa-inverted flex flex-col gap-2 rounded-lg p-3"
       }
     >
-      <input type="hidden" name="threadId" value={threadId} />
+      <CardTargets threadId={threadId} next={nextThreadId} />
       {done ? <input type="hidden" name="as" value="done" /> : null}
       <QuestionLine id={titleId} className="font-semibold">
         {done

@@ -38,6 +38,8 @@ export function NeedsYouCard({
   timeZone,
   note,
   resort,
+  nextThreadId,
+  notice,
 }: {
   i: QueueItem;
   lead: LeadCard | undefined;
@@ -51,6 +53,10 @@ export function NeedsYouCard({
   note?: ReactNode;
   /** Ideas H4: the "Move it" sheet (never on a read-only account or a check-in). */
   resort?: ReactNode;
+  /** Check 9 P5: the card after this one, where a snooze or "I called them" lands. */
+  nextThreadId?: string | null;
+  /** Check 9 P5: the done / error notice for a tap on this card. */
+  notice?: ReactNode;
 }) {
   const channel = lead?.channel ?? null;
   const phoneLine = channel?.kind === "phone" || channel?.kind === "phone_text";
@@ -102,6 +108,7 @@ export function NeedsYouCard({
       id={`t-${i.threadId}`}
       className="sa-inverted flex scroll-mt-4 scroll-mb-28 flex-col gap-2 rounded-xl p-4 sm:scroll-mb-4"
     >
+      {notice}
       <div className="flex items-baseline justify-between gap-3">
         <span className="truncate text-lg font-black">{name}</span>
         <span className="shrink-0 text-sm text-ash">
@@ -183,10 +190,16 @@ export function NeedsYouCard({
             </PendingButton>
           </form>
         ) : null}
-        <RemindMe threadId={i.threadId} options={remindOptions} inverted />
+        <RemindMe
+          threadId={i.threadId}
+          nextThreadId={nextThreadId}
+          options={remindOptions}
+          inverted
+        />
         {readOnly || i.checkIn || complaint ? null : phoneLine ? (
           <CalledThem
             threadId={i.threadId}
+            nextThreadId={nextThreadId}
             hasDraft={false}
             inverted
             label="Done — I called back"
@@ -195,13 +208,14 @@ export function NeedsYouCard({
         ) : site || i.lane ? (
           <CalledThem
             threadId={i.threadId}
+            nextThreadId={nextThreadId}
             hasDraft={false}
             inverted
             label="Done — I answered"
             confirm="Yes, done"
           />
         ) : (
-          <CalledThem threadId={i.threadId} hasDraft={false} inverted />
+          <CalledThem threadId={i.threadId} nextThreadId={nextThreadId} hasDraft={false} inverted />
         )}
         {readOnly || i.checkIn ? null : resort}
         <a href={gmailHref} target="_blank" rel="noreferrer" className={linkClass}>

@@ -12,7 +12,7 @@ import { CalledThem } from "./called-them";
 import { AutopilotCountdown } from "./autopilot-countdown";
 import { DraftEditor, keptEditKey } from "./draft-editor";
 import { SendButton } from "./send-button";
-import { closeOnEscape, QuestionLine, useFocusReturn } from "./focus";
+import { CardTargets, closeOnEscape, QuestionLine, useFocusReturn } from "./focus";
 import { readKept } from "@/lib/kept-text";
 import {
   addIntent,
@@ -32,6 +32,10 @@ import {
 export type DraftCardProps = {
   draftId: string;
   threadId: string;
+  /** Check 9 P5: the card after this one, where a send, discard or snooze lands. */
+  nextThreadId?: string | null;
+  /** Check 9 P5: the done / error notice for a tap on this card, shown at its top. */
+  notice?: React.ReactNode;
   /** Plan #6: the "Remind me" times allowed for this one right now. */
   remindOptions?: SnoozeOption[];
   customer: string;
@@ -254,6 +258,7 @@ export function DraftCard(p: DraftCardProps) {
       onPointerUp={onPointerUp}
       onPointerCancel={onPointerUp}
     >
+      {p.notice}
       <header className="flex flex-col gap-1">
         <div className="flex items-baseline justify-between gap-2">
           <span className="text-lg font-black">{p.customer}</span>
@@ -282,6 +287,7 @@ export function DraftCard(p: DraftCardProps) {
           className="sa-inverted flex flex-col gap-2 rounded-lg p-3"
         >
           <input type="hidden" name="draftId" value={p.draftId} />
+          <CardTargets threadId={p.threadId} />
           <AutopilotCountdown sendAt={p.autoSendAt} clock={p.autoSendClock ?? ""} />
           <Pending label="Hold it" busy="Holding…" className="w-full" />
         </form>
@@ -311,6 +317,8 @@ export function DraftCard(p: DraftCardProps) {
       {editing ? (
         <DraftEditor
           draftId={p.draftId}
+          threadId={p.threadId}
+          nextThreadId={p.nextThreadId}
           body={body}
           kept={kept}
           seenHash={p.seenHash}
@@ -365,6 +373,7 @@ export function DraftCard(p: DraftCardProps) {
               className="sa-inverted flex flex-col gap-2 rounded-lg p-3"
             >
               <input type="hidden" name="draftId" value={p.draftId} />
+              <CardTargets threadId={p.threadId} next={p.nextThreadId} />
               <p className="font-semibold">
                 {discardIn > 0
                   ? `Discarding in ${discardIn}… It's removed from Gmail too.`
@@ -384,6 +393,7 @@ export function DraftCard(p: DraftCardProps) {
               className="sa-inverted flex flex-col gap-2 rounded-lg p-3"
             >
               <input type="hidden" name="draftId" value={p.draftId} />
+              <CardTargets threadId={p.threadId} next={p.nextThreadId} />
               <QuestionLine id={discardTitle} className="font-semibold">
                 Discard this draft? It&apos;s removed from Gmail too.
               </QuestionLine>
@@ -426,6 +436,7 @@ export function DraftCard(p: DraftCardProps) {
                   data-offline-ok={p.offlineEnabled ? "" : undefined}
                 >
                   <input type="hidden" name="draftId" value={p.draftId} />
+                  <CardTargets threadId={p.threadId} next={p.nextThreadId} />
                   <input type="hidden" name="seen" value={p.seenHash} />
                   {p.toAddress ? <input type="hidden" name="seenTo" value={p.toAddress} /> : null}
                   {body !== p.body ? <input type="hidden" name="body" value={body} /> : null}
@@ -446,6 +457,7 @@ export function DraftCard(p: DraftCardProps) {
                     p.practiceLeft > 0 ? (
                       <form action={practiceSendAction} className="flex flex-col gap-1">
                         <input type="hidden" name="draftId" value={p.draftId} />
+                        <CardTargets threadId={p.threadId} />
                         {body !== p.body ? <input type="hidden" name="body" value={body} /> : null}
                         <Pending
                           label="Send it to yourself instead"
@@ -506,7 +518,7 @@ export function DraftCard(p: DraftCardProps) {
                 </div>
               )}
               {canChange && p.otherWays ? (
-                <OtherWaysToReply draftId={p.draftId} seenHash={p.seenHash} />
+                <OtherWaysToReply draftId={p.draftId} threadId={p.threadId} seenHash={p.seenHash} />
               ) : null}
               {canChange && changing ? (
                 <div
@@ -516,12 +528,18 @@ export function DraftCard(p: DraftCardProps) {
                   <p className="text-sm text-muted-foreground">
                     Each change writes a new version for you to read. Nothing is sent.
                   </p>
-                  <TweakChips draftId={p.draftId} seenHash={p.seenHash} />
-                  <SayAChange draftId={p.draftId} seenHash={p.seenHash} />
+                  <TweakChips draftId={p.draftId} threadId={p.threadId} seenHash={p.seenHash} />
+                  <SayAChange draftId={p.draftId} threadId={p.threadId} seenHash={p.seenHash} />
                 </div>
               ) : null}
-              <RemindMe threadId={p.threadId} options={p.remindOptions ?? []} />
-              {p.readOnly ? null : <CalledThem threadId={p.threadId} hasDraft />}
+              <RemindMe
+                threadId={p.threadId}
+                nextThreadId={p.nextThreadId}
+                options={p.remindOptions ?? []}
+              />
+              {p.readOnly ? null : (
+                <CalledThem threadId={p.threadId} nextThreadId={p.nextThreadId} hasDraft />
+              )}
             </div>
           )}
         </>

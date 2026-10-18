@@ -263,7 +263,8 @@ test("a 'not on your queue' notice goes away after the next queue action", async
   await dana.getByRole("button", { name: "Remind me later" }).click();
   await dana.getByRole("button", { name: "After this job (3 hours)" }).click();
   await expect(dana).toHaveCount(0);
-  await expect(page).toHaveURL(/\/queue\?done=snoozed$/);
+  // Check 9 P5: the last card's own id rides along (`&t=`), so the URL changes.
+  await expect(page).toHaveURL(/\/queue\?done=snoozed&t=[0-9a-f-]{36}$/);
   await expect(page.getByText("Snoozed.")).toBeVisible();
   await expect(notice).toHaveCount(0);
 });

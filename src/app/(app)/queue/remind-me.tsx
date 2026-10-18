@@ -3,17 +3,20 @@
 import { useId, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { snoozeAction } from "./actions";
-import { closeOnEscape, QuestionLine, useFocusReturn } from "./focus";
+import { CardTargets, closeOnEscape, QuestionLine, useFocusReturn } from "./focus";
 
 export type SnoozeOption = { choice: string; label: string };
 
 /** Plan #6: put a conversation off; it comes back on top of the queue. */
 export function RemindMe({
   threadId,
+  nextThreadId,
   options,
   inverted,
 }: {
   threadId: string;
+  /** Check 9 P5: the card a snooze lands on. */
+  nextThreadId?: string | null;
   options: SnoozeOption[];
   inverted?: boolean;
 }) {
@@ -33,7 +36,7 @@ export function RemindMe({
       aria-labelledby={titleId}
       onKeyDown={closeOnEscape(close)}
     >
-      <input type="hidden" name="threadId" value={threadId} />
+      <CardTargets threadId={threadId} next={nextThreadId} />
       <QuestionLine id={titleId} className="font-semibold">
         Remind me…
       </QuestionLine>

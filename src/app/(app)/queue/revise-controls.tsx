@@ -27,10 +27,13 @@ function Rewriting() {
 }
 
 /** One-tap rewrites. The new text comes back to the queue to read; nothing sends. */
-export function TweakChips({ draftId, seenHash }: { draftId: string; seenHash: string }) {
+type ReviseProps = { draftId: string; threadId: string; seenHash: string };
+
+export function TweakChips({ draftId, threadId, seenHash }: ReviseProps) {
   return (
     <form action={reviseDraftAction} aria-label="Quick changes" className="flex flex-col gap-2">
       <input type="hidden" name="draftId" value={draftId} />
+      <input type="hidden" name="threadId" value={threadId} />
       <input type="hidden" name="seen" value={seenHash} />
       <div className="flex flex-wrap gap-2">
         {(Object.keys(TWEAK_LABELS) as Tweak[]).map((t) => (
@@ -47,11 +50,12 @@ export function TweakChips({ draftId, seenHash }: { draftId: string; seenHash: s
  * draft through the same revise flow as the tweaks (same limits); the new text comes back to
  * read. Nothing sends.
  */
-export function OtherWaysToReply({ draftId, seenHash }: { draftId: string; seenHash: string }) {
+export function OtherWaysToReply({ draftId, threadId, seenHash }: ReviseProps) {
   const heading = `other-ways-${draftId}`;
   return (
     <form action={reviseDraftAction} aria-labelledby={heading} className="flex flex-col gap-2">
       <input type="hidden" name="draftId" value={draftId} />
+      <input type="hidden" name="threadId" value={threadId} />
       <input type="hidden" name="seen" value={seenHash} />
       <p id={heading} className="font-semibold">
         Other ways to reply
@@ -98,7 +102,7 @@ function UseThis() {
  * Plan #4: say (or type) a change — "make it Tuesday instead". Hold to talk
  * where the browser supports it; the words land in the box to check first.
  */
-export function SayAChange({ draftId, seenHash }: { draftId: string; seenHash: string }) {
+export function SayAChange({ draftId, threadId, seenHash }: ReviseProps) {
   const [text, setText] = useState("");
   // False on the server and where the browser has no speech recognition.
   const canTalk = useSyncExternalStore(
@@ -136,6 +140,7 @@ export function SayAChange({ draftId, seenHash }: { draftId: string; seenHash: s
   return (
     <form action={reviseDraftAction} className="flex flex-col gap-2">
       <input type="hidden" name="draftId" value={draftId} />
+      <input type="hidden" name="threadId" value={threadId} />
       <input type="hidden" name="seen" value={seenHash} />
       <label className="flex flex-col gap-1.5">
         <span className="font-semibold">Tell it what to change</span>

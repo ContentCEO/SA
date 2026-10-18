@@ -22,7 +22,11 @@ export async function answeredByPhoneAction(formData: FormData) {
   }
   // Leads package: the same mark says "Done" on lead-site, voicemail and emergency cards.
   const done = formData.get("as") === "done" ? "done" : "called";
-  redirect(r === "marked" ? `/queue?done=${done}` : "/queue?error=unknown");
+  // Check 9 P5: land on the next card, not the top of the queue.
+  // (The card's own id when it was the last one, so the URL still changes.)
+  const next = z.string().uuid().safeParse(formData.get("nextThreadId"));
+  const t = r === "marked" && next.success ? next.data : threadId.data;
+  redirect(r === "marked" ? `/queue?done=${done}&t=${t}` : `/queue?error=unknown&t=${t}`);
 }
 
 /** Round 2 (FW D1): hide the "your last 30 days" card. */

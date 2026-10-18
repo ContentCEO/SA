@@ -8,6 +8,7 @@ import { clearKept, writeKept } from "@/lib/kept-text";
 import { addNeverSayAction } from "../settings/wording-actions";
 import { editorAction, type EditorState } from "./actions";
 import { SendButton } from "./send-button";
+import { CardTargets } from "./focus";
 
 function SaveButton() {
   const { pending } = useFormStatus();
@@ -41,6 +42,9 @@ export const keptEditKey = (draftId: string) => `edit:${draftId}`;
  */
 export function DraftEditor(p: {
   draftId: string;
+  /** Check 9 P5: this card, and the one a send lands on. */
+  threadId: string;
+  nextThreadId?: string | null;
   /** The draft's text as the card shows it (gaps the owner filled on the card included). */
   body: string;
   /** What this tab kept from an earlier visit, if anything (already checked against seenHash). */
@@ -88,6 +92,7 @@ export function DraftEditor(p: {
   return (
     <form action={formAction} className="flex flex-col gap-3">
       <input type="hidden" name="draftId" value={p.draftId} />
+      <CardTargets threadId={p.threadId} next={p.nextThreadId} />
       <input type="hidden" name="opened" value={opened} />
       <input type="hidden" name="seen" value={opened} />
       {p.toAddress ? <input type="hidden" name="seenTo" value={p.toAddress} /> : null}
