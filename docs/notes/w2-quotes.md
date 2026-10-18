@@ -71,3 +71,7 @@ For the integrator to fold into CLAUDE.md (Decisions) and the other shared files
   `quote_amount_changed` with `{ amountTyped: true }`, Activity line "You changed the amount on
   Dana's won quote"). Decided cards say the day in the owner's zone: "Won Oct 14"
   (`decidedLabel`). Same words on both cards: Mark won / Mark lost / Mark no answer / Reopen.
+- **Check 11 P9 (filters and stage help):** the chips wrap (`flex-wrap gap-2`, no sideways
+  scroll), in the order Open, Waiting on you, Quoted (new, stage `talking`), Gone quiet, Won,
+  Lost, No answer, under an "All time" line. Every stage has a one-line explanation under the
+  list. Card time reads "Last email 41 minutes ago". Priced / Won show "None yet" instead of $0.

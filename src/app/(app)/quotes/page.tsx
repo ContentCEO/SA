@@ -30,6 +30,8 @@ export const metadata: Metadata = { title: "Quotes" };
 const FILTERS = [
   ["open", "Open"],
   ["waiting_on_you", "Waiting on you"],
+  // Check 11 P9: the Quoted stage gets its own chip.
+  ["talking", "Quoted"],
   ["quiet", "Gone quiet"],
   ["won", "Won"],
   ["lost", "Lost"],
@@ -102,7 +104,7 @@ function QuoteCard({
       <div className="flex items-baseline justify-between gap-3">
         <span className="truncate text-lg font-black">{name}</span>
         <span className="shrink-0 text-sm opacity-80">
-          {q.lastMessageAt ? relativeTime(q.lastMessageAt) : ""}
+          {q.lastMessageAt ? `Last email ${relativeTime(q.lastMessageAt)}` : ""}
         </span>
       </div>
       <div className="flex items-baseline justify-between gap-3">
@@ -274,8 +276,9 @@ export default async function QuotesPage(props: PageProps<"/quotes">) {
         <dl className="grid grid-cols-3 gap-3">
           {[
             ["Asked for", String(totals.requests)],
-            ["Priced", formatCents(totals.quotedCents)],
-            ["Won", formatCents(totals.wonCents)],
+            // Check 11 P9: "None yet", never a big "$0" that reads as a fact.
+            ["Priced", totals.quotedCents ? formatCents(totals.quotedCents) : "None yet"],
+            ["Won", totals.wonCents ? formatCents(totals.wonCents) : "None yet"],
           ].map(([label, value]) => (
             <div key={label} className="flex flex-col">
               <dt className="text-sm text-muted-foreground">{label}</dt>
@@ -316,7 +319,7 @@ export default async function QuotesPage(props: PageProps<"/quotes">) {
 
       {/* Check 11 P5: the chips count every quote, not just the last 30 days. */}
       <p className="text-sm font-semibold text-muted-foreground">All time</p>
-      <nav aria-label="Quote filter" className="-mx-1 flex gap-1 overflow-x-auto pb-1">
+      <nav aria-label="Quote filter" className="flex flex-wrap gap-2">
         {FILTERS.map(([key, label]) => (
           <Link
             key={key}

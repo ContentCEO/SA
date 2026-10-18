@@ -223,3 +223,62 @@ test("another owner's customer link is a 404", async ({ page, context }) => {
   const res = await page.goto(`/customers/${m!.id}`);
   expect(res?.status()).toBe(404);
 });
+
+test("quotes: every filter chip shows without swiping, and Quoted filters to priced quotes", async ({
+  page,
+  context,
+}) => {
+  const owner = await seedOwner({ mailbox: true, backfilled: true });
+  await quote(owner.mailboxId!, {
+    name: "Ana Diaz",
+    from: "ana@customer.com",
+    inAgo: 2,
+    outAgo: 1,
+    reply: "Hi Ana, the panel is $2,400.",
+    summary: "Ana wants a panel.",
+  });
+  await quote(owner.mailboxId!, {
+    name: "Bo Kim",
+    from: "bo@customer.com",
+    inAgo: 1,
+    summary: "Bo wants a fan.",
+  });
+  await signInAs(context, owner);
+  await page.goto("/quotes");
+
+  const nav = page.getByRole("navigation", { name: "Quote filter" });
+  const viewport = page.viewportSize()!;
+  for (const label of [
+    "Open",
+    "Waiting on you",
+    "Quoted",
+    "Gone quiet",
+    "Won",
+    "Lost",
+    "No answer",
+  ]) {
+    const chip = nav.getByRole("link", { name: new RegExp(`^${label} \\(`) });
+    const box = (await chip.boundingBox())!;
+    expect(box.x, label).toBeGreaterThanOrEqual(0);
+    expect(box.x + box.width, label).toBeLessThanOrEqual(viewport.width);
+    expect(box.height, label).toBeGreaterThanOrEqual(44);
+  }
+  await expect(page.getByText("All time", { exact: true })).toBeVisible();
+  await expect(page.getByText("Quoted: you sent a price.")).toBeVisible();
+  await expect(page.getByRole("article", { name: "Quote for Bo Kim" })).toContainText(
+    /Last email .+ ago/,
+  );
+  // Nothing priced or won in an account like this: no big "$0".
+  const totals = page.getByRole("region", { name: "Last 30 days" });
+  await expect(totals).toContainText("None yet");
+  await expect(totals).not.toContainText("$0");
+
+  await nav.getByRole("link", { name: /^Quoted \(1\)/ }).click();
+  await expect(page).toHaveURL(/stage=talking/);
+  await expect(page.getByRole("article", { name: "Quote for Ana Diaz" })).toContainText("Quoted");
+  await expect(page.getByRole("article", { name: "Quote for Bo Kim" })).toHaveCount(0);
+  const overflow = await page.evaluate(
+    () => document.documentElement.scrollWidth > document.documentElement.clientWidth,
+  );
+  expect(overflow).toBe(false);
+});
