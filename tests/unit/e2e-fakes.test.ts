@@ -463,9 +463,7 @@ describe("the fake server", () => {
     await register(noRead, "no-read@example.com", { untick: [GMAIL_SCOPES.readonly] });
     expect(await tokenScopes(noRead, "no-read@example.com")).not.toContain(GMAIL_SCOPES.readonly);
     const b = createGmailReader({ refreshToken: `rt-${noRead}`, maxRetries: 0 });
-    await expect(b.listMessages({ newerThanDays: 30 })).rejects.toBeInstanceOf(
-      MailboxAuthError,
-    );
+    await expect(b.listMessages({ newerThanDays: 30 })).rejects.toBeInstanceOf(MailboxAuthError);
     const other = fakeCustomer(refFor(noRead));
     const draft = await b.createDraft({
       threadId: other.gmailThreadId,

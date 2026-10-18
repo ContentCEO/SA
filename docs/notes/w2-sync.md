@@ -184,8 +184,8 @@ Under "What we store": "How many photos or files an email had (never the files o
   without a sync; with push on and a quiet inbox the worst case is close to that (15 min + one
   poll), so consider 25 minutes when Davi turns push on.
 - Count (same method as the check): fixed ≈ 864 (poll) + 480 (lifecycle: run + 4) + 72 (digest)
-  + ~17 (daily/weekly + reply-to) ≈ 1,433 a day ≈ 43,000 a month; a quiet inbox adds sync-mailbox
-  run + sync = 576 a day ≈ 17,300 a month (the draft job no longer follows a quiet check).
+  - ~17 (daily/weekly + reply-to) ≈ 1,433 a day ≈ 43,000 a month; a quiet inbox adds sync-mailbox
+    run + sync = 576 a day ≈ 17,300 a month (the draft job no longer follows a quiet check).
 
 ## Step 8 · Check 25 P5: a very big first read resumes and finishes
 
@@ -231,7 +231,7 @@ Under "What we store": "How many photos or files an email had (never the files o
 - Callback → `/connect?error=in_use`: "This Gmail is already connected to another Squared Away
   account. Disconnect it there first, or call Davi at 978-201-9763."
 - **Adapted (safety):** the new token is **not** revoked at Google. A Google revoke ends the app's
-  grant for that Google account, which can also end the *other* account's working access to the
+  grant for that Google account, which can also end the _other_ account's working access to the
   same inbox. The token is simply never stored. (Question for Davi below.)
 
 ## Step 11 · Check 42 P3: Connect another Gmail and Reconnect pick the right account
@@ -278,9 +278,9 @@ Under "What we store": "How many photos or files an email had (never the files o
   same SQL text as before), draft-message-cleanup.ts, classification.ts and drafts.ts use them.
   Stored `label_ids` unchanged; no migration.
 - `MailboxReader.listMessages({ newerThanDays?, after?, inbox?, sentOnly?, pageToken?,
-  maxResults? })` replaces the raw query; the Gmail reader builds `newer_than:` / `after:` /
+maxResults? })` replaces the raw query; the Gmail reader builds `newer_than:` / `after:` /
   `in:inbox` / `-in:inbox` / `in:sent` (`gmailQuery`). Voice asks `{ sentOnly: true,
-  newerThanDays: 365 }`. (Adapted: `after` and `inbox` added for the stepped reads of P1/P3/P5.)
+newerThanDays: 365 }`. (Adapted: `after` and `inbox` added for the stepped reads of P1/P3/P5.)
 - Guard test: no `newer_than:` / `in:sent` / `in:inbox`, and no quoted Gmail label name, in src/
   outside src/mailbox/.
 
