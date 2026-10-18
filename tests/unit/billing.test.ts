@@ -150,12 +150,21 @@ const account: {
   prices: FoundPrice[];
   portals: number;
   checkoutRefuses: (p: Stripe.Checkout.SessionCreateParams) => Error | null;
+  /** Check 17 P4: subscriptions as Stripe holds them now (what `retrieve` answers). */
+  subs: Map<string, Stripe.Subscription>;
+  /** An error every `subscriptions.retrieve` throws (null = answer from `subs`). */
+  retrieveFails: Error | null;
 } = {
   tax: "pending",
   prices: [],
   portals: 0,
   checkoutRefuses: () => null,
+  subs: new Map(),
+  retrieveFails: null,
 };
+
+const missing = () =>
+  Object.assign(new Error("No such subscription"), { code: "resource_missing" });
 
 function fakeStripe(calls: Call[]) {
   const rec =
@@ -196,8 +205,28 @@ function fakeStripe(calls: Call[]) {
       create: rec("webhookEndpoints.create", () => ({ id: "we_1", secret: "whsec_new" })),
     },
     customers: { create: rec("customers.create", () => ({ id: "cus_1" })) },
+    subscriptions: {
+      retrieve: rec("subscriptions.retrieve", (id) => {
+        if (account.retrieveFails) throw account.retrieveFails;
+        const sub = account.subs.get(id as string);
+        if (!sub) throw missing();
+        return sub;
+      }),
+      list: rec("subscriptions.list", (p) => ({
+        data: [...account.subs.values()].filter(
+          (s) => s.customer === (p as { customer: string }).customer,
+        ),
+      })),
+      cancel: rec("subscriptions.cancel", (id) => {
+        const sub = account.subs.get(id as string);
+        if (!sub) throw missing();
+        account.subs.set(id as string, { ...sub, status: "canceled" });
+        return { id };
+      }),
+    },
     checkout: {
       sessions: {
+        expire: rec("checkout.sessions.expire", (id) => ({ id })),
         create: rec("checkout.sessions.create", (p) => {
           const refused = account.checkoutRefuses(p as Stripe.Checkout.SessionCreateParams);
           if (refused) throw refused;
@@ -228,6 +257,8 @@ beforeEach(async () => {
   account.prices = [];
   account.portals = 0;
   account.checkoutRefuses = () => null;
+  account.subs = new Map();
+  account.retrieveFails = null;
   setStripeForTests(fakeStripe(calls));
   ({ workspace } = await ensureUserAndWorkspace({ email: "owner@shop.com", name: "Owner" }));
   await database
@@ -260,13 +291,21 @@ const paidSession = (over: Partial<Stripe.Checkout.Session> = {}) =>
     ...over,
   }) as unknown as Stripe.Checkout.Session;
 
-const subscription = (status: string, plan: "solo" | "crew" | "company" = "crew") =>
-  ({
-    id: "sub_1",
+/**
+ * A subscription event's payload. It is also what the fake Stripe holds now (the latest truth),
+ * unless a test sets `account.subs` itself afterwards to play a late or stale event.
+ */
+const subscription = (status: string, plan: "solo" | "crew" | "company" = "crew", id = "sub_1") => {
+  const sub = {
+    id,
     status,
+    customer: "cus_1",
     metadata: { workspaceId: workspace.id },
     items: { data: [{ price: { lookup_key: planLookupKey(plan) } }] },
-  }) as unknown as Stripe.Subscription;
+  } as unknown as Stripe.Subscription;
+  account.subs.set(id, sub);
+  return sub;
+};
 
 describe("checkout", () => {
   it("includes the setup fee on the first payment and tags the workspace", async () => {
@@ -836,10 +875,9 @@ describe("webhook endpoint", () => {
   });
 
   it("forgets an event that failed so Stripe's retry is processed", async () => {
-    const body = event("evt_2", "customer.subscription.updated", {
-      ...subscription("past_due"),
-      items: null, // malformed → throws inside the handler
-    });
+    const body = event("evt_2", "customer.subscription.updated", subscription("past_due"));
+    // Stripe can't be asked what the subscription says now → throws inside the handler.
+    account.retrieveFails = new Stripe.errors.StripeConnectionError({ message: "socket" });
     await expect(handleStripeWebhook(body, "good")).rejects.toThrow();
     expect(await database.select().from(stripeEvents)).toHaveLength(0);
   });
@@ -903,8 +941,11 @@ describe("webhook endpoint", () => {
 
 describe("canceling in Stripe's page shows the end date (Check 17 P3)", () => {
   const ENDS = new Date("2026-11-16T15:00:00Z");
-  const canceling = (over: Record<string, unknown>) =>
-    ({ ...subscription("active"), ...over }) as unknown as Stripe.Subscription;
+  const canceling = (over: Record<string, unknown>) => {
+    const sub = { ...subscription("active"), ...over } as unknown as Stripe.Subscription;
+    account.subs.set(sub.id, sub);
+    return sub;
+  };
 
   it("cancel_at sets plan_ends_at once, logs the date only, and undoing clears it", async () => {
     await applyCheckoutCompleted(paidSession(), NOW);

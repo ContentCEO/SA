@@ -6,7 +6,7 @@ import { planEnum, tradeEnum } from "@/db/schema";
 import { inviteOwner, markTestUserAdded } from "@/server/admin";
 import { sendInviteEmail } from "@/server/invite-email";
 import { inviteFromWaitlist } from "@/server/waitlist";
-import { connectStripe } from "@/server/billing";
+import { clearStripeOrphans, connectStripe } from "@/server/billing";
 import { requireAdmin } from "@/server/session";
 import { stripeErrorReason } from "@/server/stripe-error-rules";
 import { checkTestPayments, resetTestPayments, StripeNotLiveError } from "@/server/test-payments";
@@ -154,4 +154,11 @@ export async function resetTestPaymentsAction() {
     redirect("/admin?error=stripe_test_payments#stripe");
   }
   redirect("/admin?done=stripe_test_reset#stripe");
+}
+
+/** Check 17 P4: Davi looked in Stripe for the plan with no account here. */
+export async function clearStripeOrphansAction() {
+  await requireAdmin();
+  await clearStripeOrphans();
+  redirect("/admin?done=stripe_orphans_cleared#stripe");
 }

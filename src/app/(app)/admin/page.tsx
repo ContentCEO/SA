@@ -21,10 +21,17 @@ import { modelDownLine, stoppedHeading } from "@/server/model-alert-rules";
 import { modelsDownToday } from "@/server/model-alerts";
 import { isAdminEmail } from "@/server/admin";
 import { ADMIN_MOVES, canMakeMove, type AdminMove } from "@/server/lifecycle";
-import { PAUSE_EXPLAIN, pauseExplanation, STILL_BILLED_LINE } from "@/server/admin-rules";
+import {
+  ORPHAN_PLAN_LINE,
+  PAUSE_EXPLAIN,
+  pauseExplanation,
+  STILL_BILLED_LINE,
+  TWO_PLANS_LINE,
+} from "@/server/admin-rules";
 import {
   adminMoveAction,
   checkTestPaymentsAction,
+  clearStripeOrphansAction,
   connectStripeAction,
   inviteAction,
   inviteFromWaitlistAction,
@@ -42,6 +49,7 @@ import {
   stripeConfigured,
   stripeConnectedAt,
   stripeMode,
+  stripeOrphans,
   termsBoxOffSince,
 } from "@/server/billing";
 import { SALES_TAX_LINES, SALES_TAX_ON_NOTE, TERMS_BOX_OFF_LINE } from "@/server/billing-rules";
@@ -121,6 +129,7 @@ const done: Record<string, string> = {
     "Stripe connected in TEST mode: prices, billing portal and payment notifications are set up. Use card 4242 4242 4242 4242 to try it.",
   stripe_live: "Stripe connected in LIVE mode. Real cards will be charged.",
   stripe_test_check: "Test payments checked.",
+  stripe_orphans_cleared: "Cleared. It comes back if Stripe sends another one.",
   invited:
     "Invited. They can sign in now. The invite email didn't go out (email isn't set up, or it failed), so tell them yourself. Add them as a Google test user too.",
   invited_emailed:
@@ -345,6 +354,9 @@ function WorkspaceCard({ w, now }: { w: AdminRow; now: Date }) {
       {stuck ? (
         <p className="sa-inverted self-start rounded-md px-2 py-1 text-sm font-black">Stuck</p>
       ) : null}
+      {w.twoLivePlans ? (
+        <p className="sa-inverted self-start rounded-md px-2 py-1 font-black">{TWO_PLANS_LINE}</p>
+      ) : null}
       {w.status === "paused" && w.hasSubscription ? (
         <p className="font-black">{STILL_BILLED_LINE}</p>
       ) : null}
@@ -490,6 +502,7 @@ export default async function AdminPage(props: PageProps<"/admin">) {
     growthClientCount,
     modelsDown,
     launchFacts,
+    orphans,
   ] = await Promise.all([
     adminOverview(now),
     countWorkspaces(),
@@ -504,6 +517,7 @@ export default async function AdminPage(props: PageProps<"/admin">) {
     countGrowthClients(),
     modelsDownToday(now),
     loadLaunchFacts(),
+    stripeOrphans(),
   ]);
   const growthStates = await growthStateForEmails(waiting.map((w) => w.email));
   const today = adminToday(now);
@@ -617,6 +631,22 @@ export default async function AdminPage(props: PageProps<"/admin">) {
             {stripeError}
             {stripeReason ? ` ${stripeReason}` : null}
           </Notice>
+        ) : null}
+        {orphans && orphans.count > 0 ? (
+          <form
+            action={clearStripeOrphansAction}
+            className="sa-inverted flex flex-col gap-2 rounded-xl p-4"
+          >
+            <p className="font-black">{ORPHAN_PLAN_LINE}</p>
+            <p>
+              {orphans.count === 1 ? "Once" : `${orphans.count} times`}, last{" "}
+              {et.format(orphans.at)}. Look in Stripe → Customers for a plan whose account was
+              deleted or never matched.
+            </p>
+            <Button type="submit" variant="outline" className="w-full">
+              I checked Stripe
+            </Button>
+          </form>
         ) : null}
         {stripeConfigured() ? (
           <>

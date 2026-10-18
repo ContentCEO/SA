@@ -20,6 +20,7 @@ import { STALE_SYNC_MS } from "./mailbox-health";
 import { normalizeEmail } from "./accounts";
 import { effectiveStatus, jobsAllowed } from "./lifecycle";
 import { referralsVisible } from "./referral-rules";
+import { workspacesWithTwoPlans } from "./billing";
 
 export function isAdminEmail(email: string | null | undefined): boolean {
   const admin = process.env.ADMIN_EMAIL;
@@ -39,6 +40,8 @@ export type AdminRow = {
   setupPaidVia: "stripe" | "house" | null;
   /** Check 17 P2: Stripe has a subscription on file (never the id itself). */
   hasSubscription: boolean;
+  /** Check 17 P4: Stripe has two live plans for this account (one should be canceled there). */
+  twoLivePlans: boolean;
   mailboxes: {
     total: number;
     needReconnect: number;
@@ -233,6 +236,8 @@ export async function adminOverview(now: Date = new Date()): Promise<AdminRow[]>
     .where(and(inArray(activityLog.workspaceId, ids), eq(activityLog.action, "digest_sent")))
     .groupBy(activityLog.workspaceId);
 
+  const twoPlans = await workspacesWithTwoPlans(ids);
+
   const by = <T extends { workspaceId: string }>(rows: T[]) =>
     new Map(rows.map((r) => [r.workspaceId, r]));
   const b = by(boxes);
@@ -256,6 +261,7 @@ export async function adminOverview(now: Date = new Date()): Promise<AdminRow[]>
     setupPaidAt: w.setupPaidAt,
     setupPaidVia: w.setupPaidVia,
     hasSubscription: Boolean(w.hasSubscription),
+    twoLivePlans: twoPlans.has(w.id),
     createdAt: w.createdAt,
     mailboxes: {
       total: b.get(w.id)?.total ?? 0,

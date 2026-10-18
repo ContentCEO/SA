@@ -1,5 +1,5 @@
 import "server-only";
-import { eq } from "drizzle-orm";
+import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import Stripe from "stripe";
 import { pricing, type PlanId } from "@/config/pricing";
 import { db } from "@/db";
@@ -280,17 +280,33 @@ export async function createCheckout(workspace: Workspace, plan: PlanId): Promis
 
   let customer = workspace.stripeCustomerId;
   if (!customer) {
-    const c = await s.customers.create({
-      email: owner?.email,
-      name: workspace.businessName ?? owner?.name ?? undefined,
-      metadata: { workspaceId: workspace.id },
-    });
-    customer = c.id;
-    await db()
+    // Check 17 P4: two quick taps make one Stripe customer (same key → same customer), and
+    // only the first one is stored.
+    const c = await s.customers.create(
+      {
+        email: owner?.email,
+        name: workspace.businessName ?? owner?.name ?? undefined,
+        metadata: { workspaceId: workspace.id },
+      },
+      { idempotencyKey: `customer-${workspace.id}` },
+    );
+    const [stored] = await db()
       .update(workspaces)
-      .set({ stripeCustomerId: customer })
-      .where(eq(workspaces.id, workspace.id));
+      .set({ stripeCustomerId: c.id })
+      .where(and(eq(workspaces.id, workspace.id), isNull(workspaces.stripeCustomerId)))
+      .returning({ id: workspaces.stripeCustomerId });
+    if (stored?.id) customer = stored.id;
+    else {
+      const [row] = await db()
+        .select({ id: workspaces.stripeCustomerId })
+        .from(workspaces)
+        .where(eq(workspaces.id, workspace.id));
+      customer = row?.id ?? c.id;
+    }
   }
+  // Check 17 P4: an earlier checkout still open (another tab, or Back and choose again) is
+  // closed first, so two can't both be paid.
+  await expireOpenCheckout(workspace.id);
 
   const metadata = {
     workspaceId: workspace.id,
@@ -334,6 +350,7 @@ export async function createCheckout(workspace: Workspace, plan: PlanId): Promis
     withBox = false;
     session = await s.checkout.sessions.create(params);
   }
+  await setSetting(openCheckoutKey(workspace.id), session.id);
   // The /admin note is a reminder only: writing it never stops a payment.
   await noteTermsBox(withBox);
   if (!session.url) throw new Error("Stripe didn't return a checkout link.");
@@ -420,6 +437,139 @@ export async function cancelSubscriptionNow(subscriptionId: string) {
   }
 }
 
+/**
+ * Check 17 P4: every subscription of this customer that is still live, plus the stored one, for
+ * Delete my account to cancel (a second paid checkout would otherwise keep charging).
+ */
+export async function liveSubscriptionIds(
+  customerId: string | null,
+  storedId: string | null,
+): Promise<string[]> {
+  const ids = new Set<string>();
+  // Without a key there's nothing to ask (an account billed only by hand). A customer Stripe
+  // doesn't know (a test-mode id under the live key) has no subscriptions to stop.
+  if (customerId && stripeConfigured()) {
+    try {
+      const list = await stripe().subscriptions.list({
+        customer: customerId,
+        status: "all",
+        limit: 100,
+      });
+      for (const sub of list.data) if (!subscriptionEnded(sub.status)) ids.add(sub.id);
+    } catch (err) {
+      if ((err as { code?: string }).code !== "resource_missing") throw err;
+    }
+  }
+  if (storedId) ids.add(storedId);
+  return [...ids];
+}
+
+const subscriptionEnded = (status: string) =>
+  status === "canceled" || status === "incomplete_expired";
+
+async function setSetting(key: string, value: string, now: Date = new Date()) {
+  await db()
+    .insert(appSettings)
+    .values({ key, value, updatedAt: now })
+    .onConflictDoUpdate({ target: appSettings.key, set: { value, updatedAt: now } });
+}
+
+async function getSetting(key: string) {
+  const [row] = await db().select().from(appSettings).where(eq(appSettings.key, key));
+  return row;
+}
+
+/**
+ * app_settings keys held per workspace for billing (Check 17 P4/P9). Delete my account removes
+ * them (`like 'stripe-ws:%:<id>'`). Values are Stripe ids, never shown on a page.
+ */
+export const workspaceBillingKeyPattern = (workspaceId: string) => `stripe-ws:%:${workspaceId}`;
+const openCheckoutKey = (workspaceId: string) => `stripe-ws:open-checkout:${workspaceId}`;
+const secondSubKey = (workspaceId: string) => `stripe-ws:second-sub:${workspaceId}`;
+
+/** Closes the workspace's earlier open checkout. Already complete or expired is fine. */
+async function expireOpenCheckout(workspaceId: string) {
+  const open = await getSetting(openCheckoutKey(workspaceId));
+  if (!open) return;
+  try {
+    await stripe().checkout.sessions.expire(open.value);
+  } catch (err) {
+    console.info("stripe_checkout_expire_skipped", {
+      error: err instanceof Error ? err.name : "unknown",
+      reason: stripeErrorReason(err),
+    });
+  }
+  await db().delete(appSettings).where(eq(appSettings.key, open.key));
+}
+
+/** The subscription as Stripe has it now; a deleted one counts as canceled. */
+async function freshSubscription(sub: Stripe.Subscription): Promise<Stripe.Subscription> {
+  try {
+    return await stripe().subscriptions.retrieve(sub.id);
+  } catch (err) {
+    if ((err as { code?: string }).code === "resource_missing") {
+      return { ...sub, status: "canceled" } as Stripe.Subscription;
+    }
+    throw err;
+  }
+}
+
+/** A stored subscription that is still live at Stripe, or null (ended or gone). */
+async function liveStored(id: string): Promise<Stripe.Subscription | null> {
+  try {
+    const sub = await stripe().subscriptions.retrieve(id);
+    return subscriptionEnded(sub.status) ? null : sub;
+  } catch (err) {
+    if ((err as { code?: string }).code === "resource_missing") return null;
+    throw err;
+  }
+}
+
+/**
+ * Check 17 P4: a second live subscription for an account that already has one. Nothing changes
+ * on the account; /admin says so until one of them ends. One content-free activity row.
+ */
+async function flagSecondSubscription(workspaceId: string, otherId: string) {
+  const had = await getSetting(secondSubKey(workspaceId));
+  await setSetting(secondSubKey(workspaceId), otherId);
+  if (!had) await log(workspaceId, "second_subscription", {});
+}
+
+/** For /admin: which of these workspaces have two live Stripe plans. */
+export async function workspacesWithTwoPlans(ids: string[]): Promise<Set<string>> {
+  if (!ids.length) return new Set();
+  const rows = await db()
+    .select({ key: appSettings.key })
+    .from(appSettings)
+    .where(inArray(appSettings.key, ids.map(secondSubKey)));
+  return new Set(rows.map((r) => r.key.slice(r.key.lastIndexOf(":") + 1)));
+}
+
+/** app_settings key: how many live Stripe plans or paid checkouts had no account here. */
+const ORPHANS_KEY = "stripe_orphans";
+
+async function noteOrphan(now: Date) {
+  await db()
+    .insert(appSettings)
+    .values({ key: ORPHANS_KEY, value: "1", updatedAt: now })
+    .onConflictDoUpdate({
+      target: appSettings.key,
+      set: { value: sql`((${appSettings.value})::int + 1)::text`, updatedAt: now },
+    });
+}
+
+/** For /admin Payments: the count and the last time, or null. Database only. */
+export async function stripeOrphans(): Promise<{ count: number; at: Date } | null> {
+  const row = await getSetting(ORPHANS_KEY);
+  if (!row) return null;
+  return { count: Number(row.value) || 0, at: row.updatedAt };
+}
+
+/** Davi checked Stripe: forget the count. */
+export async function clearStripeOrphans() {
+  await db().delete(appSettings).where(eq(appSettings.key, ORPHANS_KEY));
+}
+
 async function log(workspaceId: string, action: string, detail: Record<string, unknown>) {
   await db().insert(activityLog).values({ workspaceId, actor: "squared_away", action, detail });
 }
@@ -500,8 +650,23 @@ export async function applyCheckoutCompleted(
 ) {
   if (session.mode !== "subscription" || session.payment_status !== "paid") return "ignored";
   const w = await workspaceById(session.metadata?.workspaceId ?? session.client_reference_id);
-  if (!w) return "unknown_workspace";
-  const plan = isPlanId(session.metadata?.plan) ? session.metadata.plan : w.plan;
+  if (!w) {
+    await noteOrphan(now);
+    return "unknown_workspace";
+  }
+  await db()
+    .delete(appSettings)
+    .where(and(eq(appSettings.key, openCheckoutKey(w.id)), eq(appSettings.value, session.id)));
+  const newSub = typeof session.subscription === "string" ? session.subscription : null;
+  // Check 17 P4: a second paid checkout while the stored subscription is still live keeps the
+  // stored one (and its plan) and flags both for Davi, instead of losing track of the first.
+  const second =
+    !!newSub &&
+    !!w.stripeSubscriptionId &&
+    newSub !== w.stripeSubscriptionId &&
+    (await liveStored(w.stripeSubscriptionId)) !== null;
+  if (second) await flagSecondSubscription(w.id, newSub);
+  const plan = second ? w.plan : isPlanId(session.metadata?.plan) ? session.metadata.plan : w.plan;
   const includesSetup = session.metadata?.includesSetup === "1";
   // Check 17 P1: a paused account isn't moved by Stripe; the payment is kept in paused_from,
   // where Resume takes it back to.
@@ -519,8 +684,7 @@ export async function applyCheckoutCompleted(
       plan,
       stripeCustomerId:
         typeof session.customer === "string" ? session.customer : w.stripeCustomerId,
-      stripeSubscriptionId:
-        typeof session.subscription === "string" ? session.subscription : w.stripeSubscriptionId,
+      stripeSubscriptionId: second ? w.stripeSubscriptionId : (newSub ?? w.stripeSubscriptionId),
       // The only place a real setup payment is recorded — and what turns sending on. The date is
       // this payment's unless one was already really paid (a hand-marked or test-card date isn't).
       ...(includesSetup
@@ -546,8 +710,14 @@ async function notePlanEnd(w: Workspace, planEndsAt: Date | null) {
   await log(w.id, "plan_cancel_scheduled", { endsOn });
 }
 
-export async function applySubscription(sub: Stripe.Subscription, now = new Date()) {
-  let w = await workspaceById(sub.metadata?.workspaceId);
+/**
+ * A subscription event. Stripe doesn't promise the order of events (Check 17 P4), so the payload
+ * only names the subscription: what it says now is retrieved fresh, and an event about a
+ * subscription other than the account's own never changes the account.
+ */
+export async function applySubscription(event: Stripe.Subscription, now = new Date()) {
+  const sub = await freshSubscription(event);
+  let w = await workspaceById(sub.metadata?.workspaceId ?? event.metadata?.workspaceId);
   if (!w) {
     const [bySub] = await db()
       .select()
@@ -555,9 +725,40 @@ export async function applySubscription(sub: Stripe.Subscription, now = new Date
       .where(eq(workspaces.stripeSubscriptionId, sub.id));
     w = bySub;
   }
-  if (!w) return "unknown_workspace";
+  if (!w) {
+    if (!subscriptionEnded(sub.status)) await noteOrphan(now);
+    return "unknown_workspace";
+  }
+  if (w.stripeSubscriptionId && w.stripeSubscriptionId !== sub.id) {
+    if (subscriptionEnded(sub.status)) {
+      // A late or old subscription ending: not the account's plan. Ids are never logged.
+      console.info("stripe_event_stale");
+      await db()
+        .delete(appSettings)
+        .where(and(eq(appSettings.key, secondSubKey(w.id)), eq(appSettings.value, sub.id)));
+      return "stale";
+    }
+    if ((await liveStored(w.stripeSubscriptionId)) !== null) {
+      await flagSecondSubscription(w.id, sub.id);
+      return "second_subscription";
+    }
+    // The stored one is gone at Stripe: this live subscription is the account's plan now.
+  }
+  if (subscriptionEnded(sub.status) && w.stripeSubscriptionId === sub.id) {
+    // The account's plan ended while a second one is still live: that one carries on.
+    const other = await getSetting(secondSubKey(w.id));
+    if (other) {
+      await db().delete(appSettings).where(eq(appSettings.key, other.key));
+      const live = await liveStored(other.value);
+      if (live) return applyFreshSubscription(w, live, now);
+    }
+  }
+  return applyFreshSubscription(w, sub, now);
+}
+
+async function applyFreshSubscription(w: Workspace, sub: Stripe.Subscription, now: Date) {
   const plan = planFromLookupKey(sub.items.data[0]?.price?.lookup_key) ?? w.plan;
-  const ended = sub.status === "canceled" || sub.status === "incomplete_expired";
+  const ended = subscriptionEnded(sub.status);
   // Check 17 P3: a cancellation from Stripe's page keeps the plan on until a date; say when.
   const planEndsAt = planEndsAtFrom(sub);
   await notePlanEnd(w, planEndsAt);

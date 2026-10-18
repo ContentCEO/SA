@@ -14,3 +14,9 @@ export function pauseExplanation(hasSubscription: boolean): string {
 
 /** Check 17 P2: on a paused account's card while Stripe still has a live plan for it. */
 export const STILL_BILLED_LINE = "Still billed in Stripe";
+
+/** Check 17 P4: on a card whose account has two live Stripe subscriptions. */
+export const TWO_PLANS_LINE = "Two live Stripe plans: cancel one in Stripe";
+
+/** Check 17 P4: in Payments, when a live plan or paid checkout matched no account here. */
+export const ORPHAN_PLAN_LINE = "A Stripe plan has no account here. Check Stripe.";

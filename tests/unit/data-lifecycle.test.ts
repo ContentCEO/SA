@@ -331,6 +331,7 @@ async function seedOwner(email: string, tag: string, extra: { referredBy?: strin
     .values({ growthClientId: gc!.id, month: "2026-10", newLeads: 3 });
   await database.insert(appSettings).values([
     { key: `cost_alert:${ws}:2026-10`, value: "1" },
+    { key: `stripe-ws:open-checkout:${ws}`, value: `cs_${tag}` },
     { key: `email-sent:digest-${ws}-2026-10-12`, value: NOW.toISOString() },
     { key: `email-sent:access-lost-${a.mailboxId}-1-1`, value: NOW.toISOString() },
   ]);
