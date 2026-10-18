@@ -27,7 +27,13 @@ import {
   sql,
 } from "drizzle-orm";
 import { pricing } from "@/config/pricing";
-import { EARN_THRESHOLD, GRACE_MINUTES } from "@/config/rules";
+import {
+  DAILY_AUTOPILOT_CAP,
+  EARN_THRESHOLD,
+  GRACE_MINUTES,
+  MIN_CONFIDENCE_PCT,
+} from "@/config/rules";
+import { GUARDRAIL_LINES, type AutopilotReasonCode, type GuardrailCode } from "./autopilot-reasons";
 import { autopilotPlanNames } from "./plan-features";
 import { db } from "@/db";
 import {
@@ -81,9 +87,7 @@ export { knownCustomer };
  * sending.
  */
 export const AUTOPILOT_CATEGORIES = AUTO_DRAFT_CATEGORIES;
-export { EARN_THRESHOLD, GRACE_MINUTES };
-export const MIN_CONFIDENCE_PCT = 85;
-export const DAILY_AUTOPILOT_CAP = 20;
+export { DAILY_AUTOPILOT_CAP, EARN_THRESHOLD, GRACE_MINUTES, MIN_CONFIDENCE_PCT };
 
 type Category = (typeof AUTOPILOT_CATEGORIES)[number];
 export function isAutopilotCategory(c: unknown): c is Category {
@@ -213,55 +217,52 @@ export function newPersonCopied(
   return [...newest.to, ...newest.cc].some((a) => norm(a) !== "" && !seen.has(norm(a)));
 }
 
-/** Layer 3. Every reason this email must wait for the owner; empty = may go. */
-export function guardrailReasons(g: GuardrailInput): string[] {
-  const out: string[] = [];
-  if (!isAutopilotCategory(g.category))
-    out.push("Complaints and other emails always wait for you.");
-  if (g.needsOwner) out.push("Flagged as needing you.");
-  if (g.kind !== "reply") out.push("Follow-ups always wait for you.");
-  if ((g.confidencePct ?? 0) < MIN_CONFIDENCE_PCT) out.push("Not confident enough to send alone.");
-  if (g.flags.length) out.push("Has things to check before sending.");
-  if (g.category === "invoice_payment" && g.amountsInEmail.length)
-    out.push("Payments with an amount always wait for you.");
+/**
+ * Layer 3. Every reason this email must wait for the owner, as content-free codes (Check 20
+ * P7); empty = may go.
+ */
+export function guardrailCodes(g: GuardrailInput): GuardrailCode[] {
+  const out: GuardrailCode[] = [];
+  if (!isAutopilotCategory(g.category)) out.push("other_kind");
+  if (g.needsOwner) out.push("needs_owner");
+  if (g.kind !== "reply") out.push("followup");
+  if ((g.confidencePct ?? 0) < MIN_CONFIDENCE_PCT) out.push("low_confidence");
+  if (g.flags.length) out.push("flags");
+  if (g.category === "invoice_payment" && g.amountsInEmail.length) out.push("invoice_amount");
   // Any way of naming a price: "$450", "450 dollars", "1.2k", "twelve hundred" (review A1).
-  if (mentionsMoney(g.draftBody)) out.push("Mentions money, so it waits for you.");
-  if (hasUnfilledGap(g.draftBody)) out.push("Has gaps for you to fill in.");
-  if (!g.knownCustomer) out.push("You haven't written to this person before.");
-  if (g.untrusted) out.push("This email tried to give instructions to the assistant.");
-  if (g.municipal) out.push("Building departments always wait for you.");
-  if (g.acceptsQuote) out.push("Quote acceptances always wait for you.");
+  if (mentionsMoney(g.draftBody)) out.push("money");
+  if (hasUnfilledGap(g.draftBody)) out.push("gaps");
+  if (!g.knownCustomer) out.push("not_known");
+  if (g.untrusted) out.push("untrusted");
+  if (g.municipal) out.push("municipal");
+  if (g.acceptsQuote) out.push("accepts_quote");
   // Thank-you notes (2026-10-16) are purpose notes too, so this line covers them.
-  if (g.purpose != null) out.push("Deposit, review and closing notes always wait for you.");
-  if (g.maybeAnswered) out.push("You might already have answered this in Gmail.");
-  if (g.redirected)
-    out.push("This reply goes to a different address than the sender's, so it waits for you.");
-  if (g.replyToUnchecked) out.push("We couldn't check where this reply goes, so it waits for you.");
-  if (g.complainedRecently)
-    out.push("This customer complained in the last 12 months, so it waits for you.");
-  if (g.paymentChange) out.push("Asks to pay a new account, so it waits for you.");
-  if (g.legalInEmail)
-    out.push("Something legal is mentioned in this conversation, so it waits for you.");
-  if (g.emailUnreadable) out.push("We can't read their email any more, so it waits for you.");
-  if (g.gasSmell) out.push("Someone smells gas. Call them.");
-  if (g.coAlarm) out.push("A carbon monoxide alarm went off. Call them.");
-  if (g.asksIfAi || claimsHuman(g.draftBody))
-    out.push("Asks if a person is answering, so it waits for you.");
-  if (g.injectionCleared)
-    out.push("You said an email here was normal after we flagged it, so it waits for you.");
-  if (g.electricalHazard) out.push("Sounds like an electrical fire risk. Call them.");
-  if (g.recentEmergency)
-    out.push(
-      "There was an emergency on this conversation in the last 2 days, so it waits for you.",
-    );
-  if (g.ownerMoved) out.push("You chose this kind yourself, so it waits for you.");
-  if (g.leadChannel) out.push("Lead-site and voicemail emails always wait for you.");
-  if (g.textAddress) out.push("That address may turn into a text message, so it waits for you.");
-  if (g.firstReply) out.push("First replies to new customers always wait for you.");
-  if (g.otherLanguage || looksNonEnglish(g.draftBody))
-    out.push("Not in English, so it waits for you.");
-  if (g.newPersonCopied) out.push("Someone new is on this conversation, so it waits for you.");
+  if (g.purpose != null) out.push("purpose");
+  if (g.maybeAnswered) out.push("maybe_answered");
+  if (g.redirected) out.push("redirected");
+  if (g.replyToUnchecked) out.push("reply_to_unchecked");
+  if (g.complainedRecently) out.push("complained");
+  if (g.paymentChange) out.push("payment_change");
+  if (g.legalInEmail) out.push("legal");
+  if (g.emailUnreadable) out.push("unreadable");
+  if (g.gasSmell) out.push("gas");
+  if (g.coAlarm) out.push("co_alarm");
+  if (g.asksIfAi || claimsHuman(g.draftBody)) out.push("asks_if_ai");
+  if (g.injectionCleared) out.push("injection_cleared");
+  if (g.electricalHazard) out.push("electrical");
+  if (g.recentEmergency) out.push("recent_emergency");
+  if (g.ownerMoved) out.push("owner_moved");
+  if (g.leadChannel) out.push("lead_channel");
+  if (g.textAddress) out.push("text_address");
+  if (g.firstReply) out.push("first_reply");
+  if (g.otherLanguage || looksNonEnglish(g.draftBody)) out.push("other_language");
+  if (g.newPersonCopied) out.push("new_person");
   return out;
+}
+
+/** The same, in plain sentences. */
+export function guardrailReasons(g: GuardrailInput): string[] {
+  return guardrailCodes(g).map((c) => GUARDRAIL_LINES[c]);
 }
 
 /** Layer 2's evidence: replies in each category the owner sent exactly as drafted. */
@@ -291,6 +292,19 @@ export async function earnedCounts(workspaceId: string): Promise<Map<string, num
 async function modes(workspaceId: string) {
   const rows = await db().select().from(rules).where(eq(rules.workspaceId, workspaceId));
   return new Map(rows.map((r) => [r.category, r.mode]));
+}
+
+/**
+ * Check 20 P7: the kinds the owner has autopilot on for right now (empty while the account
+ * can't use it), so the queue card only explains a wait where autopilot is really on.
+ */
+export async function autopilotOnKinds(
+  workspace: Pick<Workspace, "id" | "status" | "evaluationEndsAt" | "plan" | "setupPaidVia">,
+  now: Date = new Date(),
+): Promise<Set<string>> {
+  if (accountLockReason(workspace, now)) return new Set();
+  const mode = await modes(workspace.id);
+  return new Set([...mode].filter(([, m]) => m === "autopilot").map(([c]) => c));
 }
 
 export type AutopilotState = {
@@ -417,16 +431,34 @@ export async function customerComplainedRecently(
   return (await complainedAddresses(workspaceId, now)).has(address.trim().toLowerCase());
 }
 
-/** Every reason this draft can't go on its own right now (all three layers + the daily cap). */
-async function blockers(row: NonNullable<Awaited<ReturnType<typeof loadForAutopilot>>>, now: Date) {
+/** A reason autopilot won't send: a content-free code (stored, logged) and its sentence. */
+export type AutopilotReason = { code: AutopilotReasonCode; line: string };
+const reason = (code: AutopilotReasonCode, line?: string): AutopilotReason => ({
+  code,
+  line: line ?? (code in GUARDRAIL_LINES ? GUARDRAIL_LINES[code as GuardrailCode] : ""),
+});
+
+/**
+ * Every reason this draft can't go on its own right now (all three layers). `switchedOn`
+ * says whether the owner has autopilot on for this kind (and the account allows it).
+ */
+async function blockers(
+  row: NonNullable<Awaited<ReturnType<typeof loadForAutopilot>>>,
+  now: Date,
+): Promise<{ switchedOn: boolean; reasons: AutopilotReason[] }> {
   const { draft, thread, mailbox, workspace } = row;
   const locked = accountLockReason(workspace, now);
-  if (locked) return [locked];
+  if (locked) return { switchedOn: false, reasons: [reason("account_locked", locked)] };
+  const mode = (await modes(workspace.id)).get(thread.category ?? "");
+  if (mode !== "autopilot")
+    return {
+      switchedOn: false,
+      reasons: [reason("autopilot_off", "Autopilot is off for this kind of email.")],
+    };
   // The plan covers fewer Gmail addresses and this one is paused (2026-10-16): nothing from it
   // goes on its own (sendDraft refuses it too).
-  if (mailbox.planPausedAt) return [MAILBOX_PAUSED_LINE];
-  const mode = (await modes(workspace.id)).get(thread.category ?? "");
-  if (mode !== "autopilot") return ["Autopilot is off for this kind of email."];
+  if (mailbox.planPausedAt)
+    return { switchedOn: true, reasons: [reason("mailbox_paused", MAILBOX_PAUSED_LINE)] };
   const [customer] = await db()
     .select({
       address: messages.fromAddress,
@@ -500,7 +532,7 @@ async function blockers(row: NonNullable<Awaited<ReturnType<typeof loadForAutopi
   // can't be checked, so it waits.
   const fullBody = customer?.bodyText ?? null;
   const fullText = fullBody === null ? "" : `${customer?.subject ?? ""}\n${fullBody}`;
-  return guardrailReasons({
+  const codes = guardrailCodes({
     category: thread.category,
     needsOwner: thread.needsOwner || thread.needsOwnerManual,
     kind: draft.kind,
@@ -539,6 +571,7 @@ async function blockers(row: NonNullable<Awaited<ReturnType<typeof loadForAutopi
       fullBody !== null && looksNonEnglish(`${customer?.subject ?? ""}\n${prepareBody(fullBody)}`),
     newPersonCopied: copiedSomeoneNew,
   });
+  return { switchedOn: true, reasons: codes.map((c) => reason(c)) };
 }
 
 /**
@@ -551,7 +584,16 @@ export async function considerAutopilot(
 ): Promise<Date | null> {
   const row = await loadForAutopilot(draftId);
   if (!row || row.draft.status !== "pending" || row.draft.autoSendAt) return null;
-  if ((await blockers(row, now)).length) return null;
+  const { switchedOn, reasons } = await blockers(row, now);
+  if (reasons.length) {
+    // Check 20 P7: the owner switched this kind on, so say why this one waits.
+    if (switchedOn)
+      await recordSkip(
+        row,
+        reasons.map((r) => r.code),
+      );
+    return null;
+  }
 
   // Check 20 P13: the cap check, the countdown and its autopilot_scheduled row (what the cap
   // counts) happen in one transaction under a per-workspace lock, so two inboxes drafting at
@@ -563,13 +605,13 @@ export async function considerAutopilot(
       sql`select pg_advisory_xact_lock(hashtext(${`autopilot-cap:${row.workspace.id}`}))`,
     );
     if ((await countdownsStartedLast24h(tx, row.workspace.id, now)) >= DAILY_AUTOPILOT_CAP)
-      return false;
+      return "cap" as const;
     const [set] = await tx
       .update(drafts)
-      .set({ autoSendAt: at })
+      .set({ autoSendAt: at, autopilotSkip: null })
       .where(and(eq(drafts.id, draftId), eq(drafts.status, "pending"), isNull(drafts.autoSendAt)))
       .returning({ id: drafts.id });
-    if (!set) return false;
+    if (!set) return "gone" as const;
     await tx.insert(activityLog).values({
       workspaceId: row.workspace.id,
       actor: "squared_away",
@@ -577,9 +619,35 @@ export async function considerAutopilot(
       threadId: row.thread.id,
       detail: { draftId, sendAt: at.toISOString() },
     });
-    return true;
+    return "started" as const;
   });
-  return started ? at : null;
+  if (started === "cap") await recordSkip(row, ["daily_cap"]);
+  return started === "started" ? at : null;
+}
+
+/**
+ * Check 20 P7: a reply in a switched-on kind that won't go on its own — the codes go on the
+ * draft (the queue card says why) and in Activity. Codes only, never email text.
+ */
+async function recordSkip(
+  row: NonNullable<Awaited<ReturnType<typeof loadForAutopilot>>>,
+  codes: AutopilotReasonCode[],
+) {
+  const [set] = await db()
+    .update(drafts)
+    .set({ autopilotSkip: codes })
+    .where(and(eq(drafts.id, row.draft.id), eq(drafts.status, "pending")))
+    .returning({ id: drafts.id });
+  if (!set) return;
+  await db()
+    .insert(activityLog)
+    .values({
+      workspaceId: row.workspace.id,
+      actor: "squared_away",
+      action: "autopilot_skipped",
+      threadId: row.thread.id,
+      detail: { draftId: row.draft.id, codes },
+    });
 }
 
 export const NEWER_MAIL_LINE = "There's newer mail in this conversation.";
@@ -665,15 +733,15 @@ export async function runAutopilotSend(
     now,
     await workspaceTimeZone(row.workspace.id),
   );
-  const reasons = [
-    ...(await blockers(row, now)),
-    ...(newer.length ? [NEWER_MAIL_LINE] : []),
-    ...(timing ? [timingNote(timing)] : []),
+  const reasons: AutopilotReason[] = [
+    ...(await blockers(row, now)).reasons,
+    ...(newer.length ? [reason("newer_mail", NEWER_MAIL_LINE)] : []),
+    ...(timing ? [reason("stale_timing", timingNote(timing))] : []),
   ];
   // Layer 1 already needs what the send gate needs. If they ever differ, stand down here rather
   // than let sendDraft refuse: a refusal throws, and the backstop would retry it forever.
   if (!reasons.length && !canSend(row.workspace, now)) {
-    reasons.push("Sending isn't switched on for this account.");
+    reasons.push(reason("cant_send", "Sending isn't switched on for this account."));
   }
   // The owner may be writing their own reply in Gmail right now: sync doesn't store drafts,
   // so only Gmail can say. Asked only when sending is otherwise allowed — a blocked account
@@ -688,14 +756,15 @@ export async function runAutopilotSend(
       const ours = new Set([own?.messageId, row.draft.gmailMessageId].filter(Boolean));
       const listed = await writer.threadMessageLabels(row.thread.gmailThreadId);
       const others = listed.filter((m) => isUnsentDraft(m.labelIds) && !ours.has(m.id));
-      if (others.length) reasons.push("You're writing a reply in Gmail.");
+      if (others.length)
+        reasons.push(reason("writing_in_gmail", "You're writing a reply in Gmail."));
       const stored = await db()
         .select({ id: messages.gmailMessageId })
         .from(messages)
         .where(eq(messages.threadId, row.thread.id));
       if (unsyncedMessageIds(listed, new Set(stored.map((s) => s.id))).length) {
         unsynced = true;
-        reasons.push(NEWER_MAIL_LINE);
+        reasons.push(reason("newer_mail", NEWER_MAIL_LINE));
       }
     } catch (err) {
       await release();
@@ -707,9 +776,11 @@ export async function runAutopilotSend(
     }
   }
   if (reasons.length) {
+    // Check 20 P7: the codes (content-free) go on the draft and in the log.
+    const codes = [...new Set(reasons.map((r) => r.code))];
     await db()
       .update(drafts)
-      .set({ autoSendAt: null, autoSendClaimedAt: null })
+      .set({ autoSendAt: null, autoSendClaimedAt: null, autopilotSkip: codes })
       .where(eq(drafts.id, draftId));
     await db()
       .insert(activityLog)
@@ -718,11 +789,12 @@ export async function runAutopilotSend(
         actor: "squared_away",
         action: "autopilot_stood_down",
         threadId: row.thread.id,
-        detail: { draftId, reasonCount: reasons.length },
+        detail: { draftId, reasonCount: reasons.length, codes },
       });
+    const lines = reasons.map((r) => r.line);
     return unsynced
-      ? { status: "stood_down", reasons, syncMailboxId: row.mailbox.id }
-      : { status: "stood_down", reasons };
+      ? { status: "stood_down", reasons: lines, syncMailboxId: row.mailbox.id }
+      : { status: "stood_down", reasons: lines };
   }
 
   let outcome;

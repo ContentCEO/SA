@@ -9,6 +9,7 @@ import { MINUTES_PER_SENT_REPLY } from "@/config/drafting";
 import { dollarsToCents, tally, type MoneySoFar, type MonthMoney } from "./activity-rules";
 import { invoiceTotals } from "./money";
 import { atRiskActivityLine } from "./leads-at-risk-rules";
+import { knownReasonCodes, REASON_PHRASES } from "./autopilot-reasons";
 import { emergencyActivityLine } from "./emergency-alert-rules";
 import { invoiceOf } from "./money-rules";
 import {
@@ -193,8 +194,17 @@ export function describeActivity(
       return `Autopilot lined up a reply${to} — you had time to hold it`;
     case "autopilot_held":
       return `You held an autopilot reply${to}`;
-    case "autopilot_stood_down":
-      return `Autopilot didn't send the reply${to} — something changed, so it waits for you`;
+    case "autopilot_stood_down": {
+      // Check 20 P7: name the first reason (older rows carry only a count).
+      const [first] = knownReasonCodes(detail.codes);
+      return first
+        ? `Autopilot didn't send the reply${to}: ${REASON_PHRASES[first]}`
+        : `Autopilot didn't send the reply${to} — something changed, so it waits for you`;
+    }
+    case "autopilot_skipped": {
+      const [first] = knownReasonCodes(detail.codes);
+      return first ? `Autopilot left the reply${to} for you: ${REASON_PHRASES[first]}` : null;
+    }
     case "autopilot_changed":
       return `You turned autopilot ${detail.on ? "on" : "off"}${
         typeof detail.category === "string" && isCategory(detail.category)

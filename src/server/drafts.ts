@@ -3046,6 +3046,8 @@ export type QueueItem = {
   purpose: DraftPurpose | null;
   /** Autopilot will send this at this time unless held. */
   autoSendAt: Date | null;
+  /** Check 20 P7: why autopilot left this reply for the owner (content-free codes). */
+  autopilotSkip: string[] | null;
   threadId: string;
   customerName: string | null;
   customerAddress: string | null;
@@ -3393,6 +3395,7 @@ export async function listQueue(
           kind: null,
           purpose: null,
           autoSendAt: null,
+          autopilotSkip: null,
           threadId: t.id,
           customerName: who.get(t.id)?.name ?? null,
           customerAddress: who.get(t.id)?.address ?? null,
@@ -3434,6 +3437,7 @@ export async function listQueue(
           kind: draft.kind,
           purpose: draft.purpose ?? null,
           autoSendAt: draft.autoSendAt,
+          autopilotSkip: draft.autopilotSkip ?? null,
           threadId: thread.id,
           customerName: who.get(thread.id)?.name ?? null,
           customerAddress: who.get(thread.id)?.address ?? draft.toAddress,

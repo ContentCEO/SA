@@ -2,7 +2,9 @@ import { randomUUID } from "node:crypto";
 import Link from "next/link";
 import { Notice } from "@/components/app/notice";
 import { Headline } from "@/components/brand/headline";
-import { draftTag } from "@/config/categories";
+import { categoryLabels, draftTag, isCategory } from "@/config/categories";
+import { autopilotOnKinds } from "@/server/autopilot";
+import { autopilotWaitLine } from "@/server/autopilot-reasons";
 import { findGaps } from "@/ai/gaps";
 import { confidenceLabel } from "@/config/drafting";
 import { gmailThreadLink } from "@/lib/gmail-link";
@@ -155,14 +157,20 @@ export default async function QueuePage(props: PageProps<"/queue">) {
   // Ideas G7: private notes. Drafts are keyed on where the reply goes; needs-you items on the
   // customer's newest email. Never in queue counts (those come from queueMembership).
   const allThreadIds = [...queue.needsYou, ...queue.drafts].map((i) => i.threadId);
-  const [threadNotes, draftNotes, away] = await Promise.all([
+  const [threadNotes, draftNotes, away, autopilotOn] = await Promise.all([
     notesForThreads(workspace.id, allThreadIds),
     notesForAddresses(
       workspace.id,
       queue.drafts.map((i) => i.toAddress),
     ),
     awayState(workspace.id, now),
+    autopilotOnKinds(workspace, now),
   ]);
+  // Check 20 P7: a reply in a kind with autopilot on that waits says why (codes, never text).
+  const autopilotWait = (i: QueueItem) =>
+    !i.autoSendAt && i.category && isCategory(i.category) && autopilotOn.has(i.category)
+      ? autopilotWaitLine(categoryLabels[i.category], i.autopilotSkip)
+      : null;
   // A phone that keeps a copy of the queue (offline okays) never holds a note's text.
   const noteFor = (i: QueueItem) => (
     <NoteLine
@@ -448,6 +456,7 @@ export default async function QueuePage(props: PageProps<"/queue">) {
               canSend={sending && !i.mailboxPaused}
               readOnly={readOnly || i.mailboxPaused}
               autoSendAt={i.autoSendAt ? i.autoSendAt.toISOString() : null}
+              autopilotWait={autopilotWait(i)}
               autoSendClock={i.autoSendAt ? clock.format(i.autoSendAt) : null}
               sendingOffLabel={i.mailboxPaused ? MAILBOX_PAUSED_LINE : sendingOffLabel(workspace)}
               sendingOffDetail={

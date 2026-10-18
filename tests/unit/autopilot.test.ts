@@ -39,6 +39,7 @@ import {
   threadsToAutoDraft,
 } from "@/server/drafts";
 import { saveConnectedMailbox } from "@/server/mailboxes";
+import { isAutopilotReasonCode } from "@/server/autopilot-reasons";
 import { setWorkspacePlan } from "@/server/workspace-lifecycle";
 import { createTestDb } from "../support/db";
 import { fakeTransport } from "../support/fake-model";
@@ -894,6 +895,45 @@ describe("in the database", () => {
         await copy(t, ["rob@customer.com", "OWNER@shop.com"]);
         expect(await considerAutopilot(await drafted(t), NOW)).toEqual(later(GRACE_MINUTES));
       });
+    });
+
+    it("Check 20 P7: a refused draft in a switched-on kind keeps why, as codes only", async () => {
+      const t = await conversation({ known: false, from: "sam@newcustomer.com" });
+      const draftId = await drafted(t);
+      expect(await considerAutopilot(draftId, NOW)).toBeNull();
+      const [d] = await database.select().from(drafts).where(eq(drafts.id, draftId));
+      expect(d!.autopilotSkip).toContain("not_known");
+      const [log] = await database
+        .select()
+        .from(activityLog)
+        .where(eq(activityLog.action, "autopilot_skipped"));
+      expect(log!.detail).toEqual({ draftId, codes: d!.autopilotSkip });
+      for (const c of d!.autopilotSkip!) expect(isAutopilotReasonCode(c)).toBe(true);
+      expect(JSON.stringify(log!.detail)).not.toMatch(/sam|Thursday|@/i);
+
+      // A kind that's switched off records nothing.
+      const off = await drafted(
+        await conversation({ category: "customer_question", known: false }),
+      );
+      expect(await considerAutopilot(off, NOW)).toBeNull();
+      const [o] = await database.select().from(drafts).where(eq(drafts.id, off));
+      expect(o!.autopilotSkip).toBeNull();
+    });
+
+    it("Check 20 P7: a stood-down run stores and logs its codes", async () => {
+      const t = await conversation();
+      const draftId = await drafted(t);
+      await considerAutopilot(draftId, NOW);
+      const [thread] = await database.select().from(threads).where(eq(threads.id, t));
+      await writer.createDraft({ threadId: thread!.gmailThreadId, raw: "" });
+      await runAutopilotSend(draftId, deps(later(GRACE_MINUTES)));
+      const [d] = await database.select().from(drafts).where(eq(drafts.id, draftId));
+      expect(d!.autopilotSkip).toEqual(["writing_in_gmail"]);
+      const [log] = await database
+        .select()
+        .from(activityLog)
+        .where(eq(activityLog.action, "autopilot_stood_down"));
+      expect(log!.detail).toEqual({ draftId, reasonCount: 1, codes: ["writing_in_gmail"] });
     });
 
     it("Check 20 P13: a draft already counting down takes no second slot", async () => {

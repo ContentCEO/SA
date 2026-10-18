@@ -77,6 +77,8 @@ export type DraftCardProps = {
   autoSendAt?: string | null;
   /** The same time as a clock ("9:42 AM"), in the owner's time zone. */
   autoSendClock?: string | null;
+  /** Check 20 P7: "Autopilot is on for scheduling, but this one waits: …" (null = say nothing). */
+  autopilotWait?: string | null;
   sendingOffLabel: string;
   sendingOffDetail: string;
   /** Plan #40: practice sends left during the three days; null outside them. */
@@ -262,6 +264,7 @@ export function DraftCard(p: DraftCardProps) {
         {p.noteLine}
         {p.summary ? <p className="font-semibold">{p.summary}</p> : null}
         <p className={p.summary ? "text-muted-foreground" : undefined}>{p.reason}</p>
+        {p.autopilotWait ? <p className="text-sm font-semibold">{p.autopilotWait}</p> : null}
       </header>
 
       {p.needsOwnerReason ? <p className="font-semibold">Needs you: {p.needsOwnerReason}</p> : null}
