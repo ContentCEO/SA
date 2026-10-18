@@ -269,3 +269,17 @@ Under "What we store": "How many photos or files an email had (never the files o
   and the new token is used from then on.
 - `MailboxConnector.provider` is the schema's provider union (`MailboxProvider`).
 - `parseAddressList` moved to `src/mailbox/address.ts`; `src/mailbox/gmail/parse.ts` re-exports it.
+
+## Step 13 · Check 47 P4: Gmail's labels and search words in one place
+
+- `MAIL_LABELS` (src/mailbox/connector.ts): inbox, sent, draft, trash, spam, promotions, social —
+  Gmail's names, which every provider's reader maps onto; `MailMessage.labelIds` documents it.
+  sync.ts, thread-sql.ts (`labelSql` / `labelArray` build the SQL literals from the constants:
+  same SQL text as before), draft-message-cleanup.ts, classification.ts and drafts.ts use them.
+  Stored `label_ids` unchanged; no migration.
+- `MailboxReader.listMessages({ newerThanDays?, after?, inbox?, sentOnly?, pageToken?,
+  maxResults? })` replaces the raw query; the Gmail reader builds `newer_than:` / `after:` /
+  `in:inbox` / `-in:inbox` / `in:sent` (`gmailQuery`). Voice asks `{ sentOnly: true,
+  newerThanDays: 365 }`. (Adapted: `after` and `inbox` added for the stepped reads of P1/P3/P5.)
+- Guard test: no `newer_than:` / `in:sent` / `in:inbox`, and no quoted Gmail label name, in src/
+  outside src/mailbox/.

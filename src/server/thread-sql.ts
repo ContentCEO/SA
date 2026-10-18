@@ -1,4 +1,5 @@
 import "server-only";
+import { MAIL_LABELS } from "@/mailbox/connector";
 import { eq, isNotNull, or, sql, type SQL } from "drizzle-orm";
 import { EMAIL_TO_TEXT_DOMAINS, PHONE_SERVICES } from "@/config/phone-services";
 import { messages, threads } from "@/db/schema";
@@ -20,6 +21,16 @@ export const asDate = (v: unknown): Date | null => (v ? new Date(v as string | D
 const outerThreadId = () => sql`${threads.id}`;
 
 /**
+ * Check 47 P4: a label name (MAIL_LABELS, fixed constants) as SQL literals: a text literal for
+ * jsonb `?`, and a one-element jsonb array for `@>`. Never built from anything but the constants.
+ */
+const labelText = (label: (typeof MAIL_LABELS)[keyof typeof MAIL_LABELS]) => `'${label}'`;
+export const labelArray = (label: (typeof MAIL_LABELS)[keyof typeof MAIL_LABELS]) =>
+  `'${JSON.stringify([label])}'::jsonb`;
+export const labelSql = (label: (typeof MAIL_LABELS)[keyof typeof MAIL_LABELS]) =>
+  sql.raw(labelText(label));
+
+/**
  * An unsent Gmail draft, for a messages alias (`m`, `o`, …): DRAFT label and no SENT label —
  * the same rule as `isUnsentDraft` in sync.ts, so a row sync keeps is never one these checks
  * hide. Sync no longer stores drafts and a one-shot cleanup re-checks the old rows with Gmail,
@@ -28,7 +39,7 @@ const outerThreadId = () => sql`${threads.id}`;
  */
 export const unsentDraftSql = (alias: string) =>
   sql.raw(
-    `(${alias}.label_ids @> '["DRAFT"]'::jsonb and not (${alias}.label_ids @> '["SENT"]'::jsonb))`,
+    `(${alias}.label_ids @> ${labelArray(MAIL_LABELS.draft)} and not (${alias}.label_ids @> ${labelArray(MAIL_LABELS.sent)}))`,
   );
 
 /**
@@ -68,7 +79,7 @@ export const notDraftSql = (alias: string) => sql`not ${unsentDraftSql(alias)}`;
 
 /** The same, as a condition on the messages table in a query-builder WHERE. */
 export const unsentDraftMessage = () =>
-  sql`(${messages.labelIds} @> '["DRAFT"]'::jsonb and not (${messages.labelIds} @> '["SENT"]'::jsonb))`;
+  sql`(${messages.labelIds} @> ${sql.raw(labelArray(MAIL_LABELS.draft))} and not (${messages.labelIds} @> ${sql.raw(labelArray(MAIL_LABELS.sent))}))`;
 export const notDraftMessage = () => sql`not ${unsentDraftMessage()}`;
 
 /**

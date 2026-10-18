@@ -1,4 +1,6 @@
 import "server-only";
+import { MAIL_LABELS } from "@/mailbox/connector";
+import { labelArray, labelSql } from "./thread-sql";
 import { and, eq, inArray, like, or, sql } from "drizzle-orm";
 import { prepareBody } from "@/ai/classify";
 import { db } from "@/db";
@@ -199,7 +201,7 @@ async function markRecordedSends(mailboxId: string): Promise<number> {
     const updated = await tx
       .update(messages)
       .set({
-        labelIds: sql`(${messages.labelIds} - 'DRAFT') || '["SENT"]'::jsonb`,
+        labelIds: sql`(${messages.labelIds} - ${labelSql(MAIL_LABELS.draft)}) || ${sql.raw(labelArray(MAIL_LABELS.sent))}`,
         direction: "out",
         sentAt: sql`greatest(${messages.sentAt}, coalesce((select max(d.decided_at) from drafts d where d.sent_gmail_message_id = "messages"."gmail_message_id" and d.mailbox_id = "messages"."mailbox_id"), ${messages.sentAt}))`,
       })

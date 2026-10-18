@@ -84,6 +84,29 @@ const tokenResponse = z.object({
 
 export type GmailClient = MailboxReader & MailboxWriter & { gmailUnits(): number };
 
+/**
+ * Check 47 P4: Gmail's search words for a listing, built only here. `after:` takes epoch
+ * seconds; `in:inbox` / `-in:inbox` split a window into inbox and the rest.
+ */
+export function gmailQuery(o: {
+  newerThanDays?: number;
+  after?: Date;
+  inbox?: boolean;
+  sentOnly?: boolean;
+}): string {
+  return [
+    o.sentOnly ? "in:sent" : null,
+    o.inbox === true ? "in:inbox" : o.inbox === false ? "-in:inbox" : null,
+    o.after
+      ? `after:${Math.floor(o.after.getTime() / 1000)}`
+      : o.newerThanDays !== undefined
+        ? `newer_than:${o.newerThanDays}d`
+        : null,
+  ]
+    .filter(Boolean)
+    .join(" ");
+}
+
 export function createGmailReader(opts: GmailReaderOptions): GmailClient {
   const fetchImpl = opts.fetchImpl ?? fetch;
   const sleep: Sleep = opts.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
@@ -219,8 +242,9 @@ export function createGmailReader(opts: GmailReaderOptions): GmailClient {
       return p;
     },
 
-    async listMessages({ query, pageToken, maxResults = 100 }) {
-      const qs = new URLSearchParams({ q: query, maxResults: String(maxResults) });
+    async listMessages(opts) {
+      const { pageToken, maxResults = 100 } = opts;
+      const qs = new URLSearchParams({ q: gmailQuery(opts), maxResults: String(maxResults) });
       if (pageToken) qs.set("pageToken", pageToken);
       let r;
       try {

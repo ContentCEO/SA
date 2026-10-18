@@ -98,7 +98,8 @@ export async function learnVoice(
   let bodies: string[];
   try {
     const list = await reader.listMessages({
-      query: "in:sent newer_than:365d",
+      sentOnly: true,
+      newerThanDays: 365,
       maxResults: MAX_SENT_EMAILS,
     });
     const refs = list.messages.slice(0, MAX_SENT_EMAILS);

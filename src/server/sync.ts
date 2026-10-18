@@ -14,6 +14,7 @@ import {
 import {
   HistoryExpiredError,
   type HistoryPage,
+  MAIL_LABELS,
   InvalidPageTokenError,
   MailboxAuthError,
   MailboxRateLimitError,
@@ -29,9 +30,9 @@ import { mailboxRunning } from "./mailbox-plan";
 import { mailboxOn } from "./mailbox-plan-rules";
 import { pickReplyTo, type ReplyToHeader } from "./reply-address-rules";
 import { isAutoReply } from "./auto-reply-rules";
-import { lastInSql, lastOutSql, unsentDraftMessage } from "./thread-sql";
+import { labelSql, lastInSql, lastOutSql, unsentDraftMessage } from "./thread-sql";
 
-const MAIL_INBOX = "INBOX";
+const MAIL_INBOX = MAIL_LABELS.inbox;
 const DAY_MS = 86_400_000;
 
 /** How far back the first sync reaches. */
@@ -173,29 +174,25 @@ async function guarded(mailbox: Mailbox, fn: () => Promise<SyncOutcome>): Promis
  * a draft by older code is fetched again and updated in place (`ingest`).
  */
 export function isUnsentDraft(labelIds: readonly string[]): boolean {
-  return labelIds.includes("DRAFT") && !labelIds.includes("SENT");
-}
-
-/** A fixed window start (Gmail's `after:` takes epoch seconds), so a re-read never drifts. */
-function afterQuery(since: Date) {
-  return `after:${Math.floor(since.getTime() / 1000)}`;
+  return labelIds.includes(MAIL_LABELS.draft) && !labelIds.includes(MAIL_LABELS.sent);
 }
 
 /**
- * A window is listed in two passes, inbox first (`in:inbox`, so each ref is known to be an
- * inbox email and is read in full in one call), then everything else (read as metadata). The
+ * A window is listed in two passes, inbox first (so each ref is known to be an inbox email
+ * and is read in full in one call), then everything else (read as metadata). The
  * page token carries the pass: "inbox:<gmail token>" / "rest:<gmail token>".
  */
 async function windowPage(
   reader: Pick<MailboxReader, "listMessages">,
-  window: string,
+  after: Date,
   token: string | undefined,
   maxResults: number,
 ): Promise<{ messages: MessageRef[]; nextPageToken?: string }> {
   const pass = token?.startsWith("rest:") ? "rest" : "inbox";
   const gmailToken = token ? token.slice(token.indexOf(":") + 1) || undefined : undefined;
   const page = await reader.listMessages({
-    query: pass === "inbox" ? `in:inbox ${window}` : `-in:inbox ${window}`,
+    after,
+    inbox: pass === "inbox",
     pageToken: gmailToken,
     maxResults,
   });
@@ -249,7 +246,7 @@ async function ingest(
   const known = new Map(knownThreads.map((t) => [t.gmailThreadId, t]));
   const inboxThreads = new Set(knownThreads.filter((t) => t.inInbox).map((t) => t.gmailThreadId));
 
-  // Check 25 P1: an email known to be in the inbox (listed with in:inbox, or history said so,
+  // Check 25 P1: an email known to be in the inbox (listed as inbox mail, or history said so,
   // or its conversation is already in the inbox) is read in full in one call. Everything else
   // is read as metadata, and read again in full only if it turns out to belong in the inbox.
   const knownInbox = (r: MessageRef) =>
@@ -295,7 +292,7 @@ async function ingest(
   if (!workspaceEmails.includes(self)) workspaceEmails.push(self);
   const replyToOf = (m: MailMessage): ReplyToHeader | null => {
     const from = parseAddressList(m.headers.from)[0];
-    if (m.labelIds.includes("SENT") || from?.email === self) return {};
+    if (m.labelIds.includes(MAIL_LABELS.sent) || from?.email === self) return {};
     // Never "no Reply-To" unless the read could have returned one.
     if (!m.headers.replyToRead) return null;
     return pickReplyTo(m.headers.replyTo, { from: from?.email ?? null, self: workspaceEmails });
@@ -351,7 +348,7 @@ async function ingest(
 
     const rows = msgs.map((m) => {
       const from = parseAddressList(m.headers.from)[0];
-      const outbound = m.labelIds.includes("SENT") || from?.email === self;
+      const outbound = m.labelIds.includes(MAIL_LABELS.sent) || from?.email === self;
       return {
         threadId: thread!.id,
         mailboxId: mailbox.id,
@@ -441,7 +438,7 @@ export const TRASHED_NOTE = "You deleted this in Gmail.";
 export const SPAM_NOTE = "You marked this as spam in Gmail.";
 /** Shown on a waiting draft whose conversation the owner archived in Gmail (Check 25 P2). */
 export const ARCHIVED_LINE = "You archived this in Gmail.";
-const GONE_LABELS = ["TRASH", "SPAM"];
+const GONE_LABELS: string[] = [MAIL_LABELS.trash, MAIL_LABELS.spam];
 
 /**
  * Check 25 P2: follow what the owner did in Gmail — archive, Trash, Spam, Not spam, delete.
@@ -500,7 +497,7 @@ export async function applyLabelChanges(
     const set = labels.get(d.id);
     if (set) {
       set.delete(MAIL_INBOX);
-      set.add("TRASH");
+      set.add(MAIL_LABELS.trash);
     }
   }
 
@@ -566,7 +563,7 @@ export async function applyLabelChanges(
       .where(inArray(threads.id, [...resort]));
   }
 
-  const liveInbox = sql`exists (select 1 from messages li where li.thread_id = ${threads.id} and li.label_ids ? 'INBOX' and not li.label_ids ? 'TRASH' and not li.label_ids ? 'SPAM')`;
+  const liveInbox = sql`exists (select 1 from messages li where li.thread_id = ${threads.id} and li.label_ids ? ${labelSql(MAIL_LABELS.inbox)} and not li.label_ids ? ${labelSql(MAIL_LABELS.trash)} and not li.label_ids ? ${labelSql(MAIL_LABELS.spam)})`;
   const before = await db()
     .select({ id: threads.id, inInbox: threads.inInbox })
     .from(threads)
@@ -585,8 +582,8 @@ export async function applyLabelChanges(
     .select({
       threadId: messages.threadId,
       total: sql<number>`count(*)::int`,
-      gone: sql<number>`count(*) filter (where ${messages.labelIds} ? 'TRASH' or ${messages.labelIds} ? 'SPAM')::int`,
-      spam: sql<number>`count(*) filter (where ${messages.labelIds} ? 'SPAM')::int`,
+      gone: sql<number>`count(*) filter (where ${messages.labelIds} ? ${labelSql(MAIL_LABELS.trash)} or ${messages.labelIds} ? ${labelSql(MAIL_LABELS.spam)})::int`,
+      spam: sql<number>`count(*) filter (where ${messages.labelIds} ? ${labelSql(MAIL_LABELS.spam)})::int`,
     })
     .from(messages)
     .where(inArray(messages.threadId, outOfInbox))
@@ -693,11 +690,11 @@ export async function backfillPage(
     let token = mailbox.backfillPageToken ?? undefined;
     let page;
     try {
-      page = await windowPage(reader, afterQuery(since), token, BACKFILL_PAGE_SIZE);
+      page = await windowPage(reader, since, token, BACKFILL_PAGE_SIZE);
     } catch (err) {
       if (!(err instanceof InvalidPageTokenError) || !token) throw err;
       token = undefined;
-      page = await windowPage(reader, afterQuery(since), undefined, BACKFILL_PAGE_SIZE);
+      page = await windowPage(reader, since, undefined, BACKFILL_PAGE_SIZE);
     }
     const ingested = await ingest(mailbox, reader, page.messages, now);
     await db()
@@ -860,7 +857,7 @@ export async function resyncPage(
   return guarded(mailbox, async () => {
     const page = await windowPage(
       reader,
-      afterQuery(mailbox.resyncSince!),
+      mailbox.resyncSince!,
       mailbox.resyncPageToken ?? undefined,
       BACKFILL_PAGE_SIZE,
     );

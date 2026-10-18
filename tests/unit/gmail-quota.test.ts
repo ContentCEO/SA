@@ -154,7 +154,7 @@ describe("Gmail unit budget", () => {
     let pauses = 0;
     while (read < 2_000) {
       try {
-        if (read % 50 === 0) await r.listMessages({ query: "in:inbox", maxResults: 50 });
+        if (read % 50 === 0) await r.listMessages({ inbox: true, maxResults: 50 });
         await r.getMessage(`m${read}`, { withBody: true });
         read++;
         clock += 20; // a fast Gmail: 50 reads a second if nothing held us back

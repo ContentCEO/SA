@@ -446,3 +446,38 @@ describe("a rotated refresh token (Check 47 P2)", () => {
     errors.mockRestore();
   });
 });
+
+describe("Gmail's search words are built only in the Gmail client (Check 47 P4)", () => {
+  const listed = async (
+    opts: Parameters<ReturnType<typeof createGmailReader>["listMessages"]>[0],
+  ) => {
+    const f = vi
+      .fn()
+      .mockResolvedValueOnce(token())
+      .mockResolvedValueOnce(json({ messages: [] }));
+    await reader(f).r.listMessages(opts);
+    return new URL(String(f.mock.calls[1]![0])).searchParams.get("q");
+  };
+
+  it("newerThanDays, sentOnly, inbox and a fixed after:", async () => {
+    expect(await listed({ newerThanDays: 30 })).toBe("newer_than:30d");
+    expect(await listed({ newerThanDays: 365, sentOnly: true })).toBe("in:sent newer_than:365d");
+    const after = new Date("2026-10-01T00:00:00.900Z");
+    expect(await listed({ after, inbox: true })).toBe("in:inbox after:1790812800");
+    expect(await listed({ after, inbox: false })).toBe("-in:inbox after:1790812800");
+  });
+
+  it("GUARDRAIL: no Gmail search syntax or label string is written by hand outside src/mailbox/", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { sourceFiles, rel } = await import("../support/source-ast");
+    const outside = sourceFiles()
+      .map((f) => ({ f: rel(f), text: readFileSync(f, "utf8") }))
+      .filter((x) => !x.f.startsWith("src/mailbox/"));
+    const hits = (re: RegExp) => outside.filter((x) => re.test(x.text)).map((x) => x.f);
+    expect(hits(/newer_than:|in:sent|in:inbox/)).toEqual([]);
+    // The label names live in MAIL_LABELS (src/mailbox/connector.ts) only.
+    expect(
+      hits(/["'`](INBOX|SENT|DRAFT|TRASH|SPAM|CATEGORY_PROMOTIONS|CATEGORY_SOCIAL)["'`]/),
+    ).toEqual([]);
+  });
+});

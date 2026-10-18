@@ -54,10 +54,26 @@ export class NoGmailError extends Error {
   }
 }
 
+/**
+ * Check 47 P4: the label names shared code reads. They are Gmail's own, and every provider's
+ * reader maps its folders onto exactly these (an Outlook reader puts "INBOX" on inbox mail,
+ * "SENT" on sent mail, …). Stored `messages.label_ids` hold these values.
+ */
+export const MAIL_LABELS = {
+  inbox: "INBOX",
+  sent: "SENT",
+  draft: "DRAFT",
+  trash: "TRASH",
+  spam: "SPAM",
+  promotions: "CATEGORY_PROMOTIONS",
+  social: "CATEGORY_SOCIAL",
+} as const;
+
 /** A message as the sync engine sees it, independent of provider. */
 export type MailMessage = {
   providerMessageId: string;
   providerThreadId: string;
+  /** The message's labels, as the names in MAIL_LABELS (plus any the provider adds). */
   labelIds: string[];
   snippet: string;
   /** Epoch millis when the provider received/sent it. */
@@ -127,7 +143,19 @@ export type HistoryPage = {
  */
 export interface MailboxReader {
   getProfile(): Promise<{ emailAddress: string; historyId: string }>;
-  listMessages(opts: { query: string; pageToken?: string; maxResults?: number }): Promise<{
+  /**
+   * Check 47 P4: a listing by window, never a provider's own search words. `after` (a fixed
+   * start) wins over `newerThanDays`; `inbox` true = inbox only, false = everything but the
+   * inbox; `sentOnly` = the owner's sent mail. Spam and Trash are never listed.
+   */
+  listMessages(opts: {
+    newerThanDays?: number;
+    after?: Date;
+    inbox?: boolean;
+    sentOnly?: boolean;
+    pageToken?: string;
+    maxResults?: number;
+  }): Promise<{
     messages: MessageRef[];
     nextPageToken?: string;
   }>;

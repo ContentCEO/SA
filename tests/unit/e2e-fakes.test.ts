@@ -366,10 +366,10 @@ describe("the fake server", () => {
 
     const profile = await gmail.getProfile();
     expect(profile.emailAddress).toBe(ownerEmail);
-    const listed = await gmail.listMessages({ query: "newer_than:30d", maxResults: 4 });
+    const listed = await gmail.listMessages({ newerThanDays: 30, maxResults: 4 });
     expect(listed.messages).toHaveLength(4);
     expect(listed.nextPageToken).toBeTruthy();
-    const sentOnly = await gmail.listMessages({ query: "in:sent newer_than:365d" });
+    const sentOnly = await gmail.listMessages({ sentOnly: true, newerThanDays: 365 });
     expect(sentOnly.messages).toHaveLength(5);
     const incoming = await gmail.getMessage(customer.gmailMessageId, { withBody: true });
     expect(incoming?.bodyText).toContain(`Ref ${ref}`);
@@ -449,7 +449,7 @@ describe("the fake server", () => {
     expect(granted).toContain("https://www.googleapis.com/auth/gmail.send");
     expect(granted).not.toContain(GMAIL_SCOPES.compose);
     const a = createGmailReader({ refreshToken: `rt-${sendOnly}`, maxRetries: 0 });
-    expect((await a.listMessages({ query: "newer_than:30d" })).messages.length).toBeGreaterThan(0);
+    expect((await a.listMessages({ newerThanDays: 30 })).messages.length).toBeGreaterThan(0);
     const customer = fakeCustomer(refFor(sendOnly));
     await expect(
       a.createDraft({ threadId: customer.gmailThreadId, raw: ownRaw("send-only@example.com") }),
@@ -463,7 +463,7 @@ describe("the fake server", () => {
     await register(noRead, "no-read@example.com", { untick: [GMAIL_SCOPES.readonly] });
     expect(await tokenScopes(noRead, "no-read@example.com")).not.toContain(GMAIL_SCOPES.readonly);
     const b = createGmailReader({ refreshToken: `rt-${noRead}`, maxRetries: 0 });
-    await expect(b.listMessages({ query: "newer_than:30d" })).rejects.toBeInstanceOf(
+    await expect(b.listMessages({ newerThanDays: 30 })).rejects.toBeInstanceOf(
       MailboxAuthError,
     );
     const other = fakeCustomer(refFor(noRead));

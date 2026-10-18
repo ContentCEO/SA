@@ -1,4 +1,5 @@
 import "server-only";
+import { MAIL_LABELS } from "@/mailbox/connector";
 import { injectionCheck, looksMunicipal } from "@/ai/guards";
 import { and, count, desc, eq, gte, inArray, isNull, lt, sql } from "drizzle-orm";
 import { classifyEmail, DISPUTE_REASONS, type Classification } from "@/ai/classify";
@@ -48,7 +49,7 @@ export const DEFAULT_AMOUNT_THRESHOLD_DOLLARS = 2_500;
 export const BURST_WINDOW_MS = 30 * 60_000;
 export const BURST_MAX = 4;
 /** Gmail tabs that are never a customer. Skipping the model call here saves real money. */
-const NOISE_LABELS = ["CATEGORY_PROMOTIONS", "CATEGORY_SOCIAL"];
+const NOISE_LABELS: string[] = [MAIL_LABELS.promotions, MAIL_LABELS.social];
 
 export type ClassifyRunResult = {
   classified: number;

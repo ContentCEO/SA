@@ -132,20 +132,12 @@ export class FakeMailbox {
         guard();
         return { emailAddress: "owner@shop.com", historyId: String(this.history) };
       },
-      listMessages: async ({ query, pageToken, maxResults }) => {
+      listMessages: async ({ newerThanDays, after, inbox, sentOnly, pageToken, maxResults }) => {
         guard();
-        const days = Number(/newer_than:(\d+)d/.exec(query)?.[1] ?? 9999);
-        const after = /(?:^|\s)after:(\d+)/.exec(query)?.[1];
         const cutoff = after
-          ? Number(after) * 1000
-          : new Date("2026-09-28T12:00:00Z").getTime() - days * 86_400_000;
-        const sentOnly = query.includes("in:sent");
-        // Like Gmail: `in:inbox` / `-in:inbox`; Spam and Trash are never listed.
-        const inbox = /(^|\s)-in:inbox/.test(query)
-          ? false
-          : /(^|\s)in:inbox/.test(query)
-            ? true
-            : undefined;
+          ? Math.floor(after.getTime() / 1000) * 1000 // Gmail's after: is in whole seconds
+          : new Date("2026-09-28T12:00:00Z").getTime() - (newerThanDays ?? 9999) * 86_400_000;
+        // Like Gmail: inbox only / everything but; Spam and Trash are never listed.
         const all = this.messages
           .filter((m) => m.internalDate >= cutoff)
           .filter((m) => !m.labelIds.includes("SPAM") && !m.labelIds.includes("TRASH"))

@@ -85,6 +85,7 @@ import {
   type Mailbox,
 } from "@/db/schema";
 import {
+  MAIL_LABELS,
   MailboxAuthError,
   MailboxRateLimitError,
   type MailboxReader,
@@ -118,6 +119,7 @@ import {
   sideEmailSql,
   waitingSinceSql,
   answeredByPhoneSql,
+  labelSql,
 } from "./thread-sql";
 import {
   closingQuestionAllowed,
@@ -1678,7 +1680,7 @@ export async function threadGoneInGmail(threadId: string): Promise<boolean> {
   const [row] = await db()
     .select({
       inInbox: threads.inInbox,
-      live: sql<number>`(select count(*)::int from messages g where g.thread_id = ${threads.id} and not (g.label_ids ? 'TRASH' or g.label_ids ? 'SPAM'))`,
+      live: sql<number>`(select count(*)::int from messages g where g.thread_id = ${threads.id} and not (g.label_ids ? ${labelSql(MAIL_LABELS.trash)} or g.label_ids ? ${labelSql(MAIL_LABELS.spam)}))`,
     })
     .from(threads)
     .where(eq(threads.id, threadId));
