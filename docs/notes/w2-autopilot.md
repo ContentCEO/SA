@@ -27,6 +27,8 @@ For CLAUDE.md (Decisions, under Autopilot), one bullet:
     To/Cc, other than the workspace's own Gmail addresses, never seen (from/To/Cc) on an earlier
     email of the thread → "Someone new is on this conversation, so it waits for you."
     `business_profile.crew_addresses` aren't exempt (a crew member newly copied also waits).
+    On the first email of a new thread every To/Cc besides the shop's Gmail addresses counts as new
+    (a second address of the shop that forwards into Gmail, like info@shop.com, makes it wait too).
   - **Why it waited (20 P7, migration `0044_autopilot_skip`, additive):** every reason has a
     content-free code (`src/server/autopilot-reasons.ts`: `GUARDRAIL_CODES` for layer 3,
     `RUN_CODES` for account_locked / mailbox_paused / autopilot_off / daily_cap / newer_mail /
