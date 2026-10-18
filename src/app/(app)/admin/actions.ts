@@ -16,6 +16,7 @@ import { tickLaunchItem } from "@/server/launch-ticks";
 import {
   applyAdminMove,
   MoveNotAllowedError,
+  PlanSetByStripeError,
   setWorkspacePlan,
 } from "@/server/workspace-lifecycle";
 
@@ -86,7 +87,12 @@ export async function setPlanAction(formData: FormData) {
   const workspaceId = id.safeParse(formData.get("workspaceId"));
   const chosen = plan.safeParse(formData.get("plan") || null);
   if (!workspaceId.success || !chosen.success) redirect("/admin?error=unknown");
-  await setWorkspacePlan(workspaceId.data, chosen.data);
+  try {
+    await setWorkspacePlan(workspaceId.data, chosen.data);
+  } catch (err) {
+    if (err instanceof PlanSetByStripeError) redirect("/admin?error=plan_stripe");
+    throw err;
+  }
   redirect("/admin?done=plan");
 }
 

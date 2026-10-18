@@ -1,5 +1,5 @@
 import "server-only";
-import { and, eq, exists, lte, sql } from "drizzle-orm";
+import { and, eq, exists, isNull, lte, sql } from "drizzle-orm";
 import { db, type Database } from "@/db";
 import { pricing } from "@/config/pricing";
 import {
@@ -221,6 +221,14 @@ export async function applyPlanChange(
   });
 }
 
+/** Check 17 P7: the account has a Stripe subscription, so Stripe decides its plan. */
+export class PlanSetByStripeError extends Error {
+  constructor() {
+    super("This account's plan is set by its Stripe subscription.");
+    this.name = "PlanSetByStripeError";
+  }
+}
+
 /**
  * Davi sets the plan by hand until Stripe does (Milestone 10). The plan
  * decides mailbox limits and whether autopilot can be unlocked. Dropping to a
@@ -233,7 +241,15 @@ export async function setWorkspacePlan(
 ) {
   const [w] = await db().select().from(workspaces).where(eq(workspaces.id, workspaceId));
   if (!w) throw new Error("Workspace not found.");
-  await db().update(workspaces).set({ plan }).where(eq(workspaces.id, workspaceId));
+  // Check 17 P7: never a plan that disagrees with what Stripe charges (and that its next
+  // subscription event would quietly put back). The update re-checks it too.
+  if (w.stripeSubscriptionId) throw new PlanSetByStripeError();
+  const [row] = await db()
+    .update(workspaces)
+    .set({ plan })
+    .where(and(eq(workspaces.id, workspaceId), isNull(workspaces.stripeSubscriptionId)))
+    .returning({ id: workspaces.id });
+  if (!row) throw new PlanSetByStripeError();
   await applyPlanChange(workspaceId, w.plan, plan, "admin", now);
   // A plan covering fewer Gmail addresses pauses the extra ones; a bigger one turns them back
   // on (Davi, 2026-10-16).

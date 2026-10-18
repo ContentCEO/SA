@@ -24,6 +24,8 @@ import { ADMIN_MOVES, canMakeMove, type AdminMove } from "@/server/lifecycle";
 import {
   ORPHAN_PLAN_LINE,
   PAUSE_EXPLAIN,
+  PLAN_SET_BY_STRIPE_LINE,
+  planName,
   pauseExplanation,
   STILL_BILLED_LINE,
   TWO_PLANS_LINE,
@@ -145,6 +147,8 @@ const errors: Record<string, string> = {
   stripe: "Couldn't connect Stripe.",
   stripe_test_mode: TEST_PAYMENTS_TEST_MODE,
   stripe_test_payments: "Couldn't check test payments. Try again in a minute.",
+  plan_stripe:
+    "That account pays through Stripe, so its plan follows the subscription. Change it in Stripe.",
   move: "That change isn't allowed from the account's current status. Refresh and look again.",
   invite: "That doesn't look like an email address.",
   growth_only: growthCopy.admin.growthOnlyError,
@@ -383,7 +387,7 @@ function WorkspaceCard({ w, now }: { w: AdminRow; now: Date }) {
       </header>
       <dl className="grid grid-cols-2 gap-x-4 gap-y-2">
         <Stat label="Trade" value={isTrade(w.trade) ? tradeLabel[w.trade] : "—"} />
-        <Stat label="Plan" value={w.plan ?? "None yet"} />
+        <Stat label="Plan" value={planName(w.plan, pricing.plans)} />
         <Stat
           label="Setup paid"
           value={
@@ -441,29 +445,33 @@ function WorkspaceCard({ w, now }: { w: AdminRow; now: Date }) {
           />
         ) : null}
       </dl>
-      <form action={setPlanAction} className="flex gap-2">
-        <input type="hidden" name="workspaceId" value={w.workspaceId} />
-        <label className="flex flex-1 flex-col gap-1">
-          <span className="sr-only">Plan</span>
-          <select
-            name="plan"
-            aria-label="Plan"
-            defaultValue={w.plan ?? ""}
-            className="min-h-tap w-full rounded-lg border border-input bg-paper px-3 text-base"
-          >
-            <option value="">No plan yet</option>
-            {Object.entries(pricing.plans).map(([id, p]) => (
-              <option key={id} value={id}>
-                {p.name}
-                {p.autopilot ? " (autopilot)" : ""}
-              </option>
-            ))}
-          </select>
-        </label>
-        <Button type="submit" variant="outline">
-          Save plan
-        </Button>
-      </form>
+      {w.hasSubscription ? (
+        <p className="text-sm">{PLAN_SET_BY_STRIPE_LINE}</p>
+      ) : (
+        <form action={setPlanAction} className="flex gap-2">
+          <input type="hidden" name="workspaceId" value={w.workspaceId} />
+          <label className="flex flex-1 flex-col gap-1">
+            <span className="sr-only">Plan</span>
+            <select
+              name="plan"
+              aria-label="Plan"
+              defaultValue={w.plan ?? ""}
+              className="min-h-tap w-full rounded-lg border border-input bg-paper px-3 text-base"
+            >
+              <option value="">No plan yet</option>
+              {Object.entries(pricing.plans).map(([id, p]) => (
+                <option key={id} value={id}>
+                  {p.name}
+                  {p.autopilot ? " (autopilot)" : ""}
+                </option>
+              ))}
+            </select>
+          </label>
+          <Button type="submit" variant="outline">
+            Save plan
+          </Button>
+        </form>
+      )}
       {allowed.length ? (
         <div className="flex flex-col gap-2">
           {allowed.map((m) => (

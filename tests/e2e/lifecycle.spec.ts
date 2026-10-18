@@ -248,6 +248,10 @@ test("paused with a Stripe plan: the owner is told billing hasn't changed, and D
   const card = page.getByRole("article", { name: owner.email });
   await expect(card).toContainText("Still billed in Stripe");
   await expect(card).not.toContainText("sub_e2e_paused");
+  // Check 17 P7: the plan follows Stripe; no picker, and the plan's name reads properly.
+  await expect(card.getByRole("button", { name: "Save plan" })).toHaveCount(0);
+  await expect(card).toContainText("Plan is set by their Stripe subscription.");
+  await expect(card).toContainText("Crew");
 });
 
 test("pausing a paying account warns that Stripe keeps charging (Check 17 P2)", async ({

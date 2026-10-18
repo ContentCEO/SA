@@ -15,6 +15,16 @@ export function pauseExplanation(hasSubscription: boolean): string {
 /** Check 17 P2: on a paused account's card while Stripe still has a live plan for it. */
 export const STILL_BILLED_LINE = "Still billed in Stripe";
 
+/** Check 17 P7: in place of the plan picker when Stripe has a subscription for the account. */
+export const PLAN_SET_BY_STRIPE_LINE =
+  "Plan is set by their Stripe subscription. Change it in Stripe, or they can use Manage billing.";
+
+/** Check 17 P7: the plan's name from the price list ("Crew"), not its id. */
+export function planName(plan: string | null, plans: Record<string, { name: string }>): string {
+  if (!plan) return "None yet";
+  return plans[plan]?.name ?? plan;
+}
+
 /** Check 17 P4: on a card whose account has two live Stripe subscriptions. */
 export const TWO_PLANS_LINE = "Two live Stripe plans: cancel one in Stripe";
 
