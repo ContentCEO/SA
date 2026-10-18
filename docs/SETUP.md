@@ -618,9 +618,17 @@ APIs & Services → Credentials, the client needs two redirect URIs per environm
 - `{APP_URL}/api/gmail/callback`
 
 Registered today: production `https://sa-dac3.vercel.app` and the working-branch preview
-`https://sa-git-claude-squared-away-mvp-ddxl7s-dac3.vercel.app`. For local work add
-`http://localhost:3000/api/auth/callback/google` and `http://localhost:3000/api/gmail/callback`
-(the browser tests don't need them: they never talk to Google).
+`https://sa-git-claude-squared-away-mvp-ddxl7s-dac3.vercel.app`, on the one client in the
+production Google project. Once the domain is live (`docs/LAUNCH.md` step 5, then step 0e "Clean
+the live client"), the production client lists **only the production domain**: no `vercel.app`
+address and no `localhost`, because Google's verification needs every address on the client to be
+on a domain we own and have proved in Search Console (a `vercel.app` address sits on Vercel's DNS
+and can't be). Previews and local work then use a **separate Google project**, "sa preview"
+(`docs/LAUNCH.md` step 2), which stays in Testing forever and is never submitted: its own Web client
+carries the preview branch addresses plus `http://localhost:3000/api/auth/callback/google` and
+`http://localhost:3000/api/gmail/callback`, and Preview's `AUTH_GOOGLE_ID` / `AUTH_GOOGLE_SECRET`
+point at it. Its test users don't use places in the production project's 100-user cap. The
+browser tests need none of this: they never talk to Google.
 
 The Gmail API must be enabled. Connect Gmail asks for exactly two Gmail scopes,
 `https://www.googleapis.com/auth/gmail.readonly` and `https://www.googleapis.com/auth/gmail.compose`

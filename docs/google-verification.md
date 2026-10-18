@@ -400,6 +400,14 @@ production Stripe is still in test mode.
   your behalf". Only then send the practice copy and the real reply.
 - Verify the production domain in Google Search Console, add it under Google Auth Platform →
   Branding → Authorized domains, and point the homepage, privacy policy and terms links there.
+- **Clean the live client first** (launch checklist step 0e, its first sub-step, only after the old
+  address forwards to the domain in step 5.9): the production Google project has **exactly one
+  OAuth client**, and its Authorized redirect URIs and JavaScript origins list only
+  `https://<your domain>/api/auth/callback/google` and `https://<your domain>/api/gmail/callback`;
+  no `vercel.app` address and no `localhost`. Google verifies every domain on the client, and a
+  `vercel.app` address can't be proved in Search Console. Previews and local testing use the
+  separate "sa preview" Google project (launch checklist step 2), which is never submitted; with
+  one client there is one consent screen to film.
 - Switch Audience → Publishing status to **In production** before real owners connect: in Testing,
   Google's refresh tokens for Gmail scopes expire after 7 days (every owner would have to reconnect
   weekly) and only hand-added test users (at most 100) can connect. Access given while the app was

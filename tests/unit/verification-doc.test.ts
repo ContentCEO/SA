@@ -296,6 +296,29 @@ describe("the demo video script matches the end-to-end journey", () => {
     expect(step4).not.toMatch(/production domain/);
   });
 
+  it("Check 28 P1: one OAuth client on the production project, cleaned of vercel.app and localhost before submitting", () => {
+    const before = flat(
+      section("Before submitting (for Davi only; never pasted into Google's form)"),
+    );
+    expect(before).toContain("**Clean the live client first**");
+    expect(before).toContain("**exactly one OAuth client**");
+    expect(before).toContain("`https://<your domain>/api/auth/callback/google`");
+    expect(before).toContain("`https://<your domain>/api/gmail/callback`");
+    expect(before).toContain("no `vercel.app` address and no `localhost`");
+    expect(before).toContain('separate "sa preview" Google project');
+    // SETUP.md §8 says the same, and no step anywhere tells Davi to create a second client inside
+    // the production project.
+    const setup = flat(readFileSync("docs/SETUP.md", "utf8"));
+    expect(setup).toContain("the production client lists **only the production domain**");
+    expect(setup).toContain('"sa preview"');
+    expect(setup).toContain("don't use places in the production project's 100-user cap");
+    for (const file of ["docs/SETUP.md", DOC_PATH]) {
+      expect(readFileSync(file, "utf8"), file).not.toContain(
+        "A separate Google client for previews (optional)",
+      );
+    }
+  });
+
   it("publishing doesn't end the 7-day expiry for access given in Testing: reconnect once", () => {
     const before = flat(
       section("Before submitting (for Davi only; never pasted into Google's form)"),
