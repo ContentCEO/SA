@@ -543,8 +543,28 @@ describe("the money limit (Check 38 P3 + Check 22 P6 + Check 39 P2)", () => {
       signals: { ...classification().signals, large_request: true },
     });
     const r = rules({ firstTimeSender: true }, m);
-    expect(r.needsOwnerReason).toBe("New customer asking about a big job.");
+    expect(r.needsOwnerReason).toBe(
+      "Big job from someone who hasn't written in the mail we've read so far.",
+    );
     expect(r.hits.slice(0, 2)).toEqual(["big_new_job", "amount"]);
+  });
+
+  it("a big job's reason says how much mail we've read (Check 41 P5)", () => {
+    const m = withAmounts([48000], {
+      signals: { ...classification().signals, large_request: true },
+    });
+    expect(rules({ firstTimeSender: true, historyDays: 10 }, m).needsOwnerReason).toBe(
+      "Big job from someone who hasn't written in the mail we've read so far.",
+    );
+    expect(rules({ firstTimeSender: true, historyDays: 364 }, m).needsOwnerReason).toBe(
+      "Big job from someone who hasn't written in the mail we've read so far.",
+    );
+    expect(rules({ firstTimeSender: true, historyDays: 400 }, m).needsOwnerReason).toBe(
+      "Big job from someone new.",
+    );
+    expect(rules({ firstTimeSender: "unknown", historyDays: 400 }, m).hits).toContain(
+      "big_new_job",
+    );
   });
 
   it("remodeling asks the amount up front with suggestions; other trades don't", () => {

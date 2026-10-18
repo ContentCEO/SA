@@ -201,6 +201,19 @@ export const DISPUTE_REASON = "Asks for money back or disputes a charge.";
  */
 export const DISPUTE_REASONS: readonly string[] = [LEGAL_REASON, DISPUTE_REASON];
 
+/**
+ * Check 41 P5: the big-job reason. The backfill reads only 30 days, and seasonal trades hear
+ * from most customers once a year, so until a year of mail is read it never says "new".
+ */
+export const BIG_JOB_UNREAD_REASON =
+  "Big job from someone who hasn't written in the mail we've read so far.";
+export const BIG_JOB_NEW_REASON = "Big job from someone new.";
+export function bigJobReason(historyDays: number | undefined): string {
+  return historyDays !== undefined && historyDays >= 365
+    ? BIG_JOB_NEW_REASON
+    : BIG_JOB_UNREAD_REASON;
+}
+
 /** Below this, the owner looks. */
 export const CONFIDENCE_THRESHOLD = 0.6;
 /** Enough of the email to classify it; long quoted chains add nothing. */
@@ -290,6 +303,12 @@ export function applyOwnerRules(
   ctx: {
     /** Check 22 P7: "unknown" (a lead site or voicemail robot) counts as first time. */
     firstTimeSender: boolean | "unknown";
+    /**
+     * Check 41 P5: days of mail we have for this mailbox (now minus its oldest synced email).
+     * Under a year, "first time" only means "not in the mail we've read", so the big-job
+     * reason says so. Unknown counts as under a year.
+     */
+    historyDays?: number;
     senderIsVip: boolean;
     /** Ideas H3: a company-wide "Always needs me" rule matched the sender or reply address. */
     senderNeedsMe?: boolean;
@@ -393,7 +412,7 @@ export function applyOwnerRules(
     [
       ctx.firstTimeSender !== false && m.signals.large_request,
       "big_new_job",
-      "New customer asking about a big job.",
+      bigJobReason(ctx.historyDays),
     ],
     [
       overThreshold,
@@ -491,6 +510,8 @@ export type ClassifyOpts = {
   serviceTowns?: readonly string[];
   /** Check 38 P3: dollar amounts the owner already wrote on this conversation. */
   ownerAmounts?: readonly number[];
+  /** Check 41 P5: days of mail we have for this mailbox (`applyOwnerRules`' `historyDays`). */
+  historyDays?: number;
   /**
    * Check 22 P5: the thread is a supplier's (its stored bills are owed BY the business), so
    * "our bank details changed" counts even without an explicit ask.
@@ -709,6 +730,7 @@ export async function classifyEmail(
   };
   const ownerCtx = {
     firstTimeSender: email.firstTimeSender,
+    historyDays: opts.historyDays,
     senderIsVip: opts.senderIsVip,
     senderNeedsMe: opts.senderNeedsMe,
     amountThresholdDollars: business.amountThresholdDollars,

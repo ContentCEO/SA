@@ -219,6 +219,15 @@ export async function classifyPending(
   const senderRules = await rulesForWorkspace(box.workspace.id);
   // Check 22 P10 + 41 P6: the owner's own people, read once per run. Never sent to the model.
   const crew = await crewContextFor(box.workspace.id);
+  // Check 41 P5: how much of this mailbox's mail we have, once per run (the backfill reads
+  // only 30 days, so "first time" means "not in the mail we've read" for the first year).
+  const [oldest] = await db()
+    .select({ at: sql<string | Date | null>`min(${messages.sentAt})` })
+    .from(messages)
+    .where(eq(messages.mailboxId, mailboxId));
+  const historyDays = oldest?.at
+    ? Math.floor((now.getTime() - new Date(oldest.at).getTime()) / 86_400_000)
+    : 0;
 
   const batch = [...newestPerThread.values()].slice(0, limit);
   let classified = 0;
@@ -449,6 +458,7 @@ export async function classifyPending(
             channel: channel ? { kind: channel.kind, name: channelName(channel.key) ?? "" } : null,
             serviceTowns: business.serviceTowns,
             ownerAmounts,
+            historyDays,
             // Check 22 P5: a supplier's thread (its bills are owed by the business).
             supplierThread: prevMarks.bill_direction === "owed_by_business",
           },

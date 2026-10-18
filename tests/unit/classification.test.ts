@@ -199,6 +199,25 @@ describe("classifyPending", () => {
     });
   });
 
+  it("a returning customer's big job doesn't read 'new' in the first year (Check 41 P5)", async () => {
+    const t = await thread("rosa");
+    await message(t.id, "rosa-1", {
+      fromAddress: "pat@x.com",
+      bodyText: "You did our interior two years ago. Ready to do the whole exterior now.",
+      sentAt: daysAgo(10),
+    });
+    setModelTransportForTests(
+      fakeTransport([
+        classification({ signals: { ...classification().signals, large_request: true } }),
+      ]).transport,
+    );
+    await classifyPending(mailboxId, { now: NOW });
+    const [row] = await database.select().from(threads).where(eq(threads.id, t.id));
+    expect(row!.needsOwnerReason).toBe(
+      "Big job from someone who hasn't written in the mail we've read so far.",
+    );
+  });
+
   it("never clears the owner's own 'This one needs me'", async () => {
     const t = await thread("t1");
     expect(await markNeedsOwner(workspaceId, t.id)).toBe(true);

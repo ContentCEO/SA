@@ -98,3 +98,13 @@ the same `leads@thumbtack.com` address, `large_request`, expected needs-you with
 
 - `newestNameSql` (`customers.ts`): the newest non-empty reply name over the customer's inbound
   mail, used by both `listCustomers` and `customerDetail`, so the row and the page can't differ.
+
+## Step 5: Check 41 P5 (no "New customer" for last year's customers)
+
+- The big-job needs-you reason is `bigJobReason(historyDays)` (`src/ai/classify.ts`):
+  "Big job from someone who hasn't written in the mail we've read so far." while the mailbox
+  holds under 365 days of mail (now minus its oldest synced email, read once per
+  `classifyPending` run; unknown counts as under a year), else "Big job from someone new." The
+  rule itself is unchanged. No other screen showed the old "New customer asking about a big
+  job." text (cards read the `big_new_job` hit key). Widening the backfill or keeping more
+  addresses was not done: Davi's call (see Questions).
