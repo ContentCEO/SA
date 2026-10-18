@@ -1,0 +1,1 @@
+ALTER TABLE "business_profile" ADD COLUMN "big_quote_days" integer;

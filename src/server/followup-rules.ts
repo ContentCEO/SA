@@ -144,3 +144,42 @@ export function quietCutoff(now: Date, days: number, timeZone: string): Date {
   const tz = usableTimeZone(timeZone);
   return localDayStart(addDays(localParts(now, tz).date, 1 - days), tz);
 }
+
+/**
+ * Check 38 P4: the longer wait an owner may pick for quotes over their money limit (null = the
+ * normal wait). Big jobs (a $48,500 kitchen) take weeks to decide; the two-nudge cap stays.
+ */
+export const BIG_QUOTE_DAY_CHOICES = [7, 10, 14, 21] as const;
+
+/**
+ * Check 38 P4: an open quote over the owner's money limit — the owner's captured quote amount,
+ * else the largest amount the email mentioned. Never an invoice thread (the job's invoice keeps
+ * the normal wait).
+ */
+export function isBigQuote(
+  t: {
+    category: string | null;
+    extracted: unknown;
+    quoteAmountCents: number | null;
+    quoteRequestedAt?: Date | null;
+  },
+  thresholdDollars: number,
+): boolean {
+  const x = (t.extracted ?? {}) as { invoice_thread?: unknown; dollar_amounts?: unknown };
+  if (t.category === "invoice_payment" || x.invoice_thread === true) return false;
+  if (t.category !== "quote_request" && t.quoteRequestedAt == null) return false;
+  const limitCents = thresholdDollars * 100;
+  if (t.quoteAmountCents != null) return t.quoteAmountCents > limitCents;
+  const amounts = Array.isArray(x.dollar_amounts) ? (x.dollar_amounts as unknown[]) : [];
+  return amounts.some((a) => typeof a === "number" && a * 100 > limitCents);
+}
+
+/** Check 38 P4: the wait and the nudge window for one thread. */
+export function chaseTiming(
+  normalDays: number,
+  bigQuoteDays: number | null,
+  big: boolean,
+): { days: number; maxAgeDays: number } {
+  if (big && bigQuoteDays) return { days: bigQuoteDays, maxAgeDays: 2 * bigQuoteDays + 7 };
+  return { days: normalDays, maxAgeDays: FOLLOWUP_MAX_AGE_DAYS };
+}

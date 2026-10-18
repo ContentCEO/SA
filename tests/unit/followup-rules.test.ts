@@ -1,5 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { addDays, nudgeDueDate, quietCutoff } from "@/server/followup-rules";
+import {
+  addDays,
+  BIG_QUOTE_DAY_CHOICES,
+  chaseTiming,
+  isBigQuote,
+  nudgeDueDate,
+  quietCutoff,
+} from "@/server/followup-rules";
+import { FOLLOWUP_DAY_CHOICES, followupSettingsInput } from "@/server/profile";
+import { noAnswerAfterDays } from "@/server/quote-rules";
 import { localDayStart } from "@/server/growth-client-rules";
 import { localParts } from "@/server/snooze-rules";
 
@@ -50,5 +59,43 @@ describe("nudgeDueDate (Check 21 P3)", () => {
   it("adds calendar days", () => {
     expect(addDays("2026-12-30", 3)).toBe("2027-01-02");
     expect(addDays("2026-11-01", -1)).toBe("2026-10-31");
+  });
+});
+
+describe("big quotes get a longer clock (Check 38 P4)", () => {
+  const quote = { category: "quote_request", extracted: {}, quoteAmountCents: 4_850_000 };
+  it("isBigQuote: over the money limit by the owner's quote, else the email's amounts", () => {
+    expect(isBigQuote(quote, 2500)).toBe(true);
+    expect(isBigQuote({ ...quote, quoteAmountCents: 90_000 }, 2500)).toBe(false);
+    expect(
+      isBigQuote(
+        { ...quote, quoteAmountCents: null, extracted: { dollar_amounts: [45000] } },
+        2500,
+      ),
+    ).toBe(true);
+    expect(isBigQuote({ ...quote, category: "invoice_payment" }, 2500)).toBe(false);
+    expect(isBigQuote({ ...quote, extracted: { invoice_thread: true } }, 2500)).toBe(false);
+    expect(isBigQuote({ ...quote, category: "scheduling" }, 2500)).toBe(false);
+  });
+  it("chaseTiming and the no-answer bars", () => {
+    expect(chaseTiming(7, 14, true)).toEqual({ days: 14, maxAgeDays: 35 });
+    expect(chaseTiming(7, 14, false)).toEqual({ days: 7, maxAgeDays: 21 });
+    expect(chaseTiming(7, null, true)).toEqual({ days: 7, maxAgeDays: 21 });
+    expect(noAnswerAfterDays(2, 14)).toBe(14);
+    expect(noAnswerAfterDays(0, 14)).toBe(42);
+    expect(noAnswerAfterDays(0, 7)).toBe(21);
+    expect(noAnswerAfterDays(2)).toBe(7);
+    expect(noAnswerAfterDays(1)).toBe(21);
+  });
+  it("the choices", () => {
+    expect(FOLLOWUP_DAY_CHOICES).toEqual([2, 3, 4, 5, 7, 10, 14]);
+    expect(BIG_QUOTE_DAY_CHOICES).toEqual([7, 10, 14, 21]);
+    expect(followupSettingsInput.parse({ days: "14", bigQuoteDays: "21" })).toMatchObject({
+      days: 14,
+      bigQuoteDays: 21,
+    });
+    expect(followupSettingsInput.parse({ days: "3", bigQuoteDays: "" }).bigQuoteDays).toBeNull();
+    expect(followupSettingsInput.parse({ days: "3" }).bigQuoteDays).toBeNull();
+    expect(followupSettingsInput.safeParse({ days: "3", bigQuoteDays: "30" }).success).toBe(false);
   });
 });

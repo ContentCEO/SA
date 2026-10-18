@@ -14,6 +14,7 @@ import {
   type VoiceProfile,
 } from "@/db/schema";
 import { normalizeTown } from "./service-area-rules";
+import { BIG_QUOTE_DAY_CHOICES } from "./followup-rules";
 
 /** Textareas: trim, cap, empty → null. */
 const longText = (max = 2000) =>
@@ -257,7 +258,9 @@ export async function saveBusinessProfile(
   });
 }
 
-export const FOLLOWUP_DAY_CHOICES = [2, 3, 4, 5, 7] as const;
+// Check 38 P4: 10 and 14 for bigger jobs that take longer to decide.
+export const FOLLOWUP_DAY_CHOICES = [2, 3, 4, 5, 7, 10, 14] as const;
+export { BIG_QUOTE_DAY_CHOICES } from "./followup-rules";
 
 export const followupSettingsInput = z.object({
   enabled: z
@@ -267,6 +270,16 @@ export const followupSettingsInput = z.object({
   days: z.coerce.number().refine((n) => (FOLLOWUP_DAY_CHOICES as readonly number[]).includes(n), {
     message: "Pick how many days to wait.",
   }),
+  // Check 38 P4: empty (or missing) = the same as the normal wait.
+  bigQuoteDays: z.preprocess(
+    (v) => (v === "" || v == null ? null : Number(v)),
+    z
+      .number()
+      .refine((n) => (BIG_QUOTE_DAY_CHOICES as readonly number[]).includes(n), {
+        message: "Pick how many days to wait for big quotes.",
+      })
+      .nullable(),
+  ),
 });
 
 /** Follow-up settings live on the business profile row; create it if needed. */
@@ -275,7 +288,12 @@ export async function saveFollowupSettings(
   data: z.output<typeof followupSettingsInput>,
   now: Date = new Date(),
 ) {
-  const set = { followupsEnabled: data.enabled, followupDays: data.days, updatedAt: now };
+  const set = {
+    followupsEnabled: data.enabled,
+    followupDays: data.days,
+    bigQuoteDays: data.bigQuoteDays,
+    updatedAt: now,
+  };
   await db()
     .insert(businessProfiles)
     .values({ workspaceId, ...set })
@@ -286,7 +304,7 @@ export async function saveFollowupSettings(
       workspaceId,
       actor: "owner",
       action: "followup_settings_saved",
-      detail: { enabled: data.enabled, days: data.days },
+      detail: { enabled: data.enabled, days: data.days, bigQuoteDays: data.bigQuoteDays },
     });
 }
 

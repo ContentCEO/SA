@@ -128,20 +128,30 @@ export function guessNoAnswer(
     sentNudges: number;
     /** Check 21 P2: count quiet days from here instead (the date they asked us to wait for). */
     quietFrom?: Date;
+    /** Check 38 P4: a quote over the money limit with the owner's longer wait set. */
+    bigQuoteDays?: number | null;
   },
   now: Date,
 ): "two_nudges" | "three_weeks" | null {
   if (!f.lastInboundAt || !f.lastOutboundAt || f.lastOutboundAt <= f.lastInboundAt) return null;
   const from = f.quietFrom && f.quietFrom > f.lastOutboundAt ? f.quietFrom : f.lastOutboundAt;
   const quietDays = (now.getTime() - from.getTime()) / 86_400_000;
-  if (f.sentNudges >= NUDGES_BEFORE_NO_ANSWER && quietDays >= NO_ANSWER_AFTER_NUDGES_DAYS)
+  const big = f.bigQuoteDays ?? null;
+  if (f.sentNudges >= NUDGES_BEFORE_NO_ANSWER && quietDays >= noAnswerAfterDays(2, big))
     return "two_nudges";
-  if (quietDays >= NO_ANSWER_WITHOUT_NUDGES_DAYS) return "three_weeks";
+  if (quietDays >= noAnswerAfterDays(0, big)) return "three_weeks";
   return null;
 }
 
-/** The quiet-days bar `guessNoAnswer` uses for this many sent nudges. */
-export function noAnswerAfterDays(sentNudges: number): number {
+/**
+ * The quiet-days bar `guessNoAnswer` uses for this many sent nudges. Check 38 P4: a big quote
+ * with the owner's longer wait gets that wait after two nudges, and max(21, 3 × it) without.
+ */
+export function noAnswerAfterDays(sentNudges: number, bigQuoteDays: number | null = null): number {
+  if (bigQuoteDays)
+    return sentNudges >= NUDGES_BEFORE_NO_ANSWER
+      ? Math.max(NO_ANSWER_AFTER_NUDGES_DAYS, bigQuoteDays)
+      : Math.max(NO_ANSWER_WITHOUT_NUDGES_DAYS, bigQuoteDays * 3);
   return sentNudges >= NUDGES_BEFORE_NO_ANSWER
     ? NO_ANSWER_AFTER_NUDGES_DAYS
     : NO_ANSWER_WITHOUT_NUDGES_DAYS;

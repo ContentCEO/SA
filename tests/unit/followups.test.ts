@@ -1175,3 +1175,113 @@ describe("an emergency service call isn't chased as a quote (Check 36 P3)", () =
     expect((await threadsToFollowUp(mailboxId, NOW)).sort()).toEqual([priced, normal].sort());
   });
 });
+
+describe("big quotes wait longer before nudges and 'no answer' (Check 38 P4)", () => {
+  const tz = "America/New_York";
+  const day0 = Date.parse("2026-11-02T19:00:00Z"); // Monday 2pm Eastern
+  const dayAt = (d: number, hourUtc = 9) =>
+    new Date(Date.parse("2026-11-02T00:00:00Z") + d * DAY + hourUtc * 3_600_000);
+
+  async function quoteOf(cents: number) {
+    const id = `b${++g}`;
+    const [t] = await database
+      .insert(threads)
+      .values({
+        mailboxId,
+        gmailThreadId: id,
+        inInbox: true,
+        category: "quote_request",
+        quoteAmountCents: cents,
+        classifiedAt: new Date(day0 - DAY),
+        lastMessageAt: new Date(day0),
+      })
+      .returning();
+    await database.insert(messages).values([
+      {
+        threadId: t!.id,
+        mailboxId,
+        gmailMessageId: `${id}-in`,
+        direction: "in",
+        fromAddress: `${id}@customer.com`,
+        bodyText: "Kitchen remodel, can you quote?",
+        sentAt: new Date(day0 - DAY),
+      },
+      {
+        threadId: t!.id,
+        mailboxId,
+        gmailMessageId: `${id}-out`,
+        direction: "out",
+        fromAddress: "owner@shop.com",
+        toAddresses: [`${id}@customer.com`],
+        bodyText: "Proposal attached.",
+        sentAt: new Date(day0),
+      },
+    ]);
+    return t!.id;
+  }
+
+  /** Daily 4am-Eastern scans (each nudge "sent" straight away) and noon guesses. */
+  async function run(t: string, days: number) {
+    const nudged: number[] = [];
+    let guessed: number | null = null;
+    for (let d = 1; d <= days && guessed === null; d++) {
+      const scan = dayAt(d, 9); // 4am Eastern
+      if ((await threadsToFollowUp(mailboxId, scan)).includes(t)) {
+        nudged.push(d);
+        await database.insert(drafts).values({
+          threadId: t,
+          mailboxId,
+          kind: "followup",
+          gmailDraftId: `gd-${t}-${d}`,
+          toAddress: "x@customer.com",
+          subject: "Re: Kitchen",
+          body: "nudge",
+          originalBody: "nudge",
+          status: "sent",
+          reason: "nudge",
+          promptVersion: "followup.v4",
+          // Drafted at 4am, sent a little later.
+          createdAt: scan,
+          decidedAt: new Date(scan.getTime() + 60_000),
+        });
+        await database.insert(messages).values({
+          threadId: t,
+          mailboxId,
+          gmailMessageId: `${t}-nudge-${d}`,
+          direction: "out",
+          fromAddress: "owner@shop.com",
+          bodyText: "Just checking in.",
+          sentAt: new Date(scan.getTime() + 60_000),
+        });
+      }
+      await guessNoAnswers(dayAt(d, 17), workspaceId);
+      const [row] = await database.select().from(threads).where(eq(threads.id, t));
+      if (row!.quoteOutcome === "no_answer") guessed = d;
+    }
+    return { nudged, guessed };
+  }
+
+  beforeEach(async () => {
+    await database
+      .update(workspaces)
+      .set({ status: "active" })
+      .where(eq(workspaces.id, workspaceId));
+    await database
+      .insert(businessProfiles)
+      .values({ workspaceId, timeZone: tz, followupDays: 7, bigQuoteDays: 14 })
+      .onConflictDoUpdate({
+        target: businessProfiles.workspaceId,
+        set: { timeZone: tz, followupDays: 7, bigQuoteDays: 14 },
+      });
+  });
+
+  it("a $48,500 quote at the 14-day setting: nudged on days 14 and 28, no guess before day 42", async () => {
+    const t = await quoteOf(4_850_000);
+    expect(await run(t, 45)).toEqual({ nudged: [14, 28], guessed: 42 });
+  });
+
+  it("a $900 quote keeps today's timing: days 7 and 14, guessed on day 21", async () => {
+    const t = await quoteOf(90_000);
+    expect(await run(t, 30)).toEqual({ nudged: [7, 14], guessed: 21 });
+  });
+});

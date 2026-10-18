@@ -11,7 +11,7 @@ import {
   threads,
   workspaces,
 } from "@/db/schema";
-import { waitingLine } from "./followup-rules";
+import { isBigQuote, waitingLine } from "./followup-rules";
 import { usableTimeZone } from "./snooze-rules";
 import { expirePendingNudge, flagPendingNudge, followupSettings, type DraftDeps } from "./drafts";
 import { effectiveStatus, JOBS_ALLOWED, jobsAllowed, ReadOnlyError } from "./lifecycle";
@@ -451,10 +451,17 @@ export async function guessNoAnswers(
         nudgeAfter: threads.nudgeAfter,
         extracted: threads.extracted,
         ownerNewestBody: ownerNewestBodySql(),
+        // Check 38 P4: the big-quote clock.
+        category: threads.category,
+        quoteAmountCents: threads.quoteAmountCents,
+        quoteRequestedAt: threads.quoteRequestedAt,
+        bigQuoteDays: businessProfiles.bigQuoteDays,
+        thresholdDollars: businessProfiles.amountThresholdDollars,
       })
       .from(threads)
       .innerJoin(mailboxes, eq(mailboxes.id, threads.mailboxId))
       .innerJoin(workspaces, eq(workspaces.id, mailboxes.workspaceId))
+      .leftJoin(businessProfiles, eq(businessProfiles.workspaceId, workspaces.id))
       .where(
         and(
           inScope,
@@ -482,6 +489,19 @@ export async function guessNoAnswers(
       const lastOutboundAt = asDate(r.lastOut);
       const nudges = Number(r.sentNudges);
       const waitedFor = asDate(r.nudgeAfter);
+      const bigQuoteDays =
+        r.bigQuoteDays &&
+        isBigQuote(
+          {
+            category: r.category,
+            extracted: r.extracted,
+            quoteAmountCents: r.quoteAmountCents,
+            quoteRequestedAt: asDate(r.quoteRequestedAt),
+          },
+          r.thresholdDollars ?? 2_500,
+        )
+          ? r.bigQuoteDays
+          : null;
       const why = guessNoAnswer(
         {
           lastInboundAt: asDate(r.lastIn),
@@ -489,6 +509,7 @@ export async function guessNoAnswers(
           sentNudges: nudges,
           quietFrom:
             waitedFor && lastOutboundAt && waitedFor > lastOutboundAt ? waitedFor : undefined,
+          bigQuoteDays,
         },
         now,
       );
@@ -500,7 +521,7 @@ export async function guessNoAnswers(
         extra: and(
           isNull(threads.quoteOutcome),
           sql`${lastOut} > ${lastIn}`,
-          sql`${quietFrom} <= ${ago(noAnswerAfterDays(nudges))}::timestamptz`,
+          sql`${quietFrom} <= ${ago(noAnswerAfterDays(nudges, bigQuoteDays))}::timestamptz`,
         ),
       });
       if (ok) set++;

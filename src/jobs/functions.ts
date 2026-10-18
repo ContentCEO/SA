@@ -281,9 +281,11 @@ export const followupScan = inngest.createFunction(
     for (const ws of due) {
       // Quotes that went quiet after the nudges get our "no answer" guess first (plan #30);
       // a decided quote is never nudged again.
-      await step.run(`guess-no-answer-${ws.workspaceId}`, () =>
-        guessNoAnswers(new Date(), ws.workspaceId),
-      );
+      await step.run(`guess-no-answer-${ws.workspaceId}`, async () => {
+        // Check 38 P4: the owner's quoted amount decides which quotes get the big-quote wait.
+        await captureQuoteAmounts(ws.workspaceId);
+        return guessNoAnswers(new Date(), ws.workspaceId);
+      });
       for (const box of ws.mailboxes) {
         if (!box.backfillDone) continue;
         const threads = await step.run(`due-${box.id}`, () => threadsToFollowUp(box.id));

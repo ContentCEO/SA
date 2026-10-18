@@ -161,3 +161,59 @@ ownerNewestText)` (quote-rules.ts): emergency mark and the owner's newest email 
   later customer email on an old emergency makes it an ordinary thread again.
 - Also in this commit: two Check 21 P5 test fixtures in followups.test.ts (a second thread from
   the same customer address now correctly reads as "answered elsewhere").
+
+## Step 8 — Check 38 P4: big quotes get a longer clock
+
+- Migration `0046_big_quote_days` (additive): `business_profile.big_quote_days integer` (null =
+  same as `followup_days`; choices 7/10/14/21, `BIG_QUOTE_DAY_CHOICES`).
+- `FOLLOWUP_DAY_CHOICES` gains 10 and 14 (select + zod refine).
+- `isBigQuote` (followup-rules.ts): an open quote thread (sorted quote_request or a sticky request
+  time), never an invoice thread, whose `quote_amount_cents` (else the email's largest amount) is
+  over `amount_threshold_dollars`. `chaseTiming`: such quotes wait `big_quote_days` and may be
+  chased up to 2 × it + 7 days after the owner's message. Scan (SQL twin), drafter (skipped
+  `not_due` before the big wait) and the sent screen's promised day use it. The hourly job runs
+  `captureQuoteAmounts` for the workspace before guessing/scanning so the owner's quoted amount
+  is known.
+- `guessNoAnswer` / `noAnswerAfterDays(n, bigQuoteDays)`: big quotes need `big_quote_days` quiet
+  days after two nudges and max(21, 3 × it) without.
+- Settings → Follow-ups: "For quotes over your money limit, wait" (Same as above / 7 / 10 / 14 /
+  21 days); the line now reads "Never more than two per conversation. Never for complaints or
+  anything waiting on you."
+- A big quote that is "Needs you" for its size is still never chased (quotes keep the needs-you
+  rule; Check 10 P1 clears needs-you after a Gmail reply).
+
+## Migrations and prompt versions
+
+- Migrations (additive, numbered on this base; renumber at merge): `0044_nudge_after`
+  (threads.nudge_after), `0045_owner_invoice_at` (threads.owner_invoice_at),
+  `0046_big_quote_days` (business_profile.big_quote_days).
+- No prompt files written. Lines for the Prompt versions group: classify.v6 (Step 2) and
+  followup.v5 (Step 4) above. Evals not run (no `ANTHROPIC_API_KEY`).
+
+## Questions for Davi
+
+1. A second job priced on the same conversation (the deck after the kitchen) gets no nudges of
+   its own: "two per conversation, ever" stands. Should a new price after the customer writes
+   again get its own two? (Built: no; the no-answer guess now waits 21 quiet days for it.)
+2. Big invoices that need you only for their size are now chased (still drafts you tap). OK, or
+   should invoices over a second, higher limit still wait on you?
+3. Owner-sent invoice emails are recognised from the subject or first lines ("Invoice 1043",
+   "invoice … $2,100"). A deposit request worded like an invoice also counts, so the quote's
+   thread is then chased like an unpaid invoice. OK?
+
+## Integration notes
+
+- Shared files touched: `src/server/drafts.ts` (followup branch of createDraftForThread,
+  sentDraftSummary, followupSettings, listQueue/QueueItem.alsoQuote), `src/server/quotes.ts`
+  (guessNoAnswers, listQuotes, autoSetQuoteOutcome `flag`), `src/server/quote-rules.ts`
+  (`quoteStopsNudges` now needs `extracted`; `guessNoAnswer` / `noAnswerAfterDays` take extra
+  optional args), `src/ai/classify.ts` (`applyOwnerRules` returns `needsOwnerCode`; extracted gains
+  owner_code / declines_quote / wait_until), `src/server/classification.ts` (nudge_after),
+  `src/server/sync.ts` (owner invoice mark after the messages insert), `src/jobs/functions.ts`
+  (followup-scan hourly), the Money / Quotes / Queue / Settings → Follow-ups pages.
+- Quotes and Money group: Money card line (`chaseLine`), Quotes card "Service call" and "Waiting
+  until …" lines; `quoteStopsNudges` signature change.
+- Prompt versions group: the classify.v6 schema fields must be named `declines_quote` (signals)
+  and `wait_until` (extracted) for `followupSignalsOf`; `followupTask` invoice flag.
+- Sync group: `messages.auto_reply` is already filtered in the "answered elsewhere" check.
+- Settings / time zone group: follow-up timing reads `business_profile.time_zone`.

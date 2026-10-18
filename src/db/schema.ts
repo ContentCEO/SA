@@ -574,6 +574,11 @@ export const businessProfiles = pgTable("business_profile", {
   /** Nudge quiet quotes and invoices after this many days without a reply. */
   followupsEnabled: boolean("followups_enabled").notNull().default(true),
   followupDays: integer("followup_days").notNull().default(3),
+  /**
+   * Check 38 P4: for quotes over the money limit, wait this many days instead (7, 10, 14 or 21).
+   * Null = the same as `followup_days`.
+   */
+  bigQuoteDays: integer("big_quote_days"),
   /** Morning digest: on/off, the owner's local hour, their time zone, last local date sent. */
   digestEnabled: boolean("digest_enabled").notNull().default(true),
   digestHour: integer("digest_hour").notNull().default(7),

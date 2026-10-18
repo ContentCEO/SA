@@ -1,6 +1,6 @@
 import "server-only";
 import { MAX_FOLLOWUPS } from "@/config/rules";
-import { needsOwnerBlocksNudge, nudgeDueDate } from "./followup-rules";
+import { chaseTiming, isBigQuote, needsOwnerBlocksNudge, nudgeDueDate } from "./followup-rules";
 import { createHash } from "node:crypto";
 import {
   and,
@@ -217,6 +217,7 @@ export type CreateOutcome =
         | "followup_not_allowed"
         | "wait_requested"
         | "customer_wrote_elsewhere"
+        | "not_due"
         | "customer_replied"
         | "followup_cap"
         | "untrusted"
@@ -567,6 +568,8 @@ export async function followupSettings(workspaceId: string) {
       enabled: businessProfiles.followupsEnabled,
       days: businessProfiles.followupDays,
       timeZone: businessProfiles.timeZone,
+      bigQuoteDays: businessProfiles.bigQuoteDays,
+      thresholdDollars: businessProfiles.amountThresholdDollars,
     })
     .from(businessProfiles)
     .where(eq(businessProfiles.workspaceId, workspaceId));
@@ -575,6 +578,9 @@ export async function followupSettings(workspaceId: string) {
     days: p?.days ?? 3,
     // Check 21 P3: waits are counted in the owner's calendar days.
     timeZone: usableTimeZone(p?.timeZone),
+    // Check 38 P4: a longer wait for quotes over the money limit (null = the normal wait).
+    bigQuoteDays: p?.bigQuoteDays ?? null,
+    thresholdDollars: p?.thresholdDollars ?? 2_500,
   };
 }
 
@@ -1028,6 +1034,14 @@ export async function createDraftForThread(
   // a service call: no "checking in on the estimate". A price written later brings it back.
   if (followup && isServiceCall(thread.extracted, prepareBody(last.bodyText ?? last.snippet ?? "")))
     return { status: "skipped", reason: "followup_not_allowed" };
+  // Check 38 P4: a quote over the money limit waits the owner's longer big-quote wait.
+  if (followup) {
+    const fs = await followupSettings(workspace.id);
+    const big = !!fs.bigQuoteDays && isBigQuote(thread, fs.thresholdDollars);
+    const { days } = chaseTiming(fs.days, fs.bigQuoteDays, big);
+    if (big && nudgeDueDate(last.sentAt, days, fs.timeZone).startsAt.getTime() > now.getTime())
+      return { status: "skipped", reason: "not_due" };
+  }
   if (
     !afterOwner &&
     purpose !== "review_request" &&
@@ -3788,7 +3802,15 @@ export async function sentDraftSummary(
     // is the day the draft is ready (by 5am, the owner's time).
     nudgeOn:
       chased && sentNudges < MAX_FOLLOWUPS
-        ? nudgeDueDate(decidedAt, settings.days, settings.timeZone).startsAt
+        ? nudgeDueDate(
+            decidedAt,
+            chaseTiming(
+              settings.days,
+              settings.bigQuoteDays,
+              !!settings.bigQuoteDays && isBigQuote(row.thread, settings.thresholdDollars),
+            ).days,
+            settings.timeZone,
+          ).startsAt
         : null,
     /**
      * Check 21 P2: they asked us to wait; the sent screen says "Waiting until Jan 4, as they

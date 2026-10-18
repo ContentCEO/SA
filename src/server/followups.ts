@@ -18,7 +18,12 @@ import {
   sideEmailSql,
 } from "./thread-sql";
 import { isAway } from "./away";
-import { FOLLOWUP_MAX_AGE_DAYS, FOLLOWUP_SCAN_LOCAL_HOUR, quietCutoff } from "./followup-rules";
+import {
+  chaseTiming,
+  FOLLOWUP_MAX_AGE_DAYS,
+  FOLLOWUP_SCAN_LOCAL_HOUR,
+  quietCutoff,
+} from "./followup-rules";
 
 /**
  * SQL twin of `amountOnlyNeedsOwner` (followup-rules.ts): an invoice thread whose only owner
@@ -56,8 +61,8 @@ const freshInvoiceToSql = () =>
  * workspace's mailboxes, by its reply address), before the invoice went out. Never a stranger
  * or a typo. Never NULL.
  */
-export const freshInvoiceToKnownSql = () =>
-  sql`exists (select 1 from messages i join mailboxes mb on mb.id = i.mailbox_id where mb.workspace_id = (select m2.workspace_id from mailboxes m2 where m2.id = ${threads.mailboxId}) and i.direction = 'in' and ${notDraftSql("i")} and ${replyAddressSql("i")} = ${freshInvoiceToSql()} and i.sent_at < ${lastOutSql()})`;
+export const freshInvoiceToKnownSql = (workspaceId: string) =>
+  sql`exists (select 1 from messages i join mailboxes mb on mb.id = i.mailbox_id where mb.workspace_id = ${workspaceId} and i.direction = 'in' and ${notDraftSql("i")} and ${replyAddressSql("i")} = ${freshInvoiceToSql()} and i.sent_at < ${lastOutSql()})`;
 
 /**
  * Threads due a nudge, for the daily scan:
@@ -100,6 +105,20 @@ export async function threadsToFollowUp(
   // Check 21 P3: due on the owner's calendar day (`nudgeDueDate`), not N×24 hours later.
   const quietSince = quietCutoff(now, settings.days, settings.timeZone).toISOString();
   const notBefore = new Date(now.getTime() - FOLLOWUP_MAX_AGE_DAYS * 86_400_000).toISOString();
+  // Check 38 P4: quotes over the money limit wait `big_quote_days` (SQL twin of `isBigQuote`),
+  // and may be chased up to 2 × that + 7 days after the owner's message.
+  const bigTiming = chaseTiming(settings.days, settings.bigQuoteDays, true);
+  const bigQuietSince = quietCutoff(now, bigTiming.days, settings.timeZone).toISOString();
+  const bigNotBefore = new Date(now.getTime() - bigTiming.maxAgeDays * 86_400_000).toISOString();
+  const limitCents = settings.thresholdDollars * 100;
+  const bigQuote = settings.bigQuoteDays
+    ? sql`(${threads.category} is distinct from 'invoice_payment'
+        and (${threads.extracted}->>'invoice_thread') is distinct from 'true'
+        and (${threads.category} = 'quote_request' or ${threads.quoteRequestedAt} is not null)
+        and (case when ${threads.quoteAmountCents} is not null then ${threads.quoteAmountCents} > ${limitCents}
+          else exists (select 1 from jsonb_array_elements(case when jsonb_typeof(${threads.extracted}->'dollar_amounts') = 'array' then ${threads.extracted}->'dollar_amounts' else '[]'::jsonb end) da(v)
+            where jsonb_typeof(da.v) = 'number' and (da.v::text)::numeric * 100 > ${limitCents}) end))`
+    : sql`false`;
   // The shared "who wrote last": an unsent Gmail draft isn't the owner writing, and a lead
   // forwarded to the crew was never quoted, so it gets no "following up on my quote" nudge.
   const lastIn = lastInSql();
@@ -116,8 +135,8 @@ export async function threadsToFollowUp(
   // owner's last message: the old conversation only looks quiet. SQL twin of
   // `customerWroteElsewhere` (drafts.ts). Compared in SQL only; no address is selected. A
   // spouse writing from their own address can't be matched — that's the owner's "I called
-  // them" or Discard.
-  const wroteElsewhere = sql`exists (select 1 from messages e join mailboxes eb on eb.id = e.mailbox_id where eb.workspace_id = ${box.workspaceId} and e.thread_id <> ${threads.id} and e.direction = 'in' and ${notDraftSql("e")} and e.auto_reply = false and not ${sideEmailSql("e")} and ${replyAddressSql("e")} = ${customerAddressSql()} and e.sent_at > ${lastOut})`;
+  // them" or Discard. A fresh invoice email (no customer email on it) uses its To address.
+  const wroteElsewhere = sql`exists (select 1 from messages e join mailboxes eb on eb.id = e.mailbox_id where eb.workspace_id = ${box.workspaceId} and e.thread_id <> ${threads.id} and e.direction = 'in' and ${notDraftSql("e")} and e.auto_reply = false and not ${sideEmailSql("e")} and ${replyAddressSql("e")} = coalesce(${customerAddressSql()}, ${freshInvoiceToSql()}) and e.sent_at > ${lastOut})`;
 
   const rows = await db()
     .select({ id: threads.id })
@@ -137,12 +156,12 @@ export async function threadsToFollowUp(
         sql`(${threads.extracted}->>'bill_direction') is distinct from 'owed_by_business'`,
         // Someone to nudge: the customer wrote on it and the owner wrote last — or (Check 21 P4)
         // a fresh invoice email whose To address has written to this mailbox before.
-        sql`((${lastIn} is not null and ${lastOut} > ${lastIn}) or (${lastIn} is null and ${threads.ownerInvoiceAt} is not null and ${freshInvoiceToKnownSql()}))`,
-        sql`${lastOut} < ${quietSince}::timestamptz`,
+        sql`((${lastIn} is not null and ${lastOut} > ${lastIn}) or (${lastIn} is null and ${threads.ownerInvoiceAt} is not null and ${freshInvoiceToKnownSql(box.workspaceId)}))`,
+        sql`${lastOut} < (case when ${bigQuote} then ${bigQuietSince}::timestamptz else ${quietSince}::timestamptz end)`,
         // Check 21 P2: a customer who asked us to wait ("after the holidays") isn't nudged
         // before then, and the 21-day window counts from that date when it's later.
         sql`(${threads.nudgeAfter} is null or ${threads.nudgeAfter} <= ${now.toISOString()}::timestamptz)`,
-        sql`greatest(${lastOut}, ${threads.nudgeAfter}) >= ${notBefore}::timestamptz`,
+        sql`greatest(${lastOut}, ${threads.nudgeAfter}) >= (case when ${bigQuote} then ${bigNotBefore}::timestamptz else ${notBefore}::timestamptz end)`,
         sql`${sentNudges} < ${MAX_FOLLOWUPS}`,
         sql`(${lastDraft} is null or ${lastDraft} < ${lastOut})`,
         sql`not ${pending}`,
