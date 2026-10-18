@@ -121,3 +121,27 @@
   (drafts keep the stored voice). Copy: welcome/learning "Couldn't learn your style this time.
   We'll try again within the hour, and you can set it by hand in Settings."; Settings list "Not
   learned yet: not enough sent mail" / "Not learned yet: we'll try again soon".
+
+## Integration notes
+
+- Migrations on this branch (to renumber at merge): `0039_voice_attempts`,
+  `0040_voice_learned_from`, `0041_voice_examples_stale`, `0042_voice_retries` — all additive
+  columns on `voice_profile`, no backfill.
+- No prompt files written. `voice.ts` still imports `voice.v2`; wave 1's `voice.v3` (Check 24 P5 +
+  P9) will touch the same import and the `values` block in `learnVoice` — keep this branch's
+  scrub (`clean`), `ideaChanges` and `examplesStale` around whatever voice.v3 adds.
+- `workspaceContext` (drafts.ts) voice block changed (content-based, stale examples): small,
+  but the Draft checks / Send path branches edit drafts.ts heavily.
+- The 15-minute `voice` step now calls `restartVoiceLearns()`; a new daily step
+  `purge-voice-alert-markers` sits after `purge-cost-markers`.
+
+## Questions for Davi
+
+- Check 24 P8: sample replies after you change your voice — built so drafts stop using the old
+  samples; writing new ones needs a small new AI prompt (voice-examples.v1) that the Prompt
+  versions group should add. Until then, a voice you changed by hand has no samples until you tap
+  Re-learn.
+- Check 24 P7: voices already marked "edited" only because an idea was accepted were left as
+  they are (no script). Want a one-off script to put them back on the weekly refresh?
+- Check 24 P4: the privacy policy says we replace addresses, phones, prices and emails "it finds".
+  Keep that wording, or soften it to "it recognizes"?
