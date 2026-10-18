@@ -176,8 +176,9 @@ describe("Sign them out everywhere (Davi's admin move)", () => {
   it("the admin ends the owner's sign-ins; the status stays as it was", async () => {
     req.session = { user: { id: admin.id, email: admin.email, sv: 0 } };
     const f = form({ workspaceId: owner.workspaceId, move: "sign_out_everywhere" });
+    // Check 16 P6: the notice lands on the card it changed.
     expect(await outcome(() => adminMoveAction(f))).toBe(
-      "redirect /admin?done=sign_out_everywhere",
+      `redirect /admin?done=sign_out_everywhere&w=${owner.workspaceId}#acct-${owner.workspaceId}`,
     );
     expect(await versionOf(owner.id)).toBe(1);
     expect(await versionOf(admin.id)).toBe(0);
