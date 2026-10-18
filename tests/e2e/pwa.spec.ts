@@ -1,4 +1,7 @@
-import { expect, test } from "@playwright/test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { chromium, expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
 import { seedOwner, seedQueue, setWorkspace, signInAs } from "./support";
 
@@ -19,12 +22,53 @@ test("installable: manifest opens on the queue, full screen, with real icons", a
     expect(img.ok(), icon.src).toBe(true);
     expect(img.headers()["content-type"]).toContain("image/png");
   }
+  // Check 46 P4: one maskable icon, the phone screenshots for Chrome's richer install sheet
+  // (each a real PNG), and the language.
+  expect((m.icons as { purpose?: string }[]).some((i) => i.purpose === "maskable")).toBe(true);
+  expect(m).toMatchObject({ id: "/queue", scope: "/", lang: "en-US", dir: "ltr" });
+  const shots = m.screenshots as { src: string; sizes: string; form_factor: string }[];
+  expect(shots.length).toBeGreaterThanOrEqual(3);
+  for (const shot of shots) {
+    expect(shot).toMatchObject({ sizes: "1080x1920", form_factor: "narrow" });
+    const img = await request.get(shot.src);
+    expect(img.ok(), shot.src).toBe(true);
+    expect(img.headers()["content-type"]).toContain("image/png");
+  }
   expect((await request.get("/app-icon/apple-180")).ok()).toBe(true);
   // Check 46 P3: the notification badge (the "sa." mark alone).
   const badge = await request.get("/app-icon/badge-96");
   expect(badge.ok()).toBe(true);
   expect(badge.headers()["content-type"]).toBe("image/png");
   expect((await request.get("/app-icon/nope")).status()).toBe(404);
+});
+
+test("Check 46 P4: Chrome itself says the site is installable", async ({}, info) => {
+  // Chrome refuses installability in a private (incognito) context: a real profile.
+  const dir = mkdtempSync(join(tmpdir(), "sa-install-"));
+  const context = await chromium.launchPersistentContext(dir, {
+    baseURL: info.project.use.baseURL,
+    ...(process.env.PLAYWRIGHT_CHROMIUM_PATH
+      ? { executablePath: process.env.PLAYWRIGHT_CHROMIUM_PATH }
+      : {}),
+  });
+  try {
+    const page = context.pages()[0] ?? (await context.newPage());
+    await page.goto("/");
+    // The service worker is registered and active (production build only).
+    await page.waitForFunction(
+      async () => !!(await navigator.serviceWorker.getRegistration())?.active,
+      undefined,
+      { timeout: 30_000 },
+    );
+    const cdp = await context.newCDPSession(page);
+    const { installabilityErrors } = (await cdp.send("Page.getInstallabilityErrors")) as {
+      installabilityErrors: { errorId: string }[];
+    };
+    expect(installabilityErrors.map((e) => e.errorId)).toEqual([]);
+  } finally {
+    await context.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test("service worker is always fresh, and the offline page explains plainly", async ({
