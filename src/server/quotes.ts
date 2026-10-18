@@ -458,16 +458,6 @@ export async function guessNoAnswers(
 }
 
 /**
- * Remember what each quote was for while the owner's reply text still exists
- * (bodies are purged after the retention window; the amount is kept). Never
- * overwrites an amount that's already set.
- *
- * Plan #15: a captured amount on a thread whose kind of job is known also goes
- * into the owner's price memory (one row per thread, write-only from here). The
- * amount the owner types when marking a quote Won does not (it may be the final
- * bill, not the quote) — see `backfillPriceMemory`.
- */
-/**
  * Check 29 P7: after each sync of a mailbox (the draft job, which runs after every sync), catch
  * the shop's quote amounts from newly synced replies and refresh the "no answer" guesses — what
  * listQuotes used to do on every Quotes / Customers open. Never fails the job that calls it:
@@ -495,6 +485,16 @@ export async function quoteUpkeepForMailbox(
   }
 }
 
+/**
+ * Remember what each quote was for while the owner's reply text still exists
+ * (bodies are purged after the retention window; the amount is kept). Never
+ * overwrites an amount that's already set.
+ *
+ * Plan #15: a captured amount on a thread whose kind of job is known also goes
+ * into the owner's price memory (one row per thread, write-only from here). The
+ * amount the owner types when marking a quote Won does not (it may be the final
+ * bill, not the quote) — see `backfillPriceMemory`.
+ */
 export async function captureQuoteAmounts(workspaceId?: string): Promise<number> {
   const open = await db()
     .select({
