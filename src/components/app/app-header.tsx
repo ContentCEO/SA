@@ -2,7 +2,7 @@
 
 import { Banknote, ClipboardCheck, Inbox, Menu, Receipt, Sun } from "lucide-react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { Wordmark } from "@/components/brand/wordmark";
 import { cn } from "@/lib/utils";
 import { toggleSunlightAction } from "@/app/(app)/settings/device-actions";
@@ -25,6 +25,20 @@ export function AppHeader({ sunlight = false }: { sunlight?: boolean }) {
   const path = usePathname();
   const tab = currentTab(path);
   const current = (href: string) => tab === href;
+  const router = useRouter();
+  /**
+   * Check 8 P3: tapping the tab you're already on goes to the top and fetches the list again,
+   * as in every phone app (a plain link would refresh but leave you scrolled down).
+   */
+  const again = (href: string) => (e: React.MouseEvent<HTMLAnchorElement>) => {
+    // With a notice or a card in the address (?done=, #t-…), the tap goes to the plain screen.
+    if (path !== href || location.search || location.hash) return;
+    if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    e.preventDefault();
+    const still = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    window.scrollTo({ top: 0, behavior: still ? "auto" : "smooth" });
+    router.refresh();
+  };
 
   return (
     <>
@@ -39,6 +53,7 @@ export function AppHeader({ sunlight = false }: { sunlight?: boolean }) {
               <Link
                 key={href}
                 href={href}
+                onClick={again(href)}
                 aria-current={current(href) ? "page" : undefined}
                 className={cn(
                   "inline-flex min-h-tap items-center px-2 font-semibold underline-offset-8",
@@ -81,6 +96,7 @@ export function AppHeader({ sunlight = false }: { sunlight?: boolean }) {
               <li key={href} className="min-w-0">
                 <Link
                   href={href}
+                  onClick={again(href)}
                   aria-current={on ? "page" : undefined}
                   className={cn(
                     "sa-tab flex h-full min-h-14 flex-col items-center justify-center gap-0.5 px-0.5 py-1 text-center text-[length:min(0.875rem,3.6vw)] leading-tight font-semibold",

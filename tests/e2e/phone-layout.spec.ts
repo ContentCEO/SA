@@ -110,3 +110,113 @@ test("Check 8 P2: the page covers the whole screen and pads for the tab bar", as
   expect(box.barBottom).toBe(box.vh);
   expect(box.lastBottom).toBeLessThanOrEqual(box.barTop);
 });
+
+/** Pretend the app went to the background (or came back), as a phone does. */
+async function setVisibility(page: Page, state: "hidden" | "visible") {
+  await page.evaluate((s) => {
+    Object.defineProperty(document, "visibilityState", { configurable: true, get: () => s });
+    Object.defineProperty(document, "hidden", { configurable: true, get: () => s === "hidden" });
+    document.dispatchEvent(new Event("visibilitychange"));
+  }, state);
+}
+
+/** Moves the page's clock forward (Date.now only; timers keep running). */
+async function skipAhead(page: Page, ms: number) {
+  await page.evaluate((by) => {
+    const real = Date.now.bind(Date);
+    Date.now = () => real() + by;
+  }, ms);
+}
+
+/** Counts RSC (router) requests for a path from now on. */
+function rscCounter(page: Page, pathname: string) {
+  const hits: string[] = [];
+  page.on("request", (req) => {
+    if (req.headers()["rsc"] === "1" && new URL(req.url()).pathname === pathname)
+      hits.push(req.url());
+  });
+  return hits;
+}
+
+test("Check 8 P3: back after a minute refreshes the queue, but never mid-edit", async ({
+  page,
+  context,
+}) => {
+  const owner = await seedOwner({ mailbox: true, backfilled: true });
+  await seedQueue(owner.mailboxId!);
+  await signInAs(context, owner);
+  await page.goto("/queue");
+  await page.waitForLoadState("networkidle");
+  const hits = rscCounter(page, "/queue");
+
+  // A quick look away: nothing.
+  await setVisibility(page, "hidden");
+  await setVisibility(page, "visible");
+  await page.waitForTimeout(500);
+  expect(hits).toHaveLength(0);
+
+  // Away for 61 seconds: one fresh fetch of the queue.
+  await setVisibility(page, "hidden");
+  await skipAhead(page, 61_000);
+  await setVisibility(page, "visible");
+  await expect.poll(() => hits.length).toBe(1);
+
+  // Edit open on a card (focus moved off the box): no refresh, the edit stays.
+  const card = page.getByRole("article", { name: "Draft reply to Priya" });
+  await card.getByRole("button", { name: "Edit" }).click();
+  await card.getByLabel("Your reply").fill("Hey Priya, still typing");
+  await page.locator("h1").first().click();
+  await setVisibility(page, "hidden");
+  await skipAhead(page, 61_000);
+  await setVisibility(page, "visible");
+  await page.waitForTimeout(1500);
+  expect(hits).toHaveLength(1);
+  await expect(card.getByLabel("Your reply")).toHaveValue("Hey Priya, still typing");
+});
+
+test("Check 8 P3: tapping the tab you're on goes to the top and refreshes", async ({
+  page,
+  context,
+}) => {
+  const owner = await seedOwner({ mailbox: true, backfilled: true });
+  await seedQueue(owner.mailboxId!);
+  await signInAs(context, owner);
+  await page.goto("/queue");
+  await page.waitForLoadState("networkidle");
+  // Room to scroll 3,000px.
+  await page.evaluate(() => {
+    const pad = document.createElement("div");
+    pad.style.height = "4000px";
+    document.querySelector("main")!.append(pad);
+    window.scrollTo(0, 3000);
+  });
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(3000);
+  const hits = rscCounter(page, "/queue");
+  await page
+    .getByRole("navigation", { name: "Main" })
+    .filter({ visible: true })
+    .getByRole("link", { name: "Queue" })
+    .click();
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(0);
+  await expect.poll(() => hits.length).toBeGreaterThanOrEqual(1);
+  await expect(page).toHaveURL(/\/queue$/);
+});
+
+test("Check 8 P3: every tab screen says when it was updated", async ({ page, context }) => {
+  const owner = await seedOwner({ mailbox: true, backfilled: true });
+  await signInAs(context, owner);
+  for (const path of ["/queue", "/inbox", "/quotes", "/money"]) {
+    await page.goto(path);
+    await expect(page.locator("[data-updated-at]"), path).toHaveText(
+      /^Updated \d{1,2}:\d{2} [AP]M$/,
+    );
+  }
+  // With no signal, the line says how old the list is.
+  await page.goto("/queue");
+  await page.waitForLoadState("networkidle");
+  await context.setOffline(true);
+  await expect(page.locator("[data-updated-at]")).toHaveText(
+    /^No signal\. This is your queue from \d{1,2}:\d{2} [AP]M\.$/,
+  );
+  await context.setOffline(false);
+});

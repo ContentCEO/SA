@@ -3,6 +3,10 @@ import Link from "next/link";
 import { Notice } from "@/components/app/notice";
 import { OfferButtons } from "@/components/app/offer-buttons";
 import { Headline } from "@/components/brand/headline";
+import { UpdatedAt } from "@/components/app/updated-at";
+import { updatedTime } from "@/lib/refresh-rules";
+import { getBusinessProfile } from "@/server/profile";
+import { usableTimeZone } from "@/server/snooze-rules";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { gmailThreadLink } from "@/lib/gmail-link";
 import { relativeTime } from "@/lib/relative-time";
@@ -196,9 +200,10 @@ export default async function QuotesPage(props: PageProps<"/quotes">) {
   const filter: Filter = FILTERS.some(([k]) => k === params.stage)
     ? (params.stage as Filter)
     : "open";
-  const [{ quotes, totals, quietDays }, leadPay] = await Promise.all([
+  const [{ quotes, totals, quietDays }, leadPay, profile] = await Promise.all([
     listQuotes(workspace.id),
     leadSourcePay(workspace.id),
+    getBusinessProfile(workspace.id),
   ]);
   const readOnly = isReadOnly(workspace);
   const shown = quotes.filter((q) =>
@@ -216,6 +221,7 @@ export default async function QuotesPage(props: PageProps<"/quotes">) {
   return (
     <>
       <Headline serif="your quotes," heavy="won and waiting." />
+      <UpdatedAt time={updatedTime(new Date(), usableTimeZone(profile?.timeZone))} what="quotes" />
       <Link
         href="/money"
         className={cn(buttonVariants({ variant: "outline" }), "min-h-tap self-start")}

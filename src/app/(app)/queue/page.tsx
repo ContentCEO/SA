@@ -2,6 +2,8 @@ import { randomUUID } from "node:crypto";
 import Link from "next/link";
 import { Notice } from "@/components/app/notice";
 import { Headline } from "@/components/brand/headline";
+import { UpdatedAt } from "@/components/app/updated-at";
+import { updatedTime } from "@/lib/refresh-rules";
 import { draftTag } from "@/config/categories";
 import { findGaps } from "@/ai/gaps";
 import { confidenceLabel } from "@/config/drafting";
@@ -261,6 +263,8 @@ export default async function QueuePage(props: PageProps<"/queue">) {
       ) : (
         <Headline serif="waiting on you," heavy="the queue." />
       )}
+      {/* Check 8 P3: how old this list is (and, on the saved copy with no signal, says so). */}
+      <UpdatedAt time={updatedTime(now, timeZone)} what="queue" />
 
       {stopped.map((s) => (
         <Notice key={s.draftId} strong>

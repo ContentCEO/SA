@@ -3,6 +3,10 @@ import Link from "next/link";
 import { Notice } from "@/components/app/notice";
 import { OfferButtons } from "@/components/app/offer-buttons";
 import { Headline } from "@/components/brand/headline";
+import { UpdatedAt } from "@/components/app/updated-at";
+import { updatedTime } from "@/lib/refresh-rules";
+import { getBusinessProfile } from "@/server/profile";
+import { usableTimeZone } from "@/server/snooze-rules";
 import { Button } from "@/components/ui/button";
 import { gmailThreadLink } from "@/lib/gmail-link";
 import { relativeTime } from "@/lib/relative-time";
@@ -164,7 +168,10 @@ export default async function MoneyPage(props: PageProps<"/money">) {
   const { workspace } = await requireOwner();
   const params = await props.searchParams;
   const now = new Date();
-  const { owed, paidRecently, hidden, totalOwedCents } = await listMoney(workspace.id, now);
+  const [{ owed, paidRecently, hidden, totalOwedCents }, profile] = await Promise.all([
+    listMoney(workspace.id, now),
+    getBusinessProfile(workspace.id),
+  ]);
   const readOnly = isReadOnly(workspace, now);
   const showHidden = params.show === "hidden";
   const doneMsg = typeof params.done === "string" ? done[params.done] : undefined;
@@ -179,6 +186,7 @@ export default async function MoneyPage(props: PageProps<"/money">) {
   return (
     <>
       <Headline serif="money owed," heavy="who still owes you." />
+      <UpdatedAt time={updatedTime(now, usableTimeZone(profile?.timeZone))} what="money list" />
       {doneMsg ? <Notice>{doneMsg}</Notice> : null}
       {errorMsg ? <Notice strong>{errorMsg}</Notice> : null}
 

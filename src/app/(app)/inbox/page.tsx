@@ -1,5 +1,8 @@
 import Link from "next/link";
 import { Headline } from "@/components/brand/headline";
+import { UpdatedAt } from "@/components/app/updated-at";
+import { updatedTime } from "@/lib/refresh-rules";
+import { usableTimeZone } from "@/server/snooze-rules";
 import { OfferButtons } from "@/components/app/offer-buttons";
 import { PermitCard } from "@/components/app/permit-card";
 import { Button } from "@/components/ui/button";
@@ -266,6 +269,7 @@ export default async function InboxPage(props: PageProps<"/inbox">) {
   return (
     <>
       <Headline serif="everything that came in," heavy="sorted." />
+      <UpdatedAt time={updatedTime(new Date(), usableTimeZone(timeZone))} what="inbox" />
       {doneMsg ? <Notice>{doneMsg}</Notice> : null}
       {errorMsg ? <Notice strong>{errorMsg}</Notice> : null}
 

@@ -238,6 +238,8 @@ export function DraftCard(p: DraftCardProps) {
     <article
       id={`t-${p.threadId}`}
       aria-label={`Draft reply to ${p.customer}`}
+      // Check 8 P3: RefreshOnReturn waits while Edit or Change it is open.
+      data-editing={editing || changing ? "true" : undefined}
       className="flex touch-pan-y scroll-mt-4 scroll-mb-28 flex-col gap-3 rounded-xl border bg-card p-4 transition-transform motion-reduce:transition-none sm:scroll-mb-4"
       style={{ transform: dx ? `translateX(${dx}px)` : undefined }}
       onPointerDown={onPointerDown}

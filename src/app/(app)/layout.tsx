@@ -5,6 +5,7 @@ import { AssistantBanner } from "@/components/app/assistant-banner";
 import { devicePrefs } from "@/lib/device-prefs";
 import { ReconnectBanner } from "@/components/app/reconnect-banner";
 import { NoSignalGuard } from "@/components/app/no-signal-guard";
+import { RefreshOnReturn } from "@/components/app/refresh-on-return";
 import { SiteFooter } from "@/components/app/site-footer";
 import { StatusBanner } from "@/components/app/status-banner";
 
@@ -30,6 +31,8 @@ export default async function AppLayout({ children }: { children: React.ReactNod
       <main className="flex flex-1 flex-col gap-8">{children}</main>
       {/* Check 8 P1: no signal → the tap is stopped and the owner is told nothing was sent. */}
       <NoSignalGuard />
+      {/* Check 8 P3: back after a minute away → the screen fetches again (never mid-edit). */}
+      <RefreshOnReturn />
       <SiteFooter />
     </div>
   );
