@@ -2,6 +2,7 @@ import "server-only";
 import { z } from "zod";
 import {
   HistoryExpiredError,
+  InvalidPageTokenError,
   MailboxAuthError,
   MailboxRateLimitError,
   type HistoryPage,
@@ -203,10 +204,18 @@ export function createGmailReader(opts: GmailReaderOptions): GmailClient {
     async listMessages({ query, pageToken, maxResults = 100 }) {
       const qs = new URLSearchParams({ q: query, maxResults: String(maxResults) });
       if (pageToken) qs.set("pageToken", pageToken);
-      const r = await call<{
-        messages?: { id: string; threadId: string }[];
-        nextPageToken?: string;
-      }>("messages.list", `/messages?${qs}`);
+      let r;
+      try {
+        r = await call<{
+          messages?: { id: string; threadId: string }[];
+          nextPageToken?: string;
+        }>("messages.list", `/messages?${qs}`);
+      } catch (err) {
+        // Check 25 P5: a saved token Gmail no longer takes (it answers 400): start over.
+        if (pageToken && err instanceof Error && /^Gmail API 400\b/.test(err.message))
+          throw new InvalidPageTokenError();
+        throw err;
+      }
       return { messages: r?.messages ?? [], nextPageToken: r?.nextPageToken };
     },
 

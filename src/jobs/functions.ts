@@ -7,6 +7,7 @@ import {
   finishBackfill,
   incrementalSync,
   listSyncableMailboxes,
+  MAX_BACKFILL_PAGES_PER_RUN,
   MAX_RESYNC_PAGES_PER_RUN,
   resyncPage,
   purgeExpiredBodies,
@@ -113,17 +114,23 @@ export const backfillMailbox = inngest.createFunction(
     const start = await step.run("begin", () => politely(() => beginBackfill(mailboxId)));
     if (start.status !== "ok") return start;
 
-    let pageToken: string | undefined;
+    // Check 25 P5: at most MAX_BACKFILL_PAGES_PER_RUN pages per run (Inngest stops a run at
+    // 1,000 steps). A stopped read resumes from its saved token: the 5-minute poll starts the
+    // next stretch, and the singleton keeps two from overlapping.
     let total = 0;
-    for (let page = 0; ; page++) {
+    let done = false;
+    for (let page = 0; page < MAX_BACKFILL_PAGES_PER_RUN; page++) {
       const result = await step.run(`page-${page}`, () =>
-        politely(() => backfillPage(mailboxId, pageToken)),
+        politely(() => backfillPage(mailboxId)),
       );
       if (result.status !== "ok") return result;
       total += result.ingested;
-      pageToken = result.nextPageToken;
-      if (!pageToken) break;
+      if (result.done) {
+        done = true;
+        break;
+      }
     }
+    if (!done) return { status: "continuing" as const, ingested: total };
     await step.run("finish", () => finishBackfill(mailboxId));
     await step.sendEvent("classify", mailboxClassifyRequested.create({ mailboxId }));
     const workspaceId = await step.run("workspace", () => getMailboxWorkspace(mailboxId));

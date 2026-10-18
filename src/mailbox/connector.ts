@@ -153,6 +153,14 @@ export class MailboxRateLimitError extends Error {
   }
 }
 
+/** Check 25 P5: Gmail refused a saved listing page token (400): start the listing over. */
+export class InvalidPageTokenError extends Error {
+  constructor() {
+    super("Gmail no longer accepts that page token.");
+    this.name = "InvalidPageTokenError";
+  }
+}
+
 /** The stored sync cursor is too old; fall back to a fresh window sync. */
 export class HistoryExpiredError extends Error {
   constructor() {

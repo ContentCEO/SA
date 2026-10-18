@@ -77,6 +77,10 @@ export async function saveConnectedMailbox(
     accessAlertsSent: 0,
     lastSyncErrorCode: null,
     lastSyncErrorAt: null,
+    // Check 25 P5: a reconnect starts a fresh first read, never a half-finished one.
+    backfillPageToken: null,
+    backfillPagesDone: 0,
+    backfillSince: null,
   };
 
   const [row] = isReconnect

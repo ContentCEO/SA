@@ -212,6 +212,14 @@ export const mailboxes = pgTable(
      */
     resyncSince: timestamp("resync_since", { withTimezone: true }),
     resyncPageToken: text("resync_page_token"),
+    /**
+     * Check 25 P5: a first read that stopped part-way (a run cap, a failure) resumes here —
+     * the next page's token, pages stored so far, and the fixed window start (`after:`).
+     * Cleared when the read finishes and on a reconnect (which starts a fresh read).
+     */
+    backfillPageToken: text("backfill_page_token"),
+    backfillPagesDone: integer("backfill_pages_done").notNull().default(0),
+    backfillSince: timestamp("backfill_since", { withTimezone: true }),
     createdAt: createdAt(),
   },
   (t) => [

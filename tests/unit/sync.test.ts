@@ -2,7 +2,8 @@ import { randomBytes } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { beforeEach, describe, expect, it } from "vitest";
 import type { Database } from "@/db";
-import { activityLog, drafts, mailboxes, messages, threads } from "@/db/schema";
+import { activityLog, drafts, mailboxes, messages, threads, workspaces } from "@/db/schema";
+import { InvalidPageTokenError } from "@/mailbox/connector";
 import { ensureUserAndWorkspace } from "@/server/accounts";
 import { saveConnectedMailbox } from "@/server/mailboxes";
 import {
@@ -698,5 +699,119 @@ describe("expired history after a long pause (Check 25 P3)", () => {
     // Back to ordinary history-based sync from the fresh cursor.
     fake.oldestHistory = 0;
     expect(await incrementalSync(mailboxId, later)).toMatchObject({ status: "ok", ingested: 0 });
+  });
+});
+
+describe("a very big first read resumes and finishes (Check 25 P5)", () => {
+  const fill = (n: number) => {
+    for (let i = 0; i < n; i++)
+      fake.add({ id: `b${i}`, threadId: `bt${i}`, daysAgo: 1 + (i % 20) });
+  };
+
+  it("700 emails, 5 pages per run: three runs finish it, each email once, history cursor set once", async () => {
+    fill(700);
+    let getProfiles = 0;
+    const counting = () => {
+      const r = fake.reader();
+      return {
+        ...r,
+        getProfile: async () => {
+          getProfiles++;
+          return r.getProfile();
+        },
+      };
+    };
+    const d = { readerFor: counting, now: () => NOW };
+    expect(await runBackfill(mailboxId, d, { maxPages: 5 })).toMatchObject({
+      status: "continuing",
+    });
+    const [first] = await database.select().from(mailboxes);
+    expect(first!.backfillPagesDone).toBe(5);
+    expect(first!.backfillCompletedAt).toBeNull();
+    // Later runs carry on: the cursor taken at the first begin stays (getProfile once).
+    expect(await runBackfill(mailboxId, d, { maxPages: 5 })).toMatchObject({
+      status: "continuing",
+    });
+    expect(await runBackfill(mailboxId, d, { maxPages: 5 })).toMatchObject({ status: "ok" });
+    expect(getProfiles).toBe(1);
+    const [box] = await database.select().from(mailboxes);
+    expect(box!.historyId).toBe(first!.historyId);
+    expect(box!.backfillCompletedAt).toEqual(NOW);
+    expect(box!.backfillPageToken).toBeNull();
+    const ids = (await database.select().from(messages)).map((m) => m.gmailMessageId);
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(ids.filter((i) => i.startsWith("b"))).toHaveLength(700);
+  });
+
+  it("a failed run resumes from the saved token, not page 0", async () => {
+    fill(120);
+    await runBackfill(mailboxId, deps(), { maxPages: 1 });
+    // Page 2 fails (Gmail down); the run stops.
+    const failing = {
+      readerFor: () => ({
+        ...fake.reader(),
+        listMessages: async () => {
+          throw new Error("Gmail API 503.");
+        },
+      }),
+      now: () => NOW,
+    };
+    await expect(runBackfill(mailboxId, failing)).rejects.toThrow();
+    const listed: (string | undefined)[] = [];
+    const spying = () => {
+      const r = fake.reader();
+      return {
+        ...r,
+        listMessages: async (o: Parameters<typeof r.listMessages>[0]) => {
+          listed.push(o.pageToken);
+          return r.listMessages(o);
+        },
+      };
+    };
+    fake.bodyFetches = [];
+    expect(await runBackfill(mailboxId, { readerFor: spying, now: () => NOW })).toMatchObject({
+      status: "ok",
+      ingested: 70,
+    });
+    expect(listed[0]).toBe("50");
+    expect(fake.bodyFetches).toHaveLength(70);
+  });
+
+  it("a token Gmail no longer takes starts the listing over (stored emails are skipped)", async () => {
+    fill(60);
+    await runBackfill(mailboxId, deps(), { maxPages: 1 });
+    const picky = () => {
+      const r = fake.reader();
+      return {
+        ...r,
+        listMessages: async (o: Parameters<typeof r.listMessages>[0]) => {
+          if (o.pageToken) throw new InvalidPageTokenError();
+          return r.listMessages(o);
+        },
+      };
+    };
+    // The saved token is refused once, then the listing restarts from the top.
+    const out = await runBackfill(mailboxId, { readerFor: picky, now: () => NOW }, { maxPages: 1 });
+    expect(out).toMatchObject({ status: "continuing", ingested: 0 });
+    const [box] = await database.select().from(mailboxes);
+    expect(box!.backfillPageToken).toBe("inbox:50");
+  });
+
+  it("a reconnect starts a fresh read", async () => {
+    fill(120);
+    await runBackfill(mailboxId, deps(), { maxPages: 1 });
+    const [before] = await database.select().from(mailboxes);
+    expect(before!.backfillPageToken).toBe("inbox:50");
+    const [w] = await database.select().from(workspaces);
+    await saveConnectedMailbox(w!, {
+      email: "owner@shop.com",
+      refreshToken: "rt2",
+      grantedScopes: ["x"],
+    });
+    fake.add({ id: "new", threadId: "new", daysAgo: 0 });
+    await runBackfill(mailboxId, deps(), { maxPages: 1 });
+    const [after] = await database.select().from(mailboxes);
+    expect(after!.historyId).not.toBe(before!.historyId);
+    expect(after!.backfillPagesDone).toBe(1);
   });
 });

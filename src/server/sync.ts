@@ -14,6 +14,7 @@ import {
 import {
   HistoryExpiredError,
   type HistoryPage,
+  InvalidPageTokenError,
   MailboxAuthError,
   MailboxRateLimitError,
   type MailboxReader,
@@ -30,6 +31,7 @@ import { isAutoReply } from "./auto-reply-rules";
 import { lastInSql, lastOutSql, unsentDraftMessage } from "./thread-sql";
 
 const MAIL_INBOX = "INBOX";
+const DAY_MS = 86_400_000;
 
 /** How far back the first sync reaches. */
 export const BACKFILL_DAYS = 30;
@@ -171,10 +173,6 @@ async function guarded(mailbox: Mailbox, fn: () => Promise<SyncOutcome>): Promis
  */
 export function isUnsentDraft(labelIds: readonly string[]): boolean {
   return labelIds.includes("DRAFT") && !labelIds.includes("SENT");
-}
-
-function windowQuery(days: number) {
-  return `newer_than:${days}d`;
 }
 
 /** A fixed window start (Gmail's `after:` takes epoch seconds), so a re-read never drifts. */
@@ -647,41 +645,70 @@ export async function applyLabelChanges(
 /**
  * Step 1 of the first sync: remember where "now" is in the mailbox's history
  * before reading the past, so nothing that arrives during backfill is missed.
+ *
+ * Check 25 P5: a read that stopped part-way (a run's page cap, a failure) keeps its cursor,
+ * window and page token, and carries on. Only a mailbox with no unfinished read (or one just
+ * reconnected: `saveConnectedMailbox` clears the token and window) starts afresh.
  */
 export async function beginBackfill(mailboxId: string, deps: SyncDeps = {}): Promise<SyncOutcome> {
   const { mailbox, skip } = await loadActiveMailbox(mailboxId);
   if (skip) return skip;
+  const now = deps.now?.() ?? new Date();
+  if (!mailbox.backfillCompletedAt && mailbox.backfillSince && mailbox.historyId) {
+    return { status: "ok", ingested: 0 };
+  }
   const reader = (deps.readerFor ?? defaultReaderFor)(mailbox);
   return guarded(mailbox, async () => {
     const profile = await reader.getProfile();
     await db()
       .update(mailboxes)
-      .set({ historyId: profile.historyId, backfillCompletedAt: null })
+      .set({
+        historyId: profile.historyId,
+        backfillCompletedAt: null,
+        backfillSince: new Date(now.getTime() - BACKFILL_DAYS * DAY_MS),
+        backfillPageToken: null,
+        backfillPagesDone: 0,
+      })
       .where(eq(mailboxes.id, mailbox.id));
     return { status: "ok", ingested: 0 };
   });
 }
 
-/** Step 2, repeated: one page (up to BACKFILL_PAGE_SIZE = 50 messages) of the 30-day window. */
+/**
+ * Step 2, repeated: one page (up to BACKFILL_PAGE_SIZE = 50 messages) of the 30-day window,
+ * from the saved token (Check 25 P5), which is saved again once the page is stored. A token
+ * Gmail no longer takes starts the listing over: stored messages are skipped, so it's cheap.
+ */
 export async function backfillPage(
   mailboxId: string,
-  pageToken: string | undefined,
   deps: SyncDeps = {},
-): Promise<SyncOutcome> {
+): Promise<SyncOutcome & { done?: boolean }> {
   const { mailbox, skip } = await loadActiveMailbox(mailboxId);
   if (skip) return skip;
   const reader = (deps.readerFor ?? defaultReaderFor)(mailbox);
   const now = deps.now?.() ?? new Date();
+  const since = mailbox.backfillSince ?? new Date(now.getTime() - BACKFILL_DAYS * DAY_MS);
   return guarded(mailbox, async () => {
-    const page = await windowPage(
-      reader,
-      windowQuery(BACKFILL_DAYS),
-      pageToken,
-      BACKFILL_PAGE_SIZE,
-    );
+    let token = mailbox.backfillPageToken ?? undefined;
+    let page;
+    try {
+      page = await windowPage(reader, afterQuery(since), token, BACKFILL_PAGE_SIZE);
+    } catch (err) {
+      if (!(err instanceof InvalidPageTokenError) || !token) throw err;
+      token = undefined;
+      page = await windowPage(reader, afterQuery(since), undefined, BACKFILL_PAGE_SIZE);
+    }
     const ingested = await ingest(mailbox, reader, page.messages, now);
+    await db()
+      .update(mailboxes)
+      .set({
+        backfillPageToken: page.nextPageToken ?? null,
+        backfillPagesDone: sql`${mailboxes.backfillPagesDone} + 1`,
+        ...(mailbox.backfillSince ? {} : { backfillSince: since }),
+      })
+      .where(eq(mailboxes.id, mailbox.id));
     logGmailUnits("backfill", mailbox.id, reader);
-    return { status: "ok", ingested, nextPageToken: page.nextPageToken };
+    return { status: "ok", ingested, nextPageToken: page.nextPageToken, done: !page.nextPageToken };
   });
 }
 
@@ -690,24 +717,44 @@ export async function finishBackfill(mailboxId: string, deps: SyncDeps = {}) {
   const now = deps.now?.() ?? new Date();
   await db()
     .update(mailboxes)
-    .set({ backfillCompletedAt: now, lastSyncedAt: now })
+    .set({
+      backfillCompletedAt: now,
+      lastSyncedAt: now,
+      backfillPageToken: null,
+      backfillSince: null,
+    })
     .where(eq(mailboxes.id, mailboxId));
 }
 
-/** Whole backfill in one go. Used by tests and small mailboxes; jobs run it step by step. */
-export async function runBackfill(mailboxId: string, deps: SyncDeps = {}): Promise<SyncOutcome> {
+/**
+ * Most pages one backfill run may read (Check 25 P5): Inngest stops a run at 1,000 steps. The
+ * 5-minute poll starts the next stretch, which carries on from the saved token.
+ */
+export const MAX_BACKFILL_PAGES_PER_RUN = 300;
+
+/**
+ * Whole backfill in one go, up to `maxPages` (tests, the e2e hook and small mailboxes; jobs run
+ * it step by step). `continuing` = stopped at the cap; the next run picks up from there.
+ */
+export async function runBackfill(
+  mailboxId: string,
+  deps: SyncDeps = {},
+  opts: { maxPages?: number } = {},
+): Promise<SyncOutcome | { status: "continuing"; ingested: number }> {
   const start = await beginBackfill(mailboxId, deps);
   if (start.status !== "ok") return start;
-  let pageToken: string | undefined;
+  const maxPages = opts.maxPages ?? Number.POSITIVE_INFINITY;
   let total = 0;
-  do {
-    const page = await backfillPage(mailboxId, pageToken, deps);
+  for (let i = 0; i < maxPages; i++) {
+    const page = await backfillPage(mailboxId, deps);
     if (page.status !== "ok") return page;
     total += page.ingested;
-    pageToken = page.nextPageToken;
-  } while (pageToken);
-  await finishBackfill(mailboxId, deps);
-  return { status: "ok", ingested: total };
+    if (page.done) {
+      await finishBackfill(mailboxId, deps);
+      return { status: "ok", ingested: total };
+    }
+  }
+  return { status: "continuing", ingested: total };
 }
 
 /**
@@ -758,7 +805,6 @@ export async function incrementalSync(
   });
 }
 
-const DAY_MS = 86_400_000;
 const isoDay = (d: Date) => d.toISOString().slice(0, 10);
 
 /**

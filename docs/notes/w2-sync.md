@@ -186,3 +186,18 @@ Under "What we store": "How many photos or files an email had (never the files o
 - Count (same method as the check): fixed ≈ 864 (poll) + 480 (lifecycle: run + 4) + 72 (digest)
   + ~17 (daily/weekly + reply-to) ≈ 1,433 a day ≈ 43,000 a month; a quiet inbox adds sync-mailbox
   run + sync = 576 a day ≈ 17,300 a month (the draft job no longer follows a quiet check).
+
+## Step 8 · Check 25 P5: a very big first read resumes and finishes
+
+- Migration `0043_backfill_cursor`: `mailboxes.backfill_page_token`, `backfill_pages_done`
+  (int, default 0), `backfill_since`.
+- `beginBackfill` keeps an unfinished read (no `backfill_completed_at`, a `backfill_since` and a
+  cursor); otherwise it takes a fresh cursor and window (`since = now − 30 days`). A reconnect
+  clears the token and window in `saveConnectedMailbox`, so it always starts fresh.
+- `backfillPage(mailboxId)` reads from the saved token with a fixed `after:<since>` window and
+  saves the next token and `pages_done` after storing the page. A token Gmail refuses (400 →
+  `InvalidPageTokenError`) restarts the listing. `finishBackfill` clears the token and window.
+- The job reads at most `MAX_BACKFILL_PAGES_PER_RUN = 300` pages per run and returns
+  `{ status: "continuing" }`; the 5-minute poll starts the next stretch (singleton skip prevents
+  overlap). `runBackfill(…, { maxPages })` does the same in one go for tests and the e2e hook.
+- `newer_than:` is gone from sync (both the first read and the re-read use `after:`).

@@ -206,3 +206,22 @@ describe("background executions (Check 25 P4)", () => {
     expect(body.indexOf("if (!done)")).toBeLessThan(body.indexOf('"continue"'));
   });
 });
+
+describe("no run can pass Inngest's 1,000 steps (Check 25 P3 / P5)", () => {
+  it("the first read and a history re-read are capped per run", async () => {
+    const { MAX_BACKFILL_PAGES_PER_RUN, MAX_RESYNC_PAGES_PER_RUN } = await import("@/server/sync");
+    expect(MAX_BACKFILL_PAGES_PER_RUN + 10).toBeLessThan(1_000);
+    expect(MAX_RESYNC_PAGES_PER_RUN + 10).toBeLessThan(1_000);
+    const src = readFileSync("src/jobs/functions.ts", "utf8");
+    const backfill = src.slice(
+      src.indexOf('id: "backfill-mailbox"'),
+      src.indexOf('id: "sync-mailbox"'),
+    );
+    expect(backfill).toContain("page < MAX_BACKFILL_PAGES_PER_RUN");
+    const sync = src.slice(
+      src.indexOf('id: "sync-mailbox"'),
+      src.indexOf('id: "classify-mailbox"'),
+    );
+    expect(sync).toContain("page < MAX_RESYNC_PAGES_PER_RUN");
+  });
+});
