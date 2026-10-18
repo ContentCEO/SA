@@ -676,7 +676,7 @@ export default async function AdminPage(props: PageProps<"/admin">) {
         {needs.length === 0 ? (
           <p>{NOTHING_NEEDS_YOU}</p>
         ) : (
-          <ul className="flex flex-col">
+          <ul className="flex flex-col gap-2">
             {needs.map((l) => (
               <li key={l.key}>
                 <a

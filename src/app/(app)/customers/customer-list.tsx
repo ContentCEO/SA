@@ -68,7 +68,8 @@ export function CustomerList({
           className="min-h-tap rounded-lg border border-input bg-paper px-3 text-base font-normal"
         />
       </label>
-      <nav aria-label="Other people" className="flex flex-wrap gap-x-4">
+      {/* Check 8 P8: 8px between neighbouring targets, rows included. */}
+      <nav aria-label="Other people" className="flex flex-wrap gap-x-4 gap-y-2">
         {group !== "customers" ? (
           <Link
             href="/customers"

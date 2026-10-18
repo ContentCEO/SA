@@ -152,7 +152,7 @@ export default async function WritingSettingsPage(props: PageProps<"/settings/wr
         <p className="text-muted-foreground">
           Turn one on only if you can read a reply in it before you send.
         </p>
-        <AutoSaveForm action={saveReplyLanguagesAction} hideButton className="flex flex-col gap-1">
+        <AutoSaveForm action={saveReplyLanguagesAction} hideButton className="flex flex-col gap-2">
           <label className="flex min-h-tap items-center gap-3">
             <input type="checkbox" defaultChecked disabled className="size-6 shrink-0" />
             <span className="font-semibold">English (always on)</span>

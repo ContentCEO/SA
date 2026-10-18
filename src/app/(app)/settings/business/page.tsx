@@ -163,7 +163,7 @@ export default async function BusinessSettingsPage(props: PageProps<"/settings/b
         <AutoSaveForm action={saveWorkHoursAction} className="flex flex-col gap-3">
           <fieldset className="flex flex-col gap-1">
             <legend className="font-semibold">Days</legend>
-            <div className="grid grid-cols-4 gap-x-2 sm:grid-cols-7">
+            <div className="grid grid-cols-4 gap-x-2 gap-y-2 sm:grid-cols-7">
               {WORK_DAY_NAMES.map((name, i) => (
                 <label key={name} className="flex min-h-tap items-center gap-2">
                   <input

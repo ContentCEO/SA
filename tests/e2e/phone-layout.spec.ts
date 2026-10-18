@@ -162,7 +162,7 @@ test("Check 8 P3: back after a minute refreshes the queue, but never mid-edit", 
   await expect.poll(() => hits.length).toBe(1);
 
   // Edit open on a card (focus moved off the box): no refresh, the edit stays.
-  const card = page.getByRole("article", { name: "Draft reply to Priya" });
+  const card = page.getByRole("article", { name: "Priya · draft reply" });
   await card.getByRole("button", { name: "Edit" }).click();
   await card.getByLabel("Your reply").fill("Hey Priya, still typing");
   await page.locator("h1").first().click();
