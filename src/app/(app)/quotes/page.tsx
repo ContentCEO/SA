@@ -1,9 +1,13 @@
+import { ArrowRight } from "lucide-react";
 import type { Metadata } from "next";
 import { CustomerName } from "@/components/app/customer-name";
 import Link from "next/link";
 import { Notice } from "@/components/app/notice";
 import { OfferButtons } from "@/components/app/offer-buttons";
 import { Headline } from "@/components/brand/headline";
+import { UpdatedAt } from "@/components/app/updated-at";
+import { updatedTime } from "@/lib/refresh-rules";
+import { usableTimeZone } from "@/server/snooze-rules";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { gmailThreadLink } from "@/lib/gmail-link";
 import { relativeTime } from "@/lib/relative-time";
@@ -83,7 +87,7 @@ function AmountField({ id, cents }: { id: string; cents: number | null }) {
         inputMode="decimal"
         defaultValue={cents ? String(cents / 100) : ""}
         placeholder="e.g. 1450"
-        className="min-h-tap rounded-lg border bg-background px-3 text-base text-foreground"
+        className="min-h-tap rounded-lg border border-input bg-paper px-3 text-base text-foreground"
       />
     </label>
   );
@@ -114,7 +118,7 @@ function QuoteCard({
     >
       <div className="flex flex-wrap items-baseline justify-between gap-x-3">
         <CustomerName name={name} customerKey={q.customerKey} className="text-lg font-black" />
-        <span className="shrink-0 text-sm opacity-80">
+        <span className="shrink-0 text-sm text-muted-foreground">
           {q.lastMessageAt ? `Last email ${relativeTime(q.lastMessageAt)}` : ""}
         </span>
       </div>
@@ -137,7 +141,7 @@ function QuoteCard({
           </span>
         ) : null}
       </div>
-      {q.summary ? <p className="opacity-80">{q.summary}</p> : null}
+      {q.summary ? <p className="text-muted-foreground">{q.summary}</p> : null}
       {q.waitingLine ? <p className="text-sm font-semibold">{q.waitingLine}</p> : null}
       {readOnly ? null : (
         // Plan #26: only on a quote that went quiet after both nudges (the server decides).
@@ -197,7 +201,7 @@ function QuoteCard({
                 </Button>
               ))}
             </div>
-            <Button type="submit" name="outcome" value="reopen" variant="ghost" className="w-full">
+            <Button type="submit" name="outcome" value="reopen" variant="outline" className="w-full">
               Reopen
             </Button>
           </form>
@@ -248,7 +252,7 @@ function QuoteCard({
                 name="amount"
                 inputMode="decimal"
                 placeholder="e.g. 1450"
-                className="min-h-tap rounded-lg border bg-background px-3 text-base text-foreground"
+                className="min-h-tap rounded-lg border border-input bg-paper px-3 text-base text-foreground"
               />
             </label>
             <Button type="submit" variant="outline" className="w-full">
@@ -312,11 +316,13 @@ export default async function QuotesPage(props: PageProps<"/quotes">) {
   return (
     <>
       <Headline serif="your quotes," heavy="won and waiting." />
+      <UpdatedAt time={updatedTime(new Date(), usableTimeZone(timeZone))} what="quotes" />
       <Link
         href="/money"
         className={cn(buttonVariants({ variant: "outline" }), "min-h-tap self-start")}
       >
-        Money owed →
+        Money owed
+        <ArrowRight aria-hidden className="size-4" />
       </Link>
       {doneMsg ? <Notice>{doneMsg}</Notice> : null}
       {errorMsg ? <Notice strong>{errorMsg}</Notice> : null}

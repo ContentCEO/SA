@@ -258,7 +258,7 @@ function WaitlistEntry({
         <span className="text-sm font-semibold">Came from a referral link</span>
       ) : null}
       {request ? (
-        <div className="flex flex-col gap-1 border-t border-stone pt-2">
+        <div className="flex flex-col gap-2 border-t border-stone pt-2">
           <span className="font-semibold">{ga.wants(request.services)}</span>
           <span className="text-sm">{ga.asked(formatStamp(request.at))}</span>
           {callLink(request.phone)}
@@ -1028,7 +1028,7 @@ export default async function AdminPage(props: PageProps<"/admin">) {
                 ) : isAdminEmail(i.email) ? null : i.testUserAddedAt ? (
                   <span className="text-sm text-muted-foreground">Google test user: added</span>
                 ) : (
-                  <form action={testUserAddedAction} className="flex flex-col gap-1">
+                  <form action={testUserAddedAction} className="flex flex-col gap-2">
                     <input type="hidden" name="email" value={i.email} />
                     <span className="text-sm">
                       Add them as a Google test user in{" "}

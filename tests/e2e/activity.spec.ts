@@ -168,7 +168,7 @@ test("activity at 375px: monthly close rate counts owner and auto outcomes, Mone
   );
   expect(overflow).toBe(false);
 
-  await page.getByRole("link", { name: "Money owed →" }).click();
+  await page.getByRole("link", { name: "Money owed", exact: true }).click();
   await expect(page).toHaveURL(/\/money$/);
   await expect(page.getByRole("region", { name: "Owed to you" })).toBeVisible();
 });

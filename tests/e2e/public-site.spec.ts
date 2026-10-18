@@ -198,7 +198,12 @@ test("tap targets: every link and button on the homepage and /growth is at least
       [...document.querySelectorAll("a, button, summary, select, input:not([type=hidden])")]
         .filter((el) => {
           const r = (el as HTMLElement).getBoundingClientRect();
-          const hidden = r.width === 0 || r.height === 0 || el.closest("[aria-hidden=true]");
+          // The skip link is screen-reader-only until it has focus (then 44px; Check 32 P12).
+          const hidden =
+            r.width === 0 ||
+            r.height === 0 ||
+            el.closest("[aria-hidden=true]") ||
+            el.matches(".sr-only:not(:focus)");
           return !hidden && r.height < 44;
         })
         .map((el) => `${el.tagName} ${(el.textContent ?? "").trim().slice(0, 40)}`),

@@ -81,8 +81,36 @@ export function GrowthSwitch() {
     const topNow = () => target.getBoundingClientRect().top;
     const reduce = window.matchMedia("(prefers-reduced-motion: reduce)");
 
+    // Check 32 P3: while the Growth bar covers the paper header (Growth mode, and the bar stuck
+    // to the top of the screen), the header's links can't take focus (inert), so Tab never
+    // lands on something hidden. Scrolled up so the header shows again, it works again.
+    const siteHeader = document.querySelector<HTMLElement>("[data-site-header]");
+    const chapterBar = target.firstElementChild as HTMLElement | null;
+    let inertRaf = 0;
+    const syncHeaderInert = () => {
+      if (!siteHeader) return;
+      const covered =
+        root.getAttribute(THEME) === "growth" &&
+        !!chapterBar &&
+        chapterBar.getBoundingClientRect().top <= 1;
+      if (covered) siteHeader.setAttribute("inert", "");
+      else siteHeader.removeAttribute("inert");
+    };
+    const onInertScroll = () => {
+      if (inertRaf) return;
+      inertRaf = window.requestAnimationFrame(() => {
+        inertRaf = 0;
+        syncHeaderInert();
+      });
+    };
+    window.addEventListener("scroll", onInertScroll, { passive: true });
+    const setTheme = (m: HalfMode) => {
+      root.setAttribute(THEME, m);
+      syncHeaderInert();
+    };
+
     let mode: HalfMode = nextMode("app", topNow(), vh());
-    root.setAttribute(THEME, mode);
+    setTheme(mode);
 
     const timers = new Set<number>();
     const later = (fn: () => void, ms: number) => {
@@ -167,7 +195,7 @@ export function GrowthSwitch() {
 
     const setInstant = (next: HalfMode) => {
       mode = next;
-      root.setAttribute(THEME, next);
+      setTheme(next);
     };
 
     const play = (next: HalfMode, path: Exclude<SwitchPath, "instant">) => {
@@ -184,7 +212,7 @@ export function GrowthSwitch() {
         swallowTaps(true);
         // Mid full-cover: the swap and the move to the opener are never seen.
         later(() => {
-          root.setAttribute(THEME, "growth");
+          setTheme("growth");
           runUnderCover();
           land();
         }, BW_THEME_AT_MS);
@@ -192,7 +220,7 @@ export function GrowthSwitch() {
         finishCurrent = () => finish("growth");
         later(finishCurrent, BW_DONE_MS);
       } else {
-        root.setAttribute(THEME, next);
+        setTheme(next);
         root.setAttribute(SWITCHING, path);
         finishCurrent = () => finish(next);
         later(finishCurrent, BW_QUIET_DONE_MS);
@@ -208,7 +236,7 @@ export function GrowthSwitch() {
       clearTimers();
       finishCurrent = null;
       // Theme first, so a late timer can never take the bands away onto the old colours.
-      root.setAttribute(THEME, applied);
+      setTheme(applied);
       runUnderCover();
       root.removeAttribute(SWITCHING);
       swallowTaps(false);
@@ -439,6 +467,9 @@ export function GrowthSwitch() {
       else reduce.removeListener(onReduce);
       root.removeAttribute(THEME);
       root.removeAttribute(SWITCHING);
+      window.removeEventListener("scroll", onInertScroll);
+      window.cancelAnimationFrame(inertRaf);
+      siteHeader?.removeAttribute("inert");
     };
   }, []);
 

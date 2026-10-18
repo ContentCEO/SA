@@ -82,7 +82,7 @@ test("money owed: from Quotes, mark paid, undo, and hide one that isn't owed", a
   await signInAs(context, owner);
 
   await page.goto("/quotes");
-  await page.getByRole("link", { name: "Money owed →" }).click();
+  await page.getByRole("link", { name: "Money owed", exact: true }).click();
   await expect(page).toHaveURL(/\/money$/);
   await expect(page.getByRole("region", { name: "Owed to you" })).toContainText("$1,500");
 
@@ -134,7 +134,7 @@ test("money owed: from Quotes, mark paid, undo, and hide one that isn't owed", a
   await page.goto("/activity");
   await expect(page.getByText("You marked Dana's invoice paid")).toBeVisible();
   await expect(page.getByText("You put Dana's invoice back on the owed list")).toBeVisible();
-  await page.getByRole("link", { name: "Money owed →" }).click();
+  await page.getByRole("link", { name: "Money owed", exact: true }).click();
   await expect(page).toHaveURL(/\/money$/);
 });
 

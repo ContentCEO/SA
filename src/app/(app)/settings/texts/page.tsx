@@ -37,12 +37,17 @@ export default async function TextAlertSettingsPage(props: PageProps<"/settings/
           </p>
           <form action={toggleSmsAlertsAction}>
             <input type="hidden" name="enabled" value={profile.smsAlertsEnabled ? "off" : "on"} />
-            <Button type="submit" variant="outline" className="w-full">
+            <Button
+              type="submit"
+              variant="outline"
+              className="w-full"
+              data-refocus="sms-alerts-toggle"
+            >
               {profile.smsAlertsEnabled ? "Turn off text alerts" : "Turn on text alerts"}
             </Button>
           </form>
           <form action={removeSmsPhoneAction}>
-            <Button type="submit" variant="ghost" className="w-full">
+            <Button type="submit" variant="outline" className="w-full">
               Remove my number
             </Button>
           </form>

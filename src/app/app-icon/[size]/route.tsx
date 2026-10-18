@@ -1,3 +1,5 @@
+import { readFile } from "node:fs/promises";
+import path from "node:path";
 import { ImageResponse } from "next/og";
 
 /**
@@ -7,6 +9,10 @@ import { ImageResponse } from "next/og";
  *
  * `maskable-512` keeps the mark inside the safe zone so Android can crop it
  * into a circle or squircle without clipping.
+ *
+ * Check 7 P3: drawn in Inter Tight Black (the share card's file, src/app/_og), the same heavy
+ * "sa." as the site, the tab icon (icon.svg, outlined) and the favicon. Without a font passed,
+ * the renderer used its own regular-weight face and fontWeight 900 did nothing.
  */
 const SIZES: Record<string, { px: number; maskable: boolean }> = {
   "192": { px: 192, maskable: false },
@@ -25,6 +31,7 @@ export async function GET(_req: Request, ctx: RouteContext<"/app-icon/[size]">) 
   if (!spec) return new Response("Not found", { status: 404 });
   const { px, maskable } = spec;
   const font = Math.round(px * (maskable ? 0.36 : 0.46));
+  const black = await readFile(path.join(process.cwd(), "src/app/_og/InterTight-Black.ttf"));
   return new ImageResponse(
     <div
       style={{
@@ -36,6 +43,7 @@ export async function GET(_req: Request, ctx: RouteContext<"/app-icon/[size]">) 
         background: "#1B1B1B",
         borderRadius: maskable ? 0 : Math.round(px * 0.19),
         color: "#EFEEEA",
+        fontFamily: "Inter Tight",
         fontSize: font,
         fontWeight: 900,
         letterSpacing: -font * 0.05,
@@ -44,6 +52,10 @@ export async function GET(_req: Request, ctx: RouteContext<"/app-icon/[size]">) 
     >
       sa.
     </div>,
-    { width: px, height: px },
+    {
+      width: px,
+      height: px,
+      fonts: [{ name: "Inter Tight", data: black, weight: 900, style: "normal" }],
+    },
   );
 }

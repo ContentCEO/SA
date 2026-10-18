@@ -7,6 +7,9 @@ const nextConfig: NextConfig = {
   outputFileTracingIncludes: {
     "/privacy": ["./docs/privacy-policy.md"],
     "/terms": ["./docs/terms.md"],
+    // The home-screen icons are drawn in Inter Tight Black (Check 7 P3); built at deploy time,
+    // but carried along in case one is ever drawn on demand.
+    "/app-icon/[size]": ["./src/app/_og/InterTight-Black.ttf"],
   },
   async headers() {
     return [

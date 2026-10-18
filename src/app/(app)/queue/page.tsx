@@ -1,5 +1,9 @@
 import { randomUUID } from "node:crypto";
+import type { Metadata } from "next";
 import Link from "next/link";
+import { auth } from "@/auth";
+import { getWorkspaceForUser } from "@/server/accounts";
+import { badgeCount } from "@/server/badge";
 import { Notice } from "@/components/app/notice";
 import { Headline } from "@/components/brand/headline";
 import { categoryLabels, draftTag, isCategory } from "@/config/categories";
@@ -7,6 +11,8 @@ import { languageCardLine } from "@/ai/language";
 import { autopilotOnKinds } from "@/server/autopilot";
 import { autopilotWaitLine } from "@/server/autopilot-reasons";
 import { firstNameOf } from "@/lib/first-name";
+import { UpdatedAt } from "@/components/app/updated-at";
+import { updatedTime } from "@/lib/refresh-rules";
 import { findGaps } from "@/ai/gaps";
 import { confidenceLabel } from "@/config/drafting";
 import { gmailThreadLink } from "@/lib/gmail-link";
@@ -103,6 +109,17 @@ const firstName = (name: string | null) => firstNameOf(name);
 const capitalize = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
 const gmailLink = (i: QueueItem) => gmailThreadLink(i);
+
+/**
+ * Check 32 P6: "Queue (3)" while anything waits — replies ready plus needs-you, the same count as
+ * the home-screen badge (a number only, never a name). Signed out or nothing waiting: "Queue".
+ */
+export async function generateMetadata(): Promise<Metadata> {
+  const session = await auth();
+  const workspace = session?.user?.id ? await getWorkspaceForUser(session.user.id) : null;
+  const waiting = workspace ? await badgeCount(workspace).catch(() => 0) : 0;
+  return { title: waiting > 0 ? `Queue (${waiting})` : "Queue" };
+}
 
 export default async function QueuePage(props: PageProps<"/queue">) {
   const { workspace } = await requireOwner();
@@ -451,6 +468,8 @@ export default async function QueuePage(props: PageProps<"/queue">) {
       ) : (
         <Headline serif="waiting on you," heavy="the queue." />
       )}
+      {/* Check 8 P3: how old this list is (and, on the saved copy with no signal, says so). */}
+      <UpdatedAt time={updatedTime(now, timeZone)} what="queue" />
 
       {stopped.map((s) => (
         <Notice key={s.draftId} strong>

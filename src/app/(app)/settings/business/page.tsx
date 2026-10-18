@@ -108,7 +108,7 @@ export default async function BusinessSettingsPage(props: PageProps<"/settings/b
                 </div>
                 <form action={removeSeasonalNoteAction}>
                   <input type="hidden" name="id" value={n.id} />
-                  <Button type="submit" variant="ghost" aria-label={`Remove note: ${n.text}`}>
+                  <Button type="submit" variant="outline" aria-label={`Remove note: ${n.text}`}>
                     Remove
                   </Button>
                 </form>

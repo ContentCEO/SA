@@ -29,8 +29,9 @@ import {
   disconnectMailboxFromTermsAction,
   openPortalFromTermsAction,
 } from "./actions";
+import { SkipLink } from "@/components/app/skip-link";
 
-export const metadata: Metadata = { title: "Our terms · Squared Away" };
+export const metadata: Metadata = { title: "Our terms" };
 
 const done: Record<string, string> = {
   disconnected: "Gmail disconnected. We've removed our access at Google.",
@@ -62,12 +63,17 @@ export default async function TermsAgreementPage(props: PageProps<"/welcome/term
 
   return (
     <div className="mx-auto flex w-full max-w-xl flex-1 flex-col px-4 py-6">
+      <SkipLink />
       <header>
         <Link href="/" className="inline-flex min-h-tap items-center">
           <Wordmark />
         </Link>
       </header>
-      <main className="flex flex-1 flex-col justify-center gap-6 py-12">
+      <main
+        id="main"
+        tabIndex={-1}
+        className="flex flex-1 flex-col justify-center gap-6 py-12 outline-none"
+      >
         <Headline serif={copy.serif} heavy={copy.heavy} />
         {errorMsg ? <Notice strong>{errorMsg}</Notice> : null}
         {doneMsg ? <Notice>{doneMsg}</Notice> : null}

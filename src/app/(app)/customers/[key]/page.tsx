@@ -1,3 +1,4 @@
+import { ChevronLeft } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
@@ -47,8 +48,13 @@ export default async function CustomerPage(props: PageProps<"/customers/[key]">)
 
   return (
     <>
-      <Link href="/customers" className="inline-flex min-h-tap items-center font-semibold">
-        ← All customers
+      {/* Check 7 P11: the same back link as the Settings screens (an icon, not a typed arrow). */}
+      <Link
+        href="/customers"
+        className="-ml-1 inline-flex min-h-tap items-center gap-1 self-start font-semibold underline-offset-4 hover:underline"
+      >
+        <ChevronLeft aria-hidden className="size-5" />
+        All customers
       </Link>
       <Headline serif={`${first},`} heavy="every email." />
       <div className="flex flex-col gap-1">

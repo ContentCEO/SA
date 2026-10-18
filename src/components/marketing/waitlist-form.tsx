@@ -43,7 +43,7 @@ function Joined() {
       ref={ref}
       role="status"
       tabIndex={-1}
-      className="sa-inverted flex scroll-mt-20 flex-col gap-3 rounded-2xl p-6 outline-none"
+      className="sa-inverted flex flex-col gap-3 rounded-2xl p-6 outline-none"
     >
       <p className="flex flex-col">
         <span className="sa-headline-serif text-3xl">thanks,</span>{" "}

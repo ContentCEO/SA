@@ -92,6 +92,16 @@ test("quotes: stages, amounts, and one-tap Won", async ({ page, context, request
   await sam.getByText("Mark won", { exact: true }).click();
   const charge = sam.getByLabel("What you'll charge (optional)");
   await expect(charge).toHaveValue("1200");
+  // Check 1 P5: the amount box has the slate field edge, like every other field.
+  const slate = await page.evaluate(() =>
+    getComputedStyle(document.documentElement).getPropertyValue("--sa-k-slate").trim(),
+  );
+  expect(slate).toBe("#5e5d59");
+  await expect(charge).toHaveCSS("border-top-color", "rgb(94, 93, 89)");
+  await test.info().attach("quotes-won-form-375", {
+    body: await sam.screenshot(),
+    contentType: "image/png",
+  });
   await charge.fill("1350");
   await sam.getByRole("button", { name: "Save as won" }).click();
   await expect(page.getByRole("status").filter({ hasText: "Marked won" })).toBeVisible();
@@ -220,6 +230,8 @@ test("customers: list, search on the phone, and one customer's emails", async ({
   // The URL carries an opaque key, never the email address.
   expect(page.url()).not.toContain("tom@");
   expect(page.url()).toMatch(/\/customers\/[0-9a-f-]{36}$/);
+  // Check 7 P11: the back link is an icon and words, named just "All customers".
+  await expect(page.getByRole("link", { name: "All customers", exact: true })).toBeVisible();
 });
 
 test("customers: suppliers and towns are kept apart under their own links", async ({
@@ -471,4 +483,35 @@ test("quotes: every filter chip shows without swiping, and Quoted filters to pri
     () => document.documentElement.scrollWidth > document.documentElement.clientWidth,
   );
   expect(overflow).toBe(false);
+});
+
+/** Check 7 P9: sunlight shows a quote's time in full ink, not see-through grey. */
+test("sunlight: a quote's time is full ink", async ({ page, context }) => {
+  const owner = await seedOwner({ mailbox: true, backfilled: true });
+  await quote(owner.mailboxId!, {
+    name: "Sam Lee",
+    from: "sam@customer.com",
+    inAgo: 9,
+    outAgo: 8,
+    reply: "Hi Sam, the vanity install is $1,200.",
+    summary: "Sam wants a vanity installed.",
+  });
+  await signInAs(context, owner);
+  await context.addCookies([
+    { name: "sa_contrast", value: "high", domain: "localhost", path: "/" },
+  ]);
+  await page.goto("/quotes");
+  const sam = page.getByRole("article", { name: "Quote for Sam Lee" });
+  await expect(sam).toBeVisible();
+  const colours = await sam.evaluate((card) => {
+    const time = Array.from(card.querySelectorAll("span")).find((s) =>
+      /ago|yesterday|today/i.test(s.textContent ?? ""),
+    )!;
+    const t = getComputedStyle(time);
+    return { time: t.color, opacity: t.opacity, card: getComputedStyle(card).color };
+  });
+  // Sunlight's ink (#111111) on this light card, at full strength.
+  expect(colours.time).toBe("rgb(17, 17, 17)");
+  expect(colours.card).toBe("rgb(17, 17, 17)");
+  expect(colours.opacity).toBe("1");
 });

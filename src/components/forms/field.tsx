@@ -15,6 +15,22 @@ type Common = {
   idBase?: string;
 };
 
+/**
+ * Check 32 P10: the <label> holds only the label text and points at the control by id; the hint
+ * and the error sit beside it and are the control's description (aria-describedby). Wrapping all
+ * three in the label made the box's name "What's the business called? (required) What's the
+ * business called?" after a failed save, with the error read again as the description.
+ */
+const fieldId = (p: Pick<Common, "name" | "idBase">) => `${p.idBase ?? p.name}-field`;
+
+function Label(p: Pick<Common, "name" | "label" | "idBase">) {
+  return (
+    <label htmlFor={fieldId(p)} className="font-semibold">
+      {p.label}
+    </label>
+  );
+}
+
 const describedBy = (p: Pick<Common, "name" | "hint" | "error" | "idBase">) =>
   [
     p.hint ? `${p.idBase ?? p.name}-hint` : null,
@@ -43,10 +59,11 @@ export function TextField({
   autoComplete?: string;
 }) {
   return (
-    <label className={cn("flex flex-col gap-1.5", p.className)}>
-      <span className="font-semibold">{p.label}</span>
+    <div className={cn("flex flex-col gap-1.5", p.className)}>
+      <Label {...p} />
       <Hint {...p} />
       <input
+        id={fieldId(p)}
         name={p.name}
         type={type}
         inputMode={inputMode}
@@ -61,7 +78,7 @@ export function TextField({
         className={cn(control, "min-h-tap")}
       />
       <FieldError {...p} />
-    </label>
+    </div>
   );
 }
 
@@ -79,10 +96,11 @@ export function TextArea({
   ...p
 }: Common & { defaultValue?: string | null; rows?: number }) {
   return (
-    <label className={cn("flex flex-col gap-1.5", p.className)}>
-      <span className="font-semibold">{p.label}</span>
+    <div className={cn("flex flex-col gap-1.5", p.className)}>
+      <Label {...p} />
       <Hint {...p} />
       <textarea
+        id={fieldId(p)}
         name={p.name}
         rows={rows}
         required={p.required}
@@ -92,7 +110,7 @@ export function TextArea({
         className={control}
       />
       <FieldError {...p} />
-    </label>
+    </div>
   );
 }
 
@@ -114,10 +132,11 @@ export function SelectField({
     defaultValue !== "" &&
     !options.some((o) => o.value === defaultValue);
   return (
-    <label className={cn("flex flex-col gap-1.5", p.className)}>
-      <span className="font-semibold">{p.label}</span>
+    <div className={cn("flex flex-col gap-1.5", p.className)}>
+      <Label {...p} />
       <Hint {...p} />
       <select
+        id={fieldId(p)}
         name={p.name}
         required={p.required}
         defaultValue={defaultValue ?? ""}
@@ -136,7 +155,7 @@ export function SelectField({
         {unknown ? <option value={defaultValue ?? ""}>Current: {defaultValue}</option> : null}
       </select>
       <FieldError {...p} />
-    </label>
+    </div>
   );
 }
 

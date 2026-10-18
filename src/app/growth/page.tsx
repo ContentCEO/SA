@@ -5,13 +5,14 @@ import { Wordmark } from "@/components/brand/wordmark";
 import { SiteAnalytics } from "@/components/marketing/site-analytics";
 import { GrowthChapter } from "@/components/marketing/growth/growth-chapter";
 import { growthCopy } from "@/components/marketing/growth/growth-copy";
+import { SkipLink } from "@/components/app/skip-link";
 
 const { meta, page } = growthCopy;
 
 // The share card is this folder's own opengraph-image / twitter-image (Growth's words), which
 // file-based metadata attaches to this page.
 export const metadata: Metadata = {
-  title: meta.title,
+  title: { absolute: meta.title },
   description: meta.description,
   alternates: { canonical: "/growth" },
   openGraph: {
@@ -34,6 +35,7 @@ export const metadata: Metadata = {
 export default function GrowthPage() {
   return (
     <div data-growth-page className="sa-inverted flex flex-1 flex-col">
+      <SkipLink />
       <header className="sticky top-0 z-10 border-b border-ash/40 bg-charcoal px-4">
         <div className="mx-auto flex w-full max-w-5xl items-center justify-between py-2">
           <Link href="/" className="inline-flex min-h-tap items-center" aria-label={page.homeLabel}>
@@ -52,7 +54,7 @@ export default function GrowthPage() {
           </nav>
         </div>
       </header>
-      <main className="flex flex-col">
+      <main id="main" tabIndex={-1} className="flex flex-col outline-none">
         <GrowthChapter headingLevel="h1" standalone />
       </main>
       <div className="mx-auto w-full max-w-5xl px-4 pb-6">

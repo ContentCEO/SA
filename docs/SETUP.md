@@ -621,3 +621,15 @@ if anything is worse than `tests/evals/baseline.json`. Needs `ANTHROPIC_API_KEY`
 - First time (or after an intended improvement): `pnpm eval --update-baseline`, then commit the file.
 - From GitHub: Actions → **Prompt evals** → Run workflow. Add `ANTHROPIC_API_KEY` as a repository
   secret first (Settings → Secrets and variables → Actions). It never runs on its own.
+
+## 11. Phone checks (by hand, on real phones)
+
+Things the e2e tests can't see. Tick each one on a real device before a release that changes the
+app's layout, and say which phone you used.
+
+- [ ] **iPhone home bar (Check 8 P2):** on an iPhone with a home bar (no Home button), open the
+      site in Safari, Share → Add to Home Screen, open it from the home screen. The tab labels
+      (Queue, Inbox, Quotes, Money, More) sit above the home-bar strip, and swiping up on a label
+      doesn't send you to the home screen by accident.
+- [ ] **iPhone sideways:** in the installed app, turn the phone sideways both ways. Nothing (text,
+      buttons, the tab bar) sits under the notch or the camera.

@@ -136,7 +136,8 @@ describe("search basics", () => {
 
   it("the homepage title uses the words people search for, and every public page has a description", () => {
     const home = readFileSync("src/app/page.tsx", "utf8");
-    expect(home).toContain('title: "Squared Away — AI email help for contractors"');
+    // Absolute (Check 32 P6): the root template would otherwise add "· Squared Away" again.
+    expect(home).toContain('title: { absolute: "Squared Away — AI email help for contractors" }');
     expect(home).toMatch(/const description =\s*"AI email help for contractors/);
     for (const f of [
       "src/app/growth/page.tsx",

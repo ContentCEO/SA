@@ -1,8 +1,12 @@
+import type { Metadata } from "next";
 import { Headline } from "@/components/brand/headline";
 import { BackLink } from "@/components/app/back-link";
 import { VoiceForm } from "@/components/forms/voice-form";
 import { getVoiceProfile } from "@/server/profile";
 import { requireOwner } from "@/server/session";
+
+// Check 32 P6: every screen has its own title ("… · Squared Away" from the root template).
+export const metadata: Metadata = { title: "How you write" };
 
 export default async function EditVoicePage() {
   const { workspace } = await requireOwner();

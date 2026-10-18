@@ -63,7 +63,9 @@
 }
 
 /* Inverted surface: charcoal panel. Used for the "squared away." moment,
-   status that needs attention, and the evaluation banner. */
+   status that needs attention, and the evaluation banner. In the app it means exactly these
+   (Check 7 P5): needs you now, status banners, confirm steps, the selected item in a control,
+   and the empty-queue moment. Summaries, suggestions and good news get a border-2 edge. */
 .sa-inverted {
   --background: var(--sa-charcoal);
   --foreground: var(--sa-offwhite);
@@ -98,6 +100,12 @@
   --font-weight-medium: 600;
   --font-weight-semibold: 700;
   --font-weight-bold: 800;
+  /* Check 7 P2: the weights above need the range face (layout.tsx's interTightRange); the
+     normal faces only draw 400 / 600 / 900. Utilities inline var(--font-inter-tight) (@theme
+     inline), so that variable is pointed at the range face too. */
+  --font-sans: var(--font-inter-tight-range), ui-sans-serif, system-ui, sans-serif;
+  --font-heading: var(--font-inter-tight-range), ui-sans-serif, system-ui, sans-serif;
+  --font-inter-tight: var(--font-inter-tight-range);
   font-size: 112.5%;
   font-weight: 500;
 }
@@ -112,6 +120,67 @@
 }
 :root:has([data-contrast="high"]) .border-2 {
   border-width: 3px;
+}
+
+/*
+ * Phones: the signed-in app's tab bar is fixed to the bottom (app-header.tsx, data-tabbar). When
+ * focus moves by keyboard or switch access, the browser scrolls the focused item only to the
+ * viewport's edge, under the bar; scroll-padding makes it stop above the bar instead (WCAG 2.2
+ * 2.4.11, technique C43; Check 32 P2). The bar is min-h-14 (3.5rem, so it grows with a bigger
+ * text setting and sunlight) plus its 1px border and the home-bar inset; 12px of air on top.
+ */
+@media (max-width: 639.98px) {
+  html:has([data-tabbar]) {
+    scroll-padding-top: 16px;
+    scroll-padding-bottom: calc(3.5rem + 1px + env(safe-area-inset-bottom) + 12px);
+  }
+}
+
+/*
+ * A phone held sideways (Check 8 P10): the header, a two-line headline and the tab bar used to
+ * fill the whole first screen. In the signed-in app only: no serif line on the headline, a
+ * smaller heavy line, tighter spacing, and a 48px tab bar with each label beside its icon.
+ * (The installed app is locked upright on Android by the manifest; browsers and iPhone aren't.)
+ */
+@media (orientation: landscape) and (max-height: 500px) {
+  .sa-app h1 .sa-headline-serif {
+    display: none;
+  }
+  .sa-app h1 .sa-headline-heavy {
+    font-size: 1.75rem;
+  }
+  .sa-app {
+    gap: 1rem;
+    padding-top: max(0.5rem, env(safe-area-inset-top));
+  }
+  .sa-app > main {
+    gap: 1rem;
+  }
+  [data-tabbar] .sa-tab {
+    flex-direction: row;
+    gap: 0.375rem;
+    min-height: 3rem;
+  }
+  [data-tabbar] .sa-tab-pill {
+    width: 2.75rem;
+    max-width: 50%;
+  }
+}
+@media (orientation: landscape) and (max-height: 500px) and (max-width: 639.98px) {
+  html:has([data-tabbar]) {
+    scroll-padding-bottom: calc(3rem + 1px + env(safe-area-inset-bottom) + 12px);
+  }
+}
+
+/*
+ * viewport-fit=cover (Check 8 P2): the signed-in app pads its own wrapper and tab bar for the
+ * safe areas; every other page (homepage, /growth, /signin, legal) gets the insets on <body>,
+ * which are 0 except on a notched phone held sideways or the installed app's home bar.
+ */
+html:not(:has([data-tabbar])) body {
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
+  padding-bottom: env(safe-area-inset-bottom);
 }
 
 /* Light card on a dark surface (the Growth form). Restores the :root tokens.
@@ -131,6 +200,21 @@
   --ring: var(--sa-charcoal);
   background-color: var(--sa-offwhite);
   color: var(--sa-charcoal);
+}
+
+/*
+ * Public pages' sticky bars (Check 32 P3): the homepage header and /growth's header are a 44px
+ * row plus 8px padding top and bottom and a 1px border; the homepage's Growth bar, which covers
+ * the header in the Growth part, is a 56px row plus the same padding (73px). One height for all
+ * three, in rem so it grows with a bigger text setting. Focus scrolled into view stops 12px
+ * below it instead of under it (WCAG 2.2 2.4.11).
+ */
+:root {
+  --sa-sticky-top: calc(3.5rem + 1rem + 1px);
+}
+html:has([data-site-header]),
+html:has([data-growth-page]) {
+  scroll-padding-top: calc(var(--sa-sticky-top) + 12px);
 }
 
 /* /growth is charcoal edge to edge: no paper flash on overscroll. */
@@ -202,6 +286,29 @@ html:has([data-growth-page]) {
   --sa-ash: var(--sa-k-ash);
   --sa-slate: var(--sa-k-slate);
   --sa-graphite: var(--sa-k-graphite);
+}
+
+/*
+ * Focus on an element that is itself inverted (a chosen chip, a gap chip, the next step, Sunlight
+ * when on) sitting on paper: the global ring is var(--ring), which .sa-inverted makes off-white,
+ * so it vanished on paper (1.07:1). Check 32 P4: a charcoal ring outside (shows on paper) and an
+ * off-white ring inside (shows against the element itself, so also on a charcoal panel).
+ * Brand constants only; Sunlight uses its own; on the homepage's charcoal Growth page the outside
+ * ring would be charcoal on charcoal, so there the two swap.
+ */
+.sa-inverted:is(a, button, summary, [tabindex]):focus-visible {
+  outline: 2px solid var(--sa-k-charcoal);
+  outline-offset: 2px;
+  box-shadow: inset 0 0 0 2px var(--sa-k-offwhite);
+}
+:root:has([data-contrast="high"]) .sa-inverted:is(a, button, summary, [tabindex]):focus-visible {
+  outline-color: var(--sa-k-hc-charcoal);
+  box-shadow: inset 0 0 0 2px var(--sa-k-hc-offwhite);
+}
+:root[data-sa-theme="growth"] .sa-inverted:is(a, button, summary, [tabindex]):focus-visible,
+[data-growth-page] .sa-inverted:is(a, button, summary, [tabindex]):focus-visible {
+  outline-color: var(--sa-k-offwhite);
+  box-shadow: inset 0 0 0 2px var(--sa-k-charcoal);
 }
 
 /*

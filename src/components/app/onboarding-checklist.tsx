@@ -1,3 +1,4 @@
+import { Check } from "lucide-react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import type { Checklist } from "@/server/onboarding";
@@ -39,7 +40,7 @@ export function OnboardingChecklist({
       <h2 id="getting-started" className="text-lg font-black">
         {list.allDone ? "You're all set up." : "Getting started"}
       </h2>
-      <ol className="flex flex-col gap-1">
+      <ol className="flex flex-col gap-2">
         {list.steps.map((s, i) => (
           <li key={s.key}>
             <Link
@@ -56,10 +57,10 @@ export function OnboardingChecklist({
                   "flex size-7 shrink-0 items-center justify-center rounded-full border-2 border-current text-sm font-black",
                 )}
               >
-                {s.done ? "✓" : i + 1}
+                {s.done ? <Check aria-hidden className="size-4" strokeWidth={3} /> : i + 1}
               </span>
               <span className="flex flex-1 flex-col py-1">
-                <span className={s.done ? "line-through opacity-70" : "font-semibold"}>
+                <span className={s.done ? "text-muted-foreground line-through" : "font-semibold"}>
                   {s.label}
                 </span>
                 {s.hint && !s.done ? <span className="text-sm">{s.hint}</span> : null}

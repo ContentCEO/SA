@@ -437,6 +437,9 @@ test.describe("homepage: the way into Squared Away Growth", () => {
     await expect(bar).not.toBeInViewport();
 
     await page.getByRole("region", { name: "Ground rules" }).scrollIntoViewIfNeeded();
+    // Check 32 P3: scrolling into view now stops clear of the sticky bars (scroll-padding-top),
+    // so go a little further down to be well inside the Growth part.
+    await page.evaluate(() => window.scrollBy(0, 200));
     await expectGrowth(page);
     await expect(call).toBeInViewport();
     const box = (await bar.boundingBox())!;

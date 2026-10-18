@@ -4,19 +4,25 @@ import Link from "next/link";
 import { SiteFooter } from "@/components/app/site-footer";
 import { Headline } from "@/components/brand/headline";
 import { Wordmark } from "@/components/brand/wordmark";
+import { SkipLink } from "@/components/app/skip-link";
 
-export const metadata: Metadata = { title: "Account deleted · Squared Away" };
+export const metadata: Metadata = { title: "Account deleted" };
 
 export default function GoodbyePage() {
   return (
     <div className="mx-auto flex w-full max-w-xl flex-1 flex-col px-4 py-6">
       <ForgetOffline />
+      <SkipLink />
       <header>
         <Link href="/" className="inline-flex min-h-tap items-center">
           <Wordmark />
         </Link>
       </header>
-      <main className="flex flex-1 flex-col justify-center gap-6 py-12">
+      <main
+        id="main"
+        tabIndex={-1}
+        className="flex flex-1 flex-col justify-center gap-6 py-12 outline-none"
+      >
         <Headline serif="all deleted," heavy="squared away." />
         <p className="text-lg">
           Your account and everything in it is gone, and our access to your Gmail has been removed.

@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { LegalPage, loadLegalDoc } from "@/components/marketing/legal-page";
 
 export const metadata: Metadata = {
-  title: "Terms of Service — Squared Away",
+  title: { absolute: "Terms of Service — Squared Away" },
   description: "The terms for using Squared Away.",
   alternates: { canonical: "/terms" },
 };

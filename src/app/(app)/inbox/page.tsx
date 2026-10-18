@@ -1,5 +1,9 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { Headline } from "@/components/brand/headline";
+import { UpdatedAt } from "@/components/app/updated-at";
+import { updatedTime } from "@/lib/refresh-rules";
+import { usableTimeZone } from "@/server/snooze-rules";
 import { OfferButtons } from "@/components/app/offer-buttons";
 import { PermitCard, permitSummaryLine, TownCaution } from "@/components/app/permit-card";
 import { bouncedLine } from "@/server/auto-reply-rules";
@@ -31,6 +35,9 @@ import { ResortSheet, SenderRuleSheet } from "@/components/app/sender-sheets";
 import { CONTROL_DONE, CONTROL_ERRORS } from "@/config/control-messages";
 import { notesForThreads } from "@/server/customer-notes";
 import { companyChoice } from "@/server/owner-sender-rule-rules";
+
+// Check 32 P6: every screen has its own title ("… · Squared Away" from the root template).
+export const metadata: Metadata = { title: "Inbox" };
 
 const INBOX_ERRORS: Record<string, string> = {
   ...CONTROL_ERRORS,
@@ -227,12 +234,7 @@ export default async function InboxPage(props: PageProps<"/inbox">) {
               <h2 className="min-w-0 text-base font-black break-words">
                 {row.senderName || row.senderAddress || "Unknown sender"}
               </h2>
-              <span
-                className={cn(
-                  "shrink-0 text-sm",
-                  row.needsOwner ? "text-ash" : "text-muted-foreground",
-                )}
-              >
+              <span className="shrink-0 text-sm text-muted-foreground">
                 {row.lastMessageAt ? relativeTime(row.lastMessageAt) : ""}
               </span>
             </div>
@@ -392,6 +394,7 @@ export default async function InboxPage(props: PageProps<"/inbox">) {
   return (
     <>
       <Headline serif="everything that came in," heavy="sorted." />
+      <UpdatedAt time={updatedTime(new Date(), usableTimeZone(timeZone))} what="inbox" />
       {doneMsg ? <Notice>{doneMsg}</Notice> : null}
       {errorMsg ? <Notice strong>{errorMsg}</Notice> : null}
 

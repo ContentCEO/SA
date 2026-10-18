@@ -4,6 +4,10 @@ import { CustomerName } from "@/components/app/customer-name";
 import { Notice } from "@/components/app/notice";
 import { OfferButtons } from "@/components/app/offer-buttons";
 import { Headline } from "@/components/brand/headline";
+import { UpdatedAt } from "@/components/app/updated-at";
+import { updatedTime } from "@/lib/refresh-rules";
+import { getBusinessProfile } from "@/server/profile";
+import { usableTimeZone } from "@/server/snooze-rules";
 import { Button } from "@/components/ui/button";
 import { gmailThreadLink } from "@/lib/gmail-link";
 import { relativeTime } from "@/lib/relative-time";
@@ -78,7 +82,7 @@ function OwedCard({ r, readOnly }: { r: MoneyRow; readOnly: boolean }) {
             <span className="text-2xl font-black">{formatCents(r.amountCents)}</span>
             {/* Check 12 P5: where the figure came from, when it wasn't the customer's email. */}
             {r.amountFromYourEmail ? (
-              <span className="text-sm opacity-80">From your email</span>
+              <span className="text-sm text-muted-foreground">From your email</span>
             ) : null}
           </span>
         ) : (
@@ -89,10 +93,10 @@ function OwedCard({ r, readOnly }: { r: MoneyRow; readOnly: boolean }) {
         <span className="flex flex-col">
           <span className="font-semibold">{r.due.text}</span>
           {/* Check 12 P6: the due day itself. */}
-          {r.due.day ? <span className="text-sm opacity-80">{r.due.day}</span> : null}
+          {r.due.day ? <span className="text-sm text-muted-foreground">{r.due.day}</span> : null}
         </span>
         {r.invoiceNumber ? (
-          <span className="min-w-0 text-base break-words opacity-80">
+          <span className="min-w-0 text-base break-words text-muted-foreground">
             Invoice {r.invoiceNumber}
           </span>
         ) : null}
@@ -104,7 +108,7 @@ function OwedCard({ r, readOnly }: { r: MoneyRow; readOnly: boolean }) {
           )}) may still be open. It's counted in the total.`}
         </p>
       ))}
-      <p className="text-base opacity-80" data-testid="chase-line">
+      <p className="text-base text-muted-foreground" data-testid="chase-line">
         {chaseLine(r.chase, MAX_FOLLOWUPS)}
       </p>
       {readOnly ? null : r.pendingDraftId ? (
@@ -137,7 +141,12 @@ function OwedCard({ r, readOnly }: { r: MoneyRow; readOnly: boolean }) {
           </form>
           <form action={notOwedAction}>
             <input type="hidden" name="threadId" value={r.threadId} />
-            <Button type="submit" variant="ghost" className="w-full">
+            {/* Check 7 P11: a real action gets an edge (light on the charcoal card). */}
+            <Button
+              type="submit"
+              variant="outline"
+              className={cn("w-full", pastDue && "border-foreground")}
+            >
               Not owed to me
             </Button>
           </form>
@@ -217,7 +226,10 @@ export default async function MoneyPage(props: PageProps<"/money">) {
   const { workspace } = await requireOwner();
   const params = await props.searchParams;
   const now = new Date();
-  const { owed, paidRecently, hidden, totalOwedCents } = await listMoney(workspace.id, now);
+  const [{ owed, paidRecently, hidden, totalOwedCents }, profile] = await Promise.all([
+    listMoney(workspace.id, now),
+    getBusinessProfile(workspace.id),
+  ]);
   const readOnly = isReadOnly(workspace, now);
   const showHidden = params.show === "hidden";
   const doneMsg = typeof params.done === "string" ? done[params.done] : undefined;
@@ -238,6 +250,7 @@ export default async function MoneyPage(props: PageProps<"/money">) {
   return (
     <>
       <Headline serif="money owed," heavy="who still owes you." />
+      <UpdatedAt time={updatedTime(now, usableTimeZone(profile?.timeZone))} what="money list" />
       {doneMsg ? <Notice>{doneMsg}</Notice> : null}
       {errorMsg ? <Notice strong>{errorMsg}</Notice> : null}
 

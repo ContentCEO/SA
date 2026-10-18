@@ -65,7 +65,8 @@ export default async function FollowupSettingsPage(props: PageProps<"/settings/f
           A nudge is a draft in your queue, like any other reply — nothing sends without you. Never
           more than two per conversation. Never for complaints or anything waiting on you.
         </p>
-        <Button type="submit" variant="outline" className="w-full">
+        {/* Check 32 P5: focus comes back to this button after the save. */}
+        <Button type="submit" variant="outline" className="w-full" data-refocus="followups-save">
           Save
         </Button>
       </AutoSaveForm>

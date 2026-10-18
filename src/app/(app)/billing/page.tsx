@@ -425,22 +425,20 @@ export default async function BillingPage(props: PageProps<"/billing">) {
                     aria-label={`${p.name} plan`}
                     className={cn(
                       "flex flex-col gap-2 rounded-xl p-4",
-                      featured ? "sa-inverted" : "border bg-card",
+                      // Check 7 P5: the suggested plan has a heavier edge, not an inversion
+                      // (an inverted card read as "your plan" or "needs attention").
+                      featured ? "border-2 border-charcoal bg-card" : "border bg-card",
                     )}
                   >
+                    {workspace.plan === id ? <span className="font-black">Your plan</span> : null}
                     <div className="flex items-baseline justify-between">
                       <span className="text-xl font-black">{p.name}</span>
                       <span>
                         <span className="text-2xl font-black">{formatDollars(p.amountCents)}</span>
-                        <span className={featured ? "text-ash" : "text-muted-foreground"}>
-                          {" "}
-                          / month
-                        </span>
+                        <span className="text-muted-foreground"> / month</span>
                       </span>
                     </div>
-                    <p className={featured ? "text-ash" : "text-muted-foreground"}>
-                      {planFeatureLines(id).join(" · ")}
-                    </p>
+                    <p className="text-muted-foreground">{planFeatureLines(id).join(" · ")}</p>
                     <p className="text-sm">{firstChargeLine(id, terms.includeSetupFee)}</p>
                     <form action={startCheckoutAction}>
                       <input type="hidden" name="plan" value={id} />

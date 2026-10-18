@@ -53,11 +53,7 @@ export function GrowthChapter({
 }) {
   return (
     <>
-      <section
-        id={openerId}
-        aria-label={c.opener.region}
-        className={cn("px-4 py-16 sm:py-24", openerId && "scroll-mt-18")}
-      >
+      <section id={openerId} aria-label={c.opener.region} className="px-4 py-16 sm:py-24">
         <div className="mx-auto flex w-full max-w-5xl flex-col gap-6">
           <p className="font-semibold text-ash">{c.opener.eyebrow}</p>
           <Headline
@@ -186,7 +182,7 @@ export function GrowthChapter({
         </div>
       </Section>
 
-      <Section id="growth-call" label={c.call.region} className="scroll-mt-18">
+      <Section id="growth-call" label={c.call.region}>
         <div className="grid gap-10 lg:grid-cols-2">
           <div className="flex flex-col gap-4">
             <Headline as="h2" serif={c.call.serif} heavy={c.call.heavy} />
