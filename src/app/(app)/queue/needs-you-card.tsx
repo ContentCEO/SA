@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { ContactButtons } from "@/components/app/contact-buttons";
+import { CustomerName } from "@/components/app/customer-name";
 import { PendingButton } from "@/components/app/pending-button";
 import { relativeTime } from "@/lib/relative-time";
 import type { QueueItem } from "@/server/drafts";
@@ -113,7 +114,7 @@ export function NeedsYouCard({
       {/* Check 32 P9 / P11: the customer's name is the card's heading, and wraps if long. */}
       <div className="flex flex-wrap items-baseline justify-between gap-x-3">
         <h3 id={`t-${i.threadId}-name`} className="min-w-0 text-lg font-black break-words">
-          {name}
+          <CustomerName name={name} customerKey={phoneLine || site ? null : i.customerKey} />
         </h3>
         <span className="shrink-0 text-sm text-ash">
           {i.lastMessageAt ? relativeTime(i.lastMessageAt) : ""}

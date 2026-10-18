@@ -579,7 +579,26 @@ describe("the no-reply rule is one rule (A13)", () => {
     "noreply",
     "a@noreply@x.com",
     "",
+    // Check 41 P7: job boards, whole domain; a look-alike is a person.
+    "indeedapply@indeed.com",
+    "alerts@ziprecruiter.com",
+    "jobs@mail.glassdoor.com",
+    "x@indeedemail.com",
+    "apply@snagajob.com",
+    "dana@indeedhomes.com",
+    "dana@notindeed.com",
   ];
+
+  it("job-board notices are robots (Check 41 P7)", () => {
+    expect(isNoReplyAddress("indeedapply@indeed.com")).toBe(true);
+    expect(isNoReplyAddress("alerts@ziprecruiter.com")).toBe(true);
+    expect(isNoReplyAddress("jobs@mail.glassdoor.com")).toBe(true);
+    expect(isNoReplyAddress("x@indeedemail.com")).toBe(true);
+    expect(isNoReplyAddress("apply@snagajob.com")).toBe(true);
+    expect(isNoReplyAddress("dana@indeedhomes.com")).toBe(false);
+    expect(isNoReplyAddress("dana@notindeed.com")).toBe(false);
+    expect(isNoReplyAddress("someone@craigslist.org")).toBe(false);
+  });
 
   it("offer-rules re-exports the shared helper and still treats no-reply as automated", () => {
     expect(offerNoReply).toBe(isNoReplyAddress);

@@ -238,7 +238,10 @@ export default async function InboxPage(props: PageProps<"/inbox">) {
             <span className="text-sm font-semibold">
               {/* Check 10 P3: by weight only, first, on every card. */}
               {urgencyWord(row) ? <span className="font-black">{urgencyWord(row)} · </span> : null}
-              {kindWord(row, categoryTag, row.olderUnsorted)}
+              {/* Check 22 P10: the owner's own people, never a kind of customer email. */}
+              {(row.extracted as { crew?: unknown } | null)?.crew === true
+                ? "Your crew"
+                : kindWord(row, categoryTag, row.olderUnsorted)}
               {/* Check 10 P9: the same words as the chip and "This one needs me". */}
               {row.needsOwner ? " · Needs me" : ""}
               {row.replyState ? ` · ${row.replyState}` : ""}

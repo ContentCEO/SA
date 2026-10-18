@@ -25,6 +25,7 @@ import { effectiveStatus, jobsAllowed, ReadOnlyError } from "./lifecycle";
 import { readOwnerAmount } from "./quote-rules";
 import {
   customerAddressSql,
+  customerKeySql,
   customerNameSql,
   lastInSql,
   lastOutSql,
@@ -57,6 +58,8 @@ export type MoneyRow = {
   mailboxEmail: string;
   customerName: string | null;
   customerAddress: string | null;
+  /** Check 13 P9: the customer page key (an opaque message id), or null when there's no page. */
+  customerKey: string | null;
   /** Null when no email said how much ("Amount not stated"; never in the total). */
   amountCents: number | null;
   /** Check 12 P5: the amount was read from the owner's own invoice email ("From your email"). */
@@ -156,6 +159,7 @@ async function moneyThreads(
       // receipt check (a receipt's Reply-To is the merchant).
       customerName: customerNameSql(),
       customerAddress: customerAddressSql(),
+      customerKey: customerKeySql(),
       senderAddress: sql<
         string | null
       >`(select lower(m.from_address) from messages m where m.thread_id = ${threads.id} and m.direction = 'in' order by m.sent_at desc limit 1)`,
@@ -223,6 +227,7 @@ function toRow(
     mailboxEmail: r.mailboxEmail,
     customerName: r.customerName,
     customerAddress: r.customerAddress,
+    customerKey: r.customerKey,
     amountCents: invoice?.amount ? toCents(invoice.amount) : null,
     amountFromYourEmail: !!invoice?.amount && invoice.amount_source === "your_email",
     invoiceNumber: invoice?.invoice_number ?? null,

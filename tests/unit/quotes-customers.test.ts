@@ -5,6 +5,7 @@ import { setModelTransportForTests } from "@/ai/client";
 import type { Database } from "@/db";
 import {
   activityLog,
+  businessProfiles,
   drafts,
   mailboxes,
   messages,
@@ -388,7 +389,11 @@ describe("quote acceptance context (A5)", () => {
     ).toBe(true);
     // The owner marked it lost / no answer, or reopened it.
     expect(
-      keepQuoteAccepted({ ...accepted, quoteOutcome: "lost", quoteOutcomeSource: "owner" }),
+      keepQuoteAccepted({
+        ...accepted,
+        quoteOutcome: "lost",
+        quoteOutcomeSource: "owner" as const,
+      }),
     ).toBe(false);
     expect(
       keepQuoteAccepted({ ...accepted, quoteOutcome: "no_answer", quoteOutcomeSource: "owner" }),
@@ -904,11 +909,14 @@ describe("customer list", () => {
     });
     await convo({ from: "ads@spam.com", name: "Ads", category: "noise", inAgo: 1 });
     await setQuoteOutcome(workspaceId, q, "won", undefined, NOW);
+    // The amount is captured by Quotes or the daily job; Customers only reads it (Check 13 P3).
+    await captureQuoteAmounts(workspaceId);
 
     const list = await listCustomers(workspaceId, NOW);
     expect(list.map((c) => c.address)).toEqual(["dana@x.com", "rep@supply.com"]);
     expect(list[0]).toMatchObject({ name: "Dana Ruiz", conversations: 2, wonCents: 70_000 });
-    expect(list[1]!.isSupplier).toBe(true);
+    expect(list[1]!.kind).toBe("supplier");
+    expect(list[0]!.kind).toBe("customer");
 
     const d = await customerDetail(workspaceId, "DANA@x.com");
     expect(d!.threads).toHaveLength(2);
@@ -917,6 +925,285 @@ describe("customer list", () => {
     expect(await customerDetail(workspaceId, "nobody@x.com")).toBeNull();
     expect((await customerByKey(workspaceId, list[0]!.key))!.address).toBe("dana@x.com");
     expect(await customerByKey(workspaceId, "not-a-key")).toBeNull();
+  });
+
+  it("keeps suppliers, towns and the owner's own crew apart from customers (Check 13 P1)", async () => {
+    await convo({ from: "dana@x.com", name: "Dana Ruiz", category: "quote_request", inAgo: 2 });
+    await convo({
+      from: "inspections@chelmsfordma.gov",
+      name: "Chelmsford Building Dept",
+      category: "scheduling",
+      inAgo: 3,
+    });
+    // A supplier rep: 2 of 3 conversations are supplier_vendor, one was sorted as a question.
+    await convo({
+      from: "rep@supply.com",
+      name: "Supply Rep",
+      category: "supplier_vendor",
+      inAgo: 4,
+    });
+    await convo({
+      from: "rep@supply.com",
+      name: "Supply Rep",
+      category: "supplier_vendor",
+      inAgo: 5,
+    });
+    await convo({
+      from: "rep@supply.com",
+      name: "Supply Rep",
+      category: "customer_question",
+      inAgo: 6,
+    });
+    // A lead the owner forwarded to the crew: Mike on the owner's own domain and a sub on
+    // gmail.com both replied to the forward.
+    const lead = await convo({
+      from: "pat@x.com",
+      name: "Pat",
+      category: "quote_request",
+      inAgo: 3,
+    });
+    const add = (
+      o: Partial<typeof messages.$inferInsert> & {
+        gmailMessageId: string;
+        direction: "in" | "out";
+      },
+    ) =>
+      database.insert(messages).values({
+        threadId: lead,
+        mailboxId,
+        bodyText: "x",
+        sentAt: daysAgo(2),
+        ...o,
+      });
+    await add({
+      gmailMessageId: "fwd-1",
+      direction: "out",
+      fromAddress: "owner@shop.com",
+      subject: "Fwd: Job",
+      toAddresses: ["mike@shop.com", "sub@gmail.com"],
+      sentAt: daysAgo(2.5),
+    });
+    await add({
+      gmailMessageId: "crew-1",
+      direction: "in",
+      fromAddress: "mike@shop.com",
+      fromName: "Mike",
+      subject: "Re: Fwd: Job",
+      toAddresses: ["owner@shop.com"],
+    });
+    await add({
+      gmailMessageId: "sub-1",
+      direction: "in",
+      fromAddress: "sub@gmail.com",
+      fromName: "Sub Guy",
+      subject: "Re: Fwd: Job",
+      toAddresses: ["owner@shop.com"],
+    });
+
+    const list = await listCustomers(workspaceId, NOW);
+    const kindOf = (a: string) => list.find((c) => c.address === a)?.kind;
+    expect(kindOf("dana@x.com")).toBe("customer");
+    expect(kindOf("pat@x.com")).toBe("customer");
+    expect(kindOf("inspections@chelmsfordma.gov")).toBe("town");
+    expect(kindOf("rep@supply.com")).toBe("supplier");
+    expect(kindOf("mike@shop.com")).toBe("crew");
+    expect(kindOf("sub@gmail.com")).toBe("crew");
+    // A crew page still opens.
+    const mike = list.find((c) => c.address === "mike@shop.com")!;
+    expect((await customerByKey(workspaceId, mike.key))!.address).toBe("mike@shop.com");
+  });
+
+  it("a gmail.com address on the crew list is crew, not a customer (Check 41 P6)", async () => {
+    await convo({ from: "rosa.helper@gmail.com", name: "Jay", category: "scheduling", inAgo: 1 });
+    expect((await listCustomers(workspaceId, NOW))[0]!.kind).toBe("customer");
+    await database
+      .insert(businessProfiles)
+      .values({ workspaceId, crewAddresses: ["rosa.helper@gmail.com"] });
+    expect((await listCustomers(workspaceId, NOW))[0]!.kind).toBe("crew");
+  });
+
+  it("returns every customer and reads quote facts without writing (Check 13 P3)", async () => {
+    const N = 1200;
+    const ts = await database
+      .insert(threads)
+      .values(
+        Array.from({ length: N }, (_, i) => ({
+          mailboxId,
+          gmailThreadId: `bulk-${i}`,
+          inInbox: true,
+          subject: "Job",
+          // The first 302 are quotes: the oldest is won, the next 300 are newer, one is open.
+          category: i < 302 ? "quote_request" : "customer_question",
+          lastMessageAt: new Date(NOW.getTime() - (i < 302 ? 302 - i : i) * 60_000),
+          ...(i === 0
+            ? {
+                quoteOutcome: "won",
+                quoteOutcomeSource: "owner" as const,
+                quoteAmountCents: 210_000,
+              }
+            : {}),
+          ...(i > 0 && i < 302
+            ? { quoteOutcome: "lost", quoteOutcomeSource: "owner" as const }
+            : {}),
+        })),
+      )
+      .returning({ id: threads.id });
+    await database.insert(messages).values(
+      ts.map((t, i) => ({
+        threadId: t.id,
+        mailboxId,
+        gmailMessageId: `bulk-${i}-in`,
+        direction: "in" as const,
+        fromAddress: `c${i}@x.com`,
+        fromName: `Customer ${i}`,
+        bodyText: "Hi",
+        sentAt: new Date(NOW.getTime() - (i < 302 ? 302 - i : i) * 60_000 - 1000),
+      })),
+    );
+    // An old quiet quote Quotes would guess "no answer" for: Customers must not.
+    const quiet = await convo({
+      from: "kim@x.com",
+      name: "Kim",
+      category: "quote_request",
+      inAgo: 26,
+      outAgo: 25,
+      reply: "$3,100",
+    });
+    const snapshot = async () => ({
+      threads: JSON.stringify(
+        await database
+          .select({
+            id: threads.id,
+            o: threads.quoteOutcome,
+            a: threads.quoteAmountCents,
+            s: threads.quoteOutcomeSource,
+          })
+          .from(threads)
+          .orderBy(threads.id),
+      ),
+      activity: (await database.select({ id: activityLog.id }).from(activityLog)).length,
+    });
+    const before = await snapshot();
+    const list = await listCustomers(workspaceId, NOW);
+    expect(await snapshot()).toEqual(before);
+    expect(list).toHaveLength(N + 1);
+    expect(list.find((c) => c.address === "c0@x.com")).toMatchObject({ wonCents: 210_000 });
+    expect(list.find((c) => c.address === "kim@x.com")).toMatchObject({ openQuotes: 1 });
+    const [q] = await database.select().from(threads).where(eq(threads.id, quiet));
+    expect(q!.quoteOutcome).toBeNull();
+  });
+
+  it("the list and the page show the same, newest name (Check 13 P4)", async () => {
+    await convo({ from: "ruiz@x.com", name: "Dana Ruiz", category: "scheduling", inAgo: 9 });
+    await convo({ from: "ruiz@x.com", name: "Ruiz Family", category: "scheduling", inAgo: 5 });
+    await convo({ from: "ruiz@x.com", name: "Mike Ruiz", category: "scheduling", inAgo: 2 });
+    await convo({ from: "ruiz@x.com", name: "", category: "scheduling", inAgo: 1 });
+    const id = await convo({ from: "anon@x.com", name: "", category: "scheduling", inAgo: 3 });
+    await database.update(messages).set({ fromName: null }).where(eq(messages.threadId, id));
+    const list = await listCustomers(workspaceId, NOW);
+    const ruiz = list.find((c) => c.address === "ruiz@x.com")!;
+    expect(ruiz.name).toBe("Mike Ruiz");
+    expect((await customerByKey(workspaceId, ruiz.key))!.name).toBe("Mike Ruiz");
+    const anon = list.find((c) => c.address === "anon@x.com")!;
+    expect(anon.name).toBeNull();
+    expect((await customerByKey(workspaceId, anon.key))!.name).toBeNull();
+  });
+
+  it("the customer page carries what the list knows (Check 13 P5)", async () => {
+    const won = await convo({
+      from: "jose@x.com",
+      name: "Jose Alvarez",
+      category: "quote_request",
+      inAgo: 9,
+      outAgo: 8,
+      reply: "$2,100",
+    });
+    await database
+      .update(threads)
+      .set({ extracted: { address: "12 Elm St" } })
+      .where(eq(threads.id, won));
+    await setQuoteOutcome(workspaceId, won, "won", 210_000, NOW);
+    const open = await convo({
+      from: "jose@x.com",
+      name: "Jose Alvarez",
+      category: "quote_request",
+      inAgo: 2,
+    });
+    await database
+      .update(threads)
+      .set({ extracted: { address: " 4 Oak Ave " } })
+      .where(eq(threads.id, open));
+    const bill = await convo({
+      from: "jose@x.com",
+      name: "Jose Alvarez",
+      category: "invoice_payment",
+      inAgo: 3,
+    });
+    await database
+      .update(threads)
+      .set({
+        extracted: {
+          address: "12 Elm St",
+          invoice: { invoice_number: "41", amount: 350, due_date: null, status: "unpaid" },
+          invoice_thread: true,
+        },
+      })
+      .where(eq(threads.id, bill));
+
+    const d = await customerDetail(workspaceId, "jose@x.com", NOW);
+    expect(d).toMatchObject({ openQuotes: 1, wonCents: 210_000, owedCents: 35_000 });
+    expect(d!.lastWroteAt).toEqual(daysAgo(2));
+    expect(d!.addresses.sort()).toEqual(["12 Elm St", "4 Oak Ave"]);
+    const stageOf = (id: string) => d!.threads.find((t) => t.threadId === id)!.stage;
+    expect(stageOf(won)).toBe("Won $2,100");
+    expect(stageOf(open)).toBe("Waiting on you");
+    expect(stageOf(bill)).toBe("Waiting on you");
+    const row = (await listCustomers(workspaceId, NOW)).find((c) => c.address === "jose@x.com")!;
+    expect(row).toMatchObject({ openQuotes: 1, wonCents: 210_000 });
+  });
+
+  it("a thread where the crew wrote last keeps the customer's own time (Check 13 P6)", async () => {
+    const lead = await convo({
+      from: "pat@x.com",
+      name: "Pat",
+      category: "quote_request",
+      inAgo: 3,
+    });
+    await convo({ from: "lee@x.com", name: "Lee", category: "scheduling", inAgo: 2 });
+    await database.insert(messages).values([
+      {
+        threadId: lead,
+        mailboxId,
+        gmailMessageId: "p6-fwd",
+        direction: "out",
+        fromAddress: "owner@shop.com",
+        subject: "Fwd: Job",
+        toAddresses: ["mike@shop.com"],
+        bodyText: "x",
+        sentAt: daysAgo(1.5),
+      },
+      {
+        threadId: lead,
+        mailboxId,
+        gmailMessageId: "p6-crew",
+        direction: "in",
+        fromAddress: "mike@shop.com",
+        subject: "Re: Fwd: Job",
+        toAddresses: ["owner@shop.com"],
+        bodyText: "x",
+        sentAt: daysAgo(1),
+      },
+    ]);
+    await database
+      .update(threads)
+      .set({ lastMessageAt: daysAgo(1) })
+      .where(eq(threads.id, lead));
+    const list = await listCustomers(workspaceId, NOW);
+    const pat = list.find((c) => c.address === "pat@x.com")!;
+    expect(pat.lastWroteAt).toEqual(daysAgo(3));
+    // Sorted by when they themselves wrote: Lee (2 days) before Pat (3 days).
+    const order = list.filter((c) => c.kind === "customer").map((c) => c.address);
+    expect(order).toEqual(["lee@x.com", "pat@x.com"]);
   });
 
   it("never shows another workspace's customers", async () => {
@@ -1188,7 +1475,10 @@ describe("win/loss auto-guess", () => {
       await setQuoteOutcome(workspaceId, t, "lost", undefined, daysAgo(2));
       await customerWrites(t, 1);
       await classifyWith(accepting({ category: "scheduling" }));
-      expect(await rowOf(t)).toMatchObject({ quoteOutcome: "lost", quoteOutcomeSource: "owner" });
+      expect(await rowOf(t)).toMatchObject({
+        quoteOutcome: "lost",
+        quoteOutcomeSource: "owner" as const,
+      });
       expect(await guesses()).toEqual([]);
       await sqlGuardRefuses(t);
     });
@@ -1294,7 +1584,8 @@ describe("win/loss auto-guess", () => {
     expect(await guessNoAnswers(NOW, workspaceId)).toBe(0);
     await listQuotes(workspaceId, NOW);
     expect((await rowOf(accepted)).quoteOutcome).toBeNull();
-    expect((await rowOf(quiet)).quoteOutcome).toBeNull();
+    const [q] = await database.select().from(threads).where(eq(threads.id, quiet));
+    expect(q!.quoteOutcome).toBeNull();
     expect(await guesses()).toEqual([]);
   });
 
@@ -1621,7 +1912,10 @@ describe("win/loss auto-guess", () => {
         throw new MailboxAuthError();
       };
       await setQuoteOutcome(workspaceId, t, "lost", undefined, NOW, { writerFor: () => writer });
-      expect(await rowOf(t)).toMatchObject({ quoteOutcome: "lost", quoteOutcomeSource: "owner" });
+      expect(await rowOf(t)).toMatchObject({
+        quoteOutcome: "lost",
+        quoteOutcomeSource: "owner" as const,
+      });
       expect((await draftOf(d.id)).status).toBe("expired");
       const [box] = await database.select().from(mailboxes).where(eq(mailboxes.id, mailboxId));
       expect(box!.status).toBe("reconnect_needed");

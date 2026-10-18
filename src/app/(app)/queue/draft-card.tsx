@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useId, useRef, useState, useSyncExternalStore } from "react";
+import { CustomerName } from "@/components/app/customer-name";
 import { useFormStatus } from "react-dom";
 import { Button } from "@/components/ui/button";
 import { fillGap, findGaps } from "@/ai/gaps";
@@ -50,6 +51,8 @@ export type DraftCardProps = {
   /** Plan #6: the "Remind me" times allowed for this one right now. */
   remindOptions?: SnoozeOption[];
   customer: string;
+  /** Check 13 P9: the customer page key; the name links there when set. */
+  customerKey?: string | null;
   /** H7: the address this reply goes to, shown on the card and above the editor. */
   toAddress: string;
   /** The customer's email named this address to reply to (a website form's Reply-To). */
@@ -303,7 +306,8 @@ export function DraftCard(p: DraftCardProps) {
           {/* Check 32 P9 / P11: the customer's name is the card's heading, and wraps if long. */}
           <div className="flex flex-wrap items-baseline justify-between gap-x-2">
             <h3 id={`t-${p.threadId}-name`} className="min-w-0 text-lg font-black break-words">
-              {p.customer}
+              {/* Check 13 P9: the name links to their Customers page when there is one. */}
+              <CustomerName name={p.customer} customerKey={p.customerKey ?? null} />
               <span className="sr-only"> · draft reply</span>
             </h3>
             <ConfidenceTag label={p.label} />

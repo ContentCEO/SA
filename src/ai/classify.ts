@@ -160,6 +160,12 @@ export type Extracted = ModelClassification["extracted"] & {
   /** Ideas H4: the sorter's own kind for this email, whatever kind the owner chose. */
   model_category?: Category;
   /**
+   * Check 22 P10 + 41 P6: a conversation with the owner's own people only (the crew list in
+   * Settings, another connected Gmail address of theirs, or their business domain). Never a
+   * customer, never drafted by a job, never autopilot. Only ever present as `true`.
+   */
+  crew?: boolean;
+  /**
    * Leads package: every owner rule this email matched, as fixed content-free keys
    * (`OWNER_RULE_KEYS`). Cards read these, never the reason text.
    */
@@ -228,6 +234,19 @@ export const COMPLAINT_REASON = "A complaint. You'll want to answer this one you
 export const LOW_CONFIDENCE_REASON = "Not sure what this one is. Have a look.";
 export const UNREADABLE_REASON = "Couldn't sort this one. Have a look.";
 export const MODEL_FLAG_REASON = "The assistant thinks you should see this one.";
+
+/**
+ * Check 41 P5: the big-job reason. The backfill reads only 30 days, and seasonal trades hear
+ * from most customers once a year, so until a year of mail is read it never says "new".
+ */
+export const BIG_JOB_UNREAD_REASON =
+  "Big job from someone who hasn't written in the mail we've read so far.";
+export const BIG_JOB_NEW_REASON = "Big job from someone new.";
+export function bigJobReason(historyDays: number | undefined): string {
+  return historyDays !== undefined && historyDays >= 365
+    ? BIG_JOB_NEW_REASON
+    : BIG_JOB_UNREAD_REASON;
+}
 
 /** Below this, the owner looks. */
 export const CONFIDENCE_THRESHOLD = 0.6;
@@ -330,7 +349,14 @@ export function applyOwnerRules(
 }
 
 type OwnerRuleContext = {
-  firstTimeSender: boolean;
+  /** Check 22 P7: "unknown" (a lead site or voicemail robot) counts as first time. */
+  firstTimeSender: boolean | "unknown";
+  /**
+   * Check 41 P5: days of mail we have for this mailbox (now minus its oldest synced email).
+   * Under a year, "first time" only means "not in the mail we've read", so the big-job
+   * reason says so. Unknown counts as under a year.
+   */
+  historyDays?: number;
   senderIsVip: boolean;
   /** Ideas H3: a company-wide "Always needs me" rule matched the sender or reply address. */
   senderNeedsMe?: boolean;
@@ -436,9 +462,9 @@ function ownerRules(
     [ctx.senderNeedsMe === true, "sender_rule", SENDER_NEEDS_ME_REASON],
     // Check 38 P3: a new customer's big job reads better than "Mentions more than $2,500".
     [
-      ctx.firstTimeSender && m.signals.large_request,
+      ctx.firstTimeSender !== false && m.signals.large_request,
       "big_new_job",
-      "New customer asking about a big job.",
+      bigJobReason(ctx.historyDays),
     ],
     [
       overThreshold,
@@ -532,6 +558,8 @@ export type ClassifyOpts = {
   serviceTowns?: readonly string[];
   /** Check 38 P3: dollar amounts the owner already wrote on this conversation. */
   ownerAmounts?: readonly number[];
+  /** Check 41 P5: days of mail we have for this mailbox (`applyOwnerRules`' `historyDays`). */
+  historyDays?: number;
   /**
    * Check 22 P5: the thread is a supplier's (its stored bills are owed BY the business), so
    * "our bank details changed" counts even without an explicit ask.
@@ -754,6 +782,7 @@ export async function classifyEmail(
   };
   const ownerCtx = {
     firstTimeSender: email.firstTimeSender,
+    historyDays: opts.historyDays,
     senderIsVip: opts.senderIsVip,
     senderNeedsMe: opts.senderNeedsMe,
     amountThresholdDollars: business.amountThresholdDollars,

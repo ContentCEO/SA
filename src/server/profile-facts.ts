@@ -28,6 +28,7 @@ export type ProfileFactsInput = {
   signature?: string | null;
   doNotPromise?: string[] | null;
   vipSenders?: string[] | null;
+  crewAddresses?: string[] | null;
   amountThresholdDollars?: number | null;
   reviewUrl?: string | null;
   licenses?: Licenses | null;
@@ -133,6 +134,15 @@ export function describeProfileFacts(
       field: "vipSenders",
       value: p.vipSenders?.length ? p.vipSenders.join(", ") : null,
       emptyNote: "Not set. Only the usual rules send emails to you.",
+    },
+    {
+      // Check 22 P10 + 41 P6: the count only; the addresses are in the box.
+      label: "Your crew",
+      field: "crewAddresses",
+      value: p.crewAddresses?.length
+        ? `${p.crewAddresses.length} address${p.crewAddresses.length === 1 ? "" : "es"}`
+        : null,
+      emptyNote: "Not set. Emails from your crew are sorted like anyone else's.",
     },
     {
       label: "Send me anything over",

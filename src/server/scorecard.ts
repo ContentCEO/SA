@@ -12,6 +12,7 @@ import {
   requestAtSql,
   requestReplySql,
   sideEmailSql,
+  crewSql,
 } from "./thread-sql";
 
 /**
@@ -110,6 +111,8 @@ export function scorecardQueries(workspaceId: string, start: Date, end: Date, no
         sql`${requestedAt} >= ${at(start)}`,
         sql`${requestedAt} < ${at(end)}`,
         sql`not ${noReplySql(requester)}`,
+        // Check 41 P6: the owner's own crew is never a quote request to time.
+        sql`not ${crewSql(workspaceId, requester)}`,
         // Leads package: a lead website's or a phone message's request is answered off email,
         // so there's no email to time (it still counts as a quote request).
         sql`${threads.leadChannel} is null`,

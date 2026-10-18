@@ -125,6 +125,99 @@ describe("classifyPending", () => {
     expect(calls[0]!.user).toContain("First time this sender has emailed the business: yes");
   });
 
+  describe("lead sites and voicemail services (Check 22 P7)", () => {
+    const big = () =>
+      classification({ signals: { ...classification().signals, large_request: true } });
+    const hitsOf = async (id: string) => {
+      const [row] = await database.select().from(threads).where(eq(threads.id, id));
+      return {
+        row: row!,
+        hits: (row!.extracted as { owner_rule_hits?: string[] }).owner_rule_hits ?? [],
+      };
+    };
+
+    it("a second Thumbtack lead for a big job is still a new customer", async () => {
+      const first = await thread("tt1");
+      await message(first.id, "tt1-m", {
+        fromAddress: "leads@thumbtack.com",
+        fromName: "Thumbtack",
+        subject: "New lead: deck",
+        replyToHeader: {},
+        sentAt: daysAgo(5),
+        classifiedAt: daysAgo(5),
+      });
+      const second = await thread("tt2");
+      await message(second.id, "tt2-m", {
+        fromAddress: "leads@thumbtack.com",
+        fromName: "Thumbtack",
+        subject: "New lead: home addition",
+        replyToHeader: {},
+      });
+      setModelTransportForTests(fakeTransport([big()]).transport);
+      await classifyPending(mailboxId, { now: NOW });
+      const { row, hits } = await hitsOf(second.id);
+      expect(row.needsOwner).toBe(true);
+      expect(hits).toContain("big_new_job");
+    });
+
+    it("a repeat customer's own address with a big job is not new", async () => {
+      const t = await thread("rep");
+      await message(t.id, "rep-old", { sentAt: daysAgo(6), classifiedAt: daysAgo(6) });
+      await message(t.id, "rep-new", { replyToHeader: {} });
+      setModelTransportForTests(fakeTransport([big()]).transport);
+      await classifyPending(mailboxId, { now: NOW });
+      expect((await hitsOf(t.id)).hits).not.toContain("big_new_job");
+    });
+
+    it("a voicemail from a number seen before is not first time; a new number is", async () => {
+      const vm = (id: string, subject: string, over: Partial<typeof messages.$inferInsert> = {}) =>
+        thread(id).then(async (t) => {
+          await message(t.id, `${id}-m`, {
+            fromAddress: "voice-noreply@google.com",
+            fromName: "Google Voice",
+            subject,
+            bodyText: "Voicemail transcript: we want a whole new kitchen.",
+            replyToHeader: {},
+            ...over,
+          });
+          return t.id;
+        });
+      await vm("vm-old", "New voicemail from (508) 555-1234", {
+        sentAt: daysAgo(9),
+        classifiedAt: daysAgo(9),
+      });
+      const again = await vm("vm-again", "New voicemail from (508) 555-1234");
+      const fresh = await vm("vm-new", "New voicemail from (617) 555-9876", {
+        sentAt: new Date(NOW.getTime() - 3_600_000),
+      });
+      const { transport, calls } = fakeTransport([big(), big()]);
+      setModelTransportForTests(transport);
+      await classifyPending(mailboxId, { now: NOW });
+      expect(calls).toHaveLength(2);
+      expect((await hitsOf(again)).hits).not.toContain("big_new_job");
+      expect((await hitsOf(fresh)).hits).toContain("big_new_job");
+    });
+  });
+
+  it("a returning customer's big job doesn't read 'new' in the first year (Check 41 P5)", async () => {
+    const t = await thread("rosa");
+    await message(t.id, "rosa-1", {
+      fromAddress: "pat@x.com",
+      bodyText: "You did our interior two years ago. Ready to do the whole exterior now.",
+      sentAt: daysAgo(10),
+    });
+    setModelTransportForTests(
+      fakeTransport([
+        classification({ signals: { ...classification().signals, large_request: true } }),
+      ]).transport,
+    );
+    await classifyPending(mailboxId, { now: NOW });
+    const [row] = await database.select().from(threads).where(eq(threads.id, t.id));
+    expect(row!.needsOwnerReason).toBe(
+      "Big job from someone who hasn't written in the mail we've read so far.",
+    );
+  });
+
   it("never clears the owner's own 'This one needs me'", async () => {
     const t = await thread("t1");
     expect(await markNeedsOwner(workspaceId, t.id)).toBe(true);

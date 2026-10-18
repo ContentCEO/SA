@@ -38,6 +38,8 @@ export type ProfileDefaults = {
   reviewUrl: string | null;
   doNotPromise: string[];
   vipSenders: string[];
+  /** Check 22 P10 + 41 P6: the owner's crew, one email per line. */
+  crewAddresses: string[];
   amountThresholdDollars: number;
   /** Check 38 P6: registration and license numbers. */
   licenses: Licenses;
@@ -63,6 +65,7 @@ const OPTIONAL_FIELDS = [
   "reviewUrl",
   "doNotPromise",
   "vipSenders",
+  "crewAddresses",
   "amountThresholdDollars",
   "state",
   "hicNumber",
@@ -338,6 +341,14 @@ export function BusinessProfileForm({
         hint="One email address per line — your biggest GC, your bookkeeper. Their emails always come straight to you."
         defaultValue={v("vipSenders", joined(defaults.vipSenders)) as string}
         error={e.vipSenders}
+        rows={3}
+      />
+      <TextArea
+        name="crewAddresses"
+        label="Your crew's email addresses (one per line, optional)"
+        hint="Their emails stay in your inbox but aren't customers and don't get drafts."
+        defaultValue={v("crewAddresses", joined(defaults.crewAddresses)) as string}
+        error={e.crewAddresses}
         rows={3}
       />
       <fieldset className="flex flex-col gap-6">

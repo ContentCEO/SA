@@ -197,6 +197,11 @@ export function describeActivity(
       return "You edited how you write";
     case "business_profile_saved":
       return "You updated your business profile";
+    case "crew_list_saved":
+      // Check 41 P6: the size only, never the addresses.
+      return typeof detail.count === "number"
+        ? `You updated your crew list (${detail.count} address${detail.count === 1 ? "" : "es"})`
+        : "You updated your crew list";
     case "followup_settings_saved":
       return detail.enabled
         ? `Follow-ups on, after ${detail.days} days`

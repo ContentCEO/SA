@@ -303,6 +303,7 @@ export default async function QueuePage(props: PageProps<"/queue">) {
       nextThreadId={nextThreadId(i.threadId)}
       notice={noticeFor(i.threadId)}
       customer={who(i)}
+      customerKey={i.customerKey}
       toAddress={i.toAddress ?? ""}
       toFromReplyTo={i.replyRedirected && i.toAddress === i.customerAddress}
       tag={`${i.backFromSnooze ? "Back from snooze · " : ""}${tag(i)}`}

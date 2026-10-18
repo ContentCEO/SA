@@ -53,6 +53,9 @@ import { customerReplyAddress, replyRedirected } from "./reply-address-rules";
 import { junkShortcutBlocked, matchRules } from "./owner-sender-rule-rules";
 import { rulesForWorkspace } from "./sender-rule-store";
 import { channelName, channelOf } from "./channel-rules";
+import { crewContextFor } from "./crew";
+import { isCrewAddress, isNoReplyAddress, type CrewContext } from "./sender-rules";
+import { findUsPhones } from "@/lib/phone-numbers";
 
 /** Classify inbound mail from this far back on the first pass; everything new after that. */
 export const CLASSIFY_LOOKBACK_DAYS = 14;
@@ -91,7 +94,14 @@ export function mustReadDespiteTab(m: {
   if (leadPlatformOf(from) && LEAD_SUBJECT.test(subject)) return true;
   if (from.endsWith("@facebookmail.com") && /\blead/i.test(subject)) return true;
   if (PERMIT_WORDS.test(`${subject}\n${m.snippet ?? ""}`)) return true;
-  const text = `${subject}\n${m.bodyText ?? m.snippet ?? ""}`;
+  return safetyCheckFires(`${subject}\n${m.bodyText ?? m.snippet ?? ""}`);
+}
+
+/**
+ * The checks in code that always get an email read by the sorter: a gas smell, a CO alarm,
+ * electrical fire signs, a new bank account, an attack. Pure.
+ */
+export function safetyCheckFires(text: string): boolean {
   return (
     mentionsGasSmell(text) ||
     mentionsCarbonMonoxide(text) ||
@@ -248,6 +258,17 @@ export async function classifyPending(
   };
   // The owner's sender rules (ideas H3), read once per run. Never sent to the model.
   const senderRules = await rulesForWorkspace(box.workspace.id);
+  // Check 22 P10 + 41 P6: the owner's own people, read once per run. Never sent to the model.
+  const crew = await crewContextFor(box.workspace.id);
+  // Check 41 P5: how much of this mailbox's mail we have, once per run (the backfill reads
+  // only 30 days, so "first time" means "not in the mail we've read" for the first year).
+  const [oldest] = await db()
+    .select({ at: sql<string | Date | null>`min(${messages.sentAt})` })
+    .from(messages)
+    .where(eq(messages.mailboxId, mailboxId));
+  const historyDays = oldest?.at
+    ? Math.floor((now.getTime() - new Date(oldest.at).getTime()) / 86_400_000)
+    : 0;
 
   const batch = [...newestPerThread.values()].slice(0, limit);
   let classified = 0;
@@ -343,7 +364,28 @@ export async function classifyPending(
       prevMarks.payment_change !== true &&
       !injectionCheck(ruleText).flagged &&
       !junkShortcutBlocked(ruleText);
-    if (capped) {
+    // Check 22 P10 + 41 P6: a conversation with only the owner's own people on it (the crew
+    // list, another of their Gmail addresses, their business domain) is kept for counts as
+    // scheduling, needs nobody and is never drafted by a job — with no model call, unless a
+    // check in code fires (a gas smell at the Smith job still goes to the owner, top priority).
+    const crewOnly =
+      isCrewAddress(m.fromAddress, crew) &&
+      isCrewAddress(customerReplyAddress(m), crew) &&
+      (await everyInboundIsCrew(m.threadId, crew));
+    const crewQuiet =
+      crewOnly &&
+      prevMarks.injection !== true &&
+      prevMarks.payment_change !== true &&
+      !thread?.categoryManual &&
+      ![ruleText, ...alsoCheck].some((t) => safetyCheckFires(t));
+    if (crewQuiet) {
+      result = {
+        ...NOISE,
+        category: "scheduling",
+        summary: m.subject ? `From your crew: ${m.subject}` : "From your crew.",
+        extracted: { ...NOISE.extracted, crew: true },
+      };
+    } else if (capped) {
       const code = codeOnlyResult();
       if (!code) continue;
       result = code;
@@ -400,7 +442,16 @@ export async function classifyPending(
               ),
             )
         : [{ n: 1 }];
-      const firstTimeSender = (prior?.n ?? 0) === 0 || (priorReply?.n ?? 0) === 0;
+      let firstTimeSender: boolean | "unknown" =
+        (prior?.n ?? 0) === 0 || (priorReply?.n ?? 0) === 0;
+      // Check 22 P7: a lead site or a voicemail service sends every lead from one robot
+      // address, so "an earlier email from this address" says nothing about the person. With
+      // no usable Reply-To it is "unknown" (judged as first time); a voicemail whose subject
+      // names the caller's number is first time unless an earlier voicemail named that number.
+      if (!replyTo && (isNoReplyAddress(m.fromAddress) || leadPlatformOf(m.fromAddress))) {
+        firstTimeSender =
+          channel?.kind === "phone" ? await voicemailFirstTime(mailboxId, m) : "unknown";
+      }
       // Check 38 P3: amounts the owner already wrote on this conversation (their own words,
       // quoted text cut; never an unsent draft or a forward to the crew). A customer repeating
       // the contract total isn't new money. Never logged.
@@ -433,7 +484,9 @@ export async function classifyPending(
             fromAddress: m.fromAddress,
             subject: m.subject,
             receivedAt: m.sentAt,
-            firstTimeSender,
+            // The prompt still reads yes / no ("unknown" reads as yes until classify.v6 gives
+            // it its own words, see docs/notes/w2-customers.md).
+            firstTimeSender: firstTimeSender !== false,
             threadSummary: thread?.summary ?? null,
             body: m.bodyText ?? m.snippet ?? "",
             earlier,
@@ -447,6 +500,7 @@ export async function classifyPending(
             channel: channel ? { kind: channel.kind, name: channelName(channel.key) ?? "" } : null,
             serviceTowns: business.serviceTowns,
             ownerAmounts,
+            historyDays,
             // Check 22 P5: a supplier's thread (its bills are owed by the business).
             supplierThread: prevMarks.bill_direction === "owed_by_business",
           },
@@ -532,6 +586,9 @@ export async function classifyPending(
         }
       }
     }
+    // A crew conversation that went to the sorter (a check in code fired) keeps its crew mark.
+    if (crewOnly && result.extracted.crew !== true)
+      result = { ...result, extracted: { ...result.extracted, crew: true } };
     // Every classification replaces `extracted`, so an earlier acceptance would vanish with the
     // customer's next "use the side gate" (and the re-sorted category can't re-derive it).
     // It keeps the FIRST acceptance's time: a later "sent the deposit, when can you start?"
@@ -823,6 +880,50 @@ export async function classifyPending(
 
   const remaining = Math.max(0, newestPerThread.size - classified);
   return { classified, superseded, remaining: capped ? 0 : remaining, capped, codeOnly };
+}
+
+/**
+ * Check 22 P7: a voicemail-by-email whose subject names the caller ("New voicemail from (508)
+ * 555-1234") is from someone new unless an earlier voicemail from the same service named the
+ * same number. No number in the subject: "unknown". Subjects are read here only; never logged.
+ */
+async function voicemailFirstTime(
+  mailboxId: string,
+  m: { fromAddress: string | null; subject: string | null; sentAt: Date },
+): Promise<boolean | "unknown"> {
+  const [number] = findUsPhones(m.subject ?? "");
+  if (!number) return "unknown";
+  const earlier = await db()
+    .select({ subject: messages.subject })
+    .from(messages)
+    .where(
+      and(
+        eq(messages.mailboxId, mailboxId),
+        eq(messages.direction, "in"),
+        eq(messages.fromAddress, m.fromAddress ?? ""),
+        lt(messages.sentAt, m.sentAt),
+      ),
+    )
+    .orderBy(desc(messages.sentAt))
+    .limit(1000);
+  return !earlier.some((e) => findUsPhones(e.subject ?? "").includes(number));
+}
+
+/**
+ * Check 22 P10 + 41 P6: every inbound email on the thread, by sender and reply address, is one
+ * of the owner's own people (a customer thread the crew replied on never is). Never logged.
+ */
+async function everyInboundIsCrew(threadId: string, crew: CrewContext): Promise<boolean> {
+  const rows = await db()
+    .select({ fromAddress: messages.fromAddress, replyToHeader: messages.replyToHeader })
+    .from(messages)
+    .where(and(eq(messages.threadId, threadId), eq(messages.direction, "in")));
+  return (
+    rows.length > 0 &&
+    rows.every(
+      (r) => isCrewAddress(r.fromAddress, crew) && isCrewAddress(customerReplyAddress(r), crew),
+    )
+  );
 }
 
 /** Inbox action: the owner says a thread needs them. Scoped to their workspace. */

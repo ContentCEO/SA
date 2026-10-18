@@ -147,6 +147,7 @@ import {
   waitingSinceSql,
   answeredByPhoneSql,
   labelSql,
+  customerKeySql,
 } from "./thread-sql";
 import {
   closingQuestionAllowed,
@@ -165,6 +166,7 @@ import {
   type ReplyToHeader,
 } from "./reply-address-rules";
 import { isNoReplyAddress } from "./sender-rules";
+import { isCrewFor } from "./crew";
 import { noDraftRuleFor } from "./sender-rule-store";
 import { isAway } from "./away";
 import {
@@ -270,7 +272,10 @@ export type CreateOutcome =
         | "phone_message"
         // The plan covers fewer Gmail addresses and this one is paused (2026-10-16): no draft,
         // no model call, whoever asked.
-        | "mailbox_paused";
+        | "mailbox_paused"
+        // Check 22 P10 + 41 P6: the owner's own people (the crew list, another of their Gmail
+        // addresses, their business domain) — jobs only; the owner's tap still drafts.
+        | "crew";
     }
   | { status: "reconnect_needed" };
 
@@ -984,9 +989,12 @@ async function writeDraftForThread(threadId: string, opts: CreateOpts): Promise<
     bill_direction?: string;
     model_category?: string;
     bounced?: boolean;
+    crew?: boolean;
   };
   // Only the owner's tap drafts for these (feature plan #17, #42; round 2 A11) — never a job.
   if (opts.trigger !== "owner") {
+    // Check 22 P10 + 41 P6: no reply, nudge or safety note to the owner's own crew.
+    if (marks.crew) return { status: "skipped", reason: "crew" };
     if (marks.injection) return { status: "skipped", reason: "untrusted" };
     if (marks.municipal) return { status: "skipped", reason: "municipal" };
     if (marks.payment_change) return { status: "skipped", reason: "payment_change" };
@@ -1247,6 +1255,10 @@ async function writeDraftForThread(threadId: string, opts: CreateOpts): Promise<
   // Reply-To, a portal's dispatch address. Not even on the owner's tap — nobody reads it, and
   // "Reply sent." would be untrue. They answer those on the platform or by phone.
   if (isNoReplyAddress(to)) return { status: "skipped", reason: "no_reply_address" };
+  // Check 22 P10 + 41 P6: the reply would go to one of the owner's own people (read live, so
+  // a name added to the crew list today counts on older threads). Jobs only.
+  if (opts.trigger !== "owner" && (await isCrewFor(workspace.id, to)))
+    return { status: "skipped", reason: "crew" };
   // Check 22 P4: a safety note never goes to mail sorted as junk (a utility's bill, a
   // newsletter) unless the owner has written to that address before.
   if (safety && thread.category === "noise" && !(await knownCustomer(mailbox.id, to, now)))
@@ -3359,6 +3371,8 @@ export type QueueItem = {
   threadId: string;
   customerName: string | null;
   customerAddress: string | null;
+  /** Check 13 P9: the customer page key (an opaque message id), or null when there's no page. */
+  customerKey: string | null;
   /** The address this draft goes to (H7: shown on every card). Null on needs-you items. */
   toAddress: string | null;
   /** The customer's email gave a Reply-To (a website form): the reply goes there, not to From. */
@@ -3743,6 +3757,18 @@ export async function listQueue(
     return out;
   };
   const who = await senders([...needIds, ...members.drafts.map((m) => m.threadId)]);
+  // Check 13 P9: the customer page each card's name links to.
+  const keyIds = [...needIds, ...members.drafts.map((m) => m.threadId)];
+  const keys = new Map(
+    keyIds.length
+      ? (
+          await db()
+            .select({ id: threads.id, key: customerKeySql() })
+            .from(threads)
+            .where(inArray(threads.id, keyIds))
+        ).map((r) => [r.id, r.key] as const)
+      : [],
+  );
 
   // Check 21 P5: open quotes on OTHER conversations with the same customer, that the owner
   // answered before this email came in. Newest such quote per address.
@@ -3803,6 +3829,7 @@ export async function listQueue(
         threadId: t.id,
         customerName: who.get(t.id)?.name ?? null,
         customerAddress: who.get(t.id)?.address ?? null,
+        customerKey: keys.get(t.id) ?? null,
         toAddress: null,
         replyRedirected: who.get(t.id)?.redirected ?? false,
         category: t.category,
@@ -3848,6 +3875,7 @@ export async function listQueue(
         threadId: thread.id,
         customerName: who.get(thread.id)?.name ?? null,
         customerAddress: who.get(thread.id)?.address ?? draft.toAddress,
+        customerKey: keys.get(thread.id) ?? null,
         toAddress: draft.toAddress,
         replyRedirected: who.get(thread.id)?.redirected ?? false,
         category: thread.category,

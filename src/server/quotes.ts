@@ -29,6 +29,8 @@ import {
   quietSinceSql,
   quoteNotDismissedSql,
   quoteThreadSql,
+  crewThreadSql,
+  customerKeySql,
   requestAtSql,
   serviceCallSql,
 } from "./thread-sql";
@@ -57,6 +59,8 @@ export type QuoteRow = {
   mailboxEmail: string;
   customerName: string | null;
   customerAddress: string | null;
+  /** Check 13 P9: the customer page key (an opaque message id), or null when there's no page. */
+  customerKey: string | null;
   summary: string | null;
   subject: string | null;
   stage: QuoteStage;
@@ -106,6 +110,15 @@ type OwnerQuote = { cents: number; sentAt: Date; note: "total" | "picked" };
  * that isn't a purpose note, sent before `before` (null = any time). Quoted text, signatures
  * and non-price figures are left out (`readOwnerAmount`, Check 11 P2 + Check 39 P3).
  */
+/**
+ * Check 11 P6: which of these threads have an owner email (not a purpose note, not a draft)
+ * with a dollar figure — "priced" for a quote that has no amount yet. Customers uses it so a
+ * card's stage matches Quotes.
+ */
+export async function pricedThreadIds(threadIds: string[]): Promise<Set<string>> {
+  return new Set((await ownerQuotedCents(threadIds, () => null)).keys());
+}
+
 async function ownerQuotedCents(
   threadIds: string[],
   before: (threadId: string) => Date | null,
@@ -200,10 +213,18 @@ export async function listQuotes(workspaceId: string, now: Date = new Date()) {
       // As a reply addresses them: a website form's Reply-To, else the sender.
       customerName: customerNameSql(),
       customerAddress: customerAddressSql(),
+      customerKey: customerKeySql(),
     })
     .from(threads)
     .innerJoin(mailboxes, eq(mailboxes.id, threads.mailboxId))
-    .where(and(eq(mailboxes.workspaceId, workspaceId), quoteThreadSql()))
+    .where(
+      and(
+        eq(mailboxes.workspaceId, workspaceId),
+        quoteThreadSql(),
+        // Check 41 P6: a conversation with only the owner's crew on it is never a quote.
+        sql`not ${crewThreadSql(workspaceId)}`,
+      ),
+    )
     .orderBy(desc(threads.lastMessageAt))
     .limit(300);
 
@@ -235,6 +256,7 @@ export async function listQuotes(workspaceId: string, now: Date = new Date()) {
     mailboxEmail: r.mailboxEmail,
     customerName: r.customerName,
     customerAddress: r.customerAddress,
+    customerKey: r.customerKey,
     summary: r.summary,
     subject: r.subject,
     stage: quoteStage(

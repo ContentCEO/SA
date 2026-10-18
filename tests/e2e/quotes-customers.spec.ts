@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { eq } from "drizzle-orm";
 import { expect, test } from "@playwright/test";
 import * as schema from "../../src/db/schema";
 import { seedOwner, signInAs, testDb } from "./support";
@@ -213,6 +214,188 @@ test("customers: list, search on the phone, and one customer's emails", async ({
   // The URL carries an opaque key, never the email address.
   expect(page.url()).not.toContain("tom@");
   expect(page.url()).toMatch(/\/customers\/[0-9a-f-]{36}$/);
+});
+
+test("customers: suppliers and towns are kept apart under their own links", async ({
+  page,
+  context,
+}) => {
+  const owner = await seedOwner({ mailbox: true, backfilled: true });
+  await quote(owner.mailboxId!, {
+    name: "Priya Shah",
+    from: "priya@customer.com",
+    inAgo: 2,
+    summary: "Priya wants a water heater swapped.",
+  });
+  for (const [name, from, category] of [
+    ["Supply House Branch 42", "branch42@supplyhouse.com", "supplier_vendor"],
+    ["Chelmsford Building Dept", "inspections@chelmsfordma.gov", "scheduling"],
+  ] as const) {
+    const gid = `k-${randomUUID().slice(0, 8)}`;
+    const [t] = await testDb
+      .insert(schema.threads)
+      .values({ mailboxId: owner.mailboxId!, gmailThreadId: gid, inInbox: true, category })
+      .returning();
+    await testDb.insert(schema.messages).values({
+      threadId: t!.id,
+      mailboxId: owner.mailboxId!,
+      gmailMessageId: `${gid}-in`,
+      direction: "in",
+      fromAddress: from,
+      fromName: name,
+      bodyText: "Hello",
+      sentAt: ago(1),
+    });
+  }
+  await signInAs(context, owner);
+
+  await page.goto("/customers");
+  await expect(page.getByText("Suppliers, towns and your crew are kept apart.")).toBeVisible();
+  await expect(page.getByRole("link", { name: /Priya Shah/ })).toBeVisible();
+  await expect(page.getByRole("link", { name: /Supply House/ })).toHaveCount(0);
+  await expect(page.getByRole("link", { name: /Chelmsford/ })).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "Towns and inspectors (1)" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Your crew and subs (0)" })).toBeVisible();
+  const suppliers = page.getByRole("link", { name: "Suppliers (1)" });
+  expect((await suppliers.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+  await suppliers.click();
+  await expect(page).toHaveURL(/\/customers\?group=suppliers$/);
+  await expect(page.getByRole("link", { name: /Supply House Branch 42/ })).toBeVisible();
+  await expect(page.getByRole("link", { name: /Priya Shah/ })).toHaveCount(0);
+});
+
+test("customers: 50 at a time, and search finds everyone (Check 13 P3)", async ({
+  page,
+  context,
+}) => {
+  const owner = await seedOwner({ mailbox: true, backfilled: true });
+  const ts = await testDb
+    .insert(schema.threads)
+    .values(
+      Array.from({ length: 60 }, (_, i) => ({
+        mailboxId: owner.mailboxId!,
+        gmailThreadId: `many-${randomUUID().slice(0, 8)}-${i}`,
+        inInbox: true,
+        category: "customer_question",
+        lastMessageAt: new Date(Date.now() - (i + 1) * 60_000),
+      })),
+    )
+    .returning({ id: schema.threads.id });
+  await testDb.insert(schema.messages).values(
+    ts.map((t, i) => ({
+      threadId: t.id,
+      mailboxId: owner.mailboxId!,
+      gmailMessageId: `many-${t.id}`,
+      direction: "in" as const,
+      fromAddress: `person${i + 1}@customer.com`,
+      fromName: `Person Number${String(i + 1).padStart(2, "0")}`,
+      bodyText: "Hi",
+      sentAt: new Date(Date.now() - (i + 1) * 60_000),
+    })),
+  );
+  await signInAs(context, owner);
+  await page.goto("/customers");
+  await expect(page.getByText("60 customers")).toBeVisible();
+  await expect(page.getByRole("link", { name: /Number01/ })).toBeVisible();
+  await expect(page.getByRole("link", { name: /Number55/ })).toHaveCount(0);
+  await page.getByLabel("Find a customer").fill("number55");
+  await expect(page.getByRole("link", { name: /Number55/ })).toBeVisible();
+  await page.getByLabel("Find a customer").fill("");
+  await expect(page.getByRole("link", { name: /Number55/ })).toHaveCount(0);
+  await page.getByRole("button", { name: "Show 50 more" }).click();
+  await expect(page.getByRole("link", { name: /Number55/ })).toBeVisible();
+  // Check 13 P8: how far back the list goes, and a reason when a search finds no one.
+  await expect(
+    page.getByText(/^From email since \w{3} \d{1,2}, \d{4}, 30 days before you connected Gmail\./),
+  ).toBeVisible();
+  await page.getByLabel("Find a customer").fill("zzzz nobody");
+  await expect(
+    page.getByText(
+      /^No one matches that\. They may have written from another address, or before \w{3} \d{1,2}, \d{4}\.$/,
+    ),
+  ).toBeVisible();
+});
+
+test("customers: the page shows what the row shows (Check 13 P5)", async ({ page, context }) => {
+  const owner = await seedOwner({ mailbox: true, backfilled: true });
+  await quote(owner.mailboxId!, {
+    name: "Jose Alvarez",
+    from: "jose@customer.com",
+    inAgo: 9,
+    outAgo: 8,
+    reply: "Hi Jose, the deck is $2,100.",
+    summary: "Jose wants a deck.",
+  });
+  await testDb
+    .update(schema.threads)
+    .set({
+      quoteOutcome: "won",
+      quoteOutcomeSource: "owner",
+      quoteAmountCents: 210_000,
+      extracted: { address: "12 Elm St" },
+    })
+    .where(eq(schema.threads.summary, "Jose wants a deck."));
+  await quote(owner.mailboxId!, {
+    name: "Dana Ruiz",
+    from: "dana@customer.com",
+    inAgo: 1,
+    summary: "Dana wants a panel upgrade quote.",
+  });
+  await signInAs(context, owner);
+  await page.goto("/customers");
+  await expect(page.getByRole("link", { name: /Jose Alvarez/ })).toContainText("Won $2,100");
+  await page.getByRole("link", { name: /Jose Alvarez/ }).click();
+  await expect(page.getByText(/^Won \$2,100 · Wrote you/)).toBeVisible();
+  await expect(page.getByRole("region", { name: "Job addresses" })).toContainText("12 Elm St");
+  await page.goto("/customers");
+  await page.getByRole("link", { name: /Dana Ruiz/ }).click();
+  await expect(page.getByText(/^1 open quote · Wrote you/)).toBeVisible();
+  await expect(page.getByText("Waiting on you")).toBeVisible();
+});
+
+test("a Quotes card's name opens the customer's page (Check 13 P9)", async ({ page, context }) => {
+  const owner = await seedOwner({ mailbox: true, backfilled: true });
+  await quote(owner.mailboxId!, {
+    name: "Rita Gomez",
+    from: "rita@customer.com",
+    inAgo: 1,
+    summary: "Rita wants a fence.",
+  });
+  await signInAs(context, owner);
+  await page.goto("/quotes");
+  const card = page.getByRole("article", { name: "Quote for Rita Gomez" });
+  const link = card.getByRole("link", { name: "Rita Gomez" });
+  expect((await link.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+  await link.click();
+  await expect(page).toHaveURL(/\/customers\/[0-9a-f-]{36}$/);
+  expect(page.url()).not.toContain("@");
+  await expect(page.getByText("Rita wants a fence.")).toBeVisible();
+  await expect(page.getByText("Rita Gomez", { exact: true })).toBeVisible();
+});
+
+test("a junk email's id is not a customer page (Check 13 P2)", async ({ page, context }) => {
+  const owner = await seedOwner({ mailbox: true, backfilled: true });
+  const gid = `j-${randomUUID().slice(0, 8)}`;
+  const [t] = await testDb
+    .insert(schema.threads)
+    .values({ mailboxId: owner.mailboxId!, gmailThreadId: gid, inInbox: true, category: "noise" })
+    .returning();
+  const [m] = await testDb
+    .insert(schema.messages)
+    .values({
+      threadId: t!.id,
+      mailboxId: owner.mailboxId!,
+      gmailMessageId: `${gid}-in`,
+      direction: "in",
+      fromAddress: "deals@shop-sale.com",
+      fromName: "Deals",
+      bodyText: "Sale",
+      sentAt: ago(1),
+    })
+    .returning();
+  await signInAs(context, owner);
+  const res = await page.goto(`/customers/${m!.id}`);
+  expect(res?.status()).toBe(404);
 });
 
 test("another owner's customer link is a 404", async ({ page, context }) => {

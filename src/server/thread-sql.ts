@@ -3,7 +3,14 @@ import { MAIL_LABELS } from "@/mailbox/connector";
 import { sql, type SQL } from "drizzle-orm";
 import { EMAIL_TO_TEXT_DOMAINS, PHONE_SERVICES } from "@/config/phone-services";
 import { messages, threads } from "@/db/schema";
-import { NO_REPLY_LOCAL_PATTERN, PUBLIC_WEBMAIL_DOMAINS } from "./sender-rules";
+import { LEAD_RELAY_LOCAL_PATTERN, LEAD_SOURCES } from "@/config/lead-sources";
+import { RECEIPT_SENDER_DOMAINS } from "./money-rules";
+import { FORM_SENDER_DOMAINS, FORM_SENDER_LOCAL_PATTERN } from "./reply-address-rules";
+import {
+  MACHINE_SENDER_DOMAINS,
+  NO_REPLY_LOCAL_PATTERN,
+  PUBLIC_WEBMAIL_DOMAINS,
+} from "./sender-rules";
 
 /**
  * SQL pieces about a thread, shared by the quote tracker, the scorecard and the summaries.
@@ -73,6 +80,18 @@ export const customerNameSql = () =>
   sql<
     string | null
   >`(select ${replyNameSql("cx_m")} from messages cx_m where cx_m.thread_id = ${outerThreadId()} and cx_m.direction = 'in' order by cx_m.sent_at desc limit 1)`;
+
+/**
+ * Check 13 P9: the outer thread's customer page key — the newest inbound email on the thread
+ * whose reply address is the thread's customer (`customerAddressSql`), and only one the
+ * Customers list would accept (inbox, not junk, not a lead site's notice, not a robot:
+ * `customerByKey`'s rule), so a link never leads to a 404. An opaque uuid; the address never
+ * goes in a URL. Null = no link.
+ */
+export const customerKeySql = () =>
+  sql<
+    string | null
+  >`(select ck_m.id::text from messages ck_m join threads ck_t on ck_t.id = ck_m.thread_id where ck_m.thread_id = ${outerThreadId()} and ck_m.direction = 'in' and ck_m.from_address is not null and ${replyAddressSql("ck_m")} = ${customerAddressSql()} and ck_t.in_inbox and ck_t.category is distinct from 'noise' and ck_t.lead_channel is null and not ${customerRobotSql(replyAddressSql("ck_m"))} order by ck_m.sent_at desc limit 1)`;
 
 /** Not an unsent Gmail draft, for a messages alias. */
 export const notDraftSql = (alias: string) => sql`not ${unsentDraftSql(alias)}`;
@@ -359,7 +378,70 @@ export const billOwedByOwnerSql = () =>
  * itself never leaves the database.
  */
 export const noReplySql = (address: SQL) =>
-  sql`(position('@' in coalesce(${address}, '')) > 1 and regexp_replace(lower(trim(${address})), '@[^@]*$', '') ~ ${NO_REPLY_LOCAL_PATTERN})`;
+  sql`(position('@' in coalesce(${address}, '')) > 1 and (regexp_replace(lower(trim(${address})), '@[^@]*$', '') ~ ${NO_REPLY_LOCAL_PATTERN} or ${hostIn(sql`regexp_replace(lower(trim(${address})), '^.*@', '')`, MACHINE_SENDER_DOMAINS)}))`;
+
+/** A host expression is one of these domains or a subdomain of one (`exact`: the host only). */
+const hostIn = (host: SQL, domains: readonly string[], exact = false) =>
+  domains.length
+    ? sql`(${sql.join(
+        domains.map((d) =>
+          exact ? sql`${host} = ${d}` : sql`(${host} = ${d} or ${host} like ${`%.${d}`})`,
+        ),
+        sql` or `,
+      )})`
+    : sql`false`;
+
+/**
+ * Check 13 P2: SQL twin of `isCustomerRobot` (customer-robot-rules.ts) for a reply-address
+ * expression: a no-reply or job-board sender, a website form's robot (no usable Reply-To was
+ * stored, or the address would be the person's), a lead platform's own address that isn't a
+ * per-customer relay, or a payment-receipt sender. WHERE clauses only.
+ */
+export const customerRobotSql = (address: SQL) => {
+  const a = sql`lower(trim(coalesce(${address}, '')))`;
+  const local = sql`regexp_replace(${a}, '@[^@]*$', '')`;
+  const host = sql`regexp_replace(${a}, '^.*@', '')`;
+  const leadHost = sql.join(
+    LEAD_SOURCES.map((s) => hostIn(host, s.domains, s.exact === true)),
+    sql` or `,
+  );
+  return sql`(position('@' in ${a}) > 1 and (${noReplySql(address)}
+    or ${hostIn(host, FORM_SENDER_DOMAINS)} or ${local} ~ ${FORM_SENDER_LOCAL_PATTERN}
+    or ((${leadHost}) and not ${local} ~ ${LEAD_RELAY_LOCAL_PATTERN})
+    or ${hostIn(host, RECEIPT_SENDER_DOMAINS)}))`;
+};
+
+/**
+ * Check 22 P10 + 41 P6: SQL twin of `isCrewAddress` (sender-rules.ts) for an address
+ * expression in workspace `workspaceId`: on the owner's crew list
+ * (`business_profile.crew_addresses`) or one of the workspace's own Gmail addresses; with
+ * `includeDomain` (Customers' "Your crew and subs" only), also on a connected mailbox's business
+ * domain (never public webmail). WHERE clauses / aggregates only, so the address never leaves
+ * the database.
+ */
+export const crewSql = (
+  workspaceId: string | SQL,
+  address: SQL,
+  opts: { includeDomain?: boolean } = {},
+) => {
+  const a = sql`lower(trim(coalesce(${address}, '')))`;
+  const w = typeof workspaceId === "string" ? sql`${workspaceId}::uuid` : workspaceId;
+  const domain = opts.includeDomain
+    ? sql` or (${domainOf(norm("cw_mb.email"))} not in (${WEBMAIL_SQL}) and ${domainOf(norm("cw_mb.email"))} = ${domainOf(a)})`
+    : sql``;
+  return sql`(position('@' in ${a}) > 1 and (
+    exists (select 1 from business_profile cw_bp where cw_bp.workspace_id = ${w} and ${a} = any(cw_bp.crew_addresses))
+    or exists (select 1 from mailboxes cw_mb where cw_mb.workspace_id = ${w} and (lower(trim(cw_mb.email)) = ${a}${domain}))
+  ))`;
+};
+
+/**
+ * Check 22 P10 + 41 P6: the outer thread is a conversation with the owner's own people only —
+ * it has inbound mail and every inbound email's reply address is crew (`crewSql`). A customer
+ * thread where the crew replied to a forward still has the customer on it, so it never is.
+ */
+export const crewThreadSql = (workspaceId: string | SQL) =>
+  sql`(exists (select 1 from messages cw_i where cw_i.thread_id = ${outerThreadId()} and cw_i.direction = 'in') and not exists (select 1 from messages cw_o where cw_o.thread_id = ${outerThreadId()} and cw_o.direction = 'in' and not ${crewSql(workspaceId, replyAddressSql("cw_o"))}))`;
 
 /**
  * SQL twin of `channelOf(from)?.kind` being `phone` or `phone_text` (leads package): the sender

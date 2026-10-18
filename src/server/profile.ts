@@ -47,7 +47,8 @@ export const MAX_CREW_ADDRESSES = 30;
 
 /**
  * Check 50 P3: the owner's crew addresses (`business_profile.crew_addresses`), one per line:
- * each an email, lowercased, de-duplicated after lowercasing, at most 30. Not in any form yet.
+ * each an email, lowercased, de-duplicated after lowercasing, at most 30. Settings → Your
+ * business ("Your crew's email addresses"), Check 22 P10 + 41 P6.
  */
 export const crewAddressesSchema = z
   .string()
@@ -228,6 +229,8 @@ export const businessProfileInput = z.object({
   reviewUrl,
   doNotPromise: lines(30),
   vipSenders,
+  /** Check 22 P10 + 41 P6: the owner's crew. Left out entirely = leave the list as it is. */
+  crewAddresses: crewAddressesSchema.optional(),
   /**
    * Check 38 P2: "Which state do you work in?" — two letters, '' = not set. Left out = leave it.
    * Massachusetts turns on the one-third deposit warning.
@@ -307,6 +310,11 @@ export async function saveBusinessProfile(
       )
     : undefined;
   const profile = { ...rest, ...(licenses ? { licenses } : {}) };
+  // Check 41 P6: a changed crew list is logged with its size only, never the addresses.
+  const crewBefore =
+    rest.crewAddresses === undefined
+      ? undefined
+      : ((await getBusinessProfile(workspaceId))?.crewAddresses ?? []);
   await db()
     .update(workspaces)
     .set({
@@ -345,6 +353,20 @@ export async function saveBusinessProfile(
     action: "business_profile_saved",
     detail: {},
   });
+  if (
+    rest.crewAddresses !== undefined &&
+    crewBefore !== undefined &&
+    [...crewBefore].sort().join("\n") !== [...rest.crewAddresses].sort().join("\n")
+  ) {
+    await db()
+      .insert(activityLog)
+      .values({
+        workspaceId,
+        actor: "owner",
+        action: "crew_list_saved",
+        detail: { count: rest.crewAddresses.length },
+      });
+  }
 }
 
 // Check 38 P4: 10 and 14 for bigger jobs that take longer to decide.

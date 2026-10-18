@@ -29,6 +29,7 @@ import {
   quoteRequestSql,
   waitingReplySql,
   waitingSinceSql,
+  crewSql,
 } from "./thread-sql";
 
 export { unalerted } from "./leads-at-risk-rules";
@@ -112,6 +113,8 @@ export function leadsAtRiskQuery(workspaceId: string, now: Date) {
         gt(threads.lastMessageAt, new Date(now.getTime() - LEAD_AT_RISK_MAX_AGE_HOURS * 3_600_000)),
         sql`${waitingSince} is not null`,
         sql`not ${noReplySql(waitingSender)}`,
+        // Check 41 P6: the owner's own crew is never a lead.
+        sql`not ${crewSql(workspaceId, waitingSender)}`,
         sql`not ${answeredInApp}`,
       ),
     );
