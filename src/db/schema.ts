@@ -146,6 +146,12 @@ export const workspaces = pgTable(
     plan: planEnum("plan"),
     stripeCustomerId: text("stripe_customer_id"),
     stripeSubscriptionId: text("stripe_subscription_id"),
+    /**
+     * Check 17 P3: the owner canceled in Stripe's page and the plan stops on this date (Stripe's
+     * cancel_at, or the period end for cancel_at_period_end). Null when nothing is scheduled;
+     * cleared when the cancellation is undone or the subscription ends.
+     */
+    planEndsAt: timestamp("plan_ends_at", { withTimezone: true }),
     createdAt: createdAt(),
     /** Plan #47: this workspace's own referral code (random, made the first time it's shown). */
     referralCode: text("referral_code"),

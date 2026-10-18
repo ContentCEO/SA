@@ -150,19 +150,82 @@ export const PAUSED_STILL_BILLED_LINE = "Your plan's billing hasn't changed.";
 /** Shown instead when the status would allow sending but the setup was never really paid. */
 export const SETUP_NOT_PAID_LINE = "Sending turns on once your setup payment goes through.";
 
+/** "Nov 16" in the owner's time zone (Eastern when the zone is unknown or invalid). */
+export function shortDate(d: Date, timeZone = "America/New_York"): string {
+  const fmt = (tz: string) =>
+    new Intl.DateTimeFormat("en-US", { timeZone: tz, month: "short", day: "numeric" }).format(d);
+  try {
+    return fmt(timeZone);
+  } catch {
+    return fmt("America/New_York");
+  }
+}
+
+/** The owner's local calendar date ("2026-11-16"), for content-free activity rows. */
+export function localDateKey(d: Date, timeZone = "America/New_York"): string {
+  const fmt = (tz: string) =>
+    new Intl.DateTimeFormat("en-CA", {
+      timeZone: tz,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(d);
+  try {
+    return fmt(timeZone);
+  } catch {
+    return fmt("America/New_York");
+  }
+}
+
+/** Check 17 P3: what /billing says once the owner canceled and the plan runs out on a date. */
+export const planEndsLine = (date: string) =>
+  `Your plan ends on ${date}. Nothing is deleted. Changed your mind? Manage billing keeps it going.`;
+
 /**
  * What /billing says about the account. An account at setup_paid / active whose setup wasn't
  * really paid (marked by hand before 2026-10-10, or reset after a test card) gets the same words
  * as the banner and the queue, never "Setup's paid" or "renews monthly": it can't send, and has
- * no subscription to renew.
+ * no subscription to renew. Check 17 P3: a canceled plan still running says when it ends.
  */
 export function billingStatusLine(
-  w: Pick<W, "status" | "evaluationEndsAt" | "setupPaidVia">,
+  w: Pick<W, "status" | "evaluationEndsAt" | "setupPaidVia"> & { planEndsAt?: Date | null },
   now: Date = new Date(),
+  timeZone = "America/New_York",
 ): string | null {
   const status = effectiveStatus(w, now);
   if (SENDING_ALLOWED.includes(status) && !setupReallyPaid(w)) return SETUP_NOT_PAID_LINE;
+  if (SENDING_ALLOWED.includes(status) && w.planEndsAt) {
+    return planEndsLine(shortDate(w.planEndsAt, timeZone));
+  }
   return BILLING_STATUS_LINES[status] ?? null;
+}
+
+/** Check 17 P3: the banner's quiet reminder shows in the last 7 days before the plan ends. */
+export const PLAN_ENDING_SOON_MS = 7 * 86_400_000;
+export function planEndingSoon(planEndsAt: Date | null | undefined, now: Date): boolean {
+  if (!planEndsAt) return false;
+  const left = planEndsAt.getTime() - now.getTime();
+  return left > 0 && left <= PLAN_ENDING_SOON_MS;
+}
+
+/**
+ * Check 17 P3: when a live subscription stops, from Stripe's own fields: `cancel_at` first, else
+ * the period end when only `cancel_at_period_end` is set (in this API version the period dates
+ * live on the subscription's first item). Null when nothing is scheduled or it already ended.
+ */
+export function planEndsAtFrom(sub: {
+  status: string;
+  cancel_at?: number | null;
+  cancel_at_period_end?: boolean | null;
+  items?: { data?: Array<{ current_period_end?: number | null } | undefined> } | null;
+}): Date | null {
+  if (sub.status === "canceled" || sub.status === "incomplete_expired") return null;
+  if (sub.cancel_at) return new Date(sub.cancel_at * 1000);
+  if (sub.cancel_at_period_end) {
+    const end = sub.items?.data?.[0]?.current_period_end;
+    return end ? new Date(end * 1000) : null;
+  }
+  return null;
 }
 
 /** Who may start a checkout, and whether the one-time setup fee is included. */

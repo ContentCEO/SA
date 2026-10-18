@@ -94,7 +94,7 @@ describe("billing rules", () => {
     expect(billingStatusLine(w("evaluating"), NOW)).toBeNull();
     // The page uses the rule, and only mentions Stripe's page next to Manage billing.
     const page = readFileSync("src/app/(app)/billing/page.tsx", "utf8");
-    expect(page).toContain("const statusLine = billingStatusLine(workspace);");
+    expect(page).toContain("const statusLine = billingStatusLine(\n    workspace,");
     const portal = page.slice(page.indexOf("{workspace.stripeCustomerId ? ("));
     expect(portal.indexOf("Stripe&apos;s secure")).toBeGreaterThan(-1);
     expect(portal.indexOf("Stripe&apos;s secure")).toBeLessThan(portal.indexOf(") : null}"));
@@ -898,5 +898,56 @@ describe("webhook endpoint", () => {
     process.env.STRIPE_WEBHOOK_SECRET = "whsec_other";
     const r = await handleStripeWebhook(event("evt_3", "x.y", {}), "good");
     expect(r.status).toBe(400);
+  });
+});
+
+describe("canceling in Stripe's page shows the end date (Check 17 P3)", () => {
+  const ENDS = new Date("2026-11-16T15:00:00Z");
+  const canceling = (over: Record<string, unknown>) =>
+    ({ ...subscription("active"), ...over }) as unknown as Stripe.Subscription;
+
+  it("cancel_at sets plan_ends_at once, logs the date only, and undoing clears it", async () => {
+    await applyCheckoutCompleted(paidSession(), NOW);
+    await applySubscription(canceling({ cancel_at: ENDS.getTime() / 1000 }), NOW);
+    expect((await reload()).planEndsAt?.toISOString()).toBe(ENDS.toISOString());
+    // A repeat of the same news logs nothing new.
+    await applySubscription(canceling({ cancel_at: ENDS.getTime() / 1000 }), NOW);
+    const logs = (await database.select().from(activityLog)).filter(
+      (l) => l.action === "plan_cancel_scheduled",
+    );
+    expect(logs).toHaveLength(1);
+    expect(logs[0]!.detail).toEqual({ endsOn: "2026-11-16" });
+    expect(describeActivity("plan_cancel_scheduled", logs[0]!.detail, null)).toBe(
+      "You canceled your plan. It stays on until Nov 16.",
+    );
+    expect(billingStatusLine(await reload(), NOW)).toMatch(/^Your plan ends on Nov 16\./);
+
+    await applySubscription(canceling({ cancel_at: null, cancel_at_period_end: false }), NOW);
+    const undone = await reload();
+    expect(undone.planEndsAt).toBeNull();
+    expect(undone.status).toBe("setup_paid");
+  });
+
+  it("cancel_at_period_end reads the first item's period end; the end clears it", async () => {
+    await applyCheckoutCompleted(paidSession(), NOW);
+    await applySubscription(
+      canceling({
+        cancel_at_period_end: true,
+        items: {
+          data: [
+            {
+              price: { lookup_key: planLookupKey("crew") },
+              current_period_end: ENDS.getTime() / 1000,
+            },
+          ],
+        },
+      }),
+      NOW,
+    );
+    expect((await reload()).planEndsAt?.toISOString()).toBe(ENDS.toISOString());
+    await applySubscription(subscription("canceled"), NOW);
+    const ended = await reload();
+    expect(ended.planEndsAt).toBeNull();
+    expect(ended.status).toBe("canceled");
   });
 });

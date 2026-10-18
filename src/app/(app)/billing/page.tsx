@@ -21,6 +21,7 @@ import { phoneHref } from "@/lib/phone-href";
 import { referralCredit } from "@/server/referral-rules";
 import { referralLinkFor } from "@/server/referrals";
 import { requireOwner } from "@/server/session";
+import { workspaceTimeZone } from "@/server/snooze";
 import { TRIAL_NO_SEND_LINE, TRIAL_SIDE_DOOR_LINE } from "@/server/trial-email-rules";
 import { openPortalAction, startCheckoutAction } from "./actions";
 
@@ -36,7 +37,11 @@ const errors: Record<string, string> = {
 export default async function BillingPage(props: PageProps<"/billing">) {
   const { workspace } = await requireOwner();
   const params = await props.searchParams;
-  const statusLine = billingStatusLine(workspace);
+  const statusLine = billingStatusLine(
+    workspace,
+    new Date(),
+    workspace.planEndsAt ? await workspaceTimeZone(workspace.id) : undefined,
+  );
   const terms = checkoutTerms(workspace);
   const paidJustNow = params.done === "paid";
   const waitingForStripe = paidJustNow && terms.allowed;
@@ -115,7 +120,8 @@ export default async function BillingPage(props: PageProps<"/billing">) {
             <>
               <form action={openPortalAction}>
                 <Button type="submit" variant="outline" className="w-full">
-                  Manage billing
+                  {/* Check 17 P3: name the action a past-due owner came for. */}
+                  {effectiveStatus(workspace) === "past_due" ? "Update card" : "Manage billing"}
                 </Button>
               </form>
               <p className="text-sm text-muted-foreground">

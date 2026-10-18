@@ -4,7 +4,13 @@ import { siteConfig } from "@/config/site";
 import { daysPhrase } from "@/lib/trial-words";
 import { TrialClock } from "./trial-clock";
 import { getWorkspaceForUser } from "@/server/accounts";
-import { PAUSED_STILL_BILLED_LINE, setupCallSentence } from "@/server/billing-rules";
+import {
+  PAUSED_STILL_BILLED_LINE,
+  planEndingSoon,
+  setupCallSentence,
+  shortDate,
+} from "@/server/billing-rules";
+import { workspaceTimeZone } from "@/server/snooze";
 import { queueCounts } from "@/server/drafts";
 import { trialCounts } from "@/server/first-week";
 import { isLastDay, trialSoFarLine, waitingLine } from "@/server/first-week-rules";
@@ -84,6 +90,22 @@ export async function StatusBanner() {
       "Choose a plan",
     );
   }
+  // Check 17 P3: the owner canceled in Stripe's page; in the last week, a quiet reminder.
+  const ending =
+    (status === "setup_paid" || status === "active") &&
+    workspace.planEndsAt &&
+    planEndingSoon(workspace.planEndsAt, now) ? (
+      <p role="status" className="rounded-xl border-2 border-charcoal p-4">
+        Your plan ends on {shortDate(workspace.planEndsAt, await workspaceTimeZone(workspace.id))}.
+        Nothing is deleted.{" "}
+        <Link
+          href="/billing"
+          className="inline-flex min-h-tap items-center font-semibold underline underline-offset-4"
+        >
+          Plan &amp; billing
+        </Link>
+      </p>
+    ) : null;
   switch (status) {
     case "evaluation_expired": {
       // Round 2 (FW E7/F6): what's waiting for them, counts only.
@@ -103,13 +125,20 @@ export async function StatusBanner() {
       );
     }
     case "setup_paid":
-      return inverted(
-        "Setup's paid. Sending is on.",
+      return (
         <>
-          Every reply still waits for your okay. On your setup call,{" "}
-          {siteConfig.operator.split(" ")[0]} {setupCallSentence("after")}. <Contact />
-        </>,
+          {inverted(
+            "Setup's paid. Sending is on.",
+            <>
+              Every reply still waits for your okay. On your setup call,{" "}
+              {siteConfig.operator.split(" ")[0]} {setupCallSentence("after")}. <Contact />
+            </>,
+          )}
+          {ending}
+        </>
       );
+    case "active":
+      return ending;
     case "past_due":
       return inverted(
         "There's a problem with your payment.",

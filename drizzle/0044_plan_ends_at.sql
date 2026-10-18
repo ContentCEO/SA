@@ -1,0 +1,1 @@
+ALTER TABLE "workspaces" ADD COLUMN "plan_ends_at" timestamp with time zone;

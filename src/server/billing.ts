@@ -21,7 +21,9 @@ import {
   isPlanId,
   PLAN_IDS,
   planFromLookupKey,
+  planEndsAtFrom,
   planLookupKey,
+  localDateKey,
   type SalesTaxStatus,
   setupLookupKey,
   statusAfterCheckout,
@@ -32,6 +34,7 @@ import { paymentNoticeCopy } from "./first-week-rules";
 import { resumeTarget, setupReallyPaid } from "./lifecycle";
 import { fitMailboxesToPlan } from "./mailbox-plan";
 import { creditReferralSafely } from "./referrals";
+import { workspaceTimeZone } from "./snooze";
 import { isTermsUrlMissingError, stripeErrorReason } from "./stripe-error-rules";
 
 let client: Stripe | undefined;
@@ -536,6 +539,13 @@ export async function applyCheckoutCompleted(
   return "applied";
 }
 
+/** Check 17 P3: one activity row when a plan end date is newly scheduled (the date only). */
+async function notePlanEnd(w: Workspace, planEndsAt: Date | null) {
+  if (!planEndsAt || planEndsAt.getTime() === w.planEndsAt?.getTime()) return;
+  const endsOn = localDateKey(planEndsAt, await workspaceTimeZone(w.id));
+  await log(w.id, "plan_cancel_scheduled", { endsOn });
+}
+
 export async function applySubscription(sub: Stripe.Subscription, now = new Date()) {
   let w = await workspaceById(sub.metadata?.workspaceId);
   if (!w) {
@@ -548,6 +558,9 @@ export async function applySubscription(sub: Stripe.Subscription, now = new Date
   if (!w) return "unknown_workspace";
   const plan = planFromLookupKey(sub.items.data[0]?.price?.lookup_key) ?? w.plan;
   const ended = sub.status === "canceled" || sub.status === "incomplete_expired";
+  // Check 17 P3: a cancellation from Stripe's page keeps the plan on until a date; say when.
+  const planEndsAt = planEndsAtFrom(sub);
+  await notePlanEnd(w, planEndsAt);
   if (w.status === "paused") {
     // Check 17 P1: a paused account stays paused, but what Stripe says is kept in paused_from,
     // so Resume takes it to where the payment stands now (never back to "active" after a
@@ -556,7 +569,7 @@ export async function applySubscription(sub: Stripe.Subscription, now = new Date
     const after = statusAfterSubscription({ ...w, status: before }, sub.status, now);
     await db()
       .update(workspaces)
-      .set({ pausedFrom: after, plan, stripeSubscriptionId: ended ? null : sub.id })
+      .set({ pausedFrom: after, plan, planEndsAt, stripeSubscriptionId: ended ? null : sub.id })
       .where(eq(workspaces.id, w.id));
     if (after !== w.pausedFrom || plan !== w.plan) {
       await log(w.id, "subscription_changed", {
@@ -573,7 +586,7 @@ export async function applySubscription(sub: Stripe.Subscription, now = new Date
   const to = statusAfterSubscription(w, sub.status, now);
   await db()
     .update(workspaces)
-    .set({ status: to, plan, stripeSubscriptionId: ended ? null : sub.id })
+    .set({ status: to, plan, planEndsAt, stripeSubscriptionId: ended ? null : sub.id })
     .where(eq(workspaces.id, w.id));
   if (to !== w.status || plan !== w.plan) {
     await log(w.id, "subscription_changed", { stripeStatus: sub.status, from: w.status, to, plan });

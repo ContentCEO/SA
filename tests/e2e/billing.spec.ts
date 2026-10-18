@@ -83,6 +83,10 @@ test("past due: the banner says update payment", async ({ page, context }) => {
     "href",
     "/billing",
   );
+  // Check 17 P3: the portal button names what they came for.
+  await page.goto("/billing");
+  await expect(page.getByRole("button", { name: "Update card" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Manage billing" })).toHaveCount(0);
 });
 
 test("the Stripe webhook refuses unsigned requests", async ({ request }) => {
@@ -129,4 +133,30 @@ test("marked paid without a real payment: sending stays off and it says how to f
   // No Stripe customer, so no Manage billing and no sentence about Stripe's page.
   await expect(page.getByRole("button", { name: "Manage billing" })).toHaveCount(0);
   await expect(page.getByText(/Stripe.s secure page/)).toHaveCount(0);
+});
+
+test("a canceled plan still running shows its end date, not 'renews monthly' (Check 17 P3)", async ({
+  page,
+  context,
+}) => {
+  const owner = await seedOwner({ mailbox: true, backfilled: true });
+  await setWorkspace(owner.workspaceId, {
+    status: "active",
+    plan: "solo",
+    setupPaidAt: new Date(),
+    setupPaidVia: "stripe",
+    setupCallCompletedAt: new Date(),
+    stripeCustomerId: "cus_e2e_ending",
+    stripeSubscriptionId: "sub_e2e_ending",
+    planEndsAt: new Date(Date.now() + 3 * DAY),
+  });
+  await signInAs(context, owner);
+  await page.goto("/billing");
+  await expect(
+    page.getByText(/^Your plan ends on [A-Z][a-z]{2} \d{1,2}\. Nothing is deleted\./),
+  ).toBeVisible();
+  await expect(page.getByText("renews monthly")).toHaveCount(0);
+  // The last week: a quiet reminder on every screen.
+  await page.goto("/queue");
+  await expect(page.getByRole("status").filter({ hasText: /Your plan ends on/ })).toBeVisible();
 });
