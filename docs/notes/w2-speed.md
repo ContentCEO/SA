@@ -141,3 +141,44 @@ Prices and plan inbox limits unchanged."
 - Not checked live: "x-vercel-cache: HIT" needs a deploy (no pushes from this branch).
 
 Privacy policy: nothing new (no new data, no new host).
+
+## Follow-up fixes found by the full runs
+
+- `notesForThreads` (customer-notes.ts) now orders ties by id: with the new indexes Postgres
+  returned two same-second emails in a different order, and the first row per thread won. The
+  control test's extra emails are now older than Dana's.
+- `security-surface.test.ts` lists the proxy's "/" redirect as a reviewed redirect (target is the
+  fixed "/start").
+- The e2e test hooks run `quoteUpkeepForMailbox` in the "draft" step (same order as the job) and
+  as their own "quote-upkeep" step; the Quotes e2e calls it after seeding.
+
+## Integration notes (expected overlaps with other groups)
+
+- Migrations: `0044_data_speed_indexes` (eight CREATE INDEX IF NOT EXISTS) and
+  `0045_thread_prompt_version` (one ADD COLUMN), to be renumbered.
+- `src/db/schema.ts`: new indexes on threads / messages / activity_log / drafts / customer_notes /
+  push_subscriptions, `threads.classified_prompt_version`, and `replyAddressExpr` at the top.
+- `src/server/thread-sql.ts`: `messageReplyAddress` / `replyAddressSql` now build from
+  `replyAddressExpr` (same SQL text). Anyone changing that expression must change the index too.
+- `callStructured` callers gained a `purpose` line (classify.ts, drafts.ts ×2, voice.ts,
+  edit-learning.ts): small conflicts with Prompt versions / Voice groups.
+- `src/app/(app)/queue/page.tsx` and `inbox/page.tsx` data loading was restructured into two
+  `Promise.all` waits: the Queue screen and Inbox groups will conflict; keep the two-wait shape.
+- `src/server/quotes.ts`: `listQuotes` no longer writes; Quotes and Money group code that expects
+  fresh amounts on open should call `quoteUpkeepForMailbox` from a job instead.
+- `src/components/forms/field.tsx` (SelectField) — Phone look group may touch it.
+- `src/proxy.ts` matcher gained "/"; `src/app/page.tsx` is no longer async and takes no props.
+- `src/server/assistant-status-rules.ts`: the 80% warning became the "sorting waits" note.
+
+## Questions for Davi
+
+1. The daily AI limit is now 500 calls per connected inbox, at most 3,000 a day for any one shop,
+   and sorting can use 80% of it. Are 500 and 3,000 the numbers you want? (They change no price.)
+2. When sorting has used its 80%, the top of every screen says: "Most of today's assistant limit
+   is used. New email waits until 8pm to be sorted, so the rest is kept for your replies. It's
+   safe in Gmail and catches up on its own." Is that wording okay?
+3. The homepage now comes from the CDN. Someone whose sign-in cookie is broken (for example after
+   their account was deleted on another device) is sent to the sign-in page from "/" until they
+   sign in again or the cookie runs out. Okay?
+4. Before the index migration merges, someone should check the shared database's table sizes
+   (query in the migration's top comment). Fine to merge as is while it's a handful of shops.
