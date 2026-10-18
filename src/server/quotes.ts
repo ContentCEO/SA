@@ -1,5 +1,5 @@
 import "server-only";
-import { and, desc, eq, inArray, isNotNull, isNull, sql, type SQL } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, isNull, or, sql, type SQL } from "drizzle-orm";
 import { prepareBody } from "@/ai/classify";
 import { db } from "@/db";
 import { activityLog, mailboxes, messages, priceHistory, threads, workspaces } from "@/db/schema";
@@ -257,7 +257,15 @@ export async function setQuoteOutcome(
         quoteOutcomeAt: outcome ? now : null,
         // Ideas C5: a new mark starts without a reason (asked again after Mark lost).
         quoteLostReason: null,
-        ...(typed ? { quoteAmountCents: amountCents, quoteAmountNote: null } : {}),
+        // Check 11 P3: a typed amount is the owner's and is never read over from a reply.
+        ...(typed
+          ? {
+              quoteAmountCents: amountCents,
+              quoteAmountNote: null,
+              quoteAmountFrom: "owner" as const,
+              quoteAmountAt: now,
+            }
+          : {}),
       })
       .where(eq(threads.id, threadId));
     await tx.insert(activityLog).values({
@@ -463,13 +471,16 @@ export async function guessNoAnswers(
 
 /**
  * Remember what each quote was for while the owner's reply text still exists
- * (bodies are purged after the retention window; the amount is kept). Never
- * overwrites an amount that's already set.
+ * (bodies are purged after the retention window; the amount is kept).
+ *
+ * Check 11 P3: an open quote (no outcome) whose amount came from a reply is read again, so
+ * "Sorry, the right price is $2,100" replaces the first $2,600 — on the card and in price
+ * memory. An amount the owner typed ('owner') and a decided quote are never touched.
  *
  * Plan #15: a captured amount on a thread whose kind of job is known also goes
- * into the owner's price memory (one row per thread, write-only from here). The
+ * into the owner's price memory (one row per thread, written from here). The
  * amount the owner types when marking a quote Won does not (it may be the final
- * bill, not the quote) — see `backfillPriceMemory`.
+ * bill, not the quote) — see `backfillPriceMemory`. Content-free: no amounts in logs.
  */
 export async function captureQuoteAmounts(workspaceId?: string): Promise<number> {
   const open = await db()
@@ -478,6 +489,9 @@ export async function captureQuoteAmounts(workspaceId?: string): Promise<number>
       workspaceId: mailboxes.workspaceId,
       extracted: threads.extracted,
       quoteOutcomeAt: threads.quoteOutcomeAt,
+      amountCents: threads.quoteAmountCents,
+      amountNote: threads.quoteAmountNote,
+      amountAt: threads.quoteAmountAt,
     })
     .from(threads)
     .innerJoin(mailboxes, eq(mailboxes.id, threads.mailboxId))
@@ -485,7 +499,11 @@ export async function captureQuoteAmounts(workspaceId?: string): Promise<number>
       and(
         workspaceId ? eq(mailboxes.workspaceId, workspaceId) : undefined,
         quoteThreadSql(),
-        isNull(threads.quoteAmountCents),
+        or(
+          isNull(threads.quoteAmountCents),
+          // Check 11 P3: an open quote's amount read from a reply may be corrected.
+          and(eq(threads.quoteAmountFrom, "reply"), isNull(threads.quoteOutcome)),
+        ),
       ),
     )
     // Newest first, so quotes with no figure in them can't crowd out today's.
@@ -501,16 +519,45 @@ export async function captureQuoteAmounts(workspaceId?: string): Promise<number>
       (id) => decidedAt(info.get(id)!),
     );
     for (const [id, { cents, sentAt, note }] of byThread) {
+      const t = info.get(id)!;
+      const fresh = t.amountCents == null;
+      if (
+        !fresh &&
+        t.amountCents === cents &&
+        t.amountNote === note &&
+        t.amountAt?.getTime() === sentAt.getTime()
+      )
+        continue;
       const set = await db()
         .update(threads)
-        .set({ quoteAmountCents: cents, quoteAmountNote: note })
-        .where(and(eq(threads.id, id), isNull(threads.quoteAmountCents)))
+        .set({
+          quoteAmountCents: cents,
+          quoteAmountNote: note,
+          quoteAmountFrom: "reply",
+          quoteAmountAt: sentAt,
+        })
+        .where(
+          and(
+            eq(threads.id, id),
+            fresh
+              ? isNull(threads.quoteAmountCents)
+              : // Still open, still ours, still the amount we read: a typed amount or a mark
+                // made meanwhile wins.
+                and(
+                  eq(threads.quoteAmountFrom, "reply"),
+                  isNull(threads.quoteOutcome),
+                  eq(threads.quoteAmountCents, t.amountCents!),
+                ),
+          ),
+        )
         .returning({ id: threads.id });
       if (!set.length) continue;
-      captured++;
+      if (fresh || t.amountCents !== cents) captured++;
       // Check 11 P2: price memory only learns clear prices, never our pick among several.
-      if (note === "picked") continue;
-      const t = info.get(id)!;
+      if (note === "picked") {
+        if (!fresh) await db().delete(priceHistory).where(eq(priceHistory.threadId, id));
+        continue;
+      }
       const service = serviceOf(t.extracted);
       if (!service) continue;
       await db()
@@ -522,7 +569,10 @@ export async function captureQuoteAmounts(workspaceId?: string): Promise<number>
           amountCents: cents,
           quotedAt: sentAt,
         })
-        .onConflictDoNothing();
+        .onConflictDoUpdate({
+          target: priceHistory.threadId,
+          set: { amountCents: cents, quotedAt: sentAt },
+        });
     }
   }
   await backfillPriceMemory(workspaceId);
@@ -564,6 +614,8 @@ async function backfillPriceMemory(workspaceId?: string): Promise<number> {
         isNotNull(threads.quoteAmountCents),
         // Check 11 P2: our pick among several figures never goes into price memory.
         sql`${threads.quoteAmountNote} is distinct from 'picked'`,
+        // Check 11 P3: an amount the owner typed never goes in either.
+        sql`${threads.quoteAmountFrom} is distinct from 'owner'`,
         sql`coalesce(${service}, '') <> ''`,
         sql`not exists (select 1 from price_history ph where ph.thread_id = ${threads.id})`,
         // Scoped by workspace so activity_log's (workspace_id, created_at) index applies —

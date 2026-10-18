@@ -449,6 +449,77 @@ describe("quote tracker", () => {
     expect(await database.select().from(priceHistory)).toHaveLength(1);
   });
 
+  describe("Check 11 P3: a corrected price replaces the first one", () => {
+    async function quoted(reply = "That panel is $2,600.") {
+      const t = await convo({
+        from: "dana@x.com",
+        name: "Dana",
+        category: "quote_request",
+        inAgo: 5,
+        outAgo: 4,
+        reply,
+      });
+      await database
+        .update(threads)
+        .set({ extracted: { service_requested: "panel upgrade" } })
+        .where(eq(threads.id, t));
+      return t;
+    }
+    const ownerWrites = (threadId: string, ago: number, bodyText: string) =>
+      database.insert(messages).values({
+        threadId,
+        mailboxId,
+        gmailMessageId: `fix${++g}`,
+        direction: "out",
+        fromAddress: "owner@shop.com",
+        bodyText,
+        sentAt: daysAgo(ago),
+      });
+    const row = async (id: string) =>
+      (await database.select().from(threads).where(eq(threads.id, id)))[0]!;
+    const memory = async (id: string) =>
+      (await database.select().from(priceHistory).where(eq(priceHistory.threadId, id)))[0];
+
+    it("on an open quote the owner's latest price wins, and price memory follows", async () => {
+      const t = await quoted();
+      await captureQuoteAmounts(workspaceId);
+      expect(await row(t)).toMatchObject({
+        quoteAmountCents: 260_000,
+        quoteAmountFrom: "reply",
+        quoteAmountAt: daysAgo(4),
+      });
+      expect((await memory(t))!.amountCents).toBe(260_000);
+
+      await ownerWrites(t, 3, "Sorry, I got that wrong. The right price is $2,100.");
+      expect((await listQuotes(workspaceId, NOW)).quotes[0]!.amountCents).toBe(210_000);
+      expect(await memory(t)).toMatchObject({ amountCents: 210_000, quotedAt: daysAgo(3) });
+      // A later note with no figure changes nothing; a second run is a no-op.
+      await ownerWrites(t, 2, "See you Tuesday.");
+      expect(await captureQuoteAmounts(workspaceId)).toBe(0);
+      expect((await row(t)).quoteAmountCents).toBe(210_000);
+    });
+
+    it("an amount the owner typed is never replaced", async () => {
+      const t = await quoted();
+      await captureQuoteAmounts(workspaceId);
+      await setQuoteOutcome(workspaceId, t, "won", 250_000, NOW);
+      await setQuoteOutcome(workspaceId, t, null, undefined, NOW); // reopened: still theirs
+      await ownerWrites(t, 1, "The right price is $2,100.");
+      await captureQuoteAmounts(workspaceId);
+      expect(await row(t)).toMatchObject({ quoteAmountCents: 250_000, quoteAmountFrom: "owner" });
+    });
+
+    it("a won quote keeps its amount when a later invoice email has a bigger figure", async () => {
+      const t = await quoted();
+      await captureQuoteAmounts(workspaceId);
+      await setQuoteOutcome(workspaceId, t, "won", undefined, daysAgo(2));
+      await ownerWrites(t, 1, "Invoice attached: $3,400 total with the extra outlets.");
+      await captureQuoteAmounts(workspaceId);
+      expect((await row(t)).quoteAmountCents).toBe(260_000);
+      expect((await memory(t))!.amountCents).toBe(260_000);
+    });
+  });
+
   it("an unsent Gmail draft is neither the owner's answer nor a price (stage, amount)", async () => {
     const t = await convo({
       from: "dana@x.com",

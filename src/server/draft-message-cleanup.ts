@@ -400,7 +400,12 @@ async function clearDraftPrices(tx: Tx, gone: Row[]): Promise<number> {
     if (a.amount != null && !ownerTyped.has(a.id) && fromDraft(a.amount) && !inRealMail(a.amount)) {
       await tx
         .update(threads)
-        .set({ quoteAmountCents: null, quoteAmountNote: null })
+        .set({
+          quoteAmountCents: null,
+          quoteAmountNote: null,
+          quoteAmountFrom: null,
+          quoteAmountAt: null,
+        })
         .where(eq(threads.id, a.id));
       did = true;
     }

@@ -31,3 +31,13 @@ For the integrator to fold into CLAUDE.md (Decisions) and the other shared files
   your own reply". `ownerGavePrice` / acceptance use the same reader, so an hourly rate alone
   ("$95 per hour") no longer counts as a price given.
 - Migration (step 2): `threads.quote_amount_note text` (additive).
+- **Check 11 P3 (a corrected price replaces the first):** new columns `threads.quote_amount_from`
+  ('reply' | 'owner') and `threads.quote_amount_at` (when the price went out: the owner email's
+  sent time, or when the owner typed it). `captureQuoteAmounts` re-reads open quotes (no
+  outcome) whose amount came from a reply and moves the amount, note, time and that thread's
+  `price_history` row (upsert; a 'picked' correction deletes the row). A typed amount
+  (`setQuoteOutcome` writes 'owner') and a decided quote are never touched; the UPDATE
+  re-checks both. Rows from before the column (from = null) are left as they are.
+  `backfillPriceMemory` also skips `quote_amount_from = 'owner'`.
+- Migration (step 3): `threads.quote_amount_from text`, `threads.quote_amount_at timestamptz`
+  (additive, one file).

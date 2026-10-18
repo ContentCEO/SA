@@ -268,6 +268,17 @@ export const threads = pgTable(
      */
     quoteAmountNote: text("quote_amount_note").$type<"total" | "picked">(),
     /**
+     * Check 11 P3: where the amount came from — 'reply' (read from the owner's email, so a
+     * corrected price replaces it while the quote is open) or 'owner' (typed on Quotes, never
+     * replaced). Null on rows from before the column.
+     */
+    quoteAmountFrom: text("quote_amount_from").$type<"reply" | "owner">(),
+    /**
+     * Check 11 P3: when the price went out — the sent time of the owner email the amount came
+     * from, or when the owner typed it. Quotes' "Priced" total counts by this.
+     */
+    quoteAmountAt: timestamp("quote_amount_at", { withTimezone: true }),
+    /**
      * Who set quote_outcome: the owner ("owner") or our guess ("auto"). The owner always wins.
      * Rows set before this column existed (outcome set, source null) are the owner's.
      */
