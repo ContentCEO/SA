@@ -233,6 +233,20 @@ export const growthCopy = {
     nameGiven: (n: string) => `Name given: ${n}`,
     tradeGiven: (t: string) => `Trade given: ${t}`,
     growthOnly: "Not on the app waitlist. Asking for a Growth call never invites anyone.",
+    /** Check 5 P5: a Growth-only row whose email already has an app account or invite. */
+    growthOnlyHasAccount: "Also uses the app.",
+    growthOnlyInvited: "Invited to the app, not signed in yet.",
+    /**
+     * Check 5 P5: which line a Growth-only row shows, from account and invite existence by email
+     * only (listWaitlist's inviteState) — never plan, status, mailbox or anything from Gmail.
+     */
+    growthOnlyLine(inviteState: string): string {
+      return inviteState === "has_account"
+        ? "Also uses the app."
+        : inviteState === "invited"
+          ? "Invited to the app, not signed in yet."
+          : "Not on the app waitlist. Asking for a Growth call never invites anyone.";
+    },
     growthOnlyError: "That's a Growth call request, not an app sign-up, so nobody was invited.",
   },
   notify: {

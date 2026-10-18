@@ -130,3 +130,7 @@ For the integrator to fold into CLAUDE.md / docs/LAUNCH.md / docs/privacy-policy
   stripe.com/pricing; not pricing). `costLine` adds `feesCents` and `marginAfterFeesCents`
   ($99 → 386¢, $199 → 746¢, $299 → 1106¢); `marginCents` and the alert rule are unchanged. Rows
   read "plan $199 · after Stripe $191.54 · AI $8.40 · keeps $183.14".
+- **Growth card for an app owner (Check 5 P5):** a Growth-only waitlist row now says "Also uses
+  the app." (inviteState has_account) or "Invited to the app, not signed in yet." (invited),
+  from `growthCopy.admin.growthOnlyLine(inviteState)`; nothing beyond account/invite existence by
+  email is read.

@@ -270,7 +270,7 @@ function WaitlistEntry({
         </div>
       ) : null}
       {!facts.app ? (
-        <span className="font-semibold">{ga.growthOnly}</span>
+        <span className="font-semibold">{ga.growthOnlyLine(w.inviteState)}</span>
       ) : w.inviteState === "invited" ? (
         <span className="font-semibold">
           Invited {relativeTime(w.inviteAt ?? w.invitedAt ?? w.createdAt, now)}
