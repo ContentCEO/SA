@@ -135,10 +135,12 @@ function decidedAt(t: { extracted: unknown; quoteOutcomeAt: Date | null }): Date
   return times.length ? new Date(Math.min(...times.map((d) => d.getTime()))) : null;
 }
 
-/** Quote-request threads (and anything that has had an outcome) for one workspace. */
+/**
+ * Quote-request threads (and anything that has had an outcome) for one workspace. Read only
+ * (Check 29 P7): amounts and "no answer" guesses are kept up to date after each sync
+ * (`quoteUpkeepForMailbox`, draft job) and by the daily jobs, never on opening a screen.
+ */
 export async function listQuotes(workspaceId: string, now: Date = new Date()) {
-  await captureQuoteAmounts(workspaceId);
-  await guessNoAnswers(now, workspaceId);
   const { days } = await followupSettings(workspaceId);
   const rows = await db()
     .select({
@@ -465,6 +467,34 @@ export async function guessNoAnswers(
  * amount the owner types when marking a quote Won does not (it may be the final
  * bill, not the quote) — see `backfillPriceMemory`.
  */
+/**
+ * Check 29 P7: after each sync of a mailbox (the draft job, which runs after every sync), catch
+ * the shop's quote amounts from newly synced replies and refresh the "no answer" guesses — what
+ * listQuotes used to do on every Quotes / Customers open. Never fails the job that calls it:
+ * the daily jobs run both again. Logs ids and error names only.
+ */
+export async function quoteUpkeepForMailbox(
+  mailboxId: string,
+  now: Date = new Date(),
+): Promise<{ captured: number; guessed: number }> {
+  try {
+    const [box] = await db()
+      .select({ workspaceId: mailboxes.workspaceId })
+      .from(mailboxes)
+      .where(eq(mailboxes.id, mailboxId));
+    if (!box) return { captured: 0, guessed: 0 };
+    const captured = await captureQuoteAmounts(box.workspaceId);
+    const guessed = await guessNoAnswers(now, box.workspaceId);
+    return { captured, guessed };
+  } catch (err) {
+    console.error("quote_upkeep_failed", {
+      mailboxId,
+      error: err instanceof Error ? err.name : "unknown",
+    });
+    return { captured: 0, guessed: 0 };
+  }
+}
+
 export async function captureQuoteAmounts(workspaceId?: string): Promise<number> {
   const open = await db()
     .select({

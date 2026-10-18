@@ -127,30 +127,28 @@ export default async function InboxPage(props: PageProps<"/inbox">) {
   const readOnly = isReadOnly(workspace);
   const params = await props.searchParams;
   const filter = parseFilter(params.c);
-  const [rows, boxes] = await Promise.all([
+  const [rows, boxes, profile] = await Promise.all([
     listInboxThreads(workspace.id, filter),
     listMailboxes(workspace.id),
+    getBusinessProfile(workspace.id),
   ]);
   const active = filterKey(filter);
-  // "Ask for a review" / the closing question, only where the server's rules allow (#29 #26).
-  // Read-only accounts get none.
-  const offers = await threadOffers(
-    workspace.id,
-    rows.map((r) => r.id),
-  );
-  const timeZone = (await getBusinessProfile(workspace.id))?.timeZone ?? "America/New_York";
-  const pastPrices = await priceMemoryFor(
-    workspace.id,
-    rows.filter((r) => r.category === "quote_request").map((r) => r.id),
-    { timeZone },
-  );
-
-  // Ideas G7 / H3: the customer of each row (their newest email that isn't a side
-  // conversation), its private note, and the email id the sheets post.
-  const customerOf = await notesForThreads(
-    workspace.id,
-    rows.map((r) => r.id),
-  );
+  const timeZone = profile?.timeZone ?? "America/New_York";
+  const ids = rows.map((r) => r.id);
+  // Check 29 P7: one more wait, for everything that needs the rows.
+  const [offers, pastPrices, customerOf] = await Promise.all([
+    // "Ask for a review" / the closing question, only where the server's rules allow (#29 #26).
+    // Read-only accounts get none.
+    threadOffers(workspace.id, ids),
+    priceMemoryFor(
+      workspace.id,
+      rows.filter((r) => r.category === "quote_request").map((r) => r.id),
+      { timeZone },
+    ),
+    // Ideas G7 / H3: the customer of each row (their newest email that isn't a side
+    // conversation), its private note, and the email id the sheets post.
+    notesForThreads(workspace.id, ids),
+  ]);
   const own = boxes.map((b) => b.email);
   const doneMsg = typeof params.done === "string" ? CONTROL_DONE[params.done] : undefined;
   const errorMsg = typeof params.error === "string" ? INBOX_ERRORS[params.error] : undefined;

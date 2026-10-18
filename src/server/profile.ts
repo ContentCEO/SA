@@ -1,5 +1,6 @@
 import "server-only";
 import { eq } from "drizzle-orm";
+import { cache } from "react";
 import { z } from "zod";
 import { LICENSE_FIELD_MAX, type Licenses } from "@/config/licenses";
 import { cleanExtraTrades, MAX_EXTRA_TRADES, TRADES, type Trade } from "@/config/trades";
@@ -204,15 +205,19 @@ export function businessProfileInputFor(stored: { trade?: string | null; state?:
   });
 }
 
-export async function getBusinessProfile(
-  workspaceId: string,
-): Promise<BusinessProfile | undefined> {
-  const [row] = await db()
-    .select()
-    .from(businessProfiles)
-    .where(eq(businessProfiles.workspaceId, workspaceId));
-  return row;
-}
+/**
+ * Check 29 P7: React cache() — one query per request however many places ask (requireOwner and
+ * the layout's banners). Outside a server render (jobs, tests) it is a plain call.
+ */
+export const getBusinessProfile = cache(
+  async (workspaceId: string): Promise<BusinessProfile | undefined> => {
+    const [row] = await db()
+      .select()
+      .from(businessProfiles)
+      .where(eq(businessProfiles.workspaceId, workspaceId));
+    return row;
+  },
+);
 
 export async function saveBusinessProfile(
   workspaceId: string,

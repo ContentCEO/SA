@@ -1,9 +1,18 @@
 import { randomBytes } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { and, eq } from "drizzle-orm";
 import { beforeEach, describe, expect, it } from "vitest";
 import { setModelTransportForTests } from "@/ai/client";
 import type { Database } from "@/db";
-import { activityLog, drafts, mailboxes, messages, threads, workspaces } from "@/db/schema";
+import {
+  activityLog,
+  drafts,
+  mailboxes,
+  messages,
+  priceHistory,
+  threads,
+  workspaces,
+} from "@/db/schema";
 import { MailboxAuthError } from "@/mailbox/connector";
 import { ensureUserAndWorkspace } from "@/server/accounts";
 import { classifyPending } from "@/server/classification";
@@ -32,6 +41,7 @@ import {
   captureQuoteAmounts,
   guessNoAnswers,
   listQuotes,
+  quoteUpkeepForMailbox,
   setQuoteOutcome,
 } from "@/server/quotes";
 import { createTestDb } from "../support/db";
@@ -310,6 +320,8 @@ describe("quote tracker", () => {
     await convo({ from: "ads@spam.com", name: "Ads", category: "noise", inAgo: 1 });
 
     expect(await setQuoteOutcome(workspaceId, won, "won", undefined, NOW)).toBe(true);
+    // Check 29 P7: amounts are caught after a sync (the draft job), not on opening Quotes.
+    await quoteUpkeepForMailbox(mailboxId, NOW);
     const { quotes, totals } = await listQuotes(workspaceId, NOW);
     expect(quotes).toHaveLength(3);
     const by = Object.fromEntries(quotes.map((q) => [q.threadId, q]));
@@ -324,6 +336,62 @@ describe("quote tracker", () => {
       wonCents: 90_000,
       winRatePct: 100,
     });
+  });
+
+  it("opening Quotes or Customers writes nothing (Check 29 P7)", async () => {
+    await convo({
+      from: "dana@x.com",
+      name: "Dana",
+      category: "quote_request",
+      inAgo: 3,
+      outAgo: 2,
+      reply: "That's $1,200.",
+    });
+    // Quiet long enough for a "no answer" guess.
+    await convo({
+      from: "kim@z.com",
+      name: "Kim",
+      category: "quote_request",
+      inAgo: 26,
+      outAgo: 25,
+    });
+    const snapshot = async () => ({
+      threads: await database.select().from(threads).orderBy(threads.id),
+      prices: await database.select().from(priceHistory),
+      activity: await database.select().from(activityLog),
+      drafts: await database.select().from(drafts),
+    });
+    const before = await snapshot();
+    const { quotes } = await listQuotes(workspaceId, NOW);
+    await listCustomers(workspaceId, NOW);
+    expect(await snapshot()).toEqual(before);
+    // Nothing was caught or guessed on open: that waits for the next sync.
+    expect(quotes.every((q) => q.amountCents === null && !q.outcomeGuessed)).toBe(true);
+  });
+
+  it("a quote amount in a sent reply appears after the next sync (Check 29 P7)", async () => {
+    const t = await convo({
+      from: "dana@x.com",
+      name: "Dana",
+      category: "quote_request",
+      inAgo: 3,
+    });
+    expect((await listQuotes(workspaceId, NOW)).quotes[0]!.amountCents).toBeNull();
+    // The sync stores the owner's reply …
+    await database.insert(messages).values({
+      threadId: t,
+      mailboxId,
+      gmailMessageId: `${t}-reply`,
+      direction: "out",
+      fromAddress: "owner@shop.com",
+      bodyText: "Hi Dana, $1,450 installed.",
+      sentAt: daysAgo(1),
+    });
+    // … and the draft job that follows every sync runs the quote upkeep.
+    expect(await quoteUpkeepForMailbox(mailboxId, NOW)).toMatchObject({ captured: 1 });
+    expect((await listQuotes(workspaceId, NOW)).quotes[0]!.amountCents).toBe(145_000);
+    const jobs = readFileSync("src/jobs/functions.ts", "utf8");
+    expect(jobs).toContain('step.run("quote-upkeep", () => quoteUpkeepForMailbox(mailboxId))');
   });
 
   it("keeps the amount after the reply text is purged, and lets the owner correct it", async () => {
@@ -385,7 +453,7 @@ describe("quote tracker", () => {
       inAgo: 10,
       outAgo: 9,
     });
-    // Answered 25 days ago, never heard back: listQuotes guesses no answer.
+    // Answered 25 days ago, never heard back: the next sync's upkeep guesses no answer.
     const quiet = await convo({
       from: "kim@z.com",
       name: "Kim",
@@ -394,6 +462,7 @@ describe("quote tracker", () => {
       outAgo: 25,
     });
     await setQuoteOutcome(workspaceId, won, "won", undefined, NOW);
+    await quoteUpkeepForMailbox(mailboxId, NOW);
     const { quotes, totals } = await listQuotes(workspaceId, NOW);
     const by = Object.fromEntries(quotes.map((q) => [q.threadId, q]));
     expect(by[quiet]).toMatchObject({ stage: "no_answer", outcomeGuessed: true });
@@ -457,6 +526,7 @@ describe("customer list", () => {
     await convo({ from: "ads@spam.com", name: "Ads", category: "noise", inAgo: 1 });
     await setQuoteOutcome(workspaceId, q, "won", undefined, NOW);
 
+    await quoteUpkeepForMailbox(mailboxId, NOW);
     const list = await listCustomers(workspaceId, NOW);
     expect(list.map((c) => c.address)).toEqual(["dana@x.com", "rep@supply.com"]);
     expect(list[0]).toMatchObject({ name: "Dana Ruiz", conversations: 2, wonCents: 70_000 });

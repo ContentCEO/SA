@@ -1,6 +1,7 @@
 import "server-only";
 import { and, eq, isNull, or, sql } from "drizzle-orm";
 import { cookies } from "next/headers";
+import { cache } from "react";
 import { TERMS_COOKIE, TERMS_COOKIE_PATH, TERMS_VERSION } from "@/config/legal";
 import { db } from "@/db";
 import { users } from "@/db/schema";
@@ -16,9 +17,13 @@ export async function termsOf(userId: string): Promise<{ termsVersion: string | 
 }
 
 /** Whether this person has agreed to the current terms. */
-export async function termsAccepted(userId: string): Promise<boolean> {
-  return hasCurrentTerms(await termsOf(userId));
-}
+/**
+ * Check 29 P7: React cache() — one query per request however many places ask (requireOwner and
+ * the layout's banners). Outside a server render (jobs, tests) it is a plain call.
+ */
+export const termsAccepted = cache(async (userId: string): Promise<boolean> =>
+  hasCurrentTerms(await termsOf(userId)),
+);
 
 /**
  * Records that this person ticked the box just now, for the current version. Never lowers a

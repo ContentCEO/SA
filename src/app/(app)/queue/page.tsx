@@ -86,22 +86,52 @@ const gmailLink = (i: QueueItem) => gmailThreadLink(i);
 export default async function QueuePage(props: PageProps<"/queue">) {
   const { workspace } = await requireOwner();
   const params = await props.searchParams;
-  const [queue, boxes, checklist] = await Promise.all([
-    listQueue(workspace.id),
-    listMailboxes(workspace.id),
-    checklistFor(workspace.id, { readOnly: isReadOnly(workspace) }),
-  ]);
+  const now = new Date();
+  const sending = canSend(workspace);
+  const readOnly = isReadOnly(workspace);
   // One id after a tap, several after "Send N replies" (plan #5).
   const sentIds = (Array.isArray(params.sent) ? params.sent : params.sent ? [params.sent] : [])
     .filter((s) => /^[0-9a-f-]{36}$/i.test(s))
     .slice(0, 50);
-  const summaries = (
-    await Promise.all(sentIds.map((d) => sentDraftSummary(workspace.id, d)))
-  ).filter((s) => s !== null);
+  const answeredDraft =
+    params.error === "answered" && typeof params.d === "string" && /^[0-9a-f-]{36}$/i.test(params.d)
+      ? params.d
+      : null;
+  // Check 29 P7: everything that doesn't need the queue starts at once (one wait) …
+  const [
+    queue,
+    boxes,
+    checklist,
+    profile,
+    firstLook,
+    practiceUsed,
+    device,
+    summariesAll,
+    late,
+    answeredHref,
+    readyCount,
+    away,
+  ] = await Promise.all([
+    listQueue(workspace.id),
+    listMailboxes(workspace.id),
+    checklistFor(workspace.id, { readOnly }),
+    getBusinessProfile(workspace.id),
+    firstLookFor(workspace),
+    // Plan #40: practice sends only exist during the three days.
+    canPracticeSend(workspace, now) ? practiceSendsUsed(workspace.id) : null,
+    devicePrefs(),
+    Promise.all(sentIds.map((d) => sentDraftSummary(workspace.id, d))),
+    lateSends(workspace.id),
+    answeredDraft ? draftGmailLink(workspace.id, answeredDraft) : null,
+    sending && !readOnly
+      ? batchCandidates(workspace.id, BATCH_CATEGORIES).then((r) => r.length)
+      : 0,
+    awayState(workspace.id, now),
+  ]);
+  const summaries = summariesAll.filter((s) => s !== null);
   // Check 9 P10: a tap that was stopped says so; a late one waits on top with Stop it.
   const stopped = summaries.filter((s) => s.stopped);
   const sentAll = summaries.filter((s) => !s.stopped && !s.late);
-  const late = await lateSends(workspace.id);
   const sent = sentAll.length === 1 ? sentAll[0]! : null;
   const sendingIds = sentAll.filter((s) => s.sendingAt).map((s) => s.draftId);
   const sendAt = sentAll
@@ -111,57 +141,59 @@ export default async function QueuePage(props: PageProps<"/queue">) {
   const refused = Number(params.refused) || 0;
   const doneMsg = typeof params.done === "string" ? done[params.done] : undefined;
   const errorMsg = typeof params.error === "string" ? errors[params.error] : undefined;
-  const sending = canSend(workspace);
-  const timeZone = usableTimeZone(
-    (await getBusinessProfile(workspace.id))?.timeZone ?? "America/New_York",
-  );
+  const timeZone = usableTimeZone(profile?.timeZone ?? "America/New_York");
   const clock = new Intl.DateTimeFormat("en-US", { hour: "numeric", minute: "2-digit", timeZone });
-  const readOnly = isReadOnly(workspace);
   // Check 42 P1: "This was already answered from Gmail at 2:14pm. Nothing was sent."
   const answeredAt = params.error === "answered" ? Number(params.at) : NaN;
   const answered =
     params.error === "answered"
       ? {
           at: Number.isFinite(answeredAt) && answeredAt > 0 ? new Date(answeredAt) : null,
-          href:
-            typeof params.d === "string" && /^[0-9a-f-]{36}$/i.test(params.d)
-              ? await draftGmailLink(workspace.id, params.d)
-              : null,
+          href: answeredHref,
         }
       : null;
-  const firstLook = await firstLookFor(workspace);
   const empty = queue.needsYou.length === 0 && queue.drafts.length === 0;
-  const now = new Date();
-  // Plan #40: practice sends only exist during the three days.
-  const practiceLeft = canPracticeSend(workspace, now)
-    ? Math.max(0, PRACTICE_SEND_LIMIT - (await practiceSendsUsed(workspace.id)))
-    : null;
-  const device = await devicePrefs();
+  const practiceLeft =
+    practiceUsed === null ? null : Math.max(0, PRACTICE_SEND_LIMIT - practiceUsed);
   const remindOptions = (i: QueueItem) =>
     snoozeOptions(now, timeZone, i.emergency).map((o) => ({
       choice: o.choice,
       label: SNOOZE_LABELS[o.choice],
     }));
-  const readyCount =
-    sending && !readOnly ? (await batchCandidates(workspace.id, BATCH_CATEGORIES)).length : 0;
-  // Plan #15: the owner's own past prices for similar jobs, on quote-request drafts only.
-  // Shown here and tapped in by the owner — never sent to the drafter.
-  const priceMemory = await priceMemoryFor(
-    workspace.id,
-    queue.drafts.filter((i) => i.category === "quote_request").map((i) => i.threadId),
-    { timeZone, now },
-  );
 
-  // Ideas G7: private notes. Drafts are keyed on where the reply goes; needs-you items on the
-  // customer's newest email. Never in queue counts (those come from queueMembership).
+  // … and what does, together, once the queue is known (the second wait).
   const allThreadIds = [...queue.needsYou, ...queue.drafts].map((i) => i.threadId);
-  const [threadNotes, draftNotes, away] = await Promise.all([
+  const [priceMemory, threadNotes, draftNotes, [notAnswered, leadCards]] = await Promise.all([
+    // Plan #15: the owner's own past prices for similar jobs, on quote-request drafts only.
+    // Shown here and tapped in by the owner — never sent to the drafter.
+    priceMemoryFor(
+      workspace.id,
+      queue.drafts.filter((i) => i.category === "quote_request").map((i) => i.threadId),
+      { timeZone, now },
+    ),
+    // Ideas G7: private notes. Drafts are keyed on where the reply goes; needs-you items on the
+    // customer's newest email. Never in queue counts (those come from queueMembership).
     notesForThreads(workspace.id, allThreadIds),
     notesForAddresses(
       workspace.id,
       queue.drafts.map((i) => i.toAddress),
     ),
-    awayState(workspace.id, now),
+    // Leads package: Call / Text, the emergency lane, lead-site and voicemail cards, the
+    // repeat-customer and outside-your-area lines — read in a fixed number of queries.
+    // B6: customers who have waited over a day with no card here (one row each, oldest first).
+    (async () => {
+      const rows = await notAnsweredRows(workspace.id, now, new Set(allThreadIds));
+      const cards = await leadCardsFor(
+        workspace.id,
+        [
+          ...queue.needsYou.map((i) => ({ ...i, needsYou: true })),
+          ...queue.drafts.map((i) => ({ ...i, needsYou: false })),
+          ...rows.map((r) => ({ ...r, leadChannel: null, needsYou: true })),
+        ],
+        { now, timeZone, businessName: workspace.businessName },
+      );
+      return [rows, cards] as const;
+    })(),
   ]);
   // A phone that keeps a copy of the queue (offline okays) never holds a note's text.
   const noteFor = (i: QueueItem) => (
@@ -176,23 +208,6 @@ export default async function QueuePage(props: PageProps<"/queue">) {
     />
   );
 
-  // Leads package: Call / Text, the emergency lane, lead-site and voicemail cards, the
-  // repeat-customer and outside-your-area lines — read in a fixed number of queries.
-  // B6: customers who have waited over a day with no card here (one row each, oldest first).
-  const notAnswered = await notAnsweredRows(
-    workspace.id,
-    now,
-    new Set([...queue.needsYou, ...queue.drafts].map((i) => i.threadId)),
-  );
-  const leadCards = await leadCardsFor(
-    workspace.id,
-    [
-      ...queue.needsYou.map((i) => ({ ...i, needsYou: true })),
-      ...queue.drafts.map((i) => ({ ...i, needsYou: false })),
-      ...notAnswered.map((r) => ({ ...r, leadChannel: null, needsYou: true })),
-    ],
-    { now, timeZone, businessName: workspace.businessName },
-  );
   // The lane comes from the queue's own membership, like the counts (B5).
   const lane = queue.needsYou.filter((i) => i.lane);
   const needsYou = queue.needsYou.filter((i) => !i.lane);

@@ -66,3 +66,24 @@ Proposed CLAUDE.md Decisions line:
 "- **Extracted facts (2026-10-18, Check 30 P6):** `threads.classified_prompt_version` records the
   classify version that wrote `extracted`; read `extracted` with `readExtracted`
   (src/server/extracted.ts), not casts. A new classify version that adds keys adds its schema there."
+
+## Step 4: Check 29 P7 — read each thing once per screen; no writes on Quotes / Customers
+
+- `getWorkspaceForUser`, `listMailboxes`, `getBusinessProfile` and `termsAccepted` are wrapped in
+  React `cache()` (one query per request; a plain call in jobs and tests). requireOwner's checks
+  are unchanged. Nothing in src/server calls them after a write in the same request (checked).
+- Queue page: one `Promise.all` for everything that doesn't need the queue (profile, first look,
+  practice count, device prefs, sent summaries, late sends, answered link, batch count, away
+  state), then one for what does (price memory, notes, not-answered rows → lead cards).
+  Inbox: rows + mailboxes + profile, then offers + price memory + notes.
+- `listQuotes` (and so `listCustomers`) no longer writes. `quoteUpkeepForMailbox` (quotes.ts) runs
+  `captureQuoteAmounts` + `guessNoAnswers` for the mailbox's shop as step `quote-upkeep` of the draft
+  job, which runs after every sync; the daily jobs still run both. It never fails the draft job
+  (logs `quote_upkeep_failed` with ids and the error name).
+- Visible difference: a "no answer" guess now appears within one sync (about 5 minutes) or the daily
+  scan after it becomes due, instead of the moment Quotes opens.
+
+Proposed CLAUDE.md Decisions line:
+"- **Screens read, jobs write (2026-10-18, Check 29 P7):** opening a screen never writes; quote
+  amounts and no-answer guesses are refreshed by the draft job after every sync
+  (`quoteUpkeepForMailbox`) and the daily jobs. Shared per-request reads use React `cache()`."

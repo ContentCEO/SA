@@ -1,5 +1,6 @@
 import "server-only";
 import { and, asc, eq, sql } from "drizzle-orm";
+import { cache } from "react";
 import { db } from "@/db";
 import { activityLog, mailboxes, type Mailbox, type Workspace } from "@/db/schema";
 import { decryptSecret, encryptSecret } from "@/lib/crypto";
@@ -35,8 +36,12 @@ export class MailboxLimitError extends Error {
   }
 }
 
-export async function listMailboxes(workspaceId: string): Promise<MailboxSummary[]> {
-  return db()
+/**
+ * Check 29 P7: React cache() — one query per request however many places ask (requireOwner and
+ * the layout's banners). Outside a server render (jobs, tests) it is a plain call.
+ */
+export const listMailboxes = cache(async (workspaceId: string): Promise<MailboxSummary[]> =>
+  db()
     .select({
       id: mailboxes.id,
       email: mailboxes.email,
@@ -51,8 +56,8 @@ export async function listMailboxes(workspaceId: string): Promise<MailboxSummary
     })
     .from(mailboxes)
     .where(eq(mailboxes.workspaceId, workspaceId))
-    .orderBy(asc(mailboxes.connectedAt));
-}
+    .orderBy(asc(mailboxes.connectedAt)),
+);
 
 /**
  * Save (or refresh) a connected mailbox. Reconnecting the same address replaces

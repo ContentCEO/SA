@@ -30,7 +30,7 @@ import { purgeEmailSentRecords } from "@/lib/email";
 import { sendAccessLostAlerts } from "@/server/alerts";
 import { purgeAdminNoticeMarkers } from "@/server/admin-notify";
 import { recordLifecycleRun } from "@/server/health-deep";
-import { captureQuoteAmounts, guessNoAnswers } from "@/server/quotes";
+import { captureQuoteAmounts, guessNoAnswers, quoteUpkeepForMailbox } from "@/server/quotes";
 import { sendLeadAlerts } from "@/server/sms-alerts";
 import { sendEmergencyAlerts } from "@/server/emergency-alerts";
 import { sendPushAlerts } from "@/server/push-alerts";
@@ -232,6 +232,9 @@ export const draftMailbox = inngest.createFunction(
   async ({ event, step }) => {
     const { mailboxId } = event.data;
     await step.run("reconcile", () => politely(() => reconcileDrafts(mailboxId)));
+    // Check 29 P7: quote amounts from newly synced replies and "no answer" guesses, here after
+    // every sync instead of on every Quotes / Customers open.
+    await step.run("quote-upkeep", () => quoteUpkeepForMailbox(mailboxId));
     const due = await step.run("due", () => threadsToAutoDraft(mailboxId, 10));
     let created = 0;
     for (const threadId of due) {
