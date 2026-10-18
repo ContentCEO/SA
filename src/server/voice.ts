@@ -12,7 +12,8 @@ import { AiCapReachedError } from "@/ai/usage";
 import { db } from "@/db";
 import { activityLog, mailboxes, voiceProfiles, workspaces, type Mailbox } from "@/db/schema";
 import { MailboxAuthError, type MailboxReader } from "@/mailbox/connector";
-import { gmailClientFor, logGmailUnits } from "./gmail-units";
+import { logGmailUnits } from "./gmail-units";
+import { serverMailboxClient } from "./mailbox-client";
 import { mailboxRunning } from "./mailbox-plan";
 import { jobsAllowed } from "./lifecycle";
 import { markReconnectNeeded } from "./sync";
@@ -92,7 +93,7 @@ export async function learnVoice(
   if (!mailbox) return "no_mailbox";
 
   await setStatus(workspaceId, "learning", now);
-  const reader = (opts.readerFor ?? ((m) => gmailClientFor(m)))(mailbox);
+  const reader = (opts.readerFor ?? ((m) => serverMailboxClient(m)))(mailbox);
 
   let bodies: string[];
   try {

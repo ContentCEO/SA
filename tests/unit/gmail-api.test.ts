@@ -406,3 +406,43 @@ describe("message parsing", () => {
     ]);
   });
 });
+
+describe("a rotated refresh token (Check 47 P2)", () => {
+  it("is handed over once and used for the next refresh", async () => {
+    const rotated = vi.fn().mockResolvedValue(undefined);
+    const f = vi
+      .fn()
+      .mockResolvedValueOnce(json({ access_token: "at1", refresh_token: "rt-2" }))
+      .mockResolvedValueOnce(json({}, 401))
+      .mockResolvedValueOnce(json({ access_token: "at2", refresh_token: "rt-2" }))
+      .mockResolvedValueOnce(json({ emailAddress: "o@x.com", historyId: "5" }));
+    const r = createGmailReader({
+      refreshToken: "rt-1",
+      fetchImpl: f as unknown as typeof fetch,
+      onRefreshTokenRotated: rotated,
+    });
+    await r.getProfile();
+    expect(rotated).toHaveBeenCalledTimes(1);
+    expect(rotated).toHaveBeenCalledWith("rt-2");
+    expect(String(f.mock.calls[0]![1].body)).toContain("refresh_token=rt-1");
+    expect(String(f.mock.calls[2]![1].body)).toContain("refresh_token=rt-2");
+  });
+
+  it("a failure to store it is logged by name only and doesn't fail the call", async () => {
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    const f = vi
+      .fn()
+      .mockResolvedValueOnce(json({ access_token: "at1", refresh_token: "rt-secret-2" }))
+      .mockResolvedValueOnce(json({ emailAddress: "o@x.com", historyId: "5" }));
+    const r = createGmailReader({
+      refreshToken: "rt-1",
+      fetchImpl: f as unknown as typeof fetch,
+      onRefreshTokenRotated: async () => {
+        throw new TypeError("db down rt-secret-2");
+      },
+    });
+    await expect(r.getProfile()).resolves.toMatchObject({ historyId: "5" });
+    expect(errors.mock.calls).toEqual([["refresh_token_store_failed", { name: "TypeError" }]]);
+    errors.mockRestore();
+  });
+});

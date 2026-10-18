@@ -159,6 +159,17 @@ export async function saveConnectedMailbox(
 }
 
 /**
+ * Check 47 P2: a provider handed out a new refresh token on a refresh; store it (encrypted)
+ * so the next job uses it. Never logged.
+ */
+export async function saveRotatedRefreshToken(mailboxId: string, token: string) {
+  await db()
+    .update(mailboxes)
+    .set({ encryptedRefreshToken: encryptSecret(token) })
+    .where(eq(mailboxes.id, mailboxId));
+}
+
+/**
  * Check 25 P6: a first read in progress, for Settings → Your Gmail. The start is the read's
  * fixed window plus 30 days (`backfill_since` is "now − 30 days" at the begin); a read that
  * began after the owner reconnected says so instead of "for the first time". Counts only.

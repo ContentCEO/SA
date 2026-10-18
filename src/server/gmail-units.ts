@@ -1,10 +1,8 @@
 import "server-only";
 import { and, eq, lt, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { gmailUnits, mailboxes, type Mailbox } from "@/db/schema";
-import { decryptSecret } from "@/lib/crypto";
+import { gmailUnits, mailboxes } from "@/db/schema";
 import { MailboxRateLimitError } from "@/mailbox/connector";
-import { createGmailReader, type GmailClient } from "@/mailbox/gmail/api";
 import {
   GMAIL_UNITS,
   GMAIL_UNITS_PER_MINUTE,
@@ -98,13 +96,4 @@ export function logGmailUnits(job: string, mailboxId: string, client: unknown) {
   if (typeof units === "number" && units > 0) {
     console.info("gmail_units", { job, mailboxId, gmailUnits: units });
   }
-}
-
-/** The Gmail client for one mailbox, always on its shared unit budget. */
-export function gmailClientFor(m: Pick<Mailbox, "id" | "encryptedRefreshToken">): GmailClient {
-  return createGmailReader({
-    refreshToken: decryptSecret(m.encryptedRefreshToken),
-    mailboxId: m.id,
-    budget: gmailBudgetFor(m.id),
-  });
 }

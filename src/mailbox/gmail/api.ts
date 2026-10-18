@@ -30,6 +30,11 @@ export type GmailReaderOptions = {
    */
   mailboxId?: string;
   budget?: GmailBudget;
+  /**
+   * Check 47 P2: Google answered a refresh with a different refresh token. Awaited; a failure
+   * to store it is logged by name only and the new token is used for this client anyway.
+   */
+  onRefreshTokenRotated?: (token: string) => Promise<void>;
 };
 
 /** Gmail error reasons that mean "slow down", not "you did something wrong". */
@@ -71,7 +76,11 @@ export function parseRetryAfter(message: string | undefined): Date | undefined {
   return Number.isNaN(d.getTime()) ? undefined : d;
 }
 
-const tokenResponse = z.object({ access_token: z.string(), expires_in: z.number().optional() });
+const tokenResponse = z.object({
+  access_token: z.string(),
+  expires_in: z.number().optional(),
+  refresh_token: z.string().optional(),
+});
 
 export type GmailClient = MailboxReader & MailboxWriter & { gmailUnits(): number };
 
@@ -81,6 +90,7 @@ export function createGmailReader(opts: GmailReaderOptions): GmailClient {
   const maxRetries = opts.maxRetries ?? 5;
   const random = opts.random ?? Math.random;
   let accessToken: string | undefined;
+  let refreshToken = opts.refreshToken;
   let unitsUsed = 0;
 
   /** Units are counted per request Google sees, retries included. */
@@ -100,12 +110,20 @@ export function createGmailReader(opts: GmailReaderOptions): GmailClient {
         body: new URLSearchParams({
           client_id: clientId,
           client_secret: clientSecret,
-          refresh_token: opts.refreshToken,
+          refresh_token: refreshToken,
           grant_type: "refresh_token",
         }),
       });
       if (res.ok) {
-        accessToken = tokenResponse.parse(await res.json()).access_token;
+        const answer = tokenResponse.parse(await res.json());
+        accessToken = answer.access_token;
+        if (answer.refresh_token && answer.refresh_token !== refreshToken) {
+          refreshToken = answer.refresh_token;
+          if (opts.onRefreshTokenRotated)
+            await opts.onRefreshTokenRotated(answer.refresh_token).catch((e: unknown) => {
+              console.error("refresh_token_store_failed", { name: (e as Error)?.name });
+            });
+        }
         return accessToken;
       }
       const body = (await res.json().catch(() => ({}))) as { error?: string };

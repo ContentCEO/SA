@@ -1,3 +1,5 @@
+import type { mailboxProviderEnum } from "@/db/schema";
+
 /**
  * Mailbox connector interface. Only Gmail is implemented; Outlook would be a
  * second implementation of this, not a rewrite. Sync and send methods are
@@ -9,8 +11,11 @@ export type ConnectResult = {
   grantedScopes: string[];
 };
 
+/** Every provider the schema knows (`mailboxes.provider`). */
+export type MailboxProvider = (typeof mailboxProviderEnum.enumValues)[number];
+
 export interface MailboxConnector {
-  readonly provider: "gmail";
+  readonly provider: MailboxProvider;
   /** Scopes we must have. Missing any of them means we refuse the connection. */
   readonly requiredScopes: readonly string[];
   /** URL to send the owner to for consent. `state` is our CSRF token. */

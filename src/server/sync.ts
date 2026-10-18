@@ -21,8 +21,9 @@ import {
   type MailMessage,
   type MessageRef,
 } from "@/mailbox/connector";
-import { gmailClientFor, logGmailUnits } from "./gmail-units";
-import { parseAddressList } from "@/mailbox/gmail/parse";
+import { logGmailUnits } from "./gmail-units";
+import { serverMailboxClient } from "./mailbox-client";
+import { parseAddressList } from "@/mailbox/address";
 import { jobsAllowed } from "./lifecycle";
 import { mailboxRunning } from "./mailbox-plan";
 import { mailboxOn } from "./mailbox-plan-rules";
@@ -65,7 +66,7 @@ export type SyncOutcome =
   | { status: "skipped"; reason: "not_found" | "not_active" | "not_ready" | "read_only" }
   | { status: "reconnect_needed" };
 
-export const defaultReaderFor = (m: Mailbox) => gmailClientFor(m);
+export const defaultReaderFor = (m: Mailbox) => serverMailboxClient(m);
 
 async function mapLimit<T, R>(
   items: T[],

@@ -90,7 +90,7 @@ import {
   type MailboxReader,
   type MailboxWriter,
 } from "@/mailbox/connector";
-import { gmailClientFor } from "./gmail-units";
+import { serverMailboxClient } from "./mailbox-client";
 import { buildReplyMime, replySubject, sameText, toGmailRaw } from "@/mailbox/mime";
 import {
   canSend,
@@ -169,7 +169,7 @@ export type DraftDeps = {
   now?: () => Date;
 };
 
-export const defaultWriter = (m: Mailbox) => gmailClientFor(m);
+export const defaultWriter = (m: Mailbox) => serverMailboxClient(m);
 
 export type CreateOutcome =
   | { status: "created"; draftId: string }

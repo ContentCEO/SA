@@ -254,3 +254,18 @@ Under "What we store": "How many photos or files an email had (never the files o
   picked one isn't connected here). No revoke in either case (it may be live).
 - e2e fake Google: `registerScenario(…, { chooser: true })` is the account picked on the chooser;
   a plain consent without a hint is still refused.
+
+## Step 12 · Check 47 P2: one provider switch for mailbox clients; keep rotated tokens
+
+- `src/mailbox/clients.ts` `mailboxClientFor(m, { onRefreshTokenRotated, budget })`: exhaustive
+  switch on `mailboxes.provider` (a `never` check; an unknown value throws). The only place
+  `createGmailReader` is called outside src/mailbox/gmail (guard test).
+- `src/server/mailbox-client.ts` `serverMailboxClient(m)` = that client on the Gmail unit budget,
+  saving a rotated token via `saveRotatedRefreshToken` (src/server/mailboxes.ts, encrypted, never
+  logged). `defaultReaderFor` (sync), `defaultWriter` (drafts) and voice's default use it; names
+  unchanged. (Adapted: one server helper instead of repeating the options in three files.)
+- Gmail `refresh()`: a token answer carrying a different `refresh_token` calls
+  `onRefreshTokenRotated` (awaited; a failure is logged as `refresh_token_store_failed { name }`)
+  and the new token is used from then on.
+- `MailboxConnector.provider` is the schema's provider union (`MailboxProvider`).
+- `parseAddressList` moved to `src/mailbox/address.ts`; `src/mailbox/gmail/parse.ts` re-exports it.
