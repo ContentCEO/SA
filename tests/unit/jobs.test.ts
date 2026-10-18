@@ -196,6 +196,7 @@ describe("background executions (Check 25 P4)", () => {
       "sendFirstDraftsReady",
       "sendTrialEmails",
       "recordLifecycleRun",
+      "runVoiceIdeaCleanup",
     ])
       expect(body, name).toContain(`${name}()`);
   });

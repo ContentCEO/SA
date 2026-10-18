@@ -90,12 +90,13 @@ Settings removes all of our access, that one included.
 - **How you write:** a description of your writing (your usual greeting, sign-off, length and
   common phrases) and up to five short example replies in your style. These examples are written
   by the AI, which is told to use placeholders instead of customers' names and details; before we
-  save them, our own code also replaces any email addresses, phone numbers, prices and street
-  addresses it finds with placeholders. To
+  save the description and the examples, our own code also replaces the email addresses, phone
+  numbers, prices and street addresses it recognizes with placeholders. To
   learn it we read up to 200 of your sent emails from the last year: when you first connect,
   again about once a week (skipped if you have edited your style yourself), when you tap
   **Re-learn from my sent mail**, and again automatically if a read stops part-way. Those sent
   emails are used only for that and are never stored.
+- How many photos or files an email had (never the files or their names).
 - Prices you quoted (the amount, the kind of job and the date), kept as your price memory. Only
   you see them, and they are never sent to the AI.
 - Which invoices are marked paid (or "not owed to me"), a marker on conversations that were ever
@@ -117,7 +118,8 @@ Settings removes all of our access, that one included.
 
 **What you tell us:** your business details (business name, trade, services, service area, hours,
 price list, payment terms, policies, things you never promise, words you never use, short
-seasonal notes, your review link, the towns you work in), your settings, and, if you turn on text
+seasonal notes, your review link, the towns you work in, and the license and registration
+numbers you enter), your settings, and, if you turn on text
 alerts, your own mobile number. Also the sender rules you set (an email address or a company's web
 address, and what to do with its email), the people you mark as VIPs, short private notes you write
 about a customer, and, if you turn on away mode, the day you're back.
@@ -165,7 +167,7 @@ that copy.
   is going wrong right now. It's a draft like any other and waits for your **Send reply**.
 - To reword a draft when you ask, by tapping a quick change or telling it what to change. If you
   speak the change, your browser turns your words into text using its own speech service (run by
-  Google or Apple, depending on your phone); we receive only the text.
+  Google, Apple or Microsoft, depending on your browser); we receive only the text.
 - To keep your quotes, money owed and customers in order, and to remember the prices you quoted.
 - To show **Call** and **Text** buttons, we look for a phone number in the customer's email when
   you open your queue. We don't store the number. Calls and texts go from your own phone:

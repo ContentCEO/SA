@@ -56,6 +56,7 @@ import {
 import { fitAllMailboxesToPlans } from "@/server/mailbox-plan";
 import { sendTrialEmails } from "@/server/trial-emails";
 import { runDraftMessagesCleanup } from "@/server/draft-message-cleanup";
+import { runVoiceIdeaCleanup } from "@/server/voice-idea-cleanup";
 import {
   finishReplyToBackfill,
   replyToBackfillMailboxes,
@@ -569,6 +570,9 @@ export const workspaceLifecycle = inngest.createFunction(
         // missed, book earned free months, and end running ones (those end even with
         // referrals off).
         "referral-rewards": () => runReferralRewards(),
+        // One-off: voices marked edited only by an accepted idea go back on the weekly
+        // refresh (Check 24 P7; no-op after the first run).
+        "voice-idea-cleanup": () => runVoiceIdeaCleanup(),
       }),
     );
     const alertChecks = await step.run("alerts", () =>

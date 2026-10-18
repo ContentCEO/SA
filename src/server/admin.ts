@@ -2,6 +2,7 @@ import "server-only";
 import { and, count, desc, eq, gte, inArray, max, sql, sum } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { utcDay } from "@/ai/usage";
+import { jobExecutionsThisMonth } from "./job-runs";
 import { db } from "@/db";
 import {
   activityLog,
@@ -304,8 +305,12 @@ export async function adminOverview(now: Date = new Date()): Promise<AdminRow[]>
   }));
 }
 
-/** The 5-minute poll syncs every working mailbox; much older than that means jobs stopped. */
-export const JOBS_STALE_AFTER_MS = 20 * 60 * 1000;
+/**
+ * The 5-minute poll syncs every working mailbox; much older than that means jobs stopped. 25
+ * minutes, not 20 (integrator, wave 2): with Gmail push on, the poll leaves a quiet inbox alone
+ * for up to 15 minutes after its last sync (`PUSH_FRESH_MS`), so a healthy one can reach ~20.
+ */
+export const JOBS_STALE_AFTER_MS = 25 * 60 * 1000;
 
 /** Check 16 P1: a first read (the 30-day backfill) still going after this looks stuck. */
 export const FIRST_READ_STUCK_MS = 2 * 60 * 60 * 1000;
@@ -366,6 +371,8 @@ export async function systemHealth(now: Date = new Date()) {
   );
   const trouble = rows.map((r) => mailboxTrouble(r, r.workspace, now));
   return {
+    // Check 25 P4: Inngest meters runs + steps; its free plan pauses at 50,000 a month.
+    jobExecutionsThisMonth: await jobExecutionsThisMonth(now),
     workingMailboxes: working.length,
     needReconnect: rows.filter((r) => r.status === "reconnect_needed").length,
     lastSyncAt: newest,
