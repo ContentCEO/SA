@@ -65,6 +65,7 @@ export async function captureEditSignals(now: Date = new Date(), limit = 50): Pr
         const r = await callStructured({
           workspaceId: workspace.id,
           role: "classify",
+          purpose: "other",
           promptVersion: EDIT_TONE_PROMPT_VERSION,
           maxTokens: 64,
           system: [{ text: EDIT_TONE_INSTRUCTIONS, cache: false }],

@@ -87,3 +87,36 @@ Proposed CLAUDE.md Decisions line:
 "- **Screens read, jobs write (2026-10-18, Check 29 P7):** opening a screen never writes; quote
   amounts and no-answer guesses are refreshed by the draft job after every sync
   (`quoteUpkeepForMailbox`) and the daily jobs. Shared per-request reads use React `cache()`."
+
+## Step 5: Check 29 P4 + Check 29 P5 — the daily AI limit (no migration)
+
+- `reserveAiCall(workspaceId, now, purpose)`; `callStructured` takes `purpose` ("sort" from
+  classify.ts, "draft" from drafts.ts (new drafts and revisions), "voice" from voice.ts, "other"
+  from edit-learning.ts; default "other").
+- **Sort share:** a "sort" call is refused once the day's total count passes
+  `sortCallLimit(cap)` = max(1, floor(cap × `SORT_SHARE` 0.8)) (src/config/models.ts). Built on the
+  one existing counter (no per-purpose column, so no migration): sorting can use at most 80%, and
+  whatever drafts/voice used earlier in the day counts toward it too. Every purpose stops at the
+  full cap; the 80% alert is unchanged (80% of the full cap).
+- **Per inbox:** `dailyAiCallCap(workspaceId)` (src/ai/usage.ts, React-cached) =
+  `AI_DAILY_CALL_CAP` (now per inbox, default 500) × max(1, running inboxes), capped at
+  `AI_DAILY_CALL_CAP_MAX` (default 3000). Running = status active and not paused on the plan
+  (`mailboxRunning`). `dailyAiCallCapSql` is the SQL twin for lists (admin costs' "busiest day N
+  of cap", the unsorted sweep). The owner's "limit used up" note reads the same number via
+  `aiCallsToday`.
+- The unsorted sweep (15-minute job) skips shops past sorting's share (it used to skip only at the
+  full cap, which would now re-run sorting that can't proceed).
+- Owner note (assistant-status-rules): at sorting's share the top note says "Most of today's
+  assistant limit is used." / "New email waits until 8pm to be sorted, so the rest is kept for your
+  replies. It's safe in Gmail and catches up on its own." It now comes before "N new emails aren't
+  sorted yet" (whose "we try again every 15 minutes" isn't true once sorting waits for tomorrow).
+- `.env.example` and docs/SETUP.md list `AI_DAILY_CALL_CAP_MAX`.
+
+**docs/LAUNCH.md** (env table row for `AI_DAILY_CALL_CAP`): add `AI_DAILY_CALL_CAP_MAX` next to it,
+same advice ("Leave unset").
+
+Proposed CLAUDE.md Decisions line:
+"- **AI limit (2026-10-18, Check 29 P4/P5):** a shop's daily limit is `AI_DAILY_CALL_CAP` (500)
+  per running inbox, at least one, up to `AI_DAILY_CALL_CAP_MAX` (3000) (`dailyAiCallCap`). Sorting
+  may use 80% of it (`SORT_SHARE`, `reserveAiCall(..., "sort")`); drafts and voice keep the rest.
+  Prices and plan inbox limits unchanged."

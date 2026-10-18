@@ -653,6 +653,8 @@ export async function classifyEmail(
   const request = {
     workspaceId,
     role: "classify" as const,
+    // Check 29 P4: sorting stops at its share of the day's limit; drafts and voice keep the rest.
+    purpose: "sort" as const,
     promptVersion: CLASSIFY_PROMPT_VERSION,
     maxTokens: 1024,
     system: [

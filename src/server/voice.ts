@@ -143,6 +143,7 @@ export async function learnVoice(
     const request = {
       workspaceId,
       role: "voice" as const,
+      purpose: "voice" as const,
       promptVersion: VOICE_PROMPT_VERSION,
       maxTokens: 8192,
       system: [{ text: VOICE_INSTRUCTIONS, cache: false }],

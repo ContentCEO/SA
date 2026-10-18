@@ -427,5 +427,10 @@ describe("the honest assistant note (C6, C7)", () => {
     );
     expect(assistantNotice({ ...base, unsorted: 1 })!.title).toBe("1 new email isn't sorted yet.");
     expect(assistantNotice({ ...base, calls: 80 })!.title).toMatch(/Most of today/);
+    // Check 29 P4: at sorting's share, sorting waits for tomorrow: no "try again in 15 minutes".
+    const paused = assistantNotice({ ...base, calls: 80, unsorted: 3 })!;
+    expect(paused.title).toMatch(/Most of today/);
+    expect(paused.body).toContain("8pm");
+    expect(assistantNotice({ ...base, calls: 79, unsorted: 3 })!.title).toMatch(/aren't sorted/);
   });
 });

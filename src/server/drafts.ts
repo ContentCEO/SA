@@ -1186,6 +1186,7 @@ export async function createDraftForThread(
       const request = {
         workspaceId: workspace.id,
         role: "draft" as const,
+        purpose: "draft" as const,
         promptVersion,
         maxTokens: 4096,
         effort: "medium" as const,
@@ -2554,6 +2555,7 @@ export async function reviseDraft(
   const request = {
     workspaceId: workspace.id,
     role: "draft" as const,
+    purpose: "draft" as const,
     promptVersion: `${
       opening !== null
         ? `${REVISE_PROMPT_VERSION}+${OPENING_TWEAKS_PROMPT_VERSION}`
