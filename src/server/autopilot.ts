@@ -186,7 +186,32 @@ export type GuardrailInput = {
    * code check here reads English only, so it waits.
    */
   otherLanguage?: boolean;
+  /**
+   * Check 20 P8: the customer's newest email has someone on To or Cc who was never on this
+   * conversation before (a husband, a property manager, an adjuster, a lawyer). The draft
+   * only answers the customer, so the owner looks first.
+   */
+  newPersonCopied?: boolean;
 };
+
+/**
+ * Check 20 P8: anyone on the newest email's To or Cc, other than the shop's own Gmail
+ * addresses, who never appeared (as sender, To or Cc) on an earlier email of the thread.
+ * Pure; addresses compared lower-cased.
+ */
+export function newPersonCopied(
+  newest: { to: readonly string[]; cc: readonly string[] },
+  earlier: readonly { from: string | null; to: readonly string[]; cc: readonly string[] }[],
+  own: readonly string[],
+): boolean {
+  const norm = (a: string) => a.trim().toLowerCase();
+  const seen = new Set(own.map(norm));
+  for (const m of earlier) {
+    if (m.from) seen.add(norm(m.from));
+    for (const a of [...m.to, ...m.cc]) seen.add(norm(a));
+  }
+  return [...newest.to, ...newest.cc].some((a) => norm(a) !== "" && !seen.has(norm(a)));
+}
 
 /** Layer 3. Every reason this email must wait for the owner; empty = may go. */
 export function guardrailReasons(g: GuardrailInput): string[] {
@@ -235,6 +260,7 @@ export function guardrailReasons(g: GuardrailInput): string[] {
   if (g.firstReply) out.push("First replies to new customers always wait for you.");
   if (g.otherLanguage || looksNonEnglish(g.draftBody))
     out.push("Not in English, so it waits for you.");
+  if (g.newPersonCopied) out.push("Someone new is on this conversation, so it waits for you.");
   return out;
 }
 
@@ -408,11 +434,40 @@ async function blockers(row: NonNullable<Awaited<ReturnType<typeof loadForAutopi
       sentAt: messages.sentAt,
       subject: messages.subject,
       bodyText: messages.bodyText,
+      id: messages.id,
+      to: messages.toAddresses,
+      cc: messages.ccAddresses,
     })
     .from(messages)
     .where(and(eq(messages.threadId, thread.id), eq(messages.direction, "in")))
     .orderBy(desc(messages.sentAt))
     .limit(1);
+  // Check 20 P8: who was on the conversation before the customer's newest email.
+  const copiedSomeoneNew = customer
+    ? newPersonCopied(
+        customer,
+        await db()
+          .select({
+            from: messages.fromAddress,
+            to: messages.toAddresses,
+            cc: messages.ccAddresses,
+          })
+          .from(messages)
+          .where(
+            and(
+              eq(messages.threadId, thread.id),
+              lte(messages.sentAt, customer.sentAt),
+              sql`${messages.id} <> ${customer.id}`,
+            ),
+          ),
+        (
+          await db()
+            .select({ email: mailboxes.email })
+            .from(mailboxes)
+            .where(eq(mailboxes.workspaceId, workspace.id))
+        ).map((m) => m.email),
+      )
+    : false;
   const maybeAnswered = customer
     ? (
         await db()
@@ -482,6 +537,7 @@ async function blockers(row: NonNullable<Awaited<ReturnType<typeof loadForAutopi
     // Check 20 P3: the newest part of their email (quoted text cut, as the sorter reads it).
     otherLanguage:
       fullBody !== null && looksNonEnglish(`${customer?.subject ?? ""}\n${prepareBody(fullBody)}`),
+    newPersonCopied: copiedSomeoneNew,
   });
 }
 

@@ -27,6 +27,7 @@ import {
   overdueAutopilotDrafts,
   runAutopilotSend,
   setAutopilot,
+  newPersonCopied,
   unsyncedMessageIds,
   type GuardrailInput,
 } from "@/server/autopilot";
@@ -64,6 +65,21 @@ describe("unsyncedMessageIds (Check 20 P2)", () => {
     expect(unsyncedMessageIds([m("old"), m("a"), m("b")], known)).toEqual([]);
     expect(unsyncedMessageIds([m("x"), m("y")], known)).toEqual(["x", "y"]);
     expect(unsyncedMessageIds([], known)).toEqual([]);
+  });
+});
+
+describe("newPersonCopied (Check 20 P8)", () => {
+  const earlier = [{ from: "dana@customer.com", to: ["owner@shop.com"], cc: ["rob@customer.com"] }];
+  it("only someone never seen on the thread counts", () => {
+    const own = ["owner@shop.com"];
+    expect(newPersonCopied({ to: ["owner@shop.com"], cc: ["new@x.com"] }, earlier, own)).toBe(true);
+    expect(
+      newPersonCopied({ to: ["owner@shop.com"], cc: ["ROB@customer.com"] }, earlier, own),
+    ).toBe(false);
+    expect(newPersonCopied({ to: ["owner@shop.com"], cc: [] }, earlier, own)).toBe(false);
+    expect(
+      newPersonCopied({ to: ["crew@shop.com"], cc: [] }, [], ["owner@shop.com", "crew@shop.com"]),
+    ).toBe(false);
   });
 });
 
@@ -843,6 +859,41 @@ describe("in the database", () => {
       expect(await considerAutopilot(await drafted(await conversation()), NOW)).toEqual(
         later(GRACE_MINUTES),
       );
+    });
+
+    describe("Check 20 P8: someone new on the conversation", () => {
+      const copy = (t: string, cc: string[], to: string[] = ["owner@shop.com"]) =>
+        database
+          .update(messages)
+          .set({ ccAddresses: cc, toAddresses: to })
+          .where(and(eq(messages.threadId, t), eq(messages.direction, "in")));
+
+      it("a new address on Cc stops the countdown, and a later run re-checks it", async () => {
+        const t = await conversation();
+        await copy(t, ["rob@customer.com"]);
+        expect(await considerAutopilot(await drafted(t), NOW)).toBeNull();
+
+        const t2 = await conversation();
+        const draftId = await drafted(t2);
+        expect(await considerAutopilot(draftId, NOW)).toEqual(later(GRACE_MINUTES));
+        await copy(t2, ["adjuster@insurer.com"]);
+        const r = await runAutopilotSend(draftId, deps(later(GRACE_MINUTES)));
+        expect(r.status === "stood_down" && r.reasons).toContain(
+          "Someone new is on this conversation, so it waits for you.",
+        );
+        expect(writer.sent).toHaveLength(0);
+      });
+
+      it("a Cc already on the thread, or the owner's own address, doesn't", async () => {
+        const t = await conversation();
+        // Rob was copied on the owner's earlier email.
+        await database
+          .update(messages)
+          .set({ ccAddresses: ["Rob@Customer.com"] })
+          .where(and(eq(messages.threadId, t), eq(messages.direction, "out")));
+        await copy(t, ["rob@customer.com", "OWNER@shop.com"]);
+        expect(await considerAutopilot(await drafted(t), NOW)).toEqual(later(GRACE_MINUTES));
+      });
     });
 
     it("Check 20 P13: a draft already counting down takes no second slot", async () => {
