@@ -319,17 +319,24 @@ export const customerRobotSql = (address: SQL) => {
 /**
  * Check 22 P10 + 41 P6: SQL twin of `isCrewAddress` (sender-rules.ts) for an address
  * expression in workspace `workspaceId`: on the owner's crew list
- * (`business_profile.crew_addresses`), one of the workspace's own Gmail addresses, or on a
- * connected mailbox's business domain (never public webmail). WHERE clauses / aggregates only,
- * so the address never leaves the database.
+ * (`business_profile.crew_addresses`) or one of the workspace's own Gmail addresses; with
+ * `includeDomain` (Customers' "Your crew and subs" only), also on a connected mailbox's business
+ * domain (never public webmail). WHERE clauses / aggregates only, so the address never leaves
+ * the database.
  */
-export const crewSql = (workspaceId: string | SQL, address: SQL) => {
+export const crewSql = (
+  workspaceId: string | SQL,
+  address: SQL,
+  opts: { includeDomain?: boolean } = {},
+) => {
   const a = sql`lower(trim(coalesce(${address}, '')))`;
   const w = typeof workspaceId === "string" ? sql`${workspaceId}::uuid` : workspaceId;
+  const domain = opts.includeDomain
+    ? sql` or (${domainOf(norm("cw_mb.email"))} not in (${WEBMAIL_SQL}) and ${domainOf(norm("cw_mb.email"))} = ${domainOf(a)})`
+    : sql``;
   return sql`(position('@' in ${a}) > 1 and (
     exists (select 1 from business_profile cw_bp where cw_bp.workspace_id = ${w} and ${a} = any(cw_bp.crew_addresses))
-    or exists (select 1 from mailboxes cw_mb where cw_mb.workspace_id = ${w} and (lower(trim(cw_mb.email)) = ${a}
-      or (${domainOf(norm("cw_mb.email"))} not in (${WEBMAIL_SQL}) and ${domainOf(norm("cw_mb.email"))} = ${domainOf(a)})))
+    or exists (select 1 from mailboxes cw_mb where cw_mb.workspace_id = ${w} and (lower(trim(cw_mb.email)) = ${a}${domain}))
   ))`;
 };
 

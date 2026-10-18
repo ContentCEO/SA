@@ -12,10 +12,16 @@ Proposed `CLAUDE.md` decision text:
   line "Their emails stay in your inbox but aren't customers and don't get drafts."
   (`crewAddressesSchema`: emails, lowercased, de-duplicated, max 30; a form without the field
   leaves the list alone). A changed list logs `crew_list_saved` with `{ count }` only; Activity
-  reads "You updated your crew list (N addresses)". **Crew** = on that list, one of the
-  workspace's own connected Gmail addresses, or on a connected mailbox's business domain (never
-  public webmail): `isCrewAddress` (`sender-rules.ts`, pure) and its SQL twin `crewSql(workspaceId,
-address)` (`thread-sql.ts`, parity-tested); `crewThreadSql` = a thread whose every inbound email
+  reads "You updated your crew list (N addresses)". **Crew** = on that list or one of the
+  workspace's own connected Gmail addresses: `isCrewAddress` (`sender-rules.ts`, pure) and its
+  SQL twin `crewSql(workspaceId, address)` (`thread-sql.ts`, parity-tested). **Adapted:** 22 P10
+  also named "the owner's own non-webmail business domain"; that wider rule
+  (`{ includeDomain: true }`) is used only to file a Customers row under "Your crew and subs".
+  Sorting, drafts, autopilot and the counts use the strict rule, because an owner on an internet
+  provider's domain we don't list as webmail (charter.net, cox.net, sbcglobal.net…) shares it with
+  customers, and a customer taken for crew would be sorted without the model, get no draft and
+  never be needs-you. (The e2e fixtures put owner and customer on example.com, which showed it.)
+  Owners list their own-domain crew in Settings to get the full treatment. `crewThreadSql` = a thread whose every inbound email
   is crew (so a customer's thread the crew replied on is never a crew thread);
   `crewContextFor` / `isCrewFor` (`src/server/crew.ts`) read the list live.
   - Sorting (`classifyPending`): a thread whose every inbound email (From **and** reply address)

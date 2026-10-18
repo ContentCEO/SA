@@ -126,7 +126,8 @@ describe("who is crew (pure + SQL twin)", () => {
     ["jay.paints@gmail.com", true],
     ["JAY.PAINTS@gmail.com ", true],
     ["owner@shop.com", true],
-    ["mike@shop.com", true],
+    // The business domain counts only for filing a row on Customers (includeDomain).
+    ["mike@shop.com", false],
     ["dana@gmail.com", false],
     ["dana@shop.co", false],
     ["mike@notshop.com", false],
@@ -134,6 +135,8 @@ describe("who is crew (pure + SQL twin)", () => {
   ];
   it("listed, own Gmail address, or own business domain", () => {
     for (const [a, want] of table) expect(isCrewAddress(a, ctx), a).toBe(want);
+    expect(isCrewAddress("mike@shop.com", ctx, { includeDomain: true })).toBe(true);
+    expect(isCrewAddress("dana@shop.co", ctx, { includeDomain: true })).toBe(false);
     // Public webmail is never a business domain.
     expect(
       isCrewAddress("anyone@gmail.com", { listed: [], mailboxEmails: ["rosa@gmail.com"] }),
@@ -149,6 +152,12 @@ describe("who is crew (pure + SQL twin)", () => {
         sql`select ${crewSql(workspaceId, sql`${a}`)} as v`,
       )) as unknown as { rows: { v: boolean }[] };
       expect(Boolean(res.rows[0]!.v), a).toBe(want);
+    }
+    for (const a of ["mike@shop.com", "dana@gmail.com", "jay.paints@gmail.com"]) {
+      const res = (await database.execute(
+        sql`select ${crewSql(workspaceId, sql`${a}`, { includeDomain: true })} as v`,
+      )) as unknown as { rows: { v: boolean }[] };
+      expect(Boolean(res.rows[0]!.v), a).toBe(isCrewAddress(a, ctx, { includeDomain: true }));
     }
   });
 });
@@ -193,6 +202,15 @@ describe("Settings: the crew list", () => {
 });
 
 describe("sorting and drafting crew mail", () => {
+  it("someone on the owner's own domain is still sorted and drafted like anyone (not on the list)", async () => {
+    const t = await inbound("dana@shop.com", "Can you quote a kitchen?", { name: "Dana" });
+    const { transport, calls } = fakeTransport([classification({ category: "quote_request" })]);
+    setModelTransportForTests(transport);
+    await classifyPending(mailboxId, { now: NOW });
+    expect(calls).toHaveLength(1);
+    expect((await threadRow(t)).extracted).not.toHaveProperty("crew");
+  });
+
   it("a listed gmail.com crew member: no model call, no job draft, not a customer", async () => {
     await setCrew(["jay.paints@gmail.com"]);
     const t = await inbound(

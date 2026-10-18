@@ -154,7 +154,7 @@ export async function listCustomers(workspaceId: string, now: Date = new Date())
       // Check 13 P1: content-free flags for the kind. A sender pair list is read only for
       // `looksMunicipal` (the same check the sorter uses); it never leaves this function.
       municipalMark: sql<boolean>`coalesce(bool_or(${threads.extracted}->>'municipal' = 'true'), false)`,
-      crew: sql<boolean>`coalesce(bool_or(${crewSql(workspaceId, addr)}), false)`,
+      crew: sql<boolean>`coalesce(bool_or(${crewSql(workspaceId, addr, { includeDomain: true })}), false)`,
       onlySide: sql<boolean>`coalesce(bool_and(${sideEmailSql("messages")}), false)`,
       senders: sql<
         string[] | null

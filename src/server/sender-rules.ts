@@ -89,15 +89,24 @@ export type CrewContext = {
 
 /**
  * Check 22 P10 + 41 P6: an address that is one of the owner's own people, never a customer —
- * on the owner's crew list, one of the workspace's own Gmail addresses (the owner writing to
- * themselves from another connected address), or on the owner's business domain (never
- * public webmail). SQL twin: `crewSql` in thread-sql.ts. Pure.
+ * on the owner's crew list, or one of the workspace's own Gmail addresses (the owner writing
+ * to themselves from another connected address). With `includeDomain`, also anyone on the
+ * owner's business domain (never public webmail) — used only to file a row on Customers under
+ * "Your crew and subs". Sorting, drafts, autopilot and the counts use the strict rule: an owner
+ * on an internet provider's domain we don't list (charter.net, cox.net…) shares it with
+ * customers, and a customer wrongly taken for crew would get no draft and no needs-you.
+ * SQL twin: `crewSql` in thread-sql.ts. Pure.
  */
-export function isCrewAddress(address: string | null | undefined, ctx: CrewContext): boolean {
+export function isCrewAddress(
+  address: string | null | undefined,
+  ctx: CrewContext,
+  opts: { includeDomain?: boolean } = {},
+): boolean {
   const s = (address ?? "").trim().toLowerCase();
   if (!s.includes("@")) return false;
   if (ctx.listed.some((a) => a.trim().toLowerCase() === s)) return true;
   if (ctx.mailboxEmails.some((a) => a.trim().toLowerCase() === s)) return true;
+  if (!opts.includeDomain) return false;
   const domain = s.slice(s.lastIndexOf("@") + 1);
   return ctx.mailboxEmails.some((a) => businessDomainOf(a) === domain);
 }
