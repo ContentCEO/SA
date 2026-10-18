@@ -3,7 +3,15 @@ import { and, eq } from "drizzle-orm";
 import { beforeEach, describe, expect, it } from "vitest";
 import { setModelTransportForTests } from "@/ai/client";
 import type { Database } from "@/db";
-import { activityLog, drafts, mailboxes, messages, threads, workspaces } from "@/db/schema";
+import {
+  activityLog,
+  drafts,
+  mailboxes,
+  messages,
+  priceHistory,
+  threads,
+  workspaces,
+} from "@/db/schema";
 import { MailboxAuthError } from "@/mailbox/connector";
 import { ensureUserAndWorkspace } from "@/server/accounts";
 import { classifyPending } from "@/server/classification";
@@ -26,6 +34,7 @@ import {
   QUOTE_GUESS_FLAG,
   quoteAccepted,
   quoteStage,
+  readOwnerAmount,
 } from "@/server/quote-rules";
 import {
   autoSetQuoteOutcome,
@@ -107,6 +116,65 @@ describe("quote rules", () => {
     expect(amountFromOwnerText("It's $2,400 incl. permit, $150 deposit")).toBe(240_000);
     expect(amountFromOwnerText("about $3.5k all in")).toBe(350_000);
     expect(amountFromOwnerText("I'll come take a look")).toBeNull();
+    // Check 11 P2: the owner's own price, never the biggest number in the email.
+    const cases: [string, number | null][] = [
+      ["$900 for the faucet.\n\nJobs over $5,000 need a 30% deposit", 90_000],
+      ["$900 for the faucet.\n--\nMike's Plumbing\nJobs over $5,000 need a 30% deposit", 90_000],
+      [
+        "Hi Dana, $2,400 for the panel.\n\nFrom: Dana Ruiz <dana@x.com>\nSent: Monday, October 5, 2026 9:14 AM\nTo: Mike\nOur budget is $8,000",
+        240_000,
+      ],
+      [
+        "Hi Dana, $2,400 for the panel.\n\nOn Mon, Oct 5, 2026 at 9:14 AM Dana Ruiz <\ndana@x.com> wrote:\nOur budget is $8,000",
+        240_000,
+      ],
+      ["Normally $5,000 but I can do $4,200", 420_000],
+      ["The right price is $2,100, not $2,600", 210_000],
+      ["I charge $95 per hour", null],
+      ["$125/hr with a $75 trip charge", null],
+      ["Option A $650, Option B $3,900", null],
+      ["$600 installed, $10,000 workmanship guarantee", 60_000],
+      ["You'd save $2,000. Repair is $450.", 45_000],
+      ["The panel costs me $1,800 from the supply house; my price installed is $1,500", 150_000],
+      ["$ 3 200 for the deck boards", null],
+      ["About $1,2k", null],
+      ["$4,800 total, with a $500 deposit to book", 480_000],
+      ["$12k for the addition", 1_200_000],
+      ["$4,000 plus $250 tax, $4,250 total", 425_000],
+      ["$1,450 for the vanity.\n\nSent from my iPhone\n\n> Our budget is $3,000", 145_000],
+      // Check 39 P3: rebates, loans and monthly payments are never the price.
+      [
+        "$21,400 installed. After the $8,500 Mass Save rebate you'd be at $12,900, and the HEAT Loan covers up to $25,000 at 0%.",
+        2_140_000,
+      ],
+      [
+        "Single-zone mini-split $6,200 installed. You may get a $2,650 per ton rebate, up to $8,500 for the whole home.",
+        620_000,
+      ],
+      ["3-ton heat pump $14,950. Basic rebate is $250 per ton.", 1_495_000],
+      [
+        "Boiler replacement $9,800. With the 0% HEAT Loan up to $25,000 you'd pay about $117 a month.",
+        980_000,
+      ],
+      ["$219 a year, or $19 a month", 21_900],
+      [
+        "$7,450 for the AC. Income-eligible homes can get up to $16,000 through Mass Save.",
+        745_000,
+      ],
+      ["Up to $25,000 at 0%.", null],
+    ];
+    const wrong = cases.filter(([text, want]) => amountFromOwnerText(text) !== want);
+    expect(wrong.map(([t, w]) => [t, w, amountFromOwnerText(t)])).toEqual([]);
+    // How sure: a marked total or a lone figure is 'total'; the last of several is 'picked'.
+    expect(readOwnerAmount("$4,000 plus $250 tax, $4,250 total")).toEqual({
+      cents: 425_000,
+      note: "total",
+    });
+    expect(readOwnerAmount("That's $1,200.")).toEqual({ cents: 120_000, note: "total" });
+    expect(readOwnerAmount("Kitchen $3,000, bath $1,800")).toEqual({
+      cents: 180_000,
+      note: "picked",
+    });
     expect(formatCents(145_000)).toBe("$1,450");
     expect(formatCents(145_050)).toBe("$1,450.50");
     expect(parseDollars("$1,450")).toBe(145_000);
@@ -344,6 +412,41 @@ describe("quote tracker", () => {
     expect((await listQuotes(workspaceId, NOW)).quotes[0]!.amountCents).toBe(135_000);
     await setQuoteOutcome(workspaceId, t, null, undefined, NOW); // reopen
     expect((await listQuotes(workspaceId, NOW)).quotes[0]!.stage).toBe("talking");
+  });
+
+  it("price memory only learns clear prices: never a signature figure or our pick (Check 11 P2)", async () => {
+    const sig = await convo({
+      from: "dana@x.com",
+      name: "Dana",
+      category: "quote_request",
+      inAgo: 3,
+      outAgo: 2,
+      reply: "$900 for the faucet.\n\nMike's Plumbing\nJobs over $5,000 need a 30% deposit",
+    });
+    const two = await convo({
+      from: "kim@x.com",
+      name: "Kim",
+      category: "quote_request",
+      inAgo: 3,
+      outAgo: 2,
+      reply: "Kitchen $3,000, bath $1,800",
+    });
+    for (const id of [sig, two])
+      await database
+        .update(threads)
+        .set({ extracted: { service_requested: "faucet swap" } })
+        .where(eq(threads.id, id));
+    expect(await captureQuoteAmounts()).toBe(2);
+    const memory = await database.select().from(priceHistory);
+    expect(memory.map((r) => [r.threadId, r.amountCents])).toEqual([[sig, 90_000]]);
+    const by = Object.fromEntries(
+      (await listQuotes(workspaceId, NOW)).quotes.map((q) => [q.threadId, q]),
+    );
+    expect(by[sig]).toMatchObject({ amountCents: 90_000, amountUnsure: false });
+    expect(by[two]).toMatchObject({ amountCents: 180_000, amountUnsure: true });
+    // A second pass (and the backfill) still leaves the pick out.
+    await captureQuoteAmounts();
+    expect(await database.select().from(priceHistory)).toHaveLength(1);
   });
 
   it("an unsent Gmail draft is neither the owner's answer nor a price (stage, amount)", async () => {

@@ -257,10 +257,16 @@ export const threads = pgTable(
     quoteOutcome: text("quote_outcome"),
     quoteOutcomeAt: timestamp("quote_outcome_at", { withTimezone: true }),
     /**
-     * What the job was quoted at, in cents: taken from the owner's own reply (largest $ figure,
+     * What the job was quoted at, in cents: taken from the owner's own reply (the price in it, `readOwnerAmount`,
      * captured before bodies are purged) or typed by the owner. Kept after the purge.
      */
     quoteAmountCents: integer("quote_amount_cents"),
+    /**
+     * Check 11 P2: how the amount was read from the owner's reply — 'total' (a figure marked as
+     * the price, or the only one) or 'picked' (the last of several: the card says "Check
+     * amount", and it stays out of price memory). Null for a typed amount or older rows.
+     */
+    quoteAmountNote: text("quote_amount_note").$type<"total" | "picked">(),
     /**
      * Who set quote_outcome: the owner ("owner") or our guess ("auto"). The owner always wins.
      * Rows set before this column existed (outcome set, source null) are the owner's.

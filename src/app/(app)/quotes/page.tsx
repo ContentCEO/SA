@@ -90,7 +90,11 @@ function QuoteCard({
           {q.outcomeGuessed ? <span className="font-normal"> (our guess)</span> : null}
         </span>
         {q.amountCents ? (
-          <span className="text-lg font-black">{formatCents(q.amountCents)}</span>
+          <span className="flex items-baseline gap-2">
+            {/* Check 11 P2: our pick among several figures in the reply. */}
+            {q.amountUnsure ? <span className="text-sm font-semibold">Check amount</span> : null}
+            <span className="text-lg font-black">{formatCents(q.amountCents)}</span>
+          </span>
         ) : null}
       </div>
       {q.summary ? <p className="opacity-80">{q.summary}</p> : null}
@@ -267,9 +271,9 @@ export default async function QuotesPage(props: PageProps<"/quotes">) {
             ))}
           </ul>
           <p className="text-sm text-muted-foreground">
-            Won amounts are the largest price in your own reply, or the amount you typed when you
-            marked it won. Quotes you sent only as a PDF count once you type the amount on Won. Won
-            can be our guess for email leads — check Quotes.
+            Won amounts are the price in your own reply, or the amount you typed when you marked it
+            won. Quotes you sent only as a PDF count once you type the amount on Won. Won can be our
+            guess for email leads — check Quotes.
           </p>
         </section>
       ) : null}

@@ -15,7 +15,6 @@ import {
   quoteThreadSql,
 } from "./thread-sql";
 import {
-  amountFromOwnerText,
   canAutoSet,
   closeRate,
   guessNoAnswer,
@@ -26,6 +25,7 @@ import {
   quoteDecidedNote,
   quoteStage,
   quoteStopsNudges,
+  readOwnerAmount,
   shownLostReason,
   type LostReason,
   type QuoteOutcome,
@@ -46,6 +46,8 @@ export type QuoteRow = {
   /** Ideas C5: why it was lost, only while it is lost. */
   lostReason: LostReason | null;
   amountCents: number | null;
+  /** Check 11 P2: the amount is our pick among several figures — the card says "Check amount". */
+  amountUnsure: boolean;
   lastMessageAt: Date | null;
   startedAt: Date;
 };
@@ -72,15 +74,18 @@ const workspaceJobsAllowedSql = (now: Date) =>
 const notPurposeNote = () =>
   sql`not exists (select 1 from drafts d where d.thread_id = ${messages.threadId} and d.purpose is not null and d.sent_gmail_message_id = ${messages.gmailMessageId})`;
 
+type OwnerQuote = { cents: number; sentAt: Date; note: "total" | "picked" };
+
 /**
  * The quote's price as written by the owner: the newest owner message with a dollar figure
- * that isn't a purpose note, sent before `before` (null = any time). Quoted text is stripped.
+ * that isn't a purpose note, sent before `before` (null = any time). Quoted text, signatures
+ * and non-price figures are left out (`readOwnerAmount`, Check 11 P2 + Check 39 P3).
  */
 async function ownerQuotedCents(
   threadIds: string[],
   before: (threadId: string) => Date | null,
-): Promise<Map<string, { cents: number; sentAt: Date }>> {
-  const out = new Map<string, { cents: number; sentAt: Date }>();
+): Promise<Map<string, OwnerQuote>> {
+  const out = new Map<string, OwnerQuote>();
   if (threadIds.length === 0) return out;
   const outbound = await db()
     .select({ threadId: messages.threadId, body: messages.bodyText, sentAt: messages.sentAt })
@@ -100,8 +105,8 @@ async function ownerQuotedCents(
     if (out.has(m.threadId)) continue; // newest reply with a figure wins
     const cutoff = before(m.threadId);
     if (cutoff && new Date(m.sentAt).getTime() >= cutoff.getTime()) continue;
-    const cents = amountFromOwnerText(prepareBody(m.body ?? ""));
-    if (cents) out.set(m.threadId, { cents, sentAt: new Date(m.sentAt) });
+    const read = readOwnerAmount(prepareBody(m.body ?? ""));
+    if (read) out.set(m.threadId, { ...read, sentAt: new Date(m.sentAt) });
   }
   return out;
 }
@@ -150,6 +155,7 @@ export async function listQuotes(workspaceId: string, now: Date = new Date()) {
       outcomeSource: threads.quoteOutcomeSource,
       lostReason: threads.quoteLostReason,
       amountCents: threads.quoteAmountCents,
+      amountNote: threads.quoteAmountNote,
       lastMessageAt: threads.lastMessageAt,
       startedAt: threads.createdAt,
       // The same "who wrote last" as leads at risk: a lead forwarded to the crew is still
@@ -183,6 +189,7 @@ export async function listQuotes(workspaceId: string, now: Date = new Date()) {
     outcomeGuessed: r.outcome != null && r.outcomeSource === "auto",
     lostReason: shownLostReason(r.outcome, r.lostReason),
     amountCents: r.amountCents,
+    amountUnsure: r.amountCents != null && r.amountNote === "picked",
     lastMessageAt: asDate(r.lastMessageAt),
     startedAt: asDate(r.firstAt) ?? r.startedAt,
   }));
@@ -250,7 +257,7 @@ export async function setQuoteOutcome(
         quoteOutcomeAt: outcome ? now : null,
         // Ideas C5: a new mark starts without a reason (asked again after Mark lost).
         quoteLostReason: null,
-        ...(typed ? { quoteAmountCents: amountCents } : {}),
+        ...(typed ? { quoteAmountCents: amountCents, quoteAmountNote: null } : {}),
       })
       .where(eq(threads.id, threadId));
     await tx.insert(activityLog).values({
@@ -493,14 +500,16 @@ export async function captureQuoteAmounts(workspaceId?: string): Promise<number>
       open.map((t) => t.id),
       (id) => decidedAt(info.get(id)!),
     );
-    for (const [id, { cents, sentAt }] of byThread) {
+    for (const [id, { cents, sentAt, note }] of byThread) {
       const set = await db()
         .update(threads)
-        .set({ quoteAmountCents: cents })
+        .set({ quoteAmountCents: cents, quoteAmountNote: note })
         .where(and(eq(threads.id, id), isNull(threads.quoteAmountCents)))
         .returning({ id: threads.id });
       if (!set.length) continue;
       captured++;
+      // Check 11 P2: price memory only learns clear prices, never our pick among several.
+      if (note === "picked") continue;
       const t = info.get(id)!;
       const service = serviceOf(t.extracted);
       if (!service) continue;
@@ -553,6 +562,8 @@ async function backfillPriceMemory(workspaceId?: string): Promise<number> {
         workspaceId ? eq(mailboxes.workspaceId, workspaceId) : undefined,
         quoteThreadSql(),
         isNotNull(threads.quoteAmountCents),
+        // Check 11 P2: our pick among several figures never goes into price memory.
+        sql`${threads.quoteAmountNote} is distinct from 'picked'`,
         sql`coalesce(${service}, '') <> ''`,
         sql`not exists (select 1 from price_history ph where ph.thread_id = ${threads.id})`,
         // Scoped by workspace so activity_log's (workspace_id, created_at) index applies —

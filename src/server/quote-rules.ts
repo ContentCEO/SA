@@ -213,16 +213,127 @@ export function keepQuoteAccepted(t: {
 }
 
 /**
- * The amount the owner quoted: the largest dollar figure in their own words
- * (quoted text from the customer already stripped). Null if none.
+ * Check 11 P2: cut what isn't the owner's own words before reading amounts (`prepareBody` has
+ * already dropped "> " lines and one-line "On … wrote:"): a signature after a "--" line, an
+ * Outlook header block ("From:" with "Sent:" or "Date:" within the next four lines) and what
+ * follows, Gmail's "On …" line wrapped so the next line ends with "wrote:", and "Sent from my
+ * iPhone" and what follows. Amounts only: the classifier keeps `prepareBody` as it is.
  */
-export function amountFromOwnerText(text: string | null | undefined): number | null {
+export function stripForAmounts(text: string): string {
+  const lines = text.replace(/\r\n/g, "\n").split("\n");
+  const out: string[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]!.trim();
+    const next = (lines[i + 1] ?? "").trim();
+    if (
+      line === "--" ||
+      /^sent from my /i.test(line) ||
+      (/^On\s.+/.test(line) && /wrote:\s*$/.test(next)) ||
+      (/^\*?From:\*?\s+\S/i.test(line) &&
+        lines.slice(i + 1, i + 5).some((l) => /^\*?(Sent|Date):\*?\s/i.test(l.trim())))
+    ) {
+      break;
+    }
+    out.push(lines[i]!);
+  }
+  return out.join("\n").trim();
+}
+
+/** Check 11 P2: words right after a figure that make it not the job's price. */
+const NOT_PRICE_AFTER =
+  /\b(per hour|per hr|an hour|an hr|hourly|per month|a month|deposit|trip charge|service call|guarantee|warranty|tax)\b|\/\s?(hr|hour|mo|month)\b/i;
+/** Check 11 P2: words right before a figure that make it not the price (or not the owner's). */
+const NOT_PRICE_BEFORE = /\b(normally|usually|was|not|save|saves|costs me|cost me|budget|over)\b/i;
+/**
+ * Check 39 P3: program figures near a price — rebates, loans, tax credits, monthly payments,
+ * caps ("up to"). Read on both sides, so an "after rebate" / "out of pocket" figure is
+ * dropped too: the saved number is the price before incentives.
+ */
+const PROGRAM_WORDS =
+  /\b(rebates?|incentives?|tax credits?|credits?|loans?|financing|per ton|a ton|a month|per month|monthly|up to|mass save|heat loan|after rebate|out of pocket)\b|0\s?%|\/\s?mo\b/i;
+/** Words that say "this is the price": Check 11 P2. */
+const PRICE_MARKER = /\b(total|all[ -]in|comes to|come to|price is|for the job|in total)\b/i;
+/** Two or more of these → the owner gave choices, not one price. */
+const OPTION_WORD = /\b(option|choice)\b/i;
+const AFTER_WINDOW = 24;
+const BEFORE_WINDOW = 14;
+const PROGRAM_WINDOW = 30;
+
+export type OwnerAmount = {
+  cents: number;
+  /**
+   * 'total' — a figure the owner marked as the price ("$4,250 total", "price is $2,100"), or
+   * the only figure left; 'picked' — the last of several figures (a guess the card asks the
+   * owner to check, kept out of price memory).
+   */
+  note: "total" | "picked";
+};
+
+/**
+ * The amount the owner quoted, from their own words (Check 11 P2 + Check 39 P3), with how sure
+ * we are. Quoted customer text, signatures and forwarded headers are cut first
+ * (`stripForAmounts`). Each "$" figure needs digits right after "$" or "$ " with no inner
+ * spaces and proper thousands commas ("$ 3 200" and "$1,2k" give no figure: the owner types
+ * it). A figure is dropped when the words around it (same sentence, never past another
+ * figure) say it isn't the job's price: an hourly or monthly rate, a deposit, a trip charge,
+ * a guarantee, tax, "normally / was / not / save / costs me / budget / over", or a program
+ * figure (rebate, loan, tax credit, "up to", per ton, 0%) — so the saved number is the price
+ * before incentives. Of what's left, the last figure marked as the price wins ('total'),
+ * else the only one ('total'), else the LAST one ('picked'), never the largest. Several
+ * options ("Option A $650, Option B $3,900") give null. Null when nothing is left.
+ */
+export function readOwnerAmount(text: string | null | undefined): OwnerAmount | null {
   if (!text) return null;
-  const amounts = [...text.matchAll(/\$\s?(\d[\d,]*(?:\.\d{1,2})?)\s*(k\b)?/gi)]
-    .map((m) => Number(m[1]!.replace(/,/g, "")) * (m[2] ? 1000 : 1))
-    .filter((n) => Number.isFinite(n) && n > 0 && n < 10_000_000);
-  if (!amounts.length) return null;
-  return Math.round(Math.max(...amounts) * 100);
+  const body = stripForAmounts(text);
+  const re = /\$ ?(\d{1,3}(?:,\d{3})+|\d+)(\.\d{1,2})?(\s?k\b)?/gi;
+  const found = [...body.matchAll(re)].map((m) => ({
+    m,
+    start: m.index!,
+    end: m.index! + m[0].length,
+  }));
+  type Cand = { cents: number; marked: boolean; option: boolean };
+  const kept: Cand[] = [];
+  found.forEach(({ m, start, end }, i) => {
+    const rest = body.slice(end);
+    // "$ 3 200", "$1,2k", "$12.345": not a figure we can read.
+    if (/^(\s\d|,\d|\.\d)/.test(rest)) return;
+    const value = (Number(m[1]!.replace(/,/g, "")) + Number(m[2] ?? 0)) * (m[3] ? 1000 : 1);
+    if (!Number.isFinite(value) || value <= 0 || value >= 10_000_000) return;
+    // The figure's own clause: stop at a line break, a sentence end or the next figure.
+    const prevEnd = i > 0 ? found[i - 1]!.end : 0;
+    const nextStart = i + 1 < found.length ? found[i + 1]!.start : body.length;
+    let before = body.slice(prevEnd, start);
+    before = before.split(/\n|[.!?;](?:\s|$)/).pop() ?? "";
+    let after = body.slice(end, nextStart);
+    after = after.split(/\n|[.!?;](?:\s|$)/)[0] ?? "";
+    const near = (s: string, n: number, fromEnd: boolean) =>
+      fromEnd ? s.slice(-n) : s.slice(0, n);
+    if (NOT_PRICE_AFTER.test(near(after, AFTER_WINDOW, false))) return;
+    if (NOT_PRICE_BEFORE.test(near(before, BEFORE_WINDOW, true))) return;
+    if (
+      PROGRAM_WORDS.test(near(before, PROGRAM_WINDOW, true)) ||
+      PROGRAM_WORDS.test(near(after, PROGRAM_WINDOW, false))
+    )
+      return;
+    kept.push({
+      cents: Math.round(value * 100),
+      marked:
+        PRICE_MARKER.test(near(before, PROGRAM_WINDOW, true)) ||
+        PRICE_MARKER.test(near(after, PROGRAM_WINDOW, false)),
+      option: OPTION_WORD.test(near(before, PROGRAM_WINDOW, true)),
+    });
+  });
+  if (!kept.length) return null;
+  const marked = kept.filter((c) => c.marked);
+  if (marked.length) return { cents: marked[marked.length - 1]!.cents, note: "total" };
+  if (kept.filter((c) => c.option).length >= 2) return null;
+  if (kept.length === 1) return { cents: kept[0]!.cents, note: "total" };
+  return { cents: kept[kept.length - 1]!.cents, note: "picked" };
+}
+
+/** The amount alone (see `readOwnerAmount`). Null if none. */
+export function amountFromOwnerText(text: string | null | undefined): number | null {
+  return readOwnerAmount(text)?.cents ?? null;
 }
 
 /** "$1,450" / "$1,450.50" from cents. */

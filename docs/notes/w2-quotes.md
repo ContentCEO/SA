@@ -12,3 +12,22 @@ For the integrator to fold into CLAUDE.md (Decisions) and the other shared files
   Customers, follow-ups, the scorecard, the monthly summary, lead pay and leads at risk all
   count the same threads (injection / noise threads no longer count as quote requests
   anywhere). A twin test checks the two agree on 144 combinations.
+- **Check 11 P2 + Check 39 P3 (the quote amount):** `readOwnerAmount` (quote-rules.ts) replaces
+  "largest $ figure". `stripForAmounts` first cuts a "--" signature, an Outlook header block
+  ("From:" + "Sent:"/"Date:" within 4 lines, no Subject needed), a Gmail "On …" line wrapped
+  onto two lines, and "Sent from my iPhone" — amounts only; the classifier's `prepareBody` is
+  unchanged (evals can't be run here). A figure needs digits right after "$"/"$ ", no inner
+  spaces, proper thousands commas ("$ 3 200", "$1,2k" → no figure). Each figure's window is its
+  own sentence and never crosses another figure. Dropped: hourly / monthly rates, deposit, trip
+  charge, guarantee, warranty, tax (24 chars after); normally / was / not / save / costs me /
+  budget / over (14 chars before); program words both sides within 30 chars (rebate, incentive,
+  tax credit, credit, loan, financing, 0%, per ton, a month, monthly, up to, Mass Save, HEAT
+  Loan, after rebate, out of pocket) — the saved price is before incentives. Then: the last
+  figure marked as the price (total, all in, comes to, price is, for the job) → 'total'; the
+  only figure → 'total'; two or more "Option …" figures → none; else the LAST figure →
+  'picked'. New column `threads.quote_amount_note` ('total' | 'picked'; null for typed / old
+  rows). 'picked' shows "Check amount" on the card and never goes into price memory
+  (captureQuoteAmounts and backfillPriceMemory). The lead-pay footnote now says "the price in
+  your own reply". `ownerGavePrice` / acceptance use the same reader, so an hourly rate alone
+  ("$95 per hour") no longer counts as a price given.
+- Migration (step 2): `threads.quote_amount_note text` (additive).
