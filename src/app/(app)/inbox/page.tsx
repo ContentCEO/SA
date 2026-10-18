@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { Headline } from "@/components/brand/headline";
 import { OfferButtons } from "@/components/app/offer-buttons";
-import { PermitCard } from "@/components/app/permit-card";
+import { PermitCard, permitSummaryLine, TownCaution } from "@/components/app/permit-card";
 import { bouncedLine } from "@/server/auto-reply-rules";
 import { AttachmentLine } from "@/components/app/attachment-line";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -215,6 +215,9 @@ export default async function InboxPage(props: PageProps<"/inbox">) {
   const errorMsg = typeof params.error === "string" ? INBOX_ERRORS[params.error] : undefined;
 
   function renderRow(row: InboxRow) {
+    const permit = (row.extracted as { permit?: Parameters<typeof PermitCard>[0]["permit"] })
+      ?.permit;
+    const permitLine = permitSummaryLine(permit);
     return (
       <li key={row.id}>
         <details
@@ -255,6 +258,7 @@ export default async function InboxPage(props: PageProps<"/inbox">) {
             <span className={cn("line-clamp-2", row.needsOwner ? "" : "text-muted-foreground")}>
               {row.summary ?? row.subject ?? "(no subject)"}
             </span>
+            {permitLine ? <span className="text-sm font-semibold">{permitLine}</span> : null}
           </summary>
           <div className="flex flex-col gap-3 border-t border-border px-4 pt-3 pb-4">
             {row.category === null ? (
@@ -286,11 +290,8 @@ export default async function InboxPage(props: PageProps<"/inbox">) {
             {bouncedLine(row.extracted) ? (
               <p className="font-semibold">{bouncedLine(row.extracted)}</p>
             ) : null}
-            <PermitCard
-              permit={
-                (row.extracted as { permit?: Parameters<typeof PermitCard>[0]["permit"] })?.permit
-              }
-            />
+            <TownCaution extracted={row.extracted} />
+            <PermitCard permit={permit} />
             <Details row={row} />
             <AttachmentLine counts={row.attachments} gmail={row} />
             <PastPricesLine prices={pastPrices.get(row.id)} />

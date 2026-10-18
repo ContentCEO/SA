@@ -244,6 +244,8 @@ export type CreateOutcome =
         | "followup_cap"
         | "untrusted"
         | "municipal"
+        /** Check 37 P3: the electric company — only the owner's tap drafts to it. */
+        | "utility"
         // Round 2: asks to pay a new account (A11) — only the owner's tap drafts one.
         | "payment_change"
         /** Check 48 P1: "is this a bot?" — only the owner's tap drafts it. */
@@ -989,6 +991,7 @@ async function writeDraftForThread(threadId: string, opts: CreateOpts): Promise<
 
   const marks = (thread.extracted ?? {}) as {
     municipal?: boolean;
+    utility?: boolean;
     injection?: boolean;
     payment_change?: boolean;
     gas_smell?: boolean;
@@ -1006,6 +1009,7 @@ async function writeDraftForThread(threadId: string, opts: CreateOpts): Promise<
     if (marks.crew) return { status: "skipped", reason: "crew" };
     if (marks.injection) return { status: "skipped", reason: "untrusted" };
     if (marks.municipal) return { status: "skipped", reason: "municipal" };
+    if (marks.utility) return { status: "skipped", reason: "utility" };
     if (marks.payment_change) return { status: "skipped", reason: "payment_change" };
     // Check 48 P1 + 43 P2: "is this a bot?" — the owner answers it (their tap drafts it).
     if (marks.asks_if_ai) return { status: "skipped", reason: "asks_if_ai" };
@@ -2517,6 +2521,7 @@ export async function batchReview(
       dollar_amounts?: number[];
       injection?: boolean;
       municipal?: boolean;
+      utility?: boolean;
       accepts_quote?: boolean;
       payment_change?: boolean;
       gas_smell?: boolean;
@@ -2534,6 +2539,7 @@ export async function batchReview(
       untrusted:
         extracted.injection === true ||
         extracted.municipal === true ||
+        extracted.utility === true ||
         extracted.payment_change === true ||
         extracted.gas_smell === true ||
         extracted.co_alarm === true ||

@@ -112,6 +112,9 @@ test("a failed inspection shows the permit card with what to fix", async ({ page
       inInbox: true,
       category: "customer_question",
       summary: "Rough electrical inspection failed at 12 Elm St.",
+      // Check 36 P4: a town email needs the owner, with a line from its permit facts.
+      needsOwner: true,
+      needsOwnerReason: "From the town: inspection failed, 2 things to fix.",
       lastMessageAt: new Date(),
       extracted: {
         municipal: true,
@@ -142,6 +145,18 @@ test("a failed inspection shows the permit card with what to fix", async ({ page
   await expect(card).toContainText("Permit E-2026-118");
   await expect(card).toContainText("2 things to fix:");
   await expect(card).toContainText("Missing GFCI in garage");
+
+  // Check 37 P2: folded, the row says what's left to fix…
+  await page.goto("/inbox");
+  await expect(page.getByText("Permit E-2026-118 · 2 things to fix")).toBeVisible();
+  // …and the Queue's Needs-you card shows the permit card.
+  await page.goto("/queue");
+  const queueCard = page.locator(`#t-${t!.id}`);
+  await expect(queueCard).toContainText("From the town: inspection failed, 2 things to fix.");
+  const permitOnQueue = queueCard.getByRole("region", { name: "Permit or inspection" });
+  await expect(permitOnQueue).toContainText("Failed");
+  await expect(permitOnQueue).toContainText("Missing GFCI in garage");
+  await expect(permitOnQueue).toContainText("Label the panel");
 });
 
 test("inbox: a word per row, junk folded into one line, and a search that stays on the phone", async ({

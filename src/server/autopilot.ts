@@ -135,6 +135,8 @@ export type GuardrailInput = {
   municipal?: boolean;
   /** Check 22 P10 + 41 P6: the reply goes to the owner's own crew. */
   crew?: boolean;
+  /** Check 37 P3: from the electric company. */
+  utility?: boolean;
   /** The customer's email accepts a quote (classify.v3 signal) — the owner answers those. */
   acceptsQuote?: boolean;
   /** Deposit details, review request, thank-you or closing question (plan #26 #28 #29). */
@@ -245,6 +247,7 @@ export function guardrailCodes(g: GuardrailInput): GuardrailCode[] {
   if (!g.knownCustomer) out.push("not_known");
   if (g.untrusted) out.push("untrusted");
   if (g.municipal) out.push("municipal");
+  if (g.utility) out.push("utility");
   if (g.crew) out.push("crew");
   if (g.acceptsQuote) out.push("accepts_quote");
   // Thank-you notes (2026-10-16) are purpose notes too, so this line covers them.
@@ -532,6 +535,7 @@ async function blockers(
     dollar_amounts?: number[];
     injection?: boolean;
     municipal?: boolean;
+    utility?: boolean;
     accepts_quote?: boolean;
     payment_change?: boolean;
     gas_smell?: boolean;
@@ -557,6 +561,7 @@ async function blockers(
     crew:
       (extracted as { crew?: unknown }).crew === true ||
       (await isCrewFor(workspace.id, draft.toAddress)),
+    utility: extracted.utility === true,
     acceptsQuote: extracted.accepts_quote === true,
     purpose: draft.purpose ?? null,
     maybeAnswered,

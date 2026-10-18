@@ -99,14 +99,20 @@ describe("every town office (TW A5)", () => {
   it.each([
     ["permits@dracut.ma.us", null],
     ["no-reply@opengov.com", "City of Lowell via OpenGov"],
-    ["x@gmail.com", "Town of Dracut Permits"],
-    ["x@gmail.com", "Inspector of Wires"],
-    ["x@gmail.com", "Plumbing & Gas Inspector"],
-    ["x@gmail.com", "Fire Prevention"],
-    ["x@gmail.com", "Board of Health"],
-    ["x@gmail.com", "Conservation Commission"],
-    ["x@gmail.com", "Historic District Commission"],
+    // Check 22 P8: names alone count from an ordinary domain (from gmail.com they're a caution).
+    ["x@example.org", "Town of Dracut Permits"],
+    ["x@example.org", "Inspector of Wires"],
+    ["x@example.org", "Plumbing & Gas Inspector"],
+    ["x@example.org", "Fire Prevention"],
+    ["x@example.org", "Board of Health"],
+    ["x@example.org", "Conservation Commission"],
+    ["x@example.org", "Historic District Commission"],
   ])("recognises %s / %s", (a, n) => expect(looksMunicipal(a, n)).toBe(true));
+  // Check 22 P8: the same names from a personal address are a caution, not the town.
+  it.each([
+    ["x@gmail.com", "Board of Health"],
+    ["x@yahoo.com", "Town of Dracut Permits"],
+  ])("a name alone from %s is not the town", (a, n) => expect(looksMunicipal(a, n)).toBe(false));
   it.each([
     ["x@joesplumbing.us", "Joe"],
     ["no-reply@opengov.com", "OpenGov Newsletter"],

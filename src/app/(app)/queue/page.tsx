@@ -57,6 +57,8 @@ import { Button, buttonVariants } from "@/components/ui/button";
 import { firstLookFor } from "@/server/first-week";
 import { wroteLine } from "@/server/first-week-rules";
 import { NeedsYouCard } from "./needs-you-card";
+import { PermitCard, TownCaution } from "@/components/app/permit-card";
+import type { PermitFacts } from "@/server/permit-rules";
 import { leadCardsFor } from "@/server/lead-cards";
 import { notAnsweredRows } from "@/server/never-answered";
 import { NotAnsweredCard } from "./not-answered-card";
@@ -378,6 +380,12 @@ export default async function QueuePage(props: PageProps<"/queue">) {
       }
       practiceLeft={i.mailboxPaused ? null : practiceLeft}
       priceMemory={priceMemory.get(i.threadId)}
+      permitCard={
+        <>
+          <TownCaution extracted={i.extracted} />
+          <PermitCard permit={(i.extracted as { permit?: PermitFacts } | null)?.permit} />
+        </>
+      }
       noteLine={
         <>
           {alsoQuoteLine(i)}

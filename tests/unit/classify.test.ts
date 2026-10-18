@@ -28,6 +28,75 @@ import { classification, fakeTransport } from "../support/fake-model";
 
 const ctx = { firstTimeSender: false, senderIsVip: false, amountThresholdDollars: 2500 };
 
+describe("Check 36 P4: town emails go to Needs you", () => {
+  const town = (
+    permit: Partial<NonNullable<ReturnType<typeof classification>["extracted"]["permit"]>> | null,
+  ) =>
+    classification({
+      category: "customer_question",
+      priority: "normal",
+      needs_owner: false,
+      needs_owner_reason: null,
+      extracted: {
+        ...classification().extracted,
+        permit: permit
+          ? {
+              issuing_body: "Plumbing & Gas Inspector",
+              permit_number: "P-26-311",
+              inspection_at: null,
+              result: "other",
+              corrections: [],
+              ...permit,
+            }
+          : null,
+      },
+    });
+  it("a failed inspection with two corrections needs you, with the count", () => {
+    const r = applyOwnerRules(
+      town({
+        result: "failed",
+        corrections: ["T&P discharge within 6 inches of floor", "Expansion tank required"],
+      }),
+      { ...ctx, municipal: true },
+    );
+    expect(r).toMatchObject({
+      needsOwner: true,
+      needsOwnerReason: "From the town: inspection failed, 2 things to fix.",
+    });
+    expect(r.hits).toContain("municipal");
+  });
+  it("a passed inspection needs you at normal priority", () => {
+    const m = town({ result: "passed" });
+    const r = applyOwnerRules({ ...m, priority: "high" }, { ...ctx, municipal: true });
+    expect(r).toMatchObject({
+      needsOwner: true,
+      needsOwnerReason: "From the town: inspection passed.",
+      priority: "normal",
+    });
+  });
+  it("scheduled and plain town emails get their own fixed line, never the model's words", () => {
+    expect(
+      applyOwnerRules(town({ result: "scheduled" }), { ...ctx, municipal: true }).needsOwnerReason,
+    ).toBe("From the town: inspection scheduled.");
+    const plain = { ...town(null), needs_owner: true, needs_owner_reason: "Town of Acton wrote." };
+    expect(applyOwnerRules(plain, { ...ctx, municipal: true }).needsOwnerReason).toBe(
+      "From the town.",
+    );
+  });
+  it("an attack from a town address keeps the attack line", () => {
+    const r = applyOwnerRules(town({ result: "failed" }), {
+      ...ctx,
+      municipal: true,
+      injection: true,
+    });
+    expect(r.needsOwnerReason).toBe(INJECTION_REASON);
+  });
+  it("junk from the town is never possible, but a noise sort alone isn't a town reason", () => {
+    const r = applyOwnerRules(classification({ category: "noise" }), { ...ctx, municipal: true });
+    expect(r.needsOwner).toBe(false);
+  });
+});
+
 describe("needs_owner rules are enforced in code", () => {
   it("never lets a complaint through without the owner", () => {
     const r = applyOwnerRules(classification({ category: "complaint", needs_owner: false }), ctx);

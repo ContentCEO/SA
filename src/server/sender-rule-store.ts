@@ -65,6 +65,8 @@ export async function ruleSource(workspaceId: string, messageId: string) {
       mailboxId: messages.mailboxId,
       fromAddress: messages.fromAddress,
       fromName: messages.fromName,
+      // Check 37 P6: a permit portal's notice is recognized by its subject.
+      subject: messages.subject,
       replyToHeader: messages.replyToHeader,
     })
     .from(messages)
@@ -156,7 +158,8 @@ export async function saveRule(
     return { status: "vip" };
   }
   if (input.action === "junk") {
-    if (looksMunicipal(m.fromAddress, m.fromName)) return { status: "refused", why: "municipal" };
+    if (looksMunicipal(m.fromAddress, m.fromName, m.subject))
+      return { status: "refused", why: "municipal" };
     const [p] = await db()
       .select({ vips: businessProfiles.vipSenders })
       .from(businessProfiles)

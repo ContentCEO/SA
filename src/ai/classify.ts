@@ -21,7 +21,9 @@ import {
   INJECTION_REASON,
   injectionCheck,
   looksLikePaymentChange,
-  looksMunicipal,
+  looksLikeUtility,
+  looksLikeUtilityScam,
+  readMunicipal,
   mentionsCarbonMonoxide,
   mentionsElectricalHazard,
   mentionsGasSmell,
@@ -30,6 +32,8 @@ import {
   mentionsWaterSmell,
   incentiveAmounts,
   PAYMENT_CHANGE_REASON,
+  UTILITY_DATE_REASON,
+  UTILITY_SCAM_REASON,
   WATER_SMELL_REASON,
 } from "./guards";
 import { isLeadCategory } from "@/config/categories";
@@ -55,6 +59,21 @@ export type Extracted = ModelClassification["extracted"] & {
    */
   unreadable?: boolean;
   municipal?: boolean;
+  /**
+   * Check 22 P8: only the sender's name says town office, and it writes from gmail.com or the
+   * like. Not the town for the hard rule; the card shows a caution. Only ever present as `true`.
+   */
+  municipal_name_only?: boolean;
+  /**
+   * Check 37 P3: from the electric company (Eversource, National Grid, Unitil, a town light
+   * plant). Never junk, never drafted by a job, never autopilot. Only ever present as `true`.
+   */
+  utility?: boolean;
+  /**
+   * Check 37 P3: a fake disconnect demand (`looksLikeUtilityScam`). Set with `payment_change`,
+   * so every payment-change stop applies; sticky for the thread. Only ever present as `true`.
+   */
+  utility_scam?: boolean;
   injection?: boolean;
   accepts_quote?: boolean;
   job_done?: boolean;
@@ -190,6 +209,7 @@ export const OWNER_RULE_KEYS = [
   "gas",
   "co_alarm",
   "electrical",
+  "utility_scam",
   "payment_change",
   "asks_if_ai",
   "complaint",
@@ -200,6 +220,8 @@ export const OWNER_RULE_KEYS = [
   "amount",
   "big_new_job",
   "emergency",
+  "utility",
+  "municipal",
   "water_smell",
   "phone",
   "site",
@@ -211,11 +233,29 @@ export type OwnerRuleKey = (typeof OWNER_RULE_KEYS)[number];
 /** Hits whose fixed text always wins over the model's own reason (no town or name rides along). */
 const FIXED_TEXT_HITS: readonly OwnerRuleKey[] = [
   "emergency",
+  "utility",
+  "municipal",
   "water_smell",
   "phone",
   "site",
   "outside_area",
 ];
+
+/**
+ * Check 36 P4: why a town email needs the owner, built only from the stored permit facts (never
+ * the model's words or the town's name).
+ */
+export function municipalReason(permit: ModelClassification["extracted"]["permit"]): string {
+  if (permit?.result === "failed") {
+    const n = permit.corrections?.length ?? 0;
+    return n > 0
+      ? `From the town: inspection failed, ${n} thing${n === 1 ? "" : "s"} to fix.`
+      : "From the town: inspection failed.";
+  }
+  if (permit?.result === "scheduled") return "From the town: inspection scheduled.";
+  if (permit?.result === "passed") return "From the town: inspection passed.";
+  return "From the town.";
+}
 
 /** The needs-owner reasons a dispute or legal threat gets (when the model gave none). */
 export const LEGAL_REASON = "Mentions a lawyer, a lien or a claim.";
@@ -370,6 +410,12 @@ type OwnerRuleContext = {
   electricalHazard?: boolean;
   /** Asks to pay a new account (round 2, A11). */
   paymentChange?: boolean;
+  /** Check 37 P3: a fake electric-company disconnect demand. Like a payment change. */
+  utilityScam?: boolean;
+  /** Check 37 P3: from the electric company and the email carries a date. */
+  utilityDate?: boolean;
+  /** Check 36 P4: from the town (code or the model's signal). */
+  municipal?: boolean;
   /** Check 22 P3: lawyers, liens, small claims found in code anywhere in the email. */
   legalThreat?: boolean;
   /** Check 48 P1: asks whether a person or an AI is answering. */
@@ -422,6 +468,13 @@ function ownerRules(
       priority: "high",
       hits: ["electrical"],
     };
+  if (ctx.utilityScam)
+    return {
+      needsOwner: true,
+      needsOwnerReason: UTILITY_SCAM_REASON,
+      priority: "high",
+      hits: ["utility_scam", "payment_change"],
+    };
   if (ctx.paymentChange)
     return {
       needsOwner: true,
@@ -472,6 +525,8 @@ function ownerRules(
       `Mentions more than $${ctx.amountThresholdDollars.toLocaleString("en-US")}.`,
     ],
     [emergency, "emergency", EMERGENCY_REASON],
+    [!!ctx.utilityDate && m.category !== "noise", "utility", UTILITY_DATE_REASON],
+    [!!ctx.municipal && m.category !== "noise", "municipal", municipalReason(m.extracted.permit)],
     [!!ctx.waterSmell, "water_smell", WATER_SMELL_REASON],
     [
       channelLead && channel?.kind !== "site",
@@ -512,7 +567,11 @@ function ownerRules(
           : // Check 36 P1: smelly water is worth a call, not a 2am emergency.
             hit[1] === "water_smell"
             ? "normal"
-            : m.priority,
+            : // Check 36 P4: a passed inspection is good news, worth a look, not urgent.
+              matched.some(([, key]) => key === "municipal") &&
+                m.extracted.permit?.result === "passed"
+              ? "normal"
+              : m.priority,
       hits,
     };
   }
@@ -551,7 +610,13 @@ export type ClassifyOpts = {
   /** Older unsorted emails on the thread: checked in code, never sent to the model (B3). */
   alsoCheck?: string[];
   /** Marks the thread already carries, kept whatever this email says (B3). */
-  sticky?: { injection?: boolean; paymentChange?: boolean; asksIfAi?: boolean };
+  sticky?: {
+    injection?: boolean;
+    paymentChange?: boolean;
+    asksIfAi?: boolean;
+    /** Check 37 P3: the thread already had a fake disconnect demand. */
+    utilityScam?: boolean;
+  };
   /** Leads package: where the email came from, decided in code from the sender. */
   channel?: { kind: ChannelKind; name: string } | null;
   /** Leads package (B9): the owner's towns; empty = no check. */
@@ -614,7 +679,15 @@ function codeChecks(email: EmailInput, opts: Pick<ClassifyOpts, "alsoCheck" | "s
   const asksAi = asksIfAi(checked) || opts.sticky?.asksIfAi === true;
   // Check 22 P3: lawyers, liens, small claims — anywhere in the email, in code.
   const legalThreat = mentionsLegalThreat(checked) || mentionsLegalThreat(fullText);
-  const municipalSender = looksMunicipal(email.fromAddress, email.fromName);
+  // Check 37 P3: the electric company first (a light plant on .gov isn't the building office).
+  const utilitySender = looksLikeUtility(email.fromAddress, email.fromName);
+  const utilityScam =
+    looksLikeUtilityScam(checked, email.fromAddress, email.fromName) ||
+    looksLikeUtilityScam(fullText, email.fromAddress, email.fromName) ||
+    opts.sticky?.utilityScam === true;
+  const municipalRead = readMunicipal(email.fromAddress, email.fromName, email.subject);
+  const municipalSender = !utilitySender && municipalRead.municipal;
+  const municipalNameOnly = municipalRead.nameOnlyWebmail;
   return {
     body,
     earlier,
@@ -632,6 +705,9 @@ function codeChecks(email: EmailInput, opts: Pick<ClassifyOpts, "alsoCheck" | "s
     waterInText,
     paymentChangeInText,
     municipalSender,
+    municipalNameOnly,
+    utilitySender,
+    utilityScam,
   };
 }
 
@@ -648,7 +724,8 @@ function codeFallback(email: EmailInput, c: ReturnType<typeof codeChecks>): Clas
     ...(c.gasInText ? (["gas"] as const) : []),
     ...(co ? (["co_alarm"] as const) : []),
     ...(electrical ? (["electrical"] as const) : []),
-    ...(c.paymentChangeInText ? (["payment_change"] as const) : []),
+    ...(c.utilityScam ? (["utility_scam"] as const) : []),
+    ...(c.paymentChangeInText || c.utilityScam ? (["payment_change"] as const) : []),
   ];
   return {
     ...UNREADABLE,
@@ -660,10 +737,12 @@ function codeFallback(email: EmailInput, c: ReturnType<typeof codeChecks>): Clas
           ? { needsOwnerReason: CO_REASON }
           : electrical
             ? { needsOwnerReason: ELECTRICAL_HAZARD_REASON }
-            : c.paymentChangeInText
-              ? { needsOwnerReason: PAYMENT_CHANGE_REASON }
-              : {}),
-    ...(safety || c.paymentChangeInText ? { priority: "high" as const } : {}),
+            : c.utilityScam
+              ? { needsOwnerReason: UTILITY_SCAM_REASON }
+              : c.paymentChangeInText
+                ? { needsOwnerReason: PAYMENT_CHANGE_REASON }
+                : {}),
+    ...(safety || c.paymentChangeInText || c.utilityScam ? { priority: "high" as const } : {}),
     extracted: {
       ...UNREADABLE.extracted,
       // Check 10 P7: nothing was decided by the model; screens say "Couldn't sort".
@@ -671,11 +750,14 @@ function codeFallback(email: EmailInput, c: ReturnType<typeof codeChecks>): Clas
       ...(safety ? { urgency: "emergency" as const } : {}),
       ...(c.injection ? { injection: true, injection_reasons: c.injectionReasons } : {}),
       ...(c.municipalSender ? { municipal: true } : {}),
+      ...(c.municipalNameOnly ? { municipal_name_only: true } : {}),
       ...(c.gasInText ? { gas_smell: true } : {}),
       ...(co ? { co_alarm: true } : {}),
       ...(electrical ? { electrical_hazard: true } : {}),
       ...(c.waterInText ? { water_smell: true } : {}),
-      ...(c.paymentChangeInText ? { payment_change: true } : {}),
+      ...(c.paymentChangeInText || c.utilityScam ? { payment_change: true } : {}),
+      ...(c.utilityScam ? { utility_scam: true } : {}),
+      ...(c.utilitySender ? { utility: true } : {}),
       ...(c.asksAi ? { asks_if_ai: true } : {}),
       ...(hits.length ? { owner_rule_hits: hits } : {}),
       // Check 12 P1: unreadable always needs the owner; the first code check, else the model's.
@@ -697,7 +779,14 @@ export function codeOnlyClassification(
   opts: Pick<ClassifyOpts, "alsoCheck" | "sticky"> = {},
 ): Classification | null {
   const c = codeChecks(email, opts);
-  if (!(c.gasInText || c.coInText || c.electricalInText || c.paymentChangeInText || c.injection))
+  if (!(
+    c.gasInText ||
+    c.coInText ||
+    c.electricalInText ||
+    c.paymentChangeInText ||
+    c.utilityScam ||
+    c.injection
+  ))
     return null;
   return codeFallback(email, c);
 }
@@ -728,6 +817,9 @@ export async function classifyEmail(
     waterInText,
     paymentChangeInText,
     municipalSender,
+    municipalNameOnly,
+    utilitySender,
+    utilityScam,
   } = checks;
   const preCheck = { flagged: checks.injection };
   const request = {
@@ -749,7 +841,9 @@ export async function classifyEmail(
   if (!result) return codeFallback(email, checks);
 
   const injection = preCheck.flagged || result.signals.tries_to_instruct_assistant;
-  const municipal = municipalSender || result.signals.from_building_department;
+  // Check 37 P3: the electric company is never "the town", whatever the model says (a light
+  // plant is a town department, but its job emails are the utility's).
+  const municipal = !utilitySender && (municipalSender || result.signals.from_building_department);
   // Check 36 P1: when the code read sulfur WATER, the model's gas signal only wins if the email
   // itself names gas or propane somewhere.
   const gasSmell =
@@ -776,8 +870,23 @@ export async function classifyEmail(
     legalThreat ||
     (result.signals.mentions_legal &&
       !(result.signals.routine_paperwork && !mentionsRealLegal(allText)));
+  // Building departments are never noise. Check 37 P3: nor is the electric company (scheduling
+  // when it names a date).
+  const category: Category =
+    municipal && result.category === "noise"
+      ? result.extracted.permit?.result === "scheduled"
+        ? "scheduling"
+        : "customer_question"
+      : utilitySender && result.category === "noise"
+        ? result.extracted.dates.length > 0
+          ? "scheduling"
+          : "customer_question"
+        : result.category;
+  // The owner rules read the kind the email ends up with (Check 37 P3: a utility's job date
+  // the model called junk still needs the owner).
   const model: ModelClassification = {
     ...result,
+    category,
     signals: { ...result.signals, mentions_legal: legal },
   };
   const ownerCtx = {
@@ -791,6 +900,9 @@ export async function classifyEmail(
     coAlarm,
     electricalHazard,
     paymentChange,
+    utilityScam,
+    utilityDate: utilitySender && result.extracted.dates.length > 0,
+    municipal,
     legalThreat,
     asksIfAi: asksAi,
     ignoreAmounts: [...incentiveAmounts(allText), ...(opts.ownerAmounts ?? [])],
@@ -809,17 +921,12 @@ export async function classifyEmail(
   const withoutInjection = injection
     ? applyOwnerRules(model, { ...ownerCtx, injection: false })
     : null;
-  // Building departments are never noise.
-  const category: Category =
-    municipal && result.category === "noise"
-      ? result.extracted.permit?.result === "scheduled"
-        ? "scheduling"
-        : "customer_question"
-      : result.category;
   return {
     category,
     ...rules,
-    ...(municipal && rules.priority === "low" ? { priority: "normal" as const } : {}),
+    ...((municipal || utilitySender) && rules.priority === "low"
+      ? { priority: "normal" as const }
+      : {}),
     summary: result.summary.trim().slice(0, 300),
     confidence: Math.max(0, Math.min(1, result.confidence)),
     extracted: {
@@ -845,11 +952,14 @@ export async function classifyEmail(
           }
         : {}),
       ...(municipal ? { municipal: true } : {}),
+      ...(municipalNameOnly ? { municipal_name_only: true } : {}),
       ...(gasSmell ? { gas_smell: true } : {}),
       ...(coAlarm ? { co_alarm: true } : {}),
       ...(electricalHazard ? { electrical_hazard: true } : {}),
       ...(waterSmell ? { water_smell: true } : {}),
-      ...(paymentChange ? { payment_change: true } : {}),
+      ...(paymentChange || utilityScam ? { payment_change: true } : {}),
+      ...(utilityScam ? { utility_scam: true } : {}),
+      ...(utilitySender ? { utility: true } : {}),
       ...(asksAi ? { asks_if_ai: true } : {}),
       // Signals only — they never change needs_owner (applyOwnerRules ignores them).
       ...(result.signals.accepts_quote ? { accepts_quote: true } : {}),
