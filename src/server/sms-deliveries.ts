@@ -50,11 +50,23 @@ export async function applyTwilioStatus(
     .where(eq(smsDeliveries.id, row.id));
   const reason = stopReasonFor(errorCode);
   if (reason) {
+    // Only an owner whose texts were on gets an Activity line, once (Twilio may report twice).
     const stopped = await db()
       .update(businessProfiles)
       .set({ smsAlertsEnabled: false, smsStoppedReason: reason })
-      .where(eq(businessProfiles.workspaceId, row.workspaceId))
+      .where(
+        and(
+          eq(businessProfiles.workspaceId, row.workspaceId),
+          eq(businessProfiles.smsAlertsEnabled, true),
+        ),
+      )
       .returning({ id: businessProfiles.workspaceId });
+    // A code that couldn't arrive (texts not on yet): just the reason, for the screen.
+    if (!stopped.length)
+      await db()
+        .update(businessProfiles)
+        .set({ smsStoppedReason: reason })
+        .where(eq(businessProfiles.workspaceId, row.workspaceId));
     if (stopped.length)
       await db()
         .insert(activityLog)
