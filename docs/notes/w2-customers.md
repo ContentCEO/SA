@@ -152,3 +152,41 @@ the same `leads@thumbtack.com` address, `large_request`, expected needs-you with
   `CustomerName` link (`src/components/app/customer-name.tsx`, 44px, name underlined) to
   `/customers/<key>`, or plain text when there's no page. No address in any URL.
 - Inbox cards were left to Check 10 P6 (Inbox group); `customerKeySql` is there for it.
+
+## Questions for Davi
+
+1. **Own-domain crew.** Anyone on the owner's business domain (mike@shop.com) is filed under "Your
+   crew and subs" on Customers, but is still sorted and drafted like anyone else unless the owner
+   adds them to "Your crew's email addresses". Built that way because an owner on an internet
+   provider's address (charter.net, cox.net) shares the domain with customers. OK, or should the
+   whole domain count everywhere for owners on their own business domain?
+2. **Crew mail and the AI.** A crew-only conversation is sorted without the AI (as scheduling,
+   needs nobody) unless a safety check fires (gas, CO, electrical, bank change, attack). The two
+   review prompts disagreed (one said keep the AI's kind). OK as built?
+3. **Customers before the first year.** Big jobs from people not in the mail we've read say "Big
+   job from someone who hasn't written in the mail we've read so far." Reading more than 30 days
+   back on connect (so returning customers are recognised) would mean storing more mail: your
+   call (Check 41 "Your calls").
+4. **Won amounts on Customers.** Customers no longer runs the Quotes screen's work, so a won amount
+   appears once Quotes has been opened or the daily job has run. OK?
+
+## Integration notes (expected overlaps)
+
+- `src/server/classification.ts` / `src/ai/classify.ts`: Prompt versions (classify.v6 should take
+  the `"unknown"` first-time wording above), Safety guards follow-ups, Town lists.
+- `src/server/drafts.ts` (`createDraftForThread` reason `crew`, `QueueItem.customerKey`,
+  `listQueue` key query) and `src/app/(app)/queue/*` (`CustomerName` on draft / needs-you cards):
+  Queue screen group.
+- `src/server/quotes.ts`, `src/server/money.ts`, `src/app/(app)/quotes|money/page.tsx`
+  (`customerKey`, `CustomerName`, crew filter on `listQuotes`): Quotes and Money group.
+- `src/server/scorecard.ts`, `src/server/leads-at-risk.ts`, `src/server/first-week.ts` (one crew
+  WHERE line each): Numbers and Activity group.
+- `src/app/(app)/inbox/page.tsx` ("Your crew" tag): Inbox group; `customerKeySql` is ready for
+  Check 10 P6.
+- `src/components/forms/business-profile-form.tsx`, `src/server/profile.ts`,
+  `src/server/profile-defaults.ts`, `src/app/(app)/settings/business/page.tsx` (crew field):
+  Settings and time zone group.
+- `src/server/autopilot.ts` (crew guardrail line): Autopilot rules group.
+- `src/server/thread-sql.ts`: shared helpers added (`crewSql`, `crewThreadSql`,
+  `customerRobotSql`, `customerKeySql`); `noReplySql` now also reads `MACHINE_SENDER_DOMAINS`.
+- No migration, no prompt file.
