@@ -91,6 +91,13 @@ test("activity: plain log, honest estimate, reachable from the menu", async ({ p
     () => document.documentElement.scrollWidth > document.documentElement.clientWidth,
   );
   expect(overflow).toBe(false);
+
+  // Check 42 P5: the record names the sign-in, never a person, and claims no proof of who.
+  await page.getByRole("link", { name: "See record" }).first().click();
+  await expect(page).toHaveURL(/\/record\//);
+  await expect(page.getByText(`Your sign-in (${owner.email})`)).toBeVisible();
+  await expect(page.getByText("Anyone who uses this sign-in can okay replies.")).toBeVisible();
+  await expect(page.getByText(/this is the proof/)).toHaveCount(0);
 });
 
 test("activity at 375px: monthly close rate counts owner and auto outcomes, Money owed link works", async ({

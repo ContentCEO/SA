@@ -70,8 +70,9 @@ export function describeActivity(
       return `You sent ${detail.kind === "followup" ? "a follow-up" : "a reply"}${to}${
         detail.editedByOwner ? ", after editing it" : ""
       }`;
+    // Check 42 P5: anyone with that Gmail could have sent it, so not "You".
     case "reply_sent_from_gmail":
-      return `You sent the draft${to} from Gmail`;
+      return `The draft${to} was sent from Gmail, outside the app`;
     // Check 14 P1: our draft was deleted and the owner wrote their own reply in Gmail.
     case "owner_wrote_own_reply":
       return `You answered ${name ?? "them"} yourself in Gmail`;

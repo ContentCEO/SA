@@ -13,7 +13,9 @@ import { SettingsScreen } from "../screen";
 export const metadata: Metadata = { title: "Account" };
 
 export default async function AccountSettingsPage(props: PageProps<"/settings/account">) {
-  const { workspace } = await requireOwner();
+  const { workspace, session } = await requireOwner();
+  // Check 42 P5: which Google account this is (one sign-in per shop).
+  const signedInAs = session?.user?.email ?? null;
   return (
     <SettingsScreen
       path="/settings/account"
@@ -24,6 +26,11 @@ export default async function AccountSettingsPage(props: PageProps<"/settings/ac
         <h2 id="account" className="sr-only">
           Account
         </h2>
+        {signedInAs ? (
+          <p className="text-lg break-words">
+            Signed in as <span className="font-semibold">{signedInAs}</span> (Google)
+          </p>
+        ) : null}
         <Link href="/billing" className={cn(buttonVariants({ variant: "outline" }), "w-full")}>
           Plan &amp; billing
         </Link>

@@ -2878,7 +2878,10 @@ async function closeSentFromGmail(
     .set({
       status,
       sentVia: ownWords ? "own_words" : "gmail",
-      closedNote: ownWords ? "You answered them yourself in Gmail." : "You sent this from Gmail.",
+      // Check 42 P5: anyone with that Gmail (a delegate too) could have sent it.
+      closedNote: ownWords
+        ? "You answered them yourself in Gmail."
+        : "Sent from Gmail, outside the app.",
       decidedAt: (match ?? newest).sentAt,
     })
     .where(eq(drafts.id, d.id));

@@ -12,6 +12,8 @@ test("delete my account: one clear confirmation, then everything is gone", async
   await page.goto("/settings");
   await page.getByRole("link", { name: /^Account/ }).click();
   await expect(page).toHaveURL(/\/settings\/account$/);
+  // Check 42 P5: which Google account this is.
+  await expect(page.getByText(`Signed in as ${owner.email} (Google)`)).toBeVisible();
 
   await page.getByRole("button", { name: "Delete my account" }).click();
   const confirm = page.getByRole("form", { name: "Delete my account" });
