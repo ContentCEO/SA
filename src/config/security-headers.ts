@@ -68,6 +68,9 @@ export function securityHeaders(env: HeaderEnv = process.env) {
     { key: "X-Frame-Options", value: "DENY" },
     { key: "X-Content-Type-Options", value: "nosniff" },
     { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
+    // Check 26 P9: no other site's window keeps a handle on ours. Google sign-in, Gmail connect
+    // and Stripe Checkout are full-page redirects, not popups, so nothing here needs one.
+    { key: "Cross-Origin-Opener-Policy", value: "same-origin" },
     {
       key: "Permissions-Policy",
       // Nothing uses the camera, location or payments APIs. The microphone is kept to our own

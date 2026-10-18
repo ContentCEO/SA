@@ -74,3 +74,23 @@ For the integrator: what `CLAUDE.md`, `docs/LAUNCH.md` and the legal drafts shou
   self-test. `send-route.test.ts` proves the send API's 429 + Retry-After with no Gmail call.
   Spot-checked: deleting the send (sendTap), billing (checkout) or connect limit fails it.
   New hitLimit calls (other groups) need a row here.
+- **Headers and robots (Check 26 P9):** `poweredByHeader: false` in next.config.ts;
+  `Cross-Origin-Opener-Policy: same-origin` in `securityHeaders()` (sign-in, Gmail connect and
+  Stripe are full-page redirects, not popups); robots.txt no longer names /admin (its three
+  pages already say `robots: { index: false }`, now tested). e2e `security-public.spec.ts`
+  (also in smoke runs) checks COOP, no x-powered-by and robots.txt.
+- **Gmail push checks Pub/Sub's signed token (Check 26 P10):** `src/server/pubsub-auth.ts`
+  verifies the `Authorization: Bearer` Google ID token (RS256 against Google's keys from
+  `https://www.googleapis.com/oauth2/v3/certs`, cached per Cache-Control; iss
+  accounts.google.com, aud = `GMAIL_PUSH_AUDIENCE`, email = `GMAIL_PUSH_SERVICE_ACCOUNT` and
+  verified, exp/iat with 60s skew). With either new setting set, only the signed way counts
+  (half set up refuses everything); the old `?token=` (`GMAIL_PUSH_VERIFICATION_TOKEN`) is
+  accepted only when neither is set, with one content-free `gmail_push_legacy_token` warning per
+  cold start. Refusals log `gmail_push_refused` {reason}. `www.googleapis.com` added to the
+  data-paths FETCH_HOSTS under the existing **Google** line (public keys; nothing about anyone
+  is sent). SETUP.md §6a now describes only the signed setup (`--push-auth-service-account`,
+  `--push-auth-token-audience`).
+- **LAUNCH.md (integrator):** the Gmail push rows (`GMAIL_PUBSUB_TOPIC`,
+  `GMAIL_PUSH_VERIFICATION_TOKEN`, around lines 662 and 963 at 05bb296) should become
+  `GMAIL_PUBSUB_TOPIC`, `GMAIL_PUSH_AUDIENCE`, `GMAIL_PUSH_SERVICE_ACCOUNT` (none sensitive)
+  and point at SETUP.md §6a; the token is no longer set up.

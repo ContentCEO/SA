@@ -340,8 +340,11 @@ describe("C3: every route handler is in the table with the guard it uses", () =>
         }
         case "token": {
           const [post] = handlers(file);
-          expect(firstStatement(post!.fn)).toMatch(/^if \(!tokenOk\(/);
-          expect(src).toContain("timingSafeEqual");
+          // Check 26 P10: Pub/Sub's signed ID token (the old ?token= only during the switch).
+          expect(firstStatement(post!.fn)).toMatch(/^if \(!\(await pushAuthorized\(request\)\)\)/);
+          const auth = readFileSync("src/server/pubsub-auth.ts", "utf8");
+          expect(auth).toContain('verify("RSA-SHA256"');
+          expect(auth).toContain("timingSafeEqual");
           break;
         }
         case "stripe-signature":

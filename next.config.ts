@@ -2,6 +2,8 @@ import type { NextConfig } from "next";
 import { securityHeaders } from "./src/config/security-headers";
 
 const nextConfig: NextConfig = {
+  // Check 26 P9: don't announce the framework (x-powered-by: Next.js).
+  poweredByHeader: false,
   // /privacy and /terms read these files at request time (legal-page.tsx); make sure the
   // server bundle carries them if those pages are ever rendered on demand on Vercel.
   outputFileTracingIncludes: {
