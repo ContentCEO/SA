@@ -116,3 +116,8 @@ For the integrator: what `CLAUDE.md`, `docs/LAUNCH.md` and the legal drafts shou
   deploy means production is broken or isn't running the commit you merged: open the site now.
   To roll back, Vercel → sa → Deployments → the last good Production deployment → ⋯ → Promote
   (Instant Rollback)."
+- **Unit tests on a busy machine (Check 31 P7, adapted):** `vitest.config.mts` hookTimeout 60 s
+  (was 30 s); testTimeout stays at Check 25 P8's 60 s instead of the prompt's 20 s, because the
+  slowest database tests take 10–14 s at load ~18 here and would fail at 20 s only under load.
+  `tests/support/setup.ts` (setupFiles) holds `console.log` / `console.info` lines whose first
+  argument is a snake_case tag (`ai_call`, job tags) and prints them only when that test fails.
