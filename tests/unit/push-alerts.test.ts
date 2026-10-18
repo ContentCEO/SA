@@ -2,7 +2,14 @@ import { generateKeyPairSync, randomBytes, verify } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Database } from "@/db";
-import { activityLog, messages, pushSubscriptions, threads, workspaces } from "@/db/schema";
+import {
+  activityLog,
+  businessProfiles,
+  messages,
+  pushSubscriptions,
+  threads,
+  workspaces,
+} from "@/db/schema";
 import { sendPush, vapidAuthorization } from "@/lib/web-push";
 import { ensureUserAndWorkspace } from "@/server/accounts";
 import { saveConnectedMailbox } from "@/server/mailboxes";
@@ -214,6 +221,72 @@ describe("#36 phone notifications", () => {
       await sendPushAlerts(NOON_NY, { push });
       const left = await database.select().from(pushSubscriptions);
       expect(left.map((s) => s.endpoint)).toEqual([FCM]);
+    });
+
+    it("Check 19 P2: no phone took it → no Activity row, cursor and slot handed back", async () => {
+      await lead(new Date(NOON_NY.getTime() - 60_000));
+      const failed = async () => "failed" as const;
+      expect(await sendPushAlerts(NOON_NY, { push: failed })).toEqual({ sent: 0 });
+      expect(
+        await database.select().from(activityLog).where(eq(activityLog.action, "push_alert_sent")),
+      ).toHaveLength(0);
+      const [p] = await database.select().from(businessProfiles);
+      expect(p?.pushAlertCursor ?? null).toBeNull();
+      expect(p?.pushLastSentAt ?? null).toBeNull();
+      // A run 11 minutes later with a working phone buzzes about the same lead.
+      expect(await sendPushAlerts(new Date(NOON_NY.getTime() + 11 * 60_000), { push })).toEqual({
+        sent: 1,
+      });
+      const [row] = await database
+        .select()
+        .from(activityLog)
+        .where(eq(activityLog.action, "push_alert_sent"));
+      expect(row!.detail).toMatchObject({ quotes: 1, phones: 1 });
+    });
+
+    it("Check 19 P2: one owner's push throwing doesn't stop the next owner's", async () => {
+      await lead(new Date(NOON_NY.getTime() - 60_000));
+      const { workspace: second } = await ensureUserAndWorkspace({ email: "second@shop2.com" });
+      await database
+        .update(workspaces)
+        .set({ status: "active", setupPaidVia: "stripe" })
+        .where(eq(workspaces.id, second.id));
+      const box = await saveConnectedMailbox(second, {
+        email: "second@shop2.com",
+        refreshToken: "rt",
+        grantedScopes: [],
+      });
+      const theirs = "https://fcm.googleapis.com/fcm/send/second";
+      await savePushSubscription(second.id, theirs);
+      const [t] = await database
+        .insert(threads)
+        .values({
+          mailboxId: box.id,
+          gmailThreadId: "second-t",
+          inInbox: true,
+          category: "quote_request",
+          classifiedAt: new Date(NOON_NY.getTime() - 60_000),
+          lastMessageAt: new Date(NOON_NY.getTime() - 60_000),
+        })
+        .returning();
+      await database.insert(messages).values({
+        threadId: t!.id,
+        mailboxId: box.id,
+        gmailMessageId: "second-m",
+        direction: "in",
+        fromAddress: "lee@x.com",
+        sentAt: new Date(NOON_NY.getTime() - 60_000),
+      });
+      const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+      const flaky = async (endpoint: string) => {
+        if (endpoint === FCM) throw new TypeError("boom");
+        pushed.push(endpoint);
+        return "sent" as const;
+      };
+      expect(await sendPushAlerts(NOON_NY, { push: flaky })).toEqual({ sent: 1 });
+      expect(pushed).toEqual([theirs]);
+      expect(JSON.stringify(errors.mock.calls)).not.toMatch(/boom|fcm/);
+      errors.mockRestore();
     });
 
     it("refuses an endpoint that isn't a push service", async () => {

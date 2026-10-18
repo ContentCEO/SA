@@ -103,12 +103,22 @@ export async function claimPushSlot(
 
 /**
  * Hand back a slot claimed at `now` when nothing reached a phone: put the earlier time back,
- * only where this claim is still the one stored (a later claim is left alone).
+ * only where this claim is still the one stored (a later claim is left alone). With
+ * `previousCursor` (Check 19 P2), the new-lead cursor goes back too, so those leads buzz on
+ * the next run.
  */
-export async function releasePushSlot(workspaceId: string, now: Date, previous: Date | null) {
+export async function releasePushSlot(
+  workspaceId: string,
+  now: Date,
+  previous: Date | null,
+  previousCursor?: Date | null,
+) {
   await db()
     .update(businessProfiles)
-    .set({ pushLastSentAt: previous })
+    .set({
+      pushLastSentAt: previous,
+      ...(previousCursor !== undefined ? { pushAlertCursor: previousCursor } : {}),
+    })
     .where(
       and(eq(businessProfiles.workspaceId, workspaceId), eq(businessProfiles.pushLastSentAt, now)),
     );
@@ -151,44 +161,67 @@ export async function sendPushAlerts(
 
   let sent = 0;
   for (const { workspace: w, profile: p } of rows) {
-    if (!jobsAllowed(w, now)) continue;
-    if (inQuietHours(now, p?.timeZone ?? "America/New_York")) continue;
-    const last = p?.pushLastSentAt;
-    if (last && now.getTime() - last.getTime() < SMS.minGapMs) continue;
-    const [today] = await db()
-      .select({ n: count() })
-      .from(activityLog)
-      .where(
-        and(
-          eq(activityLog.workspaceId, w.id),
-          eq(activityLog.action, "push_alert_sent"),
-          gte(activityLog.createdAt, new Date(now.getTime() - 24 * 60 * 60 * 1000)),
-        ),
-      );
-    if ((today?.n ?? 0) >= SMS.dailyCap) continue;
+    // Check 19 P2: one owner's trouble never stops the others; the log names no content.
+    try {
+      if (!jobsAllowed(w, now)) continue;
+      if (inQuietHours(now, p?.timeZone ?? "America/New_York")) continue;
+      const last = p?.pushLastSentAt ?? null;
+      if (last && now.getTime() - last.getTime() < SMS.minGapMs) continue;
+      const [today] = await db()
+        .select({ n: count() })
+        .from(activityLog)
+        .where(
+          and(
+            eq(activityLog.workspaceId, w.id),
+            eq(activityLog.action, "push_alert_sent"),
+            gte(activityLog.createdAt, new Date(now.getTime() - 24 * 60 * 60 * 1000)),
+          ),
+        );
+      if ((today?.n ?? 0) >= SMS.dailyCap) continue;
 
-    const fresh = await freshLeads(w.id, p?.pushAlertCursor ?? null, now);
-    if (!fresh.length) continue;
+      const fresh = await freshLeads(w.id, p?.pushAlertCursor ?? null, now);
+      if (!fresh.length) continue;
 
-    // Claim the slot first so two runs can't both buzz the phone.
-    if (!(await claimPushSlot(w.id, now, { pushAlertCursor: fresh[0]!.classifiedAt! }))) continue;
+      // Claim the slot first so two runs can't both buzz the phone.
+      const previousCursor = p?.pushAlertCursor ?? null;
+      if (!(await claimPushSlot(w.id, now, { pushAlertCursor: fresh[0]!.classifiedAt! }))) continue;
 
-    let delivered = 0;
-    for (const endpoint of byWorkspace.get(w.id) ?? []) {
-      const r = await push(endpoint);
-      if (r === "gone") await removePushSubscription(w.id, endpoint);
-      if (r === "sent") delivered++;
-    }
-    await db()
-      .insert(activityLog)
-      .values({
+      // One phone's trouble never stops the others; a phone that's gone is forgotten.
+      let delivered = 0;
+      for (const endpoint of byWorkspace.get(w.id) ?? []) {
+        try {
+          const r = await push(endpoint);
+          if (r === "gone") await removePushSubscription(w.id, endpoint);
+          if (r === "sent") delivered++;
+        } catch (err) {
+          console.error("push_alert_failed", {
+            workspaceId: w.id,
+            error: err instanceof Error ? err.name : "unknown",
+          });
+        }
+      }
+      // Check 19 P2: nothing reached a phone, so we didn't let them know: hand the slot and the
+      // cursor back (the next run tries again) and write nothing to Activity.
+      if (!delivered) {
+        await releasePushSlot(w.id, now, last, previousCursor);
+        continue;
+      }
+      await db()
+        .insert(activityLog)
+        .values({
+          workspaceId: w.id,
+          actor: "squared_away",
+          action: "push_alert_sent",
+          detail: { ...leadCounts(fresh), phones: delivered },
+          createdAt: now,
+        });
+      sent++;
+    } catch (err) {
+      console.error("push_alert_failed", {
         workspaceId: w.id,
-        actor: "squared_away",
-        action: "push_alert_sent",
-        detail: { ...leadCounts(fresh), phones: delivered },
-        createdAt: now,
+        error: err instanceof Error ? err.name : "unknown",
       });
-    sent++;
+    }
   }
   return { sent };
 }
