@@ -11,7 +11,7 @@ import { Wordmark } from "@/components/brand/wordmark";
 import { getWorkspaceForUser } from "@/server/accounts";
 import { signInWithGoogleAction } from "./actions";
 
-export const metadata: Metadata = { title: "Sign in · Squared Away" };
+export const metadata: Metadata = { title: "Sign in" };
 
 export default async function SignInPage(props: PageProps<"/signin">) {
   const session = await auth();

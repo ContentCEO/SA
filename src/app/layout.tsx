@@ -53,7 +53,8 @@ const instrumentSerif = localFont({
 export const metadata: Metadata = {
   // Absolute URLs for the share image, canonical links and sitemap — from APP_URL, never hardcoded.
   metadataBase: new URL(appUrl()),
-  title: "Squared Away",
+  // Check 32 P6: each screen sets its own short title; the template adds the name once.
+  title: { default: "Squared Away", template: "%s · Squared Away" },
   description: "Your inbox, handled.",
   applicationName: "Squared Away",
   appleWebApp: { capable: true, title: "Squared Away", statusBarStyle: "black" },

@@ -30,7 +30,7 @@ import {
   openPortalFromTermsAction,
 } from "./actions";
 
-export const metadata: Metadata = { title: "Our terms · Squared Away" };
+export const metadata: Metadata = { title: "Our terms" };
 
 const done: Record<string, string> = {
   disconnected: "Gmail disconnected. We've removed our access at Google.",

@@ -11,7 +11,7 @@ const { meta, page } = growthCopy;
 // The share card is this folder's own opengraph-image / twitter-image (Growth's words), which
 // file-based metadata attaches to this page.
 export const metadata: Metadata = {
-  title: meta.title,
+  title: { absolute: meta.title },
   description: meta.description,
   alternates: { canonical: "/growth" },
   openGraph: {

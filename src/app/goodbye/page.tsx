@@ -5,7 +5,7 @@ import { SiteFooter } from "@/components/app/site-footer";
 import { Headline } from "@/components/brand/headline";
 import { Wordmark } from "@/components/brand/wordmark";
 
-export const metadata: Metadata = { title: "Account deleted · Squared Away" };
+export const metadata: Metadata = { title: "Account deleted" };
 
 export default function GoodbyePage() {
   return (

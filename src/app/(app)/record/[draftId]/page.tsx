@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { z } from "zod";
@@ -5,6 +6,9 @@ import { Headline } from "@/components/brand/headline";
 import { getBusinessProfile } from "@/server/profile";
 import { sendRecord } from "@/server/send-record";
 import { requireOwner } from "@/server/session";
+
+// Check 32 P6: every screen has its own title ("… · Squared Away" from the root template).
+export const metadata: Metadata = { title: "Record" };
 
 // No loading.tsx here on purpose: streaming would turn notFound() into a 200.
 

@@ -40,7 +40,7 @@ const description =
 
 export const metadata: Metadata = {
   // The words people search for; the share card keeps the brand line.
-  title: "Squared Away — AI email help for contractors",
+  title: { absolute: "Squared Away — AI email help for contractors" },
   description,
   alternates: { canonical: "/" },
   openGraph: {

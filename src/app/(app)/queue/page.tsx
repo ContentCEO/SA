@@ -1,5 +1,9 @@
 import { randomUUID } from "node:crypto";
+import type { Metadata } from "next";
 import Link from "next/link";
+import { auth } from "@/auth";
+import { getWorkspaceForUser } from "@/server/accounts";
+import { badgeCount } from "@/server/badge";
 import { Notice } from "@/components/app/notice";
 import { Headline } from "@/components/brand/headline";
 import { UpdatedAt } from "@/components/app/updated-at";
@@ -84,6 +88,17 @@ const firstName = (name: string | null) => (name ? name.split(/[\s,]+/)[0] : nul
 const capitalize = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
 const gmailLink = (i: QueueItem) => gmailThreadLink(i);
+
+/**
+ * Check 32 P6: "Queue (3)" while anything waits — replies ready plus needs-you, the same count as
+ * the home-screen badge (a number only, never a name). Signed out or nothing waiting: "Queue".
+ */
+export async function generateMetadata(): Promise<Metadata> {
+  const session = await auth();
+  const workspace = session?.user?.id ? await getWorkspaceForUser(session.user.id) : null;
+  const waiting = workspace ? await badgeCount(workspace).catch(() => 0) : 0;
+  return { title: waiting > 0 ? `Queue (${waiting})` : "Queue" };
+}
 
 export default async function QueuePage(props: PageProps<"/queue">) {
   const { workspace } = await requireOwner();

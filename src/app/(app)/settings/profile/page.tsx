@@ -1,7 +1,11 @@
+import type { Metadata } from "next";
 import { BusinessProfileForm } from "@/components/forms/business-profile-form";
 import { Headline } from "@/components/brand/headline";
 import { profileDefaults } from "@/server/profile-defaults";
 import { requireOwner } from "@/server/session";
+
+// Check 32 P6: every screen has its own title ("… · Squared Away" from the root template).
+export const metadata: Metadata = { title: "About your shop" };
 
 export default async function EditProfilePage() {
   const { workspace } = await requireOwner();

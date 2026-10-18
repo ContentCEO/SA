@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import { dayWord } from "@/lib/trial-words";
 import { Notice } from "@/components/app/notice";
 import { Headline } from "@/components/brand/headline";
@@ -7,6 +8,9 @@ import { pricing } from "@/config/pricing";
 import { listMailboxes } from "@/server/mailboxes";
 import { requireOwner } from "@/server/session";
 import { startGmailConnect } from "./actions";
+
+// Check 32 P6: every screen has its own title ("… · Squared Away" from the root template).
+export const metadata: Metadata = { title: "Connect Gmail" };
 
 const errors: Record<string, string> = {
   busy: "That's a lot in a short time, so we've paused it for a bit. Try again in a few minutes.",

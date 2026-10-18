@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { Notice } from "@/components/app/notice";
 import { Headline } from "@/components/brand/headline";
@@ -8,6 +9,9 @@ import { canSend, isReadOnly, sendingBlockedReason } from "@/server/lifecycle";
 import { requireOwner } from "@/server/session";
 import { cn } from "@/lib/utils";
 import { BatchForm } from "./batch-form";
+
+// Check 32 P6: every screen has its own title ("… · Squared Away" from the root template).
+export const metadata: Metadata = { title: "Send together" };
 
 /**
  * Plan #5 "Review all ready": every draft labelled Ready in the categories the

@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { AutoRefresh } from "@/components/app/auto-refresh";
 import { Headline } from "@/components/brand/headline";
@@ -12,6 +13,9 @@ import { firstLookCounts } from "@/server/first-week";
 import { firstLookLines } from "@/server/first-week-rules";
 import { effectiveStatus } from "@/server/lifecycle";
 import { TRIAL_NO_SEND_LINE, TRIAL_SIDE_DOOR_LINE } from "@/server/trial-email-rules";
+
+// Check 32 P6: every screen has its own title ("… · Squared Away" from the root template).
+export const metadata: Metadata = { title: "Reading your email" };
 
 function Step({ done, children }: { done: boolean; children: React.ReactNode }) {
   return (
