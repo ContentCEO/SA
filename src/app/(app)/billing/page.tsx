@@ -8,7 +8,8 @@ import { formatDollars, pricing, type PlanId } from "@/config/pricing";
 import { siteConfig } from "@/config/site";
 import { FEATURED_PLAN, planFeatureLines } from "@/server/plan-features";
 import { cn } from "@/lib/utils";
-import { stripeConfigured } from "@/server/billing";
+import { checkoutNotice, stripeConfigured } from "@/server/billing";
+import { checkoutNoticeLine } from "@/server/billing-notice-rules";
 import {
   billingStatusLine,
   checkoutTerms,
@@ -43,7 +44,9 @@ export default async function BillingPage(props: PageProps<"/billing">) {
     workspace.planEndsAt ? await workspaceTimeZone(workspace.id) : undefined,
   );
   const terms = checkoutTerms(workspace);
-  const paidJustNow = params.done === "paid";
+  // Check 17 P5: a checkout that finished without a plain payment says what happens next.
+  const notice = await checkoutNotice(workspace.id);
+  const paidJustNow = params.done === "paid" && !notice;
   const waitingForStripe = paidJustNow && terms.allowed;
   const errorMsg = typeof params.error === "string" ? errors[params.error] : undefined;
   const current = workspace.plan ? pricing.plans[workspace.plan as PlanId] : null;
@@ -68,6 +71,11 @@ export default async function BillingPage(props: PageProps<"/billing">) {
       ) : null}
       {errorMsg ? <Notice strong>{errorMsg}</Notice> : null}
 
+      {notice ? (
+        <Notice strong={notice === "payment_failed_bank"}>
+          {checkoutNoticeLine(notice, siteConfig.operator.split(" ")[0]!)}
+        </Notice>
+      ) : null}
       {waitingForStripe ? (
         <section role="status" className="sa-inverted flex flex-col gap-2 rounded-xl p-4">
           <RefreshUntil />

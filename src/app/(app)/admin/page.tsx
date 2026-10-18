@@ -54,6 +54,7 @@ import {
 } from "@/server/billing";
 import { SALES_TAX_LINES, SALES_TAX_ON_NOTE, TERMS_BOX_OFF_LINE } from "@/server/billing-rules";
 import { stripeReasonText } from "@/server/stripe-error-rules";
+import { CHECKOUT_REVIEW_LINE } from "@/server/billing-notice-rules";
 import { lastTestPaymentsResult } from "@/server/test-payments";
 import {
   PAST_DUE_RESET_NOTE,
@@ -353,6 +354,11 @@ function WorkspaceCard({ w, now }: { w: AdminRow; now: Date }) {
     >
       {stuck ? (
         <p className="sa-inverted self-start rounded-md px-2 py-1 text-sm font-black">Stuck</p>
+      ) : null}
+      {w.checkoutNeedsReview ? (
+        <p className="sa-inverted self-start rounded-md px-2 py-1 font-black">
+          {CHECKOUT_REVIEW_LINE}
+        </p>
       ) : null}
       {w.twoLivePlans ? (
         <p className="sa-inverted self-start rounded-md px-2 py-1 font-black">{TWO_PLANS_LINE}</p>

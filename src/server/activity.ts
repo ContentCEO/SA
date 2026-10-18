@@ -1,6 +1,7 @@
 import "server-only";
 import { and, count, desc, eq, gte, inArray, isNotNull, lt, sql } from "drizzle-orm";
 import { pricing } from "@/config/pricing";
+import { siteConfig } from "@/config/site";
 import { daysPhrase } from "@/lib/trial-words";
 import { categoryLabels, categoryTag, isCategory } from "@/config/categories";
 import { db } from "@/db";
@@ -227,15 +228,18 @@ export function describeActivity(
     }
     case "plan_cancel_scheduled": {
       // Check 17 P3: the owner's own local date, stored as YYYY-MM-DD (nothing else).
-      const d = typeof detail.endsOn === "string" ? detail.endsOn : "";
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return "You canceled your plan";
-      const label = new Intl.DateTimeFormat("en-US", {
-        timeZone: "UTC",
-        month: "short",
-        day: "numeric",
-      }).format(new Date(`${d}T12:00:00Z`));
-      return `You canceled your plan. It stays on until ${label}.`;
+      const label = typeof detail.endsOn === "string" ? shortDate(detail.endsOn) : null;
+      return label
+        ? `You canceled your plan. It stays on until ${label}.`
+        : "You canceled your plan";
     }
+    // Check 17 P5: checkouts that didn't simply pay.
+    case "payment_pending":
+      return "Your bank payment is on its way — sending turns on when it clears";
+    case "payment_failed_bank":
+      return "Your bank payment didn't go through";
+    case "checkout_needs_review":
+      return `We got your sign-up — ${siteConfig.operator.split(" ")[0]} will be in touch to switch sending on`;
     case "digest_sent":
       return "Sent your morning summary";
     case "monthly_summary_sent":

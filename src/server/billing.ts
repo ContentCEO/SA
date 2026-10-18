@@ -1,5 +1,5 @@
 import "server-only";
-import { and, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import Stripe from "stripe";
 import { pricing, type PlanId } from "@/config/pricing";
 import { db } from "@/db";
@@ -31,6 +31,15 @@ import {
   stripeKeyMode,
 } from "./billing-rules";
 import { paymentNoticeCopy } from "./first-week-rules";
+import {
+  billingChangeNoticeCopy,
+  CHECKOUT_NOTICE_ACTIONS,
+  checkoutNoticeFrom,
+  setupConfirmationCopy,
+  type BillingChangeKind,
+  type CheckoutNoticeKind,
+} from "./billing-notice-rules";
+import { siteConfig } from "@/config/site";
 import { resumeTarget, setupReallyPaid } from "./lifecycle";
 import { fitMailboxesToPlan } from "./mailbox-plan";
 import { creditReferralSafely } from "./referrals";
@@ -74,6 +83,9 @@ export const WEBHOOK_PATH = "/api/stripe/webhook";
 const WEBHOOK_SECRET_KEY = "stripe_webhook_secret";
 const WEBHOOK_EVENTS: Stripe.WebhookEndpointCreateParams.EnabledEvent[] = [
   "checkout.session.completed",
+  // Check 17 P5: bank debits and other delayed methods finish after the page closes.
+  "checkout.session.async_payment_succeeded",
+  "checkout.session.async_payment_failed",
   "customer.subscription.created",
   "customer.subscription.updated",
   "customer.subscription.deleted",
@@ -494,9 +506,10 @@ async function expireOpenCheckout(workspaceId: string) {
   try {
     await stripe().checkout.sessions.expire(open.value);
   } catch (err) {
+    const reason = stripeErrorReason(err);
     console.info("stripe_checkout_expire_skipped", {
       error: err instanceof Error ? err.name : "unknown",
-      reason: stripeErrorReason(err),
+      reason,
     });
   }
   await db().delete(appSettings).where(eq(appSettings.key, open.key));
@@ -629,6 +642,109 @@ export async function notifyPaymentReceived(
 }
 
 /**
+ * Check 1 P3: tell Davi when Stripe moves an account to past due, back from it, or to canceled.
+ * Same rules as notifyPaymentReceived: content-free (plan name and kind), once per Stripe event
+ * (`app_settings` marker, Resend idempotency key), never throws, never fails the webhook.
+ */
+export async function notifyBillingChange(
+  eventId: string,
+  kind: BillingChangeKind,
+  plan: PlanId | null,
+  deps: { send?: EmailSender } = {},
+): Promise<"sent" | "skipped" | "failed"> {
+  const admin = process.env.ADMIN_EMAIL;
+  if (!admin) return "skipped";
+  const key = `billing-notice:${eventId}`;
+  try {
+    if (await getSetting(key)) return "skipped";
+    const c = billingChangeNoticeCopy({
+      kind,
+      planName: plan ? pricing.plans[plan].name : null,
+      adminUrl: appUrl("/admin"),
+    });
+    const { text, html } = brandEmail(c);
+    const outcome = await (deps.send ?? sendEmail)({
+      to: admin,
+      subject: c.subject,
+      text,
+      html,
+      idempotencyKey: `billing-${eventId}`,
+    });
+    if (outcome === "not_configured") return "skipped";
+    await db()
+      .insert(appSettings)
+      .values({ key, value: new Date().toISOString() })
+      .onConflictDoNothing();
+    return "sent";
+  } catch (err) {
+    console.error("billing_notice_failed", { error: err instanceof Error ? err.name : "unknown" });
+    return "failed";
+  }
+}
+
+/**
+ * Check 1 P3: the owner's one "You're set up" email after a paid checkout that included setup.
+ * Plan name only, no amounts. Once per checkout session. Never throws.
+ */
+export async function sendSetupConfirmation(
+  sessionId: string,
+  workspace: Pick<Workspace, "id" | "ownerUserId">,
+  plan: PlanId | null,
+  deps: { send?: EmailSender } = {},
+): Promise<"sent" | "skipped" | "failed"> {
+  const key = `setup-confirmation:${sessionId}`;
+  try {
+    if (await getSetting(key)) return "skipped";
+    const [owner] = await db()
+      .select({ email: users.email })
+      .from(users)
+      .where(eq(users.id, workspace.ownerUserId));
+    if (!owner?.email) return "skipped";
+    const c = setupConfirmationCopy({
+      planName: plan ? pricing.plans[plan].name : null,
+      operatorFirstName: siteConfig.operator.split(" ")[0]!,
+      phone: siteConfig.phone,
+      queueUrl: appUrl("/queue"),
+    });
+    const { text, html } = brandEmail(c);
+    const outcome = await (deps.send ?? sendEmail)({
+      to: owner.email,
+      subject: c.subject,
+      text,
+      html,
+      idempotencyKey: `setup-confirmation-${sessionId}`,
+    });
+    if (outcome === "not_configured") return "skipped";
+    await db()
+      .insert(appSettings)
+      .values({ key, value: new Date().toISOString() })
+      .onConflictDoNothing();
+    return "sent";
+  } catch (err) {
+    console.error("setup_confirmation_failed", {
+      error: err instanceof Error ? err.name : "unknown",
+    });
+    return "failed";
+  }
+}
+
+/** Check 17 P5: what happened to this account's last checkout that didn't simply pay. */
+export async function checkoutNotice(workspaceId: string): Promise<CheckoutNoticeKind | null> {
+  const [row] = await db()
+    .select({ action: activityLog.action })
+    .from(activityLog)
+    .where(
+      and(
+        eq(activityLog.workspaceId, workspaceId),
+        inArray(activityLog.action, [...CHECKOUT_NOTICE_ACTIONS]),
+      ),
+    )
+    .orderBy(desc(activityLog.createdAt), desc(activityLog.id))
+    .limit(1);
+  return checkoutNoticeFrom(row?.action);
+}
+
+/**
  * The plan's Gmail limit after a payment or plan change (2026-10-16). Never fails the webhook:
  * the 15-minute job fits it again if this didn't (`fitAllMailboxesToPlans`). Ids and names only.
  */
@@ -648,10 +764,15 @@ export async function applyCheckoutCompleted(
   now = new Date(),
   deps: { send?: EmailSender } = {},
 ) {
-  if (session.mode !== "subscription" || session.payment_status !== "paid") return "ignored";
+  if (session.mode !== "subscription") return "ignored";
+  // Check 17 P5: every finished checkout leads somewhere. Only "paid" turns sending on.
+  const status = session.payment_status;
+  if (status !== "paid" && status !== "unpaid" && status !== "no_payment_required") {
+    return "ignored";
+  }
   const w = await workspaceById(session.metadata?.workspaceId ?? session.client_reference_id);
   if (!w) {
-    await noteOrphan(now);
+    if (status !== "unpaid") await noteOrphan(now);
     return "unknown_workspace";
   }
   await db()
@@ -666,6 +787,22 @@ export async function applyCheckoutCompleted(
     newSub !== w.stripeSubscriptionId &&
     (await liveStored(w.stripeSubscriptionId)) !== null;
   if (second) await flagSecondSubscription(w.id, newSub);
+  if (status !== "paid") {
+    // A bank payment still clearing, or nothing charged (a full discount): keep Stripe's ids so
+    // the account can't pay twice, but nothing that turns sending on (no status, no plan, no
+    // setupPaidVia). The owner sees a line on /billing; Davi decides a free checkout in Stripe.
+    await db()
+      .update(workspaces)
+      .set({
+        stripeCustomerId:
+          typeof session.customer === "string" ? session.customer : w.stripeCustomerId,
+        stripeSubscriptionId: second ? w.stripeSubscriptionId : (newSub ?? w.stripeSubscriptionId),
+      })
+      .where(eq(workspaces.id, w.id));
+    const action = status === "unpaid" ? "payment_pending" : "checkout_needs_review";
+    await log(w.id, action, {});
+    return status === "unpaid" ? "pending" : "needs_review";
+  }
   const plan = second ? w.plan : isPlanId(session.metadata?.plan) ? session.metadata.plan : w.plan;
   const includesSetup = session.metadata?.includesSetup === "1";
   // Check 17 P1: a paused account isn't moved by Stripe; the payment is kept in paused_from,
@@ -698,8 +835,32 @@ export async function applyCheckoutCompleted(
   await log(w.id, "payment_received", { plan, includesSetup, from: w.status, to });
   await fitMailboxesSafely(w.id, now);
   await notifyPaymentReceived(session.id, { plan, includesSetup }, deps);
+  if (includesSetup) await sendSetupConfirmation(session.id, w, plan, deps);
   // Plan #47: a referral is settled the first time the account is active. Never fails the webhook.
   if (to === "active") await creditReferralSafely(w.id, now);
+  return "applied";
+}
+
+/**
+ * Check 17 P5: a bank payment for a checkout didn't go through. Nothing turned sending on, so
+ * nothing turns off; a subscription that never got paid is let go so the owner can choose a plan
+ * again ("Choose a plan to try again").
+ */
+export async function applyCheckoutAsyncFailed(session: Stripe.Checkout.Session) {
+  if (session.mode !== "subscription") return "ignored";
+  const w = await workspaceById(session.metadata?.workspaceId ?? session.client_reference_id);
+  if (!w) return "unknown_workspace";
+  const subId = typeof session.subscription === "string" ? session.subscription : null;
+  if (subId && w.stripeSubscriptionId === subId) {
+    const live = await liveStored(subId);
+    if (!live || !["active", "trialing", "past_due"].includes(live.status)) {
+      await db()
+        .update(workspaces)
+        .set({ stripeSubscriptionId: null })
+        .where(and(eq(workspaces.id, w.id), eq(workspaces.stripeSubscriptionId, subId)));
+    }
+  }
+  await log(w.id, "payment_failed_bank", {});
   return "applied";
 }
 
@@ -715,7 +876,11 @@ async function notePlanEnd(w: Workspace, planEndsAt: Date | null) {
  * only names the subscription: what it says now is retrieved fresh, and an event about a
  * subscription other than the account's own never changes the account.
  */
-export async function applySubscription(event: Stripe.Subscription, now = new Date()) {
+export async function applySubscription(
+  event: Stripe.Subscription,
+  now = new Date(),
+  deps: { eventId?: string; send?: EmailSender } = {},
+) {
   const sub = await freshSubscription(event);
   let w = await workspaceById(sub.metadata?.workspaceId ?? event.metadata?.workspaceId);
   if (!w) {
@@ -750,13 +915,29 @@ export async function applySubscription(event: Stripe.Subscription, now = new Da
     if (other) {
       await db().delete(appSettings).where(eq(appSettings.key, other.key));
       const live = await liveStored(other.value);
-      if (live) return applyFreshSubscription(w, live, now);
+      if (live) return applyFreshSubscription(w, live, now, deps);
     }
   }
-  return applyFreshSubscription(w, sub, now);
+  return applyFreshSubscription(w, sub, now, deps);
 }
 
-async function applyFreshSubscription(w: Workspace, sub: Stripe.Subscription, now: Date) {
+/** Check 1 P3: which of Davi's notices a status move is, if any. */
+function billingChangeKind(from: Workspace["status"], to: Workspace["status"]) {
+  if (from === to) return null;
+  if (to === "past_due") return "past_due" as const;
+  if (to === "canceled") return "canceled" as const;
+  if ((from === "past_due" || from === "canceled") && (to === "setup_paid" || to === "active")) {
+    return "recovered" as const;
+  }
+  return null;
+}
+
+async function applyFreshSubscription(
+  w: Workspace,
+  sub: Stripe.Subscription,
+  now: Date,
+  deps: { eventId?: string; send?: EmailSender } = {},
+) {
   const plan = planFromLookupKey(sub.items.data[0]?.price?.lookup_key) ?? w.plan;
   const ended = subscriptionEnded(sub.status);
   // Check 17 P3: a cancellation from Stripe's page keeps the plan on until a date; say when.
@@ -794,6 +975,17 @@ async function applyFreshSubscription(w: Workspace, sub: Stripe.Subscription, no
   }
   // A cheaper plan pauses the Gmail addresses it doesn't cover; a bigger one turns them back on.
   if (plan !== w.plan) await fitMailboxesSafely(w.id, now);
+  // Check 1 P3: Davi hears about every past due, recovery and cancellation (never for his own
+  // house account; paused accounts returned above, Stripe doesn't move them).
+  const kind = billingChangeKind(w.status, to);
+  if (kind && w.setupPaidVia !== "house") {
+    await notifyBillingChange(
+      deps.eventId ?? `${sub.id}:${kind}:${now.toISOString()}`,
+      kind,
+      plan,
+      deps,
+    );
+  }
   if (to === "active") await creditReferralSafely(w.id, now);
   return "applied";
 }
@@ -829,12 +1021,17 @@ export async function handleStripeWebhook(rawBody: string, signature: string | n
   try {
     switch (event.type) {
       case "checkout.session.completed":
+      case "checkout.session.async_payment_succeeded":
+        // async_payment_succeeded arrives with payment_status "paid".
         await applyCheckoutCompleted(event.data.object);
+        break;
+      case "checkout.session.async_payment_failed":
+        await applyCheckoutAsyncFailed(event.data.object);
         break;
       case "customer.subscription.created":
       case "customer.subscription.updated":
       case "customer.subscription.deleted":
-        await applySubscription(event.data.object);
+        await applySubscription(event.data.object, new Date(), { eventId: event.id });
         break;
     }
   } catch (err) {

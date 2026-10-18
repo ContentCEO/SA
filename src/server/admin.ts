@@ -21,6 +21,7 @@ import { normalizeEmail } from "./accounts";
 import { effectiveStatus, jobsAllowed } from "./lifecycle";
 import { referralsVisible } from "./referral-rules";
 import { workspacesWithTwoPlans } from "./billing";
+import { CHECKOUT_NOTICE_ACTIONS } from "./billing-notice-rules";
 
 export function isAdminEmail(email: string | null | undefined): boolean {
   const admin = process.env.ADMIN_EMAIL;
@@ -42,6 +43,8 @@ export type AdminRow = {
   hasSubscription: boolean;
   /** Check 17 P4: Stripe has two live plans for this account (one should be canceled there). */
   twoLivePlans: boolean;
+  /** Check 17 P5: the newest checkout finished with nothing charged; Davi decides in Stripe. */
+  checkoutNeedsReview: boolean;
   mailboxes: {
     total: number;
     needReconnect: number;
@@ -237,6 +240,22 @@ export async function adminOverview(now: Date = new Date()): Promise<AdminRow[]>
     .groupBy(activityLog.workspaceId);
 
   const twoPlans = await workspacesWithTwoPlans(ids);
+  const notices = await db()
+    .select({
+      workspaceId: activityLog.workspaceId,
+      latest: sql<string>`(array_agg(${activityLog.action} order by ${activityLog.createdAt} desc, ${activityLog.id} desc))[1]`,
+    })
+    .from(activityLog)
+    .where(
+      and(
+        inArray(activityLog.workspaceId, ids),
+        inArray(activityLog.action, [...CHECKOUT_NOTICE_ACTIONS]),
+      ),
+    )
+    .groupBy(activityLog.workspaceId);
+  const reviews = new Set(
+    notices.filter((n) => n.latest === "checkout_needs_review").map((n) => n.workspaceId),
+  );
 
   const by = <T extends { workspaceId: string }>(rows: T[]) =>
     new Map(rows.map((r) => [r.workspaceId, r]));
@@ -262,6 +281,7 @@ export async function adminOverview(now: Date = new Date()): Promise<AdminRow[]>
     setupPaidVia: w.setupPaidVia,
     hasSubscription: Boolean(w.hasSubscription),
     twoLivePlans: twoPlans.has(w.id),
+    checkoutNeedsReview: reviews.has(w.id),
     createdAt: w.createdAt,
     mailboxes: {
       total: b.get(w.id)?.total ?? 0,
