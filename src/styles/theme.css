@@ -551,3 +551,25 @@ html:has([data-growth-page]) {
     }
   }
 }
+
+/*
+ * Check 8 P7: on a phone, the fixed tab bar hides while the owner types in the app (a reply, a
+ * note, a search), so it can't sit over Save changes or Never say this on a screen that shrinks
+ * for the keyboard. It comes back a moment after the box loses focus: the tap that moved focus
+ * (on a button near the bottom) finishes on that button, not on the bar reappearing under it.
+ */
+@media (max-width: 639px) {
+  nav[aria-label="Main"].fixed {
+    transition: visibility 0s linear 400ms;
+  }
+  body:has(
+      main textarea:focus,
+      main input[type="text"]:focus,
+      main input[type="search"]:focus,
+      main input:not([type]):focus
+    )
+    nav[aria-label="Main"].fixed {
+    visibility: hidden;
+    transition-delay: 0s;
+  }
+}

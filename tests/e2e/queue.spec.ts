@@ -627,3 +627,42 @@ test("a first reply to a new lead says so and offers other ways to reply (replie
   await expect(card).toContainText("First reply: asks 1 question");
   await expect(card.getByRole("form", { name: "Other ways to reply" })).toHaveCount(0);
 });
+
+test("Edit puts the cursor at the end, keeps Send reply apart, and hides the tab bar while typing (Check 8 P7, P9)", async ({
+  page,
+  context,
+  isMobile,
+}) => {
+  const owner = await seedOwner({ mailbox: true, backfilled: true });
+  await setWorkspace(owner.workspaceId, {
+    status: "active",
+    setupPaidAt: new Date(),
+    setupPaidVia: "stripe",
+  });
+  await seedQueue(owner.mailboxId!);
+  await signInAs(context, owner);
+  await page.goto("/queue");
+  const card = page.getByRole("article", { name: "Priya · draft reply" });
+  // Check 8 P9: the To line and the card facts are 16px.
+  const toLine = card.locator("p", { hasText: "To:" }).first();
+  expect(
+    await toLine.evaluate((e) => parseFloat(getComputedStyle(e).fontSize)),
+  ).toBeGreaterThanOrEqual(16);
+
+  await card.getByRole("button", { name: "Edit", exact: true }).click();
+  const box = card.getByLabel("Your reply");
+  await expect(box).toBeFocused();
+  const sel = await box.evaluate((el: HTMLTextAreaElement) => [el.selectionStart, el.value.length]);
+  expect(sel[0]).toBe(sel[1]);
+  expect(sel[1]).toBeGreaterThan(0);
+  const boxBottom = (await box.boundingBox())!;
+  const send = (await card.getByRole("button", { name: "Send reply" }).boundingBox())!;
+  expect(send.y - (boxBottom.y + boxBottom.height)).toBeGreaterThanOrEqual(24);
+
+  if (isMobile) {
+    const tabBar = page.locator('nav[aria-label="Main"].fixed');
+    await expect(tabBar).toBeHidden();
+    await box.blur();
+    await expect(tabBar).toBeVisible();
+  }
+});

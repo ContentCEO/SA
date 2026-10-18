@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useRef, useState, useTransition } from "react";
+import { useActionState, useEffect, useRef, useState, useTransition } from "react";
 import { useFormStatus } from "react-dom";
 import { editorGapsLeft, findGaps, fromEditorText, toEditorText } from "@/ai/gaps";
 import { Button } from "@/components/ui/button";
@@ -77,6 +77,16 @@ export function DraftEditor(p: {
   };
 
   const editor = useRef<HTMLTextAreaElement>(null);
+  // Check 8 P7: open with the cursor at the end (what's typed adds to the reply, not before
+  // "Hey Dana"), and the end of the text in view.
+  useEffect(() => {
+    const el = editor.current;
+    if (!el) return;
+    el.focus({ preventScroll: true });
+    el.setSelectionRange(el.value.length, el.value.length);
+    el.scrollTop = el.scrollHeight;
+    el.scrollIntoView({ block: "nearest" });
+  }, []);
   const [neverSayNote, setNeverSayNote] = useState<string | null>(null);
   const [savingPhrase, startSaving] = useTransition();
   const neverSay = () => {
@@ -112,7 +122,6 @@ export function DraftEditor(p: {
           value={text}
           onChange={(e) => change(e.target.value)}
           rows={10}
-          autoFocus
           className="w-full rounded-lg border border-input bg-paper px-3 py-2.5 text-base"
         />
       </label>
@@ -130,6 +139,8 @@ export function DraftEditor(p: {
           />
         </label>
       ) : null}
+      {/* Check 8 P7: a clear gap and a line between the box and Send reply (gloves). */}
+      <div aria-hidden className="mt-3 border-t" />
       {p.canSend ? (
         gapsLeft.length ? (
           <div

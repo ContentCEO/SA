@@ -139,7 +139,8 @@ function Pending({
  */
 function ToLine({ address, fromReplyTo }: { address: string; fromReplyTo?: boolean }) {
   return (
-    <p className="text-sm break-all">
+    // Check 8 P9: 16px — read in the sun before Send reply.
+    <p className="text-base break-all">
       <span className="font-semibold">To:</span> {address}
       {fromReplyTo ? (
         <span className="block text-muted-foreground">the reply address in their email</span>
@@ -306,8 +307,8 @@ export function DraftCard(p: DraftCardProps) {
             <ConfidenceTag label={p.label} />
           </div>
           <ToLine address={p.toAddress} fromReplyTo={p.toFromReplyTo} />
-          <span className="text-sm font-semibold">{p.tag}</span>
-          {p.wrote ? <span className="text-sm">{p.wrote}</span> : null}
+          <span className="text-base font-semibold">{p.tag}</span>
+          {p.wrote ? <span className="text-base">{p.wrote}</span> : null}
           {(p.leadLines ?? []).map((line) => (
             <p key={line} className="text-sm font-semibold">
               {line}

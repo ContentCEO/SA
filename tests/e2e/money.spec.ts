@@ -160,3 +160,25 @@ test("money owed: empty, and read-only accounts can look but not mark", async ({
   await expect(kim.getByRole("button", { name: "Mark paid" })).toHaveCount(0);
   await expect(kim.getByRole("button", { name: "Not owed to me" })).toHaveCount(0);
 });
+
+test("money owed: the invoice number and nudges line are 16px (Check 8 P9)", async ({
+  page,
+  context,
+}) => {
+  const owner = await seedOwner({ mailbox: true, backfilled: true });
+  await invoice(owner.mailboxId!, {
+    name: "Rita Gomez",
+    from: "rita@x.com",
+    amount: 900,
+    dueDaysAgo: 10,
+    number: "1042",
+  });
+  await signInAs(context, owner);
+  await page.goto("/money");
+  for (const text of ["Invoice 1042", /Nudges used/]) {
+    const el = page.getByText(text).first();
+    await expect(el).toBeVisible();
+    const px = await el.evaluate((e) => parseFloat(getComputedStyle(e).fontSize));
+    expect(px).toBeGreaterThanOrEqual(16);
+  }
+});

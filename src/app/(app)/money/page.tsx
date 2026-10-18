@@ -64,7 +64,9 @@ function OwedCard({ r, readOnly }: { r: MoneyRow; readOnly: boolean }) {
       <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
         <span className="font-semibold">{r.due.text}</span>
         {r.invoiceNumber ? (
-          <span className="min-w-0 truncate text-sm opacity-80">Invoice {r.invoiceNumber}</span>
+          <span className="min-w-0 text-base break-words opacity-80">
+            Invoice {r.invoiceNumber}
+          </span>
         ) : null}
       </div>
       {r.earlierOpen.map((e, i) => (
@@ -74,7 +76,7 @@ function OwedCard({ r, readOnly }: { r: MoneyRow; readOnly: boolean }) {
           )}) may still be open. It's counted in the total.`}
         </p>
       ))}
-      <p className="text-sm opacity-80">
+      <p className="text-base opacity-80">
         Nudges used: {Math.min(r.nudgesUsed, MAX_FOLLOWUPS)} of {MAX_FOLLOWUPS}
       </p>
       {readOnly ? null : (
