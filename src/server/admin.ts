@@ -37,6 +37,8 @@ export type AdminRow = {
   evaluationEndsAt: Date | null;
   setupPaidAt: Date | null;
   setupPaidVia: "stripe" | "house" | null;
+  /** Check 17 P2: Stripe has a subscription on file (never the id itself). */
+  hasSubscription: boolean;
   mailboxes: {
     total: number;
     needReconnect: number;
@@ -92,6 +94,7 @@ export async function adminOverview(now: Date = new Date()): Promise<AdminRow[]>
     evaluationEndsAt: workspaces.evaluationEndsAt,
     setupPaidAt: workspaces.setupPaidAt,
     setupPaidVia: workspaces.setupPaidVia,
+    hasSubscription: sql<boolean>`${workspaces.stripeSubscriptionId} is not null`,
     createdAt: workspaces.createdAt,
   };
   const newest = await db()
@@ -252,6 +255,7 @@ export async function adminOverview(now: Date = new Date()): Promise<AdminRow[]>
     evaluationEndsAt: w.evaluationEndsAt,
     setupPaidAt: w.setupPaidAt,
     setupPaidVia: w.setupPaidVia,
+    hasSubscription: Boolean(w.hasSubscription),
     createdAt: w.createdAt,
     mailboxes: {
       total: b.get(w.id)?.total ?? 0,

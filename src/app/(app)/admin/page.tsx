@@ -21,6 +21,7 @@ import { modelDownLine, stoppedHeading } from "@/server/model-alert-rules";
 import { modelsDownToday } from "@/server/model-alerts";
 import { isAdminEmail } from "@/server/admin";
 import { ADMIN_MOVES, canMakeMove, type AdminMove } from "@/server/lifecycle";
+import { PAUSE_EXPLAIN, pauseExplanation, STILL_BILLED_LINE } from "@/server/admin-rules";
 import {
   adminMoveAction,
   checkTestPaymentsAction,
@@ -98,7 +99,7 @@ const moves: Record<AdminMove, { label: string; explain: string; confirm: string
   },
   pause: {
     label: "Pause account",
-    explain: "Stops reading, drafting and sending. Nothing is deleted.",
+    explain: PAUSE_EXPLAIN,
     confirm: "Yes, pause",
   },
   resume: {
@@ -344,6 +345,9 @@ function WorkspaceCard({ w, now }: { w: AdminRow; now: Date }) {
       {stuck ? (
         <p className="sa-inverted self-start rounded-md px-2 py-1 text-sm font-black">Stuck</p>
       ) : null}
+      {w.status === "paused" && w.hasSubscription ? (
+        <p className="font-black">{STILL_BILLED_LINE}</p>
+      ) : null}
       <header className="flex flex-wrap items-baseline justify-between gap-2">
         <div className="flex min-w-0 flex-col">
           <span className="truncate text-lg font-black">{w.businessName || w.ownerEmail}</span>
@@ -452,7 +456,7 @@ function WorkspaceCard({ w, now }: { w: AdminRow; now: Date }) {
               <form action={adminMoveAction} className="flex flex-col gap-2 px-4 pb-4">
                 <input type="hidden" name="workspaceId" value={w.workspaceId} />
                 <input type="hidden" name="move" value={m} />
-                <p>{moves[m].explain}</p>
+                <p>{m === "pause" ? pauseExplanation(w.hasSubscription) : moves[m].explain}</p>
                 <Button type="submit" className="w-full">
                   {moves[m].confirm}
                 </Button>

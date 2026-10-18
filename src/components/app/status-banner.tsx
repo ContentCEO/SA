@@ -4,7 +4,7 @@ import { siteConfig } from "@/config/site";
 import { daysPhrase } from "@/lib/trial-words";
 import { TrialClock } from "./trial-clock";
 import { getWorkspaceForUser } from "@/server/accounts";
-import { setupCallSentence } from "@/server/billing-rules";
+import { PAUSED_STILL_BILLED_LINE, setupCallSentence } from "@/server/billing-rules";
 import { queueCounts } from "@/server/drafts";
 import { trialCounts } from "@/server/first-week";
 import { isLastDay, trialSoFarLine, waitingLine } from "@/server/first-week-rules";
@@ -122,7 +122,11 @@ export async function StatusBanner() {
       return inverted(
         "Your account is paused.",
         <>
-          Nothing new is read, drafted or sent, and nothing is deleted. <Contact />
+          Nothing new is read, drafted or sent, and nothing is deleted.{" "}
+          {workspace.stripeSubscriptionId ? (
+            <>{PAUSED_STILL_BILLED_LINE} Questions about it? </>
+          ) : null}
+          <Contact />
         </>,
       );
     case "canceled":

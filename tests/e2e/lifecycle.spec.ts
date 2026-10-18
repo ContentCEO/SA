@@ -220,3 +220,52 @@ test("AI costs: admin only", async ({ page, context }) => {
   await expect(page.getByRole("heading", { name: /AI costs/ })).toBeVisible();
   await expect(page.getByRole("list", { name: "Accounts by margin" })).toBeVisible();
 });
+
+test("paused with a Stripe plan: the owner is told billing hasn't changed, and Davi sees it (Check 17 P2)", async ({
+  page,
+  context,
+}) => {
+  const owner = await seedOwner({ mailbox: true, backfilled: true });
+  await setWorkspace(owner.workspaceId, {
+    status: "paused",
+    pausedFrom: "active",
+    plan: "crew",
+    businessName: "Billed While Paused",
+    setupPaidAt: new Date(),
+    setupPaidVia: "stripe",
+    stripeCustomerId: "cus_e2e_paused",
+    stripeSubscriptionId: "sub_e2e_paused",
+  });
+  await signInAs(context, owner);
+  await page.goto("/queue");
+  const banner = page.getByRole("status").filter({ hasText: "Your account is paused." });
+  await expect(banner).toContainText("Your plan's billing hasn't changed.");
+
+  const admin = await seedAdmin();
+  await context.clearCookies();
+  await signInAs(context, admin);
+  await page.goto("/admin");
+  const card = page.getByRole("article", { name: owner.email });
+  await expect(card).toContainText("Still billed in Stripe");
+  await expect(card).not.toContainText("sub_e2e_paused");
+});
+
+test("pausing a paying account warns that Stripe keeps charging (Check 17 P2)", async ({
+  page,
+  context,
+}) => {
+  const owner = await seedOwner({ mailbox: true, backfilled: true });
+  await setWorkspace(owner.workspaceId, {
+    status: "active",
+    plan: "solo",
+    setupPaidAt: new Date(),
+    setupPaidVia: "stripe",
+    stripeSubscriptionId: "sub_e2e_pausing",
+  });
+  const admin = await seedAdmin();
+  await signInAs(context, admin);
+  await page.goto("/admin");
+  const card = page.getByRole("article", { name: owner.email });
+  await card.getByText("Pause account").click();
+  await expect(card).toContainText("Their Stripe plan keeps charging.");
+});

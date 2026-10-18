@@ -141,6 +141,12 @@ const BILLING_STATUS_LINES: Partial<Record<Status, string>> = {
   canceled: "Your plan has ended. Pick a plan below to start again — nothing was deleted.",
 };
 
+/**
+ * Check 17 P2: the paused banner's extra sentence while a Stripe plan is still on file. Pausing
+ * only changes our status; Stripe keeps billing until Davi pauses or cancels it there.
+ */
+export const PAUSED_STILL_BILLED_LINE = "Your plan's billing hasn't changed.";
+
 /** Shown instead when the status would allow sending but the setup was never really paid. */
 export const SETUP_NOT_PAID_LINE = "Sending turns on once your setup payment goes through.";
 
