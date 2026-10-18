@@ -12,5 +12,7 @@ export default defineConfig({
     // Check 25 P8: a fresh PGlite database (all migrations) per test takes seconds on a busy
     // machine; the 10-second default timed out in beforeEach.
     hookTimeout: 30_000,
+    // The same machine runs a test against that database in several seconds under load.
+    testTimeout: 60_000,
   },
 });

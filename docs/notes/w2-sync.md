@@ -301,8 +301,9 @@ newerThanDays: 365 }`. (Adapted: `after` and `inbox` added for the stepped reads
 - New tests (tests/unit/sync.test.ts): deleted between list and get; the same change synced twice;
   a relabel is never "added"; the unit counter; revoked access on page 2 of a first read. The 404
   after 12 days and Spam → Not spam cases are in the P3 and P2 blocks.
-- `vitest.config.mts`: `hookTimeout: 30_000` (PGlite setup timed out at 10 s on a busy machine);
-  the heaviest sync tests carry their own 120 s timeout, so the sync file passes with no flags.
+- `vitest.config.mts`: `hookTimeout: 30_000` and `testTimeout: 60_000` (PGlite setup and
+  PGlite-heavy tests timed out at the 10 s / 5 s defaults on the shared machine); the heaviest sync
+  tests carry their own 120 s timeout. The sync file passes with no flags.
 
 ## Integration notes (expected conflicts)
 
