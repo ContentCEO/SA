@@ -55,6 +55,16 @@ export type CustomerRow = {
 const asDate = (v: unknown) => (v ? new Date(v as string | Date) : null);
 const notNoise = or(isNull(threads.category), ne(threads.category, "noise"));
 
+/**
+ * Check 13 P4: the one name for a customer, on the list and on their page alike: the newest
+ * non-empty name their emails carried (as a reply addresses them). An aggregate over the
+ * customer's inbound messages.
+ */
+const newestNameSql = () =>
+  sql<
+    string | null
+  >`(array_agg(${messageReplyName()} order by ${messages.sentAt} desc) filter (where nullif(trim(${messageReplyName()}), '') is not null))[1]`;
+
 /** Check 13 P3: the most rows Customers reads (a hard ceiling; only the count is logged). */
 export const CUSTOMERS_CEILING = 10_000;
 
@@ -125,7 +135,7 @@ export async function listCustomers(workspaceId: string, now: Date = new Date())
     .select({
       address: sql<string>`${addr}`,
       key: sql<string>`(array_agg(${messages.id}::text order by ${messages.sentAt} desc))[1]`,
-      name: sql<string | null>`max(${messageReplyName()})`,
+      name: newestNameSql(),
       conversations: sql<number>`count(distinct ${messages.threadId})::int`,
       lastContactAt: max(threads.lastMessageAt),
       supplierThreads: sql<number>`count(distinct ${messages.threadId}) filter (where ${threads.category} = 'supplier_vendor')`,
@@ -241,7 +251,7 @@ export async function customerDetail(workspaceId: string, address: string) {
     )
     .orderBy(desc(threads.lastMessageAt));
   const [named] = await db()
-    .select({ name: messageReplyName() })
+    .select({ name: newestNameSql() })
     .from(messages)
     .innerJoin(mailboxes, eq(mailboxes.id, messages.mailboxId))
     .where(
@@ -249,10 +259,7 @@ export async function customerDetail(workspaceId: string, address: string) {
         eq(mailboxes.workspaceId, workspaceId),
         eq(messages.direction, "in"),
         sql`${messageReplyAddress()} = ${email}`,
-        sql`${messageReplyName()} is not null`,
       ),
-    )
-    .orderBy(desc(messages.sentAt))
-    .limit(1);
+    );
   return { address: email, name: named?.name ?? null, threads: list satisfies CustomerThread[] };
 }

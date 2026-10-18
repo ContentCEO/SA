@@ -93,3 +93,8 @@ the same `leads@thumbtack.com` address, `large_request`, expected needs-you with
   (`quoteFactsByAddress`: open = quote thread with no outcome, won = sum of `quote_amount_cents`),
   so the Customers page never runs `captureQuoteAmounts` / `guessNoAnswers` and has no 300-quote
   cap. A won amount shows once Quotes or the daily job has captured it.
+
+## Step 4: Check 13 P4 (one name per customer)
+
+- `newestNameSql` (`customers.ts`): the newest non-empty reply name over the customer's inbound
+  mail, used by both `listCustomers` and `customerDetail`, so the row and the page can't differ.

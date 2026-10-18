@@ -652,6 +652,22 @@ describe("customer list", () => {
     expect(q!.quoteOutcome).toBeNull();
   });
 
+  it("the list and the page show the same, newest name (Check 13 P4)", async () => {
+    await convo({ from: "ruiz@x.com", name: "Dana Ruiz", category: "scheduling", inAgo: 9 });
+    await convo({ from: "ruiz@x.com", name: "Ruiz Family", category: "scheduling", inAgo: 5 });
+    await convo({ from: "ruiz@x.com", name: "Mike Ruiz", category: "scheduling", inAgo: 2 });
+    await convo({ from: "ruiz@x.com", name: "", category: "scheduling", inAgo: 1 });
+    const id = await convo({ from: "anon@x.com", name: "", category: "scheduling", inAgo: 3 });
+    await database.update(messages).set({ fromName: null }).where(eq(messages.threadId, id));
+    const list = await listCustomers(workspaceId, NOW);
+    const ruiz = list.find((c) => c.address === "ruiz@x.com")!;
+    expect(ruiz.name).toBe("Mike Ruiz");
+    expect((await customerByKey(workspaceId, ruiz.key))!.name).toBe("Mike Ruiz");
+    const anon = list.find((c) => c.address === "anon@x.com")!;
+    expect(anon.name).toBeNull();
+    expect((await customerByKey(workspaceId, anon.key))!.name).toBeNull();
+  });
+
   it("never shows another workspace's customers", async () => {
     await convo({ from: "dana@x.com", name: "Dana", category: "quote_request", inAgo: 1 });
     const { workspace: other } = await ensureUserAndWorkspace({ email: "other@shop.com" });
