@@ -114,6 +114,31 @@
   border-width: 3px;
 }
 
+/*
+ * Phones: the signed-in app's tab bar is fixed to the bottom (app-header.tsx, data-tabbar). When
+ * focus moves by keyboard or switch access, the browser scrolls the focused item only to the
+ * viewport's edge, under the bar; scroll-padding makes it stop above the bar instead (WCAG 2.2
+ * 2.4.11, technique C43; Check 32 P2). The bar is min-h-14 (3.5rem, so it grows with a bigger
+ * text setting and sunlight) plus its 1px border and the home-bar inset; 12px of air on top.
+ */
+@media (max-width: 639.98px) {
+  html:has([data-tabbar]) {
+    scroll-padding-top: 16px;
+    scroll-padding-bottom: calc(3.5rem + 1px + env(safe-area-inset-bottom) + 12px);
+  }
+}
+
+/*
+ * viewport-fit=cover (Check 8 P2): the signed-in app pads its own wrapper and tab bar for the
+ * safe areas; every other page (homepage, /growth, /signin, legal) gets the insets on <body>,
+ * which are 0 except on a notched phone held sideways or the installed app's home bar.
+ */
+html:not(:has([data-tabbar])) body {
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
 /* Light card on a dark surface (the Growth form). Restores the :root tokens.
    Off-white card behind paper inputs, same as the waitlist card. Unlayered, so it beats utilities. */
 .sa-light {

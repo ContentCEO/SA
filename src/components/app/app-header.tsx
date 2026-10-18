@@ -28,11 +28,12 @@ export function AppHeader({ sunlight = false }: { sunlight?: boolean }) {
 
   return (
     <>
-      <header className="flex items-center justify-between">
+      {/* Wraps (Sunlight drops below the logo) only at a very big text setting (Check 8 P5). */}
+      <header className="flex flex-wrap items-center justify-between gap-x-2">
         <Link href="/queue" className="inline-flex min-h-tap items-center rounded-md">
           <Wordmark />
         </Link>
-        <div className="flex items-center gap-1">
+        <div className="ml-auto flex items-center gap-1">
           <nav aria-label="Main" className="hidden items-center sm:flex">
             {NAV.map(({ href, label }) => (
               <Link
@@ -65,26 +66,30 @@ export function AppHeader({ sunlight = false }: { sunlight?: boolean }) {
           </form>
         </div>
       </header>
+      {/* data-tabbar: theme.css pads focus scrolling above this bar on phones (Check 32 P2). */}
       <nav
         aria-label="Main"
+        data-tabbar=""
         className="fixed inset-x-0 bottom-0 z-20 border-t border-stone bg-paper/95 pb-[env(safe-area-inset-bottom)] backdrop-blur sm:hidden"
       >
-        <ul className="mx-auto grid max-w-xl grid-cols-5">
+        {/* Check 8 P2: clear of the notch when the phone is sideways (viewport-fit=cover). */}
+        <ul className="mx-auto grid max-w-xl grid-cols-5 pr-[env(safe-area-inset-right)] pl-[env(safe-area-inset-left)]">
           {NAV.map(({ href, label, Icon }) => {
             const on = current(href);
             return (
-              <li key={href}>
+              // Check 8 P5: min-w-0 so a big text setting can't push a tab past its fifth.
+              <li key={href} className="min-w-0">
                 <Link
                   href={href}
                   aria-current={on ? "page" : undefined}
                   className={cn(
-                    "flex min-h-14 flex-col items-center justify-center gap-0.5 text-sm font-semibold",
+                    "sa-tab flex h-full min-h-14 flex-col items-center justify-center gap-0.5 px-0.5 py-1 text-center text-[length:min(0.875rem,3.6vw)] leading-tight font-semibold",
                     on && "font-black",
                   )}
                 >
                   <span
                     className={cn(
-                      "flex h-7 w-11 items-center justify-center rounded-full",
+                      "sa-tab-pill flex h-7 w-full max-w-11 shrink-0 items-center justify-center rounded-full",
                       on && "sa-inverted",
                     )}
                   >

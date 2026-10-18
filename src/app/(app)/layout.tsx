@@ -12,8 +12,11 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   const { sunlight } = await devicePrefs();
   return (
     <div
+      id="sa-app"
       data-contrast={sunlight ? "high" : undefined}
-      className="mx-auto flex w-full max-w-xl flex-1 flex-col gap-8 px-4 pt-6 pb-28 sm:pb-6"
+      // Check 8 P2: viewport-fit=cover lets the page run under the notch and home bar, so every
+      // side pads for the safe area; the bottom also clears the fixed tab bar on phones.
+      className="sa-app mx-auto flex w-full max-w-xl flex-1 flex-col gap-8 pt-[max(1.5rem,env(safe-area-inset-top))] pr-[max(1rem,env(safe-area-inset-right))] pb-[calc(7rem+env(safe-area-inset-bottom))] pl-[max(1rem,env(safe-area-inset-left))] sm:pb-6"
     >
       <AppHeader sunlight={sunlight} />
       <Suspense fallback={null}>

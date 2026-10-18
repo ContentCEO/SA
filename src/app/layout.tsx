@@ -62,6 +62,9 @@ export const metadata: Metadata = {
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
+  // Check 8 P2: without "cover", iPhone reports every safe-area inset as 0, so the installed
+  // app's tab bar sat on the home-bar strip. Each layout pads for the insets itself.
+  viewportFit: "cover",
   themeColor: "#1B1B1B",
 };
 

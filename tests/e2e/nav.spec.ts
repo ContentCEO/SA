@@ -54,3 +54,58 @@ test("an old Settings link opens the screen that holds it now", async ({ page, c
   await page.goto("/settings?done=connected");
   await expect(page.getByRole("status")).toHaveText("Gmail connected.");
 });
+
+/**
+ * Check 8 P5: a bigger text setting (or Sunlight's bigger type) never cuts a tab label, runs
+ * two together or makes the page scroll sideways.
+ */
+test("the tab bar fits at 150% and 200% text, with and without Sunlight", async ({
+  page,
+  context,
+}, info) => {
+  test.skip(info.project.name !== "mobile", "the tab bar shows on phones only");
+  const owner = await seedOwner({ mailbox: true, backfilled: true });
+  await signInAs(context, owner);
+  for (const sunlight of [false, true]) {
+    if (sunlight) {
+      await context.addCookies([
+        { name: "sa_contrast", value: "high", domain: "localhost", path: "/" },
+      ]);
+    }
+    for (const size of [
+      { width: 320, height: 640 },
+      { width: 375, height: 812 },
+    ]) {
+      await page.setViewportSize(size);
+      await page.goto("/queue");
+      await expect(page.locator('[data-contrast="high"]')).toHaveCount(sunlight ? 1 : 0);
+      for (const scale of ["150%", "200%"]) {
+        await page.evaluate((s) => (document.documentElement.style.fontSize = s), scale);
+        const where = `${size.width}px ${scale} sunlight=${sunlight}`;
+        const tabs = page.locator("[data-tabbar] a");
+        await expect(tabs).toHaveCount(5);
+        const cut = await tabs.evaluateAll((els) =>
+          els.filter((el) => el.scrollWidth > el.clientWidth).map((el) => el.textContent?.trim()),
+        );
+        expect(cut, where).toEqual([]);
+        const boxes = await tabs.evaluateAll((els) =>
+          els.map((el) => {
+            const r = el.getBoundingClientRect();
+            return { left: r.left, right: r.right, height: r.height };
+          }),
+        );
+        for (let i = 0; i < boxes.length; i++) {
+          expect(boxes[i]!.height, where).toBeGreaterThanOrEqual(44);
+          if (i > 0)
+            expect(boxes[i]!.left, where).toBeGreaterThanOrEqual(boxes[i - 1]!.right - 0.5);
+        }
+        expect(boxes[0]!.left, where).toBeGreaterThanOrEqual(0);
+        expect(boxes[4]!.right, where).toBeLessThanOrEqual(size.width + 0.5);
+        const overflow = await page.evaluate(
+          () => document.documentElement.scrollWidth > document.documentElement.clientWidth,
+        );
+        expect(overflow, where).toBe(false);
+      }
+    }
+  }
+});
