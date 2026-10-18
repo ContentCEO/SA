@@ -58,9 +58,11 @@ test("activity: plain log, honest estimate, reachable from the menu", async ({ p
     name: `${localMonthName(new Date(), "America/New_York")} so far`,
   });
   await expect(month.getByText("Time saved: about 3 minutes.")).toBeVisible();
-  await expect(
-    month.getByText(/That's an estimate: 3 minutes for each drafted reply you sent/),
-  ).toBeVisible();
+  // Check 14 P3: the rule the math uses, said once in each box.
+  const RULE =
+    "Our estimate: 3 minutes for each drafted reply or follow-up that went out, from the app, from Gmail or by autopilot.";
+  await expect(month).toContainText(RULE);
+  expect(((await month.textContent()) ?? "").split(RULE).length - 1).toBe(1);
 
   // Plan #32/#33: this week so far — the reply just sent from the app answers the quote
   // request at once (sync hasn't brought in its email yet), so the quote is out.
@@ -68,20 +70,21 @@ test("activity: plain log, honest estimate, reachable from the menu", async ({ p
   await expect(week).toBeVisible();
   const figure = (label: string) =>
     week.locator("div").filter({ has: page.getByRole("term").filter({ hasText: label }) });
-  await expect(figure("Replies sent").getByRole("definition")).toHaveText("1");
+  await expect(figure("Replies you sent").getByRole("definition")).toHaveText("1");
   await expect(figure("Follow-ups sent").getByRole("definition")).toHaveText("0");
-  await expect(figure("Quotes out").getByRole("definition")).toHaveText("1");
+  await expect(figure("Quote requests answered").getByRole("definition")).toHaveText("1");
+  await expect(figure("Autopilot sent")).toHaveCount(0);
   await expect(figure("Time saved (estimate)").getByRole("definition")).toHaveText(
     "about 3 minutes",
   );
   await expect(week).toContainText(
-    "You answered quote requests in under a minute on average this week.",
+    "You answered this week's quote requests in under a minute on average.",
   );
   await expect(week).not.toContainText("still waiting");
   await expect(week).toContainText("Nothing sent last week.");
-  await expect(
-    week.getByText(/That's an estimate: 3 minutes for each drafted reply you sent/),
-  ).toBeVisible();
+  await expect(week).toContainText(RULE);
+  expect(((await week.textContent()) ?? "").split(RULE).length - 1).toBe(1);
+  await expect(week).toContainText("Answered counts your first reply to each quote request");
 
   const overflow = await page.evaluate(
     () => document.documentElement.scrollWidth > document.documentElement.clientWidth,
@@ -140,7 +143,7 @@ test("activity at 375px: monthly close rate counts owner and auto outcomes, Mone
   const week = page.getByRole("region", { name: "This week so far" });
   await expect(week.getByRole("heading", { name: "This week so far" })).toBeVisible();
   await expect(week.getByText("Time saved (estimate)")).toBeVisible();
-  await expect(week.getByText(/That's an estimate/)).toBeVisible();
+  await expect(week.getByText(/Our estimate: 3 minutes/)).toBeVisible();
   const close = page.getByRole("region", { name: "Quotes decided this month" });
   await expect(close).toContainText("You won 1 of 3 quotes decided this month (33%).");
   // Won / Lost / No answer: one each — the auto "no answer" counts as decided.

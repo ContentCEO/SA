@@ -21,6 +21,7 @@ import {
 import { workspaceTimeZone } from "./snooze";
 import { localMonthStart, usableTimeZone } from "./snooze-rules";
 import { messageReplyName } from "./thread-sql";
+import { autopilotSentSql } from "./scorecard";
 
 // The time-saved assumption lives in config (pure files read it too); re-exported for old callers.
 export { MINUTES_PER_SENT_REPLY } from "@/config/drafting";
@@ -338,6 +339,8 @@ export type MonthSummary = {
   sent: number;
   sentAfterEditing: number;
   nudgesSent: number;
+  /** Check 14 P3: sent by autopilot, with no tap (inside `sent`, apart from "you sent"). */
+  autopilotSent: number;
   minutesSaved: number;
 };
 
@@ -363,7 +366,15 @@ export async function monthSummary(
       .where(eq(mailboxes.workspaceId, workspaceId))
   ).map((b) => b.id);
   if (boxes.length === 0)
-    return { sorted: 0, drafted: 0, sent: 0, sentAfterEditing: 0, nudgesSent: 0, minutesSaved: 0 };
+    return {
+      sorted: 0,
+      drafted: 0,
+      sent: 0,
+      sentAfterEditing: 0,
+      nudgesSent: 0,
+      autopilotSent: 0,
+      minutesSaved: 0,
+    };
 
   const [sorted] = await db()
     .select({ n: count() })
@@ -378,7 +389,7 @@ export async function monthSummary(
   // on the days they share (plan M8 A18; a week that started last month also counts last
   // month's days). Drafted stays on when it was made.
   const sentRows = await db()
-    .select({ status: drafts.status, kind: drafts.kind })
+    .select({ status: drafts.status, kind: drafts.kind, auto: autopilotSentSql() })
     .from(drafts)
     .where(
       and(
@@ -395,7 +406,9 @@ export async function monthSummary(
     drafted: made?.n ?? 0,
     sent,
     sentAfterEditing: sentRows.filter((d) => d.status === "edited_and_sent").length,
-    nudgesSent: sentRows.filter((d) => d.kind === "followup").length,
+    // Autopilot never sends follow-ups, so "you sent" = sent − follow-ups − autopilot.
+    nudgesSent: sentRows.filter((d) => d.kind === "followup" && !d.auto).length,
+    autopilotSent: sentRows.filter((d) => d.auto).length,
     minutesSaved: sent * MINUTES_PER_SENT_REPLY,
   };
 }

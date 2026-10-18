@@ -51,11 +51,13 @@ export function averageMinutes(pairs: { from: Date; to: Date }[]): number | null
 }
 
 /**
- * "You answered quote requests in 2 h 10 min on average this week (last week: 3 h 40 min)."
- * With nothing answered: "No quote requests answered yet this week (last week: 3 h 40 min on
- * average)." — so last week's figure is said either way. With none in at all (`answered` and
- * `unanswered` both 0): "No quote requests came in last week." Requests still waiting are always
- * said out loud, so a fast average can't hide them.
+ * "You answered this week's quote requests in 2 h 10 min on average (last week: 3 h 40 min)."
+ * With nothing answered: "Of this week's quote requests: none answered yet (last week: 3 h 40
+ * min on average)." — so last week's figure is said either way. With none in at all
+ * (`answered` and `unanswered` both 0): "No quote requests came in last week." Requests still
+ * waiting are always said out loud, so a fast average can't hide them. Check 14 P4: every
+ * sentence names its own group (the requests asked that week), so it can't read as
+ * contradicting "Quote requests answered", which counts answers given that week.
  */
 export function responseTimeSentence(
   thisWeek: { avgMinutes: number | null; unanswered: number; answered?: number },
@@ -67,20 +69,19 @@ export function responseTimeSentence(
   // None came in at all (only known when `answered` is given): say so, rather than "none
   // answered", which reads as if the owner missed some.
   const noneCameIn = thisWeek.answered === 0 && Math.round(thisWeek.unanswered) <= 0;
+  const whose = period === "this week" ? "this week's" : "last week's";
   let s =
     thisWeek.avgMinutes == null
       ? (noneCameIn
           ? period === "this week"
             ? "No quote requests have come in yet this week"
             : "No quote requests came in last week"
-          : period === "this week"
-            ? "No quote requests answered yet this week"
-            : "No quote requests answered last week") +
+          : `Of ${whose} quote requests: none answered${period === "this week" ? " yet" : ""}`) +
         (earlier ? ` (${before}: ${earlier} on average).` : ".")
-      : `You answered quote requests in ${formatDuration(thisWeek.avgMinutes)} on average ${period}` +
+      : `You answered ${whose} quote requests in ${formatDuration(thisWeek.avgMinutes)} on average` +
         (earlier ? ` (${before}: ${earlier}).` : ".");
   const n = Math.max(0, Math.round(thisWeek.unanswered));
-  if (n > 0) s += ` ${n} ${n === 1 ? "is" : "are"} still waiting for an answer.`;
+  if (n > 0) s += ` ${n} ${n === 1 ? "is" : "are"} still waiting.`;
   return s;
 }
 
@@ -94,8 +95,17 @@ export function stillWaitingSentence(
   return `${plural(n, "quote request")} from ${period} ${n === 1 ? "is" : "are"} still waiting for an answer.`;
 }
 
-/** The time-saved estimate in words: "about 9 minutes", "about 1.5 hours". */
+/**
+ * Check 14 P3: the time-saved rule, said the way the math does it (every drafted reply or
+ * follow-up that went out, however it went). Said once per box.
+ */
+export function timeSavedRule(): string {
+  return `Our estimate: ${MINUTES_PER_SENT_REPLY} minutes for each drafted reply or follow-up that went out, from the app, from Gmail or by autopilot.`;
+}
+
+/** The time-saved estimate in words: "about 9 minutes", "about 1.5 hours", "none yet". */
 export function timeSavedPhrase(minutes: number): string {
+  if (minutes <= 0) return "none yet";
   if (minutes < 60) return `about ${minutes} minute${minutes === 1 ? "" : "s"}`;
   const hours = Math.round((minutes / 60) * 2) / 2;
   return `about ${hours} hour${hours === 1 ? "" : "s"}`;
@@ -103,8 +113,13 @@ export function timeSavedPhrase(minutes: number): string {
 
 /** A week's numbers (the shape `weeklyScorecard` returns), typed here so this file stays pure. */
 export type ScorecardNumbers = {
+  /** Replies the owner sent (from the app or from Gmail), not autopilot's. */
   repliesSent: number;
+  /** Follow-ups the owner sent, not autopilot's. */
   followupsSent: number;
+  /** Check 14 P3: replies autopilot sent, kept apart from "you sent". */
+  autopilotSent?: number;
+  /** Quote requests first answered in the week (any first reply, or "I called them"). */
   quotesOut: number;
   response: { avgMinutes: number | null; answered: number; unanswered: number };
   minutesSaved: number;
@@ -190,27 +205,40 @@ export function scorecardIsEmpty(s: ScorecardNumbers): boolean {
   return (
     s.repliesSent === 0 &&
     s.followupsSent === 0 &&
+    (s.autopilotSent ?? 0) === 0 &&
     s.quotesOut === 0 &&
     s.response.answered === 0 &&
     s.response.unanswered === 0
   );
 }
 
-/** "Last week: 12 replies sent, 3 follow-ups sent, 4 quotes out." */
+/**
+ * "Last week: 12 replies sent (3 by autopilot), 3 follow-ups sent, 4 quote requests answered."
+ * Check 14 P4: answered, not "quotes out": the first answer can be any reply or a phone call.
+ */
 export function scorecardCountsLine(
   s: ScorecardNumbers,
   period: "This week" | "Last week",
 ): string {
-  const replies = `${s.repliesSent} ${s.repliesSent === 1 ? "reply" : "replies"}`;
-  return `${period}: ${replies} sent, ${plural(s.followupsSent, "follow-up")} sent, ${plural(
-    s.quotesOut,
-    "quote",
-  )} out.`;
+  const auto = s.autopilotSent ?? 0;
+  const total = s.repliesSent + auto;
+  const replies = `${total} ${total === 1 ? "reply" : "replies"}`;
+  return `${period}: ${replies} sent${auto > 0 ? ` (${auto} by autopilot)` : ""}, ${plural(
+    s.followupsSent,
+    "follow-up",
+  )} sent, ${plural(s.quotesOut, "quote request")} answered.`;
 }
 
-/** "Time saved: about 45 minutes (an estimate: 3 minutes per reply sent from the app)." */
-export function timeSavedLine(minutes: number): string {
-  return `Time saved: ${timeSavedPhrase(minutes)} (an estimate: ${MINUTES_PER_SENT_REPLY} minutes per reply sent from the app).`;
+/**
+ * "Time saved: about 45 minutes. Our estimate: 3 minutes for each …" With `rule: false` (where
+ * the box already says the rule) just the figure. Nothing sent: no figure to estimate.
+ */
+export function timeSavedLine(minutes: number, options: { rule?: boolean } = {}): string {
+  const figure =
+    minutes <= 0
+      ? "Time saved: none, as nothing went out."
+      : `Time saved: ${timeSavedPhrase(minutes)}.`;
+  return options.rule === false ? figure : `${figure} ${timeSavedRule()}`;
 }
 
 /**
@@ -222,7 +250,7 @@ export function timeSavedLine(minutes: number): string {
 export function scorecardLines(
   s: ScorecardNumbers,
   period: "This week" | "Last week",
-  options: { average?: boolean } = {},
+  options: { average?: boolean; rule?: boolean } = {},
 ): string[] {
   const lower = period === "This week" ? "this week" : "last week";
   const lines = [scorecardCountsLine(s, period)];
@@ -235,6 +263,6 @@ export function scorecardLines(
   if (speed) lines.push(speed);
   const written = asWrittenSentence(s.asWritten, null, lower);
   if (written) lines.push(written);
-  lines.push(timeSavedLine(s.minutesSaved));
+  lines.push(timeSavedLine(s.minutesSaved, { rule: options.rule }));
   return lines;
 }

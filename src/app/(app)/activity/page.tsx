@@ -7,7 +7,6 @@ import { cn } from "@/lib/utils";
 import {
   listActivity,
   lostReasonsBetween,
-  MINUTES_PER_SENT_REPLY,
   localMonthName,
   monthCloseRate,
   monthMoney,
@@ -29,6 +28,7 @@ import {
   scorecardIsEmpty,
   scorecardLines,
   timeSavedPhrase,
+  timeSavedRule,
 } from "@/server/scorecard-rules";
 import { requireOwner } from "@/server/session";
 import { lostReasonsSentence } from "@/server/quote-rules";
@@ -118,12 +118,20 @@ export default async function ActivityPage() {
           This week so far
         </h2>
         <dl className="grid grid-cols-2 gap-x-4 gap-y-2">
-          {[
-            ["Replies sent", thisWeek.repliesSent],
-            ["Follow-ups sent", thisWeek.followupsSent],
-            ["Quotes out", thisWeek.quotesOut],
-            ["Time saved (estimate)", timeSavedPhrase(thisWeek.minutesSaved)],
-          ].map(([label, value]) => (
+          {(
+            [
+              // Check 14 P3: autopilot's sends are never "you sent"; the tiles add up to the
+              // time saved (each × the rule's minutes).
+              ["Replies you sent", thisWeek.repliesSent],
+              ["Follow-ups sent", thisWeek.followupsSent],
+              ...((thisWeek.autopilotSent ?? 0) > 0
+                ? [["Autopilot sent", thisWeek.autopilotSent ?? 0]]
+                : []),
+              // Check 14 P4: any first answer, so not "quotes out".
+              ["Quote requests answered", thisWeek.quotesOut],
+              ["Time saved (estimate)", timeSavedPhrase(thisWeek.minutesSaved)],
+            ] as [string, string | number][]
+          ).map(([label, value]) => (
             <div key={label} className="flex flex-col">
               <dt className="text-sm text-muted-foreground">{label}</dt>
               <dd className="text-2xl font-black">{value}</dd>
@@ -136,12 +144,13 @@ export default async function ActivityPage() {
         <p>
           {scorecardIsEmpty(lastWeek)
             ? "Nothing sent last week."
-            : scorecardLines(lastWeek, "Last week", { average: false }).join(" ")}
+            : scorecardLines(lastWeek, "Last week", { average: false, rule: false }).join(" ")}
         </p>
+        {/* The rule once in this box (Check 14 P3); last week's line leaves it out. */}
         <p className="text-sm text-muted-foreground">
-          That&apos;s an estimate: {MINUTES_PER_SENT_REPLY} minutes for each drafted reply you sent.
-          Weeks start on Monday. Response time runs from a customer&apos;s first email asking for a
-          quote to your first reply.
+          {timeSavedRule()} Weeks start on Monday. Answered counts your first reply to each quote
+          request, by email or by tapping I called them, in the week you answered. Response time
+          runs from a customer&apos;s first email asking for a quote to your first reply.
         </p>
         {speedLine ? (
           <p className="text-sm text-muted-foreground">
@@ -174,13 +183,16 @@ export default async function ActivityPage() {
           {monthName} so far
         </h2>
         <dl className="grid grid-cols-2 gap-x-4 gap-y-2">
-          {[
-            ["Emails sorted", month.sorted],
-            ["Replies drafted", month.drafted],
-            // Replies only, like the week's figure; follow-ups have their own line.
-            ["Replies you sent", month.sent - month.nudgesSent],
-            ["Follow-ups sent", month.nudgesSent],
-          ].map(([label, value]) => (
+          {(
+            [
+              ["Emails sorted", month.sorted],
+              ["Replies drafted", month.drafted],
+              // Replies only, like the week's figure; follow-ups and autopilot have their own.
+              ["Replies you sent", month.sent - month.nudgesSent - month.autopilotSent],
+              ["Follow-ups sent", month.nudgesSent],
+              ...(month.autopilotSent > 0 ? [["Autopilot sent", month.autopilotSent]] : []),
+            ] as [string, number][]
+          ).map(([label, value]) => (
             <div key={label} className="flex flex-col">
               <dt className="text-sm text-muted-foreground">{label}</dt>
               <dd className="text-2xl font-black">{value}</dd>
@@ -190,8 +202,10 @@ export default async function ActivityPage() {
         <p className="text-lg">
           <span className="font-black">Time saved: {timeSavedPhrase(month.minutesSaved)}.</span>{" "}
           <span className="text-muted-foreground">
-            That&apos;s an estimate: {MINUTES_PER_SENT_REPLY} minutes for each drafted reply you
-            sent{month.sentAfterEditing ? ` (${month.sentAfterEditing} after editing)` : ""}.
+            {timeSavedRule()}
+            {month.sentAfterEditing
+              ? ` ${month.sentAfterEditing} went out after you edited ${month.sentAfterEditing === 1 ? "it" : "them"}.`
+              : ""}{" "}
             Sorting isn&apos;t counted.
           </span>
         </p>

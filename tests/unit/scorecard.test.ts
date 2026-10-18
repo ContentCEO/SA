@@ -7,7 +7,7 @@ import { ensureUserAndWorkspace } from "@/server/accounts";
 import { saveConnectedMailbox } from "@/server/mailboxes";
 import { isAutomatedSender, isNoReplyAddress as offerNoReply } from "@/server/offer-rules";
 import { scorecardQueries, weekScorecards, weeklyScorecard } from "@/server/scorecard";
-import { weekBounds } from "@/server/scorecard-rules";
+import { responseTimeSentence, scorecardCountsLine, weekBounds } from "@/server/scorecard-rules";
 import { isNoReplyAddress } from "@/server/sender-rules";
 import { noReplySql } from "@/server/thread-sql";
 import { createTestDb } from "../support/db";
@@ -140,6 +140,7 @@ describe("weeklyScorecard: replies and follow-ups sent (#32)", () => {
     expect(Object.keys(s).sort()).toEqual(
       [
         "asWritten",
+        "autopilotSent",
         "followupsSent",
         "minutesSaved",
         "quotesOut",
@@ -198,6 +199,43 @@ describe("weeklyScorecard: quotes out (#32)", () => {
     const s = await week();
     expect(s.quotesOut).toBe(1);
     expect(s.response).toEqual({ avgMinutes: 120, answered: 1, unanswered: 0 });
+  });
+});
+
+describe("quote requests answered vs this week's response sentence (Check 14 P4)", () => {
+  it("asked last Friday, answered Monday: this week's answered count, last week's response time", async () => {
+    const friday = await thread();
+    await msg(friday, "in", day(-3, 9));
+    await msg(friday, "out", day(0, 9));
+    // One asked this week, still waiting.
+    const waiting = await thread();
+    await msg(waiting, "in", day(1, 9));
+    const { thisWeek, lastWeek } = await weekScorecards(workspaceId, NOW, NY);
+    expect(thisWeek.quotesOut).toBe(1);
+    expect(lastWeek.quotesOut).toBe(0);
+    expect(lastWeek.response).toMatchObject({ answered: 1, unanswered: 0, avgMinutes: 3 * 1440 });
+    expect(thisWeek.response).toMatchObject({ answered: 0, unanswered: 1 });
+    expect(scorecardCountsLine(thisWeek, "This week")).toContain("1 quote request answered");
+    expect(responseTimeSentence(thisWeek.response, lastWeek.response)).toBe(
+      "Of this week's quote requests: none answered yet (last week: 3 days on average). 1 is still waiting.",
+    );
+    expect(responseTimeSentence(lastWeek.response, null, "last week")).toBe(
+      "You answered last week's quote requests in 3 days on average.",
+    );
+  });
+});
+
+describe("weeklyScorecard: autopilot's sends are kept apart (Check 14 P3)", () => {
+  it("counts autopilot sends apart from the owner's and in the time saved", async () => {
+    const t = await thread();
+    await draft(t, { status: "sent", decidedAt: day(1, 9), sentVia: "app" });
+    await draft(t, { status: "sent", decidedAt: day(1, 10), sentVia: "autopilot" });
+    await draft(t, { status: "sent", kind: "followup", decidedAt: day(1, 11), sentVia: "gmail" });
+    // The owner's own Gmail reply is never a drafted reply sent.
+    await draft(t, { status: "sent", decidedAt: day(1, 12), sentVia: "own_words" });
+    const s = await week();
+    expect(s).toMatchObject({ repliesSent: 1, autopilotSent: 1, followupsSent: 1 });
+    expect(s.minutesSaved).toBe(9);
   });
 });
 
@@ -527,6 +565,7 @@ describe("weeklyScorecard is scoped to the workspace", () => {
     expect(await week()).toEqual({
       repliesSent: 0,
       followupsSent: 0,
+      autopilotSent: 0,
       quotesOut: 0,
       response: { avgMinutes: null, answered: 0, unanswered: 0 },
       minutesSaved: 0,

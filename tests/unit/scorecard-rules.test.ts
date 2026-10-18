@@ -6,12 +6,16 @@ import {
   responseTimeSentence,
   scorecardIsEmpty,
   scorecardLines,
+  timeSavedLine,
   timeSavedPhrase,
+  timeSavedRule,
   weekBounds,
   type ScorecardNumbers,
 } from "@/server/scorecard-rules";
 
 const iso = (d: Date) => d.toISOString();
+const RULE =
+  "Our estimate: 3 minutes for each drafted reply or follow-up that went out, from the app, from Gmail or by autopilot.";
 const at = (s: string) => new Date(s);
 const NY = "America/New_York";
 const LA = "America/Los_Angeles";
@@ -115,52 +119,54 @@ describe("averageMinutes", () => {
 });
 
 describe("responseTimeSentence", () => {
-  const SAFE = /^[A-Za-z0-9 :().,·-]+$/;
+  const SAFE = /^[A-Za-z0-9 :().,·'-]+$/;
 
   it("this week with last week alongside", () => {
     expect(responseTimeSentence({ avgMinutes: 130, unanswered: 0 }, { avgMinutes: 220 })).toBe(
-      "You answered quote requests in 2 h 10 min on average this week (last week: 3 h 40 min).",
+      "You answered this week's quote requests in 2 h 10 min on average (last week: 3 h 40 min).",
     );
   });
 
   it("without last week's figure", () => {
     expect(responseTimeSentence({ avgMinutes: 45, unanswered: 0 }, null)).toBe(
-      "You answered quote requests in 45 min on average this week.",
+      "You answered this week's quote requests in 45 min on average.",
     );
     expect(responseTimeSentence({ avgMinutes: 45, unanswered: 0 }, { avgMinutes: null })).toBe(
-      "You answered quote requests in 45 min on average this week.",
+      "You answered this week's quote requests in 45 min on average.",
     );
   });
 
   it("no answers yet, and the requests still waiting are always said", () => {
     expect(responseTimeSentence({ avgMinutes: null, unanswered: 0 }, null)).toBe(
-      "No quote requests answered yet this week.",
+      "Of this week's quote requests: none answered yet.",
     );
     expect(responseTimeSentence({ avgMinutes: null, unanswered: 1 }, null)).toBe(
-      "No quote requests answered yet this week. 1 is still waiting for an answer.",
+      "Of this week's quote requests: none answered yet. 1 is still waiting.",
     );
     // Nothing answered yet this week (every Monday morning): last week's figure still shows.
     expect(responseTimeSentence({ avgMinutes: null, unanswered: 0 }, { avgMinutes: 220 })).toBe(
-      "No quote requests answered yet this week (last week: 3 h 40 min on average).",
+      "Of this week's quote requests: none answered yet (last week: 3 h 40 min on average).",
     );
     expect(responseTimeSentence({ avgMinutes: null, unanswered: 2 }, { avgMinutes: 220 })).toBe(
-      "No quote requests answered yet this week (last week: 3 h 40 min on average). 2 are still waiting for an answer.",
+      "Of this week's quote requests: none answered yet (last week: 3 h 40 min on average). 2 are still waiting.",
     );
     expect(responseTimeSentence({ avgMinutes: 30, unanswered: 3 }, { avgMinutes: 60 })).toBe(
-      "You answered quote requests in 30 min on average this week (last week: 1 h). 3 are still waiting for an answer.",
+      "You answered this week's quote requests in 30 min on average (last week: 1 h). 3 are still waiting.",
     );
   });
 
   it("last week, for the Monday digest", () => {
     expect(
       responseTimeSentence({ avgMinutes: 1620, unanswered: 0 }, { avgMinutes: 60 }, "last week"),
-    ).toBe("You answered quote requests in 1 day 3 h on average last week (the week before: 1 h).");
+    ).toBe(
+      "You answered last week's quote requests in 1 day 3 h on average (the week before: 1 h).",
+    );
     expect(responseTimeSentence({ avgMinutes: null, unanswered: 0 }, null, "last week")).toBe(
-      "No quote requests answered last week.",
+      "Of last week's quote requests: none answered.",
     );
     expect(
       responseTimeSentence({ avgMinutes: null, unanswered: 0 }, { avgMinutes: 60 }, "last week"),
-    ).toBe("No quote requests answered last week (the week before: 1 h on average).");
+    ).toBe("Of last week's quote requests: none answered (the week before: 1 h on average).");
     expect(
       responseTimeSentence(
         { avgMinutes: null, answered: 0, unanswered: 0 },
@@ -199,8 +205,12 @@ describe("timeSavedPhrase", () => {
     expect(timeSavedPhrase(m)).toBe(words);
   });
 
-  it("matches the old wording everywhere", () => {
-    for (let m = 0; m <= 3000; m += 3) expect(timeSavedPhrase(m)).toBe(oldTimeSaved(m));
+  it("matches the old wording everywhere above zero", () => {
+    for (let m = 3; m <= 3000; m += 3) expect(timeSavedPhrase(m)).toBe(oldTimeSaved(m));
+  });
+
+  it("nothing sent says none yet, never 'about 0 minutes' (Check 14 P3)", () => {
+    expect(timeSavedPhrase(0)).toBe("none yet");
   });
 });
 
@@ -235,9 +245,9 @@ describe("scorecardIsEmpty / scorecardLines (#32)", () => {
       minutesSaved: 45,
     };
     expect(scorecardLines(s, "Last week")).toEqual([
-      "Last week: 12 replies sent, 3 follow-ups sent, 4 quotes out.",
-      "You answered quote requests in 2 h 10 min on average last week. 1 is still waiting for an answer.",
-      "Time saved: about 45 minutes (an estimate: 3 minutes per reply sent from the app).",
+      "Last week: 12 replies sent, 3 follow-ups sent, 4 quote requests answered.",
+      "You answered last week's quote requests in 2 h 10 min on average. 1 is still waiting.",
+      `Time saved: about 45 minutes. ${RULE}`,
     ]);
     expect(
       scorecardLines(
@@ -246,9 +256,9 @@ describe("scorecardIsEmpty / scorecardLines (#32)", () => {
         { average: false },
       ),
     ).toEqual([
-      "This week: 1 reply sent, 1 follow-up sent, 1 quote out.",
+      "This week: 1 reply sent, 1 follow-up sent, 1 quote request answered.",
       "1 quote request from this week is still waiting for an answer.",
-      "Time saved: about 6 minutes (an estimate: 3 minutes per reply sent from the app).",
+      `Time saved: about 6 minutes. ${RULE}`,
     ]);
     // Without the average, a week with nothing waiting is just counts and time saved.
     expect(
@@ -260,8 +270,8 @@ describe("scorecardIsEmpty / scorecardLines (#32)", () => {
         },
       ),
     ).toEqual([
-      "Last week: 12 replies sent, 3 follow-ups sent, 4 quotes out.",
-      "Time saved: about 45 minutes (an estimate: 3 minutes per reply sent from the app).",
+      "Last week: 12 replies sent, 3 follow-ups sent, 4 quote requests answered.",
+      `Time saved: about 45 minutes. ${RULE}`,
     ]);
     // None came in at all: said as that, not as "none answered".
     expect(scorecardLines(zero, "This week")[1]).toBe(
@@ -276,7 +286,7 @@ describe("scorecardIsEmpty / scorecardLines (#32)", () => {
         { ...zero, response: { avgMinutes: null, answered: 0, unanswered: 2 } },
         "Last week",
       )[1],
-    ).toBe("No quote requests answered last week. 2 are still waiting for an answer.");
+    ).toBe("Of last week's quote requests: none answered. 2 are still waiting.");
   });
 
   it("the Activity card: last week's response time and its waiting requests are always said", () => {
@@ -307,7 +317,7 @@ describe("scorecardIsEmpty / scorecardLines (#32)", () => {
   });
 
   it("lines contain only numbers and fixed words", () => {
-    const SAFE_LINE = /^[A-Za-z0-9 .,:()\-]+$/;
+    const SAFE_LINE = /^[A-Za-z0-9 .,:()'\-]+$/;
     for (const n of [0, 1, 2, 17, 1000])
       for (const avg of [null, 0, 59, 61, 1500, 90_000])
         for (const period of ["This week", "Last week"] as const)
@@ -323,5 +333,54 @@ describe("scorecardIsEmpty / scorecardLines (#32)", () => {
             { average: n % 2 === 0 },
           ))
             expect(line).toMatch(SAFE_LINE);
+  });
+});
+
+describe("time saved said the way the math does it (Check 14 P3)", () => {
+  it("one rule sentence, from MINUTES_PER_SENT_REPLY", () => {
+    expect(timeSavedRule()).toBe(RULE);
+  });
+
+  it("the line carries the rule unless the box already says it", () => {
+    expect(timeSavedLine(45)).toBe(`Time saved: about 45 minutes. ${RULE}`);
+    expect(timeSavedLine(45, { rule: false })).toBe("Time saved: about 45 minutes.");
+    expect(timeSavedLine(0, { rule: false })).toBe("Time saved: none, as nothing went out.");
+  });
+
+  it("autopilot sends are named apart in the counts line and counted in an empty check", () => {
+    const s: ScorecardNumbers = {
+      repliesSent: 11,
+      followupsSent: 2,
+      autopilotSent: 3,
+      quotesOut: 0,
+      response: { avgMinutes: null, answered: 0, unanswered: 0 },
+      minutesSaved: 48,
+    };
+    expect(scorecardLines(s, "Last week")[0]).toBe(
+      "Last week: 14 replies sent (3 by autopilot), 2 follow-ups sent, 0 quote requests answered.",
+    );
+    expect(
+      scorecardIsEmpty({
+        ...s,
+        repliesSent: 0,
+        followupsSent: 0,
+        minutesSaved: 9,
+      }),
+    ).toBe(false);
+  });
+
+  it("the rule appears once in the Activity week box (last week's line leaves it out)", () => {
+    const lastWeek: ScorecardNumbers = {
+      repliesSent: 2,
+      followupsSent: 0,
+      quotesOut: 1,
+      response: { avgMinutes: 30, answered: 1, unanswered: 0 },
+      minutesSaved: 6,
+    };
+    const box = [
+      ...scorecardLines(lastWeek, "Last week", { average: false, rule: false }),
+      timeSavedRule(),
+    ].join(" ");
+    expect(box.split(RULE).length - 1).toBe(1);
   });
 });
