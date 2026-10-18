@@ -2,6 +2,7 @@ import "server-only";
 import { and, count, desc, eq, gte, inArray, max, sql, sum } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { utcDay } from "@/ai/usage";
+import { jobExecutionsThisMonth } from "./job-runs";
 import { db } from "@/db";
 import {
   activityLog,
@@ -261,6 +262,8 @@ export async function systemHealth(now: Date = new Date()) {
     null,
   );
   return {
+    // Check 25 P4: Inngest meters runs + steps; its free plan pauses at 50,000 a month.
+    jobExecutionsThisMonth: await jobExecutionsThisMonth(now),
     workingMailboxes: working.length,
     needReconnect: rows.filter((r) => r.status === "reconnect_needed").length,
     lastSyncAt: newest,

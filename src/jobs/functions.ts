@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import { cron, NonRetriableError, RetryAfterError } from "inngest";
 import { MailboxRateLimitError } from "@/mailbox/connector";
 import {
@@ -28,6 +29,7 @@ import { threadsToFollowUp } from "@/server/followups";
 import { getMailboxWorkspace } from "@/server/mailboxes";
 import { purgeRateLimits } from "@/server/rate-limit";
 import { purgeGmailUnits } from "@/server/gmail-units";
+import { purgeJobRuns } from "@/server/job-runs";
 import { purgeEmailSentRecords } from "@/lib/email";
 import { sendAccessLostAlerts } from "@/server/alerts";
 import { captureQuoteAmounts, guessNoAnswers } from "@/server/quotes";
@@ -60,6 +62,7 @@ import {
   mailboxConnected,
   mailboxDraftRequested,
   mailboxSyncRequested,
+  replyToBackfillContinue,
   voiceLearnRequested,
 } from "./client";
 
@@ -131,14 +134,14 @@ export const backfillMailbox = inngest.createFunction(
 );
 
 /**
- * What runs after a sync: new mail gets sorted (which then drafts); no new
- * mail still reconciles drafts, since the owner may have edited, sent or
- * deleted them in Gmail.
+ * What runs after a sync: new mail gets sorted (which then drafts). With no new mail, drafts
+ * are reconciled (the owner may have edited, sent or deleted them in Gmail) only when there is
+ * something to reconcile — a pending draft or a queued send (Check 25 P4: a quiet inbox no
+ * longer runs the draft job every 5 minutes). Null = nothing to do.
  */
-export function afterSync(mailboxId: string, ingested: number) {
-  return ingested > 0
-    ? mailboxClassifyRequested.create({ mailboxId })
-    : mailboxDraftRequested.create({ mailboxId });
+export function afterSync(mailboxId: string, ingested: number, hasPending = false) {
+  if (ingested > 0) return mailboxClassifyRequested.create({ mailboxId });
+  return hasPending ? mailboxDraftRequested.create({ mailboxId }) : null;
 }
 
 /** Incremental sync for one mailbox. One at a time per mailbox; bursts collapse. */
@@ -169,15 +172,18 @@ export const syncMailbox = inngest.createFunction(
         if (r.status !== "ok") return r;
         ingested += r.ingested;
         if (r.done) {
-          await step.sendEvent("next", afterSync(mailboxId, ingested));
+          const next = afterSync(mailboxId, ingested, true);
+          if (next) await step.sendEvent("next", next);
           return { status: "ok" as const, ingested };
         }
       }
-      if (ingested > 0) await step.sendEvent("next", afterSync(mailboxId, ingested));
+      const next = afterSync(mailboxId, ingested);
+      if (next) await step.sendEvent("next", next);
       return { status: "resync_continuing" as const, ingested };
     }
     if (result.status === "ok") {
-      await step.sendEvent("next", afterSync(mailboxId, result.ingested));
+      const next = afterSync(mailboxId, result.ingested, result.hasPending ?? false);
+      if (next) await step.sendEvent("next", next);
     }
     return result;
   },
@@ -403,7 +409,9 @@ export const voiceIdeas = inngest.createFunction(
 export const pollMailboxes = inngest.createFunction(
   { id: "poll-mailboxes", triggers: [cron("*/5 * * * *")] },
   async ({ step }) => {
-    const boxes = await step.run("list", () => listSyncableMailboxes());
+    const boxes = await step.run("list", () =>
+      listSyncableMailboxes(new Date(), { forPoll: true }),
+    );
     if (boxes.length === 0) return { polled: 0 };
     await step.sendEvent(
       "fan-out",
@@ -417,94 +425,133 @@ export const pollMailboxes = inngest.createFunction(
   },
 );
 
+/** Check 25 P4: one or more of the lifecycle job's checks threw (each was reported). */
+export class LifecycleChecksFailedError extends Error {
+  constructor(failed: string[]) {
+    super(`Lifecycle checks failed: ${failed.join(", ")}.`);
+    this.name = "LifecycleChecksFailedError";
+  }
+}
+
+/**
+ * Check 25 P4: run several checks inside one step, each on its own: a failure is reported
+ * (content-free: the error and the check's name) and the rest still run. The step itself never
+ * throws, so a retry doesn't redo the checks that worked; the run fails at the end instead.
+ */
+export async function runChecks<T extends Record<string, () => Promise<unknown>>>(
+  checks: T,
+): Promise<{ results: { [K in keyof T]?: Awaited<ReturnType<T[K]>> }; failed: string[] }> {
+  const results: { [K in keyof T]?: Awaited<ReturnType<T[K]>> } = {};
+  const failed: string[] = [];
+  for (const [name, fn] of Object.entries(checks) as [keyof T & string, () => Promise<unknown>][]) {
+    try {
+      results[name] = (await fn()) as Awaited<ReturnType<T[typeof name]>>;
+    } catch (err) {
+      failed.push(name);
+      Sentry.captureException(err, { tags: { job: "workspace-lifecycle", check: name } });
+    }
+  }
+  return { results, failed };
+}
+
 /**
  * Every 15 minutes: start the clock for anyone who connected Gmail but wasn't
  * moved (backstop), record evaluations that have run out, and restart stuck
- * voice learning. Gates don't wait
- * for this — they read the clock directly.
+ * voice learning. Gates don't wait for this — they read the clock directly.
+ *
+ * Check 25 P4: four steps instead of fourteen (Inngest bills per step). Every check still runs
+ * every time, each on its own (`runChecks`); the run fails at the end if any check failed, so
+ * ReportFinalFailures still hears about it.
  */
 export const workspaceLifecycle = inngest.createFunction(
   { id: "workspace-lifecycle", triggers: [cron("*/15 * * * *")] },
   async ({ step }) => {
-    const started = await step.run("start", () => startPendingEvaluations());
-    const expired = await step.run("expire", () => expireEvaluations());
-    // 2026-10-16: Gmail addresses over the plan's limit are paused (and back on with room).
-    // Plan changes do this themselves; this catches one that didn't finish.
-    await step.run("fit-mailboxes-to-plans", () => fitAllMailboxesToPlans());
-    // Autopilot drafts whose send event was lost: send (or stand down) now.
-    const overdue = await step.run("autopilot-overdue", () => overdueAutopilotDrafts());
-    if (overdue.length) {
-      await step.sendEvent(
-        "autopilot-overdue",
-        overdue.map((draftId) =>
-          autopilotSendRequested.create({ draftId, at: new Date().toISOString() }),
-        ),
-      );
-    }
-    // Sends whose undo window ended but whose event was lost (plan #7).
-    const queued = await step.run("sends-overdue", () => overdueQueuedSends());
-    if (queued.length) {
-      await step.sendEvent(
-        "sends-overdue",
-        queued.map((draftId) => draftSendQueued.create({ draftId, at: new Date().toISOString() })),
-      );
-    }
-    // Review D4: mail that waited over 10 minutes unsorted (an AI outage, a lost event) is
-    // sorted again now, not whenever that inbox next gets mail.
-    const unsorted = await step.run("unsorted-sweep", () => unsortedSweepMailboxes());
-    if (unsorted.length) {
-      await step.sendEvent(
-        "unsorted-sweep",
-        unsorted.map((mailboxId) => mailboxClassifyRequested.create({ mailboxId })),
-      );
-    }
-    // Also restart any voice learning that never ran or died part-way.
-    const voice = await step.run("voice", () => workspacesNeedingVoice());
-    if (voice.length) {
-      await step.sendEvent(
-        "learn-voice",
-        voice.map((workspaceId) => voiceLearnRequested.create({ workspaceId })),
-      );
-    }
-    // Tell owners when Gmail access is lost (and remind once), so leads aren't silently missed.
-    const alerts = await step.run("access-lost-alerts", () => sendAccessLostAlerts());
-    // Replies package (B5 part 2): emergencies a run missed (an alert that reached no phone).
-    await step.run("emergency-alerts", () => sendEmergencyAlerts());
-    // Backstop for text alerts held overnight or throttled.
-    await step.run("text-alerts", () => sendLeadAlerts());
-    await step.run("push-alerts", () => sendPushAlerts());
-    // One-shot M7 data fix, from new code once it's live (no-op after the first run).
-    await step.run("m7-backfill", () => runM7Backfill());
-    // One-shot: drop Gmail drafts the old sync stored as owner mail (no-op after the first run).
-    await step.run("draft-messages-cleanup", () => runDraftMessagesCleanup());
-    // Plan #34: a quote request waiting over 4 business hours → one phone notification.
-    await step.run("lead-at-risk-pushes", () => sendLeadAtRiskPushes());
-    // Plan #47 (off unless FEATURE_REFERRALS and an amount): add referral credits still waiting.
-    await step.run("referral-credits", () => applyPendingReferralCredits());
-    // Round 2 (FW D4): backstop for "your first drafts are ready" (once ever per account).
-    await step.run("first-drafts-ready", () => sendFirstDraftsReady());
-    // 2026-10-16: the trial's day-2 and day-3 emails and the one a week after it ran out, each
-    // once ever, at the owner's morning hour or later in their zone (never at night).
-    await step.run("trial-emails", () => sendTrialEmails());
+    const clock = await step.run("clock", () =>
+      runChecks({
+        start: () => startPendingEvaluations(),
+        expire: () => expireEvaluations(),
+        // 2026-10-16: Gmail addresses over the plan's limit are paused (and back on with
+        // room). Plan changes do this themselves; this catches one that didn't finish.
+        "fit-mailboxes-to-plans": () => fitAllMailboxesToPlans(),
+      }),
+    );
+    const backstops = await step.run("backstops", () =>
+      runChecks({
+        // Autopilot drafts whose send event was lost: send (or stand down) now.
+        "autopilot-overdue": () => overdueAutopilotDrafts(),
+        // Sends whose undo window ended but whose event was lost (plan #7).
+        "sends-overdue": () => overdueQueuedSends(),
+        // Review D4: mail that waited over 10 minutes unsorted (an AI outage, a lost event) is
+        // sorted again now, not whenever that inbox next gets mail.
+        "unsorted-sweep": () => unsortedSweepMailboxes(),
+        // Voice learning that never ran or died part-way.
+        voice: () => workspacesNeedingVoice(),
+      }),
+    );
+    const at = new Date().toISOString();
+    const overdue = backstops.results["autopilot-overdue"] ?? [];
+    const queued = backstops.results["sends-overdue"] ?? [];
+    const unsorted = backstops.results["unsorted-sweep"] ?? [];
+    const voice = backstops.results.voice ?? [];
+    const events = [
+      ...overdue.map((draftId) => autopilotSendRequested.create({ draftId, at })),
+      ...queued.map((draftId) => draftSendQueued.create({ draftId, at })),
+      ...unsorted.map((mailboxId) => mailboxClassifyRequested.create({ mailboxId })),
+      ...voice.map((workspaceId) => voiceLearnRequested.create({ workspaceId })),
+    ];
+    if (events.length) await step.sendEvent("backstop-events", events);
+    // Before the alerts: the lead-at-risk pushes read what the M7 backfill fixes (A29).
+    const housekeeping = await step.run("housekeeping", () =>
+      runChecks({
+        // One-shot M7 data fix, from new code once it's live (no-op after the first run).
+        "m7-backfill": () => runM7Backfill(),
+        // One-shot: drop Gmail drafts the old sync stored as owner mail (no-op after).
+        "draft-messages-cleanup": () => runDraftMessagesCleanup(),
+        // Plan #47 (off unless FEATURE_REFERRALS and an amount): credits still waiting.
+        "referral-credits": () => applyPendingReferralCredits(),
+      }),
+    );
+    const alerts = await step.run("alerts", () =>
+      runChecks({
+        // Gmail access lost (and one reminder), so leads aren't silently missed.
+        "access-lost-alerts": () => sendAccessLostAlerts(),
+        // Replies package (B5 part 2): emergencies a run missed (an alert that reached no phone).
+        "emergency-alerts": () => sendEmergencyAlerts(),
+        // Backstop for text alerts held overnight or throttled.
+        "text-alerts": () => sendLeadAlerts(),
+        // New-lead pushes first: the lead-at-risk pushes share their slot (plan #34).
+        "push-alerts": () => sendPushAlerts(),
+        // Plan #34: a quote request waiting over 4 business hours → one phone notification.
+        "lead-at-risk-pushes": () => sendLeadAtRiskPushes(),
+        // Round 2 (FW D4): backstop for "your first drafts are ready" (once ever per account).
+        "first-drafts-ready": () => sendFirstDraftsReady(),
+        // 2026-10-16: the trial's day-2 and day-3 emails and the one a week after it ran out,
+        // each once ever, at the owner's morning hour or later in their zone (never at night).
+        "trial-emails": () => sendTrialEmails(),
+      }),
+    );
+    const failed = [...clock.failed, ...backstops.failed, ...housekeeping.failed, ...alerts.failed];
+    if (failed.length) throw new LifecycleChecksFailedError(failed);
     return {
-      started,
-      expired,
+      started: clock.results.start,
+      expired: clock.results.expire,
       voiceRestarted: voice.length,
-      accessAlerts: alerts.sent,
+      accessAlerts: alerts.results["access-lost-alerts"]?.sent ?? 0,
       unsortedSwept: unsorted.length,
     };
   },
 );
 
 /**
- * Every 15 minutes until done (review B1): read the Reply-To of stored form leads and move
- * waiting drafts off the form's robot address. Its own job, one step per mailbox, so a slow
- * Gmail mailbox never delays the lifecycle job; a no-op once finished.
+ * Until done (review B1): read the Reply-To of stored form leads and move waiting drafts off
+ * the form's robot address. Its own job, one step per mailbox, so a slow Gmail mailbox never
+ * delays the lifecycle job. Check 25 P4: a daily cron (a no-op once finished); while it isn't
+ * finished, each run asks for the next one 15 minutes later.
  */
 export const replyToBackfill = inngest.createFunction(
   {
     id: "reply-to-backfill",
-    triggers: [cron("*/15 * * * *")],
+    triggers: [cron("43 4 * * *"), replyToBackfillContinue],
     concurrency: { limit: 1 },
     retries: 3,
   },
@@ -520,6 +567,11 @@ export const replyToBackfill = inngest.createFunction(
       );
     }
     const done = await step.run("finish", () => finishReplyToBackfill(results));
+    if (!done)
+      await step.sendEvent(
+        "continue",
+        replyToBackfillContinue.create({ run: Date.now() }, { ts: Date.now() + 15 * 60_000 }),
+      );
     return { ran: true, done };
   },
 );
@@ -573,6 +625,7 @@ export const purgeBodies = inngest.createFunction(
     await step.run("purge-rate-limits", async () => {
       await purgeRateLimits();
       await purgeGmailUnits();
+      await purgeJobRuns();
     });
     await step.run("purge-expired-notes", () => purgeExpiredNotes());
     // Plan #45: tell Davi when an account's AI cost passes 40% of its plan.

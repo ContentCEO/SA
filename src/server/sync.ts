@@ -51,7 +51,13 @@ export type SyncDeps = {
 };
 
 export type SyncOutcome =
-  | { status: "ok"; ingested: number; nextPageToken?: string }
+  | {
+      status: "ok";
+      ingested: number;
+      nextPageToken?: string;
+      /** Check 25 P4 (incremental sync): a pending draft or queued send to reconcile. */
+      hasPending?: boolean;
+    }
   /** Check 25 P3: history expired; re-read from `since` (ISO) with `resyncPage`. */
   | { status: "resync_needed"; since: string }
   | { status: "skipped"; reason: "not_found" | "not_active" | "not_ready" | "read_only" }
@@ -743,7 +749,12 @@ export async function incrementalSync(
       .set({ historyId: cursor, lastSyncedAt: now })
       .where(eq(mailboxes.id, mailbox.id));
     logGmailUnits("sync", mailbox.id, reader);
-    return { status: "ok", ingested };
+    const [pending] = await db()
+      .select({ id: drafts.id })
+      .from(drafts)
+      .where(and(eq(drafts.mailboxId, mailbox.id), eq(drafts.status, "pending")))
+      .limit(1);
+    return { status: "ok", ingested, hasPending: !!pending };
   });
 }
 
@@ -844,19 +855,48 @@ export async function runIncrementalSync(
   return { status: "ok", ingested: total };
 }
 
-/** Mailboxes that should be polled / backfilled right now. */
-export async function listSyncableMailboxes(now: Date = new Date()) {
+/** With Gmail push on, a mailbox synced this recently with a live watch needs no poll. */
+export const PUSH_FRESH_MS = 15 * 60_000;
+
+/**
+ * Check 25 P4: whether the 5-minute poll should sync this mailbox. Without Gmail push (no
+ * GMAIL_PUBSUB_TOPIC) every mailbox is polled. With it, a mailbox whose watch is live and
+ * that synced in the last 15 minutes is left to its push notifications.
+ */
+export function pollDue(
+  m: { watchExpiresAt: Date | null; lastSyncedAt: Date | null },
+  now: Date,
+  pushOn: boolean,
+): boolean {
+  if (!pushOn) return true;
+  const watchLive = !!m.watchExpiresAt && m.watchExpiresAt.getTime() > now.getTime();
+  const fresh = !!m.lastSyncedAt && now.getTime() - m.lastSyncedAt.getTime() < PUSH_FRESH_MS;
+  return !(watchLive && fresh);
+}
+
+/**
+ * Mailboxes that should be synced / backfilled right now. `forPoll`: the 5-minute poll, which
+ * leaves a mailbox to Gmail push while its watch works (`pollDue`).
+ */
+export async function listSyncableMailboxes(
+  now: Date = new Date(),
+  opts: { forPoll?: boolean } = {},
+) {
   const rows = await db()
     .select({
       id: mailboxes.id,
       backfillCompletedAt: mailboxes.backfillCompletedAt,
+      watchExpiresAt: mailboxes.watchExpiresAt,
+      lastSyncedAt: mailboxes.lastSyncedAt,
       workspace: { status: workspaces.status, evaluationEndsAt: workspaces.evaluationEndsAt },
     })
     .from(mailboxes)
     .innerJoin(workspaces, eq(workspaces.id, mailboxes.workspaceId))
     .where(mailboxRunning());
+  const pushOn = !!process.env.GMAIL_PUBSUB_TOPIC;
   return rows
     .filter((r) => jobsAllowed(r.workspace, now))
+    .filter((r) => !opts.forPoll || !r.backfillCompletedAt || pollDue(r, now, pushOn))
     .map(({ id, backfillCompletedAt }) => ({ id, backfillCompletedAt }));
 }
 

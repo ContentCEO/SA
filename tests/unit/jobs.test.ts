@@ -11,10 +11,12 @@ import {
 import { MailboxAuthError, MailboxRateLimitError } from "@/mailbox/connector";
 
 describe("job wiring", () => {
-  it("sorts new mail after a sync, and reconciles drafts when there's none", () => {
-    expect(afterSync("m1", 3).name).toBe("mailbox/classify.requested");
-    expect(afterSync("m1", 0).name).toBe("mailbox/draft.requested");
-    expect(afterSync("m1", 0).data).toEqual({ mailboxId: "m1" });
+  it("sorts new mail after a sync; with none, reconciles only when a draft or send is pending (Check 25 P4)", () => {
+    expect(afterSync("m1", 3)!.name).toBe("mailbox/classify.requested");
+    expect(afterSync("m1", 0)).toBeNull();
+    expect(afterSync("m1", 0, false)).toBeNull();
+    expect(afterSync("m1", 0, true)!.name).toBe("mailbox/draft.requested");
+    expect(afterSync("m1", 0, true)!.data).toEqual({ mailboxId: "m1" });
   });
 
   it("Gmail rate limits pause the step for a couple of minutes instead of failing it", async () => {
@@ -90,17 +92,21 @@ describe("job wiring", () => {
 });
 
 describe("the 15-minute workspace-lifecycle job", () => {
-  it("runs the lead-at-risk pushes (plan #34), after the new-lead pushes and the M7 backfill (A29)", () => {
+  const lifecycleBody = () => {
     const src = readFileSync("src/jobs/functions.ts", "utf8");
     const head = "export const workspaceLifecycle = inngest.createFunction(";
     const start = src.indexOf(head);
     expect(start).toBeGreaterThan(-1);
     const next = src.indexOf("inngest.createFunction(", start + head.length);
-    const body = src.slice(start, next === -1 ? undefined : next);
-    const atRisk = body.indexOf('step.run("lead-at-risk-pushes", () => sendLeadAtRiskPushes())');
+    return src.slice(start, next === -1 ? undefined : next);
+  };
+
+  it("runs the lead-at-risk pushes (plan #34), after the new-lead pushes and the M7 backfill (A29)", () => {
+    const body = lifecycleBody();
+    const atRisk = body.indexOf('"lead-at-risk-pushes": () => sendLeadAtRiskPushes()');
     expect(atRisk).toBeGreaterThan(-1);
-    const backfill = body.indexOf('step.run("m7-backfill"');
-    const pushes = body.indexOf('step.run("push-alerts"');
+    const backfill = body.indexOf('"m7-backfill": () => runM7Backfill()');
+    const pushes = body.indexOf('"push-alerts": () => sendPushAlerts()');
     expect(backfill).toBeGreaterThan(-1);
     expect(pushes).toBeGreaterThan(-1);
     expect(atRisk).toBeGreaterThan(backfill);
@@ -119,5 +125,84 @@ describe("no job is left unregistered", () => {
     for (const name of defined) {
       expect(mod.functions).toContain((mod as Record<string, unknown>)[name!]);
     }
+  });
+});
+
+describe("background executions (Check 25 P4)", () => {
+  it("workspace-lifecycle has at most 4 steps, and every check inside is wrapped on its own", async () => {
+    const src = readFileSync("src/jobs/functions.ts", "utf8");
+    const head = "export const workspaceLifecycle = inngest.createFunction(";
+    const start = src.indexOf(head);
+    const next = src.indexOf("inngest.createFunction(", start + head.length);
+    const body = src.slice(start, next === -1 ? undefined : next);
+    const steps = [...body.matchAll(/step\.run\(/g)];
+    expect(steps.length).toBeLessThanOrEqual(4);
+    // Each step.run hands its checks to runChecks (one try/catch per check).
+    const wrapped = [...body.matchAll(/step\.run\("[^"]+", \(\) =>\s*runChecks\(\{/g)];
+    expect(wrapped.length).toBe(steps.length);
+    // Every check from before is still there.
+    for (const name of [
+      "startPendingEvaluations",
+      "expireEvaluations",
+      "fitAllMailboxesToPlans",
+      "overdueAutopilotDrafts",
+      "overdueQueuedSends",
+      "unsortedSweepMailboxes",
+      "workspacesNeedingVoice",
+      "sendAccessLostAlerts",
+      "sendEmergencyAlerts",
+      "sendLeadAlerts",
+      "sendPushAlerts",
+      "runM7Backfill",
+      "runDraftMessagesCleanup",
+      "sendLeadAtRiskPushes",
+      "applyPendingReferralCredits",
+      "sendFirstDraftsReady",
+      "sendTrialEmails",
+    ])
+      expect(body, name).toContain(`${name}()`);
+  });
+
+  it("runChecks keeps going after a failure, reports it, and says which failed", async () => {
+    const { runChecks } = await import("@/jobs/functions");
+    const order: string[] = [];
+    const r = await runChecks({
+      a: async () => {
+        order.push("a");
+        return 1;
+      },
+      b: async () => {
+        order.push("b");
+        throw new Error("boom");
+      },
+      c: async () => {
+        order.push("c");
+        return "ok";
+      },
+    });
+    expect(order).toEqual(["a", "b", "c"]);
+    expect(r.failed).toEqual(["b"]);
+    expect(r.results).toEqual({ a: 1, c: "ok" });
+  });
+
+  it("the poll leaves a mailbox to Gmail push while its watch is live and it synced lately", async () => {
+    const { pollDue } = await import("@/server/sync");
+    const now = new Date("2026-10-17T12:00:00Z");
+    const live = new Date("2026-10-20T00:00:00Z");
+    const ago = (min: number) => new Date(now.getTime() - min * 60_000);
+    // Without a Pub/Sub topic every mailbox is polled.
+    expect(pollDue({ watchExpiresAt: live, lastSyncedAt: ago(1) }, now, false)).toBe(true);
+    expect(pollDue({ watchExpiresAt: live, lastSyncedAt: ago(5) }, now, true)).toBe(false);
+    expect(pollDue({ watchExpiresAt: live, lastSyncedAt: ago(16) }, now, true)).toBe(true);
+    expect(pollDue({ watchExpiresAt: ago(1), lastSyncedAt: ago(1) }, now, true)).toBe(true);
+    expect(pollDue({ watchExpiresAt: null, lastSyncedAt: ago(1) }, now, true)).toBe(true);
+    expect(pollDue({ watchExpiresAt: live, lastSyncedAt: null }, now, true)).toBe(true);
+  });
+
+  it("the Reply-To backfill wakes daily, and only chains a 15-minute rerun while unfinished", () => {
+    const src = readFileSync("src/jobs/functions.ts", "utf8");
+    const body = src.slice(src.indexOf('id: "reply-to-backfill"'));
+    expect(body).toMatch(/triggers: \[cron\("43 4 \* \* \*"\), replyToBackfillContinue\]/);
+    expect(body.indexOf("if (!done)")).toBeLessThan(body.indexOf('"continue"'));
   });
 });

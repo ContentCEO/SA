@@ -159,3 +159,30 @@ No migration: uses wave 0's reserved `messages.auto_reply` and `messages.ack_onl
 ### Privacy policy line (for Davi to approve; don't bump TERMS_VERSION)
 
 Under "What we store": "How many photos or files an email had (never the files or their names)."
+
+## Step 7 · Check 25 P4: fewer background executions
+
+- Migration `0042_job_runs`: `job_runs (function_id, day, runs, steps)`, PK (function_id, day).
+  Middleware `CountJobRuns` (src/jobs/client.ts) counts `onRunStart` and executed steps
+  (`onStepComplete` / `onStepError`; memoized steps aren't counted); /admin System box: "Background
+  work this month: N steps" (runs + steps, what Inngest meters). Purged after ~120 days.
+- `incrementalSync` returns `hasPending` (a pending draft, queued sends included); `afterSync`
+  sends draft.requested only with new mail (→ classify) or something pending. Null otherwise.
+- `workspace-lifecycle`: four `step.run`s — clock, backstops (then one `step.sendEvent` for all
+  backstop events, only if any), housekeeping, alerts. Housekeeping runs before alerts so the
+  lead-at-risk pushes still follow the M7 backfill (A29). Each check runs on its own in
+  `runChecks` (try/catch, `Sentry.captureException` with job + check tags, no content); the run
+  throws `LifecycleChecksFailedError` at the end if any failed.
+- `reply-to-backfill`: daily cron `43 4 * * *`; while unfinished each run sends
+  `reply-to-backfill/continue` with `ts` = now + 15 min (Inngest can't change a cron at runtime).
+  **Integrator:** if production's backfill isn't finished yet, the first rerun comes at 4:43 UTC
+  after deploy.
+- With `GMAIL_PUBSUB_TOPIC`: the watch asks for `["INBOX", "SENT"]`, and the 5-minute poll skips a
+  mailbox whose watch is live and that synced under 15 minutes ago (`pollDue`;
+  `listSyncableMailboxes(now, { forPoll: true })` — the follow-up scan still sees every mailbox).
+  Without a topic nothing changes. Note: /admin's "jobs look stopped" fires after 20 minutes
+  without a sync; with push on and a quiet inbox the worst case is close to that (15 min + one
+  poll), so consider 25 minutes when Davi turns push on.
+- Count (same method as the check): fixed ≈ 864 (poll) + 480 (lifecycle: run + 4) + 72 (digest)
+  + ~17 (daily/weekly + reply-to) ≈ 1,433 a day ≈ 43,000 a month; a quiet inbox adds sync-mailbox
+  run + sync = 576 a day ≈ 17,300 a month (the draft job no longer follows a quiet check).

@@ -853,6 +853,21 @@ export const gmailUnits = pgTable(
   (t) => [primaryKey({ columns: [t.mailboxId, t.minute] })],
 );
 
+/**
+ * Check 25 P4: background job runs and steps per function per UTC day (Inngest bills both).
+ * Counts only, from an Inngest middleware; /admin shows the month's total.
+ */
+export const jobRuns = pgTable(
+  "job_runs",
+  {
+    functionId: text("function_id").notNull(),
+    day: date("day").notNull(),
+    runs: integer("runs").notNull().default(0),
+    steps: integer("steps").notNull().default(0),
+  },
+  (t) => [primaryKey({ columns: [t.functionId, t.day] })],
+);
+
 export const stripeEvents = pgTable("stripe_events", {
   id: text("id").primaryKey(),
   type: text("type").notNull(),

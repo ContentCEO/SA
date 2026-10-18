@@ -355,7 +355,8 @@ export function createGmailReader(opts: GmailReaderOptions): GmailClient {
     async watch(topicName) {
       const r = await call<{ historyId: string; expiration: string }>("watch", "/watch", {
         method: "POST",
-        body: { topicName, labelIds: ["INBOX"], labelFilterBehavior: "include" },
+        // Check 25 P4: the owner's own sends too, so the poll can stand back while push works.
+        body: { topicName, labelIds: ["INBOX", "SENT"], labelFilterBehavior: "include" },
       });
       if (!r) throw new Error("Gmail watch failed.");
       return { historyId: r.historyId, expiration: Number(r.expiration) };
