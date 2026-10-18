@@ -121,30 +121,69 @@ function updateBadge(status, s) {
 }
 
 /*
+ * Check 19 P3: the count lookup gets 4 seconds. A phone must show a notification for every
+ * push (Safari drops the subscription after a few silent ones), so with one bar of signal we
+ * give up waiting and show the plain line instead.
+ */
+const SUMMARY_TIMEOUT_MS = 4000;
+function summarySignal() {
+  try {
+    if (typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function") {
+      return AbortSignal.timeout(SUMMARY_TIMEOUT_MS);
+    }
+    if (typeof AbortController === "function" && typeof setTimeout === "function") {
+      const c = new AbortController();
+      setTimeout(() => c.abort(), SUMMARY_TIMEOUT_MS);
+      return c.signal;
+    }
+  } catch {
+    // No way to time it out: fall through to the race below.
+  }
+  return undefined;
+}
+
+/*
+ * The summary (status + answer), never later than the time limit, even where fetch ignores
+ * the signal or the answer's body stalls. No answer in time = { status: 0, s: null }.
+ */
+function fetchSummary() {
+  const signal = summarySignal();
+  const answer = fetch("/api/push/summary", {
+    credentials: "same-origin",
+    cache: "no-store",
+    ...(signal ? { signal } : {}),
+  })
+    .then((r) =>
+      r.ok ? r.json().then((s) => ({ status: r.status, s })) : { status: r.status, s: null },
+    )
+    .catch(() => ({ status: 0, s: null }));
+  if (typeof setTimeout !== "function") return answer;
+  const late = new Promise((resolve) =>
+    setTimeout(() => resolve({ status: 0, s: null }), SUMMARY_TIMEOUT_MS),
+  );
+  return Promise.race([answer, late]);
+}
+
+/*
  * Phone notifications (plan #36). The push is empty — the push service never
  * sees anything — so ask the app for today's counts and show those. If the
- * phone is signed out, a plain line instead.
+ * phone is signed out, or the answer takes too long, a plain line instead.
  */
 self.addEventListener("push", (event) => {
   event.waitUntil(
-    fetch("/api/push/summary", { credentials: "same-origin", cache: "no-store" })
-      .then((r) =>
-        r.ok ? r.json().then((s) => ({ status: r.status, s })) : { status: r.status, s: null },
-      )
-      .catch(() => ({ status: 0, s: null }))
-      .then(({ status, s }) =>
-        Promise.all([
-          self.registration.showNotification((s && s.title) || "Squared Away", {
-            body: (s && s.body) || "Something new is waiting in your queue.",
-            icon: "/app-icon/192",
-            badge: "/app-icon/192",
-            tag: "sa-queue",
-            renotify: true,
-            data: { url: safeUrl(s && s.url) },
-          }),
-          updateBadge(status, s),
-        ]),
-      ),
+    fetchSummary().then(({ status, s }) =>
+      Promise.all([
+        self.registration.showNotification((s && s.title) || "Squared Away", {
+          body: (s && s.body) || "Something new is waiting in your queue.",
+          icon: "/app-icon/192",
+          badge: "/app-icon/192",
+          tag: "sa-queue",
+          renotify: true,
+          data: { url: safeUrl(s && s.url) },
+        }),
+        updateBadge(status, s),
+      ]),
+    ),
   );
 });
 
