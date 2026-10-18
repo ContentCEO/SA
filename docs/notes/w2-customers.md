@@ -120,3 +120,18 @@ the same `leads@thumbtack.com` address, `large_request`, expected needs-you with
   stages as "Waiting on you" / "Priced, waiting on them" / "Gone quiet" / "Won $2,100" / "Lost" /
   "No answer"; other threads "Waiting on you" only when the customer wrote last). No new email
   text on the page.
+
+## Step 7: Check 13 P6 + P7 + P8 (wording on Customers)
+
+- Rows read "2 conversations · wrote 3 hours ago" from `CustomerRow.lastWroteAt` (their own
+  newest inbound email, side emails left out; the list is sorted by it): `wroteWords`
+  (`customer-rules.ts`): relative under 30 days, "in July" within the current year, else
+  "Mar 2025", in the owner's time zone.
+- The customer page's serif line is `headlineName` (`src/lib/headline-name.ts`): titles skipped,
+  "Last, First" → First, a company word (llc, inc, group, property, properties, mgmt,
+  management, supply, dept, department, town, city) or three or more words → the whole name,
+  no name → "this customer" (never the address).
+- Under the intro: "From email since <date>, 30 days before you connected Gmail. People you
+  emailed first show up once they write back." (`listStartsOn`: the workspace's first mailbox
+  row's `created_at` minus `BACKFILL_DAYS`; `connected_at` moves on reconnect). An empty
+  search: "No one matches that. They may have written from another address, or before <date>."

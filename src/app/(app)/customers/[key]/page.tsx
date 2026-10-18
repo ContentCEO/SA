@@ -4,6 +4,7 @@ import { notFound } from "next/navigation";
 import { Headline } from "@/components/brand/headline";
 import { categoryTag, isCategory } from "@/config/categories";
 import { gmailThreadLink } from "@/lib/gmail-link";
+import { headlineName } from "@/lib/headline-name";
 import { relativeTime } from "@/lib/relative-time";
 import { customerByKey } from "@/server/customers";
 import { customerFactsLine } from "@/server/customer-rules";
@@ -36,7 +37,8 @@ export default async function CustomerPage(props: PageProps<"/customers/[key]">)
   if (!customer) notFound();
   const profile = await getBusinessProfile(workspace.id);
   const facts = customerFactsLine(customer, profile?.timeZone ?? "America/New_York");
-  const first = (customer.name ?? customer.address).split(/[\s,]+/)[0]!.toLowerCase();
+  // Check 13 P7: titles, "Last, First", companies and missing names all read right.
+  const first = headlineName(customer.name, customer.address);
   const note = await noteFor(workspace.id, customer.address);
   const params = await props.searchParams;
   const doneMsg = typeof params.done === "string" ? NOTE_DONE[params.done] : undefined;

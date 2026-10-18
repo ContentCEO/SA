@@ -721,6 +721,50 @@ describe("customer list", () => {
     expect(row).toMatchObject({ openQuotes: 1, wonCents: 210_000 });
   });
 
+  it("a thread where the crew wrote last keeps the customer's own time (Check 13 P6)", async () => {
+    const lead = await convo({
+      from: "pat@x.com",
+      name: "Pat",
+      category: "quote_request",
+      inAgo: 3,
+    });
+    await convo({ from: "lee@x.com", name: "Lee", category: "scheduling", inAgo: 2 });
+    await database.insert(messages).values([
+      {
+        threadId: lead,
+        mailboxId,
+        gmailMessageId: "p6-fwd",
+        direction: "out",
+        fromAddress: "owner@shop.com",
+        subject: "Fwd: Job",
+        toAddresses: ["mike@shop.com"],
+        bodyText: "x",
+        sentAt: daysAgo(1.5),
+      },
+      {
+        threadId: lead,
+        mailboxId,
+        gmailMessageId: "p6-crew",
+        direction: "in",
+        fromAddress: "mike@shop.com",
+        subject: "Re: Fwd: Job",
+        toAddresses: ["owner@shop.com"],
+        bodyText: "x",
+        sentAt: daysAgo(1),
+      },
+    ]);
+    await database
+      .update(threads)
+      .set({ lastMessageAt: daysAgo(1) })
+      .where(eq(threads.id, lead));
+    const list = await listCustomers(workspaceId, NOW);
+    const pat = list.find((c) => c.address === "pat@x.com")!;
+    expect(pat.lastWroteAt).toEqual(daysAgo(3));
+    // Sorted by when they themselves wrote: Lee (2 days) before Pat (3 days).
+    const order = list.filter((c) => c.kind === "customer").map((c) => c.address);
+    expect(order).toEqual(["lee@x.com", "pat@x.com"]);
+  });
+
   it("never shows another workspace's customers", async () => {
     await convo({ from: "dana@x.com", name: "Dana", category: "quote_request", inAgo: 1 });
     const { workspace: other } = await ensureUserAndWorkspace({ email: "other@shop.com" });

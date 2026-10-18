@@ -286,6 +286,16 @@ test("customers: 50 at a time, and search finds everyone (Check 13 P3)", async (
   await expect(page.getByRole("link", { name: /Number55/ })).toHaveCount(0);
   await page.getByRole("button", { name: "Show 50 more" }).click();
   await expect(page.getByRole("link", { name: /Number55/ })).toBeVisible();
+  // Check 13 P8: how far back the list goes, and a reason when a search finds no one.
+  await expect(
+    page.getByText(/^From email since \w{3} \d{1,2}, \d{4}, 30 days before you connected Gmail\./),
+  ).toBeVisible();
+  await page.getByLabel("Find a customer").fill("zzzz nobody");
+  await expect(
+    page.getByText(
+      /^No one matches that\. They may have written from another address, or before \w{3} \d{1,2}, \d{4}\.$/,
+    ),
+  ).toBeVisible();
 });
 
 test("customers: the page shows what the row shows (Check 13 P5)", async ({ page, context }) => {

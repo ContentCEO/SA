@@ -28,9 +28,12 @@ const PAGE = 50;
 export function CustomerList({
   items,
   group = "customers",
+  since = null,
 }: {
   items: CustomerListItem[];
   group?: CustomerGroup;
+  /** Check 13 P8: how far back the list reaches ("Oct 2, 2026"), for the empty search. */
+  since?: string | null;
 }) {
   const [q, setQ] = useState("");
   const [limit, setLimit] = useState(PAGE);
@@ -98,7 +101,11 @@ export function CustomerList({
           </li>
         ))}
         {shown.length === 0 ? (
-          <li className="p-4">{q.trim() ? "No one matches that." : "No one here yet."}</li>
+          <li className="p-4">
+            {q.trim()
+              ? `No one matches that. They may have written from another address${since ? `, or before ${since}` : ""}.`
+              : "No one here yet."}
+          </li>
         ) : null}
       </ul>
       {shown.length > limit ? (

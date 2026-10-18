@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { customerFactsLine, customerThreadStage } from "@/server/customer-rules";
+import { headlineName } from "@/lib/headline-name";
+import {
+  customerFactsLine,
+  customerThreadStage,
+  listStartsOn,
+  wroteWords,
+} from "@/server/customer-rules";
 
 const NOW = new Date("2026-10-10T14:00:00Z");
 const daysAgo = (d: number) => new Date(NOW.getTime() - d * 86_400_000);
@@ -44,5 +50,39 @@ describe("customer page wording (Check 13 P5)", () => {
     expect(customerFactsLine({ openQuotes: 0, wonCents: 0, owedCents: 0, lastWroteAt: null })).toBe(
       "",
     );
+  });
+});
+
+describe("when they last wrote, how far back, and the headline (Check 13 P6–P8)", () => {
+  it("says when the customer last wrote in plain words", () => {
+    expect(wroteWords(new Date(NOW.getTime() - 3 * 3_600_000), NOW)).toBe("Wrote 3 hours ago");
+    expect(wroteWords(daysAgo(29), NOW)).toBe("Wrote 29 days ago");
+    expect(wroteWords(new Date("2026-07-15T15:00:00Z"), NOW)).toBe("Wrote in July");
+    expect(wroteWords(new Date("2025-03-10T15:00:00Z"), NOW)).toBe("Wrote Mar 2025");
+    // The owner's time zone decides the year at the edge.
+    expect(wroteWords(new Date("2026-01-01T03:00:00Z"), NOW, "America/Los_Angeles")).toBe(
+      "Wrote Dec 2025",
+    );
+  });
+
+  it("says how far back the list goes", () => {
+    expect(listStartsOn(new Date("2026-10-01T16:00:00Z"), 30)).toBe("Sep 1, 2026");
+    expect(listStartsOn(null, 30)).toBeNull();
+  });
+
+  it.each([
+    ["Dana Ruiz", "dana"],
+    ["Mr. John Smith", "john"],
+    ["Dr Kim", "kim"],
+    ["The Hill Property Group", "the hill property group"],
+    ["Supply House Branch 42", "supply house branch 42"],
+    ["Chelmsford Building Dept", "chelmsford building dept"],
+    ["O'Connor, Kevin", "kevin"],
+    ["Mary Ann Lopez", "mary ann lopez"],
+    ["", "this customer"],
+    [null, "this customer"],
+    ["dana.ruiz@gmail.com", "this customer"],
+  ])("headlineName(%s) → %s", (name, want) => {
+    expect(headlineName(name, "dana.ruiz@gmail.com")).toBe(want);
   });
 });

@@ -2,6 +2,7 @@
  * Customers screen wording, as pure rules (Check 13 P5 / P6). Content-free: counts, amounts,
  * stages and times only.
  */
+import { relativeTime } from "@/lib/relative-time";
 import { formatCents, quoteStage, type QuoteStage } from "./quote-rules";
 
 /** Check 13 P5: a conversation card's stage line, in the words the Quotes screen uses. */
@@ -63,4 +64,33 @@ export function customerFactsLine(
   ]
     .filter((p): p is string => !!p)
     .join(" · ");
+}
+
+/**
+ * Check 13 P6: when the customer themselves last wrote, in a plumber's words — "Wrote 3 hours
+ * ago" under 30 days, then "Wrote in July" within the current year, else "Wrote Mar 2025" (the
+ * owner's time zone).
+ */
+export function wroteWords(at: Date, now: Date, timeZone = "America/New_York"): string {
+  if (now.getTime() - at.getTime() < 30 * 86_400_000) return `Wrote ${relativeTime(at, now)}`;
+  const year = (d: Date) => d.toLocaleDateString("en-US", { year: "numeric", timeZone });
+  if (year(at) === year(now))
+    return `Wrote in ${at.toLocaleDateString("en-US", { month: "long", timeZone })}`;
+  return `Wrote ${at.toLocaleDateString("en-US", { month: "short", year: "numeric", timeZone })}`;
+}
+
+/**
+ * Check 13 P8: how far back Customers reaches — the first Gmail connect minus the 30-day read
+ * on connect — as "Oct 2, 2026" in the owner's time zone. Null before any connect.
+ */
+export function listStartsOn(
+  firstConnectedAt: Date | null,
+  backfillDays: number,
+  timeZone = "America/New_York",
+): string | null {
+  if (!firstConnectedAt) return null;
+  return new Date(firstConnectedAt.getTime() - backfillDays * 86_400_000).toLocaleDateString(
+    "en-US",
+    { month: "short", day: "numeric", year: "numeric", timeZone },
+  );
 }
