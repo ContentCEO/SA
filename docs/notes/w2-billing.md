@@ -134,3 +134,24 @@ For the integrator to fold into CLAUDE.md / docs/LAUNCH.md / docs/privacy-policy
   the app." (inviteState has_account) or "Invited to the app, not signed in yet." (invited),
   from `growthCopy.admin.growthOnlyLine(inviteState)`; nothing beyond account/invite existence by
   email is read.
+
+## Questions for Davi
+
+1. **Pausing and Stripe (Check 17 P2):** pausing still only changes our status; Stripe keeps
+   charging, and the screens now say so. Should Pause also pause the Stripe subscription's
+   collection, or stay hands-off?
+2. **What a refund means (Check 17 P8):** a refund or dispute is shown but changes nothing. If you
+   refund the $499 setup, should sending turn off and the next checkout charge setup again?
+3. **Checkouts with nothing charged (Check 17 P5):** a 100% promotion code finishes checkout with
+   "no_payment_required"; sending stays off and /admin flags it. There's no /admin button to turn
+   sending on for such an account (only a real Stripe payment or your own house account can).
+   Do you want one, or should full-discount codes not be used?
+4. **Inbox limit after a downgrade (Check 17 P6 item 3):** not built, because your 2026-10-16
+   decision already pauses the extra Gmail addresses on a lower plan. Confirm that's still what
+   you want.
+5. **Stripe Tax fee (Check 29 P8):** `src/config/fees.ts` leaves `taxPercent` empty. What rate
+   does your Stripe Tax plan charge, if any?
+6. **Two live Stripe plans (Check 17 P4):** when /admin says "Two live Stripe plans: cancel one in
+   Stripe", do you also refund the second setup fee? (Nothing is refunded automatically.)
+7. **Growth calls to return (Check 16 P3):** counts Growth requests from the last 7 days until a
+   "called" mark exists (Check 16 P4).
