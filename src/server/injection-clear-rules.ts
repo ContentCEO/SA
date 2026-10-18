@@ -54,9 +54,12 @@ export function clearedFacts(
   delete rest.injection;
   delete rest.injection_reasons;
   delete rest.without_injection;
+  delete rest.owner_code;
   const next = {
     ...rest,
     owner_rule_hits: w?.hits ?? [],
+    // Check 12 P1: the code goes with the rules' answer (needsOwnerCode).
+    ...(w?.needs_owner ? { owner_code: w.hits?.[0] ?? "model" } : {}),
     injection_cleared_by_owner: true,
     injection_cleared_at: now.toISOString(),
   };

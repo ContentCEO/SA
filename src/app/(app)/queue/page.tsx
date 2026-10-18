@@ -46,6 +46,7 @@ import { OfflineQueue } from "./offline-queue";
 import { devicePrefs } from "@/lib/device-prefs";
 import { ScrollToThread } from "./scroll-to-thread";
 import { SNOOZE_LABELS, snoozeOptions, usableTimeZone } from "@/server/snooze-rules";
+import { waitingLine } from "@/server/followup-rules";
 import { batchCandidates } from "@/server/drafts";
 import { BATCH_CATEGORIES } from "@/server/batch-rules";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -78,9 +79,13 @@ function nextLine(
   timeZone: string,
 ) {
   const name = firstName(sent.toName);
+  // Check 21 P2: they asked us to wait ("after the holidays").
+  const waiting = waitingLine(sent.waitingUntil, new Date(), timeZone);
+  if (waiting) return waiting;
   if (sent.nudgeOn) {
     const weekday = new Intl.DateTimeFormat("en-US", { weekday: "long", timeZone });
-    return `I'll nudge ${name ?? "them"} on ${weekday.format(sent.nudgeOn)} if there's no reply.`;
+    // Check 21 P3: a draft ready that morning, never a send.
+    return `A nudge for ${name ?? "them"} will be ready ${weekday.format(sent.nudgeOn)} morning if there's no reply.`;
   }
   if (sent.lastNudgeUsed) return "That was the last nudge. I won't chase this one again.";
   // Check 9 P15: only what the code does — replies show up on the queue; alerts are opt-in.
@@ -182,6 +187,22 @@ export default async function QueuePage(props: PageProps<"/queue">) {
     <AttachmentLine counts={attachments.get(i.threadId)} gmail={i} />
   );
   // A phone that keeps a copy of the queue (offline okays) never holds a note's text.
+  // Check 21 P5: "Also about your quote from Nov 2" — answer both in one go. Content-free link.
+  const alsoQuoteLine = (i: QueueItem) =>
+    i.alsoQuote ? (
+      <a
+        href={gmailThreadLink(i.alsoQuote)}
+        target="_blank"
+        rel="noreferrer"
+        className="inline-flex min-h-tap items-center text-sm font-semibold underline underline-offset-4"
+      >
+        {`Also about your quote from ${i.alsoQuote.quotedAt.toLocaleDateString("en-US", {
+          month: "short",
+          day: "numeric",
+          timeZone,
+        })}`}
+      </a>
+    ) : null;
   const noteFor = (i: QueueItem) => (
     <NoteLine
       note={
@@ -248,6 +269,7 @@ export default async function QueuePage(props: PageProps<"/queue">) {
     timeZone,
     note: (
       <>
+        {alsoQuoteLine(i)}
         {noteFor(i)}
         {attachmentFor(i)}
       </>
@@ -337,6 +359,7 @@ export default async function QueuePage(props: PageProps<"/queue">) {
       priceMemory={priceMemory.get(i.threadId)}
       noteLine={
         <>
+          {alsoQuoteLine(i)}
           {noteFor(i)}
           {attachmentFor(i)}
         </>

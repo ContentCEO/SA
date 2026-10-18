@@ -87,6 +87,7 @@ export async function saveFollowupSettingsAction(formData: FormData) {
   const parsed = followupSettingsInput.safeParse({
     enabled: formData.get("enabled") ?? undefined,
     days: formData.get("days"),
+    bigQuoteDays: formData.get("bigQuoteDays") ?? undefined,
   });
   if (!parsed.success) redirect("/settings/follow-ups?error=unknown");
   await saveFollowupSettings(workspace.id, parsed.data);

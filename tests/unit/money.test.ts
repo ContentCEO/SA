@@ -29,6 +29,7 @@ import {
 import {
   billOwedByOwner,
   carryInvoiceFacts,
+  chaseLine,
   clearsAutoPaid,
   dueLabel,
   holdsOwedInvoice,
@@ -65,6 +66,28 @@ const inv = (o: Partial<InvoiceFacts> = {}): InvoiceFacts => ({
   due_date: null,
   status: "unpaid",
   ...o,
+});
+
+describe("the card's chasing line (Check 12 P1)", () => {
+  const base = {
+    followupsOn: true,
+    nudgesUsed: 0,
+    needsYou: null,
+    waitingOnOwner: false,
+    quietTooLong: false,
+  } as const;
+  it.each([
+    [{}, "We'll draft a reminder if they go quiet (0 of 2 used)"],
+    [{ nudgesUsed: 1 }, "We'll draft a reminder if they go quiet (1 of 2 used)"],
+    [{ nudgesUsed: 2 }, "Both reminders used. Chasing is up to you now."],
+    [{ followupsOn: false, nudgesUsed: 2 }, "Not chased: follow-ups are off in Settings"],
+    [{ needsYou: "manual" as const }, "Not chased: you marked this one as needing you"],
+    [{ needsYou: "other" as const }, "Not chased: this one needs you first"],
+    [{ waitingOnOwner: true }, "Not chased while they're waiting on your reply"],
+    [{ quietTooLong: true }, "Not chased: it's been quiet too long. Chasing is up to you now."],
+  ])("%o", (over, line) => {
+    expect(chaseLine({ ...base, ...over })).toBe(line);
+  });
 });
 
 describe("money rules", () => {

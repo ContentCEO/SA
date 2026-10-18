@@ -30,6 +30,8 @@ import {
 } from "@/db/schema";
 import { mailboxOn } from "./mailbox-plan-rules";
 import { recentEmergency } from "./emergency-rules";
+import { nudgeAfterFor } from "./followup-rules";
+import { usableTimeZone } from "./snooze-rules";
 import { afterClassified } from "./auto-outcomes";
 import { unflagPendingNudge } from "./drafts";
 import { jobsAllowed } from "./lifecycle";
@@ -702,6 +704,11 @@ export async function classifyPending(
         summary: result.summary,
         extracted: stored,
         classifiedAt: now,
+        // Check 21 P2: "after the holidays" → no nudge before then. Each new customer email
+        // replaces it (none → cleared); an email that tries to instruct us sets nothing.
+        nudgeAfter: injection
+          ? null
+          : nudgeAfterFor(result.extracted.wait_until, usableTimeZone(profile?.timeZone)),
         // Leads package: kept once set — a later email on the thread doesn't clear it.
         ...(channel ? { leadChannel: channel.key } : {}),
         // Sticky (A1): a later "looks great" never makes a complaint look like a happy
@@ -797,6 +804,7 @@ export async function classifyPending(
             quoteOutcomeSource: thread?.quoteOutcomeSource ?? null,
             invoiceThread: wasInvoiceThread,
             openInvoice: invoiceWasOpen(prevInvoice),
+            quoteRequested: wasQuote,
           },
           result,
           storedInvoice,

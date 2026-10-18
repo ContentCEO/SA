@@ -27,7 +27,7 @@ import {
 } from "@/server/drafts";
 import { sendDigests } from "@/server/digest";
 import { sendMonthlySummaries } from "@/server/monthly-summary";
-import { threadsToFollowUp } from "@/server/followups";
+import { followupScanDue, markFollowupScanned, threadsToFollowUp } from "@/server/followups";
 import { getMailboxWorkspace } from "@/server/mailboxes";
 import { purgeRateLimits } from "@/server/rate-limit";
 import { purgeGmailUnits } from "@/server/gmail-units";
@@ -314,30 +314,41 @@ export const draftMailbox = inngest.createFunction(
 );
 
 /**
- * Daily, 9am Eastern: nudge quiet quotes and invoices. Every nudge is a draft
- * in the queue — nothing is sent. One thread per step.
+ * Hourly at :11 (Check 21 P3): each owner's follow-up scan runs once a day, in the hour their
+ * local time is 4am, so the nudges are ready before the earliest morning email (5am) and the
+ * morning email counts them. Every nudge is a draft in the queue — nothing is sent. One thread
+ * per step; the "scanned on local date" mark makes a retry the same day a no-op.
  */
 export const followupScan = inngest.createFunction(
-  { id: "followup-scan", triggers: [cron("TZ=America/New_York 11 9 * * *")], retries: 3 },
+  { id: "followup-scan", triggers: [cron("11 * * * *")], retries: 3 },
   async ({ step }) => {
-    // Quotes that went quiet after the nudges get our "no answer" guess first (plan #30);
-    // a decided quote is never nudged again.
-    await step.run("guess-no-answer", () => guessNoAnswers());
-    const boxes = await step.run("mailboxes", () => listSyncableMailboxes());
+    const due = await step.run("due-workspaces", () => followupScanDue());
     let created = 0;
-    for (const box of boxes) {
-      if (!box.backfillCompletedAt) continue;
-      const due = await step.run(`due-${box.id}`, () => threadsToFollowUp(box.id));
-      for (const threadId of due) {
-        const r = await step.run(`nudge-${threadId}`, () =>
-          stopIfModelMissing(() =>
-            politely(() => createDraftForThread(threadId, { trigger: "followup" })),
-          ),
-        );
-        if (r.status === "created") created++;
-        if (r.status === "reconnect_needed" || (r.status === "skipped" && r.reason === "capped"))
-          break;
+    for (const ws of due) {
+      // Quotes that went quiet after the nudges get our "no answer" guess first (plan #30);
+      // a decided quote is never nudged again.
+      await step.run(`guess-no-answer-${ws.workspaceId}`, async () => {
+        // Check 38 P4: the owner's quoted amount decides which quotes get the big-quote wait.
+        await captureQuoteAmounts(ws.workspaceId);
+        return guessNoAnswers(new Date(), ws.workspaceId);
+      });
+      for (const box of ws.mailboxes) {
+        if (!box.backfillDone) continue;
+        const threads = await step.run(`due-${box.id}`, () => threadsToFollowUp(box.id));
+        for (const threadId of threads) {
+          const r = await step.run(`nudge-${threadId}`, () =>
+            stopIfModelMissing(() =>
+              politely(() => createDraftForThread(threadId, { trigger: "followup" })),
+            ),
+          );
+          if (r.status === "created") created++;
+          if (r.status === "reconnect_needed" || (r.status === "skipped" && r.reason === "capped"))
+            break;
+        }
       }
+      await step.run(`scanned-${ws.workspaceId}`, () =>
+        markFollowupScanned(ws.workspaceId, ws.localDate),
+      );
     }
     return { created };
   },

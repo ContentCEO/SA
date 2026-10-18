@@ -29,6 +29,7 @@ import { jobsAllowed } from "./lifecycle";
 import { mailboxRunning } from "./mailbox-plan";
 import { clearAnsweredNeedsOwner } from "./needs-owner";
 import { mailboxOn } from "./mailbox-plan-rules";
+import { looksLikeOwnerInvoice } from "./owner-invoice-rules";
 import { pickReplyTo, type ReplyToHeader } from "./reply-address-rules";
 import { isAutoReply } from "./auto-reply-rules";
 import { labelSql, lastInSql, lastOutSql, unsentDraftMessage } from "./thread-sql";
@@ -396,6 +397,24 @@ async function ingest(
       .returning({ id: messages.id });
     ingested += inserted.length;
     if (inserted.length) await markBounce(thread!.id);
+
+    // Check 21 P4: an invoice the owner emails (found in code from the subject and the start of
+    // their own words; never logged) makes the thread an invoice thread, so it's chased even
+    // when the customer's last email was sorted as scheduling, or when nobody has replied yet.
+    // A fresh email in Sent only has its subject here (bodies are read for inbox threads).
+    const invoiceAt = rows
+      .filter((r) => r.direction === "out" && looksLikeOwnerInvoice(r))
+      .reduce<number | null>((t, r) => Math.max(t ?? 0, r.sentAt.getTime()), null);
+    if (invoiceAt !== null) {
+      const at = new Date(invoiceAt).toISOString();
+      await db()
+        .update(threads)
+        .set({
+          extracted: sql`coalesce(${threads.extracted}, '{}'::jsonb) || '{"invoice_thread": true}'::jsonb`,
+          ownerInvoiceAt: sql`greatest(${threads.ownerInvoiceAt}, ${at}::timestamptz)`,
+        })
+        .where(eq(threads.id, thread!.id));
+    }
   }
   return ingested;
 }

@@ -8,7 +8,7 @@ import {
   normalizeInvoiceNumber,
   type InvoiceFacts,
 } from "./money-rules";
-import { canAutoSet } from "./quote-rules";
+import { canAutoSet, DECLINED_FLAG } from "./quote-rules";
 import { autoSetQuoteOutcome, clearNoAnswerGuess } from "./quotes";
 
 /**
@@ -35,6 +35,8 @@ export async function afterClassified(input: {
      * thread, not the job being paid.
      */
     openInvoice?: boolean;
+    /** Check 21 P2: was a quote before this email (sorted one, sticky request time or an outcome). */
+    quoteRequested?: boolean;
   };
   result: Classification;
   /**
@@ -68,6 +70,19 @@ export async function afterClassified(input: {
     canAutoSet(previous.quoteOutcome, previous.quoteOutcomeSource)
   ) {
     await autoSetQuoteOutcome(threadId, "won", now, { why: "accepted" });
+  }
+
+  // Check 21 P2: "We went with someone else, thanks." on a quote → lost (our guess). The owner
+  // always wins (canAutoSet here, the same rule in the UPDATE); a waiting nudge is flagged
+  // "They said no. Check before sending." and no new one is drafted (a decided quote).
+  if (
+    result.extracted.declines_quote === true &&
+    (previous.quoteRequested === true ||
+      previous.category === "quote_request" ||
+      result.category === "quote_request") &&
+    canAutoSet(previous.quoteOutcome, previous.quoteOutcomeSource)
+  ) {
+    await autoSetQuoteOutcome(threadId, "lost", now, { why: "declined", flag: DECLINED_FLAG });
   }
 
   // Invoices (plan #27). Both are guesses: they stop future nudges, flag (never delete) a

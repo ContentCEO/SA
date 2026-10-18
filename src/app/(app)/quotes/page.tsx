@@ -14,6 +14,7 @@ import {
   formatCents,
   isDecidedStage,
   QUOTE_OUTCOMES,
+  SERVICE_CALL_LABEL,
   stageLabel,
   type QuoteOutcome,
   type QuoteStage,
@@ -118,10 +119,13 @@ function QuoteCard({
       </div>
       <div className="flex items-baseline justify-between gap-3">
         <span className="text-sm font-semibold">
-          {/* Check 11 P7: a decided card says when — "Won Oct 14". */}
+          {/* Check 11 P7: a decided card says when — "Won Oct 14". Check 36 P3: "Service
+            call" is a display label only, never a stored outcome. */}
           {isDecidedStage(q.stage)
             ? decidedLabel(q.stage, q.outcomeAt, timeZone)
-            : stageLabel[q.stage]}
+            : q.serviceCall
+              ? SERVICE_CALL_LABEL
+              : stageLabel[q.stage]}
           {q.outcomeGuessed ? <span className="font-normal"> (our guess)</span> : null}
         </span>
         {q.amountCents ? (
@@ -133,6 +137,7 @@ function QuoteCard({
         ) : null}
       </div>
       {q.summary ? <p className="opacity-80">{q.summary}</p> : null}
+      {q.waitingLine ? <p className="text-sm font-semibold">{q.waitingLine}</p> : null}
       {readOnly ? null : (
         // Plan #26: only on a quote that went quiet after both nudges (the server decides).
         <OfferButtons

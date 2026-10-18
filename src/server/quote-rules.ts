@@ -3,6 +3,7 @@
  * already sorted, plus the owner's one-tap Won / Lost / No answer and our
  * guesses (plan #30), which the owner can always change.
  */
+import { isInvoiceThread } from "./money-rules";
 
 /** How a quote ended. Set by the owner, or guessed by us (`quote_outcome_source = 'auto'`). */
 export const QUOTE_OUTCOMES = ["won", "lost", "no_answer"] as const;
@@ -31,6 +32,23 @@ export const stageLabel: Record<QuoteStage, string> = {
   lost: "Lost",
   no_answer: "No answer",
 };
+
+/**
+ * Check 36 P3: "Pipe burst… how much to fix it today?" answered "On my way" — a service call,
+ * not an estimate. Shown instead of "Gone quiet" / "Quoted" (a display label only, never a
+ * stored outcome); never nudged, never guessed "no answer". A price from the owner later
+ * brings normal chasing back.
+ */
+export const SERVICE_CALL_LABEL = "Service call";
+
+/**
+ * Check 36 P3: the thread carries the emergency mark and the owner's newest email (their own
+ * words, quoted part already cut) names no dollar amount.
+ */
+export function isServiceCall(extracted: unknown, ownerNewestText: string | null): boolean {
+  if ((extracted as { emergency?: unknown } | null)?.emergency !== true) return false;
+  return amountFromOwnerText(ownerNewestText) === null;
+}
 
 /** Decided = has an outcome (won / lost / no answer). Everything else is still open. */
 export function isDecidedStage(stage: QuoteStage): stage is QuoteOutcome {
@@ -116,9 +134,13 @@ export function isQuoteThread(t: {
 export function quoteStopsNudges(t: {
   quoteOutcome: string | null;
   category: string | null;
+  extracted: unknown;
 }): boolean {
   if (t.quoteOutcome == null) return false;
-  return !(t.quoteOutcome === "won" && t.category === "invoice_payment");
+  // Check 21 P4: the job's invoice is chased whatever the customer's last email was sorted as
+  // (`isInvoiceThread`: sorted invoice_payment, or the sticky `invoice_thread` mark, which an
+  // invoice the owner emailed also sets).
+  return !(t.quoteOutcome === "won" && isInvoiceThread(t));
 }
 
 /** Two nudges sent, then this many quiet days → we guess "no answer". */
@@ -142,20 +164,33 @@ export function guessNoAnswer(
     lastOutboundAt: Date | null;
     sentNudges: number;
     priced: boolean;
+    /** Check 21 P2: count quiet days from here instead (the date they asked us to wait for). */
+    quietFrom?: Date;
+    /** Check 38 P4: a quote over the money limit with the owner's longer wait set. */
+    bigQuoteDays?: number | null;
   },
   now: Date,
 ): "two_nudges" | "three_weeks" | null {
   if (!f.priced) return null;
   if (!f.lastInboundAt || !f.lastOutboundAt || f.lastOutboundAt <= f.lastInboundAt) return null;
-  const quietDays = (now.getTime() - f.lastOutboundAt.getTime()) / 86_400_000;
-  if (f.sentNudges >= NUDGES_BEFORE_NO_ANSWER && quietDays >= NO_ANSWER_AFTER_NUDGES_DAYS)
+  const from = f.quietFrom && f.quietFrom > f.lastOutboundAt ? f.quietFrom : f.lastOutboundAt;
+  const quietDays = (now.getTime() - from.getTime()) / 86_400_000;
+  const big = f.bigQuoteDays ?? null;
+  if (f.sentNudges >= NUDGES_BEFORE_NO_ANSWER && quietDays >= noAnswerAfterDays(2, big))
     return "two_nudges";
-  if (quietDays >= NO_ANSWER_WITHOUT_NUDGES_DAYS) return "three_weeks";
+  if (quietDays >= noAnswerAfterDays(0, big)) return "three_weeks";
   return null;
 }
 
-/** The quiet-days bar `guessNoAnswer` uses for this many sent nudges. */
-export function noAnswerAfterDays(sentNudges: number): number {
+/**
+ * The quiet-days bar `guessNoAnswer` uses for this many sent nudges. Check 38 P4: a big quote
+ * with the owner's longer wait gets that wait after two nudges, and max(21, 3 × it) without.
+ */
+export function noAnswerAfterDays(sentNudges: number, bigQuoteDays: number | null = null): number {
+  if (bigQuoteDays)
+    return sentNudges >= NUDGES_BEFORE_NO_ANSWER
+      ? Math.max(NO_ANSWER_AFTER_NUDGES_DAYS, bigQuoteDays)
+      : Math.max(NO_ANSWER_WITHOUT_NUDGES_DAYS, bigQuoteDays * 3);
   return sentNudges >= NUDGES_BEFORE_NO_ANSWER
     ? NO_ANSWER_AFTER_NUDGES_DAYS
     : NO_ANSWER_WITHOUT_NUDGES_DAYS;
@@ -177,6 +212,8 @@ export function canAutoSet(outcome: string | null, source: string | null): boole
 
 /** Added to a waiting nudge when we guess a quote's outcome (a guess never deletes it). */
 export const QUOTE_GUESS_FLAG = "We think this quote is closed — check before sending.";
+/** Check 21 P2: the note on a waiting nudge when the customer said no. */
+export const DECLINED_FLAG = "They said no. Check before sending.";
 
 /** The note on a waiting nudge closed because the owner decided the quote. */
 export function quoteDecidedNote(outcome: QuoteOutcome): string {

@@ -901,3 +901,39 @@ describe("the stand-in Gmail behaves like Gmail (Check 25 P8)", () => {
     expect(box!.status).toBe("reconnect_needed");
   });
 });
+
+describe("invoices the owner emails (Check 21 P4)", () => {
+  it("marks the thread an invoice thread from the owner's own email, never a forward", async () => {
+    fake.add({ id: "c1", threadId: "job", labelIds: ["INBOX"], daysAgo: 5 });
+    fake.add({
+      id: "o1",
+      threadId: "job",
+      labelIds: ["SENT"],
+      daysAgo: 2,
+      headers: { from: "owner@shop.com", to: "customer-job@example.com", subject: "Re: Deck" },
+      bodyText: "Invoice 1043 for $2,100 attached. Thanks!",
+    });
+    fake.add({
+      id: "o2",
+      threadId: "fresh",
+      labelIds: ["SENT"],
+      daysAgo: 2,
+      headers: { from: "owner@shop.com", to: "dana@customer.com", subject: "Invoice #1044" },
+    });
+    fake.add({
+      id: "o3",
+      threadId: "fwd",
+      labelIds: ["SENT"],
+      daysAgo: 2,
+      headers: { from: "owner@shop.com", to: "crew@shop.com", subject: "Fwd: Invoice 88" },
+    });
+    await runBackfill(mailboxId, deps());
+    const all = await database.select().from(threads);
+    const by = Object.fromEntries(all.map((t) => [t.gmailThreadId, t]));
+    expect(by.job!.extracted).toMatchObject({ invoice_thread: true });
+    expect(by.job!.ownerInvoiceAt).toEqual(new Date(NOW.getTime() - 2 * 86_400_000));
+    expect(by.fresh!.extracted).toMatchObject({ invoice_thread: true });
+    expect(by.fwd!.extracted ?? {}).not.toHaveProperty("invoice_thread");
+    expect(by.fwd!.ownerInvoiceAt).toBeNull();
+  });
+});

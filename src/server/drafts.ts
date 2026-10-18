@@ -1,5 +1,6 @@
 import "server-only";
 import { MAX_FOLLOWUPS } from "@/config/rules";
+import { chaseTiming, isBigQuote, needsOwnerBlocksNudge, nudgeDueDate } from "./followup-rules";
 import { createHash } from "node:crypto";
 import {
   and,
@@ -123,8 +124,8 @@ import {
 } from "./lifecycle";
 import { batchEligible, firstLine } from "./batch-rules";
 import { isInvoiceThread, paymentSaid } from "./money-rules";
-import { quoteStopsNudges } from "./quote-rules";
-import { BACK_ON_TOP_MS, isEmergency } from "./snooze-rules";
+import { isServiceCall, quoteStopsNudges } from "./quote-rules";
+import { BACK_ON_TOP_MS, isEmergency, usableTimeZone } from "./snooze-rules";
 import { inEmergencyLane, recentEmergency } from "./emergency-rules";
 import { claimDrafting, releaseDrafting } from "./draft-claims";
 import { CHECKIN_AFTER_DAYS, CHECKIN_MAX_DAYS } from "./complaint-rules";
@@ -132,6 +133,10 @@ import { headerPickIds, toNeedsYouItem } from "./digest-rules";
 import { answeredByPhone } from "./first-week-rules";
 import {
   asDate,
+  customerAddressSql,
+  lastInSql,
+  lastOutSql,
+  quoteThreadSql,
   messageReplyAddress,
   messageReplyName,
   noReplySql,
@@ -215,6 +220,9 @@ export type CreateOutcome =
         | "model_failed"
         | "read_only"
         | "followup_not_allowed"
+        | "wait_requested"
+        | "customer_wrote_elsewhere"
+        | "not_due"
         | "customer_replied"
         // Check 20 P4: the newest email is an automatic reply (jobs only).
         | "auto_reply"
@@ -504,12 +512,87 @@ async function depositAlreadyOn(threadId: string): Promise<boolean> {
   return !!row;
 }
 
+/**
+ * Check 21 P4: where a nudge on a fresh invoice email goes — the first To address of the owner's
+ * email, only when that address has written to this business before it (any thread, any of the
+ * workspace's mailboxes, by reply address). Null otherwise. Never logged.
+ */
+async function freshInvoiceAddress(
+  workspaceId: string,
+  last: { direction: string; toAddresses: string[]; sentAt: Date },
+): Promise<string | null> {
+  if (last.direction !== "out") return null;
+  const to = (last.toAddresses[0] ?? "").trim().toLowerCase();
+  if (!to) return null;
+  const [known] = await db()
+    .select({ id: messages.id })
+    .from(messages)
+    .innerJoin(mailboxes, eq(mailboxes.id, messages.mailboxId))
+    .where(
+      and(
+        eq(mailboxes.workspaceId, workspaceId),
+        eq(messages.direction, "in"),
+        notDraftMessage(),
+        sql`${messageReplyAddress()} = ${to}`,
+        lt(messages.sentAt, last.sentAt),
+      ),
+    )
+    .limit(1);
+  return known ? to : null;
+}
+
+/**
+ * Check 21 P5: the customer (by reply address) wrote to this business on ANOTHER conversation
+ * after `after` (the owner's last message here): not a side email, an unsent draft or an
+ * auto-reply. A spouse's own address can't be matched; that stays the owner's "I called them"
+ * or Discard. SQL twin in followups.ts (`threadsToFollowUp`). Never logged.
+ */
+async function customerWroteElsewhere(
+  workspaceId: string,
+  threadId: string,
+  address: string,
+  after: Date,
+): Promise<boolean> {
+  const [row] = await db()
+    .select({ id: messages.id })
+    .from(messages)
+    .innerJoin(mailboxes, eq(mailboxes.id, messages.mailboxId))
+    .where(
+      and(
+        eq(mailboxes.workspaceId, workspaceId),
+        ne(messages.threadId, threadId),
+        eq(messages.direction, "in"),
+        eq(messages.autoReply, false),
+        notDraftMessage(),
+        sql`not ${sideEmailSql("messages")}`,
+        sql`${messageReplyAddress()} = ${address.trim().toLowerCase()}`,
+        gt(messages.sentAt, after),
+      ),
+    )
+    .limit(1);
+  return !!row;
+}
+
 export async function followupSettings(workspaceId: string) {
   const [p] = await db()
-    .select({ enabled: businessProfiles.followupsEnabled, days: businessProfiles.followupDays })
+    .select({
+      enabled: businessProfiles.followupsEnabled,
+      days: businessProfiles.followupDays,
+      timeZone: businessProfiles.timeZone,
+      bigQuoteDays: businessProfiles.bigQuoteDays,
+      thresholdDollars: businessProfiles.amountThresholdDollars,
+    })
     .from(businessProfiles)
     .where(eq(businessProfiles.workspaceId, workspaceId));
-  return { enabled: p?.enabled ?? true, days: p?.days ?? 3 };
+  return {
+    enabled: p?.enabled ?? true,
+    days: p?.days ?? 3,
+    // Check 21 P3: waits are counted in the owner's calendar days.
+    timeZone: usableTimeZone(p?.timeZone),
+    // Check 38 P4: a longer wait for quotes over the money limit (null = the normal wait).
+    bigQuoteDays: p?.bigQuoteDays ?? null,
+    thresholdDollars: p?.thresholdDollars ?? 2_500,
+  };
 }
 
 /**
@@ -960,7 +1043,8 @@ async function writeDraftForThread(threadId: string, opts: CreateOpts): Promise<
   if (followup) {
     // Checked here, where the draft is made, whatever selected the thread.
     if (
-      thread.needsOwner ||
+      // Check 12 P1: "needs you" stops it, unless it's only an invoice's size.
+      needsOwnerBlocksNudge(thread) ||
       // A decided quote (lost / no answer, any source; won, unless it's now the job's
       // invoice) is never chased.
       quoteStopsNudges(thread) ||
@@ -968,7 +1052,10 @@ async function writeDraftForThread(threadId: string, opts: CreateOpts): Promise<
       thread.invoicePaidAt != null ||
       // Nor a bill the owner has to pay: a supplier's statement is never chased (TW A2).
       marks.bill_direction === "owed_by_business" ||
-      !FOLLOWUP_CATEGORIES.includes(thread.category as (typeof FOLLOWUP_CATEGORIES)[number]) ||
+      // Check 21 P4: a quote or invoice by category, or any invoice thread (an invoice the
+      // owner emailed on a conversation last sorted as scheduling).
+      (!FOLLOWUP_CATEGORIES.includes(thread.category as (typeof FOLLOWUP_CATEGORIES)[number]) &&
+        !isInvoiceThread(thread)) ||
       // Nor a thread where a deposit, review request or closing question went out (A3) —
       // a deposit only while it's a quote — or whose customer just said they paid.
       (await nudgeBlocked(thread))
@@ -977,6 +1064,9 @@ async function writeDraftForThread(threadId: string, opts: CreateOpts): Promise<
     }
     // Check 21 P1: the owner's email never arrived; a nudge would bounce too.
     if (marks.bounced === true) return { status: "skipped", reason: "bounced" };
+    // Check 21 P2: they asked us to wait ("after the holidays"): not before that day.
+    if (thread.nudgeAfter && thread.nudgeAfter.getTime() > now.getTime())
+      return { status: "skipped", reason: "wait_requested" };
     const sentNudges = await countSentFollowups(threadId);
     if (sentNudges >= MAX_FOLLOWUPS) return { status: "skipped", reason: "followup_cap" };
     nudgeNumber = sentNudges === 0 ? 1 : 2;
@@ -1063,6 +1153,23 @@ async function writeDraftForThread(threadId: string, opts: CreateOpts): Promise<
     recent.slice(lastOutIdx + 1).every((m) => m.direction === "in" && m.ackOnly);
   if (afterOwner && last.direction !== "out" && !onlyAcksSince)
     return { status: "skipped", reason: "customer_replied" };
+  // Check 36 P3: an emergency the owner answered with no price ("On my way, be there in 30") was
+  // a service call: no "checking in on the estimate". A price written later brings it back.
+  // (The owner's newest email decides, even when the customer acknowledged it since.)
+  const ownerNewest = lastOutIdx >= 0 ? recent[lastOutIdx] : last;
+  if (
+    followup &&
+    isServiceCall(thread.extracted, prepareBody(ownerNewest.bodyText ?? ownerNewest.snippet ?? ""))
+  )
+    return { status: "skipped", reason: "followup_not_allowed" };
+  // Check 38 P4: a quote over the money limit waits the owner's longer big-quote wait.
+  if (followup) {
+    const fs = await followupSettings(workspace.id);
+    const big = !!fs.bigQuoteDays && isBigQuote(thread, fs.thresholdDollars);
+    const { days } = chaseTiming(fs.days, fs.bigQuoteDays, big);
+    if (big && nudgeDueDate(last.sentAt, days, fs.timeZone).startsAt.getTime() > now.getTime())
+      return { status: "skipped", reason: "not_due" };
+  }
   if (
     !afterOwner &&
     purpose !== "review_request" &&
@@ -1082,12 +1189,18 @@ async function writeDraftForThread(threadId: string, opts: CreateOpts): Promise<
             .limit(1)
         )[0]
       : last;
-  if (!customer) return { status: "skipped", reason: "no_text" };
+  // Check 21 P4: a fresh invoice email nobody has answered yet goes to its To address, and only
+  // when that address has written to this business before (never a stranger or a typo).
+  const freshTo =
+    !customer && followup && thread.ownerInvoiceAt != null
+      ? await freshInvoiceAddress(workspace.id, last)
+      : null;
+  if (!customer && !freshTo) return { status: "skipped", reason: "no_text" };
   // Where the reply goes (review B1): a website form's Reply-To, read at sync. A row stored
   // before sync read it is read now, before the model is asked anything — never guessed: if
   // Gmail can't say, there is no draft (a reply to the form robot reads "Reply sent." and
   // reaches nobody).
-  if (customer.replyToHeader === null) {
+  if (customer && customer.replyToHeader === null) {
     let read: ReplyToHeader;
     try {
       const reader = replyReader(mailbox, opts);
@@ -1112,8 +1225,12 @@ async function writeDraftForThread(threadId: string, opts: CreateOpts): Promise<
     customer.replyToHeader = read;
     for (const m of recent) if (m.id === customer.id) m.replyToHeader = read;
   }
-  const to = customerReplyAddress(customer);
+  const to = customer ? customerReplyAddress(customer) : freshTo;
   if (!to) return { status: "skipped", reason: "no_text" };
+  // Check 21 P5: the drafter re-checks what the scan picked — the customer already answered in
+  // a separate email after the owner's last message, so the quote isn't quiet.
+  if (followup && (await customerWroteElsewhere(workspace.id, threadId, to, last.sentAt)))
+    return { status: "skipped", reason: "customer_wrote_elsewhere" };
   // An email-to-text gateway (a form whose Reply-To is 5085551234@vtext.com, a Google Voice
   // text): a reply would text the customer, and Squared Away never texts customers. Not even
   // on the owner's tap — the card offers "Text from my phone" instead (leads package).
@@ -1479,6 +1596,7 @@ async function writeDraftForThread(threadId: string, opts: CreateOpts): Promise<
       .select({
         quoteOutcome: threads.quoteOutcome,
         category: threads.category,
+        extracted: threads.extracted,
         invoicePaidAt: threads.invoicePaidAt,
       })
       .from(threads)
@@ -3281,6 +3399,12 @@ export type QueueItem = {
   /** G5: when the owner marked it fixed. */
   complaintFixedAt: Date | null;
   /**
+   * Check 21 P5: this email came from someone with an open quote on another conversation that
+   * the owner answered before it ("Also about your quote from Nov 2"), so both get one answer.
+   * Linked by that conversation's Gmail thread; content-free.
+   */
+  alsoQuote: { gmailThreadId: string; mailboxEmail: string; quotedAt: Date } | null;
+  /**
    * 2026-10-16: its Gmail address is paused on the plan — shown, but nothing is sent, drafted
    * or changed from it (MAILBOX_PAUSED_LINE).
    */
@@ -3620,6 +3744,52 @@ export async function listQueue(
   };
   const who = await senders([...needIds, ...members.drafts.map((m) => m.threadId)]);
 
+  // Check 21 P5: open quotes on OTHER conversations with the same customer, that the owner
+  // answered before this email came in. Newest such quote per address.
+  const itemThreads = new Set([...needIds, ...members.drafts.map((m) => m.threadId)]);
+  const addresses = [
+    ...new Set([...who.values()].map((w) => w.address).filter((a): a is string => !!a)),
+  ];
+  const openQuotes = addresses.length
+    ? await db()
+        .select({
+          id: threads.id,
+          gmailThreadId: threads.gmailThreadId,
+          mailboxId: threads.mailboxId,
+          address: customerAddressSql(),
+          lastIn: lastInSql(),
+          lastOut: lastOutSql(),
+        })
+        .from(threads)
+        .where(
+          and(
+            inArray(threads.mailboxId, boxIds),
+            isNull(threads.quoteOutcome),
+            quoteThreadSql(),
+            sql`${customerAddressSql()} in (${sql.join(
+              addresses.map((a) => sql`${a}`),
+              sql`, `,
+            )})`,
+          ),
+        )
+    : [];
+  const alsoQuoteFor = (threadId: string): QueueItem["alsoQuote"] => {
+    const w = who.get(threadId);
+    if (!w?.address || !w.sentAt) return null;
+    const best = openQuotes
+      .filter((q) => q.id !== threadId && !itemThreads.has(q.id) && q.address === w.address)
+      .map((q) => ({ q, out: asDate(q.lastOut), inn: asDate(q.lastIn) }))
+      .filter((x) => x.out && x.out < w.sentAt! && (!x.inn || x.inn < x.out))
+      .sort((a, b) => b.out!.getTime() - a.out!.getTime())[0];
+    return best
+      ? {
+          gmailThreadId: best.q.gmailThreadId,
+          mailboxEmail: emailOf.get(best.q.mailboxId) ?? "",
+          quotedAt: best.out!,
+        }
+      : null;
+  };
+
   const needsYouItems: QueueItem[] = shownNeeds.flatMap((m) => {
     const t = threadById.get(m.threadId);
     if (!t) return [];
@@ -3658,6 +3828,7 @@ export async function listQueue(
         lane: m.lane,
         checkIn: m.checkIn,
         complaintFixedAt: t.complaintFixedAt,
+        alsoQuote: alsoQuoteFor(t.id),
         mailboxPaused: pausedBoxes.has(t.mailboxId),
         archivedInGmail: false,
       } satisfies QueueItem,
@@ -3702,6 +3873,7 @@ export async function listQueue(
         lane: m.lane,
         checkIn: false,
         complaintFixedAt: thread.complaintFixedAt,
+        alsoQuote: draft.kind === "followup" ? null : alsoQuoteFor(thread.id),
         mailboxPaused: pausedBoxes.has(draft.mailboxId),
         archivedInGmail: !thread.inInbox,
       } satisfies QueueItem,
@@ -3838,6 +4010,7 @@ export async function sentDraftSummary(
       kind: row.draft.kind,
       purpose: row.draft.purpose ?? null,
       nudgeOn: null,
+      waitingUntil: null,
       lastNudgeUsed: false,
     };
   }
@@ -3847,10 +4020,15 @@ export async function sentDraftSummary(
     settings.enabled &&
     // A deposit, review request or closing question is never followed by a nudge (A3).
     row.draft.purpose == null &&
-    !row.thread.needsOwner &&
+    // Check 12 P1: the same "needs you" rule as the scan.
+    !needsOwnerBlocksNudge(row.thread) &&
     !quoteStopsNudges(row.thread) &&
     row.thread.invoicePaidAt == null &&
-    FOLLOWUP_CATEGORIES.includes(row.thread.category as (typeof FOLLOWUP_CATEGORIES)[number]) &&
+    // Check 36 P3: a service call (emergency, no price in what was sent) isn't chased.
+    !isServiceCall(row.thread.extracted, row.draft.body) &&
+    // Check 21 P4: the same "quote or invoice" rule as the scan.
+    (FOLLOWUP_CATEGORIES.includes(row.thread.category as (typeof FOLLOWUP_CATEGORIES)[number]) ||
+      isInvoiceThread(row.thread)) &&
     !(await nudgeBlocked(row.thread));
   const sentNudges = chased ? await countSentFollowups(row.thread.id) : 0;
   const decidedAt = row.draft.decidedAt ?? sendingAt ?? new Date();
@@ -3875,9 +4053,30 @@ export async function sentDraftSummary(
     kind: row.draft.kind,
     purpose: row.draft.purpose ?? null,
     /** When we'll nudge if they go quiet; null if we won't. */
+    // Check 21 P3: the same calendar-day rule as the scan (`nudgeDueDate`), so the day promised
+    // is the day the draft is ready (by 5am, the owner's time).
     nudgeOn:
       chased && sentNudges < MAX_FOLLOWUPS
-        ? new Date(decidedAt.getTime() + settings.days * 86_400_000)
+        ? nudgeDueDate(
+            decidedAt,
+            chaseTiming(
+              settings.days,
+              settings.bigQuoteDays,
+              !!settings.bigQuoteDays && isBigQuote(row.thread, settings.thresholdDollars),
+            ).days,
+            settings.timeZone,
+          ).startsAt
+        : null,
+    /**
+     * Check 21 P2: they asked us to wait; the sent screen says "Waiting until Jan 4, as they
+     * asked." instead of the next nudge day.
+     */
+    waitingUntil:
+      chased &&
+      sentNudges < MAX_FOLLOWUPS &&
+      row.thread.nudgeAfter &&
+      row.thread.nudgeAfter.getTime() > now.getTime()
+        ? row.thread.nudgeAfter
         : null,
     lastNudgeUsed: chased && sentNudges >= MAX_FOLLOWUPS,
   };

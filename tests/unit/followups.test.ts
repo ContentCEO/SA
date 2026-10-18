@@ -1,18 +1,23 @@
 import { randomBytes } from "node:crypto";
 import { eq } from "drizzle-orm";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { setModelTransportForTests } from "@/ai/client";
 import type { ModelDraft } from "@/ai/prompts/draft.v5";
 import type { Database } from "@/db";
-import { activityLog, drafts, messages, threads, workspaces } from "@/db/schema";
+import { activityLog, businessProfiles, drafts, messages, threads, workspaces } from "@/db/schema";
 import { ensureUserAndWorkspace } from "@/server/accounts";
 import {
   createDraftForThread,
+  listQueue,
   reconcileDrafts,
   sendDraft,
   sentDraftSummary,
 } from "@/server/drafts";
-import { threadsToFollowUp } from "@/server/followups";
+import { digestCounts } from "@/server/digest";
+import { localDayStart } from "@/server/followup-rules";
+import { followupScanDue, markFollowupScanned, threadsToFollowUp } from "@/server/followups";
+import { localParts } from "@/server/snooze-rules";
+import { guessNoAnswers, listQuotes } from "@/server/quotes";
 import { saveConnectedMailbox } from "@/server/mailboxes";
 import { followupSettingsInput, saveFollowupSettings } from "@/server/profile";
 import { createTestDb } from "../support/db";
@@ -43,8 +48,13 @@ async function quietThread(
   opts: {
     category?: string;
     needsOwner?: boolean;
+    needsOwnerManual?: boolean;
+    extracted?: Record<string, unknown>;
+    complainedAt?: Date;
     ownerRepliedDaysAgo?: number;
     customerWroteAfter?: boolean;
+    /** The customer's address (Check 21 P5: one customer's newer email stops older nudges). */
+    from?: string;
   } = {},
 ) {
   const id = `g${++g}`;
@@ -58,6 +68,9 @@ async function quietThread(
       subject: "Panel upgrade",
       category: opts.category ?? "quote_request",
       needsOwner: opts.needsOwner ?? false,
+      needsOwnerManual: opts.needsOwnerManual ?? false,
+      ...(opts.extracted ? { extracted: opts.extracted } : {}),
+      ...(opts.complainedAt ? { complainedAt: opts.complainedAt } : {}),
       summary: "Dana wants a panel upgrade quote.",
       classifiedAt: daysAgo(replied + 1),
       lastMessageAt: daysAgo(replied),
@@ -70,7 +83,7 @@ async function quietThread(
       gmailMessageId: `${id}-in`,
       rfc822MessageId: `<${id}-in@customer.com>`,
       direction: "in",
-      fromAddress: "dana@customer.com",
+      fromAddress: opts.from ?? "dana@customer.com",
       fromName: "Dana Ruiz",
       subject: "Panel upgrade",
       bodyText: "Can you quote a 200 amp panel upgrade?",
@@ -154,7 +167,7 @@ beforeEach(async () => {
 describe("which threads get a nudge", () => {
   it("a quote the owner answered 3+ days ago with no reply is due", async () => {
     const due = await quietThread({ ownerRepliedDaysAgo: 4 });
-    await quietThread({ ownerRepliedDaysAgo: 1 }); // too soon
+    await quietThread({ ownerRepliedDaysAgo: 1, from: "lee@customer.com" }); // too soon
     expect(await threadsToFollowUp(mailboxId, NOW)).toEqual([due]);
   });
 
@@ -310,6 +323,77 @@ describe("which threads get a nudge", () => {
   it("rejects a wait that isn't one of the choices", () => {
     expect(followupSettingsInput.safeParse({ enabled: "on", days: "1" }).success).toBe(false);
     expect(followupSettingsInput.safeParse({ days: "30" }).success).toBe(false);
+  });
+});
+
+describe("big invoices are chased too (Check 12 P1)", () => {
+  const bigInvoice = (over: Record<string, unknown> = {}) => ({
+    category: "invoice_payment",
+    needsOwner: true,
+    extracted: {
+      invoice: { invoice_number: "1043", amount: 5000, due_date: null, status: "unpaid" },
+      invoice_thread: true,
+      dollar_amounts: [5000],
+      owner_rule_hits: ["amount", "model"],
+      owner_code: "amount",
+      ...over,
+    },
+  });
+
+  it("an unpaid $5,000 invoice that needs you only for its size is picked and drafted", async () => {
+    const t = await quietThread(bigInvoice());
+    expect(await threadsToFollowUp(mailboxId, NOW)).toEqual([t]);
+    setModelTransportForTests(fakeTransport([nudge()]).transport);
+    const r = await createDraftForThread(t, { trigger: "followup", ...deps() });
+    expect(r.status).toBe("created");
+    const [d] = await database.select().from(drafts).where(eq(drafts.threadId, t));
+    // A draft that waits for the owner's tap, never a send.
+    expect(d).toMatchObject({ kind: "followup", status: "pending" });
+    expect(writer.sent).toHaveLength(0);
+  });
+
+  it("not when the owner marked it, or with a dispute or a complaint", async () => {
+    const manual = await quietThread({ ...bigInvoice(), needsOwnerManual: true });
+    const dispute = await quietThread(
+      bigInvoice({ owner_rule_hits: ["dispute", "amount"], disputed: true }),
+    );
+    const complained = await quietThread({ ...bigInvoice(), complainedAt: daysAgo(30) });
+    const other = await quietThread(bigInvoice({ owner_rule_hits: ["amount", "vip"] }));
+    expect(await threadsToFollowUp(mailboxId, NOW)).toEqual([]);
+    setModelTransportForTests(fakeTransport([nudge(), nudge(), nudge(), nudge()]).transport);
+    for (const t of [manual, dispute, complained, other]) {
+      expect(await createDraftForThread(t, { trigger: "followup", ...deps() })).toEqual({
+        status: "skipped",
+        reason: "followup_not_allowed",
+      });
+    }
+  });
+
+  it("the sent screen promises the next nudge on a big invoice, as the scan will do", async () => {
+    await database
+      .update(workspaces)
+      .set({ status: "active", setupPaidVia: "stripe" })
+      .where(eq(workspaces.id, workspaceId));
+    const t = await quietThread(bigInvoice());
+    setModelTransportForTests(fakeTransport([nudge()]).transport);
+    const r = await createDraftForThread(t, { trigger: "followup", ...deps() });
+    if (r.status !== "created") throw new Error("expected a draft");
+    await sendDraft(workspaceId, r.draftId, deps());
+    const summary = await sentDraftSummary(workspaceId, r.draftId);
+    expect(summary!.nudgeOn).not.toBeNull();
+  });
+
+  it("a $5,000 quote request still waits on the owner", async () => {
+    const t = await quietThread({
+      category: "quote_request",
+      needsOwner: true,
+      extracted: { dollar_amounts: [5000], owner_rule_hits: ["amount"], owner_code: "amount" },
+    });
+    expect(await threadsToFollowUp(mailboxId, NOW)).toEqual([]);
+    setModelTransportForTests(fakeTransport([nudge()]).transport);
+    expect(await createDraftForThread(t, { trigger: "followup", ...deps() })).toMatchObject({
+      status: "skipped",
+    });
   });
 });
 
@@ -485,7 +569,8 @@ describe("writing and sending a nudge", () => {
 
     const summary = await sentDraftSummary(workspaceId, r.draftId);
     expect(summary!.kind).toBe("followup");
-    expect(summary!.nudgeOn).toEqual(new Date(NOW.getTime() + 3 * DAY));
+    // Check 21 P3: the owner's calendar day (Eastern by default), ready that morning.
+    expect(summary!.nudgeOn).toEqual(new Date("2026-10-08T04:00:00Z"));
     expect(summary!.lastNudgeUsed).toBe(false);
   });
 
@@ -649,5 +734,554 @@ describe("a decided quote is never chased (plan #30, amendment A3)", () => {
     await decide(t, "won", "auto");
     const summary = await sentDraftSummary(workspaceId, d!.id);
     expect(summary).toMatchObject({ nudgeOn: null, lastNudgeUsed: false });
+  });
+});
+
+describe("nudges by the owner's calendar day, ready by 5am (Check 21 P3)", () => {
+  const at = (date: string, hm: string, tz: string) => {
+    const [h, m] = hm.split(":").map(Number) as [number, number];
+    return new Date(localDayStart(date, tz).getTime() + (h * 60 + m) * 60_000);
+  };
+  async function owner(tz: string, days: number) {
+    await database
+      .insert(businessProfiles)
+      .values({ workspaceId, timeZone: tz, followupDays: days })
+      .onConflictDoUpdate({
+        target: businessProfiles.workspaceId,
+        set: { timeZone: tz, followupDays: days },
+      });
+  }
+  /** The owner's quote went out at `out` (sent from the app), after the customer asked. */
+  async function quoteSentAt(out: Date) {
+    const id = `c${++g}`;
+    const [t] = await database
+      .insert(threads)
+      .values({
+        mailboxId,
+        gmailThreadId: id,
+        inInbox: true,
+        category: "quote_request",
+        classifiedAt: new Date(out.getTime() - DAY),
+        lastMessageAt: out,
+      })
+      .returning();
+    await database.insert(messages).values([
+      {
+        threadId: t!.id,
+        mailboxId,
+        gmailMessageId: `${id}-in`,
+        direction: "in",
+        fromAddress: "dana@customer.com",
+        fromName: "Dana Ruiz",
+        bodyText: "Quote please.",
+        sentAt: new Date(out.getTime() - DAY),
+      },
+      {
+        threadId: t!.id,
+        mailboxId,
+        gmailMessageId: `${id}-out`,
+        direction: "out",
+        fromAddress: "owner@shop.com",
+        toAddresses: ["dana@customer.com"],
+        bodyText: "It's $900.",
+        sentAt: out,
+      },
+    ]);
+    const [d] = await database
+      .insert(drafts)
+      .values({
+        threadId: t!.id,
+        mailboxId,
+        kind: "reply",
+        gmailDraftId: `gd-${id}`,
+        toAddress: "dana@customer.com",
+        subject: "Re: Quote",
+        body: "It's $900.",
+        originalBody: "It's $900.",
+        status: "sent",
+        reason: "reply",
+        promptVersion: "draft.v8",
+        createdAt: new Date(out.getTime() - 60_000),
+        decidedAt: out,
+      })
+      .returning();
+    return { threadId: t!.id, draftId: d!.id };
+  }
+  /** The first local date (4am scans, day by day) on which the scan picks the thread. */
+  async function firstPick(threadId: string, from: string, tz: string) {
+    for (let i = 0; i < 10; i++) {
+      const date = new Date(Date.parse(`${from}T12:00:00Z`) + i * DAY).toISOString().slice(0, 10);
+      if ((await threadsToFollowUp(mailboxId, at(date, "04:00", tz), 50)).includes(threadId))
+        return date;
+    }
+    return null;
+  }
+
+  it.each([
+    ["Friday 2:00pm, 3-day wait", "America/New_York", 3, "2026-10-23", "14:00", "2026-10-26"],
+    ["Wednesday 10:00am, 3-day wait", "America/New_York", 3, "2026-10-21", "10:00", "2026-10-24"],
+    ["Thursday 4:00pm, 2-day wait", "America/New_York", 2, "2026-10-22", "16:00", "2026-10-24"],
+    ["Los Angeles Monday 7:00pm", "America/Los_Angeles", 3, "2026-10-19", "19:00", "2026-10-22"],
+  ] as const)(
+    "%s: the sent screen's day is the day the scan first picks it",
+    async (_l, tz, days, date, hm, expected) => {
+      await owner(tz, days);
+      const { threadId, draftId } = await quoteSentAt(at(date, hm, tz));
+      const summary = await sentDraftSummary(workspaceId, draftId, at(date, hm, tz));
+      expect(localParts(summary!.nudgeOn!, tz).date).toBe(expected);
+      expect(await firstPick(threadId, date, tz)).toBe(expected);
+    },
+  );
+
+  it("the scan runs once per owner per local day, at 4am their time", async () => {
+    await database
+      .update(workspaces)
+      .set({ status: "active" })
+      .where(eq(workspaces.id, workspaceId));
+    await owner("America/Los_Angeles", 3);
+    const ids = (r: Awaited<ReturnType<typeof followupScanDue>>) => r.map((w) => w.workspaceId);
+    // 4am Eastern is 1am in Los Angeles: not yet.
+    expect(ids(await followupScanDue(at("2026-10-26", "04:30", "America/New_York")))).toEqual([]);
+    const four = at("2026-10-26", "04:11", "America/Los_Angeles");
+    const due = await followupScanDue(four);
+    expect(ids(due)).toEqual([workspaceId]);
+    expect(due[0]!.localDate).toBe("2026-10-26");
+    await markFollowupScanned(workspaceId, due[0]!.localDate);
+    // A retry in the same hour: nothing to do.
+    expect(await followupScanDue(new Date(four.getTime() + 20 * 60_000))).toEqual([]);
+    expect(await followupScanDue(at("2026-10-26", "05:11", "America/Los_Angeles"))).toEqual([]);
+    expect(ids(await followupScanDue(at("2026-10-27", "04:11", "America/Los_Angeles")))).toEqual([
+      workspaceId,
+    ]);
+  });
+
+  it("a second scan the same morning drafts nothing, and the 7am morning email counts the nudge", async () => {
+    await database
+      .update(workspaces)
+      .set({ status: "active", setupPaidVia: "stripe" })
+      .where(eq(workspaces.id, workspaceId));
+    const tz = "America/New_York";
+    await owner(tz, 3);
+    const { threadId } = await quoteSentAt(at("2026-10-23", "14:00", tz));
+    const four = at("2026-10-26", "04:11", tz);
+    setModelTransportForTests(fakeTransport([nudge(), nudge()]).transport);
+    const run = async (now: Date) => {
+      let made = 0;
+      for (const t of await threadsToFollowUp(mailboxId, now)) {
+        const r = await createDraftForThread(t, {
+          trigger: "followup",
+          writerFor: () => writer,
+          now: () => now,
+        });
+        if (r.status === "created") made++;
+      }
+      return made;
+    };
+    expect(await run(four)).toBe(1);
+    expect(await run(new Date(four.getTime() + 15 * 60_000))).toBe(0);
+    const nudges = await database.select().from(drafts).where(eq(drafts.threadId, threadId));
+    expect(nudges.filter((d) => d.kind === "followup")).toHaveLength(1);
+    const counts = await digestCounts(workspaceId, at("2026-10-26", "07:03", tz), tz);
+    expect(counts.nudgesReady).toBe(1);
+  });
+});
+
+describe("invoices the owner sends are chased (Check 21 P4)", () => {
+  const won = async (threadId: string) =>
+    database
+      .update(threads)
+      .set({ quoteOutcome: "won", quoteOutcomeSource: "owner", ownerInvoiceAt: daysAgo(4) })
+      .where(eq(threads.id, threadId));
+
+  it("a won quote, then the owner's invoice on a conversation sorted scheduling → reminder", async () => {
+    const t = await quietThread({ category: "scheduling", extracted: { invoice_thread: true } });
+    await won(t);
+    expect(await threadsToFollowUp(mailboxId, NOW)).toEqual([t]);
+    setModelTransportForTests(fakeTransport([nudge()]).transport);
+    expect(await createDraftForThread(t, { trigger: "followup", ...deps() })).toMatchObject({
+      status: "created",
+    });
+  });
+
+  it("the same with the conversation still sorted as a quote request → reminder", async () => {
+    const t = await quietThread({ category: "quote_request", extracted: { invoice_thread: true } });
+    await won(t);
+    expect(await threadsToFollowUp(mailboxId, NOW)).toEqual([t]);
+  });
+
+  async function freshInvoice(to: string) {
+    const id = `f${++g}`;
+    const [t] = await database
+      .insert(threads)
+      .values({
+        mailboxId,
+        gmailThreadId: id,
+        inInbox: false,
+        subject: "Invoice 1043",
+        extracted: { invoice_thread: true },
+        ownerInvoiceAt: daysAgo(4),
+        lastMessageAt: daysAgo(4),
+      })
+      .returning();
+    await database.insert(messages).values({
+      threadId: t!.id,
+      mailboxId,
+      gmailMessageId: `${id}-out`,
+      rfc822MessageId: `<${id}-out@shop.com>`,
+      direction: "out",
+      fromAddress: "owner@shop.com",
+      toAddresses: [to],
+      subject: "Invoice 1043",
+      snippet: "Invoice 1043 for the deck, $2,100. Thanks, Davi",
+      sentAt: daysAgo(4),
+    });
+    return t!.id;
+  }
+
+  it("a fresh invoice email to an address that wrote before → reminder to that address; a stranger → none", async () => {
+    // Dana wrote before the invoice went out (not after: that would answer it, Check 21 P5).
+    await quietThread({
+      category: "customer_question",
+      ownerRepliedDaysAgo: 10,
+      customerWroteAfter: true,
+    });
+    const known = await freshInvoice("Dana@Customer.com");
+    const stranger = await freshInvoice("typo@custmer.com");
+    expect(await threadsToFollowUp(mailboxId, NOW)).toEqual([known]);
+    const logs: unknown[] = [];
+    const spies = (["log", "info", "warn", "error"] as const).map((k) =>
+      vi.spyOn(console, k).mockImplementation((...a: unknown[]) => void logs.push(a)),
+    );
+    setModelTransportForTests(fakeTransport([nudge(), nudge()]).transport);
+    expect(await createDraftForThread(known, { trigger: "followup", ...deps() })).toMatchObject({
+      status: "created",
+    });
+    expect(await createDraftForThread(stranger, { trigger: "followup", ...deps() })).toEqual({
+      status: "skipped",
+      reason: "no_text",
+    });
+    for (const s of spies) s.mockRestore();
+    expect(JSON.stringify(logs)).not.toMatch(/1043|2,100|dana@|typo@/i);
+    const [d] = await database.select().from(drafts).where(eq(drafts.threadId, known));
+    expect(d).toMatchObject({
+      kind: "followup",
+      toAddress: "dana@customer.com",
+      status: "pending",
+    });
+  });
+
+  it("a bill the owner owes is never chased, and a paid mark still stops it", async () => {
+    const owed = await quietThread({
+      category: "invoice_payment",
+      extracted: { invoice_thread: true, bill_direction: "owed_by_business" },
+    });
+    const paid = await quietThread({ category: "scheduling", extracted: { invoice_thread: true } });
+    await database
+      .update(threads)
+      .set({ invoicePaidAt: daysAgo(1), invoicePaidSource: "owner" })
+      .where(eq(threads.id, paid));
+    expect(await threadsToFollowUp(mailboxId, NOW)).toEqual([]);
+    setModelTransportForTests(fakeTransport([nudge(), nudge()]).transport);
+    for (const t of [owed, paid])
+      expect(await createDraftForThread(t, { trigger: "followup", ...deps() })).toEqual({
+        status: "skipped",
+        reason: "followup_not_allowed",
+      });
+  });
+});
+
+describe("the customer answered in a separate email (Check 21 P5)", () => {
+  /** A new conversation from `from` (and optional Reply-To), `daysAgoAt` days ago. */
+  async function newThread(
+    from: string,
+    daysAgoAt: number,
+    replyTo?: string,
+    over: Partial<typeof threads.$inferInsert> = {},
+  ) {
+    const id = `n${++g}`;
+    const [t] = await database
+      .insert(threads)
+      .values({
+        mailboxId,
+        gmailThreadId: id,
+        inInbox: true,
+        subject: "Water heater",
+        category: "scheduling",
+        classifiedAt: daysAgo(daysAgoAt),
+        lastMessageAt: daysAgo(daysAgoAt),
+        ...over,
+      })
+      .returning();
+    await database.insert(messages).values({
+      threadId: t!.id,
+      mailboxId,
+      gmailMessageId: `${id}-in`,
+      direction: "in",
+      fromAddress: from,
+      replyToHeader: replyTo ? { address: replyTo, name: "Dana Ruiz" } : {},
+      subject: "Water heater",
+      bodyText: "About the water heater, yes please. When can you come?",
+      sentAt: daysAgo(daysAgoAt),
+    });
+    return t!.id;
+  }
+
+  it("a new email from the same address after the quote → no nudge; one from before → nudge", async () => {
+    const quote = await quietThread({ ownerRepliedDaysAgo: 4 });
+    await newThread("dana@customer.com", 6); // before the owner's quote went out
+    expect(await threadsToFollowUp(mailboxId, NOW)).toEqual([quote]);
+    await newThread("Dana@Customer.com", 2); // after it
+    expect(await threadsToFollowUp(mailboxId, NOW)).toEqual([]);
+    setModelTransportForTests(fakeTransport([nudge()]).transport);
+    expect(await createDraftForThread(quote, { trigger: "followup", ...deps() })).toEqual({
+      status: "skipped",
+      reason: "customer_wrote_elsewhere",
+    });
+  });
+
+  it("a different address (a spouse's own) can't be matched: nudged as usual", async () => {
+    const quote = await quietThread({ ownerRepliedDaysAgo: 4 });
+    await newThread("sam@customer.com", 2);
+    expect(await threadsToFollowUp(mailboxId, NOW)).toEqual([quote]);
+  });
+
+  it("a website-form customer is matched by the Reply-To address", async () => {
+    const quote = await quietThread({ ownerRepliedDaysAgo: 4 });
+    expect(await threadsToFollowUp(mailboxId, NOW)).toEqual([quote]);
+    await newThread("noreply@forms.example.com", 2, "dana@customer.com");
+    expect(await threadsToFollowUp(mailboxId, NOW)).toEqual([]);
+  });
+
+  it("the newer email's queue card says it's also about the quote", async () => {
+    await quietThread({ ownerRepliedDaysAgo: 4 });
+    const newer = await newThread("dana@customer.com", 2, undefined, {
+      needsOwner: true,
+      needsOwnerReason: "Take a look.",
+    });
+    const q = await listQueue(workspaceId, NOW);
+    const card = q.needsYou.find((i) => i.threadId === newer);
+    expect(card?.alsoQuote).toMatchObject({ quotedAt: daysAgo(4) });
+  });
+});
+
+describe("only this quote's nudges count before guessing no answer (Check 21 P6)", () => {
+  async function deckTimeline() {
+    await database
+      .update(workspaces)
+      .set({ status: "active" })
+      .where(eq(workspaces.id, workspaceId));
+    // Kitchen quote 9 days ago, nudged 6 and 2 days ago.
+    const t = await quietThread({ ownerRepliedDaysAgo: 9 });
+    await sentNudge(t, 6);
+    await sentNudge(t, 2);
+    // Yesterday: "Could you price the deck instead?"; today the owner prices the deck.
+    await database.insert(messages).values([
+      {
+        threadId: t,
+        mailboxId,
+        gmailMessageId: `${t}-deck-in`,
+        direction: "in",
+        fromAddress: "dana@customer.com",
+        bodyText: "Could you price the deck instead?",
+        sentAt: daysAgo(1),
+      },
+      {
+        threadId: t,
+        mailboxId,
+        gmailMessageId: `${t}-deck-out`,
+        direction: "out",
+        fromAddress: "owner@shop.com",
+        toAddresses: ["dana@customer.com"],
+        bodyText: "The deck is $6,400.",
+        sentAt: NOW,
+      },
+    ]);
+    return t;
+  }
+  const outcome = async (t: string) =>
+    (await database.select().from(threads).where(eq(threads.id, t)))[0]!.quoteOutcome;
+  const later = (d: number) => new Date(NOW.getTime() + d * DAY);
+
+  it("the deck isn't guessed 'no answer' eight days after its price; it is after 21 quiet days", async () => {
+    const t = await deckTimeline();
+    await guessNoAnswers(later(8), workspaceId);
+    expect(await outcome(t)).toBeNull();
+    await guessNoAnswers(later(20), workspaceId);
+    expect(await outcome(t)).toBeNull();
+    await guessNoAnswers(later(21), workspaceId);
+    expect(await outcome(t)).toBe("no_answer");
+  });
+
+  it("two nudges after the customer's last email, then a quiet week → no answer", async () => {
+    await database
+      .update(workspaces)
+      .set({ status: "active" })
+      .where(eq(workspaces.id, workspaceId));
+    const t = await quietThread({ ownerRepliedDaysAgo: 16 });
+    await sentNudge(t, 13);
+    await sentNudge(t, 8);
+    await guessNoAnswers(NOW, workspaceId);
+    expect(await outcome(t)).toBe("no_answer");
+  });
+
+  it("an owner's own outcome is never overwritten", async () => {
+    const t = await deckTimeline();
+    await database
+      .update(threads)
+      .set({ quoteOutcome: null, quoteOutcomeSource: "owner" })
+      .where(eq(threads.id, t));
+    await guessNoAnswers(later(30), workspaceId);
+    expect(await outcome(t)).toBeNull();
+  });
+});
+
+describe("an emergency service call isn't chased as a quote (Check 36 P3)", () => {
+  async function burstPipe(ownerReply: string) {
+    const t = await quietThread({
+      ownerRepliedDaysAgo: 4,
+      extracted: { emergency: true, emergency_at: daysAgo(5).toISOString(), urgency: "emergency" },
+    });
+    await database
+      .update(messages)
+      .set({ bodyText: ownerReply })
+      .where(eq(messages.gmailMessageId, `${await gidOf(t)}-out`));
+    return t;
+  }
+  const gidOf = async (t: string) =>
+    (await database.select().from(threads).where(eq(threads.id, t)))[0]!.gmailThreadId;
+
+  it("'On my way' with no price: not picked on day 4, no draft, no 'no answer' guess, shown as a service call", async () => {
+    await database
+      .update(workspaces)
+      .set({ status: "active" })
+      .where(eq(workspaces.id, workspaceId));
+    const t = await burstPipe("On my way, be there in 30.");
+    expect(await threadsToFollowUp(mailboxId, NOW)).toEqual([]);
+    setModelTransportForTests(fakeTransport([nudge()]).transport);
+    expect(await createDraftForThread(t, { trigger: "followup", ...deps() })).toEqual({
+      status: "skipped",
+      reason: "followup_not_allowed",
+    });
+    await guessNoAnswers(new Date(NOW.getTime() + 30 * DAY), workspaceId);
+    const [row] = await database.select().from(threads).where(eq(threads.id, t));
+    expect(row!.quoteOutcome).toBeNull();
+    const { quotes } = await listQuotes(workspaceId, NOW);
+    expect(quotes.find((q) => q.threadId === t)!.serviceCall).toBe(true);
+  });
+
+  it("with a price in the owner's reply it's chased as usual; a normal quote is unchanged", async () => {
+    const priced = await burstPipe("It'll be $380 to replace the section.");
+    const normal = await quietThread({ ownerRepliedDaysAgo: 4 });
+    expect((await threadsToFollowUp(mailboxId, NOW)).sort()).toEqual([priced, normal].sort());
+  });
+});
+
+describe("big quotes wait longer before nudges and 'no answer' (Check 38 P4)", () => {
+  const tz = "America/New_York";
+  const day0 = Date.parse("2026-11-02T19:00:00Z"); // Monday 2pm Eastern
+  const dayAt = (d: number, hourUtc = 9) =>
+    new Date(Date.parse("2026-11-02T00:00:00Z") + d * DAY + hourUtc * 3_600_000);
+
+  async function quoteOf(cents: number) {
+    const id = `b${++g}`;
+    const [t] = await database
+      .insert(threads)
+      .values({
+        mailboxId,
+        gmailThreadId: id,
+        inInbox: true,
+        category: "quote_request",
+        quoteAmountCents: cents,
+        classifiedAt: new Date(day0 - DAY),
+        lastMessageAt: new Date(day0),
+      })
+      .returning();
+    await database.insert(messages).values([
+      {
+        threadId: t!.id,
+        mailboxId,
+        gmailMessageId: `${id}-in`,
+        direction: "in",
+        fromAddress: `${id}@customer.com`,
+        bodyText: "Kitchen remodel, can you quote?",
+        sentAt: new Date(day0 - DAY),
+      },
+      {
+        threadId: t!.id,
+        mailboxId,
+        gmailMessageId: `${id}-out`,
+        direction: "out",
+        fromAddress: "owner@shop.com",
+        toAddresses: [`${id}@customer.com`],
+        bodyText: "Proposal attached.",
+        sentAt: new Date(day0),
+      },
+    ]);
+    return t!.id;
+  }
+
+  /** Daily 4am-Eastern scans (each nudge "sent" straight away) and noon guesses. */
+  async function run(t: string, days: number) {
+    const nudged: number[] = [];
+    let guessed: number | null = null;
+    for (let d = 1; d <= days && guessed === null; d++) {
+      const scan = dayAt(d, 9); // 4am Eastern
+      if ((await threadsToFollowUp(mailboxId, scan)).includes(t)) {
+        nudged.push(d);
+        await database.insert(drafts).values({
+          threadId: t,
+          mailboxId,
+          kind: "followup",
+          gmailDraftId: `gd-${t}-${d}`,
+          toAddress: "x@customer.com",
+          subject: "Re: Kitchen",
+          body: "nudge",
+          originalBody: "nudge",
+          status: "sent",
+          reason: "nudge",
+          promptVersion: "followup.v4",
+          // Drafted at 4am, sent a little later.
+          createdAt: scan,
+          decidedAt: new Date(scan.getTime() + 60_000),
+        });
+        await database.insert(messages).values({
+          threadId: t,
+          mailboxId,
+          gmailMessageId: `${t}-nudge-${d}`,
+          direction: "out",
+          fromAddress: "owner@shop.com",
+          bodyText: "Just checking in.",
+          sentAt: new Date(scan.getTime() + 60_000),
+        });
+      }
+      await guessNoAnswers(dayAt(d, 17), workspaceId);
+      const [row] = await database.select().from(threads).where(eq(threads.id, t));
+      if (row!.quoteOutcome === "no_answer") guessed = d;
+    }
+    return { nudged, guessed };
+  }
+
+  beforeEach(async () => {
+    await database
+      .update(workspaces)
+      .set({ status: "active" })
+      .where(eq(workspaces.id, workspaceId));
+    await database
+      .insert(businessProfiles)
+      .values({ workspaceId, timeZone: tz, followupDays: 7, bigQuoteDays: 14 })
+      .onConflictDoUpdate({
+        target: businessProfiles.workspaceId,
+        set: { timeZone: tz, followupDays: 7, bigQuoteDays: 14 },
+      });
+  });
+
+  it("a $48,500 quote at the 14-day setting: nudged on days 14 and 28, no guess before day 42", async () => {
+    const t = await quoteOf(4_850_000);
+    expect(await run(t, 45)).toEqual({ nudged: [14, 28], guessed: 42 });
+  });
+
+  it("a $900 quote keeps today's timing: days 7 and 14, guessed on day 21", async () => {
+    const t = await quoteOf(90_000);
+    expect(await run(t, 30)).toEqual({ nudged: [7, 14], guessed: 21 });
   });
 });

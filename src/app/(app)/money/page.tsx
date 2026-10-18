@@ -12,6 +12,7 @@ import { CLASSIFY_LOOKBACK_DAYS } from "@/server/classification";
 import { MAX_FOLLOWUPS } from "@/server/drafts";
 import { isReadOnly } from "@/server/lifecycle";
 import { listMoney, type MoneyRow } from "@/server/money";
+import { chaseLine } from "@/server/money-rules";
 import { threadOffers, type ThreadOffers } from "@/server/offers";
 import { formatCents } from "@/server/quote-rules";
 import { requireOwner } from "@/server/session";
@@ -99,8 +100,8 @@ function OwedCard({ r, readOnly }: { r: MoneyRow; readOnly: boolean }) {
           )}) may still be open. It's counted in the total.`}
         </p>
       ))}
-      <p className="text-base opacity-80">
-        Nudges used: {Math.min(r.nudgesUsed, MAX_FOLLOWUPS)} of {MAX_FOLLOWUPS}
+      <p className="text-base opacity-80" data-testid="chase-line">
+        {chaseLine(r.chase, MAX_FOLLOWUPS)}
       </p>
       {readOnly ? null : r.pendingDraftId ? (
         // Check 12 P8: a reply is already waiting — one tap to it.

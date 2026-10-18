@@ -228,6 +228,8 @@ describe("first week, with the database", () => {
     inAt?: Date;
     outAt?: Date;
     classifiedAt?: Date;
+    /** Check 21 P5: a newer email from the same address elsewhere would answer a quiet quote. */
+    from?: string;
   }) {
     const id = `g${++g}`;
     const inAt = o.inAt ?? ago(2 * HOUR);
@@ -248,7 +250,7 @@ describe("first week, with the database", () => {
       mailboxId,
       gmailMessageId: `${id}-in`,
       direction: "in",
-      fromAddress: "dana@customer.com",
+      fromAddress: o.from ?? "dana@customer.com",
       bodyText: "Can you quote a water heater swap?",
       sentAt: inAt,
     });
@@ -290,7 +292,11 @@ describe("first week, with the database", () => {
     const drafted = await thread({});
     const draft = await pendingDraft(drafted);
     const needs = await thread({ needsOwner: true });
-    const quiet = await thread({ inAt: ago(6 * DAY), outAt: ago(5 * DAY) });
+    const quiet = await thread({
+      inAt: ago(6 * DAY),
+      outAt: ago(5 * DAY),
+      from: "lee@customer.com",
+    });
 
     // Before: a nudge is due, the needs-you card shows.
     expect(await threadsToFollowUp(mailboxId, NOW)).toEqual([quiet]);

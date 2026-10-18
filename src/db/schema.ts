@@ -358,6 +358,19 @@ export const threads = pgTable(
      */
     quoteDismissedAt: timestamp("quote_dismissed_at", { withTimezone: true }),
     /**
+     * Check 21 P2: the customer asked us to wait ("after the holidays"): no nudge before this
+     * instant (the start of that day in the owner's zone). Set from the classifier's
+     * `wait_until` and replaced at every new customer email (cleared when it has none).
+     */
+    nudgeAfter: timestamp("nudge_after", { withTimezone: true }),
+    /**
+     * Check 21 P4: the newest email the owner sent that reads as an invoice (owner-invoice-rules,
+     * found in code at sync). With `extracted.invoice_thread`, it makes the thread chased like an
+     * invoice even when the customer's last email was sorted as scheduling, and lets a fresh
+     * invoice email with no customer reply on it be chased.
+     */
+    ownerInvoiceAt: timestamp("owner_invoice_at", { withTimezone: true }),
+    /**
      * Leads package (B2 / B3): where the lead came from, decided in code from the sender
      * (`channelOf`, src/server/channel-rules.ts): a phone service key ("google_voice"),
      * "phone_text" (an email-to-text gateway) or a lead-site key ("thumbtack"). Null = a direct
@@ -656,6 +669,11 @@ export const businessProfiles = pgTable("business_profile", {
   /** Nudge quiet quotes and invoices after this many days without a reply. */
   followupsEnabled: boolean("followups_enabled").notNull().default(true),
   followupDays: integer("followup_days").notNull().default(3),
+  /**
+   * Check 38 P4: for quotes over the money limit, wait this many days instead (7, 10, 14 or 21).
+   * Null = the same as `followup_days`.
+   */
+  bigQuoteDays: integer("big_quote_days"),
   /** Morning digest: on/off, the owner's local hour, their time zone, last local date sent. */
   digestEnabled: boolean("digest_enabled").notNull().default(true),
   digestHour: integer("digest_hour").notNull().default(7),

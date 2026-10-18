@@ -2,10 +2,19 @@ import "server-only";
 import { and, desc, eq, inArray, isNotNull, isNull, or, sql, type SQL } from "drizzle-orm";
 import { prepareBody } from "@/ai/classify";
 import { db } from "@/db";
-import { activityLog, mailboxes, messages, priceHistory, threads, workspaces } from "@/db/schema";
+import {
+  activityLog,
+  businessProfiles,
+  mailboxes,
+  messages,
+  priceHistory,
+  threads,
+  workspaces,
+} from "@/db/schema";
+import { isBigQuote, waitingLine } from "./followup-rules";
+import { usableTimeZone } from "./snooze-rules";
 import { expirePendingNudge, flagPendingNudge, followupSettings, type DraftDeps } from "./drafts";
 import { markAnsweredByPhone } from "./first-week";
-import { workspaceTimeZone } from "./snooze";
 import { effectiveStatus, JOBS_ALLOWED, jobsAllowed, ReadOnlyError } from "./lifecycle";
 import {
   asDate,
@@ -16,15 +25,18 @@ import {
   lastOutSql,
   notDraftMessage,
   notDraftSql,
+  ownerNewestBodySql,
   quietSinceSql,
   quoteNotDismissedSql,
   quoteThreadSql,
   requestAtSql,
+  serviceCallSql,
 } from "./thread-sql";
 import {
   canAutoSet,
   closeRate,
   guessNoAnswer,
+  isServiceCall,
   NO_ANSWER_AFTER_NUDGES_DAYS,
   NO_ANSWER_WITHOUT_NUDGES_DAYS,
   noAnswerAfterDays,
@@ -59,6 +71,10 @@ export type QuoteRow = {
   outcomeAt: Date | null;
   lastMessageAt: Date | null;
   startedAt: Date;
+  /** Check 21 P2: "Waiting until Jan 4, as they asked." while an open quote's wait is ahead. */
+  waitingLine: string | null;
+  /** Check 36 P3: an emergency answered with no price — shown as "Service call", not chased. */
+  serviceCall: boolean;
 };
 
 const DAY_MS = 86_400_000;
@@ -153,8 +169,16 @@ export async function listQuotes(workspaceId: string, now: Date = new Date()) {
   await captureQuoteAmounts(workspaceId);
   await guessNoAnswers(now, workspaceId);
   const { days } = await followupSettings(workspaceId);
+  const [profile] = await db()
+    .select({ timeZone: businessProfiles.timeZone })
+    .from(businessProfiles)
+    .where(eq(businessProfiles.workspaceId, workspaceId));
+  const timeZone = usableTimeZone(profile?.timeZone);
   const rows = await db()
     .select({
+      nudgeAfter: threads.nudgeAfter,
+      extracted: threads.extracted,
+      ownerNewestBody: ownerNewestBodySql(),
       threadId: threads.id,
       gmailThreadId: threads.gmailThreadId,
       mailboxEmail: mailboxes.email,
@@ -233,12 +257,12 @@ export async function listQuotes(workspaceId: string, now: Date = new Date()) {
     outcomeAt: r.outcome ? asDate(r.outcomeAt) : null,
     lastMessageAt: asDate(r.lastMessageAt),
     startedAt: asDate(r.firstAt) ?? r.startedAt,
+    waitingLine: r.outcome == null ? waitingLine(asDate(r.nudgeAfter), now, timeZone) : null,
+    serviceCall:
+      r.outcome == null && isServiceCall(r.extracted, prepareBody(r.ownerNewestBody ?? "")),
   }));
 
-  const [totals, timeZone] = await Promise.all([
-    quoteTotals(workspaceId, now),
-    workspaceTimeZone(workspaceId),
-  ]);
+  const totals = await quoteTotals(workspaceId, now);
   return { quotes, totals, quietDays: days, timeZone };
 }
 
@@ -315,6 +339,7 @@ async function ownedThread(workspaceId: string, threadId: string) {
       outcome: threads.quoteOutcome,
       category: threads.category,
       amountCents: threads.quoteAmountCents,
+      extracted: threads.extracted,
       workspace: workspaces,
     })
     .from(threads)
@@ -382,7 +407,10 @@ export async function setQuoteOutcome(
   // A decided quote is never chased, so a nudge still waiting in the queue goes too
   // (here and in Gmail). The mark stands even if Gmail can't be reached right now.
   // A won job's invoice is still chased (quoteStopsNudges), so its nudge stays.
-  if (outcome && quoteStopsNudges({ quoteOutcome: outcome, category: t.category })) {
+  if (
+    outcome &&
+    quoteStopsNudges({ quoteOutcome: outcome, category: t.category, extracted: t.extracted })
+  ) {
     try {
       await expirePendingNudge(threadId, quoteDecidedNote(outcome), { ...opts, now: () => now });
     } catch (err) {
@@ -448,7 +476,7 @@ export async function autoSetQuoteOutcome(
   threadId: string,
   outcome: QuoteOutcome,
   now: Date,
-  opts: { extra?: SQL; why?: string } = {},
+  opts: { extra?: SQL; why?: string; flag?: string } = {},
 ): Promise<boolean> {
   const [row] = await db()
     .update(threads)
@@ -461,7 +489,11 @@ export async function autoSetQuoteOutcome(
         opts.extra,
       ),
     )
-    .returning({ mailboxId: threads.mailboxId, category: threads.category });
+    .returning({
+      mailboxId: threads.mailboxId,
+      category: threads.category,
+      extracted: threads.extracted,
+    });
   if (!row) return false;
   const [box] = await db()
     .select({ workspaceId: mailboxes.workspaceId })
@@ -480,8 +512,10 @@ export async function autoSetQuoteOutcome(
   }
   // A guess never deletes a waiting nudge; it asks the owner to check it (unless the
   // nudge is for a won job's invoice, which is still chased).
-  if (quoteStopsNudges({ quoteOutcome: outcome, category: row.category })) {
-    await flagPendingNudge(threadId, QUOTE_GUESS_FLAG);
+  if (
+    quoteStopsNudges({ quoteOutcome: outcome, category: row.category, extracted: row.extracted })
+  ) {
+    await flagPendingNudge(threadId, opts.flag ?? QUOTE_GUESS_FLAG);
   }
   return true;
 }
@@ -529,8 +563,14 @@ export async function guessNoAnswers(
   // Check 21 P1: a "thanks, we'll look it over" leaves the ball in their court, and the quiet
   // counts from it; an automatic reply never counts at all.
   const ballInTheirCourt = ballInTheirCourtSql();
-  const quietFrom = quietSinceSql();
-  const sentNudges = sql<number>`(select count(*) from drafts d where d.thread_id = ${threads.id} and d.kind = 'followup' and d.status in ('sent', 'edited_and_sent'))`;
+  const quietStart = quietSinceSql();
+  // Check 21 P2: quiet days count from the date they asked us to wait for, when later.
+  const quietFrom = sql`greatest(${quietStart}, ${threads.nudgeAfter})`;
+  // Check 21 P6: only nudges sent after the customer's newest email count toward "two nudges,
+  // then a quiet week" — on a conversation holding two jobs, the kitchen's nudges say nothing
+  // about the deck priced after the customer wrote again. The two-per-conversation cap
+  // (MAX_FOLLOWUPS) is unchanged; whether to reset it per job is Davi's call.
+  const sentNudges = sql<number>`(select count(*) from drafts d where d.thread_id = ${threads.id} and d.kind = 'followup' and d.status in ('sent', 'edited_and_sent') and coalesce(d.decided_at, d.created_at) > coalesce(${lastIn}, '-infinity'::timestamptz))`;
   const ago = (days: number) => new Date(now.getTime() - days * DAY_MS).toISOString();
   const inScope = and(
     workspaceId ? eq(mailboxes.workspaceId, workspaceId) : undefined,
@@ -565,12 +605,22 @@ export async function guessNoAnswers(
         source: threads.quoteOutcomeSource,
         amountCents: threads.quoteAmountCents,
         lastIn,
-        quietFrom,
+        quietStart,
         sentNudges,
+        nudgeAfter: threads.nudgeAfter,
+        extracted: threads.extracted,
+        ownerNewestBody: ownerNewestBodySql(),
+        // Check 38 P4: the big-quote clock.
+        category: threads.category,
+        quoteAmountCents: threads.quoteAmountCents,
+        quoteRequestedAt: threads.quoteRequestedAt,
+        bigQuoteDays: businessProfiles.bigQuoteDays,
+        thresholdDollars: businessProfiles.amountThresholdDollars,
       })
       .from(threads)
       .innerJoin(mailboxes, eq(mailboxes.id, threads.mailboxId))
       .innerJoin(workspaces, eq(workspaces.id, mailboxes.workspaceId))
+      .leftJoin(businessProfiles, eq(businessProfiles.workspaceId, workspaces.id))
       .where(
         and(
           inScope,
@@ -585,7 +635,10 @@ export async function guessNoAnswers(
           // Check 11 P6: only a priced quote — an amount, or an owner email with a "$" figure
           // in it (`ownerQuotedCents` decides below).
           sql`(${threads.quoteAmountCents} is not null or exists (select 1 from messages pm where pm.thread_id = ${threads.id} and pm.direction = 'out' and ${notDraftSql("pm")} and pm.body_text like '%$%'))`,
+          // Check 36 P3: a service call (emergency, no price) is never guessed "no answer".
+          sql`not ${serviceCallSql()}`,
           // Pre-filter on the two bars of `guessNoAnswer` (which still decides below).
+          // Check 21 P2: quiet days count from the date they asked us to wait for, when later.
           sql`(${quietFrom} <= ${ago(NO_ANSWER_WITHOUT_NUDGES_DAYS)}::timestamptz or (${quietFrom} <= ${ago(NO_ANSWER_AFTER_NUDGES_DAYS)}::timestamptz and ${sentNudges} >= 2))`,
         ),
       )
@@ -598,11 +651,26 @@ export async function guessNoAnswers(
     );
     for (const r of rows) {
       if (!jobsAllowed(r.workspace, now) || !canAutoSet(null, r.source)) continue;
+      if (isServiceCall(r.extracted, prepareBody(r.ownerNewestBody ?? ""))) continue;
       // The quiet's start stands in for the owner's last email; the SQL already checked the
       // customer's newest email needing an answer came before it.
-      const lastOutboundAt = asDate(r.quietFrom);
+      const lastOutboundAt = asDate(r.quietStart);
       const nudges = Number(r.sentNudges);
       const lastIn = asDate(r.lastIn);
+      const waitedFor = asDate(r.nudgeAfter);
+      const bigQuoteDays =
+        r.bigQuoteDays &&
+        isBigQuote(
+          {
+            category: r.category,
+            extracted: r.extracted,
+            quoteAmountCents: r.quoteAmountCents,
+            quoteRequestedAt: asDate(r.quoteRequestedAt),
+          },
+          r.thresholdDollars ?? 2_500,
+        )
+          ? r.bigQuoteDays
+          : null;
       const why = guessNoAnswer(
         {
           lastInboundAt:
@@ -610,6 +678,9 @@ export async function guessNoAnswers(
           lastOutboundAt,
           sentNudges: nudges,
           priced: r.amountCents != null || pricedByText.has(r.threadId),
+          quietFrom:
+            waitedFor && lastOutboundAt && waitedFor > lastOutboundAt ? waitedFor : undefined,
+          bigQuoteDays,
         },
         now,
       );
@@ -621,7 +692,7 @@ export async function guessNoAnswers(
         extra: and(
           isNull(threads.quoteOutcome),
           sql`${ballInTheirCourt}`,
-          sql`${quietFrom} <= ${ago(noAnswerAfterDays(nudges))}::timestamptz`,
+          sql`${quietFrom} <= ${ago(noAnswerAfterDays(nudges, bigQuoteDays))}::timestamptz`,
         ),
       });
       if (ok) set++;
