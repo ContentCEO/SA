@@ -362,6 +362,44 @@ describe("the verification answer is true of the code", () => {
     }
   });
 
+  it("Check 28 P4: one paste-ready justification per scope, naming the narrower scopes and every endpoint", () => {
+    expect(text).toContain(
+      '"Two separate consent steps", "Scopes", "Scope justifications", "Google API Services: Limited Use" and "Data handling"',
+    );
+    const just = section("Scope justifications (one per scope, pasted into Google's form)");
+    const paragraph = (scope: string) => {
+      const marker = `**${scope}**\n\n`;
+      const at = just.indexOf(marker);
+      expect(at, scope).toBeGreaterThan(0);
+      const rest = just.slice(at + marker.length);
+      const end = rest.indexOf("\n\n");
+      return flat(end === -1 ? rest : rest.slice(0, end)).trim();
+    };
+    const readonly = paragraph("gmail.readonly");
+    const compose = paragraph("gmail.compose");
+    for (const p of [readonly, compose]) {
+      expect(p.length).toBeGreaterThan(300);
+      expect(p.length).toBeLessThan(1000);
+    }
+    expect(readonly).toContain("gmail.metadata");
+    expect(readonly).toContain("gmail.addons.current.message.readonly");
+    expect(readonly).toContain("never modify, label, archive or delete");
+    expect(compose).toContain("gmail.send");
+    expect(compose).toContain("gmail.addons.current.action.compose");
+    expect(compose).toContain("drafts.send does not accept it");
+    // Every Gmail endpoint the client calls is named in one of the two paragraphs.
+    const api = readFileSync("src/mailbox/gmail/api.ts", "utf8");
+    const methods = [
+      ...new Set([...api.matchAll(/\bcall(?:<[\s\S]*?>)?\(\s*"([a-zA-Z.]+)"/g)].map((m) => m[1]!)),
+    ];
+    expect(methods.length).toBeGreaterThanOrEqual(12);
+    const named = `${readonly} ${compose}`;
+    for (const m of methods) expect(named, m).toContain(`users.${m}`);
+    // The old claim is gone: gmail.readonly is the narrowest scope *with message text*.
+    expect(text).not.toContain("`gmail.readonly` is the narrowest scope (no change rights at all)");
+    expect(text).toContain("the narrowest scope that includes message text");
+  });
+
   it("names the scopes we don't ask for, and the test that keeps them out exists", () => {
     expect(text).toContain("do **not** request `gmail.modify` or full `https://mail.google.com/`");
     expect(text).toContain("We don't request `gmail.send`");
