@@ -170,6 +170,11 @@ const et = new Intl.DateTimeFormat("en-US", {
   minute: "2-digit",
   timeZoneName: "short",
 });
+const inviteDay = new Intl.DateTimeFormat("en-US", {
+  timeZone: "America/New_York",
+  month: "short",
+  day: "numeric",
+});
 const dollars = (cents: number) => `$${(cents / 100).toFixed(2)}`;
 
 const ga = growthCopy.admin;
@@ -970,7 +975,8 @@ export default async function AdminPage(props: PageProps<"/admin">) {
                 <span className="flex items-baseline justify-between gap-3">
                   <span className="truncate">{i.email}</span>
                   <span className="shrink-0 text-sm text-muted-foreground">
-                    {i.acceptedAt ? "Signed in" : "Not yet"}
+                    {i.acceptedAt ? "Signed in" : "Not yet"} · Invited{" "}
+                    {inviteDay.format(i.invitedAt)}
                   </span>
                 </span>
                 {!i.acceptedAt ? (
@@ -991,7 +997,12 @@ export default async function AdminPage(props: PageProps<"/admin">) {
                   </details>
                 ) : null}
                 {/* Round 2 (FW A4): until Google approves the app, only test users get in. */}
-                {i.testUserAddedAt ? (
+                {i.gmailConnected ? (
+                  // Check 16 P9: connecting Gmail proves Google let them in as a test user.
+                  <span className="text-sm text-muted-foreground">
+                    Google test user: confirmed (Gmail connected)
+                  </span>
+                ) : isAdminEmail(i.email) ? null : i.testUserAddedAt ? (
                   <span className="text-sm text-muted-foreground">Google test user: added</span>
                 ) : (
                   <form action={testUserAddedAction} className="flex flex-col gap-1">
@@ -1002,7 +1013,7 @@ export default async function AdminPage(props: PageProps<"/admin">) {
                         href={GOOGLE_AUDIENCE_URL}
                         target="_blank"
                         rel="noreferrer"
-                        className="font-semibold underline underline-offset-4"
+                        className="inline-flex min-h-tap items-center font-semibold underline underline-offset-4"
                       >
                         Google Cloud → Audience
                       </a>

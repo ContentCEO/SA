@@ -435,3 +435,22 @@ test("admin: the support page shows what the owner sees and what happened, admin
     await expect(page.locator("main")).not.toContainText(secret);
   }
 });
+
+test("admin: the Google test-user reminder only for invites that may still be blocked (Check 16 P9)", async ({
+  page,
+  context,
+}) => {
+  const connected = await seedOwner({ mailbox: true, backfilled: true });
+  const waiting = await seedOwner();
+  const admin = await seedAdmin();
+  await signInAs(context, admin);
+  await page.goto("/admin");
+  const connectedRow = page.getByRole("listitem").filter({ hasText: connected.email });
+  const waitingRow = page.getByRole("listitem").filter({ hasText: waiting.email });
+  await expect(connectedRow.getByRole("button", { name: "I added them" })).toHaveCount(0);
+  await expect(connectedRow).toContainText("Google test user: confirmed (Gmail connected)");
+  await expect(waitingRow.getByRole("button", { name: "I added them" })).toBeVisible();
+  await expect(waitingRow).toContainText(/Invited [A-Z][a-z]{2} \d{1,2}/);
+  const link = waitingRow.getByRole("link", { name: "Google Cloud → Audience" });
+  expect((await link.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+});

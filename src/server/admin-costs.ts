@@ -4,7 +4,8 @@ import { utcDay } from "@/ai/usage";
 import { dailyAiCallCap } from "@/config/models";
 import { formatDollars, type PlanId } from "@/config/pricing";
 import { db } from "@/db";
-import { appSettings, usage, users, workspaces } from "@/db/schema";
+import { appSettings, usage, users, workspaces, type Workspace } from "@/db/schema";
+import { effectiveStatus } from "./lifecycle";
 import { sendEmail, type EmailSender } from "@/lib/email";
 import { appUrl } from "@/lib/app-url";
 import { COST_ALERT_SHARE, costAlertDue, costLine } from "./admin-cost-rules";
@@ -13,11 +14,15 @@ export type CostRow = {
   workspaceId: string;
   /** The owner's own business name / sign-in email — never anything from their customers. */
   label: string;
-  status: string;
+  status: Workspace["status"];
+  /** Davi's own house account (pays nothing). */
+  house: boolean;
   plan: PlanId | null;
   costCents: number;
   revenueCents: number;
   marginCents: number;
+  feesCents: number;
+  marginAfterFeesCents: number;
   costShare: number | null;
   calls: number;
   busiestDayCalls: number;
@@ -45,6 +50,8 @@ export async function costRows(now: Date = new Date()): Promise<CostRow[]> {
       businessName: workspaces.businessName,
       email: users.email,
       status: workspaces.status,
+      evaluationEndsAt: workspaces.evaluationEndsAt,
+      setupPaidVia: workspaces.setupPaidVia,
       plan: workspaces.plan,
       calls: per.calls,
       cost: per.cost,
@@ -56,11 +63,19 @@ export async function costRows(now: Date = new Date()): Promise<CostRow[]> {
   const cap = dailyAiCallCap();
   return rows
     .map((r) => {
-      const input = { status: r.status, plan: r.plan, costCentiCents: r.cost ?? 0 };
+      // Check 16 P10: the same status /admin shows (an expired trial isn't "evaluating").
+      const status = effectiveStatus(r, now);
+      const input = {
+        status,
+        plan: r.plan,
+        costCentiCents: r.cost ?? 0,
+        setupPaidVia: r.setupPaidVia,
+      };
       return {
         workspaceId: r.workspaceId,
         label: r.businessName || r.email,
-        status: r.status,
+        status,
+        house: r.setupPaidVia === "house",
         plan: r.plan,
         ...costLine(input),
         calls: r.calls ?? 0,

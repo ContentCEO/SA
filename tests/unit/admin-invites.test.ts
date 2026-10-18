@@ -5,7 +5,8 @@ import { pricing } from "@/config/pricing";
 import type { Database } from "@/db";
 import { invites, waitlist } from "@/db/schema";
 import { ensureUserAndWorkspace, isAllowedToSignIn } from "@/server/accounts";
-import { inviteOwner, removeInvite } from "@/server/admin";
+import { inviteOwner, listInvites, removeInvite } from "@/server/admin";
+import { saveConnectedMailbox } from "@/server/mailboxes";
 import { cardNotice, type CardNoticeRow } from "@/server/admin-rules";
 import { listWaitlist } from "@/server/waitlist";
 import { createTestDb } from "../support/db";
@@ -83,5 +84,24 @@ describe("the notice lands on the card that changed (Check 16 P6)", () => {
       expect(cardNotice({ done: "pause", w }, rows, pricing.plans)).toBeNull();
     }
     expect(cardNotice({ done: "launch_ticked", w: ID }, rows, pricing.plans)).toBeNull();
+  });
+});
+
+describe("the Google test-user reminder (Check 16 P9)", () => {
+  it("listInvites marks gmailConnected for an owner with a mailbox, not one without", async () => {
+    await inviteOwner({ email: "connected@shop.com" });
+    await inviteOwner({ email: "waiting@shop.com" });
+    const { workspace } = await ensureUserAndWorkspace({ email: "Connected@Shop.com" });
+    await ensureUserAndWorkspace({ email: "waiting@shop.com" });
+    await saveConnectedMailbox(workspace, {
+      email: "connected@shop.com",
+      refreshToken: "rt",
+      grantedScopes: [],
+    });
+    const list = await listInvites();
+    expect(Object.fromEntries(list.map((i) => [i.email, i.gmailConnected]))).toEqual({
+      "connected@shop.com": true,
+      "waiting@shop.com": false,
+    });
   });
 });

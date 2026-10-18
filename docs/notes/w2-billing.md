@@ -119,3 +119,14 @@ For the integrator to fold into CLAUDE.md / docs/LAUNCH.md / docs/privacy-policy
   kind/autopilot/stripeStatus/code/by (picked in SQL with `jsonb_build_object`). Sentences come
   from `supportSentence` (no first-name lookup). The card's name links there. `statusLabel` moved
   to admin-rules.ts.
+- **Invite list (Check 16 P9):** `listInvites` returns `gmailConnected` (a workspace owned by that
+  email has any mailbox row). The test-user reminder and "I added them" hide for connected owners
+  ("Google test user: confirmed (Gmail connected)") and for Davi's own address; the Audience link
+  is a 44px target; each row says "Invited Oct 12".
+- **AI costs (Check 16 P10 + Check 29 P8):** `planRevenueCents` is 0 for the house account (so no
+  cost alert for it); `costRows` uses `effectiveStatus` and the page shows /admin's status labels
+  and "Your test account". New `src/config/fees.ts` (`STRIPE_FEES`: 2.9% + 30¢ card, 0.7% Billing,
+  `taxPercent: null` until Davi confirms Stripe Tax's rate; checked 2026-10-18 against
+  stripe.com/pricing; not pricing). `costLine` adds `feesCents` and `marginAfterFeesCents`
+  ($99 → 386¢, $199 → 746¢, $299 → 1106¢); `marginCents` and the alert rule are unchanged. Rows
+  read "plan $199 · after Stripe $191.54 · AI $8.40 · keeps $183.14".

@@ -586,6 +586,13 @@ export async function listInvites(opts: { page?: number } = {}) {
       invitedAt: invites.invitedAt,
       acceptedAt: invites.acceptedAt,
       testUserAddedAt: invites.testUserAddedAt,
+      // Check 16 P9: Gmail connected proves Google let them in as a test user.
+      gmailConnected: sql<boolean>`exists (
+        select 1 from mailboxes m
+        join workspaces w on w.id = m.workspace_id
+        join users u on u.id = w.owner_user_id
+        where lower(u.email) = lower("invites"."email")
+      )`,
     })
     .from(invites)
     .orderBy(desc(invites.invitedAt), invites.email)
