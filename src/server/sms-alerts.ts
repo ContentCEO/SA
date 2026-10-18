@@ -4,7 +4,7 @@ import { and, count, desc, eq, gt, gte, isNull, lt, or, sql } from "drizzle-orm"
 import { db } from "@/db";
 import { activityLog, businessProfiles, mailboxes, threads, workspaces } from "@/db/schema";
 import { appUrl } from "@/lib/app-url";
-import { sendSms, type SmsSender } from "@/lib/sms";
+import { sendSms, TwilioError, type SmsSender } from "@/lib/sms";
 import { queueCardIds, queueMembership } from "./drafts";
 import { localParts } from "./snooze-rules";
 import { jobsAllowed } from "./lifecycle";
@@ -32,7 +32,31 @@ export function normalizeUsPhone(input: string | null | undefined): string | nul
   const digits = (input ?? "").replace(/\D/g, "");
   const ten = digits.length === 11 && digits.startsWith("1") ? digits.slice(1) : digits;
   if (!/^[2-9]\d{2}[2-9]\d{6}$/.test(ten)) return null;
+  // Check 19 P4: toll-free and N11 codes (211, 311 … 911) never take texts.
+  const area = ten.slice(0, 3);
+  if (TOLL_FREE_AREA_CODES.has(area) || /^[2-9]11$/.test(area)) return null;
   return `+1${ten}`;
+}
+
+const TOLL_FREE_AREA_CODES = new Set(["800", "833", "844", "855", "866", "877", "888"]);
+
+/**
+ * Which part of the Text alerts screen shows (Check 19 P4): a confirmed number, the code box
+ * (only while a code that really went out is still good), or the phone-number form.
+ */
+export function textsStep(
+  p: {
+    alertPhone: string | null;
+    alertPhoneVerifiedAt: Date | null;
+    smsCodeHash: string | null;
+    smsCodeExpiresAt: Date | null;
+  } | null,
+  now: Date,
+): "confirmed" | "code" | "phone" {
+  if (p?.alertPhoneVerifiedAt && p.alertPhone) return "confirmed";
+  if (p?.alertPhone && p.smsCodeHash && p.smsCodeExpiresAt && p.smsCodeExpiresAt > now)
+    return "code";
+  return "phone";
 }
 
 /** "(508) 555-1234" for display. */
@@ -61,7 +85,7 @@ export function leadAlertBody(c: { quotes: number; needsYou: number }, url: stri
 
 export class SmsError extends Error {
   constructor(
-    readonly code: "phone" | "busy" | "not_configured" | "code" | "not_verified",
+    readonly code: "phone" | "busy" | "not_configured" | "code" | "not_verified" | "send_failed",
     message: string,
   ) {
     super(message);
@@ -99,11 +123,31 @@ export async function startPhoneVerification(
     smsCodeHash: hash(code),
     smsCodeExpiresAt: new Date(now.getTime() + SMS.codeTtlMs),
   });
-  const r = await (deps.send ?? sendSms)({
-    to: phone,
-    body: `Your Squared Away code is ${code}. It expires in 10 minutes. Reply STOP to opt out.`,
-  });
-  if (r === "not_configured") throw new SmsError("not_configured", "Texting isn't set up yet.");
+  // Check 19 P4: no code went out → nothing that says one did (no hash, no expiry, no number).
+  const forget = () =>
+    upsertProfile(workspaceId, { alertPhone: null, smsCodeHash: null, smsCodeExpiresAt: null });
+  let r: Awaited<ReturnType<SmsSender>>;
+  try {
+    r = await (deps.send ?? sendSms)({
+      to: phone,
+      body: `Your Squared Away code is ${code}. It expires in 10 minutes. Reply STOP to opt out.`,
+    });
+  } catch (err) {
+    await forget();
+    // Twilio's numeric status only — never the number.
+    console.error("sms_code_failed", {
+      workspaceId,
+      status: err instanceof TwilioError ? err.status : null,
+    });
+    throw new SmsError(
+      "send_failed",
+      "We couldn't text that number. Check it's a mobile number and try again.",
+    );
+  }
+  if (r === "not_configured") {
+    await forget();
+    throw new SmsError("not_configured", "Texting isn't set up yet.");
+  }
   return phone;
 }
 

@@ -1,5 +1,13 @@
 import "server-only";
 
+/** Twilio refused the text. Carries Twilio's HTTP status only — never the number or the words. */
+export class TwilioError extends Error {
+  constructor(readonly status: number) {
+    super(`Twilio ${status}.`);
+    this.name = "TwilioError";
+  }
+}
+
 export type OutgoingSms = { to: string; body: string };
 export type SmsSender = (sms: OutgoingSms) => Promise<"sent" | "not_configured">;
 
@@ -26,7 +34,7 @@ export const sendSms: SmsSender = async ({ to, body }) => {
     },
     body: form,
   });
-  if (!res.ok) throw new Error(`Twilio ${res.status}.`);
+  if (!res.ok) throw new TwilioError(res.status);
   return "sent";
 };
 

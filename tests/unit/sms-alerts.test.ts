@@ -1,9 +1,10 @@
 import { randomBytes } from "node:crypto";
 import { eq } from "drizzle-orm";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Database } from "@/db";
 import { businessProfiles, drafts, messages, threads, workspaces } from "@/db/schema";
-import type { OutgoingSms } from "@/lib/sms";
+import { TwilioError, type OutgoingSms } from "@/lib/sms";
+import { SCREEN_MESSAGES } from "@/app/(app)/settings/messages";
 import { ensureUserAndWorkspace } from "@/server/accounts";
 import { saveConnectedMailbox } from "@/server/mailboxes";
 import {
@@ -16,6 +17,7 @@ import {
   SMS,
   SmsError,
   startPhoneVerification,
+  textsStep,
 } from "@/server/sms-alerts";
 import { createTestDb } from "../support/db";
 
@@ -95,6 +97,16 @@ describe("phone numbers and wording", () => {
     expect(normalizeUsPhone("+1 508.555.1234")).toBe("+15085551234");
     expect(normalizeUsPhone("555-1234")).toBeNull();
     expect(normalizeUsPhone("+44 20 7946 0958")).toBeNull();
+    // Check 19 P4: toll-free and N11 codes never take texts.
+    for (const n of [
+      "800-555-1234",
+      "888 555 1234",
+      "1-833-555-1234",
+      "211-555-1234",
+      "911-555-1234",
+    ])
+      expect(normalizeUsPhone(n), n).toBeNull();
+    expect(normalizeUsPhone("(508) 555-1234")).toBe("+15085551234");
   });
   it("texts carry counts and a link, nothing else", () => {
     expect(leadAlertBody({ quotes: 1, needsYou: 0 }, "https://x/queue")).toBe(
@@ -125,6 +137,38 @@ describe("confirming the number", () => {
     expect(p!.smsAlertsEnabled).toBe(true);
     expect(p!.smsCodeHash).toBeNull();
   });
+  it("Check 19 P4: a refused text → a plain error, no code stored, the phone form again", async () => {
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    const refuse = async () => {
+      throw new TwilioError(400);
+    };
+    const err = await startPhoneVerification(workspaceId, "(508) 555-1234", {
+      send: refuse,
+      now: NOW,
+    }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(SmsError);
+    expect((err as SmsError).code).toBe("send_failed");
+    expect((err as SmsError).message).toBe(
+      "We couldn't text that number. Check it's a mobile number and try again.",
+    );
+    const [p] = await database.select().from(businessProfiles);
+    expect(p!.smsCodeHash).toBeNull();
+    expect(p!.smsCodeExpiresAt).toBeNull();
+    expect(p!.alertPhone).toBeNull();
+    expect(textsStep(p!, NOW)).toBe("phone");
+    // The log carries Twilio's status, never the number.
+    expect(errors).toHaveBeenCalledWith("sms_code_failed", { workspaceId, status: 400 });
+    expect(JSON.stringify(errors.mock.calls)).not.toMatch(/508|555/);
+    errors.mockRestore();
+    // A code that really went shows the code box.
+    await startPhoneVerification(workspaceId, "(508) 555-1234", { send, now: NOW });
+    const [q] = await database.select().from(businessProfiles);
+    expect(textsStep(q!, NOW)).toBe("code");
+    expect(SCREEN_MESSAGES["/settings/texts"]!.error!.sms_send_failed).toBe(
+      "We couldn't text that number. Check it's a mobile number and try again.",
+    );
+  });
+
   it("can't be switched on without a confirmed number", async () => {
     await expect(setSmsAlerts(workspaceId, true)).rejects.toBeInstanceOf(SmsError);
   });
