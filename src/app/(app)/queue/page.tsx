@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { noticeText } from "@/lib/notice-text";
+import { DRAFT_LIMIT_ERROR, draftLimitText } from "@/server/draft-limit-rules";
 import Link from "next/link";
 import { Notice } from "@/components/app/notice";
 import { Headline } from "@/components/brand/headline";
@@ -129,12 +130,15 @@ export default async function QueuePage(props: PageProps<"/queue">) {
     .sort((a, b) => b.getTime() - a.getTime())[0];
   const refused = Number(params.refused) || 0;
   const doneMsg = noticeText(done, params.done);
-  const errorMsg = noticeText(errors, params.error);
   const sending = canSend(workspace);
   const timeZone = usableTimeZone(
     (await getBusinessProfile(workspace.id))?.timeZone ?? "America/New_York",
   );
   const clock = new Intl.DateTimeFormat("en-US", { hour: "numeric", minute: "2-digit", timeZone });
+  // Check 40 P3: the hourly Draft a reply limit, with the time they can ask again.
+  const draftLimitMsg =
+    params.error === DRAFT_LIMIT_ERROR ? draftLimitText(params.until, timeZone) : undefined;
+  const errorMsg = noticeText(errors, params.error) ?? draftLimitMsg;
   const readOnly = isReadOnly(workspace);
   // Check 42 P1: "This was already answered from Gmail at 2:14pm. Nothing was sent."
   const answeredAt = params.error === "answered" ? Number(params.at) : NaN;

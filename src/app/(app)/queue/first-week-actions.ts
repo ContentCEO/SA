@@ -5,6 +5,7 @@ import { z } from "zod";
 import { enqueue, foundMoneyDraftsRequested } from "@/jobs/client";
 import { claimFoundMoneyDrafts, hideFirstLook, markAnsweredByPhone } from "@/server/first-week";
 import { ReadOnlyError } from "@/server/lifecycle";
+import { DRAFT_LIMIT_ERROR, draftLimitUntil } from "@/server/draft-limit-rules";
 import { hitLimit } from "@/server/rate-limit";
 import { requireOwner } from "@/server/session";
 
@@ -43,7 +44,10 @@ export async function hideFirstLookAction() {
 /** Round 2 (FW D2): draft replies and nudges for the quotes that slipped. Drafts only. */
 export async function foundMoneyDraftsAction() {
   const { workspace } = await requireOwner();
-  if (!(await hitLimit("draft", workspace.id)).allowed) redirect("/queue?error=busy");
+  // Check 40 P3: one tap starts a batch of drafts, so it counts here, before the job is queued.
+  const limit = await hitLimit("draft", workspace.id);
+  if (!limit.allowed)
+    redirect(`/queue?error=${DRAFT_LIMIT_ERROR}&until=${draftLimitUntil(limit.retryAfterSec)}`);
   let found;
   try {
     found = await claimFoundMoneyDrafts(workspace);

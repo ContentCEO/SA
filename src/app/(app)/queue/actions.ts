@@ -25,6 +25,7 @@ import { isSnoozeChoice } from "@/server/snooze-rules";
 import { practiceSend } from "@/server/practice";
 import { snoozeThread } from "@/server/snooze";
 import { ReadOnlyError, SendingBlockedError } from "@/server/lifecycle";
+import { DRAFT_LIMIT_ERROR, draftLimitUntil } from "@/server/draft-limit-rules";
 import { hitLimit } from "@/server/rate-limit";
 import { dismissChecklist } from "@/server/onboarding";
 import { requireOwner } from "@/server/session";
@@ -371,13 +372,19 @@ export async function draftReplyAction(formData: FormData) {
   const { workspace } = await requireOwner();
   const threadId = id.safeParse(formData.get("threadId"));
   if (!threadId.success) redirect("/queue?error=unknown");
-  if (!(await hitLimit("draft", workspace.id)).allowed) redirect("/queue?error=busy");
+  // Check 40 P3: the hourly limit counts only a tap that reaches the model.
+  const tap: { retryAfterSec?: number } = {};
   let r;
   try {
     r = await createDraftForThread(threadId.data, {
       trigger: "owner",
       workspaceId: workspace.id,
       aiMode: "interactive",
+      beforeModelCall: async () => {
+        const limit = await hitLimit("draft", workspace.id);
+        tap.retryAfterSec = limit.retryAfterSec;
+        return limit.allowed;
+      },
     });
   } catch (err) {
     // Check 48 P4: the model is slow, down or missing — a plain retry message, never a hang.
@@ -396,6 +403,8 @@ export async function draftReplyAction(formData: FormData) {
       redirect(`/queue?done=drafted${at(threadId.data)}`);
   }
   if (r.status === "reconnect_needed") redirect(`/queue?error=reconnect${at(threadId.data)}`);
+  if (r.reason === "rate_limited")
+    redirect(`/queue?error=${DRAFT_LIMIT_ERROR}&until=${draftLimitUntil(tap.retryAfterSec)}`);
   const reasons: Record<string, string> = {
     already_pending: "exists",
     owner_replied_last: "replied",

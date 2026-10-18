@@ -56,3 +56,13 @@ For the integrator: what `CLAUDE.md`, `docs/LAUNCH.md` and the legal drafts shou
   conditional update (safe to re-run), and prints counts only. Steps in `docs/SETUP.md` §5a.
   LAUNCH.md's secret-rotation step can point at §5a: rotating `TOKEN_ENCRYPTION_KEY` no longer
   means every owner reconnects.
+- **Draft a reply: 90 an hour, counted at the model (Check 40 P3):** `LIMITS.draft` = 90 per
+  hour. `createDraftForThread` takes `beforeModelCall` (runs once, right before the model is
+  asked; false → skipped `rate_limited`); Queue's Draft a reply and the Inbox/Money offers
+  (`askFor`) count the limit there, so taps that end in already-pending, no text or any other
+  skip use nothing (the check and the count are still hitLimit's one upsert). Found money's
+  "Draft them" counts before it queues the job (one tap, a batch). The refusal goes to
+  `/queue?error=draft_limit&until=<ms>` and reads "You've asked for a lot of drafts this hour.
+  You can ask again at 10:00am." in the owner's zone (`src/server/draft-limit-rules.ts`; a
+  missing or odd time says "Try again in a little while."). The daily AI cap is unchanged.
+  CLAUDE.md's rate-limit line should say "Draft a reply 90/h (counted at the model call)".

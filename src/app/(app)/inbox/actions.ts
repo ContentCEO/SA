@@ -6,6 +6,7 @@ import { z } from "zod";
 import { markNeedsOwner } from "@/server/classification";
 import { isTemporaryAiFailure } from "@/ai/client";
 import { createDraftForThread, type OwnerPurpose } from "@/server/drafts";
+import { DRAFT_LIMIT_ERROR, draftLimitUntil } from "@/server/draft-limit-rules";
 import { hitLimit } from "@/server/rate-limit";
 import { requireOwner } from "@/server/session";
 import { isCategory } from "@/config/categories";
@@ -78,7 +79,8 @@ async function askFor(purpose: OwnerPurpose, formData: FormData): Promise<never>
   const { workspace } = await requireOwner();
   const parsed = input.safeParse({ threadId: formData.get("threadId") });
   if (!parsed.success) redirect("/queue?error=unknown");
-  if (!(await hitLimit("draft", workspace.id)).allowed) redirect("/queue?error=busy");
+  // Check 40 P3: the hourly limit counts only a tap that reaches the model.
+  const tap: { retryAfterSec?: number } = {};
   let r;
   try {
     r = await createDraftForThread(parsed.data.threadId, {
@@ -86,6 +88,11 @@ async function askFor(purpose: OwnerPurpose, formData: FormData): Promise<never>
       workspaceId: workspace.id,
       purpose,
       aiMode: "interactive",
+      beforeModelCall: async () => {
+        const limit = await hitLimit("draft", workspace.id);
+        tap.retryAfterSec = limit.retryAfterSec;
+        return limit.allowed;
+      },
     });
   } catch (err) {
     // Check 48 P4: a plain retry message, never a hang.
@@ -95,6 +102,8 @@ async function askFor(purpose: OwnerPurpose, formData: FormData): Promise<never>
   if (r.status === "created") redirect("/queue?done=drafted");
   if (r.status === "reconnect_needed") redirect("/queue?error=reconnect");
   if (purpose === "thank_you" && r.reason === "already_asked") redirect("/queue?error=thanked");
+  if (r.reason === "rate_limited")
+    redirect(`/queue?error=${DRAFT_LIMIT_ERROR}&until=${draftLimitUntil(tap.retryAfterSec)}`);
   redirect(`/queue?error=${OFFER_ERRORS[r.reason] ?? "draftfailed"}`);
 }
 
