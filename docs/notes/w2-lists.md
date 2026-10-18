@@ -99,3 +99,16 @@
   are stored normalized; a test enforces it), "touch-up" is covered by "touch up".
 - Known overlap: carpentry also has "Fences and gates"; landscaping's new kind is "Fences" as
   the review asked. A shop with both trades files a fence under its main trade's label.
+
+## Questions for Davi
+
+1. A town-office name sent from a Gmail (or Yahoo, etc.) address is no longer treated as the town.
+   It gets the caution line instead, and it can be filed as junk or drafted by a job like any other
+   email (the AI's own "from the building department" judgement still counts). Should a job also
+   skip drafting a reply to these, to be safe? As built: no, because Check 22 only asked for the
+   caution.
+2. Every town email that isn't junk now goes under Needs you, passed inspections included, so the
+   phone texts and alerts for "needs you" will fire for these too. Is that okay, or should passed
+   inspections stay out of alerts?
+3. Can a pilot shop forward one real notice from PermitEyes, MGO Connect, Eversource, National Grid
+   and Unitil, so the sender addresses in the code can be confirmed?
