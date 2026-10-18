@@ -5,6 +5,8 @@
  * always undo. No accounting connection.
  */
 
+import { readExtracted } from "./extracted";
+
 /**
  * Payment processors whose receipts can tell us a customer's invoice was paid. A receipt
  * only ever marks ANOTHER thread (one whose invoice number it names, A12); its own thread
@@ -67,7 +69,7 @@ const MAX_EARLIER_OPEN = 5;
 
 /** `extracted.invoice`, read loosely (old rows and odd values never throw). */
 export function invoiceOf(extracted: unknown): InvoiceFacts | null {
-  const inv = (extracted as { invoice?: unknown } | null | undefined)?.invoice;
+  const inv = readExtracted(extracted)?.invoice;
   if (!inv || typeof inv !== "object") return null;
   const r = inv as Record<string, unknown>;
   const amount = positive(r.amount);
@@ -101,10 +103,7 @@ function positive(v: unknown): number | null {
  * before (`extracted.invoice_thread`, kept from one classification to the next).
  */
 export function isInvoiceThread(t: { category: string | null; extracted: unknown }): boolean {
-  return (
-    t.category === "invoice_payment" ||
-    (t.extracted as { invoice_thread?: unknown } | null | undefined)?.invoice_thread === true
-  );
+  return t.category === "invoice_payment" || readExtracted(t.extracted)?.invoice_thread === true;
 }
 
 /**
@@ -516,8 +515,7 @@ export function carryInvoiceFacts(
  * set at classification and never carried over). Null when it said nothing of the kind.
  */
 export function paymentSaid(extracted: unknown): "paid" | "partly_paid" | null {
-  const v = (extracted as { payment_said?: unknown } | null | undefined)?.payment_said;
-  return v === "paid" || v === "partly_paid" ? v : null;
+  return readExtracted(extracted)?.payment_said ?? null;
 }
 
 /** Added to a waiting nudge when we think the invoice was paid (a guess never deletes it, A8). */

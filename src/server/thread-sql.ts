@@ -2,7 +2,7 @@ import "server-only";
 import { MAIL_LABELS } from "@/mailbox/connector";
 import { sql, type SQL } from "drizzle-orm";
 import { EMAIL_TO_TEXT_DOMAINS, PHONE_SERVICES } from "@/config/phone-services";
-import { messages, threads } from "@/db/schema";
+import { messages, replyAddressExpr, threads } from "@/db/schema";
 import { LEAD_RELAY_LOCAL_PATTERN, LEAD_SOURCES } from "@/config/lead-sources";
 import { RECEIPT_SENDER_DOMAINS } from "./money-rules";
 import { FORM_SENDER_DOMAINS, FORM_SENDER_LOCAL_PATTERN } from "./reply-address-rules";
@@ -55,7 +55,7 @@ export const unsentDraftSql = (alias: string) =>
  * The choice was made at sync (`pickReplyTo`), so this is a plain coalesce.
  */
 export const replyAddressSql = (alias: string) =>
-  sql.raw(`lower(trim(coalesce(${alias}.reply_to_header->>'address', ${alias}.from_address)))`);
+  replyAddressExpr(sql.raw(`${alias}.reply_to_header`), sql.raw(`${alias}.from_address`));
 /** SQL twin of `customerReplyName`: the Reply-To's own name when it redirects, else From's. */
 export const replyNameSql = (alias: string) =>
   sql.raw(
@@ -63,9 +63,7 @@ export const replyNameSql = (alias: string) =>
   );
 /** The same two on the messages table, in a query-builder select / where. */
 export const messageReplyAddress = () =>
-  sql<
-    string | null
-  >`lower(trim(coalesce(${messages.replyToHeader}->>'address', ${messages.fromAddress})))`;
+  replyAddressExpr(messages.replyToHeader, messages.fromAddress);
 export const messageReplyName = () =>
   sql<
     string | null

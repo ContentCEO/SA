@@ -127,6 +127,39 @@ export function pageNumber(v: unknown): number {
   return n >= 1 ? n : 1;
 }
 
+/**
+ * Check 30 P4: each shop's newest sorted email, one index lookup per mailbox
+ * (`threads_mailbox_classified_idx`). A plain max(...) group by would read every thread of
+ * every shop on each /admin load; the per-mailbox max is answered from the index's end.
+ * The outer column is written out (`mailboxes.id`): drizzle prints a lone table's columns
+ * unqualified, and a bare "id" inside the subquery would mean the thread's own id.
+ */
+export function lastSortedQuery(ids: string[]) {
+  return db()
+    .select({
+      workspaceId: mailboxes.workspaceId,
+      at: sql<Date | null>`max((select max(t.classified_at) from threads t where t.mailbox_id = mailboxes.id))`.mapWith(
+        threads.classifiedAt,
+      ),
+    })
+    .from(mailboxes)
+    .where(inArray(mailboxes.workspaceId, ids))
+    .groupBy(mailboxes.workspaceId);
+}
+
+/** Check 30 P4: each shop's last morning email, from the partial `activity_digest_sent_idx`. */
+export function lastDigestQuery(ids: string[]) {
+  return db()
+    .select({
+      workspaceId: workspaces.id,
+      at: sql<Date | null>`(select max(a.created_at) from activity_log a where a.workspace_id = workspaces.id and a.action = 'digest_sent')`.mapWith(
+        activityLog.createdAt,
+      ),
+    })
+    .from(workspaces)
+    .where(inArray(workspaces.id, ids));
+}
+
 export async function countWorkspaces(q?: string | null): Promise<number> {
   const [row] = await db()
     .select({ n: count() })
@@ -258,12 +291,7 @@ export async function adminOverview(
     .where(and(inArray(usage.workspaceId, ids), gte(usage.period, monthStart)))
     .groupBy(usage.workspaceId);
 
-  const sorted = await db()
-    .select({ workspaceId: mailboxes.workspaceId, at: max(threads.classifiedAt) })
-    .from(threads)
-    .innerJoin(mailboxes, eq(mailboxes.id, threads.mailboxId))
-    .where(inArray(mailboxes.workspaceId, ids))
-    .groupBy(mailboxes.workspaceId);
+  const sorted = await lastSortedQuery(ids);
   const drafted = await db()
     .select({ workspaceId: mailboxes.workspaceId, at: max(drafts.createdAt) })
     .from(drafts)
@@ -310,11 +338,7 @@ export async function adminOverview(
   }
   const keyMode = stripeKeyMode(process.env.STRIPE_SECRET_KEY);
 
-  const digests = await db()
-    .select({ workspaceId: activityLog.workspaceId, at: max(activityLog.createdAt) })
-    .from(activityLog)
-    .where(and(inArray(activityLog.workspaceId, ids), eq(activityLog.action, "digest_sent")))
-    .groupBy(activityLog.workspaceId);
+  const digests = await lastDigestQuery(ids);
 
   const twoPlans = await workspacesWithTwoPlans(ids);
   const money = await moneyEventsFor(ids);

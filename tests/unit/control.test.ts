@@ -330,9 +330,15 @@ describe("G7 private notes", () => {
     expect(await noteFor(workspaceId, "dana@x.com")).toBe("Big dog, prefers texts");
     expect(await saveNote(workspaceId, m.id, "x".repeat(201))).toBe("too_long");
     expect(await saveNote(workspaceId, m.id, "   ")).toBe("empty");
-    const u = await message(t.id, "u1", { fromAddress: "a@b.com", replyToHeader: null });
+    // Older than Dana's email, so hers stays the newest (a tie has no order: Check 30 P1's
+    // indexes changed which tied row came first).
+    const u = await message(t.id, "u1", {
+      fromAddress: "a@b.com",
+      replyToHeader: null,
+      sentAt: daysAgo(2),
+    });
     expect(await saveNote(workspaceId, u.id, "hi")).toBe("unchecked");
-    const r = await message(t.id, "r1", { fromAddress: "noreply@b.com" });
+    const r = await message(t.id, "r1", { fromAddress: "noreply@b.com", sentAt: daysAgo(2) });
     expect(await saveNote(workspaceId, r.id, "hi")).toBe("robot");
     // A crew member's reply to a forward never decides whose note shows.
     await message(t.id, "fwd", {

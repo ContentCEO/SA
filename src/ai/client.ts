@@ -8,6 +8,7 @@ import {
   aiTimeouts,
   modelFallbacks,
   models,
+  type AiPurpose,
   type ModelId,
   type ModelRole,
 } from "@/config/models";
@@ -191,6 +192,8 @@ export async function callStructured<S extends z.ZodType>(opts: {
   workspaceId: string;
   role: ModelRole;
   promptVersion: string;
+  /** Check 29 P4: what the call is for; sorting has its own share of the day's limit. */
+  purpose?: AiPurpose;
   maxTokens: number;
   system: { text: string; cache: boolean }[];
   user: string;
@@ -201,7 +204,7 @@ export async function callStructured<S extends z.ZodType>(opts: {
   now?: Date;
 }): Promise<z.infer<S> | null> {
   const now = opts.now ?? new Date();
-  await reserveAiCall(opts.workspaceId, now);
+  await reserveAiCall(opts.workspaceId, now, opts.purpose ?? "other");
 
   // Check 48 P3: one stand-in try per call, only when Davi approved it for this role.
   const fallback = fallbacks[opts.role];

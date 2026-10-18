@@ -4,8 +4,10 @@ import { redirect } from "next/navigation";
 import { z } from "zod";
 import { enqueue, voiceLearnRequested } from "@/jobs/client";
 import {
-  businessProfileInput,
+  businessProfileInputFor,
   digestSettingsInput,
+  getBusinessProfile,
+  getVoiceProfile,
   followupSettingsInput,
   saveBusinessProfile,
   saveDigestSettings,
@@ -16,7 +18,7 @@ import {
   saveVoiceEdits,
   saveWorkHours,
   setOwnerTimeZone,
-  voiceEditInput,
+  voiceEditInputFor,
   workHoursInput,
 } from "@/server/profile";
 import { isTimeZone } from "@/server/time-zone-rules";
@@ -49,7 +51,12 @@ export async function saveBusinessProfileAction(
       .join(",");
   // Check 45 P1: only first-time setup sends the browser's zone; Settings saves never move it.
   if (raw.returnTo !== "/welcome/learning") delete raw.timeZone;
-  const parsed = businessProfileInput.safeParse(raw);
+  // Check 30 P3: a trade or state stored by newer code is kept when posted back unchanged.
+  const stored = await getBusinessProfile(workspace.id);
+  const parsed = businessProfileInputFor({
+    trade: workspace.trade,
+    state: stored?.state,
+  }).safeParse(raw);
   if (!parsed.success)
     return {
       errors: z.flattenError(parsed.error).fieldErrors as Record<string, string[]>,
@@ -62,7 +69,9 @@ export async function saveBusinessProfileAction(
 export async function saveVoiceAction(_prev: FormState, formData: FormData): Promise<FormState> {
   const { workspace } = await requireOwner();
   const raw = values(formData);
-  const parsed = voiceEditInput.safeParse(raw);
+  const parsed = voiceEditInputFor({
+    formality: (await getVoiceProfile(workspace.id))?.formality,
+  }).safeParse(raw);
   if (!parsed.success)
     return {
       errors: z.flattenError(parsed.error).fieldErrors as Record<string, string[]>,

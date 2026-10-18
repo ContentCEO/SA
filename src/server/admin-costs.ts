@@ -1,7 +1,6 @@
 import "server-only";
 import { and, eq, gte, sql, sum } from "drizzle-orm";
-import { utcDay } from "@/ai/usage";
-import { dailyAiCallCap } from "@/config/models";
+import { dailyAiCallCapSql, utcDay } from "@/ai/usage";
 import { formatDollars, type PlanId } from "@/config/pricing";
 import { db } from "@/db";
 import { appSettings, usage, users, workspaces, type Workspace } from "@/db/schema";
@@ -61,11 +60,12 @@ export async function costRows(now: Date = new Date()): Promise<CostRow[]> {
       calls: per.calls,
       cost: per.cost,
       busiest: per.busiest,
+      // Check 29 P5: each shop's own limit (per running inbox, up to the ceiling).
+      cap: dailyAiCallCapSql('"workspaces"."id"'),
     })
     .from(workspaces)
     .innerJoin(users, eq(users.id, workspaces.ownerUserId))
     .leftJoin(per, eq(per.workspaceId, workspaces.id));
-  const cap = dailyAiCallCap();
   return rows
     .map((r) => {
       // Check 16 P10: the same status /admin shows (an expired trial isn't "evaluating").
@@ -86,7 +86,7 @@ export async function costRows(now: Date = new Date()): Promise<CostRow[]> {
         ...costLine(input),
         calls: r.calls ?? 0,
         busiestDayCalls: r.busiest ?? 0,
-        cap,
+        cap: Number(r.cap),
         alert: costAlertDue(input),
       };
     })

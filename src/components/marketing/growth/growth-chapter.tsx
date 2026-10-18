@@ -43,13 +43,13 @@ export function GrowthChapter({
   headingLevel,
   standalone,
   openerId,
-  referralCode,
+  referrals,
 }: {
   headingLevel: "h1" | "h2";
   standalone: boolean;
   openerId?: string;
-  /** Plan #47: a referral link's code (the homepage, only while referrals are on). */
-  referralCode?: string;
+  /** Plan #47: referral links are on, so the form reads a link's ?ref= (the homepage). */
+  referrals?: boolean;
 }) {
   return (
     <>
@@ -202,7 +202,7 @@ export function GrowthChapter({
             </div>
           </div>
           <div className="sa-light rounded-2xl p-5 sm:p-6">
-            <GrowthCallForm referralCode={referralCode} />
+            <GrowthCallForm referrals={referrals} />
           </div>
         </div>
       </Section>

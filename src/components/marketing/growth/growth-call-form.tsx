@@ -7,6 +7,7 @@ import { requestGrowthCallAction, type GrowthState } from "@/app/growth-actions"
 import { SelectField, TextArea, TextField } from "@/components/forms/field";
 import { FormError } from "@/components/forms/form-error";
 import { useFocusFirstError } from "@/components/forms/use-focus-first-error";
+import { ReferralField } from "@/components/marketing/referral-field";
 import { SourceFields } from "@/components/marketing/source-fields";
 import { Button } from "@/components/ui/button";
 import { GROWTH_SERVICES } from "@/config/growth";
@@ -78,9 +79,10 @@ function Success({ phone }: { phone?: string }) {
 
 /**
  * The call-request form for Squared Away Growth. Lives in an off-white `.sa-light` card.
- * `referralCode`: from a referral link (?ref=), only passed while referrals are switched on.
+ * `referrals`: referral links are switched on (the server page decides); the code itself (?ref=)
+ * is read in the browser so the homepage can be prerendered (Check 29 P3).
  */
-export function GrowthCallForm({ referralCode }: { referralCode?: string } = {}) {
+export function GrowthCallForm({ referrals = false }: { referrals?: boolean } = {}) {
   const [state, action] = useActionState<GrowthState, FormData>(requestGrowthCallAction, {
     status: "idle",
   });
@@ -192,9 +194,7 @@ export function GrowthCallForm({ referralCode }: { referralCode?: string } = {})
           <input name="website" tabIndex={-1} autoComplete="off" />
         </label>
       </div>
-      {referralCode ? (
-        <input type="hidden" name="ref" defaultValue={v.ref ?? referralCode} />
-      ) : null}
+      {referrals ? <ReferralField kept={v.ref} /> : null}
       <SourceFields />
       <FormError errors={e.form} />
       <Submit />

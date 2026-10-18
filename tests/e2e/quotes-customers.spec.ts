@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { expect, test } from "@playwright/test";
 import * as schema from "../../src/db/schema";
+import { runHook } from "./fakes/client";
 import { seedOwner, signInAs, testDb } from "./support";
 
 const DAY = 86_400_000;
@@ -53,7 +54,7 @@ async function quote(
   }
 }
 
-test("quotes: stages, amounts, and one-tap Won", async ({ page, context }) => {
+test("quotes: stages, amounts, and one-tap Won", async ({ page, context, request }) => {
   const owner = await seedOwner({ mailbox: true, backfilled: true });
   await quote(owner.mailboxId!, {
     name: "Dana Ruiz",
@@ -69,6 +70,8 @@ test("quotes: stages, amounts, and one-tap Won", async ({ page, context }) => {
     reply: "Hi Sam, the vanity install is $1,200.",
     summary: "Sam wants a vanity installed.",
   });
+  // Check 29 P7: amounts are caught by the job after a sync, not on opening Quotes.
+  await runHook(request, { step: "quote-upkeep", mailboxId: owner.mailboxId! });
   await signInAs(context, owner);
 
   await page.goto("/queue");
@@ -115,9 +118,10 @@ test("quotes: stages, amounts, and one-tap Won", async ({ page, context }) => {
 test("quotes: no answer is our guess, one tap changes it, and Activity shows the close rate", async ({
   page,
   context,
+  request,
 }) => {
   const owner = await seedOwner({ mailbox: true, backfilled: true });
-  // Quoted 25 days ago, never heard back → we guess "no answer" when Quotes loads.
+  // Quoted 25 days ago, never heard back → the job after the next sync guesses "no answer".
   await quote(owner.mailboxId!, {
     name: "Kim Park",
     from: "kim@customer.com",
@@ -133,6 +137,8 @@ test("quotes: no answer is our guess, one tap changes it, and Activity shows the
     outAgo: 2,
     summary: "Lee wants a faucet swapped.",
   });
+  // Check 29 P7: the job after a sync makes the guess; opening Quotes writes nothing.
+  await runHook(request, { step: "quote-upkeep", mailboxId: owner.mailboxId! });
   await signInAs(context, owner);
 
   await page.goto("/quotes");

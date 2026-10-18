@@ -951,6 +951,11 @@ describe("C4: no open redirects", () => {
       "src/app/welcome/terms/page.tsx: redirect(back)",
       "the same, for someone who had already agreed: const back = safeNextPath(next)",
     ],
+    [
+      "src/proxy.ts: NextResponse.redirect(new URL(to, request.url))",
+      'Check 29 P3: "/" with a session cookie → `to` is homeRedirect()\'s fixed SIGNED_IN_HOME ' +
+        '("/start") on this site, never anything from the request (pinned in home-static.test.ts)',
+    ],
   ];
 
   it("every redirect target is one of our own paths, or a reviewed exception", () => {

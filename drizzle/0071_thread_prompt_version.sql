@@ -1,0 +1,1 @@
+ALTER TABLE "threads" ADD COLUMN "classified_prompt_version" text;

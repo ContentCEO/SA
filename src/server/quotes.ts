@@ -15,6 +15,7 @@ import { isBigQuote, waitingLine } from "./followup-rules";
 import { usableTimeZone } from "./snooze-rules";
 import { expirePendingNudge, flagPendingNudge, followupSettings, type DraftDeps } from "./drafts";
 import { markAnsweredByPhone } from "./first-week";
+import { readExtracted } from "./extracted";
 import { effectiveStatus, JOBS_ALLOWED, jobsAllowed, ReadOnlyError } from "./lifecycle";
 import {
   asDate,
@@ -169,7 +170,7 @@ export async function ownerGavePrice(
  * messages from then on (deposit details, the invoice) are never the quote.
  */
 function decidedAt(t: { extracted: unknown; quoteOutcomeAt: Date | null }): Date | null {
-  const raw = (t.extracted as { quote_accepted_at?: unknown } | null)?.quote_accepted_at;
+  const raw = readExtracted(t.extracted)?.quote_accepted_at;
   const accepted = typeof raw === "string" ? new Date(raw) : null;
   const times = [accepted, t.quoteOutcomeAt ? new Date(t.quoteOutcomeAt) : null].filter(
     (d): d is Date => d != null && Number.isFinite(d.getTime()),
@@ -177,10 +178,12 @@ function decidedAt(t: { extracted: unknown; quoteOutcomeAt: Date | null }): Date
   return times.length ? new Date(Math.min(...times.map((d) => d.getTime()))) : null;
 }
 
-/** Quote-request threads (and anything that has had an outcome) for one workspace. */
+/**
+ * Quote-request threads (and anything that has had an outcome) for one workspace. Read only
+ * (Check 29 P7): amounts and "no answer" guesses are kept up to date after each sync
+ * (`quoteUpkeepForMailbox`, draft job) and by the daily jobs, never on opening a screen.
+ */
 export async function listQuotes(workspaceId: string, now: Date = new Date()) {
-  await captureQuoteAmounts(workspaceId);
-  await guessNoAnswers(now, workspaceId);
   const { days } = await followupSettings(workspaceId);
   const [profile] = await db()
     .select({ timeZone: businessProfiles.timeZone })
@@ -724,6 +727,34 @@ export async function guessNoAnswers(
 }
 
 /**
+ * Check 29 P7: after each sync of a mailbox (the draft job, which runs after every sync), catch
+ * the shop's quote amounts from newly synced replies and refresh the "no answer" guesses — what
+ * listQuotes used to do on every Quotes / Customers open. Never fails the job that calls it:
+ * the daily jobs run both again. Logs ids and error names only.
+ */
+export async function quoteUpkeepForMailbox(
+  mailboxId: string,
+  now: Date = new Date(),
+): Promise<{ captured: number; guessed: number }> {
+  try {
+    const [box] = await db()
+      .select({ workspaceId: mailboxes.workspaceId })
+      .from(mailboxes)
+      .where(eq(mailboxes.id, mailboxId));
+    if (!box) return { captured: 0, guessed: 0 };
+    const captured = await captureQuoteAmounts(box.workspaceId);
+    const guessed = await guessNoAnswers(now, box.workspaceId);
+    return { captured, guessed };
+  } catch (err) {
+    console.error("quote_upkeep_failed", {
+      mailboxId,
+      error: err instanceof Error ? err.name : "unknown",
+    });
+    return { captured: 0, guessed: 0 };
+  }
+}
+
+/**
  * Remember what each quote was for while the owner's reply text still exists
  * (bodies are purged after the retention window; the amount is kept).
  *
@@ -869,7 +900,7 @@ async function captureFrom(open: Awaited<ReturnType<typeof capturePage>>): Promi
 
 /** The kind of job sorting found, trimmed for price memory; null if there isn't one. */
 function serviceOf(extracted: unknown): string | null {
-  const s = (extracted as { service_requested?: unknown } | null)?.service_requested;
+  const s = readExtracted(extracted)?.service_requested;
   if (typeof s !== "string") return null;
   const t = s.trim().slice(0, 200);
   return t || null;

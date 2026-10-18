@@ -47,11 +47,39 @@ export const modelPricing: Record<ModelId, { inputPerMTok: number; outputPerMTok
 export const aiTimeouts = { interactiveMs: 45_000, jobMs: 90_000 } as const;
 export const aiMaxRetries = 1;
 
-/** Per-workspace daily ceiling on model calls, so a runaway loop can't run up the bill. */
-export function dailyAiCallCap(): number {
-  const n = Number(process.env.AI_DAILY_CALL_CAP ?? 500);
-  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 500;
+const positiveCount = (raw: string | undefined, fallback: number): number => {
+  const n = Number(raw ?? fallback);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : fallback;
+};
+
+/**
+ * Daily ceiling on model calls per connected inbox (`AI_DAILY_CALL_CAP`, default 500), so a
+ * runaway loop can't run up the bill. Check 29 P5: a shop's limit is this times its running
+ * inboxes (at least one), up to `AI_DAILY_CALL_CAP_MAX` (default 3000).
+ */
+export function aiCallCapPerInbox(): number {
+  return positiveCount(process.env.AI_DAILY_CALL_CAP, 500);
 }
+export function aiCallCapMax(): number {
+  return positiveCount(process.env.AI_DAILY_CALL_CAP_MAX, 3000);
+}
+/** The day's limit for a shop with this many running inboxes. */
+export function aiCallCapFor(runningInboxes: number): number {
+  return Math.min(aiCallCapMax(), aiCallCapPerInbox() * Math.max(1, Math.floor(runningInboxes)));
+}
+
+/**
+ * Check 29 P4: sorting may use at most this share of the day's limit, so a heavy first read
+ * always leaves calls for drafts and voice learning. The overall limit is unchanged.
+ */
+export const SORT_SHARE = 0.8;
+/** What sorting may use of a day's limit (at least one call). */
+export function sortCallLimit(cap: number): number {
+  return Math.max(1, Math.floor(cap * SORT_SHARE));
+}
+
+/** What a model call is for: sorting has its own share of the day's limit (Check 29 P4). */
+export type AiPurpose = "sort" | "draft" | "voice" | "other";
 
 /**
  * Check 48 P7: where email text may go. Today every model call is one synchronous

@@ -9,6 +9,7 @@ import { useFocusFirstError } from "@/components/forms/use-focus-first-error";
 import { Button } from "@/components/ui/button";
 import { siteConfig } from "@/config/site";
 import { TRADE_OPTIONS } from "@/config/trades";
+import { ReferralField } from "@/components/marketing/referral-field";
 import { SourceFields } from "./source-fields";
 
 const trades = TRADE_OPTIONS.map((t) =>
@@ -59,8 +60,8 @@ function Joined() {
   );
 }
 
-/** `referralCode`: from a referral link (?ref=), only passed while referrals are switched on. */
-export function WaitlistForm({ referralCode }: { referralCode?: string } = {}) {
+/** `referrals`: referral links are switched on (decided by the server page). */
+export function WaitlistForm({ referrals = false }: { referrals?: boolean } = {}) {
   const [state, action] = useActionState<WaitlistState, FormData>(joinWaitlistAction, {
     status: "idle",
   });
@@ -126,9 +127,7 @@ export function WaitlistForm({ referralCode }: { referralCode?: string } = {}) {
         error={e.note}
         rows={3}
       />
-      {referralCode ? (
-        <input type="hidden" name="ref" defaultValue={v.ref ?? referralCode} />
-      ) : null}
+      {referrals ? <ReferralField kept={v.ref} /> : null}
       {/* Left empty by people; bots fill it in. */}
       <div aria-hidden className="absolute -left-[9999px] h-0 w-0 overflow-hidden">
         <label>

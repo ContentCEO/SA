@@ -1,5 +1,6 @@
 import "server-only";
 import { eq, inArray, sql } from "drizzle-orm";
+import { cache } from "react";
 import { db } from "@/db";
 import { invites, users, workspaces, type User, type Workspace } from "@/db/schema";
 import { linkGrowthInvite } from "./growth-clients";
@@ -109,10 +110,14 @@ async function allowedReferrer(referrerId: string, email: string): Promise<strin
   return refusal ? null : referrerId;
 }
 
-export async function getWorkspaceForUser(userId: string): Promise<Workspace | undefined> {
+/**
+ * Check 29 P7: React cache() — one query per request however many places ask (requireOwner and
+ * the layout's banners). Outside a server render (jobs, tests) it is a plain call.
+ */
+export const getWorkspaceForUser = cache(async (userId: string): Promise<Workspace | undefined> => {
   const [workspace] = await db()
     .select()
     .from(workspaces)
     .where(eq(workspaces.ownerUserId, userId));
   return workspace;
-}
+});

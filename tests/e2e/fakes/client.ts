@@ -77,7 +77,8 @@ export async function routeGoogleConsent(page: Page, context: BrowserContext) {
 export type HookStep =
   | { step: "backfill" | "sync" | "classify" | "draft"; mailboxId: string }
   | { step: "voice"; workspaceId: string }
-  | { step: "deliver"; draftId: string };
+  | { step: "deliver"; draftId: string }
+  | { step: "quote-upkeep"; mailboxId: string };
 
 export type HookResult = { ok: boolean; status?: string; reason?: string } & Record<
   string,

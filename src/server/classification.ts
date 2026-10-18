@@ -18,6 +18,7 @@ import {
   type Classification,
 } from "@/ai/classify";
 import { AiCapReachedError } from "@/ai/usage";
+import { ACTIVE } from "@/ai/prompts/registry";
 import { moneyMentions } from "@/ai/money-words";
 import { OTHER_JOB_KIND } from "@/config/job-kinds";
 import { db } from "@/db";
@@ -772,6 +773,9 @@ export async function classifyPending(
         needsOwnerSince: sql`case when not (${threads.needsOwnerManual} or ${result.needsOwner}) then null when ${threads.needsOwner} then coalesce(${threads.needsOwnerSince}, ${requestAt}::timestamptz) else ${requestAt}::timestamptz end`,
         summary: result.summary,
         extracted: stored,
+        // Check 30 P6: which prompt version's shape `extracted` has (rule-only sorts too:
+        // they write this version's shape).
+        classifiedPromptVersion: ACTIVE.classify,
         classifiedAt: now,
         // Check 21 P2: "after the holidays" → no nudge before then. Each new customer email
         // replaces it (none → cleared); an email that tries to instruct us sets nothing.

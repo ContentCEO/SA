@@ -491,6 +491,20 @@
       "when": 1792342330156,
       "tag": "0069_stripe_money_events",
       "breakpoints": true
+    },
+    {
+      "idx": 70,
+      "version": "7",
+      "when": 1792354261871,
+      "tag": "0070_data_speed_indexes",
+      "breakpoints": true
+    },
+    {
+      "idx": 71,
+      "version": "7",
+      "when": 1792354263194,
+      "tag": "0071_thread_prompt_version",
+      "breakpoints": true
     }
   ]
 }

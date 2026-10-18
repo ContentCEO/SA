@@ -15,6 +15,7 @@ import type { ReferralAdminFlag, ReferralCredit, Workspace } from "@/db/schema";
 import { appUrl } from "@/lib/app-url";
 import { planFromLookupKey } from "./billing-rules";
 import { effectiveStatus, SENDING_ALLOWED, setupReallyPaid } from "./lifecycle";
+import { isReferralCode } from "@/lib/referral-code";
 import { PUBLIC_WEBMAIL_DOMAINS } from "./sender-rules";
 
 /**
@@ -30,11 +31,7 @@ import { PUBLIC_WEBMAIL_DOMAINS } from "./sender-rules";
 export { PUBLIC_WEBMAIL_DOMAINS };
 
 /** 12 characters of base64url: 9 random bytes, nothing about the owner in it. */
-const CODE = /^[A-Za-z0-9_-]{12}$/;
-
-export function isReferralCode(v: unknown): v is string {
-  return typeof v === "string" && CODE.test(v);
-}
+export { isReferralCode };
 
 export function newReferralCode(): string {
   return randomBytes(9).toString("base64url");

@@ -1,8 +1,6 @@
 import type { Metadata } from "next";
 import { ForgetOffline } from "@/components/app/forget-offline";
 import Link from "next/link";
-import { redirect } from "next/navigation";
-import { auth } from "@/auth";
 import { SiteFooter } from "@/components/app/site-footer";
 import { Headline } from "@/components/brand/headline";
 import { Wordmark } from "@/components/brand/wordmark";
@@ -17,7 +15,7 @@ import {
   promiseBand,
   steps,
 } from "@/components/marketing/home-copy";
-import { isReferralCode, referralsVisible } from "@/server/referral-rules";
+import { referralsVisible } from "@/server/referral-rules";
 import { formatDollars, pricing } from "@/config/pricing";
 import { siteConfig } from "@/config/site";
 import { capitalized, dayAdjective } from "@/lib/trial-words";
@@ -76,13 +74,14 @@ function Section({
   );
 }
 
-export default async function HomePage(props: PageProps<"/">) {
-  const session = await auth();
-  // Signed in: /start (the inbox, or for a Growth client the choice of inbox or Growth).
-  if (session?.user?.id) redirect("/start");
-  // Plan #47: a referral link's code rides along on the waitlist form — only while it's switched on.
-  const { ref } = await props.searchParams;
-  const referralCode = referralsVisible() && isReferralCode(ref) ? ref : undefined;
+/**
+ * Check 29 P3: prerendered (no session, no search params read here), so the CDN serves it.
+ * Signed in → /start happens in the proxy (src/proxy.ts, a session cookie on "/"); a referral
+ * link's ?ref= is read in the browser by the waitlist form, only while referrals are switched on
+ * (decided at build time: switching them on needs a redeploy anyway).
+ */
+export default function HomePage() {
+  const referrals = referralsVisible();
 
   return (
     <div className="flex flex-1 flex-col">
@@ -274,7 +273,7 @@ export default async function HomePage(props: PageProps<"/">) {
                 </div>
               </div>
               <div className="rounded-2xl border bg-card p-6">
-                <WaitlistForm referralCode={referralCode} />
+                <WaitlistForm referrals={referrals} />
               </div>
             </div>
           </Section>
@@ -289,7 +288,7 @@ export default async function HomePage(props: PageProps<"/">) {
             headingLevel="h2"
             standalone={false}
             openerId="growth"
-            referralCode={referralCode}
+            referrals={referrals}
           />
         </div>
       </main>

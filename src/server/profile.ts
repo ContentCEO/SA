@@ -1,9 +1,10 @@
 import "server-only";
 import { and, eq, ne, sql } from "drizzle-orm";
+import { cache } from "react";
 import { FROM_NAME_MAX } from "./from-line-rules";
 import { z } from "zod";
 import { LICENSE_FIELD_MAX, type Licenses } from "@/config/licenses";
-import { cleanExtraTrades, MAX_EXTRA_TRADES, TRADES } from "@/config/trades";
+import { cleanExtraTrades, MAX_EXTRA_TRADES, TRADES, type Trade } from "@/config/trades";
 import { US_STATE_CODES } from "@/config/us-states";
 import { db } from "@/db";
 import {
@@ -17,6 +18,7 @@ import {
 import { normalizeTown } from "./service-area-rules";
 import { isTimeZone } from "./time-zone-rules";
 import { BIG_QUOTE_DAY_CHOICES } from "./followup-rules";
+import { orStored, unknownStored } from "./stored-value-rules";
 
 /** Textareas: trim, cap, empty → null. */
 const longText = (max = 2000) =>
@@ -175,13 +177,24 @@ export const amountThresholdDollars = z.unknown().transform((v, ctx) => {
   return n;
 });
 
+const tradeField = z.enum(TRADES, { message: "Pick your trade." });
+const stateField = z
+  .string()
+  .trim()
+  .toUpperCase()
+  .refine(
+    (v) => v === "" || (US_STATE_CODES as readonly string[]).includes(v),
+    "Pick your state from the list.",
+  )
+  .transform((v) => (v === "" ? null : v));
+
 export const businessProfileInput = z.object({
   businessName: z
     .string({ message: "What's the business called?" })
     .trim()
     .min(1, "What's the business called?")
     .max(120, "Keep the name under 120 characters."),
-  trade: z.enum(TRADES, { message: "Pick your trade." }),
+  trade: tradeField,
   /**
    * Round 2 (TW A4): up to two more trades, as the form's ticked boxes joined by commas.
    * Left out entirely = leave them as they are.
@@ -238,16 +251,7 @@ export const businessProfileInput = z.object({
    * Check 38 P2: "Which state do you work in?" — two letters, '' = not set. Left out = leave it.
    * Massachusetts turns on the one-third deposit warning.
    */
-  state: z
-    .string()
-    .trim()
-    .toUpperCase()
-    .refine(
-      (v) => v === "" || (US_STATE_CODES as readonly string[]).includes(v),
-      "Pick your state from the list.",
-    )
-    .transform((v) => (v === "" ? null : v))
-    .optional(),
+  state: stateField.optional(),
   // Check 38 P6: "Licenses and registrations".
   hicNumber: licenseLine,
   hicExpiresOn: licenseDate,
@@ -269,15 +273,30 @@ export const businessProfileInput = z.object({
 });
 export type BusinessProfileInput = z.input<typeof businessProfileInput>;
 
-export async function getBusinessProfile(
-  workspaceId: string,
-): Promise<BusinessProfile | undefined> {
-  const [row] = await db()
-    .select()
-    .from(businessProfiles)
-    .where(eq(businessProfiles.workspaceId, workspaceId));
-  return row;
+/**
+ * Check 30 P3: the form's schema for one shop. A trade or state stored by newer code (not in
+ * this code's lists) is accepted when posted back unchanged; any other unknown value is refused.
+ */
+export function businessProfileInputFor(stored: { trade?: string | null; state?: string | null }) {
+  return businessProfileInput.extend({
+    trade: orStored(tradeField, stored.trade),
+    state: orStored(stateField, stored.state).optional(),
+  });
 }
+
+/**
+ * Check 29 P7: React cache() — one query per request however many places ask (requireOwner and
+ * the layout's banners). Outside a server render (jobs, tests) it is a plain call.
+ */
+export const getBusinessProfile = cache(
+  async (workspaceId: string): Promise<BusinessProfile | undefined> => {
+    const [row] = await db()
+      .select()
+      .from(businessProfiles)
+      .where(eq(businessProfiles.workspaceId, workspaceId));
+    return row;
+  },
+);
 
 export async function saveBusinessProfile(
   workspaceId: string,
@@ -318,12 +337,29 @@ export async function saveBusinessProfile(
     rest.crewAddresses === undefined
       ? undefined
       : ((await getBusinessProfile(workspaceId))?.crewAddresses ?? []);
+  // Check 30 P3: an extra trade stored by newer code has no box on this form, so it can't have
+  // been unticked: keep it.
+  const keptExtra = extraTrades
+    ? unknownStored(
+        (
+          await db()
+            .select({ extraTrades: workspaces.extraTrades })
+            .from(workspaces)
+            .where(eq(workspaces.id, workspaceId))
+        )[0]?.extraTrades,
+        TRADES,
+      )
+    : [];
   await db()
     .update(workspaces)
     .set({
       businessName,
       trade,
-      ...(extraTrades ? { extraTrades: cleanExtraTrades(extraTrades, trade) } : {}),
+      ...(extraTrades
+        ? {
+            extraTrades: [...keptExtra, ...cleanExtraTrades(extraTrades, trade)] as Trade[],
+          }
+        : {}),
     })
     .where(eq(workspaces.id, workspaceId));
   await db()
@@ -638,12 +674,15 @@ const ticked = z
   .optional()
   .transform((v) => v === "on");
 
+const formalityField = z.enum(["casual", "neutral", "formal"], {
+  message: "Pick how formal you are.",
+});
 const voiceFields = z.object({
   greetingStyle: optionalStyle,
   noGreeting: ticked,
   signoffStyle: optionalStyle,
   noSignoff: ticked,
-  formality: z.enum(["casual", "neutral", "formal"], { message: "Pick how formal you are." }),
+  formality: formalityField,
   // Check 15 P2: a blank box is "type a number", not "at least 10".
   avgLengthWords: z.preprocess(
     (v) => (typeof v === "string" && v.trim() === "" ? undefined : v),
@@ -661,11 +700,21 @@ const voiceFields = z.object({
     .max(600, "Keep this under 600 characters."),
 });
 
-export const voiceEditInput = voiceFields.transform(({ noGreeting, noSignoff, ...v }) => ({
-  ...v,
-  greetingStyle: noGreeting ? null : v.greetingStyle,
-  signoffStyle: noSignoff ? null : v.signoffStyle,
-}));
+const withNoneBoxes = <T extends typeof voiceFields>(fields: T) =>
+  fields.transform(({ noGreeting, noSignoff, ...v }) => ({
+    ...v,
+    greetingStyle: noGreeting ? null : v.greetingStyle,
+    signoffStyle: noSignoff ? null : v.signoffStyle,
+  }));
+
+export const voiceEditInput = withNoneBoxes(voiceFields);
+
+/** Check 30 P3: a formality stored by newer code is kept when posted back unchanged. */
+export function voiceEditInputFor(stored: { formality?: string | null }) {
+  return withNoneBoxes(
+    voiceFields.extend({ formality: orStored(formalityField, stored.formality) }),
+  );
+}
 
 /** The owner corrected the learned voice. Weekly re-learning won't overwrite this. */
 export async function saveVoiceEdits(
