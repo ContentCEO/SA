@@ -25,7 +25,8 @@ function inline(text: string, key: string): ReactNode[] {
     const link = part.match(/^\[([^\]]+)\]\(([^)\s]+)\)$/);
     if (link) {
       const href = link[2]!;
-      const safe = /^(https:|mailto:|tel:|\/)/.test(href) ? href : "#";
+      // Check 27 P2: the Contact block's "Text:" link is an sms: link.
+      const safe = /^(https:|mailto:|tel:|sms:|\/)/.test(href) ? href : "#";
       const external = safe.startsWith("https:");
       return (
         <a

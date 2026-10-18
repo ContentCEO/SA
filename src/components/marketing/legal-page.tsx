@@ -6,6 +6,7 @@ import { SiteFooter } from "@/components/app/site-footer";
 import { Wordmark } from "@/components/brand/wordmark";
 import { siteConfig } from "@/config/site";
 import { Markdown } from "@/lib/markdown";
+import { phoneHref } from "@/lib/phone-href";
 import { SiteAnalytics } from "./site-analytics";
 import { SourceCapture } from "./source-fields";
 import { SkipLink } from "@/components/app/skip-link";
@@ -15,18 +16,28 @@ import { SkipLink } from "@/components/app/skip-link";
  * docs/terms.md, so the documents in the repo are the single source. Contact
  * details come from src/config/site.ts and SUPPORT_EMAIL, never typed into
  * the documents.
+ *
+ * Check 27 P2: a data request needs a written way in. With SUPPORT_EMAIL set, the Contact block
+ * ends with the email; without it, with a text link to the business phone (texts get a written
+ * reply), so the block never offers a phone call alone.
  */
 export async function loadLegalDoc(file: "privacy-policy.md" | "terms.md"): Promise<string> {
   const raw = await readFile(path.join(process.cwd(), "docs", file), "utf8");
-  const support = process.env.SUPPORT_EMAIL?.trim();
   return raw
     .replaceAll("{{OPERATOR}}", siteConfig.operator)
     .replaceAll("{{LOCATION}}", siteConfig.location)
     .replaceAll("{{PHONE}}", `[${siteConfig.phone}](tel:${siteConfig.phone})`)
     .replace(
       /\\\n\{\{SUPPORT_EMAIL_LINE\}\}/,
-      support ? `\\\nEmail: [${support}](mailto:${support})` : "",
+      `\\\n${writtenContactLine(process.env.SUPPORT_EMAIL)}`,
     );
+}
+
+/** The Contact block's written channel: "Email: …" when the support address is set, else "Text: …". */
+export function writtenContactLine(supportEmail: string | undefined): string {
+  const support = supportEmail?.trim();
+  if (support) return `Email: [${support}](mailto:${support})`;
+  return `Text: [${siteConfig.phone}](${phoneHref("sms", siteConfig.phone)}) (texts get a written reply)`;
 }
 
 export function LegalPage({ source }: { source: string }) {

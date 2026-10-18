@@ -79,3 +79,47 @@ been made." to nothing (delete it): there are no such items left.
 - The render test's `**Draft — not yet reviewed.**` expectation, only if the banner goes.
 - Both "_Last updated:_" lines and `TERMS_VERSION` → the release date (one bump for everything in
   this file).
+
+## Check 27 P2 + Check 27 P7: data requests, and the promise to owners' customers
+
+Built in code (no legal text): with `SUPPORT_EMAIL` unset the Contact block of both documents
+ends with "Text: 978-201-9763 (texts get a written reply)" (an `sms:` link) instead of nothing,
+so a data request always has a written channel; with it set, the "Email:" line as before. /admin's
+System box says "No support email set. The privacy policy has no email for data requests." and
+inverts in production. Davi's step: choose the support address and set `SUPPORT_EMAIL` in Vercel
+(Production and Preview), then redeploy (LAUNCH step 5); the text line then stops showing.
+
+### P7: the "Your choices" bullet in `docs/privacy-policy.md`
+
+Still true at the tip: the bullet reads "To see, correct or delete what we hold about you —
+including if you are a customer of one of our users — contact us below." and the product has no
+per-sender deletion (deletion is per mailbox or per account). Replace that one bullet with two
+**(recommended, the spec's wording)**:
+
+> - To see, correct or delete what we hold about you as a Squared Away user, contact us below.
+> - If you emailed a business that uses Squared Away, that business decides what happens to your
+>   emails. Contact them first. If you contact us, we'll tell the business about your request
+>   within 5 business days and help them carry it out.
+
+Test for the release (`legal-docs.test.ts`): assert both sentences, and that "including if you
+are a customer of one of our users" is gone.
+
+### For `docs/LAUNCH.md` (not legal text; integrator-only file): "Requests from the public"
+
+Add after step 5 ("Support email and the production domain"):
+
+> ### Requests from the public
+>
+> Someone who emailed one of your owners may write to the support address (or text the business
+> number) asking what Squared Away holds about them, or to have it corrected or deleted. The
+> privacy policy promises to tell the owner within 5 business days and help. The steps:
+>
+> 1. Note the date you got the request and the sender's email address (nothing else).
+> 2. Call the owner the same week. Tell them who asked and what for. The decision is theirs: it's
+>    their business mail.
+> 3. Never open the customer's emails yourself, in the app or in the database. /admin shows no
+>    email content on purpose.
+> 4. If the owner wants the emails gone: today the app deletes per Gmail address (Disconnect) or
+>    per account (Delete my account); a single sender can't be removed on its own yet. Tell the
+>    owner that plainly, and ask the engineers if a per-sender delete is wanted.
+> 5. Reply to the person in writing with what was done, and keep the note of the date.
