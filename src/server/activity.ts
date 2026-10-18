@@ -21,6 +21,7 @@ import {
 import { workspaceTimeZone } from "./snooze";
 import { localMonthStart, usableTimeZone } from "./snooze-rules";
 import { messageReplyName } from "./thread-sql";
+import { zoneTimeName } from "./time-zone-rules";
 
 // The time-saved assumption lives in config (pure files read it too); re-exported for old callers.
 export { MINUTES_PER_SENT_REPLY } from "@/config/drafting";
@@ -185,6 +186,11 @@ export function describeActivity(
       return detail.enabled
         ? `Follow-ups on, after ${detail.days} days`
         : "You turned follow-ups off";
+    // Check 44 P5 / 45 P1: zone names only.
+    case "time_zone_changed":
+      return `You changed your time zone to ${zoneTimeName(typeof detail.to === "string" ? detail.to : null)}`;
+    case "time_zone_detected":
+      return "Set your time zone from your phone";
     case "digest_settings_saved":
       return detail.enabled
         ? "You changed your morning summary"

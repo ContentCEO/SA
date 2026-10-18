@@ -48,6 +48,9 @@ export default defineConfig({
   use: {
     baseURL,
     trace: "on-first-retry",
+    // Check 45 P1: signed-in pages save the browser's zone while it was never set; a fixed zone
+    // keeps that the same as the old default (Eastern) wherever a spec doesn't pick its own.
+    timezoneId: "America/New_York",
     // Lets sandboxes with a preinstalled Chromium skip `playwright install`.
     launchOptions: process.env.PLAYWRIGHT_CHROMIUM_PATH
       ? { executablePath: process.env.PLAYWRIGHT_CHROMIUM_PATH }

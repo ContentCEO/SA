@@ -171,6 +171,7 @@ test("settings: morning summary time and time zone are saved", async ({ page, co
   });
   await signInAs(context, owner);
 
+  // Check 45 P1: the first signed-in page saves this browser's zone (it was never set).
   await page.goto("/settings");
   await page.getByRole("link", { name: /^Morning email/ }).click();
   await expect(page).toHaveURL(/\/settings\/morning-email$/);

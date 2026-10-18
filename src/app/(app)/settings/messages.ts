@@ -62,8 +62,8 @@ export const SCREEN_MESSAGES = {
     error: { autopilot: "Autopilot can't be turned on for that yet." },
   },
   "/settings/morning-email": {
-    done: { saved: "Saved." },
-    error: { unknown: UNKNOWN },
+    done: { saved: "Saved.", zone: "Time zone saved." },
+    error: { unknown: UNKNOWN, zone: "That time zone didn't work. Pick one from the list." },
   },
   "/settings/notifications": { done: { saved: "Saved." }, error: {} },
   "/settings/texts": {

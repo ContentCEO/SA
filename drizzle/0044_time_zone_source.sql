@@ -1,0 +1,1 @@
+ALTER TABLE "business_profile" ADD COLUMN "time_zone_source" text DEFAULT 'default' NOT NULL;

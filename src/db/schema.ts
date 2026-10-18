@@ -24,6 +24,8 @@ import { TRADES, type Trade } from "../config/trades";
 import type { LostReason } from "../server/quote-rules";
 import type { ReplyToHeader } from "../server/reply-address-rules";
 
+export type TimeZoneSource = "default" | "browser" | "owner";
+
 export const tradeEnum = pgEnum("trade", TRADES);
 
 export const workspaceStatusEnum = pgEnum("workspace_status", [
@@ -565,6 +567,12 @@ export const businessProfiles = pgTable("business_profile", {
   digestEnabled: boolean("digest_enabled").notNull().default(true),
   digestHour: integer("digest_hour").notNull().default(7),
   timeZone: text("time_zone").notNull().default("America/New_York"),
+  /**
+   * Check 45 P1 / 44 P5: where time_zone came from — 'default' (never set: the schema default),
+   * 'browser' (setup, or the first signed-in page load while still 'default') or 'owner' (picked
+   * on Settings → Morning email). A browser never replaces an 'owner' zone.
+   */
+  timeZoneSource: text("time_zone_source").$type<TimeZoneSource>().notNull().default("default"),
   digestLastSentOn: text("digest_last_sent_on"),
   /** Text alerts to the owner's own phone (E.164, e.g. +15085551234). Off until they opt in. */
   alertPhone: text("alert_phone"),

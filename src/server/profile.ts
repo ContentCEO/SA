@@ -1,5 +1,5 @@
 import "server-only";
-import { eq } from "drizzle-orm";
+import { and, eq, ne, sql } from "drizzle-orm";
 import { z } from "zod";
 import { LICENSE_FIELD_MAX, type Licenses } from "@/config/licenses";
 import { cleanExtraTrades, MAX_EXTRA_TRADES, TRADES } from "@/config/trades";
@@ -14,6 +14,7 @@ import {
   type VoiceProfile,
 } from "@/db/schema";
 import { normalizeTown } from "./service-area-rules";
+import { isTimeZone } from "./time-zone-rules";
 
 /** Textareas: trim, cap, empty → null. */
 const longText = (max = 2000) =>
@@ -259,7 +260,7 @@ export async function saveBusinessProfile(
         ).filter(([, v]) => v),
       )
     : undefined;
-  const profile = { ...rest, ...(timeZone ? { timeZone } : {}), ...(licenses ? { licenses } : {}) };
+  const profile = { ...rest, ...(licenses ? { licenses } : {}) };
   await db()
     .update(workspaces)
     .set({
@@ -273,8 +274,25 @@ export async function saveBusinessProfile(
     .values({ workspaceId, ...profile, completedAt: now, updatedAt: now })
     .onConflictDoUpdate({
       target: businessProfiles.workspaceId,
-      set: { ...profile, updatedAt: now },
+      // Check 45 P1: the row often exists before setup (the first page load saves the browser's
+      // zone), so the first save marks the profile done here too, and later saves keep that date.
+      set: {
+        ...profile,
+        completedAt: sql`coalesce(${businessProfiles.completedAt}, ${now.toISOString()}::timestamptz)`,
+        updatedAt: now,
+      },
     });
+  // Check 45 P1: setup's browser zone, unless the owner picked one on purpose.
+  if (timeZone)
+    await db()
+      .update(businessProfiles)
+      .set({ timeZone, timeZoneSource: "browser" })
+      .where(
+        and(
+          eq(businessProfiles.workspaceId, workspaceId),
+          ne(businessProfiles.timeZoneSource, "owner"),
+        ),
+      );
   await db().insert(activityLog).values({
     workspaceId,
     actor: "owner",
@@ -318,15 +336,6 @@ export async function saveFollowupSettings(
 
 export const DIGEST_HOURS = [5, 6, 7, 8, 9] as const;
 
-function isTimeZone(tz: string) {
-  try {
-    new Intl.DateTimeFormat("en-US", { timeZone: tz });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 export const digestSettingsInput = z.object({
   enabled: z
     .literal("on")
@@ -335,7 +344,11 @@ export const digestSettingsInput = z.object({
   hour: z.coerce
     .number()
     .refine((n) => (DIGEST_HOURS as readonly number[]).includes(n), { message: "Pick a time." }),
-  timeZone: z.string().trim().max(64).refine(isTimeZone).catch("America/New_York"),
+  /**
+   * Check 44 P5 / 15 P7: the visible "Your time zone" select. Left out = keep the saved zone
+   * (a browser's zone is never posted from this screen any more).
+   */
+  timeZone: z.string().trim().refine(isTimeZone, "Pick your time zone.").optional(),
 });
 
 export async function saveDigestSettings(
@@ -343,12 +356,8 @@ export async function saveDigestSettings(
   data: z.output<typeof digestSettingsInput>,
   now: Date = new Date(),
 ) {
-  const set = {
-    digestEnabled: data.enabled,
-    digestHour: data.hour,
-    timeZone: data.timeZone,
-    updatedAt: now,
-  };
+  // The time zone is saved apart (setOwnerTimeZone), only when the owner changed it.
+  const set = { digestEnabled: data.enabled, digestHour: data.hour, updatedAt: now };
   await db()
     .insert(businessProfiles)
     .values({ workspaceId, ...set })
@@ -361,6 +370,76 @@ export async function saveDigestSettings(
       action: "digest_settings_saved",
       detail: { enabled: data.enabled, hour: data.hour },
     });
+}
+
+/**
+ * Check 44 P5 / 15 P7: the owner picked a zone (the select, or "Use Central time"). Saved with
+ * source 'owner' so no browser replaces it. Logs the old and new zone names only.
+ * Returns false when the zone is not real or is already the saved one.
+ */
+export async function setOwnerTimeZone(workspaceId: string, timeZone: string, now = new Date()) {
+  if (!isTimeZone(timeZone)) return false;
+  const [current] = await db()
+    .select({ timeZone: businessProfiles.timeZone, source: businessProfiles.timeZoneSource })
+    .from(businessProfiles)
+    .where(eq(businessProfiles.workspaceId, workspaceId));
+  if (current?.timeZone === timeZone) {
+    if (current.source !== "owner")
+      await db()
+        .update(businessProfiles)
+        .set({ timeZoneSource: "owner" })
+        .where(eq(businessProfiles.workspaceId, workspaceId));
+    return false;
+  }
+  const set = { timeZone, timeZoneSource: "owner" as const, updatedAt: now };
+  await db()
+    .insert(businessProfiles)
+    .values({ workspaceId, ...set })
+    .onConflictDoUpdate({ target: businessProfiles.workspaceId, set });
+  await db()
+    .insert(activityLog)
+    .values({
+      workspaceId,
+      actor: "owner",
+      action: "time_zone_changed",
+      detail: { from: current?.timeZone ?? null, to: timeZone },
+    });
+  return true;
+}
+
+/**
+ * Check 45 P1: the browser's zone from the first signed-in page load, only while the zone was
+ * never set (source 'default'). Returns true when it saved. No content in the log row.
+ */
+export async function saveDetectedTimeZone(
+  workspaceId: string,
+  timeZone: unknown,
+  now = new Date(),
+) {
+  if (!isTimeZone(timeZone)) return false;
+  const set = { timeZone, timeZoneSource: "browser" as const, updatedAt: now };
+  const inserted = await db()
+    .insert(businessProfiles)
+    .values({ workspaceId, ...set })
+    .onConflictDoNothing({ target: businessProfiles.workspaceId })
+    .returning({ id: businessProfiles.workspaceId });
+  const saved = inserted.length
+    ? inserted
+    : await db()
+        .update(businessProfiles)
+        .set(set)
+        .where(
+          and(
+            eq(businessProfiles.workspaceId, workspaceId),
+            eq(businessProfiles.timeZoneSource, "default"),
+          ),
+        )
+        .returning({ id: businessProfiles.workspaceId });
+  if (!saved.length) return false;
+  await db()
+    .insert(activityLog)
+    .values({ workspaceId, actor: "squared_away", action: "time_zone_detected", detail: {} });
+  return true;
 }
 
 export async function getVoiceProfile(workspaceId: string): Promise<VoiceProfile | undefined> {

@@ -11,6 +11,7 @@ import { listMailboxes } from "@/server/mailboxes";
 import { getBusinessProfile, getVoiceProfile } from "@/server/profile";
 import { requireOwner } from "@/server/session";
 import { formatUsPhone } from "@/server/sms-alerts";
+import { zoneShortName } from "@/server/time-zone-rules";
 import { LegacySettingsAnchors } from "./legacy-anchors";
 import { LIST_MESSAGES } from "./messages";
 import { awayState } from "@/server/away";
@@ -105,7 +106,10 @@ export default async function SettingsPage(props: PageProps<"/settings">) {
     {
       href: "/settings/morning-email",
       label: "Morning email",
-      line: (profile?.digestEnabled ?? true) ? `On · ${profile?.digestHour ?? 7}:00 am` : "Off",
+      line:
+        (profile?.digestEnabled ?? true)
+          ? `On · ${profile?.digestHour ?? 7}:00 am ${zoneShortName(profile?.timeZone)}`
+          : "Off",
     },
   ];
   if (vapidPublicKey()) {

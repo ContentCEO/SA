@@ -1,10 +1,12 @@
 import type { Metadata } from "next";
 import { AutoSaveForm } from "@/components/forms/auto-save-form";
-import { TimeZoneInput } from "@/components/forms/time-zone-input";
 import { Button } from "@/components/ui/button";
 import { DIGEST_HOURS, getBusinessProfile } from "@/server/profile";
 import { requireOwner } from "@/server/session";
+import { nowLine, zoneChoices, zoneLine } from "@/server/time-zone-rules";
+import { usableTimeZone } from "@/server/snooze-rules";
 import { trialEmailsMatter } from "@/server/trial-emails";
+import { PhoneZoneOffer } from "./phone-zone-offer";
 import { saveDigestSettingsAction, saveTrialEmailsAction } from "../profile-actions";
 import { SettingsScreen } from "../screen";
 
@@ -15,6 +17,7 @@ export default async function MorningEmailSettingsPage(
 ) {
   const { workspace } = await requireOwner();
   const profile = await getBusinessProfile(workspace.id);
+  const zone = usableTimeZone(profile?.timeZone);
   return (
     <SettingsScreen
       path="/settings/morning-email"
@@ -49,7 +52,25 @@ export default async function MorningEmailSettingsPage(
             ))}
           </select>
         </label>
-        <TimeZoneInput fallback={profile?.timeZone ?? "America/New_York"} />
+        {/* Check 44 P5 / 15 P7: the zone is shown and picked here; no hidden browser zone. */}
+        <label className="flex flex-col gap-1.5">
+          <span className="font-semibold">Your time zone</span>
+          <select
+            name="timeZone"
+            defaultValue={zone}
+            aria-describedby="zone-line"
+            className="min-h-tap rounded-lg border border-input bg-paper px-3 text-base"
+          >
+            {zoneChoices(zone).map((z) => (
+              <option key={z.value} value={z.value}>
+                {z.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <p id="zone-line" className="text-muted-foreground">
+          {zoneLine(zone)} {nowLine(new Date(), zone)}
+        </p>
         <p className="text-muted-foreground">
           Just counts and totals — how many replies are waiting, what needs you, and this
           month&apos;s money so far (quotes won, invoices paid, still owed). No customer names or
@@ -60,6 +81,7 @@ export default async function MorningEmailSettingsPage(
           Save
         </Button>
       </AutoSaveForm>
+      <PhoneZoneOffer saved={zone} />
       {trialEmailsMatter(workspace) ? (
         // 2026-10-16: the trial's short emails (day 2, the last day, and one a week after it ends).
         <AutoSaveForm action={saveTrialEmailsAction} hideButton className="flex flex-col gap-2">

@@ -42,14 +42,15 @@ export async function turnAwayOn(
   if (!jobsAllowed(workspace, now)) throw new ReadOnlyError(effectiveStatus(workspace, now));
   await db().insert(businessProfiles).values({ workspaceId: workspace.id }).onConflictDoNothing();
   const [p] = await db()
-    .select({ timeZone: businessProfiles.timeZone })
+    .select({ timeZone: businessProfiles.timeZone, source: businessProfiles.timeZoneSource })
     .from(businessProfiles)
     .where(eq(businessProfiles.workspaceId, workspace.id));
   const stored = usableTimeZone(p?.timeZone);
   const posted =
     opts.timeZone && usableTimeZone(opts.timeZone) === opts.timeZone ? opts.timeZone : null;
   // A new owner's zone may still be the default; the browser's own zone decides "today" then.
-  const tz = stored === "America/New_York" && posted ? posted : stored;
+  // Check 45 P1: only while it was never set — a browser never replaces a picked or saved zone.
+  const tz = (p?.source ?? "default") === "default" && posted ? posted : stored;
   const today = localParts(now, tz).date;
   const check = validateBackOn(backOn, today);
   if (check !== "ok") return check;
@@ -59,7 +60,7 @@ export async function turnAwayOn(
       .update(businessProfiles)
       .set({
         awayBackOn: day,
-        ...(tz !== stored ? { timeZone: tz } : {}),
+        ...(tz !== stored ? { timeZone: tz, timeZoneSource: "browser" as const } : {}),
         updatedAt: now,
       })
       .where(eq(businessProfiles.workspaceId, workspace.id));

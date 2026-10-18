@@ -86,7 +86,8 @@ describe("the money box (Check 15 P1)", () => {
     expect(amountIssues("")).toEqual([AMOUNT_BLANK_MESSAGE]);
     expect(amountIssues("  ")).toEqual([AMOUNT_BLANK_MESSAGE]);
     expect(amountIssues("$")).toEqual([AMOUNT_BLANK_MESSAGE]);
-    const { amountThresholdDollars: _, ...missing } = valid;
+    const missing: Partial<typeof valid> = { ...valid };
+    delete missing.amountThresholdDollars;
     expect(businessProfileInput.safeParse(missing).success).toBe(false);
   });
 
