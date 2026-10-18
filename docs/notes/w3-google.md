@@ -74,3 +74,33 @@ it("Check 28 P1: previews have their own Google project; the live client is clea
   expect(step0e).toContain("`https://<your domain>/api/gmail/callback`");
 });
 ```
+
+## Step 2: Check 33 P1 (LAUNCH.md text; the code is `src/config/host-redirects.ts`)
+
+Built but off: `legacyHostRedirects()` returns `[]` until `VERCEL_ENV` is `production` **and**
+`APP_URL` is an https address that is not on `vercel.app`. Davi turns it on by doing step 5 item 4
+(APP_URL = the domain, redeploy); nothing else. `/api/*` and `/_next/*` never forward.
+
+**LAUNCH.md step 5, item 9.** Replace the item (from `Once the new domain passes the smoke test`
+through `lands on https://<your domain>/queue.`) with:
+
+```
+9. Nothing to click: once `APP_URL` is your domain and you redeploy (item 4), every `vercel.app`
+   address forwards its pages to your domain by itself (`src/config/host-redirects.ts`), including
+   `sa-flax-eight.vercel.app`, the project address Vercel serves without noindex, which would
+   otherwise stay a second copy of the site. API addresses (`/api/…`) stay where they are until
+   items 5 to 7 are done, so Stripe, Inngest and Gmail keep working during the move. After item 4,
+   Connect Gmail only works when started on the new domain (Google sends the owner back there), so
+   the forward also stops the old address being a second way in. Worked when:
+   `https://sa-dac3.vercel.app/queue` and `https://sa-flax-eight.vercel.app/growth` both land on
+   the same path on your domain.
+```
+
+**LAUNCH.md step 5, item 1.** Add one sentence after `Worked when: Vercel shows **Valid
+Configuration**.`:
+
+```
+When you add the domain in Vercel → Domains, leave it as a Production domain (no Git branch).
+Production domains in that list are the ones Vercel serves without noindex; `sa-dac3.vercel.app`
+is a team address that isn't in that list, which is most likely why it carries noindex today.
+```
