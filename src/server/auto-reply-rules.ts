@@ -19,7 +19,14 @@ export type AutoReplyHeaders = {
 };
 
 const AUTO_SUBJECT = /^\s*(automatic reply\s*:|auto\s*:|out of (the )?office|autoreply)/i;
-const AUTO_PRECEDENCE = new Set(["auto_reply", "bulk", "junk", "list"]);
+/**
+ * Adapted from the check (which also named bulk / junk / list, and any Auto-Submitted but
+ * "no"): lead-site notices, website forms and voicemail-by-email services are machine-made
+ * too ("Auto-Submitted: auto-generated", "Precedence: bulk"), and they are leads that must be
+ * read. Only an automatic *response* counts: Auto-Submitted "auto-replied", Precedence
+ * "auto_reply", X-Autoreply / X-Autorespond, an out-of-office subject, or a bounce.
+ */
+const AUTO_PRECEDENCE = new Set(["auto_reply"]);
 
 /** A mailer-daemon / postmaster address: the email the owner sent didn't arrive. */
 export function isBounceSender(address: string | null | undefined): boolean {
@@ -30,14 +37,14 @@ export function isBounceSender(address: string | null | undefined): boolean {
 }
 
 /**
- * True for an automatic reply: Auto-Submitted present and not "no", any X-Autoreply /
- * X-Autorespond, Precedence auto_reply / bulk / junk / list, a subject that starts like an
- * out-of-office ("Automatic reply:", "Auto:", "Out of Office", "Autoreply"), or a bounce.
+ * True for an automatic reply: Auto-Submitted "auto-replied", any X-Autoreply /
+ * X-Autorespond, Precedence auto_reply, a subject that starts like an out-of-office
+ * ("Automatic reply:", "Auto:", "Out of Office", "Autoreply"), or a bounce.
  * The body is never read: "I'll be out of office Friday" in an ordinary email is not one.
  */
 export function isAutoReply(h: AutoReplyHeaders, from?: string | null): boolean {
   const auto = h.autoSubmitted?.trim().toLowerCase();
-  if (auto !== undefined && auto !== "" && !/^no\b/.test(auto)) return true;
+  if (auto && /^auto-replied\b/.test(auto)) return true;
   if (h.xAutoreply !== undefined || h.xAutorespond !== undefined) return true;
   const precedence = h.precedence?.trim().toLowerCase();
   if (precedence && AUTO_PRECEDENCE.has(precedence)) return true;

@@ -57,12 +57,11 @@ afterEach(() => vi.restoreAllMocks());
 describe("what counts as an automatic reply", () => {
   it("each header and subject that says so", () => {
     expect(isAutoReply({ autoSubmitted: "auto-replied" })).toBe(true);
-    expect(isAutoReply({ autoSubmitted: "auto-generated; owner-email=x@y.com" })).toBe(true);
+    expect(isAutoReply({ autoSubmitted: "Auto-Replied; owner-email=x@y.com" })).toBe(true);
     expect(isAutoReply({ autoSubmitted: "no" })).toBe(false);
     expect(isAutoReply({ xAutoreply: "yes" })).toBe(true);
     expect(isAutoReply({ xAutorespond: "" })).toBe(true);
-    for (const p of ["auto_reply", "bulk", "junk", "list", "Bulk"])
-      expect(isAutoReply({ precedence: p }), p).toBe(true);
+    expect(isAutoReply({ precedence: "auto_reply" })).toBe(true);
     expect(isAutoReply({ precedence: "first-class" })).toBe(false);
     for (const subject of [
       "Automatic reply: Re: Estimate",
@@ -74,6 +73,13 @@ describe("what counts as an automatic reply", () => {
       expect(isAutoReply({ subject }), subject).toBe(true);
     expect(isAutoReply({}, "mailer-daemon@googlemail.com")).toBe(true);
     expect(isAutoReply({}, "postmaster@shop.com")).toBe(true);
+  });
+
+  it("GUARDRAIL: machine-made leads are still read (a lead site, a website form, a voicemail email)", () => {
+    // Not responses: they're new leads, so they must reach the sorter.
+    expect(isAutoReply({ autoSubmitted: "auto-generated" }, "leads@thumbtack.com")).toBe(false);
+    for (const p of ["bulk", "junk", "list", "Bulk"])
+      expect(isAutoReply({ precedence: p }, "wordpress@site.com"), p).toBe(false);
   });
 
   it("an ordinary email that mentions being out of office is not one", () => {

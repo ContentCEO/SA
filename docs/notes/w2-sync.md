@@ -88,11 +88,17 @@ fetch and `politely()` pauses. Inbox emails are read once (full); others as meta
 
 No migration: uses wave 0's reserved `messages.auto_reply` and `messages.ack_only`.
 
+- **Adapted (safety, question for Davi):** only an automatic _response_ is marked:
+  Auto-Submitted `auto-replied`, Precedence `auto_reply`, X-Autoreply / X-Autorespond, an
+  out-of-office subject, or a mailer-daemon / postmaster bounce. The check also named
+  `Auto-Submitted: auto-generated` and Precedence bulk / junk / list, but lead-site notices,
+  website forms and voicemail-by-email services carry those too, and marking them would sort a
+  real lead as nothing with no model call. Newsletters are already caught by the Promotions
+  shortcut.
 - Sync asks for Auto-Submitted, X-Autoreply, X-Autorespond, Precedence and
   X-Auto-Response-Suppress, and sets `messages.auto_reply` (inbound only) per
-  `src/server/auto-reply-rules.ts`: Auto-Submitted present and not "no"; any X-Autoreply /
-  X-Autorespond; Precedence auto_reply / bulk / junk / list; subject starting "Automatic reply:",
-  "Auto:", "Out of Office", "Autoreply"; or a mailer-daemon / postmaster sender. The body is never
+  `src/server/auto-reply-rules.ts` (rules above; subject starting "Automatic reply:", "Auto:",
+  "Out of Office", "Autoreply"). The body is never
   read for this. Header values are never stored or logged. (X-Auto-Response-Suppress is read but
   doesn't mark on its own: plenty of ordinary bulk mail carries it.)
 - Classification: auto-replies are set aside with no model call (message `classified_at` set);
