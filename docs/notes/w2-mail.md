@@ -65,6 +65,27 @@
 - Check 43 P3 is not verified live: send one reply from the preview to a second address and
   look at the From line in Gmail web, Gmail on a phone and Apple Mail.
 
+## Integration notes
+
+- Migrations (renumber at merge): `0044_from_name` (business_profile.from_name) and
+  `0045_send_as` (mailboxes.send_as text[] default '{}', drafts.from_address). Additive only.
+- No prompt files changed. The drafter is still told "(none — sign off with the first name
+  only)" when the signature is empty; no prompt line needed for this group.
+- `mimeFor` gained a required `fromName` argument; call sites now use `draftRaw(draft, mailbox,
+  body)` (drafts.ts). Any group adding a new Gmail-draft rewrite should use `draftRaw`.
+- `buildReplyMime` output is now multipart/alternative. Tests that read a draft body must use
+  `FakeWriter.bodyOf` (reads text/plain) or `FakeWriter.partOf`; hand-built single-part raws
+  still work. `editInGmail` writes a single text part.
+- `replySubject("RE: x")` is now "Re: x".
+- `QueueItem` gained `fromAddress` and `subject`; `DraftCardProps` gained `fromName`,
+  `fromAddress`, `subject`, `noSignatureLine`.
+- The e2e Gmail fake gained `gmail.settings.sendAs.list`, multipart parsing and joined encoded
+  words; `tests/unit/e2e-fakes.test.ts` lists the new route.
+
 ## Questions for Davi
 
-(none yet)
+- The "No signature" line shows on the queue's first draft on every visit while the signature
+  box is empty (the safe default; "once a day" would need somewhere to remember it). Is every
+  visit fine, or should it be once a day?
+- A form lead's reply subject reads "Your request to <business name>". OK, or would you prefer
+  other words (e.g. "Your quote request")?
