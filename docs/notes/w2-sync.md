@@ -303,3 +303,44 @@ newerThanDays: 365 }`. (Adapted: `after` and `inbox` added for the stepped reads
   after 12 days and Spam → Not spam cases are in the P3 and P2 blocks.
 - `vitest.config.mts`: `hookTimeout: 30_000` (PGlite setup timed out at 10 s on a busy machine);
   the heaviest sync tests carry their own 120 s timeout, so the sync file passes with no flags.
+
+## Integration notes (expected conflicts)
+
+- **Migrations** 0039_gmail_units, 0040_resync_cursor, 0041_attachment_counts, 0042_job_runs,
+  0043_backfill_cursor, 0044_mailbox_email_index — renumber at merge. All additive.
+- **Wave 1 send path:** `deliverQueuedSend` (a Trash/Spam check before `sendDraft`),
+  `reconcileDrafts` (auto-replies don't expire a draft), `runAutopilotSend` (left-inbox reason,
+  auto-reply guardrail). Small inserts; re-apply on top of wave 1's versions.
+- **Prompt versions group:** `acknowledgment_only` signal (classify), the "look it over on
+  <date>" nudge line (followup), the `Attached: …` line and photo rule (classify + draft) — exact
+  text above. `src/ai/classify.ts` already maps the signal.
+- **Follow-ups group:** `followups.ts` / `quotes.ts` now use `ballInTheirCourtSql` /
+  `quietSinceSql`, and `lastInSql` / `waitingSinceSql` skip `auto_reply` messages.
+- **Queue / Inbox groups:** `QueueItem.archivedInGmail`, `InboxRow` gains `gmailThreadId`,
+  `mailboxEmail`, `attachments`; the cards gain the archived, bounced and attachment lines.
+- **Settings / Phone look:** the (app) layout gains `StaleMailLine`; Settings → Your Gmail uses
+  `firstReadProgress`; connect page / settings links carry `?add=1` / `?reconnect=<id>`.
+- **Billing and admin:** `systemHealth()` returns `jobExecutionsThisMonth`; /admin System box line.
+- `MailboxReader.listMessages` takes a window object now (no `query`); any group adding a reader
+  call or fake must use it. `HistoryPage` has `labelChanges` and `deleted`.
+- `afterSync(…)` can return null; the lifecycle job's checks moved into `runChecks` groups
+  (clock / backstops / housekeeping / alerts) — a group adding a lifecycle check adds it to one.
+- Source tests that looked for `step.run("<check>"` in the lifecycle job now look for
+  `"<check>": () => fn()` (draft-messages, emergency-alerts, m7-backfill, jobs).
+
+## Questions for Davi
+
+1. **Revoking a refused token.** When a Gmail is already connected to another account (C25 P7),
+   or the wrong Google account comes back on Reconnect / Connect another (C42 P3), we save nothing
+   but do **not** revoke the new token, because a Google revoke can also cut off the account that
+   is using that inbox. OK to keep it that way?
+2. **Archived conversations.** A draft whose conversation was archived in Gmail stays in the
+   Queue with "You archived this in Gmail." and can still be sent with a tap; an archive _after_
+   tapping Send stops the send. Trash and Spam expire the draft. Is that the behaviour you want?
+3. **Which machine mail counts as an automatic reply.** We only treat real automatic responses
+   (out-of-office, auto-responders, bounces) as auto-replies. Mail marked "auto-generated" or
+   "bulk" is still read, because lead sites, website forms and voicemail emails are sent that way.
+   OK?
+4. **Making one-Gmail-per-account strict.** The new index on mailbox addresses isn't unique yet;
+   once someone checks the shared database for duplicates (count query above), we can make it
+   unique.
