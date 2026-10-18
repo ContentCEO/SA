@@ -103,9 +103,11 @@ export function BusinessProfileForm({
         : defaults.extraTrades,
     ),
   );
-  const [amount, setAmount] = useState(
-    String(v("amountThresholdDollars", defaults.amountThresholdDollars) ?? ""),
-  );
+  // Check 15 P1: the saved amount reads "2,500"; what was typed comes back as typed.
+  const [amount, setAmount] = useState(() => {
+    const typed = state.values?.amountThresholdDollars;
+    return typed ?? defaults.amountThresholdDollars.toLocaleString("en-US");
+  });
   const readTrades = (ev: FormEvent<HTMLFormElement>) => {
     const t = ev.target as HTMLInputElement | HTMLSelectElement;
     if (t.name !== "trade" && t.name !== "extraTrades") return;
@@ -140,8 +142,8 @@ export function BusinessProfileForm({
               key={n}
               type="button"
               variant="outline"
-              aria-pressed={amount === String(n)}
-              onClick={() => setAmount(String(n))}
+              aria-pressed={amount.replace(/[$,\s]/g, "") === String(n)}
+              onClick={() => setAmount(n.toLocaleString("en-US"))}
             >
               ${n.toLocaleString("en-US")}
             </Button>

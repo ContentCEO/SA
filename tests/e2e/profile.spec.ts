@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { eq } from "drizzle-orm";
 import * as schema from "../../src/db/schema";
 import { seedOwner, signInAs, testDb } from "./support";
 
@@ -113,4 +114,43 @@ test("settings: a bad review link is refused in plain words, with focus on the f
   await page.getByRole("button", { name: "Save business profile" }).click();
   await expect(page).toHaveURL(/\/settings\/business\?done=profile/);
   await expect(page.getByRole("status")).toContainText("Business profile saved.");
+});
+
+test("settings: a cleared money box is refused, and the saved amount stays (Check 15 P1)", async ({
+  page,
+  context,
+}) => {
+  const owner = await seedOwner({ mailbox: true, backfilled: true });
+  await testDb
+    .update(schema.workspaces)
+    .set({ businessName: "Elm Electric", trade: "electrical" })
+    .where(eq(schema.workspaces.id, owner.workspaceId));
+  await testDb.insert(schema.businessProfiles).values({
+    workspaceId: owner.workspaceId,
+    services: "Service calls, panel upgrades.",
+    amountThresholdDollars: 4000,
+    completedAt: new Date(),
+  });
+  await signInAs(context, owner);
+
+  await page.goto("/settings/profile");
+  const amount = page.getByLabel("Send me anything that mentions more than");
+  await expect(amount).toHaveValue("4,000");
+  await amount.fill("");
+  await page.getByRole("button", { name: "Save business profile" }).click();
+  await expect(amount).toBeFocused();
+  await expect(page.getByText("Leaving it blank would send you every email")).toBeVisible();
+  const saved = async () =>
+    (
+      await testDb
+        .select({ a: schema.businessProfiles.amountThresholdDollars })
+        .from(schema.businessProfiles)
+        .where(eq(schema.businessProfiles.workspaceId, owner.workspaceId))
+    )[0]!.a;
+  expect(await saved()).toBe(4000);
+
+  await amount.fill("$2,500");
+  await page.getByRole("button", { name: "Save business profile" }).click();
+  await expect(page).toHaveURL(/\/settings\/business\?done=profile/);
+  expect(await saved()).toBe(2500);
 });

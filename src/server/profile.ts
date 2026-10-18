@@ -102,6 +102,36 @@ const licenseDate = z
   .refine((v) => v === "" || /^\d{4}-\d{2}-\d{2}$/.test(v), "Pick the date it runs out.")
   .optional();
 
+export const AMOUNT_BLANK_MESSAGE =
+  "Type a dollar amount, like 2,500. Leaving it blank would send you every email with a price in it.";
+export const AMOUNT_MESSAGE = "Type a dollar amount, like 2,500.";
+export const AMOUNT_WHOLE_MESSAGE = "Whole dollars, please.";
+export const AMOUNT_TOO_BIG_MESSAGE = "That's more than we can check. Try a smaller amount.";
+export const MAX_AMOUNT_THRESHOLD_DOLLARS = 10_000_000;
+
+/**
+ * Check 15 P1: "Send me anything that mentions more than". Typed the way people write money
+ * ("2,500", "$2,500"); a blank box is refused, never saved as $0 (which would send the owner
+ * every email with a price in it and stop every automatic draft for them).
+ */
+export const amountThresholdDollars = z.unknown().transform((v, ctx) => {
+  const typed = typeof v === "number" ? String(v) : typeof v === "string" ? v : "";
+  const t = typed.trim().replace(/^\$\s*/, "");
+  const fail = (message: string) => {
+    ctx.addIssue({ code: "custom", message });
+    return z.NEVER;
+  };
+  if (t === "") return fail(AMOUNT_BLANK_MESSAGE);
+  // Commas only as thousands separators: "2,500" and "1,250,000", never "25,00".
+  const plain = /^-?\d{1,3}(,\d{3})+(\.\d+)?$/.test(t) ? t.replace(/,/g, "") : t;
+  if (!/^-?\d+(\.\d+)?$/.test(plain)) return fail(AMOUNT_MESSAGE);
+  const n = Number(plain);
+  if (n < 0) return fail(AMOUNT_MESSAGE);
+  if (!Number.isInteger(n)) return fail(AMOUNT_WHOLE_MESSAGE);
+  if (n > MAX_AMOUNT_THRESHOLD_DOLLARS) return fail(AMOUNT_TOO_BIG_MESSAGE);
+  return n;
+});
+
 export const businessProfileInput = z.object({
   businessName: z.string().trim().min(1, "What's the business called?").max(120),
   trade: z.enum(TRADES, { message: "Pick your trade." }),
@@ -171,11 +201,7 @@ export const businessProfileInput = z.object({
   cslNumber: licenseLine,
   leadSafeLicense: licenseLine,
   insuranceCarrier: licenseLine,
-  amountThresholdDollars: z.coerce
-    .number({ message: "Enter a dollar amount." })
-    .int("Whole dollars, please.")
-    .min(0)
-    .max(10_000_000),
+  amountThresholdDollars,
   /**
    * Round 2 (FW C10): the browser's time zone, sent by the setup form only. Anything that isn't
    * a real zone is dropped (left as it was), never an error.

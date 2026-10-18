@@ -22,7 +22,7 @@ test("setup asks a remodeler for the amount up front, with suggestions", async (
   await expect(amount).toBeVisible();
   await expect(page.getByText("Most of your job emails mention big numbers.")).toBeVisible();
   await page.getByRole("button", { name: "$25,000" }).click();
-  await expect(amount).toHaveValue("25000");
+  await expect(amount).toHaveValue("25,000");
   await expect(page.getByRole("button", { name: "$25,000" })).toHaveAttribute(
     "aria-pressed",
     "true",

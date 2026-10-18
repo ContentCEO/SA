@@ -8,6 +8,8 @@ import { ensureUserAndWorkspace } from "@/server/accounts";
 import { classifyPending } from "@/server/classification";
 import { saveConnectedMailbox } from "@/server/mailboxes";
 import {
+  AMOUNT_BLANK_MESSAGE,
+  AMOUNT_MESSAGE,
   businessProfileInput,
   crewAddressesSchema,
   describeVoice,
@@ -66,6 +68,44 @@ describe("business profile form", () => {
     expect(
       businessProfileInput.safeParse({ ...valid, amountThresholdDollars: "lots" }).success,
     ).toBe(false);
+  });
+});
+
+describe("the money box (Check 15 P1)", () => {
+  const amountIssues = (amountThresholdDollars: string) => {
+    const r = businessProfileInput.safeParse({ ...valid, amountThresholdDollars });
+    expect(r.success, amountThresholdDollars).toBe(false);
+    return r
+      .error!.issues.filter((i) => i.path[0] === "amountThresholdDollars")
+      .map((i) => i.message);
+  };
+  const amountOf = (amountThresholdDollars: string) =>
+    businessProfileInput.parse({ ...valid, amountThresholdDollars }).amountThresholdDollars;
+
+  it("refuses a blank box (it would save $0) with a message saying why", () => {
+    expect(amountIssues("")).toEqual([AMOUNT_BLANK_MESSAGE]);
+    expect(amountIssues("  ")).toEqual([AMOUNT_BLANK_MESSAGE]);
+    expect(amountIssues("$")).toEqual([AMOUNT_BLANK_MESSAGE]);
+    const { amountThresholdDollars: _, ...missing } = valid;
+    expect(businessProfileInput.safeParse(missing).success).toBe(false);
+  });
+
+  it("reads money the way people type it", () => {
+    expect(amountOf("2,500")).toBe(2500);
+    expect(amountOf("$2,500")).toBe(2500);
+    expect(amountOf(" $ 2500 ")).toBe(2500);
+    expect(amountOf("1,250,000")).toBe(1_250_000);
+    expect(amountOf("0")).toBe(0); // typed on purpose, not a blank box
+  });
+
+  it("refuses decimals, negatives, words, odd commas and huge numbers in plain words", () => {
+    expect(amountIssues("2500.50")).toEqual(["Whole dollars, please."]);
+    expect(amountIssues("-5")).toEqual([AMOUNT_MESSAGE]);
+    expect(amountIssues("abc")).toEqual([AMOUNT_MESSAGE]);
+    expect(amountIssues("25,00")).toEqual([AMOUNT_MESSAGE]);
+    expect(amountIssues("20000000")).toEqual([
+      "That's more than we can check. Try a smaller amount.",
+    ]);
   });
 });
 
@@ -203,6 +243,23 @@ describe("profile drives classification", () => {
     );
     expect(rows.t1!.needsOwner).toBe(true); // VIP
     expect(rows.t2!.needsOwner).toBe(false); // $4,000 is under the owner's $5,000
+  });
+
+  it("a blank money box never reaches the saved profile as $0 (Check 15 P1)", async () => {
+    const { workspace } = await ensureUserAndWorkspace({ email: "owner@shop.com" });
+    await saveBusinessProfile(workspace.id, businessProfileInput.parse(valid));
+    // The action only saves what parses; a cleared box doesn't.
+    for (const blank of ["", "   ", "$"]) {
+      expect(
+        businessProfileInput.safeParse({ ...valid, amountThresholdDollars: blank }).success,
+      ).toBe(false);
+    }
+    expect((await getBusinessProfile(workspace.id))!.amountThresholdDollars).toBe(5000);
+    await saveBusinessProfile(
+      workspace.id,
+      businessProfileInput.parse({ ...valid, amountThresholdDollars: "$2,500" }),
+    );
+    expect((await getBusinessProfile(workspace.id))!.amountThresholdDollars).toBe(2500);
   });
 
   it("saves the review link, shows it in the form defaults, and clears it when emptied", async () => {
