@@ -12,6 +12,7 @@ import {
   threadsToAutoDraft,
 } from "@/server/drafts";
 import { jobsAllowed } from "@/server/lifecycle";
+import { quoteUpkeepForMailbox } from "@/server/quotes";
 import { incrementalSync, runBackfill } from "@/server/sync";
 import { learnVoice } from "@/server/voice";
 
@@ -37,6 +38,8 @@ export const hookStep = z.discriminatedUnion("step", [
   z.object({ step: z.literal("classify"), mailboxId: uuid }),
   z.object({ step: z.literal("draft"), mailboxId: uuid }),
   z.object({ step: z.literal("deliver"), draftId: uuid }),
+  // Check 29 P7: the draft job's quote upkeep on its own (amounts, "no answer" guesses).
+  z.object({ step: z.literal("quote-upkeep"), mailboxId: uuid }),
 ]);
 export type HookStep = z.infer<typeof hookStep>;
 
@@ -93,6 +96,7 @@ export async function runHookStep(input: HookStep): Promise<HookResult> {
       const blocked = await draftBlockedReason(input.mailboxId);
       if (blocked) return { ok: false, status: "skipped", reason: blocked };
       const reconciled = await reconcileDrafts(input.mailboxId);
+      await quoteUpkeepForMailbox(input.mailboxId);
       const due = await threadsToAutoDraft(input.mailboxId, 10);
       const outcomes: Record<string, unknown>[] = [];
       // Every due thread must get its draft: any other outcome (model_failed, no_text…) is a
@@ -117,6 +121,10 @@ export async function runHookStep(input: HookStep): Promise<HookResult> {
         created: outcomes.filter((o) => o.status === "created").length,
         drafts: outcomes,
       };
+    }
+    case "quote-upkeep": {
+      const r = await quoteUpkeepForMailbox(input.mailboxId);
+      return { ok: true, ...r };
     }
     case "deliver": {
       // The real clock: 'not_due' until the undo window has passed.
