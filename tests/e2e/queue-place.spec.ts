@@ -206,3 +206,34 @@ test("a short draft on a card that folds has no Show full draft (Check 9 P7)", a
   await page.waitForLoadState("networkidle");
   await expect(card.getByRole("button", { name: "Show full draft" })).toHaveCount(0);
 });
+
+test("'Fill in 1 gap to send' opens the gap's fill box; filling it brings Send reply (Check 9 P11)", async ({
+  page,
+  context,
+}) => {
+  const owner = await seedOwner({ mailbox: true, backfilled: true });
+  await setWorkspace(owner.workspaceId, {
+    status: "active",
+    setupPaidAt: new Date(),
+    setupPaidVia: "stripe",
+  });
+  const cards = await seedDrafts(owner.mailboxId!);
+  await testDb
+    .update(schema.drafts)
+    .set({ body: "Hi Avery,\n\nI can be there at {{time}} on Tuesday.\n\nThanks, Sam" })
+    .where(eq(schema.drafts.id, cards[0]!.draftId));
+  await signInAs(context, owner);
+  await page.goto("/queue");
+  const card = page.locator(`article#t-${cards[0]!.threadId}`);
+  const fill = card.getByRole("button", { name: "Fill in 1 gap to send" });
+  expect((await fill.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+  await expect(card.getByRole("button", { name: "Send reply" })).toHaveCount(0);
+  await fill.click();
+  const input = card.getByLabel("What should “time” say?");
+  await expect(input).toBeFocused();
+  await expect(input).toBeInViewport();
+  await input.fill("8am");
+  await card.getByRole("button", { name: "Fill in", exact: true }).click();
+  await expect(card).toContainText("I can be there at 8am on Tuesday.");
+  await expect(card.getByRole("button", { name: "Send reply" })).toBeVisible();
+});

@@ -27,14 +27,28 @@ function Rewriting() {
 }
 
 /** One-tap rewrites. The new text comes back to the queue to read; nothing sends. */
-type ReviseProps = { draftId: string; threadId: string; seenHash: string };
+type ReviseProps = {
+  draftId: string;
+  threadId: string;
+  seenHash: string;
+  /**
+   * Check 23 P8: the card's text with the gaps the owner filled in, posted only when it differs
+   * from the saved text, so a quick change keeps what they typed.
+   */
+  cardBody?: string;
+};
 
-export function TweakChips({ draftId, threadId, seenHash }: ReviseProps) {
+function CardBody({ cardBody }: { cardBody?: string }) {
+  return cardBody !== undefined ? <input type="hidden" name="body" value={cardBody} /> : null;
+}
+
+export function TweakChips({ draftId, threadId, seenHash, cardBody }: ReviseProps) {
   return (
     <form action={reviseDraftAction} aria-label="Quick changes" className="flex flex-col gap-2">
       <input type="hidden" name="draftId" value={draftId} />
       <input type="hidden" name="threadId" value={threadId} />
       <input type="hidden" name="seen" value={seenHash} />
+      <CardBody cardBody={cardBody} />
       <div className="flex flex-wrap gap-2">
         {(Object.keys(TWEAK_LABELS) as Tweak[]).map((t) => (
           <Chip key={t} value={t} label={TWEAK_LABELS[t]} />
@@ -50,13 +64,14 @@ export function TweakChips({ draftId, threadId, seenHash }: ReviseProps) {
  * draft through the same revise flow as the tweaks (same limits); the new text comes back to
  * read. Nothing sends.
  */
-export function OtherWaysToReply({ draftId, threadId, seenHash }: ReviseProps) {
+export function OtherWaysToReply({ draftId, threadId, seenHash, cardBody }: ReviseProps) {
   const heading = `other-ways-${draftId}`;
   return (
     <form action={reviseDraftAction} aria-labelledby={heading} className="flex flex-col gap-2">
       <input type="hidden" name="draftId" value={draftId} />
       <input type="hidden" name="threadId" value={threadId} />
       <input type="hidden" name="seen" value={seenHash} />
+      <CardBody cardBody={cardBody} />
       <p id={heading} className="font-semibold">
         Other ways to reply
       </p>
@@ -102,7 +117,7 @@ function UseThis() {
  * Plan #4: say (or type) a change — "make it Tuesday instead". Hold to talk
  * where the browser supports it; the words land in the box to check first.
  */
-export function SayAChange({ draftId, threadId, seenHash }: ReviseProps) {
+export function SayAChange({ draftId, threadId, seenHash, cardBody }: ReviseProps) {
   const [text, setText] = useState("");
   // False on the server and where the browser has no speech recognition.
   const canTalk = useSyncExternalStore(
@@ -142,6 +157,7 @@ export function SayAChange({ draftId, threadId, seenHash }: ReviseProps) {
       <input type="hidden" name="draftId" value={draftId} />
       <input type="hidden" name="threadId" value={threadId} />
       <input type="hidden" name="seen" value={seenHash} />
+      <CardBody cardBody={cardBody} />
       <label className="flex flex-col gap-1.5">
         <span className="font-semibold">Tell it what to change</span>
         <textarea

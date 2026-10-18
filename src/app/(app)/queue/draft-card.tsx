@@ -5,7 +5,14 @@ import { useFormStatus } from "react-dom";
 import { Button } from "@/components/ui/button";
 import { fillGap, findGaps } from "@/ai/gaps";
 import type { ConfidenceLabel } from "@/config/drafting";
-import { BodyWithGaps, ConfidenceTag, PastPrices, WhyThis, type PastPrice } from "./draft-parts";
+import {
+  BodyWithGaps,
+  ConfidenceTag,
+  PastPrices,
+  WhyThis,
+  type GapOpen,
+  type PastPrice,
+} from "./draft-parts";
 import { OtherWaysToReply, SayAChange, TweakChips } from "./revise-controls";
 import { RemindMe, type SnoozeOption } from "./remind-me";
 import { CalledThem } from "./called-them";
@@ -213,12 +220,23 @@ export function DraftCard(p: DraftCardProps) {
   // The body as the owner sees it — gaps they fill in change it before sending.
   const [body, setBody] = useState(p.body);
   const gapsLeft = findGaps(body).length;
+  // Check 9 P11: the open gap's fill box lives here, so the "Fill in N gaps" button opens it.
+  const [openGap, setOpenGap] = useState<GapOpen>(null);
+  const bodyBox = useRef<HTMLDivElement>(null);
+  const openFirstGap = () => {
+    setOpenGap({ index: 0, body });
+    requestAnimationFrame(() =>
+      bodyBox.current?.querySelector("form")?.scrollIntoView({ block: "center" }),
+    );
+  };
   const priceGap = findGaps(body).findIndex((g) => g.kind === "price");
   // Only ever on the owner's tap, and only into a {{price}} gap.
   const usePrice = (value: string) => {
     if (priceGap >= 0) setBody(fillGap(body, priceGap, value));
   };
   const pastPrices = p.priceMemory ?? [];
+  // Check 23 P8: a quick change keeps the gaps filled on the card (sent only when changed).
+  const cardBody = body !== p.body ? body : undefined;
 
   const onPointerDown = (e: React.PointerEvent) => {
     if (editing || p.readOnly || e.pointerType === "mouse") return;
@@ -348,10 +366,12 @@ export function DraftCard(p: DraftCardProps) {
       ) : null}
       {editing ? null : (
         <>
-          <div className="rounded-lg border bg-paper p-3">
+          <div ref={bodyBox} className="rounded-lg border bg-paper p-3">
             <BodyWithGaps
               body={body}
               onChange={setBody}
+              openGap={openGap}
+              onOpenGap={setOpenGap}
               expanded={expanded}
               onToggle={() => setExpanded((v) => !v)}
               // Check 9 P7: no Send reply ever sits under hidden text.
@@ -413,13 +433,17 @@ export function DraftCard(p: DraftCardProps) {
           ) : (
             <div ref={sendArea} className="grid grid-cols-1 gap-2">
               {p.canSend && gapsLeft > 0 ? (
-                <div
-                  role="note"
-                  tabIndex={-1}
-                  className="flex min-h-12 items-center justify-center rounded-lg border-2 border-charcoal px-4 font-black"
+                // Check 9 P11: a real button — it opens the first blank to fill. The server
+                // still refuses to send a reply with a gap in it.
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="lg"
+                  className="w-full border-2 border-charcoal font-black"
+                  onClick={openFirstGap}
                 >
                   Fill in {gapsLeft} gap{gapsLeft === 1 ? "" : "s"} to send
-                </div>
+                </Button>
               ) : p.canSend && waitingForSignal ? (
                 <div role="note" tabIndex={-1} className="flex flex-col gap-2">
                   <p className="font-black">Will send when you&apos;re back online.</p>
@@ -526,7 +550,12 @@ export function DraftCard(p: DraftCardProps) {
                 </div>
               )}
               {canChange && p.otherWays ? (
-                <OtherWaysToReply draftId={p.draftId} threadId={p.threadId} seenHash={p.seenHash} />
+                <OtherWaysToReply
+                  draftId={p.draftId}
+                  threadId={p.threadId}
+                  seenHash={p.seenHash}
+                  cardBody={cardBody}
+                />
               ) : null}
               {canChange && changing ? (
                 <div
@@ -536,8 +565,18 @@ export function DraftCard(p: DraftCardProps) {
                   <p className="text-sm text-muted-foreground">
                     Each change writes a new version for you to read. Nothing is sent.
                   </p>
-                  <TweakChips draftId={p.draftId} threadId={p.threadId} seenHash={p.seenHash} />
-                  <SayAChange draftId={p.draftId} threadId={p.threadId} seenHash={p.seenHash} />
+                  <TweakChips
+                    draftId={p.draftId}
+                    threadId={p.threadId}
+                    seenHash={p.seenHash}
+                    cardBody={cardBody}
+                  />
+                  <SayAChange
+                    draftId={p.draftId}
+                    threadId={p.threadId}
+                    seenHash={p.seenHash}
+                    cardBody={cardBody}
+                  />
                 </div>
               ) : null}
               {/* Check 9 P12: side by side; a question that opens takes the whole row. */}

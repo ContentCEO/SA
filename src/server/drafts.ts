@@ -35,7 +35,7 @@ import {
   type Tweak,
 } from "@/ai/prompts/revise.v2";
 import { MAX_REVISIONS_PER_DRAFT, UNDO_WINDOW_SECONDS } from "@/config/drafting";
-import { findGaps, hasUnfilledGap } from "@/ai/gaps";
+import { filledGaps, findGaps, hasUnfilledGap } from "@/ai/gaps";
 import {
   conversationBlock,
   DRAFT_INSTRUCTIONS,
@@ -2415,6 +2415,12 @@ export async function reviseDraft(
   opts: DraftDeps & {
     /** Check 42 P2: bodyHash of the text the card showed when the change was asked for. */
     openedHash?: string;
+    /**
+     * Check 23 P8: the card's text with the gaps the owner filled in (a typed value or a tapped
+     * past price). Used only when it is the saved text with some gaps filled and nothing else
+     * changed; otherwise ignored, so a forged body can't slip text past the checks.
+     */
+    currentBody?: string;
   } = {},
 ): Promise<ReviseOutcome> {
   const row = await loadOwnedDraft(workspaceId, draftId);
@@ -2468,6 +2474,12 @@ export async function reviseDraft(
   }
 
   const spoken = "spoken" in change ? change.spoken.trim().slice(0, 500) : null;
+  // Check 23 P8: what the owner filled into the gaps on the card is kept, and is theirs.
+  const filled =
+    opts.currentBody !== undefined ? filledGaps(draft.body ?? "", opts.currentBody) : null;
+  const typedValues = filled ?? [];
+  const startText = filled?.length ? opts.currentBody! : (draft.body ?? "");
+  const ownerSaid = [spoken, ...typedValues].filter(Boolean).join("\n") || null;
   const dispute = disputeThread(thread);
   const ask =
     spoken ??
@@ -2509,8 +2521,10 @@ export async function reviseDraft(
     ...ctx.seasonalNotes.map((n) => n.text),
     // Check 23 P3: a seasonal note's last day, as a draft would write it ("November 27").
     ...ctx.seasonalNotes.map((n) => spellDate(n.endsOn)),
-    // What the owner said counts as a fact they gave us (plan #4).
+    // What the owner said counts as a fact they gave us (plan #4), and so do the values they
+    // typed into the gaps (Check 23 P8).
     spoken,
+    ...typedValues,
     // Facts already in a clean draft stay allowed. A flagged draft's text
     // doesn't count, so a tweak can never launder a flag away.
     (draft.flags ?? []).length === 0 ? draft.body : null,
@@ -2522,7 +2536,7 @@ export async function reviseDraft(
     ...whenContext(
       ctx,
       withText,
-      [spoken, (draft.flags ?? []).length === 0 ? draft.body : null],
+      [spoken, ...typedValues, (draft.flags ?? []).length === 0 ? draft.body : null],
       now,
       ("tweak" in change && change.tweak === "availability") ||
         asksWhenAvailable(lastInbound?.text ?? ""),
@@ -2535,7 +2549,7 @@ export async function reviseDraft(
       .filter(Boolean)
       .join("\n"),
     // Round 2 A5: "tell her Thursday works, 450" — every number the owner said is theirs.
-    ownerInstruction: spoken,
+    ownerInstruction: ownerSaid,
     doNotPromise: ctx.doNotPromise,
     phrasesAvoided: ctx.voice?.phrasesAvoided ?? [],
     neverSay: ctx.neverSay,
@@ -2577,8 +2591,8 @@ export async function reviseDraft(
     extracted: thread.extracted,
     // Check 43 P9: a change on a dispute or legal thread keeps the same fixed caution.
     task: dispute
-      ? `${reviseTask(draft.body ?? "", ask, spoken !== null)}\n\n${DISPUTE_TASK}`
-      : reviseTask(draft.body ?? "", ask, spoken !== null),
+      ? `${reviseTask(startText, ask, spoken !== null)}\n\n${DISPUTE_TASK}`
+      : reviseTask(startText, ask, spoken !== null),
     messages: withText.map(({ m, text }) => ({
       from:
         m.direction === "out"

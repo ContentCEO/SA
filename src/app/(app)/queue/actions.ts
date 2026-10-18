@@ -424,6 +424,7 @@ export async function reviseDraftAction(formData: FormData) {
   const spoken = z.string().trim().min(2).max(500).safeParse(formData.get("spoken"));
   if (!isTweak(tweak) && !isOpeningTweak(opening) && !spoken.success)
     redirect("/queue?error=unknown");
+  const cardBody = z.string().max(20_000).safeParse(formData.get("body"));
   if (!(await hitLimit("revise", workspace.id)).allowed) redirect("/queue?error=busy");
   let r;
   try {
@@ -433,7 +434,12 @@ export async function reviseDraftAction(formData: FormData) {
       isTweak(tweak) ? { tweak } : isOpeningTweak(opening) ? { opening } : { spoken: spoken.data! },
       // Check 42 P2: the text the card showed when the change was asked for. Check 48 P4: a tap
       // waits at most the interactive time limit.
-      { openedHash: seenHash(formData.get("seen")) ?? undefined, aiMode: "interactive" },
+      {
+        openedHash: seenHash(formData.get("seen")) ?? undefined,
+        aiMode: "interactive",
+        // Check 23 P8: the card's text with the owner's filled gaps (checked in reviseDraft).
+        currentBody: cardBody.success ? cardBody.data : undefined,
+      },
     );
   } catch (err) {
     if (err instanceof ReadOnlyError) redirect("/queue?error=readonly");

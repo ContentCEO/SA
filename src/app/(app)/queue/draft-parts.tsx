@@ -28,9 +28,14 @@ export function ConfidenceTag({ label }: { label: ConfidenceLabel }) {
  * Plan #2: the draft with each {{gap}} shown as a chip. Tapping a chip opens
  * a big input; the filled text replaces it. The parent owns the body.
  */
+/** Which gap's fill box is open, and on which text (the card owns it: Check 9 P11). */
+export type GapOpen = { index: number; body: string } | null;
+
 export function BodyWithGaps({
   body,
   onChange,
+  openGap,
+  onOpenGap,
   expanded,
   onToggle,
   clamp = false,
@@ -39,6 +44,9 @@ export function BodyWithGaps({
 }: {
   body: string;
   onChange: (next: string) => void;
+  /** Check 9 P11: the open fill box, held by the card so "Fill in 1 gap to send" can open it. */
+  openGap: GapOpen;
+  onOpenGap: (next: GapOpen) => void;
   expanded: boolean;
   /** "Show full draft" / "Show less" (shown only when the text really is cut short). */
   onToggle?: () => void;
@@ -54,9 +62,8 @@ export function BodyWithGaps({
   // The form belongs to the text it was opened on. If that text changes from outside (a past
   // price tapped below the draft fills an earlier gap), the gaps shift under it, so the form
   // closes instead of putting the owner's answer into a different gap.
-  const [openOn, setOpenOn] = useState<{ index: number; body: string } | null>(null);
-  const open = openOn && openOn.body === body ? openOn.index : null;
-  const setOpen = (index: number | null) => setOpenOn(index === null ? null : { index, body });
+  const open = openGap && openGap.body === body ? openGap.index : null;
+  const setOpen = (index: number | null) => onOpenGap(index === null ? null : { index, body });
   const [value, setValue] = useState("");
   const gaps = findGaps(body);
   const folds = clamp && !gaps.length;

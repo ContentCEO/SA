@@ -474,7 +474,7 @@ test("price memory: past prices for similar jobs, and a tap fills only the price
   await expect(memory).toBeVisible();
   await expect(memory).toContainText("Only you see these.");
   await expect(card.getByRole("button", { name: "Fill in price" })).toBeVisible();
-  await expect(card.getByRole("note")).toContainText("Fill in 3 gaps to send");
+  await expect(card.getByRole("button", { name: "Fill in 3 gaps to send" })).toBeVisible();
   await expect(card.getByRole("button", { name: "Send reply" })).toHaveCount(0);
   // Amounts are visible text only — never in an aria-label (A9).
   await expect(page.locator('[aria-label*="$"]')).toHaveCount(0);
@@ -541,7 +541,7 @@ test("a [name]-style blank is a gap: a chip, never Ready, Send reply only once f
   await page.goto("/queue");
   const card = page.getByRole("article", { name: "Draft reply to Priya" });
   await expect(card.getByRole("button", { name: "Fill in their name" })).toBeVisible();
-  await expect(card.getByRole("note")).toContainText("Fill in 1 gap to send");
+  await expect(card.getByRole("button", { name: "Fill in 1 gap to send" })).toBeVisible();
   await expect(card.getByRole("button", { name: "Send reply" })).toHaveCount(0);
   await expect(card).not.toContainText("Ready");
 
