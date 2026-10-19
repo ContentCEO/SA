@@ -177,7 +177,7 @@ sets it, in `.env.example`).
 | `INNGEST_DEV`                                                                         | Local only                   | `1` = use the local Inngest dev server.                                                                                                                                                                                                                                                                                                                                     | —                                                                                                                                        | Local                                    |
 | `GMAIL_PUBSUB_TOPIC`, `GMAIL_PUSH_AUDIENCE`, `GMAIL_PUSH_SERVICE_ACCOUNT`             | No                           | Gmail instant notifications, checked by Pub/Sub's signed token; without them the 5-minute poll picks up mail.                                                                                                                                                                                                                                                               | §6a.                                                                                                                                     | Prod                                     |
 | `GMAIL_PUSH_VERIFICATION_TOKEN`                                                       | No (old way)                 | The old shared secret in the push URL. Accepted only while the two settings above are unset; remove it after switching.                                                                                                                                                                                                                                                     | —                                                                                                                                        | Prod (sensitive), during the switch only |
-| `RESEND_API_KEY`, `EMAIL_FROM`                                                        | No                           | Morning and monthly summaries, Gmail-access-lost emails, cost and Growth notices. Without both, nothing is emailed.                                                                                                                                                                                                                                                         | §7b.                                                                                                                                     | Prod (key sensitive)                     |
+| `RESEND_API_KEY`, `EMAIL_FROM`                                                        | No                           | Every app email: invites, "Your first drafts are ready", morning and monthly summaries, Gmail-access-lost alert and reminder, waitlist and trial emails, Davi's notices. Without both, nothing is emailed; until a domain is verified, only the Resend account's own address gets them (§7b).                                                                               | §7b.                                                                                                                                     | Prod (key sensitive)                     |
 | `STRIPE_SECRET_KEY`                                                                   | For payments                 | Checkout, billing portal, webhook, Connect Stripe in `/admin`.                                                                                                                                                                                                                                                                                                              | §7c.                                                                                                                                     | Prod (sensitive)                         |
 | `STRIPE_WEBHOOK_SECRET`                                                               | No                           | Overrides the signing secret Connect Stripe stores. Leave unset in Vercel (a stale test value breaks every live webhook).                                                                                                                                                                                                                                                   | `stripe listen` locally.                                                                                                                 | Local only                               |
 | `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`                                             | No                           | Text alerts to the owner's own phone (both plus one sender below).                                                                                                                                                                                                                                                                                                          | §6c.                                                                                                                                     | Prod (token sensitive)                   |
@@ -511,17 +511,36 @@ pnpm invite owner@shop.com electrical "note for Davi"
 
 Runs against whatever `DATABASE_URL` is in `.env.local`. Day to day, use `/admin` → Invite an owner.
 
-## 7b. Morning summary email (Resend)
+## 7b. App emails (Resend)
 
-The digest is sent through Resend's HTTP API (`src/lib/email.ts`). Without `RESEND_API_KEY` and
-`EMAIL_FROM`, nothing is sent — the job reports "not configured" and tries again next hour.
+Every email the app sends goes through Resend's HTTP API (`src/lib/email.ts`). Without
+`RESEND_API_KEY` and `EMAIL_FROM`, nothing is sent — each job reports "not configured" and tries
+again on its next run.
+
+Until a domain is verified, `onboarding@resend.dev` only delivers to the Resend account's own
+address, so these never reach anyone else: the invite email with the sign-in link
+(`src/server/invite-email.ts`), "Your first drafts are ready to check"
+(`src/server/first-week.ts`), the morning and monthly summaries, "Squared Away lost access to your
+Gmail" and its reminder (`src/server/alerts.ts`), and "You're on the Squared Away list"
+(`src/server/waitlist-emails.ts`); the trial emails and the Growth confirmation too. Davi's own
+notices reach him only if the Resend account uses `ADMIN_EMAIL`. Owner-facing emails carry
+`Reply-To: SUPPORT_EMAIL` (else `ADMIN_EMAIL`), so that address needs a real inbox.
 
 1. resend.com → API Keys → Create API Key (sending access is enough).
-2. Until a domain is verified, Resend only delivers to the email address on the Resend account,
-   from `onboarding@resend.dev`. For testing: `EMAIL_FROM="Squared Away <onboarding@resend.dev>"`.
-3. For real owners: resend.com → Domains → add the production domain, add the DNS records it shows,
-   then set `EMAIL_FROM="Squared Away <hello@thatdomain>"`.
-4. Put both in Vercel (Production) and redeploy.
+2. For testing: `EMAIL_FROM="Squared Away <onboarding@resend.dev>"`.
+3. For real owners: resend.com → Domains → add a subdomain such as `mail.<domain>` (Resend
+   recommends a subdomain), add every DNS record it shows, and a DMARC TXT record
+   `_dmarc.<domain>` = `v=DMARC1; p=none; rua=mailto:<an address Davi reads>`. Then set
+   `EMAIL_FROM="Squared Away <hello@mail.<domain>>"` and `SUPPORT_EMAIL` to an address with a
+   real inbox.
+4. Put them in Vercel (Production) and redeploy.
+5. Check: Resend shows Verified; /admin → Email says "Sending from …"; an invite to a second Gmail
+   address arrives and Gmail's Show original reads SPF, DKIM and DMARC PASS; then the /admin
+   catch-up buttons re-send the waitlist confirmations and invites that never went out
+   (`docs/LAUNCH.md` step 6).
+
+Resend's free plan: 100 emails a day, 3,000 a month (resend.com/pricing). The morning email alone
+is about one email per active shop per day.
 
 The digest carries counts and categories only — no customer names, subjects or email text.
 

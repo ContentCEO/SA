@@ -78,7 +78,7 @@ waits for it like everyone else; there's usually nothing to fix on our side.
   `/admin` → the **Email** box shows a refusal count ("Refused in the last 7 days: N") or "Test
   sender: emails only reach the Resend account's own address."
 - Where: resend.com → **Emails** (each email's status) and **Domains**.
-- Most likely: the domain isn't verified yet ([LAUNCH.md step 6](LAUNCH.md#6-morning-emails-from-your-own-domain-resend)),
+- Most likely: the domain isn't verified yet ([LAUNCH.md step 6](LAUNCH.md#6-emails-from-your-own-domain-resend)),
   the free plan's daily or monthly limit is reached, or Resend refused one address.
 - What to do: verify the domain; move to a paid Resend plan if the limit is the problem; for one
   refused address, check it with the owner. `/admin` → Email → **Send me a test email** shows

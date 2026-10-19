@@ -27,7 +27,7 @@ Contents:
 - [3. Change the passwords that were pasted in chat](#3-change-the-passwords-that-were-pasted-in-chat)
 - [4. Settings in Vercel, per environment](#4-settings-in-vercel-per-environment)
 - [5. Support email and the production domain](#5-support-email-and-the-production-domain)
-- [6. Morning emails from your own domain (Resend)](#6-morning-emails-from-your-own-domain-resend)
+- [6. Emails from your own domain (Resend)](#6-emails-from-your-own-domain-resend)
 - [7. Stripe live mode](#7-stripe-live-mode)
   - [7g. Customer emails, retries and your name on card statements](#7g-customer-emails-retries-and-your-name-on-card-statements)
 - [8. Error alerts (Sentry, optional)](#8-error-alerts-sentry-optional)
@@ -836,27 +836,50 @@ within 5 business days and help; until then these steps are still the right way 
    owner that plainly, and ask the engineers if a per-sender delete is wanted.
 5. Reply to the person in writing with what was done, and keep the note of the date.
 
-## 6. Morning emails from your own domain (Resend)
+## 6. Emails from your own domain (Resend)
 
-Until this is done, morning and monthly summaries only reach the Resend account's own address,
-and the "You're on the list" email never reaches people who join the waitlist (your own "New
-waitlist sign-up" notice still arrives; people who joined before this step get it when you tap
-the catch-up button below). The pricing cards list "morning summary" for every plan:
-this step is what makes that true for owners other than you.
+Until this is done, these emails reach only the Resend account's own address, and nobody else gets
+them: the invite email with the sign-in link ("You're in: your Squared Away invite"), "Your first
+drafts are ready to check", the morning and monthly summaries, "Squared Away lost access to your
+Gmail" and its reminder, and "You're on the Squared Away list" for people who join the waitlist.
+The trial emails wait on it too. Your own notices (new waitlist sign-ups, jobs stopped, costs)
+reach you only if your Resend account uses the same address as `ADMIN_EMAIL`. The pricing cards
+list "morning summary" for every plan: this step is what makes that true for owners other than
+you.
 
-- Where: resend.com → **Domains** → Add domain → add the DNS records it shows at your registrar.
-  Steps in [SETUP.md](SETUP.md) §7b.
-- Paste: Vercel → `EMAIL_FROM` (Production) = `Squared Away <hello@your domain>` (any address on
-  the verified domain) → Redeploy. `RESEND_API_KEY` stays as it is; check it's in the `sa`
-  project, not `contractorflow`.
-- Worked when: Resend → Domains shows **Verified**, and the next morning summary to an owner other
-  than you shows as **Delivered** in Resend → Emails. A test sign-up on the waitlist with a
-  second address of yours gets "You're on the Squared Away list".
-- Then catch up: `/admin` → the **Email** box says "Sending from <your address>" (tap **Send me a
-  test email** once). Then `/admin` → Waitlist → **Send the list email to people who never got
-  it** (it shows only once the sender is real); tap it until it says 0 to go (8 per tap). Then,
-  under the invites, tap **Email the sign-in link again** on each invite that never got its email.
-  Worked when: the catch-up button is gone and the Email box shows no refusals this week.
+Resend's free plan sends at most 100 emails a day and 3,000 a month
+([resend.com/pricing](https://resend.com/pricing)). The morning email alone is about one email
+per active shop per day, so plan the paid plan before you get near 100 shops (see
+[Check your free plans now](#resend-the-apps-emails)).
+
+- Where: resend.com → **Domains** → **Add domain**. Use a subdomain such as
+  `mail.<your domain>` (Resend recommends sending from a subdomain, so its reputation is kept
+  apart from your own mail). More in [SETUP.md](SETUP.md) §7b.
+- Add records at your domain registrar's DNS page:
+  1. Every record Resend shows for the subdomain, exactly as shown.
+  2. A DMARC record: type TXT, name `_dmarc.<your domain>`, value
+     `v=DMARC1; p=none; rua=mailto:<an address you read>`. `p=none` only asks for reports; it
+     never blocks mail.
+- Paste in Vercel (Production), then **Redeploy**:
+  - `EMAIL_FROM` = `Squared Away <hello@mail.<your domain>>`. `RESEND_API_KEY` stays as it is;
+    check it's in the `sa` project, not `contractorflow`.
+  - `SUPPORT_EMAIL` = an address with a real inbox that you read (step 5). Owners' replies to any
+    of these emails go to it (to `ADMIN_EMAIL` while it isn't set).
+- Worked when:
+  1. Resend → Domains shows **Verified**.
+  2. `/admin` → the **Email** box says "Sending from hello@mail.<your domain>." Tap **Send me a
+     test email** once.
+  3. Invite yourself at a second Gmail address of yours in `/admin`: the invite email arrives
+     there.
+  4. In that Gmail, open the invite → ⋮ → **Show original**: SPF, DKIM and DMARC all say
+     **PASS**.
+  5. The next morning summary to an owner other than you shows as **Delivered** in Resend →
+     Emails.
+- Then catch up on what never went out: `/admin` → Waitlist → **Send the list email to people
+  who never got it** (it shows only once the sender is real); tap it until it says 0 to go (8 per
+  tap). Then, under the invites, tap **Email the sign-in link again** on each invite that never
+  got its email. Worked when: the catch-up button is gone and the Email box shows no refusals
+  this week.
 
 ## 7. Stripe live mode
 
@@ -1218,7 +1241,7 @@ Waiting on you from that review (nothing here is built or changed until you say 
 - The domain ([step 5](#5-support-email-and-the-production-domain)) and `SUPPORT_EMAIL`; a
   business phone number for support, if you want one.
 - Your photo for the About section, and the legal answers that let the "Draft" banners come off.
-- Verify the Resend domain ([step 6](#6-morning-emails-from-your-own-domain-resend)), so the
+- Verify the Resend domain ([step 6](#6-emails-from-your-own-domain-resend)), so the
   pricing cards' "morning summary" is true for owners and waitlist confirmations reach people.
   The pricing cards weren't changed.
 - Turn on Web Analytics ([step 4](#4-settings-in-vercel-per-environment)) and let search engines
@@ -1252,7 +1275,7 @@ Waiting on you from that review (nothing here is built or changed until you say 
   still here"). Day 1 is the "your first drafts are ready" email that already existed. Counts
   only, at or after the owner's morning-email hour in their own time zone, never at night, each
   once. Every one has a **Stop these emails** link (and a switch in Settings → Morning email).
-  Like every email from the app they need Resend ([step 6](#6-morning-emails-from-your-own-domain-resend)).
+  Like every email from the app they need Resend ([step 6](#6-emails-from-your-own-domain-resend)).
 - **A lower plan pauses extra Gmail addresses, and the owner picks which.** When a plan covers
   fewer Gmail addresses than are connected (your plan change in `/admin`, or a cheaper plan
   chosen on Stripe's page), the oldest-connected stay on and the rest are paused: nothing in
@@ -1642,7 +1665,7 @@ Nothing below is switched on or changed until you say so.
   - The "Buzzes you when it matters" card is left off until phone notifications are on (the
     VAPID keys, [step 9](#9-phone-notifications-vapid-keys)). Add it back then?
   - The homepage still says "morning summary", but until the Resend domain is verified
-    ([step 6](#6-morning-emails-from-your-own-domain-resend)) it only reaches the Resend
+    ([step 6](#6-emails-from-your-own-domain-resend)) it only reaches the Resend
     account's own address. Keep it, or take it off until then?
   - The Autopilot card was dropped to keep nine cards (autopilot is described three other times
     on the page). Fine, or swap it back in for another card?

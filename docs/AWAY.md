@@ -17,7 +17,7 @@ As long as the background-job plan (Inngest) and the database plan (Neon) have r
 - Owners whose setup is paid send their own replies with **Send reply**, and autopilot keeps
   sending for owners who switched it on (it needs a finished setup call, so nobody new gets it).
 - Follow-up nudges are drafted, and the morning and monthly emails, trial emails and alerts go out
-  (once Resend is set up, [LAUNCH.md step 6](LAUNCH.md#6-morning-emails-from-your-own-domain-resend)).
+  (once Resend is set up, [LAUNCH.md step 6](LAUNCH.md#6-emails-from-your-own-domain-resend)).
 - An owner can choose a plan and pay on Stripe's page: Stripe's signed notice turns sending on with
   nobody tapping anything.
 - Trials end on their own after three days and the account becomes read-only. Nothing is deleted.

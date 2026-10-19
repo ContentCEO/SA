@@ -4031,10 +4031,13 @@ acknowledgedOn })`; invoice reminders ask when they expect to pay, never an easy
   Production, then redeploy. Off until then. The engineers can generate and add them if Davi says
   so.
 - `ANTHROPIC_API_KEY` repo secret for the "Prompt evals" action (baseline still empty).
-- Resend: verify the production domain in Resend and switch `EMAIL_FROM` off `onboarding@resend.dev`
-  (until then the digest, the monthly summary and the waitlist confirmation only reach the Resend
-  account's own address). This is also what makes the pricing cards' "morning summary" true for
-  owners (the cards weren't changed). LAUNCH.md step 6.
+- Resend: verify a sending subdomain (`mail.<domain>`) in Resend with a DMARC record, switch
+  `EMAIL_FROM` off `onboarding@resend.dev` and set `SUPPORT_EMAIL` to a real inbox (it is the
+  Reply-To). Until then the invite email, "Your first drafts are ready to check", the morning and
+  monthly summaries, "Squared Away lost access to your Gmail" and its reminder, and "You're on
+  the Squared Away list" only reach the Resend account's own address. This is also what makes the
+  pricing cards' "morning summary" true for owners (the cards weren't changed). LAUNCH.md step 6
+  ("Emails from your own domain (Resend)"), SETUP.md §7b ("App emails (Resend)").
 - **Outside review (2026-10-15), his part** (LAUNCH.md step 13 "Outside review"): everything in
   its "Your calls" (trial side door — app/homepage now say "won't send anything to a customer
   during the trial", `docs/terms.md` and the policy's trial sentence still say "sending to
