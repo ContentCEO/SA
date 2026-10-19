@@ -47,6 +47,7 @@ export async function joinWaitlistAction(
     email: raw.email ?? "",
     phone: raw.phone || null,
     trade: raw.trade || null,
+    tradeOther: raw.tradeOther || null,
     teamSize: raw.teamSize || null,
     note: raw.note || null,
     referralCode: raw.ref || null,

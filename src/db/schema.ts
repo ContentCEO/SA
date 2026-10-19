@@ -119,6 +119,8 @@ export const waitlist = pgTable("waitlist", {
   name: text("name").notNull(),
   phone: text("phone"),
   trade: tradeEnum("trade"),
+  /** Check 41 P4: what "Another trade" means, as they typed it (max 60). Never from Gmail. */
+  tradeOther: text("trade_other"),
   teamSize: text("team_size"),
   note: text("note"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -143,6 +145,8 @@ export const workspaces = pgTable(
       .references(() => users.id, { onDelete: "cascade" }),
     businessName: text("business_name"),
     trade: tradeEnum("trade"),
+    /** Check 41 P4: the owner's own words for "Something else" (max 60); the drafter's "Trade:". */
+    tradeOther: text("trade_other"),
     /**
      * Round 2 (TW A4): up to two more trades the shop does besides `trade` ("plumbing and
      * heating"). Values from TRADES, checked in code (`cleanExtraTrades`); never the main one.

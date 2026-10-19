@@ -51,6 +51,7 @@ export async function requestGrowthCallAction(
     phone: raw.phone,
     email: raw.email,
     trade: raw.trade || null,
+    tradeOther: raw.tradeOther || null,
     services,
     note: raw.note || null,
     referralCode: raw.ref || null,

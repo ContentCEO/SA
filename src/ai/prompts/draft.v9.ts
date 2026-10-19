@@ -24,6 +24,7 @@
  * - Check 43 P1: the "Who is writing" rule stays as draft.v8 wrote it (Check 48 P1: the owner
  *   answers an "is this a bot?" question; the draft never denies an assistant helped) — a draft
  *   answering it with a fixed honesty line was not adopted (see docs/notes/w2-prompts.md).
+ * - Check 41 P4 (step 8): a "Something else" shop's own words for its trade on the "Trade:" line.
  * - Check 36 P8 / 37 P4 / 39 P6 (step 3 of the group): the plumbing, electrical and HVAC trade
  *   files were rewritten (data in the cached block; no customer is asked whether a permit is
  *   involved), with Massachusetts' program names in prompts/states/ma.ts.
@@ -67,8 +68,22 @@ export {
 
 export const DRAFT_PROMPT_VERSION = "draft.v9";
 
-/** draft.v8's business facts, plus the owner's state (Check 44 P1 + 45 P2). */
-export type WorkspaceContext = WorkspaceContextV8 & { state?: string | null };
+/**
+ * draft.v8's business facts, plus the owner's state (Check 44 P1 + 45 P2) and, for "Something
+ * else", the trade in the owner's own words (Check 41 P4).
+ */
+export type WorkspaceContext = WorkspaceContextV8 & {
+  state?: string | null;
+  tradeOther?: string | null;
+};
+
+/** Check 41 P4: owner-typed, so one plain line of at most 60 characters. */
+const tradeOtherLine = (v: string | null | undefined) =>
+  (v ?? "")
+    .replace(/[\r\n\t<>]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 60);
 
 const SIGNOFF_WORDS =
   /\b(thanks?|thank you|many thanks|best|all the best|regards|kind regards|warm regards|cheers|talk soon|sincerely|take care|warmly|later|see you|yours)\b/gi;
@@ -102,6 +117,9 @@ export function ownerFirstName(
 export function workspaceBlock(c: WorkspaceContext): string {
   let block = workspaceBlockV8(c);
   const first = ownerFirstName(c.voice?.signoffStyle, c.signature);
+  // Check 41 P4: "Trade: pest control" for a "Something else" shop that said which trade.
+  const typed = c.trade === "other" ? tradeOtherLine(c.tradeOther) : "";
+  if (typed) block = block.replace(/^- Trade: .*$/m, () => `- Trade: ${typed}`);
   block = block.replace(
     /^(- Name: .*)$/m,
     (m) => `${m}\n- Owner's first name: ${first ?? "not given"}`,

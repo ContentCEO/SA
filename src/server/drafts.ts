@@ -882,7 +882,13 @@ export function scoreDraft(
  */
 export async function workspaceContext(
   workspaceId: string,
-  ws: { businessName: string | null; trade: string | null; extraTrades?: string[] | null },
+  ws: {
+    businessName: string | null;
+    trade: string | null;
+    extraTrades?: string[] | null;
+    /** Check 41 P4: the owner's own words for "Something else". */
+    tradeOther?: string | null;
+  },
   now: Date = new Date(),
 ): Promise<DraftContext> {
   const [profile] = await db()
@@ -897,6 +903,7 @@ export async function workspaceContext(
     businessName: ws.businessName,
     trade: ws.trade,
     extraTrades: ws.extraTrades ?? [],
+    tradeOther: ws.tradeOther ?? null,
     services: profile?.services ?? null,
     serviceArea: profile?.serviceArea ?? null,
     hours: profile?.hours ?? null,

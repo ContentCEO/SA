@@ -323,3 +323,20 @@ and salt the walk" is Plowing); landscaping keeps "Snow and plowing". Every form
 (main and extra trades) show "Snow plowing" with no form change. No prompt version: the trade file
 is data in draft.v9's block. Eval cases s7-* (pre-season sign-up, storm-night "are you coming?",
 per-push bill). **Evals not run.**
+
+## Step 8: "Another trade" says which trade (Check 41 P4)
+
+**Migration 0078 `trade_other`** (additive): `waitlist.trade_other`, `workspaces.trade_other`
+(text, nullable). `src/lib/trade-other.ts`: `tradeOtherField` (optional, one plain line — no
+newlines, tabs or angle brackets — max 60, "Keep it under 60 characters."), `tradeOtherFor`
+(stored only when the trade is "other"; a listed trade clears it). The waitlist, the Growth call
+form and the business profile form (setup and Settings) show `OtherTradeField` ("Which trade?
+(optional)", hint "For example lawn care or pest control. Up to 60 letters.", 44px) only while the
+trade select says "other" (a client component watching the form's own select). /admin waitlist
+rows (app and Growth-only) show "Something else: pest control". It is typed by the person, never
+derived from Gmail. draft.v9's business block uses it on the "Trade:" line for an "other" shop
+(one line, 60 characters; unreleased v9, so no new version). `other.ts` already lost its permit
+question in step 3, so "(only for building work)" isn't needed. **Not built:** carrying the
+waitlist's typed trade into the workspace at first sign-in (the owner types it again in setup);
+the /admin workspace card doesn't show it (the admin-no-content fence keeps owner-typed profile
+text off that card).

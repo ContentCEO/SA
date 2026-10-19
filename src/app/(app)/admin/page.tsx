@@ -1,4 +1,5 @@
 import Link from "next/link";
+import type { Trade } from "@/config/trades";
 import { noticeText } from "@/lib/notice-text";
 import { describeSource } from "@/server/source-rules";
 import type { Metadata } from "next";
@@ -248,12 +249,8 @@ function WaitlistEntry({
       <span className="break-all">{w.email}</span>
       <span className="text-sm">
         {(facts.app
-          ? [
-              w.trade ? tradeLabel[w.trade] : null,
-              w.teamSize ? `${w.teamSize} people` : null,
-              w.phone,
-            ]
-          : [w.trade ? tradeLabel[w.trade] : null]
+          ? [tradeWords(w), w.teamSize ? `${w.teamSize} people` : null, w.phone]
+          : [tradeWords(w)]
         )
           .filter(Boolean)
           .join(" · ")}
@@ -552,6 +549,14 @@ function WorkspaceCard({
       ) : null}
     </article>
   );
+}
+
+/** Check 41 P4: "Something else: pest control" when they typed which trade (they typed it). */
+function tradeWords(w: { trade: Trade | null; tradeOther?: string | null }): string | null {
+  if (!w.trade) return null;
+  return w.trade === "other" && w.tradeOther
+    ? `${tradeLabel.other}: ${w.tradeOther}`
+    : tradeLabel[w.trade];
 }
 
 export default async function AdminPage(props: PageProps<"/admin">) {

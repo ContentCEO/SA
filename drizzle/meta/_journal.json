@@ -547,6 +547,13 @@
       "when": 1792375306481,
       "tag": "0077_snow_trade",
       "breakpoints": true
+    },
+    {
+      "idx": 78,
+      "version": "7",
+      "when": 1792375598461,
+      "tag": "0078_trade_other",
+      "breakpoints": true
     }
   ]
 }

@@ -19,10 +19,13 @@ import { useFocusFirstError } from "./use-focus-first-error";
 import { useKeptForm } from "./use-kept-form";
 import { fingerprintOf } from "@/lib/kept-text";
 import { SelectField, TextArea, TextField } from "./field";
+import { OtherTradeField } from "./other-trade-field";
 
 export type ProfileDefaults = {
   businessName: string | null;
   trade: string | null;
+  /** Check 41 P4: what "Something else" means, in the owner's words. */
+  tradeOther?: string | null;
   /** Up to two more trades (round 2, TW A4). */
   extraTrades: string[];
   services: string | null;
@@ -442,6 +445,12 @@ export function BusinessProfileForm({
         options={trades}
         defaultValue={v("trade", defaults.trade) as string}
         error={e.trade}
+      />
+      {/* Check 41 P4: the owner's own words for "Something else". */}
+      <OtherTradeField
+        initialTrade={v("trade", defaults.trade) as string}
+        defaultValue={v("tradeOther", defaults.tradeOther ?? null) as string | null}
+        error={e.tradeOther}
       />
       <TextArea
         name="services"
