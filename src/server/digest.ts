@@ -14,6 +14,8 @@ import {
 } from "@/db/schema";
 import { appUrl } from "@/lib/app-url";
 import { sendEmail, type EmailSender, emailErrorFields } from "@/lib/email";
+import { BRAND } from "@/config/brand";
+import { emailHtml, emailParagraph, escapeHtml } from "@/lib/email-layout";
 import {
   byAutopilot,
   footerLine,
@@ -289,42 +291,49 @@ export function buildDigest(
     siteConfig.copyright,
   ].join("\n");
 
-  const esc = (s: string) =>
-    s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-  const para = (l: string) =>
-    `<p style="margin:0 0 12px;font-size:17px;line-height:1.45">${esc(l)}</p>`;
+  const esc = escapeHtml;
+  const para = emailParagraph;
   const needsLink = (l: { href: string; text: string }) =>
-    `<p style="margin:0"><a href="${esc(l.href)}" style="display:block;padding:12px 0;color:#1b1b1b;font-size:17px;font-weight:700;line-height:1.35;text-decoration:underline">${esc(l.text)}</a></p>`;
+    `<p style="margin:0"><a href="${esc(l.href)}" style="display:block;padding:12px 0;color:${BRAND.charcoal};font-size:17px;font-weight:700;line-height:1.35;text-decoration:underline">${esc(l.text)}</a></p>`;
   const needsHtml = needsNothing
     ? para(NOTHING_NEEDS_YOU)
     : [
         ...header.lines.map(needsLink),
         header.more
-          ? `<p style="margin:0"><a href="${esc(links.queueUrl)}" style="display:block;padding:12px 0;color:#5e5d59;font-size:16px;line-height:1.35">${esc(moreInQueue(header.more))}</a></p>`
+          ? `<p style="margin:0"><a href="${esc(links.queueUrl)}" style="display:block;padding:12px 0;color:${BRAND.slate};font-size:16px;line-height:1.35">${esc(moreInQueue(header.more))}</a></p>`
           : "",
         offQueue ? needsLink(offQueue) : "",
         notAnswered ? needsLink(notAnswered) : "",
       ].join("\n");
-  const html = `<!doctype html><html><body style="margin:0;background:#f7f6f3;color:#1b1b1b;font-family:Inter,Helvetica,Arial,sans-serif">
-<div style="max-width:480px;margin:0 auto;padding:24px 16px">
-<p style="margin:0;font-family:Georgia,serif;font-style:italic;font-size:24px">good morning,</p>
-<p style="margin:0 0 20px;font-weight:900;font-size:30px;letter-spacing:-0.02em">${esc(waiting ? `${plural(waiting, "thing")} waiting.` : "all clear.")}</p>
-${trial ? `<p style="margin:0 0 20px;font-size:17px;line-height:1.45;font-weight:700">${esc(trial.text)} <a href="${esc(trial.href)}" style="color:#1b1b1b">Choose a plan</a>.</p>` : ""}
-<p style="margin:0 0 4px;font-weight:900;font-size:19px">Needs you</p>
-${needsHtml}
-<div style="margin:20px 0 0">
-${lines.map(para).join("\n")}
-</div>
-${money.length ? `<div style="margin:20px 0 0;padding:16px 0 0;border-top:1px solid #1b1b1b">\n${money.map(para).join("\n")}\n<p style="margin:0;font-size:14px;color:#5e5d59">${esc(MONEY_SO_FAR_NOTE)}</p>\n</div>` : ""}
-${lastWeek.length ? `<div style="margin:20px 0 0;padding:16px 0 0;border-top:1px solid #1b1b1b">\n${lastWeek.map(para).join("\n")}\n</div>` : ""}
-${
-  onQueue
-    ? `<p style="margin:24px 0"><a href="${esc(links.queueUrl)}" style="display:inline-block;background:#1b1b1b;color:#efeeea;text-decoration:none;font-weight:700;font-size:17px;padding:14px 22px;border-radius:10px">Open your queue</a></p>`
-    : ""
-}
-<p style="margin:24px 0 4px;font-size:14px;color:#5e5d59">${esc(footer)} <a href="${esc(links.settingsUrl)}" style="color:#5e5d59">Change or turn off this email</a>.</p>
-<p style="margin:0;font-size:14px;color:#5e5d59">${esc(siteConfig.copyright)}</p>
-</div></body></html>`;
+  // Check 18 P7 / Check 7 P10: the one email shell (brandEmail's), with the summary's own
+  // sections as its body. Every word, link and the subject are as before.
+  const section = (inner: string) =>
+    `<div style="margin:20px 0 0;padding:16px 0 0;border-top:1px solid ${BRAND.charcoal}">\n${inner}\n</div>`;
+  const html = emailHtml({
+    serif: "good morning,",
+    heavy: waiting ? `${plural(waiting, "thing")} waiting.` : "all clear.",
+    lines: [],
+    preheader: subject,
+    htmlBody: [
+      trial
+        ? `<p style="margin:0 0 20px;font-size:17px;line-height:1.45;font-weight:700">${esc(trial.text)} <a href="${esc(trial.href)}" style="color:${BRAND.charcoal}">Choose a plan</a>.</p>`
+        : "",
+      `<p style="margin:0 0 4px;font-weight:900;font-size:19px">Needs you</p>`,
+      needsHtml,
+      `<div style="margin:20px 0 0">\n${lines.map(para).join("\n")}\n</div>`,
+      money.length
+        ? section(
+            `${money.map(para).join("\n")}\n<p style="margin:0;font-size:14px;color:${BRAND.slate}">${esc(MONEY_SO_FAR_NOTE)}</p>`,
+          )
+        : "",
+      lastWeek.length ? section(lastWeek.map(para).join("\n")) : "",
+    ]
+      .filter(Boolean)
+      .join("\n"),
+    ...(onQueue ? { button: { label: "Open your queue", url: links.queueUrl } } : {}),
+    footer,
+    footerLink: { label: "Change or turn off this email", url: links.settingsUrl },
+  });
 
   // "No emails need a decision from you today." on its own doesn't make a quiet day worth an email.
   return {

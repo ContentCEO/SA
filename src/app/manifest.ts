@@ -1,4 +1,5 @@
 import type { MetadataRoute } from "next";
+import { BRAND } from "@/config/brand";
 
 /**
  * Makes the site installable as an app (Android "Install", iPhone "Add to
@@ -14,8 +15,8 @@ export default function manifest(): MetadataRoute.Manifest {
     scope: "/",
     display: "standalone",
     orientation: "portrait",
-    background_color: "#F7F6F3",
-    theme_color: "#1B1B1B",
+    background_color: BRAND.paper,
+    theme_color: BRAND.charcoal,
     categories: ["business", "productivity"],
     lang: "en-US",
     dir: "ltr",

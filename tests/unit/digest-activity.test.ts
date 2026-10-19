@@ -218,8 +218,9 @@ describe("the morning email stays true for autopilot and trial shops (Check 18 P
       "Nothing is sent without your okay, except the kinds of email you put on autopilot. Change or turn off this email: https://app/settings",
     );
     expect(on.html).toContain(
-      'Nothing is sent without your okay, except the kinds of email you put on autopilot. <a href="https://app/settings"',
+      "Nothing is sent without your okay, except the kinds of email you put on autopilot.</p>",
     );
+    expect(on.html).toContain('href="https://app/settings"');
     expect(on.html).not.toContain("Nothing is sent without your okay.");
   });
 

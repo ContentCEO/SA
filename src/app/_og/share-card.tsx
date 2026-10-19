@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { ImageResponse } from "next/og";
+import { BRAND } from "@/config/brand";
 
 export const SHARE_SIZE = { width: 1200, height: 630 };
 
@@ -27,8 +28,8 @@ export async function shareCard(o: {
         display: "flex",
         flexDirection: "column",
         justifyContent: "space-between",
-        background: "#1B1B1B",
-        color: "#EFEEEA",
+        background: BRAND.charcoal,
+        color: BRAND.offwhite,
         padding: "72px 80px",
       }}
     >
@@ -58,7 +59,7 @@ export async function shareCard(o: {
           {o.heavy}
         </span>
       </div>
-      <span style={{ fontFamily: "Inter Tight", fontWeight: 900, fontSize: 30, color: "#9A9994" }}>
+      <span style={{ fontFamily: "Inter Tight", fontWeight: 900, fontSize: 30, color: BRAND.ash }}>
         {o.line}
       </span>
     </div>,

@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { ImageResponse } from "next/og";
+import { BRAND } from "@/config/brand";
 
 /**
  * Home-screen icons for the installable app, drawn from the brand (charcoal
@@ -15,8 +16,8 @@ import { ImageResponse } from "next/og";
  * the renderer used its own regular-weight face and fontWeight 900 did nothing.
  */
 /** The brand's two tones, used by every icon here. */
-const ICON_INK = "#1B1B1B";
-const ICON_PAPER = "#EFEEEA";
+const ICON_INK = BRAND.charcoal;
+const ICON_PAPER = BRAND.offwhite;
 
 /**
  * `badge-96` (Check 46 P3) is the small status-bar icon on Android: only its shape counts, so

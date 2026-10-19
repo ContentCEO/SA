@@ -6,6 +6,7 @@ import { db } from "@/db";
 import { appSettings, usage, users, workspaces, type Workspace } from "@/db/schema";
 import { effectiveStatus } from "./lifecycle";
 import { sendEmail, type EmailSender, emailErrorFields } from "@/lib/email";
+import { emailHtml } from "@/lib/email-layout";
 import { appUrl } from "@/lib/app-url";
 import { COST_ALERT_SHARE, costAlertDue, costLine } from "./admin-cost-rules";
 import { freeMonthRunning } from "./referral-rules";
@@ -115,22 +116,25 @@ export async function sendCostAlerts(
       const [seen] = await db().select().from(appSettings).where(eq(appSettings.key, key));
       if (seen) continue;
       const share = Math.round((r.costShare ?? 0) * 100);
-      const text = [
+      const lines = [
         `${r.label}: AI cost this month is ${formatDollars(r.costCents)}, ${share}% of their ${formatDollars(r.revenueCents)} plan (alert line: ${Math.round(COST_ALERT_SHARE * 100)}%).`,
         `Margin so far: ${formatDollars(r.marginCents)}. Busiest day: ${r.busiestDayCalls} of ${r.cap} calls.`,
-        `See ${appUrl("/admin/costs")}`,
-      ].join("\n\n");
+      ];
+      const text = [...lines, `See ${appUrl("/admin/costs")}`].join("\n\n");
+      // Check 18 P7: the one email shell (the text part is unchanged).
+      const html = emailHtml({
+        serif: "cost alert,",
+        heavy: `${share}% of plan.`,
+        lines,
+        preheader: `AI cost alert: ${share}% of plan`,
+        button: { label: "See costs", url: appUrl("/admin/costs") },
+        footer: "Squared Away sends this on its own. Nothing from anyone's email.",
+      });
       const result = await send({
         to,
         subject: `AI cost alert: ${r.label} at ${share}% of plan`,
         text,
-        html: text
-          .split("\n\n")
-          .map(
-            (p) =>
-              `<p>${p.replace(/[<>&]/g, (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;" })[c]!)}</p>`,
-          )
-          .join(""),
+        html,
         idempotencyKey: `cost-${r.workspaceId}-${month}`,
         replyTo: null,
       });

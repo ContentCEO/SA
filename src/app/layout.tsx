@@ -5,6 +5,7 @@ import { Announcer } from "@/components/app/announcer";
 import { SupportEmailProvider } from "@/components/app/help-line";
 import { ServiceWorker } from "@/components/app/service-worker";
 import { appUrl } from "@/lib/app-url";
+import { BRAND } from "@/config/brand";
 
 /*
  * Fonts are self-hosted from ./_fonts (see the README there), so a build never calls Google:
@@ -85,7 +86,7 @@ export const viewport: Viewport = {
   // Check 8 P2: without "cover", iPhone reports every safe-area inset as 0, so the installed
   // app's tab bar sat on the home-bar strip. Each layout pads for the insets itself.
   viewportFit: "cover",
-  themeColor: "#1B1B1B",
+  themeColor: BRAND.charcoal,
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
