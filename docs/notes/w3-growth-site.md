@@ -32,3 +32,11 @@ Both ad blurbs now say "in and around the towns you work in"; a code comment nam
 Housing special ad category. New FAQ "Can my Facebook ads show only in my town?" (factual, from
 Meta's rules — show Davi). The form's note hint "The towns you work in…" is about the
 visitor's own towns, not ad reach, so it stays.
+
+## Step 3 (Check 2 P1 + Check 3 P7): banned words
+
+P1 items 1–4 were already done at the tip (every button is "Ask Davi to call me", "Sending…",
+no "find a time"); only the bans were missing. Now banned in every Growth source file and the
+rendered copy: "book a free call", "booking", "find a time", "first page", "page one", "#1",
+"number one", "more leads", "google screened", "license verified", and whole-word "rank".
+The current copy passes.

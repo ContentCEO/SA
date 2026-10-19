@@ -45,9 +45,30 @@ describe("Squared Away Growth copy", () => {
       expect(text).not.toMatch(/\$\s?\d/);
       expect(text).not.toMatch(/\bGC\b/);
       expect(text).not.toMatch(/can'?t send|cannot send|nothing can send|switched off entirely/i);
-      for (const banned of ["testimonial", "guarantee", "first group", "call booked"]) {
-        expect(text.toLowerCase()).not.toContain(banned);
+      for (const banned of [
+        "testimonial",
+        "guarantee",
+        "first group",
+        "call booked",
+        // Check 2 P1: nothing is booked; Davi calls them back, and that call is the free call.
+        "book a free call",
+        "booking",
+        "find a time",
+        // Check 3 P7: results we can't promise.
+        "first page",
+        "page one",
+        "#1",
+        "number one",
+        "more leads",
+        // Check 3 P7: Local Services badge names Google retired on 2025-10-20 ("Google
+        // Guaranteed" is caught by "guarantee" above).
+        "google screened",
+        "license verified",
+      ]) {
+        expect(text.toLowerCase(), banned).not.toContain(banned);
       }
+      // "rank" as a whole word only, so "frank" or "cranky" can't trip it.
+      expect(text).not.toMatch(/\brank(?:s|ed|ing)?\b/i);
     }
   });
 
@@ -197,5 +218,13 @@ describe("Check 2 P4 / Check 3 P2: ad reach matches Meta's housing rules", () =>
       (i) => i.q === "Can my Facebook ads show only in my town?",
     );
     expect(item?.a).toContain("at least 15 miles");
+  });
+});
+
+describe("Check 2 P1 / Check 3 P7: the banned list catches what it should", () => {
+  it("matches 'rank' only as a whole word", () => {
+    const rank = /\brank(?:s|ed|ing)?\b/i;
+    expect("We rank you first").toMatch(rank);
+    expect("Frank was cranky").not.toMatch(rank);
   });
 });
