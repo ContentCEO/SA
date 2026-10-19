@@ -1579,7 +1579,11 @@ describe("Davi hears about billing changes; the owner gets one confirmation (Che
     expect((await handleStripeWebhook(body, "good")).status).toBe(200);
     expect((await reload()).status).toBe("past_due");
     expect(fetchSpy).toHaveBeenCalled();
-    expect(logged).toHaveBeenCalledWith("billing_notice_failed", { error: "Error" });
+    // Check 18 P2: the Resend refusal's class name and status, never its body.
+    expect(logged).toHaveBeenCalledWith("billing_notice_failed", {
+      error: "ResendError",
+      status: 500,
+    });
   });
 });
 

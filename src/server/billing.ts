@@ -13,7 +13,7 @@ import {
 } from "@/db/schema";
 import { appUrl } from "@/lib/app-url";
 import { brandEmail } from "@/lib/email-layout";
-import { sendEmail, type EmailSender } from "@/lib/email";
+import { emailErrorFields, sendEmail, type EmailSender } from "@/lib/email";
 import { decryptSecret, encryptSecret } from "@/lib/crypto";
 import {
   cancelAtOf,
@@ -832,7 +832,7 @@ export async function notifyPaymentReceived(
       .onConflictDoNothing();
     return "sent";
   } catch (err) {
-    console.error("payment_notice_failed", { error: err instanceof Error ? err.name : "unknown" });
+    console.error("payment_notice_failed", emailErrorFields(err));
     return "failed";
   }
 }
@@ -874,7 +874,7 @@ export async function notifyBillingChange(
       .onConflictDoNothing();
     return "sent";
   } catch (err) {
-    console.error("billing_notice_failed", { error: err instanceof Error ? err.name : "unknown" });
+    console.error("billing_notice_failed", emailErrorFields(err));
     return "failed";
   }
 }
@@ -919,7 +919,7 @@ export async function sendSetupConfirmation(
     return "sent";
   } catch (err) {
     console.error("setup_confirmation_failed", {
-      error: err instanceof Error ? err.name : "unknown",
+      ...emailErrorFields(err),
     });
     return "failed";
   }

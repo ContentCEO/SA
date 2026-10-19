@@ -708,7 +708,7 @@ export default async function AdminPage(props: PageProps<"/admin">) {
     params.error === "waitlist_catchup_limit" ||
     params.error === "email_not_set_up" ||
     params.error === "invite_needs_confirm"
-      ? errors[params.error]
+      ? noticeText(errors, params.error)
       : noticeText(WAITLIST_GROWTH_ERRORS, code(params.error, "wl_"));
   // Payment messages show inside the Payments section (the page scrolls there), not at the top.
   const isStripe = (k: unknown) => typeof k === "string" && k.startsWith("stripe");
