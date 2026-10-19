@@ -215,6 +215,19 @@ test("settings: morning summary time and time zone are saved", async ({ page, co
 
   // Check 45 P1: the first signed-in page saves this browser's zone (it was never set).
   await page.goto("/settings");
+  // That save runs in the background (ZoneCapture); wait for it, or Morning email can render
+  // first with the default zone and its Save writes that back (a race in this test, not the app).
+  await expect
+    .poll(
+      async () =>
+        (
+          await testDb
+            .select({ tz: schema.businessProfiles.timeZone })
+            .from(schema.businessProfiles)
+            .where(eq(schema.businessProfiles.workspaceId, owner.workspaceId))
+        )[0]?.tz,
+    )
+    .toBe("America/Chicago");
   await page.getByRole("link", { name: /^Morning email/ }).click();
   await expect(page).toHaveURL(/\/settings\/morning-email$/);
   const section = page.getByRole("main");
