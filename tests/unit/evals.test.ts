@@ -246,17 +246,14 @@ describe("evaluation set (#46)", () => {
   const recorded = Boolean(
     (JSON.parse(readFileSync("tests/evals/baseline.json", "utf8")) as Baseline).recordedAt,
   );
-  it.skipIf(!recorded)(
-    "the saved eval record matches the prompts in use",
-    () => {
-      const b = JSON.parse(readFileSync("tests/evals/baseline.json", "utf8")) as Baseline;
-      const fix =
-        "Run pnpm eval --update-baseline (needs ANTHROPIC_API_KEY) and commit tests/evals/baseline.json.";
-      expect(b.recordedAt, fix).toBeTruthy();
-      expect(b.promptVersions, fix).toEqual({ ...ACTIVE });
-      expect(b.models, fix).toEqual({ ...models });
-    },
-  );
+  it.skipIf(!recorded)("the saved eval record matches the prompts in use", () => {
+    const b = JSON.parse(readFileSync("tests/evals/baseline.json", "utf8")) as Baseline;
+    const fix =
+      "Run pnpm eval --update-baseline (needs ANTHROPIC_API_KEY) and commit tests/evals/baseline.json.";
+    expect(b.recordedAt, fix).toBeTruthy();
+    expect(b.promptVersions, fix).toEqual({ ...ACTIVE });
+    expect(b.models, fix).toEqual({ ...models });
+  });
 
   it("a baseline file exists and is well-formed", () => {
     const b = JSON.parse(readFileSync("tests/evals/baseline.json", "utf8")) as Baseline;
