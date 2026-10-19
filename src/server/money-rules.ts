@@ -152,7 +152,7 @@ export function isMoneyToward(f: InvoiceFacts | null): boolean {
 /**
  * Check 12 P3: "the check is in the mail" holds the nudges for `SAID_SENT_WAIT_DAYS` from that
  * email; with no paid mark after that, the invoice is chaseable again. Pure; the SQL twin is
- * `saidSentHoldSql` (followups.ts).
+ * `saidSentHold` in `threadsToFollowUp` (followups.ts).
  */
 export function saidSentBlocksNudge(invoice: InvoiceFacts | null, now: Date): boolean {
   if (!invoice || invoice.status !== "said_sent" || !invoice.said_sent_at) return false;
@@ -598,7 +598,12 @@ function settled(f: InvoiceFacts): InvoiceFacts {
   const { amount_paid_now, other_invoices, kind, ...rest } = f;
   void amount_paid_now;
   void kind;
-  const earlier = mergeOpen(f.earlier_open ?? [], other_invoices ?? []);
+  // An invoice the email lists beside itself under its own number is the same invoice.
+  const own = normalizeInvoiceNumber(f.invoice_number);
+  const earlier = mergeOpen(
+    f.earlier_open ?? [],
+    (other_invoices ?? []).filter((e) => !own || normalizeInvoiceNumber(e.invoice_number) !== own),
+  );
   const covered = f.amount !== null && f.amount > 0 && paid > 0 && paid >= f.amount;
   const status: InvoiceStatus =
     f.status === "paid"

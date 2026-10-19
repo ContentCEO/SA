@@ -447,7 +447,7 @@ export async function captureInvoiceAmounts(
           isNull(threads.invoicePaidAt),
           isNull(threads.invoicePaidSource),
           sql`${threads.category} is distinct from 'supplier_vendor'`,
-          sql`${threads.extracted}->'invoice'->>'status' in ('unpaid', 'partly_paid')`,
+          sql`${threads.extracted}->'invoice'->>'status' in ('unpaid', 'partly_paid', 'said_sent')`,
           sql`${threads.extracted}->'invoice'->>'amount' is null`,
           // Several invoices on the thread: the owner's newest email may be about an earlier
           // one ("#41, $500" before the customer's "got #42"), so nothing is guessed.

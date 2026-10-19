@@ -256,6 +256,10 @@ export const OWNER_RULE_KEYS = [
 export type OwnerRuleKey = (typeof OWNER_RULE_KEYS)[number];
 /** Hits whose fixed text always wins over the model's own reason (no town or name rides along). */
 const FIXED_TEXT_HITS: readonly OwnerRuleKey[] = [
+  // Wave 2 (Check 38 P5, Check 22 P9): their plain reasons are the point; never the model's prose.
+  "contract_rights",
+  "fake_bill",
+  "not_the_payer",
   "emergency",
   "utility",
   "municipal",

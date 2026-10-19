@@ -533,6 +533,16 @@ describe("classify.v6 (wave 2, Prompt versions step 1)", () => {
       needsOwnerReason: CONTRACT_RIGHTS_REASON,
       needsOwnerCode: "contract_rights",
     });
+    // The plain reason wins over the model's own words.
+    const said = applyOwnerRules(
+      classification({
+        category: "customer_question",
+        needs_owner: true,
+        needs_owner_reason: "You have three days to cancel, tell them.",
+      }),
+      { ...ctx, contractRights: true },
+    );
+    expect(said.needsOwnerReason).toBe(CONTRACT_RIGHTS_REASON);
     const complaint = applyOwnerRules(classification({ category: "complaint" }), {
       ...ctx,
       contractRights: true,
