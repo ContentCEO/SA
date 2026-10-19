@@ -65,3 +65,23 @@ What `CLAUDE.md`, `docs/LAUNCH.md` and `docs/BUILD-ORDER.md` should say. Legal s
   over "privacy policy." / "terms of service."), so /privacy and /terms have one h1 like every other
   screen. The `.md` files are unchanged (their `# Title` line stays for readers of the repo). The
   freeze and hash tests don't trip: no document changed.
+
+## Integration notes (expected conflicts, and one new rule for the integrator)
+
+- **`LEGAL_DOCS_SHA256` bites the integrator too.** Any edit to `docs/terms.md` or
+  `docs/privacy-policy.md` on an `integrate-*` branch (the freeze test allows it) now fails
+  `tests/unit/legal-docs-hash.test.ts` until the constant is recomputed (the failure prints the
+  value). Under the one-release rule, keep the other groups' privacy lines in their notes for the
+  release instead of folding them at each merge; if a fold is wanted anyway, recompute the hash
+  and decide with Davi whether that edit moves `TERMS_VERSION`.
+- Files other wave-3 groups also touch: `src/app/(app)/admin/page.tsx` (System box area: the
+  App-emails group's Email box, the Growth-records group), `src/app/(app)/connect/page.tsx`
+  (the Google group's C28 P3 changes the "Advanced" paragraph; this branch changes the "Share your
+  email" list item), `docs/google-verification.md` (the Google group's C28 P4 scope
+  justifications; this branch changes the Limited Use bullet), `tests/e2e/public-site.spec.ts`
+  (the Google group's robots/sitemap test; this branch rewrites the "privacy and terms" test),
+  `src/lib/markdown.tsx` and `src/components/marketing/legal-page.tsx` (only this branch, as far
+  as known), `src/server/sms-alerts.ts` (the alerts group flagged the per-owner try/catch for this
+  branch; if they changed the file too, keep `alertOne`).
+- No migration, no prompt version, no new fetch host (the `sms:` link is a page link, not a
+  request). Evals not run (no prompt change).
