@@ -3930,189 +3930,61 @@ acknowledgedOn })`; invoice reminders ask when they expect to pay, never an easy
 
 ## Waiting on Davi
 
-- **Wave 2 merge C questions** (mail format, town and utility lists, numbers, billing and
-  admin): docs/LAUNCH.md step 13 "Still open", with three live checks (send-as alias, Outlook
-  line breaks, the From line) and the sender domains to confirm from real notices.
-- **Wave 3 merge A questions** (prompt versions, legal text, Google review): docs/LAUNCH.md
-  step 13 "Still open" — the one legal release (every sentence in
-  `docs/notes/legal-w3-legal.md`, including how changes are announced), fake-bill priority, the
-  7-day "check is in the mail" hold, booking for someone else, the "is this a bot?" answer,
-  Massachusetts carpenters' HIC / CSL words, the sign-off when someone else signs, prompt checks
-  in CI and the eval baseline (`ANTHROPIC_API_KEY` repo secret), the legal lock in CI
-  (`fetch-depth: 0`), `GOOGLE_APP_STATE`, the "sa preview" Google project, the CASA pre-scan,
-  search after the domain move, a fourth trial email, "Invite anyway" for non-Gmail addresses, and
-  the Growth site's held words (two reverted commits), ad cards, form fields and repeat requests.
-- **Wave 2 merge D questions** (data and speed, phone look, security, phone alerts):
-  docs/LAUNCH.md step 13 "Still open" — the AI limit numbers (500 per inbox, 3,000 a day) and
-  the "sorting waits" wording; the broken-cookie homepage case; the shared database's table sizes
-  before the index migration runs; the Android portrait lock; the error notice read as an alert
-  (not twice); the 30-day sign-in length; everyone signing in once after the deploy; the
-  signed Gmail push setup; `PRODUCTION_URL` repository variable; Dependabot security updates;
-  CI on branches only through a PR.
-- **Inngest plan (Check 49 P1):** the free plan pauses every job at 50,000 executions a month (21,029
-  from Oct 1 to 16 with one shop). `docs/LAUNCH.md` "Check your free plans now", Inngest item.
-- **Vercel Pro (Check 49 P1):** the team is on Hobby, which is non-commercial only; Pro (about $20 a
-  month) before the first paying customer. `docs/LAUNCH.md` "Check your free plans now", Vercel
-  item. All outside accounts: `docs/VENDORS.md`.
-- **Protect main + hold production for CI (Check 31 P3):** tap through `docs/LAUNCH.md` "Protect
-  main" (GitHub ruleset: PR required, checks `check` + `old-code-new-schema`, no force push or
-  delete) and "Hold production for CI" (Vercel Deployment Checks on `check`, or the stated
-  fallback). Needs his admin rights; the engineers can't do it.
-- **Preview guard fingerprints (Check 26 P2):** `src/config/environment-guard.ts` ships with empty
-  `PRODUCTION_DB_HOST_SHA256` / `PRODUCTION_KEY_SHA256S`, so it blocks nothing yet. Either Davi
-  supplies production's fingerprints (`pnpm fingerprint <pulled env file>` prints hashes only;
-  `docs/LAUNCH.md` step 2, "The preview guard"), or this becomes moot once previews have their own
-  database and keys (LAUNCH.md step 2a–2e, the real fix). Never read the values to make them.
-- **Leads package (2026-10-16):** (1) **Privacy lines — merge blocker:** approve the new lines in
-  `docs/privacy-policy.md` (lead source / done / fixed marks, towns, Call / Text reads the number
-  without storing it, no drafts to lead sites / voicemails / email-to-text). The documents were
-  already dated today, so no extra re-agreement; if this merges after another 2026-10-16 bump has
-  shipped, batch it with the other packages' lines into one date move. (2) **Real samples**
-  (customer details blurred) of each lead site's email (Thumbtack, Angi / HomeAdvisor, Houzz, Yelp,
-  Nextdoor, Porch, Bark, Networx, Google Local Services) — Primary or Promotions? does any take an
-  email reply? does each fixed "Open <site>" link land on the pro's inbox? — and RingCentral /
-  Grasshopper / OpenPhone voicemail emails. The site parsers and the Open links were written
-  against invented samples. (3) Emergency alerts (B5 part 2): Davi said yes on 2026-10-16,
-  built in the replies package. (4) The eval baseline (`ANTHROPIC_API_KEY` repo secret) before classify.v5 (names / towns from
-  the model, strict emergency wording) can be written and compared.
-- **Replies package (2026-10-16):** (1) the eval baseline (`ANTHROPIC_API_KEY` repo secret, then
-  run "Prompt evals") before draft.v7 can be compared with a live model; (2) a Google Voice
-  voicemail comes from `voice-noreply@google.com`, a no-reply sender, so an emergency
-  voicemail does **not** buzz at night (as specified) — his call whether it should; (3) the
-  privacy lines ride on the 2026-10-16 date: if another 2026-10-16 bump has already shipped when
-  this merges, batch them into one date move.
-- **The launch checklist is `docs/LAUNCH.md`** (in order, where to click, how to know it worked,
-  and every open decision in its step 13, split into "Decided on 2026-10-15", "Decided on
-  2026-10-14", "Still open" and "Still needed from you"). The items below are the same list in engineering words.
-- **Neon plan (urgent, this week):** check Neon → Billing and production's Usage box; on Free the
-  5-minute poll likely uses up the 100 CU-hours mid-period and pauses production. Launch is about
-  $19–20 a month (LAUNCH.md "Check your free plans now"). His money decision.
-- **Preview database (decided: option B):** Davi creates the Neon project `sa-preview`, copies
-  its pooled string and tells the engineers; they untick Preview on the shared `DATABASE_URL`
-  (Vercel API, target only); Davi adds `DATABASE_URL` as a Preview-only Secret with that string;
-  the engineers add Preview-only `AUTH_SECRET` / `TOKEN_ENCRYPTION_KEY` and redeploy the preview
-  (LAUNCH.md step 2). After the split a preview shows screens, sign-in and Connect Gmail only
-  (no jobs, no Stripe). Only test Gmail addresses on previews: the Google client (and project)
-  is shared with production, so a preview's Disconnect / Delete my account revoke most likely
-  ends production's grant for that address. Vercel's docs don't say saving a Secret with an
-  empty value box keeps it, so "How to split a setting" says Cancel and ask the engineers (API)
-  if Save asks for a value. Every Neon step names `autumn-term-70302192` (not `sa-preview`; both
-  have a `production` branch), with a header check before Reset password.
-- **Massachusetts sales tax registration** on MassTaxConnect before any Stripe tax setup; then
-  Stripe's tax settings and the Massachusetts registration in Stripe (LAUNCH.md 7e). Questions
-  for his accountant are listed there. It takes about 3–10 business days, so LAUNCH.md has it
-  start before step 0 ("Start your sales tax registration now"); step 7 says not to ask anyone
-  to pay until 7e passes, and 7e lets him do the Stripe tax settings (items 2–4, 6) before the
-  certificate arrives so later subscriptions carry automatic tax.
-- **Gmail draft send behaviour (M8 review):** not yet checked live whether Gmail keeps a draft's
-  id when it's sent. Counts-only check on the shared DB: join `drafts.sent_gmail_message_id` to
-  `messages.gmail_message_id` and count the matches whose `label_ids` hold `SENT` vs `DRAFT`.
-  Many DRAFT matches = same-id sends. The code is safe either way; this only says which path is
-  live. **Run it before the launch merge** (`docs/LAUNCH.md` step 1): after it, the one-time
-  `runDraftMessagesCleanup` (`markRecordedSends`) relabels every matched row DRAFT → SENT, so the
-  count always reads 0 DRAFT.
-- **Terms (open; Davi reads later):** the three `[To confirm]` items (recommended option A for
-  each, in LAUNCH.md step 13); a lawyer's review of both legal drafts (questions: LLC, insurance,
-  "no contract" wording). The assent question is decided and built (2026-10-15, "I agree" boxes
-  above).
-- **Stripe terms link (his, right after the launch merge):** Stripe → Settings → Business →
-  Public details → Terms of service URL `https://<production address>/terms` and Privacy policy
-  URL `.../privacy` (test mode right after PR #10 merges, since production 404s both pages until
-  then; checked again in live mode at LAUNCH.md 7d). The checkout box and the /admin line
-  ("Terms box at checkout: off. …") only exist once the second merge
-  (`claude/squared-away-mvp-ddxl7s`) is deployed.
-- **Google review:** (a) decided 2026-10-15: option B (separate demo account on Stripe's
-  test card; needs an engineer's dry run on production first, while Stripe is in test mode — a
-  preview can't sync, draft, pay or send); (b) decided 2026-10-15: `gmail.send` dropped (built,
-  ships with the second merge). **His console step:** Google Auth Platform → Data Access → remove
-  `gmail.send` before submitting (LAUNCH.md 0e). Engineers: right after it goes live, first clear
-  the demo Gmail's old grant (Settings → Disconnect Gmail on every account holding it; then
-  myaccount.google.com/permissions shows no Gmail access for Squared Away; reconnect; its
-  `mailboxes.scopes` has no `gmail.send`), then a practice copy and a real reply (test card) on
-  production with the demo Gmail, before filming; put it back at once if either fails. CASA:
-  nothing to pay until Google's email names the level.
-- **Homepage About section wording (changed 2026-10-15, ships with the merge):** now "someone in
-  the trades." / "It began as the tool for A&C Construction's own inbox." (no "builder", no
-  pronouns). Davi may want other words (LAUNCH.md step 13). Separate from his photo and license
-  line.
-- **Terms re-agreement (2026-10-16 decisions package):** `docs/terms.md`'s trial paragraph now
-  names the Gmail side door; the date stayed 2026-10-16 (no re-agree). If Davi wants everyone to
-  agree to it, move both documents' date and `TERMS_VERSION` together (LAUNCH.md "Still open").
-- **Phone notifications (#36):** `VAPID_PUBLIC_KEY` + `VAPID_PRIVATE_KEY` (free) in Vercel
-  Production, then redeploy. Off until then. The engineers can generate and add them if Davi says
-  so.
-- `ANTHROPIC_API_KEY` repo secret for the "Prompt evals" action (baseline still empty).
-- Resend: verify a sending subdomain (`mail.<domain>`) in Resend with a DMARC record, switch
-  `EMAIL_FROM` off `onboarding@resend.dev` and set `SUPPORT_EMAIL` to a real inbox (it is the
-  Reply-To). Until then the invite email, "Your first drafts are ready to check", the morning and
-  monthly summaries, "Squared Away lost access to your Gmail" and its reminder, and "You're on
-  the Squared Away list" only reach the Resend account's own address. This is also what makes the
-  pricing cards' "morning summary" true for owners (the cards weren't changed). LAUNCH.md step 6
-  ("Emails from your own domain (Resend)"), SETUP.md §7b ("App emails (Resend)").
-- **Outside review (2026-10-15), his part** (LAUNCH.md step 13 "Outside review"): everything in
-  its "Your calls" (trial side door — app/homepage now say "won't send anything to a customer
-  during the trial", `docs/terms.md` and the policy's trial sentence still say "sending to
-  customers is switched off"; setup fee; trial length; [To confirm] items; hero line; homepage
-  A/B test; referral amount / founding / association offers; instant "got it" reply; more Gmail
-  permissions; money in the morning email; Outlook; app stores); the domain; `SUPPORT_EMAIL` and
-  a business phone; his photo; legal answers so the "Draft" banners can go; Web Analytics
-  (Vercel → sa → Analytics → Enable; code ready); the sitemap in Search Console; a booking
-  calendar link (needs an account); the confirmation email's wording; whether Thumbtack / Angi
-  relay addresses should ever be answered by email; whether to say on the site that form leads
-  are answered at the customer's own address; a Growth link inside the app; and his picks from
-  the 100 ideas. Testers re-agree to the terms once (2026-10-16 version).
-- Optional: Gmail instant notifications (docs/SETUP.md §6a) and Sentry error alerts (§6b).
-- Rotate the Neon password and Google client secret that were pasted in chat; delete the old
-  Google secret.
-- Only while Google Auth Platform is in Testing: add each invited owner as a test user (Audience).
-  Ends at docs/LAUNCH.md step 0c (In production).
-- Icon pack (`sa.` monogram, stacked wordmark); his photo and the exact license wording for the
-  homepage's About section (PR #9; no license number until he confirms); `SUPPORT_EMAIL`;
-  production domain.
-- **Plan #47 (referral free month, offer A):** decided and built behind `FEATURE_REFERRALS`
-  (off). Nothing left to choose; turning it on follows docs/SETUP.md §6d in order: live key,
-  Connect Stripe, Reset test payments; /admin Payments says the billing page "changes plans
-  straight away" (not "schedules downgrades", not "Couldn't check"); the
-  terms line, the privacy lines (fingerprint + "which plan, the dates, and whether you chose to
-  keep it") with the legal-docs test and a terms-version bump; an engineer's **local** Stripe Test
-  Clock check (not run yet: no Stripe key in the sandbox); then the switch. Don't rotate
-  `AUTH_SECRET` once referrals have been given.
-- **PDF quotes (#28/#30):** a quote sent only as an attachment ("Quote attached", no `$` in the
-  email) never counts as a price given, so "Let's do it" isn't auto-marked Won, isn't in the close
-  rate until he taps Won, and gets no deposit draft. Conservative on purpose (a site visit isn't a
-  quote). Alternative if he wants it: record "has an attachment" on owner emails at sync (additive
-  column) and count an owner email with an attachment as a price given.
-- **Privacy policy lines for M5/M7 (added to the draft at the launch merge, Davi to review):**
-  `docs/privacy-policy.md` now covers the price memory (never sent to the AI), invoice paid /
-  "not owed to me" marks, the complaint marker, review requests and the review link, seasonal
-  notes, web push (#36: the endpoint is stored; Google/Apple/Mozilla/Microsoft push services
-  deliver an empty ping; deleted on turn-off, a gone phone or account deletion), the per-phone
-  display cookies and the offline-approvals queue copy (#9/#37/#10), and that these M7 records
-  stay past the 30-day purge until the mailbox or account goes.
-- **Terms and privacy lines for #47** (before `FEATURE_REFERRALS` goes on): held word for word
-  in docs/SETUP.md §6d step 3. Also his call: a referrer who deletes their account before the new
-  owner is active voids the referral; repeat waitlist joins and plain invites carry no referral.
-- **Growth:** confirmed 2026-10-14: all seven services are offered today and the ground rules
-  stand (no fake reviews, price before any work, Growth never touches the inbox). Built
-  2026-10-16: client portal, pledge, the More line, admin Remove. Still open: a lawyer's review
-  of `docs/growth-agreement.md` and its [To confirm] items, Growth prices (none anywhere until he
-  picks) and whether ended clients should keep seeing their dashboard (today a 404). (A Growth
-  request may carry a referral: decided 2026-10-16, built.) No tracking pixels on /growth without a privacy-policy change and his
-  okay. Only the newest Growth request per email is kept and a growth-only row's phone becomes the
-  newest number, so anyone who knows a lead's email can replace their number: check an
-  unfamiliar number before calling.
+The one list Davi reads is `docs/LAUNCH.md` step 13 ("Decisions waiting on you": decided lists,
+"Still open", "Still needed from you"). Add every new question or hand-over there, in plain words.
+This file keeps only the engineering notes below, each naming its LAUNCH.md item.
 
-- **Ideas packages (2026-10-16, `ideas-build`) — not built yet, and his questions:**
-  - Not built in this pass (time box): G3 suggested VIPs and B7 "Send at 7am instead" (control
-    plan), D4 part payments (numbers plan; its nudge wording needs `followup.v5`), and the whole
-    site package (A3 trade pages incl. /remodelers, A15 /security, A6 slow-reply calculator).
-  - Wait for the eval baseline (prompt changes): D7's "thank them for the payment" line
-    (`purpose.v4`), D4's balance-only nudges and `classify.v5`'s `amount_paid`.
-  - His calls (defaults built): what a VIP means (today: needs you, no automatic draft); whether
-    away mode should pause autopilot, texts / phone alerts / the morning email (built: no);
-    remembered "not junk" / "always supplier" rules (cut); the privacy-policy lines added for
-    these features (same 2026-10-16 version). Decided 2026-10-16: "Other" added; "Say thanks"
-    built (decisions package above).
+### Engineering notes for open items
+
+- **"First: finish the legal text…" / "One legal release" / "A lawyer's review":** every proposed
+  sentence waits in `docs/notes/legal-*.md`; applied once (`docs/LEGAL-RELEASE.md`), moving both
+  documents' date and `TERMS_VERSION` (`src/config/legal.ts`) together. The terms gate is live in
+  production since `c1bf580` (PR #11, 2026-10-16), so owners are agreeing to the drafts now.
+- **"Your Inngest plan" / "Vercel Pro" / "Your Neon plan":** /admin System box "Background work this
+  month: N steps"; the Vercel Cron backstop `/api/cron/jobs-check` needs `CRON_SECRET` and a
+  `vercel.json` (Pro only); `/api/health/deep` needs `HEALTH_TOKEN` (SETUP §6g).
+- **"Protect main" / "Hold production for CI":** ruleset checks are the job names `check` and
+  `old-code-new-schema` in `.github/workflows/ci.yml`; renaming a job means changing the ruleset.
+- **"The preview guard's fingerprints":** `PRODUCTION_DB_HOST_SHA256` / `PRODUCTION_KEY_SHA256S`
+  in `src/config/environment-guard.ts` ship empty; `pnpm fingerprint <pulled env file>` prints
+  hashes only. Never read the values to make them.
+- **Preview database (step 2, decided option B):** the engineers untick Preview on the shared
+  `DATABASE_URL` through the Vercel API (target only) and add Preview-only `AUTH_SECRET` /
+  `TOKEN_ENCRYPTION_KEY`; every Neon step names `autumn-term-70302192`.
+- **"Your terms and privacy links in Stripe":** checkout falls back without
+  `consent_collection` and writes `app_settings` `stripe_terms_box_off`; /admin Payments shows
+  `TERMS_BOX_OFF_LINE` until a checkout with the box deletes it.
+- **"Gmail draft check":** the query joins `drafts.sent_gmail_message_id` to
+  `messages.gmail_message_id`; `runDraftMessagesCleanup` (`markRecordedSends`) relabels matches
+  DRAFT → SENT, so after the launch merge it reads 0 DRAFT.
+- **Google review (decided 2026-10-15, 0e):** the live check of the two scopes first clears the
+  demo Gmail's old grant (Disconnect revokes at Google), then confirms `mailboxes.scopes` has no
+  `gmail.send`, then a practice copy and a real reply on production; put `gmail.send` back at once
+  if either fails. `GOOGLE_APP_STATE` (testing / unverified / verified) drives the connect screen
+  and `accessLostReason`.
+- **"Phone notifications" (step 9):** `VAPID_PUBLIC_KEY` + `VAPID_PRIVATE_KEY` (+ optional
+  `VAPID_SUBJECT`); the engineers can generate them if Davi says so.
+- **Resend (step 6):** `EMAIL_FROM` on a verified `mail.<domain>` with DMARC; `SUPPORT_EMAIL` is the
+  Reply-To (`defaultReplyTo`, else `ADMIN_EMAIL`); the /admin catch-up buttons re-send the waitlist
+  confirmations and invites. `emailHealth()` drives the /admin Email box.
+- **"#47 turning referrals on":** order in SETUP §6d (live key, Connect Stripe, Reset test payments,
+  the held terms / privacy / fingerprint lines with a `TERMS_VERSION` bump, a local Stripe Test
+  Clock check, then `FEATURE_REFERRALS`). Never rotate `AUTH_SECRET` once referrals were given.
+- **"PDF quotes":** the alternative is an additive column recording "has an attachment" on owner
+  emails at sync, counted as a price given.
+- **Eval baseline (several items):** `ANTHROPIC_API_KEY` repository secret, then "Prompt evals"
+  with drafts on and commit `tests/evals/baseline.json`; prompt changes waiting on it are listed
+  under "Prompt versions" above. A model trial: `pnpm eval --model classify=<id>`.
+- **"Lead websites and voicemail emails":** the site parsers and "Open <site>" links were written
+  against invented samples; adjust them from the real ones.
+- **Ideas package, not built (engineering backlog, no decision needed):** G3 suggested VIPs, B7
+  "Send at 7am instead", the site package (A3 trade pages incl. /remodelers, A15 /security, A6
+  slow-reply calculator); D7's payment thank-you line and D4's balance-only nudges wait on the
+  eval baseline. Check the tip before building: later waves may have done parts (D4's
+  `amount_paid_now` is in classify.v6).
+- **"One Gmail per account, made strict":** the unique index waits until
+  `select lower(email), count(distinct workspace_id) from mailboxes group by 1 having count(distinct workspace_id) > 1;`
+  returns no rows on the shared database.
 
 ## Launch blockers to remember
 

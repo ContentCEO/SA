@@ -1657,6 +1657,30 @@ Nothing below is switched on or changed until you say so.
   Growth call request carrying a referral: decided, see "Decided on 2026-10-16".) Built on 2026-10-16 (ships with its merge): the Growth client dashboard,
   the "You own everything" pledge, the More screen's Growth line, and Remove on a waitlist card's
   Growth request.
+- **Growth, two more of yours:** should a Growth client whose service has ended still see their
+  dashboard (`/my-growth`)? Today it shows "page not found" to anyone who isn't an active or
+  paused client. And only the newest Growth request per email address is kept, so anyone who
+  knows a lead's email could replace the phone number on it: check an unfamiliar number before
+  you call.
+- **Lead websites and voicemail emails (2026-10-16 leads package).** (1) The privacy policy
+  already has the lines for it (where a lead came from, done / fixed marks, towns, Call / Text
+  reading the number without storing it, no drafts to lead sites, voicemails or email-to-text
+  addresses): read them with the rest of the legal text. (2) Real samples, with the customer's
+  details blurred, of each lead site's email (Thumbtack, Angi / HomeAdvisor, Houzz, Yelp,
+  Nextdoor, Porch, Bark, Networx, Google Local Services) and of RingCentral, Grasshopper and
+  OpenPhone voicemail emails: does each arrive in Primary or Promotions, does any site take an
+  email reply, and does each "Open <site>" button land on your inbox there? They were built from
+  made-up samples.
+- **Your calls from the ideas package (2026-10-16), built the safe way:** what a VIP means
+  (today: always "needs you", never drafted on its own); whether away mode should also pause
+  autopilot, texts, phone alerts and the morning email (today: no); remembered "not junk" /
+  "always a supplier" rules were left out. Say if you want any of them different.
+- **The privacy policy's lines from Milestones 5 and 7** (in the draft since the launch merge):
+  price memory (never sent to the AI), invoice "paid" / "not owed to me" marks, the complaint
+  marker, review requests and your review link, seasonal notes, phone notifications, the
+  per-phone display settings and the offline approvals copy, and that these stay after the
+  30-day email-text purge until the Gmail address or account goes. Read them with the rest of
+  the legal text.
 - **Growth agreement: a lawyer's review.** The draft is [docs/growth-agreement.md](growth-agreement.md)
   ("not legal advice"). Bring it with the app's terms. Its **[To confirm]** items are yours: who
   signs (you or an LLC), the notice to cancel, refunds, the liability limit, the hand-back time,
@@ -1754,7 +1778,9 @@ Nothing below is switched on or changed until you say so.
     is stopped".
 - **Gmail draft check (counts only, for the engineers):** whether Gmail keeps a draft's id when
   it's sent. The app is safe either way. The query is in [step 1](#1-merge-the-launch-branch);
-  run it **before merging**: after the merge it always reads 0.
+  run it **before merging**: after the merge it always reads 0. The launch merge went live on
+  2026-10-16 (PR #10), so unless someone ran it before then, it can no longer tell anything;
+  nothing for you to do.
 - **Wave 2 merge A (2026-10-18): questions from the Voice, Inbox, Sync and Queue changes.** Each
   is built with the safe choice below; nothing changes until you say so.
   - **How far back the sorter looks.** Mail from 15 to 30 days ago that was never sorted is now
@@ -1900,6 +1926,21 @@ Nothing below is switched on or changed until you say so.
 
 ### Still needed from you
 
+- [Protect main](#protect-main-before-the-next-merge) and
+  [Hold production for CI](#hold-production-for-ci-right-after-protect-main): only your GitHub
+  and Vercel admin rights can do them.
+- Your terms and privacy links in Stripe
+  ([Add your terms link in Stripe](#add-your-terms-link-in-stripe-right-after-step-1)): both
+  merges are live, so this can be done now.
+- The two passwords pasted in chat ([step 3](#3-change-the-passwords-that-were-pasted-in-chat)):
+  the Neon password and the Google client secret, then delete the old Google secret.
+- While Google is in Testing: add each invited owner as a Google test user (Google Auth Platform
+  → Audience). Ends when the app is published ([0c](#0-start-now-google-verification-takes-weeks)).
+- The preview guard's fingerprints, or skip them once previews have their own database
+  ([step 2](#2-give-previews-their-own-database), "The preview guard").
+- Optional: instant Gmail notifications and error alerts
+  ([step 10](#10-optional-text-alerts-and-instant-gmail-notifications),
+  [step 8](#8-error-alerts-sentry-optional)).
 - The production domain and `SUPPORT_EMAIL` ([step 5](#5-support-email-and-the-production-domain)).
 - The icon pack, and for the homepage's About section (PR #9) your photo and the exact license
   wording.
