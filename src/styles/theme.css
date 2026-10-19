@@ -325,6 +325,9 @@ html:has([data-growth-page]) {
  *   at 680ms · BW_REALIGN_AT_MS = 1220 · bands out 160ms each (forwards only), the outer two from
  *   1300ms, their neighbours from 1340ms, the middle one (with the words) from 1380ms, all gone by
  *   1540 · sa-land 300ms, delays 960ms / 1020ms after the swap · BW_DONE_MS = 1740 (cleanup).
+ *   Every moment from the swap on counts from the swap (the way out and sa-land are added by it;
+ *   the page's realign and cleanup count on the way out's clock), so a late swap on a slow phone
+ *   moves them with it and the bands still cover the screen while it happens.
  *   "out" / "in-quiet": bands of the old colour fly apart sideways, no words, 260ms
  *   (BW_QUIET_DONE_MS = 300, cleanup).
  * The stage is 100vh (the large viewport on phones, so a collapsing toolbar can't open a gap).
@@ -387,32 +390,51 @@ html:has([data-growth-page]) {
 :root[data-sa-switching] .sa-bw-band {
   will-change: transform;
 }
-/* In: the middle band first. Out (forwards only, so it can't hold the bands off before 1300ms):
-   the outer bands first, the words last, each back to the side it came from. */
+/* In: the middle band first. Out (forwards only, so it can't hold the bands off before they
+   start): the outer bands first, the words last, each back to the side it came from. The way out
+   is only added once the theme has swapped (E2E hardening, 2026-10-19), with delays counted from
+   the swap (1300 − 380 = 920ms for the outer two, then 960 and 1000): on a slow phone the swap can
+   come late, and the bands still never leave before it. The way in carries on untouched (same
+   name, same place in the list). */
 :root[data-sa-switching="in"] .sa-bw-band[data-band="2"] {
-  animation:
-    sa-bw-in-left 240ms cubic-bezier(0.6, 0, 0.2, 1) both,
-    sa-bw-out-left 160ms cubic-bezier(0.5, 0, 0.75, 0) 1380ms forwards;
+  animation: sa-bw-in-left 240ms cubic-bezier(0.6, 0, 0.2, 1) both;
 }
 :root[data-sa-switching="in"] .sa-bw-band[data-band="1"] {
-  animation:
-    sa-bw-in-right 240ms cubic-bezier(0.6, 0, 0.2, 1) 40ms both,
-    sa-bw-out-right 160ms cubic-bezier(0.5, 0, 0.75, 0) 1340ms forwards;
+  animation: sa-bw-in-right 240ms cubic-bezier(0.6, 0, 0.2, 1) 40ms both;
 }
 :root[data-sa-switching="in"] .sa-bw-band[data-band="3"] {
-  animation:
-    sa-bw-in-right 240ms cubic-bezier(0.6, 0, 0.2, 1) 40ms both,
-    sa-bw-out-right 160ms cubic-bezier(0.5, 0, 0.75, 0) 1340ms forwards;
+  animation: sa-bw-in-right 240ms cubic-bezier(0.6, 0, 0.2, 1) 40ms both;
 }
 :root[data-sa-switching="in"] .sa-bw-band[data-band="0"] {
-  animation:
-    sa-bw-in-left 240ms cubic-bezier(0.6, 0, 0.2, 1) 80ms both,
-    sa-bw-out-left 160ms cubic-bezier(0.5, 0, 0.75, 0) 1300ms forwards;
+  animation: sa-bw-in-left 240ms cubic-bezier(0.6, 0, 0.2, 1) 80ms both;
 }
 :root[data-sa-switching="in"] .sa-bw-band[data-band="4"] {
+  animation: sa-bw-in-left 240ms cubic-bezier(0.6, 0, 0.2, 1) 80ms both;
+}
+:root[data-sa-theme="growth"][data-sa-switching="in"] .sa-bw-band[data-band="2"] {
+  animation:
+    sa-bw-in-left 240ms cubic-bezier(0.6, 0, 0.2, 1) both,
+    sa-bw-out-left 160ms cubic-bezier(0.5, 0, 0.75, 0) 1000ms forwards;
+}
+:root[data-sa-theme="growth"][data-sa-switching="in"] .sa-bw-band[data-band="1"] {
+  animation:
+    sa-bw-in-right 240ms cubic-bezier(0.6, 0, 0.2, 1) 40ms both,
+    sa-bw-out-right 160ms cubic-bezier(0.5, 0, 0.75, 0) 960ms forwards;
+}
+:root[data-sa-theme="growth"][data-sa-switching="in"] .sa-bw-band[data-band="3"] {
+  animation:
+    sa-bw-in-right 240ms cubic-bezier(0.6, 0, 0.2, 1) 40ms both,
+    sa-bw-out-right 160ms cubic-bezier(0.5, 0, 0.75, 0) 960ms forwards;
+}
+:root[data-sa-theme="growth"][data-sa-switching="in"] .sa-bw-band[data-band="0"] {
   animation:
     sa-bw-in-left 240ms cubic-bezier(0.6, 0, 0.2, 1) 80ms both,
-    sa-bw-out-left 160ms cubic-bezier(0.5, 0, 0.75, 0) 1300ms forwards;
+    sa-bw-out-left 160ms cubic-bezier(0.5, 0, 0.75, 0) 920ms forwards;
+}
+:root[data-sa-theme="growth"][data-sa-switching="in"] .sa-bw-band[data-band="4"] {
+  animation:
+    sa-bw-in-left 240ms cubic-bezier(0.6, 0, 0.2, 1) 80ms both,
+    sa-bw-out-left 160ms cubic-bezier(0.5, 0, 0.75, 0) 920ms forwards;
 }
 /* The quiet paths fly apart, never fade: no third tone, and they move with the scroll. */
 :root[data-sa-switching="out"] .sa-bw-band[data-side="left"],

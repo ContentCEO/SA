@@ -63,8 +63,8 @@ const EDITABLE = 'input, textarea, select, [contenteditable=""], [contenteditabl
  *
  * The stage is decorative: aria-hidden, inert, pointer-events none. While the full show covers the
  * screen, taps are swallowed, so nothing hidden under the bands (a tel: link, a form) can be hit,
- * and scrolling is held. Every show's timers and holds end in finish() (or on unmount), before the
- * next one can start.
+ * and scrolling is held. Every show's steps run on the bands' own clock (onShowClock), and its
+ * clock and holds end in finish() (or on unmount), before the next one can start.
  * Mounted only on `/`; unmounting removes its attributes so no other page is affected.
  */
 export function GrowthSwitch() {
@@ -112,17 +112,58 @@ export function GrowthSwitch() {
     let mode: HalfMode = nextMode("app", topNow(), vh());
     setTheme(mode);
 
-    const timers = new Set<number>();
-    const later = (fn: () => void, ms: number) => {
-      const id = window.setTimeout(() => {
-        timers.delete(id);
-        fn();
-      }, ms);
-      timers.add(id);
+    // The show's clock (E2E hardening, 2026-10-19): the bands' own animations, not timers counted
+    // from setting data-sa-switching. The bands start in the first frame after that, and on a slow
+    // phone that frame comes late: a 380ms timer swapped the colours with the bands barely a third
+    // of the way in at CPU x12. Each step now runs in the first frame in which the bands have
+    // played that long, so that frame paints it with the bands where the timeline says. That frame
+    // can still come late (frames 700ms apart there), so the swap also adds the bands' way out
+    // (theme.css) and the realign and cleanup count on that: bands in → swap → bands out, at any
+    // CPU speed. A frame-driven clock also waits while a hidden tab draws nothing, and catches up
+    // in its first frame back. No band animations (none running): counted from now, as the
+    // timers were.
+    let clockRun = 0;
+    let clockRaf = 0;
+    const stopClock = () => {
+      clockRun++;
+      if (clockRaf) window.cancelAnimationFrame(clockRaf);
+      clockRaf = 0;
     };
-    const clearTimers = () => {
-      for (const id of timers) window.clearTimeout(id);
-      timers.clear();
+    /** When the bands started: null until every one has (their first frame hasn't come yet). */
+    const bandsStartedAt = (anims: Animation[]): number | null => {
+      let at: number | null = null;
+      for (const a of anims) {
+        if (a.startTime === null) return null;
+        const t = Number(a.startTime);
+        at = at === null ? t : Math.min(at, t);
+      }
+      return at;
+    };
+    /**
+     * Runs each step once the bands' animations named `prefix…` have played `ms` (steps in time
+     * order). Reading them brings the stage's style up to date, so new ones are there (pending).
+     */
+    const onShowClock = (prefix: string, steps: [ms: number, fn: () => void][]) => {
+      stopClock();
+      const run = clockRun;
+      const anims = stage
+        ? [...stage.querySelectorAll(".sa-bw-band")]
+            .flatMap((b) => b.getAnimations())
+            .filter((a) => (a as CSSAnimation).animationName?.startsWith(prefix))
+        : [];
+      let origin: number | null = anims.length ? null : performance.now();
+      const frame = (now: number) => {
+        clockRaf = 0;
+        if (run !== clockRun) return;
+        origin ??= bandsStartedAt(anims);
+        const timeline = document.timeline.currentTime;
+        const t = timeline === null ? now : Number(timeline);
+        while (origin !== null && steps.length && run === clockRun && t - origin >= steps[0]![0]) {
+          steps.shift()![1]();
+        }
+        if (steps.length && run === clockRun) clockRaf = window.requestAnimationFrame(frame);
+      };
+      clockRaf = window.requestAnimationFrame(frame);
     };
 
     // Settling: every decision is instant until all three are true.
@@ -210,20 +251,30 @@ export function GrowthSwitch() {
       if (path === "in") {
         root.setAttribute(SWITCHING, "in");
         swallowTaps(true);
-        // Mid full-cover: the swap and the move to the opener are never seen.
-        later(() => {
-          setTheme("growth");
-          runUnderCover();
-          land();
-        }, BW_THEME_AT_MS);
-        later(land, BW_REALIGN_AT_MS);
-        finishCurrent = () => finish("growth");
-        later(finishCurrent, BW_DONE_MS);
+        const done = () => finish("growth");
+        finishCurrent = done;
+        onShowClock("sa-bw-in-", [
+          // Mid full-cover: the swap and the move to the opener are never seen.
+          [
+            BW_THEME_AT_MS,
+            () => {
+              setTheme("growth");
+              runUnderCover();
+              land();
+              // The swap adds the bands' way out (theme.css): the rest counts on its clock.
+              onShowClock("sa-bw-out-", [
+                [BW_REALIGN_AT_MS - BW_THEME_AT_MS, land],
+                [BW_DONE_MS - BW_THEME_AT_MS, done],
+              ]);
+            },
+          ],
+        ]);
       } else {
         setTheme(next);
         root.setAttribute(SWITCHING, path);
-        finishCurrent = () => finish(next);
-        later(finishCurrent, BW_QUIET_DONE_MS);
+        const done = () => finish(next);
+        finishCurrent = done;
+        onShowClock("sa-bw-out-", [[BW_QUIET_DONE_MS, done]]);
       }
     };
 
@@ -233,9 +284,9 @@ export function GrowthSwitch() {
     };
 
     function finish(applied: HalfMode) {
-      clearTimers();
+      stopClock();
       finishCurrent = null;
-      // Theme first, so a late timer can never take the bands away onto the old colours.
+      // Theme first, so the bands can never be taken away onto the old colours.
       setTheme(applied);
       runUnderCover();
       root.removeAttribute(SWITCHING);
@@ -424,7 +475,7 @@ export function GrowthSwitch() {
     };
     if (document.readyState === "complete") afterLoad();
     else window.addEventListener("load", afterLoad, { once: true });
-    // Kept apart from the show's timers, which finish() clears.
+    // Kept apart from the show's clock, which finish() stops.
     const settleTimer = window.setTimeout(() => {
       settleTimePassed = true;
     }, SETTLE_MS);
@@ -445,7 +496,7 @@ export function GrowthSwitch() {
 
     return () => {
       for (const o of observers) o.disconnect();
-      clearTimers();
+      stopClock();
       swallowTaps(false);
       underCover = null;
       window.clearTimeout(settleTimer);

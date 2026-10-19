@@ -4,6 +4,7 @@ import { eq } from "drizzle-orm";
 import * as schema from "../../src/db/schema";
 import { formatGrowthBlock } from "../../src/server/growth-note";
 import {
+  BW_CHIP_AT_MS,
   BW_COVERED_AT_MS,
   BW_THEME_AT_MS,
 } from "../../src/components/marketing/growth/big-words-rules";
@@ -44,7 +45,10 @@ type SaWindow = Window & {
   }[];
   /** Every frame while a transition plays: which one, and how many bands were on screen. */
   __saFrames: { v: string; on: number }[];
-  /** Where the bands were, and which word was inverted, when the theme swapped in a full show. */
+  /**
+   * Where the bands were, and which word was inverted, when the theme swapped in a full show;
+   * the bands' animations just after it, and how long the bands had been playing (their clock).
+   */
   __saSwap: {
     dt: number;
     bands: Box[];
@@ -52,6 +56,8 @@ type SaWindow = Window & {
     vh: number;
     from: string;
     to: string;
+    anims: string[];
+    clock: number;
   } | null;
 };
 
@@ -106,6 +112,13 @@ async function recordSwitches(page: Page) {
               vh: window.innerHeight,
               from: chip("from"),
               to: chip("to"),
+              anims: bands().flatMap((b) =>
+                b.getAnimations().map((a) => (a as CSSAnimation).animationName),
+              ),
+              clock: (() => {
+                const a = bands()[2]!.getAnimations()[0];
+                return Number(document.timeline.currentTime) - Number(a?.startTime);
+              })(),
             };
           }
           return;
@@ -243,8 +256,10 @@ async function expectApp(page: Page) {
  * The full Big words show just played, once, from a reset log (or a fresh page): the bands came
  * in with the words, covered every bit of the screen when the theme swapped with "Your inbox" still
  * the inverted word, flew back out, and the page landed on the opener with its headline in.
+ * `slowPhone`: frames can be 700ms apart (CPU x12), so the swap may land after the words' own
+ * moment to tick over; the word inverted at the swap is then the one the bands' clock says.
  */
-async function expectFullShow(page: Page) {
+async function expectFullShow(page: Page, { slowPhone = false } = {}) {
   await expectGrowth(page);
   const log = await saLog(page);
   expect(count(log, "in")).toBe(1);
@@ -252,16 +267,9 @@ async function expectFullShow(page: Page) {
   const start = (await saVis(page)).find((x) => x.v === "in")!;
   expect(start.stage).toBe(true);
   expect(start.graphic).toBe(true);
-  // Each band comes in and, at the end, flies back out.
-  expect(start.bands.anims).toHaveLength(10);
-  expect(start.bands.anims).toEqual(
-    expect.arrayContaining([
-      "sa-bw-in-left",
-      "sa-bw-in-right",
-      "sa-bw-out-left",
-      "sa-bw-out-right",
-    ]),
-  );
+  // Each band comes in; the way out is added by the swap (so it can never start before it).
+  expect(start.bands.anims).toHaveLength(5);
+  expect(start.bands.anims).toEqual(expect.arrayContaining(["sa-bw-in-left", "sa-bw-in-right"]));
   expect(start.bands.fresh).toBe(true);
   expect(start.bands.bg).toBe(CHARCOAL);
   const s = (await saSwap(page))!;
@@ -276,7 +284,19 @@ async function expectFullShow(page: Page) {
   expect(s.bands[0].top).toBeLessThanOrEqual(0.5);
   expect(s.bands[4].bottom).toBeGreaterThanOrEqual(s.vh - 0.5);
   for (let i = 1; i < 5; i++) expect(s.bands[i].top).toBeLessThanOrEqual(s.bands[i - 1].bottom);
-  expect(s).toMatchObject({ from: "1", to: "0" });
+  // Every band then flies back out.
+  expect(s.anims).toHaveLength(10);
+  expect(s.anims).toEqual(
+    expect.arrayContaining([
+      "sa-bw-in-left",
+      "sa-bw-in-right",
+      "sa-bw-out-left",
+      "sa-bw-out-right",
+    ]),
+  );
+  expect(s.clock).toBeGreaterThanOrEqual(BW_THEME_AT_MS);
+  if (slowPhone && s.clock >= BW_CHIP_AT_MS) expect(s).toMatchObject({ from: "0", to: "1" });
+  else expect(s).toMatchObject({ from: "1", to: "0" });
 
   await expect(page.locator("[data-sa-switch-stage]")).toBeHidden();
   const heading = opener(page).getByRole("heading", { name: "the marketing side, done for you." });
@@ -847,31 +867,38 @@ test.describe("homepage: the way into Squared Away Growth", () => {
     await settle(page);
     // The order is a matter of 40ms steps (outer bands at 1300ms, their neighbours at 1340ms, the
     // middle at 1380ms). Sampled frame by frame, a loaded machine can skip every frame of a step
-    // (it did), so the bands' own animations (keyframes and timing, copied the moment the show
-    // starts) are replayed on stand-ins and read at fixed times, 10ms apart. The live show is
-    // left alone, and its real frames from the hold to cleanup are still recorded.
-    type Copy = { keyframes: Keyframe[]; timing: EffectTiming }[];
-    await page.evaluate(() => {
+    // (it did), so the bands' own animations (keyframes and timing, copied as the theme swaps,
+    // which adds the way out) are replayed on stand-ins and read at fixed times, 10ms apart, the
+    // way out from the swap at BW_THEME_AT_MS. The live show is left alone, and its real frames
+    // from the hold to cleanup are still recorded.
+    type Copy = { keyframes: Keyframe[]; timing: EffectTiming; from: number }[];
+    await page.evaluate((swapAt) => {
       const w = window as unknown as { __saCopies: Copy[] };
       const root = document.documentElement;
       const seen = new MutationObserver(() => {
         if (root.getAttribute("data-sa-switching") !== "in") return;
+        if (root.getAttribute("data-sa-theme") !== "growth") return;
         seen.disconnect();
         const bands = [...document.querySelectorAll(".sa-bw-band")];
         w.__saCopies = bands.map((b) =>
           b.getAnimations().map((a) => {
             const effect = a.effect as KeyframeEffect;
-            return { keyframes: effect.getKeyframes(), timing: effect.getTiming() };
+            const out = (a as CSSAnimation).animationName.startsWith("sa-bw-out-");
+            return {
+              keyframes: effect.getKeyframes(),
+              timing: effect.getTiming(),
+              from: out ? swapAt : 0,
+            };
           }),
         );
       });
-      seen.observe(root, { attributes: true, attributeFilter: ["data-sa-switching"] });
-    });
+      seen.observe(root, { attributes: true, attributeFilter: ["data-sa-theme"] });
+    }, BW_THEME_AT_MS);
     await stepBoundaryTo(page, 0.4);
     await expect.poll(() => saLog(page)).toContain("in");
     const start = (await saVis(page)).find((x) => x.v === "in")!;
-    // Every real frame from the hold to cleanup (the CSS clock can trail the page's timers a
-    // little; the show must not end with a band still on screen).
+    // Every real frame from the hold to cleanup (the show must not end with a band still on
+    // screen).
     const real = await page.evaluate(async (at) => {
       const lefts = () =>
         [...document.querySelectorAll(".sa-bw-band")].map((b) => b.getBoundingClientRect().left);
@@ -898,16 +925,16 @@ test.describe("homepage: the way into Squared Away Growth", () => {
         el.style.cssText = "position:absolute;left:0;right:0;height:1px";
         stage.append(el);
         // Created in the CSS order, so they stack the same way (the later one wins).
-        const anims = copies.map(({ keyframes, timing }) => {
+        const anims = copies.map(({ keyframes, timing, from }) => {
           const a = new Animation(new KeyframeEffect(el, keyframes, timing), document.timeline);
           a.pause();
-          return a;
+          return { a, from };
         });
         return { el, anims };
       });
       const at = (t: number) =>
         standIns.map(({ el, anims }) => {
-          for (const a of anims) a.currentTime = t;
+          for (const { a, from } of anims) a.currentTime = t - from;
           return el.getBoundingClientRect().left;
         });
       const held = at(1000);
@@ -932,6 +959,28 @@ test.describe("homepage: the way into Squared Away Growth", () => {
     for (const left of lastReal) expect(Math.abs(left)).toBeGreaterThanOrEqual(end.vw - 0.5);
     await expectGrowth(page);
     expect(await landed(page)).toEqual(["1", "1"]);
+  });
+
+  test("a very slow phone (CPU x12): bands in, then the swap under full cover, then bands out", async ({
+    page,
+  }) => {
+    // E2E hardening (2026-10-19): the swap ran on its own 380ms timer while the bands start in
+    // the first frame after data-sa-switching is set; at CPU x12 that frame came late and the
+    // colours swapped with the bands a third of the way in (or, with frames 700ms apart, after
+    // they had left). Now the swap waits for the bands' own clock and adds their way out.
+    await page.goto("/");
+    await settle(page);
+    const cdp = await page.context().newCDPSession(page);
+    await cdp.send("Emulation.setCPUThrottlingRate", { rate: 12 });
+    try {
+      await stepBoundaryTo(page, 0.4);
+      await expect.poll(() => saLog(page), { timeout: 10_000 }).toContain("in");
+      // At x12 the show itself takes several seconds of wall time.
+      await expect(html(page)).not.toHaveAttribute("data-sa-switching", /.*/, { timeout: 20_000 });
+    } finally {
+      await cdp.send("Emulation.setCPUThrottlingRate", { rate: 1 });
+    }
+    await expectFullShow(page, { slowPhone: true });
   });
 
   test("hysteresis: wiggling near the boundary never strobes", async ({ page }) => {

@@ -8,7 +8,9 @@
  * both use the same numbers. Change both.
  *
  * "in" (the full show, on every crossing from the app into Growth), each stage fixed to a moment,
- * never scrubbed:
+ * never scrubbed. The page's steps (the swap, the realign, cleanup) count on the bands' own
+ * animation clock (growth-switch.tsx, onShowClock), from the frame the bands start in, so on a
+ * slow phone they still come in this order:
  *   bands in             BW_BAND_MS 240 each: the middle band from 0, its two neighbours after
  *                        BW_BAND_STAGGER_MS 40, the outer two after 80 (full cover at 320); bands
  *                        0, 2, 4 come from the left, 1 and 3 from the right
@@ -21,7 +23,9 @@
  *   bands out            BW_OUT_MS 160 each from BW_OUT_AT_MS 1300 (forwards only): the outer two
  *                        first, their neighbours after BW_BAND_STAGGER_MS 40, the middle band (with
  *                        the words) last, each back to the side it came from; all gone by
- *                        BW_OUT_DONE_AT_MS 1540
+ *                        BW_OUT_DONE_AT_MS 1540; added at the swap, so counted from it in the CSS
+ *                        (bandOutAfterSwapMs: 920, 960, 1000), as are sa-land, the realign and
+ *                        cleanup
  *   sa-land              BW_LAND_MS 300, starting BW_LAND_AFTER_OUT_MS 40 after the bands start
  *                        out: delays BW_LAND_DELAY_MS 960 (serif) and 1020ms (heavy) after the swap
  *   BW_DONE_MS           1740: cleanup re-applies the theme, then drops data-sa-switching
@@ -64,6 +68,14 @@ export function bandDelayMs(i: number): number {
 /** When band `i` starts flying back out in the full show: the outer bands first. */
 export function bandOutDelayMs(i: number): number {
   return BW_OUT_AT_MS + (bandRing(0) - bandRing(i)) * BW_BAND_STAGGER_MS;
+}
+
+/**
+ * The same, counted from the swap: the way out is only added to the bands once the theme has
+ * swapped (theme.css), so a late swap on a slow phone can never let them leave before it.
+ */
+export function bandOutAfterSwapMs(i: number): number {
+  return bandOutDelayMs(i) - BW_THEME_AT_MS;
 }
 
 /** Which side band `i` comes in from (and flies back out to, in the full show and the quiet paths). */

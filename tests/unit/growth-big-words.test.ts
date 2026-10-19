@@ -7,7 +7,8 @@ import * as bw from "@/components/marketing/growth/big-words-rules";
 const css = readFileSync("src/styles/theme.css", "utf8");
 const bare = css.replace(/\/\*[\s\S]*?\*\//g, "");
 const sw = (state: string) => `:root[data-sa-switching="${state}"]`;
-const LAND = ':root[data-sa-theme="growth"][data-sa-switching="in"] .sa-land > span';
+const SWAPPED = ':root[data-sa-theme="growth"][data-sa-switching="in"]';
+const LAND = `${SWAPPED} .sa-land > span`;
 
 /** The declarations of the rule whose selector is exactly `selector` (not a longer one). */
 function block(selector: string): Map<string, string> {
@@ -85,6 +86,8 @@ describe("big words: timings", () => {
   it("the middle band comes first, then outwards, and goes out last; sides alternate", () => {
     expect(BANDS.map(bw.bandDelayMs)).toEqual([80, 40, 0, 40, 80]);
     expect(BANDS.map(bw.bandOutDelayMs)).toEqual([1300, 1340, 1380, 1340, 1300]);
+    // The way out is added at the swap, so the CSS counts it from there.
+    expect(BANDS.map(bw.bandOutAfterSwapMs)).toEqual([920, 960, 1000, 960, 920]);
     expect(BANDS.map(bw.bandSide)).toEqual(["left", "right", "left", "right", "left"]);
     expect(bw.BW_COVERED_AT_MS).toBe(Math.max(...BANDS.map(bw.bandDelayMs)) + bw.BW_BAND_MS);
   });
@@ -125,9 +128,13 @@ describe("big words: theme.css", () => {
   it("the animations use the timings in big-words-rules.ts", () => {
     for (const i of BANDS) {
       const delay = bw.bandDelayMs(i);
-      expect(anim(`${sw("in")} .sa-bw-band[data-band="${i}"]`), `band ${i}`).toBe(
-        `sa-bw-in-${bw.bandSide(i)} ${bw.BW_BAND_MS}ms ${EASE_IN}${delay ? ` ${delay}ms` : ""} both, ` +
-          `sa-bw-out-${bw.bandSide(i)} ${bw.BW_OUT_MS}ms ${EASE_OUT} ${bw.bandOutDelayMs(i)}ms forwards`,
+      const wayIn = `sa-bw-in-${bw.bandSide(i)} ${bw.BW_BAND_MS}ms ${EASE_IN}${delay ? ` ${delay}ms` : ""} both`;
+      // Until the swap, the way in only; the swap adds the way out, counted from it, and the way
+      // in stays first in the list exactly as it was (so it carries on, not restarted).
+      expect(anim(`${sw("in")} .sa-bw-band[data-band="${i}"]`), `band ${i}`).toBe(wayIn);
+      expect(anim(`${SWAPPED} .sa-bw-band[data-band="${i}"]`), `band ${i} swapped`).toBe(
+        `${wayIn}, ` +
+          `sa-bw-out-${bw.bandSide(i)} ${bw.BW_OUT_MS}ms ${EASE_OUT} ${bw.bandOutAfterSwapMs(i)}ms forwards`,
       );
     }
     for (const side of ["left", "right"]) {
