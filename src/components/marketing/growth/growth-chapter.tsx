@@ -114,17 +114,6 @@ export function GrowthChapter({
             >
               <h3 className="text-xl font-black">{s.title}</h3>
               <p className="mt-2 text-lg text-ash">{s.body}</p>
-              <ul
-                aria-label={c.services.includesLabel(s.title)}
-                className="mt-3 flex flex-col gap-1"
-              >
-                {s.includes.map((line) => (
-                  <li key={line} className="flex items-baseline gap-2 text-lg text-ash">
-                    <span aria-hidden className="size-2 shrink-0 translate-y-[-0.15em] bg-ash" />
-                    {line}
-                  </li>
-                ))}
-              </ul>
             </li>
           ))}
         </ul>
