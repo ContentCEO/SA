@@ -213,8 +213,15 @@ test("settings: morning summary time and time zone are saved", async ({ page, co
   });
   await signInAs(context, owner);
 
-  // Check 45 P1: the first signed-in page saves this browser's zone (it was never set).
+  // Check 45 P1: the first signed-in page saves this browser's zone (it was never set). The save
+  // runs in the background (ZoneCapture); wait for it, so Morning email shows the saved zone.
   await page.goto("/settings");
+  await expect
+    .poll(() => zoneOf(owner.workspaceId))
+    .toEqual({
+      timeZone: "America/Chicago",
+      timeZoneSource: "browser",
+    });
   await page.getByRole("link", { name: /^Morning email/ }).click();
   await expect(page).toHaveURL(/\/settings\/morning-email$/);
   const section = page.getByRole("main");
@@ -235,4 +242,63 @@ test("settings: morning summary time and time zone are saved", async ({ page, co
     .from(schema.businessProfiles)
     .where(eq(schema.businessProfiles.workspaceId, owner.workspaceId));
   expect(p).toMatchObject({ digestEnabled: true, digestHour: 6, timeZone: "America/Chicago" });
+});
+
+async function zoneOf(workspaceId: string) {
+  const [p] = await testDb
+    .select({
+      timeZone: schema.businessProfiles.timeZone,
+      timeZoneSource: schema.businessProfiles.timeZoneSource,
+    })
+    .from(schema.businessProfiles)
+    .where(eq(schema.businessProfiles.workspaceId, workspaceId));
+  return p ?? null;
+}
+
+test("settings: saving the hour never turns a stale zone into the owner's pick", async ({
+  page,
+  context,
+}) => {
+  // Integrator (2026-10-19): the cause of the flaky test above. Morning email can render before
+  // the first page's browser-zone save lands, still showing Eastern; Save then stored Eastern as
+  // the owner's choice over the browser's Central. Here the save is held until the screen is up.
+  const owner = await seedOwner({ mailbox: true });
+  await context.addInitScript(() => {
+    const original = Intl.DateTimeFormat.prototype.resolvedOptions;
+    Intl.DateTimeFormat.prototype.resolvedOptions = function () {
+      return { ...original.call(this), timeZone: "America/Chicago" };
+    };
+  });
+  await signInAs(context, owner);
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => (release = resolve));
+  let held = 0;
+  await page.route("**/settings", async (route) => {
+    const request = route.request();
+    // The one server action /settings posts on load: ZoneCapture's saveDetectedTimeZoneAction.
+    if (request.method() === "POST" && request.headers()["next-action"] && held++ === 0) await gate;
+    await route.continue();
+  });
+  await page.goto("/settings");
+  await expect.poll(() => held).toBe(1);
+  await page.getByRole("link", { name: /^Morning email/ }).click();
+  await expect(page).toHaveURL(/\/settings\/morning-email$/);
+  const section = page.getByRole("main");
+  await expect(section.getByLabel("Your time zone")).toHaveValue("America/New_York");
+  release();
+  await expect
+    .poll(() => zoneOf(owner.workspaceId))
+    .toEqual({
+      timeZone: "America/Chicago",
+      timeZoneSource: "browser",
+    });
+
+  await section.getByLabel("Send it at").selectOption("6");
+  await section.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(page.getByRole("status").filter({ hasText: "Saved." })).toBeVisible();
+  expect(await zoneOf(owner.workspaceId)).toEqual({
+    timeZone: "America/Chicago",
+    timeZoneSource: "browser",
+  });
+  await expect(section.getByLabel("Your time zone")).toHaveValue("America/Chicago");
 });

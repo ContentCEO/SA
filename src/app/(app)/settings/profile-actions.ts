@@ -21,7 +21,7 @@ import {
   voiceEditInputFor,
   workHoursInput,
 } from "@/server/profile";
-import { isTimeZone } from "@/server/time-zone-rules";
+import { isTimeZone, pickedTimeZone } from "@/server/time-zone-rules";
 import { AutopilotNotAllowedError, setAutopilot } from "@/server/autopilot";
 import { decideSuggestion } from "@/server/edit-learning";
 import { hitLimit } from "@/server/rate-limit";
@@ -116,8 +116,10 @@ export async function saveDigestSettingsAction(formData: FormData) {
   });
   if (!parsed.success) redirect("/settings/morning-email?error=unknown");
   await saveDigestSettings(workspace.id, parsed.data);
-  // Check 44 P5 / 15 P7: the visible select; saved (as the owner's pick) only when changed.
-  if (parsed.data.timeZone) await setOwnerTimeZone(workspace.id, parsed.data.timeZone);
+  // Check 44 P5 / 15 P7: the visible select; saved (as the owner's pick) only when the owner
+  // changed it from what the screen showed (`pickedTimeZone`).
+  const picked = pickedTimeZone(parsed.data.timeZone, formData.get("timeZoneShown"));
+  if (picked) await setOwnerTimeZone(workspace.id, picked);
   redirect("/settings/morning-email?done=saved");
 }
 

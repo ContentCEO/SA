@@ -4,6 +4,19 @@
  */
 import { FALLBACK_TIME_ZONE } from "./snooze-rules";
 
+/**
+ * Integrator (2026-10-19): the zone the owner picked on Settings → Morning email, or null when
+ * they left the select as it was shown. The screen can render before the first page's browser
+ * zone lands (ZoneCapture), still showing the Eastern default; saving only the hour must not
+ * turn that stale default into the owner's choice over the browser's zone. A form without the
+ * shown value (a page loaded before this change) counts the posted zone as picked, as before.
+ */
+export function pickedTimeZone(posted: unknown, shown: unknown): string | null {
+  if (typeof posted !== "string" || !posted) return null;
+  if (typeof shown === "string" && shown === posted) return null;
+  return posted;
+}
+
 /** The US zones the owner can pick on Settings → Morning email. */
 export const US_TIME_ZONES = [
   { value: "America/New_York", label: "Eastern", places: "New York, Boston" },

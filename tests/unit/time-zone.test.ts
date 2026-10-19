@@ -16,6 +16,7 @@ import {
   nowLine,
   sameClock,
   US_TIME_ZONES,
+  pickedTimeZone,
   zoneChoices,
   zoneLine,
   zoneShortName,
@@ -287,5 +288,19 @@ describe("saving the zone", () => {
         timeZoneSource: "owner",
       });
     });
+  });
+});
+
+describe("pickedTimeZone (integrator 2026-10-19: an untouched select is not the owner's pick)", () => {
+  it("saves only a zone the owner changed from the one shown", () => {
+    expect(pickedTimeZone("America/New_York", "America/New_York")).toBeNull();
+    expect(pickedTimeZone("America/Chicago", "America/New_York")).toBe("America/Chicago");
+  });
+  it("nothing posted: nothing picked", () => {
+    expect(pickedTimeZone(undefined, "America/New_York")).toBeNull();
+    expect(pickedTimeZone("", "America/New_York")).toBeNull();
+  });
+  it("a form from before the shown field counts the posted zone as picked (old behaviour)", () => {
+    expect(pickedTimeZone("America/New_York", null)).toBe("America/New_York");
   });
 });

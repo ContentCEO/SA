@@ -68,6 +68,8 @@ export default async function MorningEmailSettingsPage(
             ))}
           </select>
         </label>
+        {/* What the select showed: an untouched select never becomes the owner's pick. */}
+        <input type="hidden" name="timeZoneShown" value={zone} />
         <p id="zone-line" className="text-muted-foreground">
           {zoneLine(zone)} {nowLine(new Date(), zone)}
         </p>
