@@ -14,7 +14,7 @@ const phone = siteConfig.phone;
 
 export const growthCopy = {
   hero: {
-    link: "Want more work coming in? See Squared Away Growth",
+    link: "Want more work coming in? We also run ads, your Google listing and reviews",
   },
   header: {
     link: "Growth",
@@ -22,13 +22,13 @@ export const growthCopy = {
   bridge: {
     region: "Introducing Squared Away Growth",
     serif: "The app keeps you squared away.",
-    heavy: "Want more work coming in? That's what we do one-on-one.",
-    body: "Squared Away Growth is a separate service, for anyone in the trades. You don't need the app to use it.",
+    heavy: "Need more jobs? We'll do the marketing for you.",
+    body: "Squared Away Growth is a separate service for anyone in the trades: ads, your Google listing, reviews and your website. It never touches your inbox, and you don't need the app to use it.",
   },
   /** Labels on the decorative switch graphic (aria-hidden): never announced. */
   switch: {
-    from: "The app",
-    to: "One-on-one",
+    from: "Your inbox",
+    to: "Your marketing",
   },
   bar: {
     label: "Squared Away Growth",
@@ -92,7 +92,7 @@ export const growthCopy = {
     items: [
       {
         title: "Your email stays out of it",
-        body: "Growth never touches your inbox. If you use the Squared Away app, your email is only used to run the app for you (sorting, drafts, follow-ups and your quote list), never for Growth ads, posts or anything else outside the app.",
+        body: "Growth never touches your inbox. If you use the Squared Away app, your email is used only to run the app for you, like sorting, drafts and follow-ups, and never for Growth ads, posts or anything else outside the app.",
       },
       {
         title: "No made-up reviews",

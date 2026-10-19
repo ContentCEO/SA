@@ -455,15 +455,15 @@ html:has([data-growth-page]) {
   white-space: nowrap;
 }
 /* Sized word by word, so each one fills the band's width on a phone (16px gutter kept, down to
-   320px; "One-on-one" is about 5.6em) and is capped by the band's height (20% of the screen) on
-   a wide one. */
+   320px; Check 6 P6's words "Your inbox" / "Your marketing") and is capped by the band's height
+   (20% of the screen) on a wide one. */
 .sa-bw-word[data-word="from"] {
-  font-size: 24vw;
-  font-size: min(24vw, 16vh);
+  font-size: 17vw;
+  font-size: min(17vw, 16vh);
 }
 .sa-bw-word[data-word="to"] {
-  font-size: 14.5vw;
-  font-size: min(14.5vw, 14vh);
+  font-size: 10.8vw;
+  font-size: min(10.8vw, 11vh);
   transform: translateY(100%);
 }
 :root[data-sa-switching="in"] .sa-bw-word {

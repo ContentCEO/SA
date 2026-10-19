@@ -92,15 +92,15 @@ describe("big words: timings", () => {
   it("covered, swap, tick-over, chip, a held word, bands out, under 2s", () => {
     // The theme swaps once every band is in, with a frame or two to spare.
     expect(bw.BW_COVERED_AT_MS + 40).toBeLessThanOrEqual(bw.BW_THEME_AT_MS);
-    // "The app" is whole on screen before it ticks out.
+    // "Your inbox" is whole on screen before it ticks out.
     expect(bw.BW_TICK_AT_MS).toBeGreaterThanOrEqual(bw.BW_BAND_MS + 150);
     expect(bw.BW_TICK_AT_MS).toBeGreaterThan(bw.BW_THEME_AT_MS);
-    // The chip flips as "One-on-one" lands.
+    // The chip flips as "Your marketing" lands.
     expect(bw.BW_CHIP_AT_MS).toBe(bw.BW_TICK_AT_MS + bw.BW_TICK_MS);
     // The second move to the opener is still under full cover, after the first.
     expect(bw.BW_THEME_AT_MS).toBeLessThan(bw.BW_REALIGN_AT_MS);
     expect(bw.BW_REALIGN_AT_MS).toBeLessThan(bw.BW_OUT_AT_MS);
-    // "One-on-one" holds, inverted, for 600ms or more before the bands go.
+    // "Your marketing" holds, inverted, for 600ms or more before the bands go.
     expect(bw.BW_OUT_AT_MS - bw.BW_CHIP_AT_MS).toBeGreaterThanOrEqual(600);
     expect(bw.BW_OUT_DONE_AT_MS).toBe(1540);
     // The headline lands as the bands leave: its delay counts from the swap.
@@ -200,8 +200,8 @@ describe("big words: theme.css", () => {
     // Each word sized on its own, big on a phone; min() has a plain fallback declared first
     // (older iOS).
     for (const [side, size] of [
-      ["from", ["24vw", "min(24vw, 16vh)"]],
-      ["to", ["14.5vw", "min(14.5vw, 14vh)"]],
+      ["from", ["17vw", "min(17vw, 16vh)"]],
+      ["to", ["10.8vw", "min(10.8vw, 11vh)"]],
     ] as const) {
       const rule = section().slice(section().indexOf(`.sa-bw-word[data-word="${side}"] {`));
       const body = rule.slice(0, rule.indexOf("}"));

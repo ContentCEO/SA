@@ -197,9 +197,9 @@ const growthHalf = (page: Page) => page.locator('[data-sa-half="growth"]');
 const opener = (page: Page) =>
   page.getByRole("region", { name: "Squared Away Growth", exact: true });
 const heroLink = (page: Page) =>
-  page
-    .getByRole("region", { name: "Introduction" })
-    .getByRole("link", { name: "Want more work coming in? See Squared Away Growth" });
+  page.getByRole("region", { name: "Introduction" }).getByRole("link", {
+    name: "Want more work coming in? We also run ads, your Google listing and reviews",
+  });
 const headerGrowthLink = (page: Page) =>
   page.getByRole("navigation", { name: "Site" }).getByRole("link", { name: "Growth", exact: true });
 const landed = (page: Page) =>
@@ -221,7 +221,7 @@ async function expectApp(page: Page) {
 
 /**
  * The full Big words show just played, once, from a reset log (or a fresh page): the bands came
- * in with the words, covered every bit of the screen when the theme swapped with "The app" still
+ * in with the words, covered every bit of the screen when the theme swapped with "Your inbox" still
  * the inverted word, flew back out, and the page landed on the opener with its headline in.
  */
 async function expectFullShow(page: Page) {
@@ -526,7 +526,7 @@ test.describe("homepage: the way into Squared Away Growth", () => {
     const start = (await saVis(page)).find((x) => x.v === "in")!;
 
     // Nothing disappears before the screen is covered; nothing scrolls sideways as the bands
-    // come in; the stage never takes a tap; "One-on-one" is huge, and the inverted word.
+    // come in; the stage never takes a tap; "Your marketing" is huge, and the inverted word.
     const during = await page.evaluate(async (at) => {
       const until = (ms: number) =>
         new Promise((r) => setTimeout(r, Math.max(0, at + ms - performance.now())));
@@ -555,7 +555,7 @@ test.describe("homepage: the way into Squared Away Growth", () => {
         outerLeft: outer.left,
         theme,
         overflow: overflow || doc.scrollWidth > doc.clientWidth,
-        // "One-on-one" is big, and still fits the screen side to side and inside its band.
+        // "Your marketing" is big, and still fits the screen side to side and inside its band.
         wordInside:
           word.left >= 15.5 &&
           word.right <= window.innerWidth - 15.5 &&
@@ -576,7 +576,7 @@ test.describe("homepage: the way into Squared Away Growth", () => {
     expect(during.wordInside).toBe(true);
     expect(during.wordHeight).toBeGreaterThan(0.06);
     expect(during.wordWidth).toBeGreaterThan(0.4);
-    // On a phone, "One-on-one" spans the band side to side (16px gutter kept): big, not a pill.
+    // On a phone, "Your marketing" spans the band side to side (16px gutter kept): big, not a pill.
     if (page.viewportSize()!.width < 500) expect(during.wordWidth).toBeGreaterThan(0.8);
     expect(during.stillPlaying).toBe(true);
     expect(during.hitOutside).toBe(true);

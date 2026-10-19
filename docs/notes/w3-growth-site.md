@@ -109,3 +109,17 @@ like, for real." only for live items (https links only). The "testimonial" ban s
 and any client proof for /growth (`src/config/growth-proof.ts`). Each proof item needs the
 client's written okay (the date goes in `permissionOn`) and a yearly check that it's still true
 (`checkedOn`); nothing is shown without both."
+
+## Step 9 (Check 2 P7 + Check 6 P6): ground rule and homepage hand-off copy
+
+- Ground rule 1: "…your email is used only to run the app for you, like sorting, drafts and
+  follow-ups, and never for Growth ads, posts or anything else outside the app."
+- hero.link "Want more work coming in? We also run ads, your Google listing and reviews";
+  bridge.heavy "Need more jobs? We'll do the marketing for you."; bridge.body names the four
+  services and "never touches your inbox".
+- The Big words switch now reads "Your inbox" → "Your marketing" (still aria-hidden). Its
+  per-word font sizes were re-tuned in theme.css (from 17vw / min(17vw, 16vh), to 10.8vw /
+  min(10.8vw, 11vh)) so the longer words still fit the band at 320–375px; the e2e "fits side to
+  side" checks are unchanged.
+- **CLAUDE.md:** the Growth "Big words" paragraph names "The app" / "One-on-one" — now
+  "Your inbox" / "Your marketing" (Check 6 P6).

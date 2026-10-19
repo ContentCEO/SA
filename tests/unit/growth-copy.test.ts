@@ -178,12 +178,22 @@ describe("Squared Away Growth copy", () => {
   });
 
   it("labels the decorative switch plainly", () => {
-    expect(growthCopy.switch).toEqual({ from: "The app", to: "One-on-one" });
+    expect(growthCopy.switch).toEqual({ from: "Your inbox", to: "Your marketing" });
   });
 
   it("the homepage hero link and header link come from the copy file", () => {
     const home = readFileSync("src/app/page.tsx", "utf8");
-    expect(growthCopy.hero.link).toBe("Want more work coming in? See Squared Away Growth");
+    expect(growthCopy.hero.link).toBe(
+      "Want more work coming in? We also run ads, your Google listing and reviews",
+    );
+    // Check 6 P6: the hero link names at least two services.
+    const named = GROWTH_SERVICES.filter((s) =>
+      growthCopy.hero.link.toLowerCase().includes(s.label.toLowerCase()),
+    );
+    const words2 = ["ads", "google listing", "reviews", "website"].filter((w) =>
+      growthCopy.hero.link.toLowerCase().includes(w),
+    );
+    expect(Math.max(named.length, words2.length)).toBeGreaterThanOrEqual(2);
     expect(home).toContain("{growthCopy.hero.link}");
     expect(home).toContain("{growthCopy.header.link}");
   });
@@ -271,5 +281,20 @@ describe("Check 3 P6 + Check 34 P4: two more FAQs", () => {
     // The two commercial sentences wait for the operator's answer.
     expect(item.a).not.toContain("Month to month");
     expect(item.a).not.toContain("stay in your name");
+  });
+});
+
+describe("Check 2 P7 + Check 6 P6: the first ground rule and the homepage hand-off", () => {
+  it("the inbox rule gives examples, not a complete list", () => {
+    expect(growthCopy.rules.items[0].body).toBe(
+      "Growth never touches your inbox. If you use the Squared Away app, your email is used only to run the app for you, like sorting, drafts and follow-ups, and never for Growth ads, posts or anything else outside the app.",
+    );
+  });
+
+  it("the bridge says what Growth is", () => {
+    expect(growthCopy.bridge.heavy).toBe("Need more jobs? We'll do the marketing for you.");
+    expect(growthCopy.bridge.body).toBe(
+      "Squared Away Growth is a separate service for anyone in the trades: ads, your Google listing, reviews and your website. It never touches your inbox, and you don't need the app to use it.",
+    );
   });
 });

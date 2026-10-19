@@ -1,7 +1,7 @@
 /**
  * "Big words", the homepage switch's clock (played by GrowthSwitch, growth-switch.tsx; drawn by
  * big-words.tsx). Five charcoal bands slam in from alternate sides, the middle one first, carrying
- * "The app" in huge serif; the words tick over, "The app" up and out of the band and "One-on-one"
+ * "Your inbox" in huge serif; the words tick over, "Your inbox" up and out of the band and "Your marketing"
  * up into it in huge heavy sans, which then inverts (the active label); the bands fly back out the
  * way they came, outer ones first, onto the opener. Pure timings (no DOM, no React), mirrored in
  * src/styles/theme.css (the "Homepage switch" block); tests/unit/growth-big-words.test.ts checks
@@ -14,9 +14,9 @@
  *                        0, 2, 4 come from the left, 1 and 3 from the right
  *   BW_THEME_AT_MS       380: data-sa-theme becomes "growth" and the page moves to the opener
  *                        (#growth), under full cover; scrolling is held until cleanup
- *   words tick over      BW_TICK_MS 240 from BW_TICK_AT_MS 440: "The app" up and out of the
- *                        middle band, "One-on-one" up into it (a small overshoot), clipped by it
- *   chip                 BW_CHIP_AT_MS 680: "One-on-one" inverts in one frame (no fade)
+ *   words tick over      BW_TICK_MS 240 from BW_TICK_AT_MS 440: "Your inbox" up and out of the
+ *                        middle band, "Your marketing" up into it (a small overshoot), clipped by it
+ *   chip                 BW_CHIP_AT_MS 680: "Your marketing" inverts in one frame (no fade)
  *   BW_REALIGN_AT_MS     1220: the opener put back at the top if a fling's momentum moved it
  *   bands out            BW_OUT_MS 160 each from BW_OUT_AT_MS 1300 (forwards only): the outer two
  *                        first, their neighbours after BW_BAND_STAGGER_MS 40, the middle band (with
