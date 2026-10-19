@@ -221,6 +221,86 @@ test("a draft of five or more lines has Show full draft in the server's HTML: no
   expect(html).toContain("Show full draft");
 });
 
+/**
+ * Where "They said no" sits inside Priya's card, in every frame from the first paint (before the
+ * page's script runs) until the test reads it back. Counted from the card's own top, so content
+ * streaming in above the card doesn't count as a move.
+ */
+async function recordSaidNoOffsets(page: import("@playwright/test").Page) {
+  await page.addInitScript(() => {
+    const w = window as unknown as { __saidNo: number[] };
+    w.__saidNo = [];
+    const tick = () => {
+      const btn = Array.from(document.querySelectorAll("article button")).find(
+        (b) => b.textContent?.trim() === "They said no" && b.checkVisibility(),
+      );
+      const card = btn?.closest("article");
+      if (btn && card)
+        w.__saidNo.push(
+          Math.round(btn.getBoundingClientRect().top - card.getBoundingClientRect().top),
+        );
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  });
+  return () => page.evaluate(() => (window as unknown as { __saidNo: number[] }).__saidNo);
+}
+
+for (const { name, body, toggle } of [
+  {
+    // Four lines by line break, but the long one wraps past four lines on any card.
+    name: "a mid-length draft that's cut",
+    body: "Hi Priya,\nThanks for the photos. I can do the panel upgrade and the new circuit for the range in one visit, and we pull the permit.\nWhat's the address?\nThanks, Davi",
+    toggle: { mobile: true, desktop: true },
+  },
+  {
+    // Fits four lines on a desktop card; wraps past them at 375px.
+    name: "a draft that's cut only on a phone",
+    body: "Hi Priya,\nYes, we pull the permit and book the inspection for you.\nTalk soon,\nDavi",
+    toggle: { mobile: true, desktop: false },
+  },
+]) {
+  test(`${name}: nothing under the card moves at hydration (Show full draft's place is kept)`, async ({
+    page,
+    context,
+  }, info) => {
+    // E2E hardening (2026-10-19): only measured in the browser, the toggle of a draft of four
+    // lines or fewer that wraps past the fold appeared at hydration and pushed They said no (and
+    // Edit, Discard, the practice send) 52px down, under a thumb already on its way.
+    const owner = await seedOwner({ mailbox: true, backfilled: true });
+    const { draft } = await seedQueue(owner.mailboxId!);
+    await testDb
+      .update(schema.drafts)
+      .set({ kind: "followup", body })
+      .where(eq(schema.drafts.id, draft.id));
+    await signInAs(context, owner);
+    // The toggle (shown, or keeping its place) is in the server's HTML.
+    expect(await (await page.request.get("/queue")).text()).toContain("Show full draft");
+
+    const offsets = await recordSaidNoOffsets(page);
+    await page.goto("/queue");
+    const card = page.getByRole("article", { name: "Priya · draft reply" });
+    await expect(card.getByRole("button", { name: "They said no" })).toBeVisible();
+    await page.waitForLoadState("networkidle");
+    // Measured by now: the toggle is there exactly when the folded text is cut short.
+    const cut = await card
+      .locator("p.whitespace-pre-line")
+      .evaluate((el) => el.scrollHeight > el.clientHeight + 1);
+    expect(cut).toBe(toggle[info.project.name as "mobile" | "desktop"]);
+    await expect(card.getByRole("button", { name: "Show full draft" })).toHaveCount(cut ? 1 : 0);
+    const final = await card
+      .getByRole("button", { name: "They said no" })
+      .evaluate((b) =>
+        Math.round(
+          b.getBoundingClientRect().top - b.closest("article")!.getBoundingClientRect().top,
+        ),
+      );
+    const seen = await offsets();
+    expect(seen.length).toBeGreaterThan(0);
+    expect(new Set(seen)).toEqual(new Set([final]));
+  });
+}
+
 test("'Fill in 1 gap to send' opens the gap's fill box; filling it brings Send reply (Check 9 P11)", async ({
   page,
   context,

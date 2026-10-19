@@ -4,6 +4,7 @@ import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { findGaps, fillGap } from "@/ai/gaps";
 import { Button } from "@/components/ui/button";
 import { confidenceWords, type ConfidenceLabel } from "@/config/drafting";
+import { foldGuess } from "@/lib/draft-fold";
 import { cn } from "@/lib/utils";
 import { withoutCategoryPrefix } from "@/lib/card-words";
 import { closeOnEscape } from "./focus";
@@ -30,9 +31,6 @@ export function ConfidenceTag({ label }: { label: ConfidenceLabel }) {
  */
 /** Which gap's fill box is open, and on which text (the card owns it: Check 9 P11). */
 export type GapOpen = { index: number; body: string } | null;
-
-/** A folded draft shows this many lines (`line-clamp-4` below). */
-const FOLD_LINES = 4;
 
 export function BodyWithGaps({
   body,
@@ -73,11 +71,14 @@ export function BodyWithGaps({
   // Check 9 P7: the toggle only when folding hides something (measured while folded).
   const text = useRef<HTMLParagraphElement>(null);
   const [measured, setMeasured] = useState(false);
-  // Five or more lines (by line break) can't fit in four, whatever the screen or font: the
-  // toggle is in the server's HTML from the start. Only measured, it appeared at hydration and
-  // pushed Edit and Discard down under a thumb (or a click) already on its way.
-  const surelyCut = folds && body.trim().split("\n").length > FOLD_LINES;
+  // Only measured, the toggle appeared at hydration and pushed everything under the card (Edit,
+  // Discard, They said no) down under a thumb (or a click) already on its way. So the server
+  // guesses from the text (src/lib/draft-fold.ts): surely cut → the toggle is in its HTML;
+  // maybe → the toggle's place is kept, hidden until measured; surely fits → none.
+  const guess = folds ? foldGuess(body) : "fits";
+  const surelyCut = guess === "cut";
   const cutShort = surelyCut || (folds && measured);
+  const keepPlace = guess === "maybe";
   useLayoutEffect(() => {
     const el = text.current;
     if (!folds || expanded || !el) return;
@@ -131,10 +132,15 @@ export function BodyWithGaps({
       <p ref={text} className={cn("whitespace-pre-line", folds && !expanded && "line-clamp-4")}>
         {parts}
       </p>
-      {cutShort && onToggle ? (
+      {(cutShort || keepPlace) && onToggle ? (
+        // Kept in place while nothing is cut: `invisible` takes it off the screen, out of the
+        // tab order and away from screen readers, and leaves its 44px where it is.
         <button
           type="button"
-          className="inline-flex min-h-tap items-center self-start font-semibold underline underline-offset-4"
+          className={cn(
+            "inline-flex min-h-tap items-center self-start font-semibold underline underline-offset-4",
+            !cutShort && "invisible",
+          )}
           aria-expanded={expanded}
           onClick={onToggle}
         >
