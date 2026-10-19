@@ -168,3 +168,70 @@ Set `TERMS_VERSION` to the release date; recompute `LEGAL_DOCS_SHA256` (the fail
 the value); add the `## <release date>` entry to `docs/legal-changes.md` (two to five plain
 bullets: the three decided items, the data-request bullets, the Limited Use wording, the texting
 section, and so on). `tests/unit/legal-changes.test.ts` fails until the entry exists.
+
+## Check 27 P5 + Check 27 P8 + Check 45 P6: privacy-policy sentences
+
+All wording; nothing in the policy changed. The one code half done now: `docs/google-verification.md`
+(not integrator-only) already carries the Limited Use commitment below in Google's terms, so the
+verification doc and the policy agree once the release applies this.
+
+### P5: Limited Use, "In plain words" list
+
+Replace the bullet "- We don't use Gmail data to train AI models, and our AI provider doesn't
+either." with **(recommended, the spec's wording; Google's help page asks for these terms)**:
+
+> - We don't use data we receive from Google Workspace APIs, including Gmail, whether raw,
+>   combined, anonymized or derived from it, to develop, improve or train generalized or
+>   non-personalized AI or machine-learning models, and our AI provider doesn't either. The
+>   writing-style description we make from your sent mail is used only for your own drafts.
+
+Test for the release: extend `legal-docs.test.ts` "uses Google's Limited Use template sentence…"
+to also require "generalized or non-personalized AI or machine-learning models".
+
+### P8: six small lines
+
+1. "## Who this policy covers": "This policy covers the owners and staff who sign in" → "This
+   policy covers the business owners who sign in" (one owner per workspace; staff can't sign in).
+2. "**Cookies:**" paragraph, append after "Private customer notes are left out of that copy.":
+   > Our public pages also remember, for that browser tab only, the campaign tags and the site you
+   > came from, so a sign-up can say where it came from; closing the tab clears it.
+   > (`src/lib/landing-source.ts` keeps them in the tab's session storage. The app also keeps, in
+   > the tab only, what you typed in a draft's Edit box and which button you used, so a refresh
+   > doesn't lose them; say so if Davi wants every detail: "and, in the signed-in app, what you've
+   > typed in a draft's Edit box until you save it".)
+3. Same paragraph, append:
+   > Do Not Track: we don't track you across other sites, so we don't change anything when your
+   > browser sends a Do Not Track signal.
+   > (CalOPPA asks sites collecting personal information from California residents to say how they
+   > respond to Do Not Track; for the lawyer to confirm.)
+4. "**Anthropic**" bullet: "Anthropic may keep it for a limited time under its own policies, for
+   example to prevent misuse." → "Anthropic deletes it within 30 days, unless it needs to keep it
+   longer to stop misuse or the law requires it." **Fact to verify on the day of the release** on
+   Anthropic's privacy center (some sources say 7 days since September 2025); write the number
+   Anthropic states that day.
+5. "## Security": Check 26 P5 (the failed-query log scrub) is **not** in BUILD-ORDER's Done list,
+   so use the softened sentence: "Our logs never contain email text, access tokens or customers'
+   personal details." → "We never write email text, access tokens or customers' personal details
+   to our logs on purpose, and we remove them from error reports." (If Check 26 P5 ships first,
+   keep the original sentence.)
+6. The referral-fingerprint sentence: **skip**; it is kept in `docs/SETUP.md` §6d for the change
+   that turns referrals on.
+
+Tests for the release: `legal-docs.test.ts` assertions for "Do Not Track", "for that browser tab
+only", "business owners who sign in", "within 30 days"; `tests/unit/legal-w3.test.ts` ("what the
+browser keeps is in the policy") can then also require the tab sentence next to its
+`sessionStorage` scan.
+
+### Check 45 P6: the breach sentence, "## Security"
+
+Replace "If a security breach exposes your information, we'll tell you as soon as we can and
+without unreasonable delay, as Massachusetts law (Chapter 93H) requires, and we'll notify the
+authorities that law names." with **(recommended, the spec's wording)**:
+
+> If a security breach exposes your information, we'll tell you as soon as we can and without
+> unreasonable delay, and we'll notify the authorities named by the breach notice law of your
+> state, including Massachusetts law (Chapter 93H).
+
+Tests for the release: `legal-docs.test.ts` "round 2 (TC)" pins "as Massachusetts law (Chapter
+93H) requires" → change to the new sentence, and add that the Security section contains "your
+state".

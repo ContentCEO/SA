@@ -55,8 +55,12 @@ In practice:
 - It is transferred only as needed to provide those features (to Anthropic, to sort and write), to
   comply with the law, or, if the business is merged or sold, only after asking for the owner's
   explicit permission first.
-- It is never used for advertising, never sold, and never used to train AI models (Anthropic
-  doesn't use API data for training). It is never used for Squared Away Growth.
+- It is never used for advertising and never sold. We don't use data we receive from Google
+  Workspace APIs, including Gmail, whether raw, combined, anonymized or derived from it, to
+  develop, improve or train generalized or non-personalized AI or machine-learning models, and
+  our AI provider (Anthropic) doesn't either. The writing-style description we make from an
+  owner's sent mail is used only for that owner's own drafts. It is never used for Squared Away
+  Growth.
 - People don't read it, unless the owner asks us to (for example for support), it is needed for
   security or to investigate abuse, or the law requires it.
 
