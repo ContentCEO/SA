@@ -9,3 +9,9 @@ export const siteConfig = {
   phone: "978-201-9763",
   copyright: "© 2026 Squared Away — Davi Chaves, Massachusetts",
 } as const;
+
+/**
+ * Check 33 P4: when each public page's words last changed, for the sitemap's lastModified
+ * (YYYY-MM-DD). Bump the date when that page's copy changes; the legal pages use TERMS_VERSION.
+ */
+export const CONTENT_DATES = { home: "2026-10-16", growth: "2026-10-16" } as const;

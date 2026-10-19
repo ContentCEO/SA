@@ -6,7 +6,9 @@ export function StructuredData() {
   return (
     <script
       type="application/ld+json"
-      dangerouslySetInnerHTML={{ __html: jsonLd(structuredData(appUrl("/"))) }}
+      dangerouslySetInnerHTML={{
+        __html: jsonLd(structuredData(appUrl("/"), { supportEmail: process.env.SUPPORT_EMAIL })),
+      }}
     />
   );
 }

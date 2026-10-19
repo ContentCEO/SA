@@ -116,6 +116,13 @@ test("robots.txt, sitemap.xml and the share image", async ({ request }) => {
   }
   // Check 26 P9: /admin isn't named (its pages say noindex instead).
   expect(robots).not.toContain("/admin");
+  // Check 33 P4: the sign-in, not-invited and goodbye pages carry a noindex tag instead of a
+  // robots.txt block (a blocked page can still be listed by its address).
+  for (const path of ["/signin", "/not-invited", "/goodbye"]) {
+    expect(robots).not.toContain(`Disallow: ${path}`);
+  }
+  expect(robots).toContain("Disallow: /queue");
+  expect(robots).toContain("Disallow: /api/");
   expect(robots).toMatch(/Sitemap: https?:\/\/[^\s]+\/sitemap\.xml/);
   const sitemap = await (await request.get("/sitemap.xml")).text();
   for (const path of ["/growth", "/privacy", "/terms"]) expect(sitemap).toContain(`${path}</loc>`);
@@ -124,6 +131,22 @@ test("robots.txt, sitemap.xml and the share image", async ({ request }) => {
   const og = await request.get("/opengraph-image");
   expect(og.status()).toBe(200);
   expect(og.headers()["content-type"]).toBe("image/png");
+});
+
+test("sign-in, not-invited and goodbye say noindex in the page; the sitemap is dated", async ({
+  page,
+  request,
+}) => {
+  for (const path of ["/signin", "/not-invited", "/goodbye"]) {
+    await page.goto(path);
+    await expect(page.locator('meta[name="robots"]')).toHaveAttribute("content", /noindex/);
+    await expect(page.locator('meta[name="robots"]')).toHaveAttribute("content", /follow/);
+    await expect(page.locator('meta[name="robots"]')).not.toHaveAttribute("content", /nofollow/);
+  }
+  const sitemap = await (await request.get("/sitemap.xml")).text();
+  const dates = [...sitemap.matchAll(/<lastmod>([^<]+)<\/lastmod>/g)].map((m) => m[1]!);
+  expect(dates).toHaveLength(4);
+  for (const d of dates) expect(d).toMatch(/^\d{4}-\d{2}-\d{2}/);
 });
 
 test("homepage: share card tags, the call button and the trial clock in the phone", async ({
