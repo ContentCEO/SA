@@ -132,6 +132,12 @@ export const waitlist = pgTable("waitlist", {
   referrerHost: text("referrer_host"),
   /** When the "You're on the list" email went to them (one per address, ever). */
   confirmationSentAt: timestamp("confirmation_sent_at", { withTimezone: true }),
+  /**
+   * Check 47 P3: who hosts their email domain — 'google' | 'microsoft' | 'other' | 'unknown'
+   * (src/server/mail-host-rules.ts), from the domain's MX records at sign-up. Only Google
+   * addresses can connect today. Null on rows from before this column.
+   */
+  mailHost: text("mail_host"),
 });
 
 export const workspaces = pgTable(

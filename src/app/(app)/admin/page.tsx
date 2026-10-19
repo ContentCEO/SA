@@ -62,6 +62,11 @@ import {
   testEmailErrorText,
 } from "@/server/email-health-rules";
 import { countWaitlistNeverConfirmed } from "@/server/waitlist-emails";
+import {
+  INVITE_NOT_GOOGLE_CONFIRM,
+  mailHostLine,
+  needsInviteConfirm,
+} from "@/server/mail-host-rules";
 import { launchChecks } from "@/server/launch-ready";
 import { loadLaunchFacts } from "@/server/launch-ticks";
 import { PendingButton } from "@/components/app/pending-button";
@@ -188,6 +193,8 @@ const errors: Record<string, string> = {
   waitlist_catchup_limit: "That's a lot of catch-up taps for one hour. Try again later.",
   email_not_set_up: "Email isn't set up, so nothing went out.",
   growth_only: growthCopy.admin.growthOnlyError,
+  invite_needs_confirm:
+    "That address isn't on Gmail, so they can't connect yet. Open Invite on their card and tap Invite anyway.",
   unknown: "That didn't work. Refresh and try again.",
 };
 
@@ -275,6 +282,10 @@ function WaitlistEntry({
       </span>
       {facts.appNote ? <p className="text-muted-foreground">“{facts.appNote}”</p> : null}
       {describeSource(w) ? <span className="text-sm">Came from: {describeSource(w)}</span> : null}
+      {/* Check 47 P3: only Google addresses can connect today. */}
+      {facts.app && mailHostLine(w.mailHost) ? (
+        <span className="text-sm font-semibold">{mailHostLine(w.mailHost)}</span>
+      ) : null}
       {/* Plan #47: an app sign-up's code, or (since 2026-10-16) a Growth request's, which is
           settled when Davi makes them a Growth client. */}
       {referrals && w.referralCode ? (
@@ -318,14 +329,45 @@ function WaitlistEntry({
             </span>
           ) : null}
           <input type="hidden" name="email" value={w.email} />
-          <Button type="submit" className="w-full">
-            {w.inviteState === "invite_gone"
-              ? `Invite ${w.name.split(" ")[0]} again`
-              : `Invite ${w.name.split(" ")[0]}`}
-          </Button>
+          {needsInviteConfirm(w.mailHost) ? (
+            // Check 47 P3: an extra tap for an address that isn't on Gmail.
+            <details className="rounded-lg border">
+              <summary className="flex min-h-tap cursor-pointer items-center px-4 font-semibold">
+                {w.inviteState === "invite_gone"
+                  ? `Invite ${w.name.split(" ")[0]} again`
+                  : `Invite ${w.name.split(" ")[0]}`}
+              </summary>
+              <div className="flex flex-col gap-2 px-4 pb-4">
+                <p>{INVITE_NOT_GOOGLE_CONFIRM}</p>
+                <input type="hidden" name="confirm" value="1" />
+                <Button type="submit" className="w-full">
+                  Invite anyway
+                </Button>
+                <KeepOnList />
+              </div>
+            </details>
+          ) : (
+            <Button type="submit" className="w-full">
+              {w.inviteState === "invite_gone"
+                ? `Invite ${w.name.split(" ")[0]} again`
+                : `Invite ${w.name.split(" ")[0]}`}
+            </Button>
+          )}
         </form>
       )}
     </li>
+  );
+}
+
+/** "Keep on the list": closes the confirm step without inviting (a link back to the list). */
+function KeepOnList() {
+  return (
+    <a
+      href="/admin#waitlist"
+      className="inline-flex min-h-tap items-center justify-center font-semibold underline underline-offset-4"
+    >
+      Keep on the list
+    </a>
   );
 }
 
@@ -663,7 +705,9 @@ export default async function AdminPage(props: PageProps<"/admin">) {
       ? catchUpResultText(params.sent, params.failed, params.left)
       : noticeText(WAITLIST_GROWTH_DONE, code(params.done, "wl_"));
   const waitlistError =
-    params.error === "waitlist_catchup_limit" || params.error === "email_not_set_up"
+    params.error === "waitlist_catchup_limit" ||
+    params.error === "email_not_set_up" ||
+    params.error === "invite_needs_confirm"
       ? errors[params.error]
       : noticeText(WAITLIST_GROWTH_ERRORS, code(params.error, "wl_"));
   // Payment messages show inside the Payments section (the page scrolls there), not at the top.
@@ -686,7 +730,8 @@ export default async function AdminPage(props: PageProps<"/admin">) {
     !isStripe(params.error) &&
     !isEmailTest(params.error) &&
     params.error !== "waitlist_catchup_limit" &&
-    params.error !== "email_not_set_up"
+    params.error !== "email_not_set_up" &&
+    params.error !== "invite_needs_confirm"
       ? noticeText(errors, params.error)
       : undefined;
   const stripeDone =
@@ -805,6 +850,10 @@ export default async function AdminPage(props: PageProps<"/admin">) {
         <h2 id="waitlist-heading" className="text-xl font-black">
           {ga.heading(waiting.length)}
         </h2>
+        {/* Check 47 P3: Outlook demand, a count. */}
+        <p className="text-sm">
+          On Outlook: {waiting.filter((w) => w.mailHost === "microsoft").length}
+        </p>
         {waitlistDone ? <Notice>{waitlistDone}</Notice> : null}
         {waitlistError ? <Notice strong>{waitlistError}</Notice> : null}
         {/* Check 18 P4: once the sender is real, catch up the confirmations that never went out. */}

@@ -85,3 +85,24 @@ policy should say, plus Davi's questions. Legal sentences are in `docs/notes/leg
   0 to go; then tap "Email the sign-in link again" on each invite that never got its email.
   `docs/SETUP.md` §7b's "people who join before the domain is verified never get one" is now
   "…get one when Davi taps the catch-up button on /admin" (edited here).
+
+## Check 47 P3 (step 8): waitlist mail host [M]
+
+- Migration `0076_waitlist_mail_host` (on this branch's numbering; renumber at merge): additive
+  `waitlist.mail_host text` — `google` | `microsoft` | `other` | `unknown`
+  (`src/server/mail-host-rules.ts`, pure: gmail/googlemail → google; outlook/hotmail/live/msn →
+  microsoft; other `PUBLIC_WEBMAIL_DOMAINS` → other; else MX ending in google.com /
+  googlemail.com → google, mail.protection.outlook.com → microsoft; none → unknown; evilgoogle.com
+  is not Google). `lookupMailHost` (`src/server/mail-host.ts`) uses `node:dns/promises`
+  `resolveMx` on the domain only, 2 s at most, any error → unknown; `joinWaitlist` stores it
+  (never blocks the sign-up).
+- /admin waitlist card: "Email on Microsoft (Outlook)" / "Email not on Google" / "Couldn't tell
+  where their email is hosted"; "On Outlook: N" under the heading. Inviting a `microsoft` or
+  `other` row opens a confirm step ("This address isn't on Gmail, so they can't connect yet.
+  Invite anyway?" → "Invite anyway" / "Keep on the list"); the action refuses without the confirm
+  field (`needs_confirm`, nobody invited). **Decision:** `unknown` (DNS didn't answer) shows the
+  line but does not block the invite, so a custom-domain shop stays invitable when the lookup
+  failed (the spec's "for those" read literally would block every custom domain during a DNS
+  outage).
+- Privacy sentence → `docs/notes/legal-w3-emails.md`. Rows from before the column have null and
+  show nothing.

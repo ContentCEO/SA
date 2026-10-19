@@ -174,8 +174,12 @@ export async function inviteFromWaitlistAction(formData: FormData) {
   await requireAdmin();
   const email = z.string().email().safeParse(formData.get("email"));
   if (!email.success) redirect("/admin?error=unknown");
-  const r = await inviteFromWaitlist(email.data);
+  // Check 47 P3: a non-Google address needs the card's "Invite anyway" (the confirm field).
+  const r = await inviteFromWaitlist(email.data, new Date(), {
+    confirmed: formData.get("confirm") === "1",
+  });
   if (r === "growth_only") redirect("/admin?error=growth_only#waitlist");
+  if (r === "needs_confirm") redirect("/admin?error=invite_needs_confirm#waitlist");
   if (r !== "invited") redirect("/admin?error=unknown");
   // Round 2 (FW A1): once per invite (sendInviteEmail checks), never failing the invite.
   const emailed = await sendInviteEmail(email.data);
