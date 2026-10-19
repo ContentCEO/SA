@@ -96,8 +96,12 @@ test("Check 8 P2: the page covers the whole screen and pads for the tab bar", as
   const viewport = await page.locator('meta[name="viewport"]').getAttribute("content");
   expect(viewport).toContain("viewport-fit=cover");
 
-  await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+  // The queue streams in after the loading skeleton, and parts of a card appear once it
+  // hydrates, so the page can still grow after `goto`. Measure the real queue (wait for its
+  // card), and scroll and measure in one synchronous step: nothing can render in between.
+  await expect(page.getByRole("article", { name: "Priya · draft reply" })).toBeVisible();
   const box = await page.evaluate(() => {
+    window.scrollTo(0, document.documentElement.scrollHeight);
     const bar = document.querySelector("[data-tabbar]")!.getBoundingClientRect();
     const app = document.getElementById("sa-app")!;
     // The wrapper's last visible child (the footer) ends above the bar.
