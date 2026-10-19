@@ -31,12 +31,23 @@ function clientCredentials() {
   return { clientId, clientSecret };
 }
 
-export function createGmailConnector(fetchImpl: Fetch = fetch): MailboxConnector {
+/**
+ * How long Disconnect / Delete my account wait on Google's revoke before treating it as failed.
+ * Both already carry on when revoke fails (the owner asked to delete; `revokedAtProvider: false`
+ * is logged), so a hung request must fail too instead of leaving "Disconnecting…" on screen.
+ */
+export const REVOKE_TIMEOUT_MS = 10_000;
+
+export function createGmailConnector(
+  fetchImpl: Fetch = fetch,
+  opts: { revokeTimeoutMs?: number } = {},
+): MailboxConnector {
   async function revoke(tokenValue: string) {
     const res = await fetchImpl(googleEndpoints().revoke, {
       method: "POST",
       headers: { "content-type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({ token: tokenValue }),
+      signal: AbortSignal.timeout(opts.revokeTimeoutMs ?? REVOKE_TIMEOUT_MS),
     });
     // 400 invalid_token means it's already revoked — that's the outcome we wanted.
     if (!res.ok && res.status !== 400) {
