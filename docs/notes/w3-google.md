@@ -175,3 +175,19 @@ keep this version (one env, as the plan's conflict 12 says) and drop theirs.
 default testing) is the one switch for what Google's consent screen shows; the connect screen's
 warning line and the access-lost email's reason read it (`src/config/google-app.ts`). Never add a
 second env for the same fact.
+
+## Step 6: Check 28 P5 (LAUNCH.md text; casa-prep.md and the workflow are on the branch)
+
+`poweredByHeader: false` was already in `next.config.ts` (Check 26 P9, with its test in
+`security-headers.test.ts`), so that part was skipped. The workflow was **not run**: running it
+needs a push to GitHub, which builders don't do. Integrator: after merging, run Actions → CASA
+pre-scan once on the branch and read the two artifacts.
+
+**LAUNCH.md 0g.** Add a bullet before "Worked when":
+
+```
+- Before paying a lab, run the pre-scan (GitHub → Actions → **CASA pre-scan** → Run workflow) and
+  have the engineers clear every high and medium finding, or list each as an accepted risk with
+  its reason in `docs/casa-prep.md` (the evidence file the lab's questionnaire is answered from).
+  Add the yearly key rotation (`docs/SETUP.md` §5a) to the same 60–90-day reminder.
+```
