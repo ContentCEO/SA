@@ -28,7 +28,7 @@ export async function requestGrowthCallAction(
   formData: FormData,
 ): Promise<GrowthState> {
   const raw: Record<string, string> = {};
-  for (const key of ["name", "phone", "email", "trade", "note", "ref", "website"]) {
+  for (const key of ["name", "phone", "email", "trade", "tradeOther", "note", "ref", "website"]) {
     const v = formData.get(key);
     raw[key] = typeof v === "string" ? v : "";
   }

@@ -284,6 +284,17 @@ describe("Ask Davi to call me: the form action", () => {
     for (const leak of ["Mike", "617", "mike@shop.com"]) expect(logged).not.toContain(leak);
   });
 
+  it('Check 41 P4: the form\'s "Which trade?" reaches the stored request (integrator fix)', async () => {
+    vi.spyOn(console, "info").mockImplementation(() => {});
+    const r = await requestGrowthCallAction(
+      { status: "idle" },
+      form({ ...goodForm, trade: "other", tradeOther: "pest control" }),
+    );
+    expect(r).toEqual({ status: "requested", phone: "617-555-0142" });
+    const [row] = await database.select().from(waitlist).where(eq(waitlist.email, "mike@shop.com"));
+    expect(row).toMatchObject({ trade: "other", tradeOther: "pest control" });
+  });
+
   it("if the notice to Davi fails, the request still counts and only the error's name is logged", async () => {
     sendEmail.mockRejectedValue(new TypeError("Resend 500 for mike@shop.com"));
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
