@@ -8,6 +8,7 @@ import { JOB_KINDS, OTHER_JOB_KIND } from "@/config/job-kinds";
 import { DIRECT_EMAIL, LEAD_SOURCES } from "@/config/lead-sources";
 import { isTrade, type Trade } from "@/config/trades";
 import { siteConfig } from "@/config/site";
+import { footerLine } from "./digest-rules";
 import { localMonthStart, localParts, usableTimeZone } from "./snooze-rules";
 
 /** Lowercase words separated by single spaces ("Built-in" → "built in"); "/" is kept for "a/c". */
@@ -186,9 +187,12 @@ export function buildMonthlySummary(
   s: MonthlyStats,
   monthName: string,
   urls: { activityUrl: string; settingsUrl: string },
+  /** Check 18 P6: a category on autopilot changes the closing line, as in the morning email. */
+  opts: { autopilotOn?: boolean } = {},
 ): { subject: string; text: string; html: string; worthSending: boolean } {
   const decided = s.won + s.lost + s.noAnswer;
   const lines = monthlyLines(s);
+  const footer = footerLine(Boolean(opts.autopilotOn));
   const subject = `Your ${monthName} in numbers`;
   const text = [
     `Your ${monthName}, in numbers.`,
@@ -197,7 +201,7 @@ export function buildMonthlySummary(
     "",
     `See your Activity: ${urls.activityUrl}`,
     "",
-    `Nothing is sent without your okay. This comes with your morning summary; change or turn it off: ${urls.settingsUrl}`,
+    `${footer} This comes with your morning summary; change or turn it off: ${urls.settingsUrl}`,
     siteConfig.copyright,
   ].join("\n");
   const para = (l: string) =>
@@ -208,7 +212,7 @@ export function buildMonthlySummary(
 <p style="margin:0 0 20px;font-weight:900;font-size:30px;letter-spacing:-0.02em">in numbers.</p>
 ${lines.map(para).join("\n")}
 <p style="margin:24px 0"><a href="${esc(urls.activityUrl)}" style="display:inline-block;background:#1b1b1b;color:#efeeea;text-decoration:none;font-weight:700;font-size:17px;padding:14px 22px;border-radius:10px">See your Activity</a></p>
-<p style="margin:24px 0 4px;font-size:14px;color:#5e5d59">Nothing is sent without your okay. This comes with your morning summary. <a href="${esc(urls.settingsUrl)}" style="color:#5e5d59">Change or turn it off</a>.</p>
+<p style="margin:24px 0 4px;font-size:14px;color:#5e5d59">${esc(footer)} This comes with your morning summary. <a href="${esc(urls.settingsUrl)}" style="color:#5e5d59">Change or turn it off</a>.</p>
 <p style="margin:0;font-size:14px;color:#5e5d59">${esc(siteConfig.copyright)}</p>
 </div></body></html>`;
   return {

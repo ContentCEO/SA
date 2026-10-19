@@ -147,6 +147,22 @@ describe("buildMonthlySummary (pure)", () => {
     }
   });
 
+  it("Check 18 P6: the closing line changes only when a category is on autopilot", () => {
+    const plain = buildMonthlySummary(STATS, "October", URLS);
+    expect(plain.text).toContain(
+      "Nothing is sent without your okay. This comes with your morning summary",
+    );
+    expect(plain.text).not.toContain("autopilot");
+    const on = buildMonthlySummary(STATS, "October", URLS, { autopilotOn: true });
+    expect(on.text).toContain(
+      "Nothing is sent without your okay, except the kinds of email you put on autopilot. This comes with your morning summary",
+    );
+    expect(on.html).toContain("except the kinds of email you put on autopilot. This comes with");
+    expect(on.html).not.toContain("Nothing is sent without your okay.");
+    // Still counts only.
+    expect(on.text).not.toMatch(/@|SECRET/);
+  });
+
   it("singulars, and lines with nothing to say are left out", () => {
     expect(
       monthlyLines({

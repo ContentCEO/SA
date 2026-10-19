@@ -16,6 +16,7 @@ import {
 import { appUrl } from "@/lib/app-url";
 import { sendEmail, type EmailSender, emailErrorFields } from "@/lib/email";
 import { closeRateBetween } from "./activity";
+import { autopilotOnFor } from "./digest";
 import { jobsAllowed } from "./lifecycle";
 import {
   buildMonthlySummary,
@@ -240,10 +241,15 @@ export async function sendMonthlySummaries(
         month.end,
         r.workspace.extraTrades ?? [],
       );
-      const email = buildMonthlySummary(stats, localMonthName(month.start, timeZone), {
-        activityUrl: appUrl("/activity"),
-        settingsUrl: appUrl("/settings/morning-email"),
-      });
+      const email = buildMonthlySummary(
+        stats,
+        localMonthName(month.start, timeZone),
+        {
+          activityUrl: appUrl("/activity"),
+          settingsUrl: appUrl("/settings/morning-email"),
+        },
+        { autopilotOn: await autopilotOnFor(r.workspace.id) },
+      );
       if (email.worthSending) {
         const outcome = await send({
           to: r.ownerEmail,

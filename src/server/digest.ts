@@ -7,6 +7,7 @@ import {
   businessProfiles,
   drafts,
   mailboxes,
+  rules,
   threads,
   users,
   workspaces,
@@ -14,11 +15,14 @@ import {
 import { appUrl } from "@/lib/app-url";
 import { sendEmail, type EmailSender, emailErrorFields } from "@/lib/email";
 import {
+  byAutopilot,
+  footerLine,
   moreInQueue,
   needsYouHeader,
   NOTHING_NEEDS_YOU,
   queueThreadUrl,
   toNeedsYouItem,
+  TRIAL_LINE,
   type NeedsYouItem,
 } from "./digest-rules";
 import { MONEY_SO_FAR_NOTE, moneySoFarLines, type MoneySoFar } from "./activity-rules";
@@ -26,7 +30,7 @@ import { moneySoFar } from "./activity";
 import { actionableQueue, queueMembership } from "./drafts";
 import { leadsAtRisk } from "./leads-at-risk";
 import { atRiskDigestLine, atRiskOffQueueLine } from "./leads-at-risk-rules";
-import { jobsAllowed } from "./lifecycle";
+import { effectiveStatus, jobsAllowed } from "./lifecycle";
 import { weeklyScorecard } from "./scorecard";
 import { notAnsweredYet } from "./never-answered";
 import { notAnsweredLine } from "./never-answered-rules";
@@ -79,7 +83,23 @@ export type DigestCounts = {
    * invoices paid, still owed), the same numbers as Activity. Optional for older callers.
    */
   money?: MoneySoFar;
+  /**
+   * Check 18 P6 / Check 20 P12: of the sent count, how many autopilot sent in the last 24 hours
+   * (activity `reply_sent` with `autopilot: true`), and whether any category is on autopilot now.
+   */
+  sentByAutopilot?: number;
+  autopilotOn?: boolean;
 };
+
+/** Whether any of the workspace's categories is on autopilot (the `rules` table). */
+export async function autopilotOnFor(workspaceId: string): Promise<boolean> {
+  const [row] = await db()
+    .select({ category: rules.category })
+    .from(rules)
+    .where(and(eq(rules.workspaceId, workspaceId), eq(rules.mode, "autopilot")))
+    .limit(1);
+  return Boolean(row);
+}
 
 /**
  * What the summary counts. Who is waiting comes from the queue's own content-free membership
@@ -132,6 +152,18 @@ export async function digestCounts(
     .select({ n: count() })
     .from(threads)
     .where(and(inArray(threads.mailboxId, boxes), gte(threads.classifiedAt, dayAgo)));
+  // Check 20 P12: autopilot's sends, from the activity row sendDraft(…, by: "autopilot") writes.
+  const [auto] = await db()
+    .select({ n: count() })
+    .from(activityLog)
+    .where(
+      and(
+        eq(activityLog.workspaceId, workspaceId),
+        eq(activityLog.action, "reply_sent"),
+        sql`${activityLog.detail} ->> 'autopilot' = 'true'`,
+        gte(activityLog.createdAt, dayAgo),
+      ),
+    );
 
   // Plan #34: shown whether or not the owner has phone notifications — the summary is the
   // morning catch-up, and a count is harmless. Counts only.
@@ -156,6 +188,8 @@ export async function digestCounts(
       )
     ).length,
     money: await moneySoFar(workspaceId, now, tz),
+    sentByAutopilot: auto?.n ?? 0,
+    autopilotOn: await autopilotOnFor(workspaceId),
   };
 }
 
@@ -168,6 +202,8 @@ export type DigestLinks = {
   settingsUrl: string;
   /** A deep link to one card on the queue (`<queue>#t-<uuid>`). */
   threadUrl: (threadId: string) => string;
+  /** Check 18 P6: where a trial owner chooses a plan (the trial line links it). */
+  billingUrl?: string;
 };
 
 /**
@@ -181,7 +217,13 @@ export type DigestLinks = {
 export function buildDigest(
   c: DigestCounts,
   links: DigestLinks,
-  extras: { now: Date; timeZone: string; lastWeek?: string[] },
+  extras: {
+    now: Date;
+    timeZone: string;
+    lastWeek?: string[];
+    /** Check 18 P6: the account is in its three days, so sending to customers is off. */
+    trial?: boolean;
+  },
 ) {
   const header = needsYouHeader(c.needsYou, extras.now, extras.timeZone, links.threadUrl);
   // A lead going cold with no card on the queue still needs the owner: it goes under "Needs
@@ -207,9 +249,14 @@ export function buildDigest(
         // (threads), and drafted replies and follow-ups together.
         `In the last day: ${plural(c.sortedYesterday, "conversation")} sorted, ${c.sentYesterday} ${
           c.sentYesterday === 1 ? "reply or follow-up" : "replies and follow-ups"
-        } sent.`
+        } sent${byAutopilot(c.sentByAutopilot)}.`
       : null,
   ].filter((l): l is string => !!l);
+  const footer = footerLine(Boolean(c.autopilotOn));
+  // Check 18 P6: under the headline, fixed words with the billing link.
+  const trial = extras.trial
+    ? { text: TRIAL_LINE, href: links.billingUrl ?? links.queueUrl }
+    : null;
   const lastWeek = extras.lastWeek ?? [];
   // This month's money so far (totals only); the section is left out when all of it is zero.
   // It never makes a quiet morning worth an email on its own (`worthSending` ignores it).
@@ -222,6 +269,7 @@ export function buildDigest(
 
   const text = [
     "Good morning.",
+    ...(trial ? ["", `${trial.text} ${trial.href}`] : []),
     "",
     "Needs you:",
     ...(needsNothing
@@ -237,7 +285,7 @@ export function buildDigest(
     ...(lastWeek.length ? ["", ...lastWeek] : []),
     "",
     ...(onQueue ? [`Open your queue: ${links.queueUrl}`, ""] : []),
-    `Nothing is sent without your okay. Change or turn off this email: ${links.settingsUrl}`,
+    `${footer} Change or turn off this email: ${links.settingsUrl}`,
     siteConfig.copyright,
   ].join("\n");
 
@@ -261,6 +309,7 @@ export function buildDigest(
 <div style="max-width:480px;margin:0 auto;padding:24px 16px">
 <p style="margin:0;font-family:Georgia,serif;font-style:italic;font-size:24px">good morning,</p>
 <p style="margin:0 0 20px;font-weight:900;font-size:30px;letter-spacing:-0.02em">${esc(waiting ? `${plural(waiting, "thing")} waiting.` : "all clear.")}</p>
+${trial ? `<p style="margin:0 0 20px;font-size:17px;line-height:1.45;font-weight:700">${esc(trial.text)} <a href="${esc(trial.href)}" style="color:#1b1b1b">Choose a plan</a>.</p>` : ""}
 <p style="margin:0 0 4px;font-weight:900;font-size:19px">Needs you</p>
 ${needsHtml}
 <div style="margin:20px 0 0">
@@ -273,7 +322,7 @@ ${
     ? `<p style="margin:24px 0"><a href="${esc(links.queueUrl)}" style="display:inline-block;background:#1b1b1b;color:#efeeea;text-decoration:none;font-weight:700;font-size:17px;padding:14px 22px;border-radius:10px">Open your queue</a></p>`
     : ""
 }
-<p style="margin:24px 0 4px;font-size:14px;color:#5e5d59">Nothing is sent without your okay. <a href="${esc(links.settingsUrl)}" style="color:#5e5d59">Change or turn off this email</a>.</p>
+<p style="margin:24px 0 4px;font-size:14px;color:#5e5d59">${esc(footer)} <a href="${esc(links.settingsUrl)}" style="color:#5e5d59">Change or turn off this email</a>.</p>
 <p style="margin:0;font-size:14px;color:#5e5d59">${esc(siteConfig.copyright)}</p>
 </div></body></html>`;
 
@@ -355,8 +404,14 @@ export async function sendDigests(
           quotesUrl: appUrl("/quotes"),
           settingsUrl: appUrl("/settings/morning-email"),
           threadUrl: (id) => queueThreadUrl(queueUrl, id),
+          billingUrl: appUrl("/billing"),
         },
-        { now, timeZone, lastWeek: await lastWeekLines(r.workspace.id, now, timeZone) },
+        {
+          now,
+          timeZone,
+          lastWeek: await lastWeekLines(r.workspace.id, now, timeZone),
+          trial: effectiveStatus(r.workspace, now) === "evaluating",
+        },
       );
       if (digest.worthSending) {
         const outcome = await send({
