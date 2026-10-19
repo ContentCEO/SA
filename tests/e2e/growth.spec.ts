@@ -831,15 +831,37 @@ test.describe("homepage: the way into Squared Away Growth", () => {
   }) => {
     await page.goto("/");
     await settle(page);
+    // The order is a matter of 40ms steps (outer bands at 1300ms, their neighbours at 1340ms, the
+    // middle at 1380ms). Sampled frame by frame, a loaded machine can skip every frame of a step
+    // (it did), so the bands' own animations (keyframes and timing, copied the moment the show
+    // starts) are replayed on stand-ins and read at fixed times, 10ms apart. The live show is
+    // left alone, and its real frames from the hold to cleanup are still recorded.
+    type Copy = { keyframes: Keyframe[]; timing: EffectTiming }[];
+    await page.evaluate(() => {
+      const w = window as unknown as { __saCopies: Copy[] };
+      const root = document.documentElement;
+      const seen = new MutationObserver(() => {
+        if (root.getAttribute("data-sa-switching") !== "in") return;
+        seen.disconnect();
+        const bands = [...document.querySelectorAll(".sa-bw-band")];
+        w.__saCopies = bands.map((b) =>
+          b.getAnimations().map((a) => {
+            const effect = a.effect as KeyframeEffect;
+            return { keyframes: effect.getKeyframes(), timing: effect.getTiming() };
+          }),
+        );
+      });
+      seen.observe(root, { attributes: true, attributeFilter: ["data-sa-switching"] });
+    });
     await stepBoundaryTo(page, 0.4);
     await expect.poll(() => saLog(page)).toContain("in");
     const start = (await saVis(page)).find((x) => x.v === "in")!;
-    const end = await page.evaluate(async (at) => {
+    // Every real frame from the hold to cleanup (the CSS clock can trail the page's timers a
+    // little; the show must not end with a band still on screen).
+    const real = await page.evaluate(async (at) => {
       const lefts = () =>
         [...document.querySelectorAll(".sa-bw-band")].map((b) => b.getBoundingClientRect().left);
       await new Promise((r) => setTimeout(r, Math.max(0, at + 1000 - performance.now())));
-      const held = lefts();
-      // Every frame from the hold to cleanup (the CSS clock can trail the page's timers a little).
       const frames: number[][] = [];
       await new Promise<void>((resolve) => {
         const tick = () => {
@@ -849,8 +871,37 @@ test.describe("homepage: the way into Squared Away Growth", () => {
         };
         requestAnimationFrame(tick);
       });
-      return { held, frames, vw: window.innerWidth };
+      return frames;
     }, start.at);
+    const end = await page.evaluate(() => {
+      const w = window as unknown as { __saCopies: Copy[] };
+      // Stand-ins as wide as the bands (translateX(%) is of the element's own width).
+      const stage = document.createElement("div");
+      stage.style.cssText = "position:fixed;inset:0;visibility:hidden;pointer-events:none";
+      document.body.append(stage);
+      const standIns = w.__saCopies.map((copies) => {
+        const el = document.createElement("div");
+        el.style.cssText = "position:absolute;left:0;right:0;height:1px";
+        stage.append(el);
+        // Created in the CSS order, so they stack the same way (the later one wins).
+        const anims = copies.map(({ keyframes, timing }) => {
+          const a = new Animation(new KeyframeEffect(el, keyframes, timing), document.timeline);
+          a.pause();
+          return a;
+        });
+        return { el, anims };
+      });
+      const at = (t: number) =>
+        standIns.map(({ el, anims }) => {
+          for (const a of anims) a.currentTime = t;
+          return el.getBoundingClientRect().left;
+        });
+      const held = at(1000);
+      const frames: number[][] = [];
+      for (let t = 1000; t <= 1600; t += 10) frames.push(at(t));
+      stage.remove();
+      return { held, frames, vw: window.innerWidth };
+    });
     for (const left of end.held) expect(Math.abs(left)).toBeLessThanOrEqual(0.5);
     // The outer bands lead, back to the left, while the words still hold the middle.
     expect(
@@ -860,9 +911,11 @@ test.describe("homepage: the way into Squared Away Growth", () => {
     expect(end.frames.some(([, second, , fourth]) => second > 1 && fourth > 1)).toBe(true);
     // The middle band never leads.
     for (const [top, , middle] of end.frames) expect(top).toBeLessThanOrEqual(middle);
-    // All gone by the end.
+    // All gone by the end, on the timeline and in the last real frame before cleanup.
     const last = end.frames[end.frames.length - 1];
     for (const left of last) expect(Math.abs(left)).toBeGreaterThanOrEqual(end.vw - 0.5);
+    const lastReal = real[real.length - 1];
+    for (const left of lastReal) expect(Math.abs(left)).toBeGreaterThanOrEqual(end.vw - 0.5);
     await expectGrowth(page);
     expect(await landed(page)).toEqual(["1", "1"]);
   });
