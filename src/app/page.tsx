@@ -184,7 +184,7 @@ export default function HomePage() {
             id="how"
             label="How it works"
             className="border-t border-stone"
-            defer={[1065, 605]}
+            defer={[936, 412]}
           >
             <Headline as="h2" serif="three steps," heavy="then back to work." />
             <ol className="grid gap-6 md:grid-cols-3">
@@ -201,7 +201,7 @@ export default function HomePage() {
           <section
             aria-label="Our promise"
             className="sa-inverted sa-cv px-4 py-16 sm:py-24"
-            style={deferred(663, 531).style}
+            style={deferred(535, 339).style}
           >
             <div className="mx-auto flex w-full max-w-5xl flex-col gap-6">
               <p className="flex flex-col">
@@ -212,7 +212,7 @@ export default function HomePage() {
             </div>
           </section>
 
-          <Section label="What it does" defer={[2244, 1119]}>
+          <Section label="What it does" defer={[2116, 927]}>
             <Headline as="h2" serif="what it does," heavy="all day." />
             <ul className="grid gap-x-10 gap-y-8 sm:grid-cols-2 lg:grid-cols-3">
               {features.map((f) => (
@@ -230,7 +230,7 @@ export default function HomePage() {
             id="pricing"
             label="Pricing"
             className="border-t border-stone"
-            defer={[2049, 1177]}
+            defer={[1920, 984]}
           >
             <Headline as="h2" serif="simple pricing," heavy="no contract." />
             <div className="flex flex-col gap-2 rounded-2xl border-2 border-charcoal p-6 sm:flex-row sm:items-center sm:justify-between">
@@ -260,7 +260,7 @@ export default function HomePage() {
             </p>
           </Section>
 
-          <Section label="Questions" className="border-t border-stone" defer={[770, 798]}>
+          <Section label="Questions" className="border-t border-stone" defer={[641, 605]}>
             <Headline as="h2" serif="good questions," heavy="straight answers." />
             <div className="flex flex-col divide-y divide-stone border-y border-stone">
               {faqs.map((f) => (

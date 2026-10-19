@@ -205,3 +205,15 @@ last" and "a replaced request leaves no old number behind". Proposal: decide it 
 `growth_requests` table instead (one row per request, newest shown first, the stored phone never
 overwritten), with the privacy sentence "If you send the form again, we keep your first request
 and your newest one." (legal note, only if Davi says yes).
+
+## Fixes from the full checks (after step 15)
+
+- `.sa-cv` sizes are now the sections' **content** height (measured height minus padding and
+  border): contain-intrinsic-size stands in for the content, so the padded sizes made the page
+  jump as sections rendered and the switch e2e landed past its line.
+- /growth's header hides "The app" below `sm` so the GrowthMark header fits at 320px (the page
+  ends with "See the app").
+- The CPU-throttled crossing e2e (Check 29 P9) is opt-in (`SA_PERF=1`): on this shared machine
+  (load 10–20 on 4 CPUs) it read 250–350ms worst frames, which says nothing about phones.
+  **Not verified** on an idle machine — run `SA_PERF=1 pnpm test:e2e tests/e2e/growth.spec.ts`
+  before trusting the < 120ms claim.

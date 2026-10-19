@@ -44,7 +44,12 @@ export default function GrowthPage() {
             <GrowthMark />
           </Link>
           <nav aria-label="Site" className="flex items-center gap-1">
-            <Link href="/" className="inline-flex min-h-tap items-center px-3 font-semibold">
+            {/* Hidden on the smallest phones so the header fits at 320px ("See the app" is at the
+                bottom of the page). */}
+            <Link
+              href="/"
+              className="hidden min-h-tap items-center px-3 font-semibold sm:inline-flex"
+            >
               {page.appLink}
             </Link>
             <Link

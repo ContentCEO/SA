@@ -102,7 +102,7 @@ export function GrowthChapter({
         </div>
       </section>
 
-      <Section label={c.services.region} defer={[2643, 1201]}>
+      <Section label={c.services.region} defer={[2514, 1008]}>
         <Headline as="h2" serif={c.services.serif} heavy={c.services.heavy} />
         {/* Check 2 P9: the first card spans two columns, so seven cards leave no lone card
             (sm: 2 + 2×3; lg: 2+1+1, then 4). One column on phones. */}
@@ -130,7 +130,7 @@ export function GrowthChapter({
         </ul>
       </Section>
 
-      <Section label={c.pledge.region} defer={[512, 451]}>
+      <Section label={c.pledge.region} defer={[383, 258]}>
         <Headline as="h2" serif={c.pledge.serif} heavy={c.pledge.heavy} />
         <div className="flex max-w-3xl flex-col gap-4 border-l-4 border-offwhite pl-5">
           <p className="text-xl leading-relaxed">{c.pledge.body}</p>
@@ -138,7 +138,7 @@ export function GrowthChapter({
         </div>
       </Section>
 
-      <Section label={c.how.region} defer={[873, 521]}>
+      <Section label={c.how.region} defer={[744, 328]}>
         <Headline as="h2" serif={c.how.serif} heavy={c.how.heavy} />
         <ol className="grid gap-6 md:grid-cols-3">
           {c.how.steps.map((s, i) => (
@@ -153,7 +153,7 @@ export function GrowthChapter({
         </ol>
       </Section>
 
-      <Section label={c.rules.region} defer={[949, 617]}>
+      <Section label={c.rules.region} defer={[820, 424]}>
         <Headline as="h2" serif={c.rules.serif} heavy={c.rules.heavy} />
         <ul className="grid gap-x-10 gap-y-8 sm:grid-cols-2">
           {c.rules.items.map((r) => (
@@ -184,7 +184,7 @@ export function GrowthChapter({
 
       <GrowthProof items={GROWTH_PROOF} now={new Date()} />
 
-      <Section label={c.faq.region} defer={[814, 830]}>
+      <Section label={c.faq.region} defer={[685, 637]}>
         <Headline as="h2" serif={c.faq.serif} heavy={c.faq.heavy} />
         <div className="divide-y divide-ash/40 border-y border-ash/40">
           {c.faq.items.map((f) => (
