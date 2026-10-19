@@ -191,3 +191,17 @@ rules, Growth questions (Growth half, also on /growth). Not on the Introduction,
 waitlist, the bridge, the Growth opener (#growth), the call section (#growth-call), the sticky
 header/bar or the switch stage. Sizes measured at 375px and 1280px. New e2e (mobile project):
 three crossings under CDP 4x CPU throttling, worst requestAnimationFrame gap < 120ms.
+
+## Step 15 (Check 26 P8): first and newest request — limit built, the rest is Davi's call
+
+Built: a per-email limit on both public forms (`LIMITS.formEmail`, 5 a day, keyed by
+`addressKey` — an HMAC, never the address), checked after validation; the 6th try reads "Too
+many tries for this email today. Try again tomorrow, or call or text 978-201-9763."
+
+**Not built (needs Davi's okay, privacy text):** keeping the first request as well as the newest
+(`MAX_GROWTH_BLOCKS = 2`, "First request" / "Sent again" labels) and never replacing a stored
+phone. Today CLAUDE.md and the privacy policy say "the newest request per email replaces the
+last" and "a replaced request leaves no old number behind". Proposal: decide it on Group 5's
+`growth_requests` table instead (one row per request, newest shown first, the stored phone never
+overwritten), with the privacy sentence "If you send the form again, we keep your first request
+and your newest one." (legal note, only if Davi says yes).

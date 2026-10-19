@@ -11,6 +11,11 @@ import { rateLimits } from "@/db/schema";
 export const LIMITS = {
   /** Public waitlist form, per IP. */
   waitlist: { max: 10, windowSec: 60 * 60 },
+  /**
+   * Check 26 P8: both public forms, per email address (addressKey: an HMAC, never the address),
+   * so nobody can keep rewriting one person's request from many places.
+   */
+  formEmail: { max: 5, windowSec: 24 * 60 * 60 },
   /** Sending replies, per workspace. */
   send: { max: 60, windowSec: 10 * 60 },
   /**

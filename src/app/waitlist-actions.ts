@@ -10,6 +10,7 @@ import { hitLimit, ipKey } from "@/server/rate-limit";
 import { sourceFromForm } from "@/server/source-rules";
 import { TRAP_FIELD, trapWasFilled } from "@/server/trap-rules";
 import { joinWaitlist, waitlistInput } from "@/server/waitlist";
+import { addressKey } from "@/server/growth";
 import { sendWaitlistEmails } from "@/server/waitlist-emails";
 
 export type WaitlistState = {
@@ -18,6 +19,7 @@ export type WaitlistState = {
   values?: Record<string, string>;
 };
 
+const EMAIL_LIMITED = `Too many tries for this email today. Try again tomorrow, or call or text ${siteConfig.phone}.`;
 const SAVE_FAILED = `We couldn't save that just now. Try again in a minute, or call or text ${siteConfig.phone}.`;
 
 /**
@@ -67,6 +69,10 @@ export async function joinWaitlistAction(
       errors: z.flattenError(parsed.error).fieldErrors as Record<string, string[]>,
       values: raw,
     };
+  }
+  // Check 26 P8: at most 5 sign-ups a day for one email address, from anywhere.
+  if (!(await hitLimit("formEmail", addressKey(parsed.data.email))).allowed) {
+    return { status: "error", errors: { form: [EMAIL_LIMITED] }, values: raw };
   }
   const source = sourceFromForm((k) => formData.get(k), ownHosts(h));
   let result: Awaited<ReturnType<typeof joinWaitlist>>;

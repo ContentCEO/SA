@@ -221,6 +221,8 @@ export const growthCopy = {
     sentByLong: "Keep it under 80 characters.",
     noteLong: "Keep it under 500 characters.",
     rateLimited: `Too many tries from here. Try again in an hour, or call or text ${phone}.`,
+    /** Check 26 P8: the per-email daily limit. */
+    emailLimited: `Too many tries for this email today. Try again tomorrow, or call or text ${phone}.`,
     saveFailed: `We couldn't save that just now. Try again in a minute, or call or text ${phone}.`,
   },
   success: {

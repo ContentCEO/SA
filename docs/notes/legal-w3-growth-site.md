@@ -20,3 +20,8 @@ this branch.
   in, and your time zone (from your browser, so we call at a sensible hour),"
 - If Davi later adds town (Check 44 P3): "the town you work in" in the same list, and the same
   for the waitlist paragraph.
+
+## Check 26 P8 (step 15): only if Davi wants first + newest kept (NOT built)
+
+- Privacy policy, "How long we keep it", Growth call requests: "If you send the form again, we
+  keep your first request and your newest one, until you ask us to remove them."

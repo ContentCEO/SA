@@ -4,7 +4,7 @@ import { headers } from "next/headers";
 import { unstable_rethrow } from "next/navigation";
 import { z } from "zod";
 import { growthCopy } from "@/components/marketing/growth/growth-copy";
-import { growthInput, requestGrowthCall, sendGrowthEmails } from "@/server/growth";
+import { addressKey, growthInput, requestGrowthCall, sendGrowthEmails } from "@/server/growth";
 import { hitLimit, ipKey } from "@/server/rate-limit";
 import { sourceFromForm } from "@/server/source-rules";
 import { trapWasFilled } from "@/server/trap-rules";
@@ -87,6 +87,15 @@ export async function requestGrowthCallAction(
     };
   }
 
+  // Check 26 P8: at most 5 requests a day for one email address, from anywhere.
+  if (!(await hitLimit("formEmail", addressKey(parsed.data.email))).allowed) {
+    return {
+      status: "error",
+      errors: { form: [growthCopy.errors.emailLimited] },
+      values,
+      services,
+    };
+  }
   const source = sourceFromForm((k) => formData.get(k), ownHosts(h));
   try {
     await requestGrowthCall(parsed.data, new Date(), source, { trapFilled });

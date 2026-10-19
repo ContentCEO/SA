@@ -542,3 +542,39 @@ describe("Check 5 P2 + Check 45 P5: optional heard-from, sent-by, state and time
     expect(JSON.stringify(info.mock.calls)).not.toMatch(/Zed|contractor|AZ|Phoenix/);
   });
 });
+
+describe("Check 26 P8: at most 5 requests a day for one email", () => {
+  it("the 6th request for one address in a day is refused in plain words, from any IP", async () => {
+    vi.spyOn(console, "info").mockImplementation(() => {});
+    for (let i = 0; i < 5; i++) {
+      ip = `203.0.113.${i + 1}`;
+      const r = await requestGrowthCallAction(
+        { status: "idle" },
+        form({ ...goodForm, note: `try ${i}` }),
+      );
+      expect(r.status).toBe("requested");
+    }
+    ip = "203.0.113.99";
+    const r = await requestGrowthCallAction({ status: "idle" }, form({ ...goodForm, note: "6" }));
+    expect(r.status).toBe("error");
+    expect(r.errors?.form).toEqual([
+      "Too many tries for this email today. Try again tomorrow, or call or text 978-201-9763.",
+    ]);
+    const [row] = await database.select().from(waitlist);
+    expect(splitWaitlistNote(row!.note).growth[0]!.note).toBe("try 4");
+    // The key is the HMAC, never the address.
+    const keys = (await database.select().from(rateLimits)).map((k) => k.key);
+    expect(keys.join(" ")).not.toContain("mike");
+  });
+
+  it("the waitlist form shares the per-email limit", async () => {
+    const wl = { name: "Mike", email: "mike@shop.com", trade: "plumbing", teamSize: "2–5" };
+    for (let i = 0; i < 5; i++) {
+      ip = `203.0.113.${i + 10}`;
+      expect((await joinWaitlistAction({ status: "idle" }, form(wl))).status).toBe("joined");
+    }
+    ip = "203.0.113.98";
+    const r = await joinWaitlistAction({ status: "idle" }, form(wl));
+    expect(r.errors?.form?.[0]).toContain("Too many tries for this email today.");
+  });
+});
