@@ -666,7 +666,10 @@ export default async function AdminPage(props: PageProps<"/admin">) {
   const troubleLines = systemTroubleLines(system);
   // Check 48 P3: a model Anthropic said was missing today. Model names and times only.
   // Check 27 P2: no SUPPORT_EMAIL → the legal pages offer a text link, not an email; say so here.
-  const supportWarning = supportEmailWarning(process.env);
+  const supportWarning = supportEmailWarning({
+    SUPPORT_EMAIL: process.env.SUPPORT_EMAIL,
+    VERCEL_ENV: process.env.VERCEL_ENV,
+  });
   const systemInverted =
     system.jobsLookStopped ||
     troubleLines.length > 0 ||
