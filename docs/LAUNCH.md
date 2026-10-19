@@ -20,6 +20,7 @@ Contents:
 - [Protect main (before the next merge)](#protect-main-before-the-next-merge)
 - [Hold production for CI (right after Protect main)](#hold-production-for-ci-right-after-protect-main)
 - [Start your sales tax registration now (it takes days)](#start-your-sales-tax-registration-now-it-takes-days)
+- [Register the name Squared Away (this month)](#register-the-name-squared-away-this-month)
 - [Add your terms link in Stripe (right after step 1)](#add-your-terms-link-in-stripe-right-after-step-1)
 - [0. Start now: Google verification (takes weeks)](#0-start-now-google-verification-takes-weeks)
 - [1. Merge the launch branch](#1-merge-the-launch-branch)
@@ -197,13 +198,51 @@ whatever your sales total.
 
 - Where: MassTaxConnect (mass.gov/masstaxconnect) → Register a New Business → sales and use tax.
 - Have ready: your SSN if you're a sole owner with no employees (otherwise an EIN), your business
-  and mailing addresses, and the start date your accountant picks (the questions for your
+  certificate ([Register the name Squared Away](#register-the-name-squared-away-this-month)), and
+  the LLC's EIN if you formed one, your business and mailing addresses, and the start date your accountant picks (the questions for your
   accountant are in [step 7e](#7-stripe-live-mode)).
 - Cost and time: guides say it's free and takes about 3–10 business days. The state's own site
   wouldn't load for the engineers, so check both in MassTaxConnect.
 - Paste: nothing.
 - Worked when: you have a Massachusetts sales tax account and its registration certificate (Form
   ST-1). The Stripe part comes later, in step 7e.
+
+## Register the name Squared Away (this month)
+
+"Squared Away" isn't your own name, so Massachusetts law asks you to register it. Anyone
+"conducting business in the commonwealth under any title other than the real name" files a
+business certificate with the clerk of every city or town where they have an office, renews it
+every four years, and can be fined up to $300 for each month it's missing (M.G.L. c.110 §5:
+malegislature.gov → Laws → General Laws → Chapter 110, Section 5).
+
+**This isn't legal advice, and every amount and office below is "check before you go; fees
+change".** The order matters: an LLC has to exist before the business certificate, the sales tax
+registration and Stripe's business details, or each is done twice.
+
+1. **Decide: sole owner or LLC, first.** It's one of the questions for the lawyer
+   ([step 13](#13-decisions-waiting-on-you), "A lawyer's review"). The terms name you personally
+   today.
+2. **If LLC:** Secretary of the Commonwealth → Corporations Division → certificate of
+   organization: $500 (plus any fee for filing online), then an annual report, $500 each year, due
+   on or before the anniversary of the date the LLC was formed (M.G.L. c.156C §12, on
+   malegislature.gov;
+   [sec.state.ma.us](https://www.sec.state.ma.us/divisions/corporations/filing-by-subject/limited-liability/corporations-limited-liability-company.htm)).
+   Put that date in your calendar. Check before you go; fees change.
+3. **If you work from home:** a Home Occupation Permit first, applied for in person at Concord's
+   Building Department, 141 Keyes Road. The clerk asks for a copy of it with the certificate.
+   Check before you go; fees change.
+4. **The business certificate:** Concord Town Clerk, 22 Monument Square. $40; each person named
+   signs in person at the clerk's office (with ID) or has the signature notarized; renew every 4
+   years ([concordma.gov FAQ](https://concordma.gov/FAQ.aspx?QID=160),
+   [concordma.gov Business Certificates](https://www.concordma.gov/366/Business-Certificates)).
+   Check before you go; fees change.
+5. **Use the same legal name and address everywhere:** MassTaxConnect, Stripe (Settings →
+   Business) and the terms (today `/terms` names "Davi Chaves, Massachusetts, United States", from
+   `src/config/site.ts`; a change there goes through the one legal release, step 13).
+
+- Paste: nothing.
+- Worked when: you have the stamped business certificate (and, for an LLC, the filed certificate
+  of organization and the annual report date in your calendar).
 
 ## Add your terms link in Stripe (right after step 1)
 
@@ -1586,7 +1625,8 @@ Nothing below is switched on or changed until you say so.
   estimate from published averages). A cheap first step: the Boston Bar Association's lawyer
   referral service gives a first 30-minute talk for $25 at most. Questions to bring: the three
   options above; whether the "I agree" boxes make the terms binding; whether to form an LLC (the
-  terms name you personally; a Massachusetts LLC costs about $500 to start and $500 a year);
+  terms name you personally; a Massachusetts LLC costs about $500 to start and $500 a year; check
+  before you go, fees change; see [Register the name Squared Away](#register-the-name-squared-away-this-month));
   whether any insurance is worth having; and whether the homepage's "Month to month, no contract."
   should say "no long-term contract".
 - **The Google security test (CASA):** no decision yet. Don't pay until Google's email names the
