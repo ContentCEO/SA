@@ -246,3 +246,10 @@ the a11y, tap-target and noindex admin page lists.
 the sitemap in Google Search Console").** Replace "and submit the sitemap in Google Search Console"
 with "and let search engines in ([step 5, item 10](#5-support-email-and-the-production-domain))",
 so there is one place for it.
+
+## Step 10: Check 1 P6 (`pnpm check:headers <url>`; its LAUNCH.md line is item 10.1 in step 9 above)
+
+Run on 2026-10-19 against `https://sa-dac3.vercel.app`: all five paths carry `x-robots-tag:
+noindex` (the favicon answers 200 now). The LAUNCH text for it is inside step 9's item 10 (sub-item
+1: "Right after the move, run `pnpm check:headers https://<your domain>`. It must pass." and the
+note that previews are expected to fail).
