@@ -106,3 +106,31 @@ policy should say, plus Davi's questions. Legal sentences are in `docs/notes/leg
   outage).
 - Privacy sentence → `docs/notes/legal-w3-emails.md`. Rows from before the column have null and
   show nothing.
+
+## Check 18 P8 (step 9): each waiting quote once; greeting by the hour
+
+- `atRiskDigestLine` now gets `leadsAtRisk - leadsAtRiskOffQueue`: the "has waited more than 4
+  hours" line counts only leads with a queue card; off-queue ones are said once, under Needs you.
+- `greetingFor(localHour)` / `nothingWaitingSubject` (`digest-rules.ts`): before 12 "Good
+  morning." / "good morning,", 12–17 afternoon, 18+ evening; the quiet subject says "today" after
+  noon. CLAUDE.md's plan #34 line ("The morning summary always has the counts-only 'N quote
+  requests have waited more than 4 hours.' line") should now read "…for leads with a card on the
+  queue; leads with no card get only the Needs-you line linking to Quotes."
+
+## Check 18 P9 (step 10): List-Unsubscribe on the morning and monthly emails
+
+- **Reused the built route** instead of a new `/api/email/off`: `stopLinkFor(workspaceId,
+"digest")` signs a separate purpose (`digest-emails:stop:`; trial links keep theirs and carry no
+  `k`), so a trial link can never turn the morning email off and vice versa. The digest and
+  monthly sends carry `List-Unsubscribe: <…/api/emails/stop?w=…&s=…&k=digest>` and
+  `List-Unsubscribe-Post: List-Unsubscribe=One-Click` (`digestStopHeaders`; none without
+  AUTH_SECRET). Alerts, invites and Davi's notices carry none.
+- `/api/emails/stop?k=digest`: POST (RFC 8058, or the page's button) verifies the signature in
+  constant time, turns off only `business_profile.digest_enabled` (the monthly summary follows
+  it), logs `digest_turned_off` {via: "unsubscribe"} once (Activity: "You turned off the morning
+  email from its Unsubscribe link"), rate-limited per link (20/h); a bad signature → 403. GET
+  changes nothing: it lands on `/emails/stopped?kind=digest…`, which explains and offers "Turn off
+  the morning email" (a POST), then "Morning email turned off. Turn it back on in Settings."
+  **Adapted from the spec:** the spec's GET page said "Morning email turned off" while changing
+  nothing, which would be untrue; the page asks instead. Trial links behave as before.
+- **Goes live** with the Resend domain (nothing sends before). Nothing to set.

@@ -16,7 +16,7 @@ import {
 import { appUrl } from "@/lib/app-url";
 import { sendEmail, type EmailSender, emailErrorFields } from "@/lib/email";
 import { closeRateBetween } from "./activity";
-import { autopilotOnFor } from "./digest";
+import { autopilotOnFor, digestStopHeaders } from "./digest";
 import { jobsAllowed } from "./lifecycle";
 import {
   buildMonthlySummary,
@@ -257,6 +257,8 @@ export async function sendMonthlySummaries(
           html: email.html,
           text: email.text,
           idempotencyKey: `monthly-${r.workspace.id}-${monthKey}`,
+          // Check 18 P9: Gmail's own Unsubscribe turns off the morning email this follows.
+          headers: digestStopHeaders(r.workspace.id),
         });
         if (outcome === "not_configured") {
           run.notConfigured = true;

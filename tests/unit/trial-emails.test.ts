@@ -370,7 +370,7 @@ describe("Stop these emails", () => {
     const link = new URL(stopLinkFor(workspaceId)!);
     expect(link.pathname).toBe("/api/emails/stop");
     const s = link.searchParams.get("s")!;
-    expect(verifiedStopLink(link.searchParams)).toEqual({ workspaceId });
+    expect(verifiedStopLink(link.searchParams)).toEqual({ workspaceId, kind: "trial" });
     expect(verifiedStopLink(params(workspaceId, `${s.slice(0, -1)}x`))).toBeNull();
     const other = await ensureUserAndWorkspace({ email: "other@shop.com" });
     expect(verifiedStopLink(params(other.workspace.id, s))).toBeNull();

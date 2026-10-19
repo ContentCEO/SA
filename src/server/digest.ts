@@ -35,6 +35,7 @@ import { actionableQueue, queueMembership } from "./drafts";
 import { leadsAtRisk } from "./leads-at-risk";
 import { atRiskDigestLine, atRiskOffQueueLine } from "./leads-at-risk-rules";
 import { effectiveStatus, jobsAllowed } from "./lifecycle";
+import { stopHeaders, stopLinkFor } from "./trial-email-links";
 import { weeklyScorecard } from "./scorecard";
 import { notAnsweredYet } from "./never-answered";
 import { notAnsweredLine } from "./never-answered-rules";
@@ -366,6 +367,39 @@ export async function lastWeekLines(
   return scorecardIsEmpty(lastWeek) ? [] : scorecardLines(lastWeek, "Last week");
 }
 
+/**
+ * Check 18 P9: the one-click unsubscribe (List-Unsubscribe-Post) for the morning email. Turns off
+ * only `digest_enabled` (the monthly summary follows it); logs one activity row the first time.
+ * Returns whether anything changed.
+ */
+export async function turnOffDigest(workspaceId: string): Promise<boolean> {
+  return db().transaction(async (tx) => {
+    const [row] = await tx
+      .insert(businessProfiles)
+      .values({ workspaceId, digestEnabled: false })
+      .onConflictDoUpdate({
+        target: businessProfiles.workspaceId,
+        set: { digestEnabled: false },
+        setWhere: sql`${businessProfiles.digestEnabled} = true`,
+      })
+      .returning({ workspaceId: businessProfiles.workspaceId });
+    if (!row) return false;
+    await tx.insert(activityLog).values({
+      workspaceId,
+      actor: "owner",
+      action: "digest_turned_off",
+      detail: { via: "unsubscribe" },
+    });
+    return true;
+  });
+}
+
+/** Check 18 P9: List-Unsubscribe for the morning and monthly emails (none without AUTH_SECRET). */
+export function digestStopHeaders(workspaceId: string): Record<string, string> | undefined {
+  const link = stopLinkFor(workspaceId, "digest");
+  return link ? stopHeaders(link) : undefined;
+}
+
 export type DigestRun = { sent: number; skipped: number; failed: number; notConfigured: boolean };
 
 /**
@@ -436,6 +470,7 @@ export async function sendDigests(
           html: digest.html,
           text: digest.text,
           idempotencyKey: `digest-${r.workspace.id}-${localDate}`,
+          headers: digestStopHeaders(r.workspace.id),
         });
         if (outcome === "not_configured") {
           run.notConfigured = true;

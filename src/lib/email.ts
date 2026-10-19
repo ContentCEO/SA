@@ -107,8 +107,9 @@ export type OutgoingEmail = {
    */
   replyTo?: string | null;
   /**
-   * Extra headers (Resend `headers`): only the one-click unsubscribe pair on trial emails
-   * (`List-Unsubscribe` / `List-Unsubscribe-Post`), never anything an email or a person typed.
+   * Extra headers (Resend `headers`): only the one-click unsubscribe pair
+   * (`List-Unsubscribe` / `List-Unsubscribe-Post`) on trial emails and, since Check 18 P9, the
+   * morning and monthly emails. Never anything an email or a person typed.
    */
   headers?: Record<string, string>;
 };

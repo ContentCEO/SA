@@ -46,6 +46,8 @@ export const LIMITS = {
   inviteAgain: { max: 30, windowSec: 60 * 60 },
   /** Davi's waitlist catch-up tap (Check 18 P4). */
   waitlistCatchup: { max: 10, windowSec: 60 * 60 },
+  /** One-click unsubscribe POSTs, per signed link (Check 18 P9). */
+  emailStop: { max: 20, windowSec: 60 * 60 },
 } as const;
 /** purgeRateLimits deletes windows older than 2 days, so no window may be longer than a day. */
 export const MAX_WINDOW_SEC = 24 * 60 * 60;
