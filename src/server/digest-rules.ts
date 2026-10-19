@@ -7,6 +7,8 @@
  */
 import type { Category } from "@/ai/prompts/classify.v4";
 import { isCategory } from "@/config/categories";
+import { pricing } from "@/config/pricing";
+import { daysPhrase } from "@/lib/trial-words";
 import { localParts } from "./snooze-rules";
 
 /** How many needs-you items the header lists by name of category; the rest are a count. */
@@ -136,8 +138,7 @@ export function footerLine(autopilotOn: boolean): string {
 }
 
 /** Check 18 P6: a trial account can't send to customers yet; the morning email says so. */
-export const TRIAL_LINE =
-  "You're in your three days: replies can't go to customers yet. Check the drafts and choose a plan to switch sending on.";
+export const TRIAL_LINE = `You're in your ${daysPhrase(pricing.evaluationDays)}: replies can't go to customers yet. Check the drafts and choose a plan to switch sending on.`;
 
 /** "(1 by autopilot)" after the sent count, only when the number is above zero. */
 export function byAutopilot(n: number | undefined): string {
