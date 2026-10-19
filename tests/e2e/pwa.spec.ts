@@ -15,7 +15,8 @@ test("installable: manifest opens on the queue, full screen, with real icons", a
     name: "Squared Away",
     start_url: "/queue",
     display: "standalone",
-    theme_color: "#1B1B1B",
+    // Check 7 P10: from BRAND (src/config/brand.ts), written in lower case.
+    theme_color: "#1b1b1b",
   });
   for (const icon of m.icons as { src: string; sizes: string }[]) {
     const img = await request.get(icon.src);
