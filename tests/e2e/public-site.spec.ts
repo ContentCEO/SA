@@ -93,13 +93,23 @@ test("fonts are our own: Inter Tight and Instrument Serif load from this site, n
 });
 
 test("privacy and terms: drafts are labelled, and every page links to them", async ({ page }) => {
+  // Check 7 P8: the signature headline, one h1 each. Check 7 P1: no raw ** anywhere.
+  for (const [path, heavy, bold] of [
+    ["/privacy", "privacy policy.", "I called them"],
+    ["/terms", "terms of service.", "Send reply"],
+  ] as const) {
+    await page.goto(path);
+    const h1 = page.getByRole("heading", { level: 1 });
+    await expect(h1).toHaveCount(1);
+    await expect(h1).toContainText("the fine print,");
+    await expect(h1).toContainText(heavy);
+    await expect(h1.locator(".sa-headline-serif")).toHaveCount(1);
+    await expect(page.getByText("Draft — not yet reviewed.")).toBeVisible();
+    expect(await page.locator("main").innerText()).not.toContain("**");
+    await expect(page.locator("main strong", { hasText: bold }).first()).toBeVisible();
+  }
   await page.goto("/privacy");
-  await expect(page.getByRole("heading", { level: 1, name: "Privacy Policy" })).toBeVisible();
-  await expect(page.getByText("Draft — not yet reviewed.")).toBeVisible();
   await expect(page.getByText(/Limited Use requirements/)).toBeVisible();
-  await page.goto("/terms");
-  await expect(page.getByRole("heading", { level: 1, name: "Terms of Service" })).toBeVisible();
-  await expect(page.getByText("Draft — not yet reviewed.")).toBeVisible();
 
   for (const path of ["/", "/signin"]) {
     await page.goto(path);

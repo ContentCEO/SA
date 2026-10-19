@@ -55,3 +55,13 @@ What `CLAUDE.md`, `docs/LAUNCH.md` and `docs/BUILD-ORDER.md` should say. Legal s
   an autopilot record closes with "Autopilot sent this on its own, under the rules you switched
   on." and a tapped record names the sign-in. The built wording wins; LAUNCH step 13 already asks
   Davi "Fine as worded?". Tick both in BUILD-ORDER: Wave 3, Legal text, 7) C27 P9 + C27 P10.
+
+## Check 7 P1 + Check 7 P8 (for `CLAUDE.md` Decisions)
+
+- The Markdown renderer (`src/lib/markdown.tsx`) joins a paragraph's lines before running the
+  inline pass, so a bold phrase or link Prettier wrapped across two lines renders as bold instead
+  of `**stars**`; hard breaks (a line ending in `\`) still split segments. `Markdown` takes
+  `skipFirstH1`; `LegalPage` takes `serif` / `heavy` and opens with `<Headline>` ("the fine print,"
+  over "privacy policy." / "terms of service."), so /privacy and /terms have one h1 like every other
+  screen. The `.md` files are unchanged (their `# Title` line stays for readers of the repo). The
+  freeze and hash tests don't trip: no document changed.

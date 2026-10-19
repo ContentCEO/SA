@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import Link from "next/link";
 import { SiteFooter } from "@/components/app/site-footer";
+import { Headline } from "@/components/brand/headline";
 import { Wordmark } from "@/components/brand/wordmark";
 import { siteConfig } from "@/config/site";
 import { Markdown } from "@/lib/markdown";
@@ -40,7 +41,20 @@ export function writtenContactLine(supportEmail: string | undefined): string {
   return `Text: [${siteConfig.phone}](${phoneHref("sms", siteConfig.phone)}) (texts get a written reply)`;
 }
 
-export function LegalPage({ source }: { source: string }) {
+/**
+ * Check 7 P8: the legal pages open with the signature headline like every other screen, so the
+ * document's own "# Privacy Policy" line is skipped (the .md files keep it for anyone reading
+ * them in the repo).
+ */
+export function LegalPage({
+  source,
+  serif,
+  heavy,
+}: {
+  source: string;
+  serif: string;
+  heavy: string;
+}) {
   return (
     <div className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-10 px-4 py-6">
       <SkipLink />
@@ -56,8 +70,9 @@ export function LegalPage({ source }: { source: string }) {
           Home
         </Link>
       </header>
-      <main id="main" tabIndex={-1} className="outline-none">
-        <Markdown source={source} />
+      <main id="main" tabIndex={-1} className="flex flex-col gap-6 outline-none">
+        <Headline serif={serif} heavy={heavy} />
+        <Markdown source={source} skipFirstH1 />
       </main>
       <SiteFooter growthLink />
       <SourceCapture />
