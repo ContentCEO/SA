@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { expect, test, type Page } from "@playwright/test";
 import { eq } from "drizzle-orm";
 import * as schema from "../../src/db/schema";
@@ -10,6 +11,19 @@ import { seedAdmin, signInAs, testDb } from "./support";
 
 const unique = (p = "growth") =>
   `${p}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}@example.com`;
+
+/**
+ * The waitlist and call forms allow 10 a hour per address (hashed), and global setup clears
+ * the windows only once per run. A fixed fake address was shared by both projects and every
+ * repeat of a test, so `--repeat-each` 3+ hit the limit. Each test gets its own documentation-
+ * range address instead (the limit itself is unchanged).
+ */
+const ownAddress = async ({}, provide: (headers: Record<string, string>) => Promise<void>) => {
+  const hex = randomBytes(6).toString("hex");
+  await provide({
+    "x-forwarded-for": `2001:db8::${hex.slice(0, 4)}:${hex.slice(4, 8)}:${hex.slice(8)}`,
+  });
+};
 
 const noOverflow = (page: Page) =>
   page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth);
@@ -1231,7 +1245,7 @@ test.describe("homepage without JavaScript", () => {
 });
 
 test.describe("Ask Davi to call me", () => {
-  test.use({ extraHTTPHeaders: { "x-forwarded-for": "198.51.100.21" } });
+  test.use({ extraHTTPHeaders: ownAddress });
 
   test("plain errors, focus on what needs fixing, then a thank-you and one stored request", async ({
     page,
@@ -1446,7 +1460,7 @@ test("/growth: no empty proof section while there's no real proof (Check 2 P6)",
 
 test.describe("Ask Davi to call me: the optional questions (Check 3 P4, 5 P2, 45 P5)", () => {
   test.use({
-    extraHTTPHeaders: { "x-forwarded-for": "198.51.100.22" },
+    extraHTTPHeaders: ownAddress,
     timezoneId: "America/Phoenix",
   });
 
