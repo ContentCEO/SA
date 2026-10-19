@@ -239,6 +239,76 @@ describe("the morning email stays true for autopilot and trial shops (Check 18 P
   });
 });
 
+describe("each waiting quote once, and a greeting that matches the hour (Check 18 P8)", () => {
+  const links = {
+    queueUrl: "https://app/queue",
+    quotesUrl: "https://app/quotes",
+    settingsUrl: "https://app/settings",
+    threadUrl: (id: string) => queueThreadUrl("https://app/queue", id),
+  };
+  const quiet = {
+    repliesReady: 0,
+    nudgesReady: 0,
+    needsYou: [],
+    sentYesterday: 0,
+    sortedYesterday: 0,
+    leadsAtRisk: 0,
+    leadsAtRiskOffQueue: 0,
+  };
+  const at = { now: NOW, timeZone: "America/New_York" };
+
+  it("one at-risk lead off the queue gives exactly one line about it", () => {
+    const d = buildDigest({ ...quiet, leadsAtRisk: 1, leadsAtRiskOffQueue: 1 }, links, at);
+    const mentions = d.text.split("\n").filter((l) => /quote request/.test(l));
+    expect(mentions).toEqual([
+      "• 1 quote request waiting with no reply drafted — see your quotes: https://app/quotes",
+    ]);
+    expect(d.html.match(/quote request/g)).toHaveLength(1);
+  });
+
+  it("two at risk with one off the queue: the 4-hour line counts one, plus the off-queue line", () => {
+    const d = buildDigest({ ...quiet, leadsAtRisk: 2, leadsAtRiskOffQueue: 1 }, links, at);
+    expect(d.text).toContain("1 quote request has waited more than 4 hours.");
+    expect(d.text).toContain("• 1 quote request waiting with no reply drafted — see your quotes");
+    // Both on the queue: the line counts both, and there is no off-queue line.
+    const both = buildDigest({ ...quiet, leadsAtRisk: 2 }, links, at);
+    expect(both.text).toContain("2 quote requests have waited more than 4 hours.");
+    expect(both.text).not.toContain("no reply drafted");
+  });
+
+  it("greeting and subject at 7am, 1pm and 7pm local", () => {
+    const tz = "America/New_York";
+    const morning = buildDigest(quiet, links, {
+      now: new Date("2026-10-06T11:00:00Z"),
+      timeZone: tz,
+    });
+    expect(morning.text.startsWith("Good morning.")).toBe(true);
+    expect(morning.html).toContain(">good morning,<");
+    expect(morning.subject).toBe("Nothing waiting on you this morning");
+    const afternoon = buildDigest(quiet, links, {
+      now: new Date("2026-10-06T17:00:00Z"),
+      timeZone: tz,
+    });
+    expect(afternoon.text.startsWith("Good afternoon.")).toBe(true);
+    expect(afternoon.html).toContain(">good afternoon,<");
+    expect(afternoon.subject).toBe("Nothing waiting on you today");
+    const evening = buildDigest(quiet, links, {
+      now: new Date("2026-10-06T23:00:00Z"),
+      timeZone: tz,
+    });
+    expect(evening.text.startsWith("Good evening.")).toBe(true);
+    expect(evening.html).toContain(">good evening,<");
+    expect(evening.subject).toBe("Nothing waiting on you today");
+    // With something waiting the subject counts it, whatever the hour.
+    expect(
+      buildDigest({ ...quiet, repliesReady: 2 }, links, {
+        now: new Date("2026-10-06T17:00:00Z"),
+        timeZone: tz,
+      }).subject,
+    ).toBe("2 things waiting on you");
+  });
+});
+
 describe("activity wording", () => {
   it("is plain, uses only the customer's first name, and hides internal entries", () => {
     const who = { name: "Dana Ruiz", category: "quote_request" };

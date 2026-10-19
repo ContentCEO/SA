@@ -143,3 +143,17 @@ export const TRIAL_LINE =
 export function byAutopilot(n: number | undefined): string {
   return n && n > 0 ? ` (${n} by autopilot)` : "";
 }
+
+/**
+ * Check 18 P8: the summary is due at the owner's hour "or any hour after it", so a missed run
+ * catches up in the afternoon. The greeting and the quiet subject follow the local hour.
+ */
+export function greetingFor(localHour: number): { text: string; serif: string } {
+  if (localHour < 12) return { text: "Good morning.", serif: "good morning," };
+  if (localHour < 18) return { text: "Good afternoon.", serif: "good afternoon," };
+  return { text: "Good evening.", serif: "good evening," };
+}
+
+export function nothingWaitingSubject(localHour: number): string {
+  return localHour < 12 ? "Nothing waiting on you this morning" : "Nothing waiting on you today";
+}

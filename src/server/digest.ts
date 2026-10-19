@@ -19,7 +19,9 @@ import { emailHtml, emailParagraph, escapeHtml } from "@/lib/email-layout";
 import {
   byAutopilot,
   footerLine,
+  greetingFor,
   moreInQueue,
+  nothingWaitingSubject,
   needsYouHeader,
   NOTHING_NEEDS_YOU,
   queueThreadUrl,
@@ -238,8 +240,13 @@ export function buildDigest(
     ? { text: notAnsweredLine(c.notAnswered), href: links.queueUrl }
     : null;
   const needsNothing = header.empty && !offQueue && !notAnswered;
+  // Check 18 P8: the local hour picks the greeting and the quiet subject (a catch-up run can
+  // land in the afternoon). A waiting quote is said once: the "has waited" line counts only
+  // leads with a card on the queue; the off-queue ones are already under Needs you.
+  const hour = localParts(extras.now, extras.timeZone).hour;
+  const hello = greetingFor(hour);
   const lines = [
-    atRiskDigestLine(c.leadsAtRisk),
+    atRiskDigestLine(c.leadsAtRisk - c.leadsAtRiskOffQueue),
     c.repliesReady
       ? `${plural(c.repliesReady, "reply", "replies")} drafted and waiting for your okay.`
       : null,
@@ -267,10 +274,10 @@ export function buildDigest(
   const waiting = onQueue + c.leadsAtRiskOffQueue + (c.notAnswered ?? 0);
   const subject = waiting
     ? `${plural(waiting, "thing")} waiting on you`
-    : "Nothing waiting on you this morning";
+    : nothingWaitingSubject(hour);
 
   const text = [
-    "Good morning.",
+    hello.text,
     ...(trial ? ["", `${trial.text} ${trial.href}`] : []),
     "",
     "Needs you:",
@@ -310,7 +317,7 @@ export function buildDigest(
   const section = (inner: string) =>
     `<div style="margin:20px 0 0;padding:16px 0 0;border-top:1px solid ${BRAND.charcoal}">\n${inner}\n</div>`;
   const html = emailHtml({
-    serif: "good morning,",
+    serif: hello.serif,
     heavy: waiting ? `${plural(waiting, "thing")} waiting.` : "all clear.",
     lines: [],
     preheader: subject,
