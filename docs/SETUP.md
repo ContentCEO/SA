@@ -686,6 +686,24 @@ everyone who connected then reconnects once after the switch (`/connect` → the
 `docs/LAUNCH.md` step 0c). See `docs/google-verification.md` for why we ask for each scope,
 the demo-video script and the reviewer account.
 
+## 8b. Adding a second mailbox provider
+
+Gmail is the only provider today. Another one (Outlook, plan #49 in `docs/FEATURE-PLAN.md`) is
+added beside it, never by editing shared sync, draft or voice code:
+
+1. `src/mailbox/<provider>/`: `connector.ts` (a `MailboxConnector`: consent URL, code exchange,
+   revoke), `api.ts` (the `MailboxReader` and `MailboxWriter`, mapping its folders onto
+   `MAIL_LABELS`) and `scopes.ts` (the permissions it must have; missing any refuses the
+   connection).
+2. A new value in `mailboxProviderEnum` (`src/db/schema.ts`, an additive migration) and one more
+   case in `mailboxClientFor` (`src/mailbox/clients.ts`), the only place a client is built.
+3. Sending stays "send this draft" only; any new send path needs Davi's okay and a row in
+   `tests/unit/security-surface.test.ts` ("Only two places can send mail").
+4. The shared tests it must pass: `tests/unit/mailbox-clients.test.ts` (one provider switch),
+   `tests/unit/mime.test.ts` (the replies it sends are the MIME the app builds),
+   `tests/unit/security-surface.test.ts`, and a `<provider>-connector` / `<provider>-api` pair
+   like `tests/unit/gmail-connector.test.ts` and `tests/unit/gmail-api.test.ts`.
+
 ## 9. Deploys (Vercel)
 
 The Vercel project is `sa` in the **DAC** team. To make every push deploy automatically:

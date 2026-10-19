@@ -1,9 +1,13 @@
 import type { mailboxProviderEnum } from "@/db/schema";
 
 /**
- * Mailbox connector interface. Only Gmail is implemented; Outlook would be a
- * second implementation of this, not a rewrite. Sync and send methods are
- * added in later milestones.
+ * The provider-neutral mailbox contract. `MailboxConnector` connects and revokes (consent URL,
+ * code exchange, required scopes); `MailboxReader` syncs (profile, message lists and reads,
+ * history pages, sent mail for voice learning); `MailboxWriter` handles drafts and sending. Only
+ * Gmail implements them today (`./gmail/`); another provider is a second implementation built in
+ * `./clients.ts`, not a rewrite of shared code. Sending is only ever "send this draft" (every sent
+ * email existed as a visible draft first), apart from the trial's practice copy to the owner's
+ * own address (`sendMessage`).
  */
 export type ConnectResult = {
   email: string;
