@@ -18,7 +18,7 @@ import { CLASSIFY_LOOKBACK_DAYS } from "@/server/classification";
 import { MAX_FOLLOWUPS } from "@/server/drafts";
 import { isReadOnly } from "@/server/lifecycle";
 import { listMoney, type MoneyRow } from "@/server/money";
-import { chaseLine } from "@/server/money-rules";
+import { chaseLine, paidViaLine } from "@/server/money-rules";
 import { threadOffers, type ThreadOffers } from "@/server/offers";
 import { formatCents } from "@/server/quote-rules";
 import { requireOwner } from "@/server/session";
@@ -80,7 +80,15 @@ function OwedCard({ r, readOnly }: { r: MoneyRow; readOnly: boolean }) {
         />
         {r.amountCents ? (
           <span className="flex shrink-0 flex-col items-end">
-            <span className="text-2xl font-black">{formatCents(r.amountCents)}</span>
+            {/* Check 12 P2: what's left to pay, and of how much, once part was paid. */}
+            <span className="text-2xl font-black">
+              {formatCents(r.paidSoFarCents > 0 ? (r.owedCents ?? 0) : r.amountCents)}
+            </span>
+            {r.paidSoFarCents > 0 ? (
+              <span className="text-sm text-muted-foreground">
+                left of {formatCents(r.amountCents)}
+              </span>
+            ) : null}
             {/* Check 12 P5: where the figure came from, when it wasn't the customer's email. */}
             {r.amountFromYourEmail ? (
               <span className="text-sm text-muted-foreground">From your email</span>
@@ -102,6 +110,17 @@ function OwedCard({ r, readOnly }: { r: MoneyRow; readOnly: boolean }) {
           </span>
         ) : null}
       </div>
+      {r.paidSoFarCents > 0 ? (
+        <p className="text-sm font-semibold" data-testid="paid-so-far">
+          Paid so far: {formatCents(r.paidSoFarCents)}
+        </p>
+      ) : null}
+      {/* Check 12 P3: "the check is in the mail" is owed until it clears. */}
+      {r.promiseLine ? (
+        <p className="text-base font-semibold" data-testid="promise-line">
+          {r.promiseLine}
+        </p>
+      ) : null}
       {r.earlierOpen.map((e, i) => (
         <p key={i} className="text-sm font-semibold">
           {`Earlier invoice${e.invoiceNumber ? ` ${e.invoiceNumber}` : ""} (${formatCents(
@@ -196,7 +215,8 @@ function SettledRow({
       {kind === "paid" ? (
         <p className="text-sm text-muted-foreground">
           Paid {r.paidAt ? relativeTime(r.paidAt, now) : ""}
-          {r.paidSource === "auto" ? " (we spotted the payment)" : ""}
+          {/* Check 12 P3: how we knew, never "we spotted the payment". */}
+          {r.paidSource === "auto" ? ` (${paidViaLine(r.paidVia, r.invoiceNumber)})` : ""}
         </p>
       ) : null}
       {readOnly || kind !== "paid" ? null : (

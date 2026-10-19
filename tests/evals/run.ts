@@ -7,6 +7,7 @@ import { sum } from "drizzle-orm";
 import { classifyEmail } from "@/ai/classify";
 import { callStructured } from "@/ai/client";
 import { checkDraft } from "@/ai/draft-checks";
+import { detectLanguage } from "@/ai/language";
 import { asksWhenAvailable } from "@/ai/when-words";
 import {
   conversationBlock,
@@ -20,6 +21,7 @@ import { DISPUTE_TASK } from "@/ai/prompts/dispute-caution.v1";
 import { ACTIVE } from "@/ai/prompts/registry";
 import { usage } from "@/db/schema";
 import { ensureUserAndWorkspace } from "@/server/accounts";
+import { carryInvoiceFacts, invoiceOf, owedCents } from "@/server/money-rules";
 import { createTestDb } from "../support/db";
 import type { EvalCase } from "./cases";
 import { runEditEvals } from "./edits";
@@ -60,10 +62,12 @@ export async function runEvals(
       fromName: c.fromName,
       fromAddress: c.fromAddress,
       subject: c.subject,
-      receivedAt: new Date("2026-10-01T14:00:00Z"),
+      receivedAt: new Date(c.receivedAt ? `${c.receivedAt}T14:00:00Z` : "2026-10-01T14:00:00Z"),
       firstTimeSender: c.firstTimeSender ?? false,
       threadSummary: c.threadSummary ?? null,
       body: c.body,
+      // Check 40 P2: the "Attached: …" line, as the app passes it.
+      attachments: c.attachments ?? null,
     };
     const r = await classifyEmail(
       workspace.id,
@@ -74,7 +78,16 @@ export async function runEvals(
         vipSenders: [],
       },
       email,
-      { senderIsVip: false },
+      { senderIsVip: false, now: email.receivedAt },
+    );
+    // Check 12 P2: the thread's balance after this email, as classification.ts would store it
+    // (classify.v6 reads invoices as a running balance).
+    const emailInvoice = invoiceOf(r.extracted);
+    const carried = carryInvoiceFacts(
+      c.priorInvoice ?? null,
+      emailInvoice?.status === "said_sent"
+        ? { ...emailInvoice, said_sent_at: email.receivedAt.toISOString() }
+        : emailInvoice,
     );
     const result: EvalResult = {
       id: c.id,
@@ -94,6 +107,19 @@ export async function runEvals(
       onMoneyOwed:
         r.category === "invoice_payment" && r.extracted.invoice_direction !== "owed_by_business",
       disputed: r.extracted.disputed === true,
+      owedDollars: carried ? owedCents(carried) / 100 : null,
+      contractRights: r.extracted.contract_rights === true,
+      fakeBill: r.extracted.fake_bill === true,
+      notThePayer: r.extracted.not_the_payer === true,
+      newJob:
+        r.extracted.new_job_requested === true ||
+        (r.extracted.also_asks ?? []).includes("quote_request"),
+      largeRequest: (r.extracted.owner_rule_hits ?? []).includes("big_new_job"),
+      ackOnly: r.extracted.acknowledgment_only === true,
+      declinesQuote: r.extracted.declines_quote === true,
+      waitUntil: r.extracted.wait_until ?? null,
+      summaryLanguage: detectLanguage(r.summary),
+      reasonPlain: r.needsOwnerReason === null || !/[—–]| - /.test(r.needsOwnerReason),
     };
 
     if (opts.drafts !== false && c.draft) {

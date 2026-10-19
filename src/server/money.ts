@@ -40,6 +40,7 @@ import {
   senderMarkedNotOwedSql,
 } from "./thread-sql";
 import {
+  balanceDollars,
   billOwedByOwner,
   dueLabel,
   invoiceOf,
@@ -50,6 +51,7 @@ import {
   owedCents,
   PAID_GUESS_FLAG,
   PAID_NOTE,
+  paymentPromiseLine,
   promoteEarlierOpen,
   sortOwed,
   toCents,
@@ -65,8 +67,19 @@ export type MoneyRow = {
   customerAddress: string | null;
   /** Check 13 P9: the customer page key (an opaque message id), or null when there's no page. */
   customerKey: string | null;
-  /** Null when no email said how much ("Amount not stated"; never in the total). */
+  /**
+   * The full amount billed; null when no email said how much ("Amount not stated"; never in
+   * the total). Check 12 P2: what's still owed is `owedCents`.
+   */
   amountCents: number | null;
+  /** Check 12 P2: what's left to pay on the current invoice (amount minus what was paid). */
+  owedCents: number | null;
+  /** Check 12 P2: paid or credited so far; 0 when nothing was. */
+  paidSoFarCents: number;
+  /** Check 12 P3: "They say it's on the way (Oct 16)…" / "They said they'd pay Friday.", or null. */
+  promiseLine: string | null;
+  /** Check 12 P3: how our paid guess was made ('reply' | 'receipt'), from the activity row. */
+  paidVia: string | null;
   /** Check 12 P5: the amount was read from the owner's own invoice email ("From your email"). */
   amountFromYourEmail: boolean;
   invoiceNumber: string | null;
@@ -125,7 +138,7 @@ async function moneyThreads(
     // SQL twin of `holdsOwedInvoice` (a superset): the current invoice is owed (Check 12
     // P5: amount or not), or an earlier one on the thread is still open.
     or(
-      sql`${threads.extracted}->'invoice'->>'status' in ('unpaid', 'partly_paid')`,
+      sql`${threads.extracted}->'invoice'->>'status' in ('unpaid', 'partly_paid', 'said_sent')`,
       sql`${threads.extracted}->'invoice'->'earlier_open' is not null`,
     ),
   );
@@ -159,6 +172,10 @@ async function moneyThreads(
       >`(select d.id from drafts d where d.thread_id = ${threads.id} and d.status = 'pending' order by d.created_at desc limit 1)`,
       needsOwnerManual: threads.needsOwnerManual,
       complainedAt: threads.complainedAt,
+      // Check 12 P3: how our paid guess was made (content-free: 'reply' | 'receipt').
+      paidVia: sql<
+        string | null
+      >`(select a.detail->>'via' from activity_log a where a.thread_id = ${threads.id} and a.action = 'invoice_marked_paid' order by a.created_at desc limit 1)`,
       lastIn: lastInSql(),
       lastOut: lastOutSql(),
       // As a reply addresses them (a form's Reply-To, else From); the sender is for the
@@ -235,6 +252,10 @@ function toRow(
     customerAddress: r.customerAddress,
     customerKey: r.customerKey,
     amountCents: invoice?.amount ? toCents(invoice.amount) : null,
+    owedCents: invoice?.amount ? toCents(balanceDollars(invoice) ?? 0) : null,
+    paidSoFarCents: toCents(invoice?.paid ?? 0),
+    promiseLine: paymentPromiseLine(invoice, timeZone),
+    paidVia: r.paidVia ?? null,
     amountFromYourEmail: !!invoice?.amount && invoice.amount_source === "your_email",
     invoiceNumber: invoice?.invoice_number ?? null,
     earlierOpen: (invoice?.earlier_open ?? []).map((e) => ({

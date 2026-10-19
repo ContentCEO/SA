@@ -1,6 +1,7 @@
 import "server-only";
 import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { db } from "@/db";
+import { SAID_SENT_WAIT_DAYS } from "./money-rules";
 import { appSettings, businessProfiles, mailboxes, threads, workspaces } from "@/db/schema";
 import { jobsAllowed } from "./lifecycle";
 import { localParts, usableTimeZone } from "./snooze-rules";
@@ -139,6 +140,11 @@ export async function threadsToFollowUp(
   const invoiceThread = sql`(${threads.category} is not distinct from 'invoice_payment' or (${threads.extracted}->>'invoice_thread') is not distinct from 'true')`;
   const purposeSent = sql`exists (select 1 from drafts d where d.thread_id = ${threads.id} and d.purpose is not null and not (d.purpose = 'deposit' and ${invoiceThread}) and d.status in ('sent', 'edited_and_sent'))`;
   const saidPaid = sql`coalesce(${threads.extracted}->>'payment_said', '') = 'paid'`;
+  // Check 12 P3: SQL twin of `saidSentBlocksNudge`: "the check is in the mail" holds nudges for
+  // SAID_SENT_WAIT_DAYS from that email (never NULL: a bad date reads as no hold).
+  const saidSentHold = sql`(coalesce(${threads.extracted}->'invoice'->>'status', '') = 'said_sent'
+    and (${threads.extracted}->'invoice'->>'said_sent_at') ~ '^\\d{4}-\\d{2}-\\d{2}T'
+    and (${threads.extracted}->'invoice'->>'said_sent_at')::timestamptz > ${new Date(now.getTime() - SAID_SENT_WAIT_DAYS * 86_400_000).toISOString()}::timestamptz)`;
   // Check 21 P5: the customer answered in a NEW email (new subject, same address) after the
   // owner's last message: the old conversation only looks quiet. SQL twin of
   // `customerWroteElsewhere` (drafts.ts). Compared in SQL only; no address is selected. A
@@ -181,6 +187,7 @@ export async function threadsToFollowUp(
         sql`not ${pending}`,
         sql`not ${purposeSent}`,
         sql`not ${saidPaid}`,
+        sql`not ${saidSentHold}`,
         sql`not ${wroteElsewhere}`,
         // Check 36 P3: an emergency answered "On my way" with no price is a service call, not an
         // estimate to check in on. SQL twin of `isServiceCall`; the drafter's check decides.

@@ -89,7 +89,16 @@ export async function afterClassified(input: {
   // waiting one, never touch an owner's mark (the guard is in the UPDATE), and show in
   // Activity with "Undo on Money owed".
   const invoice = invoiceOf(result.extracted);
-  if (invoice?.status !== "paid") return;
+  if (!invoice) return;
+  // Check 12 P2: payments that add up to the full amount ("sent the last $3,000") read as paid
+  // on the stored facts (carryInvoiceFacts): our paid guess, never a silent drop. Check 12 P3:
+  // "the check is in the mail" (said_sent) is a promise, never a paid mark.
+  const settledByPayments =
+    (invoice.amount_paid_now ?? 0) > 0 &&
+    input.storedInvoice != null &&
+    input.storedInvoice.status === "paid" &&
+    (input.storedInvoice.paid ?? 0) > 0;
+  if (invoice.status !== "paid" && !settledByPayments) return;
   if (isReceiptSender(input.fromAddress)) {
     // A payment receipt (Stripe, QuickBooks): it only ever marks the ONE open invoice whose
     // number it names (and amount, when both say) — never its own thread, and never by
@@ -100,8 +109,10 @@ export async function afterClassified(input: {
     // customer paying the owner's invoice 1037 — QuickBooks numbers everyone's from 1001.
     if (result.extracted.invoice_direction === "owed_by_business") return;
     if (!normalizeInvoiceNumber(invoice.invoice_number)) return;
-    // …and without an amount on the receipt, a number alone never marks anything.
-    if (!(invoice.amount && invoice.amount > 0)) return;
+    // …and without an amount on the receipt, a number alone never marks anything. (Check 12
+    // P2: a receipt's figure may be read as the payment rather than the invoice total.)
+    const receiptAmount = invoice.amount ?? invoice.amount_paid_now ?? null;
+    if (!(receiptAmount && receiptAmount > 0)) return;
     const open = await openInvoices(input.workspaceId, threadId, now);
     const match = matchReceipt(invoice, open);
     if (match) {

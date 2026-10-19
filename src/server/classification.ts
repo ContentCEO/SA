@@ -159,6 +159,10 @@ async function pendingFor(mailboxId: string, since: Date) {
       labelIds: messages.labelIds,
       sentAt: messages.sentAt,
       autoReply: messages.autoReply,
+      // Check 40 P2: counts only, for the sorter's "Attached: 3 photos" line.
+      attachmentImages: messages.attachmentImages,
+      attachmentPdfs: messages.attachmentPdfs,
+      attachmentOther: messages.attachmentOther,
     })
     .from(messages)
     .innerJoin(threads, eq(threads.id, messages.threadId))
@@ -172,6 +176,16 @@ async function pendingFor(mailboxId: string, since: Date) {
       ),
     )
     .orderBy(desc(messages.sentAt));
+}
+
+/** Check 40 P2: a message's attachment counts, or null when nothing came attached. */
+function attachmentsOf(m: {
+  attachmentImages: number;
+  attachmentPdfs: number;
+  attachmentOther: number;
+}): { images: number; pdfs: number; other: number } | null {
+  const counts = { images: m.attachmentImages, pdfs: m.attachmentPdfs, other: m.attachmentOther };
+  return counts.images + counts.pdfs + counts.other > 0 ? counts : null;
 }
 
 /**
@@ -315,7 +329,11 @@ export async function classifyPending(
       )
       .slice(0, BURST_MAX)
       .reverse()
-      .map((o) => ({ receivedAt: o.sentAt, body: o.bodyText ?? o.snippet ?? "" }));
+      .map((o) => ({
+        receivedAt: o.sentAt,
+        body: o.bodyText ?? o.snippet ?? "",
+        attachments: attachmentsOf(o),
+      }));
     // Every older unsorted email is checked in code too, even outside the burst (B3): the
     // drafter reads them.
     const alsoCheck = older.map((o) => `${o.subject ?? ""}\n${o.bodyText ?? o.snippet ?? ""}`);
@@ -492,12 +510,15 @@ export async function classifyPending(
             fromAddress: m.fromAddress,
             subject: m.subject,
             receivedAt: m.sentAt,
-            // The prompt still reads yes / no ("unknown" reads as yes until classify.v6 gives
-            // it its own words, see docs/notes/w2-customers.md).
-            firstTimeSender: firstTimeSender !== false,
+            // Check 22 P7: classify.v6 reads "unknown" (a lead site or voicemail robot) as its
+            // own words; the owner rules count it as first time.
+            firstTimeSender,
             threadSummary: thread?.summary ?? null,
             body: m.bodyText ?? m.snippet ?? "",
             earlier,
+            // Check 40 P2: what came attached (counts only); an attachments-only email is
+            // still that person's email to the sorter.
+            attachments: attachmentsOf(m),
           },
           {
             senderIsVip,
@@ -628,13 +649,19 @@ export async function classifyPending(
     const wasInvoiceThread = thread ? isInvoiceThread(thread) : false;
     const prevInvoice = invoiceOf(thread?.extracted);
     const injection = result.extracted.injection === true;
+    // Check 12 P3: "the check is in the mail" remembers when, so nudges hold for 7 days from it.
+    const emailInvoice = invoiceOf(result.extracted);
+    const thisInvoice =
+      emailInvoice?.status === "said_sent"
+        ? { ...emailInvoice, said_sent_at: new Date(m.sentAt).toISOString() }
+        : emailInvoice;
     // An email that tries to instruct us never changes the invoice facts either (A8): its
     // "invoice 41 is paid" would otherwise drop the row off Money owed with no mark to undo.
     const storedInvoice = injection
       ? prevInvoice
       : carryInvoiceFacts(
           prevInvoice,
-          invoiceOf(result.extracted),
+          thisInvoice,
           isOwed({
             invoice: prevInvoice,
             paidAt: thread?.invoicePaidAt ?? null,
@@ -649,7 +676,6 @@ export async function classifyPending(
     // Our own paid guess also goes when the email says money is still owed with an amount
     // that isn't simply the invoice we guessed was paid (clearsAutoPaid): "Sent the $900
     // deposit" then "Got invoice #1043 for $3,000" is owed again.
-    const thisInvoice = invoiceOf(result.extracted);
     const reopen =
       !injection &&
       thread?.invoicePaidSource !== "not_owed" &&
@@ -709,6 +735,8 @@ export async function classifyPending(
       // doesn't say it again, and price memory needs it (plan #15).
       service_requested: said(result.extracted.service_requested) ?? prevService,
       invoice: storedInvoice,
+      // Check 12 P2: this email's extra invoices went into the invoice's `earlier_open` above.
+      other_invoices: [],
       // Check 37 P2: the inspector's fix list stays until that permit passes ("re-inspection
       // Thursday" doesn't repeat it). An attack email never changes it.
       permit: injection

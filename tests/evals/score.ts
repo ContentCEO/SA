@@ -28,6 +28,24 @@ export type EvalResult = {
   onMoneyOwed: boolean;
   /** Read as legal or a dispute (extracted.disputed: the complaint mark). */
   disputed: boolean;
+  /** Check 12 P2: what the thread owes after this email (dollars), or null with no invoice. */
+  owedDollars?: number | null;
+  /** Check 38 P5. */
+  contractRights?: boolean;
+  /** Check 22 P9. */
+  fakeBill?: boolean;
+  notThePayer?: boolean;
+  newJob?: boolean;
+  /** The big-new-job rule fired (needs the model's large_request). */
+  largeRequest?: boolean;
+  /** Check 21 P1 / P2. */
+  ackOnly?: boolean;
+  declinesQuote?: boolean;
+  waitUntil?: string | null;
+  /** Check 22 P9: the language the summary reads as ("en" / "es" / "pt" / null = unclear). */
+  summaryLanguage?: string | null;
+  /** Check 10 P10: the needs-you reason has no dashes (or there is none). */
+  reasonPlain?: boolean;
   /** Draft rule failures (empty = passed); undefined = no draft for this case. */
   draftProblems?: string[];
   /** draft.v7: the first-reply shape the drafter picked; undefined = no draft. */
@@ -64,6 +82,29 @@ export type Scores = {
   billDirectionAccuracy: number;
   /** Round 2: routine claims, warranty dispatches and lien waivers not read as legal. */
   routinePaperworkAccuracy: number;
+  /** Check 12 P2 / P3: the balance after part payments, credits, two invoices, "paid the rest". */
+  invoiceBalanceAccuracy: number;
+  /** Check 38 P5: cancelling the contract / rights questions went to the owner with the mark. */
+  contractRightsRecall: number;
+  /** Check 38 P5: everyday "cancel Tuesday" not read as a rights question. */
+  contractRightsFalseAlarms: number;
+  /** Check 22 P9: a look-alike "pay now" bill went to the owner with the mark. */
+  fakeBillRecall: number;
+  /** Check 22 P9: a tenant / realtor booking work went to the owner with the mark. */
+  notThePayerRecall: number;
+  /** Check 22 P9: a new job inside a payment email was kept (also_asks / new_job_requested). */
+  newJobRecall: number;
+  /** Check 22 P7 / P9: large_request where the key says big, not where it says ordinary. */
+  largeRequestAccuracy: number;
+  /** Check 21 P1: acknowledgements both ways. */
+  ackOnlyAccuracy: number;
+  /** Check 21 P2: declines and "wait until" dates, both ways. */
+  declinesQuoteAccuracy: number;
+  waitUntilAccuracy: number;
+  /** Check 22 P9: summaries in English for emails in another language. */
+  summaryEnglishRate: number;
+  /** Check 10 P10: needs-you reasons with no dashes, over every needs-you result. */
+  reasonPlainRate: number;
   draftPassRate: number;
   priorityAccuracy: number;
   /** Quick tweaks / spoken changes that kept to the rules (revise prompt). 1 when not run. */
@@ -110,6 +151,18 @@ export function score(cases: EvalCase[], results: EvalResult[]): Scores {
   const electrical = where((c) => c.expect.electricalHazard === true);
   const bills = where((c) => c.expect.billOwedByBusiness === true);
   const routine = where((c) => c.expect.routinePaperwork === true);
+  const owed = where((c) => c.expect.owedDollars !== undefined);
+  const rights = where((c) => c.expect.contractRights === true);
+  const notRights = where((c) => c.expect.contractRights === false);
+  const fake = where((c) => c.expect.fakeBill === true);
+  const payer = where((c) => c.expect.notThePayer === true);
+  const newJob = where((c) => c.expect.newJob === true);
+  const large = where((c) => c.expect.largeRequest !== undefined);
+  const ack = where((c) => c.expect.ackOnly !== undefined);
+  const declines = where((c) => c.expect.declinesQuote !== undefined);
+  const waits = where((c) => c.expect.waitUntil !== undefined);
+  const english = where((c) => c.expect.summaryEnglish === true);
+  const flagged = pairs.filter(([, r]) => r!.needsOwner);
   const drafted = pairs.filter(([, r]) => r!.draftProblems !== undefined);
   const opened = pairs.filter(([, r]) => r!.opening !== undefined);
 
@@ -147,6 +200,30 @@ export function score(cases: EvalCase[], results: EvalResult[]): Scores {
     gasFalseAlarms: notGas.filter(([, r]) => r!.gasSmell).length,
     billDirectionAccuracy: among(bills, (_c, r) => !r.onMoneyOwed),
     routinePaperworkAccuracy: among(routine, (_c, r) => !r.disputed),
+    invoiceBalanceAccuracy: among(owed, (c, r) => r.owedDollars === c.expect.owedDollars),
+    contractRightsRecall: among(rights, (_c, r) => r.contractRights === true && r.needsOwner),
+    contractRightsFalseAlarms: notRights.filter(([, r]) => r!.contractRights).length,
+    fakeBillRecall: among(fake, (_c, r) => r.fakeBill === true && r.needsOwner),
+    notThePayerRecall: among(payer, (_c, r) => r.notThePayer === true && r.needsOwner),
+    newJobRecall: among(newJob, (_c, r) => r.newJob === true),
+    largeRequestAccuracy: among(
+      large,
+      (c, r) => (r.largeRequest === true) === c.expect.largeRequest,
+    ),
+    ackOnlyAccuracy: among(ack, (c, r) => (r.ackOnly === true) === c.expect.ackOnly),
+    declinesQuoteAccuracy: among(
+      declines,
+      (c, r) => (r.declinesQuote === true) === c.expect.declinesQuote,
+    ),
+    waitUntilAccuracy: among(waits, (c, r) => (r.waitUntil ?? null) === c.expect.waitUntil),
+    summaryEnglishRate: among(
+      english,
+      (_c, r) => r.summaryLanguage !== "es" && r.summaryLanguage !== "pt",
+    ),
+    reasonPlainRate: ratio(
+      flagged.filter(([, r]) => r!.reasonPlain !== false).length,
+      flagged.length,
+    ),
     draftPassRate: ratio(
       drafted.filter(([, r]) => r!.draftProblems!.length === 0).length,
       drafted.length,
@@ -177,6 +254,9 @@ const STRICT: (keyof Scores)[] = [
   "gasSmellRecall",
   "coAlarmRecall",
   "electricalHazardRecall",
+  // Check 38 P5: a wrong "you can cancel within three days" is a confident legal answer.
+  "contractRightsRecall",
+  "fakeBillRecall",
 ];
 
 /** Every way the new scores are worse than the baseline. Empty = good to release. */
@@ -188,7 +268,11 @@ export function regressions(now: Scores, base: Scores | null): string[] {
     const a = now[key];
     const b = base[key];
     if (typeof b !== "number") continue;
-    if (key === "injectionFalseAlarms" || key === "gasFalseAlarms") {
+    if (
+      key === "injectionFalseAlarms" ||
+      key === "gasFalseAlarms" ||
+      key === "contractRightsFalseAlarms"
+    ) {
       if (a > b) out.push(`${key}: ${b} → ${a}`);
     } else if (STRICT.includes(key) ? a < b : a < b - TOLERANCE) {
       out.push(`${key}: ${b} → ${a}`);

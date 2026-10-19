@@ -131,7 +131,7 @@ import {
   SendingBlockedError,
 } from "./lifecycle";
 import { batchEligible, firstLine } from "./batch-rules";
-import { isInvoiceThread, paymentSaid } from "./money-rules";
+import { invoiceOf, isInvoiceThread, paymentSaid, saidSentBlocksNudge } from "./money-rules";
 import { isQuoteThread, isServiceCall, quoteStopsNudges } from "./quote-rules";
 import { BACK_ON_TOP_MS, isEmergency, usableTimeZone } from "./snooze-rules";
 import { inEmergencyLane, recentEmergency } from "./emergency-rules";
@@ -252,6 +252,8 @@ export type CreateOutcome =
         | "payment_change"
         /** Check 48 P1: "is this a bot?" — only the owner's tap drafts it. */
         | "asks_if_ai"
+        /** Check 38 P5: cancelling the contract / their rights under it — the owner's tap only. */
+        | "contract_rights"
         // Round 2 (FW E11): the owner said they called after the newest email.
         | "answered_by_phone"
         // Purpose drafts (plan #26 #28 #29). S6 adds the per-purpose eligibility reasons.
@@ -498,12 +500,17 @@ export async function purposeSentOn(
  * newest email said they paid (we may not have marked it — a deposit is not the job being
  * paid — but they aren't chased right after paying), or a purpose note went out (A3).
  */
-async function nudgeBlocked(thread: {
-  id: string;
-  category: string | null;
-  extracted: unknown;
-}): Promise<boolean> {
+async function nudgeBlocked(
+  thread: {
+    id: string;
+    category: string | null;
+    extracted: unknown;
+  },
+  now: Date = new Date(),
+): Promise<boolean> {
   if (paymentSaid(thread.extracted) === "paid") return true;
+  // Check 12 P3: "the check is in the mail" gets 7 days to clear before any reminder.
+  if (saidSentBlocksNudge(invoiceOf(thread.extracted), now)) return true;
   return purposeSentOn(thread.id, { invoiceThread: isInvoiceThread(thread) });
 }
 
@@ -1006,6 +1013,7 @@ async function writeDraftForThread(threadId: string, opts: CreateOpts): Promise<
     co_alarm?: boolean;
     electrical_hazard?: boolean;
     asks_if_ai?: boolean;
+    contract_rights?: boolean;
     bill_direction?: string;
     model_category?: string;
     bounced?: boolean;
@@ -1021,6 +1029,8 @@ async function writeDraftForThread(threadId: string, opts: CreateOpts): Promise<
     if (marks.payment_change) return { status: "skipped", reason: "payment_change" };
     // Check 48 P1 + 43 P2: "is this a bot?" — the owner answers it (their tap drafts it).
     if (marks.asks_if_ai) return { status: "skipped", reason: "asks_if_ai" };
+    // Check 38 P5: cancelling the contract, the deposit back — the owner answers (their tap).
+    if (marks.contract_rights) return { status: "skipped", reason: "contract_rights" };
     // Ideas H4: a kind the owner chose feeds a job's draft only when the sorter's own kind
     // would have been drafted too ("out of Junk" on something it called junk is a tap only).
     if (
@@ -1087,7 +1097,7 @@ async function writeDraftForThread(threadId: string, opts: CreateOpts): Promise<
         !isInvoiceThread(thread)) ||
       // Nor a thread where a deposit, review request or closing question went out (A3) —
       // a deposit only while it's a quote — or whose customer just said they paid.
-      (await nudgeBlocked(thread))
+      (await nudgeBlocked(thread, now))
     ) {
       return { status: "skipped", reason: "followup_not_allowed" };
     }

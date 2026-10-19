@@ -49,85 +49,26 @@ The code already sets `voice_profile.examples_stale` and drafts stop using stale
   starts with the greeting and ends with the sign-off, the avoided phrase absent, no digits
   except in placeholders, length within ±50% of the average.
 
-## From `w2-inbox` (Check 10 P10): classify.v6 reason wording
+## From `w2-sync` (Check 21 P1): acknowledgements (followup part)
 
-- The `needs_owner_reason` example "Mentions a $14,000 remodel — you'll want to price this
-  yourself." becomes "Mentions a $14,000 remodel. You'll want to price this yourself."
-- Add the line: "Write needs_owner_reason in one or two short sentences with no dashes." (Model
-  reasons still show on Inbox cards.)
-- Extend `tests/evals/cases.ts` accordingly.
+The classify part (`signals.acknowledgment_only`, its eval cases) was written in classify.v6
+(Prompt versions step 1). Still waiting:
 
-## From `w2-sync` (Check 21 P1): acknowledgements
-
-The code is in place and inert until the signal exists: `src/ai/classify.ts` maps
-`signals.acknowledgment_only` to `extracted.acknowledgment_only`, which classification writes to
-`messages.ack_only` (the current schema strips the unknown key).
-
-- classify (next version): add to `signals` `acknowledgment_only: z.boolean()` with the line:
-  "acknowledgment_only: true only when the email just thanks or acknowledges (\"Thanks, got it.
-  We'll look it over and get back to you.\"), says they will decide or get back to you, asks no
-  question and needs no answer. False if it asks anything, changes anything or needs a reply."
 - followup (next version): when the customer's newest email is an acknowledgement, add to the
   task: "The customer said they'd look it over on <weekday, Month D>." (`drafts.ts` knows it:
   `last` is the acknowledgement when `onlyAcksSince` is true; pass `last.sentAt` in the owner's
   zone.)
-- Eval cases, scored on `acknowledgment_only`:
-  - true: "Thanks, got it. We'll look it over and get back to you." / "Thanks! We'll talk it
-    over this weekend and let you know." / "Got the estimate, appreciate it. Will be in touch."
-  - false: "Thanks — does that include the permit?" / "Got it. Can you start before the 15th?"
 
-## From `w2-sync` (Check 40 P2): photos and files the customer attached
+## From `w2-sync` (Check 40 P2): photos and files the customer attached (draft part)
 
-Counts are stored and shown (`messages.attachment_*`, `attachmentWords()` in
-`src/server/attachment-rules.ts` gives "3 photos, 1 PDF"); the prompts don't see them yet.
+The sorter's `Attached: …` line and the attachments-only email are in classify.v6 (Prompt
+versions step 1). Still waiting for draft.v9:
 
-- classify `emailBlock` and the draft conversation block, one line per email with attachments:
+- the draft conversation block, one line per email with attachments:
   `Attached: ${attachmentWords(counts)} (the assistant can't see them)`.
 - draft rule: "If the customer attached photos, don't ask for photos again; ask only for an
   angle that's missing, or say you'll look at them."
-- An email whose only content is attachments is classified with that line as its text instead
-  of being treated as having no text (the `Attached:` line makes the body non-empty). The drafts
-  test "the draft prompt carries 'Attached: 3 photos'" goes with that change.
-
-## From `w2-followups` (Check 21 P2): classify.v6 `declines_quote` and `wait_until`
-
-The code reads both loosely (`followupSignalsOf`, `src/server/followup-rules.ts`) and is inert
-until the fields exist. Schema: `signals.declines_quote: z.boolean().catch(false)` and
-`extracted.wait_until: z.string().nullable().catch(null)` (the names must stay exactly these).
-
-- Under `## signals`: "- declines_quote: true only when the customer turns down the price or the
-  job — they hired someone else (\"we went with someone else\", \"we found another contractor\"),
-  are holding off with no date (\"we're going to hold off for now\", \"we've decided not to do
-  it\"), or no longer need the work (\"we sold the house\", \"my brother-in-law is doing it\").
-  False for comparing quotes, haggling (\"can you do it for less?\"), questions, \"not yet\", or
-  a later date they name."
-- Under `## Extracted details`: "- wait_until: when the customer asks you to wait until a time,
-  that date as YYYY-MM-DD, counted from the Received date: \"after the holidays\" in December →
-  the first weekday of January; \"next month\" → the 1st of next month; \"in the spring\" → March
-  15; \"after the 20th\" → the 21st; a named date → that date. null when they name no time or
-  it's vague (\"later\", \"sometime\")."
-- Eval cases, each after an owner's priced reply:
-  - declines_quote true: "We went with someone else, thanks for your time." / "We found another
-    contractor who could start sooner." / "We've decided not to go ahead with the bathroom this
-    year." / "My brother-in-law is going to do it, but thanks."
-  - wait_until set (Received 2026-12-17): "We'll get back to you after the holidays." →
-    2027-01-04; "Can we revisit next month?" → 2027-01-01; "Let's pick this up in the spring." →
-    2027-03-15 (all declines_quote false).
-  - neither: "We're comparing quotes, will let you know." / "Can you do it for less?"
-
-## From `w2-customers` (Check 22 P7): classify.v6 "unknown" first-time sender
-
-`applyOwnerRules` already takes `firstTimeSender: boolean | "unknown"`; the prompt still reads
-`yes` for "unknown" (classification passes `firstTimeSender !== false`). In `emailBlock` of the
-next classify version, with `EmailInput.firstTimeSender: boolean | "unknown"` and
-classification.ts passing the raw value:
-
-```ts
-First time this sender has emailed the business: ${e.firstTimeSender === "unknown" ? "unknown (a lead site or voicemail service; judge the person from the email)" : e.firstTimeSender ? "yes" : "no"}
-```
-
-Eval case: a second Thumbtack lead for a home addition from the same `leads@thumbtack.com`
-address, `large_request`, expected needs-you with the big-job reason.
+- The drafts test "the draft prompt carries 'Attached: 3 photos'" goes with that change.
 
 ## From `w2-followups` (Check 21 P4 / Check 12 P7): followup.v5 invoice reminders
 
@@ -157,21 +98,3 @@ Spanish; use short, plain sentences)`. `createDraftForThread` already computes `
 - Voice (optional, Check 24 P11): with a ready voice and a null greeting / sign-off, the voice
   block prints "Usual greeting: not given"; it could say "none — they jump straight in" /
   "none — they don't sign off".
-
-## From `w2-lists` (Check 36 P5): classify.v6 water and sewer offices, backflow notices
-
-- Add "water and sewer departments, water districts and their backflow or cross-connection
-  programs" to the town list (the building-department signal), and "backflow test due notices"
-  to the never-noise paperwork list (customer_question, or scheduling when it sets a date). The
-  code's `readMunicipal` (`src/ai/guards.ts`) already recognises those office names.
-- Eval case: "Annual backflow test due by Nov 30" from a water district's .gov address, expected
-  `municipal: true`, needs you, never noise.
-
-## From `w2-lists` (Check 37 P3): classify.v6 electric-company paperwork
-
-- Add "electric company work requests, cut-and-reconnect appointments, meter sets, planned
-  outages for a job, interconnection approvals" to the never-noise paperwork line. The code
-  (`looksLikeUtility`) already keeps those from junk and from job drafting; the prompt line keeps
-  the model's category right for an electric company we don't list.
-- Eval case: a meter-set appointment from a town light plant ("Light Department"), expected not
-  noise (scheduling, with the date), needs you with the electric-company reason.

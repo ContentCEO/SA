@@ -451,6 +451,46 @@ export function mentionsRealLegal(text: string | null | undefined): boolean {
 const LEGAL_THREAT =
   /\b(attorneys?|lawyers?|law (office|offices|firm)|lawsuits?|law suits?|small claims|demand letter|cease and desist|93a|attorney general|consumer protection|suing|sued|(will|going to|gonna|plan to|intend to|i'll|we'll|we will|i will) sue|sue (you|your|the company|him|her|them))\b|\b(file|filed|filing|place|placed|placing|put) (a |an )?(mechanic'?s )?lien\b|\blien (on|against) (the|my|our|your) (house|home|property)\b/;
 
+/**
+ * Check 38 P5: a homeowner asking about cancelling a signed contract or their rights under it:
+ * cancelling or backing out of the contract / agreement, a right to cancel, the three-day
+ * window, rescinding, the deposit back or refunded, the Guaranty Fund, arbitration, a complaint
+ * or report to the state, the HIC program or a licensing board, "is that legal / allowed" about
+ * the contract or deposit. Whole words, lower-cased, like REAL_LEGAL. Everyday cancelling
+ * ("cancel Tuesday's visit", "cancel the tile order", "back out of the driveway") is not this.
+ * Facts (malegislature.gov): c.93 §48 (three business days on a home-solicited sale), c.142A
+ * §2(a)(6) (deposit cap), c.142A §5 (the Guaranty Fund).
+ */
+const CONTRACT_WORDS = "(contract|agreement|proposal we signed|paperwork we signed|what we signed)";
+const CONTRACT_RIGHTS = new RegExp(
+  [
+    `\\b(cancel|cancelling|canceling|back out of|get out of|void|rescind|rescinding|terminate|terminating|undo) (the|this|our|that|my) (signed )?${CONTRACT_WORDS}\\b`,
+    `\\b${CONTRACT_WORDS} (be )?(cancel+ed|voided|rescinded|terminated)\\b`,
+    `\\bright to cancel\\b`,
+    `\\b(three|3)[- ](business[- ])?day(s)? (to cancel|window|right|cancellation|cooling)\\b`,
+    `\\bcooling[- ]off period\\b`,
+    `\\bcancell?ation (period|window|rights?|notice|form)\\b`,
+    `\\b(deposit|down payment|retainer) (back|returned|refunded)\\b`,
+    `\\b(refund|return|give back|get back|keep|keeping|keeps|lose|losing) (of )?(the|our|my|that|a) (full |whole |entire )?(deposit|down payment|retainer)\\b`,
+    `\\bguarant(y|ee) fund\\b`,
+    `\\barbitration\\b`,
+    `\\b(complaint|report|file|filing|complain) (to|with) (the )?(state|attorney general|hic|home improvement|licensing|board of|office of consumer|consumer affairs)\\b`,
+    `\\b(hic|home improvement) (program|complaint|office)\\b`,
+    `\\b(is|was) (that|this|it) (even )?(legal|allowed|lawful)\\b.{0,80}\\b(contract|deposit|agreement|sign|signed)\\b`,
+    `\\b(contract|deposit|agreement|signed)\\b.{0,80}\\b(is|was) (that|this|it) (even )?(legal|allowed|lawful)\\b`,
+    `\\b(limits?|caps?|cap on|limit on|maximum) (the |a |on the |for the )?deposits?\\b`,
+    `\\bdeposits? (are |is )?(limited|capped)\\b`,
+  ].join("|"),
+);
+
+export function mentionsContractRights(text: string | null | undefined): boolean {
+  const t = (text ?? "").toLowerCase().replace(/\s+/g, " ");
+  return CONTRACT_RIGHTS.test(t);
+}
+
+export const CONTRACT_RIGHTS_REASON =
+  "Asks about cancelling or their rights under the contract. Answer this one yourself.";
+
 export function mentionsLegalThreat(text: string | null | undefined): boolean {
   // Check 22 P11 / 45 P4: a closing lawyer isn't a threat; other states' words are.
   return legalSentences((text ?? "").replace(/\bpower of attorney\b/gi, " ")).some(

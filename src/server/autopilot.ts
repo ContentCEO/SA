@@ -8,6 +8,7 @@ import {
   mentionsElectricalHazard,
   mentionsGasSmell,
   mentionsLegalThreat,
+  mentionsContractRights,
   mentionsRealLegal,
 } from "@/ai/guards";
 import { mentionsMoney } from "@/ai/money-words";
@@ -181,6 +182,8 @@ export type GuardrailInput = {
   asksIfAi?: boolean;
   /** Check 22 P2: the owner cleared an attack mark on this thread in the last 30 days. */
   injectionCleared?: boolean;
+  /** Check 38 P5: asks about cancelling the contract or their rights under it. */
+  contractRights?: boolean;
   /** Check 36 P2: an emergency on this conversation in the last 48 hours. */
   recentEmergency?: boolean;
   /** Ideas H4: the owner chose this kind and the sorter said otherwise. */
@@ -263,6 +266,7 @@ export function guardrailCodes(g: GuardrailInput): GuardrailCode[] {
   if (g.coAlarm) out.push("co_alarm");
   if (g.asksIfAi || claimsHuman(g.draftBody)) out.push("asks_if_ai");
   if (g.injectionCleared) out.push("injection_cleared");
+  if (g.contractRights) out.push("contract_rights");
   if (g.electricalHazard) out.push("electrical");
   if (g.recentEmergency) out.push("recent_emergency");
   if (g.ownerMoved) out.push("owner_moved");
@@ -581,6 +585,10 @@ async function blockers(
     recentEmergency: recentEmergency(thread.extracted, now),
     injectionCleared: injectionClearedRecently(thread.extracted, now),
     asksIfAi: (extracted as { asks_if_ai?: unknown }).asks_if_ai === true,
+    // Check 38 P5: the stored mark, or the words in the newest email itself.
+    contractRights:
+      (extracted as { contract_rights?: unknown }).contract_rights === true ||
+      mentionsContractRights(fullText),
     emailUnreadable: fullBody === null,
     ownerMoved: thread.categoryManual != null && thread.categoryManual !== extracted.model_category,
     leadChannel: thread.leadChannel != null,

@@ -27,6 +27,7 @@ import {
   setInvoicePaid,
 } from "@/server/money";
 import {
+  balanceDollars,
   billOwedByOwner,
   carryInvoiceFacts,
   chaseLine,
@@ -39,10 +40,14 @@ import {
   isReceiptSender,
   matchReceipt,
   normalizeInvoiceNumber,
+  owedCents,
   PAID_GUESS_FLAG,
   PAID_NOTE,
+  paidViaLine,
+  paymentPromiseLine,
   paymentSaid,
   promoteEarlierOpen,
+  saidSentBlocksNudge,
   sortOwed,
   type InvoiceFacts,
 } from "@/server/money-rules";
@@ -1973,5 +1978,386 @@ describe("privacy: invoice facts stay on the owner's screen", () => {
       "Still owed to you: $98,765 on Money owed.",
     ]);
     expect(counts.needsYou).toHaveLength(1); // the thread was counted, just not described
+  });
+});
+
+describe("balances (wave 2, Prompt versions step 1: Check 12 P2 + P3)", () => {
+  const facts = (o: Partial<InvoiceFacts>): InvoiceFacts => inv(o);
+
+  it("a part payment toward the same invoice lowers the balance, never the amount", () => {
+    const stored = carryInvoiceFacts(
+      facts({ invoice_number: "1043", amount: 5000 }),
+      facts({
+        invoice_number: "1043",
+        amount: null,
+        amount_paid_now: 2000,
+        kind: "payment",
+        status: "partly_paid",
+      }),
+    );
+    expect(stored).toMatchObject({
+      invoice_number: "1043",
+      amount: 5000,
+      paid: 2000,
+      status: "partly_paid",
+    });
+    expect(stored).not.toHaveProperty("amount_paid_now");
+    expect(stored).not.toHaveProperty("kind");
+    expect(balanceDollars(stored)).toBe(3000);
+    expect(owedCents(stored)).toBe(300_000);
+    expect(holdsOwedInvoice(stored)).toBe(true);
+  });
+
+  it("a credit memo is money toward the invoice, never a new invoice", () => {
+    const prev = facts({ invoice_number: "1043", amount: 5000 });
+    const credit = facts({
+      invoice_number: "1043",
+      amount: null,
+      amount_paid_now: 250,
+      kind: "credit",
+      status: "partly_paid",
+    });
+    expect(isNewInvoice(prev, credit)).toBe(false);
+    const stored = carryInvoiceFacts(prev, credit);
+    expect(owedCents(stored)).toBe(475_000);
+    // Even when the model put the memo's own number on it.
+    const memo = { ...credit, invoice_number: "CM-7" };
+    expect(isNewInvoice(prev, memo)).toBe(false);
+    expect(owedCents(carryInvoiceFacts(prev, memo))).toBe(475_000);
+    expect(carryInvoiceFacts(prev, memo)?.invoice_number).toBe("1043");
+  });
+
+  it("two invoices in one email both count", () => {
+    const stored = carryInvoiceFacts(
+      null,
+      facts({
+        invoice_number: "1043",
+        amount: 3000,
+        other_invoices: [{ invoice_number: "1044", amount: 1200 }],
+      }),
+    );
+    expect(stored).toMatchObject({
+      invoice_number: "1043",
+      amount: 3000,
+      earlier_open: [{ invoice_number: "1044", amount: 1200 }],
+    });
+    expect(stored).not.toHaveProperty("other_invoices");
+    expect(owedCents(stored)).toBe(420_000);
+    // Read from the stored row, the sibling list is gone and the balance is the same.
+    expect(owedCents(invoiceOf({ invoice: stored }))).toBe(420_000);
+    // The sorter's own output carries the list beside the invoice.
+    const fromModel = invoiceOf({
+      invoice: facts({ invoice_number: "1043", amount: 3000 }),
+      other_invoices: [{ invoice_number: "1044", amount: 1200, due_date: null }],
+    });
+    expect(fromModel?.other_invoices).toEqual([{ invoice_number: "1044", amount: 1200 }]);
+  });
+
+  it("the total-due line is the amount", () => {
+    const stored = carryInvoiceFacts(null, facts({ invoice_number: "2290", amount: 4250 }));
+    expect(owedCents(stored)).toBe(425_000);
+  });
+
+  it("'paid the rest' and 'deposit applied, sent the balance' read as paid", () => {
+    const rest = carryInvoiceFacts(
+      facts({ invoice_number: "1043", amount: 5000, paid: 2000, status: "partly_paid" }),
+      facts({ invoice_number: "1043", amount: null, kind: "payment", status: "paid" }),
+    );
+    expect(rest).toMatchObject({ status: "paid", amount: 5000, paid: 2000 });
+    expect(owedCents(rest)).toBe(0);
+    // Payments that add up to the amount read as paid even when the model only said "partly".
+    const covered = carryInvoiceFacts(
+      facts({ invoice_number: "2001", amount: 3000, paid: 1000, status: "partly_paid" }),
+      facts({
+        invoice_number: "2001",
+        amount: null,
+        amount_paid_now: 2000,
+        kind: "payment",
+        status: "partly_paid",
+      }),
+    );
+    expect(covered).toMatchObject({ status: "paid", paid: 3000 });
+    expect(balanceDollars(covered)).toBe(0);
+  });
+
+  it("old rows with only an amount list exactly as today", () => {
+    const old = invoiceOf({
+      invoice: { invoice_number: "9", amount: 1200, due_date: null, status: "unpaid" },
+    });
+    expect(old).toEqual({ invoice_number: "9", amount: 1200, due_date: null, status: "unpaid" });
+    expect(balanceDollars(old)).toBe(1200);
+    expect(owedCents(old)).toBe(120_000);
+    expect(owedCents(carryInvoiceFacts(old, null))).toBe(120_000);
+  });
+
+  it("a payment toward an earlier open invoice lowers that one", () => {
+    const prev = facts({
+      invoice_number: "42",
+      amount: 1500,
+      earlier_open: [{ invoice_number: "41", amount: 900 }],
+    });
+    const stored = carryInvoiceFacts(
+      prev,
+      facts({
+        invoice_number: "41",
+        amount: null,
+        amount_paid_now: 400,
+        kind: "payment",
+        status: "partly_paid",
+      }),
+    );
+    expect(stored).toMatchObject({
+      invoice_number: "42",
+      amount: 1500,
+      earlier_open: [{ invoice_number: "41", amount: 500 }],
+    });
+    expect(owedCents(stored)).toBe(200_000);
+    // Paying it off takes it out.
+    const gone = carryInvoiceFacts(
+      prev,
+      facts({
+        invoice_number: "41",
+        amount: null,
+        amount_paid_now: 900,
+        kind: "payment",
+        status: "paid",
+      }),
+    );
+    expect(gone?.earlier_open).toBeUndefined();
+    expect(owedCents(gone)).toBe(150_000);
+  });
+
+  it("a new invoice keeps the earlier one at its balance, not its full amount", () => {
+    const stored = carryInvoiceFacts(
+      facts({ invoice_number: "41", amount: 900, paid: 400 }),
+      facts({ invoice_number: "42", amount: 1500 }),
+    );
+    expect(stored).toMatchObject({
+      invoice_number: "42",
+      amount: 1500,
+      earlier_open: [{ invoice_number: "41", amount: 500 }],
+    });
+    expect(stored).not.toHaveProperty("paid");
+  });
+
+  it("Check 12 P3: 'the check is in the mail' is owed, holds nudges 7 days, then is chaseable", () => {
+    const at = new Date("2026-10-16T15:00:00Z");
+    const stored = carryInvoiceFacts(
+      facts({ invoice_number: "1043", amount: 1800 }),
+      facts({
+        invoice_number: "1043",
+        amount: null,
+        kind: "payment",
+        status: "said_sent",
+        said_sent_at: at.toISOString(),
+      }),
+    );
+    expect(stored).toMatchObject({
+      status: "said_sent",
+      amount: 1800,
+      said_sent_at: at.toISOString(),
+    });
+    expect(holdsOwedInvoice(stored)).toBe(true);
+    expect(isOwed({ invoice: stored, paidAt: null, paidSource: null })).toBe(true);
+    expect(owedCents(stored)).toBe(180_000);
+    expect(saidSentBlocksNudge(stored, new Date(at.getTime() + 3 * DAY))).toBe(true);
+    expect(saidSentBlocksNudge(stored, new Date(at.getTime() + 8 * DAY))).toBe(false);
+    expect(saidSentBlocksNudge(facts({ status: "unpaid" }), at)).toBe(false);
+    expect(paymentPromiseLine(stored, "America/New_York")).toBe(
+      "They say it's on the way (Oct 16). Tap Mark paid when it clears.",
+    );
+    // Once they really pay, the promise goes.
+    const paid = carryInvoiceFacts(
+      stored,
+      facts({ invoice_number: "1043", amount: null, kind: "payment", status: "paid" }),
+    );
+    expect(paid).toMatchObject({ status: "paid" });
+    expect(paid).not.toHaveProperty("said_sent_at");
+    // A promised day reads on the card while it's owed.
+    const promised = carryInvoiceFacts(
+      null,
+      facts({ invoice_number: "77", amount: null, promised_on: "Friday" }),
+    );
+    expect(paymentPromiseLine(promised, "America/New_York")).toBe("They said they'd pay Friday.");
+    expect(paymentPromiseLine(facts({}), "America/New_York")).toBeNull();
+  });
+
+  it("the paid list says how we knew, never 'we spotted the payment'", () => {
+    expect(paidViaLine("reply", "1043")).toBe("they said they paid");
+    expect(paidViaLine("receipt", "1043")).toBe("a receipt for #1043 matched");
+    expect(paidViaLine("receipt", null)).toBe("a payment receipt matched");
+    expect(paidViaLine(null, null)).toBe("they said they paid");
+  });
+
+  it("a receipt for the balance matches, as does one for the whole amount", () => {
+    const open = [
+      { threadId: "a", invoice: facts({ invoice_number: "1043", amount: 5000, paid: 2000 }) },
+    ];
+    expect(
+      matchReceipt(facts({ invoice_number: "1043", amount: 3000, status: "paid" }), open),
+    ).toBe("a");
+    expect(
+      matchReceipt(
+        facts({ invoice_number: "1043", amount: null, amount_paid_now: 3000, status: "paid" }),
+        open,
+      ),
+    ).toBe("a");
+    expect(
+      matchReceipt(facts({ invoice_number: "1043", amount: 5000, status: "paid" }), open),
+    ).toBe("a");
+    expect(
+      matchReceipt(facts({ invoice_number: "1043", amount: 1000, status: "paid" }), open),
+    ).toBeNull();
+  });
+});
+
+describe("balances on the Money screen (Check 12 P2 + P3)", () => {
+  beforeEach(setupDb, DB_HOOK_TIMEOUT);
+
+  const payment = (
+    invoice: Partial<InvoiceFacts>,
+    over: Parameters<typeof classification>[0] = {},
+  ) => paidSays({ kind: "payment", ...invoice }, over);
+
+  it("'Sent $2,000 toward 1043': the card shows $3,000 left of $5,000, paid so far $2,000", async () => {
+    const t = await invoiceThread({ invoice: { amount: 5000, invoice_number: "1043" } });
+    await writes(t);
+    await classifyWith(
+      payment({ invoice_number: "1043", amount_paid_now: 2000, status: "partly_paid" }),
+    );
+    const row = await rowOf(t);
+    expect(row.invoicePaidAt).toBeNull();
+    expect(invoiceOf(row.extracted)).toMatchObject({
+      amount: 5000,
+      paid: 2000,
+      status: "partly_paid",
+    });
+    const money = await listMoney(workspaceId, NOW);
+    expect(money.owed).toMatchObject([
+      { threadId: t, amountCents: 500_000, owedCents: 300_000, paidSoFarCents: 200_000 },
+    ]);
+    expect(money.totalOwedCents).toBe(300_000);
+  });
+
+  it("a credit memo lowers the balance and opens no new invoice", async () => {
+    const t = await invoiceThread({ invoice: { amount: 5000, invoice_number: "1043" } });
+    await writes(t);
+    await classifyWith(
+      payment({
+        invoice_number: "1043",
+        amount_paid_now: 250,
+        kind: "credit",
+        status: "partly_paid",
+      }),
+    );
+    const money = await listMoney(workspaceId, NOW);
+    expect(money.owed).toMatchObject([{ threadId: t, owedCents: 475_000, earlierOpen: [] }]);
+    expect(money.totalOwedCents).toBe(475_000);
+  });
+
+  it("two invoices in one email both count toward the total", async () => {
+    const t = await invoiceThread({ invoice: null, category: "invoice_payment" });
+    await writes(t);
+    await classifyWith(
+      classification({
+        category: "invoice_payment",
+        extracted: {
+          ...classification().extracted,
+          invoice: inv({ invoice_number: "1043", amount: 3000, status: "unpaid" }),
+          other_invoices: [{ invoice_number: "1044", amount: 1200, due_date: null }],
+        },
+      }),
+    );
+    const money = await listMoney(workspaceId, NOW);
+    expect(money.owed).toMatchObject([
+      {
+        threadId: t,
+        amountCents: 300_000,
+        earlierOpen: [{ invoiceNumber: "1044", amountCents: 120_000 }],
+      },
+    ]);
+    expect(money.totalOwedCents).toBe(420_000);
+    expect((await rowOf(t)).extracted).toMatchObject({ other_invoices: [] });
+  });
+
+  it("payments that cover the amount become our paid guess, with how we knew", async () => {
+    const t = await invoiceThread({
+      invoice: { amount: 5000, invoice_number: "1043", paid: 2000, status: "partly_paid" },
+    });
+    await writes(t);
+    await classifyWith(
+      payment({ invoice_number: "1043", amount_paid_now: 3000, status: "partly_paid" }),
+    );
+    expect(await rowOf(t)).toMatchObject({ invoicePaidSource: "auto" });
+    const money = await listMoney(workspaceId, NOW);
+    expect(money.owed).toEqual([]);
+    expect(money.paidRecently).toMatchObject([
+      { threadId: t, paidSource: "auto", paidVia: "reply" },
+    ]);
+    expect((await listActivity(workspaceId))[0]!.text).toBe(
+      "Marked Dana's invoice paid — they said they paid. Undo on Money owed",
+    );
+  });
+
+  it("GUARDRAIL: 'check is in the mail' stays owed with the promise line and never sets invoice_paid_at", async () => {
+    const t = await invoiceThread({
+      invoice: { amount: 1800, invoice_number: "1043" },
+      inAgo: 10,
+      outAgo: 8,
+    });
+    expect(await threadsToFollowUp(mailboxId, NOW)).toEqual([t]);
+    await writes(t, "dana@customer.com", "Dana Ruiz", 1);
+    await classifyWith(payment({ invoice_number: "1043", status: "said_sent" }));
+    const row = await rowOf(t);
+    expect(row.invoicePaidAt).toBeNull();
+    expect(row.invoicePaidSource).toBeNull();
+    expect(invoiceOf(row.extracted)).toMatchObject({ status: "said_sent", amount: 1800 });
+    expect((row.extracted as { payment_said?: unknown }).payment_said).toBeUndefined();
+    expect(await paidLogs()).toEqual([]);
+    const money = await listMoney(workspaceId, NOW);
+    expect(money.owed).toMatchObject([
+      {
+        threadId: t,
+        owedCents: 180_000,
+        promiseLine: "They say it's on the way (Oct 9). Tap Mark paid when it clears.",
+      },
+    ]);
+    expect(money.totalOwedCents).toBe(180_000);
+    // The customer wrote last now, so no nudge either way today; once the owner writes again
+    // the 7-day hold is what stops it.
+    await database.insert(messages).values({
+      threadId: t,
+      mailboxId,
+      gmailMessageId: `w${++g}`,
+      direction: "out",
+      fromAddress: "owner@shop.com",
+      toAddresses: ["dana@customer.com"],
+      subject: "Re: Invoice",
+      bodyText: "Thanks, I'll watch for it.",
+      sentAt: new Date(NOW.getTime() - 20 * 3_600_000),
+    });
+    // Inside the 7 days: no nudge from the scan or the drafter.
+    const soon = new Date(NOW.getTime() + 4 * DAY);
+    expect(await threadsToFollowUp(mailboxId, soon)).toEqual([]);
+    const writer = new FakeWriter();
+    setModelTransportForTests(fakeTransport([]).transport);
+    expect(
+      await createDraftForThread(t, {
+        trigger: "followup",
+        writerFor: () => writer,
+        now: () => soon,
+      }),
+    ).toEqual({ status: "skipped", reason: "followup_not_allowed" });
+    // After 7 days with no paid mark: chaseable again.
+    const later = new Date(NOW.getTime() + 9 * DAY);
+    expect(await threadsToFollowUp(mailboxId, later)).toEqual([t]);
+  });
+
+  it("'Paid it, thanks' still makes our paid guess, and the label names the source", async () => {
+    const t = await invoiceThread({ invoice: { amount: 1200, invoice_number: "INV-42" } });
+    await writes(t);
+    await classifyWith(paidSays({}));
+    const { paidRecently } = await listMoney(workspaceId, NOW);
+    expect(paidRecently).toMatchObject([{ threadId: t, paidSource: "auto", paidVia: "reply" }]);
   });
 });

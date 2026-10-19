@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { setModelTransportForTests, type Transport } from "@/ai/client";
-import { CATEGORIES, type ModelClassification } from "@/ai/prompts/classify.v5";
+import { CATEGORIES } from "@/ai/prompts/classify.v6";
 import { TRADES } from "@/config/trades";
 import { EVAL_CASES, type EvalCase } from "../evals/cases";
 import { OPENING_TWEAKS } from "@/ai/prompts/opening-tweaks.v1";
@@ -9,7 +9,7 @@ import { REVISE_CASES, TONE_CASES } from "../evals/edits";
 import { PURPOSE_CASES } from "../evals/purposes";
 import { runEvals } from "../evals/run";
 import { regressions, score, type Baseline, type EvalResult, type Scores } from "../evals/score";
-import { classification } from "../support/fake-model";
+import { classification, type LooseClassification } from "../support/fake-model";
 
 describe("evaluation set (#46)", () => {
   it("has 60+ invented cases covering every category and trade", () => {
@@ -95,6 +95,57 @@ describe("evaluation set (#46)", () => {
       ).toBe(true);
   });
 
+  it("covers classify.v6 (wave 2, Prompt versions step 1) both ways", () => {
+    const n = (f: (c: EvalCase) => boolean) => EVAL_CASES.filter(f).length;
+    // Check 12 P2 / P3: the four balance threads, "paid the rest", "deposit applied", promises.
+    expect(n((c) => c.expect.owedDollars !== undefined)).toBeGreaterThanOrEqual(6);
+    expect(n((c) => c.expect.invoiceStatus === "said_sent")).toBeGreaterThanOrEqual(1);
+    // Check 22 P9: five lead sites, two voicemails, a tenant, a realtor, a fake bill, a payment
+    // with a new job, a Spanish quote, a small job to a remodeler.
+    expect(n((c) => c.firstTimeSender === "unknown")).toBeGreaterThanOrEqual(7);
+    expect(n((c) => c.expect.notThePayer === true)).toBeGreaterThanOrEqual(2);
+    expect(n((c) => c.expect.fakeBill === true)).toBeGreaterThanOrEqual(1);
+    expect(n((c) => c.expect.newJob === true)).toBeGreaterThanOrEqual(1);
+    expect(n((c) => c.expect.summaryEnglish === true)).toBeGreaterThanOrEqual(1);
+    expect(n((c) => c.expect.largeRequest === false)).toBeGreaterThanOrEqual(1);
+    expect(n((c) => c.expect.largeRequest === true)).toBeGreaterThanOrEqual(1);
+    // Check 38 P5: E11, E12 and three everyday negatives.
+    expect(n((c) => c.expect.contractRights === true)).toBeGreaterThanOrEqual(2);
+    expect(n((c) => c.expect.contractRights === false)).toBeGreaterThanOrEqual(3);
+    // Check 45 P7: six mark-out / energy-program emails, none junk.
+    for (const id of [
+      "p1-sunshine-811",
+      "p1-texas-811",
+      "p1-digalert",
+      "p1-energize-ct",
+      "p1-efficiency-maine",
+      "p1-nhsaves",
+    ]) {
+      const c = EVAL_CASES.find((x) => x.id === id);
+      expect(c, id).toBeDefined();
+      expect([c!.expect.category].flat(), id).not.toContain("noise");
+    }
+    // Check 21 P1 / P2 (inbox lines): acknowledgements, declines and waits, both ways.
+    expect(n((c) => c.expect.ackOnly === true)).toBeGreaterThanOrEqual(3);
+    expect(n((c) => c.expect.ackOnly === false)).toBeGreaterThanOrEqual(2);
+    expect(n((c) => c.expect.declinesQuote === true)).toBeGreaterThanOrEqual(4);
+    expect(n((c) => typeof c.expect.waitUntil === "string")).toBeGreaterThanOrEqual(3);
+    expect(
+      n((c) => c.expect.declinesQuote === false && c.expect.waitUntil === null),
+    ).toBeGreaterThanOrEqual(2);
+    // Check 36 P5 / 37 P3 / 40 P2 / 22 P7.
+    for (const id of [
+      "p1-backflow-due",
+      "p1-light-dept-meter-set",
+      "p1-photos-only",
+      "p1-thumbtack-addition",
+    ])
+      expect(
+        EVAL_CASES.some((c) => c.id === id),
+        id,
+      ).toBe(true);
+  });
+
   it("covers the draft-editing prompts too", () => {
     expect(REVISE_CASES.length).toBeGreaterThanOrEqual(8);
     expect(TONE_CASES.length).toBeGreaterThanOrEqual(5);
@@ -148,7 +199,7 @@ describe("evaluation set (#46)", () => {
   });
 
   it("runs end to end; a model that answers like the key scores perfectly", async () => {
-    const oracle = (c: EvalCase): ModelClassification => {
+    const oracle = (c: EvalCase): LooseClassification => {
       const base = classification();
       return {
         ...base,
@@ -167,6 +218,13 @@ describe("evaluation set (#46)", () => {
           smells_gas: c.expect.gasSmell === true,
           co_alarm: c.expect.coAlarm === true,
           routine_paperwork: c.expect.routinePaperwork === true,
+          // classify.v6 (wave 2, Prompt versions step 1).
+          large_request: c.expect.largeRequest === true,
+          not_the_payer: c.expect.notThePayer === true,
+          looks_like_fake_bill: c.expect.fakeBill === true,
+          new_job_requested: c.expect.newJob === true,
+          acknowledgment_only: c.expect.ackOnly === true,
+          declines_quote: c.expect.declinesQuote === true,
         },
         extracted: {
           ...base.extracted,
@@ -185,9 +243,19 @@ describe("evaluation set (#46)", () => {
                 corrections: [],
               }
             : null,
-          invoice: c.expect.invoiceStatus
-            ? { invoice_number: null, amount: null, due_date: null, status: c.expect.invoiceStatus }
-            : null,
+          invoice:
+            c.keyInvoice ??
+            (c.expect.invoiceStatus
+              ? {
+                  invoice_number: null,
+                  amount: null,
+                  due_date: null,
+                  status: c.expect.invoiceStatus,
+                }
+              : null),
+          other_invoices: c.keyOtherInvoices ?? [],
+          wait_until: c.expect.waitUntil ?? null,
+          also_asks: c.expect.newJob ? ["quote_request"] : [],
         },
       };
     };
@@ -278,6 +346,18 @@ describe("evaluation set (#46)", () => {
       gasFalseAlarms: 0,
       billDirectionAccuracy: 1,
       routinePaperworkAccuracy: 1,
+      invoiceBalanceAccuracy: 1,
+      contractRightsRecall: 1,
+      contractRightsFalseAlarms: 0,
+      fakeBillRecall: 1,
+      notThePayerRecall: 1,
+      newJobRecall: 1,
+      largeRequestAccuracy: 1,
+      ackOnlyAccuracy: 1,
+      declinesQuoteAccuracy: 1,
+      waitUntilAccuracy: 1,
+      summaryEnglishRate: 1,
+      reasonPlainRate: 1,
       draftPassRate: 1,
       revisePassRate: 1,
       toneAccuracy: 1,

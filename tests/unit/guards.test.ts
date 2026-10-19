@@ -5,13 +5,14 @@ import { setModelTransportForTests } from "@/ai/client";
 import {
   INJECTION_REASON,
   injectionCheck,
+  mentionsContractRights,
   looksLikeUtility,
   looksLikeUtilityScam,
   looksMunicipal,
   MUNICIPAL_NAME_ONLY_CAUTION,
   readMunicipal,
 } from "@/ai/guards";
-import { emailBlock } from "@/ai/prompts/classify.v5";
+import { emailBlock } from "@/ai/prompts/classify.v6";
 import { conversationBlock } from "@/ai/prompts/draft.v6";
 import { untrusted } from "@/ai/prompts/untrusted";
 import { ensureUserAndWorkspace } from "@/server/accounts";
@@ -89,6 +90,49 @@ describe("prompt-injection check (#42)", () => {
     expect(guardrailReasons(ok)).toEqual([]);
     expect(guardrailReasons({ ...ok, untrusted: true }).join()).toMatch(/instructions/);
     expect(guardrailReasons({ ...ok, municipal: true }).join()).toMatch(/Building departments/);
+  });
+});
+
+describe("Check 38 P5: cancelling the contract and the customer's rights under it", () => {
+  const RIGHTS = [
+    "We signed Saturday at our kitchen table. Can we still cancel the contract, and would we get the deposit back?",
+    "The contract says half down. I read Massachusetts limits deposits. Is that right?",
+    "Do we have a right to cancel?",
+    "Is there a three-day window to back out?",
+    "We want to rescind the agreement we signed last week.",
+    "Can we get our deposit back if we cancel?",
+    "If this isn't fixed I may file a complaint with the state.",
+    "Does the Guaranty Fund cover this kind of thing?",
+    "The contract mentions arbitration. What does that mean for us?",
+    "We'd like to back out of the contract before you order materials.",
+    "Is that legal, asking for half the deposit up front before any work?",
+    "Can the agreement be cancelled at this point?",
+    "I'd like a refund of the deposit, please.",
+    "Is there a cooling-off period on what we signed?",
+    "I'm going to report you to the HIC program if this isn't sorted.",
+  ];
+  const EVERYDAY = [
+    "Can we cancel Tuesday's visit? Something came up.",
+    "Can we cancel the tile order and pick another?",
+    "When your truck backed out of the driveway it left ruts.",
+    "We'd like to cancel the appointment Friday and rebook.",
+    "The deposit is on its way, mailed it this morning.",
+    "Sent the deposit this morning by Zelle.",
+    "Can you send the contract over to sign?",
+    "We signed the contract, when do you start?",
+    "Is the new deck a legal size for the setback?",
+    "I left the deposit check with your crew lead.",
+    "We cancelled our vacation so any day next week works.",
+    "Please cancel the old quote and send a new one with the extra outlet.",
+    "The agreement looks good, sending it back signed today.",
+    "Our HOA needs a copy of the contract for their records.",
+    "Cancel the extra outlets, keep the rest of the scope.",
+  ];
+  it.each(RIGHTS)("a rights question: %s", (t) => expect(mentionsContractRights(t)).toBe(true));
+  it.each(EVERYDAY)("everyday words: %s", (t) => expect(mentionsContractRights(t)).toBe(false));
+  it("handles nothing", () => {
+    expect(mentionsContractRights(null)).toBe(false);
+    expect(mentionsContractRights("")).toBe(false);
   });
 });
 
@@ -395,7 +439,8 @@ describe("classifyEmail with guards", () => {
     });
     setModelTransportForTests(fakeTransport([m]).transport);
     const r = await classifyEmail(workspaceId, business, email(), { senderIsVip: false });
-    expect(r.extracted.invoice).toEqual({
+    // classify.v6 fills its new invoice fields with their defaults.
+    expect(r.extracted.invoice).toMatchObject({
       invoice_number: "1042",
       amount: 850,
       due_date: "Oct 30",

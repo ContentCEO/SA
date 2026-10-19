@@ -5,8 +5,11 @@
  * (rewritten so it can't be traced to anyone).
  */
 import type { Category } from "@/ai/prompts/classify.v4";
+import type { ModelClassification } from "@/ai/prompts/classify.v6";
 import type { Trade } from "@/config/trades";
+import type { AttachmentCounts } from "@/server/attachment-rules";
 import type { FirstContactOpening } from "@/server/first-contact-rules";
+import type { InvoiceFacts } from "@/server/money-rules";
 
 export type EvalCase = {
   id: string;
@@ -15,9 +18,26 @@ export type EvalCase = {
   fromAddress: string;
   subject: string;
   body: string;
-  firstTimeSender?: boolean;
+  /** Check 22 P7: "unknown" = a lead site or voicemail robot (judged as first time). */
+  firstTimeSender?: boolean | "unknown";
   /** What the classifier is told happened earlier in the conversation (null = it starts here). */
   threadSummary?: string;
+  /** The day the email arrived (YYYY-MM-DD); the runner's fixed date otherwise. */
+  receivedAt?: string;
+  /** Check 40 P2: what came attached (counts only). */
+  attachments?: AttachmentCounts;
+  /**
+   * Check 12 P2: the invoice facts the thread already held before this email, so the balance
+   * after `carryInvoiceFacts` can be scored (`expect.owedDollars`).
+   */
+  priorInvoice?: InvoiceFacts;
+  /**
+   * What a model that reads the email right returns for `extracted.invoice`: the stand-in
+   * model in tests/unit/evals.test.ts echoes it, so the balance rules are exercised there too.
+   */
+  keyInvoice?: NonNullable<ModelClassification["extracted"]["invoice"]>;
+  /** Check 12 P2: the further invoices a right-reading model lists beside `keyInvoice`. */
+  keyOtherInvoices?: ModelClassification["extracted"]["other_invoices"];
   expect: {
     category: Category | Category[];
     needsOwner: boolean;
@@ -25,7 +45,31 @@ export type EvalCase = {
     injection?: boolean;
     municipal?: boolean;
     permitResult?: "passed" | "failed" | "scheduled";
-    invoiceStatus?: "unpaid" | "paid" | "partly_paid";
+    /** Check 12 P3: `said_sent` = "the check is in the mail" (a promise, still owed). */
+    invoiceStatus?: "unpaid" | "paid" | "partly_paid" | "said_sent";
+    /**
+     * Check 12 P2: what the thread owes after this email, in dollars (the current invoice's
+     * balance plus earlier open ones), from `priorInvoice` and the model's facts.
+     */
+    owedDollars?: number;
+    /** Check 38 P5: asks about cancelling the contract or their rights under it (code). */
+    contractRights?: boolean;
+    /** Check 22 P9: a "pay now" bill that looks fake (needs you, high). */
+    fakeBill?: boolean;
+    /** Check 22 P9: a tenant / realtor / neighbor booking work someone else pays for. */
+    notThePayer?: boolean;
+    /** Check 22 P9: the email also asks for new work (`also_asks` / `new_job_requested`). */
+    newJob?: boolean;
+    /** Check 22 P9 / 22 P7: the model's large_request signal (the big-job rule needs it). */
+    largeRequest?: boolean;
+    /** Check 21 P1: just "thanks, got it, we'll get back to you". */
+    ackOnly?: boolean;
+    /** Check 21 P2: the customer turned the price or job down. */
+    declinesQuote?: boolean;
+    /** Check 21 P2: the date (YYYY-MM-DD) they asked us to wait for; null = none. */
+    waitUntil?: string | null;
+    /** Check 22 P9: the summary must be English even when the email isn't. */
+    summaryEnglish?: boolean;
     /** classify.v3 signals; undefined = not scored for this case. */
     acceptsQuote?: boolean;
     jobDone?: boolean;
@@ -2253,5 +2297,740 @@ export const EVAL_CASES: EvalCase[] = [
     body: "Thinking about a heat pump. Is the $2,000 federal tax credit still around, and will Mass Save cover most of it?",
     expect: { category: ["quote_request", "customer_question"], needsOwner: false },
     draft: DRAFT,
+  }),
+
+  // ── wave 2, Prompt versions step 1: classify.v6 ──────────────────
+  // Check 12 P2: invoices as a running balance. `priorInvoice` is what the thread held;
+  // `owedDollars` is the balance after this email (carryInvoiceFacts), scored in run.ts.
+  c({
+    id: "p1-part-payment",
+    trade: "plumbing",
+    fromName: "Dana Ruiz",
+    fromAddress: "dana@example.com",
+    subject: "Re: Invoice 1043",
+    body: "Sent $2,000 toward 1043 this morning. The rest will follow after the inspection.",
+    priorInvoice: { invoice_number: "1043", amount: 5000, due_date: null, status: "unpaid" },
+    keyInvoice: {
+      invoice_number: "1043",
+      amount: null,
+      amount_paid_now: 2000,
+      kind: "payment",
+      due_date: null,
+      status: "partly_paid",
+      promised_on: null,
+    },
+    expect: {
+      category: "invoice_payment",
+      needsOwner: false,
+      invoiceStatus: "partly_paid",
+      owedDollars: 3000,
+    },
+  }),
+  c({
+    id: "p1-credit-memo",
+    trade: "electrical",
+    fromName: "Pat Quinn",
+    fromAddress: "pat@example.com",
+    subject: "Credit memo CM-7",
+    body: "Per our call, credit memo CM-7 for $250 has been applied to invoice 1043 for the fixture you didn't install. We'll pay the balance next week.",
+    priorInvoice: { invoice_number: "1043", amount: 5000, due_date: null, status: "unpaid" },
+    keyInvoice: {
+      invoice_number: "1043",
+      amount: null,
+      amount_paid_now: 250,
+      kind: "credit",
+      due_date: null,
+      status: "partly_paid",
+      promised_on: "next week",
+    },
+    expect: {
+      category: "invoice_payment",
+      needsOwner: false,
+      invoiceStatus: "partly_paid",
+      owedDollars: 4750,
+    },
+  }),
+  c({
+    id: "p1-two-invoices",
+    trade: "carpentry",
+    fromName: "Morgan Hale",
+    fromAddress: "morgan@example.com",
+    subject: "Invoices 1043 and 1044",
+    body: "Got both: invoices 1043 ($3,000) and 1044 ($1,200). Do you want them paid together or separately?",
+    keyOtherInvoices: [{ invoice_number: "1044", amount: 1200, due_date: null }],
+    keyInvoice: {
+      invoice_number: "1043",
+      amount: 3000,
+      amount_paid_now: null,
+      kind: "invoice",
+      due_date: null,
+      status: "unpaid",
+      promised_on: null,
+    },
+    expect: {
+      category: "invoice_payment",
+      needsOwner: true,
+      invoiceStatus: "unpaid",
+      owedDollars: 4200,
+    },
+  }),
+  c({
+    id: "p1-total-due",
+    trade: "hvac",
+    fromName: "Lee Grant",
+    fromAddress: "lee@example.com",
+    subject: "Invoice 2290",
+    body: "Your invoice 2290 shows subtotal $4,000, tax $250, total due $4,250. Is the tax right on labor? I'll pay once you confirm.",
+    keyInvoice: {
+      invoice_number: "2290",
+      amount: 4250,
+      amount_paid_now: null,
+      kind: "invoice",
+      due_date: null,
+      status: "unpaid",
+      promised_on: null,
+    },
+    expect: {
+      category: "invoice_payment",
+      needsOwner: true,
+      invoiceStatus: "unpaid",
+      owedDollars: 4250,
+    },
+  }),
+  c({
+    id: "p1-paid-the-rest",
+    trade: "plumbing",
+    fromName: "Dana Ruiz",
+    fromAddress: "dana@example.com",
+    subject: "Re: Invoice 1043",
+    body: "Paid the rest of 1043 today. Thanks for your patience.",
+    priorInvoice: {
+      invoice_number: "1043",
+      amount: 5000,
+      paid: 2000,
+      due_date: null,
+      status: "partly_paid",
+    },
+    keyInvoice: {
+      invoice_number: "1043",
+      amount: null,
+      amount_paid_now: null,
+      kind: "payment",
+      due_date: null,
+      status: "paid",
+      promised_on: null,
+    },
+    expect: {
+      category: "invoice_payment",
+      needsOwner: false,
+      invoiceStatus: "paid",
+      owedDollars: 0,
+    },
+  }),
+  c({
+    id: "p1-deposit-applied",
+    trade: "remodeling",
+    fromName: "Sam Lee",
+    fromAddress: "sam@example.com",
+    subject: "Invoice 2001",
+    body: "Our $1,000 deposit was applied, so we sent the remaining $2,000 to close out invoice 2001.",
+    priorInvoice: {
+      invoice_number: "2001",
+      amount: 3000,
+      paid: 1000,
+      due_date: null,
+      status: "partly_paid",
+    },
+    keyInvoice: {
+      invoice_number: "2001",
+      amount: null,
+      amount_paid_now: 2000,
+      kind: "payment",
+      due_date: null,
+      status: "paid",
+      promised_on: null,
+    },
+    expect: {
+      category: "invoice_payment",
+      needsOwner: false,
+      invoiceStatus: "paid",
+      owedDollars: 0,
+    },
+  }),
+  // Check 12 P3: a promise is not a payment.
+  c({
+    id: "p1-check-in-mail",
+    trade: "electrical",
+    fromName: "Jo Park",
+    fromAddress: "jo@example.com",
+    subject: "Re: Invoice 1043",
+    body: "Check is in the mail for 1043. Should reach you in a few days.",
+    priorInvoice: { invoice_number: "1043", amount: 1800, due_date: null, status: "unpaid" },
+    keyInvoice: {
+      invoice_number: "1043",
+      amount: null,
+      amount_paid_now: null,
+      kind: "payment",
+      due_date: null,
+      status: "said_sent",
+      promised_on: null,
+    },
+    expect: {
+      category: "invoice_payment",
+      needsOwner: false,
+      invoiceStatus: "said_sent",
+      owedDollars: 1800,
+    },
+  }),
+  c({
+    id: "p1-mail-friday",
+    trade: "roofing",
+    fromName: "Chris Wu",
+    fromAddress: "chris@example.com",
+    subject: "Invoice 77",
+    body: "Got invoice 77. I'll mail it Friday when I get paid.",
+    keyInvoice: {
+      invoice_number: "77",
+      amount: null,
+      amount_paid_now: null,
+      kind: "invoice",
+      due_date: null,
+      status: "unpaid",
+      promised_on: "Friday",
+    },
+    expect: { category: "invoice_payment", needsOwner: false, invoiceStatus: "unpaid" },
+  }),
+  c({
+    id: "p1-venmo-screenshot",
+    trade: "painting",
+    fromName: "Ana Lopez",
+    fromAddress: "ana@example.com",
+    subject: "Paid",
+    body: "Sent it on Venmo, here's the screenshot. Thanks again!",
+    attachments: { images: 1, pdfs: 0, other: 0 },
+    threadSummary: "The owner sent invoice 310 for $650 last week.",
+    keyInvoice: {
+      invoice_number: null,
+      amount: null,
+      amount_paid_now: null,
+      kind: "payment",
+      due_date: null,
+      status: "paid",
+      promised_on: null,
+    },
+    expect: { category: "invoice_payment", needsOwner: false, invoiceStatus: "paid" },
+  }),
+  // Check 22 P9: lead sites and voicemail are never junk. The runner has no channel, so the
+  // category is what's scored; the app adds its own "Came through…" reason.
+  c({
+    id: "p1-lead-nextdoor",
+    trade: "landscaping",
+    fromName: "Nextdoor",
+    fromAddress: "no-reply@leads.example.com",
+    subject: "New lead: Patio and walkway",
+    body: "A neighbor on Nextdoor is looking for a landscaper.\nName: Ruth\nProject: Patio and walkway, about 300 sq ft\nMessage: Looking for a paver patio quote this fall.\nReply in the Nextdoor app.",
+    firstTimeSender: "unknown",
+    expect: { category: "quote_request", needsOwner: false },
+  }),
+  c({
+    id: "p1-lead-thumbtack",
+    trade: "plumbing",
+    fromName: "Thumbtack",
+    fromAddress: "leads@thumbtack.example.com",
+    subject: "New lead from Marco",
+    body: "Marco sent you a request. Water heater replacement, 50 gal gas, within a week. View the lead and reply on Thumbtack.",
+    firstTimeSender: "unknown",
+    expect: { category: "quote_request", needsOwner: false },
+  }),
+  c({
+    id: "p1-lead-angi",
+    trade: "electrical",
+    fromName: "Angi",
+    fromAddress: "leads@angi.example.com",
+    subject: "You have a new lead",
+    body: "Homeowner: Priya S. Project: Install EV charger in garage. Timeline: flexible. Contact the homeowner through the Angi Pro app.",
+    firstTimeSender: "unknown",
+    expect: { category: "quote_request", needsOwner: false },
+  }),
+  c({
+    id: "p1-lead-local-services",
+    trade: "hvac",
+    fromName: "Local Services Ads",
+    fromAddress: "localservices-noreply@example.com",
+    subject: "New message lead: Furnace tune-up",
+    body: "Tom wrote: Our furnace is making a clicking noise before it starts. Can someone come take a look this week? Reply in your Local Services dashboard.",
+    firstTimeSender: "unknown",
+    expect: { category: ["quote_request", "scheduling", "customer_question"], needsOwner: false },
+  }),
+  c({
+    id: "p1-lead-facebook",
+    trade: "roofing",
+    fromName: "Facebook",
+    fromAddress: "notification@facebookmail.example.com",
+    subject: "New lead from your ad",
+    body: "Name: Kim\nPhone: 555-0150\nQuestion: How much to replace an asphalt roof on a 1,400 sq ft ranch?",
+    firstTimeSender: "unknown",
+    expect: { category: "quote_request", needsOwner: false },
+  }),
+  c({
+    id: "p1-voicemail-flooding",
+    trade: "plumbing",
+    fromName: "Google Voice",
+    fromAddress: "voice-noreply@example.com",
+    subject: "New voicemail from (555) 010-0199",
+    body: "Transcript: Hi, this is Carla at 14 Oak. Our basement is flooding, water is coming in by the boiler. Please call me back as soon as you can.",
+    firstTimeSender: "unknown",
+    expect: {
+      category: ["customer_question", "scheduling", "quote_request"],
+      needsOwner: true,
+      priority: "high",
+    },
+  }),
+  c({
+    id: "p1-voicemail-quote",
+    trade: "carpentry",
+    fromName: "Google Voice",
+    fromAddress: "voice-noreply@example.com",
+    subject: "New voicemail from (555) 010-0142",
+    body: "Transcript: Hey, it's Ben. I'd like a price on replacing the front steps, they're pressure treated and rotting. Give me a call when you can.",
+    firstTimeSender: "unknown",
+    expect: { category: "quote_request", needsOwner: false },
+  }),
+  c({
+    id: "p1-tenant",
+    trade: "plumbing",
+    fromName: "Alicia Moreno",
+    fromAddress: "alicia@example.com",
+    subject: "Leaking faucet",
+    body: "I rent the upstairs unit at 22 Birch. The kitchen faucet drips all night. Can you come fix it? My landlord said to find someone.",
+    expect: {
+      category: ["customer_question", "quote_request", "scheduling"],
+      needsOwner: true,
+      notThePayer: true,
+    },
+  }),
+  c({
+    id: "p1-realtor",
+    trade: "electrical",
+    fromName: "Greg Tan",
+    fromAddress: "greg@example.com",
+    subject: "Inspection items before closing",
+    body: "I'm the listing agent on 8 Harbor Rd. The buyer's inspector flagged two double-tapped breakers and a missing GFCI. Can you take care of those before the 30th?",
+    expect: {
+      category: ["quote_request", "scheduling", "customer_question"],
+      needsOwner: true,
+      notThePayer: true,
+    },
+  }),
+  c({
+    id: "p1-fake-bill",
+    trade: "hvac",
+    fromName: "Ferguson Billing",
+    fromAddress: "billing@fergus0n-supply.example.com",
+    subject: "PAST DUE: pay now to avoid account hold",
+    body: "Your account is past due $2,180.00. Pay now at the link below to avoid a hold on your account and collections.",
+    expect: {
+      category: ["supplier_vendor", "invoice_payment", "noise"],
+      needsOwner: true,
+      priority: "high",
+      fakeBill: true,
+    },
+  }),
+  c({
+    id: "p1-payment-plus-job",
+    trade: "carpentry",
+    fromName: "Morgan Hale",
+    fromAddress: "morgan@example.com",
+    subject: "Re: Invoice 1044",
+    body: "Paid 1044 this morning. Also, can you quote us for replacing the back deck railing? About 30 feet.",
+    threadSummary: "The owner sent invoice 1044 for $1,200 for the front steps.",
+    keyInvoice: {
+      invoice_number: "1044",
+      amount: null,
+      amount_paid_now: null,
+      kind: "payment",
+      due_date: null,
+      status: "paid",
+      promised_on: null,
+    },
+    expect: {
+      category: ["invoice_payment", "quote_request"],
+      needsOwner: false,
+      invoiceStatus: "paid",
+      newJob: true,
+    },
+  }),
+  c({
+    id: "p1-spanish-quote",
+    trade: "painting",
+    fromName: "Luis Herrera",
+    fromAddress: "luis@example.com",
+    subject: "Presupuesto",
+    body: "Hola, quiero un presupuesto para pintar la sala y dos cuartos. Las paredes solamente. ¿Cuándo pueden venir a ver?",
+    expect: { category: "quote_request", needsOwner: false, summaryEnglish: true },
+  }),
+  c({
+    id: "p1-small-bath-refresh",
+    trade: "remodeling",
+    fromName: "Nina Cole",
+    fromAddress: "nina@example.com",
+    subject: "Bathroom refresh",
+    body: "Hi, first time reaching out. We'd like to refresh our hall bathroom: new vanity, faucet and a fresh coat of paint. Nothing structural. Could you quote it?",
+    firstTimeSender: true,
+    expect: { category: "quote_request", needsOwner: false, largeRequest: false },
+  }),
+  // Check 22 P7: the same lead-site robot, a big job: still a new customer.
+  c({
+    id: "p1-thumbtack-addition",
+    trade: "remodeling",
+    fromName: "Thumbtack",
+    fromAddress: "leads@thumbtack.example.com",
+    subject: "New lead from Dev",
+    body: "Dev sent you a request: Home addition, 600 sq ft family room over the garage, start in spring. Reply on Thumbtack.",
+    firstTimeSender: "unknown",
+    expect: { category: "quote_request", needsOwner: true, largeRequest: true },
+  }),
+  // Check 38 P5: contract rights go to the owner (code); everyday cancelling doesn't.
+  c({
+    id: "p1-contract-cancel",
+    trade: "remodeling",
+    fromName: "Erin Walsh",
+    fromAddress: "erin@example.com",
+    subject: "Second thoughts",
+    body: "We signed Saturday at our kitchen table and gave you the deposit. We've had second thoughts about the kitchen. Can we still cancel, and would we get the deposit back?",
+    expect: {
+      category: ["customer_question", "complaint"],
+      needsOwner: true,
+      contractRights: true,
+    },
+  }),
+  c({
+    id: "p1-contract-deposit-law",
+    trade: "remodeling",
+    fromName: "Omar Said",
+    fromAddress: "omar@example.com",
+    subject: "Deposit question",
+    body: "The contract says half down before you start. I read Massachusetts limits deposits. Is that right?",
+    expect: { category: "customer_question", needsOwner: true, contractRights: true },
+  }),
+  c({
+    id: "p1-cancel-visit",
+    trade: "plumbing",
+    fromName: "Sam Lee",
+    fromAddress: "sam@example.com",
+    subject: "Tuesday",
+    body: "Can we cancel Tuesday's visit? Something came up. Any other day next week works.",
+    expect: { category: "scheduling", needsOwner: false, contractRights: false },
+    draft: DRAFT,
+  }),
+  c({
+    id: "p1-cancel-tile-order",
+    trade: "remodeling",
+    fromName: "Nina Cole",
+    fromAddress: "nina@example.com",
+    subject: "Tile",
+    body: "Can we cancel the tile order and pick another? The grey looked different in person.",
+    expect: { category: "customer_question", needsOwner: false, contractRights: false },
+    draft: DRAFT,
+  }),
+  c({
+    id: "p1-driveway",
+    trade: "landscaping",
+    fromName: "Ruth Adler",
+    fromAddress: "ruth@example.com",
+    subject: "Driveway",
+    body: "When your truck backed out of the driveway it left ruts in the lawn edge. Not a big deal, but can you fix it on the next visit?",
+    expect: {
+      category: ["customer_question", "complaint"],
+      needsOwner: false,
+      contractRights: false,
+    },
+  }),
+  // Check 45 P7: mark-out tickets and energy programs outside New England are never junk.
+  c({
+    id: "p1-sunshine-811",
+    trade: "landscaping",
+    fromName: "Sunshine 811",
+    fromAddress: "tickets@sunshine811.example.com",
+    subject: "Ticket 2026101512345 confirmation",
+    body: "Your locate request for 18 Palm Ct, Tampa has been received. Ticket 2026101512345. Utilities have until 10/17 at 5:00 PM to respond. Do not dig before then.",
+    expect: { category: ["customer_question", "scheduling"], needsOwner: false },
+  }),
+  c({
+    id: "p1-texas-811",
+    trade: "electrical",
+    fromName: "Texas 811",
+    fromAddress: "noreply@texas811.example.com",
+    subject: "Positive response posted: ticket 2611045",
+    body: "Oncor has posted a positive response for ticket 2611045: marked. CenterPoint: no conflict. You may proceed after the wait period.",
+    expect: { category: ["customer_question", "scheduling"], needsOwner: false },
+  }),
+  c({
+    id: "p1-digalert",
+    trade: "plumbing",
+    fromName: "DigAlert",
+    fromAddress: "tickets@digalert.example.com",
+    subject: "DigAlert ticket A260140 issued",
+    body: "Ticket A260140 for 4410 Mesa Dr, San Diego. Legal dig date 10/20/2026 7:00 AM. Members notified: SDG&E, City of San Diego Water.",
+    expect: { category: ["customer_question", "scheduling"], needsOwner: false },
+  }),
+  c({
+    id: "p1-energize-ct",
+    trade: "hvac",
+    fromName: "Energize Connecticut",
+    fromAddress: "rebates@energizect.example.com",
+    subject: "Rebate application approved",
+    body: "The heat pump rebate application for 9 Elm St, Hartford has been approved. Payment will be issued to the contractor within 6 weeks. Keep this for your records.",
+    expect: { category: ["customer_question", "supplier_vendor"], needsOwner: false },
+  }),
+  c({
+    id: "p1-efficiency-maine",
+    trade: "hvac",
+    fromName: "Efficiency Maine",
+    fromAddress: "rebates@efficiencymaine.example.com",
+    subject: "Rebate claim 88-1200 received",
+    body: "We received your heat pump rebate claim 88-1200. Missing: a photo of the outdoor unit's nameplate. Upload it within 30 days or the claim will close.",
+    expect: { category: ["customer_question", "supplier_vendor"], needsOwner: false },
+  }),
+  c({
+    id: "p1-nhsaves",
+    trade: "electrical",
+    fromName: "NHSaves",
+    fromAddress: "program@nhsaves.example.com",
+    subject: "Participating contractor update",
+    body: "Starting Nov 1, the NHSaves lighting program requires the updated W-9 and certificate of insurance on file before incentive payments are released. Please send both.",
+    expect: {
+      category: ["customer_question", "supplier_vendor"],
+      needsOwner: false,
+      routinePaperwork: true,
+    },
+  }),
+  // Check 21 P1: acknowledgements, both ways.
+  c({
+    id: "p1-ack-look-it-over",
+    trade: "carpentry",
+    fromName: "Jo Park",
+    fromAddress: "jo@example.com",
+    subject: "Re: Deck quote",
+    body: "Thanks, got it. We'll look it over and get back to you.",
+    threadSummary: "The owner sent a quote for the deck repair.",
+    expect: { category: ["quote_request", "customer_question"], needsOwner: false, ackOnly: true },
+  }),
+  c({
+    id: "p1-ack-weekend",
+    trade: "painting",
+    fromName: "Chris Wu",
+    fromAddress: "chris@example.com",
+    subject: "Re: Painting estimate",
+    body: "Thanks! We'll talk it over this weekend and let you know.",
+    threadSummary: "The owner sent an estimate for three bedrooms.",
+    expect: { category: ["quote_request", "customer_question"], needsOwner: false, ackOnly: true },
+  }),
+  c({
+    id: "p1-ack-in-touch",
+    trade: "roofing",
+    fromName: "Ana Lopez",
+    fromAddress: "ana@example.com",
+    subject: "Re: Roof estimate",
+    body: "Got the estimate, appreciate it. Will be in touch.",
+    threadSummary: "The owner sent a roof replacement estimate.",
+    expect: { category: ["quote_request", "customer_question"], needsOwner: false, ackOnly: true },
+  }),
+  c({
+    id: "p1-not-ack-permit",
+    trade: "electrical",
+    fromName: "Dana Ruiz",
+    fromAddress: "dana@example.com",
+    subject: "Re: Panel quote",
+    body: "Thanks — does that include the permit?",
+    threadSummary: "The owner quoted the panel upgrade.",
+    expect: { category: ["customer_question", "quote_request"], needsOwner: false, ackOnly: false },
+  }),
+  c({
+    id: "p1-not-ack-start",
+    trade: "plumbing",
+    fromName: "Sam Lee",
+    fromAddress: "sam@example.com",
+    subject: "Re: Water heater quote",
+    body: "Got it. Can you start before the 15th?",
+    threadSummary: "The owner quoted the water heater swap.",
+    expect: {
+      category: ["scheduling", "quote_request", "customer_question"],
+      needsOwner: false,
+      ackOnly: false,
+    },
+  }),
+  // Check 21 P2: declining, waiting, and neither — each after the owner's priced reply.
+  c({
+    id: "p1-declines-someone-else",
+    trade: "carpentry",
+    fromName: "Jo Park",
+    fromAddress: "jo@example.com",
+    subject: "Re: Deck quote",
+    body: "We went with someone else, thanks for your time.",
+    threadSummary: "The owner quoted $4,800 for the deck repair.",
+    expect: {
+      category: ["quote_request", "customer_question"],
+      needsOwner: false,
+      declinesQuote: true,
+      waitUntil: null,
+    },
+  }),
+  c({
+    id: "p1-declines-sooner",
+    trade: "hvac",
+    fromName: "Tom Baker",
+    fromAddress: "tom@example.com",
+    subject: "Re: Mini split",
+    body: "We found another contractor who could start sooner. Appreciate the quote.",
+    threadSummary: "The owner quoted the mini-split install.",
+    expect: {
+      category: ["quote_request", "customer_question"],
+      needsOwner: false,
+      declinesQuote: true,
+      waitUntil: null,
+    },
+  }),
+  c({
+    id: "p1-declines-this-year",
+    trade: "remodeling",
+    fromName: "Nina Cole",
+    fromAddress: "nina@example.com",
+    subject: "Re: Bathroom",
+    body: "We've decided not to go ahead with the bathroom this year.",
+    threadSummary: "The owner quoted the bathroom remodel.",
+    expect: {
+      category: ["quote_request", "customer_question"],
+      needsOwner: false,
+      declinesQuote: true,
+      waitUntil: null,
+    },
+  }),
+  c({
+    id: "p1-declines-brother-in-law",
+    trade: "painting",
+    fromName: "Chris Wu",
+    fromAddress: "chris@example.com",
+    subject: "Re: Painting",
+    body: "My brother-in-law is going to do it, but thanks.",
+    threadSummary: "The owner quoted the interior painting.",
+    expect: {
+      category: ["quote_request", "customer_question"],
+      needsOwner: false,
+      declinesQuote: true,
+      waitUntil: null,
+    },
+  }),
+  c({
+    id: "p1-wait-holidays",
+    trade: "carpentry",
+    fromName: "Priya Shah",
+    fromAddress: "priya@example.com",
+    subject: "Re: Built-ins quote",
+    body: "We'll get back to you after the holidays.",
+    threadSummary: "The owner quoted the living room built-ins.",
+    receivedAt: "2026-12-17",
+    expect: {
+      category: ["quote_request", "customer_question"],
+      needsOwner: false,
+      declinesQuote: false,
+      waitUntil: "2027-01-04",
+    },
+  }),
+  c({
+    id: "p1-wait-next-month",
+    trade: "electrical",
+    fromName: "Dana Ruiz",
+    fromAddress: "dana@example.com",
+    subject: "Re: Panel quote",
+    body: "Can we revisit next month? Cash is tight before the holidays.",
+    threadSummary: "The owner quoted the panel upgrade.",
+    receivedAt: "2026-12-17",
+    expect: {
+      category: ["quote_request", "customer_question"],
+      needsOwner: false,
+      declinesQuote: false,
+      waitUntil: "2027-01-01",
+    },
+  }),
+  c({
+    id: "p1-wait-spring",
+    trade: "landscaping",
+    fromName: "Ruth Adler",
+    fromAddress: "ruth@example.com",
+    subject: "Re: Patio quote",
+    body: "Let's pick this up in the spring.",
+    threadSummary: "The owner quoted the paver patio.",
+    receivedAt: "2026-12-17",
+    expect: {
+      category: ["quote_request", "customer_question"],
+      needsOwner: false,
+      declinesQuote: false,
+      waitUntil: "2027-03-15",
+    },
+  }),
+  c({
+    id: "p1-comparing",
+    trade: "roofing",
+    fromName: "Ana Lopez",
+    fromAddress: "ana@example.com",
+    subject: "Re: Roof quote",
+    body: "We're comparing quotes, will let you know.",
+    threadSummary: "The owner quoted the roof replacement.",
+    expect: {
+      category: ["quote_request", "customer_question"],
+      needsOwner: false,
+      declinesQuote: false,
+      waitUntil: null,
+      acceptsQuote: false,
+    },
+  }),
+  c({
+    id: "p1-for-less",
+    trade: "plumbing",
+    fromName: "Sam Lee",
+    fromAddress: "sam@example.com",
+    subject: "Re: Water heater quote",
+    body: "Can you do it for less? A neighbor paid a lot less last year.",
+    threadSummary: "The owner quoted the water heater swap.",
+    expect: {
+      category: ["quote_request", "customer_question"],
+      needsOwner: false,
+      declinesQuote: false,
+      waitUntil: null,
+      acceptsQuote: false,
+    },
+  }),
+  // Check 36 P5: the water district's backflow notice is town paperwork.
+  c({
+    id: "p1-backflow-due",
+    trade: "plumbing",
+    fromName: "Cross-Connection Control Program",
+    fromAddress: "backflow@waterdistrict.example.gov",
+    subject: "Annual backflow test due by Nov 30",
+    body: "The backflow prevention assembly at 40 Mill St (device BF-2210) is due for its annual test by Nov 30. Submit the test report through the district portal.",
+    expect: { category: ["customer_question", "scheduling"], needsOwner: true, municipal: true },
+  }),
+  // Check 37 P3: a town light plant's meter set is the electric company, never junk.
+  c({
+    id: "p1-light-dept-meter-set",
+    trade: "electrical",
+    fromName: "Reading Light Department",
+    fromAddress: "service@rmld.example.gov",
+    subject: "Meter set scheduled: 12 Grove St",
+    body: "The meter set at 12 Grove St is scheduled for Thursday 10/22 between 8 and 12. The electrician must be on site with the inspection certificate.",
+    expect: { category: "scheduling", needsOwner: true },
+  }),
+  // Check 40 P2: an email that is only attachments is still that person's email.
+  c({
+    id: "p1-photos-only",
+    trade: "roofing",
+    fromName: "Kim Nolan",
+    fromAddress: "kim@example.com",
+    subject: "Roof photos",
+    body: "",
+    attachments: { images: 3, pdfs: 0, other: 0 },
+    threadSummary: "Kim asked for a roof repair quote and the owner asked for photos.",
+    expect: { category: ["quote_request", "customer_question"], needsOwner: false },
   }),
 ];
