@@ -27,7 +27,16 @@ export type InviteEmailOutcome = "sent" | "already_sent" | "not_configured" | "s
  */
 export async function sendInviteEmail(
   email: string,
-  deps: { send?: EmailSender } = {},
+  deps: {
+    send?: EmailSender;
+    /**
+     * Check 18 P4: Davi's "Email the sign-in link again" for an invite whose first email failed
+     * (every invite to someone but Davi fails while EMAIL_FROM is the test sender). Skips the
+     * per-invite marker; its own key and marker carry the day, so it goes at most once a day.
+     */
+    again?: boolean;
+    now?: Date;
+  } = {},
 ): Promise<InviteEmailOutcome> {
   try {
     const address = normalizeEmail(email);
@@ -36,8 +45,12 @@ export async function sendInviteEmail(
       .from(invites)
       .where(eq(invites.email, address));
     if (!invite || invite.acceptedAt) return "skipped";
-    const id = `${inviteKey(address)}-${invite.invitedAt.getTime()}`;
-    const marker = `invite-email:${id}`;
+    const hash = inviteKey(address);
+    const day = (deps.now ?? new Date()).toISOString().slice(0, 10);
+    const id = deps.again
+      ? `${hash}-${invite.invitedAt.getTime()}-again-${day}`
+      : `${hash}-${invite.invitedAt.getTime()}`;
+    const marker = deps.again ? `invite-email-again:${hash}:${day}` : `invite-email:${id}`;
     const [seen] = await db().select().from(appSettings).where(eq(appSettings.key, marker));
     if (seen) return "already_sent";
     const c = inviteEmailCopy({

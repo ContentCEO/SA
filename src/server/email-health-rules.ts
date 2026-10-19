@@ -70,3 +70,18 @@ export function testEmailErrorText(code: unknown, status: unknown): string | und
   if (code !== "email_test_refused") return base;
   return typeof status === "string" && /^\d{3}$/.test(status) ? `${base} ${status}.` : `${base}.`;
 }
+
+/** Check 18 P4: "Sent 7, 2 failed." from the catch-up's counts (digits only, from the URL). */
+export function catchUpResultText(
+  sent: unknown,
+  failed: unknown,
+  left: unknown,
+): string | undefined {
+  const n = (v: unknown) => (typeof v === "string" && /^\d{1,5}$/.test(v) ? Number(v) : null);
+  const s = n(sent);
+  const f = n(failed);
+  const l = n(left);
+  if (s === null || f === null) return undefined;
+  const base = `Sent ${s}, ${f} failed.`;
+  return l ? `${base} ${l} still to go: tap again.` : base;
+}

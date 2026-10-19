@@ -6,6 +6,7 @@ import { planEnum, tradeEnum } from "@/db/schema";
 import { inviteOwner, markTestUserAdded, removeInvite } from "@/server/admin";
 import { sendInviteEmail } from "@/server/invite-email";
 import { inviteFromWaitlist } from "@/server/waitlist";
+import { catchUpWaitlistConfirmations } from "@/server/waitlist-emails";
 import { clearStripeOrphans, connectStripe } from "@/server/billing";
 import { requireAdmin } from "@/server/session";
 import { stripeErrorReason } from "@/server/stripe-error-rules";
@@ -96,6 +97,38 @@ export async function inviteAction(formData: FormData) {
   // Round 2 (FW A1): the "you're in" email. A failed email never fails the invite.
   const emailed = await sendInviteEmail(parsed.data.email);
   redirect(`/admin?done=${emailed === "sent" ? "invited_emailed" : "invited"}#invite`);
+}
+
+/**
+ * Check 18 P4: "Email the sign-in link again" on an invite nobody has signed in with. Once a day
+ * per address (the sender's own marker); refused once they've signed in.
+ */
+export async function emailInviteAgainAction(formData: FormData) {
+  await requireAdmin();
+  const email = z.string().trim().toLowerCase().email().safeParse(formData.get("email"));
+  if (!email.success) redirect("/admin?error=unknown#invite");
+  if (!(await hitLimit("inviteAgain", "admin")).allowed)
+    redirect("/admin?error=invite_again_limit#invite");
+  const r = await sendInviteEmail(email.data, { again: true });
+  if (r === "skipped") redirect("/admin?error=invite_used#invite");
+  if (r === "already_sent") redirect("/admin?done=invite_emailed_today#invite");
+  redirect(`/admin?done=${r === "sent" ? "invited_emailed" : "invited"}#invite`);
+}
+
+/**
+ * Check 18 P4: "Send the list email to people who never got it": the next batch of waitlist
+ * confirmations, oldest first. Only counts travel in the URL.
+ */
+export async function catchUpWaitlistEmailsAction() {
+  await requireAdmin();
+  if (!(await hitLimit("waitlistCatchup", "admin")).allowed) {
+    redirect("/admin?error=waitlist_catchup_limit#waitlist");
+  }
+  const r = await catchUpWaitlistConfirmations();
+  if (r.notConfigured) redirect("/admin?error=email_not_set_up#waitlist");
+  redirect(
+    `/admin?done=waitlist_catchup&sent=${r.sent}&failed=${r.failed}&left=${r.left}#waitlist`,
+  );
 }
 
 /**

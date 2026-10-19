@@ -65,3 +65,23 @@ policy should say, plus Davi's questions. Legal sentences are in `docs/notes/leg
   exists on this branch with `googleWarningLine(state, brandName)` written to the spec's words.
   The connect page is not changed here; the Google group wires it. Take this file's version (it
   also carries the access-lost reason) and drop any duplicate.
+
+## Check 18 P4 (step 7): invite email again, waitlist catch-up
+
+- `sendInviteEmail(email, { again: true })` skips the per-invite marker, uses key
+  `invite-<hash>-<invitedAt>-again-<YYYY-MM-DD>` and marker `invite-email-again:<hash>:<date>`
+  (once a day per address; skipped once they've signed in). /admin invite list: "Email the
+  sign-in link again" (admin only, 30 taps an hour) → `done=invited_emailed` / `invited` /
+  `invite_emailed_today`.
+- `catchUpWaitlistConfirmations` (`src/server/waitlist-emails.ts`): rows with
+  `confirmation_sent_at` null and not Growth-only, oldest first, one a second, **8 per tap**
+  (`WAITLIST_CATCHUP_PER_TAP`, so a tap stays inside a serverless request); stops at the first
+  not-configured; each success is marked by `sendWaitlistConfirmation` itself. The button "Send
+  the list email to people who never got it (N)" shows in the waitlist section only when the
+  Email box says the sender is real (not `@resend.dev`), so it appears by itself once the Resend
+  domain is verified and `EMAIL_FROM` changes. Result "Sent 7, 2 failed." (+ "N still to go: tap
+  again."); counts only in the URL. Admin only, 10 taps an hour. **LAUNCH step 6 (integrator):**
+  after switching `EMAIL_FROM`, open /admin → Waitlist and tap the catch-up button until it says
+  0 to go; then tap "Email the sign-in link again" on each invite that never got its email.
+  `docs/SETUP.md` §7b's "people who join before the domain is verified never get one" is now
+  "…get one when Davi taps the catch-up button on /admin" (edited here).

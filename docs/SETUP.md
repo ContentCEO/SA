@@ -535,8 +535,10 @@ The same key and sender also carry the waitlist emails (`src/server/waitlist-ema
 content-free "New waitlist sign-up" notice to `ADMIN_EMAIL`, and one "You're on the Squared Away
 list" to the person who joined (replies go to `SUPPORT_EMAIL` when it is set). Until a domain is
 verified the confirmation can't reach anyone but the Resend account's own address. It is only
-marked sent after Resend accepts it, but it is only tried when someone first joins, so people who
-join before the domain is verified never get one. No new settings.
+marked sent after Resend accepts it, but it is only tried when someone first joins. People who
+joined before the domain was verified get it when Davi taps "Send the list email to people who
+never got it" on /admin → Waitlist (Check 18 P4; the button shows once EMAIL_FROM is a real
+sender; 8 a tap, nobody twice). No new settings.
 
 ## 7c. Payments (Stripe)
 

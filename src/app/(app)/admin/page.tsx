@@ -44,6 +44,8 @@ import {
   connectStripeAction,
   inviteAction,
   inviteFromWaitlistAction,
+  emailInviteAgainAction,
+  catchUpWaitlistEmailsAction,
   removeInviteAction,
   testUserAddedAction,
   resetTestPaymentsAction,
@@ -54,7 +56,12 @@ import {
 import { LaunchReady } from "./launch-ready";
 import { EmailHealthBox } from "./email-health";
 import { emailHealthBox } from "@/server/email-health";
-import { TEST_EMAIL_DONE, testEmailErrorText } from "@/server/email-health-rules";
+import {
+  catchUpResultText,
+  TEST_EMAIL_DONE,
+  testEmailErrorText,
+} from "@/server/email-health-rules";
+import { countWaitlistNeverConfirmed } from "@/server/waitlist-emails";
 import { launchChecks } from "@/server/launch-ready";
 import { loadLaunchFacts } from "@/server/launch-ticks";
 import { PendingButton } from "@/components/app/pending-button";
@@ -162,6 +169,7 @@ const done: Record<string, string> = {
   test_user: "Marked as a Google test user.",
   already_invited: "That address was already invited.",
   invite_removed: "Invite taken back. That address can't sign in now.",
+  invite_emailed_today: "Already emailed them the sign-in link today. Try again tomorrow.",
   invite_gone: "That invite was already gone.",
 };
 /** Where Google Cloud lists an app's test users (Google Auth Platform → Audience). */
@@ -176,6 +184,9 @@ const errors: Record<string, string> = {
   move: "That change isn't allowed from the account's current status. Refresh and look again.",
   invite: "That doesn't look like an email address.",
   invite_used: "They've already signed in, so that invite can't be taken back.",
+  invite_again_limit: "That's a lot of invite emails for one hour. Try again later.",
+  waitlist_catchup_limit: "That's a lot of catch-up taps for one hour. Try again later.",
+  email_not_set_up: "Email isn't set up, so nothing went out.",
   growth_only: growthCopy.admin.growthOnlyError,
   unknown: "That didn't work. Refresh and try again.",
 };
@@ -602,6 +613,7 @@ export default async function AdminPage(props: PageProps<"/admin">) {
     accountCounts,
     inviteTotal,
     emailBox,
+    neverConfirmed,
   ] = await Promise.all([
     adminOverview(now, { q, page }),
     countWorkspaces(q),
@@ -625,6 +637,8 @@ export default async function AdminPage(props: PageProps<"/admin">) {
     countInvites(),
     // Check 18 P2: the sender's state (env) and the week's refusal count (a tally, no addresses).
     emailHealthBox(now),
+    // Check 18 P4: how many sign-ups never got "You're on the list" (a count).
+    countWaitlistNeverConfirmed(),
   ]);
   const growthStates = await growthStateForEmails(waiting.map((w) => w.email));
   // Check 16 P3: Growth requests from the last 7 days (no "called" mark exists yet: Check 16 P4).
@@ -644,8 +658,14 @@ export default async function AdminPage(props: PageProps<"/admin">) {
   // Waitlist Growth notices show in the waitlist section (the page scrolls there).
   const code = (v: unknown, prefix: string) =>
     typeof v === "string" && v.startsWith(prefix) ? v : undefined;
-  const waitlistDone = noticeText(WAITLIST_GROWTH_DONE, code(params.done, "wl_"));
-  const waitlistError = noticeText(WAITLIST_GROWTH_ERRORS, code(params.error, "wl_"));
+  const waitlistDone =
+    params.done === "waitlist_catchup"
+      ? catchUpResultText(params.sent, params.failed, params.left)
+      : noticeText(WAITLIST_GROWTH_DONE, code(params.done, "wl_"));
+  const waitlistError =
+    params.error === "waitlist_catchup_limit" || params.error === "email_not_set_up"
+      ? errors[params.error]
+      : noticeText(WAITLIST_GROWTH_ERRORS, code(params.error, "wl_"));
   // Payment messages show inside the Payments section (the page scrolls there), not at the top.
   const isStripe = (k: unknown) => typeof k === "string" && k.startsWith("stripe");
   // Check 18 P2: the test email's result shows in the Email box.
@@ -655,11 +675,18 @@ export default async function AdminPage(props: PageProps<"/admin">) {
   // Check 16 P6: a move's notice shows inside the card it changed, naming it (not at the top).
   const onCard = cardNotice(params, rows, pricing.plans);
   const doneMsg =
-    !onCard && !isStripe(params.done) && !isEmailTest(params.done)
+    !onCard &&
+    !isStripe(params.done) &&
+    !isEmailTest(params.done) &&
+    params.done !== "waitlist_catchup"
       ? noticeText(done, params.done)
       : undefined;
   const errorMsg =
-    !onCard && !isStripe(params.error) && !isEmailTest(params.error)
+    !onCard &&
+    !isStripe(params.error) &&
+    !isEmailTest(params.error) &&
+    params.error !== "waitlist_catchup_limit" &&
+    params.error !== "email_not_set_up"
       ? noticeText(errors, params.error)
       : undefined;
   const stripeDone =
@@ -780,6 +807,17 @@ export default async function AdminPage(props: PageProps<"/admin">) {
         </h2>
         {waitlistDone ? <Notice>{waitlistDone}</Notice> : null}
         {waitlistError ? <Notice strong>{waitlistError}</Notice> : null}
+        {/* Check 18 P4: once the sender is real, catch up the confirmations that never went out. */}
+        {neverConfirmed > 0 && emailBox.health.state === "real" ? (
+          <form action={catchUpWaitlistEmailsAction} className="flex flex-col gap-1">
+            <PendingButton pending="Sending, one a second…" variant="outline" className="w-full">
+              Send the list email to people who never got it ({neverConfirmed})
+            </PendingButton>
+            <p className="text-sm text-muted-foreground">
+              Oldest first, a few at a time. Nobody gets it twice.
+            </p>
+          </form>
+        ) : null}
         {waiting.length === 0 ? (
           <p>{ga.empty}</p>
         ) : (
@@ -1029,6 +1067,15 @@ export default async function AdminPage(props: PageProps<"/admin">) {
                     {inviteDay.format(i.invitedAt)}
                   </span>
                 </span>
+                {!i.acceptedAt ? (
+                  // Check 18 P4: an invite email that failed (the test sender) can go again.
+                  <form action={emailInviteAgainAction}>
+                    <input type="hidden" name="email" value={i.email} />
+                    <Button type="submit" variant="outline" className="w-full">
+                      Email the sign-in link again
+                    </Button>
+                  </form>
+                ) : null}
                 {!i.acceptedAt ? (
                   // Check 16 P7: a typo or a mistaken invite can be taken back before it's used.
                   <details className="rounded-lg border">
