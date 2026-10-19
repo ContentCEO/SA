@@ -128,9 +128,12 @@ describe("state words (Check 44 P1 + 45 P2)", () => {
     expect(block.match(/construction supervisor license \(CSL\)/g)).toHaveLength(1);
     // Lower-case "ma" works; a plumber in MA has no state words of their own.
     expect(workspaceBlock(ctx({ state: "ma" }))).toContain("Words used in your state");
-    expect(workspaceBlock(ctx({ state: "MA", trade: "plumbing" }))).not.toContain(
+    expect(workspaceBlock(ctx({ state: "MA", trade: "painting" }))).not.toContain(
       "Words used in your state",
     );
+    // Step 3: the state's program names for plumbing and HVAC, by name only.
+    expect(workspaceBlock(ctx({ state: "MA", trade: "hvac" }))).toContain("Mass Save, HEAT Loan");
+    expect(workspaceBlock(ctx({ state: "MA", trade: "hvac" }))).not.toMatch(/\$\s?\d/);
     // A plumber who also does remodeling gets them through the extra trade.
     expect(
       workspaceBlock(ctx({ state: "MA", trade: "plumbing", extraTrades: ["remodeling"] })),

@@ -165,3 +165,40 @@ stay re-exported (first-contact shapes, reply schema, licenses line), plus:
   it), or have the draft answer with the review's honesty line ("I use an assistant to help draft
   my emails, and I read and send every reply myself.")? Built: wave 1's rule.
 - Massachusetts carpenters also get the HIC / CSL words (remodelers certainly do). Keep?
+
+## Step 3: trade files (Check 36 P8 + 37 P4 + 39 P6)
+
+No new prompt version: the trade files are data inside draft.v9's cached business block, and
+Check 39 P6's one instruction line ("Never state rebate amounts, loan terms, tax credits or
+refrigerant rules as fact…") was already written into draft.v9 at step 2 (one version, every rule
+meant for it). draft.v9's header names the step.
+
+- **Plumbing (Check 36 P8):** "whether a permit is involved" is gone; new questions: for a water
+  heater the fuel (gas, propane, oil, electric) and a photo of the vent pipe; town water or a
+  well; who owns the home, or who approves and pays. Words added: boiler and indirect tank,
+  expansion tank, T&P valve, pressure reducing valve, sump and ejector pump, frost-free
+  sillcock, RPZ / backflow test, heat pump water heater, well pressure tank.
+- **Electrical (Check 37 P4):** "whether a permit or inspection is involved" → "the town the job
+  is in"; EV charger (the car, an existing charger, distance to the panel), service upgrade
+  (overhead or underground, where the meter is), big appliances, anything that can't lose power.
+  Words: Inspector of Wires, cut and reconnect / cut-in, utility work request number, meter
+  socket / meter-main, outdoor emergency disconnect, load calculation, interlock / transfer
+  switch, interconnection and permission to operate, Federal Pacific / Zinsco, aluminum branch
+  wiring. No rebate amounts, code editions or license numbers.
+- **HVAC (Check 39 P6):** boiler / oil burner / radiators and baseboard / hydronic, backup heat /
+  dual fuel / integrated controls, ENERGY STAR Cold Climate, the A2L refrigerants, condensate
+  line and pump, zones and heads. Questions: what heats the house now and the fuel; for heat
+  pumps the rooms or zones, backup, a home energy assessment, the panel size; anyone without heat.
+  "Size of the home in square feet" and "existing ductwork" are gone.
+- **Adaptation (Check 44 P1 + 45 P2 apply here too):** "Mass Save", "HEAT Loan" and "Home Energy
+  Assessment" are Massachusetts program names, so they live in `prompts/states/ma.ts` (plumbing
+  and hvac) and reach only Massachusetts shops' blocks — names only, never an amount.
+- **`other.ts`** lost "whether a permit is involved" now (the new test `no trade file asks the
+  customer whether a permit is needed` covers every trade), so Check 41 P4's "(only for building
+  work)" rewording in step 8 is not needed: the question is gone.
+- Tests: `trades.test.ts` (no permit question in any trade; the new words and questions present,
+  Mass Save absent for a shop with no state); `draft-v9.test.ts` (MA hvac words, no amounts).
+  Eval cases `t3-*`: a gas water heater (must ask about the vent, never a permit), a tenant (who
+  approves), a well-water question, an EV charger and a service upgrade (must ask the town, never
+  a permit), an oil boiler to heat pumps (zones, backup, assessment, no dollar figure), a one-room
+  mini-split (panel, no square footage), central AC on existing ducts. **Evals not run.**

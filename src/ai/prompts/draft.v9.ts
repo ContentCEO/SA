@@ -24,7 +24,9 @@
  * - Check 43 P1: the "Who is writing" rule stays as draft.v8 wrote it (Check 48 P1: the owner
  *   answers an "is this a bot?" question; the draft never denies an assistant helped) — a draft
  *   answering it with a fixed honesty line was not adopted (see docs/notes/w2-prompts.md).
- * - Check 36 P8 / 37 P4 / 39 P6 trade files are data in the cached block (step 3 of the group).
+ * - Check 36 P8 / 37 P4 / 39 P6 (step 3 of the group): the plumbing, electrical and HVAC trade
+ *   files were rewritten (data in the cached block; no customer is asked whether a permit is
+ *   involved), with Massachusetts' program names in prompts/states/ma.ts.
  *
  * Everything else — the first-contact shapes, the reply schema, the date helpers, the licenses
  * line — is draft.v8's / draft.v7's / draft.v6's, re-exported. The business block changes only

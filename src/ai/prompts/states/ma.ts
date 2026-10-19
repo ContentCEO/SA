@@ -13,5 +13,8 @@ export const ma: StatePrompt = {
       "construction supervisor license (CSL)",
     ],
     carpentry: ["home improvement contract (HIC)", "construction supervisor license (CSL)"],
+    // Check 36 P8 / 39 P6: the state's energy programs, by name only (never an amount).
+    plumbing: ["Mass Save"],
+    hvac: ["Mass Save, HEAT Loan, Home Energy Assessment", "Mass Save heat pump installer network"],
   },
 };

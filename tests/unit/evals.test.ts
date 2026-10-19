@@ -319,7 +319,12 @@ describe("evaluation set (#46)", () => {
                     : firstContact
                       ? "Hi,\n\nThanks for reaching out, happy to help. Could you send a couple of photos?\n\nThanks,\nAlex"
                       : // draft.v9: a good model answers each question (the key's words).
-                        `Hi,\n\nHappy to help — what's the address?${(EVAL_CASES[i]?.draft?.mustAnswer ?? []).map((w) => ` Yes to ${w}.`).join("")}\n\nThanks,\nAlex`),
+                        `Hi,\n\nHappy to help — what's the address?${[
+                          ...(EVAL_CASES[i]?.draft?.mustAnswer ?? []),
+                          ...(EVAL_CASES[i]?.draft?.mustContain ?? []),
+                        ]
+                          .map((w) => ` Also ${w}.`)
+                          .join("")}\n\nThanks,\nAlex`),
                 reason: "Asked for the address.",
                 flags: [],
                 confidence: 0.9,
