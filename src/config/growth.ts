@@ -10,17 +10,20 @@ export const GROWTH_SERVICES = [
     blurb:
       "Ads that can show up when someone nearby searches for the work you do. We set them up, keep an eye on the spend, and tell you in plain words what's happening.",
   },
+  // Check 2 P4 / Check 3 P2: home-repair ads on Meta fall under the Housing special ad category
+  // (at least a 15-mile radius around each place, no ZIP-code targeting). Never promise
+  // town-level targeting for the Facebook or Instagram ads.
   {
     value: "facebook_ads",
     label: "Facebook ads",
     blurb:
-      "Ads shown to people in the towns you actually work in. Your own photos, plain words, and a clear way to reach you.",
+      "Ads shown to people in and around the towns you work in. Your own photos, plain words, and a clear way to reach you.",
   },
   {
     value: "instagram_ads",
     label: "Instagram ads",
     blurb:
-      "Your finished work, shown to people in the towns you work in. Built from your own photos, never stock pictures.",
+      "Your finished work, shown to people in and around the towns you work in. Built from your own photos, never stock pictures.",
   },
   {
     value: "social_posts",

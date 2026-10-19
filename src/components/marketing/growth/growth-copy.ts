@@ -126,6 +126,11 @@ export const growthCopy = {
         a: `It depends on what you need. ${davi} talks it through with you on the free call and gives you a clear price before any work starts.`,
       },
       {
+        // Check 2 P4: Meta's Housing special ad category (15-mile minimum radius, no ZIP codes).
+        q: "Can my Facebook ads show only in my town?",
+        a: `Not exactly. Facebook and Instagram treat home-repair ads like housing ads, so they reach people within at least 15 miles of a place you pick. ${davi} explains what that means for your area on the call.`,
+      },
+      {
         q: "Is the call really free?",
         a: "Yes. No cost and no obligation. If we don't think we can help, we'll tell you.",
       },

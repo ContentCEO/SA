@@ -10,6 +10,7 @@ Safe default kept: the seven service cards and seven form checkboxes stay as the
 `reviews`, `website`). Later steps apply their wording to both ad cards.
 
 **Proposal if Davi says "merge them":**
+
 - `src/config/growth.ts`: relabel `facebook_ads` "Facebook and Instagram ads", one blurb ("Your
   finished work, shown to people in and around the towns you work in, on Facebook and Instagram.
   Built from your own photos, never stock pictures."), and remove the `instagram_ads` card.
@@ -24,3 +25,10 @@ Safe default kept: the seven service cards and seven form checkboxes stay as the
 - Grid: six cards at `lg:grid-cols-3` leave no orphan, so step 13's two-column first card would
   go back to a plain three-column grid.
 - Tests as in the spec (old "instagram_ads" post accepted and stored once; six checkboxes).
+
+## Step 2 (Check 2 P4 + Check 3 P2): ad reach wording
+
+Both ad blurbs now say "in and around the towns you work in"; a code comment names Meta's
+Housing special ad category. New FAQ "Can my Facebook ads show only in my town?" (factual, from
+Meta's rules — show Davi). The form's note hint "The towns you work in…" is about the
+visitor's own towns, not ad reach, so it stays.

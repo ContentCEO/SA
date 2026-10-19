@@ -96,7 +96,7 @@ describe("Squared Away Growth copy", () => {
       "Davi looks at what you have today — your Google listing, your pages, your site, your reviews — and tells you plainly what to do first and what it costs.",
     );
     expect(growthCopy.who.heavy).toBe("Davi, personally.");
-    expect(growthCopy.faq.items[4].a).toBe(
+    expect(growthCopy.faq.items.find((i) => i.q === "Who will I be dealing with?")?.a).toBe(
       "Davi Chaves, directly. For now, Davi does the work personally.",
     );
   });
@@ -165,5 +165,37 @@ describe("Check 5 P5: a Growth card for an existing app owner says they use the 
     expect(a.growthOnlyLine("invite_gone")).toBe(a.growthOnly);
     expect(a.growthOnlyLine("has_account")).toBe(a.growthOnlyHasAccount);
     expect(a.growthOnlyLine("invited")).toBe(a.growthOnlyInvited);
+  });
+});
+
+describe("Check 2 P4 / Check 3 P2: ad reach matches Meta's housing rules", () => {
+  it("pins both ad blurbs to 'in and around'", () => {
+    const blurb = (v: string) => GROWTH_SERVICES.find((s) => s.value === v)!.blurb;
+    expect(blurb("facebook_ads")).toBe(
+      "Ads shown to people in and around the towns you work in. Your own photos, plain words, and a clear way to reach you.",
+    );
+    expect(blurb("instagram_ads")).toBe(
+      "Your finished work, shown to people in and around the towns you work in. Built from your own photos, never stock pictures.",
+    );
+  });
+
+  it("never promises town-only targeting", () => {
+    const og = readFileSync("src/app/growth/opengraph-image.tsx", "utf8");
+    for (const text of [source, words, og]) {
+      expect(text.toLowerCase()).not.toContain("actually work in");
+      expect(text.toLowerCase()).not.toContain("only in your town");
+    }
+    for (const s of GROWTH_SERVICES) {
+      if (/\bads\b/i.test(`${s.label} ${s.blurb}`) && /\btowns?\b/i.test(s.blurb)) {
+        expect(s.blurb, s.value).toContain("in and around");
+      }
+    }
+  });
+
+  it("explains the radius in the FAQ", () => {
+    const item = growthCopy.faq.items.find(
+      (i) => i.q === "Can my Facebook ads show only in my town?",
+    );
+    expect(item?.a).toContain("at least 15 miles");
   });
 });
