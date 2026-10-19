@@ -124,6 +124,8 @@ test.describe("tap targets at 375px and 320px", () => {
 
   test("the admin", async ({ page, context }) => {
     await signInAs(context, await seedAdmin());
-    expect(await sweep(page, ["/admin", "/admin/costs", "/admin/growth", "/more"])).toEqual([]);
+    expect(
+      await sweep(page, ["/admin", "/admin/costs", "/admin/growth", "/admin/video", "/more"]),
+    ).toEqual([]);
   });
 });

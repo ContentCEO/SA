@@ -26,7 +26,9 @@ export function parseGoogleAppState(value: string | undefined): GoogleAppState {
 }
 
 /** The state from the environment (read at request time, so a redeploy after a change is enough). */
-export function googleAppState(env: { GOOGLE_APP_STATE?: string } = process.env): GoogleAppState {
+export function googleAppState(
+  env: Record<string, string | undefined> = process.env,
+): GoogleAppState {
   return parseGoogleAppState(env.GOOGLE_APP_STATE);
 }
 

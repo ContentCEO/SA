@@ -10,7 +10,7 @@
  * applied in next.config.ts `redirects()`.
  */
 
-export type HostRedirectEnv = { VERCEL_ENV?: string; APP_URL?: string };
+export type HostRedirectEnv = Record<string, string | undefined>;
 
 /** Next's own `has: [{ type: "host" }]` rule shape (the few fields we use). */
 export type HostRedirect = {
