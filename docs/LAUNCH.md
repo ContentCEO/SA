@@ -8,6 +8,8 @@ Where a step says "the engineers", they do that part and tell you when it's done
 here is yours to do or decide: merging, deploying and every other switch. Engineering details live
 in [SETUP.md](SETUP.md); this page links to it where a step needs more. Every outside account
 (its plan, the limit that bites and whose login holds it) is listed in [VENDORS.md](VENDORS.md).
+When something stops working after launch, [RUNBOOK.md](RUNBOOK.md) says where to look and what
+to do.
 
 `/admin` → **Ready for paying owners** lists what's left; tick the hand rows there as you finish
 them.

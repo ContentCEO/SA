@@ -65,7 +65,7 @@ tests/unit/         Vitest; DB tests use in-memory PGlite (tests/support/db.ts)
 tests/e2e/          Playwright (mobile 375px + desktop); real Postgres; forged Auth.js cookie;
                     fakes/ = fake Google consent + Gmail + Anthropic (127.0.0.1, PORT+1)
 docs/               BRIEF.md, SETUP.md, LAUNCH.md (Davi's launch checklist),
-                    google-verification.md, legal drafts
+                    RUNBOOK.md (when the app stops), google-verification.md, legal drafts
 ```
 
 ## Commands
