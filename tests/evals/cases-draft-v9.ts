@@ -273,4 +273,35 @@ export const DRAFT_V9_CASES: EvalCase[] = [
       routinePaperwork: true,
     },
   }),
+
+  // ── step 7: snow plowing (Check 41 P3) ──
+  c({
+    id: "s7-snow-preseason",
+    trade: "snow",
+    fromName: "Gail Porter",
+    fromAddress: "gail@example.com",
+    subject: "Plowing this winter",
+    body: "Can you plow our driveway this winter? Paved, about 3 cars long, plus the front walk. Per push or a season price?",
+    expect: { category: "quote_request", needsOwner: false },
+    draft: { ...DRAFT, mustNotContain: ["guarantee", "patio", "irrigation"] },
+  }),
+  c({
+    id: "s7-snow-storm-night",
+    trade: "snow",
+    fromName: "Ben Ortiz",
+    fromAddress: "ben@example.com",
+    subject: "Are you coming?",
+    body: "It's been snowing since 6, about 5 inches now. Are you coming tonight? I have to leave at 6am.",
+    expect: { category: ["scheduling", "customer_question"], needsOwner: false },
+    draft: { ...DRAFT, mustNotContain: ["guarantee", "on my way", "on the way"] },
+  }),
+  c({
+    id: "s7-snow-per-push-bill",
+    trade: "snow",
+    fromName: "Gail Porter",
+    fromAddress: "gail@example.com",
+    subject: "Re: Invoice for January",
+    body: "Got the January invoice for 6 pushes. Is the salting included or extra?",
+    expect: { category: ["invoice_payment", "customer_question"], needsOwner: false },
+  }),
 ];

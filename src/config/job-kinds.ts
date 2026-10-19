@@ -415,6 +415,20 @@ export const JOB_KINDS: Record<Trade, readonly JobKind[]> = {
       ],
     },
   ],
+  // Check 41 P3: a plow shop. Landscaping keeps its own "Snow and plowing" kind, so threads
+  // filed under it keep their label.
+  snow: [
+    { label: "Roof snow", keywords: ["roof rake", "roof snow", "snow off the roof", "ice dam"] },
+    {
+      label: "Plowing",
+      keywords: ["plow", "plowing", "plowed", "driveway", "snow removal", "push", "snow"],
+    },
+    { label: "Salting and sanding", keywords: ["salt", "salting", "sand", "sanding", "ice melt"] },
+    {
+      label: "Shoveling and walks",
+      keywords: ["shovel", "shoveling", "walk", "walkway", "steps", "stairs", "path"],
+    },
+  ],
   // Round 2 (TW D1): a general remodeler. The room kinds come first; the generic one last.
   // Check 38 P8: callbacks first (a cracked grout line isn't a new bathroom), then Basements and
   // Additions before the rooms (a basement bath is a basement job; a kitchen addition is an

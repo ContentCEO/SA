@@ -12,6 +12,8 @@ export const TRADES = [
   "painting",
   "landscaping",
   "remodeling",
+  // Check 41 P3 (wave 2): plow-only shops and landscapers who plow in winter.
+  "snow",
   "other",
 ] as const;
 export type Trade = (typeof TRADES)[number];
@@ -25,6 +27,7 @@ export const tradeLabel: Record<Trade, string> = {
   painting: "Painting",
   landscaping: "Landscaping",
   remodeling: "Remodeling",
+  snow: "Snow plowing",
   other: "Something else",
 };
 
@@ -59,6 +62,7 @@ export const servicesExample: Record<Trade, string> = {
   painting: "Interior rooms, exterior trim, cabinets. No commercial jobs.",
   landscaping: "Mowing, spring cleanups, patios. No tree removal.",
   remodeling: "Kitchens, bathrooms, basements. No additions.",
+  snow: "Driveways and walks, salting. No commercial lots.",
   other: "Repairs, installs, small jobs. No big projects.",
 };
 

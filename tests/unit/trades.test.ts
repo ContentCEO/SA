@@ -2,7 +2,10 @@ import { existsSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { workspaceBlock, type WorkspaceContext } from "@/ai/prompts/draft.v6";
 import { tradePromptFor, tradePrompts } from "@/ai/prompts/trades";
-import { TRADES, tradeLabel } from "@/config/trades";
+import { sql } from "drizzle-orm";
+import { cleanExtraTrades, TRADES, tradeLabel } from "@/config/trades";
+import { jobKindOf } from "@/server/monthly-rules";
+import { createTestDb } from "../support/db";
 import { tradeEnum } from "@/db/schema";
 
 describe("trades", () => {
@@ -83,6 +86,44 @@ describe("trades", () => {
     // Massachusetts program names only for Massachusetts shops (Check 44 P1 + 45 P2).
     expect(hvac).not.toContain("Mass Save");
     expect(plumbing).not.toContain("Mass Save");
+  });
+
+  it("Check 41 P3: a landscaping + snow shop's block lists the snow questions; the enum has 'snow'", async () => {
+    const block = workspaceBlock({
+      businessName: null,
+      trade: "landscaping",
+      extraTrades: ["snow"],
+      services: null,
+      serviceArea: null,
+      hours: null,
+      leadTime: null,
+      pricingNotes: null,
+      paymentTerms: null,
+      policies: null,
+      signature: null,
+      doNotPromise: [],
+      neverSay: [],
+      seasonalNotes: [],
+      voice: null,
+    });
+    expect(block).toContain("landscaping and snow plowing");
+    expect(block).toContain("driveway length and width, paved or gravel");
+    expect(block).toContain("per push or a season price");
+    expect(block).toContain("trigger depth");
+    expect(tradeLabel.snow).toBe("Snow plowing");
+    expect(TRADES.indexOf("snow")).toBe(TRADES.length - 2);
+    expect(jobKindOf("snow", "plow the driveway and salt the walk")).toBe("Plowing");
+    expect(jobKindOf("snow", "salt the walk")).toBe("Salting and sanding");
+    expect(jobKindOf("snow", "roof rake after the storm")).toBe("Roof snow");
+    // Landscaping keeps its own label, so threads filed under it keep it.
+    expect(jobKindOf("landscaping", "plow the driveway")).toBe("Snow and plowing");
+    expect(cleanExtraTrades(["snow"], "landscaping")).toEqual(["snow"]);
+    // The real migrations (PGlite) add the enum value.
+    const db = await createTestDb();
+    const rows = await db.execute(sql`select unnest(enum_range(null::trade))::text as v`);
+    const values =
+      (rows as unknown as { rows?: { v: string }[] }).rows ?? (rows as unknown as { v: string }[]);
+    expect(values.map((r) => r.v)).toContain("snow");
   });
 
   it("drafts get the owner's trade questions; unknown trades fall back safely", () => {

@@ -310,3 +310,16 @@ first names and a share only, scrubbed. **Prompts:** `voice.v4` (`ACTIVE.voice`)
 - Tests: `tests/unit/paperwork-leads.test.ts`; `leads-rules.test` lists the label-only sources.
   Eval cases H09 (rebate incomplete), H11 (registration complete), H23 (home-warranty dispatch)
   with `routinePaperwork: true`. **Evals not run.**
+
+## Step 7: snow plowing as a trade (Check 41 P3)
+
+**Migration 0077 `snow_trade`**: `ALTER TYPE trade ADD VALUE 'snow' BEFORE 'other'` (additive,
+like 0030). `TRADES` gains `snow` before `other` ("Snow plowing"; services example "Driveways and
+walks, salting. No commercial lots."). `src/ai/prompts/trades/snow.ts` (vocabulary and quote
+questions from the review), registered in `trades/index.ts`. `JOB_KINDS.snow`: Roof snow,
+Plowing, Salting and sanding, Shoveling and walks (Plowing before salting, so "plow the driveway
+and salt the walk" is Plowing); landscaping keeps "Snow and plowing". Every form reads
+`TRADE_OPTIONS` / `tradeEnum`, so the waitlist, Growth call form, invite and business profile
+(main and extra trades) show "Snow plowing" with no form change. No prompt version: the trade file
+is data in draft.v9's block. Eval cases s7-* (pre-season sign-up, storm-night "are you coming?",
+per-push bill). **Evals not run.**
