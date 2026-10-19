@@ -225,6 +225,68 @@ export async function withTimeout<T>(work: Promise<T>, ms: number): Promise<T> {
   }
 }
 
+export function growthConfirmKey(email: string, now: Date) {
+  return `growth-confirm-${addressKey(email)}-${localStamp(now).slice(0, 10)}`;
+}
+
+/**
+ * Check 2 P2: "here's what's next" to the person who asked for a call. Only fixed words and
+ * the operator's number: **nothing the visitor typed** (name, note, services), since anyone can put
+ * someone else's address in the form. One per address per New York day (Resend idempotency
+ * key); raced against the same timeout as the admin notice. Without Resend env it's skipped by
+ * sendEmail ("not_configured"). Not a Gmail send path: it goes through Resend like the waitlist
+ * confirmation.
+ */
+export async function sendGrowthConfirmation(
+  email: string,
+  deps: { send?: EmailSender; now?: Date; timeoutMs?: number } = {},
+) {
+  const address = normalizeEmail(email);
+  const c = growthCopy.confirm;
+  const { text, html } = brandEmail({
+    serif: c.serif,
+    heavy: c.heavy,
+    lines: [...c.lines],
+    footer: c.footer,
+  });
+  const replyTo = process.env.SUPPORT_EMAIL?.trim();
+  return withTimeout(
+    (deps.send ?? sendEmail)({
+      to: address,
+      subject: c.subject,
+      text,
+      html,
+      idempotencyKey: growthConfirmKey(address, deps.now ?? new Date()),
+      ...(replyTo ? { replyTo } : {}),
+    }),
+    deps.timeoutMs ?? GROWTH_NOTIFY_TIMEOUT_MS,
+  );
+}
+
+/**
+ * After a stored request: the admin notice and the visitor's confirmation, side by side. Never
+ * throws: a failed or hanging email never fails the request. Logs the error's name only.
+ */
+export async function sendGrowthEmails(
+  email: string,
+  deps: { send?: EmailSender; now?: Date; timeoutMs?: number } = {},
+) {
+  const [notify, confirm] = await Promise.allSettled([
+    notifyGrowthRequest(email, deps),
+    sendGrowthConfirmation(email, deps),
+  ]);
+  const name = (r: PromiseRejectedResult) =>
+    r.reason instanceof Error ? r.reason.name : "unknown";
+  if (notify.status === "rejected") console.warn("growth_notify_failed", { error: name(notify) });
+  if (confirm.status === "rejected") {
+    console.warn("growth_confirm_failed", { error: name(confirm) });
+  }
+  return {
+    notify: notify.status === "fulfilled" ? notify.value : ("failed" as const),
+    confirm: confirm.status === "fulfilled" ? confirm.value : ("failed" as const),
+  };
+}
+
 /**
  * Tell Davi a request came in. Content-free: no name, number or email address anywhere in it;
  * those stay on the admin page. One notice per person per day.

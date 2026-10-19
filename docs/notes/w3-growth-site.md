@@ -40,3 +40,14 @@ no "find a time"); only the bans were missing. Now banned in every Growth source
 rendered copy: "book a free call", "booking", "find a time", "first page", "page one", "#1",
 "number one", "more leads", "google screened", "license verified", and whole-word "rank".
 The current copy passes.
+
+## Step 4 (Check 2 P2): confirmation email to the visitor
+
+`sendGrowthConfirmation` / `sendGrowthEmails` in `src/server/growth.ts`; copy in
+`growthCopy.confirm` (fixed words + `siteConfig.phone`, nothing typed). Resend key
+`growth-confirm-<addressKey>-<New York date>`, Reply-To from `SUPPORT_EMAIL` when set, raced
+against `GROWTH_NOTIFY_TIMEOUT_MS`; sent side by side with Davi's notice (`Promise.allSettled`);
+logs `growth_notify_failed` / `growth_confirm_failed {error: name}` only. Not a Gmail send path
+(Resend, like the waitlist confirmation). **Goes live with the Resend domain** (LAUNCH: verify
+the domain, switch `EMAIL_FROM` off onboarding@resend.dev); until then `sendEmail` delivers only
+to the Resend account's own address. docs/SETUP.md §7b says so. Privacy wording: legal note.

@@ -4,7 +4,7 @@ import { headers } from "next/headers";
 import { unstable_rethrow } from "next/navigation";
 import { z } from "zod";
 import { growthCopy } from "@/components/marketing/growth/growth-copy";
-import { growthInput, notifyGrowthRequest, requestGrowthCall } from "@/server/growth";
+import { growthInput, requestGrowthCall, sendGrowthEmails } from "@/server/growth";
 import { hitLimit, ipKey } from "@/server/rate-limit";
 import { sourceFromForm } from "@/server/source-rules";
 import { ownHosts } from "@/server/own-hosts";
@@ -81,10 +81,7 @@ export async function requestGrowthCallAction(
       services,
     };
   }
-  try {
-    await notifyGrowthRequest(parsed.data.email);
-  } catch (err) {
-    console.warn("growth_notify_failed", { error: err instanceof Error ? err.name : "unknown" });
-  }
+  // The admin notice and the visitor's confirmation (Check 2 P2), side by side; never throws.
+  await sendGrowthEmails(parsed.data.email);
   return { status: "requested", phone: parsed.data.phone };
 }

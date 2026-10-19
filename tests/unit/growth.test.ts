@@ -10,8 +10,10 @@ import {
   GROWTH_NOTIFY_TIMEOUT_MS,
   growthNotifyKey,
   normalizeUsPhone,
+  growthConfirmKey,
   notifyGrowthRequest,
   requestGrowthCall,
+  sendGrowthConfirmation,
 } from "@/server/growth";
 import { splitWaitlistNote } from "@/server/growth-note";
 import { requestGrowthCallAction } from "@/app/growth-actions";
@@ -278,7 +280,9 @@ describe("Ask Davi to call me: the form action", () => {
     const info = vi.spyOn(console, "info").mockImplementation(() => {});
     const r = await requestGrowthCallAction({ status: "idle" }, form(goodForm));
     expect(r).toEqual({ status: "requested", phone: "617-555-0142" });
-    expect(sendEmail).toHaveBeenCalledTimes(1);
+    // Davi's notice and the visitor's confirmation (Check 2 P2).
+    expect(sendEmail).toHaveBeenCalledTimes(2);
+    expect(sendEmail.mock.calls.map((c) => c[0].to).sort()).toEqual([ADMIN, "mike@shop.com"]);
     expect(info).toHaveBeenCalledWith("growth_call_requested", { existing: false, services: 2 });
     const logged = JSON.stringify(info.mock.calls);
     for (const leak of ["Mike", "617", "mike@shop.com"]) expect(logged).not.toContain(leak);
@@ -292,6 +296,8 @@ describe("Ask Davi to call me: the form action", () => {
     expect(r).toEqual({ status: "requested", phone: "617-555-0142" });
     expect(await database.select().from(waitlist)).toHaveLength(1);
     expect(warn).toHaveBeenCalledWith("growth_notify_failed", { error: "TypeError" });
+    expect(warn).toHaveBeenCalledWith("growth_confirm_failed", { error: "TypeError" });
+    expect(JSON.stringify(warn.mock.calls)).not.toContain("mike@shop.com");
   });
 
   it("a notice that never finishes doesn't hold the visitor up past the timeout", async () => {
@@ -301,7 +307,7 @@ describe("Ask Davi to call me: the form action", () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     try {
       const pending = requestGrowthCallAction({ status: "idle" }, form(goodForm));
-      await vi.waitFor(() => expect(sendEmail).toHaveBeenCalledTimes(1));
+      await vi.waitFor(() => expect(sendEmail).toHaveBeenCalledTimes(2));
       await vi.advanceTimersByTimeAsync(GROWTH_NOTIFY_TIMEOUT_MS);
       expect(await pending).toEqual({ status: "requested", phone: "617-555-0142" });
     } finally {
@@ -372,6 +378,60 @@ describe("the notice to Davi", () => {
   it("is skipped without ADMIN_EMAIL", async () => {
     vi.stubEnv("ADMIN_EMAIL", "");
     expect(await notifyGrowthRequest("mike@shop.com", { send: sendEmail })).toBe("skipped");
+    expect(sendEmail).not.toHaveBeenCalled();
+  });
+});
+
+describe("Check 2 P2: the visitor's confirmation", () => {
+  it("holds no typed name, note or service, only fixed words and Davi's number", async () => {
+    await requestGrowthCallAction(
+      { status: "idle" },
+      form({ ...goodForm, name: "Zed Quill", note: "Lowell kitchen", services: ["website"] }),
+    );
+    const mail = sendEmail.mock.calls.map((c) => c[0]).find((e) => e.to === "mike@shop.com")!;
+    expect(mail.subject).toBe("Your Squared Away Growth call");
+    const body = `${mail.subject}\n${mail.text}\n${mail.html}`;
+    for (const typed of ["Zed", "Quill", "Lowell", "Website", "617-555-0142"]) {
+      expect(body).not.toContain(typed);
+    }
+    expect(mail.text).toContain("Davi will call you for your free Squared Away Growth call.");
+    expect(mail.text).toContain("978-201-9763");
+    expect(mail.text).toContain("We won't email you about anything else.");
+  });
+
+  it("one per address per New York day (the key), with no address in the key", async () => {
+    const now = new Date("2026-10-12T18:05:00Z");
+    const key = growthConfirmKey("Mike@Shop.com", now);
+    expect(key).toBe(growthConfirmKey("mike@shop.com", new Date("2026-10-12T23:59:00Z")));
+    expect(key).not.toBe(growthConfirmKey("mike@shop.com", new Date("2026-10-13T12:00:00Z")));
+    expect(key).toMatch(/^growth-confirm-[0-9a-f]{16}-2026-10-12$/);
+    expect(key).not.toContain("mike");
+    await sendGrowthConfirmation("Mike@Shop.com", { send: sendEmail, now });
+    expect(sendEmail.mock.calls[0]![0].idempotencyKey).toBe(key);
+  });
+
+  it("sets Reply-To from SUPPORT_EMAIL only when it is set", async () => {
+    await sendGrowthConfirmation("mike@shop.com", { send: sendEmail });
+    expect(sendEmail.mock.calls[0]![0].replyTo).toBeUndefined();
+    vi.stubEnv("SUPPORT_EMAIL", "help@squaredaway.app");
+    await sendGrowthConfirmation("mike@shop.com", { send: sendEmail });
+    expect(sendEmail.mock.calls[1]![0].replyTo).toBe("help@squaredaway.app");
+  });
+
+  it("a confirmation that fails or isn't configured leaves the request and the row alone", async () => {
+    sendEmail.mockImplementation(async (e) => {
+      if (e.to === "mike@shop.com") return "not_configured";
+      return "sent";
+    });
+    vi.spyOn(console, "info").mockImplementation(() => {});
+    const r = await requestGrowthCallAction({ status: "idle" }, form(goodForm));
+    expect(r).toEqual({ status: "requested", phone: "617-555-0142" });
+    const [row] = await database.select().from(waitlist);
+    expect(splitWaitlistNote(row!.note).growth).toHaveLength(1);
+  });
+
+  it("the hidden-field path sends nothing", async () => {
+    await requestGrowthCallAction({ status: "idle" }, form({ website: "http://spam.example" }));
     expect(sendEmail).not.toHaveBeenCalled();
   });
 });

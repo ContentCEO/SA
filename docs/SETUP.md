@@ -524,6 +524,11 @@ The digest is sent through Resend's HTTP API (`src/lib/email.ts`). Without `RESE
 
 The digest carries counts and categories only — no customer names, subjects or email text.
 
+A Growth call request also emails the visitor a short confirmation ("Your Squared Away Growth
+call": fixed words and the business phone, nothing they typed; one per address per day). Until
+the domain is verified in Resend, `onboarding@resend.dev` only reaches the Resend account's own
+address, so visitors won't get it yet; the request is stored either way.
+
 The trial emails (2026-10-16, `src/server/trial-emails.ts`: day 2, the last day, and one a week
 after an unpaid trial ends) use the same key and sender, counts only, from the 15-minute
 lifecycle job. Each carries a one-click "Stop these emails" link signed with `AUTH_SECRET`

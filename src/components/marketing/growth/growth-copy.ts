@@ -254,6 +254,23 @@ export const growthCopy = {
     },
     growthOnlyError: "That's a Growth call request, not an app sign-up, so nobody was invited.",
   },
+  /**
+   * Check 2 P2: the visitor's confirmation. Nothing the visitor typed goes in it (anyone can type
+   * someone else's address), same rule as the waitlist's "You're on the list".
+   */
+  confirm: {
+    subject: "Your Squared Away Growth call",
+    serif: "thanks for asking,",
+    heavy: "here's what's next.",
+    lines: [
+      `${davi} will call you for your free Squared Away Growth call.`,
+      `Save this number so you know it's ${davi}: ${phone}`,
+      "Have these handy if you can: your Google listing link, your website, and the jobs you want more of.",
+      "Nothing to do until then.",
+    ],
+    footer:
+      "You're getting this because this address asked for a Squared Away Growth call on our website. We won't email you about anything else.",
+  },
   notify: {
     subject: "New Growth call request",
     serif: "new request,",
