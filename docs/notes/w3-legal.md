@@ -45,3 +45,13 @@ What `CLAUDE.md`, `docs/LAUNCH.md` and `docs/BUILD-ORDER.md` should say. Legal s
   rates may apply", HELP/STOP, consent to the Terms and Privacy Policy under the button). When
   registering the campaign with Twilio, the opt-in screenshot is `/settings/texts` (phone form
   step). The legal sentences wait for the release (`docs/notes/legal-w3-legal.md`).
+
+## Check 27 P9 + Check 27 P10
+
+- P9 built: the connect screen's "What it won't do" list now reads "Share your email. It's stored
+  on our own servers in the US, and the only outside company that reads it is Anthropic's AI, to
+  sort and draft. It's never used to train AI." (the same places the privacy policy names).
+- P10 **skipped: already done at the tip** (wave 2 merge C, `src/server/send-record-rules.ts`):
+  an autopilot record closes with "Autopilot sent this on its own, under the rules you switched
+  on." and a tapped record names the sign-in. The built wording wins; LAUNCH step 13 already asks
+  Davi "Fine as worded?". Tick both in BUILD-ORDER: Wave 3, Legal text, 7) C27 P9 + C27 P10.

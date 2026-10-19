@@ -30,6 +30,20 @@ describe("Check 27 P5: the Limited Use statement uses Google's terms", () => {
   });
 });
 
+describe("Check 27 P9: the connect screen names the same places as the policy", () => {
+  it("says the email is stored on our servers and read by Anthropic's AI, never trained on", () => {
+    const page = flat(readFileSync("src/app/(app)/connect/page.tsx", "utf8"));
+    expect(page).toContain(
+      "Share your email. It&apos;s stored on our own servers in the US, and the only outside company that reads it is Anthropic&apos;s AI, to sort and draft. It&apos;s never used to train AI.",
+    );
+    expect(page).not.toContain("only outside service");
+    // The policy says the same: one outside service for the text, stored by us in the US.
+    const policy = flat(readFileSync("docs/privacy-policy.md", "utf8"));
+    expect(policy).toContain("Email text is sent to one outside service, Anthropic");
+    expect(policy).toContain("Squared Away runs in the United States.");
+  });
+});
+
 describe("Check 27 P8: what the browser keeps is in the policy", () => {
   const policy = flat(readFileSync("docs/privacy-policy.md", "utf8"));
   const uses = files("src").filter((f) =>
