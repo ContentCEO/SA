@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { workspaceBlock, type WorkspaceContext } from "@/ai/prompts/draft.v8";
+import { workspaceBlock, type WorkspaceContext } from "@/ai/prompts/draft.v9";
 import { businessProfiles, voiceProfiles } from "@/db/schema";
 import { ensureUserAndWorkspace } from "@/server/accounts";
 import { workspaceContext } from "@/server/drafts";

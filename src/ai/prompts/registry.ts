@@ -11,7 +11,7 @@
  */
 import { CLASSIFY_PROMPT_VERSION } from "./classify.v6";
 import { DISPUTE_CAUTION_PROMPT_VERSION } from "./dispute-caution.v1";
-import { DRAFT_PROMPT_VERSION } from "./draft.v8";
+import { DRAFT_PROMPT_VERSION } from "./draft.v9";
 import { EDIT_TONE_PROMPT_VERSION } from "./edit-tone.v1";
 import { FOLLOWUP_PROMPT_VERSION } from "./followup.v4";
 import { OPENING_TWEAKS_PROMPT_VERSION } from "./opening-tweaks.v1";

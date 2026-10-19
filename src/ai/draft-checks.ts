@@ -137,14 +137,31 @@ const SOFT_PROMISES: [string, RegExp][] = [
  * bots here", "I answer every email myself"). Anthropic's usage policy forbids a bot claiming
  * to be human; the owner may say it if it's true, so it's a flag, never rewritten.
  */
+/** Check 43 P1: the words a "real person" claim has to sit next to ("a real person will call you" is true and passes). */
+const BOT_WORDS =
+  "(bot|bots|robot|robots|ai|a\\.i\\.|assistant|automated|automation|chatbot|computer|machine)";
 const HUMAN_CLAIMS: RegExp[] = [
   /\b(this is|it's|it is|i'm|i am) [a-z][a-z'-]* (himself|herself|themself|themselves|myself)\b/i,
   /\bno bots?\b/i,
   /\bnot (a |an )?(bot|robot|ai|machine|computer)\b/i,
-  /\b(a |an )?real (person|human)\b/i,
+  // Check 43 P1: "real person" only as a claim about who is writing, or near bot / AI words.
+  /\b(this is|it's|it is|i'm|i am|you're talking to|you are talking to|talking to|you've got|you have|from) (a |an )?real (person|human)\b/i,
+  new RegExp(
+    `\\breal (person|human)\\b.{0,60}\\b${BOT_WORDS}\\b|\\b${BOT_WORDS}\\b.{0,60}\\breal (person|human)\\b`,
+    "i",
+  ),
+  /\b(just me|only me|it's me|it is me|me here)\b.{0,30}\breal (person|human)\b/i,
   /\bi (answer|write|read|reply to|handle) (every|each|all (of )?(my|the|your)?) ?(emails?|messages?|repl(y|ies))( \w+)? myself\b/i,
+  /\bi (write|type|wrote|typed|answer|answered) (all|every one|each one|these|this|every single one)( of (these|them|my emails|my replies))? myself\b/i,
   /\bnobody else (writes|answers|reads|replies)\b/i,
   /\bnot automated\b/i,
+  /\bno (robots|ai|a\.i\.|assistant)\b/i,
+  /\bnot an? (a\.i\.|automated (system|reply|response))\b/i,
+  // Check 43 P1: Spanish and Portuguese.
+  /\bno (soy|es) un (robot|bot)\b/i,
+  /(?<![\p{L}])(una )?persona real(?![\p{L}])/iu,
+  /(?<![\p{L}])n[aã]o sou um rob[oô](?![\p{L}])/iu,
+  /(?<![\p{L}])(uma )?pessoa real(?![\p{L}])/iu,
 ];
 export const HUMAN_CLAIM_FLAG =
   "Says a person wrote this without help. Check it's true before sending.";

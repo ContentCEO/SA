@@ -10,6 +10,7 @@ import type { Trade } from "@/config/trades";
 import type { AttachmentCounts } from "@/server/attachment-rules";
 import type { FirstContactOpening } from "@/server/first-contact-rules";
 import type { InvoiceFacts } from "@/server/money-rules";
+import { DRAFT_V9_CASES } from "./cases-draft-v9";
 
 export type EvalCase = {
   id: string;
@@ -26,6 +27,8 @@ export type EvalCase = {
   receivedAt?: string;
   /** Check 40 P2: what came attached (counts only). */
   attachments?: AttachmentCounts;
+  /** Check 44 P1 + 45 P2 (draft.v9): the owner's two-letter state for the business block. */
+  state?: string;
   /**
    * Check 12 P2: the invoice facts the thread already held before this email, so the balance
    * after `carryInvoiceFacts` can be scored (`expect.owedDollars`).
@@ -105,6 +108,12 @@ export type EvalCase = {
     mustContain?: string[];
     noInventedMoney?: boolean;
     noInventedDates?: boolean;
+    /** draft.v9 (Check 23 P11): words that show each question was answered ("saturday", "amex"). */
+    mustAnswer?: string[];
+    /** draft.v9 (Check 23 P11): a one- or two-line email gets a reply under this many words. */
+    maxWords?: number;
+    /** draft.v9 (Check 43 P8): the language the reply must read as. */
+    language?: "en" | "es" | "pt";
   };
   /**
    * draft.v7 (replies package): drafted as a FIRST CONTACT (the owner never wrote to them),
@@ -3033,4 +3042,7 @@ export const EVAL_CASES: EvalCase[] = [
     threadSummary: "Kim asked for a roof repair quote and the owner asked for photos.",
     expect: { category: ["quote_request", "customer_question"], needsOwner: false },
   }),
+
+  // ── wave 2, Prompt versions step 2: draft.v9 (tests/evals/cases-draft-v9.ts) ──────
+  ...DRAFT_V9_CASES,
 ];

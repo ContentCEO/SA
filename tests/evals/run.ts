@@ -7,7 +7,7 @@ import { sum } from "drizzle-orm";
 import { classifyEmail } from "@/ai/classify";
 import { callStructured } from "@/ai/client";
 import { checkDraft } from "@/ai/draft-checks";
-import { detectLanguage } from "@/ai/language";
+import { chooseReplyLanguage, detectLanguage } from "@/ai/language";
 import { asksWhenAvailable } from "@/ai/when-words";
 import {
   conversationBlock,
@@ -16,7 +16,7 @@ import {
   FIRST_CONTACT_TASK,
   replyDraftSchema,
   workspaceBlock,
-} from "@/ai/prompts/draft.v8";
+} from "@/ai/prompts/draft.v9";
 import { DISPUTE_TASK } from "@/ai/prompts/dispute-caution.v1";
 import { ACTIVE } from "@/ai/prompts/registry";
 import { usage } from "@/db/schema";
@@ -123,7 +123,8 @@ export async function runEvals(
     };
 
     if (opts.drafts !== false && c.draft) {
-      const ctx = { ...PROFILE, trade: c.trade, voice: null };
+      // draft.v9 (Check 44 P1 + 45 P2): the owner's state decides the state words in the block.
+      const ctx = { ...PROFILE, trade: c.trade, voice: null, state: c.state ?? null };
       const draft = await callStructured({
         workspaceId: workspace.id,
         role: "draft",
@@ -147,7 +148,17 @@ export async function runEvals(
               ? // Check 43 P9: the fixed task the app adds on dispute / legal threads.
                 `Write the owner's reply to the last CUSTOMER message.\n\n${DISPUTE_TASK}`
               : undefined,
-          messages: [{ from: c.fromName, direction: "in", sentAt: email.receivedAt, body: c.body }],
+          messages: [
+            {
+              from: c.fromName,
+              direction: "in",
+              sentAt: email.receivedAt,
+              body: c.body,
+              attachments: c.attachments ?? null,
+            },
+          ],
+          // draft.v9 (Check 43 P8): the eval profile answers in English only.
+          replyLanguage: chooseReplyLanguage(detectLanguage(c.body), ["en"]),
         }),
         schema: replyDraftSchema,
       });
@@ -195,6 +206,20 @@ export async function runEvals(
         for (const good of c.draft.mustContain ?? []) {
           if (!draft.body.toLowerCase().includes(good.toLowerCase()))
             problems.push(`missing "${good}"`);
+        }
+        // draft.v9 (Check 23 P11): every question answered, short replies to short emails,
+        // and the reply in the language the owner chose.
+        for (const word of c.draft.mustAnswer ?? []) {
+          if (!draft.body.toLowerCase().includes(word.toLowerCase()))
+            problems.push(`didn't answer "${word}"`);
+        }
+        if (c.draft.maxWords) {
+          const words = draft.body.trim().split(/\s+/).length;
+          if (words > c.draft.maxWords) problems.push(`${words} words, over ${c.draft.maxWords}`);
+        }
+        if (c.draft.language) {
+          const read = detectLanguage(draft.body);
+          if (read && read !== c.draft.language) problems.push(`reads as ${read}`);
         }
         // The shape the drafter picked: first contacts' own, "not_first" for everything else.
         result.opening = draft.opening;

@@ -59,17 +59,6 @@ The classify part (`signals.acknowledgment_only`, its eval cases) was written in
   `last` is the acknowledgement when `onlyAcksSince` is true; pass `last.sentAt` in the owner's
   zone.)
 
-## From `w2-sync` (Check 40 P2): photos and files the customer attached (draft part)
-
-The sorter's `Attached: …` line and the attachments-only email are in classify.v6 (Prompt
-versions step 1). Still waiting for draft.v9:
-
-- the draft conversation block, one line per email with attachments:
-  `Attached: ${attachmentWords(counts)} (the assistant can't see them)`.
-- draft rule: "If the customer attached photos, don't ask for photos again; ask only for an
-  angle that's missing, or say you'll look at them."
-- The drafts test "the draft prompt carries 'Attached: 3 photos'" goes with that change.
-
 ## From `w2-followups` (Check 21 P4 / Check 12 P7): followup.v5 invoice reminders
 
 `followupTask({ nudgeNumber, daysQuiet, invoice })`, the drafter passing
@@ -84,17 +73,15 @@ versions step 1). Still waiting for draft.v9:
 
 Until then the second invoice reminder still uses followup.v4's "give the customer an easy out".
 
-## From `w2-settings` (Check 43 P8, Check 24 P11): the reply language and voice notes
+## From `w2-settings` (Check 43 P8, Check 24 P11): the reply language (followup part) and voice notes
 
-- In the conversation block of draft.v9 and followup.v5, right after the "What it is" line, the
-  exact line from `replyLanguageLine(choice)` (`src/ai/language.ts`): `Reply language: Spanish`
-  (customer wrote Spanish, Spanish on) or `Reply language: English (the customer wrote in
-Spanish; use short, plain sentences)`. `createDraftForThread` already computes `language` (a
-  `LanguageChoice`) before the block is built; revisions use the draft's stored `reply_language`.
-- Instruction line: "Write the reply in the language named on the 'Reply language' line,
-  whatever language the customer wrote in."
-- Eval cases: a Spanish quote request with Spanish off (expect English, plain sentences, no
-  language flag) and with Spanish on (expect Spanish).
+The draft.v9 part (the "Reply language" line in the conversation block and the instruction) is
+written (Prompt versions step 2). Still waiting:
+
+- followup.v5's conversation block carries the same `replyLanguageLine(choice)` line (shared
+  `conversationBlock` from draft.v9, so it comes for free) and the instruction line "Write the
+  reply in the language named on the 'Reply language' line, whatever language the customer wrote
+  in."
 - Voice (optional, Check 24 P11): with a ready voice and a null greeting / sign-off, the voice
   block prints "Usual greeting: not given"; it could say "none — they jump straight in" /
   "none — they don't sign off".

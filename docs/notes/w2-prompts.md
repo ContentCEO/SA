@@ -70,7 +70,7 @@ meant for it, each marked with its Check in the header:
   date `followupSignalsOf` gives); Check 22 P7 `EmailInput.firstTimeSender: boolean | "unknown"`
   (classification.ts passes the raw value; the prompt says "unknown (a lead site or voicemail
   service; judge the person from the email)"); Check 40 P2 the `Attached: 3 photos, 1 PDF (the
-  assistant can't see them)` line per email (`attachedLine`; classification.ts selects the
+assistant can't see them)` line per email (`attachedLine`; classification.ts selects the
   attachment counts; an attachments-only email is sorted with that line as its text); Check 36
   P5 water and sewer departments / backflow notices; Check 37 P3 electric-company paperwork.
 - **Owner-rule keys** gained `fake_bill` (after asks_if_ai), `contract_rights` (after dispute)
@@ -98,3 +98,70 @@ meant for it, each marked with its Check in the header:
 - A tenant / realtor / neighbor booking work ("Writes for someone else. Check who pays before
   booking.") goes to Needs you only for quote / question / scheduling emails, never for a
   supplier's. Fine?
+
+## Step 2: draft.v9 (Check 23 P11 + 43 P1 + 44 P1 + 45 P2, plus the inbox's draft lines)
+
+**draft.v9** (`src/ai/prompts/draft.v9.ts`, `ACTIVE.draft`): a copy of draft.v8 whose helpers
+stay re-exported (first-contact shapes, reply schema, licenses line), plus:
+
+- **Check 23 P11:** "Length: aim for the owner's typical length; if the customer wrote one or two
+  lines, keep it under 60 words." / "Tone: the owner's voice always wins. Be calm and polite
+  whatever the customer's tone." / one rule for unknown facts (a gap when the reply needs it now;
+  ask the customer when it depends on seeing the job, no price gap) — "prefer 'I'll confirm'" is
+  gone / "A gap replaces the words for the fact. Write 'we can come {{date}}', never 'a date
+  {{date}}'." / "Answer every question the customer asked, in their order, before asking yours."
+  / never say whether a permit is needed, what meets code, what a warranty covers, a waived fee,
+  a matched price, or name a worker, phone, link or email the block doesn't give / "T&M vs.
+  fixed price, net 30" dropped / the business block's "- Owner's first name: …" line after the
+  name (`ownerFirstName`: the voice sign-off's first name-like word, else the signature's first
+  line; "not given" otherwise) and "With no signature, sign off with the owner's first name from
+  the business block." **Adaptation:** item 6 (reply in the customer's language only if the
+  samples are) is superseded by Check 43 P8's Settings choice: the block carries
+  `replyLanguageLine(choice)` right after "What it is" and the instruction says "Write the reply
+  in the language named on the 'Reply language' line". `createDraftForThread` now computes the
+  language before the conversation block; revisions pass the draft's stored `reply_language`.
+- **Check 43 P1 (adapted):** draft.v8's "Who is writing" rule stays (Check 48 P1, merged in wave
+  1: the owner answers an "is this a bot?" question; the draft never denies an assistant helped).
+  The review's fixed honesty line ("I use an assistant to help draft my emails…") was **not**
+  added to the block: two rules for the same question would contradict, and the wave-1 decision
+  already went through the integrator. The code side is done: `HUMAN_CLAIMS` (`draft-checks.ts`)
+  gained "no AI", "no assistant", "not an automated system", "I write / type every one of these
+  myself", Spanish ("no soy un robot", "no es un robot", "persona real") and Portuguese ("não sou
+  um robô", "pessoa real"); "real person" now counts only as a claim about who is writing ("this
+  is / you're talking to a real person"), near bot / AI / assistant words, or after "just me", so
+  "A real person will call you back" passes, and the honest line passes. `human_claim` stays
+  **not** in `REGENERATE_ON` (wave 1's call: cap 0.2, flag, autopilot refuses). Eval cases:
+  `d9-bot-question-en` / `-es` (no human claim in the draft).
+- **Check 44 P1 + 45 P2:** `business_profile.state` already existed (wave 0); no migration.
+  New folder `src/ai/prompts/states/` (`types.ts` `StatePrompt`, `ma.ts`, `index.ts`
+  `statePrompts` + `stateWordsFor(state, trades)` → `[]` for no state or a state without a
+  file). Massachusetts: remodeling "home improvement contract (HIC)", "HIC registration number",
+  "construction supervisor license (CSL)"; carpentry HIC + CSL. `remodeling.ts` is state-neutral
+  ("home improvement contract", "contractor registration or license"). draft.v9's business block
+  appends "- Words used in your state (understand them; only mention a license or registration
+  the owner listed): …" after the trade words only when the state has a file (`WorkspaceContext`
+  gains `state`; `workspaceContext()` already carried it). The vocabulary rule says to mention a
+  license or registration only when the block lists it. Tests: TX / null / OH never see HIC or
+  CSL, MA sees both once; every state file names a real code and config trades. followup.v5
+  and purpose prompts share the block, so they get the same words in their next versions.
+- **Inbox lines written:** Check 40 P2 (the conversation block's "Attached: 3 photos (the
+  assistant can't see them)" line per email, from the stored counts; the rule "If the customer
+  attached photos, don't ask for photos again"); Check 43 P8 (the reply-language line and
+  instruction). Check 39 P6's one rule line ("Never state rebate amounts, loan terms, tax credits
+  or refrigerant rules as fact unless the business profile says them") is in draft.v9 too, so
+  step 3 (trade files) changes no prompt text and needs no further version.
+- **Evals:** `tests/evals/cases-draft-v9.ts` (spread into `EVAL_CASES`): two questions
+  (`mustAnswer`), a one-line email (`maxWords` 60), a Spanish email (`language: "en"`), a permit
+  question, the two bot questions, two Texas remodelers (`state: "TX"`, no HIC / CSL in the
+  draft), a Massachusetts HIC question (no claim). `EvalCase` gains `state`; `draft` gains
+  `mustAnswer`, `maxWords`, `language`; the runner passes `state`, the reply language and the
+  attachments, and scores the three new rules. Every test that pinned `draft.v8` now reads
+  `draft.v9` (first-contact, dispute-caution `draft.v9+dispute-caution.v1`, licenses, purposes).
+  **Evals not run** (no `ANTHROPIC_API_KEY`).
+
+### Questions for Davi (step 2)
+
+- "Is this a bot?" — keep wave 1's rule (the draft leaves the question for the owner and flags
+  it), or have the draft answer with the review's honesty line ("I use an assistant to help draft
+  my emails, and I read and send every reply myself.")? Built: wave 1's rule.
+- Massachusetts carpenters also get the HIC / CSL words (remodelers certainly do). Keep?

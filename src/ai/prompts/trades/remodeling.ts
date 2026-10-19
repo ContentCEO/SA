@@ -9,8 +9,9 @@ export const remodeling: TradePrompt = {
     "change order",
     "progress payments and lender draws",
     "lien waiver",
-    "home improvement contract (HIC)",
-    "construction supervisor license (CSL)",
+    // Check 44 P1 + 45 P2: state-neutral; Massachusetts' HIC and CSL live in prompts/states/ma.ts.
+    "home improvement contract",
+    "contractor registration or license",
     "demo, rough-in and finish",
     "permit and inspection",
     "punch list",

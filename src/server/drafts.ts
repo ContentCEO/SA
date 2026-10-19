@@ -50,7 +50,7 @@ import {
   type ModelDraft,
   type Opening,
   type WorkspaceContext,
-} from "@/ai/prompts/draft.v8";
+} from "@/ai/prompts/draft.v9";
 import {
   OPENING_TWEAKS,
   OPENING_TWEAKS_PROMPT_VERSION,
@@ -636,6 +636,20 @@ async function customerOf(threadId: string) {
     .orderBy(desc(messages.sentAt))
     .limit(1);
   return m ? { name: customerReplyName(m), address: customerReplyAddress(m) } : null;
+}
+
+/** Check 40 P2: a stored email's attachment counts for the drafter's "Attached:" line, or null. */
+function attachmentCounts(m: {
+  attachmentImages?: number | null;
+  attachmentPdfs?: number | null;
+  attachmentOther?: number | null;
+}): { images: number; pdfs: number; other: number } | null {
+  const c = {
+    images: m.attachmentImages ?? 0,
+    pdfs: m.attachmentPdfs ?? 0,
+    other: m.attachmentOther ?? 0,
+  };
+  return c.images + c.pdfs + c.other > 0 ? c : null;
 }
 
 /** A reader for a stored email's Reply-To: the one given, else the Gmail client itself. */
@@ -1368,6 +1382,10 @@ async function writeDraftForThread(threadId: string, opts: CreateOpts): Promise<
             : firstContact
               ? FIRST_CONTACT_TASK
               : undefined;
+  const lastInbound = [...withText].reverse().find((x) => x.m.direction === "in");
+  // Check 43 P8: the reply's language, decided in code from the customer's newest email; the
+  // conversation block tells the drafter (draft.v9) and the check reads the same choice.
+  const language = chooseReplyLanguage(detectLanguage(lastInbound?.text), ctx.replyLanguages);
   const convo = conversationBlock({
     now,
     timeZone: ctx.timeZone,
@@ -1377,6 +1395,7 @@ async function writeDraftForThread(threadId: string, opts: CreateOpts): Promise<
     extracted: thread.extracted,
     ownerNote: opts.ownerNote,
     task: dispute ? `${baseTask ?? DEFAULT_REPLY_TASK}\n\n${DISPUTE_TASK}` : baseTask,
+    replyLanguage: language,
     messages: withText.map(({ m, text }) => ({
       from:
         m.direction === "out"
@@ -1385,6 +1404,8 @@ async function writeDraftForThread(threadId: string, opts: CreateOpts): Promise<
       direction: m.direction,
       sentAt: m.sentAt,
       body: text,
+      // Check 40 P2: what the customer attached (counts only; the drafter can't see them).
+      attachments: attachmentCounts(m),
     })),
   });
 
@@ -1403,9 +1424,6 @@ async function writeDraftForThread(threadId: string, opts: CreateOpts): Promise<
     // Check 23 P3: a seasonal note's last day, as a draft would write it ("November 27").
     ...ctx.seasonalNotes.map((n) => spellDate(n.endsOn)),
   ];
-  const lastInbound = [...withText].reverse().find((x) => x.m.direction === "in");
-  // Check 43 P8: the reply's language, decided in code from the customer's newest email.
-  const language = chooseReplyLanguage(detectLanguage(lastInbound?.text), ctx.replyLanguages);
   const checkContext = {
     replyLanguage: language.reply,
     sourceText: [withText.map((x) => x.text).join("\n"), ...ownerFacts, opts.ownerNote]
@@ -2928,6 +2946,10 @@ export async function reviseDraft(
     task: dispute
       ? `${reviseTask(startText, ask, spoken !== null)}\n\n${DISPUTE_TASK}`
       : reviseTask(startText, ask, spoken !== null),
+    // Check 43 P8: a change keeps the language the draft was written for.
+    replyLanguage: isReplyLanguage(draft.replyLanguage)
+      ? { customer: null, reply: draft.replyLanguage }
+      : null,
     messages: withText.map(({ m, text }) => ({
       from:
         m.direction === "out"
@@ -2936,6 +2958,7 @@ export async function reviseDraft(
       direction: m.direction,
       sentAt: m.sentAt,
       body: text,
+      attachments: attachmentCounts(m),
     })),
   });
   const request = {

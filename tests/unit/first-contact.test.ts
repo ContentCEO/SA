@@ -8,9 +8,9 @@ import {
   FIRST_CONTACT_TASK,
   replyDraftSchema,
   type ModelReplyDraft,
-} from "@/ai/prompts/draft.v8";
+} from "@/ai/prompts/draft.v9";
 import { draftSchema } from "@/ai/prompts/draft.v6";
-import { DRAFT_INSTRUCTIONS as ACTIVE_DRAFT_INSTRUCTIONS } from "@/ai/prompts/draft.v8";
+import { DRAFT_INSTRUCTIONS as ACTIVE_DRAFT_INSTRUCTIONS } from "@/ai/prompts/draft.v9";
 import { OPENING_TWEAKS } from "@/ai/prompts/opening-tweaks.v1";
 import { MAX_REVISIONS_PER_DRAFT } from "@/config/drafting";
 import { OPENING_TWEAK_LABELS } from "@/config/tweaks";
@@ -114,8 +114,8 @@ describe("first replies: the rules (pure)", () => {
     for (const v of Object.values(OPENING_TWEAKS)) expect(v.ask).toMatch(/No price|no price/i);
   });
 
-  it("draft.v8 keeps draft.v6's rules, draft.v7's first-contact section and adds who is writing", () => {
-    expect(DRAFT_PROMPT_VERSION).toBe("draft.v8");
+  it("draft.v9 keeps draft.v6's rules, draft.v7's first-contact section and draft.v8's who is writing", () => {
+    expect(DRAFT_PROMPT_VERSION).toBe("draft.v9");
     for (const rule of [
       "## Never invent",
       "## Gaps for the owner to fill in",
@@ -225,7 +225,7 @@ describe("first replies: drafting (stand-in model)", () => {
     expect(calls[0]!.user).toContain(FIRST_CONTACT_TASK);
     expect(calls[0]!.schema).toBe(replyDraftSchema);
     const d = await draftOf(t.id);
-    expect(d).toMatchObject({ opening: "details", promptVersion: "draft.v8", status: "pending" });
+    expect(d).toMatchObject({ opening: "details", promptVersion: "draft.v9", status: "pending" });
     // Nothing sent: a real Gmail draft that waits for the owner's tap.
     expect(writer.sent).toEqual([]);
     const [row] = await database

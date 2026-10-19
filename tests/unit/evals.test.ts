@@ -146,6 +146,21 @@ describe("evaluation set (#46)", () => {
       ).toBe(true);
   });
 
+  it("covers draft.v9 (wave 2, Prompt versions step 2)", () => {
+    const n = (f: (c: EvalCase) => boolean) => EVAL_CASES.filter(f).length;
+    expect(n((c) => !!c.draft?.mustAnswer?.length)).toBeGreaterThanOrEqual(1);
+    expect(n((c) => !!c.draft?.maxWords)).toBeGreaterThanOrEqual(1);
+    expect(n((c) => c.draft?.language === "en")).toBeGreaterThanOrEqual(1);
+    // Check 44 P1 + 45 P2: two Texas remodelers whose drafts must not say HIC or CSL.
+    expect(n((c) => c.state === "TX" && c.trade === "remodeling")).toBeGreaterThanOrEqual(2);
+    expect(n((c) => c.state === "MA")).toBeGreaterThanOrEqual(1);
+    // Check 43 P1: "is this a bot?" in English and Spanish, drafted, with no human claim.
+    for (const id of ["d9-bot-question-en", "d9-bot-question-es", "d9-permit-question"]) {
+      const c = EVAL_CASES.find((x) => x.id === id);
+      expect(c?.draft, id).toBeDefined();
+    }
+  });
+
   it("covers the draft-editing prompts too", () => {
     expect(REVISE_CASES.length).toBeGreaterThanOrEqual(8);
     expect(TONE_CASES.length).toBeGreaterThanOrEqual(5);
@@ -303,7 +318,8 @@ describe("evaluation set (#46)", () => {
                     ? "Hi,\n\nSorry to hear it. What's the best number to reach you, and the address?\n\nThanks,\nAlex"
                     : firstContact
                       ? "Hi,\n\nThanks for reaching out, happy to help. Could you send a couple of photos?\n\nThanks,\nAlex"
-                      : "Hi,\n\nHappy to help — what's the address?\n\nThanks,\nAlex"),
+                      : // draft.v9: a good model answers each question (the key's words).
+                        `Hi,\n\nHappy to help — what's the address?${(EVAL_CASES[i]?.draft?.mustAnswer ?? []).map((w) => ` Yes to ${w}.`).join("")}\n\nThanks,\nAlex`),
                 reason: "Asked for the address.",
                 flags: [],
                 confidence: 0.9,
