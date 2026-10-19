@@ -1,4 +1,18 @@
-import { beforeEach } from "vitest";
+import { beforeEach, vi } from "vitest";
+
+/**
+ * Unit tests never use the network. The waitlist's mail-host lookup (Check 47 P3) asks real DNS
+ * unless a test passes its own `resolveMx`; on a machine with working DNS that made results
+ * depend on who really hosts a test domain's mail (plumb.com is on Microsoft, so CI asked
+ * "Invite anyway?" where a sandbox without DNS said "unknown"). Every lookup here fails, so the
+ * host is "unknown" unless a test injects one.
+ */
+vi.mock("node:dns/promises", async (orig) => ({
+  ...(await orig<typeof import("node:dns/promises")>()),
+  resolveMx: async () => {
+    throw Object.assign(new Error("unit tests make no DNS lookups"), { code: "ENOTFOUND" });
+  },
+}));
 
 /**
  * Check 31 P7: the model client and the jobs log one metadata line per call

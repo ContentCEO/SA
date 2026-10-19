@@ -1,5 +1,6 @@
 import "server-only";
 import { resolveMx } from "node:dns/promises";
+import { mxLookupAllowed } from "@/config/e2e";
 import { domainOf, mailHostFor, type MailHost } from "./mail-host-rules";
 
 export type MxResolver = (domain: string) => Promise<{ exchange: string }[]>;
@@ -20,6 +21,8 @@ export async function lookupMailHost(
   // Public webmail needs no DNS.
   const known = mailHostFor(domain, []);
   if (known !== "unknown") return known;
+  // e2e mode never asks real DNS (a stand-in passed by a test still runs).
+  if (!deps.resolveMx && !mxLookupAllowed()) return "unknown";
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     const records = await Promise.race([

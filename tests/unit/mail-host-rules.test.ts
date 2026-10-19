@@ -1,7 +1,9 @@
+import { resolveMx } from "node:dns/promises";
 import { eq } from "drizzle-orm";
 import { beforeEach, describe, expect, it } from "vitest";
 import type { Database } from "@/db";
 import { invites, waitlist } from "@/db/schema";
+import { mxLookupAllowed } from "@/config/e2e";
 import { lookupMailHost } from "@/server/mail-host";
 import {
   domainOf,
@@ -76,6 +78,37 @@ describe("lookupMailHost", () => {
     const slow = () => new Promise<{ exchange: string }[]>(() => {});
     expect(await lookupMailHost("a@shop.com", { resolveMx: slow, timeoutMs: 20 })).toBe("unknown");
     expect(await lookupMailHost("not-an-address", { resolveMx: google })).toBe("unknown");
+  });
+
+  // CI fix 2026-10-19: on GitHub, real DNS said plumb.com is on Microsoft, so waitlist tests
+  // asked "Invite anyway?" where this sandbox (no DNS) said "unknown". Tests never see real DNS.
+  it("unit tests never reach real DNS: no stand-in means unknown", async () => {
+    // The global stand-in (tests/support/setup.ts) answers, not the machine's DNS.
+    await expect(resolveMx("plumb.com")).rejects.toThrow("unit tests make no DNS lookups");
+    expect(await lookupMailHost("rosa@plumb.com")).toBe("unknown");
+    expect(await lookupMailHost("mike@shop.com")).toBe("unknown");
+  });
+
+  it("e2e mode makes no lookup unless a stand-in is passed", async () => {
+    const before = { ...process.env };
+    Object.assign(process.env, {
+      SA_E2E: "1",
+      SA_E2E_GOOGLE_BASE_URL: "http://127.0.0.1:3301/google",
+      SA_E2E_ANTHROPIC_BASE_URL: "http://127.0.0.1:3301/anthropic",
+      DATABASE_URL: "postgres://postgres:pw@localhost:5432/squared_away_e2e",
+    });
+    delete process.env.VERCEL;
+    delete process.env.VERCEL_ENV;
+    try {
+      expect(mxLookupAllowed()).toBe(false);
+      expect(mxLookupAllowed({})).toBe(true);
+      const microsoft = async () => [{ exchange: "x.mail.protection.outlook.com", priority: 0 }];
+      expect(await lookupMailHost("rosa@plumb.com")).toBe("unknown");
+      expect(await lookupMailHost("rosa@plumb.com", { resolveMx: microsoft })).toBe("microsoft");
+    } finally {
+      for (const k of Object.keys(process.env)) if (!(k in before)) delete process.env[k];
+      Object.assign(process.env, before);
+    }
   });
 });
 
