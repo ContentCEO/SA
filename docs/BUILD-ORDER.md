@@ -364,8 +364,18 @@ edits this file after it is created.
 - [x] Wave 3, Google review and the domain, 11) C33 P3 + C33 P4
 - [x] Wave 3, Google review and the domain, 12) C33 P6
 
-Queue screen 15) C09 P8 was not built (it waits for Davi's yes; `docs/LAUNCH.md` step 13). Voice 7) C24 P8's new prompt `voice-examples.v1` and the Inbox / Sync prompt lines wait for the Prompt
-versions group in `docs/notes/prompt-versions-inbox.md`.
+- [x] Wave 3, App emails, 1) C18 P2
+- [x] Wave 3, App emails, 2) C18 P5 + C42 P6
+- [x] Wave 3, App emails, 3) C18 P6 + C20 P12
+- [x] Wave 3, App emails, 4) C18 P7 + C07 P10
+- [x] Wave 3, App emails, 5) C01 P2 [M]
+- [x] Wave 3, App emails, 6) C01 P7
+- [x] Wave 3, App emails, 7) C18 P4
+- [x] Wave 3, App emails, 8) C47 P3 [M]
+- [x] Wave 3, App emails, 9) C18 P8
+- [x] Wave 3, App emails, 10) C18 P9
+      Queue screen 15) C09 P8 was not built (it waits for Davi's yes; `docs/LAUNCH.md` step 13). Voice 7) C24 P8's new prompt `voice-examples.v1` and the Inbox / Sync prompt lines wait for the Prompt
+      versions group in `docs/notes/prompt-versions-inbox.md`.
 
 Autopilot rules 7) C20 P9, 8) C20 P10 [M] and 9) C48 P6 were not built (they wait for Davi's yes;
 `docs/LAUNCH.md` step 13). The classify.v6, followup.v5 and reply-language lines from the
@@ -383,5 +393,8 @@ Wave 3 Legal text: every document sentence (Check 27 P1–P8, Check 45 P6) is wr
 at the tip. Wave 3 Google review: 6) C28 P5's `poweredByHeader` part was already done; its CASA
 pre-scan workflow has not been run yet. 12) C33 P6 keeps one exception (/growth's description)
 until the Growth site group shortens it.
+Wave 3 App emails: 5) C01 P2 kept the built trial emails (no fourth email, no migration; the
+question is in `docs/LAUNCH.md` step 13). Its mail-host sentence waits in
+`docs/notes/legal-w3-emails.md`.
 
 Later steps are added to this list as their pull requests merge.

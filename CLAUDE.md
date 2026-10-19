@@ -654,9 +654,9 @@ Davi runs several builder sessions at once. The build order for review prompts i
     `lead_at_risk_push_sent` activity rows; if no phone got it, the marks and the slot are handed
     back and nothing goes in Activity. The tap opens `/queue?t=<uuid>#t-<uuid>` (a real
     navigation; `sw.js` `safeUrl` allows only that or `/queue`), or `/quotes` when the lead has no
-    queue card. The morning summary always has the counts-only "N quote requests have waited more
-    than 4 hours." line, push or not (harmless catch-up), plus a Needs-you line linking to Quotes
-    for at-risk leads with no card.
+    queue card. The morning summary has the counts-only "N quote requests have waited more than 4
+    hours." line, push or not (harmless catch-up), for leads with a card on the queue; leads with
+    no card get only the Needs-you line linking to Quotes (Check 18 P8, wave 3).
   - **#35 monthly summary** (`monthly-summary.ts`, rules in `monthly-rules.ts`): a second step of
     the hourly `morning-digest` job; follows `digest_enabled`; due on local day 1–3 **at/after**
     `digest_hour` for the previous month in the owner's zone; Resend idempotency key
@@ -3681,13 +3681,14 @@ Away" }`; pages set a short title and never write "· Squared Away" by hand
     `Page.getInstallabilityErrors`. The installed app stays locked upright on Android
     (`orientation: "portrait"`) until Davi says otherwise.
 - **Wave 3 merge A (2026-10-19, branch `integrate-w3a`):** `w2-prompts` (wave 2 Prompt
-  versions), `w3-legal` (Legal text, one release) and `w3-google` (Google review and the domain)
-  merged with `--no-ff`, in that order, on top of faef9a5. Migrations regenerated one at a time
+  versions), `w3-legal` (Legal text, one release), `w3-google` (Google review and the domain) and
+  `w3-emails` (App emails) merged with `--no-ff`, in that order, on top of faef9a5. Migrations regenerated one at a time
   with drizzle-kit on the 0076 snapshot, SQL byte-identical to the branch's:
   `0077_voice_writers` (when 1792390564735), `0078_snow_trade` (1792390572405; `ALTER TYPE trade
-ADD VALUE 'snow' BEFORE 'other'`, alone in its migration), `0079_trade_other` (1792390574464).
-  Proved on scratch databases: fresh from 0000 (80 rows), and faef9a5's folder first, then this
-  one (only 0077–0079 applied; the guard passed). No textual conflicts between the three; the
+ADD VALUE 'snow' BEFORE 'other'`, alone in its migration), `0079_trade_other` (1792390574464),
+  `0080_waitlist_mail_host` (1792397235019). Proved on scratch databases: fresh from 0000 (81
+  rows), and faef9a5's folder first, then this one (only 0077–0080 applied; the guard passed; a
+  second run applies nothing). No textual conflicts between the first three; the
   connect screen keeps legal's "Share your email" item and google's `GOOGLE_APP_STATE` line, and
   /admin keeps legal's support-email line, google's Video script link and prompts' "Something
   else: pest control" waitlist words.
@@ -3798,6 +3799,48 @@ acknowledgedOn })`; invoice reminders ask when they expect to pay, never an easy
     Organization markup: logo, state-level address, `email` only from `SUPPORT_EMAIL`.
     public-site.spec's search basics keep one self-expiring exception, `waitingOn["/growth"]`
     (its description is 179 characters), until the Growth site group shortens it.
+  - **App emails (`w3-emails`).** Conflicts: `src/config/google-app.ts` was written by both this
+    group and the Google group; one copy keeps both groups' names (`googleAppStateFrom` is
+    `parseGoogleAppState`) and the App emails wording for the access-lost reason, which Settings →
+    Your Gmail (`mailboxHealth`) shows too. Its activity.spec change (waiting for the zone save,
+    "a race in the test, not the app") gave way to the integrator's product fix above.
+    - **Check 18 P2 (Email box on /admin):** `sendEmail` throws `ResendError` (name, numeric
+      `status`); every sender logs `...emailErrorFields(err)` (name and status only). Refusals
+      tallied per UTC day in `app_settings` `email-refused:<YYYY-MM-DD>` (purged after 14 days).
+      /admin "Email" box (`email-health-rules.ts`, pure): "Not set up" / "Test sender…" (inverted)
+      / "Sending from <address>", the week's refusals, and "Send me a test email" (admin only, 5
+      an hour, to `ADMIN_EMAIL`, key `admin-test-<minute>`).
+    - **Check 18 P5 (Reply-To):** owner-facing emails without one get `SUPPORT_EMAIL`, else
+      `ADMIN_EMAIL`; notices to `ADMIN_EMAIL` itself pass `replyTo: null`.
+    - **Check 42 P6:** Morning email and Your Gmail name the sign-in address the app emails go to,
+      and warn when it isn't a connected inbox (`appEmailsGoTo`, `app-emails-to-rules.ts`; never
+      logged).
+    - **Check 18 P6 + Check 20 P12:** the morning email's sent line adds "(N by autopilot)"; the
+      closing line names autopilot when any kind is on it (`footerLine`); an account in its three
+      days gets a line linking `/billing`.
+    - **Check 18 P7 + Check 7 P10:** one email shell (`emailShell` / `emailHtml` / `brandEmail`,
+      `src/lib/email-layout.ts`; light only, hidden content-free preheader, 44px footer links).
+      Brand hex colours live once in `src/config/brand.ts` (`BRAND`, equal to `--sa-k-*`);
+      `brand-colors.test.ts` refuses any other hex in `src/**.ts(x)` (`public/offline.html` and
+      `src/app/icon.svg` keep copies). New emails use `brandEmail` / `emailHtml`.
+    - **Check 1 P7:** the access-lost email and Your Gmail give Google's 7-day limit as the reason
+      while `GOOGLE_APP_STATE` is testing (the default).
+    - **Check 18 P4:** "Email the sign-in link again" on /admin invites (once a day per address,
+      30 taps an hour); `catchUpWaitlistConfirmations` sends missed "You're on the list" emails, 8
+      per tap, shown only once the sender isn't `@resend.dev` (10 taps an hour).
+    - **Check 47 P3:** `waitlist.mail_host` (google / microsoft / other / unknown) from the
+      domain's MX records (`lookupMailHost`, `node:dns/promises`, 2 s, any error → unknown;
+      `mail-host-rules.ts`, pure). /admin shows the host line and "On Outlook: N"; inviting a
+      microsoft / other row needs "Invite anyway" (`inviteFromWaitlist` returns `needs_confirm`
+      without it); `unknown` never blocks.
+    - **Check 18 P8:** the at-risk line counts only leads with a queue card; the greeting and the
+      quiet subject follow the local hour (`greetingFor`, `nothingWaitingSubject`).
+    - **Check 18 P9:** morning and monthly emails carry `List-Unsubscribe` / one-click POST to the
+      built `/api/emails/stop` with `k=digest` (its own signed purpose, so trial and digest links
+      can't cross); POST turns off only `digest_enabled` and logs `digest_turned_off`
+      {via: "unsubscribe"}; GET changes nothing and lands on a page that asks.
+    - Four new rate-limit keys (`emailTest`, `inviteAgain`, `waitlistCatchup`, `emailStop`) with
+      their rows in `security-surface.test.ts`.
 
 ## Milestones
 
@@ -3829,8 +3872,8 @@ acknowledgedOn })`; invoice reminders ask when they expect to pay, never an easy
   7-day "check is in the mail" hold, booking for someone else, the "is this a bot?" answer,
   Massachusetts carpenters' HIC / CSL words, the sign-off when someone else signs, prompt checks
   in CI and the eval baseline (`ANTHROPIC_API_KEY` repo secret), the legal lock in CI
-  (`fetch-depth: 0`), `GOOGLE_APP_STATE`, the "sa preview" Google project, the CASA pre-scan, and
-  search after the domain move.
+  (`fetch-depth: 0`), `GOOGLE_APP_STATE`, the "sa preview" Google project, the CASA pre-scan,
+  search after the domain move, a fourth trial email, and "Invite anyway" for non-Gmail addresses.
 - **Wave 2 merge D questions** (data and speed, phone look, security, phone alerts):
   docs/LAUNCH.md step 13 "Still open" — the AI limit numbers (500 per inbox, 3,000 a day) and
   the "sorting waits" wording; the broken-cookie homepage case; the shared database's table sizes

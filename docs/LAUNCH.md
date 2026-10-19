@@ -305,7 +305,9 @@ that doesn't open and a reviewer would see old screens. Each rejection costs wee
   (Production only) = `unverified` → Save → Redeploy. The Connect Gmail screen then says "Tap
   Advanced, then the link that starts with Go to" instead of "Tap Continue", which is what Google
   shows once the app is published. When Google approves the app (0g done), set it to `verified`
-  and redeploy: the warning line disappears. Preview stays unset.
+  and redeploy: the warning line disappears. Preview stays unset. Until it is set, the
+  "lost access to your Gmail" email and Settings → Your Gmail give Google's 7-day limit as the
+  reason; after it, "for example after a password change".
 - Why: ends the 7-day expiry for Gmail access given **from now on**, and the hand-added test-user
   list. Until verification passes, owners still see the "unverified app" warning (they can tap
   through it), and the 100-user cap stays. Sign-in to Squared Away itself is still invite-only, so
@@ -831,7 +833,8 @@ within 5 business days and help; until then these steps are still the right way 
 
 Until this is done, morning and monthly summaries only reach the Resend account's own address,
 and the "You're on the list" email never reaches people who join the waitlist (your own "New
-waitlist sign-up" notice still arrives; people who joined before this step don't get it later). The pricing cards list "morning summary" for every plan:
+waitlist sign-up" notice still arrives; people who joined before this step get it when you tap
+the catch-up button below). The pricing cards list "morning summary" for every plan:
 this step is what makes that true for owners other than you.
 
 - Where: resend.com → **Domains** → Add domain → add the DNS records it shows at your registrar.
@@ -842,6 +845,11 @@ this step is what makes that true for owners other than you.
 - Worked when: Resend → Domains shows **Verified**, and the next morning summary to an owner other
   than you shows as **Delivered** in Resend → Emails. A test sign-up on the waitlist with a
   second address of yours gets "You're on the Squared Away list".
+- Then catch up: `/admin` → the **Email** box says "Sending from <your address>" (tap **Send me a
+  test email** once). Then `/admin` → Waitlist → **Send the list email to people who never got
+  it** (it shows only once the sender is real); tap it until it says 0 to go (8 per tap). Then,
+  under the invites, tap **Email the sign-in link again** on each invite that never got its email.
+  Worked when: the catch-up button is gone and the Email box shows no refusals this week.
 
 ## 7. Stripe live mode
 
@@ -1332,7 +1340,8 @@ Nothing below is switched on or changed until you say so.
   - **One legal release.** Every wording change for the terms and the privacy policy waits in
     `docs/notes/legal-w3-legal.md` (the three [To confirm] items, data requests from your owners'
     customers, how changes are announced, Google's Limited Use wording, six small lines, the
-    breach sentence, text alerts, and two lines from the new prompts and trades). Nothing is in
+    breach sentence, text alerts, and two lines from the new prompts and trades), plus one in
+    `docs/notes/legal-w3-emails.md` (looking up who hosts a waitlist address's email). Nothing is in
     the documents yet. Okay each sentence (and the lawyer, where you want one); then the engineers
     apply all of them at once, so owners agree again only once (`docs/LEGAL-RELEASE.md`).
   - **How changes are announced:** the documents say owners hear about big changes before they
@@ -1373,6 +1382,13 @@ Nothing below is switched on or changed until you say so.
     run it once and read the two reports before any lab is paid?
   - **Search after the domain move** (step 5, item 10): a sitemap submit, two "Request indexing"
     taps and a Bing import. Okay to keep in the checklist?
+  - **A fourth trial email?** Today: day 2, the last day, and one a week after the trial ends
+    ("still here"), each with a Stop link. The review also wanted one the moment the trial ends
+    ("Your three days are up"). Add it?
+  - **Inviting a non-Gmail address:** /admin now shows where a waitlist address's email lives
+    (Outlook, another host, or "couldn't tell") and asks "Invite anyway?" for Outlook and other
+    hosts, since only Gmail can connect today. When the lookup couldn't tell (a custom domain
+    during a DNS hiccup), it shows the line but doesn't ask. Fine?
 
 - **Wave 2 merge D (2026-10-18): data and speed, phone look, security, phone alerts.** Each was
   built the safe way; say if you want it different:
