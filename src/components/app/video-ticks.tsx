@@ -98,11 +98,13 @@ export function VideoTicks({ rows, heading }: { rows: TickRow[]; heading: string
                 <label
                   id={`${id}-label`}
                   htmlFor={id}
-                  className={`flex min-h-tap items-center font-black ${on ? "line-through opacity-60" : ""}`}
+                  className={`flex min-h-tap items-center font-black ${on ? "text-muted-foreground line-through" : ""}`}
                 >
                   {r.label}
                 </label>
-                {r.children ? <div className={on ? "opacity-60" : ""}>{r.children}</div> : null}
+                {r.children ? (
+                  <div className={on ? "text-muted-foreground" : ""}>{r.children}</div>
+                ) : null}
               </div>
             </li>
           );
