@@ -51,3 +51,18 @@ logs `growth_notify_failed` / `growth_confirm_failed {error: name}` only. Not a 
 (Resend, like the waitlist confirmation). **Goes live with the Resend domain** (LAUNCH: verify
 the domain, switch `EMAIL_FROM` off onboarding@resend.dev); until then `sendEmail` delivers only
 to the Resend account's own address. docs/SETUP.md §7b says so. Privacy wording: legal note.
+
+## Step 5 (Check 2 P3): the hidden trap field
+
+Both public forms' trap input is now `sa_hp` ("Leave this empty"; `src/server/trap-rules.ts`,
+pure). A page loaded before the deploy still posts `website`, so both names count. Trap + a form
+that fails validation = today's polite success, nothing stored or counted. Trap + a valid form =
+stored as usual with the line `Flag: hidden field filled` (`TRAP_FLAG`, `growth-note.ts`: last
+line of the Growth block, or the last line of the waitlist app note), and **no email** to Davi or
+the visitor. /admin's card shows "Might be a bot: the hidden field was filled". Logs only
+`growth_trap_hit` / `waitlist_trap_hit {stored}`. `describeWaitlistEntry` returns `appFlagged` and
+an `appNote` without the flag line (so an invite never carries it); a typed line that reads
+exactly like the flag is stored as "(flag)".
+
+CLAUDE.md line to change: the Growth section's "the hidden 'website' field for bots" → "the
+hidden `sa_hp` trap field (Check 2 P3: filled + valid = stored with a flag, nobody emailed)".

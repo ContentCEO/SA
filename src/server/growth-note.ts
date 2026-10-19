@@ -19,6 +19,13 @@ export const MAX_GROWTH_BLOCKS = 1;
 
 const PHONE_FORMAT = /^\d{3}-\d{3}-\d{4}$/;
 
+/**
+ * Check 2 P3: the line stored when the hidden trap field was filled but everything else looked
+ * real. On its own line in a Growth block, or at the end of the app note; never typed by a
+ * person (every typed line in a block has its own prefix, and the waitlist form scrubs it).
+ */
+export const TRAP_FLAG = "Flag: hidden field filled";
+
 export type GrowthRequest = {
   /** "YYYY-MM-DD HH:MM", America/New_York (see localStamp). */
   at: string;
@@ -29,6 +36,8 @@ export type GrowthRequest = {
   nameGiven?: string | null;
   tradeGiven?: string | null;
   note?: string | null;
+  /** Check 2 P3: the hidden trap field was filled (Davi still sees it, marked "might be a bot"). */
+  trapFilled?: boolean;
 };
 
 /** Any "[Growth call]" (any case or spacing) typed by a person becomes "(growth call)". */
@@ -86,6 +95,7 @@ export function formatGrowthBlock(r: {
   nameGiven?: string | null;
   tradeGiven?: string | null;
   note?: string | null;
+  trapFilled?: boolean;
 }): string {
   const at = typeof r.at === "string" ? r.at : localStamp(r.at);
   return [
@@ -95,6 +105,7 @@ export function formatGrowthBlock(r: {
     r.nameGiven ? `${PREFIX.nameGiven}${r.nameGiven}` : null,
     r.tradeGiven ? `${PREFIX.tradeGiven}${r.tradeGiven}` : null,
     r.note ? `${PREFIX.note}${r.note}` : null,
+    r.trapFilled ? TRAP_FLAG : null,
   ]
     .filter((l): l is string => l !== null)
     .join("\n");
@@ -116,6 +127,7 @@ function parseBlock(lines: string[]): GrowthRequest {
     nameGiven: first(PREFIX.nameGiven) || null,
     tradeGiven: first(PREFIX.tradeGiven) || null,
     note: first(PREFIX.note) || null,
+    ...(lines.some((l) => l.trim() === TRAP_FLAG) ? { trapFilled: true } : {}),
   };
 }
 
@@ -191,14 +203,25 @@ export type WaitlistEntryFacts = {
 
 /** The ONLY reader of the Growth conventions: what a waitlist row is. */
 export function describeWaitlistEntry(row: WaitlistEntryFacts) {
-  const { appNote, growth } = splitWaitlistNote(row.note);
+  const split = splitWaitlistNote(row.note);
+  const { growth } = split;
+  const appLines = (split.appNote ?? "").split("\n");
+  const appFlagged = appLines.some((l) => l.trim() === TRAP_FLAG);
+  const appNote =
+    appLines
+      .filter((l) => l.trim() !== TRAP_FLAG)
+      .join("\n")
+      .trim() || null;
   const created = localStamp(row.createdAt);
   const newest = growth[0]?.at;
   return {
     /** A real app sign-up (legacy and seeded rows with no team size count). */
     app: row.teamSize !== GROWTH_ONLY_TEAM_SIZE,
     growth,
+    /** The app note without the trap flag line (that's `appFlagged`). */
     appNote,
+    /** Check 2 P3: the app form's hidden trap field was filled. */
+    appFlagged,
     latestStamp: newest && newest > created ? newest : created,
   };
 }

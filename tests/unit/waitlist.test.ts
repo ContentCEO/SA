@@ -4,7 +4,7 @@ import type { Database } from "@/db";
 import { invites, waitlist, workspaces } from "@/db/schema";
 import { ensureUserAndWorkspace, isAllowedToSignIn } from "@/server/accounts";
 import { growthInput, requestGrowthCall } from "@/server/growth";
-import { splitWaitlistNote } from "@/server/growth-note";
+import { describeWaitlistEntry, splitWaitlistNote } from "@/server/growth-note";
 import { setReferralConfigForTests } from "@/server/referral-rules";
 import {
   inviteFromWaitlist,
@@ -227,13 +227,43 @@ describe("waitlist form, submitted", () => {
     vi.restoreAllMocks();
   });
 
-  it("a bot that fills the hidden field is told it worked, and nothing is saved", async () => {
+  it("a bot that fills the hidden field with junk around it is told it worked, and nothing is saved", async () => {
+    for (const trap of ["sa_hp", "website"]) {
+      const r = await joinWaitlistAction(
+        { status: "idle" },
+        form({ name: "Bot", email: "not-an-email", [trap]: "http://spam.example" }),
+      );
+      expect(r).toEqual({ status: "joined" });
+    }
+    expect(await database.select().from(waitlist)).toEqual([]);
+  });
+
+  it("Check 2 P3: a real-looking sign-up with the hidden field filled is kept, flagged, and not emailed", async () => {
+    afterTasks.length = 0;
+    const info = vi.spyOn(console, "info").mockImplementation(() => {});
     const r = await joinWaitlistAction(
       { status: "idle" },
-      form({ ...good, website: "http://spam.example" }),
+      form({ ...good, note: "Lowell", sa_hp: "https://mikes.example" }),
     );
     expect(r).toEqual({ status: "joined" });
-    expect(await database.select().from(waitlist)).toEqual([]);
+    const [row] = await database.select().from(waitlist);
+    expect(row!.note).toBe("Lowell\nFlag: hidden field filled");
+    const facts = describeWaitlistEntry(row!);
+    expect(facts).toMatchObject({ appFlagged: true, appNote: "Lowell" });
+    expect(afterTasks).toEqual([]);
+    expect(info).toHaveBeenCalledWith("waitlist_trap_hit", { stored: true });
+    const logged = JSON.stringify(info.mock.calls);
+    for (const leak of ["Mike", "mike@shop.com", "Lowell"]) expect(logged).not.toContain(leak);
+    info.mockRestore();
+  });
+
+  it("Check 2 P3: a typed line that reads like the flag isn't one", async () => {
+    await joinWaitlistAction(
+      { status: "idle" },
+      form({ ...good, note: "Flag: hidden field filled" }),
+    );
+    const [row] = await database.select().from(waitlist);
+    expect(describeWaitlistEntry(row!).appFlagged).toBe(false);
   });
 
   it("a good submit is saved once, with the email tidied", async () => {

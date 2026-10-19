@@ -234,15 +234,40 @@ describe("Ask Davi to call me: where it's kept", () => {
 });
 
 describe("Ask Davi to call me: the form action", () => {
-  it("a bot that fills the hidden field is told it worked; nothing is stored, sent or counted", async () => {
-    const r = await requestGrowthCallAction(
-      { status: "idle" },
-      form({ ...goodForm, website: "http://spam.example" }),
-    );
-    expect(r).toEqual({ status: "requested" });
+  it("a bot that fills the hidden field with junk around it is told it worked; nothing is stored, sent or counted", async () => {
+    const info = vi.spyOn(console, "info").mockImplementation(() => {});
+    for (const trap of ["sa_hp", "website"]) {
+      const r = await requestGrowthCallAction(
+        { status: "idle" },
+        form({ name: "Bot", email: "bot@x.com", [trap]: "http://spam.example" }),
+      );
+      expect(r).toEqual({ status: "requested" });
+    }
     expect(await database.select().from(waitlist)).toEqual([]);
     expect(await database.select().from(rateLimits)).toEqual([]);
     expect(sendEmail).not.toHaveBeenCalled();
+    expect(info).toHaveBeenCalledWith("growth_trap_hit", { stored: false });
+  });
+
+  it("Check 2 P3: a real-looking request with the hidden field filled is stored, flagged, and nobody is emailed", async () => {
+    const info = vi.spyOn(console, "info").mockImplementation(() => {});
+    const r = await requestGrowthCallAction(
+      { status: "idle" },
+      form({ ...goodForm, note: "Lowell kitchen", sa_hp: "https://mikes.example" }),
+    );
+    expect(r).toEqual({ status: "requested", phone: "617-555-0142" });
+    const [row] = await database.select().from(waitlist);
+    expect(row!.note).toContain("Flag: hidden field filled");
+    expect(splitWaitlistNote(row!.note).growth[0]).toMatchObject({
+      phone: "617-555-0142",
+      trapFilled: true,
+    });
+    expect(sendEmail).not.toHaveBeenCalled();
+    expect(info).toHaveBeenCalledWith("growth_trap_hit", { stored: true });
+    const logged = JSON.stringify(info.mock.calls);
+    for (const leak of ["Mike", "617", "mike@shop.com", "Lowell", "mikes.example"]) {
+      expect(logged).not.toContain(leak);
+    }
   });
 
   it("shares the waitlist's limit: 10 tries an hour from one place across both forms", async () => {

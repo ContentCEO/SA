@@ -171,7 +171,7 @@ export const growthCopy = {
     servicesHint: "Pick all that apply.",
     note: "Anything else? (optional)",
     noteHint: "The towns you work in, the jobs you want more of — anything that helps.",
-    honeypot: "Website",
+    honeypot: "Leave this empty",
     submit: `Ask ${davi} to call me`,
     pending: "Sending…",
     privacy:
@@ -252,6 +252,8 @@ export const growthCopy = {
           ? "Invited to the app, not signed in yet."
           : "Not on the app waitlist. Asking for a Growth call never invites anyone.";
     },
+    /** Check 2 P3: the hidden trap field was filled, but the rest looked real. */
+    trapFlag: "Might be a bot: the hidden field was filled",
     growthOnlyError: "That's a Growth call request, not an app sign-up, so nobody was invited.",
   },
   /**

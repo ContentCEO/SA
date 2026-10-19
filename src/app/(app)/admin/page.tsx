@@ -259,6 +259,9 @@ function WaitlistEntry({
           .join(" · ")}
       </span>
       {facts.appNote ? <p className="text-muted-foreground">“{facts.appNote}”</p> : null}
+      {facts.appFlagged || request?.trapFilled ? (
+        <span className="font-semibold">{ga.trapFlag}</span>
+      ) : null}
       {describeSource(w) ? <span className="text-sm">Came from: {describeSource(w)}</span> : null}
       {/* Plan #47: an app sign-up's code, or (since 2026-10-16) a Growth request's, which is
           settled when Davi makes them a Growth client. */}

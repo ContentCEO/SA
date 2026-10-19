@@ -163,3 +163,30 @@ describe("withBlockTradeGiven", () => {
     expect(withBlockTradeGiven("", "Roofing")).toBe("");
   });
 });
+
+describe("Check 2 P3: the hidden-field flag", () => {
+  it("round-trips in a Growth block and is absent from old blocks", async () => {
+    const { formatGrowthBlock, splitWaitlistNote, TRAP_FLAG } =
+      await import("@/server/growth-note");
+    const block = formatGrowthBlock({
+      at: "2026-10-12 14:05",
+      services: ["Reviews"],
+      phone: "617-555-0142",
+      note: "Flag: hidden field filled",
+      trapFilled: true,
+    });
+    expect(block.split("\n").at(-1)).toBe(TRAP_FLAG);
+    const [r] = splitWaitlistNote(block).growth;
+    expect(r).toMatchObject({ trapFilled: true, note: "Flag: hidden field filled" });
+    const old = formatGrowthBlock({ at: "2026-10-12 14:05", services: [], phone: null });
+    expect(splitWaitlistNote(old).growth[0]!.trapFilled).toBeUndefined();
+    // A typed note that reads like the flag is a "Note:" line, never the flag itself.
+    const typed = formatGrowthBlock({
+      at: "2026-10-12 14:05",
+      services: [],
+      phone: null,
+      note: TRAP_FLAG,
+    });
+    expect(splitWaitlistNote(typed).growth[0]!.trapFilled).toBeUndefined();
+  });
+});

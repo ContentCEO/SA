@@ -95,6 +95,8 @@ export async function requestGrowthCall(
   input: GrowthInput,
   now: Date = new Date(),
   source: SignupSource = NO_SOURCE,
+  /** Check 2 P3: the hidden trap field was filled; stored with a flag line, the admin still sees it. */
+  opts: { trapFilled?: boolean } = {},
 ) {
   const email = normalizeEmail(input.email);
   const referralCode = referralsVisible() ? (input.referralCode ?? null) : null;
@@ -103,6 +105,7 @@ export async function requestGrowthCall(
     services: input.services.map(growthServiceLabel),
     phone: input.phone,
     note: input.note,
+    ...(opts.trapFilled ? { trapFilled: true } : {}),
   };
   const result = await db().transaction(async (tx) => {
     const [inserted] = await tx

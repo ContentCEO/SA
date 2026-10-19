@@ -1190,7 +1190,12 @@ test.describe("Ask Davi to call me", () => {
     await form.getByLabel("Your name").fill("Bot");
     await form.getByLabel(/^Phone/).fill("617-555-0142");
     await form.getByLabel(/^Email/).fill(email);
-    await form.locator('input[name="website"]').fill("http://spam.example", { force: true });
+    // Check 2 P3: the trap is out of the tab order and hidden from screen readers.
+    const trap = form.locator('input[name="sa_hp"]');
+    await expect(trap).toHaveAttribute("tabindex", "-1");
+    await expect(trap.locator("xpath=ancestor::div[@aria-hidden]")).toHaveCount(1);
+    await expect(form.getByRole("textbox", { name: "Leave this empty" })).toHaveCount(0);
+    await trap.fill("http://spam.example", { force: true });
     await form.getByRole("button", { name: "Ask Davi to call me" }).click();
     await expect(form.getByRole("status")).toContainText("Davi will call you soon.");
     expect(
@@ -1205,8 +1210,8 @@ test("admin: Growth requests and app sign-ups side by side; Growth-only is never
 }) => {
   const mixed = unique("mixed");
   const only = unique("only");
-  const block = (phone: string, at: string, services: string[]) =>
-    formatGrowthBlock({ at, services, phone });
+  const block = (phone: string, at: string, services: string[], trapFilled = false) =>
+    formatGrowthBlock({ at, services, phone, trapFilled });
   await testDb.insert(schema.waitlist).values([
     {
       email: mixed,
@@ -1221,7 +1226,7 @@ test("admin: Growth requests and app sign-ups side by side; Growth-only is never
       trade: "roofing",
       phone: "617-555-0142",
       teamSize: "growth-only",
-      note: block("617-555-0142", "2026-10-12 09:12", ["Google ads", "Reviews"]),
+      note: block("617-555-0142", "2026-10-12 09:12", ["Google ads", "Reviews"], true),
     },
   ]);
   await signInAs(context, await seedAdmin());
@@ -1246,6 +1251,9 @@ test("admin: Growth requests and app sign-ups side by side; Growth-only is never
     "Not on the app waitlist. Asking for a Growth call never invites anyone.",
   );
   await expect(b).toContainText("Wants help with: Google ads, Reviews");
+  // Check 2 P3: a request with the hidden field filled still shows, marked for Davi.
+  await expect(b).toContainText("Might be a bot: the hidden field was filled");
+  await expect(a).not.toContainText("Might be a bot");
   // No app invite on a Growth-only row: only the explicit Growth controls.
   await expect(b.getByRole("button", { name: /^Invite Sam/ })).toHaveCount(0);
   await expect(b.locator("summary", { hasText: /^Invite to Growth$/ })).toBeVisible();

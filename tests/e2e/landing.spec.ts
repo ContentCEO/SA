@@ -124,7 +124,7 @@ test.describe("waitlist form", () => {
     await form.getByLabel("Your name").fill("Bot");
     await form.getByLabel(/Business email/).fill(email);
     // Two forms on the page now (the app waitlist and Growth): use this form's hidden field.
-    await form.locator('input[name="website"]').fill("http://spam.example", { force: true });
+    await form.locator('input[name="sa_hp"]').fill("http://spam.example", { force: true });
     await form.getByRole("button", { name: "Join the waitlist" }).click();
     await expect(form.getByText("You're on the list. Davi will be in touch.")).toBeVisible();
     expect(
