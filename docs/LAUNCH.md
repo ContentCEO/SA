@@ -29,6 +29,7 @@ Contents:
 - [5. Support email and the production domain](#5-support-email-and-the-production-domain)
 - [6. Morning emails from your own domain (Resend)](#6-morning-emails-from-your-own-domain-resend)
 - [7. Stripe live mode](#7-stripe-live-mode)
+  - [7g. Customer emails, retries and your name on card statements](#7g-customer-emails-retries-and-your-name-on-card-statements)
 - [8. Error alerts (Sentry, optional)](#8-error-alerts-sentry-optional)
 - [9. Phone notifications (VAPID keys)](#9-phone-notifications-vapid-keys)
 - [10. Optional: text alerts and instant Gmail notifications](#10-optional-text-alerts-and-instant-gmail-notifications)
@@ -1033,6 +1034,51 @@ mode and test mode are set up separately. In this order:
   on its own: decide in Stripe and /admin what a refund means (here, cancel its subscription in
   Stripe too; the account then shows as canceled).
 
+### 7g. Customer emails, retries and your name on card statements
+
+The app sends no receipt of its own. Without these settings an owner can pay $499 plus a plan and
+get nothing in writing, and a card that fails at renewal is never mentioned to them. Do this in
+live mode (Test mode off), any time after 7a.
+
+**Customer emails (receipts).**
+
+- Where: Stripe → Settings → Business → **Customer emails**.
+- Set: under Payments, **Successful payments** and **Refunds** on.
+- Worked when: both switches show on.
+
+**Retries and failed-card emails.**
+
+- Where: Stripe → Billing → Revenue recovery → **Emails**: turn on **Send emails when card
+  payments fail** and **Send emails about expiring cards** (sent a month before the card on file
+  expires).
+- Then Revenue recovery → **Retries**: keep **Smart Retries** on. Stripe's recommended default is
+  8 tries within 2 weeks
+  ([docs.stripe.com/billing/revenue-recovery/smart-retries](https://docs.stripe.com/billing/revenue-recovery/smart-retries)).
+- What happens after the last retry is a choice on the same page: **cancel the subscription**,
+  **mark it as unpaid**, **leave it past-due** or **pause it**. The app moves an account on what
+  Stripe reports: "unpaid" and "past_due" become **Past due** (read-only: nothing is sorted,
+  drafted or sent, nothing is deleted, and the banner asks the owner to update their card), and
+  "canceled" becomes **Canceled** (read-only, nothing deleted; choosing a plan again starts over
+  without the setup fee). A **paused** subscription doesn't move the account at all, so with that
+  choice an owner who stopped paying could keep sending. Which one is your decision
+  ([step 13](#13-decisions-waiting-on-you)).
+- Worked when: the Retries page shows your choice saved, and both email switches show on.
+
+**Your name on card statements.**
+
+- Where: Stripe → Settings → Business → **Public details**.
+- Set: the **statement descriptor**, for example `SQUAREDAWAY`: 5 to 22 Latin characters, at least
+  one letter, none of `<` `>` `\` `'` `"` `*`, and it must match the name you do business under
+  ([docs.stripe.com/get-started/account/statement-descriptors](https://docs.stripe.com/get-started/account/statement-descriptors)).
+  Also the **support phone** and support email (Stripe prints them on receipts). Then Settings →
+  Business → **Branding** → the **Email receipts** tab: your colors and icon.
+- Worked when: Public details shows the statement descriptor saved.
+
+**Check it.** Stripe doesn't send these emails on its own in test mode. Its check is a test-mode
+purchase with the email of a member of your Stripe team: Transactions → Payments → that payment →
+Receipt history → ⋯ → **Send receipt**. Worked when: the receipt email arrives with your name and
+colors, and after the real purchase in 7f the receipt arrives by itself.
+
 ## 8. Error alerts (Sentry, optional)
 
 - Where: [SETUP.md](SETUP.md) §6b (sentry.io → new Next.js project → Client Keys (DSN)).
@@ -1485,6 +1531,11 @@ Nothing below is switched on or changed until you say so.
   quiet inbox adds about 17,300, so one shop already needs the paid plan.
 - **Vercel Pro** ([check it this week](#vercel-hosting)): Hobby is for non-commercial use only;
   move to Pro (about $20 a month) before the first paying customer.
+- **After Stripe's last retry** ([7g](#7g-customer-emails-retries-and-your-name-on-card-statements)):
+  cancel the subscription, mark it unpaid, or leave it past-due? With "unpaid" or "past-due" the
+  account stays **Past due** (read-only) until the card is fixed; with "cancel" it becomes
+  **Canceled** and a new plan doesn't charge the setup fee again. Don't pick "pause": the app
+  doesn't treat a paused subscription as unpaid.
 - **Who is your backup person?** Someone who can call owners back if you can't be reached for a
   week. Fill in their name and phone in [AWAY.md](AWAY.md) ("For the backup person"), which also
   lists what carries on without you and what to do before you leave.

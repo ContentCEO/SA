@@ -881,6 +881,25 @@ describe("LAUNCH.md structure", () => {
     expect(claude).not.toContain("live only after the **second merge**");
   });
 
+  it("step 7 has 7g: Stripe's customer emails, retries and statement descriptor (Check 17 P10)", () => {
+    const heading = "### 7g. Customer emails, retries and your name on card statements";
+    expect(sections[7]!.body).toContain(heading);
+    const g = flat(sections[7]!.body.slice(sections[7]!.body.indexOf(heading)));
+    for (const text of [
+      "Customer emails",
+      "Retries",
+      "statement descriptor",
+      "**Successful payments** and **Refunds** on",
+      "Send emails when card payments fail",
+      "8 tries within 2 weeks",
+      "Worked when:",
+    ])
+      expect(g, text).toContain(text);
+    // In the contents and in step 13's open decisions.
+    expect(launch).toContain("(#7g-customer-emails-retries-and-your-name-on-card-statements)");
+    expect(step13Parts().open).toContain("**After Stripe's last retry**");
+  });
+
   it("the referral reward is recorded as decided, with Davi's seven answers", () => {
     const { decided, open } = step13Parts();
     expect(decided).toContain("#47 referral reward: offer A, a free month one plan up");
