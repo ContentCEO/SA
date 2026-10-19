@@ -89,6 +89,8 @@ import {
   referralsVisible,
 } from "@/server/referral-rules";
 import { describeWaitlistEntry, formatStamp, localStamp } from "@/server/growth-note";
+import { growthHeardFromLabel } from "@/config/growth";
+import { isTimeZone } from "@/server/time-zone-rules";
 import { growthCopy } from "@/components/marketing/growth/growth-copy";
 import { phoneHref } from "@/lib/phone-href";
 import { pricing } from "@/config/pricing";
@@ -192,6 +194,11 @@ const inviteDay = new Intl.DateTimeFormat("en-US", {
 const dollars = (cents: number) => `$${(cents / 100).toFixed(2)}`;
 
 const ga = growthCopy.admin;
+/** Check 45 P5: the caller's clock ("6:12am"), from the zone their browser gave. */
+const theirTime = (now: Date, timeZone: string) =>
+  new Intl.DateTimeFormat("en-US", { timeZone, hour: "numeric", minute: "2-digit" })
+    .format(now)
+    .replace(/\s?(AM|PM)$/, (_, m: string) => m.toLowerCase());
 const CALLABLE = /^\d{3}-\d{3}-\d{4}$/;
 
 /**
@@ -273,6 +280,14 @@ function WaitlistEntry({
           <span className="font-semibold">{ga.wants(request.services)}</span>
           <span className="text-sm">{ga.asked(formatStamp(request.at))}</span>
           {callLink(request.phone)}
+          {request.state ? <span>{ga.worksIn(request.state)}</span> : null}
+          {request.timeZone && isTimeZone(request.timeZone) ? (
+            <span>{ga.theirTime(theirTime(now, request.timeZone))}</span>
+          ) : null}
+          {request.heardFrom ? (
+            <span>{ga.heard(growthHeardFromLabel(request.heardFrom))}</span>
+          ) : null}
+          {request.sentBy ? <span>{ga.sentBy(request.sentBy)}</span> : null}
           {request.nameGiven ? <span>{ga.nameGiven(request.nameGiven)}</span> : null}
           {request.tradeGiven ? <span>{ga.tradeGiven(request.tradeGiven)}</span> : null}
           {request.note ? <p className="text-muted-foreground">“{request.note}”</p> : null}

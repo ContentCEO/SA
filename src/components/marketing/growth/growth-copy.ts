@@ -188,8 +188,15 @@ export const growthCopy = {
     emailHint: "In case we can't reach you by phone.",
     trade: "Trade",
     otherTrade: "Another trade",
+    /** Check 45 P5 (optional). */
+    state: "Which state do you work in? (optional)",
+    stateEmpty: "Choose one (optional)",
+    /** Check 5 P2 (optional). */
+    heardFrom: `How did you hear about ${davi}? (optional)`,
+    heardFromEmpty: "Choose one (optional)",
+    sentBy: "Who sent you? (optional)",
     servicesLegend: "What do you want help with?",
-    servicesHint: "Pick all that apply.",
+    servicesHint: "Pick all that apply, or Not sure yet.",
     note: "Anything else? (optional)",
     noteHint: "The towns you work in, the jobs you want more of — anything that helps.",
     honeypot: "Leave this empty",
@@ -208,6 +215,8 @@ export const growthCopy = {
     trade: "Pick your trade.",
     servicesNone: "Pick at least one thing you want help with.",
     serviceUnknown: "Pick from the list.",
+    stateUnknown: "Pick a state from the list.",
+    sentByLong: "Keep it under 80 characters.",
     noteLong: "Keep it under 500 characters.",
     rateLimited: `Too many tries from here. Try again in an hour, or call or text ${phone}.`,
     saveFailed: `We couldn't save that just now. Try again in a minute, or call or text ${phone}.`,
@@ -257,6 +266,11 @@ export const growthCopy = {
     asked: (when: string) => `Asked for a call ${when}`,
     call: (p: string) => `Call ${p}`,
     nameGiven: (n: string) => `Name given: ${n}`,
+    /** Check 5 P2 / Check 45 P5: what they told us on the form, never anything else. */
+    heard: (label: string) => `Heard: ${label}`,
+    sentBy: (who: string) => `Sent by: ${who}`,
+    worksIn: (state: string) => `Works in ${state}`,
+    theirTime: (time: string) => `Their time now: ${time}`,
     tradeGiven: (t: string) => `Trade given: ${t}`,
     growthOnly: "Not on the app waitlist. Asking for a Growth call never invites anyone.",
     /** Check 5 P5: a Growth-only row whose email already has an app account or invite. */

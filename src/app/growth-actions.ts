@@ -29,7 +29,18 @@ export async function requestGrowthCallAction(
   formData: FormData,
 ): Promise<GrowthState> {
   const raw: Record<string, string> = {};
-  for (const key of ["name", "phone", "email", "trade", "note", "ref"]) {
+  for (const key of [
+    "name",
+    "phone",
+    "email",
+    "trade",
+    "note",
+    "ref",
+    "heardFrom",
+    "sentBy",
+    "state",
+    "timeZone",
+  ]) {
     const v = formData.get(key);
     raw[key] = typeof v === "string" ? v : "";
   }
@@ -44,6 +55,10 @@ export async function requestGrowthCallAction(
     services,
     note: raw.note || null,
     referralCode: raw.ref || null,
+    heardFrom: raw.heardFrom || null,
+    sentBy: raw.sentBy || null,
+    state: raw.state || null,
+    timeZone: raw.timeZone || null,
   };
   // Check 2 P3: a filled trap with junk around it is a bot: polite success, nothing stored or
   // counted. A filled trap around a real-looking request (a browser autofilling the field) is

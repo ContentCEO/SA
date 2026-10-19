@@ -1344,3 +1344,44 @@ test("/growth: no empty proof section while there's no real proof (Check 2 P6)",
   await expect(page.getByRole("region", { name: "What it looks like" })).toHaveCount(0);
   await expect(page.getByText("what it looks like,")).toHaveCount(0);
 });
+
+test.describe("Ask Davi to call me: the optional questions (Check 3 P4, 5 P2, 45 P5)", () => {
+  test.use({
+    extraHTTPHeaders: { "x-forwarded-for": "198.51.100.22" },
+    timezoneId: "America/Phoenix",
+  });
+
+  test("Not sure yet alone, how they heard, who sent them, state and time zone reach the admin card", async ({
+    page,
+    context,
+  }) => {
+    const email = unique("growth-heard");
+    await page.goto("/growth#growth-call");
+    const form = page.getByRole("region", { name: "Ask Davi to call me" });
+    await form.getByLabel("Your name").fill("Lena Park");
+    await form.getByLabel(/^Phone/).fill("480-555-0142");
+    await form.getByLabel(/^Email/).fill(email);
+    await form.getByLabel("Trade", { exact: true }).selectOption("painting");
+    await form.getByLabel("Which state do you work in? (optional)").selectOption("AZ");
+    await expect(form.getByLabel("Who sent you? (optional)")).toHaveCount(0);
+    await form.getByLabel("How did you hear about Davi? (optional)").selectOption("contractor");
+    const sentBy = form.getByLabel("Who sent you? (optional)");
+    await expect(sentBy).toBeVisible();
+    expect((await sentBy.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+    await sentBy.fill("Mike Torres");
+    const notSure = form.getByRole("checkbox", { name: "Not sure yet — tell me what to do first" });
+    await notSure.check();
+    expect(await noOverflow(page)).toBe(true);
+    await form.getByRole("button", { name: "Ask Davi to call me" }).click();
+    await expect(form.getByRole("status")).toContainText("Davi will call you at 480-555-0142.");
+
+    await signInAs(context, await seedAdmin());
+    await page.goto("/admin#waitlist");
+    const card = page.getByRole("listitem", { name: `Waitlist: ${email}` });
+    await expect(card).toContainText("Wants help with: Not sure yet — tell me what to do first");
+    await expect(card).toContainText("Works in AZ");
+    await expect(card).toContainText(/Their time now: \d{1,2}:\d{2}(am|pm)/);
+    await expect(card).toContainText("Heard: Another contractor told me");
+    await expect(card).toContainText("Sent by: Mike Torres");
+  });
+});

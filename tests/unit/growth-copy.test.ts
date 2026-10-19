@@ -298,3 +298,19 @@ describe("Check 2 P7 + Check 6 P6: the first ground rule and the homepage hand-o
     );
   });
 });
+
+describe("Check 3 P4: Not sure yet is a form choice, not a card", () => {
+  it("the services section still lists exactly GROWTH_SERVICES", async () => {
+    const { GROWTH_REQUEST_OPTIONS } = await import("@/config/growth");
+    expect(growthCopy.services.items.map((i) => i.title)).toEqual(
+      GROWTH_SERVICES.map((s) => s.label),
+    );
+    expect(words).not.toContain("Not sure yet — tell me");
+    expect(GROWTH_REQUEST_OPTIONS.at(-1)).toEqual({
+      value: "not_sure",
+      label: "Not sure yet — tell me what to do first",
+    });
+    // A stored request's services are comma-separated: no label may hold a comma.
+    for (const o of GROWTH_REQUEST_OPTIONS) expect(o.label).not.toContain(",");
+  });
+});

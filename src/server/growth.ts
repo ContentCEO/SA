@@ -3,7 +3,12 @@ import { createHmac } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { z } from "zod";
 import { growthCopy } from "@/components/marketing/growth/growth-copy";
-import { GROWTH_SERVICE_VALUES, GROWTH_SERVICES, growthServiceLabel } from "@/config/growth";
+import {
+  GROWTH_HEARD_FROM_VALUES,
+  GROWTH_REQUEST_VALUES,
+  growthRequestLabel,
+} from "@/config/growth";
+import { US_STATE_CODES } from "@/config/us-states";
 import { tradeLabel } from "@/config/trades";
 import { db } from "@/db";
 import { tradeEnum, waitlist } from "@/db/schema";
@@ -21,6 +26,7 @@ import {
 } from "./growth-note";
 import { isReferralCode, referralsVisible } from "./referral-rules";
 import { firstTouch, NO_SOURCE, type SignupSource } from "./source-rules";
+import { isTimeZone } from "./time-zone-rules";
 
 const msg = growthCopy.errors;
 
@@ -39,47 +45,74 @@ export function normalizeUsPhone(raw: string): string | null {
 /** One line, no "[Growth call]" a person typed (it would look like a stored block). */
 const oneLine = (v: unknown) => (typeof v === "string" ? scrubMarker(collapseLine(v)) : v);
 
+/** The form's order, once each; "Not sure yet" (Check 3 P4) last. */
 const serviceOrder = (picked: readonly string[]) =>
-  GROWTH_SERVICES.map((s) => s.value).filter((v) => picked.includes(v));
+  GROWTH_REQUEST_VALUES.filter((v) => picked.includes(v));
+
+/** An optional select: blank is null, anything else must be on the list. */
+const blankToNull = (v: unknown) => (v === "" || v === undefined ? null : v);
 
 /** The call-request form: plain-language messages, exactly as on the page. */
-export const growthInput = z.object({
-  name: z.preprocess(oneLine, z.string().min(1, msg.nameEmpty).max(120, msg.nameLong)),
-  phone: z.string().transform((raw, ctx) => {
-    if (!raw.trim()) {
-      ctx.addIssue({ code: "custom", message: msg.phoneEmpty });
-      return z.NEVER;
-    }
-    const phone = normalizeUsPhone(raw);
-    if (!phone) {
-      ctx.addIssue({ code: "custom", message: msg.phoneBad });
-      return z.NEVER;
-    }
-    return phone;
-  }),
-  // 254 is the longest address email allows; it also keeps the key under Postgres's index limit.
-  email: z
-    .string()
-    .trim()
-    .toLowerCase()
-    .min(1, msg.emailEmpty)
-    .max(254, msg.emailBad)
-    .email(msg.emailBad),
-  trade: z.enum(tradeEnum.enumValues, { message: msg.trade }),
-  services: z
-    .array(z.enum(GROWTH_SERVICE_VALUES, { message: msg.serviceUnknown }))
-    .min(1, msg.servicesNone)
-    .transform(serviceOrder),
-  note: z.preprocess(
-    (v) => (typeof v === "string" ? oneLine(v) || null : (v ?? null)),
-    z.string().max(500, msg.noteLong).nullable(),
-  ),
-  /** Plan #47: the code from a referral link (?ref=). Anything malformed is dropped, not an error. */
-  referralCode: z
-    .unknown()
-    .optional()
-    .transform((v) => (isReferralCode(v) ? v : null)),
-});
+export const growthInput = z
+  .object({
+    name: z.preprocess(oneLine, z.string().min(1, msg.nameEmpty).max(120, msg.nameLong)),
+    phone: z.string().transform((raw, ctx) => {
+      if (!raw.trim()) {
+        ctx.addIssue({ code: "custom", message: msg.phoneEmpty });
+        return z.NEVER;
+      }
+      const phone = normalizeUsPhone(raw);
+      if (!phone) {
+        ctx.addIssue({ code: "custom", message: msg.phoneBad });
+        return z.NEVER;
+      }
+      return phone;
+    }),
+    // 254 is the longest address email allows; it also keeps the key under Postgres's index limit.
+    email: z
+      .string()
+      .trim()
+      .toLowerCase()
+      .min(1, msg.emailEmpty)
+      .max(254, msg.emailBad)
+      .email(msg.emailBad),
+    trade: z.enum(tradeEnum.enumValues, { message: msg.trade }),
+    services: z
+      .array(z.enum(GROWTH_REQUEST_VALUES, { message: msg.serviceUnknown }))
+      .min(1, msg.servicesNone)
+      .transform(serviceOrder),
+    /** Check 5 P2: how they heard (optional; a value id, never the label). */
+    heardFrom: z.preprocess(
+      blankToNull,
+      z.enum(GROWTH_HEARD_FROM_VALUES, { message: msg.serviceUnknown }).nullable().default(null),
+    ),
+    /** Check 5 P2: who sent them (optional, one line, ≤80; kept only with "Another contractor"). */
+    sentBy: z.preprocess(
+      (v) => (typeof v === "string" ? oneLine(v) || null : (v ?? null)),
+      z.string().max(80, msg.sentByLong).nullable().default(null),
+    ),
+    /** Check 45 P5: the state they work in (optional). */
+    state: z.preprocess(
+      blankToNull,
+      z.enum(US_STATE_CODES, { message: msg.stateUnknown }).nullable().default(null),
+    ),
+    /** Check 45 P5: the browser's zone; anything that isn't a real zone is dropped, not an error. */
+    timeZone: z
+      .unknown()
+      .optional()
+      .transform((v) => (isTimeZone(v) ? v : null)),
+    note: z.preprocess(
+      (v) => (typeof v === "string" ? oneLine(v) || null : (v ?? null)),
+      z.string().max(500, msg.noteLong).nullable(),
+    ),
+    /** Plan #47: the code from a referral link (?ref=). Anything malformed is dropped, not an error. */
+    referralCode: z
+      .unknown()
+      .optional()
+      .transform((v) => (isReferralCode(v) ? v : null)),
+  })
+  // "Who sent you?" only belongs with "Another contractor told me" (the form shows it only then).
+  .transform((r) => ({ ...r, sentBy: r.heardFrom === "contractor" ? r.sentBy : null }));
 export type GrowthInput = z.output<typeof growthInput>;
 
 /**
@@ -102,8 +135,12 @@ export async function requestGrowthCall(
   const referralCode = referralsVisible() ? (input.referralCode ?? null) : null;
   const request = {
     at: localStamp(now),
-    services: input.services.map(growthServiceLabel),
+    services: input.services.map(growthRequestLabel),
     phone: input.phone,
+    heardFrom: input.heardFrom,
+    sentBy: input.sentBy,
+    state: input.state,
+    timeZone: input.timeZone,
     note: input.note,
     ...(opts.trapFilled ? { trapFilled: true } : {}),
   };
@@ -154,6 +191,7 @@ export async function requestGrowthCall(
   console.info("growth_call_requested", {
     existing: result === "added_to_existing",
     services: input.services.length,
+    heardFrom: input.heardFrom !== null,
   });
   return result;
 }

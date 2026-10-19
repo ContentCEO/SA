@@ -12,3 +12,11 @@ this branch.
 - **Privacy policy, Resend bullet** ("…the email confirming you joined the waitlist;") — change to:
   "…the email confirming you joined the waitlist; the email confirming you asked for a Growth
   call;"
+
+## Check 5 P2 + Check 45 P5 (step 11): new optional Growth form answers
+
+- **Privacy policy, "When you ask for a free Growth call:"** — after "and anything you add in the
+  note," add: "and, if you tell us, how you heard about us and who sent you, the state you work
+  in, and your time zone (from your browser, so we call at a sensible hour),"
+- If Davi later adds town (Check 44 P3): "the town you work in" in the same list, and the same
+  for the waitlist paragraph.

@@ -132,3 +132,26 @@ Gmail.", and customer pages ("Dana," — `headlineName` keeps names as written; 
 "this customer,"). `tests/unit/headlines.test.ts` scans every serif/heavy field under src.
 Touches `src/components/growth-portal/portal-copy.ts`, `src/server/alerts.ts` and
 `settings/gmail/page.tsx` (one line each) — possible small conflicts with App emails (alerts.ts).
+
+## Step 11 (Check 2 P8 + 3 P4 + 5 P2 + 45 P5 + 44 P3): form fields — safe default, no migration
+
+Davi picks the final field list. Built now, all **optional and additive**, as lines in the
+`[Growth call]` block only (no columns; Group 5's `growth_requests` carries them):
+
+- "Not sure yet — tell me what to do first" (`GROWTH_NOT_SURE`, last checkbox; services still
+  need at least one, so P4 wins over P8's "services optional"). Not a card. The spec's label had
+  a comma, which would split when a stored block is read back, so it's an em dash.
+- "How did you hear about Davi? (optional)" (`GROWTH_HEARD_FROM`, the id is stored as
+  `Heard from: <id>`) and, only with "Another contractor told me", "Who sent you? (optional)"
+  (≤80, one line, scrubbed; `Sent by: <text>`; dropped server-side with any other answer).
+- "Which state do you work in? (optional)" (`US_STATES`; `State: AZ`) and the browser's time zone
+  (hidden `TimeZoneInput`; `Time zone: America/Phoenix`; an invalid zone is dropped).
+- /admin card: "Works in AZ", "Their time now: 6:12am", "Heard: …", "Sent by: …".
+- Logged: `growth_call_requested {existing, services, heardFrom: boolean}` only.
+
+**Not built (Davi's call):** trade optional and services optional (C02 P8); town, and state/town
+on the app waitlist form with `waitlist.state` / `waitlist.town` columns, the "Massachusetts
+only" chip and MA-first sort (C44 P3, needs a migration — put them on `growth_requests` /
+waitlist in one lane turn if wanted); "State: AZ" in Davi's email notice (C45 P5 item 5: the
+notice is content-free today, and a body that changes under the same Resend idempotency key
+gets a 409). Privacy lines: legal note.

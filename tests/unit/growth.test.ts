@@ -308,7 +308,11 @@ describe("Ask Davi to call me: the form action", () => {
     // Davi's notice and the visitor's confirmation (Check 2 P2).
     expect(sendEmail).toHaveBeenCalledTimes(2);
     expect(sendEmail.mock.calls.map((c) => c[0].to).sort()).toEqual([ADMIN, "mike@shop.com"]);
-    expect(info).toHaveBeenCalledWith("growth_call_requested", { existing: false, services: 2 });
+    expect(info).toHaveBeenCalledWith("growth_call_requested", {
+      existing: false,
+      services: 2,
+      heardFrom: false,
+    });
     const logged = JSON.stringify(info.mock.calls);
     for (const leak of ["Mike", "617", "mike@shop.com"]) expect(logged).not.toContain(leak);
   });
@@ -458,5 +462,83 @@ describe("Check 2 P2: the visitor's confirmation", () => {
   it("the hidden-field path sends nothing", async () => {
     await requestGrowthCallAction({ status: "idle" }, form({ website: "http://spam.example" }));
     expect(sendEmail).not.toHaveBeenCalled();
+  });
+});
+
+describe("Check 3 P4: Not sure yet", () => {
+  it("is accepted alone, stored last with its label; an empty list and unknown values still fail", async () => {
+    expect(parse({ services: ["not_sure", "reviews"] }).services).toEqual(["reviews", "not_sure"]);
+    await requestGrowthCall(parse({ services: ["not_sure"] }));
+    const [row] = await database.select().from(waitlist);
+    expect(row!.note).toContain("Help with: Not sure yet — tell me what to do first");
+    expect(splitWaitlistNote(row!.note).growth[0]!.services).toEqual([
+      "Not sure yet — tell me what to do first",
+    ]);
+    const empty = growthInput.safeParse({ ...good, services: [] });
+    expect(empty.error?.issues[0]?.message).toBe("Pick at least one thing you want help with.");
+    const unknown = growthInput.safeParse({ ...good, services: ["seo"] });
+    expect(unknown.error?.issues[0]?.message).toBe("Pick from the list.");
+  });
+});
+
+describe("Check 5 P2 + Check 45 P5: optional heard-from, sent-by, state and time zone", () => {
+  it("blank is fine; unknown values are refused in plain words; a bad zone is dropped", () => {
+    expect(parse()).toMatchObject({ heardFrom: null, sentBy: null, state: null, timeZone: null });
+    expect(parse({ heardFrom: "", state: "", timeZone: "" })).toMatchObject({
+      heardFrom: null,
+      state: null,
+      timeZone: null,
+    });
+    expect(growthInput.safeParse({ ...good, heardFrom: "radio" }).error?.issues[0]?.message).toBe(
+      "Pick from the list.",
+    );
+    expect(growthInput.safeParse({ ...good, state: "ZZ" }).error?.issues[0]?.message).toBe(
+      "Pick a state from the list.",
+    );
+    expect(parse({ state: "AZ", timeZone: "America/Phoenix" })).toMatchObject({
+      state: "AZ",
+      timeZone: "America/Phoenix",
+    });
+    expect(parse({ timeZone: "Mars/Olympus" }).timeZone).toBeNull();
+  });
+
+  it("Sent by is one line, at most 80 characters, and kept only with Another contractor", () => {
+    expect(
+      growthInput.safeParse({ ...good, heardFrom: "contractor", sentBy: "x".repeat(81) }).error
+        ?.issues[0]?.message,
+    ).toBe("Keep it under 80 characters.");
+    expect(parse({ heardFrom: "contractor", sentBy: "Mike\n[Growth call]" }).sentBy).toBe(
+      "Mike (growth call)",
+    );
+    expect(parse({ heardFrom: "google", sentBy: "Mike" }).sentBy).toBeNull();
+  });
+
+  it("is stored as value ids in the block, and never logged", async () => {
+    const info = vi.spyOn(console, "info").mockImplementation(() => {});
+    const r = await requestGrowthCallAction(
+      { status: "idle" },
+      form({
+        ...goodForm,
+        heardFrom: "contractor",
+        sentBy: "Zed Quill",
+        state: "AZ",
+        timeZone: "America/Phoenix",
+      }),
+    );
+    expect(r.status).toBe("requested");
+    const [row] = await database.select().from(waitlist);
+    expect(splitWaitlistNote(row!.note).growth[0]).toMatchObject({
+      heardFrom: "contractor",
+      sentBy: "Zed Quill",
+      state: "AZ",
+      timeZone: "America/Phoenix",
+    });
+    expect(row!.note).not.toContain("Another contractor told me");
+    expect(info).toHaveBeenCalledWith("growth_call_requested", {
+      existing: false,
+      services: 2,
+      heardFrom: true,
+    });
+    expect(JSON.stringify(info.mock.calls)).not.toMatch(/Zed|contractor|AZ|Phoenix/);
   });
 });
