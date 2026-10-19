@@ -842,8 +842,9 @@ describe("LAUNCH.md structure", () => {
       expect(now, text).toContain(text);
     expect(now).not.toMatch(/\bDo it now\b/);
     const step1 = flat(sections.find((x) => x.n === 1)!.body);
-    expect(step1).toContain('**Not in this merge: the "I agree" boxes**');
+    // Check 1 P1: both merges are live (PR #10 = 8cfb749, PR #11 = c1bf580, 2026-10-16).
     expect(step1).toContain("`claude/squared-away-mvp-ddxl7s`");
+    expect(step1).toContain("`c1bf580`");
     expect(step1).not.toContain("Everything waiting is in **one** pull request");
     expect(launch).not.toContain("live with the next merge");
     const line = TERMS_BOX_OFF_LINE;
@@ -863,6 +864,21 @@ describe("LAUNCH.md structure", () => {
     );
     expect(d).toContain("Settings → Business → **Public details**");
     expect(d).toContain(flat(line));
+  });
+
+  it("the 'I agree' boxes are recorded as live, and the legal text leads the open list (Check 1 P1)", () => {
+    // Production has asked owners to agree since c1bf580 (PR #11), so the notes may never say the
+    // boxes are still waiting for a merge.
+    expect(flat(launch)).not.toMatch(/Not in this merge:? (?:the )?"?I agree"? boxes/i);
+    expect(flat(launch)).not.toContain("live with the second merge");
+    const { open } = step13Parts();
+    const start = open.indexOf("- **");
+    expect(start, "the first open item").toBe(open.indexOf("- **First: finish the legal text"));
+    const first = open.slice(start, open.indexOf("- **", start + 4));
+    expect(first).toContain("Owners are agreeing to the draft");
+    const claude = flat(readFileSync(join(ROOT, "CLAUDE.md"), "utf8"));
+    expect(claude).not.toContain("the gate isn't live yet");
+    expect(claude).not.toContain("live only after the **second merge**");
   });
 
   it("the referral reward is recorded as decided, with Davi's seven answers", () => {

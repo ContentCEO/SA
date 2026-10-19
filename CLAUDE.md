@@ -1276,7 +1276,8 @@ Davi runs several builder sessions at once. The build order for review prompts i
   content-free notice (Resend list), and Vercel Web Analytics (cookie-free, public pages only;
   Vercel also listed for it). Both docs' "Last updated" and `TERMS_VERSION` moved to 2026-10-16
   (the rule: the three stay equal); `docs/terms.md` text unchanged. Everyone who agreed to
-  2026-10-15 is asked once more (only testers; the gate isn't live yet). `legal-docs.test.ts`
+  2026-10-15 is asked once more (only testers; the gate wasn't live yet then — it is live in
+  production since `c1bf580`, PR #11, 2026-10-16). `legal-docs.test.ts`
   holds each new sentence to the code. LAUNCH.md step 13 has "Outside review (2026-10-15)".
 - **Outside-review follow-ups (2026-10-16, after verifying P1–P4):**
   - Reply-To backfill matches only the **one email a draft answers** (`answeredIdSql`: the
@@ -1633,7 +1634,8 @@ Davi runs several builder sessions at once. The build order for review prompts i
     mode), both with the admin line as the check. **Two merges:** PR #10 (`claude/launch-integration`)
     puts `/terms` and `/privacy` live (production 404s them until then); the boxes, the terms
     screen, Stripe's box and the /admin line ship only with the second merge of
-    `claude/squared-away-mvp-ddxl7s` (LAUNCH.md step 1 says so); step 13 "Decided on 2026-10-15"; privacy policy: "When you
+    `claude/squared-away-mvp-ddxl7s` (LAUNCH.md step 1 says so). Both merged on 2026-10-16:
+    PR #10 = `8cfb749`, PR #11 = `c1bf580`; the terms gate is live in production since `c1bf580`; step 13 "Decided on 2026-10-15"; privacy policy: "When you
     agree to our terms" (time + version), the short-lived sign-in cookie, and retention (until
     Delete my account). `docs/terms.md` text unchanged; both docs stay dated October 15, 2026.
   - e2e: `signInAs(context, owner)` marks the user as agreed (current version) unless
@@ -4121,9 +4123,10 @@ acknowledgedOn })`; invoice reminders ask when they expect to pay, never an easy
   the registration in Stripe → Tax → Locations (`docs/LAUNCH.md` 7e). Stripe never warns about the
   home state.
 - Terms assent: decided and built 2026-10-15 ("I agree" boxes at sign-in, on /welcome/terms and
-  at Stripe Checkout), but live only after the **second merge** (`claude/squared-away-mvp-ddxl7s`,
-  after PR #10); until then production's terms are only a footer link. A lawyer's review of both
-  legal drafts is still due before launch.
+  at Stripe Checkout). The terms gate is live in production since the **second merge**
+  (`claude/squared-away-mvp-ddxl7s`, PR #11, `c1bf580`, 2026-10-16), so owners are agreeing to
+  the draft documents now: finishing the legal text (the one legal release) and a lawyer's
+  review of both legal drafts are still due before launch (LAUNCH.md step 13, first open item).
 - **M7 merge timing (complaint memory, A1):** the first preview build of the M7 branch runs
   migration 0024 (marks threads still sorted `complaint` with `complained_at`). Until M7 merges,
   production's older code keeps re-sorting threads without setting the mark, so a complaint that

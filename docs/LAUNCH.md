@@ -212,7 +212,10 @@ too. Stripe only shows that box once your terms address is saved in Stripe. Unti
 still works, just without the box (owners have already agreed at sign-in), and `/admin` tells you
 so.
 
-**This comes in two merges, so it is done in two parts.**
+**This came in two merges, and both are live.** Step 1's merge went to production as PR #10
+(commit `8cfb749`) and the "I agree" boxes as PR #11 (commit `c1bf580`), both on 2026-10-16.
+`https://sa-dac3.vercel.app/signin` shows the box. What's left is saving the links in Stripe
+below.
 
 - **Step 1's merge** (`claude/launch-integration`) puts the `/terms` and `/privacy` pages live.
   Today both addresses show "page not found" on production, so don't save them in Stripe before
@@ -325,8 +328,8 @@ that doesn't open and a reviewer would see old screens. Each rejection costs wee
 
 **0d. Record the demo video.** (After steps 1 and 5, on the merged production app.)
 
-The video's sign-in shows the "I agree" box, which goes live with the second merge (see
-[step 1](#1-merge-the-launch-branch)), so record after that one too.
+The video's sign-in shows the "I agree" box, which is live in production since the second merge
+(`c1bf580`, see [step 1](#1-merge-the-launch-branch)).
 
 - Branding is published (0b): Google's consent screen shows Squared Away, not the domain. If it
   shows the domain, stop and finish 0b.
@@ -442,12 +445,13 @@ The merge also puts the homepage's About section live. Its wording changed on 20
 "The homepage's About section" in [step 13](#13-decisions-waiting-on-you)); tell the engineers
 before you tap Merge if you want different words.
 
-**Not in this merge: the "I agree" boxes** (decided on 2026-10-15, [step 13](#13-decisions-waiting-on-you)).
-They are on a second branch, `claude/squared-away-mvp-ddxl7s`, built on top of this one. The
-engineers open its pull request once this merge is live, and you merge it the same way (another
-production deploy, checked the same way as below). This merge does put the `/terms` and `/privacy`
-pages live, so right after it, save them in Stripe:
-[Add your terms link in Stripe](#add-your-terms-link-in-stripe-right-after-step-1).
+**Done.** This merge went to production as PR #10 (commit `8cfb749`) on 2026-10-16. The "I agree"
+boxes (decided on 2026-10-15, [step 13](#13-decisions-waiting-on-you)) followed the same day in a
+second merge, of `claude/squared-away-mvp-ddxl7s`: PR #11, commit `c1bf580`. They are live:
+owners tick "I agree to the Terms of Service and the Privacy Policy" at sign-in today. The
+`/terms` and `/privacy` pages are live too, so save them in Stripe:
+[Add your terms link in Stripe](#add-your-terms-link-in-stripe-right-after-step-1). The steps
+below are kept for the record and for the next merge.
 
 - Before you tap Merge (one minute, optional but only possible now): the **Gmail draft check**.
   It tells the engineers whether Gmail keeps a draft's id when it's sent. The app is safe either
@@ -1254,7 +1258,8 @@ Waiting on you from that review (nothing here is built or changed until you say 
      waiting one by hand).
   7. No reminder email; the banner says what changes three days before the end.
 
-- **"I agree to the Terms": yes, built** (live with the second merge, after step 1's; see
+- **"I agree to the Terms": yes, built** (live in production since the second merge, `c1bf580`,
+  2026-10-16; see
   [Add your terms link in Stripe](#add-your-terms-link-in-stripe-right-after-step-1)).
   Massachusetts' top court said
   online terms only bind people who were properly shown them and agreed to them (Kauders v. Uber,
@@ -1284,7 +1289,7 @@ Waiting on you from that review (nothing here is built or changed until you say 
   a payment with a real card. Details under "Reviewer test account" in
   [google-verification.md](google-verification.md). It's recorded after the live check in the
   next item.
-- **Drop `gmail.send`: yes, built** (live with the second merge, after step 1's). Connect Gmail now
+- **Drop `gmail.send`: yes, built** (live in production since the second merge, `c1bf580`). Connect Gmail now
   asks Google for two permissions, which Google's screen calls "View your email messages and
   settings" (`gmail.readonly`) and "Manage drafts and send emails" (`gmail.compose`). Google's own
   reference says `gmail.compose` can send a draft and a new email, which covers every reply and the
@@ -1337,6 +1342,11 @@ Recorded here so nobody asks again.
 
 Nothing below is switched on or changed until you say so.
 
+- **First: finish the legal text and take the "Draft" banners off.** Owners are agreeing to the
+  draft terms and privacy policy now: the "I agree" box has been live at sign-in since
+  2026-10-16 (`c1bf580`), and both documents still open with the Draft banner. The wording waiting
+  for your okay, and the lawyer's review, are the items under "Wave 3 merge A" ("One legal
+  release") and "A lawyer's review" below.
 - **Wave 3 merge A (2026-10-19): prompt versions, legal text, Google review.** Built the safe way;
   say if you want it different:
   - **One legal release.** Every wording change for the terms and the privacy policy waits in
