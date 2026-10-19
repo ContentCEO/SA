@@ -37,6 +37,8 @@ const MENTIONS: Record<string, string> = {
   "src/lib/analytics-rules.ts": "page-view analytics counts /growth",
   // Check 1 P6: the post-deploy header check names the public paths, /growth among them.
   "src/lib/check-headers-rules.ts": "the noindex check lists the public pages (/growth is one)",
+  "src/lib/structured-data.ts":
+    "/growth's search-engine Service block (Check 33 P2): growthCopy and the service labels only",
   "src/components/app/growth-mention.tsx": "the one static app mention (no props)",
   "src/components/app/site-footer.tsx":
     "the public pages' static footer link (/, /signin, /not-invited, /goodbye, legal pages)",

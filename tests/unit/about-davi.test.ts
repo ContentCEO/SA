@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { siteConfig } from "@/config/site";
 
 const source = readFileSync(
   join(__dirname, "../../src/components/marketing/about-davi.tsx"),
@@ -27,7 +28,8 @@ describe("homepage About section, photo", () => {
   it("shows no placeholder box until a photo exists (the story text stays)", () => {
     expect(source).not.toMatch(/coming soon/i);
     expect(source).not.toContain("data-photo-placeholder");
-    expect(source).toContain("const photo: { src: string; alt: string } | null = null;");
+    expect(source).toContain("const photo = siteConfig.operatorPhoto;");
+    expect(siteConfig.operatorPhoto).toBeNull();
     expect(source).toContain("It began");
   });
 });

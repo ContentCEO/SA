@@ -1543,6 +1543,19 @@ const LIMIT_SITES: LimitSite[] = [
     limit: "waitlist",
     work: ["requestGrowthCall"],
   },
+  // Check 26 P8: the same two forms, per email address (after validation, before the save).
+  {
+    file: "src/app/waitlist-actions.ts",
+    fn: "joinWaitlistAction",
+    limit: "formEmail",
+    work: ["joinWaitlist"],
+  },
+  {
+    file: "src/app/growth-actions.ts",
+    fn: "requestGrowthCallAction",
+    limit: "formEmail",
+    work: ["requestGrowthCall"],
+  },
   // Text alerts.
   {
     file: "src/server/sms-alerts.ts",

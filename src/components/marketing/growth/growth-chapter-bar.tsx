@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { GrowthMark } from "@/components/brand/growth-mark";
 import { growthCopy } from "./growth-copy";
 
 /**
@@ -17,13 +18,12 @@ export function GrowthChapterBar() {
     <div className="sticky top-0 z-20 border-b border-ash/40 bg-charcoal px-4 py-2">
       {/* min-h-14: as tall as the paper header (wordmark row), so none of it peeks out below. */}
       <div className="mx-auto flex min-h-14 max-w-5xl items-center justify-between gap-3">
-        <p className="font-black" aria-hidden>
-          {c.label}
-        </p>
+        {/* Check 7 P6: the same mark as /growth's header. */}
+        <GrowthMark />
         <nav aria-label={c.nav}>
           <Link
             href="#growth-call"
-            className="inline-flex min-h-tap items-center rounded-lg bg-offwhite px-4 font-semibold text-charcoal"
+            className="inline-flex min-h-tap items-center rounded-lg bg-offwhite px-3 font-semibold whitespace-nowrap text-charcoal sm:px-4"
           >
             {c.link}
           </Link>

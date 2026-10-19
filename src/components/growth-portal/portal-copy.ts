@@ -52,7 +52,7 @@ export const portalCopy = {
     talk: {
       region: `Talk to ${davi}`,
       serif: "questions?",
-      heavy: `call or text ${davi.toLowerCase()}.`,
+      heavy: `call or text ${davi}.`,
       call: `Call ${phone}`,
       text: `Text ${phone}`,
     },

@@ -3,7 +3,12 @@ import { createHmac } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { z } from "zod";
 import { growthCopy } from "@/components/marketing/growth/growth-copy";
-import { GROWTH_SERVICE_VALUES, GROWTH_SERVICES, growthServiceLabel } from "@/config/growth";
+import {
+  GROWTH_HEARD_FROM_VALUES,
+  GROWTH_REQUEST_VALUES,
+  growthRequestLabel,
+} from "@/config/growth";
+import { US_STATE_CODES } from "@/config/us-states";
 import { tradeLabel } from "@/config/trades";
 import { db } from "@/db";
 import { tradeEnum, waitlist } from "@/db/schema";
@@ -22,6 +27,7 @@ import {
 import { isReferralCode, referralsVisible } from "./referral-rules";
 import { firstTouch, NO_SOURCE, type SignupSource } from "./source-rules";
 import { tradeOtherField, tradeOtherFor } from "@/lib/trade-other";
+import { isTimeZone } from "./time-zone-rules";
 
 const msg = growthCopy.errors;
 
@@ -40,49 +46,76 @@ export function normalizeUsPhone(raw: string): string | null {
 /** One line, no "[Growth call]" a person typed (it would look like a stored block). */
 const oneLine = (v: unknown) => (typeof v === "string" ? scrubMarker(collapseLine(v)) : v);
 
+/** The form's order, once each; "Not sure yet" (Check 3 P4) last. */
 const serviceOrder = (picked: readonly string[]) =>
-  GROWTH_SERVICES.map((s) => s.value).filter((v) => picked.includes(v));
+  GROWTH_REQUEST_VALUES.filter((v) => picked.includes(v));
+
+/** An optional select: blank is null, anything else must be on the list. */
+const blankToNull = (v: unknown) => (v === "" || v === undefined ? null : v);
 
 /** The call-request form: plain-language messages, exactly as on the page. */
-export const growthInput = z.object({
-  name: z.preprocess(oneLine, z.string().min(1, msg.nameEmpty).max(120, msg.nameLong)),
-  phone: z.string().transform((raw, ctx) => {
-    if (!raw.trim()) {
-      ctx.addIssue({ code: "custom", message: msg.phoneEmpty });
-      return z.NEVER;
-    }
-    const phone = normalizeUsPhone(raw);
-    if (!phone) {
-      ctx.addIssue({ code: "custom", message: msg.phoneBad });
-      return z.NEVER;
-    }
-    return phone;
-  }),
-  // 254 is the longest address email allows; it also keeps the key under Postgres's index limit.
-  email: z
-    .string()
-    .trim()
-    .toLowerCase()
-    .min(1, msg.emailEmpty)
-    .max(254, msg.emailBad)
-    .email(msg.emailBad),
-  trade: z.enum(tradeEnum.enumValues, { message: msg.trade }),
-  /** Check 41 P4: "Which trade?" for "Another trade" (optional, one line, max 60). */
-  tradeOther: tradeOtherField.optional(),
-  services: z
-    .array(z.enum(GROWTH_SERVICE_VALUES, { message: msg.serviceUnknown }))
-    .min(1, msg.servicesNone)
-    .transform(serviceOrder),
-  note: z.preprocess(
-    (v) => (typeof v === "string" ? oneLine(v) || null : (v ?? null)),
-    z.string().max(500, msg.noteLong).nullable(),
-  ),
-  /** Plan #47: the code from a referral link (?ref=). Anything malformed is dropped, not an error. */
-  referralCode: z
-    .unknown()
-    .optional()
-    .transform((v) => (isReferralCode(v) ? v : null)),
-});
+export const growthInput = z
+  .object({
+    name: z.preprocess(oneLine, z.string().min(1, msg.nameEmpty).max(120, msg.nameLong)),
+    phone: z.string().transform((raw, ctx) => {
+      if (!raw.trim()) {
+        ctx.addIssue({ code: "custom", message: msg.phoneEmpty });
+        return z.NEVER;
+      }
+      const phone = normalizeUsPhone(raw);
+      if (!phone) {
+        ctx.addIssue({ code: "custom", message: msg.phoneBad });
+        return z.NEVER;
+      }
+      return phone;
+    }),
+    // 254 is the longest address email allows; it also keeps the key under Postgres's index limit.
+    email: z
+      .string()
+      .trim()
+      .toLowerCase()
+      .min(1, msg.emailEmpty)
+      .max(254, msg.emailBad)
+      .email(msg.emailBad),
+    trade: z.enum(tradeEnum.enumValues, { message: msg.trade }),
+    /** Check 41 P4: "Which trade?" for "Another trade" (optional, one line, max 60). */
+    tradeOther: tradeOtherField.optional(),
+    services: z
+      .array(z.enum(GROWTH_REQUEST_VALUES, { message: msg.serviceUnknown }))
+      .min(1, msg.servicesNone)
+      .transform(serviceOrder),
+    /** Check 5 P2: how they heard (optional; a value id, never the label). */
+    heardFrom: z.preprocess(
+      blankToNull,
+      z.enum(GROWTH_HEARD_FROM_VALUES, { message: msg.serviceUnknown }).nullable().default(null),
+    ),
+    /** Check 5 P2: who sent them (optional, one line, ≤80; kept only with "Another contractor"). */
+    sentBy: z.preprocess(
+      (v) => (typeof v === "string" ? oneLine(v) || null : (v ?? null)),
+      z.string().max(80, msg.sentByLong).nullable().default(null),
+    ),
+    /** Check 45 P5: the state they work in (optional). */
+    state: z.preprocess(
+      blankToNull,
+      z.enum(US_STATE_CODES, { message: msg.stateUnknown }).nullable().default(null),
+    ),
+    /** Check 45 P5: the browser's zone; anything that isn't a real zone is dropped, not an error. */
+    timeZone: z
+      .unknown()
+      .optional()
+      .transform((v) => (isTimeZone(v) ? v : null)),
+    note: z.preprocess(
+      (v) => (typeof v === "string" ? oneLine(v) || null : (v ?? null)),
+      z.string().max(500, msg.noteLong).nullable(),
+    ),
+    /** Plan #47: the code from a referral link (?ref=). Anything malformed is dropped, not an error. */
+    referralCode: z
+      .unknown()
+      .optional()
+      .transform((v) => (isReferralCode(v) ? v : null)),
+  })
+  // "Who sent you?" only belongs with "Another contractor told me" (the form shows it only then).
+  .transform((r) => ({ ...r, sentBy: r.heardFrom === "contractor" ? r.sentBy : null }));
 export type GrowthInput = z.output<typeof growthInput>;
 
 /**
@@ -98,14 +131,21 @@ export async function requestGrowthCall(
   input: GrowthInput,
   now: Date = new Date(),
   source: SignupSource = NO_SOURCE,
+  /** Check 2 P3: the hidden trap field was filled; stored with a flag line, the admin still sees it. */
+  opts: { trapFilled?: boolean } = {},
 ) {
   const email = normalizeEmail(input.email);
   const referralCode = referralsVisible() ? (input.referralCode ?? null) : null;
   const request = {
     at: localStamp(now),
-    services: input.services.map(growthServiceLabel),
+    services: input.services.map(growthRequestLabel),
     phone: input.phone,
+    heardFrom: input.heardFrom,
+    sentBy: input.sentBy,
+    state: input.state,
+    timeZone: input.timeZone,
     note: input.note,
+    ...(opts.trapFilled ? { trapFilled: true } : {}),
   };
   const result = await db().transaction(async (tx) => {
     const [inserted] = await tx
@@ -158,6 +198,7 @@ export async function requestGrowthCall(
   console.info("growth_call_requested", {
     existing: result === "added_to_existing",
     services: input.services.length,
+    heardFrom: input.heardFrom !== null,
   });
   return result;
 }
@@ -231,6 +272,68 @@ export async function withTimeout<T>(work: Promise<T>, ms: number): Promise<T> {
   } finally {
     clearTimeout(timer);
   }
+}
+
+export function growthConfirmKey(email: string, now: Date) {
+  return `growth-confirm-${addressKey(email)}-${localStamp(now).slice(0, 10)}`;
+}
+
+/**
+ * Check 2 P2: "here's what's next" to the person who asked for a call. Only fixed words and
+ * the operator's number: **nothing the visitor typed** (name, note, services), since anyone can put
+ * someone else's address in the form. One per address per New York day (Resend idempotency
+ * key); raced against the same timeout as the admin notice. Without Resend env it's skipped by
+ * sendEmail ("not_configured"). Not a Gmail send path: it goes through Resend like the waitlist
+ * confirmation.
+ */
+export async function sendGrowthConfirmation(
+  email: string,
+  deps: { send?: EmailSender; now?: Date; timeoutMs?: number } = {},
+) {
+  const address = normalizeEmail(email);
+  const c = growthCopy.confirm;
+  const { text, html } = brandEmail({
+    serif: c.serif,
+    heavy: c.heavy,
+    lines: [...c.lines],
+    footer: c.footer,
+  });
+  const replyTo = process.env.SUPPORT_EMAIL?.trim();
+  return withTimeout(
+    (deps.send ?? sendEmail)({
+      to: address,
+      subject: c.subject,
+      text,
+      html,
+      idempotencyKey: growthConfirmKey(address, deps.now ?? new Date()),
+      ...(replyTo ? { replyTo } : {}),
+    }),
+    deps.timeoutMs ?? GROWTH_NOTIFY_TIMEOUT_MS,
+  );
+}
+
+/**
+ * After a stored request: the admin notice and the visitor's confirmation, side by side. Never
+ * throws: a failed or hanging email never fails the request. Logs the error's name only.
+ */
+export async function sendGrowthEmails(
+  email: string,
+  deps: { send?: EmailSender; now?: Date; timeoutMs?: number } = {},
+) {
+  const [notify, confirm] = await Promise.allSettled([
+    notifyGrowthRequest(email, deps),
+    sendGrowthConfirmation(email, deps),
+  ]);
+  const name = (r: PromiseRejectedResult) =>
+    r.reason instanceof Error ? r.reason.name : "unknown";
+  if (notify.status === "rejected") console.warn("growth_notify_failed", { error: name(notify) });
+  if (confirm.status === "rejected") {
+    console.warn("growth_confirm_failed", { error: name(confirm) });
+  }
+  return {
+    notify: notify.status === "fulfilled" ? notify.value : ("failed" as const),
+    confirm: confirm.status === "fulfilled" ? confirm.value : ("failed" as const),
+  };
 }
 
 /**

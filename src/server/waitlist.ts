@@ -13,8 +13,16 @@ import {
   growthBlocksText,
   scrubMarker,
   splitWaitlistNote,
+  TRAP_FLAG,
   withBlockTradeGiven,
 } from "./growth-note";
+
+/** A typed line that reads exactly like the trap flag isn't one (Check 2 P3). */
+const scrubTrapFlag = (note: string) =>
+  note
+    .split("\n")
+    .map((l) => (l.trim() === TRAP_FLAG ? "(flag)" : l))
+    .join("\n");
 import { isReferralCode, referralsVisible } from "./referral-rules";
 import { firstTouch, NO_SOURCE, type SignupSource } from "./source-rules";
 import { workspaceByReferralCode } from "./referrals";
@@ -65,14 +73,19 @@ export const waitlistInput = z.object({
 export async function joinWaitlist(
   input: z.output<typeof waitlistInput>,
   source: SignupSource = NO_SOURCE,
-  deps: { resolveMx?: MxResolver } = {},
+  /**
+   * Check 2 P3: `trapFilled`, the hidden trap field was filled (the note gets the flag line at its
+   * end). Check 47 P3: `resolveMx`, a stand-in DNS lookup for tests.
+   */
+  opts: { trapFilled?: boolean; resolveMx?: MxResolver } = {},
 ) {
   const email = normalizeEmail(input.email);
-  const note = input.note ? scrubMarker(input.note) : null;
+  const typed = input.note ? scrubTrapFlag(scrubMarker(input.note)) : null;
+  const note = [typed, opts.trapFilled ? TRAP_FLAG : null].filter(Boolean).join("\n") || null;
   // Plan #47: kept only while referrals are switched on (flag and amount).
   const referralCode = referralsVisible() ? (input.referralCode ?? null) : null;
   // Check 47 P3: who hosts their email (best effort, 2 seconds at most; never blocks the sign-up).
-  const mailHost = await lookupMailHost(email, deps);
+  const mailHost = await lookupMailHost(email, { resolveMx: opts.resolveMx });
   return db().transaction(async (tx) => {
     const [row] = await tx
       .insert(waitlist)

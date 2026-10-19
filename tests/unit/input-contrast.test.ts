@@ -123,7 +123,8 @@ describe("every visible field has the slate edge", () => {
       const src = readFileSync(f, "utf8");
       for (const tag of fieldTags(src)) {
         if (/type="(hidden|checkbox|radio)"/.test(tag)) continue;
-        if (/name="website"/.test(tag)) continue; // honeypot, off screen and aria-hidden
+        // The trap field (Check 2 P3: "sa_hp", once "website"), off screen and aria-hidden.
+        if (/name="(website|sa_hp)"/.test(tag)) continue;
         const cls = tag.match(/className=(?:"([^"]*)"|\{([\s\S]*)\})/);
         let text = cls?.[1] ?? cls?.[2] ?? "";
         // A shared class string (field.tsx's `control`, growth-admin's `field`).

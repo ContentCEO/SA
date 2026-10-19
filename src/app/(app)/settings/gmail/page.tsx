@@ -82,7 +82,7 @@ export default async function GmailSettingsPage(props: PageProps<"/settings/gmai
       : null;
 
   return (
-    <SettingsScreen path="/settings/gmail" heavy="your gmail." params={await props.searchParams}>
+    <SettingsScreen path="/settings/gmail" heavy="your Gmail." params={await props.searchParams}>
       <section aria-labelledby="mailbox" className="flex flex-col gap-4">
         <h2 id="mailbox" className="sr-only">
           Your Gmail

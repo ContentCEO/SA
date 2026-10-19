@@ -19,6 +19,13 @@ export const MAX_GROWTH_BLOCKS = 1;
 
 const PHONE_FORMAT = /^\d{3}-\d{3}-\d{4}$/;
 
+/**
+ * Check 2 P3: the line stored when the hidden trap field was filled but everything else looked
+ * real. On its own line in a Growth block, or at the end of the app note; never typed by a
+ * person (every typed line in a block has its own prefix, and the waitlist form scrubs it).
+ */
+export const TRAP_FLAG = "Flag: hidden field filled";
+
 export type GrowthRequest = {
   /** "YYYY-MM-DD HH:MM", America/New_York (see localStamp). */
   at: string;
@@ -28,7 +35,17 @@ export type GrowthRequest = {
   phone: string | null;
   nameGiven?: string | null;
   tradeGiven?: string | null;
+  /** Check 5 P2: a GROWTH_HEARD_FROM id (unknown ids are kept as stored). */
+  heardFrom?: string | null;
+  /** Check 5 P2: who sent them (typed, one line, ≤80). */
+  sentBy?: string | null;
+  /** Check 45 P5: two-letter state code they picked. */
+  state?: string | null;
+  /** Check 45 P5: the browser's IANA time zone. */
+  timeZone?: string | null;
   note?: string | null;
+  /** Check 2 P3: the hidden trap field was filled (Davi still sees it, marked "might be a bot"). */
+  trapFilled?: boolean;
 };
 
 /** Any "[Growth call]" (any case or spacing) typed by a person becomes "(growth call)". */
@@ -75,6 +92,10 @@ const PREFIX = {
   phone: "Phone: ",
   nameGiven: "Name given: ",
   tradeGiven: "Trade given: ",
+  heardFrom: "Heard from: ",
+  sentBy: "Sent by: ",
+  state: "State: ",
+  timeZone: "Time zone: ",
   note: "Note: ",
 } as const;
 
@@ -85,7 +106,12 @@ export function formatGrowthBlock(r: {
   phone: string | null;
   nameGiven?: string | null;
   tradeGiven?: string | null;
+  heardFrom?: string | null;
+  sentBy?: string | null;
+  state?: string | null;
+  timeZone?: string | null;
   note?: string | null;
+  trapFilled?: boolean;
 }): string {
   const at = typeof r.at === "string" ? r.at : localStamp(r.at);
   return [
@@ -94,11 +120,20 @@ export function formatGrowthBlock(r: {
     `${PREFIX.phone}${r.phone ?? ""}`,
     r.nameGiven ? `${PREFIX.nameGiven}${r.nameGiven}` : null,
     r.tradeGiven ? `${PREFIX.tradeGiven}${r.tradeGiven}` : null,
+    r.heardFrom ? `${PREFIX.heardFrom}${r.heardFrom}` : null,
+    r.sentBy ? `${PREFIX.sentBy}${r.sentBy}` : null,
+    r.state ? `${PREFIX.state}${r.state}` : null,
+    r.timeZone ? `${PREFIX.timeZone}${r.timeZone}` : null,
     r.note ? `${PREFIX.note}${r.note}` : null,
+    r.trapFilled ? TRAP_FLAG : null,
   ]
     .filter((l): l is string => l !== null)
     .join("\n");
 }
+
+/** A newer line (Check 5 P2 / 45 P5) only when present, so old blocks parse exactly as before. */
+const optionalLine = <K extends string>(key: K, value: string | null) =>
+  (value ? { [key]: value } : {}) as Partial<Record<K, string>>;
 
 function parseBlock(lines: string[]): GrowthRequest {
   const first = (prefix: string) => {
@@ -115,7 +150,12 @@ function parseBlock(lines: string[]): GrowthRequest {
     phone: phone && PHONE_FORMAT.test(phone) ? phone : null,
     nameGiven: first(PREFIX.nameGiven) || null,
     tradeGiven: first(PREFIX.tradeGiven) || null,
+    ...optionalLine("heardFrom", first(PREFIX.heardFrom)),
+    ...optionalLine("sentBy", first(PREFIX.sentBy)),
+    ...optionalLine("state", first(PREFIX.state)),
+    ...optionalLine("timeZone", first(PREFIX.timeZone)),
     note: first(PREFIX.note) || null,
+    ...(lines.some((l) => l.trim() === TRAP_FLAG) ? { trapFilled: true } : {}),
   };
 }
 
@@ -162,7 +202,10 @@ export function withBlockTradeGiven(blocks: string, tradeGiven: string | null): 
 const sameRequest = (a: GrowthRequest, b: Omit<GrowthRequest, "at">) =>
   a.phone === b.phone &&
   (a.note ?? null) === (b.note ?? null) &&
-  a.services.join("\n") === b.services.join("\n");
+  a.services.join("\n") === b.services.join("\n") &&
+  (["heardFrom", "sentBy", "state", "timeZone"] as const).every(
+    (k) => (a[k] ?? null) === (b[k] ?? null),
+  );
 
 /**
  * Add a request: it replaces the previous block (MAX_GROWTH_BLOCKS = 1). An identical resubmit
@@ -191,14 +234,25 @@ export type WaitlistEntryFacts = {
 
 /** The ONLY reader of the Growth conventions: what a waitlist row is. */
 export function describeWaitlistEntry(row: WaitlistEntryFacts) {
-  const { appNote, growth } = splitWaitlistNote(row.note);
+  const split = splitWaitlistNote(row.note);
+  const { growth } = split;
+  const appLines = (split.appNote ?? "").split("\n");
+  const appFlagged = appLines.some((l) => l.trim() === TRAP_FLAG);
+  const appNote =
+    appLines
+      .filter((l) => l.trim() !== TRAP_FLAG)
+      .join("\n")
+      .trim() || null;
   const created = localStamp(row.createdAt);
   const newest = growth[0]?.at;
   return {
     /** A real app sign-up (legacy and seeded rows with no team size count). */
     app: row.teamSize !== GROWTH_ONLY_TEAM_SIZE,
     growth,
+    /** The app note without the trap flag line (that's `appFlagged`). */
     appNote,
+    /** Check 2 P3: the app form's hidden trap field was filled. */
+    appFlagged,
     latestStamp: newest && newest > created ? newest : created,
   };
 }

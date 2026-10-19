@@ -8,7 +8,8 @@ import { features } from "@/components/marketing/home-copy";
 import { pricing } from "@/config/pricing";
 import { siteConfig } from "@/config/site";
 import { beforeSend, countedUrl } from "@/lib/analytics-rules";
-import { jsonLd, structuredData } from "@/lib/structured-data";
+import { growthStructuredData, jsonLd, structuredData } from "@/lib/structured-data";
+import { GROWTH_SERVICES } from "@/config/growth";
 import { QUOTE_STAGES, stageLabel } from "@/server/quote-rules";
 import sitemap, { legalDate } from "@/app/sitemap";
 import { TERMS_VERSION } from "@/config/legal";
@@ -253,5 +254,19 @@ describe("plain words on the public pages (Check 6 P9, P10, Check 34 P5)", () =>
     const signin = readFileSync("src/app/signin/page.tsx", "utf8").replace(/\s+/g, " ");
     expect(signin).toContain("From your Google sign-in we keep only your name and email address.");
     expect(signin).not.toContain("only shares your name");
+  });
+});
+
+describe("Check 33 P2: /growth's structured data", () => {
+  it("is one Service with the service labels, and no rating, review, price or area", () => {
+    const d = growthStructuredData("https://example.app");
+    expect(d["@type"]).toBe("Service");
+    expect(d.url).toBe("https://example.app/growth");
+    expect(growthStructuredData("https://example.app/").url).toBe("https://example.app/growth");
+    expect(d.serviceType).toEqual(GROWTH_SERVICES.map((s) => s.label));
+    expect(d.provider.founder.name).toBe(siteConfig.operator);
+    expect(JSON.stringify(d)).not.toMatch(
+      /aggregateRating|"review"|ratingValue|"price"|areaServed/,
+    );
   });
 });

@@ -7,6 +7,12 @@ export const siteConfig = {
   company: "A&C Construction",
   location: "Massachusetts, United States",
   phone: "978-201-9763",
+  /**
+   * Check 2 P6: Davi's own photo (no stock photos), shown in the homepage About section and
+   * /growth's "who does the work". Null renders text only, no placeholder box. When it arrives:
+   * put it in public/brand/ and set it here.
+   */
+  operatorPhoto: null as { src: string; alt: string } | null,
   copyright: "© 2026 Squared Away — Davi Chaves, Massachusetts",
 } as const;
 

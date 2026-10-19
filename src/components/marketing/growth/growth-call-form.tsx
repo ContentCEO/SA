@@ -1,24 +1,27 @@
 "use client";
 
 import { Check } from "lucide-react";
-import { useActionState, useLayoutEffect, useRef } from "react";
+import { useActionState, useLayoutEffect, useRef, useState } from "react";
 import { useFormStatus } from "react-dom";
 import { requestGrowthCallAction, type GrowthState } from "@/app/growth-actions";
 import { SelectField, TextArea, TextField } from "@/components/forms/field";
+import { TimeZoneInput } from "@/components/forms/time-zone-input";
 import { FormError } from "@/components/forms/form-error";
 import { useFocusFirstError } from "@/components/forms/use-focus-first-error";
 import { ReferralField } from "@/components/marketing/referral-field";
 import { SourceFields } from "@/components/marketing/source-fields";
 import { Button } from "@/components/ui/button";
-import { GROWTH_SERVICES } from "@/config/growth";
+import { GROWTH_HEARD_FROM, GROWTH_REQUEST_OPTIONS } from "@/config/growth";
 import { siteConfig } from "@/config/site";
 import { TRADE_OPTIONS } from "@/config/trades";
 import { OtherTradeField } from "@/components/forms/other-trade-field";
+import { US_STATES } from "@/config/us-states";
 import { phoneHref } from "@/lib/phone-href";
 import { growthCopy } from "./growth-copy";
 
 const c = growthCopy.form;
 const trades = TRADE_OPTIONS.map((t) => (t.value === "other" ? { ...t, label: c.otherTrade } : t));
+const states = US_STATES.map(([value, label]) => ({ value, label }));
 
 function Submit() {
   const { pending } = useFormStatus();
@@ -83,6 +86,8 @@ export function GrowthCallForm({ referrals = false }: { referrals?: boolean } = 
     status: "idle",
   });
   const ref = useFocusFirstError(state.errors);
+  // Check 5 P2: "Who sent you?" shows only with "Another contractor told me".
+  const [heardFrom, setHeardFrom] = useState(state.values?.heardFrom ?? "");
 
   if (state.status === "requested") return <Success phone={state.phone} />;
 
@@ -140,6 +145,42 @@ export function GrowthCallForm({ referrals = false }: { referrals?: boolean } = 
         error={e.tradeOther}
         idBase="growth-trade-other"
       />
+      <SelectField
+        name="state"
+        idBase="growth-state"
+        label={c.state}
+        emptyLabel={c.stateEmpty}
+        options={states}
+        defaultValue={v.state}
+        error={e.state}
+      />
+      <div
+        className="flex flex-col gap-4"
+        onChange={(ev) => {
+          const t = ev.target as unknown as HTMLSelectElement;
+          if (t.name === "heardFrom") setHeardFrom(t.value);
+        }}
+      >
+        <SelectField
+          name="heardFrom"
+          idBase="growth-heard"
+          label={c.heardFrom}
+          emptyLabel={c.heardFromEmpty}
+          options={GROWTH_HEARD_FROM}
+          defaultValue={v.heardFrom}
+          error={e.heardFrom}
+        />
+        {heardFrom === "contractor" ? (
+          <TextField
+            name="sentBy"
+            idBase="growth-sent-by"
+            label={c.sentBy}
+            defaultValue={v.sentBy}
+            error={e.sentBy}
+          />
+        ) : null}
+      </div>
+      <TimeZoneInput fallback="" />
       <fieldset
         className="flex flex-col gap-2"
         aria-describedby={
@@ -151,7 +192,7 @@ export function GrowthCallForm({ referrals = false }: { referrals?: boolean } = 
           {c.servicesHint}
         </p>
         <div className="grid gap-2 sm:grid-cols-2">
-          {GROWTH_SERVICES.map((s, i) => (
+          {GROWTH_REQUEST_OPTIONS.map((s, i) => (
             <label
               key={s.value}
               className="relative flex min-h-tap items-center gap-3 rounded-lg border-2 border-charcoal px-3 py-2 font-semibold has-checked:bg-charcoal has-checked:text-offwhite has-focus-visible:outline-2 has-focus-visible:outline-offset-2 has-focus-visible:outline-ring"
@@ -194,7 +235,7 @@ export function GrowthCallForm({ referrals = false }: { referrals?: boolean } = 
       <div aria-hidden className="absolute -left-[9999px] h-0 w-0 overflow-hidden">
         <label>
           {c.honeypot}
-          <input name="website" tabIndex={-1} autoComplete="off" />
+          <input name="sa_hp" tabIndex={-1} autoComplete="off" />
         </label>
       </div>
       {referrals ? <ReferralField kept={v.ref} /> : null}

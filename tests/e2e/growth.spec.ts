@@ -197,9 +197,9 @@ const growthHalf = (page: Page) => page.locator('[data-sa-half="growth"]');
 const opener = (page: Page) =>
   page.getByRole("region", { name: "Squared Away Growth", exact: true });
 const heroLink = (page: Page) =>
-  page
-    .getByRole("region", { name: "Introduction" })
-    .getByRole("link", { name: "Want more work coming in? See Squared Away Growth" });
+  page.getByRole("region", { name: "Introduction" }).getByRole("link", {
+    name: "Want more work coming in? We also run ads, your Google listing and reviews",
+  });
 const headerGrowthLink = (page: Page) =>
   page.getByRole("navigation", { name: "Site" }).getByRole("link", { name: "Growth", exact: true });
 const landed = (page: Page) =>
@@ -221,7 +221,7 @@ async function expectApp(page: Page) {
 
 /**
  * The full Big words show just played, once, from a reset log (or a fresh page): the bands came
- * in with the words, covered every bit of the screen when the theme swapped with "The app" still
+ * in with the words, covered every bit of the screen when the theme swapped with "Your inbox" still
  * the inverted word, flew back out, and the page landed on the opener with its headline in.
  */
 async function expectFullShow(page: Page) {
@@ -526,7 +526,7 @@ test.describe("homepage: the way into Squared Away Growth", () => {
     const start = (await saVis(page)).find((x) => x.v === "in")!;
 
     // Nothing disappears before the screen is covered; nothing scrolls sideways as the bands
-    // come in; the stage never takes a tap; "One-on-one" is huge, and the inverted word.
+    // come in; the stage never takes a tap; "Your marketing" is huge, and the inverted word.
     const during = await page.evaluate(async (at) => {
       const until = (ms: number) =>
         new Promise((r) => setTimeout(r, Math.max(0, at + ms - performance.now())));
@@ -555,7 +555,7 @@ test.describe("homepage: the way into Squared Away Growth", () => {
         outerLeft: outer.left,
         theme,
         overflow: overflow || doc.scrollWidth > doc.clientWidth,
-        // "One-on-one" is big, and still fits the screen side to side and inside its band.
+        // "Your marketing" is big, and still fits the screen side to side and inside its band.
         wordInside:
           word.left >= 15.5 &&
           word.right <= window.innerWidth - 15.5 &&
@@ -576,7 +576,7 @@ test.describe("homepage: the way into Squared Away Growth", () => {
     expect(during.wordInside).toBe(true);
     expect(during.wordHeight).toBeGreaterThan(0.06);
     expect(during.wordWidth).toBeGreaterThan(0.4);
-    // On a phone, "One-on-one" spans the band side to side (16px gutter kept): big, not a pill.
+    // On a phone, "Your marketing" spans the band side to side (16px gutter kept): big, not a pill.
     if (page.viewportSize()!.width < 500) expect(during.wordWidth).toBeGreaterThan(0.8);
     expect(during.stillPlaying).toBe(true);
     expect(during.hitOutside).toBe(true);
@@ -605,6 +605,71 @@ test.describe("homepage: the way into Squared Away Growth", () => {
     const call = page.getByRole("region", { name: "Ask Davi to call me" });
     await expect(call.locator(".sa-light")).toHaveCSS("background-color", "rgb(239, 238, 234)");
     await expect(call.getByLabel("Your name")).toHaveCSS("border-top-color", "rgb(94, 93, 89)");
+  });
+
+  test("the crossing stays smooth on a slow phone: no frame over 120ms at 4x CPU (Check 29 P9)", async ({
+    page,
+  }) => {
+    test.skip(page.viewportSize()!.width >= 640, "a phone check");
+    // A frame-timing check: meaningless on a shared, overloaded machine (it read 250-350ms there
+    // with load ~10-20 on 4 CPUs). Run it on an idle machine: SA_PERF=1 pnpm test:e2e growth.
+    test.skip(!process.env.SA_PERF, "timing check: set SA_PERF=1 on an idle machine");
+    // Off-screen sections skip style work during the theme swap (content-visibility: auto).
+    await page.goto("/");
+    await settle(page);
+    const deferredCount = await page.evaluate(
+      () =>
+        [...document.querySelectorAll("main section.sa-cv")].filter(
+          (s) => getComputedStyle(s).contentVisibility === "auto",
+        ).length,
+    );
+    expect(deferredCount).toBeGreaterThanOrEqual(8);
+    await expect(page.locator("#growth")).not.toHaveClass(/sa-cv/);
+
+    const cdp = await page.context().newCDPSession(page);
+    await cdp.send("Emulation.setCPUThrottlingRate", { rate: 4 });
+    const worst: number[] = [];
+    try {
+      for (let run = 0; run < 3; run++) {
+        await resetLog(page);
+        await page.evaluate(() => {
+          const w = window as unknown as { __gaps: number[]; __gapsOn: boolean };
+          w.__gaps = [];
+          w.__gapsOn = true;
+          let last = performance.now();
+          const tick = (t: number) => {
+            w.__gaps.push(t - last);
+            last = t;
+            if (w.__gapsOn) requestAnimationFrame(tick);
+          };
+          requestAnimationFrame(tick);
+        });
+        await stepBoundaryTo(page, 0.4);
+        await expect.poll(() => saLog(page), { timeout: 10_000 }).toContain("in");
+        await expect(html(page)).not.toHaveAttribute("data-sa-switching", /.*/, {
+          timeout: 10_000,
+        });
+        worst.push(
+          await page.evaluate(() => {
+            const w = window as unknown as { __gaps: number[]; __gapsOn: boolean };
+            w.__gapsOn = false;
+            return Math.max(...w.__gaps.slice(1));
+          }),
+        );
+        // Back up to the app side for the next run.
+        await page.evaluate(() => window.scrollTo(0, 0));
+        await expect
+          .poll(() => html(page).getAttribute("data-sa-theme"), { timeout: 10_000 })
+          .toBe("app");
+        await expect(html(page)).not.toHaveAttribute("data-sa-switching", /.*/, {
+          timeout: 10_000,
+        });
+        await page.waitForTimeout(800);
+      }
+    } finally {
+      await cdp.send("Emulation.setCPUThrottlingRate", { rate: 1 });
+    }
+    expect(Math.max(...worst)).toBeLessThan(120);
   });
 
   test("every way down plays the full show again; every way up flies apart onto paper", async ({
@@ -1190,7 +1255,12 @@ test.describe("Ask Davi to call me", () => {
     await form.getByLabel("Your name").fill("Bot");
     await form.getByLabel(/^Phone/).fill("617-555-0142");
     await form.getByLabel(/^Email/).fill(email);
-    await form.locator('input[name="website"]').fill("http://spam.example", { force: true });
+    // Check 2 P3: the trap is out of the tab order and hidden from screen readers.
+    const trap = form.locator('input[name="sa_hp"]');
+    await expect(trap).toHaveAttribute("tabindex", "-1");
+    await expect(trap.locator("xpath=ancestor::div[@aria-hidden]")).toHaveCount(1);
+    await expect(form.getByRole("textbox", { name: "Leave this empty" })).toHaveCount(0);
+    await trap.fill("http://spam.example", { force: true });
     await form.getByRole("button", { name: "Ask Davi to call me" }).click();
     await expect(form.getByRole("status")).toContainText("Davi will call you soon.");
     expect(
@@ -1205,8 +1275,8 @@ test("admin: Growth requests and app sign-ups side by side; Growth-only is never
 }) => {
   const mixed = unique("mixed");
   const only = unique("only");
-  const block = (phone: string, at: string, services: string[]) =>
-    formatGrowthBlock({ at, services, phone });
+  const block = (phone: string, at: string, services: string[], trapFilled = false) =>
+    formatGrowthBlock({ at, services, phone, trapFilled });
   await testDb.insert(schema.waitlist).values([
     {
       email: mixed,
@@ -1221,7 +1291,7 @@ test("admin: Growth requests and app sign-ups side by side; Growth-only is never
       trade: "roofing",
       phone: "617-555-0142",
       teamSize: "growth-only",
-      note: block("617-555-0142", "2026-10-12 09:12", ["Google ads", "Reviews"]),
+      note: block("617-555-0142", "2026-10-12 09:12", ["Google ads", "Reviews"], true),
     },
   ]);
   await signInAs(context, await seedAdmin());
@@ -1246,6 +1316,9 @@ test("admin: Growth requests and app sign-ups side by side; Growth-only is never
     "Not on the app waitlist. Asking for a Growth call never invites anyone.",
   );
   await expect(b).toContainText("Wants help with: Google ads, Reviews");
+  // Check 2 P3: a request with the hidden field filled still shows, marked for Davi.
+  await expect(b).toContainText("Might be a bot: the hidden field was filled");
+  await expect(a).not.toContainText("Might be a bot");
   // No app invite on a Growth-only row: only the explicit Growth controls.
   await expect(b.getByRole("button", { name: /^Invite Sam/ })).toHaveCount(0);
   await expect(b.locator("summary", { hasText: /^Invite to Growth$/ })).toBeVisible();
@@ -1273,9 +1346,7 @@ test("admin: Growth requests and app sign-ups side by side; Growth-only is never
 test("/growth: its own page, charcoal edge to edge", async ({ page }) => {
   const res = await page.goto("/growth");
   expect(res?.status()).toBe(200);
-  await expect(page).toHaveTitle(
-    "Squared Away Growth — ads, reviews and your website, done for you.",
-  );
+  await expect(page).toHaveTitle("Contractor marketing, done for you · Squared Away Growth");
   const h1 = page.getByRole("heading", { level: 1 });
   await expect(h1).toContainText("the marketing side,");
   await expect(h1).toContainText("done for you.");
@@ -1291,10 +1362,10 @@ test("/growth: its own page, charcoal edge to edge", async ({ page }) => {
     "href",
     "tel:+19782019763",
   );
-  await expect(call.getByRole("link", { name: "Text 978-201-9763" })).toHaveAttribute(
-    "href",
-    "sms:+19782019763",
-  );
+  // Hidden from lg up (Check 2 P9), so look for it hidden or not.
+  await expect(
+    call.getByRole("link", { name: "Text 978-201-9763", includeHidden: true }),
+  ).toHaveAttribute("href", "sms:+19782019763");
   await expect(page.getByRole("region", { name: "Who does the work" })).toContainText(
     "A&C Construction",
   );
@@ -1304,4 +1375,127 @@ test("/growth: its own page, charcoal edge to edge", async ({ page }) => {
     await page.evaluate(() => getComputedStyle(document.documentElement).backgroundColor),
   ).toBe("rgb(27, 27, 27)");
   expect(await noOverflow(page)).toBe(true);
+});
+
+test("/growth: every service card says what you get (Check 3 P1)", async ({ page }) => {
+  await page.goto("/growth");
+  const services = page.getByRole("region", { name: "What we take on" });
+  const reviews = services.getByRole("listitem").filter({
+    has: page.getByRole("heading", { name: "Reviews", exact: true }),
+  });
+  await expect(
+    reviews.getByRole("list", { name: "What you get with Reviews" }).getByRole("listitem").first(),
+  ).toHaveText("Your Google review link and a short message you can send");
+  await expect(reviews).toContainText("we never message your customers");
+  expect(await noOverflow(page)).toBe(true);
+});
+
+test("/growth: the new FAQs open to their answers (Check 3 P6, Check 34 P4)", async ({ page }) => {
+  await page.goto("/growth");
+  const faq = page.getByRole("region", { name: "Growth questions" });
+  await faq.getByText("Who pays for the ads?").click();
+  await expect(faq.getByText(/You set the monthly limit/)).toBeVisible();
+  await faq.getByText("How is this different from a marketing agency?").click();
+  await expect(faq.getByText(/no sales team and no hand-off/)).toBeVisible();
+  expect(await noOverflow(page)).toBe(true);
+});
+
+test("/growth: no empty proof section while there's no real proof (Check 2 P6)", async ({
+  page,
+}) => {
+  await page.goto("/growth");
+  await expect(page.getByRole("region", { name: "What it looks like" })).toHaveCount(0);
+  await expect(page.getByText("what it looks like,")).toHaveCount(0);
+});
+
+test.describe("Ask Davi to call me: the optional questions (Check 3 P4, 5 P2, 45 P5)", () => {
+  test.use({
+    extraHTTPHeaders: { "x-forwarded-for": "198.51.100.22" },
+    timezoneId: "America/Phoenix",
+  });
+
+  test("Not sure yet alone, how they heard, who sent them, state and time zone reach the admin card", async ({
+    page,
+    context,
+  }) => {
+    const email = unique("growth-heard");
+    await page.goto("/growth#growth-call");
+    const form = page.getByRole("region", { name: "Ask Davi to call me" });
+    await form.getByLabel("Your name").fill("Lena Park");
+    await form.getByLabel(/^Phone/).fill("480-555-0142");
+    await form.getByLabel(/^Email/).fill(email);
+    await form.getByLabel("Trade", { exact: true }).selectOption("painting");
+    await form.getByLabel("Which state do you work in? (optional)").selectOption("AZ");
+    await expect(form.getByLabel("Who sent you? (optional)")).toHaveCount(0);
+    await form.getByLabel("How did you hear about Davi? (optional)").selectOption("contractor");
+    const sentBy = form.getByLabel("Who sent you? (optional)");
+    await expect(sentBy).toBeVisible();
+    expect((await sentBy.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+    await sentBy.fill("Mike Torres");
+    const notSure = form.getByRole("checkbox", { name: "Not sure yet — tell me what to do first" });
+    await notSure.check();
+    expect(await noOverflow(page)).toBe(true);
+    await form.getByRole("button", { name: "Ask Davi to call me" }).click();
+    await expect(form.getByRole("status")).toContainText("Davi will call you at 480-555-0142.");
+
+    await signInAs(context, await seedAdmin());
+    await page.goto("/admin#waitlist");
+    const card = page.getByRole("listitem", { name: `Waitlist: ${email}` });
+    await expect(card).toContainText("Wants help with: Not sure yet — tell me what to do first");
+    await expect(card).toContainText("Works in AZ");
+    await expect(card).toContainText(/Their time now: \d{1,2}:\d{2}(am|pm)/);
+    await expect(card).toContainText("Heard: Another contractor told me");
+    await expect(card).toContainText("Sent by: Mike Torres");
+  });
+});
+
+test.describe("one Growth look (Check 7 P6) and a tidy laptop layout (Check 2 P9)", () => {
+  for (const width of [320, 375]) {
+    test(`the same mark on both headers, and the call button on one line (${width}px)`, async ({
+      page,
+    }) => {
+      await page.setViewportSize({ width, height: 812 });
+      await page.goto("/growth");
+      const header = page.locator("header").first();
+      await expect(header.getByRole("img", { name: "Squared Away Growth" })).toBeVisible();
+      const pageCall = header.getByRole("link", { name: "Ask Davi to call me" });
+      const h1 = (await pageCall.boundingBox())!.height;
+      expect(h1).toBeGreaterThanOrEqual(44);
+      expect(h1).toBeLessThanOrEqual(48);
+      expect(await noOverflow(page)).toBe(true);
+
+      await page.goto("/#growth");
+      const bar = page.locator("[data-growth-chapter] > div").first();
+      await expect(bar.getByRole("img", { name: "Squared Away Growth" })).toBeVisible();
+      const barCall = bar.getByRole("link", { name: "Ask Davi to call me" });
+      const h2 = (await barCall.boundingBox())!.height;
+      expect(h2).toBeGreaterThanOrEqual(44);
+      expect(h2).toBeLessThanOrEqual(48);
+      expect(await noOverflow(page)).toBe(true);
+    });
+  }
+
+  test("1280px: no lone service card, and no Text button; 375px keeps the Text button", async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await page.goto("/growth");
+    const cards = page
+      .getByRole("region", { name: "What we take on" })
+      .locator("ul")
+      .first()
+      .locator(":scope > li");
+    const tops = await cards.evaluateAll((els) =>
+      els.map((el) => Math.round(el.getBoundingClientRect().top)),
+    );
+    const perRow = new Map<number, number>();
+    for (const t of tops) perRow.set(t, (perRow.get(t) ?? 0) + 1);
+    expect([...perRow.values()].every((n) => n > 1)).toBe(true);
+    const call = page.getByRole("region", { name: "Ask Davi to call me" });
+    await expect(call.getByRole("link", { name: "Text 978-201-9763" })).toBeHidden();
+    await expect(call.getByRole("link", { name: "Call 978-201-9763" })).toBeVisible();
+
+    await page.setViewportSize({ width: 375, height: 812 });
+    await expect(call.getByRole("link", { name: "Text 978-201-9763" })).toBeVisible();
+  });
 });

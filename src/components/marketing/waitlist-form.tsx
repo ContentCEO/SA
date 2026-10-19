@@ -134,8 +134,8 @@ export function WaitlistForm({ referrals = false }: { referrals?: boolean } = {}
       {/* Left empty by people; bots fill it in. */}
       <div aria-hidden className="absolute -left-[9999px] h-0 w-0 overflow-hidden">
         <label>
-          Website
-          <input name="website" tabIndex={-1} autoComplete="off" />
+          Leave this empty
+          <input name="sa_hp" tabIndex={-1} autoComplete="off" />
         </label>
       </div>
       <SourceFields />

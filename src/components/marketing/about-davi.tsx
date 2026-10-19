@@ -10,10 +10,10 @@ import { cn } from "@/lib/utils";
  * and never "builder" (tests/unit/about-davi.test.ts).
  */
 /**
- * Davi's own photo (no stock photos). Until the file exists the section is one column, story text
- * only: no placeholder box. When it arrives: put it in public/brand/ and set it here.
+ * Davi's own photo (no stock photos), from siteConfig.operatorPhoto (Check 2 P6). Until the file
+ * exists the section is one column, story text only: no placeholder box.
  */
-const photo: { src: string; alt: string } | null = null;
+const photo = siteConfig.operatorPhoto;
 
 export function AboutDavi() {
   return (

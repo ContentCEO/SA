@@ -290,13 +290,10 @@ test("every public page has its search basics", async ({ page, request, baseURL 
   const problems: string[] = [];
   /**
    * Findings waiting on another group's change, one per line, each self-expiring: the test fails
-   * again when the finding is gone and the line isn't deleted. Growth site step 12 (Check 33 P2)
-   * rewrites /growth's title and description in growth-copy.ts; keep it at 160 characters or
-   * fewer there, then delete this entry.
+   * again when the finding is gone and the line isn't deleted. None today (the /growth
+   * description entry went at the wave 3 merge A: Growth site step 12 made it 155 characters).
    */
-  const waitingOn: Record<string, RegExp> = {
-    "/growth": /^meta description is 1[6-9]\d characters/,
-  };
+  const waitingOn: Record<string, RegExp> = {};
   const hit = new Set<string>();
   const fail = (url: string, rule: string) => {
     const path = new URL(url).pathname;
@@ -361,4 +358,15 @@ test("an address that doesn't exist: a plain 404 with a way home", async ({ page
   await expect(page.getByRole("heading", { level: 1 })).toHaveText("nothing here, page not found.");
   await page.getByRole("link", { name: "Go to the homepage" }).click();
   await expect(page).toHaveURL(/\/$/);
+});
+
+test("/growth has one Service block for search engines and its own title (Check 33 P2)", async ({
+  page,
+}) => {
+  await page.goto("/growth");
+  await expect(page).toHaveTitle("Contractor marketing, done for you · Squared Away Growth");
+  const blocks = page.locator('script[type="application/ld+json"]');
+  await expect(blocks).toHaveCount(1);
+  const ld = JSON.parse((await blocks.textContent()) ?? "{}") as { "@type": string };
+  expect(ld["@type"]).toBe("Service");
 });

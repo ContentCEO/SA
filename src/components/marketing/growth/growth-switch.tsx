@@ -42,9 +42,9 @@ const EDITABLE = 'input, textarea, select, [contenteditable=""], [contenteditabl
 /**
  * The homepage switch from the app to Squared Away Growth, played as "Big words" (big-words.tsx).
  * Scrolling decides it, nothing is tapped: every time the Growth part comes up from the bottom of
- * the screen, five charcoal bands slam in carrying "The app" in huge words, the whole site's
+ * the screen, five charcoal bands slam in carrying "Your inbox" in huge words, the whole site's
  * colours swap underneath them (`data-sa-theme` on <html>, see src/styles/theme.css), the words
- * tick over to "One-on-one", hold, and the bands fly back out onto the one-on-one opener (#growth):
+ * tick over to "Your marketing", hold, and the bands fly back out onto the one-on-one opener (#growth):
  * under the bands the page is moved there and held still (wheel, touch and scroll keys are
  * stopped), so the switch always lands on the opener, however fast the scroll. Back up until
  * Growth drops off the bottom, and bands of charcoal fly apart onto paper ("out").
