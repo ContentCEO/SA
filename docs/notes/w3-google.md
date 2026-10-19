@@ -276,7 +276,7 @@ both Playwright projects. It passes today with one explicit, self-expiring excep
 rewrites. **Growth group / integrator:** keep that description at 160 characters or fewer, then
 delete the `waitingOn["/growth"]` line in the spec (the test fails on its own once the entry is
 unused). Not edited here to avoid a conflict on the line that step rewrites. `/terms`'s
-description was lengthened to 150 characters (it was 33) in this branch.
+description was lengthened to 153 characters (it was 33; it says "the free trial", since the trial-words fence forbids typing the length) in this branch.
 
 ## What turns each switched-off piece on
 
