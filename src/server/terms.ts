@@ -28,7 +28,8 @@ export const termsAccepted = cache(async (userId: string): Promise<boolean> =>
 /**
  * Records that this person ticked the box just now, for the current version. Never lowers a
  * newer version already on record (agreed on a preview or before a rollback, which share this
- * database): that record stays as it is. Versions are YYYY-MM-DD, compared byte by byte.
+ * database): that record stays as it is. Versions are YYYY-MM-DD (or YYYY-MM-DD.N for a second
+ * release on one day), compared byte by byte.
  */
 export async function recordTermsAcceptance(userId: string, now: Date = new Date()) {
   await db()

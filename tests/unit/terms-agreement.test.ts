@@ -26,6 +26,7 @@ import {
   requestPathOf,
   safeNextPath,
   termsScreenCopy,
+  termsVersionDate,
 } from "@/server/terms-rules";
 import { createTestDb } from "../support/db";
 
@@ -135,9 +136,10 @@ describe("TERMS_VERSION", () => {
   };
 
   it("is the terms' 'Last updated' date (and the privacy policy's, which matches it)", () => {
-    expect(TERMS_VERSION).toMatch(/^\d{4}-\d{2}-\d{2}$/);
-    expect(iso("terms.md")).toBe(TERMS_VERSION);
-    expect(iso("privacy-policy.md")).toBe(TERMS_VERSION);
+    // Check 27 P4: a second release on one day may add ".N"; the documents carry the date part.
+    expect(TERMS_VERSION).toMatch(/^\d{4}-\d{2}-\d{2}(\.\d+)?$/);
+    expect(iso("terms.md")).toBe(termsVersionDate(TERMS_VERSION));
+    expect(iso("privacy-policy.md")).toBe(termsVersionDate(TERMS_VERSION));
   });
 });
 

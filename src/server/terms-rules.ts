@@ -6,8 +6,27 @@ import { AGREE_VALUE, DEFAULT_NEXT_PATH, TERMS_VERSION } from "@/config/legal";
 /** What the two "I agree" forms get back from their actions: nothing, or the plain error. */
 export type AgreeState = { error?: string };
 
-/** A terms version: the documents' "Last updated" date, YYYY-MM-DD, so later sorts later. */
-const VERSION_SHAPE = /^\d{4}-\d{2}-\d{2}$/;
+/**
+ * A terms version: the documents' "Last updated" date, YYYY-MM-DD, so later sorts later. Check
+ * 27 P4: a second legal release on the same day adds ".N" (2026-10-16.2), which sorts after the
+ * plain date and before the next day, both here and in the database's byte-order (collate "C")
+ * comparison: "2026-10-16" < "2026-10-16.2" < "2026-10-17".
+ */
+const VERSION_SHAPE = /^\d{4}-\d{2}-\d{2}(\.\d+)?$/;
+
+export function isTermsVersion(value: unknown): value is string {
+  return typeof value === "string" && VERSION_SHAPE.test(value);
+}
+
+/** Byte order, as `collate "C"` in src/server/terms.ts: negative when a sorts before b. */
+export function compareTermsVersions(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
+/** The "Last updated" date a version stands for: "2026-10-16.2" → "2026-10-16". */
+export function termsVersionDate(version: string): string {
+  return version.slice(0, 10);
+}
 
 /**
  * Whether this person has agreed to the terms as they are now, or to a newer version. Newer
@@ -20,7 +39,7 @@ export function hasCurrentTerms(
   version: string = TERMS_VERSION,
 ): boolean {
   const agreedTo = user?.termsVersion;
-  return !!agreedTo && VERSION_SHAPE.test(agreedTo) && agreedTo >= version;
+  return isTermsVersion(agreedTo) && compareTermsVersions(agreedTo, version) >= 0;
 }
 
 /** Whether the form's box was ticked: exactly our value, nothing else (a missing box sends none). */

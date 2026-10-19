@@ -123,3 +123,48 @@ Add after step 5 ("Support email and the production domain"):
 >    per account (Delete my account); a single sender can't be removed on its own yet. Tell the
 >    owner that plainly, and ask the engineers if a per-sender delete is wanted.
 > 5. Reply to the person in writing with what was done, and keep the note of the date.
+
+## Check 27 P3 + Check 27 P4: "What changed", and same-day versions
+
+Built in code (no legal text): `docs/legal-changes.md` (one `## <version>` section per
+`TERMS_VERSION`, newest first, entries for 2026-10-16 and 2026-10-15 written from the documents'
+git history); `/welcome/terms` shows "What changed" with the bullets of every version newer than
+the one the owner agreed to (someone who never agreed sees none); `TERMS_VERSION` may be
+`YYYY-MM-DD.N` for a second release on one day (sorts between the date and the next day, in code
+and in the database's `collate "C"`); `LEGAL_DOCS_SHA256` in `src/config/legal.ts` is the hash of
+both documents and `tests/unit/legal-docs-hash.test.ts` fails with the new value when they change.
+
+**Not done on purpose:** P4 item 3 ("set 2026-10-16.2 so owners who agreed to the earlier
+same-day text are asked again") contradicts Davi's recorded choice (LAUNCH step 13: the
+2026-10-16 clarifications re-asked nobody). The one release bumps to its date anyway, so `.2` is
+only for a second legal release on the same day.
+
+### P3 item 3: the advance-notice promise (Davi's choice)
+
+Both documents promise notice **before** changes take effect (privacy policy "Changes": "for
+significant changes, tell you in the app or by email before they take effect"; terms "Changes to
+these terms": "tell you in the app or by email before significant changes take effect"). The code
+does something else: a new version takes effect at deploy and the next screen asks everyone to
+agree, now with "What changed".
+
+- **Option (b) (recommended: it matches what the code does, and needs no second mechanism):**
+  reword both sentences.
+  - Privacy policy, "## Changes": replace the paragraph with
+    > If we change this policy, we'll update the date at the top and, for significant changes,
+    > show you what changed in the app before you keep using it.
+  - Terms, "## Changes to these terms": replace the paragraph with
+    > If we change these terms, we'll update the date at the top and, for significant changes,
+    > show you what changed in the app before you keep using it.
+- **Option (a):** keep "before they take effect"; then the engineers add `TERMS_NOTICE_FROM` to
+  `src/config/legal.ts` and a StatusBanner line "Our terms change on <date>. See what changes."
+  shown from that date until the version takes effect (not built; one more thing to set on every
+  release).
+
+For the release, with (b): `legal-docs.test.ts` asserts the new sentence in both documents.
+
+### For the release (P4): the version and the hash
+
+Set `TERMS_VERSION` to the release date; recompute `LEGAL_DOCS_SHA256` (the failing test prints
+the value); add the `## <release date>` entry to `docs/legal-changes.md` (two to five plain
+bullets: the three decided items, the data-request bullets, the Limited Use wording, the texting
+section, and so on). `tests/unit/legal-changes.test.ts` fails until the entry exists.
