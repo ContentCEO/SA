@@ -116,6 +116,8 @@ export type Scores = {
    * run.
    */
   purposePassRate: number;
+  /** Check 24 P8 (voice-examples.v1): sample sets that followed the stored settings. 1 when not run. */
+  voiceExamplesPassRate: number;
   /** Check 21 P7 + 12 P7 (followup.v5): nudges that kept every rule. 1 when not run. */
   followupPassRate: number;
   /** Check 21 P7: the writer declined exactly when the key says (strict). 1 when not run. */
@@ -238,6 +240,7 @@ export function score(cases: EvalCase[], results: EvalResult[]): Scores {
     purposePassRate: 1,
     followupPassRate: 1,
     followupSkipAccuracy: 1,
+    voiceExamplesPassRate: 1,
     openingAccuracy: ratio(
       opened.filter(([c, r]) => r!.opening === (c.firstContact ?? "not_first")).length,
       opened.length,

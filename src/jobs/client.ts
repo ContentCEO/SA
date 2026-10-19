@@ -115,6 +115,11 @@ export const voiceLearnRequested = eventType("voice/learn.requested", {
   schema: staticSchema<{ workspaceId: string; force?: boolean }>(),
 });
 
+/** Check 24 P8: the voice's sample replies went stale (an edit or an accepted idea); rewrite them. */
+export const voiceExamplesRequested = eventType("voice/examples.requested", {
+  schema: staticSchema<{ workspaceId: string }>(),
+});
+
 /** Round 2 (FW D2): the owner tapped "Draft them" on found money. Ids worked out by the server. */
 export const foundMoneyDraftsRequested = eventType("first-week/found-money.requested", {
   schema: staticSchema<{ workspaceId: string; replies: string[]; nudges: string[] }>(),

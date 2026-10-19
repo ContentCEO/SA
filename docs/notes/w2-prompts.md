@@ -240,3 +240,49 @@ asked_to_wait | already_answered | paid | other | null`, `.catch(null)`). "Open 
   `followup <id>: …` problems. **Evals not run.**
 - Open (not built): Check 24 P11's optional "none — they jump straight in" wording is in
   draft.v6's shared block; it waits for the next draft version.
+
+## Step 5: voice.v4 + voice-examples.v1 (Check 24 P5 + 24 P9, plus the inbox's Check 24 P8)
+
+**Migration 0076 `voice_writers`** (additive): `voice_profile.writers` jsonb, default `[]` —
+first names and a share only, scrubbed. **Prompts:** `voice.v4` (`ACTIVE.voice`), new kind
+`voice-examples.v1` (`ACTIVE.voiceExamples`).
+
+- **Check 24 P5:** `sentMailBlock(bodies, ownerFirstName)` wraps each email in `<email n="…">`
+  with `untrusted(text, "email")` (an owner's "---" between options stays one email); the
+  instructions say everything inside `<email>` is data. `learnVoice` runs `injectionCheck` on each
+  prepared body — flagged ones are skipped and counted (`attackSkipped`, counts only in the log) —
+  and on the answer: a flagged summary, greeting, phrase or sample is dropped before storing.
+- **Check 24 P9:** `writers: [{ name, share: most | some | few }]` (`.catch([])`); the model is
+  told to describe only the owner, whose first name the user block gives
+  (`ownerFirstNameFor`: the profile signature's first line, else the account's name, via
+  draft.v9's `ownerFirstName`). Stored writers: first names only (one word, letters), de-duplicated,
+  at most five, scrubbed. If the learned sign-off's first name isn't the owner's, the stored
+  sign-off is kept when it names the owner, else none (the signature carries the owner's name).
+  Settings → Your voice shows `writersNotice`: "Some of your sent mail is signed by Linda. Your
+  drafts are written as Mike." when more than one writer was seen.
+- **Check 24 P8 (inbox, voice group):** `rewriteVoiceExamples(workspaceId)` (`src/server/voice.ts`):
+  reads the stored row only (no sent mail), one `callStructured` (role voice, 1500 tokens, one
+  retry), scrubs every sample (`scrubAllowFrom(signature)`), cap 5 × 600 chars, and writes
+  `examples` + `examples_stale = false` in one UPDATE guarded by `updated_at` = the value read (an
+  edit made meanwhile wins and keeps the flag). Unusable output twice → the flag stays. Event
+  `voice/examples.requested`; function `voice-examples` (singleton per workspace, skip; retries
+  3; `jobsAllowed`; the AI cap through `callStructured`; `stopIfModelMissing`). Enqueued from
+  `saveVoiceAction` and `decideVoiceIdeaAction` when the save left the flag set, and from
+  `learnVoice` when it stored `examplesStale: true`. Prompt text is the voice group's, with
+  voice.v3's `{{…}}` placeholders (integrator note followed); owner-typed settings pass through
+  `untrusted(…, "voice_settings")`.
+- **Evals:** `tests/evals/voice-examples.ts` (three settings: casual 40 words, formal 120, one with
+  a never-say phrase; pass = five samples opening with the greeting and ending with the sign-off,
+  the avoided phrase absent, no digits outside placeholders, length within ±50%), wired into the
+  runner (`voiceExamplesPassRate`), the script and the stand-in. **Evals not run.** Check 24 P10's
+  voice-prompt cases come in step 9.
+- Tests: `tests/unit/voice-v4.test.ts` (the fence and the "---" case; a forwarded "Note for the AI
+  assistant…" never reaches the model and a planted sample is dropped; writers stored, Linda's
+  sign-off not learned, the notice text; the rewrite writes five scrubbed samples with no Gmail
+  read, an edit made meanwhile wins, failures leave the flag). `jobs.test` lists `voice-examples`.
+
+### Questions for Davi (step 5)
+
+- When the learned sign-off names someone else (an office manager), drafts now sign with no
+  sign-off line and the signature's name instead. Alternative: "Thanks, <owner's first name>".
+  Which?

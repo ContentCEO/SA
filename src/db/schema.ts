@@ -874,6 +874,15 @@ export const voiceProfiles = pgTable("voice_profile", {
   /** Check 24 P12: the UTC day of the backstop's retries of a failed first learn, and how many. */
   retryDay: text("retry_day"),
   retriesThatDay: integer("retries_that_day").notNull().default(0),
+  /**
+   * Check 24 P9: who signs the sent mail — first names and a share ("most" / "some" / "few")
+   * only, scrubbed. More than one name means someone else answers mail from this Gmail; the
+   * owner's own sign-off is kept and Settings says so.
+   */
+  writers: jsonb("writers")
+    .$type<{ name: string; share: "most" | "some" | "few" }[]>()
+    .notNull()
+    .default([]),
 });
 
 /**

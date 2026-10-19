@@ -89,3 +89,22 @@ export function voiceListLine(v: (VoiceRow & { source: string }) | null | undefi
     return "Not learned yet: we'll try again soon";
   return "Not learned yet";
 }
+
+/**
+ * Check 24 P9: when more than one person signs the sent mail, Settings says so: "Some of your
+ * sent mail is signed by Linda. Your drafts are written as Mike." Null with one writer or none.
+ */
+export function writersNotice(
+  writers: readonly { name: string; share: string }[] | null | undefined,
+  ownerFirst: string | null,
+): string | null {
+  const others = (writers ?? [])
+    .map((w) => w.name)
+    .filter((n) => n && (!ownerFirst || n.toLowerCase() !== ownerFirst.toLowerCase()));
+  if (!others.length || (writers ?? []).length < 2) return null;
+  const who =
+    others.length === 1
+      ? others[0]!
+      : `${others.slice(0, -1).join(", ")} and ${others[others.length - 1]!}`;
+  return `Some of your sent mail is signed by ${who}.${ownerFirst ? ` Your drafts are written as ${ownerFirst}.` : ""}`;
+}

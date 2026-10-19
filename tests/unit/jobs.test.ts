@@ -109,6 +109,7 @@ describe("job wiring", () => {
         "purge-expired-bodies",
         "send-after-undo",
         "voice-ideas",
+        "voice-examples",
         "found-money-drafts",
       ].sort(),
     );

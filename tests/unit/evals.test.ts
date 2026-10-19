@@ -7,6 +7,7 @@ import { EVAL_CASES, type EvalCase } from "../evals/cases";
 import { OPENING_TWEAKS } from "@/ai/prompts/opening-tweaks.v1";
 import { REVISE_CASES, TONE_CASES } from "../evals/edits";
 import { FOLLOWUP_CASES } from "../evals/followups";
+import { VOICE_EXAMPLES_CASES } from "../evals/voice-examples";
 import { PURPOSE_CASES } from "../evals/purposes";
 import { runEvals } from "../evals/run";
 import { regressions, score, type Baseline, type EvalResult, type Scores } from "../evals/score";
@@ -294,13 +295,33 @@ describe("evaluation set (#46)", () => {
     let i = -1;
     let tone = -1;
     let nudge = -1;
+    let samples = -1;
     const transport: Transport = async (req) => {
       const sys = req.system[0]!.text;
       const isDraft = sys.startsWith("You write email replies");
       const isRevise = sys.startsWith("You revise a reply");
       const isTone = sys.startsWith("You compare two versions");
       const isFollowup = sys.startsWith("You write a short follow-up");
-      if (!isDraft && !isRevise && !isTone && !isFollowup) i++;
+      const isSamples = sys.startsWith("You write five short sample email replies");
+      if (!isDraft && !isRevise && !isTone && !isFollowup && !isSamples) i++;
+      // voice-examples.v1: a good model follows the settings in the block exactly.
+      if (isSamples) {
+        const c = VOICE_EXAMPLES_CASES[++samples]!;
+        const s = c.settings;
+        const filler = "and I can come by {{date}} around {{time}} to take a look";
+        const words = Math.max(8, (s.avgLengthWords ?? 60) - 10);
+        const body = Array.from({ length: Math.ceil(words / 10) }, () => filler).join(" ");
+        return {
+          parsed: {
+            examples: Array.from(
+              { length: 5 },
+              () => `${s.greetingStyle} {{custom:name}}, ${body}. ${s.signoffStyle}`,
+            ),
+          },
+          usage: { inputTokens: 100, outputTokens: 20, cacheReadTokens: 0, cacheWriteTokens: 0 },
+          stopReason: "end_turn",
+        };
+      }
       // followup.v5: a good writer declines exactly when the key says, else writes a short nudge
       // about the job with no new figure, no guilt phrase and no easy out.
       if (isFollowup) {
@@ -430,10 +451,12 @@ describe("evaluation set (#46)", () => {
       purposePassRate: 1,
       followupPassRate: 1,
       followupSkipAccuracy: 1,
+      voiceExamplesPassRate: 1,
       openingAccuracy: 1,
     });
     expect(run.purposeProblems).toEqual({});
     expect(run.followupProblems).toEqual({});
+    expect(run.voiceExamplesProblems).toEqual({});
     expect(run.reviseProblems).toEqual({});
     // Every first-contact case was drafted and named its shape.
     const fc = EVAL_CASES.filter((c) => c.firstContact).map((c) => c.id);

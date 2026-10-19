@@ -533,6 +533,13 @@
       "when": 1792361098429,
       "tag": "0075_sms_code_tries",
       "breakpoints": true
+    },
+    {
+      "idx": 76,
+      "version": "7",
+      "when": 1792373502028,
+      "tag": "0076_voice_writers",
+      "breakpoints": true
     }
   ]
 }

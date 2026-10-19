@@ -27,6 +27,7 @@ import type { EvalCase } from "./cases";
 import { runEditEvals } from "./edits";
 import { runFollowupEvals } from "./followups";
 import { DEFAULT_PAYMENT_TERMS, runPurposeEvals } from "./purposes";
+import { runVoiceExamplesEvals } from "./voice-examples";
 import { score, type EvalResult } from "./score";
 
 /** The prompt versions an eval run used (stored with the baseline). */
@@ -235,7 +236,12 @@ export async function runEvals(
   let reviseProblems: Record<string, string[]> = {};
   let purposeProblems: Record<string, string[]> = {};
   let followupProblems: Record<string, string[]> = {};
+  let voiceExamplesProblems: Record<string, string[]> = {};
   if (opts.drafts !== false) {
+    // Check 24 P8: sample replies from the stored voice settings (voice-examples.v1).
+    const samples = await runVoiceExamplesEvals(workspace.id);
+    scores.voiceExamplesPassRate = samples.voiceExamplesPassRate;
+    voiceExamplesProblems = samples.voiceExamplesProblems;
     // Check 21 P7 + 12 P7: the nudge writer (followup.v5), skips and invoice reminders.
     const nudges = await runFollowupEvals(workspace.id);
     scores.followupPassRate = nudges.followupPassRate;
@@ -265,6 +271,7 @@ export async function runEvals(
     reviseProblems,
     purposeProblems,
     followupProblems,
+    voiceExamplesProblems,
     costDollars: (cost?.centiCents ?? 0) / 10_000,
     tokens: { input: tokens?.in ?? 0, output: tokens?.out ?? 0 },
   };

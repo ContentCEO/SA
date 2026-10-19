@@ -6,7 +6,8 @@ import { openSuggestions } from "@/server/edit-learning";
 import { listMailboxes } from "@/server/mailboxes";
 import { describeVoice, getBusinessProfile, getVoiceProfile } from "@/server/profile";
 import { requireOwner } from "@/server/session";
-import { hasVoiceContent, lastUpdateNote, voiceAttempt } from "@/server/voice-rules";
+import { hasVoiceContent, lastUpdateNote, voiceAttempt, writersNotice } from "@/server/voice-rules";
+import { ownerFirstName } from "@/ai/prompts/draft.v9";
 import { AutoSaveForm } from "@/components/forms/auto-save-form";
 import { LANGUAGE_NAMES } from "@/ai/language";
 import { OPTIONAL_REPLY_LANGUAGES } from "@/server/profile";
@@ -22,7 +23,7 @@ import { showGaps } from "@/ai/gaps";
 export const metadata: Metadata = { title: "Your voice" };
 
 export default async function WritingSettingsPage(props: PageProps<"/settings/writing">) {
-  const { workspace } = await requireOwner();
+  const { workspace, session } = await requireOwner();
   const [profile, voice, ideas, mailboxes] = await Promise.all([
     getBusinessProfile(workspace.id),
     getVoiceProfile(workspace.id),
@@ -42,6 +43,11 @@ export default async function WritingSettingsPage(props: PageProps<"/settings/wr
           ? "Couldn't learn your style last time. You can describe it yourself, or try again."
           : "Not learned yet. It starts once your email has been read.";
   const updateNote = lastUpdateNote(voice, profile?.timeZone ?? "America/New_York");
+  const writersLine = writersNotice(
+    voice?.writers,
+    ownerFirstName(voice?.signoffStyle, profile?.signature) ??
+      ownerFirstName(null, session.user?.name ?? null),
+  );
   // Check 24 P6: which inbox the voice came from (the owner's own address when it's connected).
   const learnedFrom = stored
     ? mailboxes.find((m) => m.id === voice?.learnedFromMailboxId)?.email
@@ -55,6 +61,8 @@ export default async function WritingSettingsPage(props: PageProps<"/settings/wr
         </h2>
         <div className="flex flex-col gap-2 rounded-xl border bg-card p-4">
           <p className="text-lg">{voiceLine}</p>
+          {/* Check 24 P9: someone else answers mail from this Gmail; drafts stay the owner's. */}
+          {stored && writersLine ? <p className="text-base font-semibold">{writersLine}</p> : null}
           {updateNote ? <p className="font-semibold">{updateNote}</p> : null}
           {learnedFrom ? (
             <p className="break-all text-muted-foreground">Learned from {learnedFrom}</p>

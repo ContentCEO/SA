@@ -17,7 +17,8 @@ import { FOLLOWUP_PROMPT_VERSION } from "./followup.v5";
 import { OPENING_TWEAKS_PROMPT_VERSION } from "./opening-tweaks.v1";
 import { PURPOSE_PROMPT_VERSION } from "./purpose.v2";
 import { REVISE_PROMPT_VERSION } from "./revise.v2";
-import { VOICE_PROMPT_VERSION } from "./voice.v3";
+import { VOICE_EXAMPLES_PROMPT_VERSION } from "./voice-examples.v1";
+import { VOICE_PROMPT_VERSION } from "./voice.v4";
 
 export const ACTIVE = {
   classify: CLASSIFY_PROMPT_VERSION,
@@ -31,6 +32,8 @@ export const ACTIVE = {
   openingTweaks: OPENING_TWEAKS_PROMPT_VERSION,
   /** Check 43 P9: the fixed task and flag on dispute / legal threads (`draft.vN+dispute-caution.vN`). */
   disputeCaution: DISPUTE_CAUTION_PROMPT_VERSION,
+  /** Check 24 P8: sample replies rewritten from the stored voice settings (no sent mail). */
+  voiceExamples: VOICE_EXAMPLES_PROMPT_VERSION,
 } as const;
 
 export type PromptKind = keyof typeof ACTIVE;

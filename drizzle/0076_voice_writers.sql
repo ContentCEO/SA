@@ -1,0 +1,1 @@
+ALTER TABLE "voice_profile" ADD COLUMN "writers" jsonb DEFAULT '[]'::jsonb NOT NULL;

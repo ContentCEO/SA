@@ -38,6 +38,8 @@ async function main() {
     console.log(`purpose ${id}: ${problems.join("; ")}`);
   for (const [id, problems] of Object.entries(run.followupProblems))
     console.log(`followup ${id}: ${problems.join("; ")}`);
+  for (const [id, problems] of Object.entries(run.voiceExamplesProblems))
+    console.log(`voice samples ${id}: ${problems.join("; ")}`);
 
   if (args.has("--update-baseline")) {
     const next: Baseline = {

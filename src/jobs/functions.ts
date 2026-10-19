@@ -51,6 +51,7 @@ import {
   purgeVoiceAlertMarkers,
   restartVoiceLearns,
   workspacesDueForVoiceRefresh,
+  rewriteVoiceExamples,
 } from "@/server/voice";
 import {
   enforcePlanAutopilot,
@@ -81,6 +82,7 @@ import {
   mailboxDraftRequested,
   mailboxSyncRequested,
   replyToBackfillContinue,
+  voiceExamplesRequested,
   voiceLearnRequested,
 } from "./client";
 
@@ -480,6 +482,23 @@ export const learnVoiceFn = inngest.createFunction(
     ),
 );
 
+/**
+ * Check 24 P8: rewrite the voice's sample replies from the stored settings (no sent mail) after an
+ * edit or an accepted idea made them stale. Singleton per workspace; the AI cap applies.
+ */
+export const voiceExamples = inngest.createFunction(
+  {
+    id: "voice-examples",
+    triggers: [voiceExamplesRequested],
+    singleton: { key: "event.data.workspaceId", mode: "skip" },
+    retries: 3,
+  },
+  async ({ event, step }) =>
+    step.run("rewrite", () =>
+      stopIfModelMissing(() => rewriteVoiceExamples(event.data.workspaceId)),
+    ),
+);
+
 /** Weekly: refresh learned voices (never ones the owner edited by hand). */
 export const refreshVoices = inngest.createFunction(
   { id: "refresh-voices", triggers: [cron("23 8 * * 1")] },
@@ -779,6 +798,7 @@ export const functions = [
   classifyMailbox,
   draftMailbox,
   learnVoiceFn,
+  voiceExamples,
   refreshVoices,
   pollMailboxes,
   renewGmailWatches,

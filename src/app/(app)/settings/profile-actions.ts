@@ -2,7 +2,7 @@
 
 import { redirect } from "next/navigation";
 import { z } from "zod";
-import { enqueue, voiceLearnRequested } from "@/jobs/client";
+import { enqueue, voiceLearnRequested, voiceExamplesRequested } from "@/jobs/client";
 import {
   businessProfileInputFor,
   digestSettingsInput,
@@ -78,6 +78,10 @@ export async function saveVoiceAction(_prev: FormState, formData: FormData): Pro
       values: raw,
     };
   await saveVoiceEdits(workspace.id, parsed.data);
+  // Check 24 P8: a changed greeting, sign-off, formality or length → fresh samples, from the
+  // settings only.
+  if ((await getVoiceProfile(workspace.id))?.examplesStale)
+    await enqueue(voiceExamplesRequested.create({ workspaceId: workspace.id }));
   redirect("/settings/writing?done=voice");
 }
 
@@ -191,6 +195,9 @@ export async function decideVoiceIdeaAction(formData: FormData) {
   if (!id.success) redirect("/settings/writing?error=unknown");
   const r = await decideSuggestion(workspace.id, id.data, formData.get("answer") === "yes");
   if (r === "type_it") redirect("/settings/voice");
+  // Check 24 P8: an accepted idea that moved the length or formality makes the samples stale.
+  if (r === "accepted" && (await getVoiceProfile(workspace.id))?.examplesStale)
+    await enqueue(voiceExamplesRequested.create({ workspaceId: workspace.id }));
   redirect(
     r === "accepted"
       ? "/settings/writing?done=idea_yes"
