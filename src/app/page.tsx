@@ -31,6 +31,7 @@ import { SiteAnalytics } from "@/components/marketing/site-analytics";
 import { StructuredData } from "@/components/marketing/structured-data";
 import { phoneHref } from "@/lib/phone-href";
 import { SkipLink } from "@/components/app/skip-link";
+import { deferred } from "@/lib/deferred-section";
 
 const telHref = phoneHref("tel", siteConfig.phone);
 
@@ -62,14 +63,23 @@ function Section({
   className,
   children,
   label,
+  defer,
 }: {
   id?: string;
   className?: string;
   children: React.ReactNode;
   label: string;
+  /** Check 29 P9: [phone px, wide px] for an off-screen section (src/lib/deferred-section.ts). */
+  defer?: [number, number];
 }) {
+  const d = defer ? deferred(...defer) : null;
   return (
-    <section id={id} aria-label={label} className={cn("px-4 py-16 sm:py-24", className)}>
+    <section
+      id={id}
+      aria-label={label}
+      className={cn("px-4 py-16 sm:py-24", d?.className, className)}
+      style={d?.style}
+    >
       <div className="mx-auto flex w-full max-w-5xl flex-col gap-10">{children}</div>
     </section>
   );
@@ -170,7 +180,12 @@ export default function HomePage() {
             </div>
           </Section>
 
-          <Section id="how" label="How it works" className="border-t border-stone">
+          <Section
+            id="how"
+            label="How it works"
+            className="border-t border-stone"
+            defer={[1065, 605]}
+          >
             <Headline as="h2" serif="three steps," heavy="then back to work." />
             <ol className="grid gap-6 md:grid-cols-3">
               {steps.map((s) => (
@@ -183,7 +198,11 @@ export default function HomePage() {
             </ol>
           </Section>
 
-          <section aria-label="Our promise" className="sa-inverted px-4 py-16 sm:py-24">
+          <section
+            aria-label="Our promise"
+            className="sa-inverted sa-cv px-4 py-16 sm:py-24"
+            style={deferred(663, 531).style}
+          >
             <div className="mx-auto flex w-full max-w-5xl flex-col gap-6">
               <p className="flex flex-col">
                 <span className="sa-headline-serif text-4xl sm:text-5xl">the one rule,</span>{" "}
@@ -193,7 +212,7 @@ export default function HomePage() {
             </div>
           </section>
 
-          <Section label="What it does">
+          <Section label="What it does" defer={[2244, 1119]}>
             <Headline as="h2" serif="what it does," heavy="all day." />
             <ul className="grid gap-x-10 gap-y-8 sm:grid-cols-2 lg:grid-cols-3">
               {features.map((f) => (
@@ -207,7 +226,12 @@ export default function HomePage() {
 
           <AboutDavi />
 
-          <Section id="pricing" label="Pricing" className="border-t border-stone">
+          <Section
+            id="pricing"
+            label="Pricing"
+            className="border-t border-stone"
+            defer={[2049, 1177]}
+          >
             <Headline as="h2" serif="simple pricing," heavy="no contract." />
             <div className="flex flex-col gap-2 rounded-2xl border-2 border-charcoal p-6 sm:flex-row sm:items-center sm:justify-between">
               <div className="flex flex-col gap-1">
@@ -236,7 +260,7 @@ export default function HomePage() {
             </p>
           </Section>
 
-          <Section label="Questions" className="border-t border-stone">
+          <Section label="Questions" className="border-t border-stone" defer={[770, 798]}>
             <Headline as="h2" serif="good questions," heavy="straight answers." />
             <div className="flex flex-col divide-y divide-stone border-y border-stone">
               {faqs.map((f) => (

@@ -118,9 +118,10 @@ client's written okay (the date goes in `permissionOn`) and a yearly check that 
   bridge.heavy "Need more jobs? We'll do the marketing for you."; bridge.body names the four
   services and "never touches your inbox".
 - The Big words switch now reads "Your inbox" → "Your marketing" (still aria-hidden). Its
-  per-word font sizes were re-tuned in theme.css (from 17vw / min(17vw, 16vh), to 10.8vw /
-  min(10.8vw, 11vh)) so the longer words still fit the band at 320–375px; the e2e "fits side to
-  side" checks are unchanged.
+  per-word font sizes were re-tuned in theme.css (from 20vw / min(20vw, 16vh), to 11.5vw /
+  min(11.5vw, 14vh); measured in Chromium: both words about 86% of a 375px screen, 22px+ gutters
+  at 320px) so the longer words still fit the band; the e2e "fits side to side" checks are
+  unchanged. (Step 9's commit had a first guess; step 14's commit carries the measured values.)
 - **CLAUDE.md:** the Growth "Big words" paragraph names "The app" / "One-on-one" — now
   "Your inbox" / "Your marketing" (Check 6 P6).
 
@@ -180,3 +181,13 @@ step 11/12 if it also touches structured-data.ts or public-site e2e.
 - Services grid `sm:grid-cols-2 lg:grid-cols-4`, the first card spanning two columns: seven
   cards leave no lone card at sm or lg (if Davi merges the ad cards, step 1, six cards go back to
   three columns with no span). The "Text …" button is hidden from lg up.
+
+## Step 14 (Check 29 P9): content-visibility for off-screen homepage sections
+
+`.sa-cv` (theme.css: `content-visibility: auto` + `contain-intrinsic-size: auto <measured>`),
+applied through `src/lib/deferred-section.ts` to How it works, Our promise, What it does,
+Pricing, Questions (app half) and What we take on, You own everything, How Growth works, Ground
+rules, Growth questions (Growth half, also on /growth). Not on the Introduction, About, the
+waitlist, the bridge, the Growth opener (#growth), the call section (#growth-call), the sticky
+header/bar or the switch stage. Sizes measured at 375px and 1280px. New e2e (mobile project):
+three crossings under CDP 4x CPU throttling, worst requestAnimationFrame gap < 120ms.

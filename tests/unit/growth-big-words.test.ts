@@ -200,8 +200,8 @@ describe("big words: theme.css", () => {
     // Each word sized on its own, big on a phone; min() has a plain fallback declared first
     // (older iOS).
     for (const [side, size] of [
-      ["from", ["17vw", "min(17vw, 16vh)"]],
-      ["to", ["10.8vw", "min(10.8vw, 11vh)"]],
+      ["from", ["20vw", "min(20vw, 16vh)"]],
+      ["to", ["11.5vw", "min(11.5vw, 14vh)"]],
     ] as const) {
       const rule = section().slice(section().indexOf(`.sa-bw-word[data-word="${side}"] {`));
       const body = rule.slice(0, rule.indexOf("}"));

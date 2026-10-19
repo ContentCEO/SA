@@ -5,6 +5,7 @@ import { Headline } from "@/components/brand/headline";
 import { GROWTH_PROOF } from "@/config/growth-proof";
 import { siteConfig } from "@/config/site";
 import { phoneHref } from "@/lib/phone-href";
+import { deferred } from "@/lib/deferred-section";
 import { cn } from "@/lib/utils";
 import { GrowthCallForm } from "./growth-call-form";
 import { growthCopy as c } from "./growth-copy";
@@ -15,17 +16,22 @@ function Section({
   label,
   className,
   children,
+  defer,
 }: {
   id?: string;
   label: string;
   className?: string;
   children: React.ReactNode;
+  /** Check 29 P9: [phone px, wide px] for an off-screen section (src/lib/deferred-section.ts). */
+  defer?: [number, number];
 }) {
+  const d = defer ? deferred(...defer) : null;
   return (
     <section
       id={id}
       aria-label={label}
-      className={cn("border-t border-ash/40 px-4 py-16 sm:py-24", className)}
+      className={cn("border-t border-ash/40 px-4 py-16 sm:py-24", d?.className, className)}
+      style={d?.style}
     >
       <div className="mx-auto flex w-full max-w-5xl flex-col gap-10">{children}</div>
     </section>
@@ -96,7 +102,7 @@ export function GrowthChapter({
         </div>
       </section>
 
-      <Section label={c.services.region}>
+      <Section label={c.services.region} defer={[2643, 1201]}>
         <Headline as="h2" serif={c.services.serif} heavy={c.services.heavy} />
         {/* Check 2 P9: the first card spans two columns, so seven cards leave no lone card
             (sm: 2 + 2×3; lg: 2+1+1, then 4). One column on phones. */}
@@ -124,7 +130,7 @@ export function GrowthChapter({
         </ul>
       </Section>
 
-      <Section label={c.pledge.region}>
+      <Section label={c.pledge.region} defer={[512, 451]}>
         <Headline as="h2" serif={c.pledge.serif} heavy={c.pledge.heavy} />
         <div className="flex max-w-3xl flex-col gap-4 border-l-4 border-offwhite pl-5">
           <p className="text-xl leading-relaxed">{c.pledge.body}</p>
@@ -132,7 +138,7 @@ export function GrowthChapter({
         </div>
       </Section>
 
-      <Section label={c.how.region}>
+      <Section label={c.how.region} defer={[873, 521]}>
         <Headline as="h2" serif={c.how.serif} heavy={c.how.heavy} />
         <ol className="grid gap-6 md:grid-cols-3">
           {c.how.steps.map((s, i) => (
@@ -147,7 +153,7 @@ export function GrowthChapter({
         </ol>
       </Section>
 
-      <Section label={c.rules.region}>
+      <Section label={c.rules.region} defer={[949, 617]}>
         <Headline as="h2" serif={c.rules.serif} heavy={c.rules.heavy} />
         <ul className="grid gap-x-10 gap-y-8 sm:grid-cols-2">
           {c.rules.items.map((r) => (
@@ -178,7 +184,7 @@ export function GrowthChapter({
 
       <GrowthProof items={GROWTH_PROOF} now={new Date()} />
 
-      <Section label={c.faq.region}>
+      <Section label={c.faq.region} defer={[814, 830]}>
         <Headline as="h2" serif={c.faq.serif} heavy={c.faq.heavy} />
         <div className="divide-y divide-ash/40 border-y border-ash/40">
           {c.faq.items.map((f) => (

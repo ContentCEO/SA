@@ -607,6 +607,68 @@ test.describe("homepage: the way into Squared Away Growth", () => {
     await expect(call.getByLabel("Your name")).toHaveCSS("border-top-color", "rgb(94, 93, 89)");
   });
 
+  test("the crossing stays smooth on a slow phone: no frame over 120ms at 4x CPU (Check 29 P9)", async ({
+    page,
+  }) => {
+    test.skip(page.viewportSize()!.width >= 640, "a phone check");
+    // Off-screen sections skip style work during the theme swap (content-visibility: auto).
+    await page.goto("/");
+    await settle(page);
+    const deferredCount = await page.evaluate(
+      () =>
+        [...document.querySelectorAll("main section.sa-cv")].filter(
+          (s) => getComputedStyle(s).contentVisibility === "auto",
+        ).length,
+    );
+    expect(deferredCount).toBeGreaterThanOrEqual(8);
+    await expect(page.locator("#growth")).not.toHaveClass(/sa-cv/);
+
+    const cdp = await page.context().newCDPSession(page);
+    await cdp.send("Emulation.setCPUThrottlingRate", { rate: 4 });
+    const worst: number[] = [];
+    try {
+      for (let run = 0; run < 3; run++) {
+        await resetLog(page);
+        await page.evaluate(() => {
+          const w = window as unknown as { __gaps: number[]; __gapsOn: boolean };
+          w.__gaps = [];
+          w.__gapsOn = true;
+          let last = performance.now();
+          const tick = (t: number) => {
+            w.__gaps.push(t - last);
+            last = t;
+            if (w.__gapsOn) requestAnimationFrame(tick);
+          };
+          requestAnimationFrame(tick);
+        });
+        await stepBoundaryTo(page, 0.4);
+        await expect.poll(() => saLog(page), { timeout: 10_000 }).toContain("in");
+        await expect(html(page)).not.toHaveAttribute("data-sa-switching", /.*/, {
+          timeout: 10_000,
+        });
+        worst.push(
+          await page.evaluate(() => {
+            const w = window as unknown as { __gaps: number[]; __gapsOn: boolean };
+            w.__gapsOn = false;
+            return Math.max(...w.__gaps.slice(1));
+          }),
+        );
+        // Back up to the app side for the next run.
+        await page.evaluate(() => window.scrollTo(0, 0));
+        await expect
+          .poll(() => html(page).getAttribute("data-sa-theme"), { timeout: 10_000 })
+          .toBe("app");
+        await expect(html(page)).not.toHaveAttribute("data-sa-switching", /.*/, {
+          timeout: 10_000,
+        });
+        await page.waitForTimeout(800);
+      }
+    } finally {
+      await cdp.send("Emulation.setCPUThrottlingRate", { rate: 1 });
+    }
+    expect(Math.max(...worst)).toBeLessThan(120);
+  });
+
   test("every way down plays the full show again; every way up flies apart onto paper", async ({
     page,
   }) => {
