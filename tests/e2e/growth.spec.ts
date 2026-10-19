@@ -1313,3 +1313,16 @@ test("/growth: its own page, charcoal edge to edge", async ({ page }) => {
   ).toBe("rgb(27, 27, 27)");
   expect(await noOverflow(page)).toBe(true);
 });
+
+test("/growth: every service card says what you get (Check 3 P1)", async ({ page }) => {
+  await page.goto("/growth");
+  const services = page.getByRole("region", { name: "What we take on" });
+  const reviews = services.getByRole("listitem").filter({
+    has: page.getByRole("heading", { name: "Reviews", exact: true }),
+  });
+  await expect(
+    reviews.getByRole("list", { name: "What you get with Reviews" }).getByRole("listitem").first(),
+  ).toHaveText("Your Google review link and a short message you can send");
+  await expect(reviews).toContainText("we never message your customers");
+  expect(await noOverflow(page)).toBe(true);
+});

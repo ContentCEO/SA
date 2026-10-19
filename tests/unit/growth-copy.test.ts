@@ -98,8 +98,18 @@ describe("Squared Away Growth copy", () => {
   it("asks every customer for reviews, never only happy ones (no review gating)", () => {
     const reviews = GROWTH_SERVICES.find((s) => s.value === "reviews")!;
     expect(reviews.blurb).toBe(
-      "A simple way to ask your customers for a Google review, and help answering the reviews you get. We never write fake ones.",
+      "Your Google review link and a short message you send to every customer yourself, plus help answering the reviews you get. We never write fake ones, and we never message your customers.",
     );
+    expect(reviews.blurb).toContain("every customer");
+    expect(reviews.blurb).toContain("yourself");
+    for (const said of [
+      "we'll text your customers",
+      "we text your customers",
+      "we email your customers",
+    ]) {
+      expect(`${source}\n${words}`.toLowerCase()).not.toContain(said);
+    }
+    expect(growthCopy.rules.items[1].body).toContain("offer anything in return for a review");
     expect(`${source}\n${words}`.toLowerCase()).not.toContain("happy customer");
   });
 
@@ -226,5 +236,20 @@ describe("Check 2 P1 / Check 3 P7: the banned list catches what it should", () =
     const rank = /\brank(?:s|ed|ing)?\b/i;
     expect("We rank you first").toMatch(rank);
     expect("Frank was cranky").not.toMatch(rank);
+  });
+});
+
+describe("Check 3 P1: every service card says what you get", () => {
+  it("2 to 4 short lines per service, in the copy file's items", () => {
+    for (const s of GROWTH_SERVICES) {
+      expect(s.includes.length, s.value).toBeGreaterThanOrEqual(2);
+      expect(s.includes.length, s.value).toBeLessThanOrEqual(4);
+      for (const line of s.includes) expect(line.length, line).toBeLessThan(70);
+    }
+    expect(growthCopy.services.items.map((i) => i.includes)).toEqual(
+      GROWTH_SERVICES.map((s) => s.includes),
+    );
+    // The lines are in `words` and in src/config/growth.ts, so every ban above covers them.
+    expect(words).toContain("A monthly cap on ad money that you set");
   });
 });

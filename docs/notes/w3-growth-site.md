@@ -66,3 +66,18 @@ exactly like the flag is stored as "(flag)".
 
 CLAUDE.md line to change: the Growth section's "the hidden 'website' field for bots" → "the
 hidden `sa_hp` trap field (Check 2 P3: filled + valid = stored with a flag, nobody emailed)".
+
+## Step 6 (Check 3 P1 + Check 3 P5): "you get" lines and the Reviews card — HOLD for Davi's words
+
+Built with the review's **draft** wording; Davi must okay or edit before this reaches
+production (the integrator can revert this one commit cleanly — later steps don't depend on it
+except the copy test's `includes` checks, which go with it).
+
+- `includes` (2–4 lines, < 70 chars) on every `GROWTH_SERVICES` entry, rendered as a plain list
+  under each card (`growthCopy.services.items[].includes`, list named "What you get with …").
+  Facebook ads and Instagram ads each carry the same two lines (cards not merged, step 1).
+- Reviews blurb: "Your Google review link and a short message you send to every customer
+  yourself, plus help answering the reviews you get. We never write fake ones, and we never
+  message your customers."
+- Ground rule "No made-up reviews": "…post photos of someone else's work, or offer anything in
+  return for a review."

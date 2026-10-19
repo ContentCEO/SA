@@ -51,7 +51,9 @@ export const growthCopy = {
     region: "What we take on",
     serif: "what we take on,",
     heavy: "so you don't have to.",
-    items: GROWTH_SERVICES.map((s) => ({ title: s.label, body: s.blurb })),
+    items: GROWTH_SERVICES.map((s) => ({ title: s.label, body: s.blurb, includes: s.includes })),
+    /** Check 3 P1: the screen-reader name of each card's "you get" list. */
+    includesLabel: (service: string) => `What you get with ${service}`,
   },
   /**
    * The pledge (agreed 2026-10-16: no percentage of the business). Names what the
@@ -94,7 +96,7 @@ export const growthCopy = {
       },
       {
         title: "No made-up reviews",
-        body: "We help you ask real customers. We never write reviews, buy followers or post photos of someone else's work.",
+        body: "We help you ask real customers. We never write reviews, buy followers, post photos of someone else's work, or offer anything in return for a review.",
       },
       {
         title: "A clear price before any work",
