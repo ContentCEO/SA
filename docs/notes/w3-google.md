@@ -253,3 +253,27 @@ Run on 2026-10-19 against `https://sa-dac3.vercel.app`: all five paths carry `x-
 noindex` (the favicon answers 200 now). The LAUNCH text for it is inside step 9's item 10 (sub-item
 1: "Right after the move, run `pnpm check:headers https://<your domain>`. It must pass." and the
 note that previews are expected to fail).
+
+## Step 11: Check 33 P3 + P4 (CLAUDE.md lines)
+
+**CLAUDE.md** (Decisions): the sitemap dates each page (Check 33 P4): `CONTENT_DATES` in
+`src/config/site.ts` for `/` and `/growth` (bump when that page's words change) and the date part
+of `TERMS_VERSION` for `/privacy` and `/terms` (`legalDate()` in `src/app/sitemap.ts`, so a `.N`
+same-day suffix never reaches the sitemap). `/signin`, `/not-invited` and `/goodbye` carry
+`robots: { index: false, follow: true }` and are no longer in robots.txt's disallow list. The
+Organization markup has logo (`/app-icon/512`), a state-level address and `email` only from
+`SUPPORT_EMAIL`.
+
+**Legal release:** when `TERMS_VERSION` moves, the sitemap's legal dates follow by themselves;
+nothing to edit.
+
+## Step 12: Check 33 P6 (one finding left for the Growth group)
+
+`tests/e2e/public-site.spec.ts` "every public page has its search basics" walks the sitemap in
+both Playwright projects. It passes today with one explicit, self-expiring exception:
+**/growth's meta description is 179 characters** (`growthCopy.meta.description`,
+`src/components/marketing/growth/growth-copy.ts`), which Growth site step 12 (Check 33 P2)
+rewrites. **Growth group / integrator:** keep that description at 160 characters or fewer, then
+delete the `waitingOn["/growth"]` line in the spec (the test fails on its own once the entry is
+unused). Not edited here to avoid a conflict on the line that step rewrites. `/terms`'s
+description was lengthened to 150 characters (it was 33) in this branch.
