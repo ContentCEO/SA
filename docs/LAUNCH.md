@@ -199,8 +199,8 @@ whatever your sales total.
 - Where: MassTaxConnect (mass.gov/masstaxconnect) → Register a New Business → sales and use tax.
 - Have ready: your SSN if you're a sole owner with no employees (otherwise an EIN), your business
   certificate ([Register the name Squared Away](#register-the-name-squared-away-this-month)), and
-  the LLC's EIN if you formed one, your business and mailing addresses, and the start date your accountant picks (the questions for your
-  accountant are in [step 7e](#7-stripe-live-mode)).
+  the LLC's EIN if you formed one, your business and mailing addresses, and the start date your
+  accountant picks (the questions for your accountant are in [step 7e](#7-stripe-live-mode)).
 - Cost and time: guides say it's free and takes about 3–10 business days. The state's own site
   wouldn't load for the engineers, so check both in MassTaxConnect.
 - Paste: nothing.
@@ -888,8 +888,8 @@ you.
 
 Resend's free plan sends at most 100 emails a day and 3,000 a month
 ([resend.com/pricing](https://resend.com/pricing)). The morning email alone is about one email
-per active shop per day, so plan the paid plan before you get near 100 shops (see
-[Check your free plans now](#resend-the-apps-emails)).
+per active shop per day; with the other emails the daily limit comes somewhere past 50 shops
+([Check your free plans now](#resend-the-apps-emails)), so move to a paid plan before that.
 
 - Where: resend.com → **Domains** → **Add domain**. Use a subdomain such as
   `mail.<your domain>` (Resend recommends sending from a subdomain, so its reputation is kept
