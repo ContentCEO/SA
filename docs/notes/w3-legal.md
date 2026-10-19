@@ -30,3 +30,18 @@ What `CLAUDE.md`, `docs/LAUNCH.md` and `docs/BUILD-ORDER.md` should say. Legal s
   shallow clone with no base branch, so there is no merge-base. To make it bite in CI, give the
   unit-test job `with: fetch-depth: 0` (or fetch `origin/claude/squared-away-mvp-ddxl7s` before
   `pnpm test`). Locally it runs for real on every branch.
+
+## Check 27 P6: text alerts (for `CLAUDE.md` Decisions and `docs/LAUNCH.md` step 10)
+
+- **No migration.** The spec's `sms_opted_out_at` column was not added: `business_profile.sms_stopped_reason`
+  (Check 19 P6) already records `opted_out`, the screen already reads it, and `setSmsAlerts(true)`
+  already clears it. The send path now sets it too (Twilio's 21610 on a send, and on the code
+  text). The migration lane was not taken.
+- `sendLeadAlerts` wraps each owner in try/catch (`alertOne`): a refusal for one owner is logged
+  (`sms_alert_failed` with the Twilio status and the error's name only), that owner's slot is handed
+  back, and the next owner is still texted. `not_configured` still stops the run.
+- `sendSms` parses Twilio's error JSON for the numeric `code` only; 21610 → `"opted_out"`.
+- LAUNCH step 10: the Text alerts screen now carries the A2P 10DLC words (frequency, "Msg & data
+  rates may apply", HELP/STOP, consent to the Terms and Privacy Policy under the button). When
+  registering the campaign with Twilio, the opt-in screenshot is `/settings/texts` (phone form
+  step). The legal sentences wait for the release (`docs/notes/legal-w3-legal.md`).

@@ -89,6 +89,9 @@ export const SCREEN_MESSAGES = {
       sms_not_configured: "Texting isn't switched on yet.",
       sms_not_verified: "Confirm your number first.",
       sms_send_failed: "We couldn't text that number. Check it's a mobile number and try again.",
+      // Check 27 P6: Twilio's 21610 when the code is sent.
+      sms_opted_out:
+        "That number replied STOP to our texts. Text START to the number, then try again.",
     },
   },
   "/settings/away": {

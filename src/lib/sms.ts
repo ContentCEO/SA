@@ -18,8 +18,15 @@ export type OutgoingSms = {
    */
   validitySec?: number;
 };
-/** Check 19 P6: "sent" carries Twilio's message id, so its delivery report can be matched. */
-export type SmsSendResult = { status: "sent"; sid: string } | "not_configured";
+/**
+ * Check 19 P6: "sent" carries Twilio's message id, so its delivery report can be matched.
+ * Check 27 P6: "opted_out" is Twilio's 21610 (the owner replied STOP): the caller switches texts
+ * off rather than failing.
+ */
+export type SmsSendResult = { status: "sent"; sid: string } | "not_configured" | "opted_out";
+
+/** Twilio's error code for a number that replied STOP (the same code its delivery reports carry). */
+export const TWILIO_OPTED_OUT_CODE = 21610;
 export type SmsSender = (sms: OutgoingSms) => Promise<SmsSendResult>;
 
 /** Where Twilio reports each text's delivery (Check 19 P6). Signed with the auth token. */
@@ -51,7 +58,12 @@ export const sendSms: SmsSender = async ({ to, body, validitySec }) => {
     },
     body: form,
   });
-  if (!res.ok) throw new TwilioError(res.status);
+  if (!res.ok) {
+    // Twilio's error JSON carries a numeric code; nothing else of it is read or kept.
+    const err = (await res.json().catch(() => null)) as { code?: unknown } | null;
+    if (err?.code === TWILIO_OPTED_OUT_CODE) return "opted_out";
+    throw new TwilioError(res.status);
+  }
   const json = (await res.json().catch(() => null)) as { sid?: unknown } | null;
   return { status: "sent", sid: typeof json?.sid === "string" ? json.sid : "" };
 };

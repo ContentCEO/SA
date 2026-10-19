@@ -4,10 +4,11 @@ import { Button } from "@/components/ui/button";
 import { smsConfigured } from "@/lib/sms";
 import { getBusinessProfile } from "@/server/profile";
 import { requireOwner } from "@/server/session";
-import { formatUsPhone, textsStep } from "@/server/sms-alerts";
+import Link from "next/link";
+import { formatUsPhone, SMS, textsStep } from "@/server/sms-alerts";
 import { zoneTimeName } from "@/server/time-zone-rules";
 import { lastSmsDelivery } from "@/server/sms-deliveries";
-import { lastTextLine } from "@/server/sms-delivery-rules";
+import { lastTextLine, textsConsentCopy } from "@/server/sms-delivery-rules";
 import { usableTimeZone } from "@/server/snooze-rules";
 import { EmergencySwitch } from "../emergency-switch";
 import { SettingsScreen } from "../screen";
@@ -38,14 +39,11 @@ export default async function TextAlertSettingsPage(props: PageProps<"/settings/
           timeZone: usableTimeZone(profile?.timeZone),
           now,
         });
+  // Check 27 P6: the carrier-required words, with the numbers from the SMS limits in code.
+  const copy = textsConsentCopy(SMS, zoneTimeName(profile?.timeZone));
   return (
     <SettingsScreen path="/settings/texts" heavy="text alerts." params={await props.searchParams}>
-      <p className="text-muted-foreground">
-        A text when a new quote request or an email that needs you comes in. Just the count and a
-        link — never a customer&apos;s name or words. Not between 9pm and 7am{" "}
-        {zoneTimeName(profile?.timeZone)} (except emergencies, if you leave that on below), at most
-        one every 10 minutes. Reply STOP any time.
-      </p>
+      <p className="text-muted-foreground">{copy.intro}</p>
       {lastLine ? (
         <p role="status" className="font-semibold">
           {lastLine}
@@ -108,8 +106,25 @@ export default async function TextAlertSettingsPage(props: PageProps<"/settings/
             />
           </label>
           <Button type="submit" className="w-full">
-            Text me a code
+            {copy.button}
           </Button>
+          <p className="text-sm text-muted-foreground">
+            {copy.consent}{" "}
+            <Link
+              href="/terms"
+              className="inline-flex min-h-tap items-center font-semibold underline underline-offset-4"
+            >
+              Terms
+            </Link>{" "}
+            {copy.consentEnd}{" "}
+            <Link
+              href="/privacy"
+              className="inline-flex min-h-tap items-center font-semibold underline underline-offset-4"
+            >
+              Privacy Policy
+            </Link>
+            .
+          </p>
         </form>
       )}
     </SettingsScreen>

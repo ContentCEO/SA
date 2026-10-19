@@ -235,3 +235,45 @@ authorities that law names." with **(recommended, the spec's wording)**:
 Tests for the release: `legal-docs.test.ts` "round 2 (TC)" pins "as Massachusetts law (Chapter
 93H) requires" → change to the new sentence, and add that the Security section contains "your
 state".
+
+## Check 27 P6: text alerts (carrier consent rules)
+
+Built in code (no legal text): the Text alerts screen's opening paragraph is built from the SMS
+limits in `src/server/sms-alerts.ts` ("Up to 10 texts a day, none between 9pm and 7am … Msg & data
+rates may apply. Reply HELP for help, STOP to stop.") and the phone form ends with "By tapping Text
+me a code you agree to these texts and to our Terms and Privacy Policy." with 44px links to /terms
+and /privacy. Twilio's 21610 on a send (the owner replied STOP) switches that owner's texts off
+with the reason the screen shows ("You replied STOP, so texts are off. Text START to the number,
+then turn them on here."), hands the slot back and the loop goes on to the next owner; one owner's
+refusal never stops another's text. The screen is hidden until `TWILIO_*` is set (LAUNCH step 10,
+SETUP §6c): all of this is dead until then.
+
+### Privacy policy, the "**Twilio**" bullet under "Who else sees it"
+
+Append to "— only if you turn on text alerts: delivers texts to your own phone (the code that
+confirms your number, then counts and a link)." **(recommended, the spec's wording)**:
+
+> We don't share your mobile number or texting consent with anyone for their marketing, and we
+> never sell it.
+
+Test for the release: `legal-docs.test.ts` requires that sentence.
+
+### Terms, a new section "## Text alerts" (after "## You approve what gets sent"; the existing
+
+"optional and only a convenience" paragraph under "What Squared Away does" stays)
+
+**(recommended; numbers as the code keeps them, Davi approves the wording)**
+
+> ## Text alerts
+>
+> If you turn on text alerts, Squared Away texts your own mobile number when a new quote request or
+> an email that needs you comes in: the count and a link, never a customer's name or words. Up to
+> 10 texts a day, none between 9pm and 7am your time (except emergency alerts, if you leave those
+> on). Message and data rates may apply. Reply HELP for help and STOP to stop; texting STOP turns
+> them off in the app too, and you can turn them back on in Settings after texting START. Carriers
+> aren't liable for delayed or undelivered texts. We never share your number or your consent to
+> these texts for anyone's marketing.
+
+Test for the release: `legal-docs.test.ts` requires the section heading, "Message and data rates
+may apply", "HELP", "STOP" and the carrier sentence; the numbers can be read from `SMS.dailyCap`
+and the quiet hours as the other number tests do.

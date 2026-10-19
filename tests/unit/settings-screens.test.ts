@@ -54,7 +54,7 @@ describe("settings redirects", () => {
     expect(src).toContain("const back = (q: string) => `/settings/texts?${q}`;");
     expect(src).toContain("redirect(back(`error=sms_${err.code}`))");
     const codes = readFileSync("src/server/sms-alerts.ts", "utf8")
-      .match(/readonly code: ([^,]+),/)![1]!
+      .match(/export type SmsErrorCode =([^;]+);/)![1]!
       .match(/"([a-z_]+)"/g)!
       .map((c) => c.replace(/"/g, ""));
     expect(codes.length).toBeGreaterThanOrEqual(5);

@@ -40,7 +40,9 @@ export function deliveryFailed(status: string | null | undefined): boolean {
 }
 
 export const STOPPED_LINES: Record<SmsStoppedReason, string> = {
-  opted_out: "You replied STOP, so texts are off.",
+  // Check 27 P6: START at the carrier lifts the block; the switch here turns them back on.
+  opted_out:
+    "You replied STOP, so texts are off. Text START to the number, then turn them on here.",
   not_mobile: "That number can't get texts. Use a mobile number.",
 };
 
@@ -95,6 +97,34 @@ function when(at: Date, timeZone: string, now: Date): string {
     day: "numeric",
   }).format(at);
   return `${date} at ${time}`;
+}
+
+/** 21 → "9pm", 7 → "7am", 0 → "12am", 12 → "12pm". */
+export function hourWord(hour: number): string {
+  const h = hour % 12 === 0 ? 12 : hour % 12;
+  return `${h}${hour < 12 ? "am" : "pm"}`;
+}
+
+/**
+ * Check 27 P6: the opt-in screen's words, built from the SMS limits in code (never typed), with
+ * what carriers' A2P 10DLC review looks for: the frequency, "Msg & data rates may apply", HELP
+ * and STOP, and consent to the texts and to the Terms and Privacy Policy under the button.
+ */
+export function textsConsentCopy(
+  limits: { dailyCap: number; quietStartHour: number; quietEndHour: number },
+  zoneName: string,
+) {
+  return {
+    intro:
+      "Squared Away texts you when a new quote request or an email that needs you comes in: " +
+      "just the count and a link, never a customer's name or words. " +
+      `Up to ${limits.dailyCap} texts a day, none between ${hourWord(limits.quietStartHour)} and ` +
+      `${hourWord(limits.quietEndHour)} ${zoneName} (except emergencies, if you leave that on ` +
+      "below). Msg & data rates may apply. Reply HELP for help, STOP to stop.",
+    consent: "By tapping Text me a code you agree to these texts and to our",
+    consentEnd: "and",
+    button: "Text me a code",
+  };
 }
 
 /** Activity's line for a new-lead text: "Texted you" only once Twilio says it arrived. */
